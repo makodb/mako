@@ -50,11 +50,9 @@ impl<'a> Iter<'a> {
                 self.done = true;
                 return Ok(());
             };
-            let chunk = self.store.chunk(
-                &from,
-                self.dir == Direction::Forward,
-                self.skip_first,
-            )?;
+            let chunk = self
+                .store
+                .chunk(&from, self.dir == Direction::Forward, self.skip_first)?;
             self.buf.extend(chunk.pairs);
             match chunk.next_from {
                 // A chunk can be empty while the range continues — every

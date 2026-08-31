@@ -1,15 +1,20 @@
 //! Transaction-ordered, asynchronous RocksDB write-back.
 //!
 //! Before entering native commit, STO preflights its canonical write set while
-//! Rust claims bounded queue capacity and allocates the exact record buffer,
-//! but the transaction does not yet receive a cache sequence or occupy an
-//! ordered slot. After the complete write set is locked, a per-database native
-//! gate orders Mako timestamp assignment, final validation, and the hook. A
-//! validation loser leaves only a harmless timestamp gap. A winner receives
-//! the next dense cache sequence; native retires the ordering turn, then STO
-//! writes the checksummed record directly into that buffer while retaining its
-//! write locks and before installation. The hook-time Rust operation is
-//! allocation-free and never performs backend IO.
+//! Rust claims bounded queue capacity. An oversized record also checks out and
+//! grows recycled vector storage here; a common small record needs only its
+//! exact length because its fixed 256-byte arena block is selected by the later
+//! dense sequence. The transaction does not yet receive that cache sequence or
+//! occupy an ordered slot. After the complete write set is locked, a
+//! per-database native gate orders Mako timestamp assignment, final validation,
+//! and the hook. A validation loser leaves only a harmless timestamp gap. A
+//! winner receives the next dense cache sequence, Acquires that sequence's
+//! exact ring turn, and the queue hands native a direct pointer to stable
+//! queue-owned storage. Native retires the ordering turn,
+//! then STO serializes while retaining its write locks and before installation.
+//! Rust treats the bytes as initialized only after native returns the exact
+//! completion witness. The hook-time operation is allocation-free and never
+//! performs backend IO.
 //!
 //! A bound slot remains Prepared until native commit returns successfully and
 //! Rust attaches the completed bytes. Publishing flips the slot Ready, but a
@@ -19,21 +24,27 @@
 //! The consumer decodes records off the foreground path and replays a bounded
 //! contiguous Ready prefix in one atomic backend batch.
 
+use std::cell::UnsafeCell;
 use std::collections::VecDeque;
 use std::fmt;
-use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock};
+use std::mem::{ManuallyDrop, MaybeUninit};
+use std::num::{NonZeroU32, NonZeroU64};
+use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::ptr::NonNull;
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Condvar, Mutex, MutexGuard};
 use std::time::Duration;
 
+use mako_local::{CommitRecordTarget, MakoTimestamp, TrustedOnePutHolderPool};
+use mrx_core::{BlobError, Blobs};
 #[cfg(test)]
 use std::cell::RefCell;
 
-use mako_local::MakoTimestamp;
-use mrx_core::{BlobError, Blobs};
-
+#[cfg(test)]
+use crate::record::PreparedCommitRecord;
 use crate::record::{
-    BoundCommitRecord, CommitSeq, Mutation, NativeCommitRecord, PreparedCommitRecord,
-    QueuedCommitRecord, RecordError,
+    CommitSeq, DeferredOnePutRecord, LegacyCommitRecord, Mutation, NativeCommitRecord,
+    QueuedCommitRecord, RecordError, RecycledNativeRecord,
 };
 
 #[cfg(test)]
@@ -47,6 +58,65 @@ thread_local! {
 
 /// Default maximum encoded transaction-record size (8 MiB).
 pub const DEFAULT_MAX_RECORD_BYTES: usize = 8 * 1024 * 1024;
+
+/// Bytes reserved per bounded queue slot for the common one-mutation record.
+///
+/// The fixed arena turns the overwhelmingly common small-record path into one
+/// startup allocation and makes a producer burst allocation-free even when it
+/// outruns RocksDB all the way to the configured queue capacity. Larger records
+/// use a separately recycled growable buffer.
+const NATIVE_RECORD_ARENA_BLOCK_BYTES: usize = 256;
+const CACHE_LINE_BYTES: usize = 64;
+
+/// Issue one write-intent cache hint on processors which advertise PRFCHW.
+///
+/// # Safety
+///
+/// `address` need only be a canonical address suitable for a non-faulting
+/// prefetch hint; it is never dereferenced. The caller performs the runtime
+/// feature check before reaching this instruction.
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[inline(always)]
+unsafe fn prefetch_write_unchecked(address: *const u8) {
+    // SAFETY: required by this function's contract. PREFETCHW has no
+    // architecturally visible memory access and preserves registers/flags.
+    unsafe {
+        core::arch::asm!(
+            "prefetchw [{address}]",
+            address = in(reg) address,
+            options(nostack, preserves_flags, readonly)
+        )
+    };
+}
+
+/// Cache the architectural PRFCHW capability without putting CPUID in the
+/// transaction hot path after the first call.
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[inline]
+fn prefetch_write_supported() -> bool {
+    const UNKNOWN: u8 = 0;
+    const NO: u8 = 1;
+    const YES: u8 = 2;
+    static SUPPORT: AtomicU8 = AtomicU8::new(UNKNOWN);
+
+    match SUPPORT.load(Ordering::Relaxed) {
+        NO => false,
+        YES => true,
+        _ => {
+            #[cfg(target_arch = "x86")]
+            use core::arch::x86::__cpuid;
+            #[cfg(target_arch = "x86_64")]
+            use core::arch::x86_64::__cpuid;
+
+            // CPUID is available on Rust's supported x86 targets. The
+            // extended-leaf maximum is checked before querying PRFCHW (ECX 8).
+            let maximum = __cpuid(0x8000_0000).eax;
+            let supported = maximum >= 0x8000_0001 && (__cpuid(0x8000_0001).ecx & (1 << 8)) != 0;
+            SUPPORT.store(if supported { YES } else { NO }, Ordering::Relaxed);
+            supported
+        }
+    }
+}
 
 /// In-memory progress of the ordered RocksDB consumer.
 ///
@@ -141,6 +211,10 @@ pub enum ConfigError {
     ZeroRetryDelay,
     /// The applied seed leaves no sequence number for a future bind.
     SequenceExhausted,
+    /// Queue capacity cannot be represented by the fixed native-record arena.
+    NativeRecordArenaTooLarge,
+    /// The native queue-owned one-Put holder ring could not be created.
+    NativeHolderPool,
 }
 
 impl fmt::Display for ConfigError {
@@ -152,6 +226,10 @@ impl fmt::Display for ConfigError {
             Self::ZeroBatchBytes => write!(f, "write-back batch byte limit must be nonzero"),
             Self::ZeroRetryDelay => write!(f, "write-back retry delay must be nonzero"),
             Self::SequenceExhausted => write!(f, "commit sequence space is exhausted"),
+            Self::NativeRecordArenaTooLarge => {
+                write!(f, "native record arena size exceeds addressable memory")
+            }
+            Self::NativeHolderPool => write!(f, "could not create native one-Put holder pool"),
         }
     }
 }
@@ -370,15 +448,965 @@ impl std::error::Error for ApplyError {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SlotState {
-    Prepared { pinned: bool },
+    Prepared {
+        pinned: bool,
+    },
     Ready,
+    /// The serialized consumer temporarily owns this slot's record while the
+    /// queue lock is released for decoding and backend IO.
+    Applying,
 }
 
 #[derive(Debug)]
 struct Slot {
     sequence: CommitSeq,
-    record: Arc<OnceLock<QueuedCommitRecord>>,
+    record: Option<QueuedCommitRecord>,
     state: SlotState,
+}
+
+const TURN_PHASE_BITS: u32 = 2;
+const TURN_FREE: u64 = 0;
+const TURN_BOUND: u64 = 1;
+const TURN_WRITTEN: u64 = 2;
+const TURN_READY: u64 = 3;
+
+fn turn_token(raw_sequence: u64, ring_shift: u32, phase: u64) -> u64 {
+    debug_assert!(ring_shift >= TURN_PHASE_BITS);
+    debug_assert!(phase < (1 << TURN_PHASE_BITS));
+    (raw_sequence >> ring_shift) << TURN_PHASE_BITS | phase
+}
+
+/// Stable bind and publication storage for one sequence-indexed ring position.
+///
+/// `turn` combines the implicit ring index, sequence lap, and lifecycle phase
+/// in one exact token. Concurrent binders acquire the FREE token directly.
+/// The SPSC producer instead derives exclusive ownership from its cached
+/// applied frontier: an Acquire refresh observes the consumer's Release after
+/// its final old-generation read, so the hot path needs no per-cell load.
+/// Common arena records bypass this cell entirely, while the cold
+/// legacy/oversized path transfers owned state through `record`.
+#[repr(C, align(64))]
+struct PublicationCell {
+    turn: AtomicU64,
+    arena_mako_timestamp: UnsafeCell<u32>,
+    arena_record_bytes: UnsafeCell<usize>,
+}
+
+/// Cold ownership paired one-for-one with a [`PublicationCell`].
+///
+/// Common arena records never touch this allocation. Keeping the vector-sized
+/// record enum off the producer/consumer turn line lets each hot ring cell fit
+/// in one cache line. The paired publication turn is also this value's
+/// exclusive-access token: a producer may mutate it only while owning BOUND,
+/// and the state-locked consumer finishes its last access before publishing
+/// the next lap's FREE turn.
+struct ColdPublicationCell {
+    record: UnsafeCell<Option<QueuedCommitRecord>>,
+}
+
+/// Producer-written description of one directly published SPSC arena record.
+///
+/// This cell deliberately has no atomic lifecycle word. The exclusive
+/// producer writes all three scalars and the arena bytes before advancing the
+/// shared acknowledged/published frontier with Release. The sole consumer
+/// Acquires that frontier before reading them, and does not permit this ring
+/// position to be reused until it Release-publishes the applied frontier.
+#[repr(C, align(64))]
+struct SpscArenaPublication {
+    sequence: UnsafeCell<u64>,
+    mako_timestamp: UnsafeCell<u32>,
+    exact_record_bytes: UnsafeCell<u32>,
+}
+
+// SAFETY: concurrent binders acquire the exact FREE -> BOUND CAS. The unique
+// SPSC producer proves the previous generation retired from tail minus its
+// cached applied frontier, then exclusively retains that future sequence until
+// publication. Either protocol grants one producer exclusive access to every
+// UnsafeCell. WRITTEN/READY Release publishes initialized scalar/raw bytes or
+// cold-owned state. Only code holding `Writeback::state` may harvest cold
+// ownership, and successful replay advances applied only after the sole
+// consumer's final access.
+unsafe impl Send for PublicationCell {}
+unsafe impl Sync for PublicationCell {}
+// SAFETY: MPMC access is governed by the paired PublicationCell's exact turn;
+// SPSC access uses the unique producer and published/applied frontiers above.
+// The cold allocation is fixed for Writeback's lifetime and only the
+// state-locked consumer may take published ownership.
+unsafe impl Send for ColdPublicationCell {}
+unsafe impl Sync for ColdPublicationCell {}
+// SAFETY: the single-producer published/applied frontier protocol documented
+// on the type gives one producer exclusive write access and orders the sole
+// consumer's reads. These cells are never used by the concurrent queue mode.
+unsafe impl Send for SpscArenaPublication {}
+unsafe impl Sync for SpscArenaPublication {}
+
+const _: () = assert!(std::mem::size_of::<PublicationCell>() == 64);
+const _: () = assert!(std::mem::size_of::<SpscArenaPublication>() == 64);
+
+impl ColdPublicationCell {
+    const fn empty() -> Self {
+        Self {
+            record: UnsafeCell::new(None),
+        }
+    }
+}
+
+impl SpscArenaPublication {
+    const fn empty() -> Self {
+        Self {
+            sequence: UnsafeCell::new(0),
+            mako_timestamp: UnsafeCell::new(0),
+            exact_record_bytes: UnsafeCell::new(0),
+        }
+    }
+
+    /// Install the scalar description paired with already-initialized arena
+    /// bytes. The caller publishes the shared dense frontier afterward.
+    ///
+    /// # Safety
+    ///
+    /// `sequence` must be the unique producer's retained next sequence and its
+    /// capacity proof must establish that the prior ring generation has been
+    /// applied. `exact_record_bytes` must describe the completely initialized
+    /// native arena target for this same sequence.
+    unsafe fn install(
+        &self,
+        sequence: CommitSeq,
+        mako_timestamp: MakoTimestamp,
+        exact_record_bytes: usize,
+    ) {
+        let exact_record_bytes =
+            u32::try_from(exact_record_bytes).expect("the fixed native arena extent fits u32");
+        // SAFETY: required by this method's exclusive-generation contract.
+        unsafe {
+            self.sequence.get().write(sequence.get());
+            self.mako_timestamp.get().write(mako_timestamp.get());
+            self.exact_record_bytes.get().write(exact_record_bytes);
+        }
+    }
+
+    /// Reconstruct the published arena record after acquiring the shared
+    /// published frontier. A mismatched generation belongs to a cold/cell
+    /// publication and is left to the established fallback.
+    ///
+    /// # Safety
+    ///
+    /// The caller must have Acquired an acknowledged frontier at least as high
+    /// as `sequence` and must hold the serialized queue-state consumer lock.
+    unsafe fn harvest(
+        &self,
+        sequence: CommitSeq,
+        arena: &NativeRecordArena,
+        arena_block: usize,
+    ) -> Option<QueuedCommitRecord> {
+        // SAFETY: the caller's frontier Acquire observes the producer's scalar
+        // writes; the applied-frontier reuse rule prevents concurrent rewrite.
+        if unsafe { *self.sequence.get() } != sequence.get() {
+            return None;
+        }
+        let mako_timestamp = MakoTimestamp::new(unsafe { *self.mako_timestamp.get() })
+            .expect("a published SPSC arena record retains a Mako timestamp");
+        let exact_record_bytes = unsafe { *self.exact_record_bytes.get() } as usize;
+        // SAFETY: the same published/applied frontier proof owns this exact
+        // block through retirement, and native initialized the advertised
+        // extent before the producer's Release publication.
+        let bytes = unsafe { arena.target(arena_block, exact_record_bytes) };
+        Some(QueuedCommitRecord::Native(unsafe {
+            NativeCommitRecord::from_native_arena(
+                sequence,
+                mako_timestamp,
+                bytes,
+                exact_record_bytes,
+                arena_block,
+            )
+        }))
+    }
+
+    /// Whether this generation used direct SPSC arena publication.
+    ///
+    /// # Safety
+    ///
+    /// The caller must hold the consumer state lock and have acquired a
+    /// published frontier covering `sequence`.
+    unsafe fn contains(&self, sequence: CommitSeq) -> bool {
+        unsafe { *self.sequence.get() == sequence.get() }
+    }
+}
+
+impl PublicationCell {
+    fn free(initial_free_turn: u64) -> Self {
+        Self {
+            turn: AtomicU64::new(initial_free_turn),
+            arena_mako_timestamp: UnsafeCell::new(0),
+            arena_record_bytes: UnsafeCell::new(0),
+        }
+    }
+
+    /// Acquire the exact free turn and publish one dense bound generation.
+    fn publish_bound(&self, cold: &ColdPublicationCell, sequence: CommitSeq, ring_shift: u32) {
+        let free = turn_token(sequence.get(), ring_shift, TURN_FREE);
+        let bound = turn_token(sequence.get(), ring_shift, TURN_BOUND);
+        self.turn
+            .compare_exchange(free, bound, Ordering::AcqRel, Ordering::Acquire)
+            .expect("a bound sequence must acquire its exact free ring turn");
+        // SAFETY: the successful Acquire above observes prior retirement and
+        // grants this producer exclusive cell ownership.
+        unsafe { self.arena_record_bytes.get().write(0) };
+        debug_assert!(unsafe { (&*cold.record.get()).is_none() });
+    }
+
+    /// Bind one exact generation when a stronger external gate excludes every
+    /// other sequence allocator for this Writeback.
+    ///
+    /// # Safety
+    ///
+    /// No other concurrent binder may read or update the queue tail or claim a
+    /// publication cell. `sequence` must be the next dense sequence and the
+    /// caller must own one detached capacity claim. The ring-capacity invariant
+    /// must therefore prove this exact FREE turn belongs to the caller.
+    unsafe fn publish_bound_externally_serialized(
+        &self,
+        cold: &ColdPublicationCell,
+        sequence: CommitSeq,
+        ring_shift: u32,
+    ) {
+        let free = turn_token(sequence.get(), ring_shift, TURN_FREE);
+        let bound = turn_token(sequence.get(), ring_shift, TURN_BOUND);
+        assert_eq!(
+            self.turn.load(Ordering::Acquire),
+            free,
+            "an externally serialized bind must observe its exact free ring turn"
+        );
+        // SAFETY: the exact FREE Acquire plus the caller's external exclusion
+        // contract grants unique access to both paired cells. Initialize them
+        // before publishing BOUND so importers cannot observe stale metadata.
+        unsafe { self.arena_record_bytes.get().write(0) };
+        debug_assert!(unsafe { (&*cold.record.get()).is_none() });
+        self.turn.store(bound, Ordering::Release);
+    }
+
+    /// Publish a previously retained single-producer reservation as BOUND.
+    ///
+    /// # Safety
+    ///
+    /// The caller must retain the unique foreground lease and capacity credit,
+    /// `sequence` must still be the next dense tail, and the applied frontier
+    /// must prove the prior ring generation has completed its final read. Those
+    /// conditions grant exclusive access to the paired `UnsafeCell` metadata
+    /// without reading or compare-exchanging the old turn.
+    unsafe fn publish_bound_single_reserved(
+        &self,
+        cold: &ColdPublicationCell,
+        sequence: CommitSeq,
+        ring_shift: u32,
+    ) {
+        // SAFETY: the method contract grants this producer unique ownership of
+        // the reused generation until the following Release publication.
+        unsafe { self.arena_record_bytes.get().write(0) };
+        debug_assert!(unsafe { (&*cold.record.get()).is_none() });
+        self.turn.store(
+            turn_token(sequence.get(), ring_shift, TURN_BOUND),
+            Ordering::Release,
+        );
+    }
+
+    /// Materialize one completed SPSC arena record in the legacy READY cell.
+    ///
+    /// # Safety
+    ///
+    /// The caller must own the retained future sequence, keep the unique
+    /// producer lease live, prove through the applied frontier that the prior
+    /// ring generation completed its final read, and hold native's exact
+    /// completion witness for every arena byte. No consumer may observe this
+    /// generation until the final Release store.
+    #[inline(always)]
+    unsafe fn publish_arena_ready_single_reserved(
+        &self,
+        cold: &ColdPublicationCell,
+        sequence: CommitSeq,
+        ring_shift: u32,
+        mako_timestamp: MakoTimestamp,
+        exact_record_bytes: usize,
+    ) {
+        // SPSC retirement deliberately does not write this legacy line. It may
+        // therefore contain any phase from an already-applied prior lap. The
+        // caller's capacity/applied proof, rather than that stale word, grants
+        // exclusive ownership of the cell and cold metadata now.
+        debug_assert!(unsafe { (&*cold.record.get()).is_none() });
+        // SAFETY: the method contract grants exclusive access to this exact
+        // generation until READY is published below.
+        unsafe {
+            self.arena_mako_timestamp.get().write(mako_timestamp.get());
+            self.arena_record_bytes.get().write(exact_record_bytes);
+        }
+        self.turn.store(
+            turn_token(sequence.get(), ring_shift, TURN_READY),
+            Ordering::Release,
+        );
+    }
+
+    fn is_bound(&self, sequence: CommitSeq, ring_shift: u32) -> bool {
+        let turn = self.turn.load(Ordering::Acquire);
+        turn == turn_token(sequence.get(), ring_shift, TURN_BOUND)
+            || turn == turn_token(sequence.get(), ring_shift, TURN_WRITTEN)
+            || turn == turn_token(sequence.get(), ring_shift, TURN_READY)
+    }
+
+    /// Attach a complete cold owned record while this generation is Prepared.
+    fn attach(
+        &self,
+        cold: &ColdPublicationCell,
+        sequence: CommitSeq,
+        ring_shift: u32,
+        record: QueuedCommitRecord,
+    ) {
+        // SAFETY: the unique BoundReservation owns this unpublished cell. A
+        // consumer cannot inspect record until a later Release publication.
+        debug_assert!(
+            unsafe { (&*cold.record.get()).is_none() },
+            "a Prepared generation may receive one complete record"
+        );
+        unsafe { cold.record.get().write(Some(record)) };
+        self.publish_written(sequence, ring_shift);
+    }
+
+    /// Publish native's exact completion witness for one arena-backed record.
+    fn attach_arena(
+        &self,
+        sequence: CommitSeq,
+        ring_shift: u32,
+        mako_timestamp: MakoTimestamp,
+        exact_record_bytes: usize,
+    ) {
+        debug_assert_eq!(
+            self.turn.load(Ordering::Acquire),
+            turn_token(sequence.get(), ring_shift, TURN_BOUND)
+        );
+        // SAFETY: the unique unpublished BoundReservation owns this exact
+        // generation. The following Release store transfers these scalars and
+        // native's already-initialized arena bytes to pin/consumer paths.
+        unsafe {
+            self.arena_mako_timestamp.get().write(mako_timestamp.get());
+            self.arena_record_bytes.get().write(exact_record_bytes);
+        }
+        self.publish_written(sequence, ring_shift);
+    }
+
+    /// Attach native's completed common-arena record and publish READY in one
+    /// producer-owned transition.
+    fn attach_arena_ready(
+        &self,
+        sequence: CommitSeq,
+        ring_shift: u32,
+        mako_timestamp: MakoTimestamp,
+        exact_record_bytes: usize,
+    ) {
+        debug_assert_eq!(
+            self.turn.load(Ordering::Acquire),
+            turn_token(sequence.get(), ring_shift, TURN_BOUND)
+        );
+        // SAFETY: the unique NativeArenaBoundReservation owns this generation;
+        // native's exact completion witness covers the arena bytes. Publishing
+        // READY transfers both scalars and bytes directly to helpers/consumer.
+        unsafe {
+            self.arena_mako_timestamp.get().write(mako_timestamp.get());
+            self.arena_record_bytes.get().write(exact_record_bytes);
+        }
+        self.turn.store(
+            turn_token(sequence.get(), ring_shift, TURN_READY),
+            Ordering::Release,
+        );
+    }
+
+    fn publish_written(&self, sequence: CommitSeq, ring_shift: u32) {
+        let bound = turn_token(sequence.get(), ring_shift, TURN_BOUND);
+        let written = turn_token(sequence.get(), ring_shift, TURN_WRITTEN);
+        assert_eq!(
+            self.turn.load(Ordering::Acquire),
+            bound,
+            "a Prepared generation accepts one completion witness"
+        );
+        // The unique `&mut BoundReservation` is the only possible writer after
+        // FREE -> BOUND. A Release store publishes the completed payload
+        // without another locked RMW on this producer-owned line.
+        self.turn.store(written, Ordering::Release);
+    }
+
+    /// Make an already-attached Prepared record visible to the consumer.
+    fn publish_attached(&self, sequence: CommitSeq, ring_shift: u32) {
+        let written = turn_token(sequence.get(), ring_shift, TURN_WRITTEN);
+        let ready = turn_token(sequence.get(), ring_shift, TURN_READY);
+        assert_eq!(
+            self.turn.load(Ordering::Acquire),
+            written,
+            "publication requires one exact completion witness"
+        );
+        // The reservation remains the unique writer; the consumer only begins
+        // after this Release makes the exact Ready turn visible.
+        self.turn.store(ready, Ordering::Release);
+    }
+
+    fn is_published(&self, sequence: CommitSeq, ring_shift: u32) -> bool {
+        self.turn.load(Ordering::Acquire) == turn_token(sequence.get(), ring_shift, TURN_READY)
+    }
+
+    /// Reconstruct or move a published record under the queue-state mutex.
+    ///
+    /// # Safety
+    ///
+    /// The caller must own the one-shot Prepared -> Ready transition for this
+    /// exact sequence. A second harvest could duplicate conceptual ownership
+    /// of an arena block or inspect a cold record after it was moved out.
+    unsafe fn harvest(
+        &self,
+        cold: &ColdPublicationCell,
+        sequence: CommitSeq,
+        ring_shift: u32,
+        arena: &NativeRecordArena,
+        arena_block: usize,
+    ) -> Option<QueuedCommitRecord> {
+        if !self.is_published(sequence, ring_shift) {
+            return None;
+        }
+        let exact_record_bytes = unsafe { *self.arena_record_bytes.get() };
+        if exact_record_bytes != 0 {
+            // SAFETY: the exact published Acquire observes scalar metadata and
+            // native's completion-covered bytes. In concurrent mode aggregate
+            // occupancy prevents reuse; in single-producer mode the bounded
+            // tail/applied window and retained next sequence do. Both modes
+            // keep this block owned until the returned record is retired.
+            let mako_timestamp = MakoTimestamp::new(unsafe { *self.arena_mako_timestamp.get() })
+                .expect("a bound arena record retains a valid Mako timestamp");
+            let bytes = unsafe { arena.target(arena_block, exact_record_bytes) };
+            let record = unsafe {
+                NativeCommitRecord::from_native_arena(
+                    sequence,
+                    mako_timestamp,
+                    bytes,
+                    exact_record_bytes,
+                    arena_block,
+                )
+            };
+            return Some(QueuedCommitRecord::Native(record));
+        }
+        // SAFETY: acquiring the exact published generation observes the
+        // producer's initialized record. The caller's queue-state mutex and
+        // Prepared slot grant unique harvesting ownership.
+        Some(
+            unsafe { (&mut *cold.record.get()).take() }
+                .expect("a Ready publication cell owns one complete record"),
+        )
+    }
+
+    /// Mark a never-published generation permanently ambiguous.
+    fn pin(&self, sequence: CommitSeq, ring_shift: u32) {
+        let turn = self.turn.load(Ordering::Acquire);
+        assert!(
+            turn == turn_token(sequence.get(), ring_shift, TURN_BOUND)
+                || turn == turn_token(sequence.get(), ring_shift, TURN_WRITTEN),
+            "only an unpublished queue generation may become unknown"
+        );
+    }
+
+    /// Reconstruct or move an attached unpublished record into a pinned slot.
+    fn take_unpublished(
+        &self,
+        cold: &ColdPublicationCell,
+        sequence: CommitSeq,
+        ring_shift: u32,
+        arena: &NativeRecordArena,
+        arena_block: usize,
+    ) -> Option<QueuedCommitRecord> {
+        let turn = self.turn.load(Ordering::Acquire);
+        let bound = turn_token(sequence.get(), ring_shift, TURN_BOUND);
+        let written = turn_token(sequence.get(), ring_shift, TURN_WRITTEN);
+        assert!(turn == bound || turn == written);
+        if turn == bound {
+            return None;
+        }
+        let exact_record_bytes = unsafe { *self.arena_record_bytes.get() };
+        if exact_record_bytes != 0 {
+            let mako_timestamp = MakoTimestamp::new(unsafe { *self.arena_mako_timestamp.get() })
+                .expect("a bound arena record retains a valid Mako timestamp");
+            let bytes = unsafe { arena.target(arena_block, exact_record_bytes) };
+            // SAFETY: exact written generation is native's completion witness;
+            // pinning permanently stops the dense tail in either queue mode,
+            // so this arena block stays live.
+            return Some(QueuedCommitRecord::Native(unsafe {
+                NativeCommitRecord::from_native_arena(
+                    sequence,
+                    mako_timestamp,
+                    bytes,
+                    exact_record_bytes,
+                    arena_block,
+                )
+            }));
+        }
+        // SAFETY: the unique producer relinquished this generation to the
+        // state-locked pin transition, and a zero publication marker prevents
+        // the consumer from accessing the cell.
+        unsafe { (&mut *cold.record.get()).take() }
+    }
+
+    /// Release this exact ring turn for its next representable generation.
+    fn retire(
+        &self,
+        cold: &ColdPublicationCell,
+        sequence: CommitSeq,
+        ring_shift: u32,
+        ring_len: usize,
+    ) {
+        let ready = turn_token(sequence.get(), ring_shift, TURN_READY);
+        // The state-locked Applying slot proves cold owned state was harvested.
+        debug_assert!(unsafe { (&*cold.record.get()).is_none() });
+        let Some(next_sequence) = u64::try_from(ring_len)
+            .ok()
+            .and_then(|ring_len| sequence.get().checked_add(ring_len))
+        else {
+            assert_eq!(self.turn.load(Ordering::Acquire), ready);
+            return;
+        };
+        let next_free = turn_token(next_sequence, ring_shift, TURN_FREE);
+        assert_eq!(
+            self.turn.load(Ordering::Acquire),
+            ready,
+            "retirement must release the exact ready ring turn"
+        );
+        // `consumer` plus Applying ownership makes this the sole writer until
+        // next-lap bind Acquires the exact Free token.
+        self.turn.store(next_free, Ordering::Release);
+    }
+}
+
+/// One stable allocation split into sequence-ring small-record blocks.
+///
+/// `UnsafeCell` is required because native initializes a uniquely checked-out
+/// block through a raw pointer while producers hold only a shared `Writeback`
+/// reference. Dense sequence assignment plus the mode-specific bounded-live
+/// proof is the exclusive-access proof for each modulo-ring block.
+#[repr(C, align(64))]
+struct NativeRecordArenaBlock {
+    bytes: UnsafeCell<[MaybeUninit<u8>; NATIVE_RECORD_ARENA_BLOCK_BYTES]>,
+}
+
+struct NativeRecordArena {
+    blocks: Box<[NativeRecordArenaBlock]>,
+    block_bytes: usize,
+}
+
+// SAFETY: a bound sequence owns its same-index ring block until backend
+// retirement. Concurrent mode bounds live generations with aggregate
+// Occupancy. Single-producer mode bounds `tail - applied` and permits only its
+// unique lease to retain the exact next turn before bind. Thus, with logical
+// capacity C and ring length R >= C, neither mode can reach a generation's Rth
+// successor while the old generation remains live. Concurrent mode completes
+// the byte handoff through the exact turn Acquire. SPSC refreshes applied under
+// the retirement state mutex; retaining a sequence whose prior lap is at or
+// below that frontier supplies the equivalent happens-before edge without a
+// per-cell read. Blocks never overlap, the boxed allocation never moves, and
+// Writeback drops State and publication cells before this arena field.
+unsafe impl Send for NativeRecordArena {}
+unsafe impl Sync for NativeRecordArena {}
+
+impl NativeRecordArena {
+    fn new(capacity: usize, max_record_bytes: usize) -> Result<Self, ConfigError> {
+        let block_bytes = NATIVE_RECORD_ARENA_BLOCK_BYTES.min(max_record_bytes);
+        capacity
+            .checked_mul(std::mem::size_of::<NativeRecordArenaBlock>())
+            .ok_or(ConfigError::NativeRecordArenaTooLarge)?;
+        let blocks = Box::<[NativeRecordArenaBlock]>::new_uninit_slice(capacity);
+        // SAFETY: the only data bytes are MaybeUninit<u8>; an uninitialized
+        // payload and alignment padding are both valid. UnsafeCell adds no
+        // initialization invariant. Native initializes an exact extent only
+        // after the sequence-indexed block is exclusively retained.
+        let blocks = unsafe { blocks.assume_init() };
+        Ok(Self {
+            blocks,
+            block_bytes,
+        })
+    }
+
+    const fn block_bytes(&self) -> usize {
+        self.block_bytes
+    }
+
+    /// Return a stable block address solely for a non-dereferencing prefetch.
+    fn prefetch_target(&self, block: usize) -> NonNull<u8> {
+        debug_assert!(block < self.blocks.len());
+        // SAFETY: the boxed array is stable and every aligned block contains a
+        // 256-byte MaybeUninit payload at offset zero.
+        unsafe {
+            let cell = std::ptr::addr_of!((*self.blocks.as_ptr().add(block)).bytes);
+            NonNull::new_unchecked(UnsafeCell::raw_get(cell).cast::<u8>())
+        }
+    }
+
+    /// Return the start of one exclusively checked-out block.
+    ///
+    /// # Safety
+    ///
+    /// `block` must belong to the caller's live bound sequence and be unique,
+    /// and `len` must not exceed the configured block extent.
+    unsafe fn target(&self, block: usize, len: usize) -> NonNull<u8> {
+        debug_assert!(len <= self.block_bytes);
+        debug_assert!(block < self.blocks.len());
+        // SAFETY: construction created one stable, cache-line-aligned block per
+        // ring index. The caller's frontier/turn proof makes it unique.
+        unsafe {
+            let cell = std::ptr::addr_of!((*self.blocks.as_ptr().add(block)).bytes);
+            NonNull::new_unchecked(UnsafeCell::raw_get(cell).cast::<u8>())
+        }
+    }
+}
+
+#[derive(Debug)]
+enum NativeRecordBuffer {
+    /// Small-record capacity claimed before validation but not yet assigned a
+    /// dense sequence/ring block.
+    UnboundArena {
+        exact_record_bytes: usize,
+    },
+    Arena {
+        block: usize,
+        exact_record_bytes: usize,
+    },
+    Owned(Vec<MaybeUninit<u8>>),
+}
+
+impl NativeRecordBuffer {
+    fn prepare_owned(
+        mut bytes: Vec<MaybeUninit<u8>>,
+        exact_record_bytes: usize,
+    ) -> Result<Self, RecordError> {
+        bytes.clear();
+        if bytes.capacity() < exact_record_bytes {
+            bytes
+                .try_reserve_exact(exact_record_bytes)
+                .map_err(|_| RecordError::AllocationFailed)?;
+        }
+        // SAFETY: MaybeUninit elements need not be initialized. Native receives
+        // this exact extent only through the synchronous target terminal.
+        unsafe { bytes.set_len(exact_record_bytes) };
+        Ok(Self::Owned(bytes))
+    }
+
+    const fn exact_record_bytes(&self) -> usize {
+        match self {
+            Self::UnboundArena { exact_record_bytes } => *exact_record_bytes,
+            Self::Arena {
+                exact_record_bytes, ..
+            } => *exact_record_bytes,
+            Self::Owned(bytes) => bytes.len(),
+        }
+    }
+
+    fn bind_arena(self, block: usize) -> Self {
+        match self {
+            Self::UnboundArena { exact_record_bytes } => Self::Arena {
+                block,
+                exact_record_bytes,
+            },
+            owned @ Self::Owned(_) => owned,
+            Self::Arena { .. } => panic!("an arena buffer may be bound only once"),
+        }
+    }
+
+    fn target(&mut self, arena: &NativeRecordArena) -> NonNull<u8> {
+        match self {
+            Self::UnboundArena { .. } => {
+                panic!("a native target is requested only after sequence bind")
+            }
+            Self::Arena {
+                block,
+                exact_record_bytes,
+            } => {
+                // SAFETY: ownership of this buffer proves its block token is
+                // checked out and unique until the buffer is consumed.
+                unsafe { arena.target(*block, *exact_record_bytes) }
+            }
+            Self::Owned(bytes) => NonNull::new(bytes.as_mut_ptr().cast::<u8>())
+                .expect("a nonempty prepared record buffer has storage"),
+        }
+    }
+
+    /// Convert storage covered by native's exact completion witness into an
+    /// immutable queued record without copying.
+    ///
+    /// # Safety
+    ///
+    /// Native must have initialized every byte in `exact_record_bytes`,
+    /// returned its validated 0/1 completion witness, and encoded the canonical
+    /// record for exactly `sequence`, `mako_timestamp`, and the integrity mode
+    /// sealed by preflight. Background materialization verifies that contract
+    /// before backend replay.
+    unsafe fn into_record(
+        self,
+        arena: &NativeRecordArena,
+        sequence: CommitSeq,
+        mako_timestamp: MakoTimestamp,
+    ) -> NativeCommitRecord {
+        match self {
+            Self::UnboundArena { .. } => {
+                panic!("an unbound arena buffer cannot have a completion witness")
+            }
+            Self::Arena {
+                block,
+                exact_record_bytes,
+            } => {
+                // SAFETY: this buffer uniquely owns the block and the caller's
+                // witness proves its exact extent initialized.
+                let bytes = unsafe { arena.target(block, exact_record_bytes) };
+                // SAFETY: the same witness and arena lifetime establish the
+                // NativeCommitRecord arena-storage contract.
+                unsafe {
+                    NativeCommitRecord::from_native_arena(
+                        sequence,
+                        mako_timestamp,
+                        bytes,
+                        exact_record_bytes,
+                        block,
+                    )
+                }
+            }
+            Self::Owned(bytes) => {
+                let mut bytes = ManuallyDrop::new(bytes);
+                let pointer = bytes.as_mut_ptr().cast::<u8>();
+                let len = bytes.len();
+                let capacity = bytes.capacity();
+                // SAFETY: MaybeUninit<u8> and u8 have identical allocation
+                // layouts, and the completion witness covers all `len` bytes.
+                let initialized = unsafe { Vec::from_raw_parts(pointer, len, capacity) };
+                NativeCommitRecord::from_native(sequence, mako_timestamp, initialized)
+            }
+        }
+    }
+}
+
+/// One bounded occupancy word isolated from unrelated queue metadata.
+///
+/// Every update is an RMW and the value enforces detached + bound <= capacity.
+/// The exact per-cell turn, rather than this aggregate count, supplies the
+/// `UnsafeCell`/arena reuse handoff.
+#[repr(align(64))]
+struct Occupancy {
+    value: AtomicUsize,
+}
+
+impl Occupancy {
+    const fn empty() -> Self {
+        Self {
+            value: AtomicUsize::new(0),
+        }
+    }
+
+    fn try_claim(&self, capacity: usize) -> bool {
+        let mut occupied = self.value.load(Ordering::Acquire);
+        loop {
+            if occupied >= capacity {
+                return false;
+            }
+            match self.value.compare_exchange_weak(
+                occupied,
+                occupied + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return true,
+                Err(observed) => occupied = observed,
+            }
+        }
+    }
+
+    fn release(&self) {
+        self.release_many(1);
+    }
+
+    fn release_many(&self, count: usize) {
+        debug_assert_ne!(count, 0);
+        let prior = self.value.fetch_sub(count, Ordering::Release);
+        assert!(prior >= count, "bounded occupancy underflow");
+    }
+
+    fn load(&self) -> usize {
+        self.value.load(Ordering::Acquire)
+    }
+}
+
+const _: () = assert!(std::mem::size_of::<Occupancy>() == 64);
+
+/// One independently owned, cache-line-isolated dense frontier.
+///
+/// The SPSC producer writes the published frontier while the consumer writes
+/// the applied frontier. Giving each word its own line avoids making those two
+/// cores exchange ownership merely because the allocator placed adjacent
+/// atomics in one line. The address returned by [`Self::as_ptr`] is stable for
+/// the lifetime of the enclosing [`Writeback`].
+#[repr(C, align(64))]
+struct CacheLineAtomicU64 {
+    value: AtomicU64,
+}
+
+impl CacheLineAtomicU64 {
+    const fn new(value: u64) -> Self {
+        Self {
+            value: AtomicU64::new(value),
+        }
+    }
+
+    #[inline(always)]
+    fn load(&self, ordering: Ordering) -> u64 {
+        self.value.load(ordering)
+    }
+
+    #[inline(always)]
+    fn store(&self, value: u64, ordering: Ordering) {
+        self.value.store(value, ordering);
+    }
+
+    #[inline(always)]
+    fn compare_exchange_weak(
+        &self,
+        current: u64,
+        new: u64,
+        success: Ordering,
+        failure: Ordering,
+    ) -> Result<u64, u64> {
+        self.value
+            .compare_exchange_weak(current, new, success, failure)
+    }
+
+    #[inline(always)]
+    fn as_ptr(&self) -> *mut u64 {
+        self.value.as_ptr()
+    }
+}
+
+const _: () = assert!(std::mem::size_of::<CacheLineAtomicU64>() == 64);
+
+/// Producer-local capacity cursor owned by one thread-affine cache lease.
+///
+/// The exclusive capacity limit is `applied.saturating_add(capacity)`. A stale
+/// limit only makes the queue appear conservatively fuller. The producer
+/// refreshes it after consuming its local window, so no consumer writes the
+/// producer's hot cache line.
+pub(crate) struct SingleProducerState {
+    // These are producer-local despite their atomic representation. Relaxed
+    // words keep internal permit types structurally Send for concurrent-path
+    // tests; the public SingleProducer capability remains !Send/!Sync and is
+    // the sole accessor in production.
+    capacity_limit: AtomicU64,
+    next_sequence: AtomicU64,
+    fused_holder_control: mako_local::TrustedSpscOnePutHolderControl,
+}
+
+impl SingleProducerState {
+    fn new(
+        applied: u64,
+        next_sequence: u64,
+        capacity: u64,
+        fused_holder_control: mako_local::TrustedSpscOnePutHolderControl,
+    ) -> Self {
+        Self {
+            capacity_limit: AtomicU64::new(applied.saturating_add(capacity)),
+            next_sequence: AtomicU64::new(next_sequence),
+            fused_holder_control,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn fused_holder_control(&self) -> &mako_local::TrustedSpscOnePutHolderControl {
+        &self.fused_holder_control
+    }
+
+    #[inline(always)]
+    pub(crate) fn next_sequence_ptr(&self) -> *mut u64 {
+        self.next_sequence.as_ptr()
+    }
+
+    #[inline(always)]
+    pub(crate) fn capacity_limit_ptr(&self) -> *const u64 {
+        self.capacity_limit.as_ptr().cast_const()
+    }
+
+    /// Return the future sequence retained after an untouched fused attempt.
+    #[inline(always)]
+    pub(crate) fn retained_sequence(&self) -> NonZeroU64 {
+        let next = self.next_sequence.load(Ordering::Relaxed);
+        let Some(retained) = next.checked_add(1).and_then(NonZeroU64::new) else {
+            // A consumed outcome after native observed a saturated cursor is a
+            // same-build lifecycle contradiction. Fail-stop without creating
+            // an invalid NonZeroU64 from foreign-controlled state.
+            std::process::abort();
+        };
+        retained
+    }
+
+    /// Return the sequence already accepted by the fused native terminal.
+    #[inline(always)]
+    pub(crate) fn accepted_sequence(&self) -> NonZeroU64 {
+        let accepted = self.next_sequence.load(Ordering::Relaxed);
+        let Some(accepted) = NonZeroU64::new(accepted) else {
+            // A committed-unpublished result promises cursor advancement.
+            // Treat a missing generation as protocol corruption, not an
+            // unchecked niche construction.
+            std::process::abort();
+        };
+        accepted
+    }
+
+    #[inline(always)]
+    fn accept(&self, sequence: CommitSeq) {
+        // SAFETY: CommitSeq is nonzero by construction.
+        self.accept_raw(unsafe { NonZeroU64::new_unchecked(sequence.get()) });
+    }
+
+    #[inline(always)]
+    fn accept_raw(&self, sequence: NonZeroU64) {
+        debug_assert_eq!(
+            self.next_sequence.load(Ordering::Relaxed).checked_add(1),
+            Some(sequence.get()),
+            "the exclusive producer accepts its retained next sequence"
+        );
+        self.next_sequence.store(sequence.get(), Ordering::Relaxed);
+    }
+}
+
+/// Cold recycled storage for records larger than the fixed arena block.
+struct OversizedPool {
+    buffers: Mutex<Vec<Vec<MaybeUninit<u8>>>>,
+}
+
+impl OversizedPool {
+    fn new(maximum: usize) -> Result<Self, ConfigError> {
+        let mut buffers = Vec::new();
+        buffers
+            .try_reserve_exact(maximum)
+            .map_err(|_| ConfigError::NativeRecordArenaTooLarge)?;
+        Ok(Self {
+            buffers: Mutex::new(buffers),
+        })
+    }
+
+    fn take(&self) -> Vec<MaybeUninit<u8>> {
+        lock_recover(&self.buffers).pop().unwrap_or_default()
+    }
+
+    fn recycle(&self, mut bytes: Vec<MaybeUninit<u8>>, maximum: usize) {
+        bytes.clear();
+        let mut buffers = lock_recover(&self.buffers);
+        if buffers.len() < maximum {
+            buffers.push(bytes);
+            return;
+        }
+        if let Some((smallest, _)) = buffers
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, current)| current.capacity())
+            .filter(|(_, current)| current.capacity() < bytes.capacity())
+        {
+            buffers[smallest] = bytes;
+        }
+    }
 }
 
 /// Stable identity for one slot in the dense ordered queue.
@@ -437,11 +1465,9 @@ impl PermanentRecordFailure {
 #[derive(Debug)]
 struct State {
     queue: VecDeque<Slot>,
-    /// Capacity claimed before native commit but not yet attached to `queue`.
-    detached: usize,
+    /// Highest dense lock-free bind descriptor imported into `queue`.
     last_bound: u64,
     applied: AppliedWatermark,
-    highest_acknowledged: u64,
     first_unknown: Option<CommitSeq>,
     permanent_record_failure: Option<PermanentRecordFailure>,
 }
@@ -464,29 +1490,6 @@ impl State {
             .get(offset)
             .is_some_and(|slot| slot.sequence == token.sequence())
             .then_some(offset)
-    }
-
-    /// Extend the caller-visible acknowledgement frontier across the maximal
-    /// contiguous Ready prefix after the current frontier.
-    ///
-    /// Ready publication itself may happen out of order. Keeping this frontier
-    /// dense ensures that returning success for sequence N also proves every
-    /// lower bound native commit has a known-successful outcome. Already
-    /// applied slots need no special case: the consumer only removes records
-    /// after they have crossed this acknowledgement frontier.
-    fn advance_acknowledged_prefix(&mut self) {
-        while let Some(raw_next) = self.highest_acknowledged.checked_add(1) {
-            let Some(next) = CommitSeq::new(raw_next) else {
-                break;
-            };
-            let Some(offset) = self.queue_offset(QueueToken::new(next)) else {
-                break;
-            };
-            if self.queue[offset].state != SlotState::Ready {
-                break;
-            }
-            self.highest_acknowledged = raw_next;
-        }
     }
 
     /// Return the earliest fail-stop condition that rejects new work.
@@ -535,11 +1538,64 @@ impl State {
 pub struct Writeback<B: Blobs> {
     backend: B,
     config: WritebackConfig,
+    /// Fixed at construction. A single-producer queue never mixes aggregate
+    /// Occupancy accounting with its lease-owned logical capacity credits.
+    single_producer: bool,
     state: Mutex<State>,
     changed: Condvar,
     acknowledgement_changed: Condvar,
+    descriptor_available: Condvar,
     capacity_available: Condvar,
+    /// Number of producers in the locked capacity-wait protocol. A release
+    /// locks `state` only when this is nonzero, closing the predicate/wait
+    /// notification window while leaving the ordinary non-full path lock-free.
+    capacity_waiters: AtomicUsize,
+    /// Slow-path resolvers waiting for an earlier producer to publish the
+    /// descriptor behind an already allocated dense sequence.
+    descriptor_waiters: AtomicUsize,
+    /// Synchronous apply barriers currently enrolled in the `changed`
+    /// condition-variable handoff. The dedicated runtime polls independently;
+    /// the ordinary publisher reads this first and avoids `notify_one`
+    /// entirely when no explicit barrier can be asleep.
+    activity_waiters: AtomicUsize,
     consumer: Mutex<()>,
+    /// Monotonic fast-path health summary. The detailed error remains under
+    /// `state`; a healthy commit avoids taking the queue mutex merely to prove
+    /// that no fail-stop condition has ever been latched.
+    unhealthy: AtomicBool,
+    /// Dense prefix of records whose producers have published a known-success
+    /// native outcome. Healthy in-order publication advances this without the
+    /// queue-state mutex.
+    acknowledged: CacheLineAtomicU64,
+    /// Dense prefix whose arena/cold storage is no longer read by the sole
+    /// consumer. SPSC producers Acquire this only when refreshing their local
+    /// capacity cursor; it is the cross-generation storage-reuse handoff.
+    applied_frontier: CacheLineAtomicU64,
+    /// Highest sequence assigned after post-validation. Descriptor
+    /// publication may briefly lag this scalar when producers overlap.
+    next_bound: AtomicU64,
+    /// Detached plus bound transactions. Successful backend retirement and
+    /// pre-bind cancellation are the only releases.
+    occupied: Occupancy,
+    /// Recycled allocations used only by records larger than the fixed arena.
+    oversized_pool: OversizedPool,
+    publication_shift: u32,
+    /// Fixed-address cells indexed by commit sequence modulo the power-of-two
+    /// ring length. The fixed allocation makes raw cell access stable across
+    /// every `VecDeque` front retirement and reuse.
+    publication_cells: Box<[PublicationCell]>,
+    /// Cold ownership paired one-for-one with the hot publication ring.
+    cold_publication_cells: Box<[ColdPublicationCell]>,
+    /// Scalar descriptions for common records published through the direct
+    /// SPSC frontier. The consumer never writes these cells.
+    spsc_arena_publications: Box<[SpscArenaPublication]>,
+    /// Declared after `state`, occupancy metadata, and both publication arrays
+    /// so every queued or attached arena-backed record drops before its bytes.
+    native_arena: NativeRecordArena,
+    /// Declared last so every queued holder descriptor and consumer borrow is
+    /// gone before pool destruction. A fail-stopped sealed generation makes
+    /// the native RAII wrapper intentionally leak rather than free live spans.
+    native_holder_pool: Option<TrustedOnePutHolderPool>,
 }
 
 impl<B: Blobs> Writeback<B> {
@@ -561,11 +1617,36 @@ impl<B: Blobs> Writeback<B> {
         )
     }
 
+    #[cfg(test)]
+    fn new_single(
+        backend: B,
+        applied_seed: u64,
+        config: WritebackConfig,
+    ) -> Result<Self, ConfigError> {
+        Self::new_with_watermark_mode(
+            backend,
+            AppliedWatermark::recovered(applied_seed, None),
+            config,
+            true,
+        )
+    }
+
     /// Create a queue from progress reconstructed while opening the backend.
     pub(crate) fn new_with_watermark(
         backend: B,
         applied_seed: AppliedWatermark,
         config: WritebackConfig,
+    ) -> Result<Self, ConfigError> {
+        Self::new_with_watermark_mode(backend, applied_seed, config, false)
+    }
+
+    /// Construct either the ordinary MPMC queue or the permanently selected
+    /// single-producer accounting profile used by [`crate::SingleProducer`].
+    pub(crate) fn new_with_watermark_mode(
+        backend: B,
+        applied_seed: AppliedWatermark,
+        config: WritebackConfig,
+        single_producer: bool,
     ) -> Result<Self, ConfigError> {
         if config.capacity == 0 {
             return Err(ConfigError::ZeroCapacity);
@@ -586,22 +1667,85 @@ impl<B: Blobs> Writeback<B> {
             return Err(ConfigError::SequenceExhausted);
         }
 
+        // A power-of-two ring lets the publication hot path map a sequence to
+        // its stable cell with one mask instead of a hardware integer divide.
+        // Extra cells never grant queue capacity and therefore do not change
+        // boundedness or reuse safety.
+        let publication_capacity = config
+            .capacity
+            .max(1 << TURN_PHASE_BITS)
+            .checked_next_power_of_two()
+            .ok_or(ConfigError::NativeRecordArenaTooLarge)?;
+        let publication_shift = publication_capacity.trailing_zeros();
+        let publication_mask = publication_capacity - 1;
+        let first_sequence = applied_seed
+            .sequence
+            .checked_add(1)
+            .expect("the maximum applied seed was rejected above");
+        let first_index = (first_sequence as usize) & publication_mask;
+        let publication_cells = (0..publication_capacity)
+            .map(|index| {
+                let delta = index.wrapping_sub(first_index) & publication_mask;
+                let initial_free_turn = u64::try_from(delta)
+                    .ok()
+                    .and_then(|delta| first_sequence.checked_add(delta))
+                    .map(|sequence| turn_token(sequence, publication_shift, TURN_FREE))
+                    // A near-u64::MAX ring position with no future generation
+                    // is unreachable and may retain any terminal token.
+                    .unwrap_or(u64::MAX);
+                PublicationCell::free(initial_free_turn)
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+        let cold_publication_cells = (0..publication_capacity)
+            .map(|_| ColdPublicationCell::empty())
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+        let spsc_arena_publications = (0..publication_capacity)
+            .map(|_| SpscArenaPublication::empty())
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+        let native_arena = NativeRecordArena::new(publication_capacity, config.max_record_bytes)?;
+        let native_holder_pool = if single_producer {
+            Some(
+                TrustedOnePutHolderPool::new(publication_capacity, 0, 0)
+                    .map_err(|_| ConfigError::NativeHolderPool)?,
+            )
+        } else {
+            None
+        };
+
         Ok(Self {
             backend,
             config,
+            single_producer,
             state: Mutex::new(State {
                 queue: VecDeque::with_capacity(config.capacity),
-                detached: 0,
                 last_bound: applied_seed.sequence,
                 applied: applied_seed,
-                highest_acknowledged: applied_seed.sequence,
                 first_unknown: None,
                 permanent_record_failure: None,
             }),
             changed: Condvar::new(),
             acknowledgement_changed: Condvar::new(),
+            descriptor_available: Condvar::new(),
             capacity_available: Condvar::new(),
+            capacity_waiters: AtomicUsize::new(0),
+            descriptor_waiters: AtomicUsize::new(0),
+            activity_waiters: AtomicUsize::new(0),
             consumer: Mutex::new(()),
+            unhealthy: AtomicBool::new(false),
+            acknowledged: CacheLineAtomicU64::new(applied_seed.sequence),
+            applied_frontier: CacheLineAtomicU64::new(applied_seed.sequence),
+            next_bound: AtomicU64::new(applied_seed.sequence),
+            occupied: Occupancy::empty(),
+            oversized_pool: OversizedPool::new(config.capacity)?,
+            publication_shift,
+            publication_cells,
+            cold_publication_cells,
+            spsc_arena_publications,
+            native_arena,
+            native_holder_pool,
         })
     }
 
@@ -615,16 +1759,379 @@ impl<B: Blobs> Writeback<B> {
         self.config.max_record_bytes
     }
 
+    pub(crate) fn native_holder_pool(&self) -> Option<&TrustedOnePutHolderPool> {
+        self.native_holder_pool.as_ref()
+    }
+
+    /// Return the holder pool whose presence is guaranteed by SPSC creation.
+    ///
+    /// # Safety
+    ///
+    /// This write-back queue must have been constructed in single-producer
+    /// mode and must remain live through every native use of the returned pool.
+    #[inline(always)]
+    pub(crate) unsafe fn native_holder_pool_single_unchecked(&self) -> &TrustedOnePutHolderPool {
+        debug_assert!(self.single_producer);
+        debug_assert!(self.native_holder_pool.is_some());
+        // SAFETY: required by this method's construction-mode contract.
+        unsafe { self.native_holder_pool.as_ref().unwrap_unchecked() }
+    }
+
+    /// Stable address of the SPSC published tail for a future trusted native
+    /// publication terminal.
+    ///
+    /// Merely obtaining the pointer is safe. Any foreign write through it is
+    /// unsafe and must be one naturally aligned atomic Release store by the
+    /// unique foreground producer, after the exact arena bytes and scalar
+    /// publication descriptor have been sealed. The enclosing `Writeback`
+    /// allocation must remain alive until foreign code has returned.
+    #[allow(dead_code)]
+    pub(crate) fn spsc_published_tail_ptr(&self) -> *mut u64 {
+        assert!(
+            self.single_producer,
+            "the direct published-tail address is SPSC-only"
+        );
+        self.acknowledged.as_ptr()
+    }
+
+    /// Initialize one producer-local capacity cursor for an exclusive cache
+    /// lease. Lease acquisition is cold, so reading the state-locked applied
+    /// frontier here does not burden ordinary commits.
+    pub(crate) fn single_producer_state(&self) -> SingleProducerState {
+        assert!(
+            self.single_producer,
+            "single-producer state requires a single-producer queue"
+        );
+        let mut state = lock_recover(&self.state);
+        self.import_bound_locked(&mut state);
+        let acknowledged = self.acknowledged.load(Ordering::Acquire);
+        debug_assert!(state.last_bound >= acknowledged);
+        let capacity = NonZeroU64::new(
+            u64::try_from(self.config.capacity).expect("queue capacity fits the native u64 ABI"),
+        )
+        .expect("validated queue capacity is nonzero");
+        // The native candidate itself is a u32. A larger configured cap should
+        // admit every representable fused candidate rather than truncate or
+        // reject queue construction.
+        let max_record_bytes =
+            NonZeroU32::new(u32::try_from(self.config.max_record_bytes).unwrap_or(u32::MAX))
+                .expect("validated record cap is nonzero");
+        // SAFETY: a claimed SingleProducer holds `self` immovably borrowed for
+        // the state's lifetime. These atomic fields and the SPSC holder pool
+        // therefore remain stable, and that capability is the sole foreground
+        // terminal. The physical power-of-two holder ring covers at least the
+        // logical configured capacity used by native's fullness predicate.
+        let fused_holder_control = unsafe {
+            mako_local::TrustedSpscOnePutHolderControl::new(
+                self.native_holder_pool
+                    .as_ref()
+                    .expect("single-producer queue owns a native holder pool"),
+                self.acknowledged.as_ptr(),
+                self.unhealthy.as_ptr().cast::<u8>(),
+                capacity,
+                max_record_bytes,
+            )
+        };
+        SingleProducerState::new(
+            state.applied.sequence,
+            state.last_bound,
+            capacity.get(),
+            fused_holder_control,
+        )
+    }
+
+    fn publication_cell(&self, sequence: CommitSeq) -> &PublicationCell {
+        debug_assert!(self.publication_cells.len().is_power_of_two());
+        // Truncating on a 32-bit target retains exactly the low bits selected
+        // by this representable power-of-two ring.
+        let index = (sequence.get() as usize) & (self.publication_cells.len() - 1);
+        &self.publication_cells[index]
+    }
+
+    fn publication_index(&self, sequence: CommitSeq) -> usize {
+        (sequence.get() as usize) & (self.publication_cells.len() - 1)
+    }
+
+    fn cold_publication_cell(&self, sequence: CommitSeq) -> &ColdPublicationCell {
+        &self.cold_publication_cells[self.publication_index(sequence)]
+    }
+
+    fn spsc_arena_publication(&self, sequence: CommitSeq) -> &SpscArenaPublication {
+        &self.spsc_arena_publications[self.publication_index(sequence)]
+    }
+
+    /// Whether the acquired dense published frontier exposes this exact SPSC
+    /// arena generation. A false result selects the cold publication cell.
+    fn has_spsc_arena_publication(&self, sequence: CommitSeq, published: u64) -> bool {
+        if !self.single_producer || sequence.get() > published {
+            return false;
+        }
+        // SAFETY: `published` came from an Acquire load of `acknowledged` and
+        // covers this sequence. Applied-frontier reuse prevents a concurrent
+        // rewrite while the state-locked consumer retains the generation.
+        unsafe { self.spsc_arena_publication(sequence).contains(sequence) }
+    }
+
+    /// Reconstruct a directly published holder from its exact native
+    /// generation. The holder itself is the descriptor: native sealed its
+    /// sequence, timestamp, and lengths before the producer's ACK Release, so
+    /// the foreground need not stream a second Rust descriptor cache line.
+    fn harvest_spsc_holder(
+        &self,
+        sequence: CommitSeq,
+        published: u64,
+    ) -> Option<QueuedCommitRecord> {
+        if !self.single_producer || sequence.get() > published {
+            return None;
+        }
+        let pool = self.native_holder_pool.as_ref()?;
+        let raw = NonZeroU64::new(sequence.get()).expect("cache commit sequences are nonzero");
+        // SAFETY: the caller Acquired `published`, the sole consumer invokes
+        // this helper under `state`, and applied has not advanced across this
+        // exact generation. The view is dropped after copying scalars; holder
+        // bytes remain sealed for later materialization.
+        let view = unsafe { pool.view(raw) }.ok()?;
+        let exact_record_bytes =
+            DeferredOnePutRecord::encoded_len_for(view.key().len(), view.value().len()).ok()?;
+        Some(QueuedCommitRecord::Holder(DeferredOnePutRecord::new(
+            sequence,
+            view.mako_timestamp(),
+            exact_record_bytes,
+        )))
+    }
+
+    fn is_record_published(&self, sequence: CommitSeq, ordering: Ordering) -> bool {
+        let published = self.acknowledged.load(ordering);
+        self.has_spsc_arena_publication(sequence, published)
+            || self.harvest_spsc_holder(sequence, published).is_some()
+            || self
+                .publication_cell(sequence)
+                .is_published(sequence, self.publication_shift)
+    }
+
+    /// Import every completely published dense bind descriptor into the
+    /// existing state-locked queue. A producer that has allocated the next
+    /// sequence but not yet Release-published its descriptor is a temporary
+    /// ordering hole; the importer simply stops and a later state entrant
+    /// resumes at the same sequence.
+    fn import_bound_locked(&self, state: &mut State) {
+        loop {
+            let Some(raw_sequence) = state.last_bound.checked_add(1) else {
+                return;
+            };
+            let sequence = CommitSeq::new(raw_sequence)
+                .expect("the sequence after a valid applied seed is nonzero");
+            // In SPSC mode a known-success direct arena record has no per-cell
+            // lifecycle traffic. Its one Release-published dense frontier is
+            // simultaneously the bind, Ready, and caller-ACK witness. Cold
+            // general/oversized and unknown paths retain the old cell state.
+            let direct_spsc =
+                self.single_producer && raw_sequence <= self.acknowledged.load(Ordering::Acquire);
+            if !direct_spsc
+                && !self
+                    .publication_cell(sequence)
+                    .is_bound(sequence, self.publication_shift)
+            {
+                return;
+            }
+            assert!(
+                state.queue.len() < self.config.capacity,
+                "bounded permits prevent bind-descriptor queue overflow"
+            );
+            assert!(
+                state.queue.len() < state.queue.capacity(),
+                "the ordered queue was preallocated to bounded capacity"
+            );
+            state.queue.push_back(Slot {
+                sequence,
+                record: None,
+                state: SlotState::Prepared { pinned: false },
+            });
+            state.last_bound = raw_sequence;
+        }
+    }
+
+    /// Resolve a token after importing any dense descriptors available now.
+    ///
+    /// Concurrent producers can allocate adjacent sequences and briefly
+    /// publish their descriptors out of order. A resolver for the suffix must
+    /// not misclassify that temporary hole as a missing slot. Registration and
+    /// the predicate recheck happen under `state`; a producer only takes that
+    /// mutex when a waiter exists, closing the ordinary notification gap
+    /// without adding a mutex operation to the ordinary bind path. A short
+    /// timeout is the fail-safe against a stale advisory waiter-count load on
+    /// weak memory: descriptor readiness itself remains the sole predicate.
+    fn wait_for_bound_token_locked<'a>(
+        &'a self,
+        mut state: MutexGuard<'a, State>,
+        token: QueueToken,
+    ) -> (MutexGuard<'a, State>, Option<usize>) {
+        loop {
+            self.import_bound_locked(&mut state);
+            if let Some(offset) = state.queue_offset(token) {
+                return (state, Some(offset));
+            }
+            if state.applied.sequence >= token.sequence().get() {
+                return (state, None);
+            }
+
+            self.descriptor_waiters.fetch_add(1, Ordering::AcqRel);
+            self.import_bound_locked(&mut state);
+            if let Some(offset) = state.queue_offset(token) {
+                self.descriptor_waiters.fetch_sub(1, Ordering::AcqRel);
+                return (state, Some(offset));
+            }
+            state =
+                wait_timeout_recover(&self.descriptor_available, state, Duration::from_millis(1));
+            let prior = self.descriptor_waiters.fetch_sub(1, Ordering::AcqRel);
+            debug_assert_ne!(prior, 0, "descriptor waiter registration underflow");
+        }
+    }
+
+    fn notify_descriptor_waiters(&self) {
+        if self.descriptor_waiters.load(Ordering::Acquire) != 0 {
+            let state = lock_recover(&self.state);
+            self.descriptor_available.notify_all();
+            drop(state);
+        }
+    }
+
+    /// Advance the dense acknowledgement prefix across every atomically
+    /// published successor. Multiple out-of-order publishers may help one
+    /// another; the CAS makes advancement linearizable without queue locking.
+    fn advance_atomic_acknowledgement(&self, mut acknowledged: u64, maximum: u64) -> u64 {
+        loop {
+            if acknowledged >= maximum {
+                return acknowledged;
+            }
+            let Some(raw_next) = acknowledged.checked_add(1) else {
+                return acknowledged;
+            };
+            let Some(next) = CommitSeq::new(raw_next) else {
+                return acknowledged;
+            };
+            if !self
+                .publication_cell(next)
+                .is_published(next, self.publication_shift)
+            {
+                return acknowledged;
+            }
+            match self.acknowledged.compare_exchange_weak(
+                acknowledged,
+                raw_next,
+                // This frontier also participates in the activity-waiter
+                // Dekker handshake. SeqCst keeps either the waiter's
+                // post-registration predicate read or the publisher's waiter
+                // count read from missing the other side.
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => acknowledged = raw_next,
+                Err(observed) => acknowledged = observed,
+            }
+        }
+    }
+
+    /// Move one atomically published record into its ordinary queue slot.
+    /// The caller holds `state`, so this is the unique harvester and the record
+    /// can subsequently follow the existing retry/recycle state machine.
+    fn harvest_published_slot_locked(&self, state: &mut State, offset: usize) -> bool {
+        let slot = &mut state.queue[offset];
+        if slot.state != (SlotState::Prepared { pinned: false }) {
+            return false;
+        }
+        let acknowledged = self.acknowledged.load(Ordering::Acquire);
+        // SAFETY: `state` serializes the sole Prepared -> Ready transition.
+        // In SPSC mode the Acquire above covers the direct publication's
+        // scalar metadata and arena bytes; a generation mismatch selects the
+        // established publication-cell fallback.
+        let direct_arena = if self.has_spsc_arena_publication(slot.sequence, acknowledged) {
+            unsafe {
+                self.spsc_arena_publication(slot.sequence).harvest(
+                    slot.sequence,
+                    &self.native_arena,
+                    self.publication_index(slot.sequence),
+                )
+            }
+        } else {
+            None
+        };
+        let direct = direct_arena.or_else(|| self.harvest_spsc_holder(slot.sequence, acknowledged));
+        let record = direct.or_else(|| unsafe {
+            self.publication_cell(slot.sequence).harvest(
+                self.cold_publication_cell(slot.sequence),
+                slot.sequence,
+                self.publication_shift,
+                &self.native_arena,
+                self.publication_index(slot.sequence),
+            )
+        });
+        let Some(record) = record else {
+            return false;
+        };
+        assert!(slot.record.replace(record).is_none());
+        slot.state = SlotState::Ready;
+        true
+    }
+
+    /// Materialize atomic publication metadata for the acknowledged queue
+    /// prefix before the state-locked consumer inspects it.
+    fn harvest_acknowledged_locked(&self, state: &mut State) {
+        self.import_bound_locked(state);
+        let acknowledged = self.acknowledged.load(Ordering::Acquire);
+        let harvest_limit = state.queue.len().min(self.config.max_batch_records);
+        for offset in 0..harvest_limit {
+            let sequence = state.queue[offset].sequence;
+            if sequence.get() > acknowledged {
+                break;
+            }
+            if state.queue[offset].state == (SlotState::Prepared { pinned: false }) {
+                assert!(
+                    self.harvest_published_slot_locked(state, offset),
+                    "an acknowledged slot must expose its complete publication"
+                );
+            }
+            if state.queue[offset].state != SlotState::Ready {
+                break;
+            }
+        }
+    }
+
     /// Prepare a complete transaction record and claim capacity before native
     /// commit, without assigning a sequence or inserting an ordered log slot.
     ///
-    /// Capacity counts both detached permits and queued slots. Record encoding,
-    /// key construction, and the reference-counted record cell are allocated
-    /// after capacity is claimed but before this method returns. Consequently
+    /// Capacity counts both detached permits and queued slots. Record encoding
+    /// and key construction finish after capacity is claimed but before this
+    /// method returns. Consequently
     /// [`DetachedPermit::bind`] can run inside Silo's post-validation hook
     /// without allocation, waiting for capacity, or touching the backend.
     pub fn reserve(&self, mutations: Vec<Mutation>) -> Result<DetachedPermit<'_, B>, ReserveError> {
-        self.claim_detached_capacity()?;
+        assert!(
+            !self.single_producer,
+            "a single-producer queue requires its lease-owned reserve path"
+        );
+        self.reserve_inner(mutations, None, None)
+    }
+
+    #[cfg(test)]
+    fn reserve_single<'a>(
+        &'a self,
+        producer: &'a SingleProducerState,
+        mutations: Vec<Mutation>,
+    ) -> Result<DetachedPermit<'a, B>, ReserveError> {
+        let sequence = self.claim_detached_capacity_single(producer)?;
+        self.reserve_inner(mutations, Some(sequence), Some(producer))
+    }
+
+    fn reserve_inner<'a>(
+        &'a self,
+        mutations: Vec<Mutation>,
+        single_sequence: Option<CommitSeq>,
+        single_producer: Option<&'a SingleProducerState>,
+    ) -> Result<DetachedPermit<'a, B>, ReserveError> {
+        if single_sequence.is_none() {
+            self.claim_detached_capacity_concurrent()?;
+        }
 
         // Build the returned value first so unwinding or a preparation error
         // releases the detached claim through Drop.
@@ -632,19 +2139,20 @@ impl<B: Blobs> Writeback<B> {
             owner: self,
             prepared: None,
             native_record: false,
-            record: None,
-            owns_capacity: true,
+            native_buffer: None,
+            single_sequence,
+            single_producer,
+            owns_claim: true,
         };
-        permit.prepared = Some(PreparedCommitRecord::prepare(
+        permit.prepared = Some(Box::new(LegacyCommitRecord::prepare(
             mutations,
             self.config.max_record_bytes,
-        )?);
-        permit.record = Some(Arc::new(OnceLock::new()));
+        )?));
         Ok(permit)
     }
 
-    /// Claim queue capacity and preallocate a publication cell for a record
-    /// that the trusted native transaction adapter will serialize directly.
+    /// Claim queue capacity for a record that the trusted native transaction
+    /// adapter will serialize directly.
     ///
     /// The exact byte buffer is owned by `mako-local` across the synchronous
     /// native commit call. This permit owns only the bounded queue slot and
@@ -653,6 +2161,26 @@ impl<B: Blobs> Writeback<B> {
         &self,
         record_bytes: usize,
     ) -> Result<DetachedPermit<'_, B>, ReserveError> {
+        assert!(
+            !self.single_producer,
+            "a single-producer queue requires its lease-owned native reserve"
+        );
+        self.reserve_native_inner(record_bytes, None)
+    }
+
+    pub(crate) fn reserve_native_single<'a>(
+        &'a self,
+        producer: &'a SingleProducerState,
+        record_bytes: usize,
+    ) -> Result<DetachedPermit<'a, B>, ReserveError> {
+        self.reserve_native_inner(record_bytes, Some(producer))
+    }
+
+    fn reserve_native_inner<'a>(
+        &'a self,
+        record_bytes: usize,
+        producer: Option<&'a SingleProducerState>,
+    ) -> Result<DetachedPermit<'a, B>, ReserveError> {
         if record_bytes == 0 {
             return Err(ReserveError::Record(RecordError::Truncated));
         }
@@ -662,59 +2190,670 @@ impl<B: Blobs> Writeback<B> {
                 max: self.config.max_record_bytes,
             }));
         }
-        self.claim_detached_capacity()?;
-        Ok(DetachedPermit {
+        let (single_sequence, buffer) =
+            self.claim_detached_native_buffer(record_bytes, producer)?;
+        let mut permit = DetachedPermit {
             owner: self,
             prepared: None,
             native_record: true,
-            record: Some(Arc::new(OnceLock::new())),
-            owns_capacity: true,
-        })
+            native_buffer: None,
+            single_sequence,
+            single_producer: producer,
+            owns_claim: true,
+        };
+        // Arena buffers are already exact. Oversized recycled buffers may need
+        // to grow, but this happens before native takes validation/write locks.
+        permit.native_buffer = Some(match buffer {
+            NativeRecordBuffer::UnboundArena { .. } => buffer,
+            NativeRecordBuffer::Arena { .. } => buffer,
+            NativeRecordBuffer::Owned(bytes) => {
+                NativeRecordBuffer::prepare_owned(bytes, record_bytes)?
+            }
+        });
+        Ok(permit)
     }
 
-    fn claim_detached_capacity(&self) -> Result<(), ReserveError> {
+    /// Claim the allocation-free common arena representation used by the
+    /// trusted one-Put terminal.
+    ///
+    /// `Ok(None)` means the exact record needs the generic oversized-buffer
+    /// path. No capacity is claimed in that case.
+    pub(crate) fn reserve_native_arena_fast(
+        &self,
+        record_bytes: usize,
+    ) -> Result<Option<NativeArenaPermit<'_, B>>, ReserveError> {
+        assert!(
+            !self.single_producer,
+            "a single-producer queue requires its lease-owned arena reserve"
+        );
+        self.reserve_native_arena_fast_inner(record_bytes, None)
+    }
+
+    pub(crate) fn reserve_native_arena_fast_single<'a>(
+        &'a self,
+        producer: &'a SingleProducerState,
+        record_bytes: usize,
+    ) -> Result<Option<NativeArenaPermit<'a, B>>, ReserveError> {
+        self.reserve_native_arena_fast_inner(record_bytes, Some(producer))
+    }
+
+    /// Try to retain one exact SPSC sequence using only producer-local words.
+    ///
+    /// The returned nonzero scalar is the complete reservation: unlike the
+    /// concurrent queue, an SPSC reservation mutates no shared state until
+    /// native accepts the transaction. Consequently an OCC loser needs no
+    /// permit Drop or cancellation write. `None` selects the cold health,
+    /// capacity-refresh, or sequence-exhaustion path.
+    ///
+    /// # Safety
+    ///
+    /// `producer` must be the live unique lease for this single-producer
+    /// queue, and `record_bytes` must already have been checked against this
+    /// queue's record limit. The caller must perform no other foreground
+    /// terminal until it publishes, pins, or abandons the returned generation
+    /// after a definite pre-acceptance abort.
+    #[inline(always)]
+    pub(crate) unsafe fn try_reserve_native_holder_single(
+        &self,
+        producer: &SingleProducerState,
+        record_bytes: NonZeroU32,
+    ) -> Option<NonZeroU64> {
+        debug_assert!(self.single_producer);
+        debug_assert!((record_bytes.get() as usize) <= self.config.max_record_bytes);
+
+        if self.unhealthy.load(Ordering::Acquire) {
+            return None;
+        }
+        let tail = producer.next_sequence.load(Ordering::Relaxed);
+        let capacity_limit = producer.capacity_limit.load(Ordering::Relaxed);
+        if tail >= capacity_limit {
+            return None;
+        }
+
+        // SAFETY: `tail != u64::MAX` proves the addition cannot wrap, and its
+        // successor is nonzero. The unique producer retains this generation
+        // without modifying either cursor until native acceptance.
+        Some(unsafe { NonZeroU64::new_unchecked(tail + 1) })
+    }
+
+    /// Resolve a holder reservation which missed the producer-local fast path.
+    ///
+    /// This intentionally returns the rich queue error only out of line. The
+    /// ordinary ACK path uses [`Self::try_reserve_native_holder_single`] and
+    /// never constructs or moves a `Result<_, ReserveError>`.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn reserve_native_holder_single_slow(
+        &self,
+        producer: &SingleProducerState,
+        record_bytes: NonZeroU32,
+    ) -> Result<NonZeroU64, ReserveError> {
+        let record_bytes = record_bytes.get() as usize;
+        if record_bytes > self.config.max_record_bytes {
+            return Err(ReserveError::Record(RecordError::RecordTooLarge {
+                size: record_bytes,
+                max: self.config.max_record_bytes,
+            }));
+        }
+        let capacity = u64::try_from(self.config.capacity).unwrap_or(u64::MAX);
+        let sequence = self.claim_detached_capacity_single_slow(producer, capacity)?;
+        // SAFETY: CommitSeq is nonzero by construction.
+        Ok(unsafe { NonZeroU64::new_unchecked(sequence.get()) })
+    }
+
+    /// Checked convenience reserve used by protocol tests and cold callers.
+    #[cfg(test)]
+    pub(crate) fn reserve_native_holder_single(
+        &self,
+        producer: &SingleProducerState,
+        record_bytes: NonZeroU32,
+    ) -> Result<NonZeroU64, ReserveError> {
+        // SAFETY: this checked wrapper is used with the unique producer state
+        // owned by its test queue and validates the record bound below.
+        if (record_bytes.get() as usize) <= self.config.max_record_bytes {
+            if let Some(sequence) =
+                unsafe { self.try_reserve_native_holder_single(producer, record_bytes) }
+            {
+                return Ok(sequence);
+            }
+        }
+        self.reserve_native_holder_single_slow(producer, record_bytes)
+    }
+
+    fn reserve_native_arena_fast_inner<'a>(
+        &'a self,
+        record_bytes: usize,
+        producer: Option<&'a SingleProducerState>,
+    ) -> Result<Option<NativeArenaPermit<'a, B>>, ReserveError> {
+        if record_bytes == 0 {
+            return Err(ReserveError::Record(RecordError::Truncated));
+        }
+        if record_bytes > self.config.max_record_bytes {
+            return Err(ReserveError::Record(RecordError::RecordTooLarge {
+                size: record_bytes,
+                max: self.config.max_record_bytes,
+            }));
+        }
+        if record_bytes > self.native_arena.block_bytes() {
+            return Ok(None);
+        }
+        let single_sequence = match producer {
+            Some(producer) => Some(self.claim_detached_capacity_single(producer)?),
+            None => {
+                self.claim_detached_capacity_concurrent()?;
+                None
+            }
+        };
+        match single_sequence {
+            None => {
+                self.prefetch_predicted_native_arena(record_bytes);
+            }
+            Some(sequence) => {
+                self.prefetch_native_arena(sequence, record_bytes, false);
+            }
+        }
+        Ok(Some(NativeArenaPermit {
+            owner: self,
+            exact_record_bytes: record_bytes,
+            single_sequence,
+            single_producer: producer,
+            owns_claim: true,
+        }))
+    }
+
+    /// Hint the next likely hot cell and common arena extent before native
+    /// starts lock acquisition. One worker predicts exactly; concurrent
+    /// binders may advance the tail, in which case a hint to another valid ring
+    /// cell is semantically harmless.
+    #[inline]
+    fn prefetch_predicted_native_arena(&self, record_bytes: usize) {
+        let Some(raw_sequence) = self.next_bound.load(Ordering::Relaxed).checked_add(1) else {
+            return;
+        };
+        let Some(sequence) = CommitSeq::new(raw_sequence) else {
+            return;
+        };
+        self.prefetch_native_arena(sequence, record_bytes, true);
+    }
+
+    /// Hint one already-selected direct arena target and its mode-specific
+    /// producer metadata. SPSC hints the scalar descriptor rather than the
+    /// legacy lifecycle cell it deliberately never touches.
+    #[inline]
+    fn prefetch_native_arena(
+        &self,
+        sequence: CommitSeq,
+        record_bytes: usize,
+        include_publication_cell: bool,
+    ) {
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        {
+            if !prefetch_write_supported() {
+                return;
+            }
+            let target = self
+                .native_arena
+                .prefetch_target(self.publication_index(sequence))
+                .as_ptr();
+            // SAFETY: both addresses point into stable queue-owned allocations,
+            // and the feature check above authorizes PREFETCHW. Wrong
+            // predictions never grant access and are only cache hints.
+            unsafe {
+                if include_publication_cell {
+                    let cell = std::ptr::from_ref(self.publication_cell(sequence)).cast::<u8>();
+                    prefetch_write_unchecked(cell);
+                } else {
+                    let descriptor =
+                        std::ptr::from_ref(self.spsc_arena_publication(sequence)).cast::<u8>();
+                    prefetch_write_unchecked(descriptor);
+                }
+                let mut offset = 0usize;
+                while offset < record_bytes {
+                    prefetch_write_unchecked(target.add(offset));
+                    offset += CACHE_LINE_BYTES;
+                }
+            }
+        }
+        #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+        let _ = (sequence, record_bytes, include_publication_cell);
+    }
+
+    fn claim_detached_native_buffer(
+        &self,
+        record_bytes: usize,
+        producer: Option<&SingleProducerState>,
+    ) -> Result<(Option<CommitSeq>, NativeRecordBuffer), ReserveError> {
+        let single_sequence = match producer {
+            Some(producer) => Some(self.claim_detached_capacity_single(producer)?),
+            None => {
+                self.claim_detached_capacity_concurrent()?;
+                None
+            }
+        };
+        let buffer = if record_bytes <= self.native_arena.block_bytes() {
+            NativeRecordBuffer::UnboundArena {
+                exact_record_bytes: record_bytes,
+            }
+        } else {
+            NativeRecordBuffer::Owned(self.oversized_pool.take())
+        };
+        Ok((single_sequence, buffer))
+    }
+
+    fn claim_detached_capacity_concurrent(&self) -> Result<(), ReserveError> {
+        debug_assert!(!self.single_producer);
+        if !self.unhealthy.load(Ordering::Acquire) {
+            if self.occupied.try_claim(self.config.capacity) {
+                let last_bound = self.next_bound.load(Ordering::Acquire);
+                let fast_headroom = u64::try_from(self.config.capacity)
+                    .ok()
+                    .and_then(|capacity| u64::MAX.checked_sub(capacity))
+                    .is_some_and(|safe_tail| last_bound <= safe_tail);
+                if fast_headroom {
+                    return Ok(());
+                }
+                // The final `capacity` sequence values are a cold path. Put
+                // claims and binds under `state` there so the exact number of
+                // still-detached permits cannot over-reserve sequence space.
+                let mut state = lock_recover(&self.state);
+                self.import_bound_locked(&mut state);
+                if let Some(error) = state.reserve_health_error() {
+                    self.occupied.release();
+                    return Err(error);
+                }
+                if self.claimed_sequence_available_locked(&state) {
+                    return Ok(());
+                }
+                self.occupied.release();
+                if self.next_bound.load(Ordering::Acquire) == u64::MAX {
+                    return Err(ReserveError::SequenceExhausted);
+                }
+                // Fall through to the ordinary locked wait protocol. This can
+                // become admissible only when an earlier detached permit is
+                // cancelled, whose release notifies this condition.
+            }
+        }
+
+        self.claim_detached_capacity_concurrent_slow()
+    }
+
+    fn claim_detached_capacity_concurrent_slow(&self) -> Result<(), ReserveError> {
         let mut state = lock_recover(&self.state);
+        self.capacity_waiters.fetch_add(1, Ordering::AcqRel);
+        let _waiter = CapacityWaiter(&self.capacity_waiters);
         loop {
+            self.import_bound_locked(&mut state);
             if let Some(error) = state.reserve_health_error() {
                 return Err(error);
             }
-            if state.last_bound == u64::MAX {
+            if self.occupied.try_claim(self.config.capacity) {
+                if self.claimed_sequence_available_locked(&state) {
+                    return Ok(());
+                }
+                self.occupied.release();
+            }
+            if self.next_bound.load(Ordering::Acquire) == u64::MAX {
                 return Err(ReserveError::SequenceExhausted);
             }
-
-            let occupied = state
-                .queue
-                .len()
-                .checked_add(state.detached)
-                .expect("write-back occupancy cannot overflow");
-            let detached =
-                u64::try_from(state.detached).map_err(|_| ReserveError::SequenceExhausted)?;
-            let sequence_available = state
-                .last_bound
-                .checked_add(detached)
-                .and_then(|tail| tail.checked_add(1))
-                .is_some();
-
-            if occupied < self.config.capacity && sequence_available {
-                state.detached += 1;
-                return Ok(());
-            }
-
-            state = wait_recover(&self.capacity_available, state);
+            // `capacity_waiters` is an advisory fast-path notification hint.
+            // Periodic predicate rechecks guarantee progress even on a weak
+            // memory machine where a releaser transiently observes stale zero.
+            state =
+                wait_timeout_recover(&self.capacity_available, state, Duration::from_millis(100));
         }
     }
 
-    fn release_detached_capacity(&self) {
+    /// Reserve the next logical capacity credit without publishing a sequence.
+    ///
+    /// Only the unique [`crate::SingleProducer`] lease can reach this method.
+    /// Therefore one future sequence may be retained in the returned permit
+    /// without modifying either `occupied` or the cell: a validation abort
+    /// leaves no cancellation marker, and no second producer can steal the
+    /// promise. The cached exclusive capacity limit may lag but never lead the
+    /// consumer-derived limit, so its fast capacity check is conservative.
+    #[inline(always)]
+    fn claim_detached_capacity_single(
+        &self,
+        producer: &SingleProducerState,
+    ) -> Result<CommitSeq, ReserveError> {
+        debug_assert!(
+            self.single_producer,
+            "single-producer claims require a single-producer queue"
+        );
+        let capacity = u64::try_from(self.config.capacity).unwrap_or(u64::MAX);
+        if !self.unhealthy.load(Ordering::Acquire) {
+            let tail = producer.next_sequence.load(Ordering::Relaxed);
+            let capacity_limit = producer.capacity_limit.load(Ordering::Relaxed);
+            if tail < capacity_limit {
+                return self.acquire_single_detached_turn(tail);
+            }
+        }
+
+        self.claim_detached_capacity_single_slow(producer, capacity)
+    }
+
+    /// Refresh or wait after the producer-local capacity window is exhausted.
+    /// Keeping this state/condvar machinery out of the always-inlined common
+    /// claim avoids a call, stack frame, and large Result return on every ACK.
+    #[cold]
+    #[inline(never)]
+    fn claim_detached_capacity_single_slow(
+        &self,
+        producer: &SingleProducerState,
+        capacity: u64,
+    ) -> Result<CommitSeq, ReserveError> {
+        if !self.unhealthy.load(Ordering::Acquire) {
+            let tail = producer.next_sequence.load(Ordering::Relaxed);
+            // Refresh the cross-generation handoff without taking the queue
+            // mutex. Acquire observes the consumer's final arena/cold reads
+            // before admitting reuse of that applied generation.
+            let applied = self.applied_frontier.load(Ordering::Acquire);
+            let capacity_limit = applied.saturating_add(capacity);
+            producer
+                .capacity_limit
+                .store(capacity_limit, Ordering::Relaxed);
+            if tail < capacity_limit {
+                return self.acquire_single_detached_turn(tail);
+            }
+        }
+
         let mut state = lock_recover(&self.state);
-        state.detached = state
-            .detached
-            .checked_sub(1)
-            .expect("detached permit capacity underflow");
-        drop(state);
-        // Exactly one bounded-capacity claim became available. A detached
-        // cancellation neither creates consumer work nor changes an applied
-        // target, so the consumer/activity condition needs no notification.
-        self.capacity_available.notify_one();
+        self.capacity_waiters.fetch_add(1, Ordering::AcqRel);
+        let _waiter = CapacityWaiter(&self.capacity_waiters);
+        loop {
+            self.import_bound_locked(&mut state);
+            if let Some(error) = state.reserve_health_error() {
+                return Err(error);
+            }
+            let tail = producer.next_sequence.load(Ordering::Relaxed);
+            producer.capacity_limit.store(
+                state.applied.sequence.saturating_add(capacity),
+                Ordering::Relaxed,
+            );
+            if tail == u64::MAX {
+                return Err(ReserveError::SequenceExhausted);
+            }
+            let live = tail
+                .checked_sub(state.applied.sequence)
+                .expect("the applied frontier cannot exceed the bound tail");
+            if live < capacity {
+                return self.acquire_single_detached_turn(tail);
+            }
+            state =
+                wait_timeout_recover(&self.capacity_available, state, Duration::from_millis(100));
+        }
+    }
+
+    #[inline(always)]
+    fn acquire_single_detached_turn(&self, tail: u64) -> Result<CommitSeq, ReserveError> {
+        let raw_sequence = tail.checked_add(1).ok_or(ReserveError::SequenceExhausted)?;
+        let sequence = CommitSeq::new(raw_sequence)
+            .expect("the sequence after a valid applied seed is nonzero");
+
+        // For configured capacity C and power-of-two ring length R >= C,
+        // tail-applied < C implies sequence-R <= applied. The applied-frontier
+        // Acquire in the refresh path observes the consumer's final access to
+        // that generation. The unique producer lease then retains this future
+        // generation without any per-cell load or mutation.
+        Ok(sequence)
+    }
+
+    /// Check the rare end-of-sequence claim while `state` serializes every
+    /// other near-exhaustion claim/bind. Detached tokens consume future dense
+    /// sequence capacity; Bound tokens have already consumed their sequence.
+    fn claimed_sequence_available_locked(&self, state: &State) -> bool {
+        let occupied = match u64::try_from(self.occupied.load()) {
+            Ok(occupied) => occupied,
+            Err(_) => return false,
+        };
+        // Dense live bound sequences equal next_bound - applied; every other
+        // occupied claim is detached. Therefore the highest sequence needed
+        // after every detached claim binds is exactly applied + occupied.
+        state.applied.sequence.checked_add(occupied).is_some()
+    }
+
+    /// Assign and publish the next dense bound descriptor.
+    ///
+    /// `ExternallySerialized` is selected only by the unsafe native-arena
+    /// binder. Its caller proves the LocalDb validation ticket excludes every
+    /// concurrent sequence allocator for this Writeback. Mixing that mode
+    /// concurrently with the ordinary binder would lose a tail update and
+    /// assign one sequence twice.
+    fn bind_sequence(&self, mode: BindSequenceMode) -> Result<CommitSeq, ReserveError> {
+        debug_assert!(!self.single_producer);
+        if self.unhealthy.load(Ordering::Acquire) {
+            let mut state = lock_recover(&self.state);
+            self.import_bound_locked(&mut state);
+            if let Some(error) = state.reserve_health_error() {
+                return Err(error);
+            }
+        }
+
+        let observed = self.next_bound.load(Ordering::Acquire);
+        let fast_headroom = u64::try_from(self.config.capacity)
+            .ok()
+            .and_then(|capacity| u64::MAX.checked_sub(capacity))
+            .is_some_and(|safe_tail| observed <= safe_tail);
+        // Only the final `capacity` values need the state mutex. The native
+        // specialization deliberately retains this cold checked-RMW path.
+        let sequence_guard = if fast_headroom {
+            None
+        } else {
+            let mut state = lock_recover(&self.state);
+            self.import_bound_locked(&mut state);
+            if let Some(error) = state.reserve_health_error() {
+                return Err(error);
+            }
+            Some(state)
+        };
+        let previous_sequence = if fast_headroom {
+            match mode {
+                BindSequenceMode::Concurrent => {
+                    // Bounded permits prove that at most `capacity` concurrent
+                    // binds can advance from this safe value.
+                    self.next_bound.fetch_add(1, Ordering::AcqRel)
+                }
+                BindSequenceMode::ExternallySerialized => {
+                    // SAFETY CONTRACT: the native validation ticket supplies
+                    // the missing single-writer exclusion. Its preceding
+                    // Release / this turn's Acquire also prevents a new binder
+                    // from observing an older externally serialized tail.
+                    self.next_bound.store(observed + 1, Ordering::Release);
+                    observed
+                }
+            }
+        } else {
+            self.next_bound
+                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                    current.checked_add(1)
+                })
+                .map_err(|_| ReserveError::SequenceExhausted)?
+        };
+        let raw_sequence = previous_sequence
+            .checked_add(1)
+            .expect("bounded fast sequence allocation cannot overflow");
+        let sequence = CommitSeq::new(raw_sequence)
+            .expect("the sequence after a valid applied seed is nonzero");
+
+        let publication = self.publication_cell(sequence);
+        let cold = self.cold_publication_cell(sequence);
+        match mode {
+            BindSequenceMode::Concurrent => {
+                publication.publish_bound(cold, sequence, self.publication_shift);
+            }
+            BindSequenceMode::ExternallySerialized => {
+                // SAFETY: constructing this mode is confined to the unsafe
+                // native binder whose contract proves single-writer exclusion.
+                unsafe {
+                    publication.publish_bound_externally_serialized(
+                        cold,
+                        sequence,
+                        self.publication_shift,
+                    )
+                };
+            }
+        }
+        drop(sequence_guard);
+        self.notify_descriptor_waiters();
+        if raw_sequence == u64::MAX {
+            self.capacity_available.notify_all();
+        }
+        Ok(sequence)
+    }
+
+    /// Consume the exact future generation retained by one foreground lease.
+    ///
+    /// No sequence is allocated until this post-validation call. The permit's
+    /// retained capacity credit and the still-live mutable producer borrow
+    /// exclude every other tail/cell writer, so ordinary Release stores replace
+    /// the MPMC tail RMW and turn compare-exchange.
+    fn bind_single_reserved_sequence(
+        &self,
+        producer: &SingleProducerState,
+        sequence: CommitSeq,
+    ) -> Result<CommitSeq, ReserveError> {
+        assert!(
+            self.single_producer,
+            "single-producer bind requires a single-producer queue"
+        );
+        if self.unhealthy.load(Ordering::Acquire) {
+            let mut state = lock_recover(&self.state);
+            self.import_bound_locked(&mut state);
+            if let Some(error) = state.reserve_health_error() {
+                return Err(error);
+            }
+        }
+
+        producer.accept(sequence);
+        // SAFETY: the unique lease and capacity credit were retained
+        // continuously from `claim_detached_capacity_single`, so no other
+        // binder could consume or replace that generation.
+        unsafe {
+            self.publication_cell(sequence)
+                .publish_bound_single_reserved(
+                    self.cold_publication_cell(sequence),
+                    sequence,
+                    self.publication_shift,
+                )
+        };
+        // There is no suffix producer which can be waiting for this descriptor
+        // in SPSC mode. Unknown/failure resolution imports its own BOUND turn
+        // synchronously, while the background consumer independently polls.
+        if sequence.get() == u64::MAX {
+            self.capacity_available.notify_all();
+        }
+        Ok(sequence)
+    }
+
+    /// Publish an exact SPSC sequence after native has already accepted it into
+    /// the serialization order and initialized its record bytes.
+    ///
+    /// Unlike [`Self::bind_single_reserved_sequence`], this cannot reject on a
+    /// newly latched write-back failure: native has crossed its commit point,
+    /// so leaving the preselected turn invisible would lose a visible write.
+    /// The caller must bind first and let the ordinary publication/pinning
+    /// protocol retain the record behind any earlier failure.
+    ///
+    /// # Safety
+    ///
+    /// The caller must retain the unique single-producer lease and capacity
+    /// credit for `sequence`. Native must already have returned a nonzero
+    /// accepted timestamp for the matching preselected record target.
+    #[inline(always)]
+    unsafe fn bind_single_reserved_sequence_after_acceptance(
+        &self,
+        producer: &SingleProducerState,
+        sequence: CommitSeq,
+    ) {
+        debug_assert!(self.single_producer);
+        producer.accept(sequence);
+        // SAFETY: required by this method's retained-sequence and unique-lease
+        // contract. The following BOUND Release makes the already accepted
+        // dense descriptor discoverable before it can be published or pinned.
+        unsafe {
+            self.publication_cell(sequence)
+                .publish_bound_single_reserved(
+                    self.cold_publication_cell(sequence),
+                    sequence,
+                    self.publication_shift,
+                )
+        };
+    }
+
+    fn release_detached_claim(&self, native_buffer: Option<NativeRecordBuffer>) {
+        if let Some(buffer) = native_buffer {
+            self.recycle_native_buffer(buffer);
+        }
+        if self.single_producer {
+            // The logical credit never changed tail or aggregate occupancy.
+            // Dropping before bind therefore needs no shared metadata write
+            // and the same future turn remains available.
+        } else {
+            self.occupied.release();
+            self.notify_capacity_release();
+        }
+    }
+
+    fn notify_capacity_release(&self) {
+        if self.capacity_waiters.load(Ordering::Acquire) != 0 {
+            // The waiter registers and rechecks while holding `state`. Taking
+            // the same mutex before notification closes the only lost-wakeup
+            // window without burdening the ordinary non-full fast path.
+            let state = lock_recover(&self.state);
+            self.capacity_available.notify_one();
+            drop(state);
+        }
+    }
+
+    /// Wake one explicit apply waiter only when somebody may be asleep.
+    ///
+    /// Concurrent mode retains the SeqCst acknowledgement/count handshake, so
+    /// it cannot lose a wake. Single-producer mode uses this as an advisory
+    /// latency hint and bounds the wait independently.
+    fn notify_activity_waiter(&self) {
+        if self.activity_waiters.load(Ordering::SeqCst) != 0 {
+            let state = lock_recover(&self.state);
+            self.changed.notify_one();
+            drop(state);
+        }
+    }
+
+    fn recycle_native_buffer(&self, buffer: NativeRecordBuffer) {
+        if let NativeRecordBuffer::Owned(bytes) = buffer {
+            self.oversized_pool.recycle(bytes, self.config.capacity);
+        }
+    }
+
+    fn recycle_native_record(&self, record: RecycledNativeRecord) {
+        match record {
+            RecycledNativeRecord::Arena(block) => {
+                debug_assert!(block < self.publication_cells.len());
+            }
+            RecycledNativeRecord::Owned(bytes) => {
+                self.oversized_pool.recycle(bytes, self.config.capacity);
+            }
+            RecycledNativeRecord::Holder(sequence) => {
+                let Some(pool) = self.native_holder_pool.as_ref() else {
+                    std::process::abort();
+                };
+                let raw =
+                    NonZeroU64::new(sequence.get()).expect("cache commit sequences are nonzero");
+                // SAFETY: successful backend retirement is the consumer's
+                // final use of this exact generation. `state` remains locked;
+                // the applied frontier is Release-published only after every
+                // holder in the batch has synchronously released.
+                let view = match unsafe { pool.view(raw) } {
+                    Ok(view) => view,
+                    Err(_) => std::process::abort(),
+                };
+                if unsafe { pool.release(view) }.is_err() {
+                    // Same-build protocol corruption after a successful
+                    // backend write cannot be recovered by restoring a batch
+                    // whose earlier holders may already have been released.
+                    std::process::abort();
+                }
+            }
+        }
     }
 
     /// Current in-memory applied watermark.
@@ -731,17 +2870,31 @@ impl<B: Blobs> Writeback<B> {
     /// native commits. This is deliberately distinct from both the queue tail
     /// and out-of-order Ready publication.
     pub fn highest_acknowledged(&self) -> u64 {
-        lock_recover(&self.state).highest_acknowledged
+        self.acknowledged.load(Ordering::Acquire)
     }
 
     /// Number of bound queue slots. Detached permits are deliberately omitted.
     pub fn queue_len(&self) -> usize {
-        lock_recover(&self.state).queue.len()
+        let mut state = lock_recover(&self.state);
+        self.import_bound_locked(&mut state);
+        state.queue.len()
     }
 
     #[cfg(test)]
     fn detached_len(&self) -> usize {
-        lock_recover(&self.state).detached
+        let state = lock_recover(&self.state);
+        let bound = self
+            .next_bound
+            .load(Ordering::Acquire)
+            .saturating_sub(state.applied.sequence);
+        self.occupied
+            .load()
+            .saturating_sub(usize::try_from(bound).unwrap_or(usize::MAX))
+    }
+
+    #[cfg(test)]
+    fn free_len(&self) -> usize {
+        self.config.capacity.saturating_sub(self.occupied.load())
     }
 
     /// Snapshot the highest acknowledged sequence and apply that snapshot to
@@ -754,10 +2907,7 @@ impl<B: Blobs> Writeback<B> {
     /// submitted in bounded atomic `write_batch` calls. A failed prefix remains
     /// unchanged at the front for the next retry.
     pub fn wait_applied(&self) -> Result<u64, ApplyError> {
-        let target = {
-            let state = lock_recover(&self.state);
-            state.highest_acknowledged
-        };
+        let target = { self.acknowledged.load(Ordering::Acquire) };
         self.wait_applied_through(target)
     }
 
@@ -842,15 +2992,219 @@ impl<B: Blobs> Writeback<B> {
     }
 
     fn resolve(&self, token: QueueToken, resolution: Resolution) -> Result<(), ResolveError> {
-        let mut state = lock_recover(&self.state);
+        match resolution {
+            Resolution::Publish => self.publish_record(token),
+            Resolution::PinUnknown => self.pin_unknown_record(token),
+        }
+    }
+
+    /// Attach a complete record to its stable Prepared publication cell.
+    fn attach_record(&self, token: QueueToken, record: QueuedCommitRecord) {
+        self.publication_cell(token.sequence()).attach(
+            self.cold_publication_cell(token.sequence()),
+            token.sequence(),
+            self.publication_shift,
+            record,
+        );
+    }
+
+    fn attach_arena_record(
+        &self,
+        token: QueueToken,
+        mako_timestamp: MakoTimestamp,
+        exact_record_bytes: usize,
+    ) {
+        self.publication_cell(token.sequence()).attach_arena(
+            token.sequence(),
+            self.publication_shift,
+            mako_timestamp,
+            exact_record_bytes,
+        );
+    }
+
+    /// Publish the common known-success outcome without taking `state`.
+    ///
+    /// The fixed ring cell owns the complete record before Ready is released,
+    /// and the dense atomic frontier ensures a consumer never harvests an
+    /// unacknowledged suffix. Only an out-of-order publisher or a latched
+    /// fail-stop condition enters the state-locked fallback.
+    fn publish_record(&self, token: QueueToken) -> Result<(), ResolveError> {
         let sequence = token.sequence();
-        let prior_unknown = state.first_unknown.filter(|unknown| *unknown < sequence);
-        let prior_record_failure = state
-            .permanent_record_failure
-            .as_ref()
-            .filter(|failure| failure.sequence < sequence)
-            .cloned();
-        let Some(offset) = state.queue_offset(token) else {
+        self.publication_cell(sequence)
+            .publish_attached(sequence, self.publication_shift);
+        self.finish_ready_publication(token)
+    }
+
+    /// Advance acknowledgement for a record whose exact ring turn is already
+    /// READY. The specialized arena path reaches this directly from BOUND,
+    /// while the general path first publishes its attached record above.
+    fn finish_ready_publication(&self, token: QueueToken) -> Result<(), ResolveError> {
+        if self.single_producer {
+            return self.finish_ready_publication_single(token);
+        }
+        self.finish_ready_publication_concurrent(token)
+    }
+
+    /// Publish the necessarily in-order healthy result of one exclusive
+    /// foreground producer. Runtime and explicit barrier waits are bounded
+    /// polls, so the acknowledgement Release store is the consumer gate; no
+    /// waiter-count load, notification, SeqCst operation, or RMW is needed.
+    fn finish_ready_publication_single(&self, token: QueueToken) -> Result<(), ResolveError> {
+        let sequence = token.sequence();
+        let healthy = !self.unhealthy.load(Ordering::Acquire);
+        if healthy {
+            // Recovery initializes ACK == tail == applied. The exclusive
+            // producer cannot start its next transaction until this call
+            // returns, and an abort binds no sequence. Thus known-success SPSC
+            // publications are necessarily the next dense acknowledgement.
+            debug_assert_eq!(
+                self.acknowledged.load(Ordering::Relaxed).checked_add(1),
+                Some(sequence.get())
+            );
+            self.acknowledged.store(sequence.get(), Ordering::Release);
+
+            #[cfg(test)]
+            self.acknowledgement_changed.notify_all();
+            return Ok(());
+        }
+
+        // Any observed health barrier retains the established state-locked
+        // fail-stop resolver.
+        self.finish_published_locked(token)
+    }
+
+    fn finish_ready_publication_concurrent(&self, token: QueueToken) -> Result<(), ResolveError> {
+        let sequence = token.sequence();
+        // This load is the healthy/fail-stop ordering point. If a concurrent
+        // consumer latches a record failure after it, this publication is
+        // equivalent to the old implementation winning `state` first. If the
+        // failure was already observed, do not extend caller ACK across it.
+        let healthy = !self.unhealthy.load(Ordering::Acquire);
+        let prior_acknowledgement = self.acknowledged.load(Ordering::SeqCst);
+        let acknowledged = if healthy {
+            self.advance_atomic_acknowledgement(prior_acknowledgement, u64::MAX)
+        } else {
+            prior_acknowledgement
+        };
+
+        #[cfg(test)]
+        self.acknowledgement_changed.notify_all();
+
+        if acknowledged > prior_acknowledgement {
+            // Atomic acknowledgement is the consumer gate. Once it advances,
+            // a registered sleeping apply barrier can safely harvest the new
+            // Ready prefix. The common no-waiter case avoids the
+            // condvar/futex call.
+            self.notify_activity_waiter();
+        }
+
+        if acknowledged > sequence.get() {
+            // This publication closed a Prepared hole and advanced across one
+            // or more later Ready producers. Acquire `state` before notifying:
+            // either their waiter observes the new atomic frontier before
+            // sleeping, or the condvar release-and-wait happens before this
+            // guard can be acquired, which closes the lost-wakeup window.
+            let state = lock_recover(&self.state);
+            self.acknowledgement_changed.notify_all();
+            drop(state);
+        }
+
+        if healthy && acknowledged >= sequence.get() {
+            return Ok(());
+        }
+
+        self.finish_published_locked(token)
+    }
+
+    fn finish_published_locked(&self, token: QueueToken) -> Result<(), ResolveError> {
+        let sequence = token.sequence();
+        let state = lock_recover(&self.state);
+        let (mut state, offset) = self.wait_for_bound_token_locked(state, token);
+        let Some(offset) = offset else {
+            // A consumer may apply a healthy acknowledged record in the short
+            // interval before a concurrently latched, later failure diverts us
+            // here. Applied retirement proves this publication succeeded.
+            if state.applied.sequence >= sequence.get() {
+                return Ok(());
+            }
+            return Err(ResolveError::Missing { sequence });
+        };
+        if state.queue[offset].state == (SlotState::Prepared { pinned: false }) {
+            assert!(
+                self.harvest_published_slot_locked(&mut state, offset),
+                "a slow published slot must retain its atomic record"
+            );
+        }
+
+        loop {
+            let health_barrier = match (
+                state.first_unknown,
+                state
+                    .permanent_record_failure
+                    .as_ref()
+                    .map(|failure| failure.sequence),
+            ) {
+                (Some(unknown), Some(failure)) => Some(unknown.min(failure)),
+                (Some(unknown), None) => Some(unknown),
+                (None, Some(failure)) => Some(failure),
+                (None, None) => None,
+            };
+            let safe_maximum = health_barrier
+                .map(|barrier| barrier.get().saturating_sub(1))
+                .unwrap_or(u64::MAX);
+            let prior_acknowledgement = self.acknowledged.load(Ordering::Acquire);
+            if prior_acknowledgement < safe_maximum {
+                let acknowledged =
+                    self.advance_atomic_acknowledgement(prior_acknowledgement, safe_maximum);
+                if acknowledged > prior_acknowledgement {
+                    // We already hold `state`, so this notification cannot race
+                    // an out-of-order publisher's predicate-to-wait handoff.
+                    self.acknowledgement_changed.notify_all();
+                    self.changed.notify_one();
+                }
+            }
+
+            let prior_unknown = state.first_unknown.filter(|unknown| *unknown < sequence);
+            let prior_failure = state
+                .permanent_record_failure
+                .as_ref()
+                .filter(|failure| failure.sequence < sequence)
+                .cloned();
+            if let Some(prior_unknown) = prior_unknown.filter(|prior_unknown| {
+                prior_failure
+                    .as_ref()
+                    .is_none_or(|failure| *prior_unknown < failure.sequence)
+            }) {
+                let current_offset = state
+                    .queue_offset(token)
+                    .expect("an unacknowledged published slot cannot leave the ordered queue");
+                let current = &mut state.queue[current_offset];
+                assert_eq!(
+                    current.state,
+                    SlotState::Ready,
+                    "a published suffix remains Ready until its prefix resolves"
+                );
+                current.state = SlotState::Prepared { pinned: true };
+                return Err(ResolveError::BlockedByPriorUnknown {
+                    sequence,
+                    prior_unknown,
+                });
+            }
+            if let Some(failure) = prior_failure {
+                return Err(failure.resolve_error(sequence));
+            }
+            if self.acknowledged.load(Ordering::Acquire) >= sequence.get() {
+                return Ok(());
+            }
+            state = wait_recover(&self.acknowledgement_changed, state);
+        }
+    }
+
+    fn pin_unknown_record(&self, token: QueueToken) -> Result<(), ResolveError> {
+        let sequence = token.sequence();
+        let state = lock_recover(&self.state);
+        let (mut state, offset) = self.wait_for_bound_token_locked(state, token);
+        let Some(offset) = offset else {
             return Err(ResolveError::Missing { sequence });
         };
         match state.queue[offset].state {
@@ -858,127 +3212,35 @@ impl<B: Blobs> Writeback<B> {
                 return Err(ResolveError::Pinned { sequence });
             }
             SlotState::Prepared { pinned: false } => {}
-            SlotState::Ready => {
+            SlotState::Ready | SlotState::Applying => {
                 return Err(ResolveError::AlreadyResolved { sequence });
             }
         }
-
-        let mut wake_ready_front = false;
-        let mut wake_acknowledgement = false;
-        let mut wake_fail_stop = false;
-        let result = match resolution {
-            Resolution::Publish => {
-                if let Some(prior_unknown) = prior_unknown.filter(|prior_unknown| {
-                    prior_record_failure
-                        .as_ref()
-                        .is_none_or(|failure| *prior_unknown < failure.sequence)
-                }) {
-                    // The current transaction is known committed, but callers
-                    // must not observe an acknowledgement beyond an ambiguous
-                    // prefix. Retain it as a pinned Prepared slot.
-                    state.queue[offset].state = SlotState::Prepared { pinned: true };
-                    Err(ResolveError::BlockedByPriorUnknown {
-                        sequence,
-                        prior_unknown,
-                    })
-                } else if let Some(failure) = prior_record_failure {
-                    // This transaction is known committed and retains its
-                    // complete record, but no caller acknowledgement may cross
-                    // a permanently malformed earlier record.
-                    state.queue[offset].state = SlotState::Ready;
-                    Err(failure.resolve_error(sequence))
-                } else {
-                    state.queue[offset].state = SlotState::Ready;
-                    state.advance_acknowledged_prefix();
-                    // If this publication closed a hole and advanced across a
-                    // later Ready suffix, those publishers are parked on the
-                    // acknowledgement condition. The ordinary in-order fast
-                    // path does not broadcast when no later sequence became
-                    // newly acknowledged.
-                    wake_acknowledgement = state.highest_acknowledged > sequence.get();
-                    // A later Ready slot is still blocked by the current front.
-                    // Only publishing the front can create work for a sleeping
-                    // consumer or synchronous application waiter.
-                    wake_ready_front = offset == 0;
-
-                    // Ready publication and caller acknowledgement are distinct
-                    // transitions. A later native commit may finish first and
-                    // expose its immutable record to the ordered consumer, but
-                    // it cannot return success across a Prepared hole.
-                    #[cfg(test)]
-                    self.acknowledgement_changed.notify_all();
-                    loop {
-                        if state.highest_acknowledged >= sequence.get() {
-                            break Ok(());
-                        }
-                        let prior_unknown =
-                            state.first_unknown.filter(|unknown| *unknown < sequence);
-                        let prior_failure = state
-                            .permanent_record_failure
-                            .as_ref()
-                            .filter(|failure| failure.sequence < sequence)
-                            .cloned();
-                        if let Some(prior_unknown) = prior_unknown.filter(|prior_unknown| {
-                            prior_failure
-                                .as_ref()
-                                .is_none_or(|failure| *prior_unknown < failure.sequence)
-                        }) {
-                            let current_offset = state.queue_offset(token).expect(
-                                "an unacknowledged Ready slot cannot be consumed from the queue",
-                            );
-                            let current = &mut state.queue[current_offset];
-                            assert_eq!(
-                                current.state,
-                                SlotState::Ready,
-                                "a waiting publication remains Ready until its prefix resolves"
-                            );
-                            // This native transaction is known committed. Keep
-                            // its complete record, but pin it behind the earlier
-                            // ambiguity so neither replay nor caller-visible
-                            // acknowledgement can cross the unknown outcome.
-                            current.state = SlotState::Prepared { pinned: true };
-                            break Err(ResolveError::BlockedByPriorUnknown {
-                                sequence,
-                                prior_unknown,
-                            });
-                        }
-                        if let Some(failure) = prior_failure {
-                            break Err(failure.resolve_error(sequence));
-                        }
-                        state = wait_recover(&self.acknowledgement_changed, state);
-                    }
-                }
-            }
-            Resolution::PinUnknown => {
-                state.queue[offset].state = SlotState::Prepared { pinned: true };
-                state.first_unknown = Some(match state.first_unknown {
-                    Some(current) => current.min(sequence),
-                    None => sequence,
-                });
-                wake_fail_stop = true;
-                Ok(())
-            }
-        };
-
+        assert!(state.queue[offset].record.is_none());
+        self.publication_cell(sequence)
+            .pin(sequence, self.publication_shift);
+        state.queue[offset].record = self.publication_cell(sequence).take_unpublished(
+            self.cold_publication_cell(sequence),
+            sequence,
+            self.publication_shift,
+            &self.native_arena,
+            self.publication_index(sequence),
+        );
+        state.queue[offset].state = SlotState::Prepared { pinned: true };
+        // Publish the slow-path marker while holding `state`, before installing
+        // detailed health. A racing observer that sees true must acquire this
+        // mutex and therefore cannot miss the first unknown sequence.
+        self.unhealthy.store(true, Ordering::Release);
+        state.first_unknown = Some(match state.first_unknown {
+            Some(current) => current.min(sequence),
+            None => sequence,
+        });
         drop(state);
-        if wake_fail_stop {
-            // Every application/capacity waiter must observe the permanent
-            // fail-stop state rather than remain parked behind a queue that can
-            // no longer advance.
-            self.changed.notify_all();
-            self.acknowledgement_changed.notify_all();
-            self.capacity_available.notify_all();
-        } else {
-            if wake_acknowledgement {
-                self.acknowledgement_changed.notify_all();
-            }
-            if wake_ready_front {
-                // Any activity waiter can drive the single serialized consumer;
-                // waking one avoids a notify-all herd on the normal commit path.
-                self.changed.notify_one();
-            }
-        }
-        result
+
+        self.changed.notify_all();
+        self.acknowledgement_changed.notify_all();
+        self.capacity_available.notify_all();
+        Ok(())
     }
 
     pub(crate) fn process_front(&self) -> ProcessOutcome {
@@ -994,7 +3256,9 @@ impl<B: Blobs> Writeback<B> {
         // Both locks deliberately recover poison: if a backend panics, the
         // untouched Ready prefix is safe to retry.
         let _consumer = lock_recover(&self.consumer);
-        let state = lock_recover(&self.state);
+        let mut state = lock_recover(&self.state);
+        self.import_bound_locked(&mut state);
+        self.harvest_acknowledged_locked(&mut state);
 
         let Some(front) = state.queue.front() else {
             return ProcessOutcome::Idle;
@@ -1002,6 +3266,24 @@ impl<B: Blobs> Writeback<B> {
         let first_sequence = front.sequence;
         if max_sequence.is_some_and(|maximum| first_sequence.get() > maximum) {
             return ProcessOutcome::Idle;
+        }
+        // A pinned outcome is deliberately outside the caller-acknowledged
+        // prefix, so classify it before the generic dense-ACK gate below.
+        // Otherwise every unknown front would be reported merely as Blocked
+        // and clean drains/background diagnostics could not distinguish a
+        // permanent ordering barrier from a publisher that is still running.
+        match front.state {
+            SlotState::Prepared { pinned: true } => return ProcessOutcome::Pinned(first_sequence),
+            SlotState::Prepared { pinned: false } | SlotState::Ready => {}
+            SlotState::Applying => {
+                unreachable!("the serialized consumer cannot observe another applying batch")
+            }
+        }
+        if first_sequence.get() > self.acknowledged.load(Ordering::Acquire) {
+            // A publisher may have exposed immutable bytes out of order, but
+            // the consumer must not take ownership until the dense caller ACK
+            // frontier has crossed this exact slot.
+            return ProcessOutcome::Blocked;
         }
         let permanent_record_failure = state.permanent_record_failure.clone();
         if let Some(failure) = permanent_record_failure
@@ -1015,20 +3297,24 @@ impl<B: Blobs> Writeback<B> {
                 error: failure.source.clone(),
             };
         }
-        match front.state {
-            SlotState::Prepared { pinned: false } => return ProcessOutcome::Blocked,
-            SlotState::Prepared { pinned: true } => return ProcessOutcome::Pinned(first_sequence),
-            SlotState::Ready => {}
+        if front.state == (SlotState::Prepared { pinned: false }) {
+            return ProcessOutcome::Blocked;
         }
 
         // Capture a bounded contiguous Ready prefix. Prepared and pinned slots
         // are ordering barriers; a later Ready transaction must never pass
-        // either one. Arc ownership keeps every exact record alive after the
-        // queue lock is dropped for decoding and backend IO.
-        let mut cells = Vec::new();
+        // either one. Move each record out of its preallocated queue slot so
+        // the foreground path needs neither an Arc allocation nor OnceLock.
+        // CapturedBatch restores every slot if decoding, IO, or unwinding does
+        // not retire the complete prefix.
+        let mut capture_len = 0usize;
         let mut encoded_bytes = 0usize;
+        let acknowledged = self.acknowledged.load(Ordering::Acquire);
         for slot in &state.queue {
-            if slot.state != SlotState::Ready || cells.len() == self.config.max_batch_records {
+            if slot.state != SlotState::Ready || capture_len == self.config.max_batch_records {
+                break;
+            }
+            if slot.sequence.get() > acknowledged {
                 break;
             }
             if max_sequence.is_some_and(|maximum| slot.sequence.get() > maximum) {
@@ -1044,20 +3330,27 @@ impl<B: Blobs> Writeback<B> {
             }
             let record = slot
                 .record
-                .get()
+                .as_ref()
                 .expect("a Ready slot must contain its finalized record");
             let next_bytes = encoded_bytes.saturating_add(record.encoded_len());
-            if !cells.is_empty() && next_bytes > self.config.max_batch_bytes {
+            if capture_len != 0 && next_bytes > self.config.max_batch_bytes {
                 break;
             }
             encoded_bytes = next_bytes;
-            cells.push(Arc::clone(&slot.record));
+            capture_len += 1;
         }
-        assert!(
-            !cells.is_empty(),
-            "a Ready front must form a nonempty batch"
-        );
+        assert!(capture_len != 0, "a Ready front must form a nonempty batch");
+        let mut captured_records = Vec::with_capacity(capture_len);
+        for slot in state.queue.iter_mut().take(capture_len) {
+            let record = slot
+                .record
+                .take()
+                .expect("a captured Ready slot must own its finalized record");
+            slot.state = SlotState::Applying;
+            captured_records.push(record);
+        }
         drop(state);
+        let mut captured = CapturedBatch::new(self, captured_records);
 
         #[cfg(test)]
         crate::failpoint::hit(crate::failpoint::Point::ReadyBeforeBackend);
@@ -1065,14 +3358,15 @@ impl<B: Blobs> Writeback<B> {
         // Native records are decoded and materialized only on this background
         // path. Keeping the owned decoded records together lets one flat
         // BlobOp vector borrow from all of them for the synchronous batch call.
-        let mut records = Vec::with_capacity(cells.len());
-        for cell in &cells {
-            let queued = cell
-                .get()
-                .expect("a captured Ready slot retains its record");
+        let mut records = Vec::with_capacity(captured.records.len());
+        for queued in &captured.records {
             match self.materialize_queued_record(queued) {
                 Ok(record) => records.push(record),
-                Err(error) => return self.record_failure_outcome(queued.sequence(), error),
+                Err(error) => {
+                    let sequence = queued.sequence();
+                    captured.restore();
+                    return self.record_failure_outcome(sequence, error);
+                }
             }
         }
 
@@ -1089,30 +3383,9 @@ impl<B: Blobs> Writeback<B> {
             Ok(()) => {
                 #[cfg(test)]
                 crate::failpoint::hit(crate::failpoint::Point::BackendWrittenBeforeApplied);
-                let mut state = lock_recover(&self.state);
-                for record in &records {
-                    let current = state
-                        .queue
-                        .front()
-                        .expect("serialized consumer keeps the captured prefix present");
-                    assert_eq!(
-                        current.sequence,
-                        record.sequence(),
-                        "serialized consumer changed the captured prefix"
-                    );
-                    assert_eq!(
-                        current.state,
-                        SlotState::Ready,
-                        "captured Ready slot changed state during backend IO"
-                    );
-                    state.queue.pop_front();
-                    state
-                        .applied
-                        .advance(record.sequence(), record.mako_timestamp());
-                }
+                captured.retire(&records);
                 #[cfg(test)]
                 crate::failpoint::hit(crate::failpoint::Point::AppliedAdvanced);
-                drop(state);
                 // A whole prefix became free. Wake all bounded-capacity
                 // producers once, and every barrier/consumer observing the
                 // new applied frontier once.
@@ -1120,10 +3393,13 @@ impl<B: Blobs> Writeback<B> {
                 self.changed.notify_all();
                 ProcessOutcome::Advanced
             }
-            Err(error) => ProcessOutcome::BackendFailed {
-                sequence: first_sequence,
-                error,
-            },
+            Err(error) => {
+                captured.restore();
+                ProcessOutcome::BackendFailed {
+                    sequence: first_sequence,
+                    error,
+                }
+            }
         }
     }
 
@@ -1142,6 +3418,36 @@ impl<B: Blobs> Writeback<B> {
             return Err(error);
         }
 
+        if let Some(holder) = queued.deferred_holder() {
+            let pool =
+                self.native_holder_pool
+                    .as_ref()
+                    .ok_or(RecordError::NativeHolderUnavailable {
+                        sequence: holder.sequence().get(),
+                    })?;
+            let raw = NonZeroU64::new(holder.sequence().get())
+                .expect("cache commit sequences are nonzero");
+            // SAFETY: harvesting this descriptor followed an Acquire of the
+            // dense SPSC published tail. Applied has not advanced, so the
+            // producer cannot reuse the masked holder while this view lives.
+            let view =
+                unsafe { pool.view(raw) }.map_err(|_| RecordError::NativeHolderUnavailable {
+                    sequence: holder.sequence().get(),
+                })?;
+            if view.mako_timestamp() != holder.mako_timestamp() {
+                return Err(RecordError::WrongMakoTimestamp {
+                    expected: holder.mako_timestamp().get(),
+                    record: view.mako_timestamp().get(),
+                });
+            }
+            return holder.materialize(
+                view.table_id(),
+                view.key(),
+                view.value(),
+                self.config.max_record_bytes,
+            );
+        }
+
         queued.materialize(self.config.max_record_bytes)
     }
 
@@ -1157,6 +3463,8 @@ impl<B: Blobs> Writeback<B> {
 
         let failure = {
             let mut state = lock_recover(&self.state);
+            // See the matching ordering argument in the unknown-outcome path.
+            self.unhealthy.store(true, Ordering::Release);
             let replace = state
                 .permanent_record_failure
                 .as_ref()
@@ -1187,24 +3495,51 @@ impl<B: Blobs> Writeback<B> {
         }
     }
 
+    /// Number of explicit apply barriers registered for publication wakeups.
+    #[cfg(test)]
+    pub(crate) fn activity_waiter_count(&self) -> usize {
+        self.activity_waiters.load(Ordering::SeqCst)
+    }
+
     pub(crate) fn wait_for_activity(&self, timeout: Duration) {
-        let state = lock_recover(&self.state);
-        drop(wait_timeout_recover(&self.changed, state, timeout));
+        let mut state = lock_recover(&self.state);
+        let waiter = ActivityWaiter::new(&self.activity_waiters);
+        self.import_bound_locked(&mut state);
+        if self.front_has_atomic_publication_locked(&state) {
+            // Publication may have raced between the caller's preceding
+            // process_front() and its wait call. Registration-before-recheck
+            // makes the no-notify fast path safe in either ordering.
+            drop(waiter);
+            return;
+        }
+        state = wait_timeout_recover(&self.changed, state, timeout);
+        drop(waiter);
+        drop(state);
     }
 
     pub(crate) fn retry_delay(&self) -> Duration {
         if lock_recover(&self.state).permanent_record_failure.is_some() {
-            // Runtime stop still interrupts this through `wake_waiters`. A
-            // permanent structural failure cannot improve through retrying,
-            // so keep the worker asleep instead of re-decoding the same bytes
-            // at the ordinary transient-error cadence.
+            // A permanent structural failure cannot improve through retrying,
+            // so keep the worker parked instead of re-decoding the same bytes
+            // at the ordinary transient-error cadence. Runtime checks its
+            // stop flag independently in bounded park intervals.
             Duration::MAX
         } else {
             self.config.retry_delay
         }
     }
 
+    #[inline(always)]
     pub(crate) fn ensure_no_unknown(&self) -> Result<(), ApplyError> {
+        if !self.unhealthy.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        self.ensure_no_unknown_slow()
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn ensure_no_unknown_slow(&self) -> Result<(), ApplyError> {
         match lock_recover(&self.state).health_error() {
             Some(error) => Err(error),
             None => Ok(()),
@@ -1214,31 +3549,57 @@ impl<B: Blobs> Writeback<B> {
     pub(crate) fn wake_waiters(&self) {
         self.changed.notify_all();
         self.acknowledgement_changed.notify_all();
+        self.descriptor_available.notify_all();
         self.capacity_available.notify_all();
     }
 
     fn wait_for_apply_progress(&self, target: u64) {
-        let state = lock_recover(&self.state);
-        if state.applied.sequence >= target {
+        let mut state = lock_recover(&self.state);
+        self.import_bound_locked(&mut state);
+        if self.apply_wait_satisfied_locked(&state, target) {
             return;
         }
-        if state.apply_health_error_through(target).is_some() {
-            return;
-        }
-        if state
-            .queue
-            .front()
-            .is_some_and(|slot| slot.state == SlotState::Ready)
-        {
-            // Publication may have raced between process_front() observing a
-            // Prepared hole and this waiter acquiring the state lock. Do not
-            // sleep after the only Ready notification has already fired.
+        let waiter = ActivityWaiter::new(&self.activity_waiters);
+        // Register before the second predicate read. Together with the
+        // publisher's SeqCst acknowledgement/count ordering, this is the
+        // no-lost-wakeup half of the conditional notification handshake.
+        self.import_bound_locked(&mut state);
+        if self.apply_wait_satisfied_locked(&state, target) {
+            drop(waiter);
             return;
         }
 
-        // Holding `state` until `wait` atomically releases it closes the usual
-        // notification gap between observing a Prepared hole and sleeping.
-        drop(wait_recover(&self.changed, state));
+        // Holding `state` until the wait atomically releases it closes the
+        // usual predicate/notification gap. SPSC acknowledgement deliberately
+        // uses an ordinary Release store rather than the MPMC SeqCst Dekker
+        // handshake, so keep that mode's explicit barriers on a bounded poll;
+        // a missed advisory notification can delay but never strand progress.
+        state = if self.single_producer {
+            wait_timeout_recover(&self.changed, state, Duration::from_millis(10))
+        } else {
+            wait_recover(&self.changed, state)
+        };
+        drop(waiter);
+        drop(state);
+    }
+
+    fn front_has_atomic_publication_locked(&self, state: &State) -> bool {
+        state.queue.front().is_some_and(|slot| {
+            slot.state == (SlotState::Prepared { pinned: false })
+                && slot.sequence.get() <= self.acknowledged.load(Ordering::SeqCst)
+                && self.is_record_published(slot.sequence, Ordering::SeqCst)
+        })
+    }
+
+    fn apply_wait_satisfied_locked(&self, state: &State, target: u64) -> bool {
+        state.applied.sequence >= target
+            || state.apply_health_error_through(target).is_some()
+            || state.queue.front().is_some_and(|slot| {
+                slot.state == SlotState::Ready
+                    || (slot.state == (SlotState::Prepared { pinned: false })
+                        && slot.sequence.get() <= self.acknowledged.load(Ordering::SeqCst)
+                        && self.is_record_published(slot.sequence, Ordering::SeqCst))
+            })
     }
 }
 
@@ -1255,10 +3616,45 @@ enum DropAction {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BindSequenceMode {
+    Concurrent,
+    /// The native LocalDb validation ticket excludes every other binder for
+    /// this Writeback until the callback returns.
+    ExternallySerialized,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RetryProgress {
     TargetApplied,
     FailedSequenceApplied,
     NoProgress,
+}
+
+/// RAII registration for the locked capacity-wait protocol.
+struct CapacityWaiter<'a>(&'a AtomicUsize);
+
+impl Drop for CapacityWaiter<'_> {
+    fn drop(&mut self) {
+        let prior = self.0.fetch_sub(1, Ordering::AcqRel);
+        debug_assert_ne!(prior, 0, "capacity waiter registration underflow");
+    }
+}
+
+/// Registered participant in the conditional `changed` notification handoff.
+struct ActivityWaiter<'a>(&'a AtomicUsize);
+
+impl<'a> ActivityWaiter<'a> {
+    fn new(waiters: &'a AtomicUsize) -> Self {
+        waiters.fetch_add(1, Ordering::SeqCst);
+        Self(waiters)
+    }
+}
+
+impl Drop for ActivityWaiter<'_> {
+    fn drop(&mut self) {
+        let prior = self.0.fetch_sub(1, Ordering::SeqCst);
+        debug_assert_ne!(prior, 0, "activity waiter registration underflow");
+    }
 }
 
 fn retry_progress(applied: u64, target: u64, failed: CommitSeq) -> RetryProgress {
@@ -1271,6 +3667,509 @@ fn retry_progress(applied: u64, target: u64, failed: CommitSeq) -> RetryProgress
     }
 }
 
+impl<B: Blobs> Writeback<B> {
+    /// Publish the exact ordinary holder success using only scalar state.
+    ///
+    /// The producer cursor is advanced before the health read so a concurrent
+    /// fail-stop latch cannot leave an accepted generation reusable. `true`
+    /// means the one ACK Release completed publication. `false` means the
+    /// caller must immediately invoke
+    /// [`Self::publish_native_holder_single_cold`] with the accepted timestamp
+    /// and exact extent; the producer cursor has already advanced in either
+    /// case.
+    ///
+    /// # Safety
+    ///
+    /// Native must have definitely committed and sealed `sequence` in this
+    /// queue's holder pool, and `producer` must still be the unique lease which
+    /// retained that future generation.
+    #[inline(always)]
+    pub(crate) unsafe fn try_publish_native_holder_single(
+        &self,
+        producer: &SingleProducerState,
+        sequence: NonZeroU64,
+    ) -> bool {
+        producer.accept_raw(sequence);
+        if self.unhealthy.load(Ordering::Acquire) {
+            return false;
+        }
+
+        debug_assert_eq!(
+            self.acknowledged.load(Ordering::Relaxed).checked_add(1),
+            Some(sequence.get())
+        );
+        self.acknowledged.store(sequence.get(), Ordering::Release);
+        #[cfg(test)]
+        self.acknowledgement_changed.notify_all();
+        true
+    }
+
+    /// Preserve deterministic unit-test waiter wakeups after native performs
+    /// the fused ACK store. Production consumers use bounded polling and this
+    /// method is compiled out entirely there.
+    #[cfg(test)]
+    pub(crate) fn notify_fused_holder_published_for_test(&self) {
+        self.acknowledgement_changed.notify_all();
+    }
+
+    /// Retain a definitely committed holder behind a previously latched
+    /// write-back barrier.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn publish_native_holder_single_cold(
+        &self,
+        sequence: NonZeroU64,
+        mako_timestamp: MakoTimestamp,
+        exact_record_bytes: NonZeroU32,
+    ) -> Result<CommitSeq, ResolveError> {
+        let sequence =
+            CommitSeq::new(sequence.get()).expect("a native holder reservation is always nonzero");
+        // SAFETY: the unique producer already accepted this exact generation;
+        // the unhealthy fast-path observation requires retaining it in the
+        // established cell/state protocol rather than advancing the ACK tail.
+        unsafe {
+            self.publication_cell(sequence)
+                .publish_bound_single_reserved(
+                    self.cold_publication_cell(sequence),
+                    sequence,
+                    self.publication_shift,
+                )
+        };
+        self.attach_record(
+            QueueToken::new(sequence),
+            QueuedCommitRecord::Holder(DeferredOnePutRecord::new(
+                sequence,
+                mako_timestamp,
+                exact_record_bytes.get() as usize,
+            )),
+        );
+        self.publish_record(QueueToken::new(sequence))?;
+        Ok(sequence)
+    }
+
+    /// Pin an accepted holder whose native visibility is not definite.
+    ///
+    /// # Safety
+    ///
+    /// Native must have sealed this exact generation before returning its
+    /// accepted timestamp, and `producer` must own the retained generation.
+    #[cold]
+    #[inline(never)]
+    pub(crate) unsafe fn pin_native_holder_sealed_unknown_single(
+        &self,
+        producer: &SingleProducerState,
+        sequence: NonZeroU64,
+        mako_timestamp: MakoTimestamp,
+        exact_record_bytes: NonZeroU32,
+    ) -> Result<CommitSeq, ResolveError> {
+        producer.accept_raw(sequence);
+        let sequence =
+            CommitSeq::new(sequence.get()).expect("a native holder reservation is always nonzero");
+        // SAFETY: this method's accepted-generation contract retains the exact
+        // turn while the locked fail-stop state becomes visible.
+        unsafe {
+            self.publication_cell(sequence)
+                .publish_bound_single_reserved(
+                    self.cold_publication_cell(sequence),
+                    sequence,
+                    self.publication_shift,
+                )
+        };
+        self.attach_record(
+            QueueToken::new(sequence),
+            QueuedCommitRecord::Holder(DeferredOnePutRecord::new(
+                sequence,
+                mako_timestamp,
+                exact_record_bytes.get() as usize,
+            )),
+        );
+        self.pin_unknown_record(QueueToken::new(sequence))?;
+        Ok(sequence)
+    }
+
+    /// Pin an accepted terminal which failed to seal its holder witness.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn pin_native_holder_unsealed_unknown_single(
+        &self,
+        producer: &SingleProducerState,
+        sequence: NonZeroU64,
+    ) -> Result<CommitSeq, ResolveError> {
+        producer.accept_raw(sequence);
+        let sequence =
+            CommitSeq::new(sequence.get()).expect("a native holder reservation is always nonzero");
+        // SAFETY: the retained unique generation is being made visible only
+        // to the locked pin path; no replayable holder descriptor is attached.
+        unsafe {
+            self.publication_cell(sequence)
+                .publish_bound_single_reserved(
+                    self.cold_publication_cell(sequence),
+                    sequence,
+                    self.publication_shift,
+                )
+        };
+        self.pin_unknown_record(QueueToken::new(sequence))?;
+        Ok(sequence)
+    }
+}
+
+/// Arena-only detached claim for the trusted native one-Put terminal.
+///
+/// Unlike [`DetachedPermit`], this hot representation has no record-kind enum,
+/// optional buffer, or cold legacy ownership. The future sequence selects its
+/// stable arena block only after native validation succeeds.
+pub(crate) struct NativeArenaPermit<'a, B: Blobs> {
+    owner: &'a Writeback<B>,
+    exact_record_bytes: usize,
+    single_sequence: Option<CommitSeq>,
+    single_producer: Option<&'a SingleProducerState>,
+    owns_claim: bool,
+}
+
+/// Exact arena address selected while an SPSC sequence is still invisible.
+///
+/// The native-facing value carries the sequence and capacity used to seal the
+/// record. Keeping the raw address alongside it avoids re-deriving the arena
+/// block after the terminal returns, without enlarging every detached permit.
+#[derive(Clone, Copy)]
+pub(crate) struct NativeArenaPreselectedTarget {
+    native: CommitRecordTarget,
+    target: NonNull<u8>,
+    sequence: CommitSeq,
+}
+
+impl NativeArenaPreselectedTarget {
+    #[inline(always)]
+    pub(crate) const fn native(self) -> CommitRecordTarget {
+        self.native
+    }
+}
+
+impl<'a, B: Blobs> NativeArenaPermit<'a, B> {
+    /// Select the exact target protected by this still-invisible SPSC permit.
+    ///
+    /// # Safety
+    ///
+    /// The caller must retain the mutable, thread-affine single-producer lease
+    /// until the synchronous native terminal returns. The target may be used
+    /// only by that terminal and must subsequently be paired with
+    /// [`Self::bind_preselected_after_native`] or
+    /// [`Self::publish_preselected_committed_after_native`] if native reports
+    /// acceptance.
+    #[inline(always)]
+    pub(crate) unsafe fn preselected_record_target(&self) -> NativeArenaPreselectedTarget {
+        assert!(
+            self.owns_claim,
+            "target selection must own a detached claim"
+        );
+        let sequence = self
+            .single_sequence
+            .expect("preselected targets require a single-producer permit");
+        let block = self.owner.publication_index(sequence);
+        // SAFETY: the retained capacity credit and live unique producer lease
+        // prevent reuse of this arena block through the synchronous native
+        // call.
+        let target = unsafe {
+            self.owner
+                .native_arena
+                .target(block, self.exact_record_bytes)
+        };
+        let native_sequence =
+            NonZeroU64::new(sequence.get()).expect("cache commit sequences are nonzero");
+        // SAFETY: the permit owns stable, exclusive queue arena storage for
+        // the advertised exact extent through the matching terminal call.
+        let native = unsafe {
+            CommitRecordTarget::from_raw_parts(native_sequence, target, self.exact_record_bytes)
+        };
+        NativeArenaPreselectedTarget {
+            native,
+            target,
+            sequence,
+        }
+    }
+
+    /// Make a native-accepted preselected SPSC record visible to the queue.
+    ///
+    /// This operation deliberately cannot reject a concurrently latched
+    /// write-back failure. Once native publishes a nonzero accepted timestamp,
+    /// binding the exact dense turn is mandatory; later resolution either
+    /// acknowledges it or pins it behind the failure.
+    ///
+    /// # Safety
+    ///
+    /// `preselected` must come from this permit immediately before the one
+    /// synchronous native terminal which returned `mako_timestamp`, and that
+    /// terminal must have initialized the complete exact target.
+    #[inline(always)]
+    pub(crate) unsafe fn bind_preselected_after_native(
+        &mut self,
+        mako_timestamp: MakoTimestamp,
+        preselected: NativeArenaPreselectedTarget,
+    ) -> NativeArenaBoundReservation<'a, B> {
+        assert!(self.owns_claim, "binding must own a detached claim");
+        let sequence = self
+            .single_sequence
+            .expect("preselected binding requires a single-producer permit");
+        debug_assert_eq!(preselected.sequence, sequence);
+        // SAFETY: established by this method's unique-lease, exact-turn, and
+        // post-acceptance contract.
+        unsafe {
+            self.owner.bind_single_reserved_sequence_after_acceptance(
+                self.single_producer
+                    .expect("preselected binding retains its producer state"),
+                sequence,
+            )
+        };
+        self.owns_claim = false;
+        NativeArenaBoundReservation {
+            owner: self.owner,
+            token: QueueToken::new(sequence),
+            mako_timestamp,
+            exact_record_bytes: self.exact_record_bytes,
+            target: preselected.target,
+            on_drop: DropAction::PinUnknown,
+        }
+    }
+
+    /// Publish the ordinary successful preselected SPSC outcome directly.
+    ///
+    /// This combines dense binding, complete-record attachment, READY
+    /// publication, and in-order acknowledgement. It deliberately omits the
+    /// intermediate BOUND turn: the unique producer still owns FREE, native's
+    /// completion witness covers the exact arena bytes, and the consumer can
+    /// observe neither metadata nor bytes before the READY Release.
+    ///
+    /// # Safety
+    ///
+    /// `preselected` must come from this permit immediately before a native
+    /// terminal whose compact outcome proves ordinary committed visibility,
+    /// successful cleanup, the same accepted timestamp, and a complete record.
+    #[inline(always)]
+    pub(crate) unsafe fn publish_preselected_committed_after_native(
+        &mut self,
+        mako_timestamp: MakoTimestamp,
+        preselected: NativeArenaPreselectedTarget,
+    ) -> Result<CommitSeq, ResolveError> {
+        assert!(self.owns_claim, "publication must own a detached claim");
+        let sequence = self
+            .single_sequence
+            .expect("preselected publication requires a single-producer permit");
+        let producer = self
+            .single_producer
+            .expect("preselected publication retains its producer state");
+        debug_assert_eq!(preselected.sequence, sequence);
+
+        // SAFETY: required by this method's retained-sequence and native
+        // completion contract. These scalar writes and the native arena bytes
+        // remain invisible until the one dense Release publication below.
+        unsafe {
+            self.owner.spsc_arena_publication(sequence).install(
+                sequence,
+                mako_timestamp,
+                self.exact_record_bytes,
+            )
+        };
+        // Native accepted this exact dense obligation. Advance the private
+        // producer cursor before any shared health/fail-stop resolution.
+        producer.accept(sequence);
+        self.owns_claim = false;
+
+        if !self.owner.unhealthy.load(Ordering::Acquire) {
+            debug_assert_eq!(
+                self.owner
+                    .acknowledged
+                    .load(Ordering::Relaxed)
+                    .checked_add(1),
+                Some(sequence.get())
+            );
+            // This is simultaneously dense binding, Ready publication, and
+            // caller acknowledgement. The consumer's Acquire observes every
+            // native byte and scalar descriptor write above.
+            self.owner
+                .acknowledged
+                .store(sequence.get(), Ordering::Release);
+            #[cfg(test)]
+            self.owner.acknowledgement_changed.notify_all();
+            return Ok(sequence);
+        }
+
+        // A pre-existing fail-stop barrier is cold. Materialize the old READY
+        // token so the established locked resolver can retain this known
+        // committed suffix without extending the published frontier. A future
+        // native-holder path must preserve this exact branch: transfer the
+        // accepted generation into state/cell-owned retention before returning
+        // its holder, and never advance the direct tail across the barrier.
+        unsafe {
+            self.owner
+                .publication_cell(sequence)
+                .publish_arena_ready_single_reserved(
+                    self.owner.cold_publication_cell(sequence),
+                    sequence,
+                    self.owner.publication_shift,
+                    mako_timestamp,
+                    self.exact_record_bytes,
+                )
+        };
+        self.owner
+            .finish_published_locked(QueueToken::new(sequence))?;
+        Ok(sequence)
+    }
+
+    /// Bind under native's per-LocalDb validation ticket.
+    ///
+    /// # Safety
+    ///
+    /// For a concurrent claim, the caller must be executing the cache-private
+    /// one-Put bind callback while the LocalDb validation ticket excludes every
+    /// other binder for this Writeback. For a single-producer claim, the
+    /// thread-affine mutable lease must instead exclude every foreground
+    /// terminal for the whole native call. Otherwise the load/Release-store
+    /// tail allocation can race another allocator, duplicate a dense sequence,
+    /// and violate the arena/cell exclusive-access proof.
+    pub(crate) unsafe fn bind_externally_serialized(
+        &mut self,
+        mako_timestamp: MakoTimestamp,
+    ) -> Result<NativeArenaBoundReservation<'a, B>, ReserveError> {
+        assert!(self.owns_claim, "binding must own a detached claim");
+        let sequence = match self.single_sequence {
+            None => self
+                .owner
+                .bind_sequence(BindSequenceMode::ExternallySerialized)?,
+            Some(reserved) => self.owner.bind_single_reserved_sequence(
+                self.single_producer
+                    .expect("single-producer arena binding retains producer state"),
+                reserved,
+            )?,
+        };
+        let block = self.owner.publication_index(sequence);
+        // SAFETY: the exact BOUND turn now uniquely owns this arena block
+        // through backend retirement. The SP path selected the block before
+        // validation; this lookup merely retrieves its precomputed pointer.
+        let target = unsafe {
+            self.owner
+                .native_arena
+                .target(block, self.exact_record_bytes)
+        };
+        self.owns_claim = false;
+        Ok(NativeArenaBoundReservation {
+            owner: self.owner,
+            token: QueueToken::new(sequence),
+            mako_timestamp,
+            exact_record_bytes: self.exact_record_bytes,
+            target,
+            on_drop: DropAction::PinUnknown,
+        })
+    }
+}
+
+impl<B: Blobs> Drop for NativeArenaPermit<'_, B> {
+    fn drop(&mut self) {
+        if self.owns_claim {
+            self.owner.release_detached_claim(None);
+            self.owns_claim = false;
+        }
+    }
+}
+
+/// Bound common-arena record with a precomputed direct native target.
+///
+/// Dropping an unresolved value pins its exact sequence. The record becomes
+/// replayable only after an exact native completion witness is supplied to one
+/// of the unsafe resolution methods below.
+pub(crate) struct NativeArenaBoundReservation<'a, B: Blobs> {
+    owner: &'a Writeback<B>,
+    token: QueueToken,
+    mako_timestamp: MakoTimestamp,
+    exact_record_bytes: usize,
+    target: NonNull<u8>,
+    on_drop: DropAction,
+}
+
+impl<B: Blobs> NativeArenaBoundReservation<'_, B> {
+    pub(crate) const fn sequence(&self) -> CommitSeq {
+        self.token.sequence()
+    }
+
+    /// Return the already-computed exact arena target.
+    ///
+    /// # Safety
+    ///
+    /// The target may be passed only to the synchronous native terminal which
+    /// created this reservation. `self` must remain alive and unresolved until
+    /// that call returns, and the callback must not unwind.
+    pub(crate) unsafe fn native_record_target(&mut self) -> CommitRecordTarget {
+        let sequence = NonZeroU64::new(self.token.sequence().get())
+            .expect("cache commit sequences are nonzero");
+        // SAFETY: established by this method's contract and the exact BOUND
+        // turn retained by the reservation.
+        unsafe {
+            CommitRecordTarget::from_raw_parts(sequence, self.target, self.exact_record_bytes)
+        }
+    }
+
+    /// Attach native's completed bytes and publish known success in one
+    /// BOUND-to-READY Release transition.
+    ///
+    /// # Safety
+    ///
+    /// The immediately preceding trusted terminal must have returned its exact
+    /// completion witness for this target and a definitely committed outcome.
+    pub(crate) unsafe fn publish_completed(&mut self) -> Result<CommitSeq, ResolveError> {
+        assert_eq!(self.on_drop, DropAction::PinUnknown);
+        let sequence = self.token.sequence();
+        self.owner.publication_cell(sequence).attach_arena_ready(
+            sequence,
+            self.owner.publication_shift,
+            self.mako_timestamp,
+            self.exact_record_bytes,
+        );
+        self.owner.finish_ready_publication(self.token)?;
+        self.on_drop = DropAction::Done;
+        Ok(sequence)
+    }
+
+    /// Retain completed bytes behind a permanently unknown native outcome.
+    ///
+    /// # Safety
+    ///
+    /// The terminal must have returned the exact completion witness for this
+    /// target, but its visibility outcome is not definitely committed.
+    pub(crate) unsafe fn pin_completed_unknown(&mut self) -> Result<CommitSeq, ResolveError> {
+        assert_eq!(self.on_drop, DropAction::PinUnknown);
+        let sequence = self.token.sequence();
+        self.owner.publication_cell(sequence).attach_arena(
+            sequence,
+            self.owner.publication_shift,
+            self.mako_timestamp,
+            self.exact_record_bytes,
+        );
+        self.owner.pin_unknown_record(self.token)?;
+        self.on_drop = DropAction::Done;
+        Ok(sequence)
+    }
+
+    /// Pin a bound slot for which native supplied no completion witness.
+    pub(crate) fn pin_unwritten_unknown(&mut self) -> Result<CommitSeq, ResolveError> {
+        assert_eq!(self.on_drop, DropAction::PinUnknown);
+        let sequence = self.token.sequence();
+        self.owner.pin_unknown_record(self.token)?;
+        self.on_drop = DropAction::Done;
+        Ok(sequence)
+    }
+}
+
+impl<B: Blobs> Drop for NativeArenaBoundReservation<'_, B> {
+    fn drop(&mut self) {
+        if self.on_drop == DropAction::Done {
+            return;
+        }
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            let _ = self.owner.pin_unknown_record(self.token);
+        }));
+        self.on_drop = DropAction::Done;
+    }
+}
+
 /// A bounded capacity claim that has not entered the ordered commit log.
 ///
 /// This value is created before native commit. Dropping it means Silo failed
@@ -1278,10 +4177,17 @@ fn retry_progress(applied: u64, target: u64, failed: CommitSeq) -> RetryProgress
 /// assigning a sequence or leaving a cancellation marker.
 pub struct DetachedPermit<'a, B: Blobs> {
     owner: &'a Writeback<B>,
-    prepared: Option<PreparedCommitRecord>,
+    /// Cold legacy materialized state. Boxing keeps the production native
+    /// permit small without adding allocation to native bind or publication.
+    prepared: Option<Box<LegacyCommitRecord>>,
     native_record: bool,
-    record: Option<Arc<OnceLock<QueuedCommitRecord>>>,
-    owns_capacity: bool,
+    native_buffer: Option<NativeRecordBuffer>,
+    /// `Some` only in the fixed single-producer mode. Concurrent mode assigns
+    /// its sequence at bind, while the exclusive producer can retain this
+    /// exact future turn without publishing it or modifying shared occupancy.
+    single_sequence: Option<CommitSeq>,
+    single_producer: Option<&'a SingleProducerState>,
+    owns_claim: bool,
 }
 
 impl<'a, B: Blobs> DetachedPermit<'a, B> {
@@ -1290,15 +4196,16 @@ impl<'a, B: Blobs> DetachedPermit<'a, B> {
     /// Production callers enter this hook under native's per-database
     /// validation gate, so successful binds follow a legal Silo serialization
     /// order even though failed validations consumed no slot. This assigns the
-    /// next cache sequence, embeds Mako's transaction timestamp, and appends
-    /// one Prepared slot. The method performs no heap
+    /// next cache sequence, embeds Mako's transaction timestamp, and publishes
+    /// one Prepared descriptor for state-locked import. The method performs no heap
     /// allocation, capacity wait, backend IO, or record-length work. It can
     /// reject the transaction if an earlier commit became ambiguous after this
     /// permit was detached; the caller must then abort native commit before
     /// installation. A rejection leaves the prepared bytes on this permit so
     /// they can be destroyed after Silo returns and releases its write locks.
-    /// Concurrent hooks may briefly contend on the queue-state mutex, whose
-    /// protected work is bounded and entirely in memory.
+    /// Healthy hooks do not take the queue-state mutex; concurrent producers
+    /// serialize only on the dense atomic sequence word. Fail-stop handling
+    /// and the final capacity-sized tail of sequence space use the locked path.
     #[must_use = "a bound native commit must be published or pinned unknown"]
     pub fn bind(
         &mut self,
@@ -1329,77 +4236,41 @@ impl<'a, B: Blobs> DetachedPermit<'a, B> {
         &mut self,
         mako_timestamp: MakoTimestamp,
     ) -> Result<BoundReservation<'a, B>, ReserveError> {
-        let mut state = lock_recover(&self.owner.state);
-        if let Some(error) = state.reserve_health_error() {
-            // Leave the complete prepared record on this permit. The caller
-            // is inside Silo's hook and will drop it only after native abort
-            // has returned and released the write locks.
-            return Err(error);
-        }
-        let raw_sequence = state
-            .last_bound
-            .checked_add(1)
-            .expect("detached capacity guarantees commit sequence space");
-        let sequence = CommitSeq::new(raw_sequence)
-            .expect("the sequence after a valid applied seed is nonzero");
-        let record = self
-            .record
-            .take()
-            .expect("a detached permit owns one preallocated record cell");
-        let bound = self
-            .prepared
-            .take()
-            .map(|prepared| prepared.bind(sequence, mako_timestamp));
+        assert!(self.owns_claim, "binding must own a detached claim");
+        // Legacy preparation remains boxed through the ordered hook. Its large
+        // vector-owning value is finalized only on the cold legacy path after
+        // native returns, so binding never copies or reallocates it.
         assert_eq!(
-            bound.is_none(),
+            self.prepared.is_none(),
             self.native_record,
             "detached permit record kind changed before binding"
         );
-
-        // Queue storage and the record cell were both preallocated before
-        // native commit. Since detached claims count against capacity, this
-        // push cannot grow the VecDeque.
-        assert!(
-            state.queue.len() < self.owner.config.capacity,
-            "a detached permit must own queue capacity"
+        assert_eq!(
+            self.native_buffer.is_some(),
+            self.native_record,
+            "native permit lost its checked-out serialization buffer"
         );
-        assert!(
-            state.queue.len() < state.queue.capacity(),
-            "the bounded queue must be preallocated"
-        );
-        let detached_after_bind = state
-            .detached
-            .checked_sub(1)
-            .expect("binding owns one detached capacity claim");
-        let slot = Slot {
-            sequence,
-            record: Arc::clone(&record),
-            state: SlotState::Prepared { pinned: false },
+        let sequence = match self.single_sequence {
+            None => self.owner.bind_sequence(BindSequenceMode::Concurrent)?,
+            Some(sequence) => self.owner.bind_single_reserved_sequence(
+                self.single_producer
+                    .expect("single-producer binding retains producer state"),
+                sequence,
+            )?,
         };
-
-        // Perform every checked operation before logical insertion. From this
-        // point through returning the bound handle, only scalar assignments and
-        // a no-growth VecDeque push remain.
-        state.detached = detached_after_bind;
-        state.last_bound = raw_sequence;
-        self.owns_capacity = false;
-        state.queue.push_back(slot);
-        drop(state);
-        // Binding only replaces one detached capacity claim with one Prepared
-        // queue slot; it creates no consumer work and frees no capacity. The
-        // sole exceptional transition is assigning the final sequence, which
-        // wakes every sequence-space waiter so each can fail closed instead of
-        // remaining parked forever.
-        if raw_sequence == u64::MAX {
-            self.owner.capacity_available.notify_all();
-        }
+        let legacy_prepared = self.prepared.take();
+        let native_buffer = self
+            .native_buffer
+            .take()
+            .map(|buffer| buffer.bind_arena(self.owner.publication_index(sequence)));
+        self.owns_claim = false;
 
         Ok(BoundReservation {
             owner: self.owner,
             token: QueueToken::new(sequence),
             mako_timestamp,
-            bound,
-            record,
+            legacy_prepared,
+            native_buffer,
             on_drop: DropAction::PinUnknown,
         })
     }
@@ -1407,9 +4278,10 @@ impl<'a, B: Blobs> DetachedPermit<'a, B> {
 
 impl<B: Blobs> Drop for DetachedPermit<'_, B> {
     fn drop(&mut self) {
-        if self.owns_capacity {
-            self.owner.release_detached_capacity();
-            self.owns_capacity = false;
+        if self.owns_claim {
+            let native_buffer = self.native_buffer.take();
+            self.owner.release_detached_claim(native_buffer);
+            self.owns_claim = false;
         }
     }
 }
@@ -1423,8 +4295,10 @@ pub struct BoundReservation<'a, B: Blobs> {
     owner: &'a Writeback<B>,
     token: QueueToken,
     mako_timestamp: MakoTimestamp,
-    bound: Option<BoundCommitRecord>,
-    record: Arc<OnceLock<QueuedCommitRecord>>,
+    /// Legacy/unit-test write-set representation. Production native
+    /// reservations carry only a null pointer here.
+    legacy_prepared: Option<Box<LegacyCommitRecord>>,
+    native_buffer: Option<NativeRecordBuffer>,
     on_drop: DropAction,
 }
 
@@ -1434,25 +4308,103 @@ impl<B: Blobs> BoundReservation<'_, B> {
         self.token.sequence()
     }
 
+    /// Expose this reservation's checked-out storage to mako-local's unsafe
+    /// synchronous record terminal.
+    ///
+    /// # Safety
+    ///
+    /// The returned target may be passed only to the native terminal which
+    /// created this reservation. `self` must stay alive until that terminal
+    /// returns, and the callback must not unwind. Moving the reservation is
+    /// permitted because both arena and Vec allocations remain stable. Callers
+    /// may attach the buffer as initialized only after an exact completion
+    /// witness.
+    pub(crate) unsafe fn native_record_target(&mut self) -> CommitRecordTarget {
+        assert!(
+            self.legacy_prepared.is_none(),
+            "only a native Prepared reservation has raw target storage"
+        );
+        let buffer = self
+            .native_buffer
+            .as_mut()
+            .expect("a native reservation owns one serialization buffer");
+        let exact_record_bytes = buffer.exact_record_bytes();
+        let bytes = buffer.target(&self.owner.native_arena);
+        let sequence = NonZeroU64::new(self.token.sequence().get())
+            .expect("cache commit sequences are nonzero");
+        // SAFETY: the reservation uniquely owns this checked-out buffer. Its
+        // allocation is stable in either the arena or Vec representation, and
+        // the caller keeps this reservation live through the terminal.
+        unsafe { CommitRecordTarget::from_raw_parts(sequence, bytes, exact_record_bytes) }
+    }
+
+    /// Accept native's exact completion witness and move the checked-out bytes
+    /// into this queue reservation without allocation or copying.
+    ///
+    /// # Safety
+    ///
+    /// The immediately preceding synchronous native terminal must have
+    /// returned a valid report with `record_written == true` for the target
+    /// produced by [`Self::native_record_target`]. That witness must cover the
+    /// canonical record for this reservation's exact sequence, bound Mako
+    /// timestamp, and preflight integrity mode; background materialization
+    /// verifies those fields before replay.
+    pub(crate) unsafe fn attach_written_native_record(&mut self) {
+        assert!(
+            self.legacy_prepared.is_none(),
+            "only a native Prepared reservation accepts target bytes"
+        );
+        let buffer = self
+            .native_buffer
+            .take()
+            .expect("a native reservation owns one serialization buffer");
+        match buffer {
+            NativeRecordBuffer::Arena {
+                block,
+                exact_record_bytes,
+            } => {
+                assert_eq!(block, self.owner.publication_index(self.token.sequence()));
+                self.owner
+                    .attach_arena_record(self.token, self.mako_timestamp, exact_record_bytes);
+            }
+            owned @ NativeRecordBuffer::Owned(_) => {
+                // SAFETY: required by this method's completion-witness contract.
+                let record = unsafe {
+                    owned.into_record(
+                        &self.owner.native_arena,
+                        self.token.sequence(),
+                        self.mako_timestamp,
+                    )
+                };
+                self.owner
+                    .attach_record(self.token, QueuedCommitRecord::Native(record));
+            }
+            NativeRecordBuffer::UnboundArena { .. } => {
+                panic!("a bound reservation must own an assigned arena block")
+            }
+        }
+    }
+
     /// Attach the exact bytes initialized by the trusted native serializer.
     /// This is constant-time and allocation-free; decoding is deferred to the
     /// background replay path.
     pub(crate) fn attach_native_record(&mut self, encoded: Vec<u8>) {
         assert!(
-            self.bound.is_none(),
+            self.legacy_prepared.is_none(),
             "a materialized reservation cannot accept native bytes"
         );
+        if let Some(buffer) = self.native_buffer.take() {
+            self.owner.recycle_native_buffer(buffer);
+        }
         let record =
             NativeCommitRecord::from_native(self.token.sequence(), self.mako_timestamp, encoded);
-        assert!(
-            self.record.set(QueuedCommitRecord::Native(record)).is_ok(),
-            "a native record may be attached exactly once"
-        );
+        self.owner
+            .attach_record(self.token, QueuedCommitRecord::Native(record));
     }
 
     /// Publish a successfully committed transaction.
     ///
-    /// A native reservation already has its complete checksummed bytes attached.
+    /// A native reservation already has its complete serialized bytes attached.
     /// The legacy materialized test path finalizes its preallocated record here;
     /// either way the complete record is installed before the slot becomes
     /// Ready. If an earlier bound transaction has not published yet, this call
@@ -1460,11 +4412,16 @@ impl<B: Blobs> BoundReservation<'_, B> {
     /// prefix catches up. An earlier unknown outcome instead retains this
     /// known-committed record as pinned and returns
     /// [`ResolveError::BlockedByPriorUnknown`].
-    pub fn publish(mut self) -> Result<CommitSeq, ResolveError> {
+    pub fn publish(&mut self) -> Result<CommitSeq, ResolveError> {
+        assert_eq!(
+            self.on_drop,
+            DropAction::PinUnknown,
+            "a bound reservation may be resolved only once"
+        );
         self.finalize_once();
         assert!(
-            self.record.get().is_some(),
-            "a bound slot must own a complete record before publication"
+            self.native_buffer.is_none(),
+            "native bytes need an exact completion witness before publication"
         );
         self.owner.resolve(self.token, Resolution::Publish)?;
         self.on_drop = DropAction::Done;
@@ -1476,14 +4433,22 @@ impl<B: Blobs> BoundReservation<'_, B> {
     /// The write-back layer cannot safely skip such a slot. Flushes fail and
     /// new reservations are rejected until the database is reopened and
     /// recovered by a higher-level protocol.
-    pub fn pin_unknown(mut self) -> Result<CommitSeq, ResolveError> {
+    pub fn pin_unknown(&mut self) -> Result<CommitSeq, ResolveError> {
+        assert_eq!(
+            self.on_drop,
+            DropAction::PinUnknown,
+            "a bound reservation may be resolved only once"
+        );
         self.on_drop = DropAction::PinUnknown;
         self.finalize_once();
-        assert!(
-            self.record.get().is_some(),
-            "a bound slot must retain its complete record before pinning"
-        );
-        self.owner.resolve(self.token, Resolution::PinUnknown)?;
+        let native_buffer = self.native_buffer.take();
+        let result = self.owner.resolve(self.token, Resolution::PinUnknown);
+        if let Some(buffer) = native_buffer {
+            // A bound-but-unwritten record has no replayable bytes. Its queue
+            // slot remains pinned, while the unused storage can be reused.
+            self.owner.recycle_native_buffer(buffer);
+        }
+        result?;
         self.on_drop = DropAction::Done;
         Ok(self.token.sequence())
     }
@@ -1491,17 +4456,15 @@ impl<B: Blobs> BoundReservation<'_, B> {
     /// Finalize and retain the exact write set at most once.
     ///
     /// All storage is preallocated. This performs only the deferred checksum
-    /// scan and a `OnceLock` store, so neither publication nor fail-stop
-    /// retention can fail because of allocation.
+    /// scan and moves the record into this reservation, so neither publication
+    /// nor fail-stop retention can fail because of allocation.
     fn finalize_once(&mut self) {
-        let Some(bound) = self.bound.take() else {
+        let Some(mut prepared) = self.legacy_prepared.take() else {
             return;
         };
-        let record = bound.finalize();
-        // Safe consuming transitions provide exactly one BoundCommitRecord.
-        // If an internal misuse somehow finalized the cell first, retaining
-        // that existing complete record is safer than panicking here.
-        let _ = self.record.set(QueuedCommitRecord::Materialized(record));
+        prepared.finalize_in_place(self.token.sequence(), self.mako_timestamp);
+        self.owner
+            .attach_record(self.token, QueuedCommitRecord::Materialized(prepared));
     }
 }
 
@@ -1518,7 +4481,127 @@ impl<B: Blobs> Drop for BoundReservation<'_, B> {
         let _ = catch_unwind(AssertUnwindSafe(|| {
             let _ = self.owner.resolve(self.token, resolution);
         }));
+        if let Some(buffer) = self.native_buffer.take() {
+            let _ = catch_unwind(AssertUnwindSafe(|| {
+                self.owner.recycle_native_buffer(buffer)
+            }));
+        }
         self.on_drop = DropAction::Done;
+    }
+}
+
+/// Records temporarily moved out of their queue slots by the sole consumer.
+///
+/// Moving ownership is the key foreground optimization: queue entries can own
+/// records directly, without one separately allocated `Arc<OnceLock<_>>` per
+/// transaction. The guard also preserves the old panic/retry guarantee. Until
+/// an entire batch is retired, unwinding puts every record back into the exact
+/// dense slot from which it came.
+struct CapturedBatch<'a, B: Blobs> {
+    owner: &'a Writeback<B>,
+    records: Vec<QueuedCommitRecord>,
+    completed: bool,
+}
+
+impl<'a, B: Blobs> CapturedBatch<'a, B> {
+    fn new(owner: &'a Writeback<B>, records: Vec<QueuedCommitRecord>) -> Self {
+        Self {
+            owner,
+            records,
+            completed: false,
+        }
+    }
+
+    fn restore(&mut self) {
+        if self.completed {
+            return;
+        }
+        let mut state = lock_recover(&self.owner.state);
+        for record in self.records.drain(..) {
+            let token = QueueToken::new(record.sequence());
+            let offset = state
+                .queue_offset(token)
+                .expect("an applying slot cannot leave the serialized queue");
+            let slot = &mut state.queue[offset];
+            assert_eq!(slot.state, SlotState::Applying);
+            assert!(slot.record.is_none());
+            slot.record = Some(record);
+            slot.state = SlotState::Ready;
+        }
+        self.completed = true;
+    }
+
+    fn retire(&mut self, materialized: &[crate::record::CommitRecord]) {
+        assert_eq!(self.records.len(), materialized.len());
+        let retired = self.records.len();
+        let mut state = lock_recover(&self.owner.state);
+        // Validate the whole prefix before consuming any captured ownership so
+        // a future invariant panic still leaves Drop able to restore it.
+        assert!(state.queue.len() >= retired);
+        for (current, record) in state.queue.iter().zip(materialized) {
+            assert_eq!(
+                current.sequence,
+                record.sequence(),
+                "serialized consumer changed the captured prefix"
+            );
+            assert_eq!(
+                current.state,
+                SlotState::Applying,
+                "captured slot changed state during backend IO"
+            );
+            assert!(
+                current.record.is_none(),
+                "the consumer must retain ownership until retirement"
+            );
+            assert!(
+                self.owner
+                    .is_record_published(current.sequence, Ordering::Acquire),
+                "captured retirement must retain its exact Ready ring turn"
+            );
+        }
+        for (queued, record) in self.records.drain(..).zip(materialized) {
+            let sequence = queued.sequence();
+            let slot = state
+                .queue
+                .pop_front()
+                .expect("a captured record retains its applying queue slot");
+            assert_eq!(slot.sequence, sequence);
+            state
+                .applied
+                .advance(record.sequence(), record.mako_timestamp());
+            if let Some(recycled) = queued.into_recycled_native() {
+                self.owner.recycle_native_record(recycled);
+            }
+            if !self.owner.single_producer {
+                self.owner.publication_cell(sequence).retire(
+                    self.owner.cold_publication_cell(sequence),
+                    sequence,
+                    self.owner.publication_shift,
+                    self.owner.publication_cells.len(),
+                );
+            }
+        }
+        // Every exact ring turn is FREE before capacity becomes claimable. The
+        // MPMC profile releases its aggregate claims in one cross-core RMW;
+        // the SPSC producer derives capacity from dense tail minus the applied
+        // frontier and therefore deliberately never mutates Occupancy.
+        if !self.owner.single_producer {
+            self.owner.occupied.release_many(retired);
+        } else {
+            // Release only after every record/arena read and cold ownership
+            // recycle above. A producer which Acquires this frontier may now
+            // overwrite the corresponding ring generations.
+            self.owner
+                .applied_frontier
+                .store(state.applied.sequence, Ordering::Release);
+        }
+        self.completed = true;
+    }
+}
+
+impl<B: Blobs> Drop for CapturedBatch<'_, B> {
+    fn drop(&mut self) {
+        self.restore();
     }
 }
 
@@ -1563,17 +4646,109 @@ fn wait_timeout_recover<'a, T>(
 
 #[cfg(test)]
 mod tests {
-    use std::panic::{catch_unwind, AssertUnwindSafe};
+    use std::panic::{AssertUnwindSafe, catch_unwind};
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{mpsc, Arc, Barrier};
+    use std::sync::{Arc, Barrier, mpsc};
     use std::time::Instant;
 
-    use mrx_core::fakes::MemBlobs;
     use mrx_core::BlobOp;
+    use mrx_core::fakes::MemBlobs;
 
     use super::*;
 
     const TABLE: u64 = 1;
+
+    /// Guard the native ACK path against accidentally re-inlining the legacy
+    /// five-vector record state. The old representation was 0x110 bytes and
+    /// generated two 272-byte moves per ordinary cache commit.
+    #[test]
+    fn native_reservation_handles_stay_compact() {
+        const PRE_OPTIMIZATION_BOUND_BYTES: usize = 0x110;
+        let detached = std::mem::size_of::<DetachedPermit<'static, MemBlobs>>();
+        let bound = std::mem::size_of::<BoundReservation<'static, MemBlobs>>();
+        let queued = std::mem::size_of::<QueuedCommitRecord>();
+        let arena_permit = std::mem::size_of::<NativeArenaPermit<'static, MemBlobs>>();
+        let holder_reservation = std::mem::size_of::<NonZeroU64>();
+        eprintln!(
+            "native reservation sizes: bound {PRE_OPTIMIZATION_BOUND_BYTES} -> {bound} bytes; detached={detached}; queued={queued}; arena_permit={arena_permit}; holder_reservation={holder_reservation}"
+        );
+        assert!(
+            bound <= 64,
+            "native bound handle regressed to {bound} bytes"
+        );
+        assert!(
+            detached <= 64,
+            "native detached handle regressed to {detached} bytes"
+        );
+        assert!(
+            queued <= 64,
+            "queued native record regressed to {queued} bytes"
+        );
+        assert_eq!(std::mem::size_of::<PublicationCell>(), 64);
+        assert!(
+            arena_permit <= 40,
+            "trusted arena permit should remain a scalar hot-path handle"
+        );
+        assert_eq!(
+            holder_reservation,
+            std::mem::size_of::<u64>(),
+            "trusted holder reservation must remain one scalar"
+        );
+        assert!(
+            std::mem::size_of::<NativeArenaBoundReservation<'static, MemBlobs>>() <= 64,
+            "trusted arena reservation should fit one cache line"
+        );
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn fused_control_saturates_oversized_record_cap_without_rejecting_queue() {
+        let backend = Arc::new(MemBlobs::new());
+        let mut config = config(2, 0);
+        config.max_record_bytes = u32::MAX as usize + 1;
+        let writeback = Writeback::new_single(backend, 0, config).unwrap();
+        let producer = writeback.single_producer_state();
+        assert_eq!(
+            producer.fused_holder_control().max_record_bytes(),
+            u32::MAX,
+            "every representable native candidate must remain admitted"
+        );
+    }
+
+    #[test]
+    fn healthy_claim_and_bind_do_not_take_the_queue_state_mutex() {
+        let backend = Arc::new(MemBlobs::new());
+        let writeback = Writeback::new(backend, 0, config(2, 0)).unwrap();
+        let state = lock_recover(&writeback.state);
+
+        std::thread::scope(|scope| {
+            let (bound_tx, bound_rx) = mpsc::channel();
+            let (release_tx, release_rx) = mpsc::channel();
+            let producer_writeback = &writeback;
+            let producer = scope.spawn(move || {
+                let mut permit = producer_writeback
+                    .reserve(vec![put(b"fast", b"path")])
+                    .unwrap();
+                let bound = permit.bind(mako_timestamp_of(1)).unwrap();
+                bound_tx.send(bound.sequence()).unwrap();
+                release_rx.recv().unwrap();
+                // Drop pins the unresolved reservation and intentionally runs
+                // only after the test releases `state` below.
+                drop(bound);
+            });
+
+            assert_eq!(
+                bound_rx
+                    .recv_timeout(Duration::from_secs(1))
+                    .expect("healthy reserve+bind blocked on Writeback::state")
+                    .get(),
+                1
+            );
+            drop(state);
+            release_tx.send(()).unwrap();
+            producer.join().unwrap();
+        });
+    }
 
     fn put(key: &[u8], value: &[u8]) -> Mutation {
         Mutation::Put {
@@ -1652,6 +4827,669 @@ mod tests {
         reservation.publish().unwrap()
     }
 
+    fn fill_fast_arena_reservation<B: Blobs>(
+        reservation: &mut NativeArenaBoundReservation<'_, B>,
+        encoded: &[u8],
+    ) {
+        assert_eq!(reservation.exact_record_bytes, encoded.len());
+        // SAFETY: the live bound reservation exclusively owns this exact arena
+        // extent. Copying a complete encoded test record simulates native's
+        // synchronous initialization and exact completion witness.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                encoded.as_ptr(),
+                reservation.target.as_ptr(),
+                encoded.len(),
+            );
+        }
+    }
+
+    fn publish_fast_arena<B: Blobs>(
+        writeback: &Writeback<B>,
+        raw_mako_timestamp: u32,
+        mutations: Vec<Mutation>,
+    ) -> CommitSeq {
+        let exact_record_bytes = record_encoded_len(mutations.clone());
+        let mut permit = writeback
+            .reserve_native_arena_fast(exact_record_bytes)
+            .unwrap()
+            .expect("small test record uses the common arena");
+        // SAFETY: this single-threaded helper is the only queue binder until
+        // the method returns, exactly matching the external gate contract.
+        let mut reservation = unsafe {
+            permit
+                .bind_externally_serialized(mako_timestamp_of(raw_mako_timestamp))
+                .unwrap()
+        };
+        let sequence = reservation.sequence();
+        let encoded = encoded_native_record(sequence.get(), raw_mako_timestamp, mutations);
+        fill_fast_arena_reservation(&mut reservation, &encoded);
+        // SAFETY: the full exact target was initialized immediately above.
+        unsafe { reservation.publish_completed().unwrap() }
+    }
+
+    fn publish_fast_arena_single<B: Blobs>(
+        writeback: &Writeback<B>,
+        producer: &SingleProducerState,
+        raw_mako_timestamp: u32,
+        mutations: Vec<Mutation>,
+    ) -> CommitSeq {
+        let exact_record_bytes = record_encoded_len(mutations.clone());
+        let mut permit = writeback
+            .reserve_native_arena_fast_single(producer, exact_record_bytes)
+            .unwrap()
+            .expect("small test record uses the common arena");
+        // SAFETY: this helper models the unique thread-affine foreground lease
+        // and retains it through target initialization and post-accept bind.
+        let preselected = unsafe { permit.preselected_record_target() };
+        let sequence = preselected.sequence;
+        let encoded = encoded_native_record(sequence.get(), raw_mako_timestamp, mutations);
+        // SAFETY: the live invisible permit uniquely owns this exact arena
+        // extent. Copying the complete encoded record simulates native's
+        // accepted serialization before it returns the timestamp witness.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                encoded.as_ptr(),
+                preselected.target.as_ptr(),
+                encoded.len(),
+            );
+        }
+        // SAFETY: the target and timestamp represent the same simulated native
+        // acceptance, the exact extent is initialized, and the unique producer
+        // exclusion remains live. This exercises the direct frontier protocol
+        // used by the production trusted one-Put path.
+        unsafe {
+            permit
+                .publish_preselected_committed_after_native(
+                    mako_timestamp_of(raw_mako_timestamp),
+                    preselected,
+                )
+                .unwrap()
+        }
+    }
+
+    #[test]
+    fn single_producer_abort_before_bind_reuses_the_unpublished_turn() {
+        let backend = Arc::new(MemBlobs::new());
+        let writeback = Writeback::new_single(backend, 0, config(1, 0)).unwrap();
+        let producer = writeback.single_producer_state();
+        let mutations = vec![put(b"abort", b"before-bind")];
+        let exact_record_bytes = record_encoded_len(mutations.clone());
+
+        let permit = writeback
+            .reserve_native_arena_fast_single(&producer, exact_record_bytes)
+            .unwrap()
+            .unwrap();
+        assert_eq!(writeback.next_bound.load(Ordering::Relaxed), 0);
+        assert_eq!(writeback.occupied.load(), 0);
+        drop(permit);
+        assert_eq!(writeback.next_bound.load(Ordering::Relaxed), 0);
+        assert_eq!(writeback.queue_len(), 0);
+
+        let sequence = publish_fast_arena_single(&writeback, &producer, 1, mutations);
+        assert_eq!(sequence.get(), 1, "an abort must leave no sequence hole");
+        assert_eq!(writeback.highest_acknowledged(), 1);
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::Advanced
+        ));
+        assert_eq!(writeback.applied_sequence(), 1);
+        assert_eq!(writeback.occupied.load(), 0);
+    }
+
+    #[test]
+    fn single_producer_capacity_one_and_three_wrap_exact_turns() {
+        for capacity in [1, 3] {
+            let backend = Arc::new(MemBlobs::new());
+            let writeback = Writeback::new_single(backend, 0, config(capacity, 0)).unwrap();
+            let producer = writeback.single_producer_state();
+            let rounds = u64::try_from(writeback.publication_cells.len())
+                .unwrap()
+                .checked_mul(3)
+                .unwrap();
+
+            for raw_sequence in 1..=rounds {
+                let expected = CommitSeq::new(raw_sequence).unwrap();
+                let turn_before = writeback
+                    .publication_cell(expected)
+                    .turn
+                    .load(Ordering::Relaxed);
+                let key = raw_sequence.to_le_bytes();
+                let sequence = publish_fast_arena_single(
+                    &writeback,
+                    &producer,
+                    raw_sequence as u32,
+                    vec![put(&key, b"value")],
+                );
+                assert_eq!(sequence.get(), raw_sequence);
+                assert_eq!(writeback.highest_acknowledged(), raw_sequence);
+                assert_eq!(
+                    writeback
+                        .publication_cell(sequence)
+                        .turn
+                        .load(Ordering::Relaxed),
+                    turn_before,
+                    "the direct SPSC path must not transfer the legacy turn line"
+                );
+                assert_eq!(
+                    writeback.next_bound.load(Ordering::Relaxed),
+                    0,
+                    "the direct SPSC path owns its producer-local tail"
+                );
+                assert_eq!(writeback.occupied.load(), 0);
+                assert!(matches!(
+                    writeback.process_front(),
+                    ProcessOutcome::Advanced
+                ));
+                assert_eq!(writeback.applied_sequence(), raw_sequence);
+                assert_eq!(
+                    writeback.applied_frontier.load(Ordering::Acquire),
+                    raw_sequence
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn single_producer_direct_batch_publishes_and_retires_dense_frontiers() {
+        let backend = Arc::new(MemBlobs::new());
+        let writeback = Writeback::new_single(
+            Arc::clone(&backend),
+            0,
+            batch_config(3, 3, DEFAULT_MAX_RECORD_BYTES),
+        )
+        .unwrap();
+        let producer = writeback.single_producer_state();
+        let initial_turns = writeback
+            .publication_cells
+            .iter()
+            .map(|cell| cell.turn.load(Ordering::Relaxed))
+            .collect::<Vec<_>>();
+
+        for raw_sequence in 1_u64..=3 {
+            let key = raw_sequence.to_le_bytes();
+            assert_eq!(
+                publish_fast_arena_single(
+                    &writeback,
+                    &producer,
+                    raw_sequence as u32,
+                    vec![put(&key, b"batch")],
+                )
+                .get(),
+                raw_sequence
+            );
+        }
+        assert_eq!(writeback.highest_acknowledged(), 3);
+        assert_eq!(writeback.applied_frontier.load(Ordering::Acquire), 0);
+        assert_eq!(
+            writeback
+                .publication_cells
+                .iter()
+                .map(|cell| cell.turn.load(Ordering::Relaxed))
+                .collect::<Vec<_>>(),
+            initial_turns,
+            "direct publication must leave every legacy turn cache line cold"
+        );
+
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::Advanced
+        ));
+        assert_eq!(writeback.applied_sequence(), 3);
+        assert_eq!(writeback.applied_frontier.load(Ordering::Acquire), 3);
+        assert_eq!(backend.batch_count(), 1);
+        assert_eq!(backend.op_count(), 6, "each record contributes log + data");
+    }
+
+    #[test]
+    fn single_producer_reacquisition_accounts_for_an_unapplied_tail() {
+        let backend = Arc::new(MemBlobs::new());
+        let writeback = Writeback::new_single(backend, 0, config(2, 0)).unwrap();
+        let first_owner = writeback.single_producer_state();
+        assert_eq!(
+            publish_fast_arena_single(&writeback, &first_owner, 1, vec![put(b"first", b"queued")],)
+                .get(),
+            1
+        );
+        assert_eq!(writeback.applied_sequence(), 0);
+        drop(first_owner);
+
+        // A newly acquired lease seeds its producer-local cursor from applied,
+        // not tail. The shared tail therefore still charges the first queued
+        // generation against logical capacity while admitting exactly one more.
+        let second_owner = writeback.single_producer_state();
+        assert_eq!(
+            publish_fast_arena_single(
+                &writeback,
+                &second_owner,
+                2,
+                vec![put(b"second", b"queued")],
+            )
+            .get(),
+            2
+        );
+        assert_eq!(writeback.highest_acknowledged(), 2);
+        assert_eq!(writeback.applied_sequence(), 0);
+        assert_eq!(writeback.occupied.load(), 0);
+
+        for expected in 1..=2 {
+            assert!(matches!(
+                writeback.process_front(),
+                ProcessOutcome::Advanced
+            ));
+            assert_eq!(writeback.applied_sequence(), expected);
+        }
+    }
+
+    #[test]
+    fn single_producer_all_record_paths_share_logical_capacity_accounting() {
+        let backend = Arc::new(MemBlobs::new());
+        let writeback = Writeback::new_single(backend, 0, config(4, 0)).unwrap();
+        let producer = writeback.single_producer_state();
+
+        let mut legacy = writeback
+            .reserve_single(&producer, vec![put(b"legacy", b"one")])
+            .unwrap();
+        let mut legacy = legacy.bind(mako_timestamp_of(1)).unwrap();
+        assert_eq!(legacy.publish().unwrap().get(), 1);
+
+        let small = encoded_native_record(2, 2, vec![put(b"generic-arena", b"two")]);
+        assert!(small.len() <= NATIVE_RECORD_ARENA_BLOCK_BYTES);
+        let mut permit = writeback
+            .reserve_native_single(&producer, small.len())
+            .unwrap();
+        assert!(matches!(
+            permit.native_buffer,
+            Some(NativeRecordBuffer::UnboundArena { .. })
+        ));
+        let mut reservation = permit.bind_native(mako_timestamp_of(2)).unwrap();
+        assert!(matches!(
+            reservation.native_buffer,
+            Some(NativeRecordBuffer::Arena { .. })
+        ));
+        fill_checked_out_native_buffer(&mut reservation, &small);
+        assert_eq!(reservation.publish().unwrap().get(), 2);
+
+        let large_value = vec![b'x'; NATIVE_RECORD_ARENA_BLOCK_BYTES + 64];
+        let oversized_mutations = vec![put(b"oversized", &large_value)];
+        let oversized = encoded_native_record(3, 3, oversized_mutations);
+        assert!(oversized.len() > NATIVE_RECORD_ARENA_BLOCK_BYTES);
+        let mut permit = writeback
+            .reserve_native_single(&producer, oversized.len())
+            .unwrap();
+        let mut reservation = permit.bind_native(mako_timestamp_of(3)).unwrap();
+        assert!(matches!(
+            reservation.native_buffer,
+            Some(NativeRecordBuffer::Owned(_))
+        ));
+        fill_checked_out_native_buffer(&mut reservation, &oversized);
+        assert_eq!(reservation.publish().unwrap().get(), 3);
+
+        let fourth =
+            publish_fast_arena_single(&writeback, &producer, 4, vec![put(b"fast-arena", b"four")]);
+        assert_eq!(fourth.get(), 4);
+        assert_eq!(writeback.highest_acknowledged(), 4);
+        assert_eq!(writeback.occupied.load(), 0);
+
+        for expected in 1..=4 {
+            assert!(matches!(
+                writeback.process_front(),
+                ProcessOutcome::Advanced
+            ));
+            assert_eq!(writeback.applied_sequence(), expected);
+        }
+        assert_eq!(writeback.queue_len(), 0);
+        assert_eq!(writeback.occupied.load(), 0);
+    }
+
+    #[test]
+    fn single_producer_direct_and_cold_records_reuse_one_ring_position() {
+        let backend = Arc::new(MemBlobs::new());
+        let writeback = Writeback::new_single(Arc::clone(&backend), 0, config(1, 0)).unwrap();
+        let producer = writeback.single_producer_state();
+
+        let mut legacy = writeback
+            .reserve_single(&producer, vec![put(b"legacy", b"one")])
+            .unwrap();
+        let mut legacy = legacy.bind(mako_timestamp_of(1)).unwrap();
+        assert_eq!(legacy.publish().unwrap().get(), 1);
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::Advanced
+        ));
+
+        assert_eq!(
+            publish_fast_arena_single(&writeback, &producer, 2, vec![put(b"direct", b"two")],)
+                .get(),
+            2
+        );
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::Advanced
+        ));
+
+        let large_value = vec![b'x'; NATIVE_RECORD_ARENA_BLOCK_BYTES + 64];
+        let oversized = encoded_native_record(3, 3, vec![put(b"oversized", &large_value)]);
+        let mut permit = writeback
+            .reserve_native_single(&producer, oversized.len())
+            .unwrap();
+        let mut reservation = permit.bind_native(mako_timestamp_of(3)).unwrap();
+        fill_checked_out_native_buffer(&mut reservation, &oversized);
+        assert_eq!(reservation.publish().unwrap().get(), 3);
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::Advanced
+        ));
+
+        assert_eq!(
+            publish_fast_arena_single(
+                &writeback,
+                &producer,
+                4,
+                vec![put(b"direct-again", b"four")],
+            )
+            .get(),
+            4
+        );
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::Advanced
+        ));
+
+        assert_eq!(writeback.applied_sequence(), 4);
+        assert_eq!(writeback.applied_frontier.load(Ordering::Acquire), 4);
+        assert_eq!(backend.batch_count(), 4);
+        assert_eq!(backend.op_count(), 8, "each record contributes log + data");
+    }
+
+    #[test]
+    fn single_producer_preserves_unknown_fail_stop() {
+        let backend = Arc::new(MemBlobs::new());
+        let writeback = Writeback::new_single(backend, 0, config(2, 0)).unwrap();
+        let producer = writeback.single_producer_state();
+        let mutations = vec![put(b"unknown", b"value")];
+        let exact_record_bytes = record_encoded_len(mutations.clone());
+        let mut permit = writeback
+            .reserve_native_arena_fast_single(&producer, exact_record_bytes)
+            .unwrap()
+            .unwrap();
+        // SAFETY: this test is the only foreground binder.
+        let mut reservation = unsafe {
+            permit
+                .bind_externally_serialized(mako_timestamp_of(1))
+                .unwrap()
+        };
+        let encoded = encoded_native_record(1, 1, mutations);
+        fill_fast_arena_reservation(&mut reservation, &encoded);
+        // SAFETY: the exact target is fully initialized but visibility is
+        // deliberately classified as unknown.
+        assert_eq!(
+            unsafe { reservation.pin_completed_unknown().unwrap() }.get(),
+            1
+        );
+        assert!(matches!(
+            writeback.reserve_native_arena_fast_single(&producer, exact_record_bytes),
+            Err(ReserveError::UnknownOutcome { sequence }) if sequence.get() == 1
+        ));
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::Pinned(sequence) if sequence.get() == 1
+        ));
+        assert_eq!(writeback.occupied.load(), 0);
+    }
+
+    #[test]
+    fn single_producer_preserves_permanent_record_fail_stop() {
+        let backend = Arc::new(MemBlobs::new());
+        let writeback = Writeback::new_single(backend, 0, config(2, 0)).unwrap();
+        let producer = writeback.single_producer_state();
+        let mutations = vec![put(b"malformed", b"checksum")];
+        let mut encoded = encoded_native_record(1, 1, mutations);
+        *encoded.last_mut().unwrap() ^= 1;
+        let mut permit = writeback
+            .reserve_native_arena_fast_single(&producer, encoded.len())
+            .unwrap()
+            .unwrap();
+        // SAFETY: this test is the only foreground binder.
+        let mut reservation = unsafe {
+            permit
+                .bind_externally_serialized(mako_timestamp_of(1))
+                .unwrap()
+        };
+        fill_fast_arena_reservation(&mut reservation, &encoded);
+        // SAFETY: the exact extent is initialized; corruption is deliberate
+        // and must be detected only by background materialization.
+        unsafe { reservation.publish_completed().unwrap() };
+
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::RecordFailed {
+                sequence,
+                error: RecordError::BadChecksum { .. },
+            } if sequence.get() == 1
+        ));
+        assert!(matches!(
+            writeback.reserve_native_arena_fast_single(&producer, encoded.len()),
+            Err(ReserveError::PermanentRecordFailure {
+                sequence,
+                source: RecordError::BadChecksum { .. },
+            }) if sequence.get() == 1
+        ));
+        assert_eq!(writeback.occupied.load(), 0);
+    }
+
+    #[test]
+    fn single_producer_preserves_sequence_exhaustion() {
+        let backend = Arc::new(MemBlobs::new());
+        let writeback = Writeback::new_single(backend, u64::MAX - 2, config(1, 0)).unwrap();
+        let producer = writeback.single_producer_state();
+        let mutations = vec![put(b"tail", b"value")];
+
+        for (sequence, timestamp) in [(u64::MAX - 1, 1), (u64::MAX, 2)] {
+            assert_eq!(
+                publish_fast_arena_single(&writeback, &producer, timestamp, mutations.clone(),)
+                    .get(),
+                sequence
+            );
+            assert!(matches!(
+                writeback.process_front(),
+                ProcessOutcome::Advanced
+            ));
+        }
+        let exact_record_bytes = record_encoded_len(mutations);
+        assert!(matches!(
+            writeback.reserve_native_arena_fast_single(&producer, exact_record_bytes),
+            Err(ReserveError::SequenceExhausted)
+        ));
+        assert_eq!(writeback.occupied.load(), 0);
+    }
+
+    #[test]
+    fn externally_serialized_arena_bind_wraps_and_reuses_exact_turns() {
+        let backend = Arc::new(MemBlobs::new());
+        let writeback = Writeback::new(Arc::clone(&backend), 0, config(3, 0)).unwrap();
+
+        // Capacity three rounds up to a four-cell turn ring. Twelve records
+        // exercise three complete generations of every cell.
+        for raw_sequence in 1_u64..=12 {
+            let key = raw_sequence.to_le_bytes();
+            let sequence =
+                publish_fast_arena(&writeback, raw_sequence as u32, vec![put(&key, b"value")]);
+            assert_eq!(sequence.get(), raw_sequence);
+            assert!(matches!(
+                writeback.process_front(),
+                ProcessOutcome::Advanced
+            ));
+        }
+        assert_eq!(writeback.applied_sequence(), 12);
+    }
+
+    #[test]
+    fn externally_serialized_arena_binders_assign_unique_dense_sequences() {
+        const PRODUCERS: usize = 16;
+        let backend = Arc::new(MemBlobs::new());
+        let writeback =
+            Arc::new(Writeback::new(Arc::clone(&backend), 0, config(PRODUCERS, 0)).unwrap());
+        let external_gate = Arc::new(Mutex::new(0_u32));
+        let exact_record_bytes = record_encoded_len(vec![put(b"key", b"value")]);
+        let (sequence_tx, sequence_rx) = mpsc::channel();
+
+        std::thread::scope(|scope| {
+            for _ in 0..PRODUCERS {
+                let writeback = Arc::clone(&writeback);
+                let external_gate = Arc::clone(&external_gate);
+                let sequence_tx = sequence_tx.clone();
+                scope.spawn(move || {
+                    let mut permit = writeback
+                        .reserve_native_arena_fast(exact_record_bytes)
+                        .unwrap()
+                        .unwrap();
+                    let (mut reservation, raw_mako_timestamp) = {
+                        let mut next_timestamp = external_gate.lock().unwrap();
+                        *next_timestamp += 1;
+                        let raw_mako_timestamp = *next_timestamp;
+                        // SAFETY: `external_gate` excludes every test binder
+                        // through the complete load/store sequence allocation.
+                        let reservation = unsafe {
+                            permit
+                                .bind_externally_serialized(mako_timestamp_of(raw_mako_timestamp))
+                                .unwrap()
+                        };
+                        (reservation, raw_mako_timestamp)
+                    };
+                    let sequence = reservation.sequence();
+                    let encoded = encoded_native_record(
+                        sequence.get(),
+                        raw_mako_timestamp,
+                        vec![put(b"key", b"value")],
+                    );
+                    fill_fast_arena_reservation(&mut reservation, &encoded);
+                    // SAFETY: native completion is simulated by the exact copy.
+                    unsafe { reservation.publish_completed().unwrap() };
+                    sequence_tx.send(sequence.get()).unwrap();
+                });
+            }
+        });
+        drop(sequence_tx);
+
+        let mut sequences = sequence_rx.into_iter().collect::<Vec<_>>();
+        sequences.sort_unstable();
+        assert_eq!(sequences, (1_u64..=PRODUCERS as u64).collect::<Vec<_>>());
+        for _ in 0..PRODUCERS {
+            assert!(matches!(
+                writeback.process_front(),
+                ProcessOutcome::Advanced
+            ));
+        }
+    }
+
+    #[test]
+    fn external_arena_and_concurrent_general_binders_interoperate() {
+        let backend = Arc::new(MemBlobs::new());
+        let writeback = Writeback::new(backend, 0, config(2, 0)).unwrap();
+        let fast_mutations = vec![put(b"fast", b"one")];
+        let general_mutations = vec![put(b"general", b"two")];
+        let mut fast = writeback
+            .reserve_native_arena_fast(record_encoded_len(fast_mutations.clone()))
+            .unwrap()
+            .unwrap();
+        let mut general = writeback
+            .reserve_native(record_encoded_len(general_mutations.clone()))
+            .unwrap();
+
+        // SAFETY: no other binder executes during this exact external bind.
+        let mut first = unsafe {
+            fast.bind_externally_serialized(mako_timestamp_of(1))
+                .unwrap()
+        };
+        let mut second = general.bind_native(mako_timestamp_of(2)).unwrap();
+        assert_eq!(first.sequence().get(), 1);
+        assert_eq!(second.sequence().get(), 2);
+
+        let first_encoded = encoded_native_record(1, 1, fast_mutations);
+        fill_fast_arena_reservation(&mut first, &first_encoded);
+        let second_encoded = encoded_native_record(2, 2, general_mutations);
+        fill_checked_out_native_buffer(&mut second, &second_encoded);
+        // SAFETY: the exact first target was completely initialized above.
+        unsafe { first.publish_completed().unwrap() };
+        second.publish().unwrap();
+        assert_eq!(writeback.highest_acknowledged(), 2);
+    }
+
+    #[test]
+    fn externally_serialized_arena_bind_preserves_sequence_exhaustion() {
+        let backend = Arc::new(MemBlobs::new());
+        let writeback = Writeback::new(backend, u64::MAX - 2, config(2, 0)).unwrap();
+        let mutations = vec![put(b"tail", b"value")];
+        let exact_record_bytes = record_encoded_len(mutations.clone());
+        let mut first_permit = writeback
+            .reserve_native_arena_fast(exact_record_bytes)
+            .unwrap()
+            .unwrap();
+        // SAFETY: this test calls no other binder concurrently.
+        let mut first = unsafe {
+            first_permit
+                .bind_externally_serialized(mako_timestamp_of(1))
+                .unwrap()
+        };
+        let mut second_permit = writeback
+            .reserve_native_arena_fast(exact_record_bytes)
+            .unwrap()
+            .unwrap();
+        // SAFETY: this test calls no other binder concurrently. This second
+        // bind intentionally exercises the checked near-exhaustion fallback.
+        let mut second = unsafe {
+            second_permit
+                .bind_externally_serialized(mako_timestamp_of(2))
+                .unwrap()
+        };
+        assert_eq!(first.sequence().get(), u64::MAX - 1);
+        assert_eq!(second.sequence().get(), u64::MAX);
+        assert!(matches!(
+            writeback.reserve_native_arena_fast(exact_record_bytes),
+            Err(ReserveError::SequenceExhausted)
+        ));
+
+        let first_encoded = encoded_native_record(u64::MAX - 1, 1, mutations.clone());
+        let second_encoded = encoded_native_record(u64::MAX, 2, mutations);
+        fill_fast_arena_reservation(&mut first, &first_encoded);
+        fill_fast_arena_reservation(&mut second, &second_encoded);
+        // SAFETY: both exact targets were initialized completely above.
+        unsafe { first.publish_completed().unwrap() };
+        unsafe { second.publish_completed().unwrap() };
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::Advanced
+        ));
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::Advanced
+        ));
+        assert!(matches!(
+            writeback.reserve_native_arena_fast(exact_record_bytes),
+            Err(ReserveError::SequenceExhausted)
+        ));
+    }
+
+    fn fill_checked_out_native_buffer<B: Blobs>(
+        reservation: &mut BoundReservation<'_, B>,
+        encoded: &[u8],
+    ) {
+        let buffer = reservation
+            .native_buffer
+            .as_mut()
+            .expect("test native reservation owns a checked-out buffer");
+        assert_eq!(buffer.exact_record_bytes(), encoded.len());
+        let destination = buffer.target(&reservation.owner.native_arena);
+        // SAFETY: the reservation uniquely owns an exact writable extent, and
+        // `encoded` has that same checked length. This simulates native's write
+        // immediately before its exact completion witness.
+        unsafe {
+            std::ptr::copy_nonoverlapping(encoded.as_ptr(), destination.as_ptr(), encoded.len());
+            reservation.attach_written_native_record();
+        }
+    }
+
     struct MaterializationFailureGuard;
 
     impl Drop for MaterializationFailureGuard {
@@ -1704,10 +5542,15 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(1);
         let mut state = lock_recover(&writeback.state);
         loop {
+            writeback.import_bound_locked(&mut state);
             let offset = state
                 .queue_offset(token)
                 .expect("publication slot remains queued while acknowledgement waits");
-            if state.queue[offset].state == SlotState::Ready {
+            if state.queue[offset].state == SlotState::Ready
+                || writeback
+                    .publication_cell(sequence)
+                    .is_published(sequence, writeback.publication_shift)
+            {
                 return;
             }
 
@@ -1723,9 +5566,11 @@ mod tests {
                 let offset = state
                     .queue_offset(token)
                     .expect("timed-out publication slot remains queued");
-                assert_eq!(
-                    state.queue[offset].state,
-                    SlotState::Ready,
+                assert!(
+                    state.queue[offset].state == SlotState::Ready
+                        || writeback
+                            .publication_cell(sequence)
+                            .is_published(sequence, writeback.publication_shift),
                     "publication did not make its slot Ready within one second"
                 );
                 return;
@@ -1781,6 +5626,142 @@ mod tests {
         fn for_each_key(&self, f: &mut dyn FnMut(&[u8])) -> Result<(), BlobError> {
             self.inner.for_each_key(f)
         }
+    }
+
+    #[test]
+    fn native_arena_exposes_disjoint_concurrent_block_targets() {
+        let arena = NativeRecordArena::new(2, NATIVE_RECORD_ARENA_BLOCK_BYTES).unwrap();
+        // SAFETY: this test exclusively owns both block tokens, the targets
+        // have the exact configured extent, and block zero and one are
+        // disjoint. Keeping both pointers live exercises the aliasing contract
+        // under Miri as well as ordinary test execution.
+        let (first, second) = unsafe {
+            (
+                arena.target(0, NATIVE_RECORD_ARENA_BLOCK_BYTES),
+                arena.target(1, NATIVE_RECORD_ARENA_BLOCK_BYTES),
+            )
+        };
+        unsafe {
+            std::ptr::write_bytes(first.as_ptr(), 0x11, NATIVE_RECORD_ARENA_BLOCK_BYTES);
+            std::ptr::write_bytes(second.as_ptr(), 0x22, NATIVE_RECORD_ARENA_BLOCK_BYTES);
+            assert_eq!(first.as_ptr().read(), 0x11);
+            assert_eq!(second.as_ptr().read(), 0x22);
+        }
+    }
+
+    #[test]
+    fn small_native_arena_survives_backend_retry_and_reuses_the_same_block() {
+        let backend = Arc::new(MemBlobs::new());
+        let writeback = Writeback::new(Arc::clone(&backend), 0, config(4, 0)).unwrap();
+        let encoded = encoded_native_record(1, 201, vec![put(b"small", b"value")]);
+        assert!(encoded.len() <= NATIVE_RECORD_ARENA_BLOCK_BYTES);
+
+        let mut permit = writeback.reserve_native(encoded.len()).unwrap();
+        assert!(matches!(
+            permit.native_buffer.as_ref(),
+            Some(&NativeRecordBuffer::UnboundArena { .. })
+        ));
+        assert_eq!(writeback.free_len(), 3);
+        let mut reservation = permit.bind_native(mako_timestamp_of(201)).unwrap();
+        let first_block = match reservation.native_buffer.as_ref().unwrap() {
+            NativeRecordBuffer::Arena { block, .. } => *block,
+            NativeRecordBuffer::UnboundArena { .. } | NativeRecordBuffer::Owned(_) => {
+                panic!("small record missed its sequence-indexed arena block")
+            }
+        };
+        assert_eq!(
+            first_block,
+            writeback.publication_index(reservation.sequence())
+        );
+        fill_checked_out_native_buffer(&mut reservation, &encoded);
+        reservation.publish().unwrap();
+
+        backend.fail_next_writes(1);
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::BackendFailed { sequence, .. } if sequence.get() == 1
+        ));
+        assert_eq!(
+            writeback.free_len(),
+            3,
+            "a retryable backend failure must retain the initialized block"
+        );
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::Advanced
+        ));
+        assert_eq!(writeback.free_len(), 4);
+    }
+
+    #[test]
+    fn unbound_and_bound_unwritten_native_buffers_are_recycled() {
+        let backend = Arc::new(MemBlobs::new());
+        let writeback = Writeback::new(backend, 0, config(2, 0)).unwrap();
+        let encoded = encoded_native_record(1, 202, vec![put(b"key", b"value")]);
+
+        let permit = writeback.reserve_native(encoded.len()).unwrap();
+        assert_eq!(writeback.free_len(), 1);
+        drop(permit);
+        assert_eq!(writeback.free_len(), 2);
+
+        let mut permit = writeback.reserve_native(encoded.len()).unwrap();
+        let mut reservation = permit.bind_native(mako_timestamp_of(202)).unwrap();
+        reservation.pin_unknown().unwrap();
+        let state = lock_recover(&writeback.state);
+        assert_eq!(
+            writeback.free_len(),
+            1,
+            "the unused block is recycled but its pinned capacity stays bound"
+        );
+        assert_eq!(state.first_unknown.map(CommitSeq::get), Some(1));
+        drop(state);
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::Pinned(sequence) if sequence.get() == 1
+        ));
+    }
+
+    #[test]
+    fn oversized_native_vector_is_recycled_without_moving_its_allocation() {
+        let backend = Arc::new(MemBlobs::new());
+        let writeback = Writeback::new(backend, 0, config(2, 0)).unwrap();
+        let large_value = vec![b'x'; NATIVE_RECORD_ARENA_BLOCK_BYTES + 64];
+        let encoded = encoded_native_record(1, 203, vec![put(b"large", &large_value)]);
+        assert!(encoded.len() > NATIVE_RECORD_ARENA_BLOCK_BYTES);
+
+        let mut permit = writeback.reserve_native(encoded.len()).unwrap();
+        let first_pointer = match permit.native_buffer.as_ref().unwrap() {
+            NativeRecordBuffer::Owned(bytes) => bytes.as_ptr(),
+            NativeRecordBuffer::UnboundArena { .. } | NativeRecordBuffer::Arena { .. } => {
+                panic!("oversized record entered fixed arena")
+            }
+        };
+        let mut reservation = permit.bind_native(mako_timestamp_of(203)).unwrap();
+        fill_checked_out_native_buffer(&mut reservation, &encoded);
+        reservation.publish().unwrap();
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::Advanced
+        ));
+        assert_eq!(writeback.free_len(), 2);
+
+        let mut saw_reused_pointer = false;
+        for _ in 0..writeback.config.capacity {
+            let permit = writeback.reserve_native(encoded.len()).unwrap();
+            let reused_pointer = match permit.native_buffer.as_ref().unwrap() {
+                NativeRecordBuffer::Owned(bytes) => bytes.as_ptr(),
+                NativeRecordBuffer::UnboundArena { .. } | NativeRecordBuffer::Arena { .. } => {
+                    panic!("oversized record entered fixed arena")
+                }
+            };
+            saw_reused_pointer |= reused_pointer == first_pointer;
+            drop(permit);
+        }
+        assert!(
+            saw_reused_pointer,
+            "producer hint must revisit every recycled oversized allocation"
+        );
+        assert_eq!(writeback.free_len(), 2);
     }
 
     #[test]
@@ -1926,9 +5907,9 @@ mod tests {
         let backend = Arc::new(MemBlobs::new());
         let writeback =
             Writeback::new(Arc::clone(&backend), 0, batch_config(3, 3, usize::MAX)).unwrap();
-        let first = bind(writeback.reserve(vec![put(b"a", b"one")]).unwrap(), 151);
-        let second = bind(writeback.reserve(vec![put(b"b", b"two")]).unwrap(), 152);
-        let third = bind(writeback.reserve(vec![put(b"c", b"three")]).unwrap(), 153);
+        let mut first = bind(writeback.reserve(vec![put(b"a", b"one")]).unwrap(), 151);
+        let mut second = bind(writeback.reserve(vec![put(b"b", b"two")]).unwrap(), 152);
+        let mut third = bind(writeback.reserve(vec![put(b"c", b"three")]).unwrap(), 153);
         first.publish().unwrap();
         std::thread::scope(|scope| {
             let (published_tx, published_rx) = mpsc::channel();
@@ -2008,8 +5989,8 @@ mod tests {
         let backend = Arc::new(BlockingBlobs::default());
         let writeback =
             Writeback::new(Arc::clone(&backend), 0, batch_config(2, 2, usize::MAX)).unwrap();
-        let first = bind(writeback.reserve(vec![put(b"a", b"one")]).unwrap(), 171);
-        let second = bind(writeback.reserve(vec![put(b"b", b"two")]).unwrap(), 172);
+        let mut first = bind(writeback.reserve(vec![put(b"a", b"one")]).unwrap(), 171);
+        let mut second = bind(writeback.reserve(vec![put(b"b", b"two")]).unwrap(), 172);
         first.publish().unwrap();
 
         std::thread::scope(|scope| {
@@ -2158,7 +6139,7 @@ mod tests {
         assert_eq!(writeback.highest_acknowledged(), 9);
         drop(aborted);
 
-        let committed = bind(writeback.reserve(vec![put(b"b", b"two")]).unwrap(), 100);
+        let mut committed = bind(writeback.reserve(vec![put(b"b", b"two")]).unwrap(), 100);
         assert_eq!(committed.sequence().get(), 10, "abort left no sequence gap");
         committed.publish().unwrap();
         assert_eq!(writeback.wait_applied().unwrap(), 10);
@@ -2233,7 +6214,7 @@ mod tests {
             Err(ReserveError::PermanentRecordFailure { sequence, source })
                 if sequence.get() == 1 && source == latched_source
         ));
-        assert!(detached_before_failure.owns_capacity);
+        assert!(detached_before_failure.owns_claim);
     }
 
     #[test]
@@ -2315,15 +6296,17 @@ mod tests {
         let backend = Arc::new(MemBlobs::new());
         let writeback = Arc::new(Writeback::new(backend, 0, config(2, 0)).unwrap());
         let first = bind(writeback.reserve(vec![put(b"front", b"one")]).unwrap(), 193);
-        let second = bind(writeback.reserve(vec![put(b"later", b"two")]).unwrap(), 194);
+        let mut second = bind(writeback.reserve(vec![put(b"later", b"two")]).unwrap(), 194);
 
         std::thread::scope(|scope| {
             let (published_tx, published_rx) = mpsc::channel();
             let publisher = scope.spawn(move || published_tx.send(second.publish()).unwrap());
             wait_until_ready(&writeback, 2);
-            assert!(published_rx
-                .recv_timeout(Duration::from_millis(30))
-                .is_err());
+            assert!(
+                published_rx
+                    .recv_timeout(Duration::from_millis(30))
+                    .is_err()
+            );
 
             assert!(matches!(
                 writeback.record_failure_outcome(
@@ -2433,8 +6416,8 @@ mod tests {
         let reserved_first = writeback.reserve(vec![put(b"a", b"one")]).unwrap();
         let reserved_second = writeback.reserve(vec![put(b"b", b"two")]).unwrap();
 
-        let bound_first = bind(reserved_second, 202);
-        let bound_second = bind(reserved_first, 101);
+        let mut bound_first = bind(reserved_second, 202);
+        let mut bound_second = bind(reserved_first, 101);
         assert_eq!(bound_first.sequence().get(), 1);
         assert_eq!(bound_second.sequence().get(), 2);
 
@@ -2480,15 +6463,16 @@ mod tests {
     fn queue_tokens_track_current_vecdeque_offsets_after_front_retirement() {
         let backend = Arc::new(MemBlobs::new());
         let writeback = Writeback::new(backend, 0, config(4, 0)).unwrap();
-        let first = bind(writeback.reserve(vec![put(b"a", b"one")]).unwrap(), 203);
-        let second = bind(writeback.reserve(vec![put(b"b", b"two")]).unwrap(), 204);
-        let third = bind(writeback.reserve(vec![put(b"c", b"three")]).unwrap(), 205);
+        let mut first = bind(writeback.reserve(vec![put(b"a", b"one")]).unwrap(), 203);
+        let mut second = bind(writeback.reserve(vec![put(b"b", b"two")]).unwrap(), 204);
+        let mut third = bind(writeback.reserve(vec![put(b"c", b"three")]).unwrap(), 205);
         let first_token = first.token;
         let second_token = second.token;
         let third_token = third.token;
 
         {
-            let state = lock_recover(&writeback.state);
+            let mut state = lock_recover(&writeback.state);
+            writeback.import_bound_locked(&mut state);
             assert_eq!(state.queue_offset(first_token), Some(0));
             assert_eq!(state.queue_offset(second_token), Some(1));
             assert_eq!(state.queue_offset(third_token), Some(2));
@@ -2534,11 +6518,37 @@ mod tests {
     }
 
     #[test]
+    fn non_power_of_two_capacity_reuses_publication_ring_without_aliasing() {
+        let backend = Arc::new(MemBlobs::new());
+        let writeback = Writeback::new(Arc::clone(&backend), 0, config(3, 0)).unwrap();
+
+        for raw_sequence in 1_u64..=12 {
+            assert_eq!(
+                publish(
+                    &writeback,
+                    vec![put(b"ring", &raw_sequence.to_le_bytes())],
+                    300 + raw_sequence as u32,
+                )
+                .get(),
+                raw_sequence
+            );
+            assert!(matches!(
+                writeback.process_front(),
+                ProcessOutcome::Advanced
+            ));
+        }
+
+        assert_eq!(writeback.highest_acknowledged(), 12);
+        assert_eq!(writeback.applied_sequence(), 12);
+        assert_eq!(backend.batch_count(), 12);
+    }
+
+    #[test]
     fn prepared_hole_blocks_later_ready_transaction_and_acknowledgement() {
         let backend = Arc::new(MemBlobs::new());
         let writeback = Writeback::new(Arc::clone(&backend), 0, config(4, 0)).unwrap();
-        let first = bind(writeback.reserve(vec![put(b"a", b"one")]).unwrap(), 21);
-        let second = bind(writeback.reserve(vec![put(b"b", b"two")]).unwrap(), 22);
+        let mut first = bind(writeback.reserve(vec![put(b"a", b"one")]).unwrap(), 21);
+        let mut second = bind(writeback.reserve(vec![put(b"b", b"two")]).unwrap(), 22);
         std::thread::scope(|scope| {
             let (published_tx, published_rx) = mpsc::channel();
             let publisher = scope.spawn(move || published_tx.send(second.publish()).unwrap());
@@ -2572,7 +6582,7 @@ mod tests {
     fn bind_and_publish_make_the_prepared_to_ready_transition_explicit() {
         let backend = Arc::new(MemBlobs::new());
         let writeback = Writeback::new(Arc::clone(&backend), 0, config(1, 0)).unwrap();
-        let bound = bind(
+        let mut bound = bind(
             writeback
                 .reserve(vec![put(b"ready-transition", b"value")])
                 .unwrap(),
@@ -2580,27 +6590,30 @@ mod tests {
         );
 
         {
-            let state = lock_recover(&writeback.state);
+            let mut state = lock_recover(&writeback.state);
+            writeback.import_bound_locked(&mut state);
             let slot = state.queue.front().expect("bind creates one slot");
             assert_eq!(slot.sequence.get(), 1);
             assert_eq!(slot.state, SlotState::Prepared { pinned: false });
             assert!(
-                slot.record.get().is_none(),
+                slot.record.is_none(),
                 "bind must not expose an unfinalized record as Ready"
             );
-            assert_eq!(state.highest_acknowledged, 0);
+            assert_eq!(writeback.highest_acknowledged(), 0);
         }
 
         assert_eq!(bound.publish().unwrap().get(), 1);
         {
-            let state = lock_recover(&writeback.state);
+            let mut state = lock_recover(&writeback.state);
+            writeback.import_bound_locked(&mut state);
+            assert!(writeback.harvest_published_slot_locked(&mut state, 0));
             let slot = state.queue.front().expect("published slot remains queued");
             assert_eq!(slot.state, SlotState::Ready);
             assert!(
-                slot.record.get().is_some(),
+                slot.record.is_some(),
                 "publication must finalize the record before Ready"
             );
-            assert_eq!(state.highest_acknowledged, 1);
+            assert_eq!(writeback.highest_acknowledged(), 1);
         }
 
         assert!(matches!(
@@ -2615,9 +6628,9 @@ mod tests {
     fn out_of_order_publications_wait_for_one_dense_acknowledgement_prefix() {
         let backend = Arc::new(MemBlobs::new());
         let writeback = Writeback::new(Arc::clone(&backend), 0, config(4, 0)).unwrap();
-        let first = bind(writeback.reserve(vec![put(b"a", b"one")]).unwrap(), 31);
-        let second = bind(writeback.reserve(vec![put(b"b", b"two")]).unwrap(), 32);
-        let third = bind(writeback.reserve(vec![put(b"c", b"three")]).unwrap(), 33);
+        let mut first = bind(writeback.reserve(vec![put(b"a", b"one")]).unwrap(), 31);
+        let mut second = bind(writeback.reserve(vec![put(b"b", b"two")]).unwrap(), 32);
+        let mut third = bind(writeback.reserve(vec![put(b"c", b"three")]).unwrap(), 33);
 
         std::thread::scope(|scope| {
             let (second_tx, second_rx) = mpsc::channel();
@@ -2666,11 +6679,32 @@ mod tests {
     }
 
     #[test]
+    fn later_unknown_does_not_block_acknowledging_an_earlier_delayed_publication() {
+        let backend = Arc::new(MemBlobs::new());
+        let writeback = Writeback::new(Arc::clone(&backend), 0, config(4, 0)).unwrap();
+        let mut first = bind(writeback.reserve(vec![put(b"a", b"one")]).unwrap(), 34);
+        let mut second = bind(writeback.reserve(vec![put(b"b", b"two")]).unwrap(), 35);
+
+        second.pin_unknown().unwrap();
+        assert_eq!(first.publish().unwrap().get(), 1);
+        assert_eq!(writeback.highest_acknowledged(), 1);
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::Advanced
+        ));
+        assert_eq!(writeback.applied_sequence(), 1);
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::Pinned(sequence) if sequence.get() == 2
+        ));
+    }
+
+    #[test]
     fn unknown_outcome_pins_queue_and_rejects_new_reservations() {
         let backend = Arc::new(MemBlobs::new());
         let writeback = Writeback::new(backend, 0, config(4, 0)).unwrap();
-        let unknown = bind(writeback.reserve(vec![put(b"a", b"one")]).unwrap(), 41);
-        let later = bind(writeback.reserve(vec![put(b"b", b"two")]).unwrap(), 42);
+        let mut unknown = bind(writeback.reserve(vec![put(b"a", b"one")]).unwrap(), 41);
+        let mut later = bind(writeback.reserve(vec![put(b"b", b"two")]).unwrap(), 42);
         unknown.pin_unknown().unwrap();
         assert!(matches!(
             later.publish(),
@@ -2706,7 +6740,7 @@ mod tests {
                 "ambiguous prefix and its known-committed suffix stay pinned"
             );
             assert!(
-                slot.record.get().is_some(),
+                slot.record.is_some(),
                 "every pinned slot retains its finalized write set"
             );
         }
@@ -2729,7 +6763,7 @@ mod tests {
         assert!(matches!(slot.state, SlotState::Prepared { pinned: true }));
         let record = slot
             .record
-            .get()
+            .as_ref()
             .expect("Drop finalized and retained the ambiguous write set");
         assert_eq!(record.mako_timestamp(), mako_timestamp_of(43));
     }
@@ -2750,11 +6784,7 @@ mod tests {
             detached_before_unknown.prepared.is_some(),
             "hook-time rejection retains the fully encoded record"
         );
-        assert!(
-            detached_before_unknown.record.is_some(),
-            "hook-time rejection retains the preallocated publication cell"
-        );
-        assert!(detached_before_unknown.owns_capacity);
+        assert!(detached_before_unknown.owns_claim);
         assert_eq!(
             writeback.detached_len(),
             1,
@@ -2774,8 +6804,8 @@ mod tests {
     fn wait_applied_covers_safe_acknowledged_prefix_before_later_unknown() {
         let backend = Arc::new(MemBlobs::new());
         let writeback = Writeback::new(Arc::clone(&backend), 0, config(4, 0)).unwrap();
-        let acknowledged = bind(writeback.reserve(vec![put(b"a", b"one")]).unwrap(), 51);
-        let later_unknown = bind(writeback.reserve(vec![put(b"b", b"two")]).unwrap(), 52);
+        let mut acknowledged = bind(writeback.reserve(vec![put(b"a", b"one")]).unwrap(), 51);
+        let mut later_unknown = bind(writeback.reserve(vec![put(b"b", b"two")]).unwrap(), 52);
         later_unknown.pin_unknown().unwrap();
         // A later ambiguity must not prevent acknowledgement and application of
         // an earlier safe prefix whose native outcome is known.
@@ -2796,7 +6826,7 @@ mod tests {
     fn unknown_outcome_wakes_a_backpressured_reserver() {
         let backend = Arc::new(MemBlobs::new());
         let writeback = Arc::new(Writeback::new(backend, 0, config(1, 0)).unwrap());
-        let first = bind(writeback.reserve(vec![put(b"a", b"one")]).unwrap(), 61);
+        let mut first = bind(writeback.reserve(vec![put(b"a", b"one")]).unwrap(), 61);
 
         let (result_tx, result_rx) = mpsc::channel();
         let producer_writeback = Arc::clone(&writeback);
@@ -2825,7 +6855,7 @@ mod tests {
             .unwrap()
             .publish()
             .unwrap();
-        let still_prepared = bind(writeback.reserve(vec![put(b"b", b"two")]).unwrap(), 72);
+        let mut still_prepared = bind(writeback.reserve(vec![put(b"b", b"two")]).unwrap(), 72);
 
         assert_eq!(writeback.highest_acknowledged(), 41);
         assert_eq!(writeback.wait_applied().unwrap(), 41);
@@ -2862,11 +6892,98 @@ mod tests {
     }
 
     #[test]
+    fn explicit_apply_progress_waiter_remains_notification_driven() {
+        let backend = Arc::new(MemBlobs::new());
+        let writeback = Arc::new(Writeback::new(backend, 0, config(1, 0)).unwrap());
+        let mut pending = bind(
+            writeback
+                .reserve(vec![put(b"explicit", b"barrier")])
+                .unwrap(),
+            730,
+        );
+
+        let (returned_tx, returned_rx) = mpsc::channel();
+        let waiter_writeback = Arc::clone(&writeback);
+        let waiter = std::thread::spawn(move || {
+            waiter_writeback.wait_for_apply_progress(1);
+            returned_tx.send(()).unwrap();
+        });
+
+        let registration_deadline = Instant::now() + Duration::from_secs(1);
+        while writeback.activity_waiter_count() == 0 {
+            assert!(
+                Instant::now() < registration_deadline,
+                "explicit apply waiter did not register"
+            );
+            std::thread::yield_now();
+        }
+        pending.publish().unwrap();
+        returned_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("publication did not wake the explicit apply waiter");
+        waiter.join().unwrap();
+        assert_eq!(writeback.activity_waiter_count(), 0);
+    }
+
+    #[test]
+    fn healthy_publication_uses_the_registered_activity_waiter_handshake() {
+        let backend = Arc::new(MemBlobs::new());
+        let writeback = Arc::new(Writeback::new(backend, 0, config(2, 0)).unwrap());
+
+        // With no waiter registered, publication deliberately skips the
+        // condition variable. A waiter entering afterward must observe the
+        // atomic publication during its post-registration predicate recheck.
+        let mut first = bind(
+            writeback.reserve(vec![put(b"before", b"wait")]).unwrap(),
+            731,
+        );
+        first.publish().unwrap();
+        assert_eq!(writeback.activity_waiters.load(Ordering::SeqCst), 0);
+        let started = Instant::now();
+        writeback.wait_for_activity(Duration::from_secs(1));
+        assert!(
+            started.elapsed() < Duration::from_millis(100),
+            "post-registration recheck slept after an earlier publication"
+        );
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::Advanced
+        ));
+
+        // Conversely, a publisher racing after registration must take the
+        // guarded notification path and wake the explicit waiter promptly.
+        let mut second = bind(
+            writeback.reserve(vec![put(b"after", b"wait")]).unwrap(),
+            732,
+        );
+        let (returned_tx, returned_rx) = mpsc::channel();
+        let waiter_writeback = Arc::clone(&writeback);
+        let waiter = std::thread::spawn(move || {
+            waiter_writeback.wait_for_activity(Duration::from_secs(10));
+            returned_tx.send(()).unwrap();
+        });
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while writeback.activity_waiters.load(Ordering::SeqCst) == 0 {
+            assert!(
+                Instant::now() < deadline,
+                "activity waiter did not register"
+            );
+            std::thread::yield_now();
+        }
+        second.publish().unwrap();
+        returned_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("registered activity waiter missed healthy publication");
+        waiter.join().unwrap();
+        assert_eq!(writeback.activity_waiters.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
     fn publishing_a_later_slot_does_not_wake_a_waiter_blocked_on_the_front() {
         let backend = Arc::new(MemBlobs::new());
         let writeback = Arc::new(Writeback::new(backend, 0, config(2, 0)).unwrap());
-        let first = bind(writeback.reserve(vec![put(b"front", b"one")]).unwrap(), 74);
-        let second = bind(writeback.reserve(vec![put(b"later", b"two")]).unwrap(), 75);
+        let mut first = bind(writeback.reserve(vec![put(b"front", b"one")]).unwrap(), 74);
+        let mut second = bind(writeback.reserve(vec![put(b"later", b"two")]).unwrap(), 75);
 
         std::thread::scope(|scope| {
             let (started_tx, started_rx) = mpsc::channel();
@@ -2878,6 +6995,14 @@ mod tests {
                 returned_tx.send(()).unwrap();
             });
             started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(1);
+            while writeback.activity_waiters.load(Ordering::SeqCst) == 0 {
+                assert!(
+                    Instant::now() < deadline,
+                    "apply-progress waiter did not register"
+                );
+                std::thread::yield_now();
+            }
 
             let (published_tx, published_rx) = mpsc::channel();
             let publisher = scope.spawn(move || published_tx.send(second.publish()).unwrap());
@@ -2904,6 +7029,7 @@ mod tests {
             publisher.join().unwrap();
             waiter.join().unwrap();
         });
+        assert_eq!(writeback.activity_waiters.load(Ordering::SeqCst), 0);
         assert_eq!(writeback.wait_applied().unwrap(), 2);
     }
 
@@ -2963,6 +7089,22 @@ mod tests {
     }
 
     #[test]
+    fn near_exhaustion_counts_every_occupied_sequence_obligation() {
+        let backend = Arc::new(MemBlobs::new());
+        let writeback = Writeback::new(backend, u64::MAX - 1, config(2, 0)).unwrap();
+        assert!(writeback.occupied.try_claim(writeback.config.capacity));
+        assert!(writeback.occupied.try_claim(writeback.config.capacity));
+        let state = lock_recover(&writeback.state);
+
+        // There is only one sequence left, so two Detached obligations cannot
+        // both be admitted even before either one begins binding.
+        assert!(!writeback.claimed_sequence_available_locked(&state));
+        writeback.occupied.release();
+        assert!(writeback.claimed_sequence_available_locked(&state));
+        writeback.occupied.release();
+    }
+
+    #[test]
     fn binding_the_final_sequence_wakes_every_sequence_space_waiter() {
         let backend = Arc::new(MemBlobs::new());
         let writeback = Arc::new(
@@ -2992,7 +7134,7 @@ mod tests {
         start.wait();
         assert!(result_rx.recv_timeout(Duration::from_millis(30)).is_err());
 
-        let final_reservation = bind(final_permit, 82);
+        let mut final_reservation = bind(final_permit, 82);
         assert_eq!(final_reservation.sequence().get(), u64::MAX);
         for _ in 0..2 {
             assert!(
@@ -3175,7 +7317,7 @@ mod tests {
     fn later_bind_does_not_wait_for_front_backend_io() {
         let backend = Arc::new(BlockingBlobs::default());
         let writeback = Writeback::new(Arc::clone(&backend), 0, config(4, 0)).unwrap();
-        let first = bind(writeback.reserve(vec![put(b"a", b"one")]).unwrap(), 91);
+        let mut first = bind(writeback.reserve(vec![put(b"a", b"one")]).unwrap(), 91);
         let second = writeback.reserve(vec![put(b"b", b"two")]).unwrap();
         first.publish().unwrap();
 
@@ -3185,7 +7327,7 @@ mod tests {
 
             let (bound_tx, bound_rx) = mpsc::channel();
             let binder = scope.spawn(move || {
-                let second = bind(second, 92);
+                let mut second = bind(second, 92);
                 bound_tx.send(second.sequence()).unwrap();
                 second.publish().unwrap();
             });

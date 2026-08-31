@@ -14,8 +14,8 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Barrier;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use mrx::{Db, Options, WriteBatch};
 
@@ -160,8 +160,7 @@ fn iteration_covers_the_whole_keyspace() {
         db.put(format!("k{i:04}").as_bytes(), format!("v{i}").as_bytes())
             .expect("put");
     }
-    let seen: Vec<(Vec<u8>, Vec<u8>)> =
-        db.iter(b"").collect::<Result<_, _>>().expect("iterate");
+    let seen: Vec<(Vec<u8>, Vec<u8>)> = db.iter(b"").collect::<Result<_, _>>().expect("iterate");
     assert_eq!(seen.len(), 1000);
     assert!(seen.windows(2).all(|w| w[0].0 < w[1].0), "must be ordered");
     assert_eq!(seen[0].1, b"v0".to_vec());
@@ -184,10 +183,7 @@ fn iteration_skips_deleted_keys_without_ending_early() {
     for i in 40..80 {
         db.delete(format!("k{i:03}").as_bytes()).expect("delete");
     }
-    let seen: Vec<Vec<u8>> = db
-        .iter(b"")
-        .map(|r| r.expect("iterate").0)
-        .collect();
+    let seen: Vec<Vec<u8>> = db.iter(b"").map(|r| r.expect("iterate").0).collect();
     assert_eq!(seen.len(), 160, "an all-deleted chunk ended the walk early");
     assert!(!seen.iter().any(|k| k.starts_with(b"k04")));
     assert!(seen.iter().any(|k| k.starts_with(b"k08")));
@@ -308,7 +304,10 @@ fn batches_apply_in_order() {
     let s = Scratch::new("batch");
     let db = open(&s);
     let mut b = WriteBatch::new();
-    b.put(b"a", b"1").put(b"b", b"2").delete(b"a").put(b"c", b"3");
+    b.put(b"a", b"1")
+        .put(b"b", b"2")
+        .delete(b"a")
+        .put(b"c", b"3");
     assert_eq!(b.len(), 4);
     db.write(b).expect("write");
     assert_eq!(db.get(b"a").expect("get"), None, "later delete must win");

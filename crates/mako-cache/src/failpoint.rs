@@ -4,8 +4,8 @@ use std::cell::Cell;
 use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Stable names for deterministic process-crash matrices.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

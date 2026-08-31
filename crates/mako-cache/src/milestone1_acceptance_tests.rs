@@ -7,13 +7,13 @@
 use std::env;
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{mpsc, Arc, Barrier, Condvar, Mutex};
+use std::sync::{Arc, Barrier, Condvar, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 use mrx_core::fakes::MemBlobs;
 use mrx_core::{BlobError, BlobOp, Blobs};
 
-use crate::record::{BackendKey, CommitSeq, Mutation, PreparedCommitRecord, DEFAULT_TABLE_ID};
+use crate::record::{BackendKey, CommitSeq, DEFAULT_TABLE_ID, Mutation, PreparedCommitRecord};
 use crate::{Cache, CacheOptions, Error, LocalError, MakoTimestamp, WritebackConfig};
 
 const WAIT_LIMIT: Duration = Duration::from_secs(5);
@@ -155,9 +155,10 @@ fn bounded_writeback_backpressures_sustained_concurrent_writers_then_recovers() 
         let mut seed = cache.transaction().expect("begin overload seed");
         for transaction in 0..COMMITS_PER_WORKER {
             let key = format!("milestone1/overload/{worker:02}/{transaction:02}");
-            assert!(seed
-                .put(key.as_bytes(), b"seed")
-                .expect("stage overload seed"));
+            assert!(
+                seed.put(key.as_bytes(), b"seed")
+                    .expect("stage overload seed")
+            );
         }
         seed.commit().expect("commit overload seed");
     }
@@ -182,9 +183,11 @@ fn bounded_writeback_backpressures_sustained_concurrent_writers_then_recovers() 
                 let key = format!("milestone1/overload/{worker:02}/{transaction:02}");
                 let value = format!("value-{worker:02}-{transaction:02}");
                 let mut cache_transaction = cache.transaction().expect("begin overload commit");
-                assert!(!cache_transaction
-                    .put(key.as_bytes(), value.as_bytes())
-                    .expect("stage existing disjoint overload write"));
+                assert!(
+                    !cache_transaction
+                        .put(key.as_bytes(), value.as_bytes())
+                        .expect("stage existing disjoint overload write")
+                );
                 if transaction == 0 {
                     first_commit_ready.wait();
                 }

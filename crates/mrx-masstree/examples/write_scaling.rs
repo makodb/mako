@@ -114,8 +114,8 @@
 //! number. Default here is 0, meaning all-distinct; pass the bench's
 //! 200000 to match it.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 /// CPU seconds this process has burned, from /proc/self/stat.
@@ -131,11 +131,15 @@ fn cpu_secs() -> f64 {
     let Ok(stat) = std::fs::read_to_string("/proc/self/stat") else {
         return 0.0;
     };
-    let Some(idx) = stat.rfind(')') else { return 0.0 };
+    let Some(idx) = stat.rfind(')') else {
+        return 0.0;
+    };
     let f: Vec<&str> = stat[idx + 1..].split_whitespace().collect();
     // After ')' the first field is `state`, which is field 3.
     let get = |n: usize| -> f64 {
-        f.get(n - 3).and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0)
+        f.get(n - 3)
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(0.0)
     };
     // USER_HZ is 100 on every Linux this runs on; the C++ arm uses
     // getrusage and needs no such assumption, so the two agreeing is the
@@ -297,7 +301,12 @@ enum Work {
     /// C++ counter's home. The pair isolates the memory from the
     /// instruction.
     IndexVerStore(Arc<MasstreeIndex>, &'static StoreLike),
-    Entry(Arc<MasstreeIndex>, Arc<EntryTable>, Arc<AtomicU64>, Prebuilt),
+    Entry(
+        Arc<MasstreeIndex>,
+        Arc<EntryTable>,
+        Arc<AtomicU64>,
+        Prebuilt,
+    ),
     Atomic(Arc<AtomicU64>),
     /// Pure arithmetic in registers: no shared state, no memory traffic.
     ///
@@ -308,7 +317,12 @@ enum Work {
     Spin,
     /// (index, table, how far to go: 0 = lookup, 1 = +load, 2 = +copy)
     Read(Arc<MasstreeIndex>, Arc<EntryTable>, u8),
-    Floors(Arc<MasstreeIndex>, Arc<EntryTable>, Arc<AtomicU64>, Arc<Writers>),
+    Floors(
+        Arc<MasstreeIndex>,
+        Arc<EntryTable>,
+        Arc<AtomicU64>,
+        Arc<Writers>,
+    ),
 }
 
 impl Work {
@@ -446,9 +460,7 @@ impl Work {
                 let nv = match prebuilt {
                     Prebuilt::Fresh => Record::resident(v, value),
                     Prebuilt::Shared(one) => one.clone(),
-                    Prebuilt::Ring(rings) => {
-                        rings[tid][(seq as usize) % RING].clone()
-                    }
+                    Prebuilt::Ring(rings) => rings[tid][(seq as usize) % RING].clone(),
                 };
                 e.with_slot(|_| (Some(nv), ()));
             }
@@ -548,14 +560,10 @@ fn main() {
             // Populate first, then measure reads over the same key set.
             let idx = Arc::new(MasstreeIndex::new().expect("masstree"));
             let table = Arc::new(EntryTable::new());
-            let seen = std::collections::HashSet::<&[u8]>::from_iter(
-                keys.iter().map(|k| k.as_slice()),
-            );
+            let seen =
+                std::collections::HashSet::<&[u8]>::from_iter(keys.iter().map(|k| k.as_slice()));
             for k in seen {
-                let i = table.push(mrx_core::Entry::new(
-                    k,
-                    Record::resident(1, &[b'v'; 100]),
-                ));
+                let i = table.push(mrx_core::Entry::new(k, Record::resident(1, &[b'v'; 100])));
                 idx.get_or_insert(k, u64::from(i) + 1);
             }
             let depth = match m {
@@ -582,19 +590,12 @@ fn main() {
                 Arc::clone(&counter),
                 match mode {
                     "entry" => Prebuilt::Fresh,
-                    "alloc" => {
-                        Prebuilt::Shared(Record::resident(0, &[b'v'; 100]))
-                    }
+                    "alloc" => Prebuilt::Shared(Record::resident(0, &[b'v'; 100])),
                     _ => Prebuilt::Ring(
                         (0..threads)
                             .map(|t| {
                                 (0..RING)
-                                    .map(|r| {
-                                        Record::resident(
-                                            (t * RING + r) as u64,
-                                            &[b'v'; 100],
-                                        )
-                                    })
+                                    .map(|r| Record::resident((t * RING + r) as u64, &[b'v'; 100]))
                                     .collect()
                             })
                             .collect(),
@@ -622,8 +623,7 @@ fn main() {
             let blobs = MemBlobs::new();
             blobs.set_write_delay_us(blob_us);
             let store = Arc::new(
-                Store::open(cfg, MasstreeIndex::new().expect("masstree"), blobs)
-                    .expect("open"),
+                Store::open(cfg, MasstreeIndex::new().expect("masstree"), blobs).expect("open"),
             );
             let rt = (mode == "full").then(|| Runtime::start(Arc::clone(&store)));
             (Work::Store(store), rt)
@@ -713,7 +713,11 @@ fn main() {
     println!(
         "threads={threads:3} mode={mode:9} keyspace={:8} blob_us={blob_us:5} \
          {:9.0} ops/s  cpu={:.2} busy={:.2} skew={:.2} ({:.3}s)",
-        if keyspace == 0 { threads * ops } else { keyspace },
+        if keyspace == 0 {
+            threads * ops
+        } else {
+            keyspace
+        },
         total / elapsed.as_secs_f64(),
         cpu / elapsed.as_secs_f64(),
         busy,

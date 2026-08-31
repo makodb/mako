@@ -1,4 +1,4 @@
-//! Versioned, checksummed transaction commit records.
+//! Versioned transaction commit records with an explicit integrity mode.
 //!
 //! A record is both the recovery description of one cache transaction and
 //! the source of the single RocksDB batch that materializes that transaction.
@@ -8,20 +8,27 @@
 //! The value format is deliberately small and fixed-width where practical:
 //!
 //! ```text
-//! magic[8] | version:u16 | sequence:u64 | mako_timestamp:u32 | op_count:u32
+//! mode_magic[8] | version:u16 | sequence:u64 | mako_timestamp:u32 | op_count:u32
 //! repeated op_count times:
 //!   tag:u8 | table_id:u64 | key_len:u32 | value_len:u32 | key | value
-//! crc32c:u32
+//! v3 only: crc32c:u32
 //! ```
 //!
 //! All integers are big-endian. A delete has a zero `value_len`; a put may
-//! have an empty value. The CRC covers every preceding byte, including the
-//! header. Decoding rejects non-canonical input, including bytes between the
-//! last declared operation and the checksum.
+//! have an empty value. The default v3 format's CRC covers every preceding
+//! byte, including the header. The self-describing v4 format deliberately has
+//! no checksum trailer and uses a distinct magic, so accidental damage cannot
+//! turn a v3 record into an unchecked v4 record merely by changing its version
+//! field. It exists for deployments which explicitly trade payload corruption
+//! detection for foreground commit latency. Decoding accepts mixed v3/v4 logs
+//! and rejects non-canonical input, including unclaimed bytes after the last
+//! declared operation.
 
 use std::collections::HashSet;
 use std::fmt;
+use std::mem::{ManuallyDrop, MaybeUninit};
 use std::num::NonZeroU64;
+use std::ptr::NonNull;
 
 use mako_local::MakoTimestamp;
 use mrx_core::BlobOp;
@@ -29,12 +36,14 @@ use mrx_core::BlobOp;
 /// The table used by the first, single-table cache API.
 pub const DEFAULT_TABLE_ID: u64 = 1;
 
-const MAGIC: &[u8; 8] = b"MAKOCMT\0";
+const CRC32C_MAGIC: &[u8; 8] = b"MAKOCMT\0";
+const UNCHECKED_MAGIC: &[u8; 8] = b"MAKONOC\0";
 const FORMAT_VERSION: u16 = 3;
+const UNCHECKED_FORMAT_VERSION: u16 = 4;
 const PUT_TAG: u8 = 1;
 const DELETE_TAG: u8 = 2;
 
-const VERSION_OFFSET: usize = MAGIC.len();
+const VERSION_OFFSET: usize = CRC32C_MAGIC.len();
 const SEQUENCE_OFFSET: usize = VERSION_OFFSET + 2;
 const MAKO_TIMESTAMP_OFFSET: usize = SEQUENCE_OFFSET + 8;
 const OP_COUNT_OFFSET: usize = MAKO_TIMESTAMP_OFFSET + 4;
@@ -42,6 +51,16 @@ const HEADER_LEN: usize = OP_COUNT_OFFSET + 4;
 const OP_HEADER_LEN: usize = 1 + 8 + 4 + 4;
 const CRC_LEN: usize = 4;
 const MIN_RECORD_LEN: usize = HEADER_LEN + CRC_LEN;
+const MIN_UNCHECKED_RECORD_LEN: usize = HEADER_LEN;
+
+#[inline]
+const fn expected_magic(version: u16) -> Option<&'static [u8; 8]> {
+    match version {
+        FORMAT_VERSION => Some(CRC32C_MAGIC),
+        UNCHECKED_FORMAT_VERSION => Some(UNCHECKED_MAGIC),
+        _ => None,
+    }
+}
 
 // The leading NUL and binary keyspace version make this visibly an internal
 // namespace in RocksDB dumps. The kind byte makes log and materialized data
@@ -267,19 +286,252 @@ impl BoundCommitRecord {
     }
 }
 
-/// One complete v3 record produced directly by the trusted native transaction
-/// adapter.
+/// Preallocated storage for the cold legacy write-back producer.
+///
+/// The legacy API prepares this box before entering native commit, then turns
+/// the value into its final record in the same allocation after binding.  The
+/// transient variant permits moving the prepared value out without allocating
+/// another `Box` at a point where Silo may already have installed the write.
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) enum LegacyCommitRecord {
+    Prepared(PreparedCommitRecord),
+    Ready(CommitRecord),
+    Transitioning,
+}
+
+impl LegacyCommitRecord {
+    pub(crate) fn prepare(mutations: Vec<Mutation>, max_bytes: usize) -> Result<Self, RecordError> {
+        PreparedCommitRecord::prepare(mutations, max_bytes).map(Self::Prepared)
+    }
+
+    /// Bind and checksum this record without changing its heap allocation.
+    pub(crate) fn finalize_in_place(&mut self, sequence: CommitSeq, mako_timestamp: MakoTimestamp) {
+        let prepared = match std::mem::replace(self, Self::Transitioning) {
+            Self::Prepared(prepared) => prepared,
+            Self::Ready(_) => panic!("a legacy record may be finalized only once"),
+            Self::Transitioning => panic!("a legacy record cannot re-enter finalization"),
+        };
+        *self = Self::Ready(prepared.bind(sequence, mako_timestamp).finalize());
+    }
+
+    fn ready(&self) -> &CommitRecord {
+        match self {
+            Self::Ready(record) => record,
+            Self::Prepared(_) => panic!("a prepared legacy record is not publishable"),
+            Self::Transitioning => panic!("legacy record finalization did not complete"),
+        }
+    }
+}
+
+/// One complete v3 or v4 record produced directly by the trusted native
+/// transaction adapter.
 ///
 /// Native code fills the encoded bytes after Silo has validated the canonical
 /// write set and before it installs any write.  The foreground cache path
 /// retains those bytes without decoding or copying them; validation and
 /// construction of materialized RocksDB keys happen on the background replay
 /// thread.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub(crate) struct NativeCommitRecord {
     sequence: CommitSeq,
     mako_timestamp: MakoTimestamp,
-    encoded: Vec<u8>,
+    encoded: NativeRecordBytes,
+}
+
+/// One native one-Put commit whose canonical recovery bytes are intentionally
+/// deferred to the background writer.
+///
+/// The sequence-indexed C++ holder owns the exact value allocation originally
+/// staged for STO.  This descriptor owns no pointer into that holder: the
+/// consumer must acquire a fresh exact-generation view for each replay
+/// attempt, and the holder is released only after successful backend
+/// retirement.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct DeferredOnePutRecord {
+    sequence: CommitSeq,
+    mako_timestamp: MakoTimestamp,
+    exact_record_bytes: u32,
+}
+
+impl DeferredOnePutRecord {
+    /// Exact unchecked-v4 extent represented by one native holder view.
+    pub(crate) fn encoded_len_for(key_len: usize, value_len: usize) -> Result<usize, RecordError> {
+        HEADER_LEN
+            .checked_add(OP_HEADER_LEN)
+            .and_then(|size| size.checked_add(key_len))
+            .and_then(|size| size.checked_add(value_len))
+            .ok_or(RecordError::LengthOverflow)
+    }
+
+    /// Adopt the scalar witness returned by the trusted native holder
+    /// terminal. The complete view is revalidated during materialization.
+    pub(crate) fn new(
+        sequence: CommitSeq,
+        mako_timestamp: MakoTimestamp,
+        exact_record_bytes: usize,
+    ) -> Self {
+        let exact_record_bytes =
+            u32::try_from(exact_record_bytes).expect("the trusted one-Put record extent fits u32");
+        Self {
+            sequence,
+            mako_timestamp,
+            exact_record_bytes,
+        }
+    }
+
+    pub(crate) const fn sequence(self) -> CommitSeq {
+        self.sequence
+    }
+
+    pub(crate) const fn mako_timestamp(self) -> MakoTimestamp {
+        self.mako_timestamp
+    }
+
+    pub(crate) const fn encoded_len(self) -> usize {
+        self.exact_record_bytes as usize
+    }
+
+    /// Copy one exact holder view into the canonical unchecked-v4 recovery
+    /// representation on the background thread.
+    pub(crate) fn materialize(
+        self,
+        table_id: u64,
+        key: &[u8],
+        value: &[u8],
+        max_bytes: usize,
+    ) -> Result<CommitRecord, RecordError> {
+        if u32::try_from(key.len()).is_err() {
+            return Err(RecordError::KeyTooLarge(key.len()));
+        }
+        if u32::try_from(value.len()).is_err() {
+            return Err(RecordError::ValueTooLarge(value.len()));
+        }
+        let actual = Self::encoded_len_for(key.len(), value.len())?;
+        let expected = self.encoded_len();
+        if actual != expected {
+            return Err(RecordError::WrongEncodedLength { expected, actual });
+        }
+        if actual > max_bytes {
+            return Err(RecordError::RecordTooLarge {
+                size: actual,
+                max: max_bytes,
+            });
+        }
+
+        let owned_key = copy_bytes(key)?;
+        let owned_value = copy_bytes(value)?;
+        let mut mutations = Vec::new();
+        mutations
+            .try_reserve_exact(1)
+            .map_err(|_| RecordError::AllocationFailed)?;
+        mutations.push(Mutation::Put {
+            table_id,
+            key: owned_key,
+            value: owned_value,
+        });
+
+        let mut encoded = Vec::new();
+        encoded
+            .try_reserve_exact(actual)
+            .map_err(|_| RecordError::AllocationFailed)?;
+        encoded.extend_from_slice(UNCHECKED_MAGIC);
+        encoded.extend_from_slice(&UNCHECKED_FORMAT_VERSION.to_be_bytes());
+        encoded.extend_from_slice(&self.sequence.get().to_be_bytes());
+        encoded.extend_from_slice(&self.mako_timestamp.get().to_be_bytes());
+        encoded.extend_from_slice(&1_u32.to_be_bytes());
+        encoded.push(PUT_TAG);
+        encoded.extend_from_slice(&table_id.to_be_bytes());
+        encoded.extend_from_slice(&(key.len() as u32).to_be_bytes());
+        encoded.extend_from_slice(&(value.len() as u32).to_be_bytes());
+        encoded.extend_from_slice(key);
+        encoded.extend_from_slice(value);
+        debug_assert_eq!(encoded.len(), actual);
+
+        let log_key = make_log_key(self.sequence)?;
+        let data_keys = make_data_keys(&mutations)?;
+        Ok(CommitRecord {
+            sequence: self.sequence,
+            mako_timestamp: self.mako_timestamp,
+            mutations,
+            encoded,
+            log_key,
+            data_keys,
+        })
+    }
+}
+
+/// Ownership of bytes filled by the trusted native serializer.
+///
+/// Small production records normally point into `Writeback`'s fixed arena;
+/// oversized records and unit-test records retain an ordinary vector. The
+/// exact sequence's ring turn keeps an arena block unavailable until the
+/// background backend call has completed.
+#[derive(Debug)]
+enum NativeRecordBytes {
+    Owned(Vec<u8>),
+    Arena {
+        bytes: NonNull<u8>,
+        len: usize,
+        block: usize,
+    },
+}
+
+// SAFETY: an Arena token identifies a uniquely occupied ring block until it is
+// consumed for retirement. The backing arena is stable and outlives every
+// queued record, and bytes are immutable after native's exact completion
+// witness. Owned vectors have the ordinary Send/Sync properties of Vec<u8>.
+unsafe impl Send for NativeRecordBytes {}
+unsafe impl Sync for NativeRecordBytes {}
+
+impl NativeRecordBytes {
+    fn as_slice(&self) -> &[u8] {
+        match self {
+            Self::Owned(bytes) => bytes,
+            Self::Arena { bytes, len, .. } => {
+                // SAFETY: NativeRecordBytes::from_arena is called only after
+                // native's exact completion witness. Its unique arena token
+                // keeps this initialized block unavailable for mutation.
+                unsafe { std::slice::from_raw_parts(bytes.as_ptr(), *len) }
+            }
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.as_slice().len()
+    }
+
+    fn into_recycled(self) -> RecycledNativeRecord {
+        match self {
+            Self::Owned(bytes) => {
+                let mut bytes = ManuallyDrop::new(bytes);
+                let ptr = bytes.as_mut_ptr().cast::<MaybeUninit<u8>>();
+                let capacity = bytes.capacity();
+                // SAFETY: MaybeUninit<u8> has the same layout as u8. A zero
+                // logical length prevents future users from observing stale
+                // initialized bytes before resizing the reusable buffer.
+                let bytes = unsafe { Vec::from_raw_parts(ptr, 0, capacity) };
+                RecycledNativeRecord::Owned(bytes)
+            }
+            Self::Arena { block, .. } => RecycledNativeRecord::Arena(block),
+        }
+    }
+}
+
+impl PartialEq for NativeRecordBytes {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+
+impl Eq for NativeRecordBytes {}
+
+/// Storage returned to the writeback allocator after a successful replay.
+#[derive(Debug)]
+pub(crate) enum RecycledNativeRecord {
+    Arena(usize),
+    Owned(Vec<MaybeUninit<u8>>),
+    /// Release the exact native holder generation after successful replay.
+    Holder(CommitSeq),
 }
 
 impl NativeCommitRecord {
@@ -295,27 +547,74 @@ impl NativeCommitRecord {
         mako_timestamp: MakoTimestamp,
         encoded: Vec<u8>,
     ) -> Self {
+        Self::from_storage(sequence, mako_timestamp, NativeRecordBytes::Owned(encoded))
+    }
+
+    /// Adopt a fully initialized block from the writeback arena.
+    ///
+    /// # Safety
+    ///
+    /// `encoded` must point to `len` initialized bytes in the uniquely owned
+    /// arena block identified by `block`. The arena must remain stable and live
+    /// until this record is consumed by the owning writeback queue. The bytes
+    /// must be the canonical native record for exactly `sequence` and
+    /// `mako_timestamp`, with the integrity-mode magic/version selected during
+    /// preflight. The build fingerprint and native completion witness are the
+    /// production proof of that private contract; background materialization
+    /// still performs the complete untrusted-record validation before replay.
+    #[inline]
+    pub(crate) unsafe fn from_native_arena(
+        sequence: CommitSeq,
+        mako_timestamp: MakoTimestamp,
+        encoded: NonNull<u8>,
+        len: usize,
+        block: usize,
+    ) -> Self {
+        // Do not reread the record header on the acknowledgement path. Native
+        // has just initialized this exact target under the private fingerprinted
+        // ABI and returned its terminal completion witness. Any caller that
+        // fabricates that proof violates this function's safety contract.
+        Self {
+            sequence,
+            mako_timestamp,
+            encoded: NativeRecordBytes::Arena {
+                bytes: encoded,
+                len,
+                block,
+            },
+        }
+    }
+
+    fn from_storage(
+        sequence: CommitSeq,
+        mako_timestamp: MakoTimestamp,
+        encoded: NativeRecordBytes,
+    ) -> Self {
+        let bytes = encoded.as_slice();
         assert!(
-            encoded.len() >= MIN_RECORD_LEN,
-            "native commit record is shorter than its v3 envelope"
+            bytes.len() >= MIN_UNCHECKED_RECORD_LEN,
+            "native commit record is shorter than its fixed header"
         );
+        let version = u16::from_be_bytes(
+            bytes[VERSION_OFFSET..SEQUENCE_OFFSET]
+                .try_into()
+                .expect("fixed version field"),
+        );
+        let magic = expected_magic(version).expect("native commit record has the wrong version");
         assert_eq!(
-            encoded.get(..MAGIC.len()),
-            Some(MAGIC.as_slice()),
-            "native commit record has the wrong magic"
+            bytes.get(..CRC32C_MAGIC.len()),
+            Some(magic.as_slice()),
+            "native commit record has the wrong magic for its integrity mode"
         );
-        assert_eq!(
-            u16::from_be_bytes(
-                encoded[VERSION_OFFSET..SEQUENCE_OFFSET]
-                    .try_into()
-                    .expect("fixed version field"),
-            ),
-            FORMAT_VERSION,
-            "native commit record has the wrong version"
-        );
+        if version == FORMAT_VERSION {
+            assert!(
+                bytes.len() >= MIN_RECORD_LEN,
+                "native v3 commit record has no CRC32C trailer"
+            );
+        }
         assert_eq!(
             u64::from_be_bytes(
-                encoded[SEQUENCE_OFFSET..MAKO_TIMESTAMP_OFFSET]
+                bytes[SEQUENCE_OFFSET..MAKO_TIMESTAMP_OFFSET]
                     .try_into()
                     .expect("fixed sequence field"),
             ),
@@ -324,7 +623,7 @@ impl NativeCommitRecord {
         );
         assert_eq!(
             u32::from_be_bytes(
-                encoded[MAKO_TIMESTAMP_OFFSET..OP_COUNT_OFFSET]
+                bytes[MAKO_TIMESTAMP_OFFSET..OP_COUNT_OFFSET]
                     .try_into()
                     .expect("fixed timestamp field"),
             ),
@@ -348,14 +647,24 @@ impl NativeCommitRecord {
     }
 
     /// Decode and materialize RocksDB replay state off the acknowledgement
-    /// path.  The checksum is verified here even though the trusted native
-    /// producer already computed it, so corrupt memory can never be persisted
-    /// as a valid cache-log entry.
+    /// path. Checksummed v3 records are verified here even though the trusted
+    /// native producer already computed the CRC. Explicitly unchecked v4
+    /// records receive the same structural validation but cannot detect
+    /// arbitrary payload corruption.
     pub(crate) fn materialize(&self, max_bytes: usize) -> Result<CommitRecord, RecordError> {
         let log_key = make_log_key(self.sequence)?;
-        let record = CommitRecord::decode(&log_key, &self.encoded, max_bytes)?;
-        debug_assert_eq!(record.mako_timestamp(), self.mako_timestamp);
+        let record = CommitRecord::decode(&log_key, self.encoded.as_slice(), max_bytes)?;
+        if record.mako_timestamp() != self.mako_timestamp {
+            return Err(RecordError::WrongMakoTimestamp {
+                expected: self.mako_timestamp.get(),
+                record: record.mako_timestamp().get(),
+            });
+        }
         Ok(record)
+    }
+
+    fn into_recycled(self) -> RecycledNativeRecord {
+        self.encoded.into_recycled()
     }
 }
 
@@ -364,39 +673,69 @@ impl NativeCommitRecord {
 /// Legacy/unit-test producers may still supply an already materialized record.
 /// The production cache uses `Native`, which keeps foreground acknowledgement
 /// to one native serialization and defers decoding/key construction to replay.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub(crate) enum QueuedCommitRecord {
-    Materialized(CommitRecord),
+    /// The already-materialized representation is retained only by the legacy
+    /// producer and unit tests. Keep its five vectors out of every production
+    /// native queue value: otherwise Rust sizes the whole enum for this cold
+    /// variant and moves more than two cache lines on each native commit.
+    Materialized(Box<LegacyCommitRecord>),
     Native(NativeCommitRecord),
+    /// A copy-free foreground holder awaiting background v4 encoding.
+    Holder(DeferredOnePutRecord),
 }
 
 impl QueuedCommitRecord {
-    pub(crate) const fn sequence(&self) -> CommitSeq {
+    #[inline]
+    pub(crate) fn sequence(&self) -> CommitSeq {
         match self {
-            Self::Materialized(record) => record.sequence(),
+            Self::Materialized(record) => record.ready().sequence(),
             Self::Native(record) => record.sequence(),
+            Self::Holder(record) => record.sequence(),
         }
     }
 
     #[cfg(test)]
-    pub(crate) const fn mako_timestamp(&self) -> MakoTimestamp {
+    pub(crate) fn mako_timestamp(&self) -> MakoTimestamp {
         match self {
-            Self::Materialized(record) => record.mako_timestamp(),
+            Self::Materialized(record) => record.ready().mako_timestamp(),
             Self::Native(record) => record.mako_timestamp,
+            Self::Holder(record) => record.mako_timestamp(),
         }
     }
 
     pub(crate) fn encoded_len(&self) -> usize {
         match self {
-            Self::Materialized(record) => record.encoded.len(),
+            Self::Materialized(record) => record.ready().encoded.len(),
             Self::Native(record) => record.encoded_len(),
+            Self::Holder(record) => record.encoded_len(),
+        }
+    }
+
+    pub(crate) const fn deferred_holder(&self) -> Option<DeferredOnePutRecord> {
+        match self {
+            Self::Holder(record) => Some(*record),
+            Self::Materialized(_) | Self::Native(_) => None,
         }
     }
 
     pub(crate) fn materialize(&self, max_bytes: usize) -> Result<CommitRecord, RecordError> {
         match self {
-            Self::Materialized(record) => Ok(record.clone()),
+            Self::Materialized(record) => Ok(record.ready().clone()),
             Self::Native(record) => record.materialize(max_bytes),
+            Self::Holder(_) => {
+                panic!("a deferred holder record requires its exact native pool view")
+            }
+        }
+    }
+
+    /// Consume a successfully replayed queue record and return reusable native
+    /// storage. Legacy materialized records have no native buffer to recycle.
+    pub(crate) fn into_recycled_native(self) -> Option<RecycledNativeRecord> {
+        match self {
+            Self::Materialized(_) => None,
+            Self::Native(record) => Some(record.into_recycled()),
+            Self::Holder(record) => Some(RecycledNativeRecord::Holder(record.sequence())),
         }
     }
 }
@@ -438,32 +777,48 @@ impl CommitRecord {
                 max: max_bytes,
             });
         }
-        if value.len() < MIN_RECORD_LEN {
+        if value.len() < MIN_UNCHECKED_RECORD_LEN {
             return Err(RecordError::Truncated);
         }
 
-        let checksum_offset = value.len() - CRC_LEN;
-        let stored_checksum = u32::from_be_bytes(
-            value[checksum_offset..]
+        let encoded_version = u16::from_be_bytes(
+            value[VERSION_OFFSET..SEQUENCE_OFFSET]
                 .try_into()
-                .expect("four-byte checksum suffix"),
+                .expect("fixed version field"),
         );
-        let calculated_checksum = crc32c(&value[..checksum_offset]);
-        if stored_checksum != calculated_checksum {
-            return Err(RecordError::BadChecksum {
-                expected: stored_checksum,
-                actual: calculated_checksum,
-            });
-        }
-
-        let mut cursor = Cursor::new(&value[..checksum_offset]);
-        if cursor.take(MAGIC.len())? != MAGIC {
+        let magic = expected_magic(encoded_version)
+            .ok_or(RecordError::UnsupportedVersion(encoded_version))?;
+        if value.get(..CRC32C_MAGIC.len()) != Some(magic.as_slice()) {
             return Err(RecordError::BadMagic);
         }
+        let operations_end = match encoded_version {
+            FORMAT_VERSION => {
+                if value.len() < MIN_RECORD_LEN {
+                    return Err(RecordError::Truncated);
+                }
+                let checksum_offset = value.len() - CRC_LEN;
+                let stored_checksum = u32::from_be_bytes(
+                    value[checksum_offset..]
+                        .try_into()
+                        .expect("four-byte checksum suffix"),
+                );
+                let calculated_checksum = crc32c(&value[..checksum_offset]);
+                if stored_checksum != calculated_checksum {
+                    return Err(RecordError::BadChecksum {
+                        expected: stored_checksum,
+                        actual: calculated_checksum,
+                    });
+                }
+                checksum_offset
+            }
+            UNCHECKED_FORMAT_VERSION => value.len(),
+            _ => unreachable!("known record version selected above"),
+        };
+
+        let mut cursor = Cursor::new(&value[..operations_end]);
+        let _magic = cursor.take(CRC32C_MAGIC.len())?;
         let version = cursor.read_u16()?;
-        if version != FORMAT_VERSION {
-            return Err(RecordError::UnsupportedVersion(version));
-        }
+        debug_assert_eq!(version, encoded_version);
 
         let raw_sequence = cursor.read_u64()?;
         let sequence = CommitSeq::new(raw_sequence).ok_or(RecordError::InvalidSequence)?;
@@ -558,7 +913,7 @@ impl CommitRecord {
         &self.mutations
     }
 
-    /// Checksummed serialized recovery value.
+    /// Serialized recovery value, with the record's selected integrity mode.
     #[cfg(test)]
     pub fn encoded(&self) -> &[u8] {
         &self.encoded
@@ -629,6 +984,26 @@ pub enum RecordError {
         /// Sequence encoded in the record value.
         record: u64,
     },
+    /// The native record carries a different timestamp from its bound queue
+    /// reservation.
+    WrongMakoTimestamp {
+        /// Timestamp assigned at the post-validation bind point.
+        expected: u32,
+        /// Timestamp encoded in the native record.
+        record: u32,
+    },
+    /// A trusted native holder's scalar extent disagreed with its view.
+    WrongEncodedLength {
+        /// Extent sealed by the foreground terminal.
+        expected: usize,
+        /// Extent derived from the background holder view.
+        actual: usize,
+    },
+    /// The exact native holder generation was absent or malformed.
+    NativeHolderUnavailable {
+        /// Dense sequence whose holder could not be viewed.
+        sequence: u64,
+    },
     /// The encoded value exceeds its configured bound.
     RecordTooLarge {
         /// Actual or required encoded byte count.
@@ -646,7 +1021,7 @@ pub enum RecordError {
     LengthOverflow,
     /// Memory needed to own the sealed record could not be reserved.
     AllocationFailed,
-    /// Input ended before a declared field or checksum was complete.
+    /// Input ended before a declared field or required checksum was complete.
     Truncated,
     /// The record magic does not identify this format.
     BadMagic,
@@ -682,6 +1057,20 @@ impl fmt::Display for RecordError {
                 f,
                 "log-key sequence {key} does not match record sequence {record}"
             ),
+            Self::WrongMakoTimestamp { expected, record } => write!(
+                f,
+                "bound Mako timestamp {expected} does not match record timestamp {record}"
+            ),
+            Self::WrongEncodedLength { expected, actual } => write!(
+                f,
+                "trusted holder record extent {expected} does not match derived extent {actual}"
+            ),
+            Self::NativeHolderUnavailable { sequence } => {
+                write!(
+                    f,
+                    "native one-Put holder for sequence {sequence} is unavailable"
+                )
+            }
             Self::RecordTooLarge { size, max } => {
                 write!(f, "commit record is {size} bytes; maximum is {max}")
             }
@@ -824,7 +1213,7 @@ fn encode_prepared(mutations: &[Mutation], encoded_len: usize) -> Result<Vec<u8>
     encoded
         .try_reserve_exact(encoded_len)
         .map_err(|_| RecordError::AllocationFailed)?;
-    encoded.extend_from_slice(MAGIC);
+    encoded.extend_from_slice(CRC32C_MAGIC);
     encoded.extend_from_slice(&FORMAT_VERSION.to_be_bytes());
     encoded.extend_from_slice(&0_u64.to_be_bytes());
     encoded.extend_from_slice(&0_u32.to_be_bytes());
@@ -1018,6 +1407,68 @@ mod tests {
     }
 
     #[test]
+    fn deferred_holder_materializes_canonical_unchecked_one_put() {
+        let key = b"key";
+        let value = b"value\0bytes";
+        let exact = HEADER_LEN + OP_HEADER_LEN + key.len() + value.len();
+        let deferred = DeferredOnePutRecord::new(seq(41), mako_timestamp(9_001), exact);
+        let record = deferred.materialize(7, key, value, 16 * 1024).unwrap();
+
+        assert_eq!(record.sequence(), seq(41));
+        assert_eq!(record.mako_timestamp(), mako_timestamp(9_001));
+        assert_eq!(&record.encoded()[..UNCHECKED_MAGIC.len()], UNCHECKED_MAGIC);
+        assert_eq!(
+            u16::from_be_bytes(
+                record.encoded()[VERSION_OFFSET..SEQUENCE_OFFSET]
+                    .try_into()
+                    .unwrap()
+            ),
+            UNCHECKED_FORMAT_VERSION
+        );
+        assert_eq!(
+            record.mutations(),
+            &[Mutation::Put {
+                table_id: 7,
+                key: key.to_vec(),
+                value: value.to_vec(),
+            }]
+        );
+        assert_eq!(
+            CommitRecord::decode(record.log_key(), record.encoded(), 16 * 1024).unwrap(),
+            record
+        );
+
+        let queued = QueuedCommitRecord::Holder(deferred);
+        assert_eq!(queued.sequence(), seq(41));
+        assert_eq!(queued.encoded_len(), exact);
+        assert!(matches!(
+            queued.into_recycled_native(),
+            Some(RecycledNativeRecord::Holder(sequence)) if sequence == seq(41)
+        ));
+    }
+
+    #[test]
+    fn deferred_holder_rejects_a_mismatched_scalar_extent() {
+        let deferred =
+            DeferredOnePutRecord::new(seq(7), mako_timestamp(8), HEADER_LEN + OP_HEADER_LEN + 3);
+        assert_eq!(
+            deferred.materialize(1, b"key", b"value", 1024),
+            Err(RecordError::WrongEncodedLength {
+                expected: HEADER_LEN + OP_HEADER_LEN + 3,
+                actual: HEADER_LEN + OP_HEADER_LEN + 3 + 5,
+            })
+        );
+    }
+
+    fn unchecked_v4_bytes(record: &CommitRecord) -> Vec<u8> {
+        let mut encoded = record.encoded()[..record.encoded().len() - CRC_LEN].to_vec();
+        encoded[..UNCHECKED_MAGIC.len()].copy_from_slice(UNCHECKED_MAGIC);
+        encoded[VERSION_OFFSET..SEQUENCE_OFFSET]
+            .copy_from_slice(&UNCHECKED_FORMAT_VERSION.to_be_bytes());
+        encoded
+    }
+
+    #[test]
     fn crc32c_matches_standard_check_vector() {
         assert_eq!(crc32c(b"123456789"), 0xe306_9283);
         assert_eq!(crc32c(b""), 0);
@@ -1127,6 +1578,101 @@ mod tests {
         assert_eq!(replay.mako_timestamp(), mako_timestamp(91));
         assert_eq!(replay.mutations(), mutations.as_slice());
         assert_eq!(replay.encoded(), expected.encoded());
+    }
+
+    #[test]
+    fn unchecked_v4_is_self_describing_and_replays_beside_v3() {
+        let expected = seal_at(
+            74,
+            92,
+            vec![Mutation::Put {
+                table_id: DEFAULT_TABLE_ID,
+                key: b"unchecked".to_vec(),
+                value: b"value".to_vec(),
+            }],
+        );
+        let unchecked = unchecked_v4_bytes(&expected);
+        assert_eq!(unchecked.len() + CRC_LEN, expected.encoded().len());
+
+        let native =
+            NativeCommitRecord::from_native(seq(74), mako_timestamp(92), unchecked.clone());
+        let replay = native.materialize(16 * 1024).unwrap();
+        assert_eq!(replay.mutations(), expected.mutations());
+        assert_eq!(replay.encoded(), unchecked);
+
+        // This is the intentional tradeoff: a structurally valid payload bit
+        // change cannot be detected when the producer explicitly selected v4.
+        let mut corrupted = unchecked;
+        *corrupted.last_mut().expect("one-byte value") ^= 1;
+        let decoded = CommitRecord::decode(expected.log_key(), &corrupted, 16 * 1024).unwrap();
+        assert_ne!(decoded.mutations(), expected.mutations());
+    }
+
+    #[test]
+    fn integrity_mode_magic_blocks_a_structurally_valid_downgrade() {
+        let record = seal(
+            75,
+            vec![Mutation::Put {
+                table_id: DEFAULT_TABLE_ID,
+                key: b"mode".to_vec(),
+                value: b"checked".to_vec(),
+            }],
+        );
+        let mut forged = record.encoded().to_vec();
+        forged[VERSION_OFFSET..SEQUENCE_OFFSET]
+            .copy_from_slice(&UNCHECKED_FORMAT_VERSION.to_be_bytes());
+        // Without the distinct magic, increasing this one-PUT value length by
+        // four made the old decoder accept the former CRC trailer as ordinary
+        // unchecked payload. Exercise that complete, structurally valid
+        // downgrade rather than merely leaving four unclaimed bytes.
+        let value_len_offset = HEADER_LEN + 1 + 8 + 4;
+        let old_value_len = u32::from_be_bytes(
+            forged[value_len_offset..value_len_offset + 4]
+                .try_into()
+                .unwrap(),
+        );
+        forged[value_len_offset..value_len_offset + 4]
+            .copy_from_slice(&(old_value_len + CRC_LEN as u32).to_be_bytes());
+        assert!(matches!(
+            CommitRecord::decode(record.log_key(), &forged, 16 * 1024),
+            Err(RecordError::BadMagic)
+        ));
+    }
+
+    #[test]
+    fn arena_record_timestamp_mismatch_fails_during_background_materialization() {
+        let expected = seal_at(
+            76,
+            94,
+            vec![Mutation::Put {
+                table_id: DEFAULT_TABLE_ID,
+                key: b"timestamp".to_vec(),
+                value: b"mismatch".to_vec(),
+            }],
+        );
+        let mut unchecked = unchecked_v4_bytes(&expected);
+        unchecked[MAKO_TIMESTAMP_OFFSET..OP_COUNT_OFFSET].copy_from_slice(&95_u32.to_be_bytes());
+        let bytes = NonNull::new(unchecked.as_mut_ptr()).unwrap();
+        // SAFETY: this deliberately violates only the canonical-timestamp
+        // portion of the private producer contract to prove the off-ACK
+        // fail-stop validation remains active in release builds. The Vec keeps
+        // the initialized extent live and stable through materialization.
+        let native = unsafe {
+            NativeCommitRecord::from_native_arena(
+                seq(76),
+                mako_timestamp(94),
+                bytes,
+                unchecked.len(),
+                0,
+            )
+        };
+        assert!(matches!(
+            native.materialize(16 * 1024),
+            Err(RecordError::WrongMakoTimestamp {
+                expected: 94,
+                record: 95,
+            })
+        ));
     }
 
     #[test]
@@ -1253,12 +1799,12 @@ mod tests {
         ));
 
         let mut bad_version = record.encoded().to_vec();
-        let version_offset = MAGIC.len();
-        bad_version[version_offset..version_offset + 2].copy_from_slice(&4_u16.to_be_bytes());
+        let version_offset = CRC32C_MAGIC.len();
+        bad_version[version_offset..version_offset + 2].copy_from_slice(&5_u16.to_be_bytes());
         refresh_checksum(&mut bad_version);
         assert!(matches!(
             CommitRecord::decode(record.log_key(), &bad_version, 4096),
-            Err(RecordError::UnsupportedVersion(4))
+            Err(RecordError::UnsupportedVersion(5))
         ));
 
         let mut legacy_silo_version = record.encoded().to_vec();

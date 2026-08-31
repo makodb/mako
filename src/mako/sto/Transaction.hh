@@ -400,7 +400,9 @@ public:
     // after_leave optionally completes storage work after retiring the turn
     // while the transaction still owns every write lock and before install.
     // All callbacks must be allocation-free, must perform no I/O, and must not
-    // unwind. enter may spin waiting for the preceding ordered turn.
+    // unwind. enter may spin waiting for the preceding ordered turn. A caller
+    // with stronger whole-call exclusion may set both enter and leave null;
+    // the non-null gate object still requests the phase-2 predicate recheck.
     // Public/general hooks pass no gate.
     struct commit_validation_gate {
         using callback = void (*)(void*) noexcept;
@@ -468,6 +470,15 @@ public:
     };
     using canonical_write_visitor =
         bool (*)(void*, const canonical_write_view&) noexcept;
+
+    // Decode one local MassTrans write item into the same canonical borrowed
+    // representation used by visit_local_canonical_writes(). This private
+    // storage-engine seam lets a caller that just staged a known item retain
+    // a short-lived witness without rescanning the whole transaction set.
+    // Returns false for a non-local, net-empty, or malformed item.
+    bool export_local_canonical_write(const TransItem& item,
+                                      canonical_write_view* write_out) const
+        noexcept;
 
     // Visit the normalized final local MassTrans write set without copying or
     // allocation. Returns false for a malformed engine value or visitor

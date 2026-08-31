@@ -95,8 +95,7 @@ extern "C" {
     pub fn mtx_destroy(t: *mut MtxTree);
 
     /// Look up a key; `*out` receives the word or [`MTX_WORD_NULL`].
-    pub fn mtx_get(t: *mut MtxTree, key: *const c_char, klen: usize, out: *mut u64)
-        -> i32;
+    pub fn mtx_get(t: *mut MtxTree, key: *const c_char, klen: usize, out: *mut u64) -> i32;
 
     /// Install `word` if absent; `*out` receives whichever word is now
     /// associated with the key.

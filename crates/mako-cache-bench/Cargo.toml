@@ -13,3 +13,6 @@ mako-cache = { path = "../mako-cache" }
 mrx = { path = "../mrx" }
 mrx-core = { path = "../mrx-core" }
 mrx-rocks = { path = "../mrx-rocks" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+nix = { version = "0.30.1", default-features = false, features = ["time"] }

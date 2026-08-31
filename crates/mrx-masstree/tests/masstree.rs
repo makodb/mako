@@ -42,7 +42,11 @@ fn words_round_trip_bit_identical() {
     // Point path.
     for (i, w) in words.iter().enumerate() {
         let k = format!("w{i:02}");
-        assert_eq!(t.get(k.as_bytes()), Some(*w), "point read altered word {w:#x}");
+        assert_eq!(
+            t.get(k.as_bytes()),
+            Some(*w),
+            "point read altered word {w:#x}"
+        );
     }
     // Scan path, which copies through a different code path entirely.
     let mut out = Vec::new();
@@ -89,7 +93,11 @@ fn concurrent_inserts_agree_on_one_word() {
         }
     });
     let set = seen.get_mut().unwrap();
-    assert_eq!(set.len(), 1, "threads disagreed about the stored word: {set:?}");
+    assert_eq!(
+        set.len(),
+        1,
+        "threads disagreed about the stored word: {set:?}"
+    );
     assert_eq!(t.get(b"contested"), set.iter().copied().next());
 }
 
@@ -138,7 +146,10 @@ fn rscan_walks_backwards() {
     let mut out = Vec::new();
     t.rscan_chunk(b"k10", 5, &mut out);
     assert_eq!(out[0].0, b"k10".to_vec(), "the bound is inclusive");
-    assert!(out.windows(2).all(|w| w[0].0 > w[1].0), "must be descending");
+    assert!(
+        out.windows(2).all(|w| w[0].0 > w[1].0),
+        "must be descending"
+    );
 }
 
 #[test]

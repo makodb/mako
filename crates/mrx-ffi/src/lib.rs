@@ -29,8 +29,8 @@
 // for, and these types are never used from Rust as Rust.
 #![allow(non_camel_case_types)]
 
-use std::ffi::{c_char, c_int, c_uchar, c_void, CStr};
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::ffi::{CStr, c_char, c_int, c_uchar, c_void};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
 use std::ptr;
 use std::sync::Arc;
@@ -109,12 +109,7 @@ unsafe fn set_err(errptr: *mut *mut c_char, msg: &str) {
 /// path returns `fallback` and touches no state that a panic could have
 /// left inconsistent — the handles are either untouched or about to be
 /// reported as failed.
-unsafe fn guard<R>(
-    errptr: *mut *mut c_char,
-    what: &str,
-    fallback: R,
-    f: impl FnOnce() -> R,
-) -> R {
+unsafe fn guard<R>(errptr: *mut *mut c_char, what: &str, fallback: R, f: impl FnOnce() -> R) -> R {
     match catch_unwind(AssertUnwindSafe(f)) {
         Ok(r) => r,
         Err(_) => {
@@ -177,9 +172,11 @@ pub unsafe extern "C" fn mrxdb_free(p: *mut c_void) {
 /// Create default options.
 #[no_mangle]
 pub extern "C" fn mrxdb_options_create() -> *mut mrxdb_options_t {
-    match catch_unwind(|| Box::into_raw(Box::new(mrxdb_options_t {
-        opts: Options::default(),
-    }))) {
+    match catch_unwind(|| {
+        Box::into_raw(Box::new(mrxdb_options_t {
+            opts: Options::default(),
+        }))
+    }) {
         Ok(p) => p,
         Err(_) => ptr::null_mut(),
     }
@@ -196,21 +193,14 @@ pub unsafe extern "C" fn mrxdb_options_destroy(o: *mut mrxdb_options_t) {
 /// Accepted and ignored: this cache always creates the database if it is
 /// missing. Present so a ported RocksDB caller compiles unchanged.
 #[no_mangle]
-pub extern "C" fn mrxdb_options_set_create_if_missing(
-    _o: *mut mrxdb_options_t,
-    _v: c_uchar,
-) {
-}
+pub extern "C" fn mrxdb_options_set_create_if_missing(_o: *mut mrxdb_options_t, _v: c_uchar) {}
 
 /// Byte ceiling for the evictable value tier. 0 disables eviction.
 ///
 /// This bounds *values*. Keys are always resident, so a workload with
 /// enough keys exceeds any setting here — see the header.
 #[no_mangle]
-pub unsafe extern "C" fn mrxdb_options_set_capacity_bytes(
-    o: *mut mrxdb_options_t,
-    bytes: u64,
-) {
+pub unsafe extern "C" fn mrxdb_options_set_capacity_bytes(o: *mut mrxdb_options_t, bytes: u64) {
     if o.is_null() {
         return;
     }
@@ -219,10 +209,7 @@ pub unsafe extern "C" fn mrxdb_options_set_capacity_bytes(
 
 /// Durability of each writeback batch: 0 = fsync, 1 = WAL only, 2 = none.
 #[no_mangle]
-pub unsafe extern "C" fn mrxdb_options_set_durability(
-    o: *mut mrxdb_options_t,
-    level: c_int,
-) {
+pub unsafe extern "C" fn mrxdb_options_set_durability(o: *mut mrxdb_options_t, level: c_int) {
     if o.is_null() {
         return;
     }
@@ -501,9 +488,7 @@ pub unsafe extern "C" fn mrxdb_write(
 
 /// Create an iterator. Position it with `seek` or `seek_to_first`.
 #[no_mangle]
-pub unsafe extern "C" fn mrxdb_create_iterator(
-    db: *mut mrxdb_t,
-) -> *mut mrxdb_iterator_t {
+pub unsafe extern "C" fn mrxdb_create_iterator(db: *mut mrxdb_t) -> *mut mrxdb_iterator_t {
     if db.is_null() {
         return ptr::null_mut();
     }

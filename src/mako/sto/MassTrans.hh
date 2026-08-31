@@ -260,7 +260,14 @@ private:
   }
 
   template <bool INSERT, bool SET, typename StringType, typename ValueType>
-  bool trans_write(const StringType& key, const ValueType& value, bool(*compar)(const std::string& newValue,const std::string& oldValue), threadinfo_type& ti = mythreadinfo) {
+  bool trans_write(
+      const StringType& key, const ValueType& value,
+      bool(*compar)(const std::string& newValue,
+                    const std::string& oldValue),
+      threadinfo_type& ti = mythreadinfo,
+      Transaction::canonical_write_view* canonical_write_out = nullptr) {
+    if (canonical_write_out != nullptr)
+      *canonical_write_out = Transaction::canonical_write_view{};
     // optimization to do an unlocked lookup first
     if (SET) {
       auto lp = unlocked_cursor_type::from_mutable_str(table_, key);
@@ -272,7 +279,8 @@ private:
             return false;
           }
         }
-        return handlePutFound<INSERT, SET>(lp.value(), key, value);
+        return handlePutFound<INSERT, SET>(lp.value(), key, value,
+                                           canonical_write_out);
       } else {
         if (!INSERT) {
           ensureNotFound(lp.node(), lp.full_version_value());
@@ -294,7 +302,8 @@ private:
           return false;
         }
       }
-      return handlePutFound<INSERT, SET>(e, key, value);
+      return handlePutFound<INSERT, SET>(e, key, value,
+                                         canonical_write_out);
     } else {
       //      auto p = ti.ti->allocate(sizeof(versioned_value), memtag_value);
       versioned_value* val;
@@ -338,6 +347,9 @@ private:
       // TransItem::key_ is actuall value, TransItem::wdata_ or rdata_ is actual key in write-set and read-set, respectively
       auto item = Sto::new_item(this, val);
       item.template add_write<key_write_value_type>(key).add_flags(insert_bit);
+      if (canonical_write_out != nullptr)
+        (void)TThread::txn->export_local_canonical_write(
+            item.item(), canonical_write_out);
       return found;
     }
   }
@@ -346,6 +358,20 @@ public:
   template <typename KT, typename VT>
   bool transPut(const KT& k, const VT& v, threadinfo_type& ti = mythreadinfo) {
     return trans_write</*insert*/true, /*set*/true>(k, v, nullptr, ti);
+  }
+
+  // Private local-cache fast path. Borrow the exact canonical TransItem spans
+  // produced by this put so a one-mutation commit can avoid rediscovering the
+  // item during both record sizing and serialization. The facade must discard
+  // the witness before any later mutation or read that can grow/reorganize
+  // transaction state.
+  template <typename KT, typename VT>
+  bool transPutWithCanonicalWrite(
+      const KT& k, const VT& v,
+      Transaction::canonical_write_view* canonical_write_out,
+      threadinfo_type& ti = mythreadinfo) {
+    return trans_write</*insert*/true, /*set*/true>(
+        k, v, nullptr, ti, canonical_write_out);
   }
 
   template <typename KT, typename VT>
@@ -996,7 +1022,9 @@ protected:
   // returns true if already in tree, false otherwise
   // handles a transactional put when the given key is already in the tree
   template <bool INSERT, bool SET, typename ValueType>
-  bool handlePutFound(versioned_value *e, Str key, const ValueType& value) {
+  bool handlePutFound(
+      versioned_value *e, Str key, const ValueType& value,
+      Transaction::canonical_write_view* canonical_write_out = nullptr) {
     auto item = t_item(e);
     if (!validityCheck(item, e)) {
       Sto::abort();
@@ -1010,6 +1038,9 @@ protected:
         item.clear_flags(delete_bit);
         assert(!has_delete(item));
         reallyHandlePutFound(item, e, key, value);
+        if (canonical_write_out != nullptr)
+          (void)TThread::txn->export_local_canonical_write(
+              item.item(), canonical_write_out);
       } else {
         // delete-then-update == not found
         // delete will check for other deletes so we don't need to re-log that check
@@ -1034,6 +1065,9 @@ protected:
       fence();
       item.observe(tversion_type(v));
     }
+    if (SET && canonical_write_out != nullptr)
+      (void)TThread::txn->export_local_canonical_write(
+          item.item(), canonical_write_out);
     return true;
   }
 

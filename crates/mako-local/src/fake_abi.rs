@@ -8,12 +8,15 @@
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
-use std::ffi::{c_char, c_int, c_void, CString};
+use std::ffi::{CString, c_char, c_int, c_void};
 use std::ptr;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use super::sys;
+use super::{
+    FastOnePutHolderPool, FastOnePutHolderView, FastPreselectedRecordResult, FastSpscHolderControl,
+    sys,
+};
 
 static ENGINE_ID: &[u8] = b"mako-local/sto-masstrans\0";
 
@@ -45,6 +48,15 @@ pub(super) enum Call {
     FastCommitDestroy,
     FastRecordPreflight,
     FastRecordCommitDestroy,
+    FastUncheckedOnePutRecordCommitDestroy,
+    FastSingleProducerUncheckedOnePutRecordCommitDestroy,
+    FastPreselectedSingleProducerUncheckedOnePutRecordCommitDestroy,
+    FastOnePutHolderPoolCreate,
+    FastOnePutHolderPoolDestroy,
+    FastPreselectedSingleProducerUncheckedOnePutHolderCommitDestroy,
+    FastFusedSingleProducerOnePutHolderTryCommitDestroy,
+    FastOnePutHolderPoolGetView,
+    FastOnePutHolderPoolRelease,
     Abort,
     FastAbortDestroy,
     Destroy,
@@ -85,11 +97,16 @@ impl GetReply {
 pub(super) struct ByteReply {
     pub status: c_int,
     pub value: u8,
+    pub unchecked_record_bytes: u32,
 }
 
 impl ByteReply {
     pub fn status(status: c_int) -> Self {
-        Self { status, value: 0 }
+        Self {
+            status,
+            value: 0,
+            unchecked_record_bytes: 0,
+        }
     }
 }
 
@@ -151,6 +168,22 @@ pub(super) enum Step {
         record: Vec<u8>,
         reported_written: Option<u8>,
     },
+    CommitPreselectedRecord {
+        status: c_int,
+        timestamp: Option<u32>,
+        exact_record_bytes: usize,
+        record: Vec<u8>,
+        reported_record_state: Option<u64>,
+    },
+    CommitPreselectedHolder {
+        status: c_int,
+        timestamp: Option<u32>,
+        exact_record_bytes: usize,
+        table_id: u64,
+        key: Vec<u8>,
+        value: Vec<u8>,
+        reported_holder_state: Option<u64>,
+    },
     Abort(c_int),
     Destroy(c_int),
 }
@@ -163,8 +196,36 @@ struct FakeTable {
     id: u64,
 }
 
+#[derive(Debug)]
+struct FakeTxn {
+    fast_path_eligible: bool,
+    unchecked_record_bytes: u32,
+}
+
+impl Default for FakeTxn {
+    fn default() -> Self {
+        Self {
+            fast_path_eligible: true,
+            unchecked_record_bytes: 0,
+        }
+    }
+}
+
 #[derive(Debug, Default)]
-struct FakeTxn;
+struct FakeOnePutHolder {
+    sequence: u64,
+    table_id: u64,
+    mako_timestamp: u32,
+    key: Vec<u8>,
+    value: Vec<u8>,
+    sealed: bool,
+}
+
+#[derive(Debug)]
+struct FakeOnePutHolderPool {
+    mask: usize,
+    holders: Vec<FakeOnePutHolder>,
+}
 
 #[derive(Default)]
 struct State {
@@ -177,6 +238,10 @@ struct State {
     foreign_bytes: Vec<Box<[u8]>>,
     steps: VecDeque<Step>,
     calls: Vec<Call>,
+    last_record_checksum_mode: Option<u32>,
+    last_unchecked_record_bytes: Option<u32>,
+    holder_pools: usize,
+    fused_latch_unhealthy_after_commit: bool,
 }
 
 thread_local! {
@@ -221,6 +286,18 @@ pub(super) fn calls() -> Vec<Call> {
     STATE.with(|state| state.borrow().calls.clone())
 }
 
+pub(super) fn last_record_checksum_mode() -> Option<u32> {
+    with_state(|state| state.last_record_checksum_mode)
+}
+
+pub(super) fn last_unchecked_record_bytes() -> Option<u32> {
+    with_state(|state| state.last_unchecked_record_bytes)
+}
+
+fn latch_fused_unhealthy_after_commit_once() {
+    with_state(|state| state.fused_latch_unhealthy_after_commit = true);
+}
+
 pub(super) fn local_quarantine_transition_count() -> u64 {
     STATE.with(|state| state.borrow().quarantine_transitions)
 }
@@ -241,6 +318,11 @@ pub(super) fn assert_drained() {
         assert!(
             state.txn.is_none() || state.poisoned,
             "a healthy fake worker retained a transaction facade"
+        );
+        assert_eq!(
+            state.holder_pools, 0,
+            "wrapper leaked {} fake one-Put holder pool(s)",
+            state.holder_pools
         );
     });
 }
@@ -483,7 +565,7 @@ pub(super) unsafe fn mako_local_txn_begin(
         };
         observe_status(state, status);
         if status == sys::MAKO_LOCAL_OK && return_handle {
-            let mut txn = Box::new(FakeTxn);
+            let mut txn = Box::new(FakeTxn::default());
             let raw = ptr::from_mut(txn.as_mut()).cast::<sys::mako_local_txn>();
             state.txn = Some(txn);
             // SAFETY: checked above; the allocation remains owned by fake state.
@@ -520,7 +602,7 @@ pub(super) unsafe fn mako_rust_fast_txn_begin(
         };
         observe_status(state, status);
         if status == sys::MAKO_LOCAL_OK && return_handle {
-            let mut txn = Box::new(FakeTxn);
+            let mut txn = Box::new(FakeTxn::default());
             let raw = ptr::from_mut(txn.as_mut()).cast::<sys::mako_local_txn>();
             state.txn = Some(txn);
             // SAFETY: checked above; fake state owns the allocation.
@@ -609,7 +691,7 @@ pub(super) unsafe fn mako_local_txn_put(
 }
 
 pub(super) unsafe fn mako_rust_fast_txn_put(
-    _txn: *mut sys::mako_local_txn,
+    txn: *mut sys::mako_local_txn,
     _key: *const u8,
     _key_len: u32,
     _value: *const u8,
@@ -619,7 +701,25 @@ pub(super) unsafe fn mako_rust_fast_txn_put(
         Step::Put(reply) => Some(reply),
         _ => None,
     });
-    u64::from(reply.status as u32) | (u64::from(reply.value) << 32)
+    assert!(!txn.is_null());
+    // SAFETY: fast begin returned this live fake allocation and the safe
+    // wrapper uniquely borrows it for the operation.
+    let fake = unsafe { &mut *txn.cast::<FakeTxn>() };
+    if reply.status == sys::MAKO_LOCAL_OK
+        && fake.fast_path_eligible
+        && fake.unchecked_record_bytes == 0
+        && reply.unchecked_record_bytes != 0
+    {
+        fake.unchecked_record_bytes = reply.unchecked_record_bytes;
+    } else {
+        // Match native's conservative direct-witness retirement after a
+        // second/malformed fast mutation.
+        fake.fast_path_eligible = false;
+        fake.unchecked_record_bytes = 0;
+    }
+    u64::from(reply.status as u32)
+        | (u64::from(reply.value) << 32)
+        | (u64::from(reply.unchecked_record_bytes) << 33)
 }
 
 pub(super) unsafe fn mako_local_txn_insert(
@@ -867,8 +967,28 @@ pub(super) unsafe fn mako_rust_fast_txn_commit_with_hook_and_destroy(
 }
 
 pub(super) unsafe fn mako_rust_fast_txn_record_preflight(
+    txn: *mut sys::mako_local_txn,
+    max_record_bytes: usize,
+    exact_record_bytes_out: *mut usize,
+    op_count_out: *mut u32,
+) -> c_int {
+    // SAFETY: this compatibility spelling has the same pointer contract and
+    // selects the native ABI's default CRC32C mode.
+    unsafe {
+        mako_rust_fast_txn_record_preflight_with_checksum(
+            txn,
+            max_record_bytes,
+            1,
+            exact_record_bytes_out,
+            op_count_out,
+        )
+    }
+}
+
+pub(super) unsafe fn mako_rust_fast_txn_record_preflight_with_checksum(
     _txn: *mut sys::mako_local_txn,
     _max_record_bytes: usize,
+    checksum_mode: u32,
     exact_record_bytes_out: *mut usize,
     op_count_out: *mut u32,
 ) -> c_int {
@@ -882,6 +1002,7 @@ pub(super) unsafe fn mako_rust_fast_txn_record_preflight(
     }
     with_state(|state| {
         state.calls.push(Call::FastRecordPreflight);
+        state.last_record_checksum_mode = Some(checksum_mode);
         let (status, exact_record_bytes, op_count) = match state.steps.pop_front() {
             Some(Step::RecordPreflight {
                 status,
@@ -991,6 +1112,587 @@ pub(super) unsafe fn mako_rust_fast_txn_commit_record_and_destroy(
     })
 }
 
+unsafe fn fast_unchecked_one_put_record_commit_and_destroy(
+    call: Call,
+    _txn: *mut sys::mako_local_txn,
+    expected_record_bytes: u32,
+    hook: RecordBindHook,
+    context: *mut c_void,
+    record_written_out: *mut u8,
+) -> u64 {
+    if !record_written_out.is_null() {
+        // SAFETY: the optional completion output is writable for this call.
+        unsafe { record_written_out.write(0) };
+    }
+    with_state(|state| {
+        state.calls.push(call);
+        state.last_unchecked_record_bytes = Some(expected_record_bytes);
+        let (commit, timestamp, exact_record_bytes, record, reported_written) =
+            match state.steps.pop_front() {
+                Some(Step::CommitRecord {
+                    status,
+                    timestamp,
+                    exact_record_bytes,
+                    record,
+                    reported_written,
+                }) => (
+                    status,
+                    timestamp,
+                    exact_record_bytes,
+                    record,
+                    reported_written,
+                ),
+                found => unexpected("fast unchecked one-put record commit", found),
+            };
+
+        let exact_candidate = exact_record_bytes == expected_record_bytes as usize;
+        let mut sequence = 0u64;
+        let mut record_bytes = ptr::null_mut();
+        let mut record_capacity = 0usize;
+        let accepted = match (exact_candidate, hook, timestamp) {
+            (true, Some(hook), Some(timestamp)) => {
+                // SAFETY: the safe wrapper keeps the callback context and its
+                // output scalars live throughout this synchronous fake call.
+                (unsafe {
+                    hook(
+                        context,
+                        timestamp,
+                        exact_record_bytes,
+                        &mut sequence,
+                        &mut record_bytes,
+                        &mut record_capacity,
+                    )
+                }) != 0
+            }
+            _ => false,
+        };
+        let valid_binding = accepted
+            && sequence != 0
+            && !record_bytes.is_null()
+            && record_capacity >= exact_record_bytes
+            && record.len() == exact_record_bytes;
+        let initialize_record = reported_written != Some(0);
+        let actual_written = if valid_binding && initialize_record {
+            if exact_record_bytes != 0 {
+                // SAFETY: the callback reported at least the exact writable
+                // capacity and the scripted source has exactly that extent.
+                unsafe {
+                    ptr::copy_nonoverlapping(record.as_ptr(), record_bytes, exact_record_bytes)
+                };
+            }
+            1
+        } else {
+            0
+        };
+        if !record_written_out.is_null() {
+            // SAFETY: checked immediately before the write.
+            unsafe { record_written_out.write(reported_written.unwrap_or(actual_written)) };
+        }
+
+        let cleanup = match state.steps.pop_front() {
+            Some(Step::Destroy(status)) => status,
+            found => unexpected("fast unchecked one-put record commit cleanup", found),
+        };
+        observe_status(state, commit);
+        observe_status(state, cleanup);
+        if cleanup == sys::MAKO_LOCAL_OK {
+            state.txn = None;
+        }
+        u64::from(commit as u32) | (u64::from(cleanup as u32) << 32)
+    })
+}
+
+pub(super) unsafe fn mako_rust_fast_txn_commit_unchecked_one_put_record_and_destroy(
+    txn: *mut sys::mako_local_txn,
+    expected_record_bytes: u32,
+    hook: RecordBindHook,
+    context: *mut c_void,
+    record_written_out: *mut u8,
+) -> u64 {
+    // SAFETY: forwarded unchanged to the shared fake terminal.
+    unsafe {
+        fast_unchecked_one_put_record_commit_and_destroy(
+            Call::FastUncheckedOnePutRecordCommitDestroy,
+            txn,
+            expected_record_bytes,
+            hook,
+            context,
+            record_written_out,
+        )
+    }
+}
+
+pub(super) unsafe fn mako_rust_fast_txn_commit_unchecked_one_put_record_single_producer_and_destroy(
+    txn: *mut sys::mako_local_txn,
+    expected_record_bytes: u32,
+    hook: RecordBindHook,
+    context: *mut c_void,
+    record_written_out: *mut u8,
+) -> u64 {
+    // The fake has no native ticket words; a distinct call tag verifies that
+    // the safe cache capability selected the intended private ABI spelling.
+    // SAFETY: forwarded unchanged to the shared fake terminal.
+    unsafe {
+        fast_unchecked_one_put_record_commit_and_destroy(
+            Call::FastSingleProducerUncheckedOnePutRecordCommitDestroy,
+            txn,
+            expected_record_bytes,
+            hook,
+            context,
+            record_written_out,
+        )
+    }
+}
+
+pub(super) unsafe fn mako_rust_fast_txn_commit_preselected_unchecked_one_put_record_single_producer_and_destroy(
+    _txn: *mut sys::mako_local_txn,
+    expected_record_bytes: u32,
+    sequence: u64,
+    record_out: *mut u8,
+    record_capacity: usize,
+) -> FastPreselectedRecordResult {
+    with_state(|state| {
+        state
+            .calls
+            .push(Call::FastPreselectedSingleProducerUncheckedOnePutRecordCommitDestroy);
+        state.last_unchecked_record_bytes = Some(expected_record_bytes);
+        let (commit, timestamp, exact_record_bytes, record, reported_record_state) =
+            match state.steps.pop_front() {
+                Some(Step::CommitPreselectedRecord {
+                    status,
+                    timestamp,
+                    exact_record_bytes,
+                    record,
+                    reported_record_state,
+                }) => (
+                    status,
+                    timestamp,
+                    exact_record_bytes,
+                    record,
+                    reported_record_state,
+                ),
+                found => unexpected("fast preselected one-put record commit", found),
+            };
+
+        let exact_candidate = exact_record_bytes == expected_record_bytes as usize;
+        let valid_target = expected_record_bytes != 0
+            && sequence != 0
+            && !record_out.is_null()
+            && record_capacity >= exact_record_bytes
+            && record.len() == exact_record_bytes;
+        let actual_record_state = if exact_candidate && valid_target {
+            timestamp.map_or(0, |timestamp| u64::from(timestamp) | (1u64 << 32))
+        } else {
+            0
+        };
+        // A direct override lets the contract tests model a corrupt same-build
+        // ABI, including reserved bits and impossible timestamp/witness pairs.
+        let record_state = reported_record_state.unwrap_or(actual_record_state);
+        if record_state & (1u64 << 32) != 0 && exact_candidate && valid_target {
+            if exact_record_bytes != 0 {
+                // SAFETY: the Rust wrapper supplied a stable target whose
+                // capacity covers this exact scripted source extent.
+                unsafe {
+                    ptr::copy_nonoverlapping(record.as_ptr(), record_out, exact_record_bytes)
+                };
+            }
+        }
+
+        let cleanup = match state.steps.pop_front() {
+            Some(Step::Destroy(status)) => status,
+            found => unexpected("fast preselected one-put record commit cleanup", found),
+        };
+        observe_status(state, commit);
+        observe_status(state, cleanup);
+        if cleanup == sys::MAKO_LOCAL_OK {
+            state.txn = None;
+        }
+        FastPreselectedRecordResult {
+            terminal: u64::from(commit as u32) | (u64::from(cleanup as u32) << 32),
+            record_state,
+        }
+    })
+}
+
+pub(super) unsafe fn mako_rust_fast_one_put_holder_pool_create(
+    capacity: usize,
+    key_reserve_bytes: u32,
+    value_reserve_bytes: u32,
+    out: *mut *mut FastOnePutHolderPool,
+) -> c_int {
+    with_state(|state| state.calls.push(Call::FastOnePutHolderPoolCreate));
+    if out.is_null() {
+        return sys::MAKO_LOCAL_INVALID_ARGUMENT;
+    }
+    // SAFETY: checked non-null above; deterministic nulling matches native.
+    unsafe { out.write(ptr::null_mut()) };
+    if capacity == 0 || !capacity.is_power_of_two() {
+        return sys::MAKO_LOCAL_INVALID_ARGUMENT;
+    }
+    if key_reserve_bytes as usize > super::MAX_KEY_BYTES
+        || value_reserve_bytes as usize > super::MAX_VALUE_BYTES
+    {
+        return sys::MAKO_LOCAL_VALUE_TOO_LARGE;
+    }
+
+    let pool = Box::new(FakeOnePutHolderPool {
+        mask: capacity - 1,
+        holders: (0..capacity).map(|_| FakeOnePutHolder::default()).collect(),
+    });
+    let raw = Box::into_raw(pool).cast::<FastOnePutHolderPool>();
+    // SAFETY: `out` was checked and now receives the unique fake allocation.
+    unsafe { out.write(raw) };
+    with_state(|state| state.holder_pools += 1);
+    sys::MAKO_LOCAL_OK
+}
+
+pub(super) unsafe fn mako_rust_fast_one_put_holder_pool_destroy(
+    pool: *mut FastOnePutHolderPool,
+) -> c_int {
+    with_state(|state| state.calls.push(Call::FastOnePutHolderPoolDestroy));
+    if pool.is_null() {
+        return sys::MAKO_LOCAL_OK;
+    }
+    // SAFETY: the private wrapper passes a live allocation returned by create
+    // and externally quiesces all holder users before destruction.
+    let fake = unsafe { &*pool.cast::<FakeOnePutHolderPool>() };
+    if fake.holders.iter().any(|holder| holder.sealed) {
+        return sys::MAKO_LOCAL_BUSY;
+    }
+    // SAFETY: the successful quiescent destroy consumes this allocation once.
+    drop(unsafe { Box::from_raw(pool.cast::<FakeOnePutHolderPool>()) });
+    with_state(|state| {
+        state.holder_pools = state
+            .holder_pools
+            .checked_sub(1)
+            .expect("fake holder pool destruction underflow")
+    });
+    sys::MAKO_LOCAL_OK
+}
+
+pub(super) unsafe fn mako_rust_fast_one_put_holder_pool_get_hot_layout(
+    pool: *mut FastOnePutHolderPool,
+    holder_base_out: *mut *mut c_void,
+    holder_mask_out: *mut usize,
+) -> c_int {
+    if holder_base_out.is_null() || holder_mask_out.is_null() {
+        return sys::MAKO_LOCAL_INVALID_ARGUMENT;
+    }
+    // SAFETY: both outputs were checked above.
+    unsafe {
+        holder_base_out.write(ptr::null_mut());
+        holder_mask_out.write(0);
+    }
+    if pool.is_null() {
+        return sys::MAKO_LOCAL_INVALID_ARGUMENT;
+    }
+    // SAFETY: the private wrapper supplies its live fake pool allocation.
+    let fake = unsafe { &mut *pool.cast::<FakeOnePutHolderPool>() };
+    if fake.holders.is_empty() || !fake.holders.len().is_power_of_two() {
+        return sys::MAKO_LOCAL_INVALID_ARGUMENT;
+    }
+    // The boxed pool keeps this Vec allocation stable until pool destruction.
+    // SAFETY: both outputs remain live for this synchronous call.
+    unsafe {
+        holder_base_out.write(fake.holders.as_mut_ptr().cast::<c_void>());
+        holder_mask_out.write(fake.mask);
+    }
+    sys::MAKO_LOCAL_OK
+}
+
+unsafe fn fake_preselected_one_put_holder_commit(
+    state: &mut State,
+    expected_record_bytes: u32,
+    pool: *mut FastOnePutHolderPool,
+    sequence: u64,
+) -> FastPreselectedRecordResult {
+    let (commit, timestamp, exact_record_bytes, table_id, key, value, reported_holder_state) =
+        match state.steps.pop_front() {
+            Some(Step::CommitPreselectedHolder {
+                status,
+                timestamp,
+                exact_record_bytes,
+                table_id,
+                key,
+                value,
+                reported_holder_state,
+            }) => (
+                status,
+                timestamp,
+                exact_record_bytes,
+                table_id,
+                key,
+                value,
+                reported_holder_state,
+            ),
+            found => unexpected("fast preselected one-put holder commit", found),
+        };
+
+    let canonical_bytes = super::UNCHECKED_ONE_PUT_RECORD_OVERHEAD_BYTES
+        .checked_add(key.len())
+        .and_then(|bytes| bytes.checked_add(value.len()));
+    let valid_candidate = !pool.is_null()
+        && sequence != 0
+        && expected_record_bytes != 0
+        && exact_record_bytes == expected_record_bytes as usize
+        && canonical_bytes == Some(exact_record_bytes)
+        && key.len() <= super::MAX_KEY_BYTES
+        && value.len() <= super::MAX_VALUE_BYTES;
+
+    let mut actual_holder_state = 0;
+    if valid_candidate {
+        // SAFETY: the wrapper supplies the live pool created above.
+        let fake = unsafe { &mut *pool.cast::<FakeOnePutHolderPool>() };
+        let index = (sequence as usize).wrapping_sub(1) & fake.mask;
+        let holder = &mut fake.holders[index];
+        if !holder.sealed {
+            if let Some(timestamp) = timestamp {
+                holder.sequence = sequence;
+                holder.table_id = table_id;
+                holder.mako_timestamp = timestamp;
+                holder.key = key;
+                holder.value = value;
+                holder.sealed = true;
+                actual_holder_state = u64::from(timestamp) | (1u64 << 32);
+            }
+        }
+    }
+    // An explicit override models an internally corrupt same-build ABI. The
+    // independently retained fake holder still follows actual native
+    // acceptance, allowing tests to inspect fail-closed combinations.
+    let holder_state = reported_holder_state.unwrap_or(actual_holder_state);
+
+    let cleanup = match state.steps.pop_front() {
+        Some(Step::Destroy(status)) => status,
+        found => unexpected("fast preselected one-put holder commit cleanup", found),
+    };
+    observe_status(state, commit);
+    observe_status(state, cleanup);
+    if cleanup == sys::MAKO_LOCAL_OK {
+        state.txn = None;
+    }
+    FastPreselectedRecordResult {
+        terminal: u64::from(commit as u32) | (u64::from(cleanup as u32) << 32),
+        record_state: holder_state,
+    }
+}
+
+pub(super) unsafe fn mako_rust_fast_txn_commit_preselected_unchecked_one_put_holder_single_producer_and_destroy(
+    _txn: *mut sys::mako_local_txn,
+    expected_record_bytes: u32,
+    pool: *mut FastOnePutHolderPool,
+    sequence: u64,
+) -> FastPreselectedRecordResult {
+    with_state(|state| {
+        state
+            .calls
+            .push(Call::FastPreselectedSingleProducerUncheckedOnePutHolderCommitDestroy);
+        state.last_unchecked_record_bytes = Some(expected_record_bytes);
+        // SAFETY: the outer fake ABI entry inherits the private holder and
+        // unique-generation contract from the safe wrapper.
+        unsafe {
+            fake_preselected_one_put_holder_commit(state, expected_record_bytes, pool, sequence)
+        }
+    })
+}
+
+pub(super) unsafe fn mako_rust_fast_txn_try_commit_fused_one_put_holder_single_producer_and_destroy(
+    txn: *mut sys::mako_local_txn,
+    acknowledged: *mut u64,
+    unhealthy: *const u8,
+    control: *mut FastSpscHolderControl,
+    capacity_limit: u64,
+) -> u64 {
+    const CONSUMED_PUBLISHED: u32 = 0;
+    const UNTOUCHED_NEED_GENERAL: u32 = 1;
+    const UNTOUCHED_NEED_SLOW: u32 = 2;
+    const CONSUMED_COMMITTED_UNPUBLISHED: u32 = 3;
+    const CONSUMED_OUTCOME: u32 = 4;
+
+    assert!(!txn.is_null());
+    assert!(!control.is_null());
+    assert!(!acknowledged.is_null());
+    assert!(!unhealthy.is_null());
+    // SAFETY: the private wrapper supplies live stable pointers for this
+    // synchronous call.
+    let control = unsafe { &*control };
+    assert!(!control.pool.is_null());
+    assert!(!control.holder_base.is_null());
+    // SAFETY: the control retains the matching live fake pool.
+    let fake_pool = unsafe { &*control.pool.cast::<FakeOnePutHolderPool>() };
+    assert_eq!(
+        control.holder_base,
+        fake_pool.holders.as_ptr().cast_mut().cast()
+    );
+    assert_eq!(control.holder_mask, fake_pool.mask);
+    assert!(!control.acknowledged.is_null());
+    assert!(!control.unhealthy.is_null());
+    assert_eq!(acknowledged, control.acknowledged);
+    assert_eq!(unhealthy, control.unhealthy);
+    assert_ne!(control.capacity, 0);
+    assert_eq!(control.reserved, 0);
+
+    // Read the fake witness before any consuming path can release `txn`.
+    // SAFETY: fast begin returned this live allocation and the safe wrapper
+    // still owns the active transaction on all entry paths.
+    let exact_record_bytes = {
+        let fake = unsafe { &*txn.cast::<FakeTxn>() };
+        if fake.fast_path_eligible {
+            fake.unchecked_record_bytes
+        } else {
+            0
+        }
+    };
+    with_state(|state| {
+        state
+            .calls
+            .push(Call::FastFusedSingleProducerOnePutHolderTryCommitDestroy)
+    });
+
+    // SAFETY: these are the live inner pointers supplied by the private
+    // single-producer wrapper for this synchronous call.
+    let unhealthy = unsafe { AtomicBool::from_ptr(unhealthy.cast_mut().cast::<bool>()) };
+    let acknowledged = unsafe { AtomicU64::from_ptr(acknowledged) };
+    if exact_record_bytes == 0 || exact_record_bytes > control.max_record_bytes {
+        return u64::from(UNTOUCHED_NEED_GENERAL);
+    }
+
+    if unhealthy.load(Ordering::Acquire) {
+        return u64::from(UNTOUCHED_NEED_SLOW) | (u64::from(exact_record_bytes) << 32);
+    }
+    // ACK is the canonical healthy tail. producer_next is synchronized only
+    // by Rust's cold decoder when it needs the richer cursor protocol.
+    let tail = acknowledged.load(Ordering::Relaxed);
+    if tail >= capacity_limit {
+        return u64::from(UNTOUCHED_NEED_SLOW) | (u64::from(exact_record_bytes) << 32);
+    }
+    let sequence = tail + 1;
+    let outcome = with_state(|state| {
+        state.last_unchecked_record_bytes = Some(exact_record_bytes);
+        // SAFETY: the capacity check retains this unique future holder and the
+        // scripted fake obeys the same consuming terminal contract.
+        unsafe {
+            fake_preselected_one_put_holder_commit(
+                state,
+                exact_record_bytes,
+                control.pool,
+                sequence,
+            )
+        }
+    });
+    const PACKED_OK: u64 =
+        (sys::MAKO_LOCAL_OK as u32 as u64) | ((sys::MAKO_LOCAL_OK as u32 as u64) << 32);
+    let timestamp = outcome.record_state as u32;
+    if outcome.terminal == PACKED_OK && outcome.record_state >> 32 == 1 && timestamp != 0 {
+        if with_state(|state| std::mem::take(&mut state.fused_latch_unhealthy_after_commit)) {
+            unhealthy.store(true, Ordering::Release);
+        }
+        if unhealthy.load(Ordering::Acquire) {
+            // SAFETY: code 3 initializes this live output. Upper bits carry
+            // native's exact extent and are masked by the cold decoder.
+            unsafe {
+                control.cold_out.get().write(FastPreselectedRecordResult {
+                    terminal: outcome.terminal,
+                    record_state: outcome.record_state | (u64::from(exact_record_bytes) << 33),
+                })
+            };
+            return u64::from(CONSUMED_COMMITTED_UNPUBLISHED) | (u64::from(timestamp) << 32);
+        }
+        // SAFETY: this is the live inner pointer returned by AtomicU64::as_ptr.
+        acknowledged.store(sequence, Ordering::Release);
+        return u64::from(CONSUMED_PUBLISHED);
+    }
+
+    // SAFETY: code 4 is one of the two routes that initializes this output.
+    unsafe {
+        control.cold_out.get().write(FastPreselectedRecordResult {
+            terminal: outcome.terminal,
+            record_state: outcome.record_state | (u64::from(exact_record_bytes) << 33),
+        })
+    };
+    u64::from(CONSUMED_OUTCOME)
+}
+
+pub(super) unsafe fn mako_rust_fast_one_put_holder_pool_get_view(
+    pool: *const FastOnePutHolderPool,
+    expected_sequence: u64,
+    out: *mut FastOnePutHolderView,
+) -> c_int {
+    with_state(|state| state.calls.push(Call::FastOnePutHolderPoolGetView));
+    if out.is_null() {
+        return sys::MAKO_LOCAL_INVALID_ARGUMENT;
+    }
+    // SAFETY: checked output; zeroing on all failures matches native.
+    unsafe {
+        out.write(FastOnePutHolderView {
+            sequence: 0,
+            table_id: 0,
+            key: ptr::null(),
+            value: ptr::null(),
+            key_len: 0,
+            value_len: 0,
+            mako_timestamp: 0,
+            reserved: 0,
+        })
+    };
+    if pool.is_null() || expected_sequence == 0 {
+        return sys::MAKO_LOCAL_INVALID_ARGUMENT;
+    }
+    // SAFETY: exact-generation caller retains the live fake allocation.
+    let fake = unsafe { &*pool.cast::<FakeOnePutHolderPool>() };
+    let index = (expected_sequence as usize).wrapping_sub(1) & fake.mask;
+    let holder = &fake.holders[index];
+    if !holder.sealed || holder.sequence != expected_sequence {
+        return sys::MAKO_LOCAL_BUSY;
+    }
+    let key_len = match u32::try_from(holder.key.len()) {
+        Ok(len) => len,
+        Err(_) => return sys::MAKO_LOCAL_INTERNAL,
+    };
+    let value_len = match u32::try_from(holder.value.len()) {
+        Ok(len) => len,
+        Err(_) => return sys::MAKO_LOCAL_INTERNAL,
+    };
+    // SAFETY: the sealed holder owns stable key/value vectors until release.
+    unsafe {
+        out.write(FastOnePutHolderView {
+            sequence: holder.sequence,
+            table_id: holder.table_id,
+            key: holder.key.as_ptr(),
+            value: holder.value.as_ptr(),
+            key_len,
+            value_len,
+            mako_timestamp: holder.mako_timestamp,
+            reserved: 0,
+        })
+    };
+    sys::MAKO_LOCAL_OK
+}
+
+pub(super) unsafe fn mako_rust_fast_one_put_holder_pool_release(
+    pool: *mut FastOnePutHolderPool,
+    expected_sequence: u64,
+) -> c_int {
+    with_state(|state| state.calls.push(Call::FastOnePutHolderPoolRelease));
+    if pool.is_null() || expected_sequence == 0 {
+        return sys::MAKO_LOCAL_INVALID_ARGUMENT;
+    }
+    // SAFETY: the serialized consumer retains the live fake allocation.
+    let fake = unsafe { &mut *pool.cast::<FakeOnePutHolderPool>() };
+    let index = (expected_sequence as usize).wrapping_sub(1) & fake.mask;
+    let holder = &mut fake.holders[index];
+    if !holder.sealed || holder.sequence != expected_sequence {
+        return sys::MAKO_LOCAL_BUSY;
+    }
+    holder.sequence = 0;
+    holder.table_id = 0;
+    holder.mako_timestamp = 0;
+    holder.key.clear();
+    holder.value.clear();
+    holder.sealed = false;
+    sys::MAKO_LOCAL_OK
+}
+
 pub(super) unsafe fn mako_local_txn_abort(_txn: *mut sys::mako_local_txn) -> c_int {
     with_state(|state| {
         state.calls.push(Call::Abort);
@@ -1060,9 +1762,10 @@ mod tests {
 
     use super::*;
     use crate::{
-        arm_test_cleanup_failure, clear_test_cleanup_failure, clear_test_commit_observer, features,
-        install_test_commit_observer, quarantined_worker_count, worker_health, CommitDisposition,
-        Error, LocalDb, TestCleanupBoundary, TestCommitPhase, WorkerHealth, MAX_VALUE_BYTES,
+        CommitDisposition, Error, LocalDb, MAX_VALUE_BYTES, TestCleanupBoundary, TestCommitPhase,
+        WorkerHealth, arm_test_cleanup_failure, clear_test_cleanup_failure,
+        clear_test_commit_observer, features, install_test_commit_observer,
+        quarantined_worker_count, worker_health,
     };
 
     fn unavailable_commit_observer(_phase: TestCommitPhase, _timestamp: u32) {
@@ -1411,14 +2114,17 @@ mod tests {
                 Call::Put => push(Step::Put(ByteReply {
                     status: sys::MAKO_LOCAL_OK,
                     value: 2,
+                    unchecked_record_bytes: 0,
                 })),
                 Call::Insert => push(Step::Insert(ByteReply {
                     status: sys::MAKO_LOCAL_OK,
                     value: u8::MAX,
+                    unchecked_record_bytes: 0,
                 })),
                 Call::Remove => push(Step::Remove(ByteReply {
                     status: sys::MAKO_LOCAL_OK,
                     value: 2,
+                    unchecked_record_bytes: 0,
                 })),
                 _ => unreachable!(),
             }
@@ -1449,6 +2155,7 @@ mod tests {
         push(Step::Put(ByteReply {
             status: sys::MAKO_LOCAL_OK,
             value: 2,
+            unchecked_record_bytes: 0,
         }));
         push(Step::Abort(sys::MAKO_LOCAL_WORKER_POISONED));
         push(Step::Destroy(sys::MAKO_LOCAL_WORKER_POISONED));
@@ -1667,6 +2374,7 @@ mod tests {
         push(Step::Put(ByteReply {
             status: sys::MAKO_LOCAL_OK,
             value: 1,
+            unchecked_record_bytes: 0,
         }));
         assert_eq!(transaction.put(&table, b"key", b"value"), Ok(true));
 
@@ -1703,6 +2411,7 @@ mod tests {
         push(Step::Put(ByteReply {
             status: sys::MAKO_LOCAL_OK,
             value: 0,
+            unchecked_record_bytes: 0,
         }));
         assert_eq!(transaction.put(&other_table, b"key", b"value"), Ok(false));
         push(Step::Abort(sys::MAKO_LOCAL_OK));
@@ -1756,11 +2465,13 @@ mod tests {
         let db = open_db();
         let table = db.open_table("trusted-fast-malformed", 15).unwrap();
         let mut transaction = db.trusted_transaction(&table).unwrap();
-        // Values above one set reserved packed-result bits. The wrapper must
-        // fail closed through the checked abort/destroy lifecycle.
+        // A non-boolean created field spills into a record-size bit but cannot
+        // match this Put's exact v4 extent. The wrapper must fail closed
+        // through the checked abort/destroy lifecycle.
         push(Step::Put(ByteReply {
             status: sys::MAKO_LOCAL_OK,
             value: 2,
+            unchecked_record_bytes: 0,
         }));
         push(Step::Abort(sys::MAKO_LOCAL_OK));
         push(Step::Destroy(sys::MAKO_LOCAL_OK));
@@ -1789,6 +2500,8 @@ mod tests {
         let preflight = transaction.commit_record_preflight(64).unwrap();
         assert_eq!(preflight.exact_record_bytes(), 8);
         assert_eq!(preflight.op_count(), 2);
+        assert_eq!(preflight.checksum(), crate::CommitRecordChecksum::Crc32c);
+        assert_eq!(last_record_checksum_mode(), Some(1));
         assert!(!preflight.is_empty());
         let copied = preflight;
         let mut record = crate::UninitCommitRecord::try_for(preflight).unwrap();
@@ -1833,14 +2546,19 @@ mod tests {
         let mut transaction = db.trusted_transaction(&table).unwrap();
         push(Step::RecordPreflight {
             status: sys::MAKO_LOCAL_OK,
-            exact_record_bytes: 30,
+            exact_record_bytes: 26,
             op_count: 0,
         });
         // Empty plans need no output allocation and therefore remain valid
-        // even when the caller's nonempty-record cap is below the 30-byte v3
-        // framing size.
-        let preflight = transaction.commit_record_preflight(1).unwrap();
+        // even when the caller's nonempty-record cap is below the selected
+        // 26-byte unchecked-v4 framing size.
+        let preflight = transaction
+            .commit_record_preflight_with_checksum(1, crate::CommitRecordChecksum::None)
+            .unwrap();
         assert!(preflight.is_empty());
+        assert_eq!(preflight.exact_record_bytes(), 26);
+        assert_eq!(preflight.checksum(), crate::CommitRecordChecksum::None);
+        assert_eq!(last_record_checksum_mode(), Some(0));
         push(Step::Commit(sys::MAKO_LOCAL_OK));
         push(Step::Destroy(sys::MAKO_LOCAL_OK));
         let report = transaction.commit_report();
@@ -1849,6 +2567,1157 @@ mod tests {
         assert_call_count(Call::FastRecordPreflight, 1);
         assert_call_count(Call::FastRecordCommitDestroy, 0);
         assert_call_count(Call::FastCommitDestroy, 1);
+        drop(db);
+        assert_drained();
+    }
+
+    fn exercise_commit_record_raw_target_path() {
+        reset();
+        let db = open_db();
+        let table = db.open_table("trusted-record-target", 39).unwrap();
+        let mut transaction = db.trusted_transaction(&table).unwrap();
+        push(Step::RecordPreflight {
+            status: sys::MAKO_LOCAL_OK,
+            exact_record_bytes: 8,
+            op_count: 1,
+        });
+        let preflight = transaction.commit_record_preflight(64).unwrap();
+        let expected = b"rawbytes".to_vec();
+        push(Step::CommitRecord {
+            status: sys::MAKO_LOCAL_OK,
+            timestamp: Some(54),
+            exact_record_bytes: 8,
+            record: expected.clone(),
+            reported_written: None,
+        });
+        push(Step::Destroy(sys::MAKO_LOCAL_OK));
+
+        let mut storage = vec![std::mem::MaybeUninit::<u8>::uninit(); 8];
+        let target = crate::CommitRecordTarget::from_raw_parts;
+        // SAFETY: `storage` stays allocated and exclusively owned until the
+        // synchronous terminal returns, and this callback cannot unwind.
+        let report = unsafe {
+            transaction.commit_report_with_record_target(|timestamp, bounds| {
+                assert_eq!(timestamp.get(), 54);
+                assert_eq!(bounds, preflight);
+                let sequence = NonZeroU64::new(8).unwrap();
+                let bytes = std::ptr::NonNull::new(storage.as_mut_ptr().cast::<u8>()).unwrap();
+                Some(target(sequence, bytes, storage.len()))
+            })
+        };
+        assert_eq!(report.commit.disposition, CommitDisposition::Committed);
+        assert_eq!(report.commit.cleanup, Ok(()));
+        assert!(report.completion_contract_valid);
+        assert!(report.record_bound);
+        assert!(report.record_written);
+        // SAFETY: the exact native completion witness above initialized every
+        // byte in the target extent.
+        let written =
+            unsafe { std::slice::from_raw_parts(storage.as_ptr().cast::<u8>(), storage.len()) };
+        assert_eq!(written, expected);
+        drop(db);
+        assert_drained();
+    }
+
+    fn exercise_unchecked_one_put_record_terminal() {
+        reset();
+        let db = open_db();
+        let table = db.open_table("trusted-fused-record-target", 40).unwrap();
+        let mut transaction = db.trusted_transaction(&table).unwrap();
+        const EXACT_BYTES: u32 = 43 + 3 + 5;
+        push(Step::Put(ByteReply {
+            status: sys::MAKO_LOCAL_OK,
+            value: 1,
+            unchecked_record_bytes: EXACT_BYTES,
+        }));
+        assert_eq!(transaction.put(&table, b"key", b"value"), Ok(true));
+        let candidate = transaction
+            .unchecked_one_put_record_candidate()
+            .expect("one trusted fast Put advertises a direct v4 candidate");
+        assert_eq!(candidate.exact_record_bytes(), EXACT_BYTES as usize);
+        assert_eq!(candidate.op_count(), 1);
+        assert_eq!(candidate.checksum(), crate::CommitRecordChecksum::None);
+        assert_call_count(Call::FastRecordPreflight, 0);
+
+        let expected = vec![0x5a; EXACT_BYTES as usize];
+        push(Step::CommitRecord {
+            status: sys::MAKO_LOCAL_OK,
+            timestamp: Some(55),
+            exact_record_bytes: EXACT_BYTES as usize,
+            record: expected.clone(),
+            reported_written: None,
+        });
+        push(Step::Destroy(sys::MAKO_LOCAL_OK));
+        let mut storage = vec![std::mem::MaybeUninit::<u8>::uninit(); EXACT_BYTES as usize];
+        let target = crate::CommitRecordTarget::from_raw_parts;
+        // SAFETY: storage remains stable and exclusively writable through the
+        // synchronous terminal; the callback does not unwind.
+        let outcome = unsafe {
+            transaction.commit_trusted_unchecked_one_put_record_target(
+                candidate,
+                |timestamp, bounds| {
+                    assert_eq!(timestamp.get(), 55);
+                    assert_eq!(bounds, candidate);
+                    let sequence = NonZeroU64::new(9).unwrap();
+                    let bytes = std::ptr::NonNull::new(storage.as_mut_ptr().cast::<u8>()).unwrap();
+                    Some(target(sequence, bytes, storage.len()))
+                },
+            )
+        };
+        assert!(outcome.is_committed());
+        let report = outcome.into_report();
+        assert_eq!(report.commit.disposition, CommitDisposition::Committed);
+        assert_eq!(report.commit.cleanup, Ok(()));
+        assert!(report.completion_contract_valid);
+        assert!(report.record_bound);
+        assert!(report.record_written);
+        assert_eq!(last_unchecked_record_bytes(), Some(EXACT_BYTES));
+        assert_call_count(Call::FastUncheckedOnePutRecordCommitDestroy, 1);
+        assert_call_count(Call::FastRecordPreflight, 0);
+        assert_call_count(Call::FastRecordCommitDestroy, 0);
+        // SAFETY: the exact native completion witness initialized the target.
+        let written =
+            unsafe { std::slice::from_raw_parts(storage.as_ptr().cast::<u8>(), storage.len()) };
+        assert_eq!(written, expected);
+        drop(db);
+        assert_drained();
+
+        reset();
+        let db = open_db();
+        let table = db.open_table("trusted-fused-stale", 41).unwrap();
+        let mut transaction = db.trusted_transaction(&table).unwrap();
+        push(Step::Put(ByteReply {
+            status: sys::MAKO_LOCAL_OK,
+            value: 1,
+            unchecked_record_bytes: EXACT_BYTES,
+        }));
+        assert_eq!(transaction.put(&table, b"key", b"value"), Ok(true));
+        let stale = transaction.unchecked_one_put_record_candidate().unwrap();
+        push(Step::Get(GetReply::absent()));
+        assert_eq!(transaction.get(&table, b"probe"), Ok(None));
+        assert_eq!(transaction.unchecked_one_put_record_candidate(), None);
+        push(Step::Abort(sys::MAKO_LOCAL_OK));
+        push(Step::Destroy(sys::MAKO_LOCAL_OK));
+        // SAFETY: this stale candidate is intentionally exercised; rejection
+        // occurs before the never-called target callback.
+        let report = unsafe {
+            transaction.commit_report_with_unchecked_one_put_record_target(stale, |_, _| {
+                panic!("stale direct candidate must reject before binding")
+            })
+        };
+        assert_eq!(
+            report.commit.disposition,
+            CommitDisposition::Aborted(Error::InvalidArgument)
+        );
+        assert_eq!(report.commit.cleanup, Ok(()));
+        assert!(!report.record_bound);
+        assert!(!report.record_written);
+        assert_call_count(Call::FastUncheckedOnePutRecordCommitDestroy, 0);
+        assert_call_count(Call::FastAbortDestroy, 1);
+        drop(db);
+        assert_drained();
+
+        reset();
+        let db = open_db();
+        let table = db.open_table("trusted-fused-native-recheck", 42).unwrap();
+        let mut transaction = db.trusted_transaction(&table).unwrap();
+        push(Step::Put(ByteReply {
+            status: sys::MAKO_LOCAL_OK,
+            value: 1,
+            unchecked_record_bytes: EXACT_BYTES,
+        }));
+        assert_eq!(transaction.put(&table, b"key", b"value"), Ok(true));
+        let candidate = transaction.unchecked_one_put_record_candidate().unwrap();
+        push(Step::CommitRecord {
+            status: sys::MAKO_LOCAL_INVALID_ARGUMENT,
+            timestamp: None,
+            exact_record_bytes: EXACT_BYTES as usize,
+            record: vec![0; EXACT_BYTES as usize],
+            reported_written: None,
+        });
+        push(Step::Destroy(sys::MAKO_LOCAL_OK));
+        // SAFETY: candidate is the final trusted one-Put value. Native's
+        // modeled shape recheck rejects before this callback.
+        let outcome = unsafe {
+            transaction.commit_trusted_unchecked_one_put_record_target(candidate, |_, _| {
+                panic!("native revalidation failure must reject before binding")
+            })
+        };
+        assert!(!outcome.is_committed());
+        let report = outcome.into_report();
+        assert_eq!(
+            report.commit.disposition,
+            CommitDisposition::Aborted(Error::InvalidArgument)
+        );
+        assert_eq!(report.commit.cleanup, Ok(()));
+        assert!(report.completion_contract_valid);
+        assert!(!report.record_bound);
+        assert!(!report.record_written);
+        assert_call_count(Call::FastUncheckedOnePutRecordCommitDestroy, 1);
+        drop(db);
+        assert_drained();
+
+        reset();
+        let db = open_db();
+        let table = db.open_table("trusted-fused-bind-rejection", 43).unwrap();
+        let mut transaction = db.trusted_transaction(&table).unwrap();
+        push(Step::Put(ByteReply {
+            status: sys::MAKO_LOCAL_OK,
+            value: 1,
+            unchecked_record_bytes: EXACT_BYTES,
+        }));
+        assert_eq!(transaction.put(&table, b"key", b"value"), Ok(true));
+        let candidate = transaction.unchecked_one_put_record_candidate().unwrap();
+        push(Step::CommitRecord {
+            status: sys::MAKO_LOCAL_COMMIT_HOOK_REJECTED,
+            timestamp: Some(56),
+            exact_record_bytes: EXACT_BYTES as usize,
+            record: vec![0x5a; EXACT_BYTES as usize],
+            reported_written: None,
+        });
+        push(Step::Destroy(sys::MAKO_LOCAL_OK));
+        // SAFETY: returning None lends no storage and deliberately exercises
+        // the fused trampoline's fail-closed preinstall rejection.
+        let report = unsafe {
+            transaction.commit_report_with_unchecked_one_put_record_target(
+                candidate,
+                |timestamp, plan| {
+                    assert_eq!(timestamp.get(), 56);
+                    assert_eq!(plan, candidate);
+                    None
+                },
+            )
+        };
+        assert_eq!(
+            report.commit.disposition,
+            CommitDisposition::Aborted(Error::CommitHookRejected)
+        );
+        assert_eq!(report.commit.cleanup, Ok(()));
+        assert!(report.completion_contract_valid);
+        assert!(!report.record_bound);
+        assert!(!report.record_written);
+        assert_call_count(Call::FastUncheckedOnePutRecordCommitDestroy, 1);
+        drop(db);
+        assert_drained();
+    }
+
+    fn exercise_unchecked_one_put_outcome_contract() {
+        const EXACT_BYTES: u32 = 43 + 3 + 5;
+
+        // The compact trusted outcome must preserve the general terminal's
+        // fail-closed handling of malformed witness and binding combinations.
+        // These scripts deliberately model returns that the same-build native
+        // terminal promises never to produce.
+        for (index, status, timestamp, reported_written, expect_bound) in [
+            (0, sys::MAKO_LOCAL_OK, Some(80), Some(0), true),
+            (1, sys::MAKO_LOCAL_OK, Some(81), Some(2), true),
+            // Final validation cannot conflict after the ordered bind gate.
+            (2, sys::MAKO_LOCAL_CONFLICT, Some(82), Some(0), true),
+            // A completion witness without a successful bind is impossible.
+            (3, sys::MAKO_LOCAL_OK, None, Some(1), false),
+        ] {
+            reset();
+            let db = open_db();
+            let table = db
+                .open_table("trusted-fused-malformed", 44 + index)
+                .unwrap();
+            let mut transaction = db.trusted_transaction(&table).unwrap();
+            push(Step::Put(ByteReply {
+                status: sys::MAKO_LOCAL_OK,
+                value: 1,
+                unchecked_record_bytes: EXACT_BYTES,
+            }));
+            assert_eq!(transaction.put(&table, b"key", b"value"), Ok(true));
+            let candidate = transaction.unchecked_one_put_record_candidate().unwrap();
+            push(Step::CommitRecord {
+                status,
+                timestamp,
+                exact_record_bytes: EXACT_BYTES as usize,
+                record: vec![0x6b; EXACT_BYTES as usize],
+                reported_written,
+            });
+            push(Step::Destroy(sys::MAKO_LOCAL_OK));
+            let mut storage = vec![std::mem::MaybeUninit::<u8>::uninit(); EXACT_BYTES as usize];
+            // SAFETY: storage remains stable and exclusively writable through
+            // the synchronous terminal. The same-build precondition is
+            // supplied by this scripted fake, and the callback cannot unwind.
+            let outcome = unsafe {
+                transaction.commit_trusted_unchecked_one_put_record_target(
+                    candidate,
+                    |_, bounds| {
+                        assert_eq!(bounds, candidate);
+                        let sequence = NonZeroU64::new(200 + index).unwrap();
+                        let bytes =
+                            std::ptr::NonNull::new(storage.as_mut_ptr().cast::<u8>()).unwrap();
+                        Some(crate::CommitRecordTarget::from_raw_parts(
+                            sequence,
+                            bytes,
+                            storage.len(),
+                        ))
+                    },
+                )
+            };
+            assert!(!outcome.is_committed(), "case {index}");
+            let report = outcome.into_report();
+            assert_eq!(
+                report.commit.disposition,
+                CommitDisposition::Unknown(Error::Internal),
+                "case {index}"
+            );
+            assert_eq!(report.commit.cleanup, Err(Error::Internal), "case {index}");
+            assert!(!report.completion_contract_valid, "case {index}");
+            assert_eq!(report.record_bound, expect_bound, "case {index}");
+            assert!(!report.record_written, "case {index}");
+            drop(db);
+            assert_drained();
+        }
+
+        // Worker poisoning after native filled a bound record is a valid
+        // uncertain-visibility shape. Preserve the written witness so the
+        // ordered slot and bytes remain available for fail-stop diagnostics.
+        reset();
+        let before = quarantined_worker_count().unwrap();
+        let db = open_db();
+        let table = db.open_table("trusted-fused-written-poisoned", 48).unwrap();
+        let mut transaction = db.trusted_transaction(&table).unwrap();
+        push(Step::Put(ByteReply {
+            status: sys::MAKO_LOCAL_OK,
+            value: 1,
+            unchecked_record_bytes: EXACT_BYTES,
+        }));
+        assert_eq!(transaction.put(&table, b"key", b"value"), Ok(true));
+        let candidate = transaction.unchecked_one_put_record_candidate().unwrap();
+        let expected = vec![0x7c; EXACT_BYTES as usize];
+        push(Step::CommitRecord {
+            status: sys::MAKO_LOCAL_WORKER_POISONED,
+            timestamp: Some(84),
+            exact_record_bytes: EXACT_BYTES as usize,
+            record: expected.clone(),
+            reported_written: Some(1),
+        });
+        push(Step::Destroy(sys::MAKO_LOCAL_WORKER_POISONED));
+        let mut storage = vec![std::mem::MaybeUninit::<u8>::uninit(); EXACT_BYTES as usize];
+        // SAFETY: storage remains stable and exclusively writable through the
+        // synchronous fake terminal, and the callback cannot unwind.
+        let outcome = unsafe {
+            transaction.commit_trusted_unchecked_one_put_record_target(candidate, |_, bounds| {
+                assert_eq!(bounds, candidate);
+                let sequence = NonZeroU64::new(204).unwrap();
+                let bytes = std::ptr::NonNull::new(storage.as_mut_ptr().cast::<u8>()).unwrap();
+                Some(crate::CommitRecordTarget::from_raw_parts(
+                    sequence,
+                    bytes,
+                    storage.len(),
+                ))
+            })
+        };
+        assert!(!outcome.is_committed());
+        let report = outcome.into_report();
+        assert_eq!(
+            report.commit.disposition,
+            CommitDisposition::Unknown(Error::WorkerPoisoned)
+        );
+        assert_eq!(report.commit.cleanup, Err(Error::WorkerPoisoned));
+        assert!(report.completion_contract_valid);
+        assert!(report.record_bound);
+        assert!(report.record_written);
+        // SAFETY: the accepted exact completion witness proves native
+        // initialized the full target even though visibility is uncertain.
+        let written =
+            unsafe { std::slice::from_raw_parts(storage.as_ptr().cast::<u8>(), storage.len()) };
+        assert_eq!(written, expected);
+        assert!(quarantined_worker_count().unwrap() > before);
+        drop(db);
+        assert_drained();
+    }
+
+    fn run_preselected_one_put_case(
+        table_id: u64,
+        commit: c_int,
+        timestamp: Option<u32>,
+        reported_record_state: Option<u64>,
+        cleanup: c_int,
+    ) -> (
+        crate::TrustedPreselectedUncheckedOnePutRecordOutcome,
+        Vec<std::mem::MaybeUninit<u8>>,
+        Vec<u8>,
+    ) {
+        const EXACT_BYTES: u32 = 43 + 3 + 5;
+
+        reset();
+        let db = open_db();
+        let table = db
+            .open_table("trusted-preselected-one-put", table_id)
+            .unwrap();
+        let mut transaction = db.trusted_transaction(&table).unwrap();
+        push(Step::Put(ByteReply {
+            status: sys::MAKO_LOCAL_OK,
+            value: 1,
+            unchecked_record_bytes: EXACT_BYTES,
+        }));
+        assert_eq!(transaction.put(&table, b"key", b"value"), Ok(true));
+        let candidate = transaction.unchecked_one_put_record_candidate().unwrap();
+        let expected = vec![0x8d; EXACT_BYTES as usize];
+        push(Step::CommitPreselectedRecord {
+            status: commit,
+            timestamp,
+            exact_record_bytes: EXACT_BYTES as usize,
+            record: expected.clone(),
+            reported_record_state,
+        });
+        push(Step::Destroy(cleanup));
+        let mut storage = vec![std::mem::MaybeUninit::<u8>::uninit(); EXACT_BYTES as usize];
+        let sequence = NonZeroU64::new(1_000 + table_id).unwrap();
+        let bytes = std::ptr::NonNull::new(storage.as_mut_ptr().cast::<u8>()).unwrap();
+        // SAFETY: this test owns the only transaction and record terminal for
+        // the fake LocalDb. `storage` has the exact advertised extent and stays
+        // stable and exclusively writable through the synchronous call.
+        let outcome = unsafe {
+            let target = crate::CommitRecordTarget::from_raw_parts(sequence, bytes, storage.len());
+            transaction.commit_trusted_preselected_single_producer_unchecked_one_put_record_target(
+                candidate, target,
+            )
+        };
+        assert_eq!(last_unchecked_record_bytes(), Some(EXACT_BYTES));
+        assert_call_count(
+            Call::FastPreselectedSingleProducerUncheckedOnePutRecordCommitDestroy,
+            1,
+        );
+        assert_call_count(
+            Call::FastSingleProducerUncheckedOnePutRecordCommitDestroy,
+            0,
+        );
+        drop(db);
+        assert_drained();
+        (outcome, storage, expected)
+    }
+
+    fn exercise_preselected_one_put_record_terminal() {
+        let (outcome, storage, expected) = run_preselected_one_put_case(
+            49,
+            sys::MAKO_LOCAL_OK,
+            Some(90),
+            None,
+            sys::MAKO_LOCAL_OK,
+        );
+        assert_eq!(
+            outcome.accepted_timestamp().map(crate::MakoTimestamp::get),
+            Some(90)
+        );
+        assert!(outcome.record_written());
+        assert!(outcome.is_committed());
+        let report = outcome.into_report();
+        assert_eq!(report.commit.disposition, CommitDisposition::Committed);
+        assert_eq!(report.commit.cleanup, Ok(()));
+        assert!(report.completion_contract_valid);
+        assert!(report.record_bound);
+        assert!(report.record_written);
+        // SAFETY: the valid completion witness proves the fake initialized the
+        // complete exact target before returning.
+        let written =
+            unsafe { std::slice::from_raw_parts(storage.as_ptr().cast::<u8>(), storage.len()) };
+        assert_eq!(written, expected);
+
+        // A clean conflict before the native serializer accepts the target
+        // leaves the preselected reservation reusable.
+        let (outcome, _, _) = run_preselected_one_put_case(
+            50,
+            sys::MAKO_LOCAL_CONFLICT,
+            None,
+            None,
+            sys::MAKO_LOCAL_OK,
+        );
+        assert_eq!(outcome.accepted_timestamp(), None);
+        assert!(!outcome.record_written());
+        assert!(!outcome.is_committed());
+        let report = outcome.into_report();
+        assert_eq!(
+            report.commit.disposition,
+            CommitDisposition::Aborted(Error::Conflict)
+        );
+        assert_eq!(report.commit.cleanup, Ok(()));
+        assert!(report.completion_contract_valid);
+        assert!(!report.record_bound);
+        assert!(!report.record_written);
+
+        // Once the target is accepted and filled, a poisoned terminal preserves
+        // its timestamp and witness so the cache can bind and pin the slot.
+        let before = quarantined_worker_count().unwrap();
+        let (outcome, storage, expected) = run_preselected_one_put_case(
+            51,
+            sys::MAKO_LOCAL_WORKER_POISONED,
+            Some(91),
+            None,
+            sys::MAKO_LOCAL_WORKER_POISONED,
+        );
+        assert_eq!(
+            outcome.accepted_timestamp().map(crate::MakoTimestamp::get),
+            Some(91)
+        );
+        assert!(outcome.record_written());
+        assert!(!outcome.is_committed());
+        let report = outcome.into_report();
+        assert_eq!(
+            report.commit.disposition,
+            CommitDisposition::Unknown(Error::WorkerPoisoned)
+        );
+        assert_eq!(report.commit.cleanup, Err(Error::WorkerPoisoned));
+        assert!(report.completion_contract_valid);
+        assert!(report.record_bound);
+        assert!(report.record_written);
+        // SAFETY: this valid written witness covers the entire exact target.
+        let written =
+            unsafe { std::slice::from_raw_parts(storage.as_ptr().cast::<u8>(), storage.len()) };
+        assert_eq!(written, expected);
+        assert!(quarantined_worker_count().unwrap() > before);
+
+        for (index, status, timestamp, record_state, expect_accepted) in [
+            // Installed without accepting or writing a durable record.
+            (0, sys::MAKO_LOCAL_OK, Some(92), 0, false),
+            // Accepted timestamp without the completion witness.
+            (1, sys::MAKO_LOCAL_OK, Some(93), 93, true),
+            // Completion witness without an accepted timestamp.
+            (2, sys::MAKO_LOCAL_OK, None, 1u64 << 32, false),
+            // A final conflict after acceptance contradicts the commit gate.
+            (
+                3,
+                sys::MAKO_LOCAL_CONFLICT,
+                Some(94),
+                94 | (1u64 << 32),
+                true,
+            ),
+            // Bits above the written witness are reserved.
+            (
+                4,
+                sys::MAKO_LOCAL_OK,
+                Some(95),
+                95 | (1u64 << 32) | (1u64 << 33),
+                true,
+            ),
+            // A nonzero timestamp outside Mako's representable base range.
+            (
+                5,
+                sys::MAKO_LOCAL_OK,
+                Some(crate::MAX_MAKO_TIMESTAMP + 1),
+                u64::from(crate::MAX_MAKO_TIMESTAMP + 1) | (1u64 << 32),
+                false,
+            ),
+        ] {
+            let (outcome, _, _) = run_preselected_one_put_case(
+                52 + index,
+                status,
+                timestamp,
+                Some(record_state),
+                sys::MAKO_LOCAL_OK,
+            );
+            assert_eq!(outcome.accepted_timestamp().is_some(), expect_accepted);
+            assert!(!outcome.is_committed(), "case {index}");
+            let report = outcome.into_report();
+            assert_eq!(
+                report.commit.disposition,
+                CommitDisposition::Unknown(Error::Internal),
+                "case {index}"
+            );
+            assert_eq!(report.commit.cleanup, Err(Error::Internal), "case {index}");
+            assert!(!report.completion_contract_valid, "case {index}");
+            assert_eq!(report.record_bound, expect_accepted, "case {index}");
+            assert!(!report.record_written, "case {index}");
+        }
+    }
+
+    fn run_preselected_one_put_holder_case(
+        table_id: u64,
+        sequence: u64,
+        commit: c_int,
+        timestamp: Option<u32>,
+        reported_holder_state: Option<u64>,
+        cleanup: c_int,
+    ) -> (
+        LocalDb,
+        crate::TrustedOnePutHolderPool,
+        crate::TrustedPreselectedUncheckedOnePutHolderOutcome,
+        NonZeroU64,
+    ) {
+        const KEY: &[u8] = b"holder\0key";
+        const VALUE: &[u8] = b"holder-value\xff";
+        const EXACT_BYTES: u32 = 43 + KEY.len() as u32 + VALUE.len() as u32;
+
+        reset();
+        let pool = crate::TrustedOnePutHolderPool::new(4, 0, 0).unwrap();
+        let db = open_db();
+        let table = db.open_table("trusted-one-put-holder", table_id).unwrap();
+        let mut transaction = db.trusted_transaction(&table).unwrap();
+        push(Step::Put(ByteReply {
+            status: sys::MAKO_LOCAL_OK,
+            value: 1,
+            unchecked_record_bytes: EXACT_BYTES,
+        }));
+        assert_eq!(transaction.put(&table, KEY, VALUE), Ok(true));
+        let candidate = transaction.unchecked_one_put_record_candidate().unwrap();
+        push(Step::CommitPreselectedHolder {
+            status: commit,
+            timestamp,
+            exact_record_bytes: EXACT_BYTES as usize,
+            table_id,
+            key: KEY.to_vec(),
+            value: VALUE.to_vec(),
+            reported_holder_state,
+        });
+        push(Step::Destroy(cleanup));
+        let sequence = NonZeroU64::new(sequence).unwrap();
+        // SAFETY: the fake test owns the sole producer and exact pool
+        // generation, and this is the candidate's immediate consuming call.
+        let outcome = unsafe {
+            transaction.commit_trusted_preselected_single_producer_unchecked_one_put_holder(
+                candidate, &pool, sequence,
+            )
+        };
+        assert_eq!(last_unchecked_record_bytes(), Some(EXACT_BYTES));
+        assert_call_count(
+            Call::FastPreselectedSingleProducerUncheckedOnePutHolderCommitDestroy,
+            1,
+        );
+        assert_call_count(
+            Call::FastPreselectedSingleProducerUncheckedOnePutRecordCommitDestroy,
+            0,
+        );
+        (db, pool, outcome, sequence)
+    }
+
+    fn release_actual_holder(pool: &crate::TrustedOnePutHolderPool, sequence: NonZeroU64) {
+        // SAFETY: each scripted accepted terminal is synchronously published
+        // for this single-thread fake before this sole-consumer observation.
+        let view = unsafe { pool.view(sequence) }.expect("accepted fake holder has a view");
+        // No fake backend borrow remains after this point.
+        unsafe { pool.release(view) }.expect("exact fake holder release succeeds");
+    }
+
+    fn exercise_preselected_one_put_holder_terminal() {
+        reset();
+        assert!(matches!(
+            crate::TrustedOnePutHolderPool::new(0, 0, 0),
+            Err(Error::InvalidArgument)
+        ));
+        assert!(matches!(
+            crate::TrustedOnePutHolderPool::new(3, 0, 0),
+            Err(Error::InvalidArgument)
+        ));
+        assert!(matches!(
+            crate::TrustedOnePutHolderPool::new(4, 0, (MAX_VALUE_BYTES + 1) as u32),
+            Err(Error::ValueTooLarge)
+        ));
+        let pool = crate::TrustedOnePutHolderPool::new(4, 0, 0).unwrap();
+        assert_eq!(pool.capacity(), 4);
+        drop(pool);
+        assert_call_count(Call::FastOnePutHolderPoolCreate, 1);
+        assert_call_count(Call::FastOnePutHolderPoolDestroy, 1);
+        assert_drained();
+
+        let (db, pool, outcome, sequence) = run_preselected_one_put_holder_case(
+            70,
+            1001,
+            sys::MAKO_LOCAL_OK,
+            Some(120),
+            None,
+            sys::MAKO_LOCAL_OK,
+        );
+        assert_eq!(
+            outcome.accepted_timestamp().map(crate::MakoTimestamp::get),
+            Some(120)
+        );
+        assert!(outcome.holder_sealed());
+        assert!(outcome.is_committed());
+        let report = outcome.into_report();
+        assert_eq!(report.commit.disposition, CommitDisposition::Committed);
+        assert_eq!(report.commit.cleanup, Ok(()));
+        assert!(report.completion_contract_valid);
+        assert!(report.holder_bound);
+        assert!(report.holder_sealed);
+
+        let wrong = NonZeroU64::new(sequence.get() + 1).unwrap();
+        // SAFETY: the sole consumer is checking an exact generation after the
+        // scripted publication; native rejects the unsealed adjacent slot.
+        assert!(matches!(unsafe { pool.get_view(wrong) }, Err(Error::Busy)));
+        // SAFETY: same sole-consumer publication proof for the accepted slot.
+        let view = unsafe { pool.view(sequence) }.unwrap();
+        assert_eq!(view.sequence(), sequence);
+        assert_eq!(view.table_id(), 70);
+        assert_eq!(view.mako_timestamp().get(), 120);
+        assert_eq!(view.key(), b"holder\0key");
+        assert_eq!(view.value(), b"holder-value\xff");
+        // Native destruction must reject a sealed holder without invalidating
+        // either this live view or the pool.
+        assert_eq!(
+            unsafe { mako_rust_fast_one_put_holder_pool_destroy(pool.raw.as_ptr()) },
+            sys::MAKO_LOCAL_BUSY
+        );
+        // SAFETY: all slice borrows above ended and the fake backend is done.
+        unsafe { pool.release(view) }.unwrap();
+        // SAFETY: this exact generation was just released and must now reject.
+        assert!(matches!(
+            unsafe { pool.get_view(sequence) },
+            Err(Error::Busy)
+        ));
+        assert_eq!(
+            unsafe {
+                mako_rust_fast_one_put_holder_pool_release(pool.raw.as_ptr(), sequence.get())
+            },
+            sys::MAKO_LOCAL_BUSY
+        );
+        drop(pool);
+        drop(db);
+        assert_drained();
+
+        // A clean pre-acceptance conflict neither consumes the sequence nor
+        // seals a holder generation.
+        let (db, pool, outcome, sequence) = run_preselected_one_put_holder_case(
+            71,
+            1002,
+            sys::MAKO_LOCAL_CONFLICT,
+            None,
+            None,
+            sys::MAKO_LOCAL_OK,
+        );
+        assert_eq!(outcome.accepted_timestamp(), None);
+        assert!(!outcome.holder_sealed());
+        assert!(!outcome.is_committed());
+        let report = outcome.into_report();
+        assert_eq!(
+            report.commit.disposition,
+            CommitDisposition::Aborted(Error::Conflict)
+        );
+        assert_eq!(report.commit.cleanup, Ok(()));
+        assert!(report.completion_contract_valid);
+        assert!(!report.holder_bound);
+        assert!(!report.holder_sealed);
+        // SAFETY: no accepted publication exists for this exact generation.
+        assert!(matches!(
+            unsafe { pool.get_view(sequence) },
+            Err(Error::Busy)
+        ));
+        drop(pool);
+        drop(db);
+        assert_drained();
+
+        // Long-key holder preparation may fail before native enters commit.
+        // Native completes abort cleanup and returns a definite unbound OOM,
+        // which must not poison the dense sequence.
+        let (db, pool, outcome, sequence) = run_preselected_one_put_holder_case(
+            72,
+            1003,
+            sys::MAKO_LOCAL_OUT_OF_MEMORY,
+            None,
+            None,
+            sys::MAKO_LOCAL_OK,
+        );
+        assert_eq!(outcome.accepted_timestamp(), None);
+        let report = outcome.into_report();
+        assert_eq!(
+            report.commit.disposition,
+            CommitDisposition::Aborted(Error::OutOfMemory)
+        );
+        assert_eq!(report.commit.cleanup, Ok(()));
+        assert!(report.completion_contract_valid);
+        assert!(!report.holder_bound);
+        assert!(!report.holder_sealed);
+        // SAFETY: a pre-acceptance allocation failure leaves this holder free.
+        assert!(matches!(unsafe { pool.view(sequence) }, Err(Error::Busy)));
+        drop(pool);
+        drop(db);
+        assert_drained();
+
+        // Cleanup uncertainty after acceptance keeps a complete holder for the
+        // cache to publish and pin.
+        let before = quarantined_worker_count().unwrap();
+        let (db, pool, outcome, sequence) = run_preselected_one_put_holder_case(
+            73,
+            1004,
+            sys::MAKO_LOCAL_WORKER_POISONED,
+            Some(121),
+            None,
+            sys::MAKO_LOCAL_WORKER_POISONED,
+        );
+        assert_eq!(
+            outcome.accepted_timestamp().map(crate::MakoTimestamp::get),
+            Some(121)
+        );
+        assert!(outcome.holder_sealed());
+        assert!(!outcome.is_committed());
+        let report = outcome.into_report();
+        assert_eq!(
+            report.commit.disposition,
+            CommitDisposition::Unknown(Error::WorkerPoisoned)
+        );
+        assert_eq!(report.commit.cleanup, Err(Error::WorkerPoisoned));
+        assert!(report.completion_contract_valid);
+        assert!(report.holder_bound);
+        assert!(report.holder_sealed);
+        assert!(quarantined_worker_count().unwrap() > before);
+        release_actual_holder(&pool, sequence);
+        drop(pool);
+        drop(db);
+        assert_drained();
+
+        for (index, status, timestamp, holder_state, expect_bound) in [
+            // Installed without exposing the accepted holder generation.
+            (0, sys::MAKO_LOCAL_OK, Some(122), 0, false),
+            // Accepted timestamp without the sealed witness.
+            (1, sys::MAKO_LOCAL_OK, Some(123), 123, true),
+            // Sealed witness without an accepted timestamp.
+            (2, sys::MAKO_LOCAL_OK, None, 1u64 << 32, false),
+            // A final conflict after holder acceptance is impossible.
+            (
+                3,
+                sys::MAKO_LOCAL_CONFLICT,
+                Some(124),
+                124 | (1u64 << 32),
+                true,
+            ),
+            // Bits above the sealed witness are reserved.
+            (
+                4,
+                sys::MAKO_LOCAL_OK,
+                Some(125),
+                125 | (1u64 << 32) | (1u64 << 33),
+                true,
+            ),
+            // Timestamp exceeds Mako's representable base range.
+            (
+                5,
+                sys::MAKO_LOCAL_OK,
+                Some(crate::MAX_MAKO_TIMESTAMP + 1),
+                u64::from(crate::MAX_MAKO_TIMESTAMP + 1) | (1u64 << 32),
+                false,
+            ),
+        ] {
+            let (db, pool, outcome, sequence) = run_preselected_one_put_holder_case(
+                74 + index,
+                1101 + index,
+                status,
+                timestamp,
+                Some(holder_state),
+                sys::MAKO_LOCAL_OK,
+            );
+            assert_eq!(outcome.accepted_timestamp().is_some(), expect_bound);
+            assert!(!outcome.is_committed(), "case {index}");
+            let report = outcome.into_report();
+            assert_eq!(
+                report.commit.disposition,
+                CommitDisposition::Unknown(Error::Internal),
+                "case {index}"
+            );
+            assert_eq!(report.commit.cleanup, Err(Error::Internal), "case {index}");
+            assert!(!report.completion_contract_valid, "case {index}");
+            assert_eq!(report.holder_bound, expect_bound, "case {index}");
+            assert!(!report.holder_sealed, "case {index}");
+            // The fake holder follows the actual scripted acceptance, not the
+            // corrupted reported state. Release it so pool Drop remains a
+            // useful sealed-generation diagnostic.
+            if let Some(timestamp) = timestamp {
+                if crate::MakoTimestamp::new(timestamp).is_some() {
+                    release_actual_holder(&pool, sequence);
+                } else {
+                    // The safe view correctly rejects this deliberately
+                    // malformed native timestamp. Use the fake raw boundary
+                    // only to clean up the test allocation afterward.
+                    assert_eq!(
+                        unsafe {
+                            mako_rust_fast_one_put_holder_pool_release(
+                                pool.raw.as_ptr(),
+                                sequence.get(),
+                            )
+                        },
+                        sys::MAKO_LOCAL_OK
+                    );
+                }
+            }
+            drop(pool);
+            drop(db);
+            assert_drained();
+        }
+    }
+
+    fn exercise_fused_one_put_holder_terminal() {
+        const KEY: &[u8] = b"fused-key";
+        const VALUE: &[u8] = b"fused-value";
+        const EXACT_BYTES: u32 = 43 + KEY.len() as u32 + VALUE.len() as u32;
+
+        // Exact healthy success consumes the facade and publishes ACK as the
+        // canonical producer tail without returning the cold two-word outcome.
+        reset();
+        let pool = crate::TrustedOnePutHolderPool::new(4, 0, 0).unwrap();
+        let acknowledged = AtomicU64::new(0);
+        let unhealthy = AtomicBool::new(false);
+        // SAFETY: every object remains in this stack frame through the calls;
+        // these are the exact atomic inner pointers and matching pool/capacity.
+        let control = unsafe {
+            crate::TrustedSpscOnePutHolderControl::new(
+                &pool,
+                acknowledged.as_ptr(),
+                unhealthy.as_ptr().cast::<u8>(),
+                NonZeroU64::new(4).unwrap(),
+                std::num::NonZeroU32::new(EXACT_BYTES).unwrap(),
+            )
+        };
+        let next = AtomicU64::new(0);
+        let capacity_limit = AtomicU64::new(4);
+        let db = open_db();
+        let table = db.open_table("trusted-fused-holder", 80).unwrap();
+        let mut transaction = db.trusted_transaction(&table).unwrap();
+        push(Step::Put(ByteReply {
+            status: sys::MAKO_LOCAL_OK,
+            value: 1,
+            unchecked_record_bytes: EXACT_BYTES,
+        }));
+        assert_eq!(transaction.put(&table, KEY, VALUE), Ok(true));
+        push(Step::CommitPreselectedHolder {
+            status: sys::MAKO_LOCAL_OK,
+            timestamp: Some(140),
+            exact_record_bytes: EXACT_BYTES as usize,
+            table_id: 80,
+            key: KEY.to_vec(),
+            value: VALUE.to_vec(),
+            reported_holder_state: None,
+        });
+        push(Step::Destroy(sys::MAKO_LOCAL_OK));
+        // SAFETY: this test owns the only transaction/producer and all stable
+        // control words for the synchronous call.
+        let attempt = unsafe {
+            transaction.try_commit_trusted_fused_single_producer_one_put_holder(
+                &control,
+                next.as_ptr(),
+                capacity_limit.as_ptr(),
+            )
+        };
+        assert!(matches!(
+            attempt,
+            crate::TrustedFusedOnePutHolderAttempt::Published
+        ));
+        assert_eq!(next.load(Ordering::Relaxed), 0);
+        assert_eq!(acknowledged.load(Ordering::Acquire), 1);
+        assert_call_count(Call::FastFusedSingleProducerOnePutHolderTryCommitDestroy, 1);
+        assert_call_count(
+            Call::FastPreselectedSingleProducerUncheckedOnePutHolderCommitDestroy,
+            0,
+        );
+        release_actual_holder(&pool, NonZeroU64::new(1).unwrap());
+        drop(transaction);
+        drop(control);
+        drop(pool);
+        drop(db);
+        assert_drained();
+
+        // A full cached window is explicitly untouched. Refreshing the cached
+        // capacity limit and retrying the same facade then commits sequence 5.
+        reset();
+        let pool = crate::TrustedOnePutHolderPool::new(4, 0, 0).unwrap();
+        let acknowledged = AtomicU64::new(4);
+        let unhealthy = AtomicBool::new(false);
+        let control = unsafe {
+            crate::TrustedSpscOnePutHolderControl::new(
+                &pool,
+                acknowledged.as_ptr(),
+                unhealthy.as_ptr().cast::<u8>(),
+                NonZeroU64::new(4).unwrap(),
+                std::num::NonZeroU32::new(EXACT_BYTES).unwrap(),
+            )
+        };
+        let next = AtomicU64::new(4);
+        let capacity_limit = AtomicU64::new(4);
+        let db = open_db();
+        let table = db.open_table("trusted-fused-holder-retry", 81).unwrap();
+        let mut transaction = db.trusted_transaction(&table).unwrap();
+        push(Step::Put(ByteReply {
+            status: sys::MAKO_LOCAL_OK,
+            value: 1,
+            unchecked_record_bytes: EXACT_BYTES,
+        }));
+        transaction.put(&table, KEY, VALUE).unwrap();
+        let attempt = unsafe {
+            transaction.try_commit_trusted_fused_single_producer_one_put_holder(
+                &control,
+                next.as_ptr(),
+                capacity_limit.as_ptr(),
+            )
+        };
+        assert!(matches!(
+            attempt,
+            crate::TrustedFusedOnePutHolderAttempt::UntouchedSlow {
+                exact_record_bytes
+            } if exact_record_bytes.get() == EXACT_BYTES
+        ));
+        assert_eq!(next.load(Ordering::Relaxed), 4);
+        assert_eq!(acknowledged.load(Ordering::Relaxed), 4);
+        capacity_limit.store(8, Ordering::Relaxed);
+        push(Step::CommitPreselectedHolder {
+            status: sys::MAKO_LOCAL_OK,
+            timestamp: Some(141),
+            exact_record_bytes: EXACT_BYTES as usize,
+            table_id: 81,
+            key: KEY.to_vec(),
+            value: VALUE.to_vec(),
+            reported_holder_state: None,
+        });
+        push(Step::Destroy(sys::MAKO_LOCAL_OK));
+        let attempt = unsafe {
+            transaction.try_commit_trusted_fused_single_producer_one_put_holder(
+                &control,
+                next.as_ptr(),
+                capacity_limit.as_ptr(),
+            )
+        };
+        assert!(matches!(
+            attempt,
+            crate::TrustedFusedOnePutHolderAttempt::Published
+        ));
+        assert_eq!(next.load(Ordering::Relaxed), 4);
+        assert_eq!(acknowledged.load(Ordering::Acquire), 5);
+        release_actual_holder(&pool, NonZeroU64::new(5).unwrap());
+        drop(transaction);
+        drop(control);
+        drop(pool);
+        drop(db);
+        assert_drained();
+
+        // Model the fail-stop bit latching after native acceptance. ACK remains
+        // unchanged; after native's second Acquire returns the diversion, the
+        // Rust decoder advances its cursor and receives the exact timestamp and
+        // extent for cold attachment.
+        reset();
+        let pool = crate::TrustedOnePutHolderPool::new(4, 0, 0).unwrap();
+        let acknowledged = AtomicU64::new(0);
+        let unhealthy = AtomicBool::new(false);
+        let control = unsafe {
+            crate::TrustedSpscOnePutHolderControl::new(
+                &pool,
+                acknowledged.as_ptr(),
+                unhealthy.as_ptr().cast::<u8>(),
+                NonZeroU64::new(4).unwrap(),
+                std::num::NonZeroU32::new(EXACT_BYTES).unwrap(),
+            )
+        };
+        let next = AtomicU64::new(0);
+        let capacity_limit = AtomicU64::new(4);
+        let db = open_db();
+        let table = db.open_table("trusted-fused-holder-race", 82).unwrap();
+        let mut transaction = db.trusted_transaction(&table).unwrap();
+        push(Step::Put(ByteReply {
+            status: sys::MAKO_LOCAL_OK,
+            value: 1,
+            unchecked_record_bytes: EXACT_BYTES,
+        }));
+        transaction.put(&table, KEY, VALUE).unwrap();
+        // Rust retires its conservative mirror before rejecting this call,
+        // while native's unchanged one-Put witness remains authoritative.
+        // The consumed cold result must therefore carry native's exact extent.
+        let oversized_key = vec![0; crate::MAX_KEY_BYTES + 1];
+        assert_eq!(
+            transaction.put(&table, &oversized_key, VALUE),
+            Err(crate::Error::ValueTooLarge)
+        );
+        push(Step::CommitPreselectedHolder {
+            status: sys::MAKO_LOCAL_OK,
+            timestamp: Some(142),
+            exact_record_bytes: EXACT_BYTES as usize,
+            table_id: 82,
+            key: KEY.to_vec(),
+            value: VALUE.to_vec(),
+            reported_holder_state: None,
+        });
+        push(Step::Destroy(sys::MAKO_LOCAL_OK));
+        latch_fused_unhealthy_after_commit_once();
+        let attempt = unsafe {
+            transaction.try_commit_trusted_fused_single_producer_one_put_holder(
+                &control,
+                next.as_ptr(),
+                capacity_limit.as_ptr(),
+            )
+        };
+        assert!(matches!(
+            attempt,
+            crate::TrustedFusedOnePutHolderAttempt::CommittedUnpublished {
+                timestamp,
+                exact_record_bytes,
+            } if timestamp.get() == 142 && exact_record_bytes.get() == EXACT_BYTES
+        ));
+        assert_eq!(next.load(Ordering::Relaxed), 1);
+        assert_eq!(acknowledged.load(Ordering::Acquire), 0);
+        assert!(unhealthy.load(Ordering::Acquire));
+        release_actual_holder(&pool, NonZeroU64::new(1).unwrap());
+        drop(transaction);
+        drop(control);
+        drop(pool);
+        drop(db);
+        assert_drained();
+
+        // A definite conflict is consuming but does not advance the retained
+        // future generation. The full terminal remains available cold.
+        reset();
+        let pool = crate::TrustedOnePutHolderPool::new(4, 0, 0).unwrap();
+        let acknowledged = AtomicU64::new(0);
+        let unhealthy = AtomicBool::new(false);
+        let control = unsafe {
+            crate::TrustedSpscOnePutHolderControl::new(
+                &pool,
+                acknowledged.as_ptr(),
+                unhealthy.as_ptr().cast::<u8>(),
+                NonZeroU64::new(4).unwrap(),
+                std::num::NonZeroU32::new(EXACT_BYTES).unwrap(),
+            )
+        };
+        let next = AtomicU64::new(0);
+        let capacity_limit = AtomicU64::new(4);
+        let db = open_db();
+        let table = db.open_table("trusted-fused-holder-conflict", 83).unwrap();
+        let mut transaction = db.trusted_transaction(&table).unwrap();
+        push(Step::Put(ByteReply {
+            status: sys::MAKO_LOCAL_OK,
+            value: 1,
+            unchecked_record_bytes: EXACT_BYTES,
+        }));
+        transaction.put(&table, KEY, VALUE).unwrap();
+        let oversized_key = vec![0; crate::MAX_KEY_BYTES + 1];
+        assert_eq!(
+            transaction.put(&table, &oversized_key, VALUE),
+            Err(crate::Error::ValueTooLarge)
+        );
+        push(Step::CommitPreselectedHolder {
+            status: sys::MAKO_LOCAL_CONFLICT,
+            timestamp: None,
+            exact_record_bytes: EXACT_BYTES as usize,
+            table_id: 83,
+            key: KEY.to_vec(),
+            value: VALUE.to_vec(),
+            reported_holder_state: None,
+        });
+        push(Step::Destroy(sys::MAKO_LOCAL_OK));
+        let attempt = unsafe {
+            transaction.try_commit_trusted_fused_single_producer_one_put_holder(
+                &control,
+                next.as_ptr(),
+                capacity_limit.as_ptr(),
+            )
+        };
+        let crate::TrustedFusedOnePutHolderAttempt::ConsumedOutcome {
+            outcome,
+            exact_record_bytes,
+        } = attempt
+        else {
+            panic!("conflict must return the consumed cold outcome")
+        };
+        assert_eq!(exact_record_bytes.get(), EXACT_BYTES);
+        let report = outcome.into_report();
+        assert_eq!(
+            report.commit.disposition,
+            CommitDisposition::Aborted(Error::Conflict)
+        );
+        assert!(report.completion_contract_valid);
+        assert!(!report.holder_bound);
+        assert_eq!(next.load(Ordering::Relaxed), 0);
+        assert_eq!(acknowledged.load(Ordering::Relaxed), 0);
+        drop(transaction);
+        drop(control);
+        drop(pool);
         drop(db);
         assert_drained();
     }
@@ -2234,6 +4103,12 @@ mod tests {
         exercise_trusted_fast_transaction_path();
         exercise_malformed_fast_terminal_outputs();
         exercise_commit_record_happy_path_and_empty_plan();
+        exercise_commit_record_raw_target_path();
+        exercise_unchecked_one_put_record_terminal();
+        exercise_unchecked_one_put_outcome_contract();
+        exercise_preselected_one_put_record_terminal();
+        exercise_preselected_one_put_holder_terminal();
+        exercise_fused_one_put_holder_terminal();
         exercise_commit_record_preflight_fail_closed();
         exercise_commit_record_hook_outcomes();
         exercise_commit_record_completion_witness();

@@ -13,7 +13,7 @@ use mrx_core::Blobs;
 use mrx_rocks::{RocksBlobs, WriteBatchHookPoint};
 
 use crate::failpoint::{self, Point};
-use crate::record::{classify_backend_key, BackendKey, CommitRecord};
+use crate::record::{BackendKey, CommitRecord, classify_backend_key};
 use crate::{Db, Durability, Options};
 
 const ROLE_ENV: &str = "MAKO_CACHE_CRASH_TEST_ROLE";
@@ -229,23 +229,31 @@ fn writer_role() {
 
     let cache = open_observed_writer(&db_path);
     let mut baseline = cache.transaction().expect("begin baseline transaction");
-    assert!(baseline
-        .put(REPLACE_KEY, OLD_VALUE)
-        .expect("seed replacement key"));
-    assert!(baseline
-        .put(DELETE_KEY, OLD_VALUE)
-        .expect("seed deletion key"));
+    assert!(
+        baseline
+            .put(REPLACE_KEY, OLD_VALUE)
+            .expect("seed replacement key")
+    );
+    assert!(
+        baseline
+            .put(DELETE_KEY, OLD_VALUE)
+            .expect("seed deletion key")
+    );
     baseline.commit().expect("commit baseline transaction");
     cache.flush().expect("flush baseline transaction");
 
     let mut transaction = cache.transaction().expect("begin crash transaction");
-    assert!(!transaction
-        .put(REPLACE_KEY, NEW_VALUE)
-        .expect("stage replacement"));
+    assert!(
+        !transaction
+            .put(REPLACE_KEY, NEW_VALUE)
+            .expect("stage replacement")
+    );
     assert!(transaction.remove(DELETE_KEY).expect("stage deletion"));
-    assert!(transaction
-        .put(NEW_KEY, INSERTED_VALUE)
-        .expect("stage insertion"));
+    assert!(
+        transaction
+            .put(NEW_KEY, INSERTED_VALUE)
+            .expect("stage insertion")
+    );
 
     failpoint::arm(point, marker);
     install_native_observer(point);
@@ -299,9 +307,11 @@ fn recovery_seed_role() {
         .expect("begin first durable transaction");
     assert!(first.put(RECOVERY_A, b"a-v1").expect("seed recovery a"));
     assert!(first.put(RECOVERY_B, b"b-v1").expect("seed recovery b"));
-    assert!(first
-        .put(RECOVERY_TOMBSTONE, b"doomed")
-        .expect("seed recovery tombstone"));
+    assert!(
+        first
+            .put(RECOVERY_TOMBSTONE, b"doomed")
+            .expect("seed recovery tombstone")
+    );
     first.commit().expect("commit first durable transaction");
 
     let mut second = cache
@@ -309,33 +319,43 @@ fn recovery_seed_role() {
         .expect("begin second durable transaction");
     assert!(!second.put(RECOVERY_A, b"a-v2").expect("replace recovery a"));
     assert!(second.put(RECOVERY_C, b"c-v1").expect("seed recovery c"));
-    assert!(second
-        .remove(RECOVERY_TOMBSTONE)
-        .expect("delete recovery tombstone"));
+    assert!(
+        second
+            .remove(RECOVERY_TOMBSTONE)
+            .expect("delete recovery tombstone")
+    );
     second.commit().expect("commit second durable transaction");
 
     let mut third = cache
         .transaction()
         .expect("begin third durable transaction");
-    assert!(!third
-        .put(RECOVERY_B, b"b-final")
-        .expect("replace recovery b"));
+    assert!(
+        !third
+            .put(RECOVERY_B, b"b-final")
+            .expect("replace recovery b")
+    );
     assert!(!third.put(RECOVERY_C, b"c-v2").expect("replace recovery c"));
-    assert!(third
-        .put(RECOVERY_D, b"\0durable\xff")
-        .expect("seed binary recovery value"));
+    assert!(
+        third
+            .put(RECOVERY_D, b"\0durable\xff")
+            .expect("seed binary recovery value")
+    );
     third.commit().expect("commit third durable transaction");
 
     let mut fourth = cache
         .transaction()
         .expect("begin fourth durable transaction");
-    assert!(!fourth
-        .put(RECOVERY_A, b"a-final")
-        .expect("finalize recovery a"));
+    assert!(
+        !fourth
+            .put(RECOVERY_A, b"a-final")
+            .expect("finalize recovery a")
+    );
     assert!(fourth.remove(RECOVERY_C).expect("delete recovery c"));
-    assert!(fourth
-        .put(RECOVERY_EMPTY, b"")
-        .expect("seed empty recovery value"));
+    assert!(
+        fourth
+            .put(RECOVERY_EMPTY, b"")
+            .expect("seed empty recovery value")
+    );
     fourth.commit().expect("commit fourth durable transaction");
 
     assert_eq!(

@@ -8,7 +8,7 @@ use std::time::Duration;
 use mako_local::MakoTimestamp;
 use mrx_core::fakes::MemBlobs;
 
-use crate::record::{classify_backend_key, BackendKey, CommitRecord, Mutation, DEFAULT_TABLE_ID};
+use crate::record::{BackendKey, CommitRecord, DEFAULT_TABLE_ID, Mutation, classify_backend_key};
 use crate::writeback::{AppliedWatermark, Writeback, WritebackConfig};
 
 /// Run the exact detached-permit bind transition between two callbacks.

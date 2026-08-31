@@ -47,14 +47,14 @@
 
 use std::fmt;
 use std::future::Future;
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, AtomicU8, AtomicUsize, Ordering};
-use std::sync::{mpsc, Arc, Condvar, Mutex};
+use std::sync::atomic::{AtomicU8, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::task::{Context, Poll, Waker};
 use std::thread::{self, JoinHandle};
 
-use crate::{worker_health, Error, LocalDb, WorkerHealth};
+use crate::{Error, LocalDb, WorkerHealth, worker_health};
 
 const DEFAULT_QUEUE_CAPACITY_PER_WORKER: usize = 64;
 

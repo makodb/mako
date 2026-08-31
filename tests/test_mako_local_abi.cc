@@ -57,6 +57,88 @@ void record_commit_phase(void *context, uint32_t phase,
   ++observation->calls;
 }
 
+uint32_t read_u32_be_unchecked(const uint8_t *bytes) noexcept {
+  uint32_t value = 0;
+  for (unsigned index = 0; index != 4; ++index)
+    value = (value << 8) | bytes[index];
+  return value;
+}
+
+uint64_t read_u64_be_unchecked(const uint8_t *bytes) noexcept {
+  uint64_t value = 0;
+  for (unsigned index = 0; index != 8; ++index)
+    value = (value << 8) | bytes[index];
+  return value;
+}
+
+struct PreselectedCommitObservation {
+  CommitPhaseObservation phases;
+  const uint8_t *record = nullptr;
+  size_t record_bytes = 0;
+  uint64_t sequence = 0;
+  uint64_t table_id = 0;
+  const std::string *key = nullptr;
+  const std::string *value = nullptr;
+  bool complete_at_preinstall = false;
+};
+
+void observe_preselected_commit(void *context, uint32_t phase,
+                                uint32_t timestamp) noexcept {
+  auto *observation = static_cast<PreselectedCommitObservation *>(context);
+  record_commit_phase(&observation->phases, phase, timestamp);
+  if (phase != MAKO_LOCAL_TEST_COMMIT_PREINSTALL_ACCEPTED) return;
+  constexpr std::array<uint8_t, 8> magic{
+      'M', 'A', 'K', 'O', 'N', 'O', 'C', '\0'};
+  constexpr size_t header_bytes = 26;
+  constexpr size_t operation_header_bytes = 17;
+  if (observation->record == nullptr || observation->key == nullptr ||
+      observation->value == nullptr ||
+      observation->record_bytes != header_bytes + operation_header_bytes +
+                                       observation->key->size() +
+                                       observation->value->size()) {
+    return;
+  }
+  const uint8_t *const record = observation->record;
+  const uint8_t *const payload = record + header_bytes + operation_header_bytes;
+  observation->complete_at_preinstall =
+      std::equal(magic.begin(), magic.end(), record) && record[8] == 0 &&
+      record[9] == 4 &&
+      read_u64_be_unchecked(record + 10) == observation->sequence &&
+      read_u32_be_unchecked(record + 18) == timestamp &&
+      read_u32_be_unchecked(record + 22) == 1 && record[26] == 1 &&
+      read_u64_be_unchecked(record + 27) == observation->table_id &&
+      read_u32_be_unchecked(record + 35) == observation->key->size() &&
+      read_u32_be_unchecked(record + 39) == observation->value->size() &&
+      std::memcmp(payload, observation->key->data(),
+                  observation->key->size()) == 0 &&
+      std::memcmp(payload + observation->key->size(),
+                  observation->value->data(), observation->value->size()) == 0;
+}
+
+struct FusedHolderCommitObservation {
+  uint64_t *producer_next = nullptr;
+  uint64_t *acknowledged = nullptr;
+  uint8_t *unhealthy = nullptr;
+  uint64_t producer_at_install = UINT64_MAX;
+  uint64_t acknowledged_at_install = UINT64_MAX;
+  uint32_t timestamp_at_install = 0;
+  bool make_unhealthy_at_install = false;
+};
+
+void observe_fused_holder_commit(void *context, uint32_t phase,
+                                 uint32_t timestamp) noexcept {
+  if (phase != MAKO_LOCAL_TEST_COMMIT_ALL_WRITES_INSTALLED)
+    return;
+  auto *observation = static_cast<FusedHolderCommitObservation *>(context);
+  observation->producer_at_install =
+      __atomic_load_n(observation->producer_next, __ATOMIC_RELAXED);
+  observation->acknowledged_at_install =
+      __atomic_load_n(observation->acknowledged, __ATOMIC_RELAXED);
+  observation->timestamp_at_install = timestamp;
+  if (observation->make_unhealthy_at_install)
+    __atomic_store_n(observation->unhealthy, UINT8_C(1), __ATOMIC_RELEASE);
+}
+
 struct ParkingCommitObserver {
   CommitPhaseObservation observation;
   std::atomic<bool> *parked;
@@ -185,6 +267,11 @@ class LocalAbiTest : public ::testing::Test {
       EXPECT_EQ(mako_local_txn_destroy(txn_for_cleanup), MAKO_LOCAL_OK);
       txn_for_cleanup = nullptr;
     }
+    if (holder_pool != nullptr) {
+      EXPECT_EQ(mako_rust_fast_one_put_holder_pool_destroy(holder_pool),
+                MAKO_LOCAL_OK);
+      holder_pool = nullptr;
+    }
     if (db != nullptr) EXPECT_EQ(mako_local_db_close(db), MAKO_LOCAL_OK);
   }
 
@@ -264,9 +351,19 @@ class LocalAbiTest : public ::testing::Test {
     destroy_tracked(txn);
   }
 
+  void create_holder_pool(size_t capacity, uint32_t key_reserve = 0,
+                          uint32_t value_reserve = 0) {
+    ASSERT_EQ(holder_pool, nullptr);
+    ASSERT_EQ(mako_rust_fast_one_put_holder_pool_create(
+                  capacity, key_reserve, value_reserve, &holder_pool),
+              MAKO_LOCAL_OK);
+    ASSERT_NE(holder_pool, nullptr);
+  }
+
   mako_local_db *db = nullptr;
   mako_local_table *primary = nullptr;
   mako_local_txn *txn_for_cleanup = nullptr;
+  mako_rust_fast_one_put_holder_pool *holder_pool = nullptr;
   CommitPhaseObservation commit_observation;
 };
 
@@ -279,6 +376,21 @@ uint64_t fast_put(mako_local_txn *txn, const std::string &key,
                                 static_cast<uint32_t>(key.size()),
                                 reinterpret_cast<const uint8_t *>(value.data()),
                                 static_cast<uint32_t>(value.size()));
+}
+
+mako_rust_fast_spsc_holder_control make_fused_holder_control(
+    mako_rust_fast_one_put_holder_pool *pool, uint64_t *acknowledged,
+    const uint8_t *unhealthy, uint64_t capacity,
+    uint32_t max_record_bytes = UINT32_MAX) {
+  void *holder_base = nullptr;
+  size_t holder_mask = 0;
+  EXPECT_EQ(mako_rust_fast_one_put_holder_pool_get_hot_layout(
+                pool, &holder_base, &holder_mask),
+            MAKO_LOCAL_OK);
+  EXPECT_NE(holder_base, nullptr);
+  return mako_rust_fast_spsc_holder_control{
+      pool, holder_base, holder_mask, acknowledged, unhealthy,
+      capacity, max_record_bytes, 0, {0, 0}};
 }
 
 struct ThinRecordBinding {
@@ -344,16 +456,25 @@ struct DecodedThinRecord {
 
 bool decode_thin_record(const std::vector<uint8_t> &bytes,
                         DecodedThinRecord *record) {
-  constexpr size_t minimum_bytes = 30;
-  constexpr std::array<uint8_t, 8> magic{
+  constexpr size_t minimum_bytes = 26;
+  constexpr std::array<uint8_t, 8> crc32c_magic{
       'M', 'A', 'K', 'O', 'C', 'M', 'T', '\0'};
-  if (record == nullptr || bytes.size() < minimum_bytes ||
-      !std::equal(magic.begin(), magic.end(), bytes.begin()))
-    return false;
+  constexpr std::array<uint8_t, 8> unchecked_magic{
+      'M', 'A', 'K', 'O', 'N', 'O', 'C', '\0'};
+  if (record == nullptr || bytes.size() < minimum_bytes) return false;
 
-  const size_t checksum_offset = bytes.size() - 4;
+  const uint16_t encoded_version =
+      static_cast<uint16_t>(bytes[8]) << 8 | static_cast<uint16_t>(bytes[9]);
+  if (encoded_version != 3 && encoded_version != 4) return false;
+  const auto &expected_magic =
+      encoded_version == 3 ? crc32c_magic : unchecked_magic;
+  if (!std::equal(expected_magic.begin(), expected_magic.end(), bytes.begin()))
+    return false;
+  if (encoded_version == 3 && bytes.size() < minimum_bytes + 4) return false;
+  const size_t operations_end =
+      encoded_version == 3 ? bytes.size() - 4 : bytes.size();
   auto read_u16 = [&](size_t *cursor, uint16_t *out) {
-    if (*cursor > checksum_offset || checksum_offset - *cursor < 2)
+    if (*cursor > operations_end || operations_end - *cursor < 2)
       return false;
     *out = static_cast<uint16_t>(bytes[*cursor]) << 8 |
            static_cast<uint16_t>(bytes[*cursor + 1]);
@@ -361,7 +482,7 @@ bool decode_thin_record(const std::vector<uint8_t> &bytes,
     return true;
   };
   auto read_u32 = [&](size_t *cursor, uint32_t *out) {
-    if (*cursor > checksum_offset || checksum_offset - *cursor < 4)
+    if (*cursor > operations_end || operations_end - *cursor < 4)
       return false;
     *out = 0;
     for (unsigned index = 0; index != 4; ++index)
@@ -369,7 +490,7 @@ bool decode_thin_record(const std::vector<uint8_t> &bytes,
     return true;
   };
   auto read_u64 = [&](size_t *cursor, uint64_t *out) {
-    if (*cursor > checksum_offset || checksum_offset - *cursor < 8)
+    if (*cursor > operations_end || operations_end - *cursor < 8)
       return false;
     *out = 0;
     for (unsigned index = 0; index != 8; ++index)
@@ -377,19 +498,19 @@ bool decode_thin_record(const std::vector<uint8_t> &bytes,
     return true;
   };
 
-  size_t checksum_cursor = checksum_offset;
-  uint32_t stored_checksum = 0;
-  // Temporarily let read_u32 see the four-byte checksum suffix.
-  for (unsigned index = 0; index != 4; ++index)
-    stored_checksum = (stored_checksum << 8) |
-                      bytes[checksum_cursor + index];
-  if (stored_checksum != test_crc32c(bytes.data(), checksum_offset))
-    return false;
+  if (encoded_version == 3) {
+    uint32_t stored_checksum = 0;
+    for (unsigned index = 0; index != 4; ++index)
+      stored_checksum = (stored_checksum << 8) |
+                        bytes[operations_end + index];
+    if (stored_checksum != test_crc32c(bytes.data(), operations_end))
+      return false;
+  }
 
-  size_t cursor = magic.size();
+  size_t cursor = expected_magic.size();
   uint16_t version = 0;
   uint32_t operation_count = 0;
-  if (!read_u16(&cursor, &version) || version != 3 ||
+  if (!read_u16(&cursor, &version) || version != encoded_version ||
       !read_u64(&cursor, &record->sequence) ||
       !read_u32(&cursor, &record->timestamp) ||
       !read_u32(&cursor, &operation_count))
@@ -398,7 +519,7 @@ bool decode_thin_record(const std::vector<uint8_t> &bytes,
   record->mutations.clear();
   record->mutations.reserve(operation_count);
   for (uint32_t operation = 0; operation != operation_count; ++operation) {
-    if (cursor >= checksum_offset) return false;
+    if (cursor >= operations_end) return false;
     DecodedThinMutation mutation;
     mutation.tag = bytes[cursor++];
     uint32_t key_length = 0;
@@ -407,12 +528,12 @@ bool decode_thin_record(const std::vector<uint8_t> &bytes,
         !read_u64(&cursor, &mutation.table_id) ||
         !read_u32(&cursor, &key_length) ||
         !read_u32(&cursor, &value_length) ||
-        key_length > checksum_offset - cursor)
+        key_length > operations_end - cursor)
       return false;
     mutation.key.assign(reinterpret_cast<const char *>(bytes.data() + cursor),
                         key_length);
     cursor += key_length;
-    if (value_length > checksum_offset - cursor ||
+    if (value_length > operations_end - cursor ||
         (mutation.tag == 2 && value_length != 0))
       return false;
     mutation.value.assign(
@@ -420,7 +541,7 @@ bool decode_thin_record(const std::vector<uint8_t> &bytes,
     cursor += value_length;
     record->mutations.push_back(std::move(mutation));
   }
-  return cursor == checksum_offset;
+  return cursor == operations_end;
 }
 
 struct AbiScanChunk {
@@ -540,12 +661,58 @@ TEST(MakoLocalAbiIdentity, VersionAndStatusStringsAreStable) {
   static_assert(MAKO_LOCAL_WORKER_POISONED == 19);
   EXPECT_STREQ(mako_local_status_string(MAKO_LOCAL_WORKER_POISONED),
                "worker poisoned by uncertain native cleanup");
+  static_assert(sizeof(mako_rust_fast_preselected_record_result) == 16);
+  static_assert(alignof(mako_rust_fast_preselected_record_result) == 8);
+  static_assert(offsetof(mako_rust_fast_preselected_record_result, terminal) ==
+                0);
+  static_assert(
+      offsetof(mako_rust_fast_preselected_record_result, record_state) == 8);
+  constexpr mako_rust_fast_preselected_record_result preselected_probe{
+      UINT64_C(0), UINT64_C(1) | (UINT64_C(1) << 32)};
+  static_assert(
+      MAKO_RUST_FAST_PRESELECTED_RECORD_TIMESTAMP(preselected_probe) == 1);
+  static_assert(MAKO_RUST_FAST_PRESELECTED_RECORD_WRITTEN(preselected_probe) ==
+                1);
+  static_assert(MAKO_RUST_FAST_PRESELECTED_RECORD_RESERVED(preselected_probe) ==
+                0);
+  static_assert(MAKO_RUST_FAST_PRESELECTED_HOLDER_SEALED(preselected_probe) ==
+                1);
+  static_assert(sizeof(mako_rust_fast_spsc_holder_control) == 72);
+  static_assert(alignof(mako_rust_fast_spsc_holder_control) == 8);
+  static_assert(offsetof(mako_rust_fast_spsc_holder_control, pool) == 0);
+  static_assert(offsetof(mako_rust_fast_spsc_holder_control, holder_base) ==
+                8);
+  static_assert(offsetof(mako_rust_fast_spsc_holder_control, holder_mask) ==
+                16);
+  static_assert(offsetof(mako_rust_fast_spsc_holder_control, acknowledged) ==
+                24);
+  static_assert(offsetof(mako_rust_fast_spsc_holder_control, unhealthy) == 32);
+  static_assert(offsetof(mako_rust_fast_spsc_holder_control, capacity) == 40);
+  static_assert(
+      offsetof(mako_rust_fast_spsc_holder_control, max_record_bytes) == 48);
+  static_assert(offsetof(mako_rust_fast_spsc_holder_control, reserved) == 52);
+  static_assert(offsetof(mako_rust_fast_spsc_holder_control, cold_out) == 56);
+  constexpr uint64_t fused_slow =
+      (UINT64_C(12345) << 32) | MAKO_RUST_FAST_FUSED_HOLDER_UNTOUCHED_NEED_SLOW;
+  static_assert(MAKO_RUST_FAST_FUSED_HOLDER_CODE(fused_slow) ==
+                MAKO_RUST_FAST_FUSED_HOLDER_UNTOUCHED_NEED_SLOW);
+  static_assert(MAKO_RUST_FAST_FUSED_HOLDER_PAYLOAD(fused_slow) == 12345);
+  static_assert(sizeof(mako_rust_fast_one_put_holder_view) == 48);
+  static_assert(alignof(mako_rust_fast_one_put_holder_view) == 8);
+  static_assert(offsetof(mako_rust_fast_one_put_holder_view, sequence) == 0);
+  static_assert(offsetof(mako_rust_fast_one_put_holder_view, table_id) == 8);
+  static_assert(offsetof(mako_rust_fast_one_put_holder_view, key) == 16);
+  static_assert(offsetof(mako_rust_fast_one_put_holder_view, value) == 24);
+  static_assert(offsetof(mako_rust_fast_one_put_holder_view, key_len) == 32);
+  static_assert(offsetof(mako_rust_fast_one_put_holder_view, value_len) == 36);
+  static_assert(offsetof(mako_rust_fast_one_put_holder_view, mako_timestamp) ==
+                40);
+  static_assert(offsetof(mako_rust_fast_one_put_holder_view, reserved) == 44);
   static_assert(sizeof(mako_local_scan_entry) == 4 * sizeof(uint32_t));
   EXPECT_EQ(mako_local_db_options_size(), MAKO_LOCAL_DB_OPTIONS_V0_SIZE);
   EXPECT_EQ(mako_local_db_options_size(),
             offsetof(mako_local_db_options, flags) + sizeof(uint32_t));
-  EXPECT_EQ(mako_local_scan_options_size(),
-            MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE);
+  EXPECT_EQ(mako_local_scan_options_size(), MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE);
   EXPECT_EQ(mako_local_scan_options_size(),
             offsetof(mako_local_scan_options, resume_len) + sizeof(size_t));
   EXPECT_EQ(mako_local_scan_entry_size(), sizeof(mako_local_scan_entry));
@@ -555,9 +722,9 @@ TEST(MakoLocalAbiIdentity, VersionAndStatusStringsAreStable) {
             MAKO_LOCAL_TIMESTAMP_EXHAUSTED);
   static_assert(MAKO_LOCAL_MAX_MAKO_TIMESTAMP ==
                 (std::numeric_limits<uint32_t>::max() - 9) / 10);
-  EXPECT_EQ(mako_local_advance_mako_timestamp_past(
-                MAKO_LOCAL_MAX_MAKO_TIMESTAMP),
-            MAKO_LOCAL_TIMESTAMP_EXHAUSTED);
+  EXPECT_EQ(
+      mako_local_advance_mako_timestamp_past(MAKO_LOCAL_MAX_MAKO_TIMESTAMP),
+      MAKO_LOCAL_TIMESTAMP_EXHAUSTED);
   EXPECT_EQ(mako_local_advance_mako_timestamp_past(
                 MAKO_LOCAL_MAX_MAKO_TIMESTAMP + 1),
             MAKO_LOCAL_TIMESTAMP_EXHAUSTED);
@@ -758,7 +925,9 @@ TEST_F(LocalAbiTest, TrustedRustFastPathBindsPacksAndConsumesTransaction) {
   const uint64_t created = fast_put(txn, "fast-primary", "first");
   ASSERT_EQ(MAKO_RUST_FAST_PUT_STATUS(created), MAKO_LOCAL_OK);
   EXPECT_EQ(MAKO_RUST_FAST_PUT_CREATED(created), 1U);
-  EXPECT_EQ(created >> 33, 0U);
+  EXPECT_EQ(MAKO_RUST_FAST_PUT_UNCHECKED_RECORD_BYTES(created),
+            26U + 17U + std::string("fast-primary").size() +
+                std::string("first").size());
   ASSERT_EQ(put(txn, secondary, "safe-secondary", "mixed"), MAKO_LOCAL_OK);
 
   const uint64_t committed = mako_rust_fast_txn_commit_and_destroy(txn);
@@ -891,6 +1060,1487 @@ TEST_F(LocalAbiTest, TrustedThinRecordSerializesCanonicalV3WriteSet) {
   commit_and_destroy(txn);
 }
 
+TEST_F(LocalAbiTest, TrustedThinRecordCanExplicitlySkipCrcInV4) {
+  mako_local_txn *txn = nullptr;
+  ASSERT_EQ(mako_rust_fast_txn_begin(db, primary, &txn), MAKO_LOCAL_OK);
+  txn_for_cleanup = txn;
+  ASSERT_EQ(MAKO_RUST_FAST_PUT_STATUS(fast_put(txn, "unchecked", "payload")),
+            MAKO_LOCAL_OK);
+
+  size_t exact_bytes = 99;
+  uint32_t operation_count = 99;
+  EXPECT_EQ(mako_rust_fast_txn_record_preflight_with_checksum(
+                txn, 1 << 20, 99, &exact_bytes, &operation_count),
+            MAKO_LOCAL_INVALID_ARGUMENT);
+  EXPECT_EQ(exact_bytes, 0U);
+  EXPECT_EQ(operation_count, 0U);
+
+  ASSERT_EQ(mako_rust_fast_txn_record_preflight_with_checksum(
+                txn, 1 << 20, MAKO_RUST_FAST_RECORD_CHECKSUM_NONE,
+                &exact_bytes, &operation_count),
+            MAKO_LOCAL_OK);
+  ASSERT_EQ(operation_count, 1U);
+  EXPECT_EQ(exact_bytes, 26U + 17U + std::string("unchecked").size() +
+                             std::string("payload").size());
+
+  std::vector<uint8_t> storage(exact_bytes, 0xa5);
+  ThinRecordBinding binding{&storage, 405};
+  uint8_t written = 0;
+  const uint64_t result = mako_rust_fast_txn_commit_record_and_destroy(
+      txn, bind_thin_record, &binding, &written);
+  txn_for_cleanup = nullptr;
+  ASSERT_EQ(MAKO_RUST_FAST_TERMINAL_STATUS(result), MAKO_LOCAL_OK);
+  ASSERT_EQ(MAKO_RUST_FAST_CLEANUP_STATUS(result), MAKO_LOCAL_OK);
+  ASSERT_EQ(written, 1U);
+  ASSERT_GE(storage.size(), 10U);
+  EXPECT_EQ(storage[8], 0U);
+  EXPECT_EQ(storage[9], 4U);
+
+  DecodedThinRecord decoded;
+  ASSERT_TRUE(decode_thin_record(storage, &decoded));
+  EXPECT_EQ(decoded.sequence, binding.sequence);
+  EXPECT_EQ(decoded.timestamp, binding.timestamp);
+  ASSERT_EQ(decoded.mutations.size(), 1U);
+  EXPECT_EQ(decoded.mutations[0].key, "unchecked");
+  EXPECT_EQ(decoded.mutations[0].value, "payload");
+}
+
+TEST_F(LocalAbiTest, TrustedUncheckedOnePutFusesV4PreflightAndCommit) {
+  const std::string key("fused\0key\xff", 10);
+  const std::string value("direct\0payload\xff", 15);
+  mako_local_txn *txn = nullptr;
+  ASSERT_EQ(mako_rust_fast_txn_begin(db, primary, &txn), MAKO_LOCAL_OK);
+  txn_for_cleanup = txn;
+  const uint64_t put_result = fast_put(txn, key, value);
+  ASSERT_EQ(MAKO_RUST_FAST_PUT_STATUS(put_result), MAKO_LOCAL_OK);
+  const uint32_t exact_bytes =
+      MAKO_RUST_FAST_PUT_UNCHECKED_RECORD_BYTES(put_result);
+  ASSERT_EQ(exact_bytes, 26U + 17U + key.size() + value.size());
+
+  std::vector<uint8_t> storage(exact_bytes, 0xa5);
+  ThinRecordBinding binding{&storage, 601};
+  uint8_t written = 99;
+  const uint64_t commit =
+      mako_rust_fast_txn_commit_unchecked_one_put_record_and_destroy(
+          txn, exact_bytes, bind_thin_record, &binding, &written);
+  txn_for_cleanup = nullptr;
+  ASSERT_EQ(MAKO_RUST_FAST_TERMINAL_STATUS(commit), MAKO_LOCAL_OK);
+  ASSERT_EQ(MAKO_RUST_FAST_CLEANUP_STATUS(commit), MAKO_LOCAL_OK);
+  ASSERT_EQ(binding.calls, 1);
+  ASSERT_EQ(binding.exact_bytes, exact_bytes);
+  ASSERT_EQ(written, 1U);
+
+  DecodedThinRecord decoded;
+  ASSERT_TRUE(decode_thin_record(storage, &decoded));
+  EXPECT_EQ(decoded.sequence, binding.sequence);
+  EXPECT_EQ(decoded.timestamp, binding.timestamp);
+  ASSERT_EQ(decoded.mutations.size(), 1U);
+  EXPECT_EQ(decoded.mutations[0].tag, 1U);
+  EXPECT_EQ(decoded.mutations[0].table_id, mako_local_table_id(primary));
+  EXPECT_EQ(decoded.mutations[0].key, key);
+  EXPECT_EQ(decoded.mutations[0].value, value);
+
+  auto *verify = begin();
+  EXPECT_EQ(get(verify, primary, key).second,
+            std::optional<std::string>(value));
+  commit_and_destroy(verify);
+}
+
+TEST_F(LocalAbiTest,
+       TrustedSingleProducerUncheckedOnePutSkipsOnlyValidationTicket) {
+  const std::string key("single\0producer\xff", 16);
+  const std::string value("direct\0record\xff", 14);
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+  const uint64_t tickets_before =
+      mako_rust_fast_test_record_validation_tickets(db);
+  const uint64_t waits_before =
+      mako_rust_fast_test_record_validation_wait_observations(db);
+  ASSERT_EQ(mako_local_test_set_commit_observer(record_commit_phase,
+                                                &commit_observation),
+            MAKO_LOCAL_OK);
+#endif
+
+  mako_local_txn *txn = nullptr;
+  ASSERT_EQ(mako_rust_fast_txn_begin(db, primary, &txn), MAKO_LOCAL_OK);
+  txn_for_cleanup = txn;
+  const uint64_t put_result = fast_put(txn, key, value);
+  ASSERT_EQ(MAKO_RUST_FAST_PUT_STATUS(put_result), MAKO_LOCAL_OK);
+  const uint32_t exact_bytes =
+      MAKO_RUST_FAST_PUT_UNCHECKED_RECORD_BYTES(put_result);
+  ASSERT_EQ(exact_bytes, 26U + 17U + key.size() + value.size());
+
+  std::vector<uint8_t> storage(exact_bytes, 0xa5);
+  ThinRecordBinding binding{&storage, 701};
+  uint8_t written = 99;
+  const uint64_t commit =
+      mako_rust_fast_txn_commit_unchecked_one_put_record_single_producer_and_destroy(
+          txn, exact_bytes, bind_thin_record, &binding, &written);
+  txn_for_cleanup = nullptr;
+  ASSERT_EQ(MAKO_RUST_FAST_TERMINAL_STATUS(commit), MAKO_LOCAL_OK);
+  ASSERT_EQ(MAKO_RUST_FAST_CLEANUP_STATUS(commit), MAKO_LOCAL_OK);
+  ASSERT_EQ(binding.calls, 1);
+  ASSERT_EQ(binding.exact_bytes, exact_bytes);
+  ASSERT_EQ(written, 1U);
+
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+  EXPECT_EQ(mako_rust_fast_test_record_validation_tickets(db),
+            tickets_before);
+  EXPECT_EQ(mako_rust_fast_test_record_validation_wait_observations(db),
+            waits_before);
+  // A one-write commit has no meaningful mid-install seam; STO reports the
+  // terminal all-writes-installed phase directly after preinstall acceptance.
+  constexpr std::array<uint32_t, 5> expected_phases{
+      MAKO_LOCAL_TEST_COMMIT_WRITESET_LOCKED,
+      MAKO_LOCAL_TEST_COMMIT_MAKO_TIMESTAMP_ALLOCATED,
+      MAKO_LOCAL_TEST_COMMIT_LOCAL_VALIDATION_COMPLETE,
+      MAKO_LOCAL_TEST_COMMIT_PREINSTALL_ACCEPTED,
+      MAKO_LOCAL_TEST_COMMIT_ALL_WRITES_INSTALLED,
+  };
+  ASSERT_EQ(commit_observation.calls, expected_phases.size());
+  for (size_t index = 0; index != expected_phases.size(); ++index)
+    EXPECT_EQ(commit_observation.phases[index], expected_phases[index])
+        << index;
+  EXPECT_EQ(commit_observation.timestamps[0], 0U);
+  for (size_t index = 1; index != expected_phases.size(); ++index)
+    EXPECT_EQ(commit_observation.timestamps[index], binding.timestamp)
+        << index;
+  ASSERT_EQ(mako_local_test_clear_commit_observer(), MAKO_LOCAL_OK);
+#endif
+
+  DecodedThinRecord decoded;
+  ASSERT_TRUE(decode_thin_record(storage, &decoded));
+  EXPECT_EQ(decoded.sequence, binding.sequence);
+  EXPECT_EQ(decoded.timestamp, binding.timestamp);
+  ASSERT_EQ(decoded.mutations.size(), 1U);
+  EXPECT_EQ(decoded.mutations[0].tag, 1U);
+  EXPECT_EQ(decoded.mutations[0].table_id, mako_local_table_id(primary));
+  EXPECT_EQ(decoded.mutations[0].key, key);
+  EXPECT_EQ(decoded.mutations[0].value, value);
+
+  auto *verify = begin();
+  EXPECT_EQ(get(verify, primary, key).second,
+            std::optional<std::string>(value));
+  commit_and_destroy(verify);
+}
+
+TEST_F(LocalAbiTest,
+       TrustedPreselectedSingleProducerSerializesBeforeInstall) {
+  const std::string key("preselected\0key\xff", 16);
+  const std::string value("direct\0target\xff", 14);
+  constexpr uint64_t sequence = 801;
+
+  mako_local_txn *txn = nullptr;
+  ASSERT_EQ(mako_rust_fast_txn_begin(db, primary, &txn), MAKO_LOCAL_OK);
+  txn_for_cleanup = txn;
+  const uint64_t put_result = fast_put(txn, key, value);
+  ASSERT_EQ(MAKO_RUST_FAST_PUT_STATUS(put_result), MAKO_LOCAL_OK);
+  const uint32_t exact_bytes =
+      MAKO_RUST_FAST_PUT_UNCHECKED_RECORD_BYTES(put_result);
+  ASSERT_EQ(exact_bytes, 26U + 17U + key.size() + value.size());
+
+  std::vector<uint8_t> storage(exact_bytes, 0xa5);
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+  const uint64_t tickets_before =
+      mako_rust_fast_test_record_validation_tickets(db);
+  const uint64_t waits_before =
+      mako_rust_fast_test_record_validation_wait_observations(db);
+  PreselectedCommitObservation observation;
+  observation.record = storage.data();
+  observation.record_bytes = storage.size();
+  observation.sequence = sequence;
+  observation.table_id = mako_local_table_id(primary);
+  observation.key = &key;
+  observation.value = &value;
+  ASSERT_EQ(mako_local_test_set_commit_observer(
+                observe_preselected_commit, &observation),
+            MAKO_LOCAL_OK);
+#endif
+
+  const mako_rust_fast_preselected_record_result result =
+      mako_rust_fast_txn_commit_preselected_unchecked_one_put_record_single_producer_and_destroy(
+          txn, exact_bytes, sequence, storage.data(), storage.size());
+  txn_for_cleanup = nullptr;
+  ASSERT_EQ(MAKO_RUST_FAST_TERMINAL_STATUS(result.terminal),
+            MAKO_LOCAL_OK);
+  ASSERT_EQ(MAKO_RUST_FAST_CLEANUP_STATUS(result.terminal),
+            MAKO_LOCAL_OK);
+  const uint32_t timestamp =
+      MAKO_RUST_FAST_PRESELECTED_RECORD_TIMESTAMP(result);
+  ASSERT_NE(timestamp, 0U);
+  ASSERT_LE(timestamp, MAKO_LOCAL_MAX_MAKO_TIMESTAMP);
+  EXPECT_EQ(MAKO_RUST_FAST_PRESELECTED_RECORD_WRITTEN(result), 1U);
+  EXPECT_EQ(MAKO_RUST_FAST_PRESELECTED_RECORD_RESERVED(result), 0U);
+
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+  EXPECT_EQ(mako_rust_fast_test_record_validation_tickets(db),
+            tickets_before);
+  EXPECT_EQ(mako_rust_fast_test_record_validation_wait_observations(db),
+            waits_before);
+  constexpr std::array<uint32_t, 5> expected_phases{
+      MAKO_LOCAL_TEST_COMMIT_WRITESET_LOCKED,
+      MAKO_LOCAL_TEST_COMMIT_MAKO_TIMESTAMP_ALLOCATED,
+      MAKO_LOCAL_TEST_COMMIT_LOCAL_VALIDATION_COMPLETE,
+      MAKO_LOCAL_TEST_COMMIT_PREINSTALL_ACCEPTED,
+      MAKO_LOCAL_TEST_COMMIT_ALL_WRITES_INSTALLED,
+  };
+  ASSERT_EQ(observation.phases.calls, expected_phases.size());
+  for (size_t index = 0; index != expected_phases.size(); ++index) {
+    EXPECT_EQ(observation.phases.phases[index], expected_phases[index])
+        << index;
+    EXPECT_EQ(observation.phases.timestamps[index],
+              index == 0 ? 0U : timestamp)
+        << index;
+  }
+  EXPECT_TRUE(observation.complete_at_preinstall);
+  ASSERT_EQ(mako_local_test_clear_commit_observer(), MAKO_LOCAL_OK);
+#endif
+
+  DecodedThinRecord decoded;
+  ASSERT_TRUE(decode_thin_record(storage, &decoded));
+  EXPECT_EQ(decoded.sequence, sequence);
+  EXPECT_EQ(decoded.timestamp, timestamp);
+  ASSERT_EQ(decoded.mutations.size(), 1U);
+  EXPECT_EQ(decoded.mutations[0].tag, 1U);
+  EXPECT_EQ(decoded.mutations[0].table_id, mako_local_table_id(primary));
+  EXPECT_EQ(decoded.mutations[0].key, key);
+  EXPECT_EQ(decoded.mutations[0].value, value);
+
+  auto *verify = begin();
+  EXPECT_EQ(get(verify, primary, key).second,
+            std::optional<std::string>(value));
+  commit_and_destroy(verify);
+}
+
+TEST_F(LocalAbiTest, OnePutHolderPoolValidatesConfigurationAndLayout) {
+  mako_rust_fast_one_put_holder_pool *pool =
+      reinterpret_cast<mako_rust_fast_one_put_holder_pool *>(uintptr_t{1});
+  EXPECT_EQ(mako_rust_fast_one_put_holder_pool_create(0, 0, 0, &pool),
+            MAKO_LOCAL_INVALID_ARGUMENT);
+  EXPECT_EQ(pool, nullptr);
+  pool = reinterpret_cast<mako_rust_fast_one_put_holder_pool *>(uintptr_t{1});
+  EXPECT_EQ(mako_rust_fast_one_put_holder_pool_create(3, 0, 0, &pool),
+            MAKO_LOCAL_INVALID_ARGUMENT);
+  EXPECT_EQ(pool, nullptr);
+  EXPECT_EQ(mako_rust_fast_one_put_holder_pool_create(4, 0, 0, nullptr),
+            MAKO_LOCAL_INVALID_ARGUMENT);
+  EXPECT_EQ(mako_rust_fast_one_put_holder_pool_create(
+                4, UINT32_MAX, 0, &pool),
+            MAKO_LOCAL_VALUE_TOO_LARGE);
+  EXPECT_EQ(pool, nullptr);
+  EXPECT_EQ(mako_rust_fast_one_put_holder_pool_create(
+                4, 0, UINT32_MAX, &pool),
+            MAKO_LOCAL_VALUE_TOO_LARGE);
+  EXPECT_EQ(pool, nullptr);
+  EXPECT_EQ(mako_rust_fast_one_put_holder_pool_destroy(nullptr),
+            MAKO_LOCAL_OK);
+
+  ASSERT_EQ(mako_rust_fast_one_put_holder_pool_create(4, 64, 256, &pool),
+            MAKO_LOCAL_OK);
+  ASSERT_NE(pool, nullptr);
+  mako_rust_fast_one_put_holder_view view{
+      1, 2, reinterpret_cast<const uint8_t *>(uintptr_t{3}),
+      reinterpret_cast<const uint8_t *>(uintptr_t{4}), 5, 6, 7, 8};
+  EXPECT_EQ(mako_rust_fast_one_put_holder_pool_get_view(pool, 1, &view),
+            MAKO_LOCAL_BUSY);
+  EXPECT_EQ(view.sequence, 0U);
+  EXPECT_EQ(view.key, nullptr);
+  EXPECT_EQ(view.value, nullptr);
+  EXPECT_EQ(mako_rust_fast_one_put_holder_pool_get_view(pool, 0, &view),
+            MAKO_LOCAL_INVALID_ARGUMENT);
+  EXPECT_EQ(mako_rust_fast_one_put_holder_pool_get_view(pool, 1, nullptr),
+            MAKO_LOCAL_INVALID_ARGUMENT);
+  EXPECT_EQ(mako_rust_fast_one_put_holder_pool_release(pool, 0),
+            MAKO_LOCAL_INVALID_ARGUMENT);
+  EXPECT_EQ(mako_rust_fast_one_put_holder_pool_release(pool, 1),
+            MAKO_LOCAL_BUSY);
+  EXPECT_EQ(mako_rust_fast_one_put_holder_pool_destroy(pool), MAKO_LOCAL_OK);
+}
+
+TEST_F(LocalAbiTest, FusedOnePutHolderLeavesCandidateAndSizeMissesUntouched) {
+  create_holder_pool(4);
+  alignas(8) uint64_t acknowledged = 5;
+  alignas(8) uint64_t producer_next = 5;
+  alignas(8) uint64_t capacity_limit = 8;
+  uint8_t unhealthy = 0;
+  mako_rust_fast_spsc_holder_control control = make_fused_holder_control(
+      holder_pool, &acknowledged, &unhealthy, 4);
+  constexpr mako_rust_fast_preselected_record_result kColdSentinel{
+      UINT64_MAX, UINT64_MAX - 1};
+  control.cold_out = kColdSentinel;
+  auto &cold = control.cold_out;
+
+  mako_local_txn *txn = nullptr;
+  ASSERT_EQ(mako_rust_fast_txn_begin(db, primary, &txn), MAKO_LOCAL_OK);
+  txn_for_cleanup = txn;
+  uint64_t fused =
+      mako_rust_fast_txn_try_commit_fused_one_put_holder_single_producer_and_destroy(
+          txn, &acknowledged, &unhealthy, &control, capacity_limit);
+  EXPECT_EQ(MAKO_RUST_FAST_FUSED_HOLDER_CODE(fused),
+            MAKO_RUST_FAST_FUSED_HOLDER_UNTOUCHED_NEED_GENERAL);
+  EXPECT_EQ(MAKO_RUST_FAST_FUSED_HOLDER_PAYLOAD(fused), 0U);
+  EXPECT_EQ(producer_next, 5U);
+  EXPECT_EQ(acknowledged, 5U);
+  EXPECT_EQ(cold.terminal, kColdSentinel.terminal);
+  EXPECT_EQ(cold.record_state, kColdSentinel.record_state);
+  const uint64_t abort_empty = mako_rust_fast_txn_abort_and_destroy(txn);
+  txn_for_cleanup = nullptr;
+  EXPECT_EQ(MAKO_RUST_FAST_TERMINAL_STATUS(abort_empty), MAKO_LOCAL_OK);
+  EXPECT_EQ(MAKO_RUST_FAST_CLEANUP_STATUS(abort_empty), MAKO_LOCAL_OK);
+
+  ASSERT_EQ(mako_rust_fast_txn_begin(db, primary, &txn), MAKO_LOCAL_OK);
+  txn_for_cleanup = txn;
+  const uint64_t put_result = fast_put(txn, "fused-size", "candidate");
+  ASSERT_EQ(MAKO_RUST_FAST_PUT_STATUS(put_result), MAKO_LOCAL_OK);
+  const uint32_t exact_bytes =
+      MAKO_RUST_FAST_PUT_UNCHECKED_RECORD_BYTES(put_result);
+  ASSERT_GT(exact_bytes, 1U);
+  control.max_record_bytes = exact_bytes - 1;
+  fused =
+      mako_rust_fast_txn_try_commit_fused_one_put_holder_single_producer_and_destroy(
+          txn, &acknowledged, &unhealthy, &control, capacity_limit);
+  EXPECT_EQ(MAKO_RUST_FAST_FUSED_HOLDER_CODE(fused),
+            MAKO_RUST_FAST_FUSED_HOLDER_UNTOUCHED_NEED_GENERAL);
+  EXPECT_EQ(MAKO_RUST_FAST_FUSED_HOLDER_PAYLOAD(fused), 0U);
+  EXPECT_EQ(producer_next, 5U);
+  EXPECT_EQ(acknowledged, 5U);
+  EXPECT_EQ(cold.terminal, kColdSentinel.terminal);
+  EXPECT_EQ(cold.record_state, kColdSentinel.record_state);
+  const uint64_t abort_oversized = mako_rust_fast_txn_abort_and_destroy(txn);
+  txn_for_cleanup = nullptr;
+  EXPECT_EQ(MAKO_RUST_FAST_TERMINAL_STATUS(abort_oversized), MAKO_LOCAL_OK);
+  EXPECT_EQ(MAKO_RUST_FAST_CLEANUP_STATUS(abort_oversized), MAKO_LOCAL_OK);
+
+  mako_rust_fast_one_put_holder_view view{};
+  EXPECT_EQ(mako_rust_fast_one_put_holder_pool_get_view(holder_pool, 6, &view),
+            MAKO_LOCAL_BUSY);
+}
+
+TEST_F(LocalAbiTest, FusedOnePutHolderSlowMissesRetainTxnAndExactCandidate) {
+  create_holder_pool(4);
+  alignas(8) uint64_t acknowledged = 7;
+  alignas(8) uint64_t producer_next = 7;
+  alignas(8) uint64_t capacity_limit = 7;
+  uint8_t unhealthy = 0;
+  mako_rust_fast_spsc_holder_control control = make_fused_holder_control(
+      holder_pool, &acknowledged, &unhealthy, 2);
+  constexpr mako_rust_fast_preselected_record_result kColdSentinel{
+      UINT64_MAX - 2, UINT64_MAX - 3};
+  control.cold_out = kColdSentinel;
+  auto &cold = control.cold_out;
+
+  mako_local_txn *txn = nullptr;
+  ASSERT_EQ(mako_rust_fast_txn_begin(db, primary, &txn), MAKO_LOCAL_OK);
+  txn_for_cleanup = txn;
+  const uint64_t put_result = fast_put(txn, "fused-slow", "candidate");
+  ASSERT_EQ(MAKO_RUST_FAST_PUT_STATUS(put_result), MAKO_LOCAL_OK);
+  const uint32_t exact_bytes =
+      MAKO_RUST_FAST_PUT_UNCHECKED_RECORD_BYTES(put_result);
+  ASSERT_NE(exact_bytes, 0U);
+
+  uint64_t fused =
+      mako_rust_fast_txn_try_commit_fused_one_put_holder_single_producer_and_destroy(
+          txn, &acknowledged, &unhealthy, &control, capacity_limit);
+  EXPECT_EQ(MAKO_RUST_FAST_FUSED_HOLDER_CODE(fused),
+            MAKO_RUST_FAST_FUSED_HOLDER_UNTOUCHED_NEED_SLOW);
+  EXPECT_EQ(MAKO_RUST_FAST_FUSED_HOLDER_PAYLOAD(fused), exact_bytes);
+  EXPECT_EQ(producer_next, 7U);
+  EXPECT_EQ(acknowledged, 7U);
+  EXPECT_EQ(cold.terminal, kColdSentinel.terminal);
+  EXPECT_EQ(cold.record_state, kColdSentinel.record_state);
+
+  capacity_limit = 8;
+  __atomic_store_n(&unhealthy, UINT8_C(1), __ATOMIC_RELEASE);
+  fused =
+      mako_rust_fast_txn_try_commit_fused_one_put_holder_single_producer_and_destroy(
+          txn, &acknowledged, &unhealthy, &control, capacity_limit);
+  EXPECT_EQ(MAKO_RUST_FAST_FUSED_HOLDER_CODE(fused),
+            MAKO_RUST_FAST_FUSED_HOLDER_UNTOUCHED_NEED_SLOW);
+  EXPECT_EQ(MAKO_RUST_FAST_FUSED_HOLDER_PAYLOAD(fused), exact_bytes);
+  EXPECT_EQ(producer_next, 7U);
+  EXPECT_EQ(acknowledged, 7U);
+  EXPECT_EQ(cold.terminal, kColdSentinel.terminal);
+  EXPECT_EQ(cold.record_state, kColdSentinel.record_state);
+
+  // Both slow returns left txn and generation 8 untouched, so the same call
+  // can succeed after Rust's refresh/health resolver clears the test barrier.
+  __atomic_store_n(&unhealthy, UINT8_C(0), __ATOMIC_RELEASE);
+  fused =
+      mako_rust_fast_txn_try_commit_fused_one_put_holder_single_producer_and_destroy(
+          txn, &acknowledged, &unhealthy, &control, capacity_limit);
+  txn_for_cleanup = nullptr;
+  EXPECT_EQ(MAKO_RUST_FAST_FUSED_HOLDER_CODE(fused),
+            MAKO_RUST_FAST_FUSED_HOLDER_CONSUMED_PUBLISHED);
+  EXPECT_EQ(MAKO_RUST_FAST_FUSED_HOLDER_PAYLOAD(fused), 0U);
+  EXPECT_EQ(producer_next, 7U);
+  EXPECT_EQ(acknowledged, 8U);
+  EXPECT_EQ(cold.terminal, kColdSentinel.terminal);
+  EXPECT_EQ(cold.record_state, kColdSentinel.record_state);
+
+  mako_rust_fast_one_put_holder_view view{};
+  ASSERT_EQ(mako_rust_fast_one_put_holder_pool_get_view(holder_pool, 8, &view),
+            MAKO_LOCAL_OK);
+  EXPECT_EQ(std::string(reinterpret_cast<const char *>(view.key), view.key_len),
+            "fused-slow");
+  EXPECT_EQ(mako_rust_fast_one_put_holder_pool_release(holder_pool, 8),
+            MAKO_LOCAL_OK);
+}
+
+TEST_F(LocalAbiTest, FusedOnePutHolderPublishesOnlyAfterNativeInstallAndSeal) {
+  create_holder_pool(4);
+  alignas(8) uint64_t acknowledged = 0;
+  alignas(8) uint64_t producer_next = 0;
+  alignas(8) uint64_t capacity_limit = 4;
+  uint8_t unhealthy = 0;
+  mako_rust_fast_spsc_holder_control control = make_fused_holder_control(
+      holder_pool, &acknowledged, &unhealthy, 4);
+  constexpr mako_rust_fast_preselected_record_result kColdSentinel{
+      UINT64_MAX - 4, UINT64_MAX - 5};
+  control.cold_out = kColdSentinel;
+  auto &cold = control.cold_out;
+  FusedHolderCommitObservation observation{&producer_next, &acknowledged,
+                                           &unhealthy};
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+  ASSERT_EQ(mako_local_test_set_commit_observer(observe_fused_holder_commit,
+                                                &observation),
+            MAKO_LOCAL_OK);
+#endif
+
+  mako_local_txn *txn = nullptr;
+  ASSERT_EQ(mako_rust_fast_txn_begin(db, primary, &txn), MAKO_LOCAL_OK);
+  txn_for_cleanup = txn;
+  const uint64_t put_result = fast_put(txn, "fused-publish", "visible");
+  ASSERT_EQ(MAKO_RUST_FAST_PUT_STATUS(put_result), MAKO_LOCAL_OK);
+  const uint64_t fused =
+      mako_rust_fast_txn_try_commit_fused_one_put_holder_single_producer_and_destroy(
+          txn, &acknowledged, &unhealthy, &control, capacity_limit);
+  txn_for_cleanup = nullptr;
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+  ASSERT_EQ(mako_local_test_clear_commit_observer(), MAKO_LOCAL_OK);
+#endif
+
+  EXPECT_EQ(MAKO_RUST_FAST_FUSED_HOLDER_CODE(fused),
+            MAKO_RUST_FAST_FUSED_HOLDER_CONSUMED_PUBLISHED);
+  EXPECT_EQ(MAKO_RUST_FAST_FUSED_HOLDER_PAYLOAD(fused), 0U);
+  EXPECT_EQ(producer_next, 0U);
+  EXPECT_EQ(acknowledged, 1U);
+  EXPECT_EQ(cold.terminal, kColdSentinel.terminal);
+  EXPECT_EQ(cold.record_state, kColdSentinel.record_state);
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+  EXPECT_EQ(observation.producer_at_install, 0U);
+  EXPECT_EQ(observation.acknowledged_at_install, 0U);
+  EXPECT_NE(observation.timestamp_at_install, 0U);
+#endif
+
+  mako_rust_fast_one_put_holder_view view{};
+  ASSERT_EQ(mako_rust_fast_one_put_holder_pool_get_view(holder_pool, 1, &view),
+            MAKO_LOCAL_OK);
+  EXPECT_EQ(view.sequence, 1U);
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+  EXPECT_EQ(view.mako_timestamp, observation.timestamp_at_install);
+#endif
+  EXPECT_EQ(
+      std::string(reinterpret_cast<const char *>(view.value), view.value_len),
+      "visible");
+  EXPECT_EQ(mako_rust_fast_one_put_holder_pool_release(holder_pool, 1),
+            MAKO_LOCAL_OK);
+}
+
+TEST_F(LocalAbiTest,
+       FusedOnePutHolderPostCommitHealthBarrierDefersColdCursorToRust) {
+#if !defined(MAKO_LOCAL_TEST_HOOKS)
+  GTEST_SKIP() << "post-commit health race requires native commit observer";
+#else
+  create_holder_pool(4);
+  alignas(8) uint64_t acknowledged = 0;
+  alignas(8) uint64_t producer_next = 0;
+  alignas(8) uint64_t capacity_limit = 4;
+  uint8_t unhealthy = 0;
+  mako_rust_fast_spsc_holder_control control = make_fused_holder_control(
+      holder_pool, &acknowledged, &unhealthy, 4);
+  constexpr mako_rust_fast_preselected_record_result kColdSentinel{
+      UINT64_MAX - 6, UINT64_MAX - 7};
+  control.cold_out = kColdSentinel;
+  auto &cold = control.cold_out;
+  FusedHolderCommitObservation observation{&producer_next,
+                                           &acknowledged,
+                                           &unhealthy,
+                                           UINT64_MAX,
+                                           UINT64_MAX,
+                                           0,
+                                           true};
+  ASSERT_EQ(mako_local_test_set_commit_observer(observe_fused_holder_commit,
+                                                &observation),
+            MAKO_LOCAL_OK);
+
+  mako_local_txn *txn = nullptr;
+  ASSERT_EQ(mako_rust_fast_txn_begin(db, primary, &txn), MAKO_LOCAL_OK);
+  txn_for_cleanup = txn;
+  const uint64_t put_result = fast_put(txn, "fused-unhealthy", "committed");
+  ASSERT_EQ(MAKO_RUST_FAST_PUT_STATUS(put_result), MAKO_LOCAL_OK);
+  const uint64_t fused =
+      mako_rust_fast_txn_try_commit_fused_one_put_holder_single_producer_and_destroy(
+          txn, &acknowledged, &unhealthy, &control, capacity_limit);
+  txn_for_cleanup = nullptr;
+  ASSERT_EQ(mako_local_test_clear_commit_observer(), MAKO_LOCAL_OK);
+
+  EXPECT_EQ(MAKO_RUST_FAST_FUSED_HOLDER_CODE(fused),
+            MAKO_RUST_FAST_FUSED_HOLDER_CONSUMED_COMMITTED_UNPUBLISHED);
+  const uint32_t timestamp = MAKO_RUST_FAST_FUSED_HOLDER_PAYLOAD(fused);
+  EXPECT_NE(timestamp, 0U);
+  EXPECT_EQ(timestamp, observation.timestamp_at_install);
+  EXPECT_EQ(observation.producer_at_install, 0U);
+  EXPECT_EQ(observation.acknowledged_at_install, 0U);
+  EXPECT_EQ(producer_next, 0U);
+  EXPECT_EQ(acknowledged, 0U);
+  EXPECT_EQ(__atomic_load_n(&unhealthy, __ATOMIC_ACQUIRE), 1U);
+  EXPECT_EQ(MAKO_RUST_FAST_TERMINAL_STATUS(cold.terminal), MAKO_LOCAL_OK);
+  EXPECT_EQ(MAKO_RUST_FAST_CLEANUP_STATUS(cold.terminal), MAKO_LOCAL_OK);
+  EXPECT_EQ(MAKO_RUST_FAST_PRESELECTED_RECORD_TIMESTAMP(cold), timestamp);
+  EXPECT_EQ(MAKO_RUST_FAST_PRESELECTED_HOLDER_SEALED(cold), 1U);
+  EXPECT_EQ(MAKO_RUST_FAST_PRESELECTED_RECORD_RESERVED(cold),
+            MAKO_RUST_FAST_PUT_UNCHECKED_RECORD_BYTES(put_result));
+
+  mako_rust_fast_one_put_holder_view view{};
+  ASSERT_EQ(mako_rust_fast_one_put_holder_pool_get_view(holder_pool, 1, &view),
+            MAKO_LOCAL_OK);
+  EXPECT_EQ(view.mako_timestamp, timestamp);
+  EXPECT_EQ(mako_rust_fast_one_put_holder_pool_release(holder_pool, 1),
+            MAKO_LOCAL_OK);
+#endif
+}
+
+TEST_F(LocalAbiTest, OnePutHolderTransfersExactEncodedValueAllocation) {
+  create_holder_pool(4);
+  const std::string key = "12345678";
+  const std::string value(2048, 'v');
+  constexpr uint64_t sequence = 1;
+
+  mako_local_txn *txn = nullptr;
+  ASSERT_EQ(mako_rust_fast_txn_begin(db, primary, &txn), MAKO_LOCAL_OK);
+  txn_for_cleanup = txn;
+  const uint64_t put_result = fast_put(txn, key, value);
+  ASSERT_EQ(MAKO_RUST_FAST_PUT_STATUS(put_result), MAKO_LOCAL_OK);
+  const uint32_t exact_bytes =
+      MAKO_RUST_FAST_PUT_UNCHECKED_RECORD_BYTES(put_result);
+  ASSERT_NE(exact_bytes, 0U);
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+  uint32_t staged_len = 0;
+  const uint8_t *const staged_value =
+      mako_rust_fast_test_txn_staged_one_put_value(txn, &staged_len);
+  ASSERT_NE(staged_value, nullptr);
+  ASSERT_EQ(staged_len, value.size());
+#endif
+
+  const mako_rust_fast_preselected_record_result commit =
+      mako_rust_fast_txn_commit_preselected_unchecked_one_put_holder_single_producer_and_destroy(
+          txn, exact_bytes, holder_pool, sequence);
+  txn_for_cleanup = nullptr;
+  ASSERT_EQ(MAKO_RUST_FAST_TERMINAL_STATUS(commit.terminal), MAKO_LOCAL_OK);
+  ASSERT_EQ(MAKO_RUST_FAST_CLEANUP_STATUS(commit.terminal), MAKO_LOCAL_OK);
+  const uint32_t timestamp =
+      MAKO_RUST_FAST_PRESELECTED_RECORD_TIMESTAMP(commit);
+  ASSERT_NE(timestamp, 0U);
+  EXPECT_EQ(MAKO_RUST_FAST_PRESELECTED_HOLDER_SEALED(commit), 1U);
+  EXPECT_EQ(MAKO_RUST_FAST_PRESELECTED_RECORD_RESERVED(commit), 0U);
+
+  mako_rust_fast_one_put_holder_view view{};
+  ASSERT_EQ(mako_rust_fast_one_put_holder_pool_get_view(
+                holder_pool, sequence, &view),
+            MAKO_LOCAL_OK);
+  EXPECT_EQ(view.sequence, sequence);
+  EXPECT_EQ(view.table_id, mako_local_table_id(primary));
+  EXPECT_EQ(view.key_len, key.size());
+  EXPECT_EQ(view.value_len, value.size());
+  EXPECT_EQ(view.mako_timestamp, timestamp);
+  EXPECT_EQ(view.reserved, 0U);
+  EXPECT_EQ(std::string(reinterpret_cast<const char *>(view.key),
+                        view.key_len),
+            key);
+  EXPECT_EQ(std::string(reinterpret_cast<const char *>(view.value),
+                        view.value_len),
+            value);
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+  // This is the core no-second-copy witness: pool view points at the exact
+  // heap allocation staged before STO validation, not a reconstructed record.
+  EXPECT_EQ(view.value, staged_value);
+#endif
+
+  mako_rust_fast_one_put_holder_view stale{};
+  EXPECT_EQ(mako_rust_fast_one_put_holder_pool_get_view(
+                holder_pool, sequence + 4, &stale),
+            MAKO_LOCAL_BUSY);
+  EXPECT_EQ(mako_rust_fast_one_put_holder_pool_release(
+                holder_pool, sequence + 4),
+            MAKO_LOCAL_BUSY);
+  EXPECT_EQ(mako_rust_fast_one_put_holder_pool_destroy(holder_pool),
+            MAKO_LOCAL_BUSY);
+  EXPECT_EQ(mako_rust_fast_one_put_holder_pool_release(holder_pool, sequence),
+            MAKO_LOCAL_OK);
+  EXPECT_EQ(mako_rust_fast_one_put_holder_pool_release(holder_pool, sequence),
+            MAKO_LOCAL_BUSY);
+
+  auto *verify = begin();
+  EXPECT_EQ(get(verify, primary, key).second,
+            std::optional<std::string>(value));
+  commit_and_destroy(verify);
+}
+
+TEST_F(LocalAbiTest, OnePutHolderSupportsInlineOverflowAndExactReuse) {
+  create_holder_pool(2);
+  const std::array<std::string, 3> keys{
+      std::string{}, std::string(20, 'i'), std::string(40, 'o')};
+  for (size_t index = 0; index != keys.size(); ++index) {
+    const uint64_t sequence = index + 1;
+    const std::string value = "value-" + std::to_string(sequence);
+    mako_local_txn *txn = nullptr;
+    ASSERT_EQ(mako_rust_fast_txn_begin(db, primary, &txn), MAKO_LOCAL_OK);
+    txn_for_cleanup = txn;
+    const uint64_t put_result = fast_put(txn, keys[index], value);
+    ASSERT_EQ(MAKO_RUST_FAST_PUT_STATUS(put_result), MAKO_LOCAL_OK);
+    const uint32_t exact_bytes =
+        MAKO_RUST_FAST_PUT_UNCHECKED_RECORD_BYTES(put_result);
+    ASSERT_NE(exact_bytes, 0U);
+    const mako_rust_fast_preselected_record_result commit =
+        mako_rust_fast_txn_commit_preselected_unchecked_one_put_holder_single_producer_and_destroy(
+            txn, exact_bytes, holder_pool, sequence);
+    txn_for_cleanup = nullptr;
+    ASSERT_EQ(MAKO_RUST_FAST_TERMINAL_STATUS(commit.terminal), MAKO_LOCAL_OK);
+    ASSERT_EQ(MAKO_RUST_FAST_PRESELECTED_HOLDER_SEALED(commit), 1U);
+
+    mako_rust_fast_one_put_holder_view view{};
+    ASSERT_EQ(mako_rust_fast_one_put_holder_pool_get_view(
+                  holder_pool, sequence, &view),
+              MAKO_LOCAL_OK);
+    EXPECT_EQ(std::string(reinterpret_cast<const char *>(view.key),
+                          view.key_len),
+              keys[index]);
+    EXPECT_EQ(std::string(reinterpret_cast<const char *>(view.value),
+                          view.value_len),
+              value);
+    EXPECT_EQ(mako_rust_fast_one_put_holder_pool_release(holder_pool,
+                                                          sequence),
+              MAKO_LOCAL_OK);
+  }
+}
+
+TEST_F(LocalAbiTest, OnePutHolderReleasedGenerationCanPublishNextLap) {
+  create_holder_pool(2);
+  constexpr uint64_t sequence = 11;
+  constexpr uint64_t next_generation = sequence + 2;
+  const std::array<std::pair<uint64_t, std::string>, 2> generations{{
+      {sequence, "first-generation"},
+      {next_generation, "next-generation"},
+  }};
+
+  for (const auto &[generation, value] : generations) {
+    mako_local_txn *txn = nullptr;
+    ASSERT_EQ(mako_rust_fast_txn_begin(db, primary, &txn), MAKO_LOCAL_OK);
+    txn_for_cleanup = txn;
+    const uint64_t put_result = fast_put(txn, "same-key", value);
+    const uint32_t exact_bytes =
+        MAKO_RUST_FAST_PUT_UNCHECKED_RECORD_BYTES(put_result);
+    ASSERT_NE(exact_bytes, 0U);
+    const mako_rust_fast_preselected_record_result commit =
+        mako_rust_fast_txn_commit_preselected_unchecked_one_put_holder_single_producer_and_destroy(
+            txn, exact_bytes, holder_pool, generation);
+    txn_for_cleanup = nullptr;
+    ASSERT_EQ(MAKO_RUST_FAST_TERMINAL_STATUS(commit.terminal), MAKO_LOCAL_OK);
+    ASSERT_EQ(MAKO_RUST_FAST_PRESELECTED_HOLDER_SEALED(commit), 1U);
+
+    mako_rust_fast_one_put_holder_view view{};
+    ASSERT_EQ(mako_rust_fast_one_put_holder_pool_get_view(
+                  holder_pool, generation, &view),
+              MAKO_LOCAL_OK);
+    EXPECT_EQ(std::string(reinterpret_cast<const char *>(view.value),
+                          view.value_len),
+              value);
+    EXPECT_EQ(
+        mako_rust_fast_one_put_holder_pool_release(holder_pool, generation),
+        MAKO_LOCAL_OK);
+  }
+}
+
+TEST_F(LocalAbiTest,
+       FusedOnePutHolderConflictConsumesTxnButNotProducerGeneration) {
+  create_holder_pool(2);
+  constexpr uint64_t kTail = 20;
+  constexpr uint64_t kSequence = kTail + 1;
+  const std::string contested_key = "fused-holder-conflict";
+  auto *seed = begin();
+  ASSERT_EQ(put(seed, primary, contested_key, "seed"), MAKO_LOCAL_OK);
+  commit_and_destroy(seed);
+
+  struct WorkerResult {
+    int attach = MAKO_LOCAL_INTERNAL;
+    int begin = MAKO_LOCAL_INTERNAL;
+    uint64_t put = UINT64_MAX;
+    uint64_t fused = UINT64_MAX;
+    mako_rust_fast_preselected_record_result cold{UINT64_MAX, UINT64_MAX};
+    alignas(8) uint64_t acknowledged = 20;
+    alignas(8) uint64_t producer_next = 20;
+    alignas(8) uint64_t capacity_limit = 22;
+    uint8_t unhealthy = 0;
+  } result;
+  std::barrier staged(2);
+  std::barrier overwritten(2);
+  std::thread worker([&] {
+    result.attach = mako_local_thread_attach();
+    mako_local_txn *txn = nullptr;
+    if (result.attach == MAKO_LOCAL_OK)
+      result.begin = mako_rust_fast_txn_begin(db, primary, &txn);
+    if (result.begin == MAKO_LOCAL_OK)
+      result.put = fast_put(txn, contested_key, "stale");
+    staged.arrive_and_wait();
+    overwritten.arrive_and_wait();
+    if (MAKO_RUST_FAST_PUT_STATUS(result.put) == MAKO_LOCAL_OK) {
+      mako_rust_fast_spsc_holder_control control =
+          make_fused_holder_control(holder_pool, &result.acknowledged,
+                                    &result.unhealthy, 2);
+      result.fused =
+          mako_rust_fast_txn_try_commit_fused_one_put_holder_single_producer_and_destroy(
+              txn, &result.acknowledged, &result.unhealthy, &control,
+              result.capacity_limit);
+      result.cold = control.cold_out;
+      txn = nullptr;
+    }
+    if (txn != nullptr)
+      (void)mako_rust_fast_txn_abort_and_destroy(txn);
+  });
+
+  staged.arrive_and_wait();
+  mako_local_txn *overwrite = nullptr;
+  const int overwrite_begin = mako_local_txn_begin(db, &overwrite);
+  const int overwrite_put =
+      overwrite_begin == MAKO_LOCAL_OK
+          ? put(overwrite, primary, contested_key, "newer")
+          : MAKO_LOCAL_INTERNAL;
+  const int overwrite_commit = overwrite_put == MAKO_LOCAL_OK
+                                   ? mako_local_txn_commit(overwrite)
+                                   : MAKO_LOCAL_INTERNAL;
+  const int overwrite_destroy = overwrite == nullptr
+                                    ? MAKO_LOCAL_INTERNAL
+                                    : mako_local_txn_destroy(overwrite);
+  overwritten.arrive_and_wait();
+  worker.join();
+
+  EXPECT_EQ(overwrite_begin, MAKO_LOCAL_OK);
+  EXPECT_EQ(overwrite_put, MAKO_LOCAL_OK);
+  EXPECT_EQ(overwrite_commit, MAKO_LOCAL_OK);
+  EXPECT_EQ(overwrite_destroy, MAKO_LOCAL_OK);
+  EXPECT_EQ(result.attach, MAKO_LOCAL_OK);
+  EXPECT_EQ(result.begin, MAKO_LOCAL_OK);
+  EXPECT_EQ(MAKO_RUST_FAST_PUT_STATUS(result.put), MAKO_LOCAL_OK);
+  EXPECT_EQ(MAKO_RUST_FAST_FUSED_HOLDER_CODE(result.fused),
+            MAKO_RUST_FAST_FUSED_HOLDER_CONSUMED_OUTCOME);
+  EXPECT_EQ(MAKO_RUST_FAST_FUSED_HOLDER_PAYLOAD(result.fused), 0U);
+  EXPECT_EQ(MAKO_RUST_FAST_TERMINAL_STATUS(result.cold.terminal),
+            MAKO_LOCAL_CONFLICT);
+  EXPECT_EQ(MAKO_RUST_FAST_CLEANUP_STATUS(result.cold.terminal), MAKO_LOCAL_OK);
+  EXPECT_EQ(result.cold.record_state & ((UINT64_C(1) << 33) - 1), 0U);
+  EXPECT_EQ(MAKO_RUST_FAST_PRESELECTED_RECORD_RESERVED(result.cold),
+            MAKO_RUST_FAST_PUT_UNCHECKED_RECORD_BYTES(result.put));
+  EXPECT_EQ(result.producer_next, kTail);
+  EXPECT_EQ(result.acknowledged, kTail);
+
+  mako_rust_fast_one_put_holder_view view{};
+  EXPECT_EQ(mako_rust_fast_one_put_holder_pool_get_view(holder_pool, kSequence,
+                                                        &view),
+            MAKO_LOCAL_BUSY);
+  auto *verify = begin();
+  EXPECT_EQ(get(verify, primary, contested_key).second,
+            std::optional<std::string>("newer"));
+  commit_and_destroy(verify);
+}
+
+TEST_F(LocalAbiTest, OnePutHolderConflictLeavesInvisibleGenerationReusable) {
+  create_holder_pool(2);
+  constexpr uint64_t sequence = 21;
+  const std::string contested_key = "holder-conflict";
+  auto *seed = begin();
+  ASSERT_EQ(put(seed, primary, contested_key, "seed"), MAKO_LOCAL_OK);
+  commit_and_destroy(seed);
+
+  struct WorkerResult {
+    int attach = MAKO_LOCAL_INTERNAL;
+    int begin = MAKO_LOCAL_INTERNAL;
+    uint64_t put = UINT64_MAX;
+    mako_rust_fast_preselected_record_result conflict{UINT64_MAX, UINT64_MAX};
+    int retry_begin = MAKO_LOCAL_INTERNAL;
+    uint64_t retry_put = UINT64_MAX;
+    mako_rust_fast_preselected_record_result retry{UINT64_MAX, UINT64_MAX};
+  } result;
+  std::barrier staged(2);
+  std::barrier overwritten(2);
+  std::thread worker([&] {
+    result.attach = mako_local_thread_attach();
+    mako_local_txn *txn = nullptr;
+    if (result.attach == MAKO_LOCAL_OK)
+      result.begin = mako_rust_fast_txn_begin(db, primary, &txn);
+    if (result.begin == MAKO_LOCAL_OK)
+      result.put = fast_put(txn, contested_key, "stale");
+    staged.arrive_and_wait();
+    overwritten.arrive_and_wait();
+    if (MAKO_RUST_FAST_PUT_STATUS(result.put) == MAKO_LOCAL_OK) {
+      const uint32_t exact_bytes =
+          MAKO_RUST_FAST_PUT_UNCHECKED_RECORD_BYTES(result.put);
+      result.conflict =
+          mako_rust_fast_txn_commit_preselected_unchecked_one_put_holder_single_producer_and_destroy(
+              txn, exact_bytes, holder_pool, sequence);
+      txn = nullptr;
+    }
+    if (txn != nullptr)
+      (void)mako_rust_fast_txn_abort_and_destroy(txn);
+
+    if (MAKO_RUST_FAST_TERMINAL_STATUS(result.conflict.terminal) ==
+        MAKO_LOCAL_CONFLICT) {
+      result.retry_begin = mako_rust_fast_txn_begin(db, primary, &txn);
+      if (result.retry_begin == MAKO_LOCAL_OK)
+        result.retry_put = fast_put(txn, "holder-retry", "visible");
+      if (MAKO_RUST_FAST_PUT_STATUS(result.retry_put) == MAKO_LOCAL_OK) {
+        const uint32_t exact_bytes =
+            MAKO_RUST_FAST_PUT_UNCHECKED_RECORD_BYTES(result.retry_put);
+        result.retry =
+            mako_rust_fast_txn_commit_preselected_unchecked_one_put_holder_single_producer_and_destroy(
+                txn, exact_bytes, holder_pool, sequence);
+        txn = nullptr;
+      }
+      if (txn != nullptr)
+        (void)mako_rust_fast_txn_abort_and_destroy(txn);
+    }
+  });
+
+  staged.arrive_and_wait();
+  mako_local_txn *overwrite = nullptr;
+  const int overwrite_begin = mako_local_txn_begin(db, &overwrite);
+  const int overwrite_put = overwrite_begin == MAKO_LOCAL_OK
+      ? put(overwrite, primary, contested_key, "newer")
+      : MAKO_LOCAL_INTERNAL;
+  const int overwrite_commit = overwrite_put == MAKO_LOCAL_OK
+      ? mako_local_txn_commit(overwrite)
+      : MAKO_LOCAL_INTERNAL;
+  const int overwrite_destroy = overwrite == nullptr
+      ? MAKO_LOCAL_INTERNAL
+      : mako_local_txn_destroy(overwrite);
+  overwritten.arrive_and_wait();
+  worker.join();
+
+  EXPECT_EQ(overwrite_begin, MAKO_LOCAL_OK);
+  EXPECT_EQ(overwrite_put, MAKO_LOCAL_OK);
+  EXPECT_EQ(overwrite_commit, MAKO_LOCAL_OK);
+  EXPECT_EQ(overwrite_destroy, MAKO_LOCAL_OK);
+  EXPECT_EQ(result.attach, MAKO_LOCAL_OK);
+  EXPECT_EQ(result.begin, MAKO_LOCAL_OK);
+  EXPECT_EQ(MAKO_RUST_FAST_PUT_STATUS(result.put), MAKO_LOCAL_OK);
+  EXPECT_EQ(MAKO_RUST_FAST_TERMINAL_STATUS(result.conflict.terminal),
+            MAKO_LOCAL_CONFLICT);
+  EXPECT_EQ(MAKO_RUST_FAST_CLEANUP_STATUS(result.conflict.terminal),
+            MAKO_LOCAL_OK);
+  EXPECT_EQ(result.conflict.record_state, 0U);
+  EXPECT_EQ(result.retry_begin, MAKO_LOCAL_OK);
+  EXPECT_EQ(MAKO_RUST_FAST_PUT_STATUS(result.retry_put), MAKO_LOCAL_OK);
+  ASSERT_EQ(MAKO_RUST_FAST_TERMINAL_STATUS(result.retry.terminal),
+            MAKO_LOCAL_OK);
+  ASSERT_EQ(MAKO_RUST_FAST_PRESELECTED_HOLDER_SEALED(result.retry), 1U);
+
+  mako_rust_fast_one_put_holder_view view{};
+  ASSERT_EQ(mako_rust_fast_one_put_holder_pool_get_view(
+                holder_pool, sequence, &view),
+            MAKO_LOCAL_OK);
+  EXPECT_EQ(std::string(reinterpret_cast<const char *>(view.key),
+                        view.key_len),
+            "holder-retry");
+  EXPECT_EQ(std::string(reinterpret_cast<const char *>(view.value),
+                        view.value_len),
+            "visible");
+  EXPECT_EQ(mako_rust_fast_one_put_holder_pool_release(holder_pool, sequence),
+            MAKO_LOCAL_OK);
+
+  auto *verify = begin();
+  EXPECT_EQ(get(verify, primary, contested_key).second,
+            std::optional<std::string>("newer"));
+  EXPECT_EQ(get(verify, primary, "holder-retry").second,
+            std::optional<std::string>("visible"));
+  commit_and_destroy(verify);
+}
+
+TEST_F(LocalAbiTest,
+       TrustedSingleProducerUncheckedOnePutRejectsMalformedAndHookError) {
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+  const uint64_t tickets_before =
+      mako_rust_fast_test_record_validation_tickets(db);
+#endif
+  mako_local_txn *txn = nullptr;
+  ASSERT_EQ(mako_rust_fast_txn_begin(db, primary, &txn), MAKO_LOCAL_OK);
+  txn_for_cleanup = txn;
+  const uint64_t malformed_put =
+      fast_put(txn, "single-malformed", "invisible");
+  ASSERT_EQ(MAKO_RUST_FAST_PUT_STATUS(malformed_put), MAKO_LOCAL_OK);
+  const uint32_t malformed_bytes =
+      MAKO_RUST_FAST_PUT_UNCHECKED_RECORD_BYTES(malformed_put);
+  ASSERT_NE(malformed_bytes, 0U);
+  std::vector<uint8_t> malformed_storage(malformed_bytes, 0xa5);
+  const std::vector<uint8_t> malformed_untouched = malformed_storage;
+  ThinRecordBinding malformed_binding{&malformed_storage, 702};
+  uint8_t written = 99;
+  const uint64_t malformed =
+      mako_rust_fast_txn_commit_unchecked_one_put_record_single_producer_and_destroy(
+          txn, malformed_bytes + 1, bind_thin_record, &malformed_binding,
+          &written);
+  txn_for_cleanup = nullptr;
+  EXPECT_EQ(MAKO_RUST_FAST_TERMINAL_STATUS(malformed),
+            MAKO_LOCAL_INVALID_ARGUMENT);
+  EXPECT_EQ(MAKO_RUST_FAST_CLEANUP_STATUS(malformed), MAKO_LOCAL_OK);
+  EXPECT_EQ(malformed_binding.calls, 0);
+  EXPECT_EQ(written, 0U);
+  EXPECT_EQ(malformed_storage, malformed_untouched);
+
+  txn = nullptr;
+  ASSERT_EQ(mako_rust_fast_txn_begin(db, primary, &txn), MAKO_LOCAL_OK);
+  txn_for_cleanup = txn;
+  const uint64_t rejected_put =
+      fast_put(txn, "single-rejected", "also-invisible");
+  ASSERT_EQ(MAKO_RUST_FAST_PUT_STATUS(rejected_put), MAKO_LOCAL_OK);
+  const uint32_t rejected_bytes =
+      MAKO_RUST_FAST_PUT_UNCHECKED_RECORD_BYTES(rejected_put);
+  ASSERT_NE(rejected_bytes, 0U);
+  std::vector<uint8_t> rejected_storage(rejected_bytes, 0xa5);
+  const std::vector<uint8_t> rejected_untouched = rejected_storage;
+  ThinRecordBinding rejected_binding{&rejected_storage, 703};
+  rejected_binding.accept = false;
+  written = 99;
+  const uint64_t rejected =
+      mako_rust_fast_txn_commit_unchecked_one_put_record_single_producer_and_destroy(
+          txn, rejected_bytes, bind_thin_record, &rejected_binding, &written);
+  txn_for_cleanup = nullptr;
+  EXPECT_EQ(MAKO_RUST_FAST_TERMINAL_STATUS(rejected),
+            MAKO_LOCAL_COMMIT_HOOK_REJECTED);
+  EXPECT_EQ(MAKO_RUST_FAST_CLEANUP_STATUS(rejected), MAKO_LOCAL_OK);
+  EXPECT_EQ(rejected_binding.calls, 1);
+  EXPECT_EQ(written, 0U);
+  EXPECT_EQ(rejected_storage, rejected_untouched);
+
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+  EXPECT_EQ(mako_rust_fast_test_record_validation_tickets(db),
+            tickets_before);
+#endif
+  auto *verify = begin();
+  EXPECT_FALSE(get(verify, primary, "single-malformed").second.has_value());
+  EXPECT_FALSE(get(verify, primary, "single-rejected").second.has_value());
+  commit_and_destroy(verify);
+}
+
+TEST_F(LocalAbiTest,
+       TrustedPreselectedSingleProducerRejectsStaleSizeAndTarget) {
+  enum class InvalidCase {
+    wrong_expected_size,
+    short_target,
+    null_target,
+    zero_sequence,
+    later_mutation,
+  };
+  const std::array<InvalidCase, 5> cases{
+      InvalidCase::wrong_expected_size,
+      InvalidCase::short_target,
+      InvalidCase::null_target,
+      InvalidCase::zero_sequence,
+      InvalidCase::later_mutation,
+  };
+  std::vector<std::string> keys;
+
+  for (size_t index = 0; index != cases.size(); ++index) {
+    const std::string key = "preselected-invalid-" + std::to_string(index);
+    keys.push_back(key);
+    mako_local_txn *txn = nullptr;
+    ASSERT_EQ(mako_rust_fast_txn_begin(db, primary, &txn), MAKO_LOCAL_OK);
+    txn_for_cleanup = txn;
+    const uint64_t put_result = fast_put(txn, key, "must-not-install");
+    ASSERT_EQ(MAKO_RUST_FAST_PUT_STATUS(put_result), MAKO_LOCAL_OK);
+    const uint32_t exact_bytes =
+        MAKO_RUST_FAST_PUT_UNCHECKED_RECORD_BYTES(put_result);
+    ASSERT_NE(exact_bytes, 0U);
+
+    std::vector<uint8_t> storage(exact_bytes + 1, 0xa5);
+    const std::vector<uint8_t> untouched = storage;
+    uint32_t expected_bytes = exact_bytes;
+    uint64_t sequence = 810 + index;
+    uint8_t *target = storage.data();
+    size_t capacity = exact_bytes;
+    switch (cases[index]) {
+    case InvalidCase::wrong_expected_size:
+      ++expected_bytes;
+      capacity = expected_bytes;
+      break;
+    case InvalidCase::short_target:
+      --capacity;
+      break;
+    case InvalidCase::null_target:
+      target = nullptr;
+      break;
+    case InvalidCase::zero_sequence:
+      sequence = 0;
+      break;
+    case InvalidCase::later_mutation: {
+      const std::string later = key + "-later";
+      keys.push_back(later);
+      const uint64_t later_put = fast_put(txn, later, "also-invisible");
+      ASSERT_EQ(MAKO_RUST_FAST_PUT_STATUS(later_put), MAKO_LOCAL_OK);
+      EXPECT_EQ(MAKO_RUST_FAST_PUT_UNCHECKED_RECORD_BYTES(later_put), 0U);
+      break;
+    }
+    }
+
+    const mako_rust_fast_preselected_record_result result =
+        mako_rust_fast_txn_commit_preselected_unchecked_one_put_record_single_producer_and_destroy(
+            txn, expected_bytes, sequence, target, capacity);
+    txn_for_cleanup = nullptr;
+    EXPECT_EQ(MAKO_RUST_FAST_TERMINAL_STATUS(result.terminal),
+              MAKO_LOCAL_INVALID_ARGUMENT)
+        << index;
+    EXPECT_EQ(MAKO_RUST_FAST_CLEANUP_STATUS(result.terminal),
+              MAKO_LOCAL_OK)
+        << index;
+    EXPECT_EQ(MAKO_RUST_FAST_PRESELECTED_RECORD_TIMESTAMP(result), 0U)
+        << index;
+    EXPECT_EQ(MAKO_RUST_FAST_PRESELECTED_RECORD_WRITTEN(result), 0U)
+        << index;
+    EXPECT_EQ(MAKO_RUST_FAST_PRESELECTED_RECORD_RESERVED(result), 0U)
+        << index;
+    EXPECT_EQ(storage, untouched) << index;
+  }
+
+  auto *verify = begin();
+  for (const std::string &key : keys)
+    EXPECT_FALSE(get(verify, primary, key).second.has_value()) << key;
+  commit_and_destroy(verify);
+}
+
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+TEST_F(LocalAbiTest,
+       TrustedSingleProducerUncheckedOnePutStillRechecksPredicates) {
+  auto *seed = begin();
+  ASSERT_EQ(put(seed, primary, "single-range-h", "seed"), MAKO_LOCAL_OK);
+  commit_and_destroy(seed);
+
+  struct WorkerResult {
+    int attach = MAKO_LOCAL_INTERNAL;
+    int observer_set = MAKO_LOCAL_INTERNAL;
+    int begin = MAKO_LOCAL_INTERNAL;
+    int scan = MAKO_LOCAL_INTERNAL;
+    uint64_t put = UINT64_MAX;
+    uint32_t exact_bytes = 0;
+    uint64_t commit = UINT64_MAX;
+    int observer_clear = MAKO_LOCAL_INTERNAL;
+    uint8_t written = 0;
+    std::vector<uint8_t> storage;
+    ThinRecordBinding binding;
+  } worker_result;
+
+  std::atomic<bool> writeset_locked{false};
+  std::atomic<bool> release_worker{false};
+  ParkingPhaseCommitObserver parking{
+      MAKO_LOCAL_TEST_COMMIT_WRITESET_LOCKED, &writeset_locked,
+      &release_worker};
+  const uint64_t tickets_before =
+      mako_rust_fast_test_record_validation_tickets(db);
+
+  std::thread worker([&] {
+    worker_result.attach = mako_local_thread_attach();
+    mako_local_txn *txn = nullptr;
+    if (worker_result.attach == MAKO_LOCAL_OK)
+      worker_result.observer_set = mako_local_test_set_commit_observer(
+          park_at_commit_phase, &parking);
+    if (worker_result.observer_set == MAKO_LOCAL_OK)
+      worker_result.begin = mako_rust_fast_txn_begin(db, primary, &txn);
+    if (worker_result.begin == MAKO_LOCAL_OK) {
+      const std::string lower = "single-range-a";
+      const std::string upper = "single-range-z";
+      const mako_local_scan_options options{
+          MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE, MAKO_LOCAL_SCAN_HAS_UPPER,
+          reinterpret_cast<const uint8_t *>(lower.data()), lower.size(),
+          reinterpret_cast<const uint8_t *>(upper.data()), upper.size(),
+          nullptr, 0};
+      worker_result.scan =
+          scan_chunk(txn, primary, options, false, 8, 1024).status;
+    }
+    if (worker_result.scan == MAKO_LOCAL_OK) {
+      worker_result.put = fast_put(txn, "single-side", "must-abort");
+      worker_result.exact_bytes =
+          MAKO_RUST_FAST_PUT_UNCHECKED_RECORD_BYTES(worker_result.put);
+    }
+    if (MAKO_RUST_FAST_PUT_STATUS(worker_result.put) == MAKO_LOCAL_OK &&
+        worker_result.exact_bytes != 0) {
+      worker_result.storage.assign(worker_result.exact_bytes, 0xa5);
+      worker_result.binding.storage = &worker_result.storage;
+      worker_result.binding.sequence = 704;
+      worker_result.commit =
+          mako_rust_fast_txn_commit_unchecked_one_put_record_single_producer_and_destroy(
+              txn, worker_result.exact_bytes, bind_thin_record,
+              &worker_result.binding, &worker_result.written);
+      txn = nullptr;
+    }
+    if (txn != nullptr)
+      (void)mako_rust_fast_txn_abort_and_destroy(txn);
+    worker_result.observer_clear = mako_local_test_clear_commit_observer();
+  });
+
+  const auto lock_deadline = std::chrono::steady_clock::now() +
+                             std::chrono::seconds(5);
+  while (!writeset_locked.load(std::memory_order_acquire) &&
+         std::chrono::steady_clock::now() < lock_deadline)
+    std::this_thread::yield();
+  if (!writeset_locked.load(std::memory_order_acquire)) {
+    release_worker.store(true, std::memory_order_release);
+    worker.join();
+    FAIL() << "single-producer record commit did not lock its write set";
+    return;
+  }
+
+  // This ordinary STO commit is not a competing cache-record terminal. It
+  // changes the already-checked range after phase 1; the non-ticketed but
+  // non-null validation gate must make phase 2 reject the stale predicate.
+  mako_local_txn *phantom = nullptr;
+  const int phantom_begin = mako_local_txn_begin(db, &phantom);
+  const int phantom_put = phantom_begin == MAKO_LOCAL_OK
+      ? put(phantom, primary, "single-range-m", "phantom")
+      : MAKO_LOCAL_INTERNAL;
+  int phantom_commit = MAKO_LOCAL_INTERNAL;
+  int phantom_destroy = MAKO_LOCAL_INTERNAL;
+  if (phantom_put == MAKO_LOCAL_OK)
+    phantom_commit = mako_local_txn_commit(phantom);
+  if (phantom != nullptr)
+    phantom_destroy = mako_local_txn_destroy(phantom);
+  release_worker.store(true, std::memory_order_release);
+  worker.join();
+
+  EXPECT_EQ(phantom_begin, MAKO_LOCAL_OK);
+  EXPECT_EQ(phantom_put, MAKO_LOCAL_OK);
+  EXPECT_EQ(phantom_commit, MAKO_LOCAL_OK);
+  EXPECT_EQ(phantom_destroy, MAKO_LOCAL_OK);
+  EXPECT_EQ(worker_result.attach, MAKO_LOCAL_OK);
+  EXPECT_EQ(worker_result.observer_set, MAKO_LOCAL_OK);
+  EXPECT_EQ(worker_result.begin, MAKO_LOCAL_OK);
+  EXPECT_EQ(worker_result.scan, MAKO_LOCAL_OK);
+  EXPECT_EQ(MAKO_RUST_FAST_PUT_STATUS(worker_result.put), MAKO_LOCAL_OK);
+  EXPECT_NE(worker_result.exact_bytes, 0U);
+  EXPECT_EQ(MAKO_RUST_FAST_TERMINAL_STATUS(worker_result.commit),
+            MAKO_LOCAL_CONFLICT);
+  EXPECT_EQ(MAKO_RUST_FAST_CLEANUP_STATUS(worker_result.commit),
+            MAKO_LOCAL_OK);
+  EXPECT_EQ(worker_result.binding.calls, 0);
+  EXPECT_EQ(worker_result.written, 0U);
+  EXPECT_EQ(worker_result.observer_clear, MAKO_LOCAL_OK);
+  EXPECT_EQ(mako_rust_fast_test_record_validation_tickets(db),
+            tickets_before);
+
+  auto *verify = begin();
+  EXPECT_FALSE(get(verify, primary, "single-side").second.has_value());
+  EXPECT_EQ(get(verify, primary, "single-range-m").second,
+            std::optional<std::string>("phantom"));
+  commit_and_destroy(verify);
+}
+
+TEST_F(LocalAbiTest,
+       TrustedPreselectedSingleProducerStillRechecksPredicates) {
+  auto *seed = begin();
+  ASSERT_EQ(put(seed, primary, "preselected-range-h", "seed"),
+            MAKO_LOCAL_OK);
+  commit_and_destroy(seed);
+
+  struct WorkerResult {
+    int attach = MAKO_LOCAL_INTERNAL;
+    int observer_set = MAKO_LOCAL_INTERNAL;
+    int begin = MAKO_LOCAL_INTERNAL;
+    int scan = MAKO_LOCAL_INTERNAL;
+    uint64_t put = UINT64_MAX;
+    uint32_t exact_bytes = 0;
+    mako_rust_fast_preselected_record_result commit{UINT64_MAX, UINT64_MAX};
+    int observer_clear = MAKO_LOCAL_INTERNAL;
+    std::vector<uint8_t> storage;
+  } worker_result;
+
+  std::atomic<bool> writeset_locked{false};
+  std::atomic<bool> release_worker{false};
+  ParkingPhaseCommitObserver parking{
+      MAKO_LOCAL_TEST_COMMIT_WRITESET_LOCKED, &writeset_locked,
+      &release_worker};
+  const uint64_t tickets_before =
+      mako_rust_fast_test_record_validation_tickets(db);
+
+  std::thread worker([&] {
+    worker_result.attach = mako_local_thread_attach();
+    mako_local_txn *txn = nullptr;
+    if (worker_result.attach == MAKO_LOCAL_OK)
+      worker_result.observer_set = mako_local_test_set_commit_observer(
+          park_at_commit_phase, &parking);
+    if (worker_result.observer_set == MAKO_LOCAL_OK)
+      worker_result.begin = mako_rust_fast_txn_begin(db, primary, &txn);
+    if (worker_result.begin == MAKO_LOCAL_OK) {
+      const std::string lower = "preselected-range-a";
+      const std::string upper = "preselected-range-z";
+      const mako_local_scan_options options{
+          MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE, MAKO_LOCAL_SCAN_HAS_UPPER,
+          reinterpret_cast<const uint8_t *>(lower.data()), lower.size(),
+          reinterpret_cast<const uint8_t *>(upper.data()), upper.size(),
+          nullptr, 0};
+      worker_result.scan =
+          scan_chunk(txn, primary, options, false, 8, 1024).status;
+    }
+    if (worker_result.scan == MAKO_LOCAL_OK) {
+      worker_result.put =
+          fast_put(txn, "preselected-side", "must-abort");
+      worker_result.exact_bytes =
+          MAKO_RUST_FAST_PUT_UNCHECKED_RECORD_BYTES(worker_result.put);
+    }
+    if (MAKO_RUST_FAST_PUT_STATUS(worker_result.put) == MAKO_LOCAL_OK &&
+        worker_result.exact_bytes != 0) {
+      worker_result.storage.assign(worker_result.exact_bytes, 0xa5);
+      worker_result.commit =
+          mako_rust_fast_txn_commit_preselected_unchecked_one_put_record_single_producer_and_destroy(
+              txn, worker_result.exact_bytes, 820,
+              worker_result.storage.data(), worker_result.storage.size());
+      txn = nullptr;
+    }
+    if (txn != nullptr)
+      (void)mako_rust_fast_txn_abort_and_destroy(txn);
+    worker_result.observer_clear = mako_local_test_clear_commit_observer();
+  });
+
+  const auto lock_deadline = std::chrono::steady_clock::now() +
+                             std::chrono::seconds(5);
+  while (!writeset_locked.load(std::memory_order_acquire) &&
+         std::chrono::steady_clock::now() < lock_deadline)
+    std::this_thread::yield();
+  if (!writeset_locked.load(std::memory_order_acquire)) {
+    release_worker.store(true, std::memory_order_release);
+    worker.join();
+    FAIL() << "preselected record commit did not lock its write set";
+    return;
+  }
+
+  // The ordinary transaction creates a range anti-dependency after phase 1.
+  // The callback-free terminal still supplies a non-null validation gate, so
+  // phase 2 must reject before serializing or accepting the retained target.
+  mako_local_txn *phantom = nullptr;
+  const int phantom_begin = mako_local_txn_begin(db, &phantom);
+  const int phantom_put = phantom_begin == MAKO_LOCAL_OK
+      ? put(phantom, primary, "preselected-range-m", "phantom")
+      : MAKO_LOCAL_INTERNAL;
+  int phantom_commit = MAKO_LOCAL_INTERNAL;
+  int phantom_destroy = MAKO_LOCAL_INTERNAL;
+  if (phantom_put == MAKO_LOCAL_OK)
+    phantom_commit = mako_local_txn_commit(phantom);
+  if (phantom != nullptr)
+    phantom_destroy = mako_local_txn_destroy(phantom);
+  release_worker.store(true, std::memory_order_release);
+  worker.join();
+
+  EXPECT_EQ(phantom_begin, MAKO_LOCAL_OK);
+  EXPECT_EQ(phantom_put, MAKO_LOCAL_OK);
+  EXPECT_EQ(phantom_commit, MAKO_LOCAL_OK);
+  EXPECT_EQ(phantom_destroy, MAKO_LOCAL_OK);
+  EXPECT_EQ(worker_result.attach, MAKO_LOCAL_OK);
+  EXPECT_EQ(worker_result.observer_set, MAKO_LOCAL_OK);
+  EXPECT_EQ(worker_result.begin, MAKO_LOCAL_OK);
+  EXPECT_EQ(worker_result.scan, MAKO_LOCAL_OK);
+  EXPECT_EQ(MAKO_RUST_FAST_PUT_STATUS(worker_result.put), MAKO_LOCAL_OK);
+  EXPECT_NE(worker_result.exact_bytes, 0U);
+  EXPECT_EQ(MAKO_RUST_FAST_TERMINAL_STATUS(worker_result.commit.terminal),
+            MAKO_LOCAL_CONFLICT);
+  EXPECT_EQ(MAKO_RUST_FAST_CLEANUP_STATUS(worker_result.commit.terminal),
+            MAKO_LOCAL_OK);
+  EXPECT_EQ(MAKO_RUST_FAST_PRESELECTED_RECORD_TIMESTAMP(
+                worker_result.commit),
+            0U);
+  EXPECT_EQ(MAKO_RUST_FAST_PRESELECTED_RECORD_WRITTEN(worker_result.commit),
+            0U);
+  EXPECT_EQ(MAKO_RUST_FAST_PRESELECTED_RECORD_RESERVED(worker_result.commit),
+            0U);
+  EXPECT_TRUE(std::all_of(worker_result.storage.begin(),
+                          worker_result.storage.end(),
+                          [](uint8_t byte) { return byte == 0xa5; }));
+  EXPECT_EQ(worker_result.observer_clear, MAKO_LOCAL_OK);
+  EXPECT_EQ(mako_rust_fast_test_record_validation_tickets(db),
+            tickets_before);
+
+  auto *verify = begin();
+  EXPECT_FALSE(get(verify, primary, "preselected-side").second.has_value());
+  EXPECT_EQ(get(verify, primary, "preselected-range-m").second,
+            std::optional<std::string>("phantom"));
+  commit_and_destroy(verify);
+}
+#endif
+
+TEST_F(LocalAbiTest, TrustedUncheckedOnePutRejectsStaleExactSizeBeforeBind) {
+  mako_local_txn *txn = nullptr;
+  ASSERT_EQ(mako_rust_fast_txn_begin(db, primary, &txn), MAKO_LOCAL_OK);
+  txn_for_cleanup = txn;
+  const uint64_t put_result = fast_put(txn, "fused-stale", "invisible");
+  ASSERT_EQ(MAKO_RUST_FAST_PUT_STATUS(put_result), MAKO_LOCAL_OK);
+  const uint32_t exact_bytes =
+      MAKO_RUST_FAST_PUT_UNCHECKED_RECORD_BYTES(put_result);
+  ASSERT_NE(exact_bytes, 0U);
+
+  std::vector<uint8_t> storage(exact_bytes, 0xa5);
+  ThinRecordBinding binding{&storage, 602};
+  uint8_t written = 99;
+  const uint64_t commit =
+      mako_rust_fast_txn_commit_unchecked_one_put_record_and_destroy(
+          txn, exact_bytes + 1, bind_thin_record, &binding, &written);
+  txn_for_cleanup = nullptr;
+  EXPECT_EQ(MAKO_RUST_FAST_TERMINAL_STATUS(commit),
+            MAKO_LOCAL_INVALID_ARGUMENT);
+  EXPECT_EQ(MAKO_RUST_FAST_CLEANUP_STATUS(commit), MAKO_LOCAL_OK);
+  EXPECT_EQ(binding.calls, 0);
+  EXPECT_EQ(written, 0U);
+
+  auto *verify = begin();
+  EXPECT_FALSE(get(verify, primary, "fused-stale").second.has_value());
+  commit_and_destroy(verify);
+}
+
+#if READ_MY_WRITES
+TEST_F(LocalAbiTest, TrustedUncheckedOnePutRejectsLaterReadOrMutation) {
+  mako_local_txn *txn = nullptr;
+  ASSERT_EQ(mako_rust_fast_txn_begin(db, primary, &txn), MAKO_LOCAL_OK);
+  txn_for_cleanup = txn;
+  const uint64_t first = fast_put(txn, "fused-first", "one");
+  const uint32_t stale_bytes =
+      MAKO_RUST_FAST_PUT_UNCHECKED_RECORD_BYTES(first);
+  ASSERT_NE(stale_bytes, 0U);
+  const uint64_t second = fast_put(txn, "fused-second", "two");
+  ASSERT_EQ(MAKO_RUST_FAST_PUT_STATUS(second), MAKO_LOCAL_OK);
+  EXPECT_EQ(MAKO_RUST_FAST_PUT_UNCHECKED_RECORD_BYTES(second), 0U);
+
+  std::vector<uint8_t> storage(stale_bytes, 0xa5);
+  ThinRecordBinding binding{&storage, 603};
+  uint8_t written = 99;
+  uint64_t commit =
+      mako_rust_fast_txn_commit_unchecked_one_put_record_and_destroy(
+          txn, stale_bytes, bind_thin_record, &binding, &written);
+  txn_for_cleanup = nullptr;
+  EXPECT_EQ(MAKO_RUST_FAST_TERMINAL_STATUS(commit),
+            MAKO_LOCAL_INVALID_ARGUMENT);
+  EXPECT_EQ(binding.calls, 0);
+  EXPECT_EQ(written, 0U);
+
+  txn = nullptr;
+  ASSERT_EQ(mako_rust_fast_txn_begin(db, primary, &txn), MAKO_LOCAL_OK);
+  txn_for_cleanup = txn;
+  const uint64_t before_read = fast_put(txn, "fused-read", "staged");
+  const uint32_t read_stale_bytes =
+      MAKO_RUST_FAST_PUT_UNCHECKED_RECORD_BYTES(before_read);
+  ASSERT_NE(read_stale_bytes, 0U);
+  EXPECT_EQ(get(txn, primary, "fused-read").second,
+            std::optional<std::string>("staged"));
+  storage.assign(read_stale_bytes, 0xa5);
+  binding = ThinRecordBinding{&storage, 604};
+  written = 99;
+  commit = mako_rust_fast_txn_commit_unchecked_one_put_record_and_destroy(
+      txn, read_stale_bytes, bind_thin_record, &binding, &written);
+  txn_for_cleanup = nullptr;
+  EXPECT_EQ(MAKO_RUST_FAST_TERMINAL_STATUS(commit),
+            MAKO_LOCAL_INVALID_ARGUMENT);
+  EXPECT_EQ(binding.calls, 0);
+  EXPECT_EQ(written, 0U);
+
+  // A read before the sole Put is safe: the direct spans are captured only
+  // after read-side transaction growth has completed.
+  txn = nullptr;
+  ASSERT_EQ(mako_rust_fast_txn_begin(db, primary, &txn), MAKO_LOCAL_OK);
+  txn_for_cleanup = txn;
+  EXPECT_FALSE(get(txn, primary, "fused-probe").second.has_value());
+  const uint64_t after_read = fast_put(txn, "fused-after-read", "visible");
+  const uint32_t after_read_bytes =
+      MAKO_RUST_FAST_PUT_UNCHECKED_RECORD_BYTES(after_read);
+  ASSERT_NE(after_read_bytes, 0U);
+  storage.assign(after_read_bytes, 0xa5);
+  binding = ThinRecordBinding{&storage, 605};
+  written = 0;
+  commit = mako_rust_fast_txn_commit_unchecked_one_put_record_and_destroy(
+      txn, after_read_bytes, bind_thin_record, &binding, &written);
+  txn_for_cleanup = nullptr;
+  ASSERT_EQ(MAKO_RUST_FAST_TERMINAL_STATUS(commit), MAKO_LOCAL_OK);
+  ASSERT_EQ(written, 1U);
+
+  auto *verify = begin();
+  EXPECT_FALSE(get(verify, primary, "fused-first").second.has_value());
+  EXPECT_FALSE(get(verify, primary, "fused-second").second.has_value());
+  EXPECT_FALSE(get(verify, primary, "fused-read").second.has_value());
+  EXPECT_EQ(get(verify, primary, "fused-after-read").second,
+            std::optional<std::string>("visible"));
+  commit_and_destroy(verify);
+}
+#endif
+
+#if READ_MY_WRITES
+TEST_F(LocalAbiTest, TrustedThinRecordFallsBackAfterPointAndRangeReads) {
+  auto *seed = begin();
+  ASSERT_EQ(put(seed, primary, "witness-a", "left"), MAKO_LOCAL_OK);
+  ASSERT_EQ(put(seed, primary, "witness-z", "right"), MAKO_LOCAL_OK);
+  commit_and_destroy(seed);
+
+  const std::string key = "witness-middle";
+  const std::string value("new\0value\xff", 10);
+  mako_local_txn *txn = nullptr;
+  ASSERT_EQ(mako_rust_fast_txn_begin(db, primary, &txn), MAKO_LOCAL_OK);
+  txn_for_cleanup = txn;
+  const uint64_t put_result = fast_put(txn, key, value);
+  ASSERT_EQ(MAKO_RUST_FAST_PUT_STATUS(put_result), MAKO_LOCAL_OK);
+  ASSERT_EQ(MAKO_RUST_FAST_PUT_CREATED(put_result), 1U);
+
+  // Point and range RYW paths may grow/reorganize transaction state. They
+  // invalidate the borrowed one-put witness, so record production must use the
+  // canonical transaction walk and still preserve the same final write set.
+  ASSERT_EQ(get(txn, primary, key).second,
+            std::optional<std::string>(value));
+  const std::string lower = "witness-a";
+  const std::string upper = "witness-z";
+  const mako_local_scan_options options{
+      MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE, MAKO_LOCAL_SCAN_HAS_UPPER,
+      reinterpret_cast<const uint8_t *>(lower.data()), lower.size(),
+      reinterpret_cast<const uint8_t *>(upper.data()), upper.size(),
+      nullptr, 0};
+  const auto scan = scan_chunk(txn, primary, options, false, 8, 1024);
+  ASSERT_EQ(scan.status, MAKO_LOCAL_OK);
+  ASSERT_EQ(scan.done, 1U);
+  const auto staged = std::find(
+      scan.entries.begin(), scan.entries.end(),
+      std::pair<std::string, std::string>{key, value});
+  ASSERT_NE(staged, scan.entries.end());
+
+  size_t exact_bytes = 0;
+  uint32_t operation_count = 0;
+  ASSERT_EQ(mako_rust_fast_txn_record_preflight_with_checksum(
+                txn, 1 << 20, MAKO_RUST_FAST_RECORD_CHECKSUM_NONE,
+                &exact_bytes, &operation_count),
+            MAKO_LOCAL_OK);
+  ASSERT_EQ(operation_count, 1U);
+  EXPECT_EQ(exact_bytes, 26U + 17U + key.size() + value.size());
+
+  std::vector<uint8_t> storage(exact_bytes, 0xa5);
+  ThinRecordBinding binding{&storage, 406};
+  uint8_t written = 0;
+  const uint64_t commit = mako_rust_fast_txn_commit_record_and_destroy(
+      txn, bind_thin_record, &binding, &written);
+  txn_for_cleanup = nullptr;
+  ASSERT_EQ(MAKO_RUST_FAST_TERMINAL_STATUS(commit), MAKO_LOCAL_OK);
+  ASSERT_EQ(MAKO_RUST_FAST_CLEANUP_STATUS(commit), MAKO_LOCAL_OK);
+  ASSERT_EQ(written, 1U);
+
+  DecodedThinRecord decoded;
+  ASSERT_TRUE(decode_thin_record(storage, &decoded));
+  ASSERT_EQ(decoded.mutations.size(), 1U);
+  EXPECT_EQ(decoded.mutations[0].tag, 1U);
+  EXPECT_EQ(decoded.mutations[0].key, key);
+  EXPECT_EQ(decoded.mutations[0].value, value);
+
+  auto *verify = begin();
+  EXPECT_EQ(get(verify, primary, key).second,
+            std::optional<std::string>(value));
+  commit_and_destroy(verify);
+}
+#endif
+
 TEST_F(LocalAbiTest, TrustedThinRecordReadOnlyNeedsNoCapacity) {
   mako_local_txn *txn = nullptr;
   ASSERT_EQ(mako_rust_fast_txn_begin(db, primary, &txn), MAKO_LOCAL_OK);
@@ -969,6 +2619,77 @@ TEST_F(LocalAbiTest, TrustedThinRecordNormalizesSameKeyAndNetCancellation) {
   EXPECT_EQ(decoded.mutations[0].tag, 1U);
   EXPECT_EQ(decoded.mutations[0].key, "chain");
   EXPECT_EQ(decoded.mutations[0].value, final_value);
+}
+
+TEST_F(LocalAbiTest, TrustedThinRecordFallsBackAfterSecondFastPut) {
+  auto *seed = begin();
+  ASSERT_EQ(put(seed, primary, "fast-chain", "seed"), MAKO_LOCAL_OK);
+  commit_and_destroy(seed);
+
+  mako_local_txn *txn = nullptr;
+  ASSERT_EQ(mako_rust_fast_txn_begin(db, primary, &txn), MAKO_LOCAL_OK);
+  txn_for_cleanup = txn;
+  ASSERT_EQ(MAKO_RUST_FAST_PUT_STATUS(
+                fast_put(txn, "fast-chain", "intermediate")),
+            MAKO_LOCAL_OK);
+  const std::string final_value("final\0fast", 10);
+  ASSERT_EQ(MAKO_RUST_FAST_PUT_STATUS(
+                fast_put(txn, "fast-chain", final_value)),
+            MAKO_LOCAL_OK);
+
+  size_t exact_bytes = 0;
+  uint32_t operation_count = 0;
+  ASSERT_EQ(mako_rust_fast_txn_record_preflight_with_checksum(
+                txn, 1 << 20, MAKO_RUST_FAST_RECORD_CHECKSUM_NONE,
+                &exact_bytes, &operation_count),
+            MAKO_LOCAL_OK);
+  ASSERT_EQ(operation_count, 1U);
+  EXPECT_EQ(exact_bytes, 26U + 17U + std::string("fast-chain").size() +
+                             final_value.size());
+
+  std::vector<uint8_t> storage(exact_bytes, 0);
+  ThinRecordBinding binding{&storage, 501};
+  uint8_t written = 0;
+  const uint64_t result = mako_rust_fast_txn_commit_record_and_destroy(
+      txn, bind_thin_record, &binding, &written);
+  txn_for_cleanup = nullptr;
+  ASSERT_EQ(MAKO_RUST_FAST_TERMINAL_STATUS(result), MAKO_LOCAL_OK);
+  ASSERT_EQ(MAKO_RUST_FAST_CLEANUP_STATUS(result), MAKO_LOCAL_OK);
+  ASSERT_EQ(written, 1U);
+  DecodedThinRecord decoded;
+  ASSERT_TRUE(decode_thin_record(storage, &decoded));
+  ASSERT_EQ(decoded.mutations.size(), 1U);
+  EXPECT_EQ(decoded.mutations[0].key, "fast-chain");
+  EXPECT_EQ(decoded.mutations[0].value, final_value);
+
+  txn = nullptr;
+  ASSERT_EQ(mako_rust_fast_txn_begin(db, primary, &txn), MAKO_LOCAL_OK);
+  txn_for_cleanup = txn;
+  ASSERT_EQ(MAKO_RUST_FAST_PUT_STATUS(fast_put(txn, "fast-a", "value-a")),
+            MAKO_LOCAL_OK);
+  ASSERT_EQ(MAKO_RUST_FAST_PUT_STATUS(fast_put(txn, "fast-b", "value-b")),
+            MAKO_LOCAL_OK);
+  ASSERT_EQ(mako_rust_fast_txn_record_preflight_with_checksum(
+                txn, 1 << 20, MAKO_RUST_FAST_RECORD_CHECKSUM_NONE,
+                &exact_bytes, &operation_count),
+            MAKO_LOCAL_OK);
+  ASSERT_EQ(operation_count, 2U);
+  storage.assign(exact_bytes, 0);
+  binding = ThinRecordBinding{&storage, 502};
+  written = 0;
+  const uint64_t multi_result =
+      mako_rust_fast_txn_commit_record_and_destroy(
+          txn, bind_thin_record, &binding, &written);
+  txn_for_cleanup = nullptr;
+  ASSERT_EQ(MAKO_RUST_FAST_TERMINAL_STATUS(multi_result), MAKO_LOCAL_OK);
+  ASSERT_EQ(MAKO_RUST_FAST_CLEANUP_STATUS(multi_result), MAKO_LOCAL_OK);
+  ASSERT_EQ(written, 1U);
+  ASSERT_TRUE(decode_thin_record(storage, &decoded));
+  ASSERT_EQ(decoded.mutations.size(), 2U);
+  EXPECT_EQ(decoded.mutations[0].key, "fast-a");
+  EXPECT_EQ(decoded.mutations[0].value, "value-a");
+  EXPECT_EQ(decoded.mutations[1].key, "fast-b");
+  EXPECT_EQ(decoded.mutations[1].value, "value-b");
 }
 #endif
 
@@ -1634,6 +3355,208 @@ TEST_F(LocalAbiTest, HookRejectionAndExceptionDefinitelyAbortBeforeInstall) {
 }
 
 #if defined(MAKO_LOCAL_TEST_HOOKS)
+TEST(MakoLocalAbiCleanupFailure,
+     PreselectedTerminalRetainsAcceptedRecordWitnessOnUncertainty) {
+  struct Result {
+    int attach = MAKO_LOCAL_INTERNAL;
+    int db_open = MAKO_LOCAL_INTERNAL;
+    int table_open = MAKO_LOCAL_INTERNAL;
+    int begin = MAKO_LOCAL_INTERNAL;
+    uint64_t put = UINT64_MAX;
+    int arm = MAKO_LOCAL_INTERNAL;
+    mako_rust_fast_preselected_record_result commit{UINT64_MAX, UINT64_MAX};
+    int health = MAKO_LOCAL_INTERNAL;
+    int close = MAKO_LOCAL_INTERNAL;
+    uint64_t table_id = 0;
+    std::vector<uint8_t> storage;
+  } result;
+  constexpr uint64_t sequence = 830;
+  const uint64_t quarantined_before =
+      mako_local_quarantined_worker_count();
+
+  std::thread worker([&] {
+    result.attach = mako_local_thread_attach();
+    mako_local_db *db = nullptr;
+    if (result.attach == MAKO_LOCAL_OK)
+      result.db_open = mako_local_db_open(&db);
+    mako_local_table *table = nullptr;
+    const std::string table_name = "preselected-cleanup-uncertainty";
+    result.table_id = next_table_id.fetch_add(1);
+    if (result.db_open == MAKO_LOCAL_OK) {
+      result.table_open = mako_local_table_open(
+          db, reinterpret_cast<const uint8_t *>(table_name.data()),
+          table_name.size(), result.table_id, &table);
+    }
+    mako_local_txn *txn = nullptr;
+    if (result.table_open == MAKO_LOCAL_OK)
+      result.begin = mako_rust_fast_txn_begin(db, table, &txn);
+    if (result.begin == MAKO_LOCAL_OK)
+      result.put = fast_put(txn, "preselected-cleanup", "installed-or-unknown");
+    const uint32_t exact_bytes =
+        MAKO_RUST_FAST_PUT_UNCHECKED_RECORD_BYTES(result.put);
+    if (MAKO_RUST_FAST_PUT_STATUS(result.put) == MAKO_LOCAL_OK &&
+        exact_bytes != 0) {
+      result.storage.assign(exact_bytes, 0xa5);
+      result.arm = mako_local_test_arm_cleanup_failure(
+          MAKO_LOCAL_CLEANUP_BOUNDARY_COMMIT);
+    }
+    if (result.arm == MAKO_LOCAL_OK) {
+      result.commit =
+          mako_rust_fast_txn_commit_preselected_unchecked_one_put_record_single_producer_and_destroy(
+              txn, exact_bytes, sequence, result.storage.data(),
+              result.storage.size());
+      txn = nullptr;
+    }
+    if (txn != nullptr)
+      (void)mako_rust_fast_txn_abort_and_destroy(txn);
+    result.health = mako_local_worker_health();
+    result.close = mako_local_db_close(db);
+
+    // Cleanup uncertainty quarantines this process-lifetime worker and its
+    // facade storage. Do not attempt another native operation on this thread.
+  });
+  worker.join();
+
+  EXPECT_EQ(result.attach, MAKO_LOCAL_OK);
+  EXPECT_EQ(result.db_open, MAKO_LOCAL_OK);
+  EXPECT_EQ(result.table_open, MAKO_LOCAL_OK);
+  EXPECT_EQ(result.begin, MAKO_LOCAL_OK);
+  EXPECT_EQ(MAKO_RUST_FAST_PUT_STATUS(result.put), MAKO_LOCAL_OK);
+  EXPECT_EQ(result.arm, MAKO_LOCAL_OK);
+  EXPECT_EQ(MAKO_RUST_FAST_TERMINAL_STATUS(result.commit.terminal),
+            MAKO_LOCAL_WORKER_POISONED);
+  EXPECT_EQ(MAKO_RUST_FAST_CLEANUP_STATUS(result.commit.terminal),
+            MAKO_LOCAL_WORKER_POISONED);
+  const uint32_t timestamp =
+      MAKO_RUST_FAST_PRESELECTED_RECORD_TIMESTAMP(result.commit);
+  EXPECT_NE(timestamp, 0U);
+  EXPECT_EQ(MAKO_RUST_FAST_PRESELECTED_RECORD_WRITTEN(result.commit), 1U);
+  EXPECT_EQ(MAKO_RUST_FAST_PRESELECTED_RECORD_RESERVED(result.commit), 0U);
+  EXPECT_EQ(result.health, MAKO_LOCAL_WORKER_POISONED);
+  EXPECT_EQ(result.close, MAKO_LOCAL_BUSY);
+  EXPECT_EQ(mako_local_quarantined_worker_count(), quarantined_before + 1);
+
+  DecodedThinRecord decoded;
+  ASSERT_TRUE(decode_thin_record(result.storage, &decoded));
+  EXPECT_EQ(decoded.sequence, sequence);
+  EXPECT_EQ(decoded.timestamp, timestamp);
+  ASSERT_EQ(decoded.mutations.size(), 1U);
+  EXPECT_EQ(decoded.mutations[0].table_id, result.table_id);
+  EXPECT_EQ(decoded.mutations[0].key, "preselected-cleanup");
+  EXPECT_EQ(decoded.mutations[0].value, "installed-or-unknown");
+}
+
+TEST(MakoLocalAbiCleanupFailure,
+     OnePutHolderSealsTransferredAllocationOnAcceptedUncertainty) {
+  mako_rust_fast_one_put_holder_pool *pool = nullptr;
+  ASSERT_EQ(mako_rust_fast_one_put_holder_pool_create(2, 0, 0, &pool),
+            MAKO_LOCAL_OK);
+  ASSERT_NE(pool, nullptr);
+  struct Result {
+    int attach = MAKO_LOCAL_INTERNAL;
+    int db_open = MAKO_LOCAL_INTERNAL;
+    int table_open = MAKO_LOCAL_INTERNAL;
+    int begin = MAKO_LOCAL_INTERNAL;
+    uint64_t put = UINT64_MAX;
+    const uint8_t *staged_value = nullptr;
+    uint32_t staged_len = 0;
+    int arm = MAKO_LOCAL_INTERNAL;
+    mako_rust_fast_preselected_record_result commit{UINT64_MAX, UINT64_MAX};
+    int health = MAKO_LOCAL_INTERNAL;
+    int close = MAKO_LOCAL_INTERNAL;
+    uint64_t table_id = 0;
+  } result;
+  constexpr uint64_t sequence = 841;
+  // Exercise the allocating overflow-key preparation on the accepted cleanup
+  // uncertainty path, where the staged value still must be sealed exactly once
+  // after try_commit unwinds.
+  const std::string key(40, 'k');
+  const std::string value(1024, 'u');
+  const uint64_t quarantined_before =
+      mako_local_quarantined_worker_count();
+
+  std::thread worker([&] {
+    result.attach = mako_local_thread_attach();
+    mako_local_db *db = nullptr;
+    if (result.attach == MAKO_LOCAL_OK)
+      result.db_open = mako_local_db_open(&db);
+    mako_local_table *table = nullptr;
+    const std::string table_name = "holder-cleanup-uncertainty";
+    result.table_id = next_table_id.fetch_add(1);
+    if (result.db_open == MAKO_LOCAL_OK) {
+      result.table_open = mako_local_table_open(
+          db, reinterpret_cast<const uint8_t *>(table_name.data()),
+          table_name.size(), result.table_id, &table);
+    }
+    mako_local_txn *txn = nullptr;
+    if (result.table_open == MAKO_LOCAL_OK)
+      result.begin = mako_rust_fast_txn_begin(db, table, &txn);
+    if (result.begin == MAKO_LOCAL_OK) {
+      result.put = fast_put(txn, key, value);
+      result.staged_value = mako_rust_fast_test_txn_staged_one_put_value(
+          txn, &result.staged_len);
+    }
+    const uint32_t exact_bytes =
+        MAKO_RUST_FAST_PUT_UNCHECKED_RECORD_BYTES(result.put);
+    if (MAKO_RUST_FAST_PUT_STATUS(result.put) == MAKO_LOCAL_OK &&
+        exact_bytes != 0) {
+      result.arm = mako_local_test_arm_cleanup_failure(
+          MAKO_LOCAL_CLEANUP_BOUNDARY_COMMIT);
+    }
+    if (result.arm == MAKO_LOCAL_OK) {
+      result.commit =
+          mako_rust_fast_txn_commit_preselected_unchecked_one_put_holder_single_producer_and_destroy(
+              txn, exact_bytes, pool, sequence);
+      txn = nullptr;
+    }
+    if (txn != nullptr)
+      (void)mako_rust_fast_txn_abort_and_destroy(txn);
+    result.health = mako_local_worker_health();
+    result.close = mako_local_db_close(db);
+  });
+  worker.join();
+
+  EXPECT_EQ(result.attach, MAKO_LOCAL_OK);
+  EXPECT_EQ(result.db_open, MAKO_LOCAL_OK);
+  EXPECT_EQ(result.table_open, MAKO_LOCAL_OK);
+  EXPECT_EQ(result.begin, MAKO_LOCAL_OK);
+  EXPECT_EQ(MAKO_RUST_FAST_PUT_STATUS(result.put), MAKO_LOCAL_OK);
+  EXPECT_EQ(result.staged_len, value.size());
+  ASSERT_NE(result.staged_value, nullptr);
+  EXPECT_EQ(result.arm, MAKO_LOCAL_OK);
+  EXPECT_EQ(MAKO_RUST_FAST_TERMINAL_STATUS(result.commit.terminal),
+            MAKO_LOCAL_WORKER_POISONED);
+  EXPECT_EQ(MAKO_RUST_FAST_CLEANUP_STATUS(result.commit.terminal),
+            MAKO_LOCAL_WORKER_POISONED);
+  const uint32_t timestamp =
+      MAKO_RUST_FAST_PRESELECTED_RECORD_TIMESTAMP(result.commit);
+  EXPECT_NE(timestamp, 0U);
+  EXPECT_EQ(MAKO_RUST_FAST_PRESELECTED_HOLDER_SEALED(result.commit), 1U);
+  EXPECT_EQ(MAKO_RUST_FAST_PRESELECTED_RECORD_RESERVED(result.commit), 0U);
+  EXPECT_EQ(result.health, MAKO_LOCAL_WORKER_POISONED);
+  EXPECT_EQ(result.close, MAKO_LOCAL_BUSY);
+  EXPECT_EQ(mako_local_quarantined_worker_count(), quarantined_before + 1);
+
+  mako_rust_fast_one_put_holder_view view{};
+  ASSERT_EQ(mako_rust_fast_one_put_holder_pool_get_view(
+                pool, sequence, &view),
+            MAKO_LOCAL_OK);
+  EXPECT_EQ(view.sequence, sequence);
+  EXPECT_EQ(view.table_id, result.table_id);
+  EXPECT_EQ(view.mako_timestamp, timestamp);
+  EXPECT_EQ(view.value, result.staged_value);
+  EXPECT_EQ(std::string(reinterpret_cast<const char *>(view.key),
+                        view.key_len),
+            key);
+  EXPECT_EQ(std::string(reinterpret_cast<const char *>(view.value),
+                        view.value_len),
+            value);
+  EXPECT_EQ(mako_rust_fast_one_put_holder_pool_destroy(pool), MAKO_LOCAL_BUSY);
+  EXPECT_EQ(mako_rust_fast_one_put_holder_pool_release(pool, sequence),
+            MAKO_LOCAL_OK);
+  EXPECT_EQ(mako_rust_fast_one_put_holder_pool_destroy(pool), MAKO_LOCAL_OK);
+}
+
 struct CleanupFailureResult {
   int health_before = MAKO_LOCAL_INTERNAL;
   int attach = MAKO_LOCAL_INTERNAL;

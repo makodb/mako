@@ -20,6 +20,7 @@
 #include <new>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #if !READ_MY_WRITES
 #include <unordered_set>
 #endif
@@ -102,7 +103,71 @@ struct mako_local_txn {
   std::unordered_map<mako_local_table_impl *, std::unordered_set<std::string>>
       mutated_keys;
 #endif
+  // Trailing defaulted member preserves the existing aggregate initialization
+  // and makes an omitted extension select the safe default.
+  uint32_t record_plan_checksum_mode =
+      MAKO_RUST_FAST_RECORD_CHECKSUM_CRC32C;
+  // Unsafe private fast-put witness. Its spans point into the stable
+  // TransItem/tree row created by the one and only mutation. A later mutation
+  // or read which can grow/reorganize transaction state invalidates it before
+  // entering MassTrans, after which preflight and serialization fall back to
+  // a canonical transaction walk.
+  size_t record_fast_mutation_bytes = 0;
+  Transaction::canonical_write_view record_fast_write{};
+  bool record_fast_path_eligible = true;
+  // Nonzero only while the immediately preceding trusted fast Put remains a
+  // valid unchecked-v4 fused-terminal candidate. This consumes existing tail
+  // padding in the facade and lets the release terminal test one scalar; the
+  // richer borrowed witness above remains available to general serialization.
+  uint32_t record_fused_candidate_bytes = 0;
 };
+
+/* Queue-owned storage for the trusted callback-free one-Put terminal. The
+ * fields are deliberately non-atomic. Rust's single producer exclusively owns
+ * the sequence generation until it release-publishes the queue entry; the
+ * consumer acquire-observes that publication, completes pool_release, then
+ * release-publishes applied_tail; producer reuse follows an acquire of that
+ * tail. Those external edges order every access to one holder. Calling these
+ * entry points without that proof is a cross-language data race and undefined
+ * behavior. */
+struct mako_rust_fast_one_put_holder_pool {
+  static constexpr size_t kInlineKeyBytes = 32;
+  static constexpr size_t kHotInlineKeyBytes = 8;
+
+  enum class holder_state : uint8_t { free, sealed };
+  enum class key_storage : uint8_t { hot_inline, inline_key, overflow };
+
+  struct alignas(64) holder {
+    // A standard-library string object of at most 32 bytes plus the common
+    // 8-byte-key metadata occupies one prefetched line. Correctness does not
+    // depend on that implementation size; larger string implementations use
+    // the same fields with a less compact layout.
+    std::string encoded_value;
+    uint64_t sequence = 0;
+    uint64_t table_id = 0;
+    uint32_t mako_timestamp = 0;
+    uint16_t key_len = 0;
+    key_storage key_location = key_storage::hot_inline;
+    holder_state state = holder_state::free;
+    std::array<uint8_t, kHotInlineKeyBytes> hot_inline_key{};
+    std::string overflow_key;
+    std::array<uint8_t, kInlineKeyBytes> inline_key{};
+  };
+
+  size_t capacity = 0;
+  size_t mask = 0;
+  std::unique_ptr<holder[]> holders;
+};
+
+static_assert(mako_rust_fast_one_put_holder_pool::kInlineKeyBytes >= 16);
+static_assert(MAKO_LOCAL_MAX_KEY_BYTES <= UINT16_MAX);
+static_assert(
+    sizeof(std::string) > 32 ||
+    offsetof(mako_rust_fast_one_put_holder_pool::holder, hot_inline_key) +
+            mako_rust_fast_one_put_holder_pool::kHotInlineKeyBytes <=
+        64);
+static_assert(noexcept(std::declval<std::string &>().swap(
+    std::declval<std::string &>())));
 
 namespace {
 
@@ -187,10 +252,41 @@ class operation_cleanup_failure_scope {
 
 bool valid_slice(const uint8_t *p, size_t n) { return p != nullptr || n == 0; }
 
-constexpr uint64_t pack_fast_put_result(int status,
-                                        bool created = false) noexcept {
+constexpr bool is_nonzero_power_of_two(size_t value) noexcept {
+  return value != 0 && (value & (value - 1)) == 0;
+}
+
+using one_put_holder = mako_rust_fast_one_put_holder_pool::holder;
+using one_put_holder_state =
+    mako_rust_fast_one_put_holder_pool::holder_state;
+
+// @unsafe - Exact generation ownership, not this masked lookup, prevents an
+// old and a new sequence from concurrently naming the same holder.
+one_put_holder &one_put_holder_for(
+    mako_rust_fast_one_put_holder_pool *pool, uint64_t sequence) noexcept {
+  assert(pool != nullptr);
+  assert(sequence != 0);
+  assert(is_nonzero_power_of_two(pool->capacity));
+  return pool->holders[static_cast<size_t>(sequence - 1) & pool->mask];
+}
+
+const one_put_holder &one_put_holder_for(
+    const mako_rust_fast_one_put_holder_pool *pool,
+    uint64_t sequence) noexcept {
+  assert(pool != nullptr);
+  assert(sequence != 0);
+  assert(is_nonzero_power_of_two(pool->capacity));
+  return pool->holders[static_cast<size_t>(sequence - 1) & pool->mask];
+}
+
+constexpr uint64_t kFastPutRecordBytesMax = UINT64_MAX >> 33;
+
+constexpr uint64_t pack_fast_put_result(
+    int status, bool created = false,
+    uint32_t unchecked_record_bytes = 0) noexcept {
   return static_cast<uint64_t>(static_cast<uint32_t>(status)) |
-         (created ? MAKO_RUST_FAST_PUT_CREATED_BIT : UINT64_C(0));
+         (created ? MAKO_RUST_FAST_PUT_CREATED_BIT : UINT64_C(0)) |
+         (static_cast<uint64_t>(unchecked_record_bytes) << 33);
 }
 
 constexpr uint64_t pack_fast_terminal_result(int status,
@@ -199,27 +295,114 @@ constexpr uint64_t pack_fast_terminal_result(int status,
          (static_cast<uint64_t>(static_cast<uint32_t>(cleanup_status)) << 32);
 }
 
+constexpr uint64_t pack_preselected_record_state(uint32_t mako_timestamp,
+                                                 bool record_written) noexcept {
+  return static_cast<uint64_t>(mako_timestamp) |
+         (record_written ? UINT64_C(1) << 32 : UINT64_C(0));
+}
+
+constexpr uint64_t
+pack_fused_holder_control_word(uint32_t code, uint32_t payload = 0) noexcept {
+  return static_cast<uint64_t>(code) | (static_cast<uint64_t>(payload) << 32);
+}
+
+constexpr mako_rust_fast_preselected_record_result
+pack_fused_holder_cold_result(
+    mako_rust_fast_preselected_record_result result,
+    uint32_t exact_record_bytes) noexcept {
+  assert(exact_record_bytes != 0);
+  assert(exact_record_bytes <= kFastPutRecordBytesMax);
+  assert(MAKO_RUST_FAST_PRESELECTED_RECORD_RESERVED(result) == 0);
+  result.record_state |= static_cast<uint64_t>(exact_record_bytes) << 33;
+  return result;
+}
+
 static_assert(MAKO_RUST_FAST_PUT_STATUS(pack_fast_put_result(
                   MAKO_LOCAL_VALUE_TOO_LARGE)) == MAKO_LOCAL_VALUE_TOO_LARGE);
 static_assert(MAKO_RUST_FAST_PUT_CREATED(pack_fast_put_result(MAKO_LOCAL_OK,
                                                               true)) == 1);
+static_assert(MAKO_RUST_FAST_PUT_UNCHECKED_RECORD_BYTES(
+                  pack_fast_put_result(MAKO_LOCAL_OK, true, 12345)) == 12345);
 static_assert(MAKO_RUST_FAST_TERMINAL_STATUS(pack_fast_terminal_result(
                   MAKO_LOCAL_COMMIT_HOOK_REJECTED, MAKO_LOCAL_OK)) ==
               MAKO_LOCAL_COMMIT_HOOK_REJECTED);
 static_assert(MAKO_RUST_FAST_CLEANUP_STATUS(pack_fast_terminal_result(
                   MAKO_LOCAL_OK, MAKO_LOCAL_WORKER_POISONED)) ==
               MAKO_LOCAL_WORKER_POISONED);
+static_assert(sizeof(mako_rust_fast_preselected_record_result) ==
+              2 * sizeof(uint64_t));
+static_assert(alignof(mako_rust_fast_preselected_record_result) ==
+              alignof(uint64_t));
+static_assert(sizeof(mako_rust_fast_spsc_holder_control) == 72);
+static_assert(alignof(mako_rust_fast_spsc_holder_control) == alignof(uint64_t));
+static_assert(offsetof(mako_rust_fast_spsc_holder_control, pool) == 0);
+static_assert(offsetof(mako_rust_fast_spsc_holder_control, holder_base) == 8);
+static_assert(offsetof(mako_rust_fast_spsc_holder_control, holder_mask) == 16);
+static_assert(offsetof(mako_rust_fast_spsc_holder_control, acknowledged) == 24);
+static_assert(offsetof(mako_rust_fast_spsc_holder_control, unhealthy) == 32);
+static_assert(offsetof(mako_rust_fast_spsc_holder_control, capacity) == 40);
+static_assert(offsetof(mako_rust_fast_spsc_holder_control, max_record_bytes) ==
+              48);
+static_assert(offsetof(mako_rust_fast_spsc_holder_control, reserved) == 52);
+static_assert(offsetof(mako_rust_fast_spsc_holder_control, cold_out) == 56);
+static_assert(sizeof(mako_rust_fast_one_put_holder_view) == 48);
+static_assert(alignof(mako_rust_fast_one_put_holder_view) == alignof(uint64_t));
+static_assert(offsetof(mako_rust_fast_one_put_holder_view, sequence) == 0);
+static_assert(offsetof(mako_rust_fast_one_put_holder_view, table_id) == 8);
+static_assert(offsetof(mako_rust_fast_one_put_holder_view, key) == 16);
+static_assert(offsetof(mako_rust_fast_one_put_holder_view, value) == 24);
+static_assert(offsetof(mako_rust_fast_one_put_holder_view, key_len) == 32);
+static_assert(offsetof(mako_rust_fast_one_put_holder_view, value_len) == 36);
+static_assert(offsetof(mako_rust_fast_one_put_holder_view, mako_timestamp) ==
+              40);
+static_assert(offsetof(mako_rust_fast_one_put_holder_view, reserved) == 44);
+constexpr mako_rust_fast_preselected_record_result
+    kPreselectedRecordLayoutProbe{
+        pack_fast_terminal_result(MAKO_LOCAL_OK, MAKO_LOCAL_WORKER_POISONED),
+        pack_preselected_record_state(12345, true)};
+static_assert(MAKO_RUST_FAST_TERMINAL_STATUS(
+                  kPreselectedRecordLayoutProbe.terminal) == MAKO_LOCAL_OK);
+static_assert(
+    MAKO_RUST_FAST_CLEANUP_STATUS(kPreselectedRecordLayoutProbe.terminal) ==
+    MAKO_LOCAL_WORKER_POISONED);
+static_assert(MAKO_RUST_FAST_PRESELECTED_RECORD_TIMESTAMP(
+                  kPreselectedRecordLayoutProbe) == 12345);
+static_assert(MAKO_RUST_FAST_PRESELECTED_RECORD_WRITTEN(
+                  kPreselectedRecordLayoutProbe) == 1);
+static_assert(MAKO_RUST_FAST_PRESELECTED_RECORD_RESERVED(
+                  kPreselectedRecordLayoutProbe) == 0);
+static_assert(MAKO_RUST_FAST_FUSED_HOLDER_CODE(pack_fused_holder_control_word(
+                  MAKO_RUST_FAST_FUSED_HOLDER_UNTOUCHED_NEED_SLOW, 12345)) ==
+              MAKO_RUST_FAST_FUSED_HOLDER_UNTOUCHED_NEED_SLOW);
+static_assert(
+    MAKO_RUST_FAST_FUSED_HOLDER_PAYLOAD(pack_fused_holder_control_word(
+        MAKO_RUST_FAST_FUSED_HOLDER_UNTOUCHED_NEED_SLOW, 12345)) == 12345);
 
-constexpr std::array<uint8_t, 8> kCacheRecordMagic{
-    'M', 'A', 'K', 'O', 'C', 'M', 'T', '\0'};
-constexpr uint16_t kCacheRecordVersion = 3;
+constexpr std::array<uint8_t, 8> kCacheRecordCrc32cMagic{'M', 'A', 'K', 'O',
+                                                         'C', 'M', 'T', '\0'};
+constexpr std::array<uint8_t, 8> kCacheRecordUncheckedMagic{
+    'M', 'A', 'K', 'O', 'N', 'O', 'C', '\0'};
+constexpr uint16_t kCacheRecordCrc32cVersion = 3;
+constexpr uint16_t kCacheRecordUncheckedVersion = 4;
 constexpr uint8_t kCacheRecordPutTag = 1;
 constexpr uint8_t kCacheRecordDeleteTag = 2;
 constexpr size_t kCacheRecordHeaderBytes = 8 + 2 + 8 + 4 + 4;
 constexpr size_t kCacheRecordOperationHeaderBytes = 1 + 8 + 4 + 4;
 constexpr size_t kCacheRecordCrcBytes = 4;
-constexpr size_t kCacheRecordMinimumBytes =
-    kCacheRecordHeaderBytes + kCacheRecordCrcBytes;
+static_assert(kCacheRecordHeaderBytes + kCacheRecordOperationHeaderBytes +
+                  MAKO_LOCAL_MAX_KEY_BYTES + MAKO_LOCAL_MAX_VALUE_BYTES <=
+              kFastPutRecordBytesMax);
+
+constexpr bool valid_record_checksum_mode(uint32_t mode) noexcept {
+  return mode == MAKO_RUST_FAST_RECORD_CHECKSUM_CRC32C ||
+         mode == MAKO_RUST_FAST_RECORD_CHECKSUM_NONE;
+}
+
+constexpr size_t record_trailer_bytes(uint32_t checksum_mode) noexcept {
+  return checksum_mode == MAKO_RUST_FAST_RECORD_CHECKSUM_CRC32C
+             ? kCacheRecordCrcBytes
+             : 0;
+}
 constexpr uint32_t kReversedCastagnoli = UINT32_C(0x82f63b78);
 
 constexpr uint32_t make_crc32c_entry(uint32_t value) noexcept {
@@ -321,10 +504,102 @@ void write_u64_be(uint8_t *&cursor, uint64_t value) noexcept {
     *cursor++ = static_cast<uint8_t>(value >> shift);
 }
 
+// @unsafe - Fixed-width stores intentionally accept unaligned record fields.
+// memcpy gives them defined C++ aliasing/alignment semantics and compilers
+// lower the constant extents to one unaligned store on supported targets.
+void store_u16_be_unaligned(uint8_t *destination, uint16_t value) noexcept {
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+  value = __builtin_bswap16(value);
+#elif __BYTE_ORDER__ != __ORDER_BIG_ENDIAN__
+#error "unsupported byte order"
+#endif
+  std::memcpy(destination, &value, sizeof(value));
+}
+
+void store_u32_be_unaligned(uint8_t *destination, uint32_t value) noexcept {
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+  value = __builtin_bswap32(value);
+#elif __BYTE_ORDER__ != __ORDER_BIG_ENDIAN__
+#error "unsupported byte order"
+#endif
+  std::memcpy(destination, &value, sizeof(value));
+}
+
+void store_u64_be_unaligned(uint8_t *destination, uint64_t value) noexcept {
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+  value = __builtin_bswap64(value);
+#elif __BYTE_ORDER__ != __ORDER_BIG_ENDIAN__
+#error "unsupported byte order"
+#endif
+  std::memcpy(destination, &value, sizeof(value));
+}
+
 struct record_shape {
-  size_t bytes = kCacheRecordMinimumBytes;
+  size_t bytes = 0;
   uint32_t operations = 0;
+  uint32_t checksum_mode = MAKO_RUST_FAST_RECORD_CHECKSUM_CRC32C;
 };
+
+void invalidate_fast_record_witness(mako_local_txn *txn) noexcept {
+  assert(txn != nullptr);
+  txn->record_fast_path_eligible = false;
+  txn->record_fast_mutation_bytes = 0;
+  txn->record_fast_write = Transaction::canonical_write_view{};
+  txn->record_fused_candidate_bytes = 0;
+}
+
+// Reads which precede the first write do not hold a borrowed record view and
+// may leave the one-Put shortcut eligible: the later Put captures spans only
+// after that read-side transaction growth has completed. Once a Put has lent
+// us spans, however, any further point/range read retires them conservatively
+// before it can grow or reorganize transaction state.
+void invalidate_borrowed_fast_record_witness(mako_local_txn *txn) noexcept {
+  assert(txn != nullptr);
+  if (txn->record_fast_mutation_bytes != 0 ||
+      static_cast<uint8_t>(txn->record_fast_write.op) != 0)
+    invalidate_fast_record_witness(txn);
+}
+
+// @unsafe - Validates the cached borrowed spans without dereferencing them.
+// The private fast-put contract and transaction seal keep the underlying
+// TransItem/tree row alive and immutable until terminal cleanup. Exact length
+// checks tie this shortcut to the same framing that a canonical walk derives.
+bool derive_fast_record_shape(const mako_local_txn *txn,
+                              uint32_t checksum_mode,
+                              record_shape *shape) noexcept {
+  if (txn == nullptr || shape == nullptr ||
+      !txn->record_fast_path_eligible ||
+      !valid_record_checksum_mode(checksum_mode))
+    return false;
+
+  const size_t base =
+      kCacheRecordHeaderBytes + record_trailer_bytes(checksum_mode);
+  const auto &write = txn->record_fast_write;
+  if (static_cast<uint8_t>(write.op) == 0) {
+    if (txn->record_fast_mutation_bytes != 0)
+      return false;
+    *shape = record_shape{base, 0, checksum_mode};
+    return true;
+  }
+  if (write.op != Transaction::canonical_write_view::operation::put ||
+      write.key_length > UINT32_MAX || write.value_length > UINT32_MAX ||
+      (write.key_length != 0 && write.key == nullptr) ||
+      (write.value_length != 0 && write.value == nullptr))
+    return false;
+  if (write.key_length >
+      SIZE_MAX - kCacheRecordOperationHeaderBytes)
+    return false;
+  const size_t key_end =
+      kCacheRecordOperationHeaderBytes + write.key_length;
+  if (write.value_length > SIZE_MAX - key_end)
+    return false;
+  const size_t mutation_bytes = key_end + write.value_length;
+  if (mutation_bytes != txn->record_fast_mutation_bytes ||
+      mutation_bytes > SIZE_MAX - base)
+    return false;
+  *shape = record_shape{base + mutation_bytes, 1, checksum_mode};
+  return true;
+}
 
 bool add_record_shape(
     void *opaque, const Transaction::canonical_write_view &write) noexcept {
@@ -343,10 +618,14 @@ bool add_record_shape(
   return true;
 }
 
-bool derive_record_shape(const Transaction *native_txn,
+bool derive_record_shape(const Transaction *native_txn, uint32_t checksum_mode,
                          record_shape *shape) noexcept {
-  if (native_txn == nullptr || shape == nullptr) return false;
-  *shape = record_shape{};
+  if (native_txn == nullptr || shape == nullptr ||
+      !valid_record_checksum_mode(checksum_mode))
+    return false;
+  *shape = record_shape{kCacheRecordHeaderBytes +
+                            record_trailer_bytes(checksum_mode),
+                        0, checksum_mode};
   uint32_t visited = 0;
   if (!native_txn->visit_local_canonical_writes(
           add_record_shape, shape, &visited))
@@ -390,34 +669,96 @@ bool write_record_mutation(
 bool serialize_cache_record(const Transaction *native_txn,
                             uint64_t sequence, uint32_t mako_timestamp,
                             const record_shape &shape,
-                            uint8_t *record) noexcept {
+                            uint8_t *record,
+                            const Transaction::canonical_write_view
+                                *direct_write = nullptr) noexcept {
   assert(native_txn != nullptr);
   assert(sequence != 0);
   assert(mako_timestamp != 0);
   assert(shape.operations != 0);
-  assert(shape.bytes >= kCacheRecordMinimumBytes);
+  assert(valid_record_checksum_mode(shape.checksum_mode));
+  assert(shape.bytes >=
+         kCacheRecordHeaderBytes + record_trailer_bytes(shape.checksum_mode));
   assert(record != nullptr);
 
   uint8_t *cursor = record;
-  std::memcpy(cursor, kCacheRecordMagic.data(), kCacheRecordMagic.size());
-  cursor += kCacheRecordMagic.size();
-  write_u16_be(cursor, kCacheRecordVersion);
+  const auto &magic =
+      shape.checksum_mode == MAKO_RUST_FAST_RECORD_CHECKSUM_CRC32C
+          ? kCacheRecordCrc32cMagic
+          : kCacheRecordUncheckedMagic;
+  std::memcpy(cursor, magic.data(), magic.size());
+  cursor += magic.size();
+  write_u16_be(cursor,
+               shape.checksum_mode == MAKO_RUST_FAST_RECORD_CHECKSUM_CRC32C
+                   ? kCacheRecordCrc32cVersion
+                   : kCacheRecordUncheckedVersion);
   write_u64_be(cursor, sequence);
   write_u32_be(cursor, mako_timestamp);
   write_u32_be(cursor, shape.operations);
 
-  record_writer writer{cursor, record + shape.bytes - kCacheRecordCrcBytes};
+  record_writer writer{
+      cursor, record + shape.bytes - record_trailer_bytes(shape.checksum_mode)};
   uint32_t visited = 0;
-  if (!native_txn->visit_local_canonical_writes(
-          write_record_mutation, &writer, &visited) ||
+  const bool wrote = direct_write == nullptr
+      ? native_txn->visit_local_canonical_writes(
+            write_record_mutation, &writer, &visited)
+      : (write_record_mutation(&writer, *direct_write) &&
+         (++visited != 0));
+  if (!wrote ||
       visited != shape.operations || writer.cursor != writer.operations_end)
     return false;
 
-  const uint32_t checksum =
-      crc32c(record, shape.bytes - kCacheRecordCrcBytes);
   cursor = writer.operations_end;
-  write_u32_be(cursor, checksum);
+  if (shape.checksum_mode == MAKO_RUST_FAST_RECORD_CHECKSUM_CRC32C) {
+    const uint32_t checksum =
+        crc32c(record, shape.bytes - kCacheRecordCrcBytes);
+    write_u32_be(cursor, checksum);
+  }
   return cursor == record + shape.bytes;
+}
+
+// @unsafe - Specialized allocation-free encoder for the fused private
+// one-Put/NONE terminal. The terminal has already rederived and sealed this
+// exact shape before attempting write locking, and bind_hook has supplied at
+// least exact_record_bytes stable writable bytes. No visitor, callback, CRC,
+// or cursor-by-cursor integer loop remains on this path.
+bool serialize_unchecked_one_put_cache_record(
+    uint64_t sequence, uint32_t mako_timestamp, size_t exact_record_bytes,
+    uint8_t *record,
+    const Transaction::canonical_write_view &write) noexcept {
+  assert(sequence != 0);
+  assert(mako_timestamp != 0);
+  assert(record != nullptr);
+  assert(write.op == Transaction::canonical_write_view::operation::put);
+  assert(write.key_length <= UINT32_MAX);
+  assert(write.value_length <= UINT32_MAX);
+  assert(write.key_length == 0 || write.key != nullptr);
+  assert(write.value_length == 0 || write.value != nullptr);
+  assert(exact_record_bytes == kCacheRecordHeaderBytes +
+                                     kCacheRecordOperationHeaderBytes +
+                                     write.key_length + write.value_length);
+
+  std::memcpy(record, kCacheRecordUncheckedMagic.data(),
+              kCacheRecordUncheckedMagic.size());
+  store_u16_be_unaligned(record + 8, kCacheRecordUncheckedVersion);
+  store_u64_be_unaligned(record + 10, sequence);
+  store_u32_be_unaligned(record + 18, mako_timestamp);
+  store_u32_be_unaligned(record + 22, 1);
+  record[26] = kCacheRecordPutTag;
+  store_u64_be_unaligned(record + 27, write.table_id);
+  store_u32_be_unaligned(record + 35,
+                         static_cast<uint32_t>(write.key_length));
+  store_u32_be_unaligned(record + 39,
+                         static_cast<uint32_t>(write.value_length));
+  uint8_t *payload = record + kCacheRecordHeaderBytes +
+                     kCacheRecordOperationHeaderBytes;
+  if (write.key_length != 0) {
+    std::memcpy(payload, write.key, write.key_length);
+    payload += write.key_length;
+  }
+  if (write.value_length != 0)
+    std::memcpy(payload, write.value, write.value_length);
+  return true;
 }
 
 lcdf::Str as_key(const uint8_t *p, size_t n) {
@@ -436,19 +777,25 @@ bool on_owner_thread(const mako_local_txn *txn) {
          TThread::id() == static_cast<int>(txn->worker_slot);
 }
 
-void finish_encoded_values(mako_local_txn *txn) noexcept {
+[[gnu::cold, gnu::noinline]] void release_oversized_encoded_values(
+    mako_local_txn *txn) noexcept {
+  assert(txn->encoded_values_require_release);
+  for (size_t index = 0; index != txn->encoded_values_used; ++index) {
+    std::string &encoded = txn->encoded_values[index];
+    if (encoded.capacity() <= kMaximumRetainedEncodedValueCapacity)
+      continue;
+    std::string{}.swap(encoded);
+  }
+  txn->encoded_values_require_release = false;
+}
+
+[[gnu::always_inline]] inline void finish_encoded_values(
+    mako_local_txn *txn) noexcept {
   // The common small-transaction path retains both size and capacity. The
   // next payload copy and metadata initialization overwrite every byte before
   // the slot is lent to STO again, so no clearing scan is required.
-  if (txn->encoded_values_require_release) {
-    for (size_t index = 0; index != txn->encoded_values_used; ++index) {
-      std::string &encoded = txn->encoded_values[index];
-      if (encoded.capacity() <= kMaximumRetainedEncodedValueCapacity)
-        continue;
-      std::string{}.swap(encoded);
-    }
-    txn->encoded_values_require_release = false;
-  }
+  if (txn->encoded_values_require_release) [[unlikely]]
+    release_oversized_encoded_values(txn);
   txn->encoded_values_used = 0;
 }
 
@@ -468,8 +815,14 @@ template <bool TrustedOwnerBorrow>
   txn->item_budget_used = 0;
   txn->record_plan_bytes = 0;
   txn->record_plan_ops = 0;
+  txn->record_plan_checksum_mode =
+      MAKO_RUST_FAST_RECORD_CHECKSUM_CRC32C;
   txn->record_plan_sealed = false;
   txn->record_plan_ready = false;
+  txn->record_fast_mutation_bytes = 0;
+  txn->record_fast_write = Transaction::canonical_write_view{};
+  txn->record_fast_path_eligible = true;
+  txn->record_fused_candidate_bytes = 0;
   local_active_txn = nullptr;
   // Keep the database published for both surfaces. Safe Rust normally borrows
   // LocalDb through this point, but mem::forget is safe and ends that borrow
@@ -494,7 +847,12 @@ void finish_txn(mako_local_txn *txn) noexcept {
     finish_txn_known<true>(txn);
 }
 
-void recycle_txn(mako_local_txn *txn) noexcept {
+[[gnu::cold, gnu::noinline]] void recycle_txn_overflow(
+    mako_local_txn *txn) noexcept {
+  delete txn;
+}
+
+[[gnu::always_inline]] inline void recycle_txn(mako_local_txn *txn) noexcept {
   assert(!txn->active);
   assert(!txn->poisoned);
   // Finished handles can coexist briefly: callers may begin a new transaction
@@ -505,7 +863,7 @@ void recycle_txn(mako_local_txn *txn) noexcept {
   if (active_database_slots[worker_slot].spare == nullptr) {
     active_database_slots[worker_slot].spare = txn;
   } else {
-    delete txn;
+    recycle_txn_overflow(txn);
   }
 }
 
@@ -537,9 +895,15 @@ void recycle_txn(mako_local_txn *txn) noexcept {
   assert(txn->encoded_values_used == 0);
   assert(txn->record_plan_bytes == 0);
   assert(txn->record_plan_ops == 0);
+  assert(txn->record_plan_checksum_mode ==
+         MAKO_RUST_FAST_RECORD_CHECKSUM_CRC32C);
   assert(!txn->encoded_values_require_release);
   assert(!txn->record_plan_sealed);
   assert(!txn->record_plan_ready);
+  assert(txn->record_fast_mutation_bytes == 0);
+  assert(static_cast<uint8_t>(txn->record_fast_write.op) == 0);
+  assert(txn->record_fast_path_eligible);
+  assert(txn->record_fused_candidate_bytes == 0);
   txn->owner = db;
   txn->worker_slot = worker_slot;
   txn->active = true;
@@ -996,6 +1360,10 @@ int scan_chunk_impl(
   if (bounds_status != MAKO_LOCAL_OK) return bounds_status;
   const int checked = check_txn_operation(txn, table);
   if (checked != MAKO_LOCAL_OK) return checked;
+  // Range reads can append row/predicate TransItems and grow their backing
+  // transaction storage, invalidating borrowed key/value spans retained by a
+  // preceding fast put. Forward and reverse scans share this implementation.
+  invalidate_borrowed_fast_record_witness(txn);
   if (window.empty) {
     *done_out = 1;
     return MAKO_LOCAL_OK;
@@ -1080,6 +1448,8 @@ struct record_bind_bridge {
   uint8_t *record = nullptr;
   uint64_t validation_ticket = 0;
   bool validation_gate_held = false;
+  bool use_direct_write = false;
+  bool use_unchecked_one_put_serializer = false;
 };
 
 void record_validation_cpu_relax() noexcept {
@@ -1129,18 +1499,199 @@ void leave_record_validation_gate(void *opaque) noexcept {
       bridge->validation_ticket + UINT64_C(1), std::memory_order_release);
 }
 
+// @unsafe - This callback deliberately provides no mutual exclusion. The
+// caller of the single-producer terminal must prove that no other cache-record
+// terminal for this database is running or waiting for the whole call. Keeping
+// a non-null Transaction gate is nevertheless essential: `held()` selects the
+// repeated post-lock predicate validation, and release still separates the
+// bind hook from after-leave serialization.
+void enter_single_producer_record_validation_gate(void *opaque) noexcept {
+  auto *bridge = static_cast<record_bind_bridge *>(opaque);
+  assert(bridge != nullptr);
+  assert(!bridge->validation_gate_held);
+#ifndef NDEBUG
+  mako_local_db *const db = bridge->txn->owner;
+  assert(db->record_validation_next.value.load(std::memory_order_relaxed) ==
+         db->record_validation_serving.value.load(std::memory_order_acquire));
+#endif
+  bridge->validation_gate_held = true;
+}
+
+void leave_single_producer_record_validation_gate(void *opaque) noexcept {
+  auto *bridge = static_cast<record_bind_bridge *>(opaque);
+  assert(bridge != nullptr);
+  assert(bridge->validation_gate_held);
+  bridge->validation_gate_held = false;
+}
+
+// Build-private state for the callback-free single-producer record terminal.
+// The target is an invisible exact arena turn retained by Rust for the whole
+// call. A nonzero timestamp is therefore also native's acceptance witness:
+// after observing it, Rust must publish this sequence even on uncertainty.
+struct preselected_one_put_bridge {
+  mako_local_txn *txn;
+  uint64_t sequence;
+  uint8_t *record;
+  size_t exact_record_bytes;
+  uint32_t mako_timestamp = 0;
+  bool record_written = false;
+};
+
+// Build-private state for the zero-copy holder terminal. Inline key bytes and
+// every potentially allocating overflow-key operation are complete before
+// validation. The post-validation hook therefore only captures Transaction's
+// accepted timestamp. The holder remains FREE/invisible until the terminal
+// transfers the staged value and seals all metadata after try_commit returns.
+struct preselected_one_put_holder_bridge {
+  mako_local_txn *txn;
+  one_put_holder *holder;
+  uint64_t sequence;
+  uint64_t table_id;
+  uint16_t key_len;
+  mako_rust_fast_one_put_holder_pool::key_storage key_location;
+  uint32_t mako_timestamp = 0;
+  bool holder_sealed = false;
+};
+
+bool accept_preselected_one_put_holder(void *opaque,
+                                       uint32_t timestamp) noexcept {
+  auto *bridge = static_cast<preselected_one_put_holder_bridge *>(opaque);
+  assert(bridge != nullptr);
+  assert(bridge->txn != nullptr);
+  assert(bridge->holder != nullptr);
+  assert(timestamp != 0);
+  assert(bridge->mako_timestamp == 0);
+  bridge->mako_timestamp = timestamp;
+  return true;
+}
+
+// @unsafe - The same-build one-Put witness proves a non-null stable key span
+// through commit. Special-casing the overwhelmingly common eight-byte key
+// makes this one unaligned load/store rather than a size-dispatched memcpy.
+inline void copy_preselected_holder_inline_key(uint8_t *destination,
+                                               const char *key,
+                                               size_t key_len) noexcept {
+  assert(destination != nullptr);
+  assert(key_len == 0 || key != nullptr);
+  if (key_len == sizeof(uint64_t)) {
+    uint64_t word;
+    std::memcpy(&word, key, sizeof(word));
+    std::memcpy(destination, &word, sizeof(word));
+  } else if (key_len != 0) {
+    std::memcpy(destination, key, key_len);
+  }
+}
+
+// @unsafe - Called only after try_commit_no_paxos has returned or unwound to
+// its caller. Normal success has completed STO cleanup. The accepted cleanup
+// failpoint throws at stop() entry, before it can observe or alter the stable
+// staged StringWrapper; that transaction and worker are then quarantined and
+// native cleanup is never re-entered. Thus no STO code can observe the
+// allocation after this noexcept ownership transfer.
+void seal_preselected_one_put_holder(
+    preselected_one_put_holder_bridge *bridge) noexcept {
+  assert(bridge != nullptr);
+  mako_local_txn *const txn = bridge->txn;
+  one_put_holder &holder = *bridge->holder;
+#ifndef NDEBUG
+  const auto &write = txn->record_fast_write;
+  assert(bridge->mako_timestamp != 0);
+  assert(!bridge->holder_sealed);
+  assert(holder.state == one_put_holder_state::free);
+  assert(holder.sequence == 0);
+  assert(txn->encoded_values_used == 1);
+  assert(txn->record_fast_path_eligible);
+  assert(write.op == Transaction::canonical_write_view::operation::put);
+  assert(write.table_id == bridge->table_id);
+  assert(write.key_length == bridge->key_len);
+  assert(write.value_length <= UINT32_MAX);
+  assert(txn->encoded_values[0].size() ==
+         write.value_length +
+             static_cast<size_t>(mako::EXTRA_BITS_FOR_VALUE));
+  assert(bridge->key_location !=
+             mako_rust_fast_one_put_holder_pool::key_storage::overflow ||
+         holder.overflow_key.size() == write.key_length);
+#endif
+
+  // Do not dereference record_fast_write.value here: inserts may point at a
+  // tree row and successful cleanup has ended that borrow. The facade-owned
+  // encoded string is the authoritative value allocation. Its exact shape was
+  // established by the unsafe same-build candidate contract (and is asserted
+  // above in diagnostic builds).
+  holder.encoded_value.swap(txn->encoded_values[0]);
+  // The swap rotates the holder's prior allocation into the pooled facade.
+  // Retain that one bounded-by-public-max buffer so later holder generations
+  // can rotate allocations without falling back to malloc on every large Put.
+  txn->encoded_values_require_release = false;
+  holder.sequence = bridge->sequence;
+  holder.table_id = bridge->table_id;
+  holder.key_len = bridge->key_len;
+  holder.key_location = bridge->key_location;
+  holder.mako_timestamp = bridge->mako_timestamp;
+  holder.state = one_put_holder_state::sealed;
+  bridge->holder_sealed = true;
+}
+
+// @unsafe - Runs only after the complete write set is locked and phase-2
+// predicate/point-read validation succeeds. The direct one-Put shape and
+// borrowed spans were rederived and sealed before commit. Serialization is
+// complete before this hook returns true, hence before Transaction can enter
+// phase 3. Only an accepted hook publishes its timestamp witness.
+bool serialize_preselected_one_put_record(void *opaque,
+                                          uint32_t timestamp) noexcept {
+  auto *bridge = static_cast<preselected_one_put_bridge *>(opaque);
+  assert(bridge != nullptr);
+  assert(bridge->mako_timestamp == 0);
+  assert(!bridge->record_written);
+  const bool serialized = serialize_unchecked_one_put_cache_record(
+      bridge->sequence, timestamp, bridge->exact_record_bytes,
+      bridge->record, bridge->txn->record_fast_write);
+  if (!serialized) return false;
+  bridge->mako_timestamp = timestamp;
+  bridge->record_written = true;
+  return true;
+}
+
 // @unsafe - Binds Rust-owned uninitialized storage while the full native write
 // set is locked and the ordered validation turn is held. Every potentially
 // failing native shape check precedes the external dense-sequence assignment.
 bool invoke_record_bind_hook(void *opaque, uint32_t timestamp) noexcept {
   auto *bridge = static_cast<record_bind_bridge *>(opaque);
   assert(bridge->validation_gate_held);
-  record_shape final_shape;
-  if (!derive_record_shape(TThread::txn, &final_shape) ||
-      final_shape.operations == 0 ||
-      final_shape.operations != bridge->txn->record_plan_ops ||
-      final_shape.bytes != bridge->txn->record_plan_bytes)
+  // Preflight seals the transaction plan, and every subsequent operation is
+  // rejected while `record_plan_sealed` is set. Validation changes only OCC
+  // lock/version state; it cannot change the canonical write set. Rewalking
+  // that write set here duplicated the complete preflight traversal on every
+  // successful commit. Trust the sealed scalars on this private hot path.
+  // `serialize_cache_record` still walks the canonical writes once and checks
+  // both the visited operation count and exact ending cursor before STO may
+  // install anything, so an internal mismatch remains a fail-closed unwritten
+  // bound record rather than an uncovered commit.
+  const record_shape final_shape{bridge->txn->record_plan_bytes,
+                                 bridge->txn->record_plan_ops,
+                                 bridge->txn->record_plan_checksum_mode};
+  if (final_shape.operations == 0 ||
+      !valid_record_checksum_mode(final_shape.checksum_mode) ||
+      final_shape.bytes <
+          kCacheRecordHeaderBytes +
+              record_trailer_bytes(final_shape.checksum_mode))
     return false;
+
+  if (bridge->use_unchecked_one_put_serializer) {
+    // The fused terminal rederived this exact direct v4 shape immediately
+    // before entering commit and sealed the transaction against later API
+    // operations. STO validation changes lock/version state, not this view.
+    assert(bridge->txn->record_fast_path_eligible);
+    bridge->use_direct_write = true;
+  } else if (bridge->txn->record_fast_path_eligible) {
+    record_shape witnessed_shape;
+    if (!derive_fast_record_shape(bridge->txn, final_shape.checksum_mode,
+                                  &witnessed_shape) ||
+        witnessed_shape.bytes != final_shape.bytes ||
+        witnessed_shape.operations != final_shape.operations)
+      return false;
+    bridge->use_direct_write = true;
+  }
 
   uint64_t sequence = 0;
   uint8_t *record = nullptr;
@@ -1163,17 +1714,25 @@ bool invoke_record_bind_hook(void *opaque, uint32_t timestamp) noexcept {
 
 // @unsafe - Completes the already-bound record after the ticket turn is
 // retired, but while STO still owns the complete write set and before any
-// write is installed. This bounded walk, copy, and CRC performs no allocation
-// or I/O; failure leaves Rust's ordered slot bound but unwritten, which pins
-// the queue fail-closed.
+// write is installed. This bounded walk and copy, plus optional CRC, performs
+// no allocation or I/O; failure leaves Rust's ordered slot bound but unwritten,
+// which pins the queue fail-closed.
 bool serialize_bound_record_after_gate(void *opaque,
                                        uint32_t timestamp) noexcept {
   auto *bridge = static_cast<record_bind_bridge *>(opaque);
   assert(!bridge->validation_gate_held);
   assert(bridge->sequence != 0);
   assert(bridge->record != nullptr);
-  if (!serialize_cache_record(TThread::txn, bridge->sequence, timestamp,
-                              bridge->final_shape, bridge->record))
+  const bool serialized = bridge->use_unchecked_one_put_serializer
+      ? serialize_unchecked_one_put_cache_record(
+            bridge->sequence, timestamp, bridge->final_shape.bytes,
+            bridge->record, bridge->txn->record_fast_write)
+      : serialize_cache_record(TThread::txn, bridge->sequence, timestamp,
+                               bridge->final_shape, bridge->record,
+                               bridge->use_direct_write
+                                   ? &bridge->txn->record_fast_write
+                                   : nullptr);
+  if (!serialized)
     return false;
   *bridge->record_written_out = 1;
   return true;
@@ -1511,6 +2070,10 @@ int mako_local_txn_get(mako_local_txn *txn, mako_local_table *table,
     return MAKO_LOCAL_VALUE_TOO_LARGE;
   const int checked = check_txn_operation(txn, table);
   if (checked != MAKO_LOCAL_OK) return checked;
+  // A point read may add or repack an observation in the transaction buffer.
+  // Retire a preceding put's borrowed spans before entering MassTrans;
+  // preflight will recover the authoritative canonical view by walking STO.
+  invalidate_borrowed_fast_record_witness(txn);
 
   try {
 #if defined(MAKO_LOCAL_TEST_HOOKS)
@@ -1559,6 +2122,10 @@ int mako_local_txn_put(mako_local_txn *txn, mako_local_table *table,
     return MAKO_LOCAL_VALUE_TOO_LARGE;
   const int checked = check_txn_operation(txn, table);
   if (checked != MAKO_LOCAL_OK) return checked;
+  // A trusted transaction can deliberately call the public surface for a
+  // second table. Invalidate its one-put borrowed witness before any native
+  // mutation, including a same-key rewrite that normalizes in place.
+  invalidate_fast_record_witness(txn);
 
   try {
 #if defined(MAKO_LOCAL_TEST_HOOKS)
@@ -1607,6 +2174,7 @@ int mako_local_txn_insert(mako_local_txn *txn, mako_local_table *table,
     return MAKO_LOCAL_VALUE_TOO_LARGE;
   const int checked = check_txn_operation(txn, table);
   if (checked != MAKO_LOCAL_OK) return checked;
+  invalidate_fast_record_witness(txn);
 
   try {
 #if defined(MAKO_LOCAL_TEST_HOOKS)
@@ -1649,6 +2217,7 @@ int mako_local_txn_remove(mako_local_txn *txn, mako_local_table *table,
     return MAKO_LOCAL_VALUE_TOO_LARGE;
   const int checked = check_txn_operation(txn, table);
   if (checked != MAKO_LOCAL_OK) return checked;
+  invalidate_fast_record_witness(txn);
 
   try {
 #if defined(MAKO_LOCAL_TEST_HOOKS)
@@ -1792,6 +2361,154 @@ void mako_local_bytes_free(void *bytes) noexcept {
 #endif
 
 MAKO_RUST_FAST_DEFINITION_HIDDEN int
+mako_rust_fast_one_put_holder_pool_create(
+    size_t capacity, uint32_t key_reserve_bytes,
+    uint32_t value_reserve_bytes,
+    mako_rust_fast_one_put_holder_pool **out) noexcept {
+  if (out == nullptr) return MAKO_LOCAL_INVALID_ARGUMENT;
+  *out = nullptr;
+  if (!is_nonzero_power_of_two(capacity))
+    return MAKO_LOCAL_INVALID_ARGUMENT;
+  if (key_reserve_bytes > MAKO_LOCAL_MAX_KEY_BYTES ||
+      value_reserve_bytes > MAKO_LOCAL_MAX_VALUE_BYTES)
+    return MAKO_LOCAL_VALUE_TOO_LARGE;
+
+  try {
+    auto pool = std::make_unique<mako_rust_fast_one_put_holder_pool>();
+    pool->capacity = capacity;
+    pool->mask = capacity - 1;
+    pool->holders = std::make_unique<one_put_holder[]>(capacity);
+    if (key_reserve_bytes >
+        mako_rust_fast_one_put_holder_pool::kInlineKeyBytes) {
+      for (size_t index = 0; index != capacity; ++index)
+        pool->holders[index].overflow_key.reserve(key_reserve_bytes);
+    }
+    if (value_reserve_bytes != 0) {
+      const size_t encoded_reserve =
+          static_cast<size_t>(value_reserve_bytes) +
+          static_cast<size_t>(mako::EXTRA_BITS_FOR_VALUE);
+      for (size_t index = 0; index != capacity; ++index)
+        pool->holders[index].encoded_value.reserve(encoded_reserve);
+    }
+    *out = pool.release();
+    return MAKO_LOCAL_OK;
+  } catch (const std::bad_alloc &) {
+    return MAKO_LOCAL_OUT_OF_MEMORY;
+  } catch (...) {
+    return MAKO_LOCAL_INTERNAL;
+  }
+}
+
+MAKO_RUST_FAST_DEFINITION_HIDDEN int
+mako_rust_fast_one_put_holder_pool_destroy(
+    mako_rust_fast_one_put_holder_pool *pool) noexcept {
+  if (pool == nullptr) return MAKO_LOCAL_OK;
+  // External quiescence is required. This scan is only a cold diagnostic; it
+  // does not make destruction race-safe against producer or consumer calls.
+  for (size_t index = 0; index != pool->capacity; ++index) {
+    if (pool->holders[index].state != one_put_holder_state::free)
+      return MAKO_LOCAL_BUSY;
+  }
+  delete pool;
+  return MAKO_LOCAL_OK;
+}
+
+MAKO_RUST_FAST_DEFINITION_HIDDEN int
+mako_rust_fast_one_put_holder_pool_get_hot_layout(
+    mako_rust_fast_one_put_holder_pool *pool, void **holder_base_out,
+    size_t *holder_mask_out) noexcept {
+  if (holder_base_out == nullptr || holder_mask_out == nullptr)
+    return MAKO_LOCAL_INVALID_ARGUMENT;
+  *holder_base_out = nullptr;
+  *holder_mask_out = 0;
+  if (pool == nullptr || !is_nonzero_power_of_two(pool->capacity) ||
+      pool->holders == nullptr)
+    return MAKO_LOCAL_INVALID_ARGUMENT;
+  *holder_base_out = pool->holders.get();
+  *holder_mask_out = pool->mask;
+  return MAKO_LOCAL_OK;
+}
+
+MAKO_RUST_FAST_DEFINITION_HIDDEN int
+mako_rust_fast_one_put_holder_pool_get_view(
+    const mako_rust_fast_one_put_holder_pool *pool,
+    uint64_t expected_sequence,
+    mako_rust_fast_one_put_holder_view *out) noexcept {
+  if (out == nullptr) return MAKO_LOCAL_INVALID_ARGUMENT;
+  *out = mako_rust_fast_one_put_holder_view{};
+  if (pool == nullptr || expected_sequence == 0 ||
+      !is_nonzero_power_of_two(pool->capacity))
+    return MAKO_LOCAL_INVALID_ARGUMENT;
+
+  const one_put_holder &holder =
+      one_put_holder_for(pool, expected_sequence);
+  if (holder.state != one_put_holder_state::sealed ||
+      holder.sequence != expected_sequence)
+    return MAKO_LOCAL_BUSY;
+  if (holder.mako_timestamp == 0 ||
+      holder.encoded_value.size() <
+          static_cast<size_t>(mako::EXTRA_BITS_FOR_VALUE))
+    return MAKO_LOCAL_INTERNAL;
+  const size_t value_len = holder.encoded_value.size() -
+                           static_cast<size_t>(mako::EXTRA_BITS_FOR_VALUE);
+  if (value_len > UINT32_MAX) return MAKO_LOCAL_INTERNAL;
+
+  const uint8_t *key = nullptr;
+  switch (holder.key_location) {
+  case mako_rust_fast_one_put_holder_pool::key_storage::hot_inline:
+    if (holder.key_len > holder.hot_inline_key.size())
+      return MAKO_LOCAL_INTERNAL;
+    key = holder.hot_inline_key.data();
+    break;
+  case mako_rust_fast_one_put_holder_pool::key_storage::inline_key:
+    if (holder.key_len > holder.inline_key.size())
+      return MAKO_LOCAL_INTERNAL;
+    key = holder.inline_key.data();
+    break;
+  case mako_rust_fast_one_put_holder_pool::key_storage::overflow:
+    if (holder.overflow_key.size() != holder.key_len)
+      return MAKO_LOCAL_INTERNAL;
+    key = reinterpret_cast<const uint8_t *>(holder.overflow_key.data());
+    break;
+  default:
+    return MAKO_LOCAL_INTERNAL;
+  }
+
+  *out = mako_rust_fast_one_put_holder_view{
+      holder.sequence,
+      holder.table_id,
+      key,
+      reinterpret_cast<const uint8_t *>(holder.encoded_value.data()),
+      holder.key_len,
+      static_cast<uint32_t>(value_len),
+      holder.mako_timestamp,
+      0};
+  return MAKO_LOCAL_OK;
+}
+
+MAKO_RUST_FAST_DEFINITION_HIDDEN int
+mako_rust_fast_one_put_holder_pool_release(
+    mako_rust_fast_one_put_holder_pool *pool,
+    uint64_t expected_sequence) noexcept {
+  if (pool == nullptr || expected_sequence == 0 ||
+      !is_nonzero_power_of_two(pool->capacity))
+    return MAKO_LOCAL_INVALID_ARGUMENT;
+  one_put_holder &holder = one_put_holder_for(pool, expected_sequence);
+  if (holder.state != one_put_holder_state::sealed ||
+      holder.sequence != expected_sequence)
+    return MAKO_LOCAL_BUSY;
+
+  // Synchronous release ends the consumer's pointer borrow. Rust must perform
+  // its Release applied-tail publication only after this call returns; the
+  // producer's Acquire observation then orders these plain stores before
+  // reuse. State becomes FREE last for cold diagnostics.
+  holder.mako_timestamp = 0;
+  holder.sequence = 0;
+  holder.state = one_put_holder_state::free;
+  return MAKO_LOCAL_OK;
+}
+
+MAKO_RUST_FAST_DEFINITION_HIDDEN int
 mako_rust_fast_txn_begin(mako_local_db *db, mako_local_table *bound_table,
                          mako_local_txn **out) noexcept {
   if (out == nullptr)
@@ -1827,6 +2544,16 @@ MAKO_RUST_FAST_DEFINITION_HIDDEN uint64_t mako_rust_fast_txn_put(
   assert(valid_slice(value, value_len));
   mako_local_table_impl *const table = txn->fast_table_impl;
 
+  // Only a single private put can retain a direct canonical witness. Once a
+  // mutation already exists, invalidate before touching STO so every same-key
+  // composition and multi-key transaction takes the canonical fallback.
+  const bool capture_fast_write =
+      txn->record_fast_path_eligible &&
+      static_cast<uint8_t>(txn->record_fast_write.op) == 0 &&
+      txn->record_fast_mutation_bytes == 0;
+  if (!capture_fast_write)
+    invalidate_fast_record_witness(txn);
+
   try {
 #if defined(MAKO_LOCAL_TEST_HOOKS)
     operation_cleanup_failure_scope cleanup_failure_scope;
@@ -1847,12 +2574,44 @@ MAKO_RUST_FAST_DEFINITION_HIDDEN uint64_t mako_rust_fast_txn_put(
     // fixed transaction-owned staging pool and retention bound as the public
     // ABI; bypassing validation must never shorten the value lifetime.
     std::string &encoded = stage_encoded_value(txn, value, value_len);
-    const bool existed =
-        table->transPut(as_key(key, key_len), StringWrapper(encoded));
+    Transaction::canonical_write_view write{};
+    const bool existed = capture_fast_write
+        ? table->transPutWithCanonicalWrite(
+              as_key(key, key_len), StringWrapper(encoded), &write)
+        : table->transPut(as_key(key, key_len), StringWrapper(encoded));
+    uint32_t unchecked_record_bytes = 0;
+    if (capture_fast_write) {
+      const size_t mutation_bytes = kCacheRecordOperationHeaderBytes +
+                                    static_cast<size_t>(key_len) +
+                                    static_cast<size_t>(value_len);
+      if (write.op == Transaction::canonical_write_view::operation::put &&
+          write.key_length == key_len && write.value_length == value_len &&
+          (write.key_length == 0 || write.key != nullptr) &&
+          (write.value_length == 0 || write.value != nullptr)) {
+        txn->record_fast_write = write;
+        txn->record_fast_mutation_bytes = mutation_bytes;
+        const size_t exact_record_bytes =
+            kCacheRecordHeaderBytes + mutation_bytes;
+        if (exact_record_bytes <= kFastPutRecordBytesMax) {
+          unchecked_record_bytes =
+              static_cast<uint32_t>(exact_record_bytes);
+          txn->record_fused_candidate_bytes = unchecked_record_bytes;
+        } else {
+          // Current public key/value limits make this unreachable, but never
+          // truncate a future larger representation into the packed witness.
+          invalidate_fast_record_witness(txn);
+        }
+      } else {
+        // A malformed or unexpected engine layout must never make the unsafe
+        // shortcut authoritative. Canonical preflight will diagnose it.
+        invalidate_fast_record_witness(txn);
+      }
+    }
 #if !READ_MY_WRITES
     mutations.insert(mutation_key);
 #endif
-    return pack_fast_put_result(MAKO_LOCAL_OK, !existed);
+    return pack_fast_put_result(MAKO_LOCAL_OK, !existed,
+                                unchecked_record_bytes);
   } catch (const Transaction::Abort &) {
     return pack_fast_put_result(operation_exception(txn, MAKO_LOCAL_CONFLICT));
   } catch (const std::bad_alloc &) {
@@ -1863,23 +2622,33 @@ MAKO_RUST_FAST_DEFINITION_HIDDEN uint64_t mako_rust_fast_txn_put(
   }
 }
 
-MAKO_RUST_FAST_DEFINITION_HIDDEN int
-mako_rust_fast_txn_record_preflight(
-    mako_local_txn *txn, size_t max_record_bytes,
+namespace {
+int record_preflight_with_checksum(
+    mako_local_txn *txn, size_t max_record_bytes, uint32_t checksum_mode,
     size_t *exact_record_bytes_out, uint32_t *op_count_out) noexcept {
   if (exact_record_bytes_out == nullptr || op_count_out == nullptr)
     return MAKO_LOCAL_INVALID_ARGUMENT;
   *exact_record_bytes_out = 0;
   *op_count_out = 0;
 
+  if (!valid_record_checksum_mode(checksum_mode))
+    return MAKO_LOCAL_INVALID_ARGUMENT;
   const int checked = check_txn(txn);
   if (checked != MAKO_LOCAL_OK) return checked;
   if (txn->fast_table_impl == nullptr) return MAKO_LOCAL_INVALID_ARGUMENT;
   if (txn->record_plan_sealed) return MAKO_LOCAL_BUSY;
 
   record_shape shape;
-  if (!derive_record_shape(TThread::txn, &shape) ||
-      shape.operations > MAKO_LOCAL_TXN_ITEM_BUDGET)
+  if (!derive_fast_record_shape(txn, checksum_mode, &shape)) {
+    // Any uncertainty about the borrowed one-put witness falls back to the
+    // complete canonical transaction walk before the plan becomes sealed.
+    // Keep it invalid for serialization too, so the two phases cannot choose
+    // different sources of truth.
+    invalidate_fast_record_witness(txn);
+    if (!derive_record_shape(TThread::txn, checksum_mode, &shape))
+      return MAKO_LOCAL_INTERNAL;
+  }
+  if (shape.operations > MAKO_LOCAL_TXN_ITEM_BUDGET)
     return MAKO_LOCAL_INTERNAL;
 
   // Seal even on a cap rejection. Rust consumes that transaction by aborting;
@@ -1887,40 +2656,76 @@ mako_rust_fast_txn_record_preflight(
   // make failure handling depend on a mutable write set.
   txn->record_plan_bytes = shape.bytes;
   txn->record_plan_ops = shape.operations;
+  txn->record_plan_checksum_mode = checksum_mode;
   txn->record_plan_sealed = true;
   txn->record_plan_ready =
       shape.operations == 0 || shape.bytes <= max_record_bytes;
+  // A sealed plan is no longer eligible for the no-preflight fused terminal,
+  // while the fuller witness remains intact for the selected serializer.
+  txn->record_fused_candidate_bytes = 0;
   *exact_record_bytes_out = shape.bytes;
   *op_count_out = shape.operations;
   return txn->record_plan_ready ? MAKO_LOCAL_OK
                                 : MAKO_LOCAL_VALUE_TOO_LARGE;
 }
+}  // namespace
 
-MAKO_RUST_FAST_DEFINITION_HIDDEN uint64_t
-mako_rust_fast_txn_commit_record_and_destroy(
+MAKO_RUST_FAST_DEFINITION_HIDDEN int
+mako_rust_fast_txn_record_preflight(
+    mako_local_txn *txn, size_t max_record_bytes,
+    size_t *exact_record_bytes_out, uint32_t *op_count_out) noexcept {
+  return record_preflight_with_checksum(
+      txn, max_record_bytes, MAKO_RUST_FAST_RECORD_CHECKSUM_CRC32C,
+      exact_record_bytes_out, op_count_out);
+}
+
+MAKO_RUST_FAST_DEFINITION_HIDDEN int
+mako_rust_fast_txn_record_preflight_with_checksum(
+    mako_local_txn *txn, size_t max_record_bytes, uint32_t checksum_mode,
+    size_t *exact_record_bytes_out, uint32_t *op_count_out) noexcept {
+  return record_preflight_with_checksum(txn, max_record_bytes, checksum_mode,
+                                        exact_record_bytes_out, op_count_out);
+}
+
+namespace {
+[[gnu::cold]] static uint64_t abort_fast_record_terminal(
+    mako_local_txn *txn, int status) noexcept {
+  if (!abort_and_finish(txn, cleanup_boundary::abort))
+    return pack_fast_terminal_result(MAKO_LOCAL_WORKER_POISONED,
+                                     MAKO_LOCAL_WORKER_POISONED);
+  recycle_txn(txn);
+  return pack_fast_terminal_result(status, MAKO_LOCAL_OK);
+}
+
+[[gnu::cold]] static uint64_t reject_fast_record_terminal(
+    mako_local_txn *txn) noexcept {
+  return abort_fast_record_terminal(txn, MAKO_LOCAL_INVALID_ARGUMENT);
+}
+
+constexpr mako_rust_fast_preselected_record_result
+pack_preselected_record_result(
+    uint64_t terminal,
+    const preselected_one_put_bridge &bridge) noexcept {
+  return mako_rust_fast_preselected_record_result{
+      terminal,
+      pack_preselected_record_state(bridge.mako_timestamp,
+                                    bridge.record_written)};
+}
+
+[[gnu::cold]] static mako_rust_fast_preselected_record_result
+reject_fast_preselected_record_terminal(mako_local_txn *txn) noexcept {
+  return mako_rust_fast_preselected_record_result{
+      reject_fast_record_terminal(txn), 0};
+}
+
+[[gnu::always_inline]] static inline uint64_t commit_ready_record_and_destroy(
     mako_local_txn *txn, mako_rust_fast_record_bind_hook bind_hook,
-    void *context, uint8_t *record_written_out) noexcept {
-  assert(txn != nullptr);
-  assert(on_owner_thread(txn));
-  assert(!txn->poisoned);
-  assert(!local_worker_poisoned);
-  assert(txn->active);
-  assert(local_active_txn == txn);
-  assert(txn->fast_table_impl != nullptr);
-
-  if (record_written_out != nullptr) *record_written_out = 0;
-  if (bind_hook == nullptr || record_written_out == nullptr ||
-      !txn->record_plan_sealed || !txn->record_plan_ready ||
-      txn->record_plan_ops == 0 ||
-      txn->record_plan_bytes < kCacheRecordMinimumBytes) {
-    if (!abort_and_finish(txn, cleanup_boundary::abort))
-      return pack_fast_terminal_result(MAKO_LOCAL_WORKER_POISONED,
-                                       MAKO_LOCAL_WORKER_POISONED);
-    recycle_txn(txn);
-    return pack_fast_terminal_result(MAKO_LOCAL_INVALID_ARGUMENT,
-                                     MAKO_LOCAL_OK);
-  }
-
+    void *context, uint8_t *record_written_out,
+    bool unchecked_one_put,
+    Transaction::commit_validation_gate::callback enter_validation_gate =
+        enter_record_validation_gate,
+    Transaction::commit_validation_gate::callback leave_validation_gate =
+        leave_record_validation_gate) noexcept {
   int status = MAKO_LOCAL_INTERNAL;
   try {
 #if defined(MAKO_LOCAL_TEST_HOOKS)
@@ -1929,8 +2734,9 @@ mako_rust_fast_txn_commit_record_and_destroy(
     Transaction::preinstall_failure failure =
         Transaction::preinstall_failure::none;
     record_bind_bridge bridge{txn, bind_hook, context, record_written_out};
+    bridge.use_unchecked_one_put_serializer = unchecked_one_put;
     const Transaction::commit_validation_gate validation_gate{
-        enter_record_validation_gate, leave_record_validation_gate,
+        enter_validation_gate, leave_validation_gate,
         serialize_bound_record_after_gate, &bridge};
     const bool committed = Sto::try_commit_no_paxos(
         invoke_record_bind_hook, &bridge, &failure, &validation_gate);
@@ -1963,6 +2769,523 @@ mako_rust_fast_txn_commit_record_and_destroy(
 
   recycle_txn(txn);
   return pack_fast_terminal_result(status, MAKO_LOCAL_OK);
+}
+
+[[gnu::always_inline]] static inline
+mako_rust_fast_preselected_record_result
+commit_preselected_one_put_record_and_destroy(
+    mako_local_txn *txn, uint64_t sequence, uint8_t *record,
+    size_t exact_record_bytes) noexcept {
+  preselected_one_put_bridge bridge{
+      txn, sequence, record, exact_record_bytes};
+  int status = MAKO_LOCAL_INTERNAL;
+  try {
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+    arm_native_cleanup_failure_if_requested(cleanup_boundary::commit);
+#endif
+    Transaction::preinstall_failure failure =
+        Transaction::preinstall_failure::none;
+    const Transaction::commit_validation_gate validation_gate{
+        nullptr, nullptr, nullptr, &bridge};
+    const bool committed = Sto::try_commit_no_paxos(
+        serialize_preselected_one_put_record, &bridge, &failure,
+        &validation_gate);
+    finish_txn_known<true>(txn);
+
+    if (committed) {
+      status = MAKO_LOCAL_OK;
+    } else {
+      switch (failure) {
+      case Transaction::preinstall_failure::hook_rejected:
+        status = MAKO_LOCAL_COMMIT_HOOK_REJECTED;
+        break;
+      case Transaction::preinstall_failure::timestamp_exhausted:
+        status = MAKO_LOCAL_TIMESTAMP_EXHAUSTED;
+        break;
+      case Transaction::preinstall_failure::none:
+        status = MAKO_LOCAL_CONFLICT;
+        break;
+      default:
+        poison_transaction(txn);
+        return pack_preselected_record_result(
+            pack_fast_terminal_result(MAKO_LOCAL_WORKER_POISONED,
+                                      MAKO_LOCAL_WORKER_POISONED),
+            bridge);
+      }
+    }
+  } catch (...) {
+    poison_transaction(txn);
+    return pack_preselected_record_result(
+        pack_fast_terminal_result(MAKO_LOCAL_WORKER_POISONED,
+                                  MAKO_LOCAL_WORKER_POISONED),
+        bridge);
+  }
+
+  recycle_txn(txn);
+  return pack_preselected_record_result(
+      pack_fast_terminal_result(status, MAKO_LOCAL_OK), bridge);
+}
+
+[[gnu::always_inline]] static inline mako_rust_fast_preselected_record_result
+pack_preselected_holder_result(
+    uint64_t terminal, const one_put_holder &holder) noexcept {
+  const bool sealed = holder.state == one_put_holder_state::sealed;
+  return mako_rust_fast_preselected_record_result{
+      terminal,
+      pack_preselected_record_state(sealed ? holder.mako_timestamp : 0,
+                                    sealed)};
+}
+
+[[gnu::always_inline]] static inline uint64_t
+commit_preselected_one_put_holder_and_destroy(
+    mako_local_txn *txn, one_put_holder *holder, uint64_t sequence,
+    uint64_t table_id, uint16_t key_len,
+    mako_rust_fast_one_put_holder_pool::key_storage key_location) noexcept {
+  preselected_one_put_holder_bridge bridge{
+      txn, holder, sequence, table_id, key_len, key_location};
+  int status = MAKO_LOCAL_INTERNAL;
+  try {
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+    arm_native_cleanup_failure_if_requested(cleanup_boundary::commit);
+#endif
+    Transaction::preinstall_failure failure =
+        Transaction::preinstall_failure::none;
+    const Transaction::commit_validation_gate validation_gate{
+        nullptr, nullptr, nullptr, &bridge};
+    const bool committed = Sto::try_commit_no_paxos(
+        accept_preselected_one_put_holder, &bridge, &failure,
+        &validation_gate);
+
+    // The accepted hook only captures the assigned timestamp. Moving the
+    // staged encoded string sooner would change STO's stable StringWrapper
+    // target before install/cleanup. Transfer it only after try_commit returns.
+    if (bridge.mako_timestamp != 0)
+      seal_preselected_one_put_holder(&bridge);
+
+    // The hook always accepts, and sealing above is noexcept after validation
+    // has returned. These relationships are therefore construction
+    // invariants, not fallible runtime input on this same-build unsafe path.
+    // Keep their full diagnostic spelling without charging every ACK.
+#ifndef NDEBUG
+    assert(committed ==
+           (bridge.mako_timestamp != 0 && bridge.holder_sealed));
+    assert(bridge.mako_timestamp == 0 || bridge.holder_sealed);
+#endif
+
+    finish_txn_known<true>(txn);
+    if (committed) {
+      status = MAKO_LOCAL_OK;
+    } else {
+      switch (failure) {
+      case Transaction::preinstall_failure::hook_rejected:
+        status = MAKO_LOCAL_COMMIT_HOOK_REJECTED;
+        break;
+      case Transaction::preinstall_failure::timestamp_exhausted:
+        status = MAKO_LOCAL_TIMESTAMP_EXHAUSTED;
+        break;
+      case Transaction::preinstall_failure::none:
+        status = MAKO_LOCAL_CONFLICT;
+        break;
+      default:
+        poison_transaction(txn);
+        return pack_fast_terminal_result(MAKO_LOCAL_WORKER_POISONED,
+                                         MAKO_LOCAL_WORKER_POISONED);
+      }
+    }
+  } catch (...) {
+    // Stack unwinding has left try_commit_no_paxos before this transfer. An
+    // accepted timestamp owns the dense sequence even though cleanup status is
+    // now unknown, so seal it before quarantining. A preaccept exception owns
+    // no sequence and returns its invisible holder immediately.
+    if (bridge.mako_timestamp != 0 && !bridge.holder_sealed)
+      seal_preselected_one_put_holder(&bridge);
+    poison_transaction(txn);
+    return pack_fast_terminal_result(MAKO_LOCAL_WORKER_POISONED,
+                                     MAKO_LOCAL_WORKER_POISONED);
+  }
+
+  recycle_txn(txn);
+  return pack_fast_terminal_result(status, MAKO_LOCAL_OK);
+}
+}  // namespace
+
+MAKO_RUST_FAST_DEFINITION_HIDDEN uint64_t
+mako_rust_fast_txn_commit_record_and_destroy(
+    mako_local_txn *txn, mako_rust_fast_record_bind_hook bind_hook,
+    void *context, uint8_t *record_written_out) noexcept {
+  assert(txn != nullptr);
+  assert(on_owner_thread(txn));
+  assert(!txn->poisoned);
+  assert(!local_worker_poisoned);
+  assert(txn->active);
+  assert(local_active_txn == txn);
+  assert(txn->fast_table_impl != nullptr);
+
+  if (record_written_out != nullptr) *record_written_out = 0;
+  if (bind_hook == nullptr || record_written_out == nullptr ||
+      !txn->record_plan_sealed || !txn->record_plan_ready ||
+      txn->record_plan_ops == 0 ||
+      txn->record_plan_bytes <
+          kCacheRecordHeaderBytes +
+              record_trailer_bytes(txn->record_plan_checksum_mode)) {
+    return reject_fast_record_terminal(txn);
+  }
+
+  return commit_ready_record_and_destroy(txn, bind_hook, context,
+                                         record_written_out, false);
+}
+
+MAKO_RUST_FAST_DEFINITION_HIDDEN uint64_t
+mako_rust_fast_txn_commit_unchecked_one_put_record_and_destroy(
+    mako_local_txn *txn, uint32_t expected_record_bytes,
+    mako_rust_fast_record_bind_hook bind_hook, void *context,
+    uint8_t *record_written_out) noexcept {
+  assert(txn != nullptr);
+  assert(on_owner_thread(txn));
+  assert(!txn->poisoned);
+  assert(!local_worker_poisoned);
+  assert(txn->active);
+  assert(local_active_txn == txn);
+  assert(txn->fast_table_impl != nullptr);
+
+  if (record_written_out != nullptr) *record_written_out = 0;
+  record_shape shape;
+  if (bind_hook == nullptr || record_written_out == nullptr ||
+      expected_record_bytes == 0 ||
+      expected_record_bytes > kFastPutRecordBytesMax ||
+      txn->record_plan_sealed || txn->record_plan_ready ||
+      txn->record_plan_bytes != 0 || txn->record_plan_ops != 0 ||
+      !derive_fast_record_shape(
+          txn, MAKO_RUST_FAST_RECORD_CHECKSUM_NONE, &shape) ||
+      shape.operations != 1 || shape.bytes != expected_record_bytes) {
+    return reject_fast_record_terminal(txn);
+  }
+
+  // This seal occurs only after exact revalidation and before STO can acquire
+  // a write lock. The caller has already reserved the advertised extent;
+  // bind_hook merely lends that stable storage after final validation.
+  txn->record_plan_bytes = shape.bytes;
+  txn->record_plan_ops = shape.operations;
+  txn->record_plan_checksum_mode = MAKO_RUST_FAST_RECORD_CHECKSUM_NONE;
+  txn->record_plan_sealed = true;
+  txn->record_plan_ready = true;
+  return commit_ready_record_and_destroy(txn, bind_hook, context,
+                                         record_written_out, true);
+}
+
+MAKO_RUST_FAST_DEFINITION_HIDDEN uint64_t
+mako_rust_fast_txn_commit_unchecked_one_put_record_single_producer_and_destroy(
+    mako_local_txn *txn, uint32_t expected_record_bytes,
+    mako_rust_fast_record_bind_hook bind_hook, void *context,
+    uint8_t *record_written_out) noexcept {
+  // This entry intentionally cannot verify its global exclusion contract.
+  // Its caller guarantees that no concurrent or already-ticketed cache-record
+  // terminal for txn->owner overlaps this entire call. The ordinary fused
+  // spelling above remains the safe default for concurrent producers.
+  assert(txn != nullptr);
+  assert(on_owner_thread(txn));
+  assert(!txn->poisoned);
+  assert(!local_worker_poisoned);
+  assert(txn->active);
+  assert(local_active_txn == txn);
+  assert(txn->fast_table_impl != nullptr);
+
+  if (record_written_out != nullptr) *record_written_out = 0;
+  record_shape shape;
+  if (bind_hook == nullptr || record_written_out == nullptr ||
+      expected_record_bytes == 0 ||
+      expected_record_bytes > kFastPutRecordBytesMax ||
+      txn->record_plan_sealed || txn->record_plan_ready ||
+      txn->record_plan_bytes != 0 || txn->record_plan_ops != 0 ||
+      !derive_fast_record_shape(
+          txn, MAKO_RUST_FAST_RECORD_CHECKSUM_NONE, &shape) ||
+      shape.operations != 1 || shape.bytes != expected_record_bytes) {
+    return reject_fast_record_terminal(txn);
+  }
+
+  // Preserve the ordinary fused terminal's exact predicate recheck and
+  // fail-closed plan seal. Only the validation gate's ticket operations are
+  // replaced; Transaction still calls enter, bind, leave, and after_leave in
+  // the same order while retaining the complete write set.
+  txn->record_plan_bytes = shape.bytes;
+  txn->record_plan_ops = shape.operations;
+  txn->record_plan_checksum_mode = MAKO_RUST_FAST_RECORD_CHECKSUM_NONE;
+  txn->record_plan_sealed = true;
+  txn->record_plan_ready = true;
+  return commit_ready_record_and_destroy(
+      txn, bind_hook, context, record_written_out, true,
+      enter_single_producer_record_validation_gate,
+      leave_single_producer_record_validation_gate);
+}
+
+MAKO_RUST_FAST_DEFINITION_HIDDEN mako_rust_fast_preselected_record_result
+mako_rust_fast_txn_commit_preselected_unchecked_one_put_record_single_producer_and_destroy(
+    mako_local_txn *txn, uint32_t expected_record_bytes, uint64_t sequence,
+    uint8_t *record, size_t record_capacity) noexcept {
+  // Rust retains this exact sequence/arena generation invisibly for the whole
+  // call and guarantees that no other record terminal for txn->owner runs or
+  // waits. This entry cannot verify that global exclusion contract.
+  assert(txn != nullptr);
+  assert(on_owner_thread(txn));
+  assert(!txn->poisoned);
+  assert(!local_worker_poisoned);
+  assert(txn->active);
+  assert(local_active_txn == txn);
+  assert(txn->fast_table_impl != nullptr);
+#ifndef NDEBUG
+  assert(txn->owner->record_validation_next.value.load(
+             std::memory_order_relaxed) ==
+         txn->owner->record_validation_serving.value.load(
+             std::memory_order_acquire));
+#endif
+
+  record_shape shape;
+  if (sequence == 0 || record == nullptr || expected_record_bytes == 0 ||
+      expected_record_bytes > kFastPutRecordBytesMax ||
+      record_capacity < expected_record_bytes || txn->record_plan_sealed ||
+      txn->record_plan_ready || txn->record_plan_bytes != 0 ||
+      txn->record_plan_ops != 0 ||
+      !derive_fast_record_shape(txn, MAKO_RUST_FAST_RECORD_CHECKSUM_NONE,
+                                &shape) ||
+      shape.operations != 1 || shape.bytes != expected_record_bytes) {
+    return reject_fast_preselected_record_terminal(txn);
+  }
+
+  // The private caller already acquired this target's exact FREE arena turn.
+  // Sealing after every scalar check and before lock acquisition prevents any
+  // later operation from changing the spans serialized by the internal hook.
+  txn->record_plan_bytes = shape.bytes;
+  txn->record_plan_ops = shape.operations;
+  txn->record_plan_checksum_mode = MAKO_RUST_FAST_RECORD_CHECKSUM_NONE;
+  txn->record_plan_sealed = true;
+  txn->record_plan_ready = true;
+  return commit_preselected_one_put_record_and_destroy(txn, sequence, record,
+                                                       shape.bytes);
+}
+
+[[gnu::always_inline]] static inline uint64_t
+commit_preselected_unchecked_one_put_holder_single_producer_and_destroy(
+    mako_local_txn *txn, uint32_t expected_record_bytes,
+    one_put_holder *selected_holder, uint64_t sequence) noexcept {
+  // This entry has the record terminal's same whole-database exclusivity
+  // requirement plus the holder generation proof documented in the header.
+  // Neither global invariant can be reconstructed from opaque native state.
+  assert(txn != nullptr);
+  assert(on_owner_thread(txn));
+  assert(!txn->poisoned);
+  assert(!local_worker_poisoned);
+  assert(txn->active);
+  assert(local_active_txn == txn);
+  assert(txn->fast_table_impl != nullptr);
+  assert(txn->owner->record_validation_next.value.load(
+             std::memory_order_relaxed) ==
+         txn->owner->record_validation_serving.value.load(
+             std::memory_order_acquire));
+  assert(selected_holder != nullptr);
+  assert(sequence != 0);
+  one_put_holder &holder = *selected_holder;
+#if defined(__GNUC__) || defined(__clang__)
+  // The ring can exceed LLC. A future pointer-token ABI can issue this before
+  // the terminal; until then start exclusive acquisition immediately after
+  // masked selection and before the diagnostic shape assertions.
+  __builtin_prefetch(&holder, 1, 3);
+#endif
+
+  const auto &write = txn->record_fast_write;
+#ifndef NDEBUG
+  record_shape shape;
+  const size_t encoded_trailer =
+      static_cast<size_t>(mako::EXTRA_BITS_FOR_VALUE);
+  assert(expected_record_bytes != 0);
+  assert(expected_record_bytes <= kFastPutRecordBytesMax);
+  assert(!txn->record_plan_sealed);
+  assert(!txn->record_plan_ready);
+  assert(txn->record_plan_bytes == 0);
+  assert(txn->record_plan_ops == 0);
+  assert(txn->encoded_values_used == 1);
+  assert(derive_fast_record_shape(txn, MAKO_RUST_FAST_RECORD_CHECKSUM_NONE,
+                                  &shape));
+  assert(shape.operations == 1);
+  assert(shape.bytes == expected_record_bytes);
+  assert(write.op == Transaction::canonical_write_view::operation::put);
+  assert(write.key_length <= UINT16_MAX);
+  assert(write.value_length <= UINT32_MAX);
+  assert(txn->encoded_values[0].size() == write.value_length + encoded_trailer);
+  assert(holder.state == one_put_holder_state::free);
+  assert(holder.sequence == 0);
+  assert(holder.mako_timestamp == 0);
+#else
+  // The private Rust wrapper obtained this exact value from the immediately
+  // preceding fast Put and consumes the transaction without another operation.
+  // Malformed calls violate the same-build unsafe ABI contract; deliberately
+  // keep their diagnostics out of the production foreground path.
+  (void)expected_record_bytes;
+#endif
+
+  const auto key_location =
+      write.key_length <= mako_rust_fast_one_put_holder_pool::kHotInlineKeyBytes
+          ? mako_rust_fast_one_put_holder_pool::key_storage::hot_inline
+      : write.key_length <= mako_rust_fast_one_put_holder_pool::kInlineKeyBytes
+          ? mako_rust_fast_one_put_holder_pool::key_storage::inline_key
+          : mako_rust_fast_one_put_holder_pool::key_storage::overflow;
+  if (key_location ==
+      mako_rust_fast_one_put_holder_pool::key_storage::overflow) {
+    try {
+      holder.overflow_key.assign(write.key, write.key_length);
+    } catch (const std::bad_alloc &) {
+      return abort_fast_record_terminal(txn, MAKO_LOCAL_OUT_OF_MEMORY);
+    } catch (...) {
+      return abort_fast_record_terminal(txn, MAKO_LOCAL_INTERNAL);
+    }
+  } else if (key_location ==
+             mako_rust_fast_one_put_holder_pool::key_storage::hot_inline) {
+    copy_preselected_holder_inline_key(holder.hot_inline_key.data(), write.key,
+                                       write.key_length);
+  } else {
+    copy_preselected_holder_inline_key(holder.inline_key.data(), write.key,
+                                       write.key_length);
+  }
+
+  // The unsafe consuming contract is itself the seal: no transaction operation
+  // can follow this call. Inline bytes and long-key allocation are complete,
+  // so the post-validation hook need only capture the Mako timestamp.
+  return commit_preselected_one_put_holder_and_destroy(
+      txn, &holder, sequence, write.table_id,
+      static_cast<uint16_t>(write.key_length), key_location);
+}
+
+MAKO_RUST_FAST_DEFINITION_HIDDEN mako_rust_fast_preselected_record_result
+mako_rust_fast_txn_commit_preselected_unchecked_one_put_holder_single_producer_and_destroy(
+    mako_local_txn *txn, uint32_t expected_record_bytes,
+    mako_rust_fast_one_put_holder_pool *pool, uint64_t sequence) noexcept {
+  assert(pool != nullptr);
+  assert(sequence != 0);
+  assert(is_nonzero_power_of_two(pool->capacity));
+  one_put_holder &holder = one_put_holder_for(pool, sequence);
+  const uint64_t terminal =
+      commit_preselected_unchecked_one_put_holder_single_producer_and_destroy(
+          txn, expected_record_bytes, &holder, sequence);
+  return pack_preselected_holder_result(terminal, holder);
+}
+
+// Recover the exact compact candidate emitted by the immediately preceding
+// private fast Put without walking STO's write set. The fused entry is itself
+// the consuming seal, so the Rust facade's active-transaction ownership and
+// this retained direct-write witness make these scalar reads authoritative.
+// A miss selects the checked general terminal while leaving txn untouched.
+[[gnu::always_inline]] static inline uint32_t
+trusted_fused_one_put_record_bytes(const mako_local_txn *txn) noexcept {
+  const uint32_t exact_record_bytes = txn->record_fused_candidate_bytes;
+  if (exact_record_bytes == 0)
+    return 0;
+
+#ifndef NDEBUG
+  assert(txn->record_fast_path_eligible);
+  assert(!txn->record_plan_sealed);
+  assert(!txn->record_plan_ready);
+  assert(txn->record_plan_bytes == 0);
+  assert(txn->record_plan_ops == 0);
+  assert(txn->record_fast_write.op ==
+         Transaction::canonical_write_view::operation::put);
+  assert(txn->record_fast_mutation_bytes != 0);
+  assert(txn->record_fast_mutation_bytes <=
+         kFastPutRecordBytesMax - kCacheRecordHeaderBytes);
+  assert(exact_record_bytes ==
+         kCacheRecordHeaderBytes + txn->record_fast_mutation_bytes);
+  record_shape shape;
+  assert(derive_fast_record_shape(txn, MAKO_RUST_FAST_RECORD_CHECKSUM_NONE,
+                                  &shape));
+  assert(shape.operations == 1);
+  assert(shape.bytes == exact_record_bytes);
+#endif
+  return exact_record_bytes;
+}
+
+MAKO_RUST_FAST_DEFINITION_HIDDEN uint64_t
+mako_rust_fast_txn_try_commit_fused_one_put_holder_single_producer_and_destroy(
+    mako_local_txn *txn, uint64_t *acknowledged, const uint8_t *unhealthy,
+    mako_rust_fast_spsc_holder_control *control,
+    uint64_t capacity_limit) noexcept {
+  // Rust's thread-affine lease owns txn and the next holder generation for
+  // this entire synchronous call. ACK and health name naturally aligned Rust
+  // atomic storage; GCC/Clang builtins establish the exact cross-language
+  // order without pretending these C ABI pointer types are C++ atomics.
+  assert(txn != nullptr);
+  assert(on_owner_thread(txn));
+  assert(!txn->poisoned);
+  assert(!local_worker_poisoned);
+  assert(txn->active);
+  assert(local_active_txn == txn);
+  assert(txn->fast_table_impl != nullptr);
+  assert(control != nullptr);
+  assert(control->pool != nullptr);
+  assert(control->holder_base != nullptr);
+  assert(control->holder_base == control->pool->holders.get());
+  assert(control->holder_mask == control->pool->mask);
+  assert(control->acknowledged != nullptr);
+  assert(control->unhealthy != nullptr);
+  assert(control->capacity != 0);
+  assert(control->capacity <= control->pool->capacity);
+  assert(control->reserved == 0);
+  assert(acknowledged != nullptr);
+  assert(unhealthy != nullptr);
+  assert(acknowledged == control->acknowledged);
+  assert(unhealthy == control->unhealthy);
+  assert(reinterpret_cast<uintptr_t>(acknowledged) % alignof(uint64_t) == 0);
+
+  const uint32_t exact_record_bytes = trusted_fused_one_put_record_bytes(txn);
+  if (exact_record_bytes - UINT32_C(1) >= control->max_record_bytes) [[unlikely]] {
+    return pack_fused_holder_control_word(
+        MAKO_RUST_FAST_FUSED_HOLDER_UNTOUCHED_NEED_GENERAL);
+  }
+
+  if (__atomic_load_n(unhealthy, __ATOMIC_ACQUIRE) != 0) [[unlikely]] {
+    return pack_fused_holder_control_word(
+        MAKO_RUST_FAST_FUSED_HOLDER_UNTOUCHED_NEED_SLOW, exact_record_bytes);
+  }
+  const uint64_t tail = __atomic_load_n(acknowledged, __ATOMIC_RELAXED);
+  if (tail >= capacity_limit) [[unlikely]] {
+    return pack_fused_holder_control_word(
+        MAKO_RUST_FAST_FUSED_HOLDER_UNTOUCHED_NEED_SLOW, exact_record_bytes);
+  }
+
+  const uint64_t sequence = tail + 1;
+  auto *const holders = static_cast<one_put_holder *>(control->holder_base);
+  one_put_holder &holder =
+      holders[static_cast<size_t>(sequence - 1) & control->holder_mask];
+  const uint64_t terminal =
+      commit_preselected_unchecked_one_put_holder_single_producer_and_destroy(
+          txn, exact_record_bytes, &holder, sequence);
+  constexpr uint64_t kExactOk =
+      pack_fast_terminal_result(MAKO_LOCAL_OK, MAKO_LOCAL_OK);
+  if (terminal == kExactOk) [[likely]] {
+    const uint32_t timestamp = holder.mako_timestamp;
+#ifndef NDEBUG
+    assert(holder.state == one_put_holder_state::sealed);
+    assert(timestamp != 0);
+#endif
+    // ACK remains the canonical healthy tail. Rust reconstructs its local
+    // cursor only if this post-commit fail-stop diversion is taken.
+    if (__atomic_load_n(unhealthy, __ATOMIC_ACQUIRE) != 0) [[unlikely]] {
+      control->cold_out = pack_fused_holder_cold_result(
+          pack_preselected_holder_result(terminal, holder),
+          exact_record_bytes);
+      return pack_fused_holder_control_word(
+          MAKO_RUST_FAST_FUSED_HOLDER_CONSUMED_COMMITTED_UNPUBLISHED,
+          timestamp);
+    }
+
+    __atomic_store_n(acknowledged, sequence, __ATOMIC_RELEASE);
+    return pack_fused_holder_control_word(
+        MAKO_RUST_FAST_FUSED_HOLDER_CONSUMED_PUBLISHED);
+  }
+
+  // The full raw outcome is cold. Rust synchronizes its pre-acceptance cursor
+  // before it inspects and possibly pins this generation.
+  control->cold_out = pack_fused_holder_cold_result(
+      pack_preselected_holder_result(terminal, holder), exact_record_bytes);
+  return pack_fused_holder_control_word(
+      MAKO_RUST_FAST_FUSED_HOLDER_CONSUMED_OUTCOME);
 }
 
 MAKO_RUST_FAST_DEFINITION_HIDDEN uint64_t
@@ -2121,6 +3444,23 @@ mako_rust_fast_test_record_validation_wait_observations(
              ? 0
              : db->record_validation_wait_observations.load(
                    std::memory_order_acquire);
+}
+
+MAKO_RUST_FAST_DEFINITION_HIDDEN const uint8_t *
+mako_rust_fast_test_txn_staged_one_put_value(
+    const mako_local_txn *txn, uint32_t *length_out) noexcept {
+  if (length_out == nullptr) return nullptr;
+  *length_out = 0;
+  if (txn == nullptr || txn->encoded_values_used != 1 ||
+      txn->encoded_values[0].size() <
+          static_cast<size_t>(mako::EXTRA_BITS_FOR_VALUE))
+    return nullptr;
+  const size_t length = txn->encoded_values[0].size() -
+                        static_cast<size_t>(mako::EXTRA_BITS_FOR_VALUE);
+  if (length > UINT32_MAX) return nullptr;
+  *length_out = static_cast<uint32_t>(length);
+  return reinterpret_cast<const uint8_t *>(
+      txn->encoded_values[0].data());
 }
 #endif
 

@@ -156,15 +156,15 @@ impl MasstreeIndex {
                 &mut out,
             )
         })?;
-        Ok(if out == sys::MTX_WORD_NULL { None } else { Some(out) })
+        Ok(if out == sys::MTX_WORD_NULL {
+            None
+        } else {
+            Some(out)
+        })
     }
 
     /// Install `word` if absent, reporting failures.
-    pub fn try_get_or_insert(
-        &self,
-        key: &[u8],
-        word: EntryWord,
-    ) -> Result<EntryWord, IndexError> {
+    pub fn try_get_or_insert(&self, key: &[u8], word: EntryWord) -> Result<EntryWord, IndexError> {
         debug_assert_ne!(
             word,
             sys::MTX_WORD_NULL,
@@ -221,7 +221,11 @@ impl MasstreeIndex {
         }
         attach_thread()?;
         let mut kvs: Vec<sys::MtxKv> = vec![
-            sys::MtxKv { key_off: 0, key_len: 0, word: 0 };
+            sys::MtxKv {
+                key_off: 0,
+                key_len: 0,
+                word: 0
+            };
             budget
         ];
         // 64 bytes a key to start. Grown below rather than guessed at,
@@ -309,13 +313,9 @@ impl KeyIndex for MasstreeIndex {
             .expect("masstree insert failed")
     }
 
-    fn scan_chunk(
-        &self,
-        from: &[u8],
-        budget: usize,
-        out: &mut Vec<(Vec<u8>, EntryWord)>,
-    ) -> usize {
-        self.walk(from, budget, true, out).expect("masstree scan failed")
+    fn scan_chunk(&self, from: &[u8], budget: usize, out: &mut Vec<(Vec<u8>, EntryWord)>) -> usize {
+        self.walk(from, budget, true, out)
+            .expect("masstree scan failed")
     }
 
     fn rscan_chunk(

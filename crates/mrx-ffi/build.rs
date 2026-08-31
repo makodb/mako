@@ -2,8 +2,9 @@
 //!
 //! `cargo:rustc-link-lib` and `-link-search` from a dependency's build
 //! script reach the final link on their own, so this crate does not
-//! repeat what `mrx-masstree` and `mrx-rocks` already emit. Two things do
-//! need repeating:
+//! repeat what `mrx-masstree` and `mrx-rocks` already emit. Runtime search
+//! arguments do not propagate, so the final crate repeats them for libc++
+//! and Mako's vendored yaml-cpp.
 //!
 //! * `cargo:rustc-link-arg` does **not** propagate from a dependency, so
 //!   the libc++ rpath has to be emitted here as well or the test binary
@@ -16,10 +17,12 @@ use std::path::{Path, PathBuf};
 fn main() {
     println!("cargo:rerun-if-env-changed=MAKO_BUILD_DIR");
     println!("cargo:rerun-if-env-changed=ROCKSDB_LIB_DIR");
+    println!("cargo:rerun-if-env-changed=LIBCXX_DIR");
     println!("cargo:rustc-check-cfg=cfg(have_mako)");
     println!("cargo:rustc-check-cfg=cfg(have_rocksdb)");
 
-    if mako_build_dir().is_some() {
+    let mako_build = mako_build_dir();
+    if mako_build.is_some() {
         println!("cargo:rustc-cfg=have_mako");
     }
     if rocksdb_dir().is_some() {
@@ -33,6 +36,15 @@ fn main() {
     if let Some(keg) = libcxx_dir() {
         println!("cargo:rustc-link-search=native={}", keg.display());
         println!("cargo:rustc-link-arg=-Wl,-rpath,{}", keg.display());
+    }
+    if let Some(build) = mako_build {
+        let yaml_dir = build.join("third-party/yaml-cpp");
+        let yaml_library = yaml_dir.join("libyaml-cpp.so");
+        println!("cargo:rerun-if-changed={}", yaml_library.display());
+        if yaml_library.is_file() {
+            println!("cargo:rustc-link-search=native={}", yaml_dir.display());
+            println!("cargo:rustc-link-arg=-Wl,-rpath,{}", yaml_dir.display());
+        }
     }
 }
 
@@ -71,6 +83,11 @@ fn libcxx_dir() -> Option<PathBuf> {
     let home = std::env::var("HOME").ok()?;
     ["llvm@22", "llvm@21", "llvm"]
         .iter()
-        .map(|v| PathBuf::from(&home).join(".linuxbrew/opt").join(v).join("lib"))
+        .map(|v| {
+            PathBuf::from(&home)
+                .join(".linuxbrew/opt")
+                .join(v)
+                .join("lib")
+        })
         .find(|p| p.join("libc++.so.1").exists() || p.join("libc++.so").exists())
 }

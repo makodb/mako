@@ -26,17 +26,79 @@
 /// Fixed, thread-affine workers and bounded OCC retry policy.
 pub mod worker;
 
-use std::cell::Cell;
-use std::ffi::{c_void, CStr};
+use std::cell::{Cell, UnsafeCell};
+use std::ffi::{CStr, c_void};
 use std::fmt;
 use std::marker::PhantomData;
 use std::mem::{ManuallyDrop, MaybeUninit};
 use std::num::{NonZeroU32, NonZeroU64};
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::ptr::NonNull;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, Ordering};
 
 use mako_local_sys as sys;
+
+/// Return value of the cache-private callback-free record terminal.
+///
+/// Keep this layout in lockstep with
+/// `mako_rust_fast_preselected_record_result` in the private native header.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+struct FastPreselectedRecordResult {
+    terminal: u64,
+    record_state: u64,
+}
+
+const _: [(); 16] = [(); std::mem::size_of::<FastPreselectedRecordResult>()];
+const _: [(); 8] = [(); std::mem::align_of::<FastPreselectedRecordResult>()];
+
+/// Opaque build-private native holder-pool handle.
+#[repr(C)]
+struct FastOnePutHolderPool {
+    _private: [u8; 0],
+}
+
+/// Stable queue-global inputs for the private fused SPSC terminal.
+///
+/// Keep this layout in lockstep with `mako_rust_fast_spsc_holder_control` in
+/// the private native header. The pointed-to words are Rust atomics accessed
+/// by native with matching compiler atomics during one synchronous call.
+#[repr(C)]
+struct FastSpscHolderControl {
+    pool: *mut FastOnePutHolderPool,
+    holder_base: *mut c_void,
+    holder_mask: usize,
+    acknowledged: *mut u64,
+    unhealthy: *const u8,
+    capacity: u64,
+    max_record_bytes: u32,
+    reserved: u32,
+    cold_out: UnsafeCell<FastPreselectedRecordResult>,
+}
+
+const _: [(); 72] = [(); std::mem::size_of::<FastSpscHolderControl>()];
+const _: [(); 8] = [(); std::mem::align_of::<FastSpscHolderControl>()];
+
+/// Borrowed snapshot returned for one exact sealed holder generation.
+///
+/// Keep this layout in lockstep with
+/// `mako_rust_fast_one_put_holder_view` in the private native header.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+struct FastOnePutHolderView {
+    sequence: u64,
+    table_id: u64,
+    key: *const u8,
+    value: *const u8,
+    key_len: u32,
+    value_len: u32,
+    mako_timestamp: u32,
+    reserved: u32,
+}
+
+const _: [(); 48] = [(); std::mem::size_of::<FastOnePutHolderView>()];
+const _: [(); 8] = [(); std::mem::align_of::<FastOnePutHolderView>()];
 
 #[cfg(not(test))]
 use mako_local_sys as abi;
@@ -54,7 +116,10 @@ use fake_abi as abi;
 mod fast_abi {
     use std::ffi::c_void;
 
-    use super::sys;
+    use super::{
+        FastOnePutHolderPool, FastOnePutHolderView, FastPreselectedRecordResult,
+        FastSpscHolderControl, sys,
+    };
 
     pub(super) type RecordBindHook = Option<
         unsafe extern "C" fn(
@@ -90,9 +155,10 @@ mod fast_abi {
             context: *mut c_void,
         ) -> u64;
 
-        pub(super) fn mako_rust_fast_txn_record_preflight(
+        pub(super) fn mako_rust_fast_txn_record_preflight_with_checksum(
             txn: *mut sys::mako_local_txn,
             max_record_bytes: usize,
+            checksum_mode: u32,
             exact_record_bytes_out: *mut usize,
             op_count_out: *mut u32,
         ) -> i32;
@@ -103,6 +169,73 @@ mod fast_abi {
             context: *mut c_void,
             record_written_out: *mut u8,
         ) -> u64;
+
+        pub(super) fn mako_rust_fast_txn_commit_unchecked_one_put_record_and_destroy(
+            txn: *mut sys::mako_local_txn,
+            expected_record_bytes: u32,
+            hook: RecordBindHook,
+            context: *mut c_void,
+            record_written_out: *mut u8,
+        ) -> u64;
+
+        pub(super) fn mako_rust_fast_txn_commit_unchecked_one_put_record_single_producer_and_destroy(
+            txn: *mut sys::mako_local_txn,
+            expected_record_bytes: u32,
+            hook: RecordBindHook,
+            context: *mut c_void,
+            record_written_out: *mut u8,
+        ) -> u64;
+
+        pub(super) fn mako_rust_fast_txn_commit_preselected_unchecked_one_put_record_single_producer_and_destroy(
+            txn: *mut sys::mako_local_txn,
+            expected_record_bytes: u32,
+            sequence: u64,
+            record: *mut u8,
+            record_capacity: usize,
+        ) -> FastPreselectedRecordResult;
+
+        pub(super) fn mako_rust_fast_one_put_holder_pool_create(
+            capacity: usize,
+            key_reserve_bytes: u32,
+            value_reserve_bytes: u32,
+            out: *mut *mut FastOnePutHolderPool,
+        ) -> i32;
+
+        pub(super) fn mako_rust_fast_one_put_holder_pool_destroy(
+            pool: *mut FastOnePutHolderPool,
+        ) -> i32;
+
+        pub(super) fn mako_rust_fast_one_put_holder_pool_get_hot_layout(
+            pool: *mut FastOnePutHolderPool,
+            holder_base_out: *mut *mut c_void,
+            holder_mask_out: *mut usize,
+        ) -> i32;
+
+        pub(super) fn mako_rust_fast_txn_commit_preselected_unchecked_one_put_holder_single_producer_and_destroy(
+            txn: *mut sys::mako_local_txn,
+            expected_record_bytes: u32,
+            pool: *mut FastOnePutHolderPool,
+            sequence: u64,
+        ) -> FastPreselectedRecordResult;
+
+        pub(super) fn mako_rust_fast_txn_try_commit_fused_one_put_holder_single_producer_and_destroy(
+            txn: *mut sys::mako_local_txn,
+            acknowledged: *mut u64,
+            unhealthy: *const u8,
+            control: *mut FastSpscHolderControl,
+            capacity_limit: u64,
+        ) -> u64;
+
+        pub(super) fn mako_rust_fast_one_put_holder_pool_get_view(
+            pool: *const FastOnePutHolderPool,
+            expected_sequence: u64,
+            out: *mut FastOnePutHolderView,
+        ) -> i32;
+
+        pub(super) fn mako_rust_fast_one_put_holder_pool_release(
+            pool: *mut FastOnePutHolderPool,
+            expected_sequence: u64,
+        ) -> i32;
 
         pub(super) fn mako_rust_fast_txn_abort_and_destroy(txn: *mut sys::mako_local_txn) -> u64;
     }
@@ -420,21 +553,40 @@ pub struct CommitReport {
     pub cleanup: Result<()>,
 }
 
+/// Integrity mode for a native cache commit record.
+///
+/// CRC32C is the default and produces the backwards-compatible v3 format.
+/// `None` produces a self-describing v4 record without a checksum trailer. It
+/// avoids checksum work on the foreground commit path, but replay can then
+/// validate only the record's structure, not arbitrary payload corruption.
+#[doc(hidden)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum CommitRecordChecksum {
+    /// Emit v4 without an integrity checksum.
+    None = 0,
+    /// Emit v3 with a CRC-32C trailer.
+    #[default]
+    Crc32c = 1,
+}
+
 /// Exact native sizing for one canonical cache commit record.
 ///
 /// This build-private type is returned only for a trusted transaction whose
-/// native write plan has been sealed. The byte count includes the complete v3
-/// header and CRC; `op_count == 0` identifies a logical read-only transaction
-/// that must use the ordinary no-record commit terminal.
+/// native write plan has been sealed. The byte count includes the selected
+/// format's complete header and, for CRC32C/v3, its checksum trailer;
+/// `op_count == 0` identifies a logical read-only transaction that must use the
+/// ordinary no-record commit terminal.
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CommitRecordPreflight {
     exact_record_bytes: usize,
     op_count: u32,
+    checksum: CommitRecordChecksum,
 }
 
 impl CommitRecordPreflight {
-    /// Complete encoded record size, including header and CRC.
+    /// Complete encoded record size, including the header and optional CRC.
     pub const fn exact_record_bytes(self) -> usize {
         self.exact_record_bytes
     }
@@ -442,6 +594,11 @@ impl CommitRecordPreflight {
     /// Number of canonical final-effect mutations in the record.
     pub const fn op_count(self) -> u32 {
         self.op_count
+    }
+
+    /// Integrity mode sealed into this record plan.
+    pub const fn checksum(self) -> CommitRecordChecksum {
+        self.checksum
     }
 
     /// Whether native canonicalization found no externally visible mutation.
@@ -563,6 +720,801 @@ pub struct CommitRecordReport {
     pub record_written: bool,
 }
 
+/// Compact result from the cache-private fused one-Put terminal.
+///
+/// The common success path retains native's packed terminal word and two
+/// completion scalars instead of eagerly constructing the larger public
+/// [`CommitRecordReport`]. A cache can branch on [`Self::is_committed`] and
+/// defer full status/contract decoding to [`Self::into_report`] only for an
+/// anomalous or unsuccessful native return.
+///
+/// This compact representation is private to the hidden fast ABI and assumes
+/// the Rust crate and C++ engine were built from the same source/configuration
+/// fingerprint. It is not a compatibility surface for an arbitrary provider
+/// of the stable public ABI.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy)]
+#[must_use = "a bound record outcome must be published or decoded and pinned before acknowledgement"]
+pub struct TrustedUncheckedOnePutRecordOutcome {
+    packed: u64,
+    record_bound: bool,
+    record_written: u8,
+}
+
+impl TrustedUncheckedOnePutRecordOutcome {
+    /// Whether native returned the exact ordinary committed outcome.
+    ///
+    /// A true result proves both native visibility and cleanup succeeded and
+    /// that the fused callback bound and completely initialized its target.
+    #[inline(always)]
+    pub const fn is_committed(self) -> bool {
+        const PACKED_OK: u64 =
+            (sys::MAKO_LOCAL_OK as u32 as u64) | ((sys::MAKO_LOCAL_OK as u32 as u64) << 32);
+        self.packed == PACKED_OK && self.record_bound && self.record_written == 1
+    }
+
+    /// Perform the general fail-closed terminal and completion-contract decode.
+    ///
+    /// Cache code should call this only when [`Self::is_committed`] is false.
+    #[cold]
+    #[inline(never)]
+    pub fn into_report(self) -> CommitRecordReport {
+        let record_bound = self.record_bound;
+        let witness_claimed = self.record_written == 1;
+        let mut contract_valid = self.record_written <= 1 && (!witness_claimed || record_bound);
+        let decoded = decode_fast_unchecked_record_commit(self.packed);
+        if decoded.is_none() {
+            contract_valid = false;
+        }
+        if let Some((commit, _)) = decoded {
+            if commit == sys::MAKO_LOCAL_OK && !witness_claimed {
+                contract_valid = false;
+            }
+            if record_bound
+                && !witness_claimed
+                && commit != sys::MAKO_LOCAL_COMMIT_HOOK_REJECTED
+                && commit != sys::MAKO_LOCAL_WORKER_POISONED
+            {
+                contract_valid = false;
+            }
+        }
+        let commit = if contract_valid {
+            decoded.map_or(
+                CommitReport {
+                    disposition: CommitDisposition::Unknown(Error::Internal),
+                    cleanup: Err(Error::Internal),
+                },
+                |(commit, cleanup)| CommitReport {
+                    disposition: if commit == sys::MAKO_LOCAL_INVALID_ARGUMENT {
+                        CommitDisposition::Aborted(Error::InvalidArgument)
+                    } else {
+                        commit_disposition(commit)
+                    },
+                    cleanup: status(cleanup),
+                },
+            )
+        } else {
+            CommitReport {
+                disposition: CommitDisposition::Unknown(Error::Internal),
+                cleanup: Err(Error::Internal),
+            }
+        };
+        CommitRecordReport {
+            commit,
+            completion_contract_valid: contract_valid,
+            record_bound,
+            record_written: contract_valid && witness_claimed,
+        }
+    }
+}
+
+/// Compact result from the cache-private callback-free one-Put terminal.
+///
+/// The target and its dense sequence are selected before native validation.
+/// Native's `record_state` then says whether that target was accepted into the
+/// commit order: its low 32 bits carry the accepted Mako timestamp and bit 32
+/// is the complete-record witness. Bits 33 through 63 are reserved and must be
+/// zero. This representation lets the common committed path avoid callback
+/// setup and output-pointer traffic while retaining a strict fail-stop decode
+/// for every anomalous native result.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy)]
+#[must_use = "a preselected record outcome must be published, released, or decoded and pinned"]
+pub struct TrustedPreselectedUncheckedOnePutRecordOutcome {
+    terminal: u64,
+    record_state: u64,
+}
+
+impl TrustedPreselectedUncheckedOnePutRecordOutcome {
+    /// Return the Mako timestamp with which native accepted the preselected
+    /// target, if its low 32-bit timestamp field is valid and nonzero.
+    ///
+    /// This intentionally ignores the completion bit and reserved high bits.
+    /// A cache must bind/pin the preselected slot whenever this returns `Some`,
+    /// then separately use [`Self::is_committed`] or [`Self::into_report`] to
+    /// validate the complete result. That ordering remains conservative when a
+    /// same-build ABI defect corrupts another `record_state` bit.
+    #[inline(always)]
+    pub const fn accepted_timestamp(self) -> Option<MakoTimestamp> {
+        MakoTimestamp::new(self.record_state as u32)
+    }
+
+    /// Whether native claims to have initialized every byte of the target.
+    ///
+    /// This is only the raw bit-32 witness. Bytes may be read only after the
+    /// whole completion contract has also been validated by
+    /// [`Self::is_committed`] or [`Self::into_report`].
+    #[inline(always)]
+    pub const fn record_written(self) -> bool {
+        self.record_state & (1u64 << 32) != 0
+    }
+
+    /// Whether native returned the exact valid ordinary committed outcome.
+    ///
+    /// A true result proves successful visibility and cleanup, a valid accepted
+    /// Mako timestamp, the complete-record witness, and zero reserved bits.
+    #[inline(always)]
+    pub const fn is_committed(self) -> bool {
+        const PACKED_OK: u64 =
+            (sys::MAKO_LOCAL_OK as u32 as u64) | ((sys::MAKO_LOCAL_OK as u32 as u64) << 32);
+        self.terminal == PACKED_OK
+            && self.record_state >> 33 == 0
+            && self.record_written()
+            && self.accepted_timestamp().is_some()
+    }
+
+    /// Perform the general fail-closed terminal and completion-contract decode.
+    ///
+    /// A zero timestamp is a valid pre-acceptance result only for a non-OK
+    /// terminal. Once native reports an accepted timestamp, a complete witness
+    /// is mandatory and only ordinary success or a quarantined unknown outcome
+    /// is possible. Every other combination is an ABI contract violation and
+    /// decodes to an internal unknown result so a cache cannot retry or reuse an
+    /// accepted ordered slot.
+    #[cold]
+    #[inline(never)]
+    pub fn into_report(self) -> CommitRecordReport {
+        let raw_timestamp = self.record_state as u32;
+        let accepted_timestamp = self.accepted_timestamp();
+        let record_bound = accepted_timestamp.is_some();
+        let witness_claimed = self.record_written();
+        let reserved_bits_valid = self.record_state >> 33 == 0;
+        let timestamp_valid = raw_timestamp == 0 || record_bound;
+        let decoded = decode_fast_unchecked_record_commit(self.terminal);
+
+        let mut contract_valid = reserved_bits_valid
+            && timestamp_valid
+            && (!witness_claimed || record_bound)
+            && decoded.is_some();
+        if let Some((commit, _)) = decoded {
+            if record_bound {
+                // The callback-free native terminal publishes its timestamp
+                // only after the serializer completed successfully. From that
+                // point the only valid outcomes are installation success or a
+                // quarantined exception with uncertain visibility.
+                contract_valid &= witness_claimed
+                    && (commit == sys::MAKO_LOCAL_OK || commit == sys::MAKO_LOCAL_WORKER_POISONED);
+            } else {
+                // Success without acceptance would install a write that has no
+                // durable ordered record. A witness without acceptance was
+                // rejected above as well.
+                contract_valid &= !witness_claimed && commit != sys::MAKO_LOCAL_OK;
+            }
+        }
+
+        let commit = if contract_valid {
+            decoded.map_or(
+                CommitReport {
+                    disposition: CommitDisposition::Unknown(Error::Internal),
+                    cleanup: Err(Error::Internal),
+                },
+                |(commit, cleanup)| CommitReport {
+                    disposition: if commit == sys::MAKO_LOCAL_INVALID_ARGUMENT {
+                        CommitDisposition::Aborted(Error::InvalidArgument)
+                    } else {
+                        commit_disposition(commit)
+                    },
+                    cleanup: status(cleanup),
+                },
+            )
+        } else {
+            CommitReport {
+                disposition: CommitDisposition::Unknown(Error::Internal),
+                cleanup: Err(Error::Internal),
+            }
+        };
+        CommitRecordReport {
+            commit,
+            completion_contract_valid: contract_valid,
+            record_bound,
+            record_written: contract_valid && witness_claimed,
+        }
+    }
+}
+
+/// Native commit visibility together with one preselected holder's progress.
+///
+/// This is the holder-pool counterpart of [`CommitRecordReport`]. A bound
+/// holder is identified by a nonzero accepted Mako timestamp. `holder_sealed`
+/// means native transferred the complete one-Put key/value payload into that
+/// exact holder generation; it does not mean a cache record has already been
+/// encoded.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use = "an accepted holder must be published or pinned before acknowledgement"]
+pub struct CommitHolderReport {
+    /// Native commit visibility and facade cleanup outcomes.
+    pub commit: CommitReport,
+    /// Whether native's packed terminal and holder-state words form one
+    /// internally consistent result.
+    pub completion_contract_valid: bool,
+    /// Whether native accepted this exact preselected generation into Mako's
+    /// commit order.
+    pub holder_bound: bool,
+    /// Whether native sealed the complete key/value payload in the holder.
+    pub holder_sealed: bool,
+}
+
+/// Compact result from the cache-private callback-free holder terminal.
+///
+/// The low 32 bits of `holder_state` carry the accepted Mako timestamp, bit 32
+/// is the sealed-payload witness, and every higher bit is reserved. The cache
+/// inspects the compact ordinary-success predicate before paying for the full
+/// fail-closed decode.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy)]
+#[must_use = "a preselected holder outcome must be published, released, or decoded and pinned"]
+pub struct TrustedPreselectedUncheckedOnePutHolderOutcome {
+    terminal: u64,
+    holder_state: u64,
+}
+
+impl TrustedPreselectedUncheckedOnePutHolderOutcome {
+    /// Return the timestamp only for the exact ordinary success word.
+    ///
+    /// This fuses terminal, sealed-bit, reserved-bit, and nonzero-timestamp
+    /// validation so the cache's common path decodes the two-word ABI result
+    /// once. Every non-success result must use the fail-closed accessors below.
+    #[inline(always)]
+    pub const fn committed_timestamp(self) -> Option<MakoTimestamp> {
+        const PACKED_OK: u64 =
+            (sys::MAKO_LOCAL_OK as u32 as u64) | ((sys::MAKO_LOCAL_OK as u32 as u64) << 32);
+        if self.terminal == PACKED_OK && self.holder_state >> 32 == 1 {
+            MakoTimestamp::new(self.holder_state as u32)
+        } else {
+            None
+        }
+    }
+
+    /// Return native's accepted Mako timestamp, if it is nonzero and in range.
+    ///
+    /// A cache must make the exact preselected sequence visible or pin it
+    /// whenever this returns `Some`, before performing any fallible decode.
+    #[inline(always)]
+    pub const fn accepted_timestamp(self) -> Option<MakoTimestamp> {
+        MakoTimestamp::new(self.holder_state as u32)
+    }
+
+    /// Whether native claims the complete one-Put payload is sealed.
+    #[inline(always)]
+    pub const fn holder_sealed(self) -> bool {
+        self.holder_state & (1u64 << 32) != 0
+    }
+
+    /// Whether native returned the exact ordinary committed holder outcome.
+    #[inline(always)]
+    pub const fn is_committed(self) -> bool {
+        self.committed_timestamp().is_some()
+    }
+
+    /// Perform the complete anomalous/unsuccessful outcome decode.
+    ///
+    /// An accepted timestamp requires a sealed witness and permits only
+    /// ordinary success or a quarantined unknown result. Without acceptance,
+    /// success or a sealed witness would describe an uncovered visible write.
+    #[cold]
+    #[inline(never)]
+    pub fn into_report(self) -> CommitHolderReport {
+        let raw_timestamp = self.holder_state as u32;
+        let accepted_timestamp = self.accepted_timestamp();
+        let holder_bound = accepted_timestamp.is_some();
+        let sealed_claimed = self.holder_sealed();
+        let reserved_bits_valid = self.holder_state >> 33 == 0;
+        let timestamp_valid = raw_timestamp == 0 || holder_bound;
+        let decoded = decode_fast_unchecked_holder_commit(self.terminal);
+
+        let mut contract_valid = reserved_bits_valid
+            && timestamp_valid
+            && (!sealed_claimed || holder_bound)
+            && decoded.is_some();
+        if let Some((commit, _)) = decoded {
+            if holder_bound {
+                contract_valid &= sealed_claimed
+                    && (commit == sys::MAKO_LOCAL_OK || commit == sys::MAKO_LOCAL_WORKER_POISONED);
+            } else {
+                contract_valid &= !sealed_claimed && commit != sys::MAKO_LOCAL_OK;
+            }
+        }
+
+        let commit = if contract_valid {
+            decoded.map_or(
+                CommitReport {
+                    disposition: CommitDisposition::Unknown(Error::Internal),
+                    cleanup: Err(Error::Internal),
+                },
+                |(commit, cleanup)| CommitReport {
+                    disposition: holder_commit_disposition(commit),
+                    cleanup: status(cleanup),
+                },
+            )
+        } else {
+            CommitReport {
+                disposition: CommitDisposition::Unknown(Error::Internal),
+                cleanup: Err(Error::Internal),
+            }
+        };
+        CommitHolderReport {
+            commit,
+            completion_contract_valid: contract_valid,
+            holder_bound,
+            holder_sealed: contract_valid && sealed_claimed,
+        }
+    }
+}
+
+/// Fixed-capacity native storage for callback-free one-Put write-back.
+///
+/// The pool owns one holder per power-of-two queue ring position. It is safe
+/// to share the handle, but access to each holder is governed by the cache's
+/// external SPSC published/applied frontier protocol rather than an atomic in
+/// the native holder itself.
+#[doc(hidden)]
+pub struct TrustedOnePutHolderPool {
+    raw: NonNull<FastOnePutHolderPool>,
+    holder_base: NonNull<c_void>,
+    holder_mask: usize,
+    capacity: usize,
+}
+
+impl fmt::Debug for TrustedOnePutHolderPool {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TrustedOnePutHolderPool")
+            .field("capacity", &self.capacity)
+            .finish_non_exhaustive()
+    }
+}
+
+// SAFETY: the opaque pool allocation has a stable address. Its private ABI
+// requires the producer/consumer frontier happens-before protocol documented
+// on the unsafe terminal/view/release methods below; sharing the handle alone
+// reads or writes no holder payload.
+unsafe impl Send for TrustedOnePutHolderPool {}
+// SAFETY: as above.
+unsafe impl Sync for TrustedOnePutHolderPool {}
+
+impl TrustedOnePutHolderPool {
+    /// Allocate an independent holder pool for one SPSC write-back ring.
+    ///
+    /// `capacity` must be a nonzero power of two and must equal the physical
+    /// publication-ring capacity. The reserve values are cold allocation
+    /// hints; zero leaves payload allocations lazy.
+    pub fn new(capacity: usize, key_reserve_bytes: u32, value_reserve_bytes: u32) -> Result<Self> {
+        verify_abi()?;
+        if !capacity.is_power_of_two() || capacity == 0 {
+            return Err(Error::InvalidArgument);
+        }
+        if key_reserve_bytes as usize > MAX_KEY_BYTES
+            || value_reserve_bytes as usize > MAX_VALUE_BYTES
+        {
+            return Err(Error::ValueTooLarge);
+        }
+
+        let mut raw = std::ptr::null_mut();
+        // SAFETY: `raw` remains writable for this synchronous call. Native
+        // returns either one uniquely owned allocation or a null output.
+        status(unsafe {
+            fast_abi::mako_rust_fast_one_put_holder_pool_create(
+                capacity,
+                key_reserve_bytes,
+                value_reserve_bytes,
+                &mut raw,
+            )
+        })?;
+        let raw = NonNull::new(raw).ok_or(Error::Internal)?;
+        let mut holder_base = std::ptr::null_mut();
+        let mut holder_mask = 0usize;
+        // SAFETY: `raw` is the live pool allocation returned immediately
+        // above. Native returns its immutable holder-array layout and retains
+        // no output pointer.
+        let layout = status(unsafe {
+            fast_abi::mako_rust_fast_one_put_holder_pool_get_hot_layout(
+                raw.as_ptr(),
+                &mut holder_base,
+                &mut holder_mask,
+            )
+        });
+        let Some(holder_base) = NonNull::new(holder_base) else {
+            // SAFETY: no holder generation has been exposed yet.
+            let _ = unsafe { fast_abi::mako_rust_fast_one_put_holder_pool_destroy(raw.as_ptr()) };
+            return Err(layout.err().unwrap_or(Error::Internal));
+        };
+        if let Err(error) = layout {
+            // SAFETY: no holder generation has been exposed yet.
+            let _ = unsafe { fast_abi::mako_rust_fast_one_put_holder_pool_destroy(raw.as_ptr()) };
+            return Err(error);
+        }
+        if holder_mask != capacity - 1 {
+            // SAFETY: no holder generation has been exposed yet.
+            let _ = unsafe { fast_abi::mako_rust_fast_one_put_holder_pool_destroy(raw.as_ptr()) };
+            return Err(Error::Internal);
+        }
+        Ok(Self {
+            raw,
+            holder_base,
+            holder_mask,
+            capacity,
+        })
+    }
+
+    /// Number of exact generations addressable before a ring position repeats.
+    pub const fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    /// Borrow one exact sealed holder generation after queue publication.
+    ///
+    /// # Safety
+    ///
+    /// The caller must be the sole serialized consumer and must have acquired
+    /// a Rust publication frontier covering `expected_sequence`. No overlapping
+    /// view or release of this generation may exist. The returned value must
+    /// remain alive through every use of its borrowed slices.
+    pub unsafe fn get_view(
+        &self,
+        expected_sequence: NonZeroU64,
+    ) -> Result<TrustedOnePutHolderView<'_>> {
+        let mut raw = FastOnePutHolderView {
+            sequence: 0,
+            table_id: 0,
+            key: std::ptr::null(),
+            value: std::ptr::null(),
+            key_len: 0,
+            value_len: 0,
+            mako_timestamp: 0,
+            reserved: 0,
+        };
+        // SAFETY: the caller supplies the required cross-language Acquire and
+        // exact-generation ownership. `raw` is a live writable output.
+        status(unsafe {
+            fast_abi::mako_rust_fast_one_put_holder_pool_get_view(
+                self.raw.as_ptr(),
+                expected_sequence.get(),
+                &mut raw,
+            )
+        })?;
+
+        if raw.sequence != expected_sequence.get()
+            || raw.reserved != 0
+            || raw.key_len as usize > MAX_KEY_BYTES
+            || raw.value_len as usize > MAX_VALUE_BYTES
+        {
+            return Err(Error::Internal);
+        }
+        let mako_timestamp = MakoTimestamp::new(raw.mako_timestamp).ok_or(Error::Internal)?;
+        let key = checked_holder_span(raw.key, raw.key_len as usize)?;
+        let value = checked_holder_span(raw.value, raw.value_len as usize)?;
+        Ok(TrustedOnePutHolderView {
+            pool: self,
+            sequence: expected_sequence,
+            table_id: raw.table_id,
+            mako_timestamp,
+            key,
+            key_len: raw.key_len as usize,
+            value,
+            value_len: raw.value_len as usize,
+        })
+    }
+
+    /// Preferred compact spelling for [`Self::get_view`].
+    ///
+    /// # Safety
+    ///
+    /// The caller must satisfy the exact publication-Acquire, sole-consumer,
+    /// and generation-ownership requirements of [`Self::get_view`].
+    #[inline(always)]
+    pub unsafe fn view(
+        &self,
+        expected_sequence: NonZeroU64,
+    ) -> Result<TrustedOnePutHolderView<'_>> {
+        // SAFETY: delegated unchanged to this method's contract.
+        unsafe { self.get_view(expected_sequence) }
+    }
+
+    /// Release an exact borrowed generation after backend retirement.
+    ///
+    /// Consuming `view` ensures its safe slice accessors cannot be used after
+    /// native makes this ring position reusable.
+    ///
+    /// # Safety
+    ///
+    /// Every backend use of the view's key/value must be complete. The caller
+    /// must publish the matching applied frontier with Release only after this
+    /// function succeeds.
+    pub unsafe fn release(&self, view: TrustedOnePutHolderView<'_>) -> Result<()> {
+        if !std::ptr::eq(self, view.pool) {
+            return Err(Error::InvalidArgument);
+        }
+        let sequence = view.sequence;
+        // SAFETY: the caller supplies backend retirement and sole-consumer
+        // ownership; native validates the exact sequence generation again.
+        status(unsafe {
+            fast_abi::mako_rust_fast_one_put_holder_pool_release(self.raw.as_ptr(), sequence.get())
+        })
+    }
+}
+
+impl Drop for TrustedOnePutHolderPool {
+    fn drop(&mut self) {
+        // SAFETY: this is the unique allocation returned by create. Native
+        // refuses to destroy a pool containing any non-free (PREPARED or
+        // SEALED) generation. In that fail-stop/crash-simulation case ignoring
+        // BUSY intentionally leaks the allocation rather than invalidating
+        // queued raw spans.
+        let _ = unsafe { fast_abi::mako_rust_fast_one_put_holder_pool_destroy(self.raw.as_ptr()) };
+    }
+}
+
+/// Stable, same-build control block for the fused one-Put SPSC terminal.
+///
+/// This is deliberately a capability rather than a general public queue ABI.
+/// It snapshots immutable queue configuration and process-stable addresses so
+/// the ordinary terminal does not repeatedly assemble or copy them.
+#[doc(hidden)]
+pub struct TrustedSpscOnePutHolderControl {
+    raw: FastSpscHolderControl,
+}
+
+impl fmt::Debug for TrustedSpscOnePutHolderControl {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TrustedSpscOnePutHolderControl")
+            .field("capacity", &self.raw.capacity)
+            .field("max_record_bytes", &self.raw.max_record_bytes)
+            .finish_non_exhaustive()
+    }
+}
+
+// SAFETY: moving or sharing the control performs no foreign access. Its
+// non-atomic cold scratch is touched only by unsafe terminal calls whose
+// contract requires unique-producer serialization through the complete cold
+// decode. The pointer lifetimes and atomic orders are documented on `new` and
+// the fused terminal.
+unsafe impl Send for TrustedSpscOnePutHolderControl {}
+// SAFETY: as above.
+unsafe impl Sync for TrustedSpscOnePutHolderControl {}
+
+impl TrustedSpscOnePutHolderControl {
+    /// Snapshot stable queue-global inputs for the private fused terminal.
+    ///
+    /// # Safety
+    ///
+    /// `pool`, `acknowledged`, and `unhealthy` must remain live and at stable
+    /// addresses until the last terminal call using this value returns.
+    /// `acknowledged` must point at naturally aligned `AtomicU64` storage and
+    /// `unhealthy` at `AtomicBool` storage. Native Relaxed-loads and
+    /// Release-stores `acknowledged`, Acquire-loads `unhealthy`, and
+    /// plain-writes this control's `cold_out` scratch before returning either
+    /// consumed cold code. No terminal call or cold decode using this control
+    /// may overlap another terminal call using it.
+    /// `capacity` must describe the same SPSC queue and must not exceed the
+    /// holder pool's physical capacity. The caller must externally guarantee
+    /// that only its unique producer invokes a fused terminal at a time.
+    #[doc(hidden)]
+    pub unsafe fn new(
+        pool: &TrustedOnePutHolderPool,
+        acknowledged: *mut u64,
+        unhealthy: *const u8,
+        capacity: NonZeroU64,
+        max_record_bytes: NonZeroU32,
+    ) -> Self {
+        debug_assert!(!acknowledged.is_null());
+        debug_assert!(!unhealthy.is_null());
+        debug_assert!(capacity.get() <= pool.capacity as u64);
+        Self {
+            raw: FastSpscHolderControl {
+                pool: pool.raw.as_ptr(),
+                holder_base: pool.holder_base.as_ptr(),
+                holder_mask: pool.holder_mask,
+                acknowledged,
+                unhealthy,
+                capacity: capacity.get(),
+                max_record_bytes: max_record_bytes.get(),
+                reserved: 0,
+                cold_out: UnsafeCell::new(FastPreselectedRecordResult {
+                    terminal: 0,
+                    record_state: 0,
+                }),
+            },
+        }
+    }
+
+    /// Return the maximum representable record extent supplied to native.
+    ///
+    /// This diagnostic accessor is primarily for same-build boundary tests;
+    /// fused candidates themselves are always `u32` extents.
+    #[doc(hidden)]
+    pub const fn max_record_bytes(&self) -> u32 {
+        self.raw.max_record_bytes
+    }
+}
+
+/// Ownership result of one attempt at the fused one-Put SPSC terminal.
+///
+/// Only the two `Untouched` variants retain the native transaction. Every
+/// other variant means native consumed it, including malformed same-build ABI
+/// results; this distinction prevents a later Rust Drop from touching a freed
+/// native facade.
+#[doc(hidden)]
+#[derive(Debug)]
+#[must_use = "the fused terminal result owns transaction and queue progress"]
+pub enum TrustedFusedOnePutHolderAttempt {
+    /// Native committed and Release-published ACK as the canonical tail.
+    Published,
+    /// The transaction is still active and needs the general commit path.
+    UntouchedGeneral,
+    /// The transaction is active, but the queue needs a cold capacity refresh.
+    UntouchedSlow {
+        /// Exact unchecked-v4 record extent rederived by native.
+        exact_record_bytes: NonZeroU32,
+    },
+    /// Native committed behind a fail-stop barrier; Rust advanced the local cursor.
+    CommittedUnpublished {
+        /// Accepted Mako serialization timestamp.
+        timestamp: MakoTimestamp,
+        /// Exact unchecked-v4 record extent retained for cold pinning.
+        exact_record_bytes: NonZeroU32,
+    },
+    /// Native consumed the transaction with a non-ordinary terminal outcome.
+    ConsumedOutcome {
+        /// Full compact terminal result for fail-closed cold decoding.
+        outcome: TrustedPreselectedUncheckedOnePutHolderOutcome,
+        /// Exact unchecked-v4 record extent retained for possible pinning.
+        exact_record_bytes: NonZeroU32,
+    },
+    /// An explicit untouched result had malformed metadata; the handle is live.
+    UntouchedMalformed,
+    /// Any malformed non-untouched result; the handle is conservatively consumed.
+    ConsumedMalformed,
+}
+
+/// Exact-generation borrowed view of one sealed native one-Put holder.
+///
+/// Slice borrows are tied to this value. Releasing the generation consumes the
+/// view, so safe Rust cannot use a slice after the matching native release.
+#[doc(hidden)]
+pub struct TrustedOnePutHolderView<'pool> {
+    pool: &'pool TrustedOnePutHolderPool,
+    sequence: NonZeroU64,
+    table_id: u64,
+    mako_timestamp: MakoTimestamp,
+    key: NonNull<u8>,
+    key_len: usize,
+    value: NonNull<u8>,
+    value_len: usize,
+}
+
+impl fmt::Debug for TrustedOnePutHolderView<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TrustedOnePutHolderView")
+            .field("sequence", &self.sequence)
+            .field("table_id", &self.table_id)
+            .field("mako_timestamp", &self.mako_timestamp)
+            .field("key_len", &self.key_len)
+            .field("value_len", &self.value_len)
+            .finish_non_exhaustive()
+    }
+}
+
+impl TrustedOnePutHolderView<'_> {
+    /// Exact dense sequence naming this holder generation.
+    pub const fn sequence(&self) -> NonZeroU64 {
+        self.sequence
+    }
+
+    /// Stable logical table identifier captured by native.
+    pub const fn table_id(&self) -> u64 {
+        self.table_id
+    }
+
+    /// Mako timestamp accepted for this transaction.
+    pub const fn mako_timestamp(&self) -> MakoTimestamp {
+        self.mako_timestamp
+    }
+
+    /// Raw application key, borrowed until this view is released or dropped.
+    pub fn key(&self) -> &[u8] {
+        // SAFETY: `get_view` validated the pointer/length pair, and the exact
+        // holder remains sealed for this view's complete lifetime.
+        unsafe { std::slice::from_raw_parts(self.key.as_ptr(), self.key_len) }
+    }
+
+    /// Raw application value without STO's private encoded-value trailer.
+    pub fn value(&self) -> &[u8] {
+        // SAFETY: same exact-generation borrow as `key`.
+        unsafe { std::slice::from_raw_parts(self.value.as_ptr(), self.value_len) }
+    }
+
+    /// Release this generation after its backend batch has succeeded.
+    ///
+    /// # Safety
+    ///
+    /// Every backend use of [`Self::key`] and [`Self::value`] must be complete.
+    /// The caller must publish the corresponding applied frontier with Release
+    /// only after this function returns successfully.
+    pub unsafe fn release_after_backend(self) -> Result<()> {
+        let pool = self.pool;
+        // SAFETY: delegated unchanged to this method's contract. Consuming
+        // `self` prevents safe slice access after the release boundary.
+        unsafe { pool.release(self) }
+    }
+}
+
+fn checked_holder_span(pointer: *const u8, len: usize) -> Result<NonNull<u8>> {
+    match NonNull::new(pointer.cast_mut()) {
+        Some(pointer) => Ok(pointer),
+        None if len == 0 => Ok(NonNull::dangling()),
+        None => Err(Error::Internal),
+    }
+}
+
+/// Raw writable storage for the allocation-free native record terminal.
+///
+/// This is a build-private optimization seam. It deliberately carries no Rust
+/// lifetime: native writes the record after the binding callback returns, while
+/// the same synchronous terminal call is still active. Callers must therefore
+/// uphold the lifetime and aliasing contract of [`Self::from_raw_parts`].
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy)]
+pub struct CommitRecordTarget {
+    sequence: NonZeroU64,
+    bytes: NonNull<u8>,
+    exact_record_bytes: usize,
+}
+
+impl CommitRecordTarget {
+    /// Describe storage into which native may initialize one complete record.
+    ///
+    /// # Safety
+    ///
+    /// `bytes` must remain allocated, stable, and exclusively writable for
+    /// `exact_record_bytes` bytes until the synchronous record terminal that
+    /// receives this target returns. This includes
+    /// [`Transaction::commit_report_with_record_target`],
+    /// [`Transaction::commit_report_with_unchecked_one_put_record_target`], and
+    /// [`Transaction::commit_trusted_unchecked_one_put_record_target`], as well
+    /// as the callback-free preselected terminal. The storage may be
+    /// uninitialized on entry, and any callback that returns this target must
+    /// not unwind.
+    ///
+    /// For a terminal returning [`CommitRecordReport`], the storage must not be
+    /// read as initialized unless its completion contract is valid and
+    /// `record_written` is true. For the trusted fused terminal, an
+    /// [`TrustedUncheckedOnePutRecordOutcome::is_committed`] result of `true`
+    /// provides that witness. Otherwise the caller must first use
+    /// [`TrustedUncheckedOnePutRecordOutcome::into_report`] and apply the same
+    /// valid-contract plus `record_written` rule.
+    pub unsafe fn from_raw_parts(
+        sequence: NonZeroU64,
+        bytes: NonNull<u8>,
+        exact_record_bytes: usize,
+    ) -> Self {
+        Self {
+            sequence,
+            bytes,
+            exact_record_bytes,
+        }
+    }
+}
+
 /// Maximum table-name length accepted by the draft ABI.
 pub const MAX_TABLE_NAME_BYTES: usize = sys::MAKO_LOCAL_MAX_TABLE_NAME_BYTES as usize;
 /// Maximum key length accepted by the draft ABI.
@@ -571,6 +1523,8 @@ pub const MAX_KEY_BYTES: usize = sys::MAKO_LOCAL_MAX_KEY_BYTES as usize;
 pub const MAX_VALUE_BYTES: usize = sys::MAKO_LOCAL_MAX_VALUE_BYTES as usize;
 /// Weighted native item budget for one draft transaction.
 pub const TRANSACTION_ITEM_BUDGET: usize = sys::MAKO_LOCAL_TXN_ITEM_BUDGET as usize;
+
+const UNCHECKED_ONE_PUT_RECORD_OVERHEAD_BYTES: usize = 26 + 17;
 /// Maximum number of OS workers that may attach to STO in one process.
 ///
 /// Worker identifiers are process-lifetime resources and are not recycled.
@@ -899,15 +1853,26 @@ fn known_status(status: sys::KnownStatus) -> Result<()> {
 }
 
 #[inline]
-fn decode_fast_put(packed: u64) -> Option<(i32, bool)> {
+fn decode_fast_put(
+    packed: u64,
+    expected_unchecked_record_bytes: usize,
+) -> Option<(i32, bool, Option<NonZeroU32>)> {
     let status = packed as u32 as i32;
     let created = packed & (1_u64 << 32) != 0;
-    // Bits above the documented created flag are reserved. Native must not
-    // claim creation for an operation it also reports as failed.
-    if packed >> 33 != 0 || (status != sys::MAKO_LOCAL_OK && created) {
+    let raw_record_bytes = u32::try_from(packed >> 33).ok()?;
+    let record_bytes = NonZeroU32::new(raw_record_bytes);
+    // Native must not claim creation or a usable direct-write candidate for a
+    // failed operation. A nonzero candidate must exactly match the key/value
+    // lengths Rust supplied to this same synchronous call.
+    if status != sys::MAKO_LOCAL_OK && (created || record_bytes.is_some()) {
         return None;
     }
-    Some((status, created))
+    if let Some(record_bytes) = record_bytes {
+        if usize::try_from(record_bytes.get()).ok()? != expected_unchecked_record_bytes {
+            return None;
+        }
+    }
+    Some((status, created, record_bytes))
 }
 
 #[inline]
@@ -924,6 +1889,53 @@ fn decode_fast_commit(packed: u64) -> Option<(i32, i32)> {
     let quarantined =
         commit == sys::MAKO_LOCAL_WORKER_POISONED && cleanup == sys::MAKO_LOCAL_WORKER_POISONED;
     (definite_terminal || quarantined).then_some((commit, cleanup))
+}
+
+#[inline]
+fn decode_fast_unchecked_record_commit(packed: u64) -> Option<(i32, i32)> {
+    let commit = packed as u32 as i32;
+    let cleanup = (packed >> 32) as u32 as i32;
+    if commit == sys::MAKO_LOCAL_INVALID_ARGUMENT && cleanup == sys::MAKO_LOCAL_OK {
+        // The fused terminal revalidates its borrowed direct-write witness and
+        // exact size natively. A mismatch is a documented definite abort even
+        // if Rust's conservative mirror still held a candidate.
+        Some((commit, cleanup))
+    } else {
+        decode_fast_commit(packed)
+    }
+}
+
+#[inline]
+fn decode_fast_unchecked_holder_commit(packed: u64) -> Option<(i32, i32)> {
+    let commit = packed as u32 as i32;
+    let cleanup = (packed >> 32) as u32 as i32;
+    if matches!(
+        commit,
+        sys::MAKO_LOCAL_INVALID_ARGUMENT | sys::MAKO_LOCAL_OUT_OF_MEMORY | sys::MAKO_LOCAL_INTERNAL
+    ) && cleanup == sys::MAKO_LOCAL_OK
+    {
+        // Holder shape/generation rejection and long-key preparation happen
+        // before native marks the holder PREPARED or enters commit. The native
+        // helper completes abort cleanup before returning these statuses, so
+        // they are definite pre-acceptance aborts rather than unknown writes.
+        Some((commit, cleanup))
+    } else {
+        decode_fast_commit(packed)
+    }
+}
+
+fn holder_commit_disposition(code: i32) -> CommitDisposition {
+    if matches!(
+        code,
+        sys::MAKO_LOCAL_INVALID_ARGUMENT | sys::MAKO_LOCAL_OUT_OF_MEMORY | sys::MAKO_LOCAL_INTERNAL
+    ) {
+        let error = sys::KnownStatus::from_code(code)
+            .and_then(|status| known_status(status).err())
+            .unwrap_or(Error::UnknownStatus(code));
+        CommitDisposition::Aborted(error)
+    } else {
+        commit_disposition(code)
+    }
 }
 
 #[inline]
@@ -1062,6 +2074,12 @@ fn ensure_current_thread_attached() -> Result<()> {
 /// releases the facade handles after all safe Rust borrows have ended.
 pub struct LocalDb {
     raw: NonNull<sys::mako_local_db>,
+    // Cache the single build-private table binding used by mako-cache. Native
+    // owns this handle until `raw` is closed, and every load is converted back
+    // into a borrow tied to `self`; the atomic keeps ordinary LocalDb sharing
+    // unchanged while removing table-name construction and the native table
+    // map mutex from every transaction begin.
+    trusted_table: AtomicPtr<sys::mako_local_table>,
 }
 
 /// Options for opening a local database facade.
@@ -1098,7 +2116,10 @@ impl LocalDb {
         // call, and the returned handle is checked before use.
         status(unsafe { abi::mako_local_db_open_with_options(&raw_options, &mut raw) })?;
         let raw = NonNull::new(raw).ok_or(Error::Internal)?;
-        Ok(Self { raw })
+        Ok(Self {
+            raw,
+            trusted_table: AtomicPtr::new(std::ptr::null_mut()),
+        })
     }
 
     /// Find or create a table with a stable numeric identifier.
@@ -1144,6 +2165,7 @@ impl LocalDb {
             active: true,
             fast_bound_table: None,
             record_preflight: None,
+            unchecked_one_put_record_bytes: None,
             _db: PhantomData,
             _thread_affine: PhantomData,
         })
@@ -1187,9 +2209,49 @@ impl LocalDb {
             active: true,
             fast_bound_table: Some(bound_table.raw),
             record_preflight: None,
+            unchecked_one_put_record_bytes: None,
             _db: PhantomData,
             _thread_affine: PhantomData,
         })
+    }
+
+    /// Bind the one table used by the build-private cache transaction path.
+    ///
+    /// Repeating this call for the same native table is harmless. Attempting
+    /// to replace it with a different table fails, keeping later lock-free
+    /// loads unambiguous. The ordinary public multi-table API is unaffected.
+    #[doc(hidden)]
+    pub fn bind_trusted_table(&self, name: impl AsRef<[u8]>, table_id: u64) -> Result<()> {
+        let table = self.open_table(name, table_id)?;
+        let raw = table.raw.as_ptr();
+        match self.trusted_table.compare_exchange(
+            std::ptr::null_mut(),
+            raw,
+            Ordering::Release,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => Ok(()),
+            Err(existing) if existing == raw => Ok(()),
+            Err(_) => Err(Error::WrongDatabaseOrTable),
+        }
+    }
+
+    /// Begin on the table previously installed by [`Self::bind_trusted_table`].
+    ///
+    /// The returned table and transaction both borrow this database. The
+    /// native table pointer is process-stable until the database facade is
+    /// closed, so the common path is one atomic load plus the existing trusted
+    /// transaction begin instead of a table-map lookup and mutex acquisition.
+    #[doc(hidden)]
+    pub fn trusted_bound_transaction<'db>(&'db self) -> Result<(Table<'db>, Transaction<'db>)> {
+        let raw = NonNull::new(self.trusted_table.load(Ordering::Acquire))
+            .ok_or(Error::FeatureUnavailable)?;
+        let table = Table {
+            raw,
+            _db: PhantomData,
+        };
+        let transaction = self.trusted_transaction(&table)?;
+        Ok((table, transaction))
     }
 
     /// Explicitly close and consume this database facade.
@@ -1299,6 +2361,10 @@ pub struct Transaction<'db> {
     // is retained so storage sized for another transaction cannot be supplied
     // to the consuming serialization terminal.
     record_preflight: Option<CommitRecordPreflight>,
+    // Exact unchecked-v4 extent advertised by the latest private fast Put.
+    // Native returns it only while a direct one-Put canonical witness remains
+    // usable; every other operation clears this conservative Rust mirror.
+    unchecked_one_put_record_bytes: Option<NonZeroU32>,
     _db: PhantomData<&'db LocalDb>,
     _thread_affine: PhantomData<Rc<()>>,
 }
@@ -1667,6 +2733,7 @@ impl<'db> Transaction<'db> {
         lower: &[u8],
         upper: Option<&[u8]>,
     ) -> Result<Scan<'txn, 'db>> {
+        self.unchecked_one_put_record_bytes = None;
         Scan::new(self, *table, ScanDirection::Forward, lower, upper)
     }
 
@@ -1680,12 +2747,14 @@ impl<'db> Transaction<'db> {
         lower: &[u8],
         upper: Option<&[u8]>,
     ) -> Result<Scan<'txn, 'db>> {
+        self.unchecked_one_put_record_bytes = None;
         Scan::new(self, *table, ScanDirection::Reverse, lower, upper)
     }
 
     /// Read a key, returning owned bytes. Missing and present-empty are
     /// distinct (`None` versus `Some(Vec::new())`).
     pub fn get(&mut self, table: &Table<'db>, key: &[u8]) -> Result<Option<Vec<u8>>> {
+        self.unchecked_one_put_record_bytes = None;
         let mut bytes = std::ptr::null_mut();
         let mut len = 0usize;
         let mut found = 0u8;
@@ -1733,9 +2802,14 @@ impl<'db> Transaction<'db> {
     pub fn put(&mut self, table: &Table<'db>, key: &[u8], value: &[u8]) -> Result<bool> {
         let raw = self.active_raw()?;
         if self.fast_bound_table == Some(table.raw) {
+            self.unchecked_one_put_record_bytes = None;
             if key.len() > MAX_KEY_BYTES || value.len() > MAX_VALUE_BYTES {
                 return Err(Error::ValueTooLarge);
             }
+            let expected_unchecked_record_bytes = UNCHECKED_ONE_PUT_RECORD_OVERHEAD_BYTES
+                .checked_add(key.len())
+                .and_then(|bytes| bytes.checked_add(value.len()))
+                .ok_or(Error::Internal)?;
             // SAFETY: the safe Rust transaction/table borrows prove the
             // thread, database, table, and slice-lifetime invariants that this
             // build-private entry intentionally omits. The representation
@@ -1749,13 +2823,17 @@ impl<'db> Transaction<'db> {
                     value.len() as u32,
                 )
             };
-            let Some((code, created)) = decode_fast_put(packed) else {
+            let Some((code, created, unchecked_record_bytes)) =
+                decode_fast_put(packed, expected_unchecked_record_bytes)
+            else {
                 return self.fail_closed(Error::Internal);
             };
+            self.unchecked_one_put_record_bytes = unchecked_record_bytes;
             self.operation_status(code)?;
             return Ok(created);
         }
 
+        self.unchecked_one_put_record_bytes = None;
         let mut created = 0u8;
         // SAFETY: input slices live through the call. C++ copies/encodes the
         // value into transaction-owned stable storage before returning.
@@ -1780,6 +2858,7 @@ impl<'db> Transaction<'db> {
     /// Insert only when absent in the transaction's current view, returning
     /// whether insertion was staged.
     pub fn insert(&mut self, table: &Table<'db>, key: &[u8], value: &[u8]) -> Result<bool> {
+        self.unchecked_one_put_record_bytes = None;
         let mut inserted = 0u8;
         // SAFETY: same ownership contract as put.
         let code = unsafe {
@@ -1803,6 +2882,7 @@ impl<'db> Transaction<'db> {
     /// Remove a key, returning whether a live value existed in the
     /// transaction's current view.
     pub fn remove(&mut self, table: &Table<'db>, key: &[u8]) -> Result<bool> {
+        self.unchecked_one_put_record_bytes = None;
         let mut existed = 0u8;
         // SAFETY: key slice lives through the call and existed is writable.
         let code = unsafe {
@@ -1821,6 +2901,60 @@ impl<'db> Transaction<'db> {
         Ok(existed != 0)
     }
 
+    /// Return the exact direct one-Put unchecked-v4 record candidate.
+    ///
+    /// Unlike [`Self::commit_record_preflight_with_checksum`], this performs
+    /// no ABI call and does not seal native state. It is available only when
+    /// the latest operation was the transaction's first trusted fast Put and
+    /// no later read or mutation retired its direct canonical witness. The
+    /// caller may reserve this exact extent before write locking, but must
+    /// perform no further transaction operation before consuming `self` with
+    /// [`Self::commit_report_with_unchecked_one_put_record_target`]. Native
+    /// revalidates the candidate fail-closed at that terminal boundary.
+    #[doc(hidden)]
+    pub fn unchecked_one_put_record_candidate(&self) -> Option<CommitRecordPreflight> {
+        if !self.active
+            || self.raw.is_none()
+            || self.fast_bound_table.is_none()
+            || self.record_preflight.is_some()
+        {
+            return None;
+        }
+        self.unchecked_one_put_record_bytes
+            .map(|exact_record_bytes| CommitRecordPreflight {
+                exact_record_bytes: exact_record_bytes.get() as usize,
+                op_count: 1,
+                checksum: CommitRecordChecksum::None,
+            })
+    }
+
+    /// Return only the compact unchecked-v4 extent for the cache-private
+    /// single-producer fast path.
+    ///
+    /// This deliberately omits the redundant facade-state checks and
+    /// [`CommitRecordPreflight`] construction performed by
+    /// [`Self::unchecked_one_put_record_candidate`]. Native revalidates the
+    /// complete one-Put witness at the consuming terminal. Keeping this as an
+    /// unsafe, build-private primitive lets a caller which already owns the
+    /// active transaction protocol avoid materializing a three-field plan on
+    /// every acknowledgement.
+    ///
+    /// # Safety
+    ///
+    /// The caller must own an active trusted-bound transaction and must not
+    /// perform another transaction operation between this accessor and the
+    /// matching consuming terminal. `None` must select the general preflight
+    /// path rather than an unchecked terminal.
+    #[doc(hidden)]
+    #[inline(always)]
+    pub unsafe fn trusted_unchecked_one_put_record_bytes_candidate(&self) -> Option<NonZeroU32> {
+        debug_assert!(self.active);
+        debug_assert!(self.raw.is_some());
+        debug_assert!(self.fast_bound_table.is_some());
+        debug_assert!(self.record_preflight.is_none());
+        self.unchecked_one_put_record_bytes
+    }
+
     /// Seal and size native's canonical cache commit record.
     ///
     /// This private cache integration is available only on a transaction from
@@ -1836,7 +2970,24 @@ impl<'db> Transaction<'db> {
         &mut self,
         max_record_bytes: usize,
     ) -> Result<CommitRecordPreflight> {
+        self.commit_record_preflight_with_checksum(max_record_bytes, CommitRecordChecksum::Crc32c)
+    }
+
+    /// Seal and size native's canonical cache record in an explicit integrity
+    /// mode.
+    ///
+    /// This has the same one-shot and fail-closed contract as
+    /// [`Self::commit_record_preflight`]. CRC32C is the safe default; selecting
+    /// [`CommitRecordChecksum::None`] produces a self-describing unchecked v4
+    /// record and deliberately gives up payload-corruption detection.
+    #[doc(hidden)]
+    pub fn commit_record_preflight_with_checksum(
+        &mut self,
+        max_record_bytes: usize,
+        checksum: CommitRecordChecksum,
+    ) -> Result<CommitRecordPreflight> {
         let raw = self.active_raw()?;
+        self.unchecked_one_put_record_bytes = None;
         if self.fast_bound_table.is_none() {
             return Err(Error::FeatureUnavailable);
         }
@@ -1849,9 +3000,10 @@ impl<'db> Transaction<'db> {
         // SAFETY: this is a live trusted transaction. Both initialized output
         // scalars remain writable for the synchronous private ABI call.
         let code = unsafe {
-            fast_abi::mako_rust_fast_txn_record_preflight(
+            fast_abi::mako_rust_fast_txn_record_preflight_with_checksum(
                 raw,
                 max_record_bytes,
+                checksum as u32,
                 &mut exact_record_bytes,
                 &mut op_count,
             )
@@ -1871,6 +3023,7 @@ impl<'db> Transaction<'db> {
         let preflight = CommitRecordPreflight {
             exact_record_bytes,
             op_count,
+            checksum,
         };
         self.record_preflight = Some(preflight);
         Ok(preflight)
@@ -2070,6 +3223,810 @@ impl<'db> Transaction<'db> {
         }
     }
 
+    /// Commit while native serializes directly into caller-managed storage.
+    ///
+    /// This is the allocation-free counterpart of
+    /// [`Self::commit_report_with_record`]. It keeps the same native ordering
+    /// and completion-witness protocol, but the post-validation callback
+    /// supplies the final storage together with the dense cache sequence. This
+    /// lets a durability adapter bind a preallocated queue buffer without
+    /// allocating a separate [`UninitCommitRecord`] on every transaction.
+    ///
+    /// # Safety
+    ///
+    /// Every target returned by `acquire` must satisfy the safety contract of
+    /// [`CommitRecordTarget::from_raw_parts`]. In particular, its allocation
+    /// must remain stable and exclusively writable until this method returns,
+    /// even though `acquire` itself has already returned. `acquire` must not
+    /// panic or otherwise unwind. The target bytes remain uninitialized unless
+    /// the returned report has both a valid completion contract and
+    /// `record_written == true`.
+    #[doc(hidden)]
+    pub unsafe fn commit_report_with_record_target<F>(mut self, acquire: F) -> CommitRecordReport
+    where
+        F: FnOnce(MakoTimestamp, CommitRecordPreflight) -> Option<CommitRecordTarget>,
+    {
+        let Some(preflight) = self.record_preflight else {
+            return self.reject_record_commit(Error::InvalidArgument);
+        };
+        if self.fast_bound_table.is_none() || preflight.is_empty() {
+            return self.reject_record_commit(Error::InvalidArgument);
+        }
+
+        let raw = self
+            .raw
+            .take()
+            .expect("transaction handle already consumed");
+        if !self.active {
+            self.raw = Some(raw);
+            let commit = self.finish_commit(None, std::ptr::null_mut());
+            return CommitRecordReport {
+                commit,
+                completion_contract_valid: true,
+                record_bound: false,
+                record_written: false,
+            };
+        }
+        self.active = false;
+
+        let mut state = RecordTargetBindHook {
+            hook: Some(acquire),
+            preflight,
+            bound: false,
+        };
+        let mut record_written = 0u8;
+        // SAFETY: the transaction is active and consumed on every outcome.
+        // The method's contract makes the callback and any returned storage
+        // live, stable, exclusively writable, and non-unwinding through this
+        // complete synchronous call.
+        let packed = unsafe {
+            fast_abi::mako_rust_fast_txn_commit_record_and_destroy(
+                raw.as_ptr(),
+                Some(record_target_bind_trampoline::<F>),
+                std::ptr::from_mut(&mut state).cast::<c_void>(),
+                &mut record_written,
+            )
+        };
+
+        let record_bound = state.bound;
+        let witness_claimed = record_written == 1;
+        let mut contract_valid = record_written <= 1 && (!witness_claimed || record_bound);
+        let decoded = decode_fast_commit(packed);
+        if decoded.is_none() {
+            contract_valid = false;
+        }
+        if let Some((commit, _)) = decoded {
+            if commit == sys::MAKO_LOCAL_OK && !witness_claimed {
+                contract_valid = false;
+            }
+            if record_bound
+                && !witness_claimed
+                && commit != sys::MAKO_LOCAL_COMMIT_HOOK_REJECTED
+                && commit != sys::MAKO_LOCAL_WORKER_POISONED
+            {
+                contract_valid = false;
+            }
+        }
+        let commit = if contract_valid {
+            decoded.map_or(
+                CommitReport {
+                    disposition: CommitDisposition::Unknown(Error::Internal),
+                    cleanup: Err(Error::Internal),
+                },
+                |(commit, cleanup)| CommitReport {
+                    disposition: commit_disposition(commit),
+                    cleanup: status(cleanup),
+                },
+            )
+        } else {
+            CommitReport {
+                disposition: CommitDisposition::Unknown(Error::Internal),
+                cleanup: Err(Error::Internal),
+            }
+        };
+        CommitRecordReport {
+            commit,
+            completion_contract_valid: contract_valid,
+            record_bound,
+            record_written: contract_valid && witness_claimed,
+        }
+    }
+
+    /// Commit a direct one-Put transaction without a separate preflight call.
+    ///
+    /// `candidate` must be the value returned by
+    /// [`Self::unchecked_one_put_record_candidate`] after the final operation.
+    /// Native rederives that exact one-Put shape before acquiring write locks,
+    /// seals it as an unchecked-v4 record, and otherwise uses the same ordered
+    /// post-validation binding and serialization-before-install protocol as
+    /// [`Self::commit_report_with_record_target`]. A stale candidate, later
+    /// operation, or native shape mismatch definitely aborts without invoking
+    /// `acquire`.
+    ///
+    /// # Safety
+    ///
+    /// Before entering this method, the caller must have reserved capacity for
+    /// exactly `candidate.exact_record_bytes()` without holding any native
+    /// write lock. Every target returned by `acquire` must satisfy
+    /// [`CommitRecordTarget::from_raw_parts`], remain stable and exclusively
+    /// writable through this synchronous call, and must not alias the
+    /// transaction's key/value storage. Its extent must equal
+    /// `candidate.exact_record_bytes()`. `acquire` must not unwind.
+    ///
+    /// This fused build-private terminal trusts native to pass its validated
+    /// non-null callback context, outputs, timestamp, and exact candidate size
+    /// directly to the callback. The dedicated callback deliberately does not
+    /// repeat those generic-boundary checks. Returning `None` remains a
+    /// fail-closed preinstall rejection.
+    #[doc(hidden)]
+    pub unsafe fn commit_report_with_unchecked_one_put_record_target<F>(
+        self,
+        candidate: CommitRecordPreflight,
+        acquire: F,
+    ) -> CommitRecordReport
+    where
+        F: FnOnce(MakoTimestamp, CommitRecordPreflight) -> Option<CommitRecordTarget>,
+    {
+        let expected_record_bytes = u32::try_from(candidate.exact_record_bytes)
+            .ok()
+            .and_then(NonZeroU32::new);
+        if self.fast_bound_table.is_none()
+            || self.record_preflight.is_some()
+            || candidate.is_empty()
+            || candidate.op_count != 1
+            || candidate.checksum != CommitRecordChecksum::None
+            || expected_record_bytes != self.unchecked_one_put_record_bytes
+        {
+            return self.reject_record_commit(Error::InvalidArgument);
+        }
+        let expected_record_bytes = expected_record_bytes
+            .expect("validated unchecked one-put record size fits u32")
+            .get();
+
+        if !self.active {
+            let commit = self.finish_commit(None, std::ptr::null_mut());
+            return CommitRecordReport {
+                commit,
+                completion_contract_valid: true,
+                record_bound: false,
+                record_written: false,
+            };
+        }
+        debug_assert_eq!(expected_record_bytes as usize, candidate.exact_record_bytes);
+        // SAFETY: every trusted precondition below was checked above, and this
+        // method carries the same callback/storage contract.
+        unsafe {
+            self.commit_trusted_unchecked_one_put_record_target(candidate, acquire)
+                .into_report()
+        }
+    }
+
+    /// Commit the cache's already-verified direct one-Put candidate.
+    ///
+    /// This is the success-biased counterpart of
+    /// [`Self::commit_report_with_unchecked_one_put_record_target`]. It returns
+    /// native's compact terminal state without eagerly decoding a
+    /// [`CommitRecordReport`]. Native still independently rederives the direct
+    /// one-Put shape and definitely aborts before invoking `acquire` if that
+    /// witness is stale.
+    ///
+    /// # Safety
+    ///
+    /// `self` must be an active trusted-bound transaction, and `candidate`
+    /// must be the exact current result of
+    /// [`Self::unchecked_one_put_record_candidate`] after the final operation.
+    /// The caller must have reserved exactly its advertised nonzero extent
+    /// before entering native commit. Every target returned by `acquire` must
+    /// have that same extent, satisfy [`CommitRecordTarget::from_raw_parts`],
+    /// remain stable and exclusively writable for the synchronous call, not
+    /// alias transaction key/value storage, and the callback must not unwind.
+    /// A false [`TrustedUncheckedOnePutRecordOutcome::is_committed`] result
+    /// must be converted with
+    /// [`TrustedUncheckedOnePutRecordOutcome::into_report`] and handled with
+    /// the general fail-closed outcome protocol.
+    ///
+    /// The hidden fused ABI must come from the exact source/configuration
+    /// fingerprint expected by this crate. In release builds its dedicated
+    /// callback intentionally trusts native's validated non-null pointers,
+    /// timestamp, extent, and single-invocation guarantee instead of repeating
+    /// those checks; linking a merely layout-compatible implementation does
+    /// not satisfy this safety contract.
+    #[doc(hidden)]
+    pub unsafe fn commit_trusted_unchecked_one_put_record_target<F>(
+        self,
+        candidate: CommitRecordPreflight,
+        acquire: F,
+    ) -> TrustedUncheckedOnePutRecordOutcome
+    where
+        F: FnOnce(MakoTimestamp, CommitRecordPreflight) -> Option<CommitRecordTarget>,
+    {
+        // SAFETY: this public method's contract is exactly the common helper's
+        // target/lifetime contract; the ordinary spelling retains the native
+        // database-wide validation ticket.
+        unsafe {
+            self.commit_trusted_unchecked_one_put_record_target_impl::<false, F>(candidate, acquire)
+        }
+    }
+
+    /// Commit one verified one-Put candidate under external single-producer
+    /// exclusion.
+    ///
+    /// This has the same outcome and target contract as
+    /// [`Self::commit_trusted_unchecked_one_put_record_target`], but calls the
+    /// private native terminal which omits the database validation-ticket RMW.
+    /// Silo still locks the write set, allocates the Mako timestamp, repeats
+    /// ordered predicate validation, validates point reads, serializes the
+    /// record, and only then installs the write.
+    ///
+    /// # Safety
+    ///
+    /// Every safety requirement of
+    /// [`Self::commit_trusted_unchecked_one_put_record_target`] applies. In
+    /// addition, from before this call until it returns, the caller must prove
+    /// that no other cache-record terminal for this transaction's `LocalDb` is
+    /// running or waiting, including an ordinary ticketed terminal. Violating
+    /// that exclusion can make timestamp and cache-sequence order diverge.
+    #[doc(hidden)]
+    pub unsafe fn commit_trusted_single_producer_unchecked_one_put_record_target<F>(
+        self,
+        candidate: CommitRecordPreflight,
+        acquire: F,
+    ) -> TrustedUncheckedOnePutRecordOutcome
+    where
+        F: FnOnce(MakoTimestamp, CommitRecordPreflight) -> Option<CommitRecordTarget>,
+    {
+        // SAFETY: delegated unchanged to this method's stronger contract.
+        unsafe {
+            self.commit_trusted_unchecked_one_put_record_target_impl::<true, F>(candidate, acquire)
+        }
+    }
+
+    /// Commit one verified one-Put candidate into an already-selected target.
+    ///
+    /// This callback-free terminal is the narrowest cache-only spelling. The
+    /// caller selects the dense sequence and exact record storage before native
+    /// validation. Native independently rederives the candidate, acquires the
+    /// write set, assigns the Mako timestamp, performs final validation,
+    /// serializes into `target`, and only then installs the write. The returned
+    /// [`TrustedPreselectedUncheckedOnePutRecordOutcome::accepted_timestamp`]
+    /// is the sole indication that native accepted the preselected target into
+    /// that commit order.
+    ///
+    /// # Safety
+    ///
+    /// `self` must be an active trusted-bound transaction, and `candidate` must
+    /// be its exact current [`Self::unchecked_one_put_record_candidate`] after
+    /// the final operation. `target` must have a nonzero sequence, its extent
+    /// must equal `candidate.exact_record_bytes()`, and its allocation must
+    /// remain stable, exclusively writable, and non-aliasing with transaction
+    /// key/value storage throughout this synchronous call.
+    ///
+    /// From before this call until it returns, the caller must also prove that
+    /// no other cache-record terminal for this transaction's `LocalDb` is
+    /// running or waiting, including any ordinary ticketed terminal. This call
+    /// does not provide mutual exclusion itself. The preselected target must
+    /// remain invisible before the call. On return, the caller must bind it
+    /// unconditionally if `accepted_timestamp()` is `Some`; it may publish the
+    /// initialized bytes only when `is_committed()` is true. Every other
+    /// accepted outcome must be decoded and pinned under the cache's fail-stop
+    /// protocol. A target with no accepted timestamp may be reused only after a
+    /// valid definite pre-acceptance abort has been decoded.
+    #[doc(hidden)]
+    #[inline(always)]
+    pub unsafe fn commit_trusted_preselected_single_producer_unchecked_one_put_record_target(
+        mut self,
+        candidate: CommitRecordPreflight,
+        target: CommitRecordTarget,
+    ) -> TrustedPreselectedUncheckedOnePutRecordOutcome {
+        debug_assert!(self.fast_bound_table.is_some());
+        debug_assert!(self.record_preflight.is_none());
+        debug_assert!(self.active);
+        debug_assert!(self.raw.is_some());
+        debug_assert!(!candidate.is_empty());
+        debug_assert_eq!(candidate.op_count, 1);
+        debug_assert_eq!(candidate.checksum, CommitRecordChecksum::None);
+        debug_assert_ne!(candidate.exact_record_bytes, 0);
+        debug_assert!(candidate.exact_record_bytes <= u32::MAX as usize);
+        debug_assert_eq!(target.exact_record_bytes, candidate.exact_record_bytes);
+        debug_assert_eq!(
+            NonZeroU32::new(candidate.exact_record_bytes as u32),
+            self.unchecked_one_put_record_bytes
+        );
+
+        // SAFETY: the trusted cache contract guarantees a live native handle;
+        // consuming it here prevents every later facade use. The same contract
+        // keeps the preselected target stable and uniquely writable.
+        let raw = unsafe { self.raw.take().unwrap_unchecked() };
+        self.active = false;
+        // SAFETY: the active handle is consumed on every outcome. Native
+        // revalidates the direct one-Put witness and exact extent before using
+        // the caller-provided nonzero sequence and writable target.
+        let result = unsafe {
+            fast_abi::mako_rust_fast_txn_commit_preselected_unchecked_one_put_record_single_producer_and_destroy(
+                raw.as_ptr(),
+                candidate.exact_record_bytes as u32,
+                target.sequence.get(),
+                target.bytes.as_ptr(),
+                target.exact_record_bytes,
+            )
+        };
+        TrustedPreselectedUncheckedOnePutRecordOutcome {
+            terminal: result.terminal,
+            record_state: result.record_state,
+        }
+    }
+
+    /// Commit one verified one-Put candidate into a preselected native holder.
+    ///
+    /// Unlike the record-target terminal, this path does not encode or copy a
+    /// cache record on the foreground thread. Native installs the transaction
+    /// first, then transfers its stable staged value allocation and key into
+    /// the exact pool generation. A background consumer later borrows that
+    /// holder and constructs the RocksDB log record.
+    ///
+    /// # Safety
+    ///
+    /// `self` must be an active trusted-bound transaction, and `candidate`
+    /// must be its exact current [`Self::unchecked_one_put_record_candidate`]
+    /// after the final operation. `sequence` must be the unique producer's
+    /// retained next dense sequence, and its `(sequence - 1) % pool.capacity()`
+    /// generation must be FREE. The caller must retain the pool and unique
+    /// single-producer lease through this call.
+    ///
+    /// No other cache-record or holder terminal for this transaction's
+    /// `LocalDb` may run or wait during the call. A returned accepted timestamp
+    /// transfers an unconditional obligation to publish or pin `sequence`,
+    /// even when terminal visibility is unknown. A zero accepted timestamp
+    /// permits reuse only after the complete result decodes as a valid
+    /// pre-acceptance abort.
+    #[doc(hidden)]
+    #[inline(always)]
+    pub unsafe fn commit_trusted_preselected_single_producer_unchecked_one_put_holder(
+        self,
+        candidate: CommitRecordPreflight,
+        pool: &TrustedOnePutHolderPool,
+        sequence: NonZeroU64,
+    ) -> TrustedPreselectedUncheckedOnePutHolderOutcome {
+        debug_assert!(self.fast_bound_table.is_some());
+        debug_assert!(self.record_preflight.is_none());
+        debug_assert!(self.active);
+        debug_assert!(self.raw.is_some());
+        debug_assert!(!candidate.is_empty());
+        debug_assert_eq!(candidate.op_count, 1);
+        debug_assert_eq!(candidate.checksum, CommitRecordChecksum::None);
+        debug_assert_ne!(candidate.exact_record_bytes, 0);
+        debug_assert!(candidate.exact_record_bytes <= u32::MAX as usize);
+        debug_assert_eq!(
+            NonZeroU32::new(candidate.exact_record_bytes as u32),
+            self.unchecked_one_put_record_bytes
+        );
+
+        // SAFETY: this method's contract proves the same ownership and
+        // generation invariants required by the compact primitive below.
+        unsafe {
+            self.commit_trusted_preselected_single_producer_unchecked_one_put_holder_bytes(
+                NonZeroU32::new_unchecked(candidate.exact_record_bytes as u32),
+                pool,
+                sequence,
+            )
+        }
+    }
+
+    /// Attempt the fused native one-Put holder terminal without first
+    /// materializing a Rust candidate or reserving a queue generation.
+    ///
+    /// Native rederives the retained direct one-Put witness, checks the queue
+    /// health/capacity snapshot, commits into the future holder, and on exact
+    /// success Release-publishes ACK as the canonical SPSC tail. Rust only
+    /// synchronizes the producer-local cursor when decoding a cold result. A
+    /// cold capacity result leaves this transaction active so the caller can
+    /// refresh and retry; a general result likewise permits the ordinary safe
+    /// terminal.
+    ///
+    /// # Safety
+    ///
+    /// `self` must be the active trusted-bound transaction owned by the unique
+    /// producer represented by `control`. `producer_next` and
+    /// `capacity_limit` must point to live, naturally aligned `AtomicU64`
+    /// storage owned by that producer for the whole synchronous call. Rust
+    /// loads the limit before entering native and may update `producer_next`
+    /// while decoding a cold result. Those two words and the control's
+    /// `acknowledged` word must be distinct storage. The limit must equal
+    /// `applied_frontier.saturating_add(control.capacity)` for the same queue.
+    /// A stale snapshot may lag the current applied frontier, but it must never
+    /// exceed the limit derived from that current frontier. The control's pool
+    /// and queue pointers must satisfy
+    /// [`TrustedSpscOnePutHolderControl::new`]. No other cache-record or holder
+    /// terminal for this `LocalDb` may run or wait during the call.
+    ///
+    /// The caller must inspect the returned ownership state exactly once. It
+    /// may continue using this transaction only for an explicit untouched
+    /// result. Every consumed outcome carries the same publish-or-pin
+    /// obligations as the preselected terminal above.
+    #[doc(hidden)]
+    #[inline(always)]
+    pub unsafe fn try_commit_trusted_fused_single_producer_one_put_holder(
+        &mut self,
+        control: &TrustedSpscOnePutHolderControl,
+        producer_next: *mut u64,
+        capacity_limit: *const u64,
+    ) -> TrustedFusedOnePutHolderAttempt {
+        let mut cold_attempt = MaybeUninit::uninit();
+        // SAFETY: this method has exactly the fast primitive's contract. The
+        // false result initializes `cold_attempt` before it is read.
+        if unsafe {
+            self.try_commit_trusted_fused_single_producer_one_put_holder_fast(
+                control,
+                producer_next,
+                capacity_limit,
+                &mut cold_attempt,
+            )
+        } {
+            TrustedFusedOnePutHolderAttempt::Published
+        } else {
+            // SAFETY: guaranteed by the false result above.
+            unsafe { cold_attempt.assume_init() }
+        }
+    }
+
+    /// Success-biased form of the fused SPSC terminal.
+    ///
+    /// `true` is the exact ordinary success: native consumed the transaction
+    /// and Release-published its ACK. `false` initializes `cold_attempt` with
+    /// every other lifecycle result. Keeping the rich decoder out of line
+    /// leaves the production acknowledgement path as one native call, one
+    /// zero test, and facade-ownership retirement.
+    ///
+    /// # Safety
+    ///
+    /// This has the same safety contract as
+    /// [`Self::try_commit_trusted_fused_single_producer_one_put_holder`]. The
+    /// caller must read `cold_attempt` exactly once after a false result and
+    /// must not read it after a true result.
+    #[doc(hidden)]
+    #[inline(always)]
+    pub unsafe fn try_commit_trusted_fused_single_producer_one_put_holder_fast(
+        &mut self,
+        control: &TrustedSpscOnePutHolderControl,
+        producer_next: *mut u64,
+        capacity_limit: *const u64,
+        cold_attempt: &mut MaybeUninit<TrustedFusedOnePutHolderAttempt>,
+    ) -> bool {
+        // SAFETY: this wrapper preserves the public fast method's contract and
+        // retires its facade before reporting a published result.
+        unsafe {
+            self.try_commit_trusted_fused_single_producer_one_put_holder_impl::<true>(
+                control,
+                producer_next,
+                capacity_limit,
+                cold_attempt,
+            )
+        }
+    }
+
+    /// Exact-success spelling for an outer consuming facade.
+    ///
+    /// Unlike the ordinary fast method, `true` deliberately leaves this Rust
+    /// facade's scalar ownership fields unchanged after native destroys the
+    /// raw handle. The caller must immediately forget the enclosing facade and
+    /// must never read, drop, or otherwise use `self` again. `false` retains
+    /// the ordinary decoded ownership state and permits normal Drop.
+    ///
+    /// # Safety
+    ///
+    /// This has every requirement of
+    /// [`Self::try_commit_trusted_fused_single_producer_one_put_holder_fast`].
+    /// In addition, a `true` return creates the immediate-forget obligation
+    /// described above.
+    #[doc(hidden)]
+    #[inline(always)]
+    pub unsafe fn try_commit_trusted_fused_single_producer_one_put_holder_fast_forget_on_publish(
+        &mut self,
+        control: &TrustedSpscOnePutHolderControl,
+        producer_next: *mut u64,
+        capacity_limit: *const u64,
+        cold_attempt: &mut MaybeUninit<TrustedFusedOnePutHolderAttempt>,
+    ) -> bool {
+        // SAFETY: delegated unchanged to this method's stronger contract.
+        unsafe {
+            self.try_commit_trusted_fused_single_producer_one_put_holder_impl::<false>(
+                control,
+                producer_next,
+                capacity_limit,
+                cold_attempt,
+            )
+        }
+    }
+
+    #[inline(always)]
+    unsafe fn try_commit_trusted_fused_single_producer_one_put_holder_impl<
+        const RETIRE_PUBLISHED: bool,
+    >(
+        &mut self,
+        control: &TrustedSpscOnePutHolderControl,
+        producer_next: *mut u64,
+        capacity_limit: *const u64,
+        cold_attempt: &mut MaybeUninit<TrustedFusedOnePutHolderAttempt>,
+    ) -> bool {
+        const CONSUMED_PUBLISHED: u64 = 0;
+
+        debug_assert!(self.fast_bound_table.is_some());
+        debug_assert!(self.record_preflight.is_none());
+        debug_assert!(self.active);
+        debug_assert!(self.raw.is_some());
+        debug_assert!(!producer_next.is_null());
+        debug_assert!(!capacity_limit.is_null());
+        debug_assert_ne!(producer_next.cast_const(), capacity_limit);
+        debug_assert_ne!(producer_next, control.raw.acknowledged);
+        debug_assert_ne!(capacity_limit, control.raw.acknowledged.cast_const());
+
+        // SAFETY: the caller promises that `capacity_limit` points to live,
+        // naturally aligned AtomicU64 storage for this whole call.
+        let capacity_limit_value =
+            unsafe { AtomicU64::from_ptr(capacity_limit.cast_mut()).load(Ordering::Relaxed) };
+        // SAFETY: the caller supplies the transaction, unique-producer,
+        // stable-pointer, pool-generation, and whole-call exclusion proofs.
+        let raw_result = unsafe {
+            fast_abi::mako_rust_fast_txn_try_commit_fused_one_put_holder_single_producer_and_destroy(
+                self.raw.unwrap_unchecked().as_ptr(),
+                control.raw.acknowledged,
+                control.raw.unhealthy,
+                std::ptr::from_ref(&control.raw).cast_mut(),
+                capacity_limit_value,
+            )
+        };
+
+        if raw_result == CONSUMED_PUBLISHED {
+            // Exact zero is the only ordinary result. Native consumed the raw
+            // handle before publishing. The cache-only false specialization
+            // transfers facade retirement to its caller's immediate forget.
+            if RETIRE_PUBLISHED {
+                let _ = unsafe { self.raw.take().unwrap_unchecked() };
+                self.active = false;
+            }
+            return true;
+        }
+
+        // SAFETY: every nonzero word is decoded out of line; that decoder
+        // alone knows whether native left the raw transaction untouched.
+        cold_attempt.write(unsafe {
+            self.decode_fused_holder_attempt_cold(raw_result, control, producer_next)
+        });
+        false
+    }
+
+    #[cold]
+    #[inline(never)]
+    unsafe fn decode_fused_holder_attempt_cold(
+        &mut self,
+        raw_result: u64,
+        control: &TrustedSpscOnePutHolderControl,
+        producer_next: *mut u64,
+    ) -> TrustedFusedOnePutHolderAttempt {
+        const CONSUMED_PUBLISHED: u32 = 0;
+        const UNTOUCHED_NEED_GENERAL: u32 = 1;
+        const UNTOUCHED_NEED_SLOW: u32 = 2;
+        const CONSUMED_COMMITTED_UNPUBLISHED: u32 = 3;
+        const CONSUMED_OUTCOME: u32 = 4;
+        const HOLDER_STATE_MASK: u64 = (1u64 << 33) - 1;
+        let code = raw_result as u32;
+        let payload = (raw_result >> 32) as u32;
+        // SAFETY: the fused terminal contract keeps these naturally aligned
+        // atomic words live through this cold decode. Native alone writes ACK;
+        // this unique producer alone writes its local cursor.
+        let acknowledged = unsafe { AtomicU64::from_ptr(control.raw.acknowledged) };
+        let unhealthy =
+            unsafe { AtomicBool::from_ptr(control.raw.unhealthy.cast_mut().cast::<bool>()) };
+        let producer_next = unsafe { AtomicU64::from_ptr(producer_next) };
+
+        // These are the only ABI codes that guarantee the raw transaction was
+        // not consumed. Even corrupt payload metadata cannot change that
+        // ownership fact, so leave the facade live for fail-stop handling.
+        if code == UNTOUCHED_NEED_GENERAL {
+            if !unhealthy.load(Ordering::Acquire) {
+                producer_next.store(acknowledged.load(Ordering::Relaxed), Ordering::Relaxed);
+            }
+            return if payload == 0 {
+                TrustedFusedOnePutHolderAttempt::UntouchedGeneral
+            } else {
+                TrustedFusedOnePutHolderAttempt::UntouchedMalformed
+            };
+        }
+        if code == UNTOUCHED_NEED_SLOW {
+            if !unhealthy.load(Ordering::Acquire) {
+                producer_next.store(acknowledged.load(Ordering::Relaxed), Ordering::Relaxed);
+            }
+            return match NonZeroU32::new(payload) {
+                Some(exact_record_bytes) => {
+                    TrustedFusedOnePutHolderAttempt::UntouchedSlow { exact_record_bytes }
+                }
+                None => TrustedFusedOnePutHolderAttempt::UntouchedMalformed,
+            };
+        }
+
+        // Any other code is conservatively consuming, including an unknown or
+        // malformed code. Clear Rust ownership before inspecting metadata so a
+        // future decoder panic or Drop can never touch freed native storage.
+        let _ = unsafe { self.raw.take().unwrap_unchecked() };
+        self.active = false;
+
+        match code {
+            // Exact published success was consumed by the caller before this
+            // cold decoder. Code zero with a nonzero payload is malformed.
+            CONSUMED_PUBLISHED => TrustedFusedOnePutHolderAttempt::ConsumedMalformed,
+            CONSUMED_COMMITTED_UNPUBLISHED => {
+                let Some(sequence) = acknowledged.load(Ordering::Relaxed).checked_add(1) else {
+                    return TrustedFusedOnePutHolderAttempt::ConsumedMalformed;
+                };
+                producer_next.store(sequence, Ordering::Relaxed);
+                let Some(timestamp) = MakoTimestamp::new(payload) else {
+                    return TrustedFusedOnePutHolderAttempt::ConsumedMalformed;
+                };
+                // SAFETY: native initializes cold_out for both consumed cold
+                // codes. Code 3 was established above.
+                let cold_out = unsafe { *control.raw.cold_out.get() };
+                let Some(exact_record_bytes) =
+                    NonZeroU32::new((cold_out.record_state >> 33) as u32)
+                else {
+                    return TrustedFusedOnePutHolderAttempt::ConsumedMalformed;
+                };
+                let outcome = TrustedPreselectedUncheckedOnePutHolderOutcome {
+                    terminal: cold_out.terminal,
+                    holder_state: cold_out.record_state & HOLDER_STATE_MASK,
+                };
+                if !outcome.is_committed() || outcome.accepted_timestamp() != Some(timestamp) {
+                    return TrustedFusedOnePutHolderAttempt::ConsumedMalformed;
+                }
+                TrustedFusedOnePutHolderAttempt::CommittedUnpublished {
+                    timestamp,
+                    exact_record_bytes,
+                }
+            }
+            CONSUMED_OUTCOME if payload == 0 => {
+                producer_next.store(acknowledged.load(Ordering::Relaxed), Ordering::Relaxed);
+                // SAFETY: the frozen ABI initializes `cold_out` for code 4 and
+                // code 3. The exact code was established above.
+                let cold_out = unsafe { *control.raw.cold_out.get() };
+                let Some(exact_record_bytes) =
+                    NonZeroU32::new((cold_out.record_state >> 33) as u32)
+                else {
+                    return TrustedFusedOnePutHolderAttempt::ConsumedMalformed;
+                };
+                TrustedFusedOnePutHolderAttempt::ConsumedOutcome {
+                    outcome: TrustedPreselectedUncheckedOnePutHolderOutcome {
+                        terminal: cold_out.terminal,
+                        holder_state: cold_out.record_state & HOLDER_STATE_MASK,
+                    },
+                    exact_record_bytes,
+                }
+            }
+            _ => TrustedFusedOnePutHolderAttempt::ConsumedMalformed,
+        }
+    }
+
+    /// Compact form of the preselected one-Put holder terminal.
+    ///
+    /// This is identical to
+    /// [`Self::commit_trusted_preselected_single_producer_unchecked_one_put_holder`]
+    /// except that a cache which already obtained the build-private compact
+    /// extent need not expand it into a [`CommitRecordPreflight`] and pass that
+    /// larger value back through Rust. All exact-shape validation remains in
+    /// the native consuming terminal.
+    ///
+    /// # Safety
+    ///
+    /// `self` must be the active trusted-bound transaction from which
+    /// `exact_record_bytes` was obtained, with no intervening operation. The
+    /// pool, sequence, unique-producer, and publish-or-pin obligations are the
+    /// same as the full-plan terminal above.
+    #[doc(hidden)]
+    #[inline(always)]
+    pub unsafe fn commit_trusted_preselected_single_producer_unchecked_one_put_holder_bytes(
+        mut self,
+        exact_record_bytes: NonZeroU32,
+        pool: &TrustedOnePutHolderPool,
+        sequence: NonZeroU64,
+    ) -> TrustedPreselectedUncheckedOnePutHolderOutcome {
+        debug_assert!(self.fast_bound_table.is_some());
+        debug_assert!(self.record_preflight.is_none());
+        debug_assert!(self.active);
+        debug_assert!(self.raw.is_some());
+        debug_assert_eq!(
+            Some(exact_record_bytes),
+            self.unchecked_one_put_record_bytes
+        );
+
+        // SAFETY: the trusted caller guarantees a live native handle and
+        // consumes it here on every terminal outcome.
+        let raw = unsafe { self.raw.take().unwrap_unchecked() };
+        self.active = false;
+        // SAFETY: the method contract proves exact candidate, holder
+        // generation, whole-call exclusion, and pool lifetime. Native
+        // independently revalidates the one-Put shape before lock acquisition.
+        let result = unsafe {
+            fast_abi::mako_rust_fast_txn_commit_preselected_unchecked_one_put_holder_single_producer_and_destroy(
+                raw.as_ptr(),
+                exact_record_bytes.get(),
+                pool.raw.as_ptr(),
+                sequence.get(),
+            )
+        };
+        TrustedPreselectedUncheckedOnePutHolderOutcome {
+            terminal: result.terminal,
+            holder_state: result.record_state,
+        }
+    }
+
+    #[inline(always)]
+    unsafe fn commit_trusted_unchecked_one_put_record_target_impl<const SINGLE_PRODUCER: bool, F>(
+        mut self,
+        candidate: CommitRecordPreflight,
+        acquire: F,
+    ) -> TrustedUncheckedOnePutRecordOutcome
+    where
+        F: FnOnce(MakoTimestamp, CommitRecordPreflight) -> Option<CommitRecordTarget>,
+    {
+        debug_assert!(self.fast_bound_table.is_some());
+        debug_assert!(self.record_preflight.is_none());
+        debug_assert!(self.active);
+        debug_assert!(self.raw.is_some());
+        debug_assert!(!candidate.is_empty());
+        debug_assert_eq!(candidate.op_count, 1);
+        debug_assert_eq!(candidate.checksum, CommitRecordChecksum::None);
+        debug_assert_ne!(candidate.exact_record_bytes, 0);
+        debug_assert!(candidate.exact_record_bytes <= u32::MAX as usize);
+        debug_assert_eq!(
+            NonZeroU32::new(candidate.exact_record_bytes as u32),
+            self.unchecked_one_put_record_bytes
+        );
+
+        // SAFETY: the trusted cache contract above guarantees a live native
+        // handle; consuming it here prevents every later facade use.
+        let raw = unsafe { self.raw.take().unwrap_unchecked() };
+        self.active = false;
+        let mut state = RecordTargetBindHook {
+            hook: Some(acquire),
+            preflight: candidate,
+            bound: false,
+        };
+        let mut record_written = 0u8;
+        // SAFETY: this active fast-bound handle is consumed on every outcome.
+        // Native independently revalidates `expected_record_bytes` before
+        // locking. The method contract keeps callback state and any returned
+        // storage stable, exclusively writable, and non-unwinding throughout.
+        let packed = if SINGLE_PRODUCER {
+            // SAFETY: the caller additionally proves whole-call exclusion for
+            // this LocalDb, while the common method contract covers the raw
+            // handle, callback state, and target storage.
+            unsafe {
+                fast_abi::mako_rust_fast_txn_commit_unchecked_one_put_record_single_producer_and_destroy(
+                    raw.as_ptr(),
+                    candidate.exact_record_bytes as u32,
+                    Some(unchecked_one_put_record_target_bind_trampoline::<F>),
+                    std::ptr::from_mut(&mut state).cast::<c_void>(),
+                    &mut record_written,
+                )
+            }
+        } else {
+            // SAFETY: this active fast-bound handle is consumed on every
+            // outcome and the method contract covers the callback storage.
+            unsafe {
+                fast_abi::mako_rust_fast_txn_commit_unchecked_one_put_record_and_destroy(
+                    raw.as_ptr(),
+                    candidate.exact_record_bytes as u32,
+                    Some(unchecked_one_put_record_target_bind_trampoline::<F>),
+                    std::ptr::from_mut(&mut state).cast::<c_void>(),
+                    &mut record_written,
+                )
+            }
+        };
+        TrustedUncheckedOnePutRecordOutcome {
+            packed,
+            record_bound: state.bound,
+            record_written,
+        }
+    }
+
     fn reject_record_commit(self, error: Error) -> CommitRecordReport {
         let cleanup = self.abort();
         CommitRecordReport {
@@ -2217,6 +4174,12 @@ struct RecordBindHook<F> {
     bound: bool,
 }
 
+struct RecordTargetBindHook<F> {
+    hook: Option<F>,
+    preflight: CommitRecordPreflight,
+    bound: bool,
+}
+
 unsafe extern "C" fn post_validate_trampoline<F>(context: *mut c_void, raw_timestamp: u32) -> i32
 where
     F: FnOnce(MakoTimestamp) -> bool,
@@ -2309,6 +4272,133 @@ where
         sequence_out.write(sequence.get());
         record_bytes_out.write(record.bytes.as_mut_ptr().cast::<u8>());
         record_capacity_out.write(record.bytes.len());
+    }
+    state.bound = true;
+    1
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe extern "C" fn record_target_bind_trampoline<F>(
+    context: *mut c_void,
+    raw_timestamp: u32,
+    exact_record_bytes: usize,
+    sequence_out: *mut u64,
+    record_bytes_out: *mut *mut u8,
+    record_capacity_out: *mut usize,
+) -> i32
+where
+    F: FnOnce(MakoTimestamp, CommitRecordPreflight) -> Option<CommitRecordTarget>,
+{
+    // Fail closed and leave deterministic outputs even if native violates its
+    // private callback contract.
+    if !sequence_out.is_null() {
+        // SAFETY: a non-null ABI output is writable for this callback.
+        unsafe { sequence_out.write(0) };
+    }
+    if !record_bytes_out.is_null() {
+        // SAFETY: a non-null ABI output is writable for this callback.
+        unsafe { record_bytes_out.write(std::ptr::null_mut()) };
+    }
+    if !record_capacity_out.is_null() {
+        // SAFETY: a non-null ABI output is writable for this callback.
+        unsafe { record_capacity_out.write(0) };
+    }
+    if context.is_null()
+        || sequence_out.is_null()
+        || record_bytes_out.is_null()
+        || record_capacity_out.is_null()
+    {
+        return 0;
+    }
+
+    // SAFETY: commit_report_with_record_target passes this exact stack value;
+    // native invokes the callback synchronously at most once.
+    let state = unsafe { &mut *context.cast::<RecordTargetBindHook<F>>() };
+    let Some(timestamp) = MakoTimestamp::new(raw_timestamp) else {
+        return 0;
+    };
+    if exact_record_bytes != state.preflight.exact_record_bytes {
+        return 0;
+    }
+    let Some(hook) = state.hook.take() else {
+        return 0;
+    };
+    // The unsafe terminal contract requires a non-unwinding callback. Avoiding
+    // catch_unwind is intentional on this production hot path.
+    let Some(target) = hook(timestamp, state.preflight) else {
+        return 0;
+    };
+    if target.exact_record_bytes != exact_record_bytes {
+        return 0;
+    }
+
+    // Nothing below is fallible. The target constructor and terminal contract
+    // guarantee the pointer remains valid and uniquely writable through the
+    // native serialization which follows this callback.
+    // SAFETY: required outputs were checked above.
+    unsafe {
+        sequence_out.write(target.sequence.get());
+        record_bytes_out.write(target.bytes.as_ptr());
+        record_capacity_out.write(target.exact_record_bytes);
+    }
+    state.bound = true;
+    1
+}
+
+/// Trusted callback used only by the hidden fused one-Put terminal.
+///
+/// Unlike [`record_target_bind_trampoline`], this path relies on the native
+/// terminal's already-validated callback contract and the unsafe Rust method's
+/// exact-target precondition. Keeping the checked trampoline separate ensures
+/// ordinary record targets continue to fail closed against malformed ABI
+/// inputs while the fused path does not zero and revalidate six trusted
+/// scalars on every successful commit.
+#[allow(clippy::too_many_arguments)]
+unsafe extern "C" fn unchecked_one_put_record_target_bind_trampoline<F>(
+    context: *mut c_void,
+    raw_timestamp: u32,
+    exact_record_bytes: usize,
+    sequence_out: *mut u64,
+    record_bytes_out: *mut *mut u8,
+    record_capacity_out: *mut usize,
+) -> i32
+where
+    F: FnOnce(MakoTimestamp, CommitRecordPreflight) -> Option<CommitRecordTarget>,
+{
+    debug_assert!(!context.is_null());
+    debug_assert!(!sequence_out.is_null());
+    debug_assert!(!record_bytes_out.is_null());
+    debug_assert!(!record_capacity_out.is_null());
+    debug_assert!(MakoTimestamp::new(raw_timestamp).is_some());
+
+    // SAFETY: the hidden native terminal receives this exact live stack state,
+    // invokes the callback synchronously at most once, and supplies the
+    // validated non-null context promised by this unsafe terminal's contract.
+    let state = unsafe { &mut *context.cast::<RecordTargetBindHook<F>>() };
+    debug_assert_eq!(exact_record_bytes, state.preflight.exact_record_bytes);
+
+    // SAFETY: native allocates a nonzero in-range Mako timestamp before it can
+    // invoke the fused bind hook. The debug assertion retains a diagnostic for
+    // a mismatched development ABI without a production hot-path branch.
+    let timestamp = MakoTimestamp(unsafe { NonZeroU32::new_unchecked(raw_timestamp) });
+    // SAFETY: native invokes this fused callback at most once for the live
+    // state, so the FnOnce value is present on its sole invocation.
+    let hook = unsafe { state.hook.take().unwrap_unchecked() };
+    let Some(target) = hook(timestamp, state.preflight) else {
+        // Native ignores every output when the hook rejects. Its own zeroed
+        // locals preserve deterministic diagnostics; no Rust-side stores are
+        // necessary on this fail-closed path.
+        return 0;
+    };
+    debug_assert_eq!(target.exact_record_bytes, exact_record_bytes);
+
+    // SAFETY: the hidden terminal supplies writable non-null output pointers,
+    // and the unsafe caller guarantees this target is the exact stable extent
+    // reserved for the candidate through the synchronous native terminal.
+    unsafe {
+        sequence_out.write(target.sequence.get());
+        record_bytes_out.write(target.bytes.as_ptr());
+        record_capacity_out.write(target.exact_record_bytes);
     }
     state.bound = true;
     1

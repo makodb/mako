@@ -66,13 +66,14 @@ public:
         const Transaction::commit_validation_gate* gate) noexcept
         : gate_(gate) {
         assert(gate_ == nullptr ||
-               (gate_->enter != nullptr && gate_->leave != nullptr));
+               ((gate_->enter == nullptr) == (gate_->leave == nullptr)));
     }
 
     void acquire() noexcept {
         assert(gate_ != nullptr);
         assert(!held_);
-        gate_->enter(gate_->context);
+        if (gate_->enter != nullptr)
+            gate_->enter(gate_->context);
         held_ = true;
     }
 
@@ -80,7 +81,8 @@ public:
         if (!held_)
             return;
         held_ = false;
-        gate_->leave(gate_->context);
+        if (gate_->leave != nullptr)
+            gate_->leave(gate_->context);
     }
 
     bool held() const noexcept {
@@ -571,11 +573,61 @@ void Transaction::shard_unlock(bool committed) {
     }
 }
 
-// @unsafe: decodes the three MassTrans write layouts from borrowed TransItems.
-// The representation matches serialize_util(): inserts keep their key in
-// write data and their payload in the private row, while updates/deletes keep
-// the key in extra and updates keep their payload in write data. Unlike the
-// legacy Paxos serializer, this normalized view omits insert-then-delete.
+// @unsafe: decodes the three MassTrans write layouts from one borrowed
+// TransItem. The returned spans remain owned by the transaction/tree and are
+// valid only while the item cannot be mutated or cleaned up.
+bool Transaction::export_local_canonical_write(
+    const TransItem& item, canonical_write_view* write_out) const noexcept {
+    if (write_out == nullptr)
+        return false;
+    *write_out = canonical_write_view{};
+    assert(TThread::id() == threadid_);
+    assert(state_ == s_in_progress || state_ == s_committing ||
+           state_ == s_committing_locked);
+
+    if (!item.has_write() || item.owner()->get_is_remote())
+        return false;
+    const bool is_insert = hasInsertOp(&item);
+    const bool is_delete = hasDeleteOp(&item);
+    if (is_insert && is_delete)
+        return false;
+
+    canonical_write_view view{};
+    view.table_id = item.owner()->get_table_id();
+    if (is_insert) {
+        const std::string& key = item.write_value<std::string>();
+        versioned_str_struct* row = item.key<versioned_str_struct*>();
+        if (row == nullptr || row->length() < mako::EXTRA_BITS_FOR_VALUE)
+            return false;
+        view.op = canonical_write_view::operation::put;
+        view.key = key.data();
+        view.key_length = key.size();
+        view.value = row->data();
+        view.value_length = static_cast<size_t>(row->length()) -
+                            mako::EXTRA_BITS_FOR_VALUE;
+    } else {
+        view.key = item.extra.data();
+        view.key_length = item.extra.size();
+        if (is_delete) {
+            view.op = canonical_write_view::operation::remove;
+            view.value = nullptr;
+            view.value_length = 0;
+        } else {
+            const std::string& value = item.write_value<std::string>();
+            if (value.size() < mako::EXTRA_BITS_FOR_VALUE)
+                return false;
+            view.op = canonical_write_view::operation::put;
+            view.value = value.data();
+            view.value_length = value.size() - mako::EXTRA_BITS_FOR_VALUE;
+        }
+    }
+    *write_out = view;
+    return true;
+}
+
+// @unsafe: visits the final MassTrans write set without copying. The
+// representation matches serialize_util(); insert-then-delete is a net-empty
+// mutation and is intentionally omitted.
 bool Transaction::visit_local_canonical_writes(
     canonical_write_visitor visitor, void* context,
     uint32_t* count_out) const noexcept {
@@ -592,45 +644,12 @@ bool Transaction::visit_local_canonical_writes(
                                   : tset_[tidx / tset_chunk]);
         if (!item->has_write() || item->owner()->get_is_remote())
             continue;
-
-        const bool is_insert = hasInsertOp(item);
-        const bool is_delete = hasDeleteOp(item);
-        if (is_insert && is_delete)
+        if (hasInsertOp(item) && hasDeleteOp(item))
             continue;
 
         canonical_write_view view{};
-        view.table_id = item->owner()->get_table_id();
-        if (is_insert) {
-            const std::string& key = item->write_value<std::string>();
-            versioned_str_struct* row =
-                item->key<versioned_str_struct*>();
-            if (row == nullptr ||
-                row->length() < mako::EXTRA_BITS_FOR_VALUE)
-                return false;
-            view.op = canonical_write_view::operation::put;
-            view.key = key.data();
-            view.key_length = key.size();
-            view.value = row->data();
-            view.value_length = static_cast<size_t>(row->length()) -
-                                mako::EXTRA_BITS_FOR_VALUE;
-        } else {
-            view.key = item->extra.data();
-            view.key_length = item->extra.size();
-            if (is_delete) {
-                view.op = canonical_write_view::operation::remove;
-                view.value = nullptr;
-                view.value_length = 0;
-            } else {
-                const std::string& value =
-                    item->write_value<std::string>();
-                if (value.size() < mako::EXTRA_BITS_FOR_VALUE)
-                    return false;
-                view.op = canonical_write_view::operation::put;
-                view.value = value.data();
-                view.value_length = value.size() -
-                                    mako::EXTRA_BITS_FOR_VALUE;
-            }
-        }
+        if (!export_local_canonical_write(*item, &view))
+            return false;
 
         if (*count_out == std::numeric_limits<uint32_t>::max())
             return false;

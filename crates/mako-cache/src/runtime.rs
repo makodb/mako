@@ -1,10 +1,11 @@
 //! One background consumer for [`crate::writeback::Writeback`].
 
 use std::fmt;
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::io;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::thread::JoinHandle;
+use std::sync::{Arc, mpsc};
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use mrx_core::Blobs;
@@ -57,13 +58,47 @@ pub struct Runtime<B: Blobs + 'static> {
 
 impl<B: Blobs + 'static> Runtime<B> {
     /// Start one named background consumer.
+    #[cfg(test)]
     pub fn start(writeback: Arc<Writeback<B>>) -> std::io::Result<Self> {
+        Self::start_on_cpu(writeback, None)
+    }
+
+    /// Start one named background consumer, optionally pinned to one logical
+    /// CPU.
+    ///
+    /// Pinning is currently supported on Linux. Startup waits for the new
+    /// thread to install its affinity, so an invalid CPU, a cgroup restriction,
+    /// or an unsupported platform is returned to the caller instead of being
+    /// silently ignored.
+    pub fn start_on_cpu(writeback: Arc<Writeback<B>>, cpu: Option<usize>) -> std::io::Result<Self> {
         let stop = Arc::new(AtomicBool::new(false));
         let worker_writeback = Arc::clone(&writeback);
         let worker_stop = Arc::clone(&stop);
+        let (started_tx, started_rx) = mpsc::sync_channel(0);
         let thread = std::thread::Builder::new()
             .name("mako-writeback".to_owned())
-            .spawn(move || run(worker_writeback, worker_stop))?;
+            .spawn(move || {
+                let affinity = pin_current_thread(cpu);
+                let should_run = affinity.is_ok();
+                if started_tx.send(affinity).is_err() || !should_run {
+                    return;
+                }
+                run(worker_writeback, worker_stop);
+            })?;
+
+        match started_rx.recv() {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                let _ = thread.join();
+                return Err(error);
+            }
+            Err(_) => {
+                let _ = thread.join();
+                return Err(io::Error::other(
+                    "write-back worker exited before reporting startup",
+                ));
+            }
+        }
 
         Ok(Self {
             writeback,
@@ -109,8 +144,38 @@ impl<B: Blobs + 'static> Runtime<B> {
         };
 
         self.stop.store(true, Ordering::Release);
+        // `unpark` records a token when it races just before the worker parks,
+        // so the Release stop store cannot be stranded behind a long backend
+        // retry interval.
+        thread.thread().unpark();
         self.writeback.wake_waiters();
         thread.join().map_err(|_| RuntimeError::BackgroundPanicked)
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn pin_current_thread(cpu: Option<usize>) -> io::Result<()> {
+    use nix::sched::{CpuSet, sched_setaffinity};
+    use nix::unistd::Pid;
+
+    let Some(cpu) = cpu else {
+        return Ok(());
+    };
+    let mut set = CpuSet::new();
+    set.set(cpu)
+        .map_err(|error| io::Error::from_raw_os_error(error as i32))?;
+    sched_setaffinity(Pid::from_raw(0), &set)
+        .map_err(|error| io::Error::from_raw_os_error(error as i32))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn pin_current_thread(cpu: Option<usize>) -> io::Result<()> {
+    match cpu {
+        None => Ok(()),
+        Some(_) => Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "write-back CPU affinity is supported only on Linux",
+        )),
     }
 }
 
@@ -127,16 +192,16 @@ fn run<B: Blobs + 'static>(writeback: Arc<Writeback<B>>, stop: Arc<AtomicBool>) 
             Ok(ProcessOutcome::Advanced) => {}
             Ok(ProcessOutcome::BackendFailed { .. } | ProcessOutcome::RecordFailed { .. })
             | Err(_) => {
-                wait_interruptibly(&writeback, &stop, writeback.retry_delay());
+                wait_interruptibly(&stop, writeback.retry_delay());
             }
             Ok(ProcessOutcome::Idle | ProcessOutcome::Blocked | ProcessOutcome::Pinned(_)) => {
-                wait_interruptibly(&writeback, &stop, IDLE_POLL);
+                wait_interruptibly(&stop, IDLE_POLL);
             }
         }
     }
 }
 
-fn wait_interruptibly<B: Blobs>(writeback: &Writeback<B>, stop: &AtomicBool, duration: Duration) {
+fn wait_interruptibly(stop: &AtomicBool, duration: Duration) {
     let started = Instant::now();
     loop {
         if stop.load(Ordering::Acquire) {
@@ -146,17 +211,19 @@ fn wait_interruptibly<B: Blobs>(writeback: &Writeback<B>, stop: &AtomicBool, dur
         if elapsed >= duration {
             return;
         }
-        // Bound every individual wait so a stop notification racing just
-        // before `wait_timeout` cannot delay shutdown for an arbitrary retry
-        // interval. This is sleeping, not polling in a tight loop.
-        writeback.wait_for_activity((duration - elapsed).min(IDLE_POLL));
+        // The dedicated consumer polls independently instead of enrolling in
+        // the foreground publication condvar handshake. Bound each park so a
+        // permanent record failure still checks stop periodically; `unpark`
+        // in `stop_worker` makes ordinary shutdown immediate and cannot be
+        // lost if it races just before this call.
+        thread::park_timeout((duration - elapsed).min(IDLE_POLL));
     }
 }
 
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::AtomicUsize;
-    use std::sync::{mpsc, Arc};
+    use std::sync::{Arc, mpsc};
 
     use mako_local::MakoTimestamp;
     use mrx_core::fakes::MemBlobs;
@@ -187,6 +254,49 @@ mod tests {
         MakoTimestamp::new(raw).expect("test timestamps are nonzero")
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn affinity_helper_pins_only_the_calling_thread() {
+        use nix::sched::{CpuSet, sched_getaffinity};
+        use nix::unistd::Pid;
+
+        let allowed = sched_getaffinity(Pid::from_raw(0)).expect("read test affinity");
+        let cpu = (0..CpuSet::count())
+            .find(|cpu| allowed.is_set(*cpu) == Ok(true))
+            .expect("test process has at least one allowed CPU");
+        let pinned = std::thread::spawn(move || {
+            pin_current_thread(Some(cpu)).expect("pin test thread");
+            sched_getaffinity(Pid::from_raw(0)).expect("read pinned affinity")
+        })
+        .join()
+        .unwrap();
+
+        assert!(pinned.is_set(cpu).unwrap());
+        assert_eq!(
+            (0..CpuSet::count())
+                .filter(|candidate| pinned.is_set(*candidate) == Ok(true))
+                .count(),
+            1
+        );
+        assert_eq!(
+            sched_getaffinity(Pid::from_raw(0)).expect("reread parent affinity"),
+            allowed,
+            "pinning the worker changed its parent thread"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn invalid_affinity_fails_runtime_start_synchronously() {
+        use nix::sched::CpuSet;
+
+        let backend = Arc::new(MemBlobs::new());
+        let writeback = Arc::new(Writeback::new(backend, 0, config()).expect("valid writeback"));
+        let result = Runtime::start_on_cpu(writeback, Some(CpuSet::count()));
+        assert!(result.is_err());
+        assert_eq!(result.err().unwrap().kind(), io::ErrorKind::InvalidInput);
+    }
+
     #[test]
     fn clean_shutdown_drains_acknowledged_records() {
         let backend = Arc::new(MemBlobs::new());
@@ -211,10 +321,22 @@ mod tests {
     }
 
     #[test]
-    fn background_worker_advances_applied_watermark_without_a_flush_barrier() {
+    fn background_worker_polls_without_registering_an_activity_waiter() {
         let backend = Arc::new(MemBlobs::new());
         let writeback =
             Arc::new(Writeback::new(Arc::clone(&backend), 0, config()).expect("valid writeback"));
+
+        let mut runtime = Runtime::start(Arc::clone(&writeback)).unwrap();
+        let idle_deadline = Instant::now() + Duration::from_millis(30);
+        while Instant::now() < idle_deadline {
+            assert_eq!(
+                writeback.activity_waiter_count(),
+                0,
+                "the dedicated worker enrolled in the publication condvar"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+
         writeback
             .reserve(vec![put(b"background", b"applied")])
             .unwrap()
@@ -223,15 +345,16 @@ mod tests {
             .publish()
             .unwrap();
 
-        let mut runtime = Runtime::start(Arc::clone(&writeback)).unwrap();
         let deadline = Instant::now() + Duration::from_secs(1);
         while writeback.applied_sequence() < 1 {
             assert!(
                 Instant::now() < deadline,
                 "background worker did not advance the applied watermark"
             );
-            writeback.wait_for_activity(Duration::from_millis(10));
+            assert_eq!(writeback.activity_waiter_count(), 0);
+            std::thread::sleep(Duration::from_millis(1));
         }
+        assert_eq!(writeback.activity_waiter_count(), 0);
         runtime.abort().unwrap();
 
         assert_eq!(writeback.applied_sequence(), 1);
@@ -241,6 +364,63 @@ mod tests {
         );
         assert_eq!(backend.batch_count(), 1);
         assert_eq!(writeback.queue_len(), 0);
+    }
+
+    #[derive(Debug, Default)]
+    struct AlwaysFailBlobs {
+        attempts: AtomicUsize,
+    }
+
+    impl Blobs for AlwaysFailBlobs {
+        fn get(&self, _key: &[u8]) -> Result<Option<Vec<u8>>, BlobError> {
+            Ok(None)
+        }
+
+        fn write_batch(&self, _operations: &[BlobOp<'_>]) -> Result<(), BlobError> {
+            self.attempts.fetch_add(1, Ordering::SeqCst);
+            Err(BlobError("injected persistent write failure".to_owned()))
+        }
+
+        fn for_each_key(&self, _f: &mut dyn FnMut(&[u8])) -> Result<(), BlobError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn abort_wakes_a_worker_parked_for_a_long_retry() {
+        let backend = Arc::new(AlwaysFailBlobs::default());
+        let mut test_config = config();
+        test_config.retry_delay = Duration::from_secs(30);
+        let writeback = Arc::new(
+            Writeback::new(Arc::clone(&backend), 0, test_config).expect("valid writeback"),
+        );
+        writeback
+            .reserve(vec![put(b"retry", b"pending")])
+            .unwrap()
+            .bind(timestamp(10))
+            .unwrap()
+            .publish()
+            .unwrap();
+
+        let mut runtime = Runtime::start(Arc::clone(&writeback)).unwrap();
+        let attempt_deadline = Instant::now() + Duration::from_secs(1);
+        while backend.attempts.load(Ordering::SeqCst) == 0 {
+            assert!(
+                Instant::now() < attempt_deadline,
+                "background worker did not attempt the failing write"
+            );
+            std::thread::yield_now();
+        }
+        std::thread::sleep(Duration::from_millis(20));
+
+        let abort_started = Instant::now();
+        runtime.abort().unwrap();
+        assert!(
+            abort_started.elapsed() < Duration::from_secs(1),
+            "abort waited for the 30-second backend retry delay"
+        );
+        assert_eq!(writeback.applied_sequence(), 0);
+        assert_eq!(writeback.queue_len(), 1);
     }
 
     #[test]
@@ -372,12 +552,12 @@ mod tests {
         let backend = Arc::new(MemBlobs::new());
         let writeback =
             Arc::new(Writeback::new(Arc::clone(&backend), 0, config()).expect("valid writeback"));
-        let acknowledged = writeback
+        let mut acknowledged = writeback
             .reserve(vec![put(b"a", b"one")])
             .unwrap()
             .bind(timestamp(6))
             .unwrap();
-        let unknown = writeback
+        let mut unknown = writeback
             .reserve(vec![put(b"b", b"two")])
             .unwrap()
             .bind(timestamp(7))

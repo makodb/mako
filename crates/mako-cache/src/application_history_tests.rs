@@ -1,20 +1,20 @@
 //! Application-aware full-history coverage for visible, acknowledged, and
 //! asynchronously applied cache state.
 
-use std::sync::{mpsc, Arc, Condvar, Mutex, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, OnceLock, mpsc};
 use std::time::{Duration, Instant};
 
 use mako_history::{
-    check_application, state_insert, ApplicationCheckFailureKind, ApplicationCommit,
-    ApplicationCommitOutcome, ApplicationHistory, BackendAttempt, BackendAttemptOutcome, CacheSeq,
-    CheckOptions, FrontierObservation, History, Interval, LogicalClock, ModelMutation, Observation,
-    Operation, Semantics, State, TerminalCall, TerminalOutcome, TimedOperation,
-    Transaction as HistoryTransaction, WaitAppliedObservation, WaitAppliedOutcome,
+    ApplicationCheckFailureKind, ApplicationCommit, ApplicationCommitOutcome, ApplicationHistory,
+    BackendAttempt, BackendAttemptOutcome, CacheSeq, CheckOptions, FrontierObservation, History,
+    Interval, LogicalClock, ModelMutation, Observation, Operation, Semantics, State, TerminalCall,
+    TerminalOutcome, TimedOperation, Transaction as HistoryTransaction, WaitAppliedObservation,
+    WaitAppliedOutcome, check_application, state_insert,
 };
 use mrx_core::fakes::MemBlobs;
 use mrx_core::{BlobError, BlobOp, Blobs};
 
-use crate::record::{classify_backend_key, BackendKey, CommitRecord, Mutation, DEFAULT_TABLE_ID};
+use crate::record::{BackendKey, CommitRecord, DEFAULT_TABLE_ID, Mutation, classify_backend_key};
 use crate::{Cache, CacheOptions, Transaction};
 
 const PREFIX: &[u8] = b"phase1f/application/";

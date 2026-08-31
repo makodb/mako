@@ -19,15 +19,15 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use mako_cache::{Db as MakoDb, Options as MakoOptions};
+use mako_cache::{Db as MakoDb, ForegroundMode, Options as MakoOptions, RecordChecksum};
 use mrx::{Db as MrxDb, Options as MrxOptions, WriteBatch as MrxWriteBatch};
 use mrx_core::{BlobOp, Blobs};
 use mrx_rocks::{Durability, RocksBlobs};
 
-const REPORT_PROTOCOL: &str = "mako-milestone1-benchmark-v1";
-const SAMPLE_PROTOCOL: &str = "mako-m1-sample-v1";
+const REPORT_PROTOCOL: &str = "mako-milestone1-benchmark-v2";
+const SAMPLE_PROTOCOL: &str = "mako-m1-sample-v2";
 const RECOVERY_PROTOCOL: &str = "mako-m1-recovery-v1";
-const CHECKPOINT_PROTOCOL: &str = "mako-m1-checkpoint-v1";
+const CHECKPOINT_PROTOCOL: &str = "mako-m1-checkpoint-v2";
 const CHECKPOINT_RESULT_PROTOCOL: &str = "mako-m1-checkpoint-result-v1";
 const CHECKPOINT_RUN_PROTOCOL: &str = "mako-m1-checkpoint-run-v1";
 const VALUE_BYTES: usize = 128;
@@ -40,6 +40,9 @@ const FORCED_COLLISION_ROUNDS: u64 = 64;
 const CHILD_CAPTURE_BYTES: usize = 1024 * 1024;
 const MAKO_LOG_PREFIX: &[u8] = b"\0mako-cache\0\x01L";
 const MAKO_DATA_PREFIX: &[u8] = b"\0mako-cache\0\x01D";
+const WRITEBACK_CPU_ENV: &str = "MAKO_CACHE_BENCH_WRITEBACK_CPU";
+const RECORD_CHECKSUM_ENV: &str = "MAKO_CACHE_BENCH_RECORD_CHECKSUM";
+const MAKO_FOREGROUND_MODE: ForegroundMode = ForegroundMode::Concurrent;
 
 type AnyResult<T> = Result<T, String>;
 
@@ -216,6 +219,7 @@ struct ChildSpec {
 #[derive(Clone, Copy, Debug, Default)]
 struct PhaseStats {
     duration_ns: u64,
+    foreground_cpu_ns: u64,
     commits: u64,
     conflicts: u64,
     attempt_p50_ns: u64,
@@ -277,6 +281,8 @@ struct RunOptions {
     checkpoint: Option<PathBuf>,
     resume: bool,
     keep_data: bool,
+    writeback_cpu: Option<usize>,
+    record_checksum: RecordChecksum,
 }
 
 struct Checkpoint {
@@ -301,6 +307,9 @@ impl Database {
             Arm::Mako => {
                 let mut options = MakoOptions::default();
                 options.cache.writeback.capacity = async_queue_capacity(configuration);
+                options.cache.foreground_mode = MAKO_FOREGROUND_MODE;
+                options.cache.writeback_cpu = benchmark_writeback_cpu()?;
+                options.cache.record_checksum = benchmark_record_checksum()?;
                 MakoDb::open(path, options)
                     .map(|db| Self::Mako(Arc::new(db)))
                     .map_err(|error| format!("open mako-cache: {error}"))
@@ -441,7 +450,7 @@ fn real_main() -> AnyResult<()> {
 }
 
 fn usage() -> String {
-    "usage: mako-cache-bench run --profile smoke|acceptance|scaling --data-root PATH [--output FILE] [--checkpoint FILE] [--resume] [--keep-data]".to_owned()
+    "usage: mako-cache-bench run --profile smoke|acceptance|scaling --data-root PATH [--output FILE] [--checkpoint FILE] [--resume] [--keep-data] [--writeback-cpu CPU] [--record-checksum crc32c|none]".to_owned()
 }
 
 fn parse_run_options(arguments: &[String]) -> AnyResult<RunOptions> {
@@ -451,6 +460,8 @@ fn parse_run_options(arguments: &[String]) -> AnyResult<RunOptions> {
     let mut checkpoint = None;
     let mut resume = false;
     let mut keep_data = false;
+    let mut writeback_cpu = None;
+    let mut record_checksum = RecordChecksum::Crc32c;
     let mut index = 0;
     while index < arguments.len() {
         match arguments[index].as_str() {
@@ -486,6 +497,19 @@ fn parse_run_options(arguments: &[String]) -> AnyResult<RunOptions> {
             }
             "--resume" => resume = true,
             "--keep-data" => keep_data = true,
+            "--writeback-cpu" => {
+                index += 1;
+                let value = required_argument(arguments, index, "--writeback-cpu")?;
+                writeback_cpu = Some(parse_cpu(value)?);
+            }
+            "--record-checksum" => {
+                index += 1;
+                record_checksum = parse_record_checksum(required_argument(
+                    arguments,
+                    index,
+                    "--record-checksum",
+                )?)?;
+            }
             other => return Err(format!("unknown option {other:?}; {}", usage())),
         }
         index += 1;
@@ -517,6 +541,8 @@ fn parse_run_options(arguments: &[String]) -> AnyResult<RunOptions> {
         checkpoint,
         resume,
         keep_data,
+        writeback_cpu,
+        record_checksum,
     })
 }
 
@@ -586,6 +612,50 @@ fn parse_u64(value: &str, label: &str) -> AnyResult<u64> {
         return Err(format!("{label} is not canonical"));
     }
     Ok(parsed)
+}
+
+fn parse_cpu(value: &str) -> AnyResult<usize> {
+    usize::try_from(parse_u64(value, "write-back CPU")?)
+        .map_err(|_| "write-back CPU does not fit usize".to_owned())
+}
+
+fn benchmark_writeback_cpu() -> AnyResult<Option<usize>> {
+    env::var(WRITEBACK_CPU_ENV)
+        .ok()
+        .map(|value| parse_cpu(&value))
+        .transpose()
+}
+
+fn parse_record_checksum(value: &str) -> AnyResult<RecordChecksum> {
+    match value {
+        "crc32c" => Ok(RecordChecksum::Crc32c),
+        "none" => Ok(RecordChecksum::None),
+        _ => Err(format!(
+            "record checksum must be crc32c or none, got {value:?}"
+        )),
+    }
+}
+
+fn record_checksum_name(value: RecordChecksum) -> &'static str {
+    match value {
+        RecordChecksum::Crc32c => "crc32c",
+        RecordChecksum::None => "none",
+    }
+}
+
+fn foreground_mode_name(value: ForegroundMode) -> &'static str {
+    match value {
+        ForegroundMode::Concurrent => "concurrent",
+        ForegroundMode::SingleProducer => "single_producer",
+    }
+}
+
+fn benchmark_record_checksum() -> AnyResult<RecordChecksum> {
+    env::var(RECORD_CHECKSUM_ENV)
+        .ok()
+        .map_or(Ok(RecordChecksum::Crc32c), |value| {
+            parse_record_checksum(&value)
+        })
 }
 
 fn error_string(error: impl std::fmt::Display) -> String {
@@ -755,6 +825,7 @@ fn rocks_attempt(
 struct WorkerStats {
     commits: u64,
     conflicts: u64,
+    foreground_cpu_ns: Option<u64>,
     attempt_latencies: Vec<u64>,
     logical_latencies: Vec<u64>,
 }
@@ -785,6 +856,7 @@ fn run_phase(
             while !release_gate.load(Ordering::Acquire) {
                 std::hint::spin_loop();
             }
+            let foreground_cpu_start = current_thread_cpu_ns();
             let mut result = WorkerStats::default();
             let mut logical_start = Instant::now();
             while result.commits != target_commits {
@@ -823,6 +895,9 @@ fn run_phase(
                     thread::yield_now();
                 }
             }
+            result.foreground_cpu_ns = foreground_cpu_start
+                .zip(current_thread_cpu_ns())
+                .and_then(|(start, end)| end.checked_sub(start));
             Ok(result)
         }));
     }
@@ -831,10 +906,14 @@ fn run_phase(
     let start = Instant::now();
     release_gate.store(true, Ordering::Release);
     let mut aggregate = WorkerStats::default();
+    let mut foreground_cpu_ns = Some(0u64);
     for (worker, handle) in handles.into_iter().enumerate() {
         let worker_result = handle
             .join()
             .map_err(|_| format!("benchmark worker {worker} panicked"))??;
+        foreground_cpu_ns = foreground_cpu_ns
+            .zip(worker_result.foreground_cpu_ns)
+            .and_then(|(total, worker)| total.checked_add(worker));
         aggregate.commits = aggregate
             .commits
             .checked_add(worker_result.commits)
@@ -862,6 +941,10 @@ fn run_phase(
     }
     Ok(PhaseStats {
         duration_ns,
+        // Zero is the explicit unavailable sentinel on platforms without a
+        // per-thread runtime counter. ACK wall time remains the primary
+        // end-to-end measurement on every platform.
+        foreground_cpu_ns: foreground_cpu_ns.unwrap_or(0),
         commits: aggregate.commits,
         conflicts: aggregate.conflicts,
         attempt_p50_ns: percentile(&mut aggregate.attempt_latencies, 50),
@@ -869,6 +952,24 @@ fn run_phase(
         logical_p50_ns: percentile(&mut aggregate.logical_latencies, 50),
         logical_p99_ns: percentile(&mut aggregate.logical_latencies, 99),
     })
+}
+
+#[cfg(target_os = "linux")]
+fn current_thread_cpu_ns() -> Option<u64> {
+    use nix::sys::time::TimeValLike;
+    use nix::time::{ClockId, clock_gettime};
+
+    // CLOCK_THREAD_CPUTIME_ID belongs only to this workload thread, so the
+    // asynchronous Mako/RocksDB threads never enter the diagnostic total.
+    let nanos = clock_gettime(ClockId::CLOCK_THREAD_CPUTIME_ID)
+        .ok()?
+        .num_nanoseconds();
+    u64::try_from(nanos).ok()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn current_thread_cpu_ns() -> Option<u64> {
+    None
 }
 
 fn percentile(values: &mut [u64], percentile: usize) -> u64 {
@@ -1120,7 +1221,7 @@ fn encode_sample_protocol(result: &SampleResult) -> String {
     let configuration = result.configuration;
     write!(
         &mut output,
-        "{SAMPLE_PROTOCOL} arm={} workload={} tx={} contention={} workers={} target={} warmup={} keyspace={} warmup_conflicts={} duration_ns={} commits={} conflicts={} attempt_p50_ns={} attempt_p99_ns={} logical_p50_ns={} logical_p99_ns={} drain_ns={} logical_ops={} measured_mutation_bytes={} total_mutation_bytes={} live_user_bytes={} checksum={} backend_keys={} backend_key_bytes={} backend_value_bytes={} log_keys={} log_key_bytes={} log_value_bytes={} data_keys={} physical_bytes={}",
+        "{SAMPLE_PROTOCOL} arm={} workload={} tx={} contention={} workers={} target={} warmup={} keyspace={} warmup_conflicts={} duration_ns={} foreground_cpu_ns={} commits={} conflicts={} attempt_p50_ns={} attempt_p99_ns={} logical_p50_ns={} logical_p99_ns={} drain_ns={} logical_ops={} measured_mutation_bytes={} total_mutation_bytes={} live_user_bytes={} checksum={} backend_keys={} backend_key_bytes={} backend_value_bytes={} log_keys={} log_key_bytes={} log_value_bytes={} data_keys={} physical_bytes={}",
         configuration.arm.name(),
         configuration.workload.name(),
         configuration.transaction_size,
@@ -1131,6 +1232,7 @@ fn encode_sample_protocol(result: &SampleResult) -> String {
         result.keyspace,
         result.warmup_conflicts,
         result.phase.duration_ns,
+        result.phase.foreground_cpu_ns,
         result.phase.commits,
         result.phase.conflicts,
         result.phase.attempt_p50_ns,
@@ -1173,6 +1275,7 @@ fn parse_sample_protocol(text: &str) -> AnyResult<SampleResult> {
         warmup_conflicts: take_number(&mut fields, "warmup_conflicts")?,
         phase: PhaseStats {
             duration_ns: take_number(&mut fields, "duration_ns")?,
+            foreground_cpu_ns: take_number(&mut fields, "foreground_cpu_ns")?,
             commits: take_number(&mut fields, "commits")?,
             conflicts: take_number(&mut fields, "conflicts")?,
             attempt_p50_ns: take_number(&mut fields, "attempt_p50_ns")?,
@@ -1604,11 +1707,15 @@ fn checkpoint_header(options: &RunOptions) -> String {
         .canonicalize()
         .unwrap_or_else(|_| options.data_root.clone());
     format!(
-        "{CHECKPOINT_PROTOCOL} profile={} binary={} host={} affinity={} data_root={} git={} fingerprint={}",
+        "{CHECKPOINT_PROTOCOL} profile={} binary={} host={} affinity={} writeback_cpu={} record_checksum={} data_root={} git={} fingerprint={}",
         options.profile.name(),
         executable_digest(),
         hex_encode(read_trimmed("/etc/hostname").as_bytes()),
         hex_encode(process_status_field("Cpus_allowed_list").as_bytes()),
+        options
+            .writeback_cpu
+            .map_or_else(|| "inherit".to_owned(), |cpu| cpu.to_string()),
+        record_checksum_name(options.record_checksum),
         hex_encode(canonical_data_root.as_os_str().as_bytes()),
         command_line("git", &["rev-parse", "HEAD"]),
         native_fingerprint(),
@@ -1786,6 +1893,8 @@ fn run_orchestrator_inner(
                 &executable,
                 &sample_arguments(&spec),
                 options.profile.child_timeout(),
+                options.writeback_cpu,
+                options.record_checksum,
             )?;
             let sample = parse_sample_protocol(&sample_output)?;
             if sample.configuration != configuration {
@@ -1795,6 +1904,8 @@ fn run_orchestrator_inner(
                 &executable,
                 &recovery_arguments(&spec, sample.checksum),
                 options.profile.child_timeout(),
+                options.writeback_cpu,
+                options.record_checksum,
             )?;
             let recovery = parse_recovery_protocol(&recovery_output)?;
             if recovery.configuration != configuration
@@ -1844,12 +1955,31 @@ fn child_arguments(role: &str, spec: &ChildSpec) -> Vec<String> {
     ]
 }
 
-fn run_child(executable: &Path, arguments: &[String], timeout: Duration) -> AnyResult<String> {
-    let mut child = Command::new(executable)
+fn run_child(
+    executable: &Path,
+    arguments: &[String],
+    timeout: Duration,
+    writeback_cpu: Option<usize>,
+    record_checksum: RecordChecksum,
+) -> AnyResult<String> {
+    let mut command = Command::new(executable);
+    command
         .args(arguments)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    match writeback_cpu {
+        Some(cpu) => {
+            command.env(WRITEBACK_CPU_ENV, cpu.to_string());
+        }
+        None => {
+            // An orchestrated run is entirely described by its command line;
+            // do not let an ambient diagnostic variable change its profile.
+            command.env_remove(WRITEBACK_CPU_ENV);
+        }
+    }
+    command.env(RECORD_CHECKSUM_ENV, record_checksum_name(record_checksum));
+    let mut child = command
         .spawn()
         .map_err(|error| format!("start benchmark child: {error}"))?;
     let stdout = child
@@ -2205,6 +2335,26 @@ fn encode_report(
     );
     json_string_field(
         &mut output,
+        "mako_writeback_cpu",
+        &options
+            .writeback_cpu
+            .map_or_else(|| "inherited".to_owned(), |cpu| cpu.to_string()),
+        false,
+    );
+    json_string_field(
+        &mut output,
+        "mako_foreground_mode",
+        foreground_mode_name(MAKO_FOREGROUND_MODE),
+        false,
+    );
+    json_string_field(
+        &mut output,
+        "mako_record_checksum",
+        record_checksum_name(options.record_checksum),
+        false,
+    );
+    json_string_field(
+        &mut output,
         "load_average",
         &read_trimmed("/proc/loadavg"),
         false,
@@ -2307,8 +2457,29 @@ fn encode_report(
     json_string_field(&mut output, "rocksdb_durability", "wal_sync_false", false);
     json_string_field(
         &mut output,
+        "mako_record_integrity",
+        match options.record_checksum {
+            RecordChecksum::Crc32c => "self-describing v3 with CRC32C",
+            RecordChecksum::None => "self-describing v4 without corruption checksum",
+        },
+        false,
+    );
+    json_string_field(
+        &mut output,
         "ack_scope",
-        "foreground calls through transaction acknowledgement",
+        "wall time from releasing workload workers through their transaction acknowledgements; worker count excludes asynchronous cache and RocksDB threads, while wall time still observes their contention and backpressure",
+        false,
+    );
+    json_string_field(
+        &mut output,
+        "foreground_cpu_scope",
+        "sum of Linux CLOCK_THREAD_CPUTIME_ID on-CPU time for workload workers only; zero when unavailable; excludes cache/RocksDB background execution and time the foreground is blocked or descheduled",
+        false,
+    );
+    json_string_field(
+        &mut output,
+        "writeback_affinity_scope",
+        "optional Linux logical-CPU pin applies to mako-writeback only; RocksDB internal threads retain their own placement",
         false,
     );
     json_string_field(
@@ -2424,12 +2595,24 @@ fn encode_combined_json(output: &mut String, result: &CombinedResult) {
         false,
     );
     json_number_field(output, "ack_duration_ns", sample.phase.duration_ns, false);
+    json_number_field(
+        output,
+        "foreground_cpu_duration_ns",
+        sample.phase.foreground_cpu_ns,
+        false,
+    );
     json_number_field(output, "drain_duration_ns", sample.drain_ns, false);
     json_number_field(output, "ack_applied_duration_ns", end_to_end_ns, false);
     json_float_field(
         output,
         "ack_transactions_per_second",
         rate(sample.phase.commits, sample.phase.duration_ns),
+        false,
+    );
+    json_float_field(
+        output,
+        "foreground_cpu_transactions_per_second",
+        rate(sample.phase.commits, sample.phase.foreground_cpu_ns),
         false,
     );
     json_float_field(
@@ -2564,6 +2747,17 @@ fn encode_summary_json(
         "median_ack_transactions_per_second",
         median(values(|result| {
             rate(result.sample.phase.commits, result.sample.phase.duration_ns)
+        })),
+        false,
+    );
+    json_float_field(
+        output,
+        "median_foreground_cpu_transactions_per_second",
+        median(values(|result| {
+            rate(
+                result.sample.phase.commits,
+                result.sample.phase.foreground_cpu_ns,
+            )
         })),
         false,
     );
@@ -2826,6 +3020,7 @@ mod tests {
             warmup_conflicts: 3,
             phase: PhaseStats {
                 duration_ns: 1_000_000,
+                foreground_cpu_ns: 750_000,
                 commits,
                 conflicts: 7,
                 attempt_p50_ns: 100,
@@ -2891,6 +3086,8 @@ mod tests {
             checkpoint: Some(checkpoint),
             resume,
             keep_data: false,
+            writeback_cpu: None,
+            record_checksum: RecordChecksum::Crc32c,
         }
     }
 
@@ -2901,6 +3098,10 @@ mod tests {
         let actual = parse_sample_protocol(&(encoded.clone() + "\n")).unwrap();
         assert_eq!(actual.configuration, expected.configuration);
         assert_eq!(actual.phase.commits, expected.phase.commits);
+        assert_eq!(
+            actual.phase.foreground_cpu_ns,
+            expected.phase.foreground_cpu_ns
+        );
         assert_eq!(
             actual.backend.log_value_bytes,
             expected.backend.log_value_bytes
@@ -2933,6 +3134,47 @@ mod tests {
         assert_eq!(percentile(&mut values, 50), 2);
         assert_eq!(percentile(&mut values, 99), 100);
         assert_eq!(percentile(&mut [], 99), 0);
+    }
+
+    #[test]
+    fn writeback_cpu_parser_accepts_zero_and_rejects_noncanonical_values() {
+        assert_eq!(parse_cpu("0"), Ok(0));
+        assert_eq!(parse_cpu("17"), Ok(17));
+        assert!(parse_cpu("017").is_err());
+        assert!(parse_cpu("-1").is_err());
+    }
+
+    #[test]
+    fn record_checksum_parser_is_explicit() {
+        assert_eq!(
+            parse_record_checksum("crc32c").unwrap(),
+            RecordChecksum::Crc32c
+        );
+        assert_eq!(parse_record_checksum("none").unwrap(), RecordChecksum::None);
+        assert!(parse_record_checksum("off").is_err());
+        assert!(parse_record_checksum("").is_err());
+    }
+
+    #[test]
+    fn report_labels_the_fixed_concurrent_foreground_mode() {
+        assert_eq!(MAKO_FOREGROUND_MODE, ForegroundMode::Concurrent);
+        let options = checkpoint_options(
+            Path::new("/tmp"),
+            PathBuf::from("/tmp/mako-cache-bench-report.checkpoint"),
+            false,
+        );
+        let report = encode_report(
+            &options,
+            Path::new("/tmp/mako-cache-bench-report"),
+            &[combined()],
+        )
+        .unwrap();
+        assert_eq!(
+            report
+                .matches("\"mako_foreground_mode\":\"concurrent\"")
+                .count(),
+            1
+        );
     }
 
     #[test]
