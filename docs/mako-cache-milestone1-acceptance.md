@@ -1,16 +1,118 @@
 # Mako cache Milestone 1 acceptance
 
-Status: **CURRENT REWRITE PASS** on 2026-08-29. The full comparative acceptance
-below remains historical evidence for candidate `6574cf47c`; the native-record
-and bounded-batching rewrite is validated separately here and does not
-retroactively change that immutable artifact.
+Status: **CURRENT DETACHED-WRITEBACK PASS** on 2026-08-30. The latest code and
+performance evidence is for candidate `153e14c78`. The earlier native-record
+rewrite and the full comparative acceptance remain below as historical
+evidence; newer measurements do not retroactively alter those artifacts.
 
 Milestone 1 is complete for its declared scope: one process, one recovered
-cache namespace, C++ STO/MassTrans transactions behind the revision-0 C ABI,
-the safe Rust transaction/cache layer, and asynchronous atomic RocksDB
-application. Phase 1G eviction and all distributed work remain deferred.
+cache namespace, C++ STO/MassTrans transactions behind the public revision-0 C
+ABI plus its fingerprint-checked build-private fast extension, the safe Rust
+transaction/cache layer, and asynchronous atomic RocksDB application. Phase 1G
+eviction and all distributed work remain deferred.
 
-## Current native-record and bounded-batching validation
+## Current detached holder fast path
+
+Candidate `153e14c78fc1a1ea6efa68713b5bda8b87d6ce44` moves the
+checksum-none, single-producer, one-Put acknowledgement path off record
+construction and RocksDB replay:
+
+1. Rust passes the unique producer's persistent SPSC control and a
+   capacity-limit snapshot to the fused C++ terminal. It retains the stable
+   local next-sequence cursor for cold-result decoding.
+2. C++ checks capacity, selects the next dense generation and its masked
+   holder, acquires the STO write locks, allocates the Mako timestamp, performs
+   final read and predicate validation, installs and cleans up the transaction,
+   transfers the staged `std::string` value into that holder, and publishes the
+   acknowledgement witness.
+3. The foreground returns after the dense acknowledgement prefix reaches the
+   transaction. It does not encode a commit record or call RocksDB.
+4. The sole serialized consumer, normally the named `mako-writeback` OS thread,
+   reads the holder, encodes the record, applies the transaction and log entry
+   in one RocksDB `WriteBatch`, releases the holder generation, and advances
+   the applied watermark. `wait_applied()` and shutdown can help execute that
+   same serialized drain. The normal thread can be pinned to a CPU outside the
+   foreground affinity set.
+
+The production default remains checksummed v3 records. The explicit
+`RecordChecksum::None` option emits a distinct, self-describing v4 format and
+skips the foreground CRC scan. Recovery accepts mixed v3/v4 history. V4 still
+performs structural validation but cannot detect arbitrary payload corruption,
+so disabling CRC is an intentional durability tradeoff rather than a silent
+downgrade.
+
+### Matched one-worker hot-path result
+
+The controlled one-worker `zoo-002` run used CPU 0, writeback CPU 16, checksum
+`none`, a 1,048,576-entry queue, 1,048,576 warmup transactions, and 262,144
+measured transactions. Values are three-run medians from exact perf intervals:
+
+| Path | Cycles/txn | Instructions/txn | Branches/txn | Cycle-normalized throughput |
+| --- | ---: | ---: | ---: | ---: |
+| Raw STO/Masstree C ABI | 1,022.488 | 2,563.285 | 482.943 | 100.00% |
+| Fused C++ holder terminal | 1,051.967 | 2,642.406 | 488.970 | 97.20% |
+| Full Rust cache acknowledgement gate | 1,077.375 | 2,673.446 | 495.175 | 94.91% |
+
+The full cache gate is therefore within the requested roughly 95% of raw C ABI
+throughput by cycles. It retains 97.64% of the fused native terminal. Wall-time
+samples were frequency-sensitive, so cycles, instructions, and branches are
+the primary comparison rather than tuning to a fraction of one percent. The
+source also records PGO as future work; this result does not depend on PGO.
+
+### Final concurrent scaling run
+
+The retained
+[final scaling report](benchmarks/mako-cache-scaling-zoo002-20260830-detached-holder.json)
+has SHA-256
+`98ac3e5a4b3781c76dc31e076179907849aa3977e44737ce29e4fff8930707ff`.
+It records exact Git HEAD `153e14c78`, a clean worktree, Rust 1.95.0, native
+fingerprint
+`e1a0e042b0ebf3a493a729f4dde29b91282cc2e5d1141500894e0e2bb601f6b3`,
+foreground CPUs 0-31, writeback CPU 32, and checksum `none`. All 84 unique
+sample/recovery pairs and an independent accounting audit passed.
+
+This matrix deliberately uses `ForegroundMode::Concurrent` for every row so
+one binary can cover 1 through 32 workers. Its W1 row therefore does not use
+the exclusive single-producer fast path measured above. Throughput is median
+thousands of transactions per second across seven repetitions. `Applied`
+includes the immediate asynchronous drain. Foreground CPU throughput divides
+commits by summed workload-thread CPU time and excludes the writeback thread;
+it is a diagnostic, not aggregate wall throughput.
+
+| Workers | Read ACK | Read applied | Write ACK | Write applied | Write foreground CPU |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 759.3 | 759.3 | 640.0 | 93.2 | 643.9 |
+| 2 | 1,256.2 | 1,256.1 | 625.4 | 134.5 | 324.8 |
+| 4 | 1,668.3 | 1,668.2 | 706.3 | 145.8 | 193.4 |
+| 8 | 1,390.1 | 1,390.1 | 698.5 | 141.1 | 115.5 |
+| 16 | 1,631.7 | 1,631.7 | 747.8 | 136.1 | 82.4 |
+| 32 | 1,858.1 | 1,858.1 | 255.8 | 104.7 | 9.7 |
+
+Against the retained pre-rewrite run, write throughput changed as follows:
+
+| Workers | Old ACK | Final ACK | Gain | Old applied | Final applied | Gain |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 119.9 | 640.0 | 5.337x | 44.8 | 93.2 | 2.082x |
+| 2 | 106.6 | 625.4 | 5.869x | 46.7 | 134.5 | 2.882x |
+| 4 | 35.5 | 706.3 | 19.885x | 24.2 | 145.8 | 6.019x |
+| 8 | 20.1 | 698.5 | 34.760x | 15.8 | 141.1 | 8.942x |
+| 16 | 11.1 | 747.8 | 67.544x | 9.7 | 136.1 | 14.094x |
+| 32 | 7.2 | 255.8 | 35.504x | 6.6 | 104.7 | 15.884x |
+
+Read ACK changed between -1.48% and +7.36%, consistent with a write-specific
+optimization. W32 write ACK still drops from W16 and remains the next
+foreground contention target. The dedicated writer and foreground CPU metric
+make that limitation visible without charging background replay CPU to a
+workload worker.
+
+Current functional evidence includes the 119/119 native `mako-cache` tests,
+13/13 fake-ABI tests under pinned Miri, 17/17 benchmark tests, the fresh
+hooks-off C++ suite with 75 passes and one expected hook-only skip, and 27/27
+supporting `mrx-ffi`, `mrx-masstree`, `mrx`, and `mtree-sys` tests. Two
+independent holder hot-path unsafe-code reviews reported no remaining
+actionable finding.
+
+## Previous native-record and bounded-batching validation
 
 The 2026-08-29 rewrite keeps STO/MassTrans/Masstree in C++, but moves commit-
 record construction to STO's canonical write set. Rust preallocates one exact-

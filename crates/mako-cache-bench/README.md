@@ -79,6 +79,11 @@ taskset -c 0-31 env \
     --output "$PWD/build_milestone1/mako-isolated-writeback.json"
 ```
 
+The latest retained execution of this diagnostic is the
+[2026-08-30 detached-holder report](../../docs/benchmarks/mako-cache-scaling-zoo002-20260830-detached-holder.json).
+It contains 84 validated sample/recovery pairs, seven for each read/write and
+1/2/4/8/16/32-worker cell.
+
 This profile explicitly uses `ForegroundMode::Concurrent` for every row,
 including one worker. It therefore does not exercise the single-producer
 native-holder fast path; a matched one-worker raw/holder/cache comparison needs
