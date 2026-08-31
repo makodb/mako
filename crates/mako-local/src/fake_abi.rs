@@ -565,9 +565,14 @@ pub(super) unsafe fn mako_local_txn_begin(
         };
         observe_status(state, status);
         if status == sys::MAKO_LOCAL_OK && return_handle {
-            let mut txn = Box::new(FakeTxn::default());
-            let raw = ptr::from_mut(txn.as_mut()).cast::<sys::mako_local_txn>();
-            state.txn = Some(txn);
+            state.txn = Some(Box::new(FakeTxn::default()));
+            let raw = ptr::from_mut(
+                state
+                    .txn
+                    .as_deref_mut()
+                    .expect("transaction was just registered"),
+            )
+            .cast::<sys::mako_local_txn>();
             // SAFETY: checked above; the allocation remains owned by fake state.
             unsafe { out.write(raw) };
         }
@@ -602,9 +607,14 @@ pub(super) unsafe fn mako_rust_fast_txn_begin(
         };
         observe_status(state, status);
         if status == sys::MAKO_LOCAL_OK && return_handle {
-            let mut txn = Box::new(FakeTxn::default());
-            let raw = ptr::from_mut(txn.as_mut()).cast::<sys::mako_local_txn>();
-            state.txn = Some(txn);
+            state.txn = Some(Box::new(FakeTxn::default()));
+            let raw = ptr::from_mut(
+                state
+                    .txn
+                    .as_deref_mut()
+                    .expect("transaction was just registered"),
+            )
+            .cast::<sys::mako_local_txn>();
             // SAFETY: checked above; fake state owns the allocation.
             unsafe { out.write(raw) };
         }
