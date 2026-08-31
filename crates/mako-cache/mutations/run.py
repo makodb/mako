@@ -119,14 +119,20 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         name="early-detached-capacity-discharge",
         relative_path="src/writeback.rs",
-        anchor="""        permit.record = Some(Arc::new(OnceLock::new()));
+        anchor="""        permit.prepared = Some(Box::new(LegacyCommitRecord::prepare(
+            mutations,
+            self.config.max_record_bytes,
+        )?));
         Ok(permit)
 """,
-        anchor_sha256="20fdbd104c9fb454261bca666824724f05bab20adba2cc0308e1550992a1d051",
-        replacement="""        permit.record = Some(Arc::new(OnceLock::new()));
+        anchor_sha256="d6888cd1a604c60cdaa0f1a97573a9729075ad7ea5bc54953396cbd9143c92ed",
+        replacement="""        permit.prepared = Some(Box::new(LegacyCommitRecord::prepare(
+            mutations,
+            self.config.max_record_bytes,
+        )?));
         // MUTANT: advertise capacity while the detached permit still exists.
-        permit.owns_capacity = false;
-        self.release_detached_capacity();
+        permit.owns_claim = false;
+        self.release_detached_claim(None);
         Ok(permit)
 """,
         test=WRITEBACK_UNIT(
@@ -140,16 +146,16 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         name="hook-time-allocation",
         relative_path="src/writeback.rs",
-        anchor="""        let mut state = lock_recover(&self.owner.state);
-        if let Some(error) = state.reserve_health_error() {
+        anchor="""        assert!(self.owns_claim, "binding must own a detached claim");
+        // Legacy preparation remains boxed through the ordered hook. Its large
 """,
-        anchor_sha256="11d1d125d842e8b70fb02a793012bed18f0b08b7e8c1ee1034bed24678295352",
-        replacement="""        let mut state = lock_recover(&self.owner.state);
+        anchor_sha256="3e33505a4c3715689a4a27e13a387d0d4b96bdddf838b4ce5ef53a99882a199e",
+        replacement="""        assert!(self.owns_claim, "binding must own a detached claim");
         // MUTANT: allocate while Silo's post-validation hook holds write locks.
         let hook_allocation = Box::new(mako_timestamp.get());
         std::hint::black_box(&hook_allocation);
         drop(hook_allocation);
-        if let Some(error) = state.reserve_health_error() {
+        // Legacy preparation remains boxed through the ordered hook. Its large
 """,
         test=TestTarget(
             ("--test", "hook_allocation"),
@@ -163,27 +169,27 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         name="conflict-cancellation-slot",
         relative_path="src/writeback.rs",
-        anchor="""    fn release_detached_capacity(&self) {
-        let mut state = lock_recover(&self.state);
-        state.detached = state
-            .detached
-            .checked_sub(1)
-            .expect("detached permit capacity underflow");
-        drop(state);
+        anchor="""        } else {
+            self.occupied.release();
+            self.notify_capacity_release();
+        }
 """,
-        anchor_sha256="98221015887568c08b5f1ec6946e53b51f8176ed0d98c04dff4d5a8b9dfae4e7",
-        replacement="""    fn release_detached_capacity(&self) {
-        let mut state = lock_recover(&self.state);
-        state.detached = state
-            .detached
-            .checked_sub(1)
-            .expect("detached permit capacity underflow");
-        // MUTANT: model an abort/cancellation marker by consuming CacheSeq.
-        state.last_bound = state
-            .last_bound
-            .checked_add(1)
-            .expect("mutant cancellation sequence exhausted");
-        drop(state);
+        anchor_sha256="fab75e41259f2c51141e60ecc98a3f29e6ff657d425cc37ca082bb200e7cdf35",
+        replacement="""        } else {
+            // MUTANT: turn a pre-validation abort into a cancelled log position.
+            let cancelled = self
+                .next_bound
+                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                    current.checked_add(1)
+                })
+                .expect("mutant cancellation sequence exhausted")
+                + 1;
+            let mut state = lock_recover(&self.state);
+            state.last_bound = cancelled;
+            drop(state);
+            self.occupied.release();
+            self.notify_capacity_release();
+        }
 """,
         test=WRITEBACK_UNIT(
             "detached_abort_uses_capacity_but_never_assigns_a_sequence_or_slot"
@@ -196,13 +202,14 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         name="missing-ready-publication",
         relative_path="src/writeback.rs",
-        anchor="""                    state.queue[offset].state = SlotState::Ready;
-                    state.advance_acknowledged_prefix();
+        anchor="""        self.publication_cell(sequence)
+            .publish_attached(sequence, self.publication_shift);
+        self.finish_ready_publication(token)
 """,
-        anchor_sha256="1407ddd783fb180dcab1fbfbe85e48fab82f5d0fd6cd1fbd0bdf5b2d9a3941dc",
-        replacement="""                    // MUTANT: acknowledge without publishing the Prepared slot.
-                    state.queue[offset].state = SlotState::Prepared { pinned: false };
-                    state.highest_acknowledged = sequence.get();
+        anchor_sha256="a174de5042bfcd9b4174be299b053339b6679770a87cd98f02ea7631c779bfa7",
+        replacement="""        // MUTANT: acknowledge without publishing the completed record cell.
+        self.acknowledged.store(sequence.get(), Ordering::Release);
+        Ok(())
 """,
         test=WRITEBACK_UNIT(
             "bind_and_publish_make_the_prepared_to_ready_transition_explicit"
@@ -215,19 +222,19 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         name="premature-ready-publication",
         relative_path="src/writeback.rs",
-        anchor="""        let slot = Slot {
-            sequence,
-            record: Arc::clone(&record),
-            state: SlotState::Prepared { pinned: false },
-        };
+        anchor="""            state.queue.push_back(Slot {
+                sequence,
+                record: None,
+                state: SlotState::Prepared { pinned: false },
+            });
 """,
-        anchor_sha256="28dd3534675321cba6d84f3e4f319d0935dc7769dc550258c527b7b8e39584cc",
-        replacement="""        let slot = Slot {
-            sequence,
-            record: Arc::clone(&record),
-            // MUTANT: expose Ready before the checksum and record cell exist.
-            state: SlotState::Ready,
-        };
+        anchor_sha256="e7d3403c850a828f34a4ecd59253a7e30fd97ef5e353c86329f617394bdf5455",
+        replacement="""            state.queue.push_back(Slot {
+                sequence,
+                record: None,
+                // MUTANT: expose Ready before the finalized record exists.
+                state: SlotState::Ready,
+            });
 """,
         test=WRITEBACK_UNIT(
             "bind_and_publish_make_the_prepared_to_ready_transition_explicit"
@@ -240,15 +247,25 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         name="unpinned-unknown-outcome",
         relative_path="src/writeback.rs",
-        anchor="""            bound,
-            record,
+        anchor="""        Ok(BoundReservation {
+            owner: self.owner,
+            token: QueueToken::new(sequence),
+            mako_timestamp,
+            legacy_prepared,
+            native_buffer,
             on_drop: DropAction::PinUnknown,
+        })
 """,
-        anchor_sha256="6994082f858b574217a46cca8ceda6e50785ec6f15cf4be304c9225e17fa6ee6",
-        replacement="""            bound,
-            record,
+        anchor_sha256="572c0fd358b6e53b5aaa7e0d3bb193eaff6925cb3c01c8ca2c501c7c823cf25f",
+        replacement="""        Ok(BoundReservation {
+            owner: self.owner,
+            token: QueueToken::new(sequence),
+            mako_timestamp,
+            legacy_prepared,
+            native_buffer,
             // MUTANT: silently discard an ambiguous post-bind outcome.
             on_drop: DropAction::Done,
+        })
 """,
         test=WRITEBACK_UNIT(
             "dropping_bound_unknown_finalizes_and_retains_its_write_set"
@@ -315,20 +332,18 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         name="wrong-mako-timestamp",
         relative_path="src/writeback.rs",
-        anchor="""                    state
-                        .applied
-                        .advance(record.sequence(), record.mako_timestamp());
+        anchor="""            state
+                .applied
+                .advance(record.sequence(), record.mako_timestamp());
 """,
-        anchor_sha256="15e1d49b704a8993a1c925967394761cee909c4f6c5838d98d1d4222d10d0382",
-        replacement="""                    // MUTANT: advance the frontier with a valid but different timestamp.
-                    let record_timestamp = record.mako_timestamp();
-                    let wrong_timestamp = MakoTimestamp::new(
-                        if record_timestamp.get() == 1 { 2 } else { 1 },
-                    )
-                    .expect("mutant timestamp remains nonzero");
-                    state
-                        .applied
-                        .advance(record.sequence(), wrong_timestamp);
+        anchor_sha256="fcb53f319fe853c829e15edcba94840e62665bcd85b540b512bc66821b5626ab",
+        replacement="""            // MUTANT: advance the frontier with a valid but different timestamp.
+            let record_timestamp = record.mako_timestamp();
+            let wrong_timestamp = MakoTimestamp::new(
+                if record_timestamp.get() == 1 { 2 } else { 1 },
+            )
+            .expect("mutant timestamp remains nonzero");
+            state.applied.advance(record.sequence(), wrong_timestamp);
 """,
         test=TestTarget(
             ("--test", "timestamp"),
