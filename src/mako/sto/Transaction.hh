@@ -683,11 +683,12 @@ private:
 
     void refresh_tset_chunk();
 
+    // @unsafe: reuses one live transaction-set slot containing packed pointers.
     TransItem* allocate_item(const TObject* obj, void* xkey) {  // weihshen, allocate an item
         if (tset_size_ && tset_size_ % tset_chunk == 0)
             refresh_tset_chunk();
         ++tset_size_;
-        new(reinterpret_cast<void*>(tset_next_)) TransItem(const_cast<TObject*>(obj), xkey);
+        tset_next_->reinitialize(const_cast<TObject*>(obj), xkey);
 #if TRANSACTION_HASHTABLE
         unsigned hi = hash(obj, xkey);
 # if TRANSACTION_HASHTABLE > 1

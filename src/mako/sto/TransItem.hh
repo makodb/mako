@@ -199,6 +199,16 @@ class TransItem {
     }
 
 private:
+    // @unsafe: resets packed owner and raw transaction-buffer pointers while
+    // preserving this live object's allocation-owning string.
+    void reinitialize(TObject* owner, void* key) noexcept {
+        s_ = reinterpret_cast<ownerstore_type>(owner);
+        key_ = key;
+        rdata_ = nullptr;
+        wdata_ = nullptr;
+        extra.clear();
+    }
+
     ownerstore_type s_;
     // this word must be unique (to a particular item) and consistently ordered across transactions
     void* key_;

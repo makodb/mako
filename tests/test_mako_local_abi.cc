@@ -1491,6 +1491,9 @@ TEST_F(LocalAbiTest, NativeOrderedTerminalRejectsExhaustedPackedClock) {
 }
 
 TEST_F(LocalAbiTest, NativeOrderedOnePutAssignsBeforePostGateBinding) {
+  // This exceeds the configured libc++ small-string buffer. The consecutive
+  // transactions below reuse slot zero and therefore also guard TransItem's
+  // allocation-owning string lifecycle under ASan/LSan.
   const std::string key = "native-ordered-existing";
   auto *seed = begin();
   ASSERT_EQ(put(seed, primary, key, "old"), MAKO_LOCAL_OK);
