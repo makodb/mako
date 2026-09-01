@@ -316,6 +316,30 @@ extern "C" {
         std::cout << "[cpp] Rust worker thread " << thread_id << " initialized" << std::endl;
     }
 
+    // makoConMultiTrd has no allocation-light string fast path; report
+    // FALLBACK so Rust routes plain GET/SET through cpp_execute_transaction
+    // and the work queue, like every other operation.
+    bool cpp_execute_fast_mako_string(
+        uint32_t op,
+        const uint8_t* key_ptr,
+        size_t key_len,
+        const uint8_t* val_ptr,
+        size_t val_len,
+        FastMakoStringResult* result) {
+        (void)op;
+        (void)key_ptr;
+        (void)key_len;
+        (void)val_ptr;
+        (void)val_len;
+        if (!result) {
+            return false;
+        }
+        result->status = FAST_MAKO_FALLBACK;
+        result->data_ptr = nullptr;
+        result->data_len = 0;
+        return true;
+    }
+
     // Transaction API - required by new Rust FFI interface
     bool cpp_execute_transaction(const TxnRequest* request, TxnResponse* response) {
         if (!g_work_queue || !makocon_ffi::allocate_response(request, response)) {
