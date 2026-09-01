@@ -522,6 +522,11 @@ bench_runner::run()
   // This ensures all shards have completed thread_init() before any start transactions
   BenchmarkConfig::getInstance().waitMultiShardBarrier();
 
+  // These timestamped markers let the comparison runner distinguish the
+  // measured transaction interval from database loading and slow process
+  // teardown. Keep START before timer construction/worker release and END
+  // after workers join and the elapsed interval is captured.
+  Warning("TPCC_BENCH_MEASURE_START");
   util::timer t, t_nosync;  // timing starts
   barrier_b.count_down(); // bombs away!
   std::vector<std::pair<uint64_t, uint32_t>> samplingTPUT;
@@ -594,6 +599,7 @@ bench_runner::run()
   stop(); // ensure transports are torn down after workers exit
   cerr << "[SHUTDOWN] Second stop() completed" << endl;
   const unsigned long elapsed_nosync = t_nosync.lap()-1e6; // take 1 second off due to sleep(1) within bench_worker::run()
+  Warning("TPCC_BENCH_MEASURE_END");
   cerr << "[SHUTDOWN] Calling do_txn_finish()" << endl;
   db->do_txn_finish(); // waits for all worker txns to persist
   cerr << "[SHUTDOWN] do_txn_finish() completed" << endl;
