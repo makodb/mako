@@ -220,3 +220,92 @@ the measured one-worker penalty from 45.589008% to 3.949160%.
 This result establishes one-worker parity for this local standard mix. It does
 not establish multiworker scaling. The `target-cpu=native` PGO binary is
 specific to the `zoo-002` processor and should be rebuilt for another host.
+
+## Current controlled 1-to-16-worker sweep
+
+The current clean-source reference is a three-repetition sweep from the same
+host on 2026-09-01. It uses Git head
+`d1d5c5d1c22deb67828bd9e6d12f4b750da87399`, including exact measurement
+markers immediately before worker release and after worker join and elapsed
+time capture. This sweep supersedes the one-worker number above when assessing
+the current benchmark and also measures scaling through 16 workers.
+
+The PGO training run used one Rust worker and the standard `45,43,4,4,4` mix.
+It committed 3,161,584 transactions with zero aborts over 60.401305 measured
+seconds, or 52,342.975 transactions/s. The comparison used one warehouse per
+worker, five measured seconds per process, and 15 matched pairs:
+
+| Workers and warehouses | C++ median txn/s | Rust median txn/s | Paired Rust/C++ median | Paired range | C++ scale-up | Rust scale-up |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 47,128.163 | 45,480.880 | **96.289%** | 96.081–96.542% | 1.000x | 1.000x |
+| 2 | 96,697.623 | 90,090.300 | **93.029%** | 92.197–94.229% | 2.052x | 1.981x |
+| 4 | 196,867.861 | 170,413.159 | **87.540%** | 86.216–88.068% | 4.177x | 3.747x |
+| 8 | 383,108.617 | 328,380.029 | **85.715%** | 82.466–92.747% | 8.129x | 7.220x |
+| 16 | 784,914.451 | 590,534.944 | **78.843%** | 75.054–79.305% | 16.655x | 12.984x |
+
+Each percentage is the median of three paired Rust/C++ throughput ratios, not
+the ratio of the two throughput medians. The one-worker penalty is therefore
+3.711%. The gap widens with worker and warehouse count. Relative to each
+engine's own one-worker median, C++ reaches 16.655x at 16 workers while Rust
+reaches 12.984x. This design changes concurrency and dataset size together, so
+it does not isolate their individual effects. The Rust profile was trained
+only at one worker, so the high-worker result also includes possible PGO
+workload mismatch.
+
+Abort rates were small throughout. Across all accepted samples, C++ recorded
+3,522 aborts in 22,611,497 attempts (0.015576%), and Rust recorded 1,341 in
+18,750,657 attempts (0.007152%). Thus abort frequency does not explain Rust's
+lower multithread throughput.
+
+### Sweep controls and audit
+
+The runner used physical CPUs 10 through 25, adding SMT siblings 74 through 89
+to the idle guard. It held all 128 policies at 2 GHz in userspace mode with
+boost disabled, then restored `schedutil` and boost. Seed 4 shuffled the cell
+order and balanced which engine ran first across worker counts. Every engine
+sample loaded a fresh database and started in its own newly aligned LXD restart
+interval after a two-second window in which each guarded CPU was at least 95%
+idle and no recognized benchmark, compiler, or `perf` process was present.
+
+All 30 accepted samples contain exactly one start marker and one end marker.
+Their stored LXD journal activity is empty, and a separate post-run journal
+query found no activity in any of the 30 exact measurement intervals. Every
+row satisfies `attempts = commits + aborts`, its transaction counters sum to
+commits, and its only recorded environment override is
+`MAKO_TPCC_WORKLOAD_MIX=45,43,4,4,4`; all diagnostic fallback variables were
+absent. The generated `summary.csv` was independently recomputed and matched
+at six decimal places.
+
+Two attempts for the first 8-worker pair were discarded after an unrelated
+Mako compilation appeared on the host. Three engine samples were discarded in
+total. The guard recorded the competing Cargo and Clang processes, waited for
+the host to become quiet, and accepted the third attempt. All other pairs were
+accepted on their first attempt.
+
+### Sweep evidence
+
+The PGO artifact directory is
+`/var/tmp/sto-rust-exact-markers-pgo-20260901T0430Z` on `zoo-002`:
+
+- source-state SHA-256:
+  `1285b5ab92d0bd467d4872afebc5a819a377c3be89c7f1e52a5ce5ec156064f6`
+- optimized benchmark SHA-256:
+  `2953193e9b577a9958845cacd30f946c9f62166546de8572aa95b2a556d47b53`
+- optimized Rust archive SHA-256:
+  `02284a8115384f97fcf81ac060bbe887f2da1aa9d93a457f1a462ae8741e6a24`
+- merged profile SHA-256:
+  `9d4e9efd997ab4789f0a28da98d6f604cb2f20745536bbe9c3cb47b083d8c6dd`
+
+The result directory is
+`/var/tmp/sto-rust-tpcc-sweep-exact-pgo-20260901T0435Z`:
+
+- `raw.jsonl`:
+  `9504ed0c1dac2a1c04c9f4d6404aece2f559b4e982c21aea85689de770ab21a2`
+- `summary.csv`:
+  `134c55e8c94ada29b40a5d33f57badd1557e37c1702acb0e6fded8bb4e306b8a`
+- `run.json`:
+  `1ba814a7f03bfdeeb3e1e3b7e78174d3749a1e69830566a6874c016abb463106`
+
+These paths are host-local evidence. This is a single-shard concurrency sweep
+whose dataset grows from one to 16 warehouses along with the worker count. It
+is not an official tpmC result and is not a fixed-dataset scaling experiment.
