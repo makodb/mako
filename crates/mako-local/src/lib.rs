@@ -113,8 +113,10 @@ impl TrustedNativeOrderedArenaControl {
     /// # Safety
     ///
     /// `next_bound` must point to a live, naturally aligned `AtomicU64`, and
-    /// `unhealthy` must point to a live `AtomicBool`. Native accesses both with
-    /// matching compiler atomics. `publication_base` must address
+    /// `unhealthy` must point to a live `AtomicBool`. Native validates the
+    /// retained `next_bound` compatibility field without reading or updating
+    /// its value; it accesses `unhealthy` with matching compiler atomics.
+    /// `publication_base` must address
     /// `publication_mask + 1` fixed-stride cells whose atomic turn is at byte
     /// zero, Mako timestamp at byte 8, and record extent at byte 16.
     /// `arena_base` must address the same number of fixed-stride blocks with
@@ -125,7 +127,7 @@ impl TrustedNativeOrderedArenaControl {
     /// equal its base-two logarithm. Each prior generation must be retired
     /// before native can reuse its cell or arena block. Every concurrent
     /// cache-record terminal for the associated `LocalDb` must use the same
-    /// packed namespace, `next_bound` mirror, and health word.
+    /// packed namespace, compatibility control, and health word.
     #[allow(clippy::too_many_arguments)]
     pub const unsafe fn from_raw_parts(
         next_bound: *mut u64,
@@ -3823,7 +3825,8 @@ impl<'db> Transaction<'db> {
     /// `next_bound` and `unhealthy` must belong to the one write-back queue
     /// used by every cache-record terminal for this Concurrent-claimed LocalDb
     /// and must remain alive through this synchronous call. `next_bound` is a
-    /// post-BOUND monotonic mirror and must never be used as an allocator.
+    /// retained ABI field which this concurrent terminal validates but does
+    /// not use for allocation or descriptor discovery.
     /// Whenever the returned outcome exposes an accepted order, the caller
     /// must adopt and publish or pin that exact sequence, including when
     /// `acquire` was not reached.

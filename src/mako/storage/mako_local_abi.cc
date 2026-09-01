@@ -1583,9 +1583,9 @@ struct record_bind_bridge {
   bool use_direct_write = false;
   bool use_unchecked_one_put_serializer = false;
   // Native-ordered concurrent terminals lend the queue health word. The
-  // packed process state is the sole sequence allocator; Rust's queue tail is
-  // only a monotonic observation mirror updated while adopting the assigned
-  // generation.
+  // packed process state is the sole sequence allocator; the legacy Rust
+  // queue tail remains in the compatibility ABI but is not part of concurrent
+  // allocation or descriptor discovery.
   const uint8_t *native_unhealthy = nullptr;
   uint64_t *ordered_sequence_out = nullptr;
   uint32_t *ordered_timestamp_out = nullptr;
@@ -1965,20 +1965,6 @@ uint64_t rust_publication_turn(uint64_t sequence, uint32_t ring_shift,
   return ((sequence >> ring_shift) << kRustPublicationPhaseBits) | phase;
 }
 
-// @unsafe - `next_bound` is the naturally aligned live Rust AtomicU64 from a
-// validated same-build arena control. The packed process word remains the sole
-// allocator; this CAS loop only raises the queue's observation mirror and
-// therefore tolerates callbacks completing out of sequence.
-void mirror_native_next_bound(uint64_t *next_bound,
-                              uint64_t sequence) noexcept {
-  assert(next_bound != nullptr);
-  uint64_t current = __atomic_load_n(next_bound, __ATOMIC_RELAXED);
-  while (current < sequence &&
-         !__atomic_compare_exchange_n(next_bound, &current, sequence, true,
-                                      __ATOMIC_RELEASE, __ATOMIC_RELAXED)) {
-  }
-}
-
 // @unsafe - The terminal validated the immutable layout before STO could
 // assign sequence. The queue's detached occupancy claim proves this exact ring
 // generation has retired and cannot alias another live producer. Once the
@@ -2024,7 +2010,6 @@ void bind_native_ordered_arena(record_bind_bridge *bridge) noexcept {
                   offsetof(rust_publication_cell_layout, record_bytes),
               &no_record, sizeof(no_record));
   __atomic_store_n(turn, bound, __ATOMIC_RELEASE);
-  mirror_native_next_bound(control.next_bound, bridge->sequence);
   bridge->record = record;
 }
 

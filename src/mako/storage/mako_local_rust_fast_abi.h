@@ -113,11 +113,11 @@ extern "C" {
  * provided the general bit is clear. It publishes that pair through the
  * scalar outputs before calling bind_hook. For this spelling sequence_out is
  * initialized to the exact assigned sequence and the hook must return that
- * same value together with its stable target. `next_bound` is a live aligned
- * queue-observation mirror, never an allocator: the Rust hook must first
- * publish the exact FREE generation as BOUND, then raise the mirror with a
- * monotonic Release fetch-max before notifying descriptor waiters. Native
- * serializes before install as usual.
+ * same value together with its stable target. `next_bound` remains a live
+ * aligned compatibility field but is neither read nor updated by concurrent
+ * allocation. The Rust hook must publish the exact FREE generation as BOUND
+ * before notifying descriptor waiters. Native serializes before install as
+ * usual.
  *
  * A nonzero ordered_sequence_out transfers an unconditional dense-slot
  * obligation even if bind_hook was not reached or the terminal later reports
@@ -134,8 +134,8 @@ extern "C" {
  * After final validation, a write-covered update uses the restricted pair CAS.
  * Insert/predicate fallback instead assigns under the packed general bit.
  * Native then acquires the exact FREE cell generation, Release-publishes
- * BOUND, monotonically raises next_bound as a mirror, and serializes directly
- * into that sequence's arena block before STO may install the write.
+ * BOUND, and serializes directly into that sequence's arena block before STO
+ * may install the write. Consumers discover it by probing the next exact turn.
  *
  * A nonzero ordered_sequence in the three-word result is an unconditional
  * dense-slot obligation and guarantees that the matching publication cell is
@@ -298,12 +298,13 @@ typedef struct mako_rust_fast_preselected_record_result {
 } mako_rust_fast_preselected_record_result;
 
 /* Synchronous queue layout for the callback-free concurrent arena terminal.
- * Rust owns every target. Native Acquire-checks unhealthy and raises
- * next_bound only as a post-BOUND monotonic mirror; dense allocation belongs
- * exclusively to Transaction's packed process word. publication_base is a
- * ring of publication_stride-byte cells and arena_base is the matching ring
- * of arena_stride-byte blocks. The power-of-two ring has publication_mask + 1
- * cells and publication_shift == log2(publication_mask + 1). */
+ * Rust owns every target. Native Acquire-checks unhealthy; dense allocation
+ * belongs exclusively to Transaction's packed process word. next_bound is a
+ * retained ABI/layout field which concurrent terminals validate but do not
+ * read or update. publication_base is a ring of publication_stride-byte cells
+ * and arena_base is the matching ring of arena_stride-byte blocks. The
+ * power-of-two ring has publication_mask + 1 cells and publication_shift ==
+ * log2(publication_mask + 1). */
 typedef struct mako_rust_fast_native_ordered_arena_control {
   uint64_t *next_bound;
   const uint8_t *unhealthy;

@@ -1487,9 +1487,8 @@ TEST_F(LocalAbiTest, NativeOrderedOnePutAssignsBeforePostGateBinding) {
 
   ASSERT_EQ(MAKO_RUST_FAST_TERMINAL_STATUS(commit), MAKO_LOCAL_OK);
   ASSERT_EQ(MAKO_RUST_FAST_CLEANUP_STATUS(commit), MAKO_LOCAL_OK);
-  // The callback spelling assigns only from the packed word. A production
-  // Rust callback publishes BOUND and then raises this observation mirror;
-  // this raw storage-only probe deliberately performs neither operation.
+  // The callback spelling assigns only from the packed word. The retained
+  // next_bound ABI field is not part of concurrent allocation or discovery.
   EXPECT_EQ(next_bound, 700U);
   EXPECT_EQ(ordered_sequence, 701U);
   EXPECT_NE(ordered_timestamp, 0U);
@@ -1576,7 +1575,7 @@ TEST_F(LocalAbiTest, NativeOrderedArenaBindsAndSerializesWithoutCallback) {
   txn_for_cleanup = nullptr;
   ASSERT_EQ(MAKO_RUST_FAST_TERMINAL_STATUS(commit.terminal), MAKO_LOCAL_OK);
   ASSERT_EQ(MAKO_RUST_FAST_CLEANUP_STATUS(commit.terminal), MAKO_LOCAL_OK);
-  EXPECT_EQ(next_bound, sequence);
+  EXPECT_EQ(next_bound, 900U);
   EXPECT_EQ(commit.ordered_sequence, sequence);
   EXPECT_NE(MAKO_RUST_FAST_NATIVE_ORDERED_ARENA_TIMESTAMP(commit), 0U);
   EXPECT_EQ(MAKO_RUST_FAST_NATIVE_ORDERED_ARENA_WRITTEN(commit), 1U);

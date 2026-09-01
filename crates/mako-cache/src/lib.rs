@@ -1471,8 +1471,9 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
                 let outcome = if unchecked_one_put.is_some() {
                     // SAFETY: native rederives the current restricted one-Put
                     // candidate and assigns its packed pair only after final
-                    // validation. `next_bound` is an observation mirror, never
-                    // an allocator; the callback raises it while adopting.
+                    // validation. `next_bound` is retained only by the ABI;
+                    // exact-turn publication makes the assigned generation
+                    // discoverable without another shared tail update.
                     unsafe {
                         native
                             .commit_trusted_native_ordered_unchecked_one_put_record_target(

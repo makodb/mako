@@ -1521,9 +1521,9 @@ pub(super) unsafe fn mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_
 
         let exact_candidate = exact_record_bytes == expected_record_bytes as usize;
         let healthy = !unhealthy.is_null() && unsafe { unhealthy.read() } == 0;
-        let mirror_valid = !next_bound.is_null()
+        let compatibility_field_valid = !next_bound.is_null()
             && (next_bound as usize) % std::mem::align_of::<u64>() == 0;
-        let assigned = (exact_candidate && healthy && mirror_valid)
+        let assigned = (exact_candidate && healthy && compatibility_field_valid)
             .then(|| assign_fake_cache_order_pair(state, timestamp))
             .flatten();
         if let Some((sequence, timestamp)) = assigned {
@@ -1683,11 +1683,6 @@ pub(super) unsafe fn mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_
                     // to the native record-extent field at byte 16.
                     unsafe { publication.add(16).cast::<usize>().write(0) };
                     turn.store(bound, Ordering::Release);
-                    // SAFETY: validated control supplies the live aligned Rust
-                    // AtomicU64. The packed fake word allocated `sequence`;
-                    // this RMW only raises the post-BOUND observation mirror.
-                    let mirror = unsafe { AtomicU64::from_ptr(control.next_bound) };
-                    mirror.fetch_max(sequence, Ordering::Release);
                 }
             }
         }
@@ -3407,10 +3402,6 @@ mod tests {
                     assert_eq!(timestamp.get(), 91);
                     assert_eq!(bounds, candidate);
                     assert_eq!(sequence.get(), 11);
-                    // Model mako-cache's post-BOUND observation mirror; the
-                    // same-build native terminal itself never allocates from
-                    // this Rust word.
-                    next_bound.fetch_max(sequence.get(), Ordering::Release);
                     let bytes =
                         std::ptr::NonNull::new(storage.as_mut_ptr().cast::<u8>()).unwrap();
                     Some(crate::CommitRecordTarget::from_raw_parts(
@@ -3434,7 +3425,7 @@ mod tests {
         assert!(report.completion_contract_valid);
         assert!(report.record_bound);
         assert!(report.record_written);
-        assert_eq!(next_bound.load(Ordering::Acquire), 11);
+        assert_eq!(next_bound.load(Ordering::Acquire), 10);
         assert_call_count(Call::FastNativeOrderedUncheckedOnePutRecordCommitDestroy, 1);
         let written = unsafe {
             std::slice::from_raw_parts(storage.as_ptr().cast::<u8>(), storage.len())
@@ -3658,7 +3649,7 @@ mod tests {
         assert!(report.completion_contract_valid);
         assert!(report.record_bound);
         assert!(report.record_written);
-        assert_eq!(next_bound.load(Ordering::Acquire), 11);
+        assert_eq!(next_bound.load(Ordering::Acquire), 10);
         assert_eq!(cells[index].turn.load(Ordering::Acquire), ((11 >> 2) << 2) | 1);
         assert_eq!(unsafe { cells[index].record_bytes.get().read() }, 0);
         let written = unsafe {
