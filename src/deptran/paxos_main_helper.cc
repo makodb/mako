@@ -208,6 +208,17 @@ int get_outstanding_logs(uint32_t par_id) {
     return -1;
 }
 
+bool is_replication_leader(uint32_t par_id) {
+    for (auto& worker : pxs_workers_g) {
+        if (!worker->IsPartition(par_id)) {
+            continue;
+        }
+        std::lock_guard<std::recursive_mutex> lock(worker->election_state_lock);
+        return worker->is_leader != 0;
+    }
+    return false;
+}
+
 
 std::vector<std::string> setup(int argc, char* argv[]) {
     vector<string> retVector;
@@ -568,7 +579,10 @@ void* heartbeatBackground(void* arg) {
 
 // learner maintains heartbeat with the leader (connect to the first PaxosWorker::SetupHeartbeat())
 void* heartbeatMonitor2(void* arg) { // happens on the learner
-  time_t st = time(NULL);
+  const time_t st = time(NULL);
+  const char* redis_server_env = getenv("MAKO_REDIS_SERVER");
+  const bool redis_server = redis_server_env != nullptr
+      && std::string(redis_server_env) == "1";
   std::this_thread::sleep_for(std::chrono::seconds(5)); // ensure heartbeatBackground get started
 
   while (es->running) {
@@ -577,7 +591,7 @@ void* heartbeatMonitor2(void* arg) { // happens on the learner
     if (duration2.count()/1000.0/1000.0 > 1000) { // timeout: 1s
      Log_info("the time for the heartbeat: {:f} ms", duration2.count()/1000.0/1000.0);
      time_t end = time (NULL);
-     if (end - st > 35) {
+     if (!redis_server && end - st > 35) {
        Log_info("Let's stop it automatically without failover!!!");
        std::quick_exit( EXIT_SUCCESS );
      }

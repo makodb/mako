@@ -1,4 +1,5 @@
 #include "cluster_bootstrap.h"
+#include <std_compat.hpp>              // Must precede module imports
 
 #include <stdlib.h>  // getenv
 #include <string.h>  // strcmp

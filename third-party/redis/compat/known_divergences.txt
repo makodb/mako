@@ -1,0 +1,15 @@
+# Known intentional Redis compatibility divergences.
+#
+# Format:
+# <suite/test/command> :: <reason-category> :: <short reason>
+#
+# Reason categories:
+# - feature-killed-per-A.11
+# - mako-design-difference
+# - mako-correctness-fix
+#
+KEYS/SCAN/DBSIZE set visibility :: mako-design-difference :: Set members are stored as hidden length-prefixed composite keys outside the visible `table_key_` namespace. Exposing set logical keys through keyspace enumeration needs a shared logical-key index or safe remote-scan design, not a local composite-prefix scan.
+KEYS/SCAN/DBSIZE list visibility :: mako-design-difference :: Lists are stored as hidden meta/element composite keys outside the visible `table_key_` namespace. Exposing list logical keys through keyspace enumeration needs a shared logical-key index or safe remote-scan design, not a local composite-prefix scan.
+KEYS/SCAN/DBSIZE sorted-set visibility :: mako-design-difference :: Sorted sets are stored as hidden member/score/meta composite keys outside the visible `table_key_` namespace. Exposing zset logical keys through keyspace enumeration needs a shared logical-key index or safe remote-scan design, not a local composite-prefix scan.
+makoConMultiTrd extended Redis commands :: mako-design-difference :: Project decision: keep the alternate MultiTrd binary ABI-compatible only. Redis correctness is claimed for `third-party/redis/cpp/makoCon.cc`; making MultiTrd a correctness target would require executor deduplication and is not needed for this PR.
+FLUSHDB/FLUSHALL :: mako-design-difference :: Project decision: Mako Redis remains a single-keyspace server. `SELECT 0` is supported for client compatibility, but Redis logical DB selection is not mapped onto Mako DB namespaces; `FLUSHDB`/`FLUSHALL` clear the single Mako Redis keyspace.

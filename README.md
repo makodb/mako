@@ -89,6 +89,12 @@ Mako includes a Redis-compatible layer for:
 - **Multi-key atomic operations** with full ACID guarantees
 - **Geographic distribution** with automatic failover
 
+The default Redis path sends commands through Mako transactions. A Redis-layer
+cache is not part of the current phase plan; if added later for read-heavy
+workloads, cache-mode results must be reported separately. Mako remains the
+source of truth, and cached reads must not weaken serializability, multi-key
+atomicity, or failover semantics.
+
 ---
 
 ## Documentation

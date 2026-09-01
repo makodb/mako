@@ -1,0 +1,29 @@
+# Redis TCL Scope
+
+In scope:
+
+- unit/type/string
+- unit/type/hash
+- unit/type/list
+- unit/type/set
+- unit/type/zset
+- unit/expire
+- unit/scan
+- unit/multi
+- unit/keyspace
+- unit/networking
+- unit/pubsub
+
+Whole-file exclusions:
+
+- unit/cluster: Redis Cluster hash-slot routing is not Mako's sharding API.
+- unit/sentinel: Sentinel is Redis's monitoring/failover control plane.
+- unit/moduleapi: Mako does not expose the Redis module ABI.
+- unit/dump, unit/rdb, unit/aof: Redis persistence internals are replaced by
+  Mako storage/replication paths.
+- unit/scripting and Lua-specific files: Lua is outside this PR scope.
+- Streams-specific files: Streams are outside this PR scope.
+- ACL/TLS/client-cache files: outside this Redis layer scope.
+
+The TCL guard is an external-server semantic test. It should not be used to
+validate Redis internals that Mako deliberately does not implement.
