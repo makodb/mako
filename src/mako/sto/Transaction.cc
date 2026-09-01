@@ -101,6 +101,17 @@ private:
     bool held_ = false;
 };
 
+// @safe: issues only a non-binding cache hint for the process-lifetime packed
+// order word. It neither reads nor changes the timestamp, dense sequence, or
+// general-certification bit; the later checked CAS remains the commit point.
+[[gnu::always_inline]] inline void
+prefetch_restricted_cache_order_state_for_write() noexcept {
+#if defined(__GNUC__) || defined(__clang__)
+    __builtin_prefetch(
+        &sync_util::sync_logger::cache_order_state, 1, 3);
+#endif
+}
+
 #if defined(MAKO_LOCAL_TEST_HOOKS)
 thread_local Transaction::test_commit_observer local_test_commit_observer =
     nullptr;
@@ -1055,6 +1066,15 @@ bool Transaction::try_commit(bool no_paxos,
             test_commit_phase::mako_timestamp_allocated, tid_unique_);
     }
 #endif
+
+    // The same-build caller selects accept_ordered only after proving that
+    // this transaction's complete observation is covered by its locked local
+    // update. Start the packed word's write-intent acquisition now so phase-2
+    // validation can overlap part of the later contended CAS latency. This is
+    // only a hint: no order is allocated until validation succeeds below.
+    if (acquire_gate_after_validation && nwriteset != 0 &&
+        validation_gate->accept_ordered != nullptr)
+        prefetch_restricted_cache_order_state_for_write();
 
     //phase2
     for (unsigned tidx = 0; tidx != tset_size_; ++tidx) {
