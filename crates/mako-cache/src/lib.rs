@@ -40,14 +40,15 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 #![warn(missing_docs)]
 
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::marker::PhantomData;
 use std::num::{NonZeroU32, NonZeroU64};
 use std::path::Path;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use mako_local::{CommitDisposition, LocalDb};
 use mrx_core::{BlobError, Blobs};
@@ -90,6 +91,183 @@ use runtime::{Runtime, RuntimeError};
 use writeback::Writeback;
 
 const DEFAULT_TABLE_NAME: &[u8] = b"mako-cache/default";
+
+const COMMIT_FENCE_SPINS: usize = 64;
+static NEXT_COMMIT_FENCE_THREAD_SLOT: AtomicUsize = AtomicUsize::new(0);
+
+thread_local! {
+    /// Process-lifetime slot paired with native's process-lifetime worker.
+    ///
+    /// A slot number need not equal STO's worker ID. Every thread which gets
+    /// here already attached to STO, so no more than `MAX_WORKERS` distinct
+    /// threads can allocate one. Neither allocator recycles a departed OS
+    /// thread's slot.
+    static COMMIT_FENCE_THREAD_SLOT: Cell<usize> = const { Cell::new(usize::MAX) };
+}
+
+#[repr(align(64))]
+struct CommitWriterSlot {
+    active: AtomicBool,
+}
+
+impl CommitWriterSlot {
+    const fn new() -> Self {
+        Self {
+            active: AtomicBool::new(false),
+        }
+    }
+}
+
+const _: () = assert!(std::mem::size_of::<CommitWriterSlot>() == 64);
+
+/// An asymmetric outcome fence for common writers and rare read-only commits.
+///
+/// Each attached writer modifies only its own cache line. A read-only commit
+/// closes admission, drains all earlier writer slots, and keeps admission
+/// closed through native validation and the final queue-health check.
+struct CommitFence {
+    read_only_closed: AtomicBool,
+    read_only_serial: Mutex<()>,
+    writers: Box<[CommitWriterSlot]>,
+}
+
+impl CommitFence {
+    fn new() -> Self {
+        let writers = (0..mako_local::MAX_WORKERS)
+            .map(|_| CommitWriterSlot::new())
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+        Self {
+            read_only_closed: AtomicBool::new(false),
+            read_only_serial: Mutex::new(()),
+            writers,
+        }
+    }
+
+    #[inline(always)]
+    fn current_thread_slot() -> usize {
+        COMMIT_FENCE_THREAD_SLOT.with(|thread_slot| {
+            let current = thread_slot.get();
+            if current != usize::MAX {
+                return current;
+            }
+            let allocated = NEXT_COMMIT_FENCE_THREAD_SLOT.fetch_add(1, Ordering::Relaxed);
+            assert!(
+                allocated < mako_local::MAX_WORKERS,
+                "a cache writer reached the outcome fence without a native worker slot"
+            );
+            thread_slot.set(allocated);
+            allocated
+        })
+    }
+
+    #[inline(always)]
+    fn enter_writer(&self) -> CommitWriterGuard<'_> {
+        self.enter_writer_slot(Self::current_thread_slot())
+    }
+
+    fn enter_writer_slot(&self, slot: usize) -> CommitWriterGuard<'_> {
+        let mut spins = 0;
+        loop {
+            while self.read_only_closed.load(Ordering::Acquire) {
+                commit_fence_backoff(&mut spins);
+            }
+            if let Some(guard) = self.try_enter_writer_slot(slot) {
+                return guard;
+            }
+            commit_fence_backoff(&mut spins);
+        }
+    }
+
+    /// Try the enrollment half even when a closer may already be active.
+    ///
+    /// Let E be this slot's successful SeqCst CAS and C the read-only closer's
+    /// SeqCst store. If E precedes C in the single SC order, the closer's later
+    /// SC slot load observes this writer until its outcome has resolved. If C
+    /// precedes E, the writer's later SC closed load is ordered after both and
+    /// observes true because reopening cannot occur until the reader guard is
+    /// dropped. It clears its slot and retries. Thus the closer either drains
+    /// a preexisting writer or prevents that writer from entering native
+    /// commit; the two sides cannot miss one another.
+    #[inline(always)]
+    fn try_enter_writer_slot(&self, slot: usize) -> Option<CommitWriterGuard<'_>> {
+        let writer = self
+            .writers
+            .get(slot)
+            .expect("commit-fence writer slot is in range");
+        assert!(
+            writer
+                .active
+                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok(),
+            "one native worker cannot overlap two cache commit outcomes"
+        );
+        if !self.read_only_closed.load(Ordering::SeqCst) {
+            return Some(CommitWriterGuard { writer });
+        }
+        writer.active.store(false, Ordering::Release);
+        None
+    }
+
+    fn close_for_read_only(&self) -> CommitReadOnlyGuard<'_> {
+        let serial = self
+            .read_only_serial
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        debug_assert!(!self.read_only_closed.load(Ordering::Relaxed));
+        self.read_only_closed.store(true, Ordering::SeqCst);
+
+        let mut spins = 0;
+        while self
+            .writers
+            .iter()
+            .any(|writer| writer.active.load(Ordering::SeqCst))
+        {
+            commit_fence_backoff(&mut spins);
+        }
+        CommitReadOnlyGuard {
+            fence: self,
+            _serial: serial,
+        }
+    }
+}
+
+#[inline(always)]
+fn commit_fence_backoff(spins: &mut usize) {
+    if *spins < COMMIT_FENCE_SPINS {
+        *spins += 1;
+        std::hint::spin_loop();
+    } else {
+        std::thread::yield_now();
+    }
+}
+
+struct CommitWriterGuard<'a> {
+    writer: &'a CommitWriterSlot,
+}
+
+impl Drop for CommitWriterGuard<'_> {
+    #[inline(always)]
+    fn drop(&mut self) {
+        // The closer's Acquire-capable SC scan carries all native outcome and
+        // queue-resolution effects which precede this release.
+        self.writer.active.store(false, Ordering::Release);
+    }
+}
+
+struct CommitReadOnlyGuard<'a> {
+    fence: &'a CommitFence,
+    _serial: MutexGuard<'a, ()>,
+}
+
+impl Drop for CommitReadOnlyGuard<'_> {
+    fn drop(&mut self) {
+        // Keep new writers excluded until the read-only result and its final
+        // health check are both complete. The serial mutex still belongs to
+        // this guard while admission reopens.
+        self.fence.read_only_closed.store(false, Ordering::Release);
+    }
+}
 
 /// Foreground transaction concurrency accepted by one cache instance.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -478,10 +656,10 @@ pub struct Cache<B: Blobs + 'static> {
     /// Lease acquisition is a cold, once-per-owner operation. The lease
     /// itself is thread-affine, so ordinary transactions pay no owner atomic.
     single_producer_claimed: AtomicBool,
-    // Writers share this fence, so native Silo commits remain concurrent.
-    // Read-only/no-op commits take it exclusively to avoid acknowledging a
-    // value while a writer's post-install outcome is still unresolved.
-    commit_fence: RwLock<()>,
+    // Common writers publish only to their thread-private fence cache line.
+    // Read-only/no-op commits close admission and drain those lines so they
+    // cannot pass a writer whose post-install outcome is still unresolved.
+    commit_fence: CommitFence,
 }
 
 /// Production cache using RocksDB as its asynchronous backend.
@@ -531,7 +709,7 @@ impl<B: Blobs + 'static> Cache<B> {
             record_checksum: options.record_checksum,
             foreground_mode: options.foreground_mode,
             single_producer_claimed: AtomicBool::new(false),
-            commit_fence: RwLock::new(()),
+            commit_fence: CommitFence::new(),
         })
     }
 
@@ -1125,14 +1303,9 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
 
         if preflight.is_empty() {
             if foreground.is_concurrent() {
-                // Concurrent writers hold this fence shared from native commit
-                // through queue resolution. Taking it exclusively prevents a
-                // read-only result from passing a post-install writer.
-                let _fence = self
-                    .cache
-                    .commit_fence
-                    .write()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                // Close writer admission and drain every outcome which entered
+                // before this read-only commit validates.
+                let _fence = self.cache.commit_fence.close_for_read_only();
                 if let Err(error) = self.cache.writeback.ensure_no_unknown() {
                     return Err(abort_after_precommit_failure(native, Error::Apply(error)));
                 }
@@ -1230,14 +1403,12 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
         crate::failpoint::hit(crate::failpoint::Point::DetachedPrepared);
 
         // The concurrent profile excludes read-only acknowledgement while a
-        // writer's native outcome is unresolved. The unique mutable producer
-        // lease supplies stronger foreground exclusion without an RwLock RMW.
-        let _fence = foreground.is_concurrent().then(|| {
-            self.cache
-                .commit_fence
-                .read()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-        });
+        // writer's native outcome is unresolved. Each concurrent worker owns
+        // a separate cache-line slot; the unique mutable producer lease needs
+        // no outcome fence.
+        let _fence = foreground
+            .is_concurrent()
+            .then(|| self.cache.commit_fence.enter_writer());
         if let Err(error) = self.cache.writeback.ensure_no_unknown() {
             return Err(abort_after_precommit_failure(native, Error::Apply(error)));
         }
@@ -1389,10 +1560,7 @@ fn finish_trusted_one_put_arena<'cache, 'db, B: Blobs + 'static>(
     #[cfg(test)]
     crate::failpoint::hit(crate::failpoint::Point::DetachedPrepared);
 
-    let _fence = cache
-        .commit_fence
-        .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _fence = cache.commit_fence.enter_writer();
     if let Err(error) = cache.writeback.ensure_no_unknown() {
         return Err(abort_after_precommit_failure(native, Error::Apply(error)));
     }
@@ -1405,9 +1573,8 @@ fn finish_trusted_one_put_arena<'cache, 'db, B: Blobs + 'static>(
     // owned through native serialization and backend retirement.
     let acquire_target = |timestamp, native_preflight, ordered_sequence| {
         debug_assert_eq!(native_preflight, preflight);
-        let mut reservation = unsafe {
-            permit.bind_externally_ordered(timestamp, ordered_sequence)
-        };
+        let mut reservation =
+            unsafe { permit.bind_externally_ordered(timestamp, ordered_sequence) };
         // SAFETY: `reservation` is moved into `bound` before native can write,
         // and `bound` remains alive through this terminal.
         let target = unsafe { reservation.native_record_target() };
@@ -2157,6 +2324,56 @@ fn finish_replay_audit() -> Vec<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn commit_fence_read_only_closer_drains_an_enrolled_writer() {
+        use std::sync::mpsc::{TryRecvError, channel};
+        use std::time::{Duration, Instant};
+
+        let fence = Arc::new(CommitFence::new());
+        let payload = Arc::new(AtomicUsize::new(0));
+        let writer = fence.enter_writer_slot(0);
+        payload.store(17, Ordering::Relaxed);
+
+        let reader_fence = Arc::clone(&fence);
+        let reader_payload = Arc::clone(&payload);
+        let (entered_tx, entered_rx) = channel();
+        let reader = std::thread::spawn(move || {
+            let _reader = reader_fence.close_for_read_only();
+            entered_tx
+                .send(reader_payload.load(Ordering::Relaxed))
+                .unwrap();
+        });
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !fence.read_only_closed.load(Ordering::Acquire) {
+            assert!(Instant::now() < deadline, "read-only closer did not start");
+            std::thread::yield_now();
+        }
+        assert_eq!(entered_rx.try_recv(), Err(TryRecvError::Empty));
+
+        drop(writer);
+        assert_eq!(entered_rx.recv_timeout(Duration::from_secs(5)), Ok(17));
+        reader.join().unwrap();
+    }
+
+    #[test]
+    fn commit_fence_writer_enrollment_after_close_must_retry() {
+        let fence = CommitFence::new();
+        let reader = fence.close_for_read_only();
+
+        assert!(
+            fence.try_enter_writer_slot(1).is_none(),
+            "a writer enrolled after close entered its native outcome"
+        );
+        assert!(!fence.writers[1].active.load(Ordering::Acquire));
+
+        drop(reader);
+        let writer = fence
+            .try_enter_writer_slot(1)
+            .expect("reopening admits the rejected writer enrollment");
+        drop(writer);
+    }
 
     #[test]
     fn unbound_native_record_contract_violation_aborts_process() {
