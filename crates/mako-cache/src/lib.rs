@@ -139,8 +139,8 @@ impl CommitWriterSlot {
             return;
         }
         // Equality can alias a later active generation only after 2^64 owner
-        // transitions. No finite read-only scan can overlap that many native
-        // outcomes from one process-lifetime worker.
+        // transitions. Exact wrap may conservatively extend this wait through
+        // one later outcome, but it cannot hide the already-resolved prefix.
         while self.generation.load(Ordering::Acquire) == observed {
             commit_fence_backoff(spins);
         }

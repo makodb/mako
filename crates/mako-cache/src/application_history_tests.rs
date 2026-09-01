@@ -15,7 +15,7 @@ use mrx_core::fakes::MemBlobs;
 use mrx_core::{BlobError, BlobOp, Blobs};
 
 use crate::record::{BackendKey, CommitRecord, DEFAULT_TABLE_ID, Mutation, classify_backend_key};
-use crate::{Cache, CacheOptions, Transaction};
+use crate::{Cache, CacheOptions, Error, LocalError, RecordChecksum, Transaction};
 
 const PREFIX: &[u8] = b"phase1f/application/";
 const CHAIN: &[u8] = b"phase1f/application/chain";
@@ -916,4 +916,70 @@ fn real_concurrent_cache_history_waits_for_dense_acknowledgement_prefix() {
     .unwrap_or_else(|error| panic!("concurrent application history failed:\n{error}"));
     assert_eq!(witness.cache_order.serialization, vec![1, 2]);
     assert_eq!(witness.successful_backend_prefix, 2);
+}
+
+#[test]
+fn post_cut_conflicting_writer_is_validated_before_read_only_success() {
+    const KEY: &[u8] = b"phase1f/application/post-cut-conflict";
+    const INITIAL: &[u8] = b"initial-value";
+    const UPDATED: &[u8] = b"updated-value";
+
+    let mut options = CacheOptions::default();
+    options.record_checksum = RecordChecksum::None;
+    let cache = Cache::from_backend(Arc::new(MemBlobs::new()), options)
+        .expect("open post-cut validation cache");
+    cache.put(KEY, INITIAL).expect("seed conflict key");
+
+    let mut reader = cache.transaction().expect("begin read-only transaction");
+    assert_eq!(
+        reader.get(KEY).expect("read conflict key").as_deref(),
+        Some(INITIAL)
+    );
+    let native_reader = reader.native.take().expect("retain native reader");
+    drop(reader);
+
+    // Reproduce the public read-only commit path up to its native terminal.
+    // Starting the writer after this returns makes its validation ticket and
+    // worker generation unambiguously post-cut.
+    let mut read_only_fence = Some(cache.commit_fence.close_for_read_only(|| {
+        cache.local.order_record_validation_prefix();
+    }));
+
+    std::thread::scope(|scope| {
+        let (result_tx, result_rx) = mpsc::sync_channel(1);
+        let writer_cache = &cache;
+        let writer = scope.spawn(move || {
+            result_tx
+                .send(writer_cache.put(KEY, UPDATED))
+                .expect("send post-cut writer result");
+        });
+        let writer_result = match result_rx.recv_timeout(Duration::from_secs(5)) {
+            Ok(result) => result,
+            Err(error) => {
+                // Release the fence before joining so an admission regression
+                // fails this test instead of stranding its scoped worker.
+                drop(read_only_fence.take());
+                writer
+                    .join()
+                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+                panic!("post-cut writer did not finish before reader validation: {error}");
+            }
+        };
+        writer_result.expect("post-cut conflicting writer commits");
+        writer
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+    });
+
+    assert!(matches!(
+        crate::finish_read_only(native_reader),
+        Err(Error::Native(LocalError::Conflict))
+    ));
+    drop(read_only_fence.take());
+    drop(read_only_fence);
+    assert_eq!(
+        cache.get(KEY).expect("read committed writer").as_deref(),
+        Some(UPDATED)
+    );
+    cache.close().expect("close post-cut validation cache");
 }
