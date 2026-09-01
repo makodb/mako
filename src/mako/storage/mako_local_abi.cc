@@ -1963,19 +1963,22 @@ Transaction::ordered_accept_result accept_packed_cache_order(
   assert(bridge->ordered_timestamp_out != nullptr);
   *timestamp_out = 0;
 
-  const record_shape final_shape{bridge->txn->record_plan_bytes,
-                                 bridge->txn->record_plan_ops,
-                                 bridge->txn->record_plan_checksum_mode};
-  const bool prepared = bridge->use_unchecked_one_put_serializer &&
-      bridge->txn->record_fast_path_eligible &&
-      final_shape.operations == 1 &&
-      valid_record_checksum_mode(final_shape.checksum_mode) &&
-      final_shape.bytes >=
-          kCacheRecordHeaderBytes +
-              record_trailer_bytes(final_shape.checksum_mode);
-  if (!prepared ||
-      !packed_cache_order_allowed(bridge->txn->owner) ||
-      __atomic_load_n(bridge->native_unhealthy, __ATOMIC_ACQUIRE) != 0) {
+  // Both restricted terminals rederive this exact direct shape, seal it, and
+  // check the immutable Concurrent namespace mode before entering commit.
+  // Validation cannot mutate either witness. Keep diagnostics for internal
+  // drift without repeating the release-mode loads after final validation.
+  assert(bridge->use_unchecked_one_put_serializer);
+  assert(bridge->txn->record_fast_path_eligible);
+  assert(bridge->txn->record_plan_ops == 1);
+  assert(bridge->txn->record_plan_checksum_mode ==
+         MAKO_RUST_FAST_RECORD_CHECKSUM_NONE);
+  assert(bridge->txn->record_plan_bytes >= kCacheRecordHeaderBytes);
+  assert(bridge->txn->record_plan_sealed);
+  assert(bridge->txn->record_plan_ready);
+  assert(packed_cache_order_allowed(bridge->txn->owner));
+  const record_shape final_shape{bridge->txn->record_plan_bytes, 1,
+                                 MAKO_RUST_FAST_RECORD_CHECKSUM_NONE};
+  if (__atomic_load_n(bridge->native_unhealthy, __ATOMIC_ACQUIRE) != 0) {
     // Preserve scalar timestamp-before-hook precedence on cold rejection.
     uint32_t rejected_timestamp = 0;
     if (!Transaction::try_allocate_mako_timestamp(rejected_timestamp))

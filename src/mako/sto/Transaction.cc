@@ -218,38 +218,6 @@ bool Transaction::try_allocate_mako_timestamp(uint32_t& result) noexcept {
     }
 }
 
-// @safe: one lock-free u64 CAS assigns the timestamp and dense sequence which
-// name a restricted validated cache update. A visible general lock makes the
-// caller wait outside this helper; no field changes on exhaustion.
-Transaction::cache_order_allocation
-Transaction::try_allocate_cache_order_pair(
-    uint64_t& sequence, uint32_t& timestamp) noexcept {
-    sequence = 0;
-    timestamp = 0;
-    auto& state = sync_util::sync_logger::cache_order_state;
-    uint64_t current = state.load(std::memory_order_acquire);
-    for (;;) {
-        if ((current & cache_order_general_lock) != 0)
-            return cache_order_allocation::general_locked;
-        const uint64_t next_timestamp = cache_order_timestamp(current);
-        if (next_timestamp == 0 || next_timestamp > max_mako_timestamp)
-            return cache_order_allocation::timestamp_exhausted;
-        const uint64_t previous_sequence = cache_order_sequence(current);
-        if (previous_sequence >= max_mako_timestamp)
-            return cache_order_allocation::sequence_exhausted;
-        const uint64_t desired = with_cache_order_timestamp(
-            with_cache_order_sequence(current, previous_sequence + 1),
-            next_timestamp + 1);
-        if (state.compare_exchange_weak(current, desired,
-                                        std::memory_order_acq_rel,
-                                        std::memory_order_acquire)) {
-            sequence = previous_sequence + 1;
-            timestamp = static_cast<uint32_t>(next_timestamp);
-            return cache_order_allocation::accepted;
-        }
-    }
-}
-
 // @safe: the caller owns the packed general lock, so no restricted allocator
 // can change the dense field. Timestamp-only allocators may still update the
 // same word; the CAS loop preserves those independent changes.

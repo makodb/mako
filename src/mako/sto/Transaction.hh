@@ -972,10 +972,46 @@ public:
         sequence_exhausted,
     };
 
-    // Atomically allocate one timestamp/dense-sequence pair for a restricted
-    // transaction whose complete observation is covered by its write lock.
-    static cache_order_allocation try_allocate_cache_order_pair(
-        uint64_t& sequence, uint32_t& timestamp) noexcept;
+    // @safe: one lock-free u64 CAS assigns the timestamp and dense sequence
+    // which name a restricted validated cache update. A visible general lock
+    // makes the caller wait outside this helper; no field changes on
+    // exhaustion. Keeping this small allocator inline avoids an extra call in
+    // the post-validation restricted callback.
+    [[gnu::always_inline]] static inline cache_order_allocation
+    try_allocate_cache_order_pair(
+        uint64_t& sequence, uint32_t& timestamp) noexcept {
+        sequence = 0;
+        timestamp = 0;
+        auto& state = sync_util::sync_logger::cache_order_state;
+        uint64_t current = state.load(std::memory_order_acquire);
+        for (;;) {
+            if ((current & cache_order_general_lock) != 0)
+                return cache_order_allocation::general_locked;
+            const uint64_t next_timestamp =
+                (current >> cache_order_timestamp_shift) &
+                cache_order_field_mask;
+            if (next_timestamp == 0 ||
+                next_timestamp > max_mako_timestamp)
+                return cache_order_allocation::timestamp_exhausted;
+            const uint64_t previous_sequence =
+                current & cache_order_field_mask;
+            if (previous_sequence >= max_mako_timestamp)
+                return cache_order_allocation::sequence_exhausted;
+            const uint64_t fields_mask =
+                cache_order_field_mask |
+                (cache_order_field_mask << cache_order_timestamp_shift);
+            const uint64_t desired =
+                (current & ~fields_mask) | (previous_sequence + 1) |
+                ((next_timestamp + 1) << cache_order_timestamp_shift);
+            if (state.compare_exchange_weak(current, desired,
+                                            std::memory_order_acq_rel,
+                                            std::memory_order_acquire)) {
+                sequence = previous_sequence + 1;
+                timestamp = static_cast<uint32_t>(next_timestamp);
+                return cache_order_allocation::accepted;
+            }
+        }
+    }
 
     // General cache commits own the packed general lock across final
     // validation. Timestamp allocation still uses the process-wide clock;
