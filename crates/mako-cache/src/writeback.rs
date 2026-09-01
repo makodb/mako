@@ -72,6 +72,20 @@ pub const DEFAULT_MAX_RECORD_BYTES: usize = 8 * 1024 * 1024;
 /// use a separately recycled growable buffer.
 const NATIVE_RECORD_ARENA_BLOCK_BYTES: usize = 256;
 const CACHE_LINE_BYTES: usize = 64;
+/// Tag stored in `PublicationCell::arena_record_bytes` when the payload lives
+/// in the native deferred holder pool rather than the byte arena.
+const NATIVE_HOLDER_RECORD_TAG: usize = 1usize << (usize::BITS - 1);
+
+#[inline(always)]
+pub(crate) const fn native_holder_record_supported(exact_record_bytes: usize) -> bool {
+    exact_record_bytes != 0 && exact_record_bytes < NATIVE_HOLDER_RECORD_TAG
+}
+
+#[inline(always)]
+fn tagged_native_holder_extent(exact_record_bytes: usize) -> usize {
+    assert!(native_holder_record_supported(exact_record_bytes));
+    NATIVE_HOLDER_RECORD_TAG | exact_record_bytes
+}
 /// Short out-of-order publication gaps are normal when several native
 /// transactions finish together. Keep those gaps in userspace instead of
 /// immediately entering the mutex/condition-variable protocol.
@@ -885,6 +899,55 @@ impl PublicationCell {
         );
     }
 
+    /// Attach a sealed deferred holder and publish READY without constructing
+    /// a cold Rust record object on the foreground path.
+    fn attach_holder_ready(
+        &self,
+        sequence: CommitSeq,
+        ring_shift: u32,
+        mako_timestamp: MakoTimestamp,
+        exact_record_bytes: usize,
+    ) {
+        debug_assert_eq!(
+            self.turn.load(Ordering::Acquire),
+            turn_token(sequence.get(), ring_shift, TURN_BOUND)
+        );
+        // SAFETY: the exact BOUND generation owns these scalars. Native sealed
+        // the pool generation before returning; READY transfers both facts to
+        // the sole consumer.
+        unsafe {
+            self.arena_mako_timestamp.get().write(mako_timestamp.get());
+            self.arena_record_bytes
+                .get()
+                .write(tagged_native_holder_extent(exact_record_bytes));
+        }
+        self.turn.store(
+            turn_token(sequence.get(), ring_shift, TURN_READY),
+            Ordering::Release,
+        );
+    }
+
+    /// Attach a sealed holder without making an uncertain commit replayable.
+    fn attach_holder_written(
+        &self,
+        sequence: CommitSeq,
+        ring_shift: u32,
+        mako_timestamp: MakoTimestamp,
+        exact_record_bytes: usize,
+    ) {
+        debug_assert_eq!(
+            self.turn.load(Ordering::Acquire),
+            turn_token(sequence.get(), ring_shift, TURN_BOUND)
+        );
+        unsafe {
+            self.arena_mako_timestamp.get().write(mako_timestamp.get());
+            self.arena_record_bytes
+                .get()
+                .write(tagged_native_holder_extent(exact_record_bytes));
+        }
+        self.publish_written(sequence, ring_shift);
+    }
+
     fn publish_written(&self, sequence: CommitSeq, ring_shift: u32) {
         let bound = turn_token(sequence.get(), ring_shift, TURN_BOUND);
         let written = turn_token(sequence.get(), ring_shift, TURN_WRITTEN);
@@ -936,6 +999,15 @@ impl PublicationCell {
             return None;
         }
         let exact_record_bytes = unsafe { *self.arena_record_bytes.get() };
+        if exact_record_bytes & NATIVE_HOLDER_RECORD_TAG != 0 {
+            let mako_timestamp = MakoTimestamp::new(unsafe { *self.arena_mako_timestamp.get() })
+                .expect("a published holder retains a valid Mako timestamp");
+            return Some(QueuedCommitRecord::Holder(DeferredOnePutRecord::new(
+                sequence,
+                mako_timestamp,
+                exact_record_bytes & !NATIVE_HOLDER_RECORD_TAG,
+            )));
+        }
         if exact_record_bytes != 0 {
             // SAFETY: the exact published Acquire observes scalar metadata and
             // native's completion-covered bytes. In concurrent mode aggregate
@@ -992,6 +1064,15 @@ impl PublicationCell {
             return None;
         }
         let exact_record_bytes = unsafe { *self.arena_record_bytes.get() };
+        if exact_record_bytes & NATIVE_HOLDER_RECORD_TAG != 0 {
+            let mako_timestamp = MakoTimestamp::new(unsafe { *self.arena_mako_timestamp.get() })
+                .expect("a written holder retains a valid Mako timestamp");
+            return Some(QueuedCommitRecord::Holder(DeferredOnePutRecord::new(
+                sequence,
+                mako_timestamp,
+                exact_record_bytes & !NATIVE_HOLDER_RECORD_TAG,
+            )));
+        }
         if exact_record_bytes != 0 {
             let mako_timestamp = MakoTimestamp::new(unsafe { *self.arena_mako_timestamp.get() })
                 .expect("a bound arena record retains a valid Mako timestamp");
@@ -1861,14 +1942,10 @@ impl<B: Blobs> Writeback<B> {
             .collect::<Vec<_>>()
             .into_boxed_slice();
         let native_arena = NativeRecordArena::new(publication_capacity, config.max_record_bytes)?;
-        let native_holder_pool = if single_producer {
-            Some(
-                TrustedOnePutHolderPool::new(publication_capacity, 0, 0)
-                    .map_err(|_| ConfigError::NativeHolderPool)?,
-            )
-        } else {
-            None
-        };
+        let native_holder_pool = Some(
+            TrustedOnePutHolderPool::new(publication_capacity, 0, 0)
+                .map_err(|_| ConfigError::NativeHolderPool)?,
+        );
 
         Ok(Self {
             backend,
@@ -1971,6 +2048,45 @@ impl<B: Blobs> Writeback<B> {
                 publication_stride,
                 arena_stride,
                 arena_block_bytes,
+            )
+        }
+    }
+
+    /// Borrow the stable publication layout and deferred holder pool used by
+    /// the callback-free concurrent one-Put terminal.
+    ///
+    /// # Safety
+    ///
+    /// The caller must retain one concurrent detached occupancy claim and pass
+    /// this control only to the matching packed native holder terminal. This
+    /// queue, pool, and every pointer in the returned value must outlive that
+    /// synchronous call.
+    #[inline(always)]
+    pub(crate) unsafe fn native_ordered_holder_control(
+        &self,
+    ) -> mako_local::TrustedNativeOrderedHolderControl {
+        debug_assert!(!self.single_producer);
+        let publication_stride = u32::try_from(std::mem::size_of::<PublicationCell>())
+            .expect("the native publication stride fits u32");
+        // The publication descriptor reserves usize's high bit as its holder
+        // tag. On 32-bit targets, keep larger valid records on the byte-arena
+        // terminal instead of admitting an ambiguous tagged extent.
+        let holder_record_limit = NATIVE_HOLDER_RECORD_TAG - 1;
+        let max_record_bytes = u32::try_from(self.config.max_record_bytes.min(holder_record_limit))
+            .unwrap_or(u32::MAX);
+        // SAFETY: queue construction gives the pool and publication ring the
+        // same power-of-two capacity and stable allocation lifetime.
+        unsafe {
+            mako_local::TrustedNativeOrderedHolderControl::new(
+                self.native_holder_pool
+                    .as_ref()
+                    .expect("every queue owns a native holder pool"),
+                self.unhealthy.as_ptr().cast::<u8>(),
+                self.publication_cells.as_ptr().cast_mut().cast::<u8>(),
+                self.publication_cells.len() - 1,
+                self.publication_shift,
+                publication_stride,
+                max_record_bytes,
             )
         }
     }
@@ -4633,6 +4749,34 @@ impl<B: Blobs> NativeArenaBoundReservation<'_, B> {
         Ok(sequence)
     }
 
+    /// Publish a native-sealed deferred holder for a trusted concurrent
+    /// one-Put commit.
+    ///
+    /// # Safety
+    ///
+    /// The matching native holder terminal must have returned definite commit,
+    /// cleanup, and exact sealed-holder witnesses for this reservation's
+    /// timestamp, sequence, and record extent.
+    pub(crate) unsafe fn publish_holder_completed_concurrent_nonblocking(
+        &mut self,
+        worker_slot: usize,
+    ) -> Result<CommitSeq, ResolveError> {
+        assert_eq!(self.on_drop, DropAction::PinUnknown);
+        assert!(!self.owner.single_producer);
+        let sequence = self.token.sequence();
+        let caller_ack = self.owner.trusted_caller_ack_slot(worker_slot);
+        self.owner.publication_cell(sequence).attach_holder_ready(
+            sequence,
+            self.owner.publication_shift,
+            self.mako_timestamp,
+            self.exact_record_bytes,
+        );
+        self.owner
+            .finish_trusted_ready_publication_concurrent(self.token, caller_ack)?;
+        self.on_drop = DropAction::Done;
+        Ok(sequence)
+    }
+
     /// Retain completed bytes behind a permanently unknown native outcome.
     ///
     /// # Safety
@@ -4643,6 +4787,28 @@ impl<B: Blobs> NativeArenaBoundReservation<'_, B> {
         assert_eq!(self.on_drop, DropAction::PinUnknown);
         let sequence = self.token.sequence();
         self.owner.publication_cell(sequence).attach_arena(
+            sequence,
+            self.owner.publication_shift,
+            self.mako_timestamp,
+            self.exact_record_bytes,
+        );
+        self.owner.pin_unknown_record(self.token)?;
+        self.on_drop = DropAction::Done;
+        Ok(sequence)
+    }
+
+    /// Retain a sealed holder behind a permanently unknown native outcome.
+    ///
+    /// # Safety
+    ///
+    /// Native must have returned the exact sealed-holder witness for this
+    /// accepted timestamp and sequence.
+    pub(crate) unsafe fn pin_holder_completed_unknown(
+        &mut self,
+    ) -> Result<CommitSeq, ResolveError> {
+        assert_eq!(self.on_drop, DropAction::PinUnknown);
+        let sequence = self.token.sequence();
+        self.owner.publication_cell(sequence).attach_holder_written(
             sequence,
             self.owner.publication_shift,
             self.mako_timestamp,

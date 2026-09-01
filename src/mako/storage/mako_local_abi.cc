@@ -390,6 +390,25 @@ static_assert(offsetof(mako_rust_fast_native_ordered_arena_result,
                        ordered_sequence) == 8);
 static_assert(offsetof(mako_rust_fast_native_ordered_arena_result,
                        record_state) == 16);
+static_assert(sizeof(mako_rust_fast_native_ordered_holder_control) == 48);
+static_assert(alignof(mako_rust_fast_native_ordered_holder_control) ==
+              alignof(uint64_t));
+static_assert(offsetof(mako_rust_fast_native_ordered_holder_control, pool) ==
+              0);
+static_assert(offsetof(mako_rust_fast_native_ordered_holder_control,
+                       unhealthy) == 8);
+static_assert(offsetof(mako_rust_fast_native_ordered_holder_control,
+                       publication_base) == 16);
+static_assert(offsetof(mako_rust_fast_native_ordered_holder_control,
+                       publication_mask) == 24);
+static_assert(offsetof(mako_rust_fast_native_ordered_holder_control,
+                       publication_shift) == 32);
+static_assert(offsetof(mako_rust_fast_native_ordered_holder_control,
+                       publication_stride) == 36);
+static_assert(offsetof(mako_rust_fast_native_ordered_holder_control,
+                       max_record_bytes) == 40);
+static_assert(offsetof(mako_rust_fast_native_ordered_holder_control,
+                       reserved) == 44);
 static_assert(sizeof(mako_rust_fast_spsc_holder_control) == 72);
 static_assert(alignof(mako_rust_fast_spsc_holder_control) == alignof(uint64_t));
 static_assert(offsetof(mako_rust_fast_spsc_holder_control, pool) == 0);
@@ -523,6 +542,37 @@ bool valid_native_ordered_arena_control(
                                    control->publication_mask,
                                    control->arena_stride,
                                    control->arena_block_bytes);
+}
+
+// @safe - This validator only checks scalar metadata and stable same-build
+// layout pointers; it does not dereference the holder array or publication
+// cells. The trusted terminal performs generation-ordered access later.
+bool valid_native_ordered_holder_control(
+    const mako_rust_fast_native_ordered_holder_control *control,
+    uint32_t expected_record_bytes) noexcept {
+  if (control == nullptr || control->pool == nullptr ||
+      control->unhealthy == nullptr || control->publication_base == nullptr ||
+      control->reserved != 0 ||
+      reinterpret_cast<uintptr_t>(control->publication_base) %
+              alignof(rust_publication_cell_layout) !=
+          0)
+    return false;
+  if (!is_nonzero_power_of_two(control->pool->capacity) ||
+      control->pool->mask != control->pool->capacity - 1 ||
+      control->publication_mask != control->pool->mask ||
+      control->publication_mask == std::numeric_limits<size_t>::max())
+    return false;
+  const size_t capacity = control->publication_mask + 1;
+  if (capacity < 4 ||
+      control->publication_shift >= std::numeric_limits<size_t>::digits ||
+      (size_t{1} << control->publication_shift) != capacity ||
+      control->publication_stride != sizeof(rust_publication_cell_layout) ||
+      expected_record_bytes == 0 ||
+      expected_record_bytes > control->max_record_bytes)
+    return false;
+  return valid_indexed_byte_layout(
+      control->publication_base, control->publication_mask,
+      control->publication_stride, sizeof(rust_publication_cell_layout));
 }
 
 constexpr bool valid_record_checksum_mode(uint32_t mode) noexcept {
@@ -1590,6 +1640,15 @@ struct record_bind_bridge {
   uint64_t *ordered_sequence_out = nullptr;
   uint32_t *ordered_timestamp_out = nullptr;
   bool assign_sequence_natively = false;
+  // The concurrent holder terminal binds an exact publication turn but
+  // defers record encoding to writeback. Its staged value remains in txn until
+  // try_commit returns; the selected holder is then sealed with a noexcept
+  // swap before the facade is recycled.
+  const mako_rust_fast_native_ordered_holder_control *holder_control = nullptr;
+  one_put_holder *selected_holder = nullptr;
+  mako_rust_fast_one_put_holder_pool::key_storage holder_key_location =
+      mako_rust_fast_one_put_holder_pool::key_storage::hot_inline;
+  std::string *prepared_overflow_key = nullptr;
 };
 
 void record_validation_cpu_relax() noexcept {
@@ -2013,6 +2072,75 @@ void bind_native_ordered_arena(record_bind_bridge *bridge) noexcept {
   bridge->record = record;
 }
 
+// @unsafe - The exact publication FREE Acquire owns the matching holder
+// generation until Rust publishes and later retires this sequence. All
+// allocating long-key preparation completed before STO acquired write locks;
+// this callback performs only bounded copies or noexcept swaps.
+void bind_native_ordered_holder(record_bind_bridge *bridge) noexcept {
+  assert(bridge != nullptr);
+  assert(bridge->assign_sequence_natively);
+  assert(bridge->holder_control != nullptr);
+  assert(bridge->selected_holder == nullptr);
+  assert(bridge->sequence != 0);
+  const auto &control = *bridge->holder_control;
+  if (bridge->final_shape.bytes == 0 ||
+      bridge->final_shape.bytes > control.max_record_bytes ||
+      control.publication_shift < kRustPublicationPhaseBits ||
+      control.publication_stride != sizeof(rust_publication_cell_layout))
+    std::abort();
+
+  const size_t publication_index =
+      static_cast<size_t>(bridge->sequence) & control.publication_mask;
+  uint8_t *const publication = control.publication_base +
+      publication_index * control.publication_stride;
+  auto *const turn = reinterpret_cast<uint64_t *>(publication);
+  const uint64_t free = rust_publication_turn(
+      bridge->sequence, control.publication_shift, kRustPublicationFree);
+  const uint64_t bound = rust_publication_turn(
+      bridge->sequence, control.publication_shift, kRustPublicationBound);
+  if (__atomic_load_n(turn, __ATOMIC_ACQUIRE) != free)
+    std::abort();
+
+  one_put_holder &holder = one_put_holder_for(control.pool, bridge->sequence);
+  if (holder.state != one_put_holder_state::free || holder.sequence != 0 ||
+      holder.mako_timestamp != 0)
+    std::abort();
+
+  const auto &write = bridge->txn->record_fast_write;
+  if (write.op != Transaction::canonical_write_view::operation::put ||
+      write.key_length > UINT16_MAX || write.value_length > UINT32_MAX ||
+      (write.key_length != 0 && write.key == nullptr))
+    std::abort();
+  bridge->holder_key_location =
+      write.key_length <=
+              mako_rust_fast_one_put_holder_pool::kHotInlineKeyBytes
+          ? mako_rust_fast_one_put_holder_pool::key_storage::hot_inline
+      : write.key_length <= mako_rust_fast_one_put_holder_pool::kInlineKeyBytes
+          ? mako_rust_fast_one_put_holder_pool::key_storage::inline_key
+          : mako_rust_fast_one_put_holder_pool::key_storage::overflow;
+  if (bridge->holder_key_location ==
+      mako_rust_fast_one_put_holder_pool::key_storage::overflow) {
+    if (bridge->prepared_overflow_key == nullptr ||
+        bridge->prepared_overflow_key->size() != write.key_length)
+      std::abort();
+    holder.overflow_key.swap(*bridge->prepared_overflow_key);
+  } else if (bridge->holder_key_location ==
+             mako_rust_fast_one_put_holder_pool::key_storage::hot_inline) {
+    copy_preselected_holder_inline_key(holder.hot_inline_key.data(), write.key,
+                                       write.key_length);
+  } else {
+    copy_preselected_holder_inline_key(holder.inline_key.data(), write.key,
+                                       write.key_length);
+  }
+
+  const size_t no_record = 0;
+  std::memcpy(publication +
+                  offsetof(rust_publication_cell_layout, record_bytes),
+              &no_record, sizeof(no_record));
+  __atomic_store_n(turn, bound, __ATOMIC_RELEASE);
+  bridge->selected_holder = &holder;
+}
+
 // @unsafe - Completes the already-bound record after native releases its
 // ordering exclusion, but while STO still owns the complete write set before
 // any write is installed. This bounded walk and copy, plus optional CRC, performs
@@ -2023,6 +2151,10 @@ bool serialize_bound_record_after_gate(void *opaque,
   auto *bridge = static_cast<record_bind_bridge *>(opaque);
   assert(!bridge->validation_gate_held);
   assert(bridge->sequence != 0);
+  if (bridge->holder_control != nullptr) {
+    bind_native_ordered_holder(bridge);
+    return true;
+  }
   if (bridge->assign_sequence_natively && bridge->hook == nullptr) {
     bind_native_ordered_arena(bridge);
   } else if (bridge->assign_sequence_natively) {
@@ -3265,6 +3397,129 @@ commit_native_ordered_arena_and_destroy(
       accepted_timestamp, record_written);
 }
 
+// @unsafe - The validated control, packed-order exclusion, and detached Rust
+// occupancy right jointly guarantee unique access to the selected publication
+// turn and holder generation until the terminal returns its witness.
+[[gnu::always_inline]] static inline
+mako_rust_fast_native_ordered_arena_result
+commit_native_ordered_holder_and_destroy(
+    mako_local_txn *txn,
+    const mako_rust_fast_native_ordered_holder_control &validated_control)
+    noexcept {
+  mako_rust_fast_native_ordered_holder_control control = validated_control;
+  const auto &write = txn->record_fast_write;
+  std::string prepared_overflow_key;
+  if (write.key_length >
+      mako_rust_fast_one_put_holder_pool::kInlineKeyBytes) {
+    try {
+      prepared_overflow_key.assign(write.key, write.key_length);
+    } catch (const std::bad_alloc &) {
+      return mako_rust_fast_native_ordered_arena_result{
+          abort_fast_record_terminal(txn, MAKO_LOCAL_OUT_OF_MEMORY), 0, 0};
+    } catch (...) {
+      return mako_rust_fast_native_ordered_arena_result{
+          abort_fast_record_terminal(txn, MAKO_LOCAL_INTERNAL), 0, 0};
+    }
+  }
+
+  uint64_t ordered_sequence = 0;
+  uint32_t accepted_timestamp = 0;
+  uint8_t holder_sealed = 0;
+  record_bind_bridge bridge{txn, nullptr, &control, &holder_sealed};
+  bridge.use_unchecked_one_put_serializer = true;
+  bridge.native_unhealthy = control.unhealthy;
+  bridge.ordered_sequence_out = &ordered_sequence;
+  bridge.ordered_timestamp_out = &accepted_timestamp;
+  bridge.assign_sequence_natively = true;
+  bridge.holder_control = &control;
+  bridge.prepared_overflow_key = &prepared_overflow_key;
+  const bool can_accept_after_validation =
+      TThread::txn->can_order_record_after_validation();
+
+  int status = MAKO_LOCAL_INTERNAL;
+  try {
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+    arm_native_cleanup_failure_if_requested(cleanup_boundary::commit);
+#endif
+    Transaction::preinstall_failure failure =
+        Transaction::preinstall_failure::none;
+    const Transaction::commit_validation_gate validation_gate{
+        can_accept_after_validation ? nullptr : enter_packed_cache_order_gate,
+        can_accept_after_validation ? nullptr : leave_packed_cache_order_gate,
+        serialize_bound_record_after_gate, &bridge,
+        can_accept_after_validation,
+        can_accept_after_validation ? accept_packed_cache_order : nullptr};
+    const bool committed = Sto::try_commit_no_paxos(
+        invoke_record_bind_hook, &bridge, &failure, &validation_gate);
+    if (bridge.sequence != ordered_sequence ||
+        (bridge.sequence != 0 && bridge.selected_holder == nullptr))
+      std::abort();
+    if (bridge.sequence != 0) {
+      preselected_one_put_holder_bridge seal_bridge{
+          txn,
+          bridge.selected_holder,
+          bridge.sequence,
+          write.table_id,
+          static_cast<uint16_t>(write.key_length),
+          bridge.holder_key_location,
+          accepted_timestamp,
+          false};
+      seal_preselected_one_put_holder(&seal_bridge);
+      holder_sealed = seal_bridge.holder_sealed ? 1 : 0;
+    }
+    finish_txn_known<true>(txn);
+
+    if (committed) {
+      status = MAKO_LOCAL_OK;
+    } else {
+      switch (failure) {
+      case Transaction::preinstall_failure::hook_rejected:
+        status = MAKO_LOCAL_COMMIT_HOOK_REJECTED;
+        break;
+      case Transaction::preinstall_failure::timestamp_exhausted:
+        status = MAKO_LOCAL_TIMESTAMP_EXHAUSTED;
+        break;
+      case Transaction::preinstall_failure::none:
+        status = MAKO_LOCAL_CONFLICT;
+        break;
+      default:
+        poison_transaction(txn);
+        return pack_native_ordered_arena_result(
+            pack_fast_terminal_result(MAKO_LOCAL_WORKER_POISONED,
+                                      MAKO_LOCAL_WORKER_POISONED),
+            bridge, accepted_timestamp, holder_sealed);
+      }
+    }
+  } catch (...) {
+    if (bridge.sequence != ordered_sequence ||
+        (bridge.sequence != 0 && bridge.selected_holder == nullptr))
+      std::abort();
+    if (bridge.sequence != 0 && holder_sealed == 0) {
+      preselected_one_put_holder_bridge seal_bridge{
+          txn,
+          bridge.selected_holder,
+          bridge.sequence,
+          write.table_id,
+          static_cast<uint16_t>(write.key_length),
+          bridge.holder_key_location,
+          accepted_timestamp,
+          false};
+      seal_preselected_one_put_holder(&seal_bridge);
+      holder_sealed = seal_bridge.holder_sealed ? 1 : 0;
+    }
+    poison_transaction(txn);
+    return pack_native_ordered_arena_result(
+        pack_fast_terminal_result(MAKO_LOCAL_WORKER_POISONED,
+                                  MAKO_LOCAL_WORKER_POISONED),
+        bridge, accepted_timestamp, holder_sealed);
+  }
+
+  recycle_txn(txn);
+  return pack_native_ordered_arena_result(
+      pack_fast_terminal_result(status, MAKO_LOCAL_OK), bridge,
+      accepted_timestamp, holder_sealed);
+}
+
 [[gnu::always_inline]] static inline
 mako_rust_fast_preselected_record_result
 commit_preselected_one_put_record_and_destroy(
@@ -3590,6 +3845,46 @@ mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_arena_and_destroy(
   txn->record_plan_sealed = true;
   txn->record_plan_ready = true;
   return commit_native_ordered_arena_and_destroy(txn, *control);
+}
+
+// @unsafe - This build-private ABI consumes one live thread-affine facade. Its
+// caller must keep the trusted queue layout and detached capacity claim alive
+// through the synchronous call and resolve every accepted sequence afterward.
+MAKO_RUST_FAST_DEFINITION_HIDDEN mako_rust_fast_native_ordered_arena_result
+mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_holder_and_destroy(
+    mako_local_txn *txn, uint32_t expected_record_bytes,
+    const mako_rust_fast_native_ordered_holder_control *control) noexcept {
+  assert(txn != nullptr);
+  assert(on_owner_thread(txn));
+  assert(!txn->poisoned);
+  assert(!local_worker_poisoned);
+  assert(txn->active);
+  assert(local_active_txn == txn);
+  assert(txn->fast_table_impl != nullptr);
+
+  record_shape shape;
+  if (!packed_cache_order_allowed(txn->owner) ||
+      expected_record_bytes == 0 ||
+      expected_record_bytes > kFastPutRecordBytesMax ||
+      !valid_native_ordered_holder_control(control, expected_record_bytes) ||
+      txn->record_plan_sealed || txn->record_plan_ready ||
+      txn->record_plan_bytes != 0 || txn->record_plan_ops != 0 ||
+      !derive_fast_record_shape(
+          txn, MAKO_RUST_FAST_RECORD_CHECKSUM_NONE, &shape) ||
+      shape.operations != 1 || shape.bytes != expected_record_bytes) {
+    return mako_rust_fast_native_ordered_arena_result{
+        reject_fast_record_terminal(txn), 0, 0};
+  }
+
+  // Seal every fallible shape/layout check before packed assignment. Long-key
+  // staging remains precommit inside the helper; the common inline-key path
+  // allocates nothing and transfers only the existing encoded value string.
+  txn->record_plan_bytes = shape.bytes;
+  txn->record_plan_ops = shape.operations;
+  txn->record_plan_checksum_mode = MAKO_RUST_FAST_RECORD_CHECKSUM_NONE;
+  txn->record_plan_sealed = true;
+  txn->record_plan_ready = true;
+  return commit_native_ordered_holder_and_destroy(txn, *control);
 }
 
 MAKO_RUST_FAST_DEFINITION_HIDDEN uint64_t

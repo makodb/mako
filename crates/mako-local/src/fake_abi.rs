@@ -15,7 +15,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use super::{
     FastNativeOrderedArenaResult, FastOnePutHolderPool, FastOnePutHolderView,
-    FastPreselectedRecordResult, FastSpscHolderControl, TrustedNativeOrderedArenaControl, sys,
+    FastPreselectedRecordResult, FastSpscHolderControl, TrustedNativeOrderedArenaControl,
+    TrustedNativeOrderedHolderControl, sys,
 };
 
 static ENGINE_ID: &[u8] = b"mako-local/sto-masstrans\0";
@@ -52,6 +53,7 @@ pub(super) enum Call {
     FastUncheckedOnePutRecordCommitDestroy,
     FastNativeOrderedUncheckedOnePutRecordCommitDestroy,
     FastNativeOrderedUncheckedOnePutArenaCommitDestroy,
+    FastNativeOrderedUncheckedOnePutHolderCommitDestroy,
     FastSingleProducerUncheckedOnePutRecordCommitDestroy,
     FastPreselectedSingleProducerUncheckedOnePutRecordCommitDestroy,
     FastOnePutHolderPoolCreate,
@@ -1730,6 +1732,129 @@ pub(super) unsafe fn mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_
             terminal: u64::from(commit as u32) | (u64::from(cleanup as u32) << 32),
             ordered_sequence: sequence,
             record_state,
+        }
+    })
+}
+
+pub(super) unsafe fn mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_holder_and_destroy(
+    _txn: *mut sys::mako_local_txn,
+    expected_record_bytes: u32,
+    control: *const TrustedNativeOrderedHolderControl,
+) -> FastNativeOrderedArenaResult {
+    with_state(|state| {
+        state
+            .calls
+            .push(Call::FastNativeOrderedUncheckedOnePutHolderCommitDestroy);
+        state.last_unchecked_record_bytes = Some(expected_record_bytes);
+        if !fake_packed_order_allowed(state) {
+            let terminal = reject_fake_fast_terminal(state);
+            return FastNativeOrderedArenaResult {
+                terminal,
+                ordered_sequence: 0,
+                record_state: 0,
+            };
+        }
+
+        let (scripted_timestamp, exact_record_bytes, canonical_record_bytes) =
+            match state.steps.front() {
+                Some(Step::CommitPreselectedHolder {
+                    timestamp,
+                    exact_record_bytes,
+                    key,
+                    value,
+                    ..
+                }) => (
+                    *timestamp,
+                    *exact_record_bytes,
+                    super::UNCHECKED_ONE_PUT_RECORD_OVERHEAD_BYTES
+                        .checked_add(key.len())
+                        .and_then(|bytes| bytes.checked_add(value.len())),
+                ),
+                found => panic!(
+                    "fake ABI expected fast native-ordered one-put holder commit, found {found:?}"
+                ),
+            };
+
+        // SAFETY: the wrapper lends its live repr(C) control for this complete
+        // synchronous fake call.
+        let control = unsafe { control.as_ref() };
+        let layout_valid = control.is_some_and(|control| {
+            if control.pool.is_null() {
+                return false;
+            }
+            // SAFETY: a non-null pool in this test-only control comes from the
+            // fake holder-pool constructor and stays live through the call.
+            let pool = unsafe { &*control.pool.cast::<FakeOnePutHolderPool>() };
+            let capacity = control.publication_mask.checked_add(1);
+            !control.unhealthy.is_null()
+                && !control.publication_base.is_null()
+                && control.reserved == 0
+                && (control.publication_base as usize) % 64 == 0
+                && capacity.is_some_and(|capacity| {
+                    capacity >= 4
+                        && capacity.is_power_of_two()
+                        && pool.holders.len() == capacity
+                        && pool.mask == control.publication_mask
+                        && 1usize.checked_shl(control.publication_shift) == Some(capacity)
+                })
+                && control.publication_stride == 64
+                && expected_record_bytes != 0
+                && expected_record_bytes <= control.max_record_bytes
+        });
+        let exact_candidate = exact_record_bytes == expected_record_bytes as usize
+            && canonical_record_bytes == Some(exact_record_bytes);
+
+        let mut sequence = 0u64;
+        if layout_valid && exact_candidate {
+            let control = control.expect("validated holder control remains present");
+            // SAFETY: construction promises this byte is one live AtomicBool.
+            let health =
+                unsafe { AtomicBool::from_ptr(control.unhealthy.cast_mut().cast::<bool>()) };
+            if !health.load(Ordering::Acquire) {
+                if let Some((next, _)) = assign_fake_cache_order_pair(state, scripted_timestamp) {
+                    sequence = next;
+                    let index = sequence as usize & control.publication_mask;
+                    // SAFETY: the validated control covers the complete ring and
+                    // this masked index stays within it.
+                    let publication = unsafe {
+                        control
+                            .publication_base
+                            .add(index * control.publication_stride as usize)
+                    };
+                    // SAFETY: byte zero is the aligned AtomicU64 turn word.
+                    let turn = unsafe { AtomicU64::from_ptr(publication.cast::<u64>()) };
+                    let free = (sequence >> control.publication_shift) << 2;
+                    let bound = free | 1;
+                    assert_eq!(turn.load(Ordering::Acquire), free);
+
+                    // The matching holder must be FREE before native publishes
+                    // BOUND. Its payload is sealed by the shared fake below.
+                    let pool = unsafe { &*control.pool.cast::<FakeOnePutHolderPool>() };
+                    let holder_index = (sequence as usize).wrapping_sub(1) & pool.mask;
+                    assert!(!pool.holders[holder_index].sealed);
+                    // SAFETY: the exact FREE generation grants unique access to
+                    // the publication extent word at byte 16.
+                    unsafe { publication.add(16).cast::<usize>().write(0) };
+                    turn.store(bound, Ordering::Release);
+                }
+            }
+        }
+
+        // SAFETY: a nonzero sequence above owns the matching fake holder and
+        // BOUND publication generation. Zero makes the shared helper consume the
+        // scripted rejection without touching a holder.
+        let result = unsafe {
+            fake_preselected_one_put_holder_commit(
+                state,
+                expected_record_bytes,
+                control.map_or(ptr::null_mut(), |control| control.pool),
+                sequence,
+            )
+        };
+        FastNativeOrderedArenaResult {
+            terminal: result.terminal,
+            ordered_sequence: sequence,
+            record_state: result.record_state,
         }
     })
 }
@@ -5077,6 +5202,142 @@ mod tests {
         assert!(!report.record_written);
         assert_eq!(next_bound.load(Ordering::Acquire), 13);
         assert_eq!(db.cache_order_snapshot(), packed_reject_snapshot);
+        drop(db);
+        assert_drained();
+    }
+
+    #[test]
+    fn concurrent_packed_holder_binds_and_seals_exact_generation() {
+        #[repr(C, align(64))]
+        struct TestPublicationCell {
+            turn: AtomicU64,
+            mako_timestamp: std::cell::UnsafeCell<u32>,
+            record_bytes: std::cell::UnsafeCell<usize>,
+            padding: [u8; 40],
+        }
+
+        const _: () = {
+            assert!(std::mem::size_of::<TestPublicationCell>() == 64);
+            assert!(std::mem::align_of::<TestPublicationCell>() == 64);
+            assert!(std::mem::offset_of!(TestPublicationCell, turn) == 0);
+            assert!(std::mem::offset_of!(TestPublicationCell, mako_timestamp) == 8);
+            assert!(std::mem::offset_of!(TestPublicationCell, record_bytes) == 16);
+        };
+
+        const KEY: &[u8] = b"packed-holder-key";
+        const VALUE: &[u8] = b"packed-holder-value";
+        const TABLE_ID: u64 = 113;
+        const TIMESTAMP: u32 = 151;
+        const RECOVERED_SEQUENCE: u64 = 10;
+        const EXPECTED_SEQUENCE: u64 = RECOVERED_SEQUENCE + 1;
+        const EXACT_BYTES: u32 = 43 + KEY.len() as u32 + VALUE.len() as u32;
+
+        reset();
+        let db = open_db();
+        claim_cache_order(&db, RECOVERED_SEQUENCE);
+        let table = db.open_table("concurrent-packed-holder", TABLE_ID).unwrap();
+        let mut transaction = db.trusted_transaction(&table).unwrap();
+        push(Step::Put(ByteReply {
+            status: sys::MAKO_LOCAL_OK,
+            value: 1,
+            unchecked_record_bytes: EXACT_BYTES,
+        }));
+        assert_eq!(transaction.put(&table, KEY, VALUE), Ok(true));
+        let candidate = transaction.unchecked_one_put_record_candidate().unwrap();
+
+        let pool = crate::TrustedOnePutHolderPool::new(4, 0, 0).unwrap();
+        let mut cells = Box::new(std::array::from_fn::<_, 4, _>(|_| TestPublicationCell {
+            turn: AtomicU64::new(u64::MAX),
+            mako_timestamp: std::cell::UnsafeCell::new(0),
+            record_bytes: std::cell::UnsafeCell::new(usize::MAX),
+            padding: [0; 40],
+        }));
+        let unhealthy = AtomicBool::new(false);
+        let publication_index = EXPECTED_SEQUENCE as usize & 3;
+        let free_turn = (EXPECTED_SEQUENCE >> 2) << 2;
+        cells[publication_index]
+            .turn
+            .store(free_turn, Ordering::Relaxed);
+        // This compatibility allocator is intentionally not part of the packed
+        // holder control and must remain untouched by the terminal.
+        let legacy_next_bound = AtomicU64::new(RECOVERED_SEQUENCE);
+        // SAFETY: the pool, health byte, and four-cell aligned ring stay live
+        // through the synchronous terminal; this test owns its one capacity right.
+        let control = unsafe {
+            crate::TrustedNativeOrderedHolderControl::new(
+                &pool,
+                unhealthy.as_ptr().cast::<u8>(),
+                cells.as_mut_ptr().cast::<u8>(),
+                3,
+                2,
+                64,
+                EXACT_BYTES,
+            )
+        };
+
+        push(Step::CommitPreselectedHolder {
+            status: sys::MAKO_LOCAL_OK,
+            timestamp: Some(TIMESTAMP),
+            exact_record_bytes: EXACT_BYTES as usize,
+            table_id: TABLE_ID,
+            key: KEY.to_vec(),
+            value: VALUE.to_vec(),
+            reported_holder_state: None,
+        });
+        push(Step::Destroy(sys::MAKO_LOCAL_OK));
+        // SAFETY: the immediate trusted candidate matches the stable control,
+        // and this test retains its detached capacity right until resolution.
+        let outcome = unsafe {
+            transaction.commit_trusted_native_ordered_unchecked_one_put_holder(candidate, &control)
+        };
+        assert!(outcome.order_witness_valid());
+        assert_eq!(
+            outcome
+                .accepted_order()
+                .map(|(timestamp, sequence)| (timestamp.get(), sequence.get())),
+            Some((TIMESTAMP, EXPECTED_SEQUENCE))
+        );
+        assert!(outcome.is_committed());
+        let report = outcome.into_report();
+        assert!(report.completion_contract_valid);
+        assert!(report.record_bound);
+        assert!(report.record_written);
+        assert_eq!(
+            cells[publication_index].turn.load(Ordering::Acquire),
+            free_turn | 1,
+            "native must publish the exact generation BOUND"
+        );
+        assert_eq!(
+            unsafe { cells[publication_index].record_bytes.get().read() },
+            0,
+            "a holder-backed BOUND turn exposes no arena extent"
+        );
+        assert_eq!(
+            legacy_next_bound.load(Ordering::Acquire),
+            RECOVERED_SEQUENCE
+        );
+        let packed = db.cache_order_snapshot();
+        assert_eq!(packed & CACHE_ORDER_FIELD_MASK, EXPECTED_SEQUENCE);
+        assert_eq!(
+            (packed & CACHE_ORDER_TIMESTAMP_MASK) >> CACHE_ORDER_TIMESTAMP_SHIFT,
+            u64::from(TIMESTAMP + 1)
+        );
+
+        let sequence = NonZeroU64::new(EXPECTED_SEQUENCE).unwrap();
+        // SAFETY: the terminal returned an exact sealed-generation witness and
+        // this test is the sole consumer before release.
+        let view = unsafe { pool.view(sequence) }.expect("sealed holder has an exact view");
+        assert_eq!(view.sequence(), sequence);
+        assert_eq!(view.table_id(), TABLE_ID);
+        assert_eq!(view.mako_timestamp().get(), TIMESTAMP);
+        assert_eq!(view.key(), KEY);
+        assert_eq!(view.value(), VALUE);
+        // SAFETY: all holder-backed slice borrows ended above.
+        unsafe { pool.release(view) }.unwrap();
+
+        assert_eq!(last_unchecked_record_bytes(), Some(EXACT_BYTES));
+        assert_call_count(Call::FastNativeOrderedUncheckedOnePutHolderCommitDestroy, 1);
+        drop(pool);
         drop(db);
         assert_drained();
     }

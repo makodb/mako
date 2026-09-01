@@ -326,6 +326,23 @@ typedef struct mako_rust_fast_native_ordered_arena_result {
 typedef struct mako_rust_fast_one_put_holder_pool
     mako_rust_fast_one_put_holder_pool;
 
+/* Synchronous queue layout for the callback-free concurrent holder terminal.
+ * The exact publication turn supplies holder-generation ownership: native
+ * Acquire-checks FREE before touching the holder selected by the same dense
+ * sequence, then Release-publishes BOUND. Rust publishes READY only after the
+ * terminal reports that the holder was sealed. The pool and every pointed-to
+ * allocation must remain stable for the complete synchronous call. */
+typedef struct mako_rust_fast_native_ordered_holder_control {
+  mako_rust_fast_one_put_holder_pool *pool;
+  const uint8_t *unhealthy;
+  uint8_t *publication_base;
+  size_t publication_mask;
+  uint32_t publication_shift;
+  uint32_t publication_stride;
+  uint32_t max_record_bytes;
+  uint32_t reserved;
+} mako_rust_fast_native_ordered_holder_control;
+
 /* Persistent queue-global inputs for the fused SPSC holder terminal. The
  * pointer targets and this control block must outlive every synchronous call
  * and its cold decode. Calls and cold decodes using one control must not
@@ -455,6 +472,11 @@ MAKO_RUST_FAST_HIDDEN mako_rust_fast_native_ordered_arena_result
 mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_arena_and_destroy(
     mako_local_txn *txn, uint32_t expected_record_bytes,
     const mako_rust_fast_native_ordered_arena_control *control)
+    MAKO_RUST_FAST_NOEXCEPT;
+MAKO_RUST_FAST_HIDDEN mako_rust_fast_native_ordered_arena_result
+mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_holder_and_destroy(
+    mako_local_txn *txn, uint32_t expected_record_bytes,
+    const mako_rust_fast_native_ordered_holder_control *control)
     MAKO_RUST_FAST_NOEXCEPT;
 MAKO_RUST_FAST_HIDDEN uint64_t
 mako_rust_fast_txn_commit_unchecked_one_put_record_single_producer_and_destroy(

@@ -93,6 +93,35 @@ pub struct TrustedNativeOrderedArenaControl {
     arena_block_bytes: u32,
 }
 
+/// Stable queue and holder-pool layout lent to the callback-free concurrent
+/// holder terminal.
+#[doc(hidden)]
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct TrustedNativeOrderedHolderControl {
+    pool: *mut FastOnePutHolderPool,
+    unhealthy: *const u8,
+    publication_base: *mut u8,
+    publication_mask: usize,
+    publication_shift: u32,
+    publication_stride: u32,
+    max_record_bytes: u32,
+    reserved: u32,
+}
+
+const _: [(); 48] = [(); std::mem::size_of::<TrustedNativeOrderedHolderControl>()];
+const _: [(); 8] = [(); std::mem::align_of::<TrustedNativeOrderedHolderControl>()];
+const _: () = {
+    assert!(std::mem::offset_of!(TrustedNativeOrderedHolderControl, pool) == 0);
+    assert!(std::mem::offset_of!(TrustedNativeOrderedHolderControl, unhealthy) == 8);
+    assert!(std::mem::offset_of!(TrustedNativeOrderedHolderControl, publication_base) == 16);
+    assert!(std::mem::offset_of!(TrustedNativeOrderedHolderControl, publication_mask) == 24);
+    assert!(std::mem::offset_of!(TrustedNativeOrderedHolderControl, publication_shift) == 32);
+    assert!(std::mem::offset_of!(TrustedNativeOrderedHolderControl, publication_stride) == 36);
+    assert!(std::mem::offset_of!(TrustedNativeOrderedHolderControl, max_record_bytes) == 40);
+    assert!(std::mem::offset_of!(TrustedNativeOrderedHolderControl, reserved) == 44);
+};
+
 const _: [(); 56] = [(); std::mem::size_of::<TrustedNativeOrderedArenaControl>()];
 const _: [(); 8] = [(); std::mem::align_of::<TrustedNativeOrderedArenaControl>()];
 const _: () = {
@@ -160,6 +189,44 @@ struct FastOnePutHolderPool {
     _private: [u8; 0],
 }
 
+impl TrustedNativeOrderedHolderControl {
+    /// Describe one stable concurrent publication ring and its holder pool.
+    ///
+    /// # Safety
+    ///
+    /// `publication_base` must address `publication_mask + 1` same-build
+    /// publication cells, with their atomic turn at offset zero. The ring must
+    /// be a power of two whose logarithm is `publication_shift`; its capacity
+    /// must equal `pool.capacity()`. `unhealthy` must address a live
+    /// `AtomicBool`. All allocations must outlive every synchronous native use,
+    /// and the caller must own one detached capacity right for the sequence
+    /// native may assign.
+    #[doc(hidden)]
+    pub unsafe fn new(
+        pool: &TrustedOnePutHolderPool,
+        unhealthy: *const u8,
+        publication_base: *mut u8,
+        publication_mask: usize,
+        publication_shift: u32,
+        publication_stride: u32,
+        max_record_bytes: u32,
+    ) -> Self {
+        debug_assert!(!unhealthy.is_null());
+        debug_assert!(!publication_base.is_null());
+        debug_assert_eq!(publication_mask + 1, pool.capacity());
+        Self {
+            pool: pool.raw.as_ptr(),
+            unhealthy,
+            publication_base,
+            publication_mask,
+            publication_shift,
+            publication_stride,
+            max_record_bytes,
+            reserved: 0,
+        }
+    }
+}
+
 /// Stable queue-global inputs for the private fused SPSC terminal.
 ///
 /// Keep this layout in lockstep with `mako_rust_fast_spsc_holder_control` in
@@ -219,7 +286,8 @@ mod fast_abi {
 
     use super::{
         FastNativeOrderedArenaResult, FastOnePutHolderPool, FastOnePutHolderView,
-        FastPreselectedRecordResult, FastSpscHolderControl, TrustedNativeOrderedArenaControl, sys,
+        FastPreselectedRecordResult, FastSpscHolderControl, TrustedNativeOrderedArenaControl,
+        TrustedNativeOrderedHolderControl, sys,
     };
 
     pub(super) type RecordBindHook = Option<
@@ -305,6 +373,12 @@ mod fast_abi {
             txn: *mut sys::mako_local_txn,
             expected_record_bytes: u32,
             control: *const TrustedNativeOrderedArenaControl,
+        ) -> FastNativeOrderedArenaResult;
+
+        pub(super) fn mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_holder_and_destroy(
+            txn: *mut sys::mako_local_txn,
+            expected_record_bytes: u32,
+            control: *const TrustedNativeOrderedHolderControl,
         ) -> FastNativeOrderedArenaResult;
 
         pub(super) fn mako_rust_fast_txn_commit_unchecked_one_put_record_single_producer_and_destroy(
@@ -3966,6 +4040,75 @@ impl<'db> Transaction<'db> {
                 packed: result.terminal,
                 record_bound: target_bound,
                 record_written,
+            },
+            ordered_sequence: result.ordered_sequence,
+            ordered_timestamp,
+            target_bound,
+        }
+    }
+
+    /// Commit one verified one-Put into a native holder selected after packed
+    /// timestamp/sequence assignment.
+    ///
+    /// This is the concurrent counterpart of the preselected SPSC holder
+    /// terminal. Native acquires the exact publication generation before it
+    /// touches the matching holder, transfers the transaction's staged value
+    /// allocation after installation, and returns a sealed-holder witness.
+    /// Foreground code does not encode or copy a commit record.
+    ///
+    /// # Safety
+    ///
+    /// The transaction and candidate requirements match
+    /// [`Self::commit_trusted_native_ordered_unchecked_one_put_arena`]. The
+    /// control must describe the same concurrent queue and holder pool used by
+    /// all of its packed terminals, and the caller must retain one detached
+    /// capacity right. Every accepted sequence owns an already-BOUND turn and
+    /// must be published or pinned; a sealed witness may be exposed only
+    /// through that exact turn.
+    #[doc(hidden)]
+    #[inline(always)]
+    pub unsafe fn commit_trusted_native_ordered_unchecked_one_put_holder(
+        mut self,
+        candidate: CommitRecordPreflight,
+        control: &TrustedNativeOrderedHolderControl,
+    ) -> TrustedNativeOrderedOnePutRecordOutcome {
+        debug_assert!(self.fast_bound_table.is_some());
+        debug_assert!(self.record_preflight.is_none());
+        debug_assert!(self.active);
+        debug_assert!(self.raw.is_some());
+        debug_assert!(!candidate.is_empty());
+        debug_assert_eq!(candidate.op_count, 1);
+        debug_assert_eq!(candidate.checksum, CommitRecordChecksum::None);
+        debug_assert_ne!(candidate.exact_record_bytes, 0);
+        debug_assert!(candidate.exact_record_bytes <= u32::MAX as usize);
+        debug_assert_eq!(
+            NonZeroU32::new(candidate.exact_record_bytes as u32),
+            self.unchecked_one_put_record_bytes
+        );
+
+        // SAFETY: the trusted terminal consumes the thread-affine handle on
+        // every outcome and the method contract retains the queue/pool layout.
+        let raw = unsafe { self.raw.take().unwrap_unchecked() };
+        self.active = false;
+        let result = unsafe {
+            fast_abi::mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_holder_and_destroy(
+                raw.as_ptr(),
+                candidate.exact_record_bytes as u32,
+                std::ptr::from_ref(control),
+            )
+        };
+        let ordered_timestamp = result.record_state as u32;
+        let holder_sealed = if result.record_state >> 33 == 0 {
+            ((result.record_state >> 32) & 1) as u8
+        } else {
+            u8::MAX
+        };
+        let target_bound = result.ordered_sequence != 0;
+        TrustedNativeOrderedOnePutRecordOutcome {
+            inner: TrustedUncheckedOnePutRecordOutcome {
+                packed: result.terminal,
+                record_bound: target_bound,
+                record_written: holder_sealed,
             },
             ordered_sequence: result.ordered_sequence,
             ordered_timestamp,

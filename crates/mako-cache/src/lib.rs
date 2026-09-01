@@ -1397,7 +1397,9 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
                 Ok(Some(permit)) => {
                     return match foreground {
                         TransactionForeground::Concurrent => {
-                            finish_trusted_one_put_arena(self.cache, native, preflight, permit)
+                            finish_trusted_one_put_concurrent(
+                                self.cache, native, preflight, permit,
+                            )
                         }
                         TransactionForeground::SingleProducer(_) => {
                             finish_trusted_one_put_arena_single(
@@ -1632,13 +1634,15 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
     }
 }
 
-/// Complete the cache-private, common-arena one-Put terminal.
+/// Complete the cache-private concurrent one-Put terminal.
 ///
 /// Native's packed process word pairs the Mako timestamp with the dense queue
-/// sequence. The exact publication cell and arena target are acquired only
-/// after native assigns that pair, then remain owned through backend retirement.
+/// sequence. Native acquires the exact publication generation only after it
+/// assigns that pair, then transfers the staged value allocation into a holder
+/// that remains owned through backend retirement. The byte arena remains the
+/// compatibility path for an unrepresentable holder tag or crash failpoint.
 #[allow(unsafe_code)]
-fn finish_trusted_one_put_arena<'cache, 'db, B: Blobs + 'static>(
+fn finish_trusted_one_put_concurrent<'cache, 'db, B: Blobs + 'static>(
     cache: &'cache Cache<B>,
     native: mako_local::Transaction<'db>,
     preflight: mako_local::CommitRecordPreflight,
@@ -1655,18 +1659,29 @@ fn finish_trusted_one_put_arena<'cache, 'db, B: Blobs + 'static>(
     let mut bound = None;
     // The crash matrix retains its exact post-bind/pre-serialization seam by
     // selecting the legacy callback terminal only in the helper process which
-    // armed that point. Ordinary tests and every production commit use the
-    // callback-free native arena binder.
+    // armed that point. Oversized 32-bit records retain the direct byte arena;
+    // ordinary records use the callback-free zero-copy holder terminal.
     #[cfg(test)]
-    let direct_arena =
-        !crate::failpoint::is_armed(crate::failpoint::Point::PreinstallBound);
+    let force_callback = crate::failpoint::is_armed(crate::failpoint::Point::PreinstallBound);
     #[cfg(not(test))]
-    let direct_arena = true;
+    let force_callback = false;
+    let use_holder_terminal = !force_callback
+        && writeback::native_holder_record_supported(preflight.exact_record_bytes());
 
-    let outcome = if direct_arena {
+    let outcome = if use_holder_terminal {
         // SAFETY: the candidate is current, the permit owns one concurrent
         // occupancy claim, and the control borrows this queue's stable exact
-        // publication/arena layout for the synchronous native terminal.
+        // publication/holder layout for the synchronous native terminal.
+        let control = unsafe { cache.writeback.native_ordered_holder_control() };
+        unsafe {
+            native.commit_trusted_native_ordered_unchecked_one_put_holder(
+                preflight,
+                &control,
+            )
+        }
+    } else if !force_callback {
+        // SAFETY: this is the same direct packed terminal and exact generation
+        // ownership, with bytes stored in the queue arena instead of a holder.
         let control = unsafe { cache.writeback.native_ordered_arena_control() };
         unsafe {
             native.commit_trusted_native_ordered_unchecked_one_put_arena(
@@ -1716,7 +1731,7 @@ fn finish_trusted_one_put_arena<'cache, 'db, B: Blobs + 'static>(
     // the ordinary unwritten-record path pins the exact dense obligation.
     if bound.is_none() {
         if let Some((timestamp, sequence)) = outcome.accepted_order() {
-            bound = Some(if direct_arena {
+            bound = Some(if !force_callback {
                 // SAFETY: a nonzero order returned by the direct terminal also
                 // proves native Release-published this exact BOUND generation.
                 unsafe { permit.adopt_externally_bound(timestamp, sequence) }
@@ -1736,9 +1751,16 @@ fn finish_trusted_one_put_arena<'cache, 'db, B: Blobs + 'static>(
         crate::failpoint::observe_post_native_commit();
         #[cfg(test)]
         crate::failpoint::hit(crate::failpoint::Point::NativeCommittedBeforeReady);
-        // SAFETY: `is_committed` proves the exact completion witness, definite
-        // visibility, and successful cleanup. Publish directly BOUND -> READY.
-        unsafe { reservation.publish_completed_concurrent_nonblocking(fence.slot())? };
+        // SAFETY: `is_committed` proves the exact sealed-holder witness,
+        // definite visibility, and successful cleanup. Publish BOUND -> READY.
+        if use_holder_terminal {
+            unsafe {
+                reservation
+                    .publish_holder_completed_concurrent_nonblocking(fence.slot())?
+            };
+        } else {
+            unsafe { reservation.publish_completed_concurrent_nonblocking(fence.slot())? };
+        }
         return Ok(());
     }
 
@@ -1765,18 +1787,30 @@ fn finish_trusted_one_put_arena<'cache, 'db, B: Blobs + 'static>(
         }
         return match report.disposition {
             CommitDisposition::Committed => {
-                // SAFETY: report validation plus `record_written` proves native
-                // initialized the reservation's complete exact target.
-                let sequence = unsafe { reservation.publish_completed()? };
+                // SAFETY: report validation plus `record_written` proves the
+                // direct holder or callback arena target is complete.
+                let sequence = if use_holder_terminal {
+                    unsafe {
+                        reservation
+                            .publish_holder_completed_concurrent_nonblocking(fence.slot())?
+                    }
+                } else {
+                    unsafe { reservation.publish_completed()? }
+                };
                 match report.cleanup {
                     Ok(()) => Ok(()),
                     Err(source) => Err(Error::CommittedButCleanupFailed { sequence, source }),
                 }
             }
             CommitDisposition::Aborted(source) | CommitDisposition::Unknown(source) => {
-                // SAFETY: the completion witness makes the bytes replayable,
-                // but uncertain visibility permanently pins their sequence.
-                let sequence = unsafe { reservation.pin_completed_unknown()? };
+                // SAFETY: the completion witness makes the holder/bytes
+                // replayable, but uncertain visibility permanently pins its
+                // sequence.
+                let sequence = if use_holder_terminal {
+                    unsafe { reservation.pin_holder_completed_unknown()? }
+                } else {
+                    unsafe { reservation.pin_completed_unknown()? }
+                };
                 Err(Error::UnknownCommitOutcome {
                     sequence,
                     source,
