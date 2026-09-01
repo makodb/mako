@@ -52,7 +52,7 @@ fi
 # .github/workflows/ci.yml — keep the two lists in sync.
 # Real docker only: podman's --sysctl CSV-splits the value on commas and
 # rejects the range list (verified podman 5.x); podman runs keep the
-# historical exposure and rely on the rrr self-connect guard.
+# historical exposure and rely on the srpc self-connect guard.
 if docker --version 2>/dev/null | grep -q '^Docker version'; then
     DOCKER_SECURITY_OPTS+=(--sysctl net.ipv4.ip_local_reserved_ports=32768-35100,37000-37400,40000-64999)
 fi
@@ -805,7 +805,7 @@ case "$ACTION" in
             exit 1
         fi
         case "${CI_TEST}" in
-            compile|cleanup|simpleTransaction|simplePaxos|shardNoReplication|shard1Replication|shard2Replication|shard1ReplicationSimple|shard2ReplicationSimple|shard1ReplicationRaft|shard2ReplicationRaft|shard1ReplicationSimpleRaft|shard2ReplicationSimpleRaft|rocksdbTests|multiShardSingleProcess|shard2SingleProcess|shard2SingleProcessReplication|rrrTests|cpuThrottlingScaling|clientServer|all)
+            compile|cleanup|simpleTransaction|simplePaxos|shardNoReplication|shard1Replication|shard2Replication|shard1ReplicationSimple|shard2ReplicationSimple|shard1ReplicationRaft|shard2ReplicationRaft|shard1ReplicationSimpleRaft|shard2ReplicationSimpleRaft|rocksdbTests|multiShardSingleProcess|shard2SingleProcess|shard2SingleProcessReplication|srpcTests|cpuThrottlingScaling|clientServer|all)
                 ;;
             *)
                 echo -e "${RED}Error: Unknown CI test '${CI_TEST}'.${NC}"
@@ -852,7 +852,7 @@ case "$ACTION" in
         fi
         CI_TEST=${2:-shardNoReplication}
         case "${CI_TEST}" in
-            compile|cleanup|all|rrrTests)
+            compile|cleanup|all|srpcTests)
                 echo -e "${RED}Error: ci-quick does not support '${CI_TEST}'.${NC}"
                 echo -e "${YELLOW}Use './docker_build.sh ci ${CI_TEST}' instead.${NC}"
                 exit 1
@@ -1502,7 +1502,7 @@ case "$ACTION" in
         echo "  shard1ReplicationSimpleRaft, shard2ReplicationSimpleRaft,"
         echo "  rocksdbTests, multiShardSingleProcess,"
         echo "  shard2SingleProcess, shard2SingleProcessReplication,"
-        echo "  rrrTests, cpuThrottlingScaling, clientServer"
+        echo "  srpcTests, cpuThrottlingScaling, clientServer"
         echo ""
         echo "Examples:"
         echo "  $0 ci                    # Build and run all CI tests"

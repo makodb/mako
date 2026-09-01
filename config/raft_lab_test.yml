@@ -1,12 +1,9 @@
 # Mode: just Raft replication
 
 mode:
-  cc: none # concurrency control
   ab: raft # atomic broadcast
-  read_only: occ
   batch: false
   retry: 20
-  ongoing: 1 # per client
 
 # Sites: 5 servers (replicas) and 1 client
 site:

@@ -105,8 +105,8 @@ public:
 
 ## File Changes
 
-- Modified: `src/rrr/rpc/client.hpp` (~100 LOC)
-- Modified: `src/rrr/rpc/client.cpp` (~150 LOC)
+- Modified: `src/srpc/rpc/client.hpp` (~100 LOC)
+- Modified: `src/srpc/rpc/client.cpp` (~150 LOC)
 
 ## Estimated LOC
 

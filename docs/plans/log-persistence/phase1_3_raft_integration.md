@@ -34,7 +34,7 @@ Integrate LogStorage into RaftServer to provide durable persistence for consensu
 ```cpp
 // Add to RaftServer class
 private:
-    std::shared_ptr<rrr::LogStorage> log_storage_;
+    std::shared_ptr<srpc::LogStorage> log_storage_;
 
     // Metadata keys
     static constexpr const char* META_TERM = "currentTerm";
@@ -52,13 +52,13 @@ private:
 
 ```cpp
 // Initialize LogStorage
-void SetLogStorage(std::shared_ptr<rrr::LogStorage> storage);
+void SetLogStorage(std::shared_ptr<srpc::LogStorage> storage);
 
 // Recover state from storage
 bool RecoverFromStorage();
 
 // Helper to convert RaftData to LogEntry
-rrr::LogEntry ToLogEntry(slotid_t slot_id, const RaftData& data);
+srpc::LogEntry ToLogEntry(slotid_t slot_id, const RaftData& data);
 
 // Truncate log entries after a given index
 void TruncateLogAfter(slotid_t index);

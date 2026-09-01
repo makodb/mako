@@ -232,9 +232,8 @@ mako/
 │   │   ├── Transaction.cc  # Transaction logic
 │   │   └── masstree/   # Masstree storage engine
 │   ├── deptran/        # Transaction protocols
-│   │   ├── paxos/      # Paxos consensus
-│   │   └── rcc/        # RCC protocol
-│   └── rrr/            # RPC framework
+│   │   └── paxos/      # Paxos consensus
+│   └── srpc/            # RPC framework
 ├── config/             # Configuration files
 │   ├── 1c1s1p.yml      # 1 client, 1 shard, 1 partition
 │   └── ...
@@ -262,7 +261,7 @@ mako/
 ### For Developers:
 1. Explore [Development Setup](dev-setup.md)
 2. Understand [Coroutines & Reactor Pattern](coroutines_guide.md)
-3. Learn about [RustyCpp Memory Safety](rrr-rustycpp-migration-plan.md)
+3. Learn about [RustyCpp Memory Safety](srpc-rustycpp-migration-plan.md)
 
 ## Getting Help
 

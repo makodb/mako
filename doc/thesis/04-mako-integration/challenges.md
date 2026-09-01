@@ -82,7 +82,7 @@ point.
 
 Added `detect_replication_type_from_config()` in `mako.hh:779-816`.  This
 function performs a lightweight text scan of the YAML files before `setup()`
-is called, looking for `ab: raft` or `ab: fpga_raft`:
+is called, looking for `ab: raft`:
 
 ```cpp
 // mako.hh:886-889 — called in init_env() before setup()
@@ -189,7 +189,7 @@ triggers.
 ### Symptom
 
 Intermittent segmentation faults during shutdown or high-concurrency
-scenarios, with stack traces pointing to the RRR transport backend's
+scenarios, with stack traces pointing to the SRPC transport backend's
 `GetOrCreateClient()` method.
 
 ### Root Cause
@@ -199,7 +199,7 @@ found an entry in the `clients_` map, then released the mutex, then tried
 to use the iterator:
 
 ```cpp
-// rrr_rpc_backend.cc — BEFORE fix (buggy)
+// srpc_rpc_backend.cc — BEFORE fix (buggy)
 auto it = clients_.find(session_key);
 if (it != clients_.end()) {
     clients_lock_.unlock();          // Release lock
@@ -215,7 +215,7 @@ if (it != clients_.end()) {
 
 ### Fix
 
-Clone the `Arc` before releasing the lock (`rrr_rpc_backend.cc:206-211`):
+Clone the `Arc` before releasing the lock (`srpc_rpc_backend.cc:206-211`):
 
 ```cpp
 // AFTER fix
@@ -233,7 +233,7 @@ intermittent segfault"
 ### Verification
 
 - `shardNoReplication`: 5/5 passes
-- `rrrTests`: 66/66 passes
+- `srpcTests`: 66/66 passes
 - `shard2Replication`: passes consistently
 
 ### Lesson
@@ -256,7 +256,7 @@ to bind to those ports.
 1. **Raft heartbeat threads**: Background OS threads (`StartLeadershipTransferMonitoring`,
    `HeartbeatLoop`) don't always exit cleanly if the election timer hasn't
    fired yet.
-2. **RPC connections**: `rrr::Server::~Server()` enqueues cleanup commands
+2. **RPC connections**: `srpc::Server::~Server()` enqueues cleanup commands
    to the poll thread, but if the poll thread has already exited, the
    commands are lost and connection reference counts never reach zero.
 3. **TCP TIME_WAIT**: Even after process exit, TCP ports remain in
@@ -383,16 +383,16 @@ safety (default off) and flexibility (overridable).
 
 ## 9. Additional Fixes: Transport Layer Shutdown Races
 
-Beyond the bugs above, the RRR transport layer required five coordinated
+Beyond the bugs above, the SRPC transport layer required five coordinated
 fixes for clean shutdown:
 
 | Fix | Description | Location |
 |-----|-------------|----------|
-| Atomic stop flag | `stop_` changed from `bool` to `std::atomic<bool>` | `rrr_rpc_backend.h` |
-| Idempotent `Stop()` | Atomic compare-exchange prevents concurrent execution | `rrr_rpc_backend.cc` |
-| Early stop checks | Check `stop_` at entry of all RPC send methods | `rrr_rpc_backend.cc` |
-| Lock-protected check | Check `stop_` inside lock in `GetOrCreateClient()` | `rrr_rpc_backend.cc` |
-| Post-wait check | Check `stop_` after RPC wait completes | `rrr_rpc_backend.cc` |
+| Atomic stop flag | `stop_` changed from `bool` to `std::atomic<bool>` | `srpc_rpc_backend.h` |
+| Idempotent `Stop()` | Atomic compare-exchange prevents concurrent execution | `srpc_rpc_backend.cc` |
+| Early stop checks | Check `stop_` at entry of all RPC send methods | `srpc_rpc_backend.cc` |
+| Lock-protected check | Check `stop_` inside lock in `GetOrCreateClient()` | `srpc_rpc_backend.cc` |
+| Post-wait check | Check `stop_` after RPC wait completes | `srpc_rpc_backend.cc` |
 
 These work together as **defence-in-depth** against shutdown races that
 manifest as segfaults or hangs when stopping Raft workers.

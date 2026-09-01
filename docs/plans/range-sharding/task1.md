@@ -94,7 +94,7 @@ All structs are POD-like with simple serialization:
 
 ## Dependencies
 
-- `src/rrr/base/all.hpp` for Marshal
+- `src/srpc/base/all.hpp` for Marshal
 - Standard library: `<string>`, `<vector>`, `<map>`, `<cstdint>`
 
 ## Testing Strategy

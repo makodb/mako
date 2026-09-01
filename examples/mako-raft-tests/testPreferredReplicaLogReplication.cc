@@ -24,8 +24,6 @@
 
 #include <mako.hh>
 #include <examples/common.h>
-#include "../src/deptran/classic/tpc_command.h"  // TpcCommitCommand
-#include "../src/deptran/procedure.h"            // VecPieceData, SimpleCommand
 
 import std;
 
@@ -61,64 +59,21 @@ void safe_print(const string& msg) {
 }
 
 // =============================================================================
-// Helper: Create TpcCommitCommand wrapping raw log bytes
+// Helper: build the opaque application bytes submitted through Mako's shared
+// Raft worker. The worker owns the replication command envelope.
 // =============================================================================
-shared_ptr<TpcCommitCommand> create_log_command(const char* log_data, int length, txnid_t tx_id) {
-    // Create TpcCommitCommand (outer wrapper for batch optimization)
-    auto tpc_cmd = make_shared<TpcCommitCommand>();
-    tpc_cmd->tx_id_ = tx_id;
-
-    // Create VecPieceData (inner container)
-    auto vpd = make_shared<VecPieceData>();
-    vpd->sp_vec_piece_data_ = make_shared<vector<shared_ptr<SimpleCommand>>>();
-
-    // Create SimpleCommand to hold the raw payload
-    auto simple_cmd = make_shared<SimpleCommand>();
-
-    // Store raw bytes as STRING value at key=0
-    simple_cmd->input.values_ = make_shared<map<int32_t, Value>>();
-    (*simple_cmd->input.values_)[0] = Value(string(log_data, length));
-    simple_cmd->input.keys_.insert(0);
-    simple_cmd->partition_id_ = 0;
-
-    // Assemble: TpcCommitCommand → VecPieceData → SimpleCommand
-    vpd->sp_vec_piece_data_->push_back(simple_cmd);
-    tpc_cmd->cmd_ = vpd;
-
-    return tpc_cmd;
-}
-
-// =============================================================================
-// Helper: Serialize TpcCommitCommand to bytes
-// =============================================================================
-string serialize_tpc_command(shared_ptr<TpcCommitCommand> cmd) {
+string serialize_test_log(const string& log_data, uint64_t tx_id) {
     // For this test, we'll use a simple format:
     // [tx_id(8 bytes)][log_data_length(4 bytes)][log_data]
 
     ostringstream oss;
 
     // Write tx_id
-    uint64_t tx_id = cmd->tx_id_;
     oss.write(reinterpret_cast<const char*>(&tx_id), sizeof(tx_id));
 
-    // Extract log data from SimpleCommand
-    auto vpd = rrr::marshallable_cast<VecPieceData>(cmd->cmd_);
-    if (vpd && vpd->sp_vec_piece_data_ && !vpd->sp_vec_piece_data_->empty()) {
-        auto simple_cmd = (*vpd->sp_vec_piece_data_)[0];
-        if (simple_cmd->input.values_) {
-            auto it = simple_cmd->input.values_->find(0);
-            if (it != simple_cmd->input.values_->end()) {
-                string log_data = it->second.get_str();
-                uint32_t len = log_data.length();
-
-                // Write length
-                oss.write(reinterpret_cast<const char*>(&len), sizeof(len));
-
-                // Write data
-                oss.write(log_data.c_str(), len);
-            }
-        }
-    }
+    uint32_t len = static_cast<uint32_t>(log_data.length());
+    oss.write(reinterpret_cast<const char*>(&len), sizeof(len));
+    oss.write(log_data.data(), len);
 
     return oss.str();
 }
@@ -151,7 +106,7 @@ int main(int argc, char **argv) {
     safe_print("[" + proc_name + "] Step 1: Configuring Raft cluster...");
 
     vector<string> config{
-        get_current_absolute_path() + "../config/none_raft.yml",
+        get_current_absolute_path() + "../config/raft.yml",
         get_current_absolute_path() + "../config/1c1s5r1p_cluster_test.yml"
     };
 
@@ -282,7 +237,7 @@ int main(int argc, char **argv) {
     // =========================================================================
     if (is_leader) {
         safe_print("[" + proc_name + "] Step 7: Submitting " + to_string(NUM_LOGS) +
-                   " logs with TpcCommitCommand wrapping...");
+                   " application logs...");
         safe_print("");
 
         for (int i = 1; i <= NUM_LOGS; i++) {
@@ -291,12 +246,8 @@ int main(int argc, char **argv) {
             log_stream << "LOG_ENTRY_" << setfill('0') << setw(3) << i;
             string log_content = log_stream.str();
 
-            // Wrap in TpcCommitCommand
-            txnid_t tx_id = 1000 + i;
-            auto tpc_cmd = create_log_command(log_content.c_str(), log_content.length(), tx_id);
-
-            // Serialize to bytes
-            string serialized = serialize_tpc_command(tpc_cmd);
+            uint64_t tx_id = 1000 + i;
+            string serialized = serialize_test_log(log_content, tx_id);
 
             // Submit to Raft with batching
             add_log_to_nc(serialized.c_str(), serialized.length(), 0, BATCH_SIZE);

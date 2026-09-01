@@ -68,7 +68,7 @@
 // RpcHandler was the defer-based macro that fabricated Handle##name +
 // OnDisconnected##name + a Fiber::create_run wrapper around a
 // DeferredReply. It is no longer needed: the raft RPCs are declared
-// `fiber` in src/deptran/rcc_rpc.rpc, so the rrr codegen now:
+// `fiber` in src/deptran/rcc_rpc.rpc, so the srpc codegen now:
 //   - generates a virtual `Result<Resp, i32> Method(const Req&)` on
 //     RaftService,
 //   - generates a `__Method__wrapper__` that launches Fiber::create_run

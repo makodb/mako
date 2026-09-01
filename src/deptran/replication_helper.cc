@@ -292,19 +292,6 @@ void worker_info_stats(size_t s) {
     DISPATCH_VOID_RAFT_OR_PAXOS(worker_info_stats, s);  // @unsafe
 }
 
-void nc_setup_server(int port, std::string host) {
-    DISPATCH_VOID_RAFT_OR_PAXOS(nc_setup_server, port, host);  // @unsafe
-}
-
-// removed seven `nc_get_*_requests`
-// dispatcher functions (~25 lines) and their underlying impls in
-// `paxos_main_helper.cc` / `raft_main_helper.cc`.  The Paxos-side
-// getters returned `&nc_services[par_id]->...` against an
-// unpopulated `nc_services` global (UB), and the only external
-// caller in `nc_main.cc` line 381 was already a single-line `//`
-// comment.  Both implementations + their declarations in
-// `replication_helper.h` were dropped alongside.
-
 // Raft-specific function - no-op for Paxos
 void set_preferred_leader(int site_id) {
     if (janus::is_using_raft()) {

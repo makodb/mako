@@ -1,6 +1,6 @@
 # Marshal perf baseline — chunk-linked-list implementation
 
-This file records the baseline for the existing `rrr::Marshal` (chunk-
+This file records the baseline for the existing `srpc::Marshal` (chunk-
 linked-list with raw `char*` arithmetic, 51 per-method `// @unsafe`
 overrides) before the planned `Cursor<rusty::Vec<uint8_t>>` rewrite.
 Any future Marshal implementation must be compared against these
@@ -8,7 +8,7 @@ numbers using the same `bench_marshal` harness.
 
 ## Harness
 
-- Source: `src/rrr/tests/bench_marshal.cc`
+- Source: `src/srpc/tests/bench_marshal.cc`
 - Build:  `cmake --build build_clang21 --target bench_marshal -j32`
 - Run:    `./build_clang21/bench_marshal`
 - Method: each scenario runs a warmup pass (1% of iters or 1024,

@@ -21,9 +21,9 @@
 #include <unistd.h>
 #include <getopt.h>
 
-#include "../txn.h"
 #include "../macros.h"
 #include "../scopedperf.hh"
+#include "../small_unordered_map.h"
 #include "../spinlock.h"
 
 #if defined(__APPLE__)
@@ -3143,13 +3143,13 @@ tpcc_worker::txn_order_status()
   //   max_read_set_size : 81
   //   max_write_set_size : 0
   //   num_txn_contexts : 4
-  const uint64_t read_only_mask =
-    g_disable_read_only_scans ? 0 : transaction_base::TXN_FLAG_READ_ONLY;
   const abstract_db::TxnProfileHint hint =
     g_disable_read_only_scans ?
       abstract_db::HINT_TPCC_ORDER_STATUS :
       abstract_db::HINT_TPCC_ORDER_STATUS_READ_ONLY;
-  void *txn = db->new_txn(BenchmarkConfig::getInstance().getTxnFlags() | read_only_mask, arena, txn_buf(), hint);
+  // Preserve the profile tag as metadata. The STO/MassTrans wrapper ignores
+  // both this tag and the retired original-Silo read-only flag.
+  void *txn = db->new_txn(BenchmarkConfig::getInstance().getTxnFlags(), arena, txn_buf(), hint);
   scoped_str_arena s_arena(arena);
   // NB: since txn_order_status() is a RO txn, we assume that
   // locking is un-necessary (since we can just read from some old snapshot)
@@ -3327,13 +3327,13 @@ tpcc_worker::txn_stock_level()
   //   n_node_scan_large_instances : 1
   //   n_read_set_large_instances : 2
   //   num_txn_contexts : 3
-  const uint64_t read_only_mask =
-    g_disable_read_only_scans ? 0 : transaction_base::TXN_FLAG_READ_ONLY;
   const abstract_db::TxnProfileHint hint =
     g_disable_read_only_scans ?
       abstract_db::HINT_TPCC_STOCK_LEVEL :
       abstract_db::HINT_TPCC_STOCK_LEVEL_READ_ONLY;
-  void *txn = db->new_txn(BenchmarkConfig::getInstance().getTxnFlags() | read_only_mask, arena, txn_buf(), hint);
+  // Preserve the profile tag as metadata. The STO/MassTrans wrapper ignores
+  // both this tag and the retired original-Silo read-only flag.
+  void *txn = db->new_txn(BenchmarkConfig::getInstance().getTxnFlags(), arena, txn_buf(), hint);
   scoped_str_arena s_arena(arena);
   // NB: since txn_stock_level() is a RO txn, we assume that
   // locking is un-necessary (since we can just read from some old snapshot)

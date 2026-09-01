@@ -16,7 +16,7 @@ Work on tasks defined in this TODO file. Repeat the following steps, don't stop 
 
 - [x] Raft: build a production-ready consensus module for Mako
   - [x] *high* Implement Raft snapshotting and log compaction
-    - [x] *high* Define snapshot data format and metadata structure. [26:04:13, 19:00] A snapshot captures the state machine state at a given log index/term. Add `SnapshotMetadata` struct to `server.h` with fields: `last_included_index`, `last_included_term`, `data` (serialized state machine). The `snapshot_manager_` field already exists at `server.h:123` but is unused. Design doc: docs/dev/raft_snapshot_design.md. Implementation: SnapshotMetadata/SnapshotManager/FileSnapshotManager already existed in src/rrr/rpc/. Wired up snapshot_manager_ via InitializeSnapshotManager() in Setup(), added HasSnapshot()/GetSnapshotIndex()/GetSnapshotTerm() accessors, added 5 unit tests (Tests 50-54) covering metadata creation, format round-trip, save/load, listing/pruning, and RaftServer wiring.
+    - [x] *high* Define snapshot data format and metadata structure. [26:04:13, 19:00] A snapshot captures the state machine state at a given log index/term. Add `SnapshotMetadata` struct to `server.h` with fields: `last_included_index`, `last_included_term`, `data` (serialized state machine). The `snapshot_manager_` field already exists at `server.h:123` but is unused. Design doc: docs/dev/raft_snapshot_design.md. Implementation: SnapshotMetadata/SnapshotManager/FileSnapshotManager already existed in src/srpc/rpc/. Wired up snapshot_manager_ via InitializeSnapshotManager() in Setup(), added HasSnapshot()/GetSnapshotIndex()/GetSnapshotTerm() accessors, added 5 unit tests (Tests 50-54) covering metadata creation, format round-trip, save/load, listing/pruning, and RaftServer wiring.
     - [x] *high* Implement `CreateSnapshot()` in `server.cc`. [26:04:13, 22:00] Implemented CreateSnapshot() that serializes state (executeIndex + term), persists via snapshot_manager_->TakeSnapshot(), updates snapidx_/snapterm_, then calls CompactLog() which updates min_active_slot_. Wired into applyLogs() with threshold check: triggers when executeIndex - snapidx_ > snapshot_threshold_. Threshold configurable via MAKO_RAFT_SNAPSHOT_INTERVAL env var (default 10000) or SetSnapshotThreshold() API. Added 3 tests (Tests 55-57): basic snapshot creation, snapshot+compaction with continued operation, and threshold configurability.
     - [x] *high* Implement `InstallSnapshot` RPC. [26:04:13] Added InstallSnapshot RPC to rcc_rpc.rpc, regenerated stubs. Implemented OnInstallSnapshot() handler in server.cc: validates term (rejects stale), saves snapshot via snapshot_manager_, updates snapidx_/snapterm_, discards log entries up to last_included_index, advances commitIndex/executeIndex/lastLogIndex. Added SendInstallSnapshot() to commo.cc for leader-side sending. Added service dispatcher in service.h/cc. Added 2 tests (Tests 58-59): basic InstallSnapshot and stale term rejection.
     - [x] *high* Integrate snapshot into leader's `HeartbeatLoop`. [26:04:13, 22:10] When a follower's `next_index_[follower]` points to a log entry that has been compacted (i.e., `next_index_ < min_active_slot_`), send `InstallSnapshot` instead of `AppendEntries`. After the follower acknowledges, update `match_index_` and `next_index_` accordingly. Implemented in HeartbeatLoop's PHASE 1 loop: checks `it->second < min_active_slot_ && snapshot_manager_` before GetRaftInstance, loads snapshot via LoadLatestSnapshot, sends via SendInstallSnapshot with callback that updates next_index_/match_index_ or steps down on higher term. Added Test 60 (testHeartbeatTriggersInstallSnapshot) that creates snapshot on leader, simulates lagging follower, and verifies heartbeat triggers InstallSnapshot and indices are updated.
@@ -75,15 +75,15 @@ Work on tasks defined in this TODO file. Repeat the following steps, don't stop 
     - [x] *low* Test crash recovery: kill a replica, commit entries, restart replica, verify it catches up and has correct state. [26:04:14] Implemented as Test 101 (testReplicatedDBCrashRecovery).
     - [x] *low* Test snapshot: commit enough entries to trigger snapshot, verify lagging follower receives snapshot and has correct RocksDB state. [26:04:14] Already covered by Tests 88, 89.
     - [x] *low* Test ConfigManager: set/get shard replicas, add/remove shards, verify version increments. [26:04:14] Already covered by Tests 92-94.
-- [x] Relocate Raft-specific storage/snapshot files from `src/rrr/rpc/` to `src/deptran/raft/` [26:04:16]
-  - [x] *medium* Move log storage files. [26:04:16] Moved `src/rrr/rpc/log_storage.hpp`, `src/rrr/rpc/memory_log_storage.hpp`, and `src/rrr/rpc/rocksdb_log_storage.hpp` to `src/deptran/raft/`. Changed namespace from `rrr::` to `janus::raft::` (nested sub-namespace to avoid collision with pre-existing `janus::LogEntry` class in `paxos_worker.h`). Added `using` declarations to re-export rrr types (Marshal, Marshallable, MarshallDeputy, i8). Updated callers: raft/server.h/cc, raft/testconf.cc, paxos/server.h/cc, server_worker.cc, recovery_manager.hpp, and both test files. All 68 log storage tests pass (test_rpc_log_storage: 35/35, test_rpc_rocksdb_log_storage: 33/33).
-  - [x] *medium* Move snapshot files. [26:04:16] Moved `src/rrr/rpc/snapshot_format.hpp`, `src/rrr/rpc/snapshot_manager.hpp`, and `src/rrr/rpc/file_snapshot_manager.hpp` to `src/deptran/raft/`. Changed namespace from `rrr::` to `janus::raft::` (matches the pattern from log_storage relocation). No `using` re-exports needed since these files don't use `rrr::` marshalling types. Updated callers: raft/server.h/cc, raft/test.cc, paxos/server.h. All log storage tests still pass (68/68). dbtest and deptran_server build cleanly.
-  - [x] *low* Verify no regressions. [26:04:16] Verified: dbtest and deptran_server build cleanly with `-DMAKO_USE_RAFT=ON -DRAFT_TEST=ON` (after fixing a pre-existing unrelated bug: `ReplicatedDBCommand` was missing `public Marshallable` inheritance, causing `static_pointer_cast<Marshallable>` in test.cc to fail — fixed by adding inheritance with proper `Marshallable(kMarshallKind)` construction). All 68 log storage tests pass (35 InMemory + 33 RocksDB). No stale references to `rrr::Snapshot*`, `rrr::FileSnapshot*`, `rrr::LogStorage`, or `rpc/snapshot_*`/`rpc/log_storage*` in src/. Also added `@unsafe` annotations to `ThreadPool::make`/`RunLater::make` in threading.hpp and `MarshallDeputy::data_proxy` in marshal.hpp (pre-existing borrow checker violations surfaced during verification, unrelated to the relocation). Remaining upstream borrow checker violations in paxos_worker.cc/communicator.cc/scheduler.cc/etc. are pre-existing and unrelated.
+- [x] Relocate Raft-specific storage/snapshot files from `src/srpc/rpc/` to `src/deptran/raft/` [26:04:16]
+  - [x] *medium* Move log storage files. [26:04:16] Moved `src/srpc/rpc/log_storage.hpp`, `src/srpc/rpc/memory_log_storage.hpp`, and `src/srpc/rpc/rocksdb_log_storage.hpp` to `src/deptran/raft/`. Changed namespace from `srpc::` to `janus::raft::` (nested sub-namespace to avoid collision with pre-existing `janus::LogEntry` class in `paxos_worker.h`). Added `using` declarations to re-export srpc types (Marshal, Marshallable, MarshallDeputy, i8). Updated callers: raft/server.h/cc, raft/testconf.cc, paxos/server.h/cc, server_worker.cc, recovery_manager.hpp, and both test files. All 68 log storage tests pass (test_rpc_log_storage: 35/35, test_rpc_rocksdb_log_storage: 33/33).
+  - [x] *medium* Move snapshot files. [26:04:16] Moved `src/srpc/rpc/snapshot_format.hpp`, `src/srpc/rpc/snapshot_manager.hpp`, and `src/srpc/rpc/file_snapshot_manager.hpp` to `src/deptran/raft/`. Changed namespace from `srpc::` to `janus::raft::` (matches the pattern from log_storage relocation). No `using` re-exports needed since these files don't use `srpc::` marshalling types. Updated callers: raft/server.h/cc, raft/test.cc, paxos/server.h. All log storage tests still pass (68/68). dbtest and deptran_server build cleanly.
+  - [x] *low* Verify no regressions. [26:04:16] Verified: dbtest and deptran_server build cleanly with `-DMAKO_USE_RAFT=ON -DRAFT_TEST=ON` (after fixing a pre-existing unrelated bug: `ReplicatedDBCommand` was missing `public Marshallable` inheritance, causing `static_pointer_cast<Marshallable>` in test.cc to fail — fixed by adding inheritance with proper `Marshallable(kMarshallKind)` construction). All 68 log storage tests pass (35 InMemory + 33 RocksDB). No stale references to `srpc::Snapshot*`, `srpc::FileSnapshot*`, `srpc::LogStorage`, or `rpc/snapshot_*`/`rpc/log_storage*` in src/. Also added `@unsafe` annotations to `ThreadPool::make`/`RunLater::make` in threading.hpp and `MarshallDeputy::data_proxy` in marshal.hpp (pre-existing borrow checker violations surfaced during verification, unrelated to the relocation). Remaining upstream borrow checker violations in paxos_worker.cc/communicator.cc/scheduler.cc/etc. are pre-existing and unrelated.
 - [x] *high* Fix upstream borrow checker violations blocking Docker CI [26:04:17]
-  - Context: Daily CI attempted 2026-04-17 blocked by 221 pre-existing borrow checker violations cascading from `marshal.hpp` (`MarshallDeputy::set_marshallable`, `make_initializer_state`, `set_marshallable_state`). Also violations in `rrr::Client::circuit_breaker_*`, `rrr::Client::heartbeat_*`, `rrr::PollThread::update_mode`, various `__reg_to__` service functions (ClassicService, ClientControlService, ConfigServiceService, CopilotService, FpgaRaftService, MenciusService, MongodbService, MultiPaxosService, RaftService, ServerControlService). These all predate the raft storage/snapshot relocation and are from upstream srpc migration work.
-  - [x] *high* Add `@unsafe` annotations to `MarshallDeputy::set_marshallable`, `make_initializer_state`, `set_marshallable_state` in `src/rrr/misc/marshal.hpp`. [26:04:17] Annotated all three methods `@unsafe`. Reduced borrow checker violation count from 221 to 218 per file.
-  - [x] *high* Add `@unsafe` annotations to `rrr::Client::circuit_breaker_*` and `heartbeat_*` accessors. [26:04:17] Wrapped RefCell::borrow + Option::unwrap operations in `@unsafe { }` blocks inside `set_heartbeat`, `heartbeat_config`, `set_circuit_breaker`, `circuit_breaker_config`, `circuit_breaker_state` in `src/rrr/rpc/client.hpp`. Reduced Docker CI violation count from 218 → 210 per file.
-  - [x] *high* Add `@unsafe` annotations to `__reg_to__` generated service functions. [26:04:17] Updated rpcgen codegen (`src/rrr/pylib/simplerpcgen/lang_cpp.py`) to emit `// @unsafe` instead of `// @safe` above `__reg_to__`. Regenerated all RPC headers (rcc_rpc.h, helloworld.h, network.h, benchmark_service.h). Also fixed cascading reactor.cc violations (get_reactor, register_coroutine, check_timeout, continue_coro, PollThreadWorker::do_add_pollable, PollThread::update_mode) by wrapping unsafe RefCell/Option/STL ops in `@unsafe { }` blocks. Reverted a problematic ReplicatedDBCommand Marshallable inheritance change (conflicted with rpc_marshallable_proxy_test.cc static_assert) — instead use `MarshallDeputy::set_marshallable()` with typed shared_ptr in test.cc. All borrow checker violations from this TODO are fixed. Remaining Docker CI failure is an unrelated upstream bug: `examples/rocksdbInterfaceTest.cc` calls `db->ListTables()` which doesn't exist on `mako::IDatabase` (added by commit 826bb0691 but never implemented).
+  - Context: Daily CI attempted 2026-04-17 blocked by 221 pre-existing borrow checker violations cascading from `marshal.hpp` (`MarshallDeputy::set_marshallable`, `make_initializer_state`, `set_marshallable_state`). Also violations in `srpc::Client::circuit_breaker_*`, `srpc::Client::heartbeat_*`, `srpc::PollThread::update_mode`, various `__reg_to__` service functions (ClassicService, ClientControlService, ConfigServiceService, CopilotService, FpgaRaftService, MenciusService, MongodbService, MultiPaxosService, RaftService, ServerControlService). These all predate the raft storage/snapshot relocation and are from upstream srpc migration work.
+  - [x] *high* Add `@unsafe` annotations to `MarshallDeputy::set_marshallable`, `make_initializer_state`, `set_marshallable_state` in `src/srpc/misc/marshal.hpp`. [26:04:17] Annotated all three methods `@unsafe`. Reduced borrow checker violation count from 221 to 218 per file.
+  - [x] *high* Add `@unsafe` annotations to `srpc::Client::circuit_breaker_*` and `heartbeat_*` accessors. [26:04:17] Wrapped RefCell::borrow + Option::unwrap operations in `@unsafe { }` blocks inside `set_heartbeat`, `heartbeat_config`, `set_circuit_breaker`, `circuit_breaker_config`, `circuit_breaker_state` in `src/srpc/rpc/client.hpp`. Reduced Docker CI violation count from 218 → 210 per file.
+  - [x] *high* Add `@unsafe` annotations to `__reg_to__` generated service functions. [26:04:17] Updated rpcgen codegen (`src/srpc/pylib/simplerpcgen/lang_cpp.py`) to emit `// @unsafe` instead of `// @safe` above `__reg_to__`. Regenerated all RPC headers (rcc_rpc.h, helloworld.h, network.h, benchmark_service.h). Also fixed cascading reactor.cc violations (get_reactor, register_coroutine, check_timeout, continue_coro, PollThreadWorker::do_add_pollable, PollThread::update_mode) by wrapping unsafe RefCell/Option/STL ops in `@unsafe { }` blocks. Reverted a problematic ReplicatedDBCommand Marshallable inheritance change (conflicted with rpc_marshallable_proxy_test.cc static_assert) — instead use `MarshallDeputy::set_marshallable()` with typed shared_ptr in test.cc. All borrow checker violations from this TODO are fixed. Remaining Docker CI failure is an unrelated upstream bug: `examples/rocksdbInterfaceTest.cc` calls `db->ListTables()` which doesn't exist on `mako::IDatabase` (added by commit 826bb0691 but never implemented).
   - [x] *medium* Verify Docker CI passes after these fixes. [26:04:17] All 4 Raft Docker CI suites pass: shard1ReplicationRaft, shard2ReplicationRaft, shard1ReplicationSimpleRaft, shard2ReplicationSimpleRaft. Also fixed remaining unrelated upstream blocker by adding `ListTables()` default method to `mako::IDatabase` and concrete implementation in `mako::DB` (was declared by commit 826bb0691 but never implemented).
 - [x] *high* Fix `#include "masstree/config.h"` not found in Docker CI [26:04:24, 10:50]
   - Context: 2026-04-24 daily CI attempt, after fixing the CMake/make
@@ -281,8 +281,8 @@ Work on tasks defined in this TODO file. Repeat the following steps, don't stop 
     * `78aa05e34` (04-22 09:16, docs for phase 0+1): **UNBUILDABLE**
       — same module import errors.
     * `2fcfc9164 + 6b378ad3b cherry-pick` (04-22 23:03 + proxy fix):
-      **UNBUILDABLE** — `rrr/misc/alarm.hpp`, `rrr/rpc/server.hpp`,
-      `rrr/rpc/client.hpp` still missing module imports for `Time`,
+      **UNBUILDABLE** — `srpc/misc/alarm.hpp`, `srpc/rpc/server.hpp`,
+      `srpc/rpc/client.hpp` still missing module imports for `Time`,
       `i64`, `SpinMutex`, `RpcError`, etc. Cherry-pick would need
       to stack ~5-8 subsequent module-fix commits (d335a0c50,
       abba2aab9, e3b03918e, 76f259c96, 6b378ad3b …) which is
@@ -338,7 +338,7 @@ from the repo-root `todo-raft.md`.)
   in new code. Use `rusty::Arc`/`rusty::Box`/`rusty::Function`/
   `rusty::thread::spawn`/`rusty::Vec`/`rusty::Mutex`/`rusty::Option`.
   Touch-as-you-go migration for adjacent std constructs. Boundary std
-  types at rrr / rocksdb interfaces stay std and are annotated
+  types at srpc / rocksdb interfaces stay std and are annotated
   `@unsafe`.
 - **Every new function has `@safe` or `@unsafe`** annotation.
 - **Every commit gates on**: phase gtests (`test_raft_*`) green +
@@ -366,15 +366,15 @@ at `docs/dev/raft_quorum.md`, unit test at `tests/raft_quorum_test.cc`
 (8 cases, all green: construction/accessors, empty-collect,
 all-replies-arrive, early-quorum, timeout, counter advance, one-shot
 collect, non-trivial Reply type). One deviation from the original
-spec: the field is `std::shared_ptr<rrr::IntEvent>` rather than
-`rusty::Arc<rrr::IntEvent>` because rrr's reactor owns every event
+spec: the field is `std::shared_ptr<srpc::IntEvent>` rather than
+`rusty::Arc<srpc::IntEvent>` because srpc's reactor owns every event
 through `Reactor::all_events_` and the only legal constructor is
 `Reactor::create_sp_event<IntEvent>` which returns `shared_ptr` —
 documented inline + in the design doc.
 
 - [x] Create `src/deptran/raft/quorum.hpp` (new file).
   - `template<typename Reply> class RaftQuorum` with:
-    - `rusty::Arc<rrr::IntEvent> ready_;`
+    - `rusty::Arc<srpc::IntEvent> ready_;`
     - `rusty::Mutex<std::vector<std::pair<siteid_t, Reply>>> replies_;`
       (or `rusty::Vec` if available in that namespace).
     - `int n_total_`, `int n_needed_`, `rusty::sync::atomic::Atomic<int> n_received_`.
@@ -391,7 +391,7 @@ documented inline + in the design doc.
 - [x] Gate: `test_raft_quorum` passes + all existing `test_raft_*`
   targets green. [26:04:25, 12:30] All 22 raft unit tests pass
   (test_raft_messages 2, test_raft_quorum 8 NEW, test_raft_transport_facade 1,
-  test_raft_rrr_transport_compile 1, test_raft_dispatcher_facade 1,
+  test_raft_srpc_transport_compile 1, test_raft_dispatcher_facade 1,
   test_raft_channel_transport 2, test_raft_test_cluster 4,
   test_raft_memory_snapshot_manager 3). All 4 Raft CI suites also
   pass (shard1ReplicationRaft 54815 ops/sec; shard2ReplicationRaft
@@ -405,9 +405,9 @@ documented inline + in the design doc.
   `TransportProxy& transport()`. Include `transport.hpp` at the top.
 - [ ] `src/deptran/raft/server.cc` (or wherever `RaftServer` is
   initialized — likely in `Setup()` or the constructor):
-  construct `transport_ = make_rrr_transport(commo_, site_id_,
+  construct `transport_ = make_srpc_transport(commo_, site_id_,
   partition_id_);` once `commo_` is non-null. `commo_` stays live —
-  `RrrTransportAdapter` holds a non-owning pointer into it.
+  `SrpcTransportAdapter` holds a non-owning pointer into it.
 - [ ] No outbound call-site changes yet; this step just plumbs the
   member so the rest of 8.1 can reference it.
 - [ ] Gate: deptran_server links, lab test passes tests 1-60.
@@ -475,7 +475,7 @@ returns `shared_ptr<SendAppendEntriesResults>`. Callers read `res->done`,
 - [ ] Delete `SendAppendEntriesResults` from `commo.h` +
   `commo.cc` + every include site. Delete `SendAppendEntries2` /
   `SendAppendEntries` member definitions from RaftCommo (the
-  `*Cb` variants stay as the rrr-side callback entry).
+  `*Cb` variants stay as the srpc-side callback entry).
 - [ ] Gate: lab test tests 1-60 all pass. Watch TEST 3 (Basic
   agreement), TEST 7 (Concurrent starts), TEST 11 (Figure 8),
   TEST 60 (HeartbeatLoop triggers InstallSnapshot).
@@ -494,7 +494,7 @@ returns `shared_ptr<SendAppendEntriesResults>`. Callers read `res->done`,
   it from the facade or leave the direct `commo()->UpdatePartitionView`
   call (annotate `@unsafe` and note it's out of scope for 8.x).
 - [ ] Line 1408 `commo()->rpc_par_proxies_[par_id]` — this reaches
-  into rrr internals. Either wrap with a helper on `RaftCommo` that
+  into srpc internals. Either wrap with a helper on `RaftCommo` that
   RaftServer consumes, or leave as a documented `@unsafe` boundary.
 - [ ] Delete `RaftVoteQuorumEvent` from `commo.h` + `commo.cc` now
   that no one calls `BroadcastVote`.
@@ -505,7 +505,7 @@ returns `shared_ptr<SendAppendEntriesResults>`. Callers read `res->done`,
 
 ### 8.1 risks
 
-- **mtx_ re-entry**: reply handlers currently fire on rrr's callback
+- **mtx_ re-entry**: reply handlers currently fire on srpc's callback
   thread; after 8.1 they fire on the sub-fiber's thread. Every reply
   handler that modifies `next_index_` / `match_index_` / `durableAcks_`
   / `memoryAcks_` must take `mtx_` explicitly. Use `std::lock_guard<
@@ -585,7 +585,7 @@ and returns the filled `Reply`.
 ### 8.3 risks
 
 - `NotifyRestart` is the odd one — it's currently a service-level
-  method that reconnects the rrr client. In `RaftServerDispatcher`
+  method that reconnects the srpc client. In `RaftServerDispatcher`
   the dispatcher has no `commo_` to call `ReconnectToSite` on. Either
   keep `NotifyRestart` as a service-level concern (no dispatcher) or
   thread the commo reference through.
@@ -658,8 +658,8 @@ the virtual `LogStorage` / `SnapshotManager` interfaces at
   Probably (a) — add a `RaftServer(/*test_mode*/)` constructor that
   skips `tx_sched_` setup.
 - Fiber scheduling: RaftServer's timers use `Fiber::create_run` +
-  `Fiber::sleep` — depends on `rrr::Reactor` running. In a test
-  binary that doesn't use `deptran_server`, a `rrr::PollThread` must
+  `Fiber::sleep` — depends on `srpc::Reactor` running. In a test
+  binary that doesn't use `deptran_server`, a `srpc::PollThread` must
   still be created to drive the reactor. `rusty::thread::spawn` a
   PollThread per node.
 
@@ -687,7 +687,7 @@ on the 5-server deptran topology.
     (see `RaftServer::Submit` or equivalent), poll `commit_index()`
     across nodes.
   - `OneLeader()` → scan nodes for `is_leader()`.
-- [ ] Keep the existing rrr-based `RaftTestConfig(std::vector<Frame*>)`
+- [ ] Keep the existing srpc-based `RaftTestConfig(std::vector<Frame*>)`
   constructor intact so `deptran_server -f raft_lab_test.yml` keeps
   working.
 - [ ] Switchboard API additions (likely in

@@ -11,7 +11,7 @@ Mako is a **research-grade distributed transactional datastore** with strong aca
 
 | Component | Status | Production-Ready? |
 |-----------|--------|-------------------|
-| [RPC Framework (RRR/SRPC)](#1-rpc-framework-rrrsrpc) | 90% | Yes |
+| [RPC Framework (SRPC)](#1-rpc-framework-srpc) | 90% | Yes |
 | [Raft Consensus](#2-raft-consensus) | 70% | Partial |
 | [Paxos Consensus](#3-paxos-consensus) | 60% | No |
 | [Masstree (In-Memory Storage)](#4-masstree-in-memory-storage) | 90% | Yes (in-memory only) |
@@ -26,11 +26,11 @@ Mako is a **research-grade distributed transactional datastore** with strong aca
 
 ---
 
-## 1. RPC Framework (RRR/SRPC)
+## 1. RPC Framework (SRPC)
 
 **Status: 90% — Production-Ready**
 
-The RRR framework is the most mature component. Nearly all reliability features are fully implemented, not stubs.
+The SRPC framework is the most mature component. Nearly all reliability features are fully implemented, not stubs.
 
 ### What Works
 
@@ -158,20 +158,29 @@ Proven, high-performance in-memory index. The critical missing piece is crash re
 - **OCC (Optimistic Concurrency Control)**: Mature implementation with MVCC, thread-local transaction state, read/write set tracking.
 - **Transaction API**: Clean `abstract_db` interface with `new_txn`, `commit_txn`, `abort_txn`.
 - **Speculative 2PC**: Core Mako innovation — watermark-based validation with background replication.
-- **Protocol plugin system (Frame)**: Well-designed factory pattern supporting 15+ protocols. Easy to add new protocols.
+- **Protocol plugin system (Frame)**: Factory pattern for the remaining transaction and replication protocols.
 - **Coordinator framework**: Phase-based execution (DISPATCH → PREPARE → COMMIT) with pluggable backends.
 
 ### What's Research-Only (Not Production-Ready)
 
 | Protocol | Completeness | Status |
 |----------|-------------|--------|
-| 2PL | 70% | Core works, no deadlock detection |
 | OCC | 65% | Lazy versioning, ad-hoc design |
-| RCC/Rococo | 55% | Complex dependency graphs, 24 `verify(0)` stubs |
-| TROAD, Carousel, Februus, SNOW | <30% | Proof-of-concept only |
 
-The former standalone Janus and Mencius protocol implementations are retired
-and are not supported configuration options.
+The former standalone Janus, Mencius, SNOW/RO6, Extern-C, 2PL, Rule, TAPIR,
+FPGA-Raft, Copilot, RCC/Rococo, TROAD, MDCC, Carousel, and Februus protocol
+implementations are retired and are not supported configuration options. The
+old `deptran` and `deptran_er` names were RCC aliases and are retired too.
+The former internal MemDB transaction and storage stack is retired; Mako uses
+STO `Transaction` with MassTrans/Masstree through `mbta_wrapper`. The original
+Silo `txn`/`txn_btree`/`txn_proto2` engine is also retired, source-guarded, and
+not selectable. `SiloRuntime` remains live allocator/RCU/Masstree support and
+must not be confused with that retired transaction engine.
+The `rpc_null` benchmark mode and its no-op Classic RPC endpoint are retired.
+Generic Jetpack recovery code remains as a legacy subsystem pending a separate
+audit; it is not a supported replacement for the retired Rule protocol.
+EPaxos, Replicated Commit, and Multi-Paxos Plus were unimplemented selector
+placeholders; those names are rejected instead of silently selecting `none`.
 
 ### Critical Issues
 
@@ -467,12 +476,12 @@ Based on this assessment, here are the recommended development priorities:
               |                       |
               +-----------+-----------+
                           |
-                   RPC Framework (RRR)
+                   RPC Framework (SRPC)
                           |
                     Fiber / Reactor
 ```
 
-**Bottom-up readiness**: RRR and Masstree are solid foundations. The critical gap is the **persistence and recovery layer** connecting Masstree to RocksDB. Everything above (client APIs, Redis interface) depends on this being solved first.
+**Bottom-up readiness**: SRPC and Masstree are solid foundations. The critical gap is the **persistence and recovery layer** connecting Masstree to RocksDB. Everything above (client APIs, Redis interface) depends on this being solved first.
 
 ---
 

@@ -14,8 +14,8 @@ This document explains the complete RPC (Remote Procedure Call) infrastructure t
 - `src/deptran/raft/frame.cc` — Factory method implementations (207 lines)
 - `src/deptran/rcc_rpc.h` — Generated `RaftService` and `RaftProxy` classes
 - `src/deptran/communicator.h` — Base `Communicator` class with proxy maps
-- `src/rrr/rpc/server.hpp` — `DeferredReply` RAII class
-- `src/rrr/misc/marshal.hpp` — `Marshal` and `MarshallDeputy` serialization
+- `src/srpc/rpc/server.hpp` — `DeferredReply` RAII class
+- `src/srpc/misc/marshal.hpp` — `Marshal` and `MarshallDeputy` serialization
 
 ---
 
@@ -35,7 +35,7 @@ RaftProxy                             RaftService (base)
    sends async RPC)                      dispatches to handler)
         |                                     ^
         v                                     |
-rrr::Client                           rrr::Server
+srpc::Client                           srpc::Server
   (TCP connection,                      (TCP listener,
    marshals request)                     unmarshals request)
 ```
@@ -43,7 +43,7 @@ rrr::Client                           rrr::Server
 ### Class Hierarchy
 
 ```
-rrr::Service (abstract base)
+srpc::Service (abstract base)
     |
     v
 RaftService (generated, rcc_rpc.h)
@@ -77,7 +77,7 @@ Four RPCs are defined for the Raft protocol, each with a unique 32-bit ID:
 
 ### Wire Format
 
-Each RPC's arguments are serialized sequentially using the `Marshal` (`rrr::Marshal`) binary format. The `<<` and `>>` operators handle serialization and deserialization for primitive types (`uint64_t`, `bool_t`, `ballot_t`, `siteid_t`) and compound types (`MarshallDeputy`).
+Each RPC's arguments are serialized sequentially using the `Marshal` (`srpc::Marshal`) binary format. The `<<` and `>>` operators handle serialization and deserialization for primitive types (`uint64_t`, `bool_t`, `ballot_t`, `siteid_t`) and compound types (`MarshallDeputy`).
 
 **Vote RPC:**
 ```
@@ -109,7 +109,7 @@ Response: [followerTerm:u64] [success:bool_t]
 
 ### MarshallDeputy — Polymorphic Serialization
 
-`MarshallDeputy` (`src/rrr/misc/marshal.hpp:88`) is a type-erasing wrapper that serializes polymorphic `Marshallable` objects. It stores:
+`MarshallDeputy` (`src/srpc/misc/marshal.hpp:88`) is a type-erasing wrapper that serializes polymorphic `Marshallable` objects. It stores:
 - `kind_` — A 32-bit type tag identifying the concrete type (e.g., `TpcCommitCommand`, `TpcBatchCommand`)
 - `sp_data_` — A `shared_ptr<Marshallable>` to the actual data
 
@@ -125,7 +125,7 @@ Two macros in `macros.h` handle the repetitive parts of RPC handler registration
 
 ```cpp
 #define RpcHandler(name, ...) \
-  void name(_ARGPAIRS(__VA_ARGS__), rrr::DeferredReply defer) override { \
+  void name(_ARGPAIRS(__VA_ARGS__), srpc::DeferredReply defer) override { \
     verify(svr_ != nullptr); \
     if (svr_->IsDisconnected()) { \
       OnDisconnected##name(_PARAMS(__VA_ARGS__)); \
@@ -134,7 +134,7 @@ Two macros in `macros.h` handle the repetitive parts of RPC handler registration
       Handle##name(_PARAMS(__VA_ARGS__), std::move(defer)); \
     } \
   } \
-  void Handle##name(_ARGPAIRS(__VA_ARGS__), rrr::DeferredReply defer); \
+  void Handle##name(_ARGPAIRS(__VA_ARGS__), srpc::DeferredReply defer); \
   void OnDisconnected##name(_ARGPAIRS(__VA_ARGS__))
 ```
 
@@ -151,7 +151,7 @@ The helper macros `_PARAMS` and `_ARGPAIRS` extract parameter names and type-nam
 void Vote(const uint64_t& lst_log_idx, const ballot_t& lst_log_term,
           const siteid_t& can_id, const ballot_t& can_term,
           ballot_t* reply_term, bool_t* vote_granted,
-          rrr::DeferredReply defer) override {
+          srpc::DeferredReply defer) override {
     verify(svr_ != nullptr);
     if (svr_->IsDisconnected()) {
         OnDisconnectedVote(lst_log_idx, lst_log_term, can_id, can_term,
@@ -167,7 +167,7 @@ void Vote(const uint64_t& lst_log_idx, const ballot_t& lst_log_term,
 void HandleVote(const uint64_t& lst_log_idx, const ballot_t& lst_log_term,
                 const siteid_t& can_id, const ballot_t& can_term,
                 ballot_t* reply_term, bool_t* vote_granted,
-                rrr::DeferredReply defer);
+                srpc::DeferredReply defer);
 
 // Disconnection handler (returns defaults set in service.h initializer)
 void OnDisconnectedVote(const uint64_t& lst_log_idx, const ballot_t& lst_log_term,
@@ -222,7 +222,7 @@ RaftCommo (raft/commo.h)
 auto proxy = (RaftProxy*) p.second;
 ```
 
-This cast is safe because the same `rrr::Client` connection supports multiple proxy types — they share the same underlying TCP connection and only differ in which RPC IDs they send.
+This cast is safe because the same `srpc::Client` connection supports multiple proxy types — they share the same underlying TCP connection and only differ in which RPC IDs they send.
 
 ### SendAppendEntries2() (`commo.cc:26-94`)
 
@@ -361,7 +361,7 @@ Each handler receives a `DeferredReply` object by move. This RAII wrapper:
 The handler captures `defer` in a lambda and calls `defer.reply()` after setting output parameters:
 
 ```cpp
-void HandleVote(..., rrr::DeferredReply defer) {
+void HandleVote(..., srpc::DeferredReply defer) {
     svr_->OnRequestVote(lst_log_idx, lst_log_term, can_id, can_term,
                         reply_term, vote_granted,
                         [defer = std::move(defer)]() mutable { defer.reply(); });
@@ -380,10 +380,10 @@ This pattern decouples the reply from the RPC dispatch — the server can reply 
 
 ### RPC Registration (`__reg_to__`)
 
-Registers each RPC ID with the `rrr::Server`:
+Registers each RPC ID with the `srpc::Server`:
 
 ```cpp
-int __reg_to__(rrr::Server& svr, size_t svc_index) override {
+int __reg_to__(srpc::Server& svr, size_t svc_index) override {
     svr.reg_rpc(VOTE, svc_index);
     svr.reg_rpc(APPENDENTRIES, svc_index);
     svr.reg_rpc(EMPTYAPPENDENTRIES, svc_index);
@@ -398,8 +398,8 @@ The server uses `svc_index` to find the correct service when an RPC arrives.
 Routes incoming RPCs by ID:
 
 ```cpp
-void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req,
-                  rrr::WeakServerConnection weak_sconn) override {
+void __dispatch__(srpc::i32 rpc_id, rusty::Box<srpc::Request> req,
+                  srpc::WeakServerConnection weak_sconn) override {
     switch (rpc_id) {
         case VOTE:              __Vote__wrapper__(std::move(req), weak_sconn); break;
         case APPENDENTRIES:     __AppendEntries__wrapper__(std::move(req), weak_sconn); break;
@@ -422,7 +422,7 @@ Each `__*__wrapper__` method performs deserialization:
 
 Example for `Vote`:
 ```cpp
-void __Vote__wrapper__(rusty::Box<rrr::Request> req, WeakServerConnection weak_sconn) {
+void __Vote__wrapper__(rusty::Box<srpc::Request> req, WeakServerConnection weak_sconn) {
     uint64_t* in_0 = new uint64_t;     req->m >> *in_0;  // lst_log_idx
     ballot_t* in_1 = new ballot_t;     req->m >> *in_1;  // lst_log_term
     siteid_t* in_2 = new siteid_t;     req->m >> *in_2;  // can_id
@@ -444,11 +444,11 @@ void __Vote__wrapper__(rusty::Box<rrr::Request> req, WeakServerConnection weak_s
 
 **Location**: `rcc_rpc.h:1673-1770`
 
-`RaftProxy` wraps an `rrr::Client` connection and provides typed async methods for each RPC:
+`RaftProxy` wraps an `srpc::Client` connection and provides typed async methods for each RPC:
 
 ```cpp
 class RaftProxy {
-    rrr::Client* __cl__;
+    srpc::Client* __cl__;
 
     FutureResult async_Vote(const uint64_t& lst_log_idx, ..., const FutureAttr& fuattr) {
         return __cl__->request(RaftService::VOTE, fuattr, [&](Marshal& m) {
@@ -491,7 +491,6 @@ This registers `RaftFrame` for mode `MODE_RAFT` with the name `"raft"`, matching
 | `CreateScheduler()` | `RaftServer` | Owned by frame (`unique_ptr`) |
 | `CreateCommo()` | `RaftCommo` | Owned by frame (`unique_ptr`) |
 | `CreateCoordinator()` | `CoordinatorRaft` | Caller-owned (raw `new`) |
-| `CreateExecutor()` | `RaftExecutor` | Caller-owned (raw `new`) |
 | `CreateRpcServices()` | `RaftServiceImpl` | Returned as `Box<Service>` |
 
 ### Ownership Model
@@ -652,7 +651,7 @@ RaftProxy::async_AppendEntries(...)
     v
     ~~~~ TCP ~~~~
     v
-rrr::Server receives request
+srpc::Server receives request
     |
     | Looks up svc_index for APPENDENTRIES
     | Calls RaftService::__dispatch__(APPENDENTRIES, req, weak_sconn)

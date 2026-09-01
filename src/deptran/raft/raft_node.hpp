@@ -7,7 +7,7 @@
  *        DispatcherProxy to the cluster. Intentionally a SKELETON: it
  *        holds the wiring but does not yet drive the full RaftServer
  *        state machine, because RaftServer is still coupled to
- *        rrr::PollThread / rrr::Fiber. That integration is the
+ *        srpc::PollThread / srpc::Fiber. That integration is the
  *        remaining Phase 6.5 (deferred in the same spirit as Phase 2.5).
  *
  * What this file provides right now:

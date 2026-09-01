@@ -1,8 +1,8 @@
 # Transport Layer
 
-Mako uses a single RPC transport: **rrr/rpc**, the portable TCP/IP RPC provided
-by the in-tree rrr library (`src/rrr/`). It is implemented by the concrete
-`RrrRpcBackend` class in `src/mako/lib/rrr_rpc_backend.{h,cc}`.
+Mako uses a single RPC transport: **srpc/rpc**, the portable TCP/IP RPC provided
+by the in-tree srpc library (`src/srpc/`). It is implemented by the concrete
+`SrpcRpcBackend` class in `src/mako/lib/srpc_rpc_backend.{h,cc}`.
 
 There is no transport abstraction and no transport selection. The former
 `TransportBackend` interface, its second implementation (the eRPC/RDMA backend),
@@ -12,7 +12,7 @@ and a runtime switch that could not select anything.
 
 ## Characteristics
 
-| Property | rrr/rpc |
+| Property | srpc/rpc |
 |----------|---------|
 | **Transport** | TCP/IP sockets (event-driven) |
 | **Latency** | ~10-50 μs round-trip |
@@ -27,7 +27,7 @@ No special hardware or configuration is required:
 
 ## Architecture
 
-`FastTransport` (`src/mako/lib/fasttransport.{h,cc}`) owns an `RrrRpcBackend`
+`FastTransport` (`src/mako/lib/fasttransport.{h,cc}`) owns an `SrpcRpcBackend`
 directly and forwards `Transport`'s virtual API to it.
 
 Worker threads in `src/mako/lib/server.cc` never see the backend type: the
@@ -45,11 +45,11 @@ class TransportRequestHandle {
 };
 ```
 
-`RrrRequestHandle` is its only implementation.
+`SrpcRequestHandle` is its only implementation.
 
 ## Reliability features
 
-The rrr/rpc client/server carries the reliability machinery used in production
+The srpc/rpc client/server carries the reliability machinery used in production
 deployments:
 
 - **Connection state machine** — NEW, CONNECTING, CONNECTED, DISCONNECTING,
@@ -66,11 +66,11 @@ deployments:
 ## Testing
 
 ```bash
-# Focused rrr/rpc transport coverage (real network I/O)
+# Focused srpc/rpc transport coverage (real network I/O)
 ctest -R test_transport_integration
 
 # Full unit-test suite
-./ci/ci.sh rrrTests
+./ci/ci.sh srpcTests
 
 # End-to-end suites
 ./ci/ci.sh simpleTransaction

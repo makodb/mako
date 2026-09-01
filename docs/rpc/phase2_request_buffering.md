@@ -185,8 +185,8 @@ Unit tests (`test/rpc_request_buffering_test.cc`):
 
 | File | Change |
 |------|--------|
-| `src/rrr/rpc/client.hpp` | Add buffering members and methods (~50 LOC) |
-| `src/rrr/rpc/client.cpp` | Implement buffering logic (~100 LOC) |
+| `src/srpc/rpc/client.hpp` | Add buffering members and methods (~50 LOC) |
+| `src/srpc/rpc/client.cpp` | Implement buffering logic (~100 LOC) |
 | `test/rpc_request_buffering_test.cc` | New test file (~250 LOC) |
 
 ## Estimated Size

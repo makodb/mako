@@ -71,18 +71,13 @@ now completes with **no violations** for every file under `src/deptran/raft/`.
 ### 📊 Per-file annotation snapshot
 The tables below reflect the exact annotations currently in-tree. “Reason” entries summarise why a function remains `@unsafe` (often raw pointer outs, shared ownership of reactor state, or template gaps). Safe functions are listed when they are noteworthy (constructors, primary entry-points). Any function not listed is still **undeclared** and should be audited before marking safe.
 
-#### `exec.cc`
-- **@safe**: `RaftExecutor::Prepare`, `RaftExecutor::Accept`, `RaftExecutor::AppendEntries`, `RaftExecutor::Decide`  
-  _Rationale_: stubbed implementations that immediately `verify(0)`; no ownership or pointer work.
-- **@unsafe**: _none_
-
 #### `service.cc`
 - **@safe**: `RaftServiceImpl::RaftServiceImpl`, `HandleVote`, `HandleAppendEntries`, `HandleEmptyAppendEntries`  
-  _Notes_: `Handle*` helpers dispatch onto the scheduler via `Coroutine::CreateRun`. The coroutine helper is annotated in `rrr` and the lambdas avoid raw pointer manipulation.
+  _Notes_: `Handle*` helpers dispatch onto the scheduler via `Coroutine::CreateRun`. The coroutine helper is annotated in `srpc` and the lambdas avoid raw pointer manipulation.
 - **@unsafe**: _none_
 
 #### `frame.cc`
-- **@safe**: `RaftFrame::RaftFrame`, `CreateExecutor`, `CreateScheduler`, `CreateCommo`, `CreateRpcServices`  
+- **@safe**: `RaftFrame::RaftFrame`, `CreateScheduler`, `CreateCommo`, `CreateRpcServices`
   _Notes_: Allocation via `new` is permitted in safe code; logging helpers are already marked `@unsafe` upstream.
 - **@unsafe**: `RaftFrame::CreateCoordinator` – takes the address of `slot_hint_` for out-parameters and mixes in `Config::GetPartitionSize` (still undeclared). Requires structural refactor before it can be audited safe.
 
@@ -114,12 +109,12 @@ The tables below reflect the exact annotations currently in-tree. “Reason” e
 
 #### 📚 Related Files Annotated (Outside Raft Module)
 
-##### src/rrr/reactor/coroutine.h
+##### src/srpc/reactor/coroutine.h
 - `Coroutine::CreateRun()` template - **@unsafe** (annotated for documentation, but checker ignores it - see template limitation)
   - Despite annotation, this appears as "undeclared" when called from any @safe function
   - This is due to template limitation in the borrow checker
 
-##### src/rrr/base/logging.hpp
+##### src/srpc/base/logging.hpp
 - **ALL logging functions marked @unsafe** (critical for frame.cc to pass)
   - `Log::info()` (both overloads) - **@unsafe**
   - `Log::debug()` (both overloads) - **@unsafe**
@@ -156,7 +151,7 @@ The tables below reflect the exact annotations currently in-tree. “Reason” e
 - **Alternative**: Document current state and success metrics
 
 ### 🎯 Old Next Steps (Archived)
-1. ✅ ~~Complete exec.cc annotation~~ - DONE
+1. ✅ ~~Complete exec.cc annotation~~ - DONE (the dead executor hierarchy was later retired)
 2. ✅ ~~Complete service.cc annotation~~ - DONE
 3. ✅ ~~Complete frame.cc annotation~~ - DONE
 4. ✅ ~~Complete commo.cc annotation~~ - DONE
@@ -173,7 +168,7 @@ The tables below reflect the exact annotations currently in-tree. “Reason” e
   --compile-commands build/compile_commands.json \
   src/deptran/raft/<file>.cc
 ```
-**Current Result**: ✅ **PASSING** for exec.cc, service.cc, frame.cc, and commo.cc (no violations found)
+**Current Result**: ✅ **PASSING** for service.cc, frame.cc, and commo.cc (no violations found)
 
 ---
 
@@ -334,7 +329,7 @@ static void error(int line, const char* file, const char* fmt, ...);
 **Why this matters:**
 - The borrow checker looks for annotations **directly before** each function signature
 - A single comment at the top of a group is NOT parsed as applying to all functions
-- This was the root cause of `frame.cc` failing with "undeclared function rrr::Log::info" errors
+- This was the root cause of `frame.cc` failing with "undeclared function srpc::Log::info" errors
 - Required annotating ALL 10 logging function overloads in `logging.hpp` individually
 
 **Example from logging.hpp fix:**
@@ -482,7 +477,7 @@ Migrate the Raft consensus implementation (`src/deptran/raft/`) to use RustyCpp 
 - **Memory Leaks Found**: Timer object not properly deleted (line 17 in `server.cc`)
 - **Unclear Ownership**: Raw pointers throughout (Frame*, RaftCommo*, RaftServer*)
 - **Safety Guarantees**: Enable compile-time memory safety checks
-- **Consistency**: Align with project-wide RustyCpp migration (RRR already uses Arc)
+- **Consistency**: Align with project-wide RustyCpp migration (SRPC already uses Arc)
 
 ### Scope
 - **~4000 lines of code** across 9 files
@@ -505,7 +500,6 @@ src/deptran/raft/
 ├── commo.h/cc       (~350 lines)  - RPC communication
 ├── frame.h/cc       (~300 lines)  - Component factory
 ├── service.h/cc     (~400 lines)  - RPC service handlers
-├── exec.h/cc        (~100 lines)  - Command execution
 ├── test.h/cc        (~800 lines)  - Test infrastructure
 ├── testconf.h/cc    (~400 lines)  - Test configuration
 └── macros.h         (~50 lines)   - Helper macros
@@ -668,7 +662,7 @@ cmake --build build -j32
   -f config/rw.yml \
   -f config/client_closed.yml \
   -f config/concurrent_1.yml \
-  -d 30 -m 100 -P localhost
+  -d 30 -P localhost
 
 # Run Raft with higher concurrency (stress test):
 ./build/deptran_server \
@@ -677,7 +671,7 @@ cmake --build build -j32
   -f config/rw.yml \
   -f config/client_closed.yml \
   -f config/concurrent_12.yml \
-  -d 30 -m 100 -P localhost
+  -d 30 -P localhost
 ```
 
 **Important**:
@@ -1119,7 +1113,7 @@ rusty::Arc<IntEvent> SendAppendEntries2(..., rusty::Arc<Marshallable> cmd, ...);
 #### Step 3.3: Migrate IntEvent Smart Pointers ⚠️ BLOCKED
 **Files**: `commo.h`, `commo.cc`, `server.h`
 
-**Blocker**: `shared_ptr<IntEvent>` is created by `Reactor::CreateSpEvent<IntEvent>()` which is part of the RRR reactor framework API (outside Raft module). Cannot change without modifying reactor interface.
+**Blocker**: `shared_ptr<IntEvent>` is created by `Reactor::CreateSpEvent<IntEvent>()` which is part of the SRPC reactor framework API (outside Raft module). Cannot change without modifying reactor interface.
 
 **Before (Original)**:
 ```cpp
@@ -1135,10 +1129,10 @@ rusty::Arc<IntEvent> ready_for_replication_;
 rusty::Arc<IntEvent> SendAppendEntries2(...);
 ```
 
-**Note**: Check if IntEvent is defined in RRR framework
-- RRR already uses RustyCpp (we saw `rusty::Arc<PollThreadWorker>`)
+**Note**: Check if IntEvent is defined in SRPC framework
+- SRPC already uses RustyCpp (we saw `rusty::Arc<PollThreadWorker>`)
 - IntEvent might already have RustyCpp support
-- Check `src/rrr/` for IntEvent definition
+- Check `src/srpc/` for IntEvent definition
 
 **Testing**: Same as previous steps
 
@@ -1845,7 +1839,7 @@ cmake --build build -j32
   -f config/rw.yml \
   -f config/client_closed.yml \
   -f config/concurrent_1.yml \
-  -d 30 -m 100 -P localhost
+  -d 30 -P localhost
 
 # Run high concurrency test (stress test)
 ./build/deptran_server \
@@ -1854,18 +1848,12 @@ cmake --build build -j32
   -f config/rw.yml \
   -f config/client_closed.yml \
   -f config/concurrent_12.yml \
-  -d 30 -m 100 -P localhost
-
-# Run Raft with Jetpack failover
-./build/deptran_server \
-  -f config/rule_raft.yml \
-  -f config/1c1s3r1p.yml \
-  -f config/rw.yml \
-  -f config/client_closed.yml \
-  -f config/concurrent_1.yml \
-  -f config/failover.yml \
-  -d 30 -m 100 -P localhost
+  -d 30 -P localhost
 ```
+
+The former Rule/Jetpack configuration has been retired. Generic Jetpack
+recovery code remains a legacy subsystem under a separate audit and is not part
+of this migration's supported test matrix.
 
 **Success Criteria**:
 - ✅ Lab tests complete without crashes
@@ -1905,7 +1893,7 @@ ASAN_OPTIONS=detect_leaks=1 ./build/raft_test
   -f config/rw.yml \
   -f config/client_closed.yml \
   -f config/concurrent_12.yml \
-  -d 30 -m 100 -P localhost > baseline.txt 2>&1
+  -d 30 -P localhost > baseline.txt 2>&1
 
 # Extract throughput from output
 grep -i "throughput\|tps\|latency" baseline.txt
@@ -1919,7 +1907,7 @@ grep -i "throughput\|tps\|latency" baseline.txt
   -f config/rw.yml \
   -f config/client_closed.yml \
   -f config/concurrent_12.yml \
-  -d 30 -m 100 -P localhost > migrated.txt 2>&1
+  -d 30 -P localhost > migrated.txt 2>&1
 
 # Compare metrics
 grep -i "throughput\|tps\|latency" migrated.txt
@@ -1968,7 +1956,7 @@ cmake --build build -j32
   -f config/rw.yml \
   -f config/client_closed.yml \
   -f config/concurrent_1.yml \
-  -d 30 -m 100 -P localhost
+  -d 30 -P localhost
 
 # High concurrency test (stress test)
 ./build/deptran_server \
@@ -1977,22 +1965,17 @@ cmake --build build -j32
   -f config/rw.yml \
   -f config/client_closed.yml \
   -f config/concurrent_12.yml \
-  -d 30 -m 100 -P localhost
+  -d 30 -P localhost
 ```
 **Success**: Tests complete, check throughput/latency in output
 
-#### Level 4: Raft with Jetpack (Failure Recovery)
-```bash
-./build/deptran_server \
-  -f config/rule_raft.yml \
-  -f config/1c1s3r1p.yml \
-  -f config/rw.yml \
-  -f config/client_closed.yml \
-  -f config/concurrent_1.yml \
-  -f config/failover.yml \
-  -d 30 -m 100 -P localhost
-```
-**Success**: Failover scenarios handled correctly
+#### Level 4: Failure Recovery
+
+Exercise normal Raft leader failover with supported configurations. The former
+Rule/Jetpack scenario is retired; the remaining generic recovery stack is under
+a separate audit and has no supported test command.
+
+**Success**: Raft failover scenarios complete without relying on legacy Jetpack behavior
 
 ### Test Frequency
 - **After each field change**: Level 1 + Level 2
@@ -2099,7 +2082,7 @@ git checkout rustycpp-phase-N-complete
 
 ### Upstream Dependencies
 - ✅ RustyCpp library available in `third-party/rusty-cpp/`
-- ✅ RRR framework already uses `rusty::Arc<PollThreadWorker>`
+- ✅ SRPC framework already uses `rusty::Arc<PollThreadWorker>`
 - ⚠️ Parent classes (TxLogServer, Coordinator, Communicator) use raw pointers
   - **Decision**: Keep raw pointer interfaces for now, migrate internals only
 
@@ -2195,7 +2178,7 @@ valgrind --leak-check=full --show-leak-kinds=all ./build/raft_test
 - RustyCpp documentation: `third-party/rusty-cpp/README.md`
 - Project migration guide: `CLAUDE.md`
 - RustyCpp examples: `third-party/rusty-cpp/examples/`
-- RRR framework (already migrated): `src/rrr/`
+- SRPC framework (already migrated): `src/srpc/`
 
 ### Contact
 - Questions: [Add contact info]

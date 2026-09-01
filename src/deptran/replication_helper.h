@@ -73,12 +73,9 @@ int get_epoch();
 void set_epoch(int epoch);
 void upgrade_p1_to_leader();
 void worker_info_stats(size_t);
-void nc_setup_server(int, std::string);
 // removed `microbench_paxos()` and
 // `microbench_paxos_queue()` declarations (paxos_impl side) — see
 // paxos_main_helper.cc retirement comments.
-// removed seven `nc_get_*_requests`
-// declarations (paxos_impl side) — see replication_helper.cc.
 }  // namespace paxos_impl
 
 // ============================================================================
@@ -114,12 +111,9 @@ int get_epoch();
 void set_epoch(int epoch);
 void upgrade_p1_to_leader();
 void worker_info_stats(size_t);
-void nc_setup_server(int, std::string);
 // removed `microbench_paxos()` and
 // `microbench_paxos_queue()` declarations (raft_impl side) — both
 // stubs and dispatcher deleted.
-// removed seven `nc_get_*_requests`
-// declarations (raft_impl side) — see replication_helper.cc.
 void set_preferred_leader(int site_id);
 }  // namespace raft_impl
 
@@ -155,12 +149,9 @@ int get_epoch();
 void set_epoch(int epoch = -1);
 void upgrade_p1_to_leader();
 void worker_info_stats(size_t);
-void nc_setup_server(int, std::string);
 // removed `microbench_paxos()` and
 // `microbench_paxos_queue()` declarations (unified API side) — both
 // dispatcher impls deleted.
-// removed seven `nc_get_*_requests`
-// declarations (unified API side) — see replication_helper.cc.
 
 // Raft-specific function (no-op for Paxos)
 void set_preferred_leader(int site_id);

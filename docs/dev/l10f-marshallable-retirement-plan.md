@@ -25,7 +25,7 @@ boundary points.  This session landed:
 * **L10f-5 part 2**: 5 `verify(cmd_.kind_ != MarshallDeputy::UNKNOWN)`
   assertions in Submit-style coordinators replaced with
   `verify(cmd_.has_value())`.
-* **L10f-5 part 3**: Remaining `using rrr::MarshallDeputy;` aliases
+* **L10f-5 part 3**: Remaining `using srpc::MarshallDeputy;` aliases
   documented as bridge/test/facade-only.
 
 **Remaining work (L10f-5 final + L10f-6):**
@@ -40,7 +40,7 @@ still exist.  Dropping them requires:
    `Marshallable` subclass) — needs a Serializable replacement, or
    keep `Marshallable` minimally for AnyMessage only.
 2. Migrating test fixtures (`TestMarshallable`, `CanaryMarshallable`,
-   `TestCommand` in src/rrr/tests/) — replace with Serializable-based
+   `TestCommand` in src/srpc/tests/) — replace with Serializable-based
    fixtures, or accept that `Marshallable` survives only for tests.
 3. Switching `Command::inner_` storage from `shared_ptr<Marshallable>`
    to a non-Marshallable type (e.g., `shared_ptr<SerializableProxy>`
@@ -65,9 +65,9 @@ This is a multi-day effort with deep test-coverage requirements.
   `shared_ptr<Marshallable> inner_` internally to bridge with legacy
   shared_ptr-shaped APIs.
 * Production command types: most inherit
-  `rrr::Serializable<T, MakoCommands>` directly. Only `CmdData`
+  `srpc::Serializable<T, MakoCommands>` directly. Only `CmdData`
   (and its subclasses `SimpleCommand`, `TxData`) still inherit
-  `rrr::Marshallable`.
+  `srpc::Marshallable`.
 
 ## What "retire Marshallable" means concretely
 
@@ -195,7 +195,7 @@ Steps:
 * Tests: `TestMarshallable` and friends still construct
   `MarshallDeputy` directly. Migrate these tests to use Command
   with a TestSerializable proxy, OR keep `MarshallDeputy` as a
-  test-only legacy shim in `src/rrr/tests/`.
+  test-only legacy shim in `src/srpc/tests/`.
 * Bridge: `as_marshallable` / `wrap_serializable` / etc. all
   reference `MarshallDeputy` indirectly via the legacy registry.
   Once production no longer needs the bridge, delete it.

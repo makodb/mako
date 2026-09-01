@@ -13,8 +13,8 @@ Implement `RocksDBLogStorage` - a persistent storage backend that implements the
 - Uses partitioned databases for high concurrency
 
 ### LogStorage Interface (Phase 1.1)
-- `src/rrr/rpc/log_storage.hpp` - Abstract interface
-- `src/rrr/rpc/memory_log_storage.hpp` - In-memory implementation
+- `src/srpc/rpc/log_storage.hpp` - Abstract interface
+- `src/srpc/rpc/memory_log_storage.hpp` - In-memory implementation
 - Uses `rusty::Mutex`, `rusty::Cell`, `rusty::Option` for thread safety
 
 ## Design
@@ -86,7 +86,7 @@ write_options.sync = true;  // Durable writes for consensus logs
 ## Implementation Tasks
 
 ### Task 1: Core Implementation (~200 LOC)
-- Create `src/rrr/rpc/rocksdb_log_storage.hpp`
+- Create `src/srpc/rpc/rocksdb_log_storage.hpp`
 - Implement constructor/destructor with `rusty::Box` for DB handle
 - Implement key formatting helpers
 - Implement serialization using Marshal
@@ -124,7 +124,7 @@ write_options.sync = true;  // Durable writes for consensus logs
 
 ## File Structure
 ```
-src/rrr/rpc/
+src/srpc/rpc/
 ├── log_storage.hpp           # Interface (existing)
 ├── memory_log_storage.hpp    # In-memory (existing)
 └── rocksdb_log_storage.hpp   # RocksDB (new, ~250 LOC)

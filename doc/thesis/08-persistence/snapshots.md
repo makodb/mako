@@ -14,7 +14,7 @@ The snapshot system has four components:
 
 ## 2. SnapshotMetadata
 
-**File**: `src/rrr/rpc/snapshot_manager.hpp` (294 lines, lines 39-57)
+**File**: `src/srpc/rpc/snapshot_manager.hpp` (294 lines, lines 39-57)
 
 ```cpp
 struct SnapshotMetadata {
@@ -35,7 +35,7 @@ Key methods:
 
 ## 3. SnapshotManager Interface
 
-**File**: `src/rrr/rpc/snapshot_manager.hpp` (lines 148-258)
+**File**: `src/srpc/rpc/snapshot_manager.hpp` (lines 148-258)
 
 ### 3.1 Snapshot Creation
 
@@ -76,7 +76,7 @@ memory.
 
 ## 4. SnapshotReader and SnapshotWriter
 
-**File**: `src/rrr/rpc/snapshot_manager.hpp`
+**File**: `src/srpc/rpc/snapshot_manager.hpp`
 
 ### 4.1 SnapshotReader (lines 63-97)
 
@@ -109,7 +109,7 @@ partial writes.
 
 ## 5. FileSnapshotManager
 
-**File**: `src/rrr/rpc/file_snapshot_manager.hpp` (531 lines)
+**File**: `src/srpc/rpc/file_snapshot_manager.hpp` (531 lines)
 
 ### 5.1 File Naming Convention
 
@@ -131,7 +131,7 @@ Example: `snapshot_00000000000000010000_00000000000000000005.snap`
 
 ### 5.3 Configuration
 
-**File**: `src/rrr/rpc/snapshot_manager.hpp` (lines 264-292)
+**File**: `src/srpc/rpc/snapshot_manager.hpp` (lines 264-292)
 
 ```cpp
 struct SnapshotConfig {
@@ -163,7 +163,7 @@ struct SnapshotConfig {
 
 ### 5.5 FileSnapshotWriter
 
-**File**: `src/rrr/rpc/file_snapshot_manager.hpp` (lines 39-161)
+**File**: `src/srpc/rpc/file_snapshot_manager.hpp` (lines 39-161)
 
 The writer accumulates data in a buffer, then performs an atomic write:
 
@@ -187,7 +187,7 @@ finalized, cleaning up any `.tmp` file via `unlink()`.
 
 ### 5.6 FileSnapshotReader
 
-**File**: `src/rrr/rpc/file_snapshot_manager.hpp` (lines 167-267)
+**File**: `src/srpc/rpc/file_snapshot_manager.hpp` (lines 167-267)
 
 The reader loads the entire file at construction:
 
@@ -225,7 +225,7 @@ calls `log_storage_->remove_range(first_index, up_to_index)`.
 
 ## 6. Snapshot Binary Format
 
-**File**: `src/rrr/rpc/snapshot_format.hpp` (373 lines)
+**File**: `src/srpc/rpc/snapshot_format.hpp` (373 lines)
 
 ### 6.1 Layout
 
@@ -252,7 +252,7 @@ Total size: 52 + N + 4 bytes (with CRC32).
 
 ### 6.2 SnapshotHeader
 
-**File**: `src/rrr/rpc/snapshot_format.hpp` (lines 56-76)
+**File**: `src/srpc/rpc/snapshot_format.hpp` (lines 56-76)
 
 ```cpp
 #pragma pack(push, 1)
@@ -277,7 +277,7 @@ giving an exact 52-byte binary layout.
 
 ### 6.3 CRC32 Implementation
 
-**File**: `src/rrr/rpc/snapshot_format.hpp` (lines 85-162)
+**File**: `src/srpc/rpc/snapshot_format.hpp` (lines 85-162)
 
 A table-driven CRC32 using the IEEE 802.3 polynomial (reversed:
 `0xEDB88320`).  The 256-entry lookup table is defined inline
@@ -353,7 +353,7 @@ enum class SnapshotChecksumType : uint8_t {
 **File**: `src/deptran/raft/server.h`
 
 ```cpp
-std::shared_ptr<rrr::SnapshotManager> snapshot_manager_;  // line 57
+std::shared_ptr<srpc::SnapshotManager> snapshot_manager_;  // line 57
 ```
 
 The Raft server holds a reference to the snapshot manager but the
@@ -365,10 +365,10 @@ snapshotting.  The infrastructure is in place for future use.
 **File**: `src/deptran/paxos/server.h`
 
 ```cpp
-std::shared_ptr<rrr::SnapshotManager> snapshot_manager_;  // line 81
+std::shared_ptr<srpc::SnapshotManager> snapshot_manager_;  // line 81
 
-void SetSnapshotManager(std::shared_ptr<rrr::SnapshotManager>);  // line 84
-std::shared_ptr<rrr::SnapshotManager> GetSnapshotManager() const;  // line 88
+void SetSnapshotManager(std::shared_ptr<srpc::SnapshotManager>);  // line 84
+std::shared_ptr<srpc::SnapshotManager> GetSnapshotManager() const;  // line 88
 void CompactLog(slotid_t up_to_index);  // line 115
 ```
 

@@ -1,8 +1,8 @@
-# RRR Naming Convention Migration Analysis
+# SRPC Naming Convention Migration Analysis
 
 ## Overview
 
-This document analyzes the migration of rrr code from C++ naming conventions to Rust naming conventions.
+This document analyzes the migration of srpc code from C++ naming conventions to Rust naming conventions.
 
 ## Target Conventions
 

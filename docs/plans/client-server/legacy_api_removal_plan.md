@@ -40,12 +40,12 @@ Need to update `Coroutine::` → `Fiber::` in:
 - src/deptran/fpga_raft/server.cc
 - src/deptran/fpga_raft/coordinator.cc
 - src/deptran/fpga_raft/service.cc
-- src/rrr/reactor/event.cc
-- src/rrr/reactor/reactor.cc
-- src/rrr/reactor/quorum_event.cc
-- src/rrr/rpc/client.cpp
-- src/rrr/rpc/server.cpp
-- src/rrr/rpc/server.hpp
+- src/srpc/reactor/event.cc
+- src/srpc/reactor/reactor.cc
+- src/srpc/reactor/quorum_event.cc
+- src/srpc/rpc/client.cpp
+- src/srpc/rpc/server.cpp
+- src/srpc/rpc/server.hpp
 - test/test_reactor_extended.cc
 - test/test_reactor.cc
 - test/coroutine.cc
@@ -57,26 +57,26 @@ Need to update `Coroutine::` → `Fiber::` in:
 - src/deptran/communicator.h (3)
 - test/test_and_event.cc (8)
 - test/fiber_test.cc (3)
-- src/rrr/reactor/event.h (6) - definition, keep but remove alias
-- src/rrr/reactor/reactor.h (1)
-- src/rrr/reactor/event.cc (1)
-- src/rrr/reactor/fiber.h (1) - alias, remove
+- src/srpc/reactor/event.h (6) - definition, keep but remove alias
+- src/srpc/reactor/reactor.h (1)
+- src/srpc/reactor/event.cc (1)
+- src/srpc/reactor/fiber.h (1) - alias, remove
 
 ### Source Files with OrEvent (30 occurrences across 14 files)
 - src/deptran/copilot/commo.h (1)
 - test/coroutine.cc (1)
 - test/fiber_test.cc (3)
 - test/test_reactor_extended.cc (5)
-- src/rrr/reactor/event.h (3) - definition, keep but remove alias
-- src/rrr/reactor/reactor.h (1)
-- src/rrr/reactor/event.cc (1)
-- src/rrr/reactor/fiber.h (1) - alias, remove
+- src/srpc/reactor/event.h (3) - definition, keep but remove alias
+- src/srpc/reactor/reactor.h (1)
+- src/srpc/reactor/event.cc (1)
+- src/srpc/reactor/fiber.h (1) - alias, remove
 
 ### Source Files with NEvent (18 occurrences across 8 files)
 - src/deptran/client_worker.h (1)
 - test/fiber_test.cc (3)
-- src/rrr/reactor/event.h (2) - definition, keep but remove alias
-- src/rrr/reactor/fiber.h (1) - alias, remove
+- src/srpc/reactor/event.h (2) - definition, keep but remove alias
+- src/srpc/reactor/fiber.h (1) - alias, remove
 
 ## Approach
 

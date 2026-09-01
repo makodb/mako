@@ -192,7 +192,7 @@ bash examples/simplePaxos.sh
   --shard-config src/mako/config/local-shards1-warehouses6.yml \
   -P localhost \
   -F config/1leader_2followers/paxos6_shardidx0.yml \
-  -F config/occ_paxos.yml \
+  -F config/paxos.yml \
   --startup-timeout-sec 60 \
   --is-replicated \
   --replication=paxos
@@ -206,15 +206,15 @@ bash examples/simplePaxos.sh
   --shard-index 0 \
   --shard-config src/mako/config/local-shards1-warehouses6.yml \
   -P localhost \
-  -F config/1leader_2followers/paxos6_shardidx0.yml \
-  -F config/occ_raft.yml \
+  -F config/1leader_2followers/raft6_shardidx0.yml \
+  -F config/raft.yml \
   --startup-timeout-sec 60 \
   --is-replicated \
   --replication=raft
 ```
 
 Important:
-- In replicated configs like `config/1leader_2followers/paxos6_shardidx0.yml`, `-P localhost` starts only one role group.
+- In replicated topology configs, `-P localhost` starts only one role group.
 - You must start peer role groups (for example `-P p1`, `-P p2`, and `-P learner`) concurrently, or startup can wait indefinitely.
 - `dbtest` now prints an explicit startup warning when replicated mode is launched with `-P localhost` to highlight this requirement.
 - Use `--startup-timeout-sec <seconds>` (or `MAKO_STARTUP_TIMEOUT_SEC`) to fail fast instead of hanging indefinitely.
@@ -290,6 +290,11 @@ When using this format with `dbtest`, pass `--site-name` so the process can map 
 
 Note: `dbtest` does not currently expose a standard `--help` output.
 
+There is intentionally no storage-backend option. Every `dbtest` path uses
+STO `Transaction` with MassTrans through `mbta_wrapper`; the original Silo/NDB
+transaction engine is retired and guarded against compilation. Paxos and Raft
+select replication only. `SiloRuntime` remains live runtime support.
+
 ## Transport Backends
 
 Runtime selection:
@@ -354,7 +359,7 @@ Primary CI script (`ci/ci.sh`) supports:
 - `multiShardSingleProcess`
 - `shard2SingleProcess`
 - `shard2SingleProcessReplication`
-- `rrrTests`
+- `srpcTests`
 - `cpuThrottlingScaling`
 - `clientServer`
 - `all`
@@ -457,7 +462,7 @@ Notes:
 - Example: `./docker_build.sh ci all 8` to run CI with 8 build jobs.
 - Jobs-only shorthand is supported: `./docker_build.sh ci 8` is equivalent to `./docker_build.sh ci all 8`.
 - `./docker_build.sh ci-quick <test>` skips rebuild and validates suite binaries up front (exists, executable, Docker-compatible RUNPATH); use `./docker_build.sh ci <test>` when `ci-quick` reports a binary issue.
-- `rrrTests` is not supported in `ci-quick` because it runs broad CTest suites; use `./docker_build.sh ci rrrTests`.
+- `srpcTests` is not supported in `ci-quick` because it runs broad CTest suites; use `./docker_build.sh ci srpcTests`.
 - `cpuThrottlingScaling` is supported via `./docker_build.sh ci` and `./docker_build.sh ci-quick`; it is longer-running than most tests because each CPU cap run waits for full benchmark completion to emit throughput summaries.
 - `shard1ReplicationSimple`, `shard2ReplicationSimple`, `shard1ReplicationSimpleRaft`, and `shard2ReplicationSimpleRaft` require `build_docker/simpleTransactionRep`; `test` alone may not produce that binary.
 

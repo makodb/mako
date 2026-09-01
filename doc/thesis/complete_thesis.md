@@ -189,7 +189,7 @@ Mako's architecture consists of several major components that work together to p
 
 **Sharding.** Data is horizontally partitioned across shards. Each shard holds a subset of the keyspace (for example, a range of TPC-C warehouses), has its own independent replication group of leader and follower replicas, runs its own consensus instance per partition, and can be placed on a different set of machines. Cross-shard transactions use Two-Phase Commit (2PC) coordinated by the transaction coordinator.
 
-**Protocol Factory.** Mako uses a factory pattern to create protocol-specific components. Each protocol (OCC, 2PL, Paxos, Raft, and others) registers a factory subclass that creates the appropriate coordinator, scheduler, communicator, and RPC services. This architecture enables protocol polymorphism — the upper layers of the system need not know which consensus protocol is in use.
+**Protocol Factory.** Mako uses a factory pattern to create protocol-specific components. Each protocol (OCC, Paxos, Raft, and others) registers a factory subclass that creates the appropriate coordinator, scheduler, communicator, and RPC services. This architecture enables protocol polymorphism — the upper layers of the system need not know which consensus protocol is in use.
 
 ### Speculative Execution and the Replication Layer
 
@@ -771,7 +771,7 @@ The worker performs several key functions:
 
 **Setup chain.** The worker initialises in multiple phases:
 
-1. **Base setup**: Creates the protocol factory, which in turn creates the Raft server, communicator, coordinator, and executor.
+1. **Base setup**: Creates the protocol factory, which in turn creates the Raft server, communicator, and coordinator.
 2. **Service setup**: Starts the RPC server, registering Raft's RPC handlers with the network layer so the server can receive incoming messages from peers.
 3. **Communication setup**: Establishes outgoing RPC connections to all peers in the cluster. This is done after service setup to ensure peers can respond.
 4. **Heartbeat setup**: Starts the control-plane heartbeat mechanism for peer liveness detection.
@@ -1213,7 +1213,7 @@ To answer these questions, we run both protocols under the same workloads and co
 
 There is an important trade-off in this approach. By running on localhost, we eliminate the most significant real-world latency source (network round-trips between replicas), which means the measured throughput differences are larger than what would be observed in a geo-replicated deployment. However, this is deliberate: by removing network latency, we isolate the protocol-level differences in CPU overhead and synchronisation costs, which are the factors that the protocol choice directly influences.
 
-**Build configuration.** All tests use release-mode compilation with full optimisation, OCC concurrency control, and the jemalloc memory allocator. The rrr TCP/IP RPC transport backend is used for all communication. The same build configuration is used for both Paxos and Raft tests, ensuring that performance differences are attributable to the protocol and not to build differences.
+**Build configuration.** All tests use release-mode compilation with full optimisation, OCC concurrency control, and the jemalloc memory allocator. The srpc TCP/IP RPC transport backend is used for all communication. The same build configuration is used for both Paxos and Raft tests, ensuring that performance differences are attributable to the protocol and not to build differences.
 
 **Primary workload.** The primary workload is TPC-C, the industry-standard OLTP benchmark. TPC-C was chosen because it is widely understood, has a well-defined transaction mix, and exercises both read and write paths with varying conflict profiles. TPC-C models a wholesale supplier with five transaction types:
 
@@ -1574,7 +1574,7 @@ The process of integrating Raft into a production-grade distributed transaction 
 
 | Term | Definition |
 |------|------------|
-| **rrr** | Mako's custom RPC framework: TCP/IP-based with ~10-50 microsecond latency. The default transport. |
+| **srpc** | Mako's custom RPC framework: TCP/IP-based with ~10-50 microsecond latency. The default transport. |
 | **eRPC** | An alternative RDMA-based RPC backend (~1-2 microsecond latency). Not used for Raft testing. |
 | **RustyCpp** | A static analysis tool enforcing Rust-style ownership and borrowing rules on C++ code. |
 | **Frame** | A factory class in Mako's protocol architecture. Each protocol has a Frame subclass creating protocol-specific components. |

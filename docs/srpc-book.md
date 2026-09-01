@@ -1,8 +1,8 @@
 # The SRPC Book
 
-A comprehensive developer guide for RRR — the **S**imple **RPC** framework powering Mako.
+A comprehensive developer guide for SRPC — the **S**imple **RPC** framework powering Mako.
 
-RRR stands for "Repeatable Research Runtime." It provides high-performance RPC, stackful fibers, an event-driven reactor, and binary serialization — all with Rust-inspired memory safety.
+SRPC stands for "Simple RPC." It provides high-performance RPC, stackful fibers, an event-driven reactor, and binary serialization — all with Rust-inspired memory safety.
 
 ---
 
@@ -31,11 +31,11 @@ RRR stands for "Repeatable Research Runtime." It provides high-performance RPC, 
 
 ## 1. Introduction
 
-RRR is a custom-built RPC and concurrency framework designed for high-performance distributed systems research. It is the networking and concurrency backbone of the Mako distributed transactional datastore.
+SRPC is a custom-built RPC and concurrency framework designed for high-performance distributed systems research. It is the networking and concurrency backbone of the Mako distributed transactional datastore.
 
 ### Why a Custom Framework?
 
-Off-the-shelf RPC frameworks (gRPC, Thrift) are designed for general-purpose use. RRR is purpose-built for:
+Off-the-shelf RPC frameworks (gRPC, Thrift) are designed for general-purpose use. SRPC is purpose-built for:
 
 - **Ultra-low latency**: Sub-100us round-trip with TCP/IP; ~10us with RDMA
 - **Massive concurrency**: 100,000+ concurrent operations via lightweight fibers
@@ -71,7 +71,7 @@ Typical numbers (TCP/IP backend):
 
 ## 2. Architecture Overview
 
-RRR is organized in layers:
+SRPC is organized in layers:
 
 ```
 +-----------------------------------------------------+
@@ -106,7 +106,7 @@ RRR is organized in layers:
 ### Directory Structure
 
 ```
-src/rrr/
+src/srpc/
   rpc/                # RPC client/server implementation
     client.hpp          # Client, Future, and connection APIs
     server.hpp          # Server, listener, dispatch (684 lines)
@@ -163,14 +163,14 @@ src/rrr/
   pylib/              # Python bindings
     simplerpc/          # Python RPC client/server
 
-  rrr.hpp             # C++ umbrella header
+  srpc.hpp             # C++ umbrella header
 ```
 
 ---
 
 ## 3. Fibers (Stackful)
 
-Fibers are the fundamental concurrency primitive in RRR. They are **stackful execution contexts** that can pause and resume from any function depth.
+Fibers are the fundamental concurrency primitive in SRPC. They are **stackful execution contexts** that can pause and resume from any function depth.
 
 ### Why Fibers Instead of Threads?
 
@@ -202,7 +202,7 @@ The modern API uses `Fiber` class and `this_fiber` namespace:
 
 ```cpp srpc-no-compile
 #include "reactor/fiber.h"
-using namespace rrr;
+using namespace srpc;
 
 // Create and run a fiber
 auto fiber = Fiber::create_run([]() {
@@ -434,7 +434,7 @@ if (event->status_ == Event::TIMEOUT) {
 
 Legacy path: objects can still implement `Pollable` directly. The
 trait now lives as an inline-DSL `pub trait` in
-`src/rrr/reactor/epoll_wrapper.cc`:
+`src/srpc/reactor/epoll_wrapper.cc`:
 
 ```rust srpc-no-compile
 #[cfg(rusty_cpp_rust)]
@@ -454,7 +454,7 @@ pub trait Pollable {
 The rusty-cpp transpiler emits the matching `class Pollable { ...
 virtual ... = 0; }` GEN block into the same file at build time.
 
-Migration note: proxy scaffolding for `Pollable` now lives in `src/rrr/rpc/pollable_proxy.h`
+Migration note: proxy scaffolding for `Pollable` now lives in `src/srpc/rpc/pollable_proxy.h`
 (`PollableFacade` and typed-arc adapter support). Poll-thread
 command payloads, storage, and event dispatch run through proxy-backed state
 (`pro::proxy<PollableFacade>`), and epoll integration is fd-based (no
@@ -464,7 +464,7 @@ inherit `Pollable`.
 
 ### Epoll Abstraction
 
-RRR wraps Linux epoll and macOS kqueue behind a unified `Epoll` class:
+SRPC wraps Linux epoll and macOS kqueue behind a unified `Epoll` class:
 
 ```cpp srpc-no-compile
 class Epoll {
@@ -675,7 +675,7 @@ path). `Server` is now reduced to its dispatch + lifecycle
 state plus the channel binding.
 
 Workstream K, sub-leaves 6a–6d — in-memory channel backend.
-`src/rrr/rpc/inmemory_channel.{hpp,cpp}` adds a deterministic
+`src/srpc/rpc/inmemory_channel.{hpp,cpp}` adds a deterministic
 in-process channel implementation conforming to the same
 `ChannelConnectionFacade` / `ChannelListenerFacade` /
 `ChannelFactoryFacade` contracts as the TCP backend. Components:
@@ -713,7 +713,7 @@ Fault-injection knobs (`inject_drop_next_sends(N)`,
 `make_channel_pair_for_testing(a_addr, b_addr)` helper. Drops fire
 before errors when both are queued; `closed` always wins.
 
-The end-to-end test `src/rrr/tests/rpc_inmemory_channel_e2e_test.cc`
+The end-to-end test `src/srpc/tests/rpc_inmemory_channel_e2e_test.cc`
 drives a real `Server` + `Client` through the `InMemoryFactory`
 without any real sockets — useful as a deterministic foundation for
 RPC-layer reliability tests (reconnect coverage, partition-induced
@@ -749,15 +749,15 @@ if (rc != 0) {
 
 // Synchronous-style call using FutureResult
 auto fu_result = client->request(RPC_METHOD_ID, FutureAttr{}, [&](BinaryWriteArchive& m) {
-    rrr::Serialize_::serialize(arg1, m);
-    rrr::Serialize_::serialize(arg2, m);
+    srpc::Serialize_::serialize(arg1, m);
+    srpc::Serialize_::serialize(arg2, m);
 });
 
 if (fu_result.is_ok()) {
     auto fu = fu_result.unwrap();
     fu->wait();
     int result = 0;
-    rrr::deserialize_from(fu->get_reply(), result);
+    srpc::deserialize_from(fu->get_reply(), result);
 }
 ```
 
@@ -765,7 +765,7 @@ if (fu_result.is_ok()) {
 
 ```cpp srpc-compile-client
 auto fu_result = client->request(RPC_METHOD_ID, FutureAttr{}, [&](BinaryWriteArchive& m) {
-    rrr::Serialize_::serialize(arg1, m);
+    srpc::Serialize_::serialize(arg1, m);
 });
 // ... do other work ...
 if (fu_result.is_ok()) {
@@ -846,15 +846,15 @@ public:
             return;
         }
         int arg;
-        rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
-        rrr::Deserialize_::deserialize(arg, __req_ar__);
+        srpc::BinaryReadArchive __req_ar__(srpc::make_source_proxy(&req->src));
+        srpc::Deserialize_::deserialize(arg, __req_ar__);
         int result = compute(arg);
 
         auto sconn_opt = weak_sconn.upgrade();
         if (sconn_opt.is_some()) {
             auto sconn = sconn_opt.unwrap();
             const_cast<ServerConnection&>(*sconn).reply(*req, 0, [&](BinaryWriteArchive& out) {
-                rrr::Serialize_::serialize(result, out);
+                srpc::Serialize_::serialize(result, out);
             });
         }
     }
@@ -941,17 +941,17 @@ The `Marshal` class provides binary serialization/deserialization:
 Marshal m;
 
 // Serialize
-rrr::Serialize_::serialize((i32)42, m);
-rrr::Serialize_::serialize((i64)1234567890LL, m);
-rrr::Serialize_::serialize(std::string("hello"), m);
-rrr::Serialize_::serialize((double)3.14, m);
+srpc::Serialize_::serialize((i32)42, m);
+srpc::Serialize_::serialize((i64)1234567890LL, m);
+srpc::Serialize_::serialize(std::string("hello"), m);
+srpc::Serialize_::serialize((double)3.14, m);
 
 // Deserialize
 i32 x; i64 y; std::string s; double d;
-rrr::Deserialize_::deserialize(x, m);
-rrr::Deserialize_::deserialize(y, m);
-rrr::Deserialize_::deserialize(s, m);
-rrr::Deserialize_::deserialize(d, m);
+srpc::Deserialize_::deserialize(x, m);
+srpc::Deserialize_::deserialize(y, m);
+srpc::Deserialize_::deserialize(s, m);
+srpc::Deserialize_::deserialize(d, m);
 ```
 
 ### Supported Types
@@ -994,21 +994,21 @@ struct MyTypedData {
 
     int32_t kind() const { return kMarshallKind; }
 
-    void save(rrr::BinaryWriteArchive& ar) const {
-        rrr::Serialize_::serialize(id, ar);
-        rrr::Serialize_::serialize(name, ar);
+    void save(srpc::BinaryWriteArchive& ar) const {
+        srpc::Serialize_::serialize(id, ar);
+        srpc::Serialize_::serialize(name, ar);
     }
 
-    void load(rrr::BinaryReadArchive& ar) {
-        rrr::Deserialize_::deserialize(id, ar);
-        rrr::Deserialize_::deserialize(name, ar);
+    void load(srpc::BinaryReadArchive& ar) {
+        srpc::Deserialize_::deserialize(id, ar);
+        srpc::Deserialize_::deserialize(name, ar);
     }
 };
 
 // Register so the `SerializableEnvelope` factory path can recover the
 // type by kind on the receive side. Lives in any .cc file:
 static int volatile reg_my_typed_data =
-    rrr::SerializableRegistry::reg<MyTypedData>(MyTypedData::kMarshallKind);
+    srpc::SerializableRegistry::reg<MyTypedData>(MyTypedData::kMarshallKind);
 ```
 
 For closed-set command types (the in-tree `MakoCommands` TypeList) the
@@ -1020,8 +1020,8 @@ polymorphism" subsection below for the full pattern.
 All in-tree deptran payload types (`VecRecData`, `ViewData`,
 `KeyCmdBatchData`, `VecPieceData`, `TpcPrepareCommand`,
 `TpcCommitCommand`, `TpcEmptyCommand`, `TpcNoopCommand`,
-`TpcBatchCommand`, `ReplicatedDBCommand`, `EmptyGraph`, `RccGraph`,
-`BulkPrepareLog`, `PaxosPrepCmd`, `HeartBeatLog`, `SyncLogRequest`,
+`TpcBatchCommand`, `ReplicatedDBCommand`, `BulkPrepareLog`, `PaxosPrepCmd`,
+`HeartBeatLog`, `SyncLogRequest`,
 `SyncLogResponse`, `SyncNoOpRequest`, `LogEntry`, `BulkPaxosCmd`,
 `SimpleRWCommand`) use the Serializable path.  Wire format is
 `[v32 kind][payload bytes]` for closed-set types and
@@ -1029,12 +1029,12 @@ All in-tree deptran payload types (`VecRecData`, `ViewData`,
 open-set `AnyMessage` envelope.
 
 > **Historical note** — the prior abstract base classes
-> `rrr::Marshallable` (virtual `to_marshal`/`from_marshal`) and
-> `rrr::MarshallDeputy` (kind-tagged envelope around
+> `srpc::Marshallable` (virtual `to_marshal`/`from_marshal`) and
+> `srpc::MarshallDeputy` (kind-tagged envelope around
 > `shared_ptr<Marshallable>`) are gone as of Workstream N L10f-2 step 5
 > (2026-05-05).  Production code uses `janus::Command`
 > (`SerializableEnvelope<MakoCommands>`) for closed-set commands and
-> `rrr::AnyMessage` for open-set graph payloads; both serialize
+> `srpc::AnyMessage` for open-set payloads; both serialize
 > through `pro::proxy<SerializableFacade>` value members with no
 > intermediate adapter or `shared_ptr<Marshallable>` storage.
 
@@ -1045,7 +1045,7 @@ into the envelope's storage so the receiver can pin lifetime):
 
 ```cpp srpc-no-compile
 janus::Command cmd;
-rrr::Deserialize_::deserialize(cmd, m);  // wire decode populates kind + payload via factory + load
+srpc::Deserialize_::deserialize(cmd, m);  // wire decode populates kind + payload via factory + load
 
 if (auto* view = cmd.unpack<ViewData>()) {
     // use view
@@ -1055,10 +1055,6 @@ if (auto* view = cmd.unpack<ViewData>()) {
 auto sp = cmd.unpack_shared<ViewData>();
 ```
 
-For RCC graph envelopes (`RccGraph`, `EmptyGraph`) the access pattern
-uses `AnyMessage` directly (Workstream N L7).  See the AnyMessage
-subsection below.
-
 ### Bookmarks
 
 For recording sizes without seeking:
@@ -1066,9 +1062,9 @@ For recording sizes without seeking:
 ```cpp srpc-no-compile
 Marshal m;
 auto bookmark = m.set_bookmark(sizeof(i32));  // Reserve space
-rrr::Serialize_::serialize(data1, m);
-rrr::Serialize_::serialize(data2, m);
-rrr::Serialize_::serialize(data3, m);
+srpc::Serialize_::serialize(data1, m);
+srpc::Serialize_::serialize(data2, m);
+srpc::Serialize_::serialize(data3, m);
 i32 payload_size = m.get_and_reset_write_cnt();
 m.write_bookmark(bookmark, &payload_size);  // Fill in size
 ```
@@ -1082,20 +1078,20 @@ write into a memory buffer, an fd, a TCP channel, or a hash without
 copying through `Marshal` first.
 
 ```cpp srpc-no-compile
-#include <rrr/misc/serializable.hpp>
+#include <srpc/misc/serializable.hpp>
 
 // Sink: holds the bytes (Layer 1 — concrete; Layer 2 — `pro::proxy`)
-rrr::BufferSink sink;
+srpc::BufferSink sink;
 
 // Archive: knows the wire format (Layer 3)
-rrr::BinaryWriteArchive writer(&sink);
-rrr::Serialize_::serialize((rrr::i32)42, writer);
-rrr::Serialize_::serialize(std::string("hello"), writer);
+srpc::BinaryWriteArchive writer(&sink);
+srpc::Serialize_::serialize((srpc::i32)42, writer);
+srpc::Serialize_::serialize(std::string("hello"), writer);
 
 // Source: drains from a byte view
-rrr::BufferSource source(sink.bytes.data(), sink.bytes.len());
-rrr::BinaryReadArchive reader(&source);
-rrr::i32 x; std::string s;
+srpc::BufferSource source(sink.bytes.data(), sink.bytes.len());
+srpc::BinaryReadArchive reader(&source);
+srpc::i32 x; std::string s;
 reader >> x >> s;
 ```
 
@@ -1120,9 +1116,9 @@ log replay paths, snapshots, or any consumer that wants to bypass the
 ```cpp srpc-no-compile
 int fd = ::open("/tmp/snap.bin", O_WRONLY | O_CREAT | O_TRUNC, 0644);
 {
-  rrr::FdSink sink(fd);
-  rrr::BinaryWriteArchive writer(&sink);
-  writer << (rrr::i32)42 << std::string("snapshot payload");
+  srpc::FdSink sink(fd);
+  srpc::BinaryWriteArchive writer(&sink);
+  writer << (srpc::i32)42 << std::string("snapshot payload");
 }
 ::close(fd);
 ```
@@ -1141,24 +1137,24 @@ struct MyCommand {
   // Required by SerializableFacade.
   static constexpr int32_t kKind = 0xCAFE;
   int32_t kind() const { return kKind; }
-  void save(rrr::BinaryWriteArchive& ar) const { ar << id << name; }
-  void load(rrr::BinaryReadArchive& ar) { ar >> id >> name; }
+  void save(srpc::BinaryWriteArchive& ar) const { ar << id << name; }
+  void load(srpc::BinaryReadArchive& ar) { ar >> id >> name; }
 };
 
 // Static-initializer registration.
 static int _reg =
-    rrr::SerializableRegistry::reg<MyCommand>(MyCommand::kKind);
+    srpc::SerializableRegistry::reg<MyCommand>(MyCommand::kKind);
 
 // Read-side: factory create + load.
-rrr::SerializableProxy proxy =
-    rrr::SerializableRegistry::create(kind_from_wire);
+srpc::SerializableProxy proxy =
+    srpc::SerializableRegistry::create(kind_from_wire);
 proxy->load(reader);
 ```
 
 `SerializableProxy::save` emits only the payload bytes (no kind
 prefix); the kind tag is framed by the enclosing envelope —
 `SerializableEnvelope<TypeList>` (e.g. `janus::Command`) for
-closed-set commands, or `rrr::AnyMessage` for open-set graph
+closed-set commands, or `srpc::AnyMessage` for open-set
 payloads.  Both envelopes wrap the proxy as a value member; there is
 no `shared_ptr<Marshallable>` storage layer.
 
@@ -1174,20 +1170,20 @@ counterpart to the closed-set TypeList pattern lives in
 struct GraphPayload {
   int32_t node_count;
   std::string label;
-  void save(rrr::BinaryWriteArchive& ar) const { ar << node_count << label; }
-  void load(rrr::BinaryReadArchive& ar) { ar >> node_count >> label; }
+  void save(srpc::BinaryWriteArchive& ar) const { ar << node_count << label; }
+  void load(srpc::BinaryReadArchive& ar) { ar >> node_count >> label; }
   int32_t kind() const { return 0; }  // unused — AnyMessage owns the tag
 };
 
 // Register under a stable string name (anywhere, at static init).
-static int _reg = rrr::reg_any_message_as<GraphPayload>("my.GraphPayload");
+static int _reg = srpc::reg_any_message_as<GraphPayload>("my.GraphPayload");
 
 // Sender: pack typed value into AnyMessage and ride it directly on
-// an RPC field of type `rrr::AnyMessage`.
+// an RPC field of type `srpc::AnyMessage`.
 auto val = std::make_shared<GraphPayload>();
 val->node_count = 42;
 val->label = "x";
-rrr::AnyMessage outgoing = *rrr::AnyMessage::pack(val);
+srpc::AnyMessage outgoing = *srpc::AnyMessage::pack(val);
 
 // Receiver: dispatch by carried type.
 if (incoming.is_a<GraphPayload>()) {
@@ -1207,8 +1203,8 @@ encoded payload (the holder-shaped proxy retains the original
 refcount).
 
 When to choose AnyMessage vs. closed-set TypeList:
-- **AnyMessage** for graph / data payloads (`RccGraph`, `EmptyGraph`),
-  versioned schemas, or any case where a service that doesn't know
+- **AnyMessage** for extensible data payloads, versioned schemas, or any case
+  where a service that doesn't know
   about a new type can still receive and dispatch the envelope. The
   Rust analogue is `typetag` (string tags via the `inventory` pattern);
   the protobuf analogue is `google.protobuf.Any` (type-URL).
@@ -1230,19 +1226,19 @@ hashing.
 ```cpp srpc-no-compile
 // Inherit Serializable<T, MakoCommands> for kind() / static_kind()
 // from the TypeList position.
-class TpcCommitCommand : public rrr::Serializable<TpcCommitCommand,
+class TpcCommitCommand : public srpc::Serializable<TpcCommitCommand,
                                                   janus::MakoCommands> {
  public:
   txnid_t tx_id_ = 0;
   janus::Command cmd_{};   // nested polymorphic field rides Command directly
 
-  void save(rrr::BinaryWriteArchive& ar) const;
-  void load(rrr::BinaryReadArchive& ar);
+  void save(srpc::BinaryWriteArchive& ar) const;
+  void load(srpc::BinaryReadArchive& ar);
 };
 
 // Register at static init — the no-arg overload picks up the kind
 // from `T::static_kind()` (the TypeList position).
-static int _reg = rrr::SerializableRegistry::reg<TpcCommitCommand>();
+static int _reg = srpc::SerializableRegistry::reg<TpcCommitCommand>();
 ```
 
 Adding a new closed-set Command type:
@@ -1250,12 +1246,12 @@ Adding a new closed-set Command type:
 2. Append the type at the END of the `MakoCommands` TypeList there
    (appending preserves existing types' kind values; reordering or
    inserting in the middle is a wire-format break).
-3. Define `class T : public rrr::Serializable<T, janus::MakoCommands>`.
-4. Add `static int _reg = rrr::SerializableRegistry::reg<T>();` in
+3. Define `class T : public srpc::Serializable<T, janus::MakoCommands>`.
+4. Add `static int _reg = srpc::SerializableRegistry::reg<T>();` in
    T's .cc.
 
 After Workstream N L9, the `Command::kind_` field serializes as
-`rrr::v32` (variable-length SparseInt) on the wire instead of raw
+`srpc::v32` (variable-length SparseInt) on the wire instead of raw
 4-byte int32.  SparseInt's first-byte encoding has a 6-bit signed
 payload, so values in [-64, 63] fit in 1 byte.  With closed-set kinds
 in [1, 19] and ANY_MESSAGE=24, every production polymorphic envelope
@@ -1271,16 +1267,16 @@ For incremental migration, the new system bridges the existing
 that legacy code is also writing to:
 
 ```cpp srpc-no-compile
-rrr::Marshal m;
-rrr::Serialize_::serialize(static_cast<rrr::i32>(1), m);   // legacy
+srpc::Marshal m;
+srpc::Serialize_::serialize(static_cast<srpc::i32>(1), m);   // legacy
 
 {
-  rrr::MarshalSink sink(&m);
-  rrr::BinaryWriteArchive writer(&sink);
-  writer << static_cast<rrr::i32>(2);  // new code, same buffer
+  srpc::MarshalSink sink(&m);
+  srpc::BinaryWriteArchive writer(&sink);
+  writer << static_cast<srpc::i32>(2);  // new code, same buffer
 }
 
-rrr::Serialize_::serialize(std::string("trailing"), m);  // legacy
+srpc::Serialize_::serialize(std::string("trailing"), m);  // legacy
 ```
 
 `MarshalSource` is the dual: a `BinaryReadArchive` over a
@@ -1303,7 +1299,7 @@ that let Serializable types flow through APIs typed against
 `shared_ptr<Marshallable>`.  Workstream N L10f-2 step 5 retired the
 entire bridge — every production payload registers via
 `SerializableRegistry::reg<T>()` and rides `janus::Command` /
-`rrr::AnyMessage` directly.
+`srpc::AnyMessage` directly.
 
 If you encounter a stale reference to one of these names in third-
 party docs or comments, the modern equivalent is:
@@ -1328,15 +1324,16 @@ overloads alongside the existing Marshal& ones for generated headers.
 Both forms compile and produce identical wire bytes.  As of Phase 3e
 (2026-04-29) this is the default — every in-tree `.rpc` file now
 references types with archive operators (`janus::Command` /
-`rrr::AnyMessage` via the L10c/L10f migrations, `Value` /
+`srpc::AnyMessage` via the L10c/L10f migrations, `Value` /
 `SimpleCommand` / `TxWorkspace` via Phase 4d-6, `TxReply` and
-`ParentEdge<RccTx>` via Phase 3e), so the additive emission compiles
+the former graph payloads via Phase 3e), so the additive emission compiles
 cleanly.  Use `--no-archive` to opt out (e.g. when generating against
 a custom `.rpc` that uses user types without archive overloads).
 
-The four in-tree generated headers (`rcc_rpc.h`, `helloworld.h`,
-`network.h`, `benchmark_service.h`) all carry archive operators;
-`rpcgen_compile_test.py` exercises both modes.
+The two tracked in-tree generated headers (`rcc_rpc.h` and
+`benchmark_service.h`) both carry archive operators. `rpcgen_compile_test.py`
+regenerates every schema, including the HelloWorld and network fixtures, in a
+temporary directory and exercises both modes.
 
 Status: the archive layer landed in five broad strokes.
 
@@ -1344,7 +1341,7 @@ Status: the archive layer landed in five broad strokes.
    `SerializableProxy` + registry, `rpcgen --archive` (now the
    default), `Marshal↔Archive` adapters (`MarshalSink` / `MarshalSource`),
    archive ops on `Value` / `SimpleCommand` / `TxWorkspace` /
-   `TxReply` / `ParentEdge<RccTx>` so every in-tree `.rpc` references
+   `TxReply` so every in-tree `.rpc` references
    archive-aware types.
 2. **Reactor TX/RX migration (Phase 3d)** — channel-mode response
    demux moved to `BufferSource`, request/reply lambdas typed as
@@ -1354,8 +1351,8 @@ Status: the archive layer landed in five broad strokes.
    collapsed back to a single archive-only path.  Every write-side
    caller in the production path now uses `BinaryWriteArchive&`.
 3. **Per-payload Serializable migration (Phase 4)** — every in-tree
-   deptran payload (`EmptyGraph`, the simple paxos control types,
-   `procedure.h` types, `SyncLogResponse`, `RccGraph`, `VecPieceData`,
+   deptran payload (the simple paxos control types, `procedure.h` types,
+   `SyncLogResponse`, `VecPieceData`,
    `LogEntry`, `BulkPaxosCmd`, `SimpleRWCommand`,
    `ReplicatedDBCommand`, the TPC commands) defines `save` / `load` /
    `kind` directly with no `Marshallable` inheritance.
@@ -1389,7 +1386,7 @@ Status: the archive layer landed in five broad strokes.
 Result: every payload type in the tree implements `save` / `load` /
 `kind` directly; closed-set polymorphism rides
 `SerializableEnvelope<TypeList>` (typed as `janus::Command` for
-Mako); open-set polymorphism rides `rrr::AnyMessage`; both envelopes
+Mako); open-set polymorphism rides `srpc::AnyMessage`; both envelopes
 back their storage with `pro::proxy<SerializableFacade>` value
 members and have no `shared_ptr<Marshallable>` layer.  The only
 `Marshal&` references that remain in source are the intentional
@@ -1406,11 +1403,11 @@ and [`docs/dev/l10f-2-command-inner-design.md`](dev/l10f-2-command-inner-design.
 
 ## 11. Reliability Features
 
-RRR includes comprehensive fault tolerance for production deployments.
+SRPC includes comprehensive fault tolerance for production deployments.
 
 ### Implemented vs Planned (Shipping Status)
 
-The table below reflects the current shipping headers under `src/rrr/rpc`:
+The table below reflects the current shipping headers under `src/srpc/rpc`:
 
 | Capability | Status | Shipping API |
 | --- | --- | --- |
@@ -1536,7 +1533,7 @@ enum class RpcError {
 ```
 
 `TOTAL_TIMEOUT` is represented by `TimeoutType::TOTAL_TIMEOUT` in the
-`rrr.request_options` module.
+`srpc.request_options` module.
 SRPC handles failures through `RpcError` values and helper predicates rather
 than an RPC-specific exception class.
 
@@ -1599,7 +1596,7 @@ virtual Result<RpcLockThenReadResponse, i32> lock_then_read(const RpcLockThenRea
 // defer
 virtual void write(const RpcWriteRequest& req,
                    RpcWriteResponse& resp,
-                   rrr::DeferredReply defer);
+                   srpc::DeferredReply defer);
 
 // async (server-side stackless task)
 virtual rusty::Task<Result<RpcFetchRemoteResponse, i32>>
@@ -1638,7 +1635,7 @@ This produces:
 - Marshal/unmarshal code for custom structs
 - Per-method typed scaffolding structs (`Rpc<MethodPascalCase>Request`/`Rpc<MethodPascalCase>Response`) synthesized from RPC input/output lists
 - Typed service signatures for non-raw methods:
-  `Result<MethodResponse, rrr::i32> Method(const MethodRequest&)`
+  `Result<MethodResponse, srpc::i32> Method(const MethodRequest&)`
 - Typed proxy sync/async APIs for non-raw methods:
   `Method(const MethodRequest&)` and
   `async_Method(const MethodRequest&, const FutureAttr&)`
@@ -1651,11 +1648,12 @@ Current codegen is typed-only for non-raw RPC methods:
   map `Err(i32)` to RPC error replies.
 - Generated proxy sync/async methods use typed request/response objects end-to-end.
 - `raw` handlers remain raw (`void Method(Box<Request>, WeakServerConnection)`).
-- Generated service classes do not inherit `rrr::Service`. They register via
+- Generated service classes do not inherit `srpc::Service`. They register via
   `Server::reg_service_typed(Box<T>)`, which wraps their concrete dispatch
   methods in the server's internal type-erasure shim.
-- All in-tree generated headers (`rcc_rpc.h`, `network.h`, `helloworld.h`) use
-  typed-only mode and all callsites use typed APIs.
+- The tracked deptran generated header (`rcc_rpc.h`) uses typed-only mode and
+  all live callsites use typed APIs. `helloworld.rpc` and `network.rpc` remain
+  as rpcgen compile fixtures whose outputs are generated temporarily.
 
 ### Generated Client Usage
 
@@ -1711,7 +1709,7 @@ struct GetUserResponse {
 };
 
 template <typename T>
-using RpcResult = rusty::Result<T, rrr::i32>;
+using RpcResult = rusty::Result<T, srpc::i32>;
 
 class MyServiceService {
 public:
@@ -1771,7 +1769,7 @@ SpinMutex<int> counter(0);
 
 ## 14. Memory Safety (RustyCpp)
 
-All new RRR code must use RustyCpp types and annotations.
+All new SRPC code must use RustyCpp types and annotations.
 
 ### Required Types
 
@@ -1822,7 +1820,7 @@ Events hold weak references to fibers to avoid reference cycles:
 
 ### Inline Rust DSL
 
-Most newly-migrated rrr types are authored as inline Rust DSL blocks
+Most newly-migrated srpc types are authored as inline Rust DSL blocks
 that the `rusty-cpp-transpiler` (third-party/rusty-cpp) regenerates
 into C++ at build time. The pattern:
 
@@ -1862,7 +1860,7 @@ Regenerate after editing the Rust block:
 
 ```bash srpc-no-compile
 third-party/rusty-cpp/target/release/rusty-cpp-transpiler \
-    inline-rust --rewrite --files src/rrr/path/to/file.cpp
+    inline-rust --rewrite --files src/srpc/path/to/file.cpp
 ```
 
 What the DSL currently expresses, in rough order of usage:
@@ -1871,7 +1869,7 @@ What the DSL currently expresses, in rough order of usage:
 - **`pub trait T { fn method(&self) -> ...; }`** — emits a C++ abstract base class (pure virtual, virtual dtor, copy/move disabled) so concrete C++ implementors keep working unchanged. Examples: `Pollable`, `PollableBase`, `SerializableBase`, `Service`, `Job`, `Alarm`, `SinkBase`, `SourceBase`.
 - **Concrete classes with state + methods** — `Client`, `Server`, `CircuitBreaker`, `HeartbeatManager`, etc. The DSL impl block carries the method bodies; large method bodies stay in out-of-class `T::method(...) { ... }` C++ definitions because the DSL doesn't translate complex syscall / cast-heavy code yet.
 
-Constructs the DSL grammar does **not** accept (these stay manual C++ and show up as `needs-transpiler` or `trivial-blocked` in `docs/rrr-inventory.md`):
+Constructs the DSL grammar does **not** accept (these stay manual C++ and show up as `needs-transpiler` or `trivial-blocked` in `docs/srpc-inventory.md`):
 
 - `void*` / `va_list` / C-style array params
 - Template methods (and class templates beyond a couple of pilot shapes)
@@ -1880,10 +1878,10 @@ Constructs the DSL grammar does **not** accept (these stay manual C++ and show u
 - Custom destructors that aren't trivially-defaulted
 - `impl Trait for Type` — parses but the emitter does not yet write `: public Trait` + `override` for the implementor, so trait *implementors* stay manual C++ while the *trait base* migrates cleanly.
 
-The `tools/rrr-inventory.py` script scans `src/rrr` and produces a
+The `tools/srpc-inventory.py` script scans `src/srpc` and produces a
 per-decl bucket (trivial / trivial-blocked / refactor-then-dsl /
 needs-transpiler / boundary / already-dsl) along with a blocker
-histogram — see `docs/rrr-inventory.md`.
+histogram — see `docs/srpc-inventory.md`.
 
 ---
 
@@ -2300,6 +2298,6 @@ If the process hangs during shutdown, check the transport stop fix documentation
 
 ---
 
-*This document consolidates the RRR/SRPC framework documentation from across the Mako project. For detailed implementation plans, phase documents, and migration guides, see `docs/rpc/`, `docs/developer/`, and `docs/migration/rustycpp/`.*
+*This document consolidates the SRPC framework documentation from across the Mako project. For detailed implementation plans, phase documents, and migration guides, see `docs/rpc/`, `docs/developer/`, and `docs/migration/rustycpp/`.*
 
-*For the ongoing manual-C++ → Rust DSL migration roadmap, see [`docs/TODO-rusty-rewrite.md`](TODO-rusty-rewrite.md) (the phased plan) and [`docs/rrr-inventory.md`](rrr-inventory.md) (the per-decl triage CSV + bucket summary, regeneratable via `python3 tools/rrr-inventory.py`).*
+*For the ongoing manual-C++ → Rust DSL migration roadmap, see [`docs/TODO-rusty-rewrite.md`](TODO-rusty-rewrite.md) (the phased plan) and [`docs/srpc-inventory.md`](srpc-inventory.md) (the per-decl triage CSV + bucket summary, regeneratable via `python3 tools/srpc-inventory.py`).*

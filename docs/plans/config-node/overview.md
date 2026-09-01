@@ -300,7 +300,7 @@ private:
 
 #pragma once
 
-#include "rrr/rrr.hpp"
+#include "srpc/srpc.hpp"
 #include "config.h"
 
 namespace janus {
@@ -309,7 +309,7 @@ namespace janus {
 constexpr uint32_t RPC_CONFIG_GET = 0xC001;
 constexpr uint32_t RPC_CONFIG_GET_VERSION = 0xC002;
 
-class ConfigService : public rrr::Service {
+class ConfigService : public srpc::Service {
 public:
   ConfigService(Config* config) : config_(config) {}
 
@@ -325,7 +325,7 @@ public:
   void GetConfigVersion(uint64_t* version);
 
   // Register RPC handlers
-  void __dispatch__(rrr::Request* req, rrr::ServerConnection* sconn) override;
+  void __dispatch__(srpc::Request* req, srpc::ServerConnection* sconn) override;
 
 private:
   Config* config_;
@@ -346,7 +346,7 @@ private:
 #include <string>
 #include <memory>
 #include "config.h"
-#include "rrr/rrr.hpp"
+#include "srpc/srpc.hpp"
 
 namespace janus {
 
@@ -604,5 +604,5 @@ uint64_t ConfigStore::GetVersion() const {
 
 - Current config: `src/deptran/config.h`, `config.cc`
 - RocksDB usage: `src/mako/rocksdb_persistence.cc`
-- RPC framework: `src/rrr/rpc/`
+- RPC framework: `src/srpc/rpc/`
 - YAML parsing: Uses `yaml-cpp` library

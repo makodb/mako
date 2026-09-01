@@ -1,27 +1,30 @@
-//#include "all.h"
-#include <stdint.h>
-#include <stddef.h>
-#include <string.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <ctype.h>
+#include <std_compat.hpp>
 
+#include <algorithm>
+#include <cctype>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <sstream>
+#include <string>
+#include <vector>
 
-#include "__dep__.h"
-#include "multi_value.h"
-#include "constants.h"
+#include <unistd.h>
+#include <yaml-cpp/yaml.h>
+
 #include "config.h"
-#include "multi_value.h"
-#include "sharding.h"
-#include "frame.h"
-#include "sharding.h"
-#include "benchmark_registry.h"
-#include "rcc/dep_graph.h"
-#include "rcc/graph_marshaler.h"
-#include "workload.h"
+#include "srpc_log.h"
 
-import std;
+using namespace std;
+using namespace srpc;
 
+/*
+ * Config owns only process/topology and replication settings. The retired
+ * DepTran benchmark/schema/sharding path used to pull MemDB into every Config
+ * consumer through __dep__.h; keep those dependencies out of this translation
+ * unit as well as out of config.h.
+ */
 
 namespace janus {
 namespace {
@@ -35,6 +38,14 @@ void to_lower_in_place(std::string& s) {
 Config *Config::config_s = nullptr;
 size_t bulkBatchCount=10000;
 
+Config::SiteInfo::SiteInfo(uint32_t id, std::string& site_addr) : id(id) {
+  const auto pos = site_addr.find(':');
+  verify(pos != std::string::npos);
+  name = site_addr.substr(0, pos);
+  const std::string port_str = site_addr.substr(pos + 1);
+  port = std::stoi(port_str);
+}
+
 
 Config * Config::GetConfig() {
   verify(config_s != nullptr);
@@ -44,7 +55,6 @@ Config * Config::GetConfig() {
 int Config::CreateConfig(int argc, char **argv) {
   if (config_s != NULL) return -1;
 
-//  std::string filename = "./config/sample.yml";
   vector<string> config_paths;
   std::string proc_name = "localhost"; // default as "localhost"
   std::string exp_setting_name = "not_set"; // used to dump Distribution to file
@@ -68,8 +78,6 @@ int Config::CreateConfig(int argc, char **argv) {
   int16_t n_concurrent          = 1;
   bulkBatchCount = 10000;
 
-  int jetpack_fastpath_attempt_rate = 101; // [0, 100]   101: adaptive
-
   string timeouts;
   size_t pos;
 
@@ -78,7 +86,7 @@ int Config::CreateConfig(int argc, char **argv) {
   string filename;
   // dropped `r:` from getopt string —
   // `case 'r':` (logging path) handler was the only consumer.
-  while ((c = getopt(argc, argv, "bc:d:f:h:i:k:p:P:s:S:t:H:T:n:A:F:O:m:a:N:")) != -1) {
+  while ((c = getopt(argc, argv, "bc:d:f:h:i:k:p:P:s:S:t:H:T:n:A:F:O:a:N:")) != -1) {
     switch (c) {
       case 'b': // heartbeat to controller
         heart_beat = true;
@@ -149,9 +157,6 @@ int Config::CreateConfig(int argc, char **argv) {
         if (server_or_client != -1) return -4;
         server_or_client = 0;
         break;
-      case 'm': // fastpath possibility mode
-        jetpack_fastpath_attempt_rate = strtoul(optarg, &end_ptr, 10);
-        break;
       case 'S': // client touch only single server
       {
         // TODO remove
@@ -218,10 +223,7 @@ int Config::CreateConfig(int argc, char **argv) {
     // ctrl_run,
     duration,
     heart_beat,
-    single_server,
-    // dropped `logging_path,` arg — Config
-    // ctor parameter and `logging_path_` field both gone.
-    jetpack_fastpath_attempt_rate);
+    single_server);
   config_s->proc_name_ = proc_name;
   config_s->exp_setting_name_ = exp_setting_name;
   config_s->config_paths_ = config_paths;
@@ -247,10 +249,7 @@ Config::Config(char           *ctrl_hostname,
                int16_t         n_concurrent,
                uint32_t        duration,
                bool            heart_beat,
-               single_server_t single_server,
-               // removed `string logging_path,`
-               // ctor parameter — field gone.
-               int              jetpack_fastpath_attempt_rate) :
+               single_server_t single_server) :
   heart_beat_(heart_beat),
   ctrl_hostname_(ctrl_hostname),
   ctrl_port_(ctrl_port),
@@ -261,7 +260,7 @@ Config::Config(char           *ctrl_hostname,
   tot_req_num_(tot_req_num),
   duration_(duration),
   config_paths_(vector<string>()),
-  tx_proto_(0),
+  tx_proto_(-1),
   proc_id_(0),
   benchmark_(0),
   scale_factor_(1),
@@ -270,8 +269,6 @@ Config::Config(char           *ctrl_hostname,
   proc_name_(string()),
   exp_setting_name_(string()),
   batch_start_(false),
-  early_return_(false),
-  retry_wait_(false),
   // removed `logging_path_(logging_path),`
   // initializer — field gone.
   single_server_(single_server),
@@ -285,9 +282,7 @@ Config::Config(char           *ctrl_hostname,
   sid_(1),
   cid_(1),
   next_site_id_(0),
-  proc_host_map_(map<string, string>()),
-  sharding_(nullptr),
-  jetpack_fastpath_attempt_rate_(jetpack_fastpath_attempt_rate)
+  proc_host_map_(map<string, string>())
 
 {
 }
@@ -301,53 +296,39 @@ void Config::Load() {
     }
   }
 
-  // TODO particular configuration for certain workloads.
-  this->InitTPCCD();
 }
 
 void Config::LoadYML(std::string &filename) {
   Log_info("{}: {}", __FUNCTION__, filename.c_str());
-  yaml_config_ = YAML::LoadFile(filename);
+  const YAML::Node yaml_config = YAML::LoadFile(filename);
 
-  if (yaml_config_["process"]) {
-    BuildSiteProcMap(yaml_config_["process"]);
+  if (yaml_config["process"]) {
+    BuildSiteProcMap(yaml_config["process"]);
   }
-  if (yaml_config_["site"]) {
-    LoadSiteYML(yaml_config_["site"]);
+  if (yaml_config["site"]) {
+    LoadSiteYML(yaml_config["site"]);
   }
-  if (yaml_config_["process"]) {
-    LoadProcYML(yaml_config_["process"]);
+  if (yaml_config["process"]) {
+    LoadProcYML(yaml_config["process"]);
   }
-  if (yaml_config_["host"]) {
-    LoadHostYML(yaml_config_["host"]);
+  if (yaml_config["host"]) {
+    LoadHostYML(yaml_config["host"]);
   }
-  if (yaml_config_["mode"]) {
-    LoadModeYML(yaml_config_["mode"]);
+  if (yaml_config["mode"]) {
+    LoadModeYML(yaml_config["mode"]);
   }
-  if (yaml_config_["bench"]) {
-    LoadBenchYML(yaml_config_["bench"]);
+  if (yaml_config["client"]) {
+    LoadClientYML(yaml_config["client"]);
   }
-  if (yaml_config_["bench_update_weight"]){
-    UpdateWeights(yaml_config_["bench_update_weight"]);
+  if (yaml_config["failover"]) {
+    LoadFailoverYML(yaml_config["failover"]);
   }
-  if (yaml_config_["schema"]) {
-    LoadSchemaYML(yaml_config_["schema"]);
-  }
-  if (yaml_config_["sharding"]) {
-    LoadShardingYML(yaml_config_["sharding"]);
-  }
-  if (yaml_config_["client"]) {
-    LoadClientYML(yaml_config_["client"]);
-  }
-  if (yaml_config_["failover"]) {
-    LoadFailoverYML(yaml_config_["failover"]);
-  }
-  if (yaml_config_["n_concurrent"]) {
-    n_concurrent_ = yaml_config_["n_concurrent"].as<uint16_t>();
+  if (yaml_config["n_concurrent"]) {
+    n_concurrent_ = yaml_config["n_concurrent"].as<uint16_t>();
     Log_info("# of concurrent requests: {}", n_concurrent_);
   }
-  if (yaml_config_["n_parallel_dispatch"]) {
-    n_parallel_dispatch_ = yaml_config_["n_parallel_dispatch"].as<int32_t>();
+  if (yaml_config["n_parallel_dispatch"]) {
+    n_parallel_dispatch_ = yaml_config["n_parallel_dispatch"].as<int32_t>();
   }
 }
 
@@ -476,49 +457,6 @@ void Config::LoadHostYML(YAML::Node config) {
   }
 }
 
-void Config::InitMode(string &cc_name, string& ab_name) {
-  tx_proto_ = Frame::Name2Mode(cc_name);
-
-  if ((cc_name == "rococo") || (cc_name == "deptran")) {
-    // deprecated
-    early_return_ = false;
-  } else if (cc_name == "deptran_er") {
-    // deprecated
-    early_return_ = true;
-  } else if (cc_name == "2pl_w") {
-    retry_wait_ = true;
-  } else if (cc_name == "2pl_wait_die" || cc_name == "2pl_wd") {
-    // FineLockedRow/ALock removed (dead code); no per-row lock mode to set.
-  } else if ((cc_name == "2pl_ww") || (cc_name == "2pl_wound_die")) {
-    // FineLockedRow/ALock removed (dead code); no per-row lock mode to set.
-    n_parallel_dispatch_ = 1;
-  }
-
-  replica_proto_ = Frame::Name2Mode(ab_name);
-}
-
-void Config::InitBench(std::string &bench_str) {
-  if (bench_str == "tpca") {
-    benchmark_ = TPCA;
-  } else if (bench_str == "tpcc") {
-    benchmark_ = TPCC;
-    n_parallel_dispatch_ = 0;
-  } else if (bench_str == "tpcc_dist_part") {
-    benchmark_ = TPCC_DIST_PART;
-  } else if (bench_str == "tpccd") {
-    benchmark_ = TPCC_REAL_DIST_PART;
-  } else if (bench_str == "tpcc_real_dist_part") {
-    benchmark_ = TPCC_REAL_DIST_PART;
-  } else if (bench_str == "rw") {
-    benchmark_ = RW_BENCHMARK;
-  } else if (bench_str == "micro_bench") {
-    benchmark_ = MICRO_BENCH;
-  } else {
-    Log_error("No implementation for benchmark: {}", bench_str.c_str());
-    verify(0);
-  }
-}
-
 std::string Config::site2host_addr(std::string& siteaddr) {
   auto pos = siteaddr.find_first_of(':');
 
@@ -542,13 +480,23 @@ std::string Config::site2host_name(std::string& sitename) {
 
 
 void Config::LoadModeYML(YAML::Node config) {
-  auto mode_str = config["cc"].as<string>();
-  to_lower_in_place(mode_str);
+  if (config["cc"]) {
+    Log_error("mode.cc is no longer supported; Mako selects only mode.ab");
+    verify(0);
+  }
   auto ab_str = config["ab"].as<string>();
   to_lower_in_place(ab_str);
-  this->InitMode(mode_str, ab_str);
+  if (ab_str == "none") {
+    replica_proto_ = MODE_NONE;
+  } else if (ab_str == "multi_paxos" || ab_str == "paxos") {
+    replica_proto_ = MODE_MULTI_PAXOS;
+  } else if (ab_str == "raft") {
+    replica_proto_ = MODE_RAFT;
+  } else {
+    Log_error("Unsupported replication mode: {}", ab_str.c_str());
+    verify(0);
+  }
   max_retry_ = config["retry"].as<int32_t>();
-//  concurrent_txn_ = config["ongoing"].as<uint32_t>();
   batch_start_ = config["batch"].as<bool>();
   if (config["timestamp"]) {
     string ts_str = config["timestamp"].as<string>();
@@ -567,155 +515,6 @@ void Config::LoadModeYML(YAML::Node config) {
   if (config["txn_timeout_ms"]) {
     // Convert milliseconds to microseconds
     txn_timeout_us_ = static_cast<uint64_t>(config["txn_timeout_ms"].as<int>()) * 1000;
-  }
-}
-
-void Config::UpdateWeights(YAML::Node config) {
-  auto weights = config["weight"];
-  for (auto it = weights.begin(); it != weights.end(); ++it) {
-      auto txn_name = it->first.as<std::string>();
-      auto weight = it->second.as<double>();
-      // Update the txn_weights_ map with the new weight
-      txn_weights_[txn_name] = weight;
-  }  
-  for (std::map<std::string, double>::iterator it = txn_weights_.begin(); it != txn_weights_.end(); ++it) {
-    Log_info("key: {} value: {:.2f}", it->first.c_str(), it->second);
-  }
-}
-
-void Config::LoadBenchYML(YAML::Node config) {
-  std::string bench_str = config["workload"].as<string>();
-  this->InitBench(bench_str);
-  scale_factor_ = config["scale"].as<uint32_t>();
-  auto weights = config["weight"];
-  for (auto it = weights.begin(); it != weights.end(); it++) {
-    auto txn_name = it->first.as<string>();
-    auto weight = it->second.as<double>();
-    txn_weights_[txn_name] = weight;
-  }
-
-  txn_weight_.push_back(txn_weights_["new_order"]);
-  txn_weight_.push_back(txn_weights_["payment"]);
-  txn_weight_.push_back(txn_weights_["order_status"]);
-  txn_weight_.push_back(txn_weights_["delivery"]);
-  txn_weight_.push_back(txn_weights_["stock_level"]);
-
-  sharding_ = Frame(MODE_NONE).CreateSharding();
-  auto populations = config["population"];
-  auto &tb_infos = sharding_->tb_infos_;
-  for (auto it = populations.begin(); it != populations.end(); it++) {
-    auto tbl_name = it->first.as<string>();
-    auto info_it = tb_infos.find(tbl_name);
-    if(info_it == tb_infos.end()) {
-      tb_infos[tbl_name] = Sharding::tb_info_t();
-      info_it = tb_infos.find(tbl_name);
-    }
-    auto &tbl_info = info_it->second;
-    int pop = it->second.as<int>();
-    tbl_info.num_records = scale_factor_ * pop;
-    verify(tbl_info.num_records > 0);
-  }
-  if (config["dist"])
-    dist_ = config["dist"].as<string>();
-  if (config["range"])
-    range_ = config["range"].as<int32_t>();
-  if (config["coefficient"])
-    coeffcient_ = config["coefficient"].as<float>();
-  if (config["rotate"])
-    rotate_ = config["rotate"].as<int32_t>();
-}
-
-void Config::LoadSchemaYML(YAML::Node config) {
-  verify(sharding_);
-  auto &tb_infos = sharding_->tb_infos_;
-  for (auto it = config.begin(); it != config.end(); it++) {
-    auto table_node = *it;
-    std::string tbl_name = table_node["name"].as<string>();
-
-    auto info_it = tb_infos.find(tbl_name);
-    if(info_it == tb_infos.end()) {
-      tb_infos[tbl_name] = Sharding::tb_info_t();
-      info_it = tb_infos.find(tbl_name);
-    }
-    auto &tbl_info = info_it->second;
-    auto columns = table_node["column"];
-    for (auto iitt = columns.begin(); iitt != columns.end(); iitt++) {
-      auto column = *iitt;
-      LoadSchemaTableColumnYML(tbl_info, column);
-    }
-
-    tbl_info.tb_name = tbl_name;
-    sharding_->tb_infos_[tbl_name] = tbl_info;
-  }
-  sharding_->BuildTableInfoPtr();
-}
-
-void Config::LoadSchemaTableColumnYML(Sharding::tb_info_t &tb_info,
-                                      YAML::Node column) {
-  std::string c_type = column["type"].as<string>();
-  verify(c_type.size() > 0);
-  Value::kind c_v_type;
-
-  if (c_type == "i32" || c_type == "integer") {
-    c_v_type = Value::I32;
-  } else if (c_type == "i64") {
-    c_v_type = Value::I64;
-  } else if (c_type == "double") {
-    c_v_type = Value::DOUBLE;
-  } else if (c_type == "str" || c_type == "string") {
-    c_v_type = Value::STR;
-  } else {
-    c_v_type = Value::UNKNOWN;
-    verify(0);
-  }
-
-  std::string c_name = column["name"].as<string>();
-  verify(c_name.size() > 0);
-
-  bool c_primary = column["primary"].as<bool>(false);
-
-  std::string c_foreign = column["foreign"].as<string>("");
-  Sharding::column_t  *foreign_key_column = NULL;
-  Sharding::tb_info_t *foreign_key_tb     = NULL;
-  std::string ftbl_name;
-  std::string fcol_name;
-  bool is_foreign = (c_foreign.size() > 0);
-  if (is_foreign) {
-    size_t pos = c_foreign.find('.');
-    verify(pos != std::string::npos);
-
-    ftbl_name = c_foreign.substr(0, pos);
-    fcol_name = c_foreign.substr(pos + 1);
-    verify(c_foreign.size() > pos + 1);
-  }
-  tb_info.columns.push_back(Sharding::column_t(c_v_type,
-                                               c_name,
-                                               c_primary,
-                                               is_foreign,
-                                               ftbl_name,
-                                               fcol_name));
-}
-
-void Config::LoadShardingYML(YAML::Node config) {
-  verify(sharding_);
-  auto &tb_infos = sharding_->tb_infos_;
-  for (auto it = config.begin(); it != config.end(); it++) {
-    auto tbl_name = it->first.as<string>();
-    auto info_it = tb_infos.find(tbl_name);
-    verify(info_it != tb_infos.end());
-    auto &tbl_info = info_it->second;
-    string method = it->second.as<string>();
-
-    Log_info("group size: {}", replica_groups_.size());
-    for (auto replica_group_it = this->replica_groups_.begin();
-         replica_group_it != this->replica_groups_.end();
-         replica_group_it++) {
-      auto &replica_group = *replica_group_it;
-      tbl_info.par_ids.push_back(replica_group.partition_id);
-      tbl_info.symbol = tbl_types_map_["sorted"];
-    }
-  
-    verify(tbl_info.par_ids.size() > 0);
   }
 }
 
@@ -759,49 +558,7 @@ void Config::LoadFailoverYML(YAML::Node config) {
   failover_stop_int_ = config["stop_interval"].as<int32_t>();
 }
 
-void Config::InitTPCCD() {
-  // TODO particular configuration for certain workloads.
-  EnsureBenchmarkRegistryInitialized();
-  auto table_names = BenchmarkRegistry::Instance().GetTableNames();
-  verify(!table_names.tpcc_warehouse.empty());
-  verify(!table_names.tpcc_district.empty());
-  verify(!table_names.tpcc_item.empty());
-  auto &tb_infos = sharding_->tb_infos_;
-  if (benchmark_ == TPCC_REAL_DIST_PART) {
-    i32 n_w_id =
-        (i32)(tb_infos[table_names.tpcc_warehouse].num_records);
-    verify(n_w_id > 0);
-    i32 n_d_id = (i32)(GetNumPartition() *
-        tb_infos[table_names.tpcc_district].num_records / n_w_id);
-    i32 d_id = 0, w_id = 0;
-
-    for (d_id = 0; d_id < n_d_id; d_id++)
-      for (w_id = 0; w_id < n_w_id; w_id++) {
-        MultiValue mv(std::vector<Value>({Value(d_id),
-                                          Value(w_id)}));
-        sharding_->insert_dist_mapping(mv);
-      }
-    i32 n_i_id =
-        (i32)(tb_infos[table_names.tpcc_item].num_records);
-    i32 i_id = 0;
-
-    for (i_id = 0; i_id < n_i_id; i_id++)
-      for (w_id = 0; w_id < n_w_id; w_id++) {
-        MultiValue mv(std::vector<Value>({
-                                             Value(i_id),
-                                             Value(w_id)
-                                         }));
-        sharding_->insert_stock_mapping(mv);
-      }
-  }
-}
-
 Config::~Config() {
-  if (sharding_) {
-    delete sharding_;
-    sharding_ = NULL;
-  }
-
   if (ctrl_hostname_) {
     free(ctrl_hostname_);
     ctrl_hostname_ = NULL;
@@ -963,22 +720,6 @@ int Config::GetPartitionSize(parid_t partition_id) {
   verify(0);
 }
 
-int32_t Config::get_num_leaders(parid_t partition_id) {
-  switch (replica_proto_) {
-    case MODE_RAFT:
-    case MODE_FPGA_RAFT:
-      return 1;
-      break;
-    case MODE_COPILOT:
-      return 2;
-      break;
-    default:
-      Log_fatal("Rule mode do not support for this replica protocol now");
-      return 0;
-      break;
-  }
-}
-
 std::vector<Config::SiteInfo>
 Config::SitesByLocaleId(uint32_t locale_id, SiteInfoType type) {
   std::vector<SiteInfo> result;
@@ -1054,10 +795,6 @@ bool Config::do_heart_beat() {
   return heart_beat_;
 }
 
-int Config::get_mode() {
-  return tx_proto_;
-}
-
 unsigned int Config::get_num_threads() {
   verify(num_coordinator_threads_ > 0);
   return num_coordinator_threads_;
@@ -1110,10 +847,6 @@ int Config::GetProfilePath(char *prof_file) {
   return sprintf(prof_file, "process-%s.prof", proc_name_.c_str());
 }
 
-bool Config::do_early_return() {
-  return early_return_;
-}
-
 // removed `Config::do_logging()` and
 // `Config::log_path()` — only call site of `do_logging` was the
 // now-deleted `else if (do_logging())` branch in
@@ -1123,13 +856,7 @@ bool Config::do_early_return() {
 // getopt loop).
 
 bool Config::IsReplicated() {
-  // TODO
   return (replica_proto_ != MODE_NONE);
-  return true;
-}
-
-bool Config::retry_wait() {
-  return retry_wait_;
 }
 
 int32_t Config::get_tot_req() {

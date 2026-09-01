@@ -171,7 +171,7 @@ The test checks for these log messages:
 - `"Initialized ShardContext for shard X"`
 - `"MultiTransportManager: Initializing N transports"`
 - `"All N event loop threads spawned"`
-- `"RrrRpcBackend initialized on 127.0.0.1:PORT"`
+- `"SrpcRpcBackend initialized on 127.0.0.1:PORT"`
 
 ## Backward Compatibility
 
@@ -271,6 +271,6 @@ The implementation is fully backward compatible:
 ## References
 
 - Original implementation: Phases 1-6 of multi-shard migration
-- Transport backend: `src/mako/lib/rrr_rpc_backend.{h,cc}`
+- Transport backend: `src/mako/lib/srpc_rpc_backend.{h,cc}`
 - FastTransport: `src/mako/lib/fasttransport.{h,cc}`
 - Configuration system: `src/mako/lib/configuration.{h,cc}`

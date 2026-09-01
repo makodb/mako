@@ -18,7 +18,7 @@
 // It needs `#[cpp_ctor]` + a stored parameter + at least TWO Default fields,
 // which reads like a positional mismatch rather than a type-lookup failure.
 //
-// Caught in src/rrr/rpc/tcp_channel.cpp (TcpConnection::new takes `fd: i32`);
+// Caught in src/srpc/rpc/tcp_channel.cpp (TcpConnection::new takes `fd: i32`);
 // TcpListener in the same file takes no parameters and lowers correctly.
 
 #include <rusty/function.hpp>

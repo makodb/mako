@@ -156,8 +156,6 @@ These are the primary source files discussed across the documentation, organized
 | `src/deptran/raft/service.cc` | ~100 | RPC handler implementations |
 | `src/deptran/raft/frame.h` | ~80 | `RaftFrame`: factory for protocol components |
 | `src/deptran/raft/frame.cc` | ~120 | Factory method implementations |
-| `src/deptran/raft/exec.h` | ~40 | `RaftExecutor`: command execution |
-| `src/deptran/raft/exec.cc` | ~60 | Executor implementation |
 | `src/deptran/raft/macros.h` | ~77 | RPC handler code generation macros |
 
 ### Raft-Mako Bridge
@@ -234,7 +232,7 @@ These are the primary source files discussed across the documentation, organized
 
 | Term | Definition |
 |------|------------|
-| **rrr** | Mako's custom RPC framework: a TCP/IP-based request/response system with ~10--50 us latency. Used as the default transport. |
+| **srpc** | Mako's custom RPC framework: a TCP/IP-based request/response system with ~10--50 us latency. Used as the default transport. |
 | **eRPC** | An alternative high-performance RDMA-based RPC backend (~1--2 us latency). Not used for Raft testing. |
 | **DPDK** | Data Plane Development Kit: kernel bypass networking. Available as an optional transport but not used for Raft. |
 | **RustyCpp** | A static analysis tool that enforces Rust-style ownership and borrowing rules on C++ code. All new code must pass borrow checking. |

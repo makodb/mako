@@ -9,7 +9,6 @@
 #include "frame.h"
 #include "raft/raft_worker.h"
 #include "raft/service.h"
-#include "client_worker.h"
 #include "paxos_worker.h"  // ElectionState definition lives here
 
 
@@ -18,12 +17,10 @@ import std;
 using namespace janus;
 
 namespace janus {
-vector<unique_ptr<ClientWorker>> client_workers_storage = {};
 vector<shared_ptr<RaftWorker>> raft_workers_g = {};
 std::function<void(int)> leader_callback_{};
 }
 
-vector<unique_ptr<janus::ClientWorker>>& client_workers_g = janus::client_workers_storage;
 using janus::raft_workers_g;
 
 // ============================================================================
@@ -45,7 +42,7 @@ constexpr RaftGroupMode kDefaultRaftGroupMode = RaftGroupMode::kPerPartitionGrou
 static RaftGroupMode raft_group_mode_g = kDefaultRaftGroupMode;
 // File-scope storage for local site infos and stub servers.
 static std::vector<Config::SiteInfo*> all_site_infos_g;
-static std::vector<rrr::Server*> stub_rpc_servers_g;
+static std::vector<srpc::Server*> stub_rpc_servers_g;
 static std::vector<rusty::Arc<PollThread>> stub_poll_threads_g;
 static std::unordered_map<uint32_t, std::shared_ptr<RaftWorker>> workers_by_partition_g;
 
@@ -247,18 +244,19 @@ void create_stub_servers() {
   }
 
   auto& worker = raft_workers_g[0];
-  TxLogServer* rep_sched = worker->rep_sched_;
+  auto* rep_sched = dynamic_cast<RaftServer*>(worker->rep_sched_);
+  verify(rep_sched != nullptr);
 
   for (size_t i = 1; i < all_site_infos_g.size(); i++) {
     auto* site_info = all_site_infos_g[i];
     std::string bind_addr = site_info->GetBindAddress();
 
     // Create a PollThread for this stub
-    auto poll_thread = rrr::PollThread::create();
+    auto poll_thread = srpc::PollThread::create();
     stub_poll_threads_g.push_back(poll_thread);
 
     // Create RPC server
-    auto* rpc_server = new rrr::Server(rrr::Server::new_(rusty::Some(poll_thread.clone())));
+    auto* rpc_server = new srpc::Server(srpc::Server::new_(rusty::Some(poll_thread.clone())));
 
     // Register RaftServiceImpl pointing to the single RaftServer
     rpc_server->reg_service_typed(rusty::make_box<RaftServiceImpl>(rep_sched, poll_thread.clone()));
@@ -456,11 +454,11 @@ std::vector<std::string> setup(int argc, char* argv[]) {
     return ret_vector;
   }
 
-  // Verify that replica_proto_ is set to MODE_RAFT via occ_raft.yml config
+  // Verify that replica_proto_ is set to MODE_RAFT via raft.yml config.
   auto config = Config::GetConfig();
   if (config->replica_proto_ != MODE_RAFT) {
     Log_warn("[RAFT-SETUP] replica_proto_={} is not MODE_RAFT ({}). "
-             "Make sure to use config/occ_raft.yml with 'ab: raft' setting.",
+             "Make sure to use config/raft.yml with 'ab: raft' setting.",
              config->replica_proto_, MODE_RAFT);
   } else {
     Log_info("[RAFT-SETUP] replica_proto_ correctly set to MODE_RAFT ({})",
@@ -945,20 +943,6 @@ void set_preferred_leader(int site_id) {
              count, site_id);
   }
 }
-
-// nc_setup_server stub kept for linkage parity (the Paxos-side
-// implementation IS live — `nc_main.cc` calls it).
-void nc_setup_server(int /*port*/, std::string /*ip*/) {
-  Log_warn("nc_setup_server not implemented for Raft helper (unused).");
-}
-
-// removed seven `nc_get_*_requests`
-// `Log_warn`-only stubs (~35 lines).  The Paxos-side `nc_get_*`
-// getters they paralleled returned `&nc_services[par_id]->...`
-// against an unpopulated `nc_services` global (UB), and the only
-// external caller in `nc_main.cc` was a single-line `//` comment.
-// Both implementations + the matching dispatchers in
-// `replication_helper.{cc,h}` were dropped together.
 
 }  // namespace raft_impl
 
