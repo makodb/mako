@@ -34,9 +34,9 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::mem::{ManuallyDrop, MaybeUninit};
 use std::num::{NonZeroU32, NonZeroU64};
-use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -75,6 +75,69 @@ const CACHE_LINE_BYTES: usize = 64;
 /// Tag stored in `PublicationCell::arena_record_bytes` when the payload lives
 /// in the native deferred holder pool rather than the byte arena.
 const NATIVE_HOLDER_RECORD_TAG: usize = 1usize << (usize::BITS - 1);
+
+/// Select the complete base pages owned by one allocation without extending
+/// the range into allocator metadata or a neighboring allocation.
+fn complete_page_range(
+    address: usize,
+    allocation_bytes: usize,
+    page_bytes: usize,
+) -> Option<(usize, usize)> {
+    if allocation_bytes == 0 || page_bytes == 0 {
+        return None;
+    }
+    let end = address.checked_add(allocation_bytes)?;
+    let remainder = address % page_bytes;
+    let prefix = if remainder == 0 {
+        0
+    } else {
+        page_bytes - remainder
+    };
+    if prefix > allocation_bytes {
+        return None;
+    }
+    let start = address.checked_add(prefix)?;
+    let end = end - end % page_bytes;
+    (end > start).then_some((start, end - start))
+}
+
+/// Ask Linux to back a large queue allocation with transparent huge pages.
+///
+/// The call deliberately happens while the allocation is still uninitialized,
+/// so its first faults can allocate huge pages directly. Advice is only a
+/// performance hint: every error leaves ordinary base-page behavior intact.
+#[cfg(target_os = "linux")]
+fn advise_transparent_huge_pages<T>(allocation: &mut [MaybeUninit<T>]) {
+    use nix::sys::mman::{madvise, MmapAdvise};
+    use nix::unistd::{sysconf, SysconfVar};
+
+    let allocation_bytes = std::mem::size_of_val(allocation);
+    let Some(page_bytes) = sysconf(SysconfVar::PAGE_SIZE)
+        .ok()
+        .flatten()
+        .and_then(|bytes| usize::try_from(bytes).ok())
+        .filter(|bytes| *bytes != 0)
+    else {
+        return;
+    };
+    let Some((start, length)) = complete_page_range(
+        allocation.as_mut_ptr() as usize,
+        allocation_bytes,
+        page_bytes,
+    ) else {
+        return;
+    };
+    let Some(start) = NonNull::new(start as *mut std::ffi::c_void) else {
+        return;
+    };
+    // SAFETY: complete_page_range returns only full pages wholly contained in
+    // this live allocation. MADV_HUGEPAGE changes backing policy, not Rust's
+    // ownership, initialization, or access permissions.
+    let _ = unsafe { madvise(start, length, MmapAdvise::MADV_HUGEPAGE) };
+}
+
+#[cfg(not(target_os = "linux"))]
+fn advise_transparent_huge_pages<T>(_allocation: &mut [MaybeUninit<T>]) {}
 
 #[inline(always)]
 pub(crate) const fn native_holder_record_supported(exact_record_bytes: usize) -> bool {
@@ -1480,8 +1543,7 @@ impl CacheLineAtomicU64 {
         success: Ordering,
         failure: Ordering,
     ) -> Result<u64, u64> {
-        self.value
-            .compare_exchange(current, new, success, failure)
+        self.value.compare_exchange(current, new, success, failure)
     }
 
     #[inline(always)]
@@ -1490,12 +1552,7 @@ impl CacheLineAtomicU64 {
     }
 
     #[inline(always)]
-    fn fetch_update<F>(
-        &self,
-        set_order: Ordering,
-        fetch_order: Ordering,
-        f: F,
-    ) -> Result<u64, u64>
+    fn fetch_update<F>(&self, set_order: Ordering, fetch_order: Ordering, f: F) -> Result<u64, u64>
     where
         F: FnMut(u64) -> Option<u64>,
     {
@@ -1997,28 +2054,38 @@ impl<B: Blobs> Writeback<B> {
             .checked_add(1)
             .expect("the maximum applied seed was rejected above");
         let first_index = (first_sequence as usize) & publication_mask;
-        let publication_cells = (0..publication_capacity)
-            .map(|index| {
-                let delta = index.wrapping_sub(first_index) & publication_mask;
-                let initial_free_turn = u64::try_from(delta)
-                    .ok()
-                    .and_then(|delta| first_sequence.checked_add(delta))
-                    .map(|sequence| turn_token(sequence, publication_shift, TURN_FREE))
-                    // A near-u64::MAX ring position with no future generation
-                    // is unreachable and may retain any terminal token.
-                    .unwrap_or(u64::MAX);
-                PublicationCell::free(initial_free_turn)
-            })
-            .collect::<Vec<_>>()
-            .into_boxed_slice();
+        let mut publication_cells =
+            Box::<[PublicationCell]>::new_uninit_slice(publication_capacity);
+        advise_transparent_huge_pages(&mut publication_cells);
+        for (index, cell) in publication_cells.iter_mut().enumerate() {
+            let delta = index.wrapping_sub(first_index) & publication_mask;
+            let initial_free_turn = u64::try_from(delta)
+                .ok()
+                .and_then(|delta| first_sequence.checked_add(delta))
+                .map(|sequence| turn_token(sequence, publication_shift, TURN_FREE))
+                // A near-u64::MAX ring position with no future generation
+                // is unreachable and may retain any terminal token.
+                .unwrap_or(u64::MAX);
+            cell.write(PublicationCell::free(initial_free_turn));
+        }
+        // SAFETY: the loop writes every element exactly once before any
+        // initialized view or owner is created.
+        let publication_cells = unsafe { publication_cells.assume_init() };
         let cold_publication_cells = (0..publication_capacity)
             .map(|_| ColdPublicationCell::empty())
             .collect::<Vec<_>>()
             .into_boxed_slice();
-        let spsc_arena_publications = (0..publication_capacity)
-            .map(|_| SpscArenaPublication::empty())
-            .collect::<Vec<_>>()
-            .into_boxed_slice();
+        let spsc_arena_publications = if single_producer {
+            let mut cells = Box::<[SpscArenaPublication]>::new_uninit_slice(publication_capacity);
+            advise_transparent_huge_pages(&mut cells);
+            for cell in &mut cells {
+                cell.write(SpscArenaPublication::empty());
+            }
+            // SAFETY: the loop writes every element exactly once.
+            unsafe { cells.assume_init() }
+        } else {
+            Vec::new().into_boxed_slice()
+        };
         let native_arena = NativeRecordArena::new(publication_capacity, config.max_record_bytes)?;
         let native_holder_pool = Some(
             TrustedOnePutHolderPool::new(publication_capacity, 0, 0)
@@ -2375,6 +2442,7 @@ impl<B: Blobs> Writeback<B> {
     }
 
     fn spsc_arena_publication(&self, sequence: CommitSeq) -> &SpscArenaPublication {
+        debug_assert!(self.single_producer);
         &self.spsc_arena_publications[self.publication_index(sequence)]
     }
 
@@ -2517,11 +2585,7 @@ impl<B: Blobs> Writeback<B> {
     /// Advance the dense acknowledgement prefix across every atomically
     /// published successor. Multiple out-of-order publishers may help one
     /// another; the CAS makes advancement linearizable without queue locking.
-    fn advance_atomic_acknowledgement_once(
-        &self,
-        mut acknowledged: u64,
-        maximum: u64,
-    ) -> u64 {
+    fn advance_atomic_acknowledgement_once(&self, mut acknowledged: u64, maximum: u64) -> u64 {
         loop {
             if acknowledged >= maximum {
                 return acknowledged;
@@ -2996,8 +3060,7 @@ impl<B: Blobs> Writeback<B> {
 
     fn claim_detached_capacity_concurrent(&self) -> Result<(), ReserveError> {
         debug_assert!(!self.single_producer);
-        if !self.unhealthy.load(Ordering::Acquire)
-            && self.occupied.try_claim(self.config.capacity)
+        if !self.unhealthy.load(Ordering::Acquire) && self.occupied.try_claim(self.config.capacity)
         {
             return Ok(());
         }
@@ -4946,10 +5009,7 @@ impl<'a, B: Blobs> NativeArenaPermit<'a, B> {
         // never release occupancy after consumer retirement did so.
         self.owns_claim = false;
         self.owner
-            .finish_trusted_ready_publication_concurrent(
-                QueueToken::new(sequence),
-                caller_ack,
-            )?;
+            .finish_trusted_ready_publication_concurrent(QueueToken::new(sequence), caller_ack)?;
         Ok(sequence)
     }
 }
@@ -5666,17 +5726,49 @@ fn wait_timeout_recover<'a, T>(
 
 #[cfg(test)]
 mod tests {
-    use std::panic::{AssertUnwindSafe, catch_unwind};
+    use std::panic::{catch_unwind, AssertUnwindSafe};
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{Arc, Barrier, mpsc};
+    use std::sync::{mpsc, Arc, Barrier};
     use std::time::Instant;
 
-    use mrx_core::BlobOp;
     use mrx_core::fakes::MemBlobs;
+    use mrx_core::BlobOp;
 
     use super::*;
 
     const TABLE: u64 = 1;
+
+    #[test]
+    fn huge_page_advice_never_extends_beyond_the_allocation() {
+        const PAGE: usize = 4_096;
+
+        assert_eq!(
+            complete_page_range(0x2000, PAGE * 2, PAGE),
+            Some((0x2000, PAGE * 2))
+        );
+        assert_eq!(
+            complete_page_range(0x2003, PAGE * 2 - 1, PAGE),
+            Some((0x3000, PAGE))
+        );
+        assert_eq!(complete_page_range(0x2003, PAGE - 3, PAGE), None);
+        assert_eq!(complete_page_range(0x2000, PAGE - 1, PAGE), None);
+        assert_eq!(complete_page_range(0x2000, 0, PAGE), None);
+        assert_eq!(complete_page_range(0x2000, PAGE, 0), None);
+        assert_eq!(
+            complete_page_range(usize::MAX - PAGE / 2, PAGE, PAGE),
+            None,
+            "overflow must suppress advice instead of wrapping the range"
+        );
+    }
+
+    #[test]
+    fn concurrent_queue_does_not_allocate_single_producer_descriptors() {
+        let concurrent = Writeback::new(Arc::new(MemBlobs::new()), 0, config(8, 0)).unwrap();
+        assert!(concurrent.spsc_arena_publications.is_empty());
+
+        let single = Writeback::new_single(Arc::new(MemBlobs::new()), 0, config(8, 0)).unwrap();
+        assert_eq!(single.spsc_arena_publications.len(), 8);
+    }
 
     /// Guard the native ACK path against accidentally re-inlining the legacy
     /// five-vector record state. The old representation was 0x110 bytes and
@@ -6680,11 +6772,13 @@ mod tests {
         // order, then its direct binder owns FREE and Release-publishes BOUND
         // before returning that order. The legacy tail remains stale.
         unsafe {
-            writeback.publication_cell(sequence).publish_bound_preassigned(
-                writeback.cold_publication_cell(sequence),
-                sequence,
-                writeback.publication_shift,
-            )
+            writeback
+                .publication_cell(sequence)
+                .publish_bound_preassigned(
+                    writeback.cold_publication_cell(sequence),
+                    sequence,
+                    writeback.publication_shift,
+                )
         };
         let mut reservation = unsafe {
             permit.adopt_externally_bound(mako_timestamp_of(1), NonZeroU64::new(1).unwrap())
@@ -6697,7 +6791,12 @@ mod tests {
         fill_fast_arena_reservation(&mut reservation, &encoded);
         // SAFETY: the exact simulated native target is completely initialized.
         assert_eq!(
-            unsafe { reservation.publish_completed_concurrent_nonblocking(0).unwrap() }.get(),
+            unsafe {
+                reservation
+                    .publish_completed_concurrent_nonblocking(0)
+                    .unwrap()
+            }
+            .get(),
             1
         );
         assert_eq!(writeback.wait_applied().unwrap(), 1);
@@ -6724,33 +6823,21 @@ mod tests {
         // import must stop at the sequence-one hole without consulting the
         // deliberately stale legacy tail.
         let mut second = unsafe {
-            second_permit.bind_externally_ordered(
-                mako_timestamp_of(2),
-                NonZeroU64::new(2).unwrap(),
-            )
+            second_permit.bind_externally_ordered(mako_timestamp_of(2), NonZeroU64::new(2).unwrap())
         };
         assert_eq!(writeback.next_bound.load(Ordering::Acquire), 0);
         assert_eq!(writeback.detached_len(), 1);
         assert_eq!(writeback.queue_len(), 0);
 
         let mut first = unsafe {
-            first_permit.bind_externally_ordered(
-                mako_timestamp_of(1),
-                NonZeroU64::new(1).unwrap(),
-            )
+            first_permit.bind_externally_ordered(mako_timestamp_of(1), NonZeroU64::new(1).unwrap())
         };
         assert_eq!(writeback.next_bound.load(Ordering::Acquire), 0);
         assert_eq!(writeback.detached_len(), 0);
         assert_eq!(writeback.queue_len(), 2);
 
-        fill_fast_arena_reservation(
-            &mut second,
-            &encoded_native_record(2, 2, second_mutations),
-        );
-        fill_fast_arena_reservation(
-            &mut first,
-            &encoded_native_record(1, 1, first_mutations),
-        );
+        fill_fast_arena_reservation(&mut second, &encoded_native_record(2, 2, second_mutations));
+        fill_fast_arena_reservation(&mut first, &encoded_native_record(1, 1, first_mutations));
         // SAFETY: both exact simulated native targets are fully initialized.
         assert_eq!(
             unsafe { second.publish_completed_concurrent_nonblocking(1).unwrap() }.get(),
@@ -6774,10 +6861,7 @@ mod tests {
         let mut permit = writeback.reserve_native(encoded.len()).unwrap();
 
         let mut reservation = unsafe {
-            permit.bind_native_externally_ordered(
-                mako_timestamp_of(1),
-                NonZeroU64::new(1).unwrap(),
-            )
+            permit.bind_native_externally_ordered(mako_timestamp_of(1), NonZeroU64::new(1).unwrap())
         };
         assert_eq!(writeback.next_bound.load(Ordering::Acquire), 0);
         assert_eq!(writeback.detached_len(), 0);
@@ -8030,11 +8114,9 @@ mod tests {
             let (published_tx, published_rx) = mpsc::channel();
             let publisher = scope.spawn(move || published_tx.send(second.publish()).unwrap());
             wait_until_ready(&writeback, 2);
-            assert!(
-                published_rx
-                    .recv_timeout(Duration::from_millis(30))
-                    .is_err()
-            );
+            assert!(published_rx
+                .recv_timeout(Duration::from_millis(30))
+                .is_err());
 
             assert!(matches!(
                 writeback.record_failure_outcome(

@@ -21,7 +21,7 @@ mrx-rocks = { path = "../mrx-rocks" }
 [target.'cfg(target_os = "linux")'.dependencies]
 # Keep the cache crate free of direct unsafe affinity syscalls. `nix` exposes
 # the checked CpuSet wrapper and converts kernel errors into ordinary Results.
-nix = { version = "0.30.1", default-features = false, features = ["sched"] }
+nix = { version = "0.30.1", default-features = false, features = ["feature", "mman", "sched"] }
 
 [dev-dependencies]
 loom = "0.7"

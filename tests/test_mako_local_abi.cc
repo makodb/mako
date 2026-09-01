@@ -1720,6 +1720,103 @@ TEST_F(LocalAbiTest, NativeOrderedHolderDefersEncodingWithoutCopyingValue) {
   commit_and_destroy(verify);
 }
 
+TEST_F(LocalAbiTest, TrustedNativeOrderedHolderPublishesRestrictedUpdate) {
+  const std::string key = "trusted-native-holder";
+  auto *seed = begin();
+  ASSERT_EQ(put(seed, primary, key, "old"), MAKO_LOCAL_OK);
+  commit_and_destroy(seed);
+
+  mako_local_txn *txn = nullptr;
+  ASSERT_EQ(mako_rust_fast_txn_begin(db, primary, &txn), MAKO_LOCAL_OK);
+  txn_for_cleanup = txn;
+  const uint64_t put_result = fast_put(txn, key, "new");
+  ASSERT_EQ(MAKO_RUST_FAST_PUT_STATUS(put_result), MAKO_LOCAL_OK);
+  const uint32_t exact_bytes =
+      MAKO_RUST_FAST_PUT_UNCHECKED_RECORD_BYTES(put_result);
+  ASSERT_NE(exact_bytes, 0U);
+
+  ASSERT_EQ(mako_rust_fast_db_claim_cache_order_namespace(
+                db, MAKO_RUST_FAST_CACHE_ORDER_CONCURRENT),
+            MAKO_LOCAL_OK);
+  ASSERT_EQ(mako_rust_fast_db_reseed_cache_order_namespace(db, 960),
+            MAKO_LOCAL_OK);
+  create_holder_pool(4);
+
+  const uint8_t unhealthy = 0;
+  std::array<TestRustPublicationCell, 4> publications{};
+  constexpr uint64_t sequence = 961;
+  const size_t index = static_cast<size_t>(sequence) & 3;
+  const uint64_t free_turn = (sequence >> 2) << 2;
+  __atomic_store_n(&publications[index].turn, free_turn, __ATOMIC_RELAXED);
+  const auto control = make_native_holder_control(
+      holder_pool, &unhealthy, publications.data());
+
+  const mako_rust_fast_native_ordered_arena_result commit =
+      mako_rust_fast_txn_commit_trusted_native_ordered_unchecked_one_put_holder_and_destroy(
+          txn, exact_bytes, &control);
+  txn_for_cleanup = nullptr;
+  ASSERT_EQ(MAKO_RUST_FAST_TERMINAL_STATUS(commit.terminal), MAKO_LOCAL_OK);
+  ASSERT_EQ(MAKO_RUST_FAST_CLEANUP_STATUS(commit.terminal), MAKO_LOCAL_OK);
+  EXPECT_EQ(commit.ordered_sequence, sequence);
+  EXPECT_EQ(MAKO_RUST_FAST_NATIVE_ORDERED_ARENA_WRITTEN(commit), 1U);
+  EXPECT_EQ(MAKO_RUST_FAST_NATIVE_ORDERED_HOLDER_READY(commit), 1U);
+  EXPECT_EQ(__atomic_load_n(&publications[index].turn, __ATOMIC_ACQUIRE),
+            free_turn | UINT64_C(3));
+
+  mako_rust_fast_one_put_holder_view view{};
+  ASSERT_EQ(mako_rust_fast_one_put_holder_pool_get_view(
+                holder_pool, sequence, &view),
+            MAKO_LOCAL_OK);
+  EXPECT_EQ(std::string(reinterpret_cast<const char *>(view.key), view.key_len),
+            key);
+  EXPECT_EQ(
+      std::string(reinterpret_cast<const char *>(view.value), view.value_len),
+      "new");
+  ASSERT_EQ(mako_rust_fast_one_put_holder_pool_release(holder_pool, sequence),
+            MAKO_LOCAL_OK);
+}
+
+TEST_F(LocalAbiTest, NativeOrderedHolderCheckedEntryRejectsInvalidLayout) {
+  const std::string key = "checked-holder-invalid-layout";
+  mako_local_txn *txn = nullptr;
+  ASSERT_EQ(mako_rust_fast_txn_begin(db, primary, &txn), MAKO_LOCAL_OK);
+  txn_for_cleanup = txn;
+  const uint64_t put_result = fast_put(txn, key, "must-not-install");
+  ASSERT_EQ(MAKO_RUST_FAST_PUT_STATUS(put_result), MAKO_LOCAL_OK);
+  const uint32_t exact_bytes =
+      MAKO_RUST_FAST_PUT_UNCHECKED_RECORD_BYTES(put_result);
+  ASSERT_NE(exact_bytes, 0U);
+
+  ASSERT_EQ(mako_rust_fast_db_claim_cache_order_namespace(
+                db, MAKO_RUST_FAST_CACHE_ORDER_CONCURRENT),
+            MAKO_LOCAL_OK);
+  ASSERT_EQ(mako_rust_fast_db_reseed_cache_order_namespace(db, 980),
+            MAKO_LOCAL_OK);
+  const uint64_t initial_order =
+      mako_rust_fast_db_cache_order_snapshot(db);
+  create_holder_pool(4);
+
+  const uint8_t unhealthy = 0;
+  std::array<TestRustPublicationCell, 4> publications{};
+  auto control = make_native_holder_control(
+      holder_pool, &unhealthy, publications.data());
+  control.publication_stride = 63;
+  const mako_rust_fast_native_ordered_arena_result commit =
+      mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_holder_and_destroy(
+          txn, exact_bytes, &control);
+  txn_for_cleanup = nullptr;
+  EXPECT_EQ(MAKO_RUST_FAST_TERMINAL_STATUS(commit.terminal),
+            MAKO_LOCAL_INVALID_ARGUMENT);
+  EXPECT_EQ(MAKO_RUST_FAST_CLEANUP_STATUS(commit.terminal), MAKO_LOCAL_OK);
+  EXPECT_EQ(commit.ordered_sequence, 0U);
+  EXPECT_EQ(commit.record_state, 0U);
+  EXPECT_EQ(mako_rust_fast_db_cache_order_snapshot(db), initial_order);
+
+  auto *verify = begin();
+  EXPECT_FALSE(get(verify, primary, key).second.has_value());
+  commit_and_destroy(verify);
+}
+
 TEST_F(LocalAbiTest, NativeOrderedArenaRejectsLayoutBeforeAssigningOrder) {
   const std::string key = "native-arena-invalid-layout";
   mako_local_txn *txn = nullptr;

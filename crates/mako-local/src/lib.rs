@@ -33,12 +33,12 @@
 pub mod worker;
 
 use std::cell::{Cell, UnsafeCell};
-use std::ffi::{CStr, c_void};
+use std::ffi::{c_void, CStr};
 use std::fmt;
 use std::marker::PhantomData;
 use std::mem::{ManuallyDrop, MaybeUninit};
 use std::num::{NonZeroU32, NonZeroU64};
-use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr::NonNull;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, Ordering};
@@ -291,9 +291,9 @@ mod fast_abi {
     use std::ffi::c_void;
 
     use super::{
-        FastNativeOrderedArenaResult, FastOnePutHolderPool, FastOnePutHolderView,
+        sys, FastNativeOrderedArenaResult, FastOnePutHolderPool, FastOnePutHolderView,
         FastPreselectedRecordResult, FastSpscHolderControl, TrustedNativeOrderedArenaControl,
-        TrustedNativeOrderedHolderControl, sys,
+        TrustedNativeOrderedHolderControl,
     };
 
     pub(super) type RecordBindHook = Option<
@@ -381,7 +381,14 @@ mod fast_abi {
             control: *const TrustedNativeOrderedArenaControl,
         ) -> FastNativeOrderedArenaResult;
 
+        #[allow(dead_code)]
         pub(super) fn mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_holder_and_destroy(
+            txn: *mut sys::mako_local_txn,
+            expected_record_bytes: u32,
+            control: *const TrustedNativeOrderedHolderControl,
+        ) -> FastNativeOrderedArenaResult;
+
+        pub(super) fn mako_rust_fast_txn_commit_trusted_native_ordered_unchecked_one_put_holder_and_destroy(
             txn: *mut sys::mako_local_txn,
             expected_record_bytes: u32,
             control: *const TrustedNativeOrderedHolderControl,
@@ -460,9 +467,7 @@ mod fast_abi {
             recovered_sequence: u64,
         ) -> i32;
 
-        pub(super) fn mako_rust_fast_db_cache_order_snapshot(
-            db: *const sys::mako_local_db,
-        ) -> u64;
+        pub(super) fn mako_rust_fast_db_cache_order_snapshot(db: *const sys::mako_local_db) -> u64;
     }
 }
 
@@ -2598,10 +2603,7 @@ impl LocalDb {
         // SAFETY: `self.raw` is live for this synchronous claim. Native keeps
         // only the facade identity and releases it when the facade closes.
         status(unsafe {
-            fast_abi::mako_rust_fast_db_claim_cache_order_namespace(
-                self.raw.as_ptr(),
-                mode as u32,
-            )
+            fast_abi::mako_rust_fast_db_claim_cache_order_namespace(self.raw.as_ptr(), mode as u32)
         })
     }
 
@@ -4119,11 +4121,14 @@ impl<'db> Transaction<'db> {
         );
 
         // SAFETY: the trusted terminal consumes the thread-affine handle on
-        // every outcome and the method contract retains the queue/pool layout.
+        // every outcome. This wrapper obtained the exact candidate from the
+        // immediately preceding fast Put, and the method contract retains the
+        // queue, pool, descriptor, and detached capacity claim through the
+        // synchronous native call.
         let raw = unsafe { self.raw.take().unwrap_unchecked() };
         self.active = false;
         let result = unsafe {
-            fast_abi::mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_holder_and_destroy(
+            fast_abi::mako_rust_fast_txn_commit_trusted_native_ordered_unchecked_one_put_holder_and_destroy(
                 raw.as_ptr(),
                 candidate.exact_record_bytes as u32,
                 std::ptr::from_ref(control),
@@ -5258,8 +5263,8 @@ mod tests {
 
     #[test]
     fn native_holder_ready_requires_exact_committed_witnesses() {
-        let packed_ok = (sys::MAKO_LOCAL_OK as u32 as u64)
-            | ((sys::MAKO_LOCAL_OK as u32 as u64) << 32);
+        let packed_ok =
+            (sys::MAKO_LOCAL_OK as u32 as u64) | ((sys::MAKO_LOCAL_OK as u32 as u64) << 32);
         let ready = TrustedNativeOrderedOnePutRecordOutcome {
             inner: TrustedUncheckedOnePutRecordOutcome {
                 packed: packed_ok,
@@ -5307,13 +5312,9 @@ mod tests {
 
     #[test]
     fn native_ordered_binder_rejects_overrange_sequence_before_publication() {
-        type Hook = fn(
-            MakoTimestamp,
-            CommitRecordPreflight,
-            NonZeroU64,
-        ) -> Option<CommitRecordTarget>;
-        static CALLS: std::sync::atomic::AtomicUsize =
-            std::sync::atomic::AtomicUsize::new(0);
+        type Hook =
+            fn(MakoTimestamp, CommitRecordPreflight, NonZeroU64) -> Option<CommitRecordTarget>;
+        static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         fn count_call(
             _: MakoTimestamp,
             _: CommitRecordPreflight,

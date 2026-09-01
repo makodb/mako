@@ -21,8 +21,14 @@
 #include <string>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 #if !READ_MY_WRITES
 #include <unordered_set>
+#endif
+
+#if defined(__linux__)
+#include <sys/mman.h>
+#include <unistd.h>
 #endif
 
 #if defined(__i386__) || defined(__x86_64__)
@@ -149,6 +155,62 @@ struct mako_local_txn {
   uint32_t record_fused_candidate_bytes = 0;
 };
 
+// @safe - Select only complete allocator-owned pages. The hint is optional:
+// unsupported kernels, short allocations, and advice failures retain ordinary
+// base-page backing without changing allocation or lifetime semantics.
+static void advise_transparent_huge_pages(void *allocation,
+                                          size_t allocation_bytes) noexcept {
+#if defined(__linux__)
+  if (allocation == nullptr || allocation_bytes == 0)
+    return;
+  const long raw_page_bytes = ::sysconf(_SC_PAGESIZE);
+  if (raw_page_bytes <= 0)
+    return;
+  const size_t page_bytes = static_cast<size_t>(raw_page_bytes);
+  const uintptr_t begin = reinterpret_cast<uintptr_t>(allocation);
+  if (allocation_bytes > std::numeric_limits<uintptr_t>::max() - begin)
+    return;
+  const uintptr_t end = begin + allocation_bytes;
+  const size_t remainder = begin % page_bytes;
+  const size_t prefix = remainder == 0 ? 0 : page_bytes - remainder;
+  if (prefix > allocation_bytes || begin > UINTPTR_MAX - prefix)
+    return;
+  const uintptr_t first_complete_page = begin + prefix;
+  const uintptr_t end_complete_page = end - end % page_bytes;
+  if (end_complete_page <= first_complete_page)
+    return;
+  (void)::madvise(reinterpret_cast<void *>(first_complete_page),
+                  end_complete_page - first_complete_page, MADV_HUGEPAGE);
+#else
+  (void)allocation;
+  (void)allocation_bytes;
+#endif
+}
+
+// @unsafe - std::vector calls allocate before it constructs any element, so
+// the Linux hint reaches the holder mapping before default constructors fault
+// its pages. The standard allocator remains the sole owner and deallocator.
+template <typename T> struct huge_page_hint_allocator {
+  using value_type = T;
+
+  [[nodiscard]] T *allocate(size_t count) {
+    T *const allocation = std::allocator<T>{}.allocate(count);
+    if (count <= std::numeric_limits<size_t>::max() / sizeof(T))
+      advise_transparent_huge_pages(allocation, count * sizeof(T));
+    return allocation;
+  }
+
+  void deallocate(T *allocation, size_t count) noexcept {
+    std::allocator<T>{}.deallocate(allocation, count);
+  }
+
+  template <typename U>
+  constexpr bool operator==(
+      const huge_page_hint_allocator<U> &) const noexcept {
+    return true;
+  }
+};
+
 /* Queue-owned storage for the trusted callback-free one-Put terminal. The
  * fields are deliberately non-atomic. Rust's single producer exclusively owns
  * the sequence generation until it release-publishes the queue entry; the
@@ -183,7 +245,7 @@ struct mako_rust_fast_one_put_holder_pool {
 
   size_t capacity = 0;
   size_t mask = 0;
-  std::unique_ptr<holder[]> holders;
+  std::vector<holder, huge_page_hint_allocator<holder>> holders;
 };
 
 static_assert(mako_rust_fast_one_put_holder_pool::kInlineKeyBytes >= 16);
@@ -2104,6 +2166,7 @@ void bind_native_ordered_holder(record_bind_bridge *bridge) noexcept {
   assert(bridge->assign_sequence_natively);
   assert(bridge->holder_control != nullptr);
   assert(bridge->selected_holder == nullptr);
+  assert(bridge->record == nullptr);
   assert(bridge->sequence != 0);
   const auto &control = *bridge->holder_control;
   if (bridge->final_shape.bytes == 0 ||
@@ -2161,6 +2224,11 @@ void bind_native_ordered_holder(record_bind_bridge *bridge) noexcept {
                   offsetof(rust_publication_cell_layout, record_bytes),
               &no_record, sizeof(no_record));
   __atomic_store_n(turn, bound, __ATOMIC_RELEASE);
+  // The holder path does not serialize into `record`. Retain the exact
+  // publication address in that otherwise-unused bridge slot so the terminal
+  // can publish READY without repeating queue-control loads and ring address
+  // arithmetic after STO cleanup.
+  bridge->record = publication;
   bridge->selected_holder = &holder;
 }
 
@@ -2172,28 +2240,34 @@ void bind_native_ordered_holder(record_bind_bridge *bridge) noexcept {
 [[gnu::always_inline]] static inline void publish_native_ordered_holder_ready(
     const record_bind_bridge &bridge) noexcept {
   if (!bridge.assign_sequence_natively || bridge.holder_control == nullptr ||
-      bridge.selected_holder == nullptr || bridge.sequence == 0 ||
+      bridge.selected_holder == nullptr || bridge.record == nullptr ||
+      bridge.sequence == 0 ||
       bridge.ordered_timestamp_out == nullptr ||
       *bridge.ordered_timestamp_out == 0 || bridge.final_shape.bytes == 0 ||
       bridge.final_shape.bytes >= kRustNativeHolderRecordTag)
     std::abort();
 
-  const auto &control = *bridge.holder_control;
   const one_put_holder &holder = *bridge.selected_holder;
   if (holder.state != one_put_holder_state::sealed ||
       holder.sequence != bridge.sequence ||
       holder.mako_timestamp != *bridge.ordered_timestamp_out)
     std::abort();
 
+  uint8_t *const publication = bridge.record;
+  const uint32_t publication_shift =
+      bridge.holder_control->publication_shift;
+#ifndef NDEBUG
+  const auto &control = *bridge.holder_control;
   const size_t index =
       static_cast<size_t>(bridge.sequence) & control.publication_mask;
-  uint8_t *const publication =
-      control.publication_base + index * control.publication_stride;
+  assert(publication ==
+         control.publication_base + index * control.publication_stride);
+#endif
   auto *const turn = reinterpret_cast<uint64_t *>(publication);
   const uint64_t bound = rust_publication_turn(
-      bridge.sequence, control.publication_shift, kRustPublicationBound);
+      bridge.sequence, publication_shift, kRustPublicationBound);
   const uint64_t ready = rust_publication_turn(
-      bridge.sequence, control.publication_shift, kRustPublicationReady);
+      bridge.sequence, publication_shift, kRustPublicationReady);
   if (__atomic_load_n(turn, __ATOMIC_ACQUIRE) != bound)
     std::abort();
 
@@ -2963,7 +3037,7 @@ mako_rust_fast_one_put_holder_pool_create(
     auto pool = std::make_unique<mako_rust_fast_one_put_holder_pool>();
     pool->capacity = capacity;
     pool->mask = capacity - 1;
-    pool->holders = std::make_unique<one_put_holder[]>(capacity);
+    pool->holders.resize(capacity);
     if (key_reserve_bytes >
         mako_rust_fast_one_put_holder_pool::kInlineKeyBytes) {
       for (size_t index = 0; index != capacity; ++index)
@@ -3008,9 +3082,9 @@ mako_rust_fast_one_put_holder_pool_get_hot_layout(
   *holder_base_out = nullptr;
   *holder_mask_out = 0;
   if (pool == nullptr || !is_nonzero_power_of_two(pool->capacity) ||
-      pool->holders == nullptr)
+      pool->holders.size() != pool->capacity)
     return MAKO_LOCAL_INVALID_ARGUMENT;
-  *holder_base_out = pool->holders.get();
+  *holder_base_out = pool->holders.data();
   *holder_mask_out = pool->mask;
   return MAKO_LOCAL_OK;
 }
@@ -3475,7 +3549,13 @@ commit_native_ordered_holder_and_destroy(
     mako_local_txn *txn,
     const mako_rust_fast_native_ordered_holder_control &validated_control)
     noexcept {
-  mako_rust_fast_native_ordered_holder_control control = validated_control;
+  // This build-private terminal is synchronous and its unsafe Rust caller
+  // lends an immutable descriptor for the whole call. Borrow it in place so
+  // the common commit does not copy six pointer/scalar words into a second
+  // stack object. Mutating or ending that descriptor concurrently already
+  // violates the terminal's same-build lifetime contract.
+  const mako_rust_fast_native_ordered_holder_control &control =
+      validated_control;
   const auto &write = txn->record_fast_write;
   std::string prepared_overflow_key;
   if (write.key_length >
@@ -3494,7 +3574,7 @@ commit_native_ordered_holder_and_destroy(
   uint64_t ordered_sequence = 0;
   uint32_t accepted_timestamp = 0;
   uint8_t holder_sealed = 0;
-  record_bind_bridge bridge{txn, nullptr, &control, &holder_sealed};
+  record_bind_bridge bridge{txn, nullptr, nullptr, &holder_sealed};
   bridge.use_unchecked_one_put_serializer = true;
   bridge.native_unhealthy = control.unhealthy;
   bridge.ordered_sequence_out = &ordered_sequence;
@@ -3521,7 +3601,8 @@ commit_native_ordered_holder_and_destroy(
     const bool committed = Sto::try_commit_no_paxos(
         invoke_record_bind_hook, &bridge, &failure, &validation_gate);
     if (bridge.sequence != ordered_sequence ||
-        (bridge.sequence != 0 && bridge.selected_holder == nullptr))
+        (bridge.sequence != 0 &&
+         (bridge.selected_holder == nullptr || bridge.record == nullptr)))
       std::abort();
     if (bridge.sequence != 0) {
       preselected_one_put_holder_bridge seal_bridge{
@@ -3561,7 +3642,8 @@ commit_native_ordered_holder_and_destroy(
     }
   } catch (...) {
     if (bridge.sequence != ordered_sequence ||
-        (bridge.sequence != 0 && bridge.selected_holder == nullptr))
+        (bridge.sequence != 0 &&
+         (bridge.selected_holder == nullptr || bridge.record == nullptr)))
       std::abort();
     if (bridge.sequence != 0 && holder_sealed == 0) {
       preselected_one_put_holder_bridge seal_bridge{
@@ -3962,6 +4044,56 @@ mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_holder_and_destroy(
   return commit_native_ordered_holder_and_destroy(txn, *control);
 }
 
+// @unsafe - The private Rust wrapper obtained expected_record_bytes from the
+// immediately preceding fast Put and constructed control from the same live
+// write-back queue whose detached capacity permit it retains. No operation may
+// intervene, and the descriptor and all pointed-to storage must remain stable
+// through this synchronous call. Violating that contract is undefined; the
+// checked sibling above remains available to callers that need fail-closed
+// validation of arbitrary same-build inputs.
+MAKO_RUST_FAST_DEFINITION_HIDDEN mako_rust_fast_native_ordered_arena_result
+mako_rust_fast_txn_commit_trusted_native_ordered_unchecked_one_put_holder_and_destroy(
+    mako_local_txn *txn, uint32_t expected_record_bytes,
+    const mako_rust_fast_native_ordered_holder_control *control) noexcept {
+  assert(txn != nullptr);
+  assert(on_owner_thread(txn));
+  assert(!txn->poisoned);
+  assert(!local_worker_poisoned);
+  assert(txn->active);
+  assert(local_active_txn == txn);
+  assert(txn->fast_table_impl != nullptr);
+
+  // Native's compact witness is authoritative in release builds. Keep the
+  // complete transaction and queue audit in diagnostic builds without charging
+  // the same-build cache path for it on every commit.
+  const uint32_t exact_record_bytes = txn->record_fused_candidate_bytes;
+#ifndef NDEBUG
+  record_shape shape;
+  assert(packed_cache_order_allowed(txn->owner));
+  assert(expected_record_bytes != 0);
+  assert(expected_record_bytes <= kFastPutRecordBytesMax);
+  assert(expected_record_bytes == exact_record_bytes);
+  assert(valid_native_ordered_holder_control(control, exact_record_bytes));
+  assert(!txn->record_plan_sealed);
+  assert(!txn->record_plan_ready);
+  assert(txn->record_plan_bytes == 0);
+  assert(txn->record_plan_ops == 0);
+  assert(derive_fast_record_shape(
+      txn, MAKO_RUST_FAST_RECORD_CHECKSUM_NONE, &shape));
+  assert(shape.operations == 1);
+  assert(shape.bytes == exact_record_bytes);
+#else
+  (void)expected_record_bytes;
+#endif
+
+  txn->record_plan_bytes = exact_record_bytes;
+  txn->record_plan_ops = 1;
+  txn->record_plan_checksum_mode = MAKO_RUST_FAST_RECORD_CHECKSUM_NONE;
+  txn->record_plan_sealed = true;
+  txn->record_plan_ready = true;
+  return commit_native_ordered_holder_and_destroy(txn, *control);
+}
+
 MAKO_RUST_FAST_DEFINITION_HIDDEN uint64_t
 mako_rust_fast_txn_commit_unchecked_one_put_record_single_producer_and_destroy(
     mako_local_txn *txn, uint32_t expected_record_bytes,
@@ -4215,7 +4347,7 @@ mako_rust_fast_txn_try_commit_fused_one_put_holder_single_producer_and_destroy(
   assert(control != nullptr);
   assert(control->pool != nullptr);
   assert(control->holder_base != nullptr);
-  assert(control->holder_base == control->pool->holders.get());
+  assert(control->holder_base == control->pool->holders.data());
   assert(control->holder_mask == control->pool->mask);
   assert(control->acknowledged != nullptr);
   assert(control->unhealthy != nullptr);

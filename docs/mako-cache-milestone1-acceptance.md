@@ -107,12 +107,13 @@ foreground contention target. The dedicated writer and foreground CPU metric
 make that limitation visible without charging background replay CPU to a
 workload worker.
 
-Current functional evidence includes the 119/119 native `mako-cache` tests,
-13/13 fake-ABI tests under pinned Miri, 17/17 benchmark tests, the fresh
-hooks-off C++ suite with 75 passes and one expected hook-only skip, and 27/27
-supporting `mrx-ffi`, `mrx-masstree`, `mrx`, and `mtree-sys` tests. Two
-independent holder hot-path unsafe-code reviews reported no remaining
-actionable finding.
+Current functional evidence includes 142/142 native-backed `mako-cache` unit
+tests, 23/23 integration and Loom tests, 18/18 `mako-local` fake-ABI unit tests,
+the hooks-off C++ suite with 87 passes and one expected hook-only skip, and the
+canonical Goal-0 source gate. The combined required-native ASan/UBSan boundary
+gate also passes. The prior pinned-Miri, benchmark, and supporting-crate
+evidence remains applicable. Independent holder hot-path unsafe-code reviews
+reported no actionable finding.
 
 ## Four-worker hot-path follow-up
 
@@ -201,6 +202,59 @@ hashes, deltas, and artifact paths are in the
 SHA-256 `fdcbb2b25b8cb4a86871df9a85f7c889f3fcc131e5c4de4c82c01dde4375dcf6`.
 The released base-candidate binary hash was not available locally and is
 marked as such rather than reconstructed.
+
+### Second four-worker optimization pass
+
+A second pass retained the same transaction and acknowledgement contract while
+removing work that was not part of it. The C++ terminal now borrows its
+same-call descriptor instead of copying 48 bytes, and the cache uses a separate
+hidden trusted terminal whose omitted layout checks are proved by the safe Rust
+caller. The checked C ABI keeps its full release validation. The foreground
+path retains the exact BOUND publication pointer through READY instead of
+looking it up again. The concurrent queue no longer allocates or initializes
+the single-producer descriptor ring that it cannot use.
+
+The two dense hot arrays are now advised for transparent huge pages before
+their first touch: Rust's publication ring and C++'s stable holder vector. The
+advice covers only complete allocator-owned pages and is best effort. The
+benchmark does not set global `MALLOC_CONF`, so this does not rely on jemalloc
+advising unrelated mappings. A live process observation found 3,143,680 KiB of
+anonymous huge pages and 4,065,104 KiB RSS. Removing the unused concurrent
+descriptor ring reduced RSS by roughly one GiB from the preceding build.
+
+The final five-repetition medians are:
+
+| Path | Cycles/txn | Instructions/txn | ACK Mtxn/s |
+| --- | ---: | ---: | ---: |
+| Direct C++ STO/Masstree | 893.410 | 2,282.103 | 14.848 |
+| Raw fast C ABI, clean control rerun | 935.164 | 2,410.102 | 14.198 |
+| Cache before this pass | 1,605.047 | 3,373.624 | 7.004 |
+| Cache after this pass | 1,523.897 | 3,276.635 | 7.290 |
+
+Against the immediately preceding cache build, acknowledgement throughput is
+4.09% higher, cycles per commit are 5.06% lower, and instructions per commit
+are 2.87% lower. The final cache retains 51.35% of raw-C-ABI throughput. It
+still costs 588.7 extra cycles and 866.5 extra instructions per commit, so the
+95% target is not met at four workers. The final profile attributes the
+remaining gap primarily to required holder binding/publication and packed
+ordering. A specialized after-gate callback added about one instruction per
+transaction without improving cycles and was rejected. PGO remains a possible
+future whole-program optimization, not a requirement of this implementation.
+
+All paths used four disjoint workers, the same CPU placement, 65,536 warmup and
+1,048,576 ramp transactions per worker, and 2,097,152 measured transactions per
+worker. Every accepted cache sample committed exactly 8,388,608 transactions
+with zero conflicts and exact acknowledgement/queue watermarks. This is a
+foreground acknowledgement benchmark: RocksDB WAL is enabled with
+`sync=false`, writeback runs asynchronously on CPU 32, and teardown deliberately
+does not drain the queued tail. It is not a RocksDB apply or durability result.
+The rotated comparison had two externally slowed raw samples, so the raw row
+comes from an immediate five-repetition raw-only rerun using the identical
+binary and protocol; its rate CV was 0.91%.
+
+Exact samples, hashes, deltas, memory observations, and retained zoo-2 paths
+are in the [final four-worker report](benchmarks/mako-cache-w4-final-20260901.json),
+SHA-256 `012bb86b82e79eb0141d29258b9bdefdc22030c952e2313245a50f6a47673c8f`.
 
 ## Previous native-record and bounded-batching validation
 

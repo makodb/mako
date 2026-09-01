@@ -487,6 +487,13 @@ mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_holder_and_destroy(
     mako_local_txn *txn, uint32_t expected_record_bytes,
     const mako_rust_fast_native_ordered_holder_control *control)
     MAKO_RUST_FAST_NOEXCEPT;
+/* Same-build cache-only terminal. Unlike the checked sibling above, release
+ * builds trust the immediate fast-Put witness and queue-owned descriptor. */
+MAKO_RUST_FAST_HIDDEN mako_rust_fast_native_ordered_arena_result
+mako_rust_fast_txn_commit_trusted_native_ordered_unchecked_one_put_holder_and_destroy(
+    mako_local_txn *txn, uint32_t expected_record_bytes,
+    const mako_rust_fast_native_ordered_holder_control *control)
+    MAKO_RUST_FAST_NOEXCEPT;
 MAKO_RUST_FAST_HIDDEN uint64_t
 mako_rust_fast_txn_commit_unchecked_one_put_record_single_producer_and_destroy(
     mako_local_txn *txn, uint32_t expected_record_bytes,
