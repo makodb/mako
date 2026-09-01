@@ -190,6 +190,46 @@ class RunnerTests(unittest.TestCase):
         self.assertAlmostEqual(alignment["waited_seconds"], 0.3)
         self.assertEqual(sleep.call_count, 2)
 
+    def test_measurement_guard_window_excludes_unlogged_teardown(self) -> None:
+        stderr = "\n".join(
+            [
+                "20260901-03:54.46-957068(us) 1 ! run: start the running time, runTime:5",
+                "20260901-03:54.51-999802(us) 1 ! run: runtime_plus:0",
+                "20260901-03:54.53-25656(us) 1 * Stop: Already stopped",
+                "unlogged teardown after the result",
+            ]
+        )
+        started, finished = MODULE.benchmark_measurement_guard_window(stderr)
+        self.assertEqual(
+            started.strftime("%Y%m%d-%H:%M.%S-%f"),
+            "20260901-03:54.45-957068",
+        )
+        self.assertEqual(
+            finished.strftime("%Y%m%d-%H:%M.%S-%f"),
+            "20260901-03:54.53-025656",
+        )
+
+    def test_lxd_journal_activity_is_parsed_and_timestamped(self) -> None:
+        completed = SimpleNamespace(
+            returncode=0,
+            stdout=(
+                '{"__REALTIME_TIMESTAMP":"1788234926568345",'
+                '"MESSAGE":"Scheduled restart job"}\n'
+            ),
+            stderr="",
+        )
+        with mock.patch.object(MODULE.subprocess, "run", return_value=completed) as run:
+            activity = MODULE.read_lxd_journal_activity(
+                MODULE.datetime(2026, 9, 1, 3, 54, tzinfo=MODULE.timezone.utc),
+                MODULE.datetime(2026, 9, 1, 3, 55, tzinfo=MODULE.timezone.utc),
+            )
+
+        self.assertEqual(activity[0]["message"], "Scheduled restart job")
+        self.assertEqual(
+            activity[0]["observed_at_utc"], "2026-09-01T03:55:26.568345+00:00"
+        )
+        self.assertIn("--output=json", run.call_args.args[0])
+
     def test_aligned_quiet_window_restarts_alignment_after_noisy_opening(self) -> None:
         alignments = [
             {"restart_count_before": 10, "restart_count_after": 11},
@@ -353,6 +393,85 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(
             [window["pre_run_window"]["interval"] for window in engine_windows],
             ["first", "second"],
+        )
+
+    def test_measurement_scoped_guard_allows_restart_during_teardown(self) -> None:
+        args = SimpleNamespace(guard_lxd_during_measurement=True)
+        attempted = [result("cpp", 100.0), result("rust", 80.0)]
+        for record in attempted:
+            record["measurement_lxd_guard"] = {"journal_activity": []}
+        with (
+            mock.patch.object(
+                MODULE,
+                "wait_for_quiet_window",
+                return_value={"restart_count_after": 10},
+            ),
+            mock.patch.object(MODULE, "run_one", side_effect=attempted),
+            mock.patch.object(
+                MODULE, "read_lxd_restart_count", side_effect=[11, 12, 12]
+            ),
+            mock.patch.object(MODULE, "find_competing_processes", return_value=[]),
+        ):
+            accepted = MODULE.run_guarded_pair(
+                args,
+                ["cpp", "rust"],
+                threads=16,
+                repetition=0,
+                pair_id="pair-1",
+                first_run_order=1,
+            )
+
+        self.assertEqual([record["engine"] for record in accepted], ["cpp", "rust"])
+        self.assertEqual(
+            [
+                window["measurement_lxd_guard"]["journal_activity"]
+                for window in accepted[0]["guard"]["engine_windows"]
+            ],
+            [[], []],
+        )
+
+    def test_measurement_scoped_guard_retries_lxd_activity(self) -> None:
+        args = SimpleNamespace(guard_lxd_during_measurement=True)
+        attempted = [
+            result("cpp", 99.0),
+            result("cpp", 100.0),
+            result("rust", 80.0),
+        ]
+        attempted[0]["measurement_lxd_guard"] = {
+            "journal_activity": [{"message": "LXD restarted"}]
+        }
+        for record in attempted[1:]:
+            record["measurement_lxd_guard"] = {"journal_activity": []}
+        with (
+            mock.patch.object(
+                MODULE,
+                "wait_for_quiet_window",
+                side_effect=[
+                    {"restart_count_after": 10},
+                    {"restart_count_after": 20},
+                ],
+            ),
+            mock.patch.object(MODULE, "run_one", side_effect=attempted),
+            mock.patch.object(
+                MODULE,
+                "read_lxd_restart_count",
+                side_effect=[11, 11, 21, 22, 22],
+            ),
+            mock.patch.object(MODULE, "find_competing_processes", return_value=[]),
+            mock.patch.object(MODULE.time, "sleep"),
+        ):
+            accepted = MODULE.run_guarded_pair(
+                args,
+                ["cpp", "rust"],
+                threads=16,
+                repetition=0,
+                pair_id="pair-1",
+                first_run_order=1,
+            )
+
+        self.assertEqual(
+            accepted[0]["guard"]["rejected_attempts"][0]["reasons"],
+            ["cpp_lxd_activity_during_measurement"],
         )
 
     def test_guard_does_not_mask_an_uncontaminated_benchmark_failure(self) -> None:

@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import random
+import re
 import shlex
 import socket
 import statistics
@@ -16,7 +17,7 @@ import subprocess
 import sys
 import time
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -46,6 +47,20 @@ GUARD_CPU_IDLE_MIN_PERCENT = 95.0
 GUARD_MAX_ATTEMPTS = 20
 GUARD_RETRY_SECONDS = 0.25
 LXD_ALIGNMENT_TIMEOUT_SECONDS = 180.0
+# The benchmark starts its no-sync timer immediately before the timestamped
+# "start the running time" message. Include one second before that marker, then
+# conservatively guard through the last timestamped benchmark log record. This
+# excludes slow, unmeasured process teardown while still covering worker join,
+# elapsed-time capture, and result construction.
+MEASUREMENT_GUARD_LEAD_SECONDS = 1.0
+BENCHMARK_TIMESTAMP_RE = re.compile(
+    r"^(\d{8}-\d{2}:\d{2}\.\d{2}-\d{1,6})\(us\)", re.MULTILINE
+)
+BENCHMARK_MEASUREMENT_START_RE = re.compile(
+    r"^(\d{8}-\d{2}:\d{2}\.\d{2}-\d{1,6})\(us\).*"
+    r"start the running time, runTime:\d+\s*$",
+    re.MULTILINE,
+)
 RUNNER_PROCESS_NAMES = (
     "run_sto_tpcc_compare.py",
     "run_sto_masstree_compare.py",
@@ -221,10 +236,23 @@ def parse_args() -> argparse.Namespace:
             "equivalent fresh intervals"
         ),
     )
+    parser.add_argument(
+        "--guard-lxd-during-measurement",
+        action="store_true",
+        help=(
+            "permit LXD restarts during database setup or process teardown, "
+            "but reject journal activity during the timestamped benchmark "
+            "measurement/result window (requires restart alignment)"
+        ),
+    )
     args = parser.parse_args()
 
     if args.align_between_engines and not args.align_after_lxd_restart:
         parser.error("--align-between-engines requires --align-after-lxd-restart")
+    if args.guard_lxd_during_measurement and not args.align_after_lxd_restart:
+        parser.error(
+            "--guard-lxd-during-measurement requires --align-after-lxd-restart"
+        )
 
     if not args.binary.is_file() or not os.access(args.binary, os.X_OK):
         parser.error(f"benchmark is not executable: {args.binary}")
@@ -313,6 +341,110 @@ def read_lxd_restart_count() -> int:
             f"stderr={completed.stderr!r}"
         )
     return int(value)
+
+
+def parse_benchmark_timestamp(text: str) -> datetime:
+    """Parse the benchmark logger's local wall-clock timestamp."""
+    local_timezone = datetime.now().astimezone().tzinfo
+    wall_clock, microseconds = text.rsplit("-", maxsplit=1)
+    parsed = datetime.strptime(wall_clock, "%Y%m%d-%H:%M.%S")
+    value = int(microseconds)
+    if value < 0 or value > 999_999:
+        raise RuntimeError(f"invalid benchmark timestamp: {text!r}")
+    return parsed.replace(microsecond=value, tzinfo=local_timezone)
+
+
+def benchmark_measurement_guard_window(stderr: str) -> tuple[datetime, datetime]:
+    """Return a conservative interval covering all measured work.
+
+    The start marker follows timer construction and worker release by only a
+    few instructions, so the lead margin covers that gap. The last timestamped
+    benchmark record occurs after workers have joined and the elapsed interval
+    has been captured. Later unlogged destruction is outside the throughput
+    result and can be safely ignored.
+    """
+    start_matches = BENCHMARK_MEASUREMENT_START_RE.findall(stderr)
+    if len(start_matches) != 1:
+        raise RuntimeError(
+            "expected one timestamped benchmark measurement start marker, "
+            f"found {len(start_matches)}"
+        )
+    timestamps = [
+        parse_benchmark_timestamp(value)
+        for value in BENCHMARK_TIMESTAMP_RE.findall(stderr)
+    ]
+    if not timestamps:
+        raise RuntimeError("benchmark stderr contains no timestamped log records")
+    start = parse_benchmark_timestamp(start_matches[0]) - timedelta(
+        seconds=MEASUREMENT_GUARD_LEAD_SECONDS
+    )
+    end = max(timestamps)
+    if end <= start:
+        raise RuntimeError("benchmark measurement guard window is not positive")
+    return start, end
+
+
+def read_lxd_journal_activity(
+    started: datetime, finished: datetime
+) -> list[dict[str, str]]:
+    """Return LXD journal records within an absolute benchmark interval."""
+    command = [
+        "journalctl",
+        "--unit",
+        GUARD_LXD_UNIT,
+        "--since",
+        f"@{started.timestamp():.6f}",
+        "--until",
+        f"@{finished.timestamp():.6f}",
+        "--output=json",
+        "--no-pager",
+    ]
+    completed = subprocess.run(
+        command,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(
+            f"cannot read {GUARD_LXD_UNIT} journal: "
+            f"returncode={completed.returncode}, stdout={completed.stdout!r}, "
+            f"stderr={completed.stderr!r}"
+        )
+    activity: list[dict[str, str]] = []
+    for line in completed.stdout.splitlines():
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise RuntimeError(f"invalid journalctl JSON: {error}") from error
+        realtime = record.get("__REALTIME_TIMESTAMP")
+        message = record.get("MESSAGE")
+        if not isinstance(realtime, str) or not isinstance(message, str):
+            raise RuntimeError("LXD journal record lacks timestamp or message")
+        observed = datetime.fromtimestamp(
+            int(realtime) / 1_000_000, tz=timezone.utc
+        )
+        activity.append(
+            {
+                "observed_at_utc": observed.isoformat(),
+                "message": message,
+            }
+        )
+    return activity
+
+
+def capture_measurement_lxd_guard(stderr: str) -> dict[str, object]:
+    started, finished = benchmark_measurement_guard_window(stderr)
+    activity = read_lxd_journal_activity(started, finished)
+    return {
+        "started_at_utc": started.astimezone(timezone.utc).isoformat(),
+        "finished_at_utc": finished.astimezone(timezone.utc).isoformat(),
+        "lead_seconds": MEASUREMENT_GUARD_LEAD_SECONDS,
+        "journal_activity": activity,
+    }
 
 
 def read_cpu_times(cpus: list[int]) -> dict[int, tuple[int, int]]:
@@ -602,6 +734,9 @@ def run_one(
             f"see {stdout_path} and {stderr_path}"
         )
     result = extract_result(completed.stdout, engine)
+    measurement_lxd_guard = None
+    if getattr(args, "guard_lxd_during_measurement", False):
+        measurement_lxd_guard = capture_measurement_lxd_guard(completed.stderr)
     expected = {
         "threads": threads,
         "warehouses": threads,
@@ -627,6 +762,8 @@ def run_one(
             "stderr_log": stderr_path.name,
         }
     )
+    if measurement_lxd_guard is not None:
+        result["measurement_lxd_guard"] = measurement_lxd_guard
     return result
 
 
@@ -694,7 +831,24 @@ def run_guarded_pair(
                     f"{engine}_lxd_restart_count_unavailable"
                 )
             engine_windows[-1]["restart_count_after_run"] = restart_after_run
-            if restart_after_run is not None and restart_after_run != restart_before:
+            measurement_guard = attempted_results[-1].get("measurement_lxd_guard")
+            if getattr(args, "guard_lxd_during_measurement", False):
+                if not isinstance(measurement_guard, dict):
+                    intermediate_rejection_reasons.append(
+                        f"{engine}_measurement_lxd_guard_unavailable"
+                    )
+                else:
+                    engine_windows[-1]["measurement_lxd_guard"] = measurement_guard
+                    activity = measurement_guard.get("journal_activity")
+                    if not isinstance(activity, list):
+                        intermediate_rejection_reasons.append(
+                            f"{engine}_measurement_lxd_guard_invalid"
+                        )
+                    elif activity:
+                        intermediate_rejection_reasons.append(
+                            f"{engine}_lxd_activity_during_measurement"
+                        )
+            elif restart_after_run is not None and restart_after_run != restart_before:
                 intermediate_rejection_reasons.append(
                     f"{engine}_lxd_restart_count_changed"
                 )
@@ -719,7 +873,11 @@ def run_guarded_pair(
         except (OSError, RuntimeError, subprocess.TimeoutExpired):
             restart_after = None
             rejection_reasons.append("lxd_restart_count_unavailable")
-        if restart_after is not None and restart_after != restart_before:
+        if (
+            not getattr(args, "guard_lxd_during_measurement", False)
+            and restart_after is not None
+            and restart_after != restart_before
+        ):
             rejection_reasons.append("lxd_restart_count_changed")
 
         try:
@@ -895,6 +1053,7 @@ def main() -> int:
         "guard_cpus": benchmark_guard_cpus(args.physical_cpus),
         "align_after_lxd_restart": args.align_after_lxd_restart,
         "align_between_engines": args.align_between_engines,
+        "guard_lxd_during_measurement": args.guard_lxd_during_measurement,
         "git_commit": command_output(
             [
                 "git",
@@ -923,8 +1082,16 @@ def main() -> int:
             "pair, require a two-second quiet window with stable LXD restarts, "
             "at least 95% idle on every selected CPU and its SMT siblings, and "
             "no recognized competing STO/perf job. Reject and retry both "
-            "samples if the LXD counter changes or a competitor is present "
-            "after the pair."
+            "samples if a competitor is present after the pair."
+            + (
+                " LXD restarts during database setup or unmeasured process "
+                "teardown are permitted, but any LXD journal activity in a "
+                "conservative interval from one second before the benchmark "
+                "start marker through its last timestamped result-side log "
+                "record rejects the pair."
+                if args.guard_lxd_during_measurement
+                else " Any LXD restart before the process exits rejects the pair."
+            )
             + (
                 " Before every pair attempt, wait for the next LXD restart "
                 "before applying the quiet-window gate. Failed post-restart "
