@@ -49,6 +49,7 @@ pub(super) enum Call {
     FastRecordPreflight,
     FastRecordCommitDestroy,
     FastUncheckedOnePutRecordCommitDestroy,
+    FastNativeOrderedUncheckedOnePutRecordCommitDestroy,
     FastSingleProducerUncheckedOnePutRecordCommitDestroy,
     FastPreselectedSingleProducerUncheckedOnePutRecordCommitDestroy,
     FastOnePutHolderPoolCreate,
@@ -1230,6 +1231,130 @@ pub(super) unsafe fn mako_rust_fast_txn_commit_unchecked_one_put_record_and_dest
             record_written_out,
         )
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) unsafe fn mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_record_and_destroy(
+    _txn: *mut sys::mako_local_txn,
+    expected_record_bytes: u32,
+    next_bound: *mut u64,
+    unhealthy: *const u8,
+    hook: RecordBindHook,
+    context: *mut c_void,
+    ordered_sequence_out: *mut u64,
+    ordered_timestamp_out: *mut u32,
+    record_written_out: *mut u8,
+) -> u64 {
+    if !ordered_sequence_out.is_null() {
+        // SAFETY: the wrapper supplies a live scalar output.
+        unsafe { ordered_sequence_out.write(0) };
+    }
+    if !ordered_timestamp_out.is_null() {
+        // SAFETY: the wrapper supplies a live scalar output.
+        unsafe { ordered_timestamp_out.write(0) };
+    }
+    if !record_written_out.is_null() {
+        // SAFETY: the wrapper supplies a live scalar output.
+        unsafe { record_written_out.write(0) };
+    }
+    with_state(|state| {
+        state
+            .calls
+            .push(Call::FastNativeOrderedUncheckedOnePutRecordCommitDestroy);
+        state.last_unchecked_record_bytes = Some(expected_record_bytes);
+        let (commit, timestamp, exact_record_bytes, record, reported_written) =
+            match state.steps.pop_front() {
+                Some(Step::CommitRecord {
+                    status,
+                    timestamp,
+                    exact_record_bytes,
+                    record,
+                    reported_written,
+                }) => (
+                    status,
+                    timestamp,
+                    exact_record_bytes,
+                    record,
+                    reported_written,
+                ),
+                found => unexpected("fast native-ordered one-put record commit", found),
+            };
+
+        let exact_candidate = exact_record_bytes == expected_record_bytes as usize;
+        let healthy = !unhealthy.is_null() && unsafe { unhealthy.read() } == 0;
+        let mut sequence = 0u64;
+        let mut assigned = false;
+        if exact_candidate && healthy && timestamp.is_some() && !next_bound.is_null() {
+            // SAFETY: the wrapper passes the aligned storage of one live
+            // AtomicU64. The scripted fake is single-threaded, but uses the
+            // same atomic transition as the native terminal.
+            let tail = unsafe { AtomicU64::from_ptr(next_bound) };
+            if let Some(next) = tail.load(Ordering::Acquire).checked_add(1) {
+                tail.store(next, Ordering::Release);
+                sequence = next;
+                assigned = true;
+                if !ordered_sequence_out.is_null() {
+                    unsafe { ordered_sequence_out.write(sequence) };
+                }
+                if !ordered_timestamp_out.is_null() {
+                    unsafe { ordered_timestamp_out.write(timestamp.unwrap()) };
+                }
+            }
+        }
+
+        let mut returned_sequence = sequence;
+        let mut record_bytes = ptr::null_mut();
+        let mut record_capacity = 0usize;
+        let callback_timestamp = timestamp.filter(|raw| *raw <= crate::MAX_MAKO_TIMESTAMP);
+        let accepted = match (assigned, hook, callback_timestamp) {
+            (true, Some(hook), Some(timestamp)) => {
+                // SAFETY: the wrapper retains every pointer and callback value
+                // throughout this synchronous fake invocation.
+                (unsafe {
+                    hook(
+                        context,
+                        timestamp,
+                        exact_record_bytes,
+                        &mut returned_sequence,
+                        &mut record_bytes,
+                        &mut record_capacity,
+                    )
+                }) != 0
+            }
+            _ => false,
+        };
+        let valid_binding = accepted
+            && returned_sequence == sequence
+            && sequence != 0
+            && !record_bytes.is_null()
+            && record_capacity >= exact_record_bytes
+            && record.len() == exact_record_bytes;
+        let initialize_record = reported_written != Some(0);
+        let actual_written = if valid_binding && initialize_record {
+            if exact_record_bytes != 0 {
+                unsafe {
+                    ptr::copy_nonoverlapping(record.as_ptr(), record_bytes, exact_record_bytes)
+                };
+            }
+            1
+        } else {
+            0
+        };
+        if !record_written_out.is_null() {
+            unsafe { record_written_out.write(reported_written.unwrap_or(actual_written)) };
+        }
+
+        let cleanup = match state.steps.pop_front() {
+            Some(Step::Destroy(status)) => status,
+            found => unexpected("fast native-ordered one-put cleanup", found),
+        };
+        observe_status(state, commit);
+        observe_status(state, cleanup);
+        if cleanup == sys::MAKO_LOCAL_OK {
+            state.txn = None;
+        }
+        u64::from(commit as u32) | (u64::from(cleanup as u32) << 32)
+    })
 }
 
 pub(super) unsafe fn mako_rust_fast_txn_commit_unchecked_one_put_record_single_producer_and_destroy(
@@ -2811,6 +2936,191 @@ mod tests {
         assert_drained();
     }
 
+    fn exercise_native_ordered_one_put_record_terminal() {
+        const EXACT_BYTES: u32 = 43 + 3 + 5;
+
+        reset();
+        let db = open_db();
+        let table = db.open_table("trusted-native-ordered-record", 90).unwrap();
+        let mut transaction = db.trusted_transaction(&table).unwrap();
+        push(Step::Put(ByteReply {
+            status: sys::MAKO_LOCAL_OK,
+            value: 1,
+            unchecked_record_bytes: EXACT_BYTES,
+        }));
+        assert_eq!(transaction.put(&table, b"key", b"value"), Ok(true));
+        let candidate = transaction.unchecked_one_put_record_candidate().unwrap();
+        let expected = vec![0x3d; EXACT_BYTES as usize];
+        push(Step::CommitRecord {
+            status: sys::MAKO_LOCAL_OK,
+            timestamp: Some(91),
+            exact_record_bytes: EXACT_BYTES as usize,
+            record: expected.clone(),
+            reported_written: None,
+        });
+        push(Step::Destroy(sys::MAKO_LOCAL_OK));
+        let next_bound = AtomicU64::new(10);
+        let unhealthy = AtomicBool::new(false);
+        let mut storage = vec![std::mem::MaybeUninit::<u8>::uninit(); EXACT_BYTES as usize];
+        let outcome = unsafe {
+            transaction.commit_trusted_native_ordered_unchecked_one_put_record_target(
+                candidate,
+                &next_bound,
+                &unhealthy,
+                |timestamp, bounds, sequence| {
+                    assert_eq!(timestamp.get(), 91);
+                    assert_eq!(bounds, candidate);
+                    assert_eq!(sequence.get(), 11);
+                    let bytes =
+                        std::ptr::NonNull::new(storage.as_mut_ptr().cast::<u8>()).unwrap();
+                    Some(crate::CommitRecordTarget::from_raw_parts(
+                        sequence,
+                        bytes,
+                        storage.len(),
+                    ))
+                },
+            )
+        };
+        assert!(outcome.order_witness_valid());
+        assert_eq!(
+            outcome.accepted_order().map(|(timestamp, sequence)| (
+                timestamp.get(),
+                sequence.get()
+            )),
+            Some((91, 11))
+        );
+        assert!(outcome.is_committed());
+        let report = outcome.into_report();
+        assert!(report.completion_contract_valid);
+        assert!(report.record_bound);
+        assert!(report.record_written);
+        assert_eq!(next_bound.load(Ordering::Acquire), 11);
+        assert_call_count(Call::FastNativeOrderedUncheckedOnePutRecordCommitDestroy, 1);
+        let written = unsafe {
+            std::slice::from_raw_parts(storage.as_ptr().cast::<u8>(), storage.len())
+        };
+        assert_eq!(written, expected);
+        drop(db);
+        assert_drained();
+
+        // A claimed completion witness without a target must never make the
+        // compact fast-path predicate publish uninitialized arena bytes.
+        reset();
+        let db = open_db();
+        let table = db.open_table("trusted-native-ordered-malformed", 91).unwrap();
+        let mut transaction = db.trusted_transaction(&table).unwrap();
+        push(Step::Put(ByteReply {
+            status: sys::MAKO_LOCAL_OK,
+            value: 1,
+            unchecked_record_bytes: EXACT_BYTES,
+        }));
+        transaction.put(&table, b"key", b"value").unwrap();
+        let candidate = transaction.unchecked_one_put_record_candidate().unwrap();
+        push(Step::CommitRecord {
+            status: sys::MAKO_LOCAL_OK,
+            timestamp: Some(92),
+            exact_record_bytes: EXACT_BYTES as usize,
+            record: vec![0x7e; EXACT_BYTES as usize],
+            reported_written: Some(1),
+        });
+        push(Step::Destroy(sys::MAKO_LOCAL_OK));
+        let next_bound = AtomicU64::new(20);
+        let unhealthy = AtomicBool::new(false);
+        let outcome = unsafe {
+            transaction.commit_trusted_native_ordered_unchecked_one_put_record_target(
+                candidate,
+                &next_bound,
+                &unhealthy,
+                |_, _, _| None,
+            )
+        };
+        assert!(!outcome.is_committed());
+        assert_eq!(outcome.accepted_order().unwrap().1.get(), 21);
+        let report = outcome.into_report();
+        assert!(!report.completion_contract_valid);
+        assert!(report.record_bound);
+        assert!(!report.record_written);
+        drop(db);
+        assert_drained();
+
+        reset();
+        let db = open_db();
+        let table = db.open_table("trusted-native-ordered-exhausted", 92).unwrap();
+        let mut transaction = db.trusted_transaction(&table).unwrap();
+        push(Step::Put(ByteReply {
+            status: sys::MAKO_LOCAL_OK,
+            value: 1,
+            unchecked_record_bytes: EXACT_BYTES,
+        }));
+        transaction.put(&table, b"key", b"value").unwrap();
+        let candidate = transaction.unchecked_one_put_record_candidate().unwrap();
+        push(Step::CommitRecord {
+            status: sys::MAKO_LOCAL_COMMIT_HOOK_REJECTED,
+            timestamp: Some(93),
+            exact_record_bytes: EXACT_BYTES as usize,
+            record: vec![0; EXACT_BYTES as usize],
+            reported_written: None,
+        });
+        push(Step::Destroy(sys::MAKO_LOCAL_OK));
+        let next_bound = AtomicU64::new(u64::MAX);
+        let unhealthy = AtomicBool::new(false);
+        let outcome = unsafe {
+            transaction.commit_trusted_native_ordered_unchecked_one_put_record_target(
+                candidate,
+                &next_bound,
+                &unhealthy,
+                |_, _, _| panic!("an exhausted tail must reject before target binding"),
+            )
+        };
+        assert!(outcome.order_witness_valid());
+        assert!(outcome.accepted_order().is_none());
+        let report = outcome.into_report();
+        assert!(report.completion_contract_valid);
+        assert!(!report.record_bound);
+        assert!(!report.record_written);
+        assert_eq!(next_bound.load(Ordering::Acquire), u64::MAX);
+        drop(db);
+        assert_drained();
+
+        reset();
+        let db = open_db();
+        let table = db.open_table("trusted-native-ordered-bad-timestamp", 93).unwrap();
+        let mut transaction = db.trusted_transaction(&table).unwrap();
+        push(Step::Put(ByteReply {
+            status: sys::MAKO_LOCAL_OK,
+            value: 1,
+            unchecked_record_bytes: EXACT_BYTES,
+        }));
+        transaction.put(&table, b"key", b"value").unwrap();
+        let candidate = transaction.unchecked_one_put_record_candidate().unwrap();
+        push(Step::CommitRecord {
+            status: sys::MAKO_LOCAL_COMMIT_HOOK_REJECTED,
+            timestamp: Some(crate::MAX_MAKO_TIMESTAMP + 1),
+            exact_record_bytes: EXACT_BYTES as usize,
+            record: vec![0; EXACT_BYTES as usize],
+            reported_written: None,
+        });
+        push(Step::Destroy(sys::MAKO_LOCAL_OK));
+        let next_bound = AtomicU64::new(30);
+        let unhealthy = AtomicBool::new(false);
+        let outcome = unsafe {
+            transaction.commit_trusted_native_ordered_unchecked_one_put_record_target(
+                candidate,
+                &next_bound,
+                &unhealthy,
+                |_, _, _| None,
+            )
+        };
+        assert!(!outcome.order_witness_valid());
+        assert!(outcome.accepted_order().is_none());
+        let report = outcome.into_report();
+        assert!(!report.completion_contract_valid);
+        assert!(report.record_bound);
+        assert!(!report.record_written);
+        drop(db);
+        assert_drained();
+    }
+
     fn exercise_unchecked_one_put_outcome_contract() {
         const EXACT_BYTES: u32 = 43 + 3 + 5;
 
@@ -4115,6 +4425,7 @@ mod tests {
         exercise_commit_record_happy_path_and_empty_plan();
         exercise_commit_record_raw_target_path();
         exercise_unchecked_one_put_record_terminal();
+        exercise_native_ordered_one_put_record_terminal();
         exercise_unchecked_one_put_outcome_contract();
         exercise_preselected_one_put_record_terminal();
         exercise_preselected_one_put_holder_terminal();

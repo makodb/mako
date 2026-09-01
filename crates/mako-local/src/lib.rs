@@ -178,6 +178,18 @@ mod fast_abi {
             record_written_out: *mut u8,
         ) -> u64;
 
+        pub(super) fn mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_record_and_destroy(
+            txn: *mut sys::mako_local_txn,
+            expected_record_bytes: u32,
+            next_bound: *mut u64,
+            unhealthy: *const u8,
+            hook: RecordBindHook,
+            context: *mut c_void,
+            ordered_sequence_out: *mut u64,
+            ordered_timestamp_out: *mut u32,
+            record_written_out: *mut u8,
+        ) -> u64;
+
         pub(super) fn mako_rust_fast_txn_commit_unchecked_one_put_record_single_producer_and_destroy(
             txn: *mut sys::mako_local_txn,
             expected_record_bytes: u32,
@@ -805,6 +817,69 @@ impl TrustedUncheckedOnePutRecordOutcome {
             record_bound,
             record_written: contract_valid && witness_claimed,
         }
+    }
+}
+
+/// Compact outcome for native-assigned concurrent cache ordering.
+///
+/// Native writes the accepted Mako timestamp and dense cache sequence while
+/// holding the same validation ticket, then invokes the target callback only
+/// after releasing that ticket. A nonzero pair must be adopted and published
+/// or pinned even when the callback was not reached.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy)]
+#[must_use = "an accepted native order must be adopted before acknowledgement"]
+pub struct TrustedNativeOrderedOnePutRecordOutcome {
+    inner: TrustedUncheckedOnePutRecordOutcome,
+    ordered_sequence: u64,
+    ordered_timestamp: u32,
+    target_bound: bool,
+}
+
+impl TrustedNativeOrderedOnePutRecordOutcome {
+    /// Whether native returned either no order or one complete timestamp/sequence pair.
+    #[inline(always)]
+    pub const fn order_witness_valid(self) -> bool {
+        if self.ordered_sequence == 0 {
+            self.ordered_timestamp == 0
+        } else {
+            self.ordered_timestamp != 0 && self.ordered_timestamp <= MAX_MAKO_TIMESTAMP
+        }
+    }
+
+    /// Return the accepted timestamp/sequence pair, if native assigned one.
+    ///
+    /// A one-zero/one-nonzero pair is malformed same-build ABI state. It is
+    /// omitted here and makes [`Self::into_report`] fail its completion
+    /// contract so the cache terminates rather than losing an obligation.
+    #[inline(always)]
+    pub fn accepted_order(self) -> Option<(MakoTimestamp, NonZeroU64)> {
+        Some((
+            MakoTimestamp::new(self.ordered_timestamp)?,
+            NonZeroU64::new(self.ordered_sequence)?,
+        ))
+    }
+
+    /// Whether native committed, cleaned up, and completed the ordered target.
+    #[inline(always)]
+    pub const fn is_committed(self) -> bool {
+        self.order_witness_valid()
+            && self.ordered_sequence != 0
+            && self.target_bound
+            && self.inner.is_committed()
+    }
+
+    /// Decode the cold fail-closed completion report.
+    #[cold]
+    #[inline(never)]
+    pub fn into_report(self) -> CommitRecordReport {
+        let order_pair_valid = self.order_witness_valid();
+        let mut report = self.inner.into_report();
+        if !order_pair_valid || (self.inner.record_written == 1 && !self.target_bound) {
+            report.completion_contract_valid = false;
+            report.record_written = false;
+        }
+        report
     }
 }
 
@@ -3448,6 +3523,91 @@ impl<'db> Transaction<'db> {
         }
     }
 
+    /// Commit one verified one-Put while native assigns the cache sequence.
+    ///
+    /// The LocalDb validation ticket pairs Mako timestamp allocation with an
+    /// advance of `next_bound`. Native releases that ticket before invoking
+    /// `acquire`, which receives the already-assigned dense sequence and lends
+    /// its exact target for serialization-before-install.
+    ///
+    /// # Safety
+    ///
+    /// Every target and transaction requirement of
+    /// [`Self::commit_trusted_unchecked_one_put_record_target`] applies.
+    /// `next_bound` and `unhealthy` must belong to the one write-back queue
+    /// used by every cache-record terminal for this LocalDb and must remain
+    /// alive through this synchronous call. No independent allocator may
+    /// modify `next_bound` outside the same validation-ticket protocol.
+    /// Whenever the returned outcome exposes an accepted order, the caller
+    /// must adopt and publish or pin that exact sequence, including when
+    /// `acquire` was not reached.
+    #[doc(hidden)]
+    pub unsafe fn commit_trusted_native_ordered_unchecked_one_put_record_target<F>(
+        mut self,
+        candidate: CommitRecordPreflight,
+        next_bound: &AtomicU64,
+        unhealthy: &AtomicBool,
+        acquire: F,
+    ) -> TrustedNativeOrderedOnePutRecordOutcome
+    where
+        F: FnOnce(MakoTimestamp, CommitRecordPreflight, NonZeroU64) -> Option<CommitRecordTarget>,
+    {
+        debug_assert!(self.fast_bound_table.is_some());
+        debug_assert!(self.record_preflight.is_none());
+        debug_assert!(self.active);
+        debug_assert!(self.raw.is_some());
+        debug_assert!(!candidate.is_empty());
+        debug_assert_eq!(candidate.op_count, 1);
+        debug_assert_eq!(candidate.checksum, CommitRecordChecksum::None);
+        debug_assert_ne!(candidate.exact_record_bytes, 0);
+        debug_assert!(candidate.exact_record_bytes <= u32::MAX as usize);
+        debug_assert_eq!(
+            NonZeroU32::new(candidate.exact_record_bytes as u32),
+            self.unchecked_one_put_record_bytes
+        );
+
+        // SAFETY: this trusted terminal consumes the live thread-affine handle
+        // on every outcome. The method contract keeps both atomic words and
+        // any callback target valid for the whole synchronous call.
+        let raw = unsafe { self.raw.take().unwrap_unchecked() };
+        self.active = false;
+        let mut state = NativeOrderedRecordTargetBindHook {
+            hook: Some(acquire),
+            preflight: candidate,
+            bound: false,
+        };
+        let mut ordered_sequence = 0u64;
+        let mut ordered_timestamp = 0u32;
+        let mut record_written = 0u8;
+        // SAFETY: all raw addresses point to naturally aligned, live Rust
+        // atomic/stack storage, and the callback state remains pinned here
+        // until native has returned.
+        let packed = unsafe {
+            fast_abi::mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_record_and_destroy(
+                raw.as_ptr(),
+                candidate.exact_record_bytes as u32,
+                next_bound.as_ptr(),
+                unhealthy.as_ptr().cast::<u8>(),
+                Some(native_ordered_one_put_record_target_bind_trampoline::<F>),
+                std::ptr::from_mut(&mut state).cast::<c_void>(),
+                &mut ordered_sequence,
+                &mut ordered_timestamp,
+                &mut record_written,
+            )
+        };
+        debug_assert!(!state.bound || ordered_sequence != 0);
+        TrustedNativeOrderedOnePutRecordOutcome {
+            inner: TrustedUncheckedOnePutRecordOutcome {
+                packed,
+                record_bound: ordered_sequence != 0,
+                record_written,
+            },
+            ordered_sequence,
+            ordered_timestamp,
+            target_bound: state.bound,
+        }
+    }
+
     /// Commit one verified one-Put candidate under external single-producer
     /// exclusion.
     ///
@@ -4180,6 +4340,12 @@ struct RecordTargetBindHook<F> {
     bound: bool,
 }
 
+struct NativeOrderedRecordTargetBindHook<F> {
+    hook: Option<F>,
+    preflight: CommitRecordPreflight,
+    bound: bool,
+}
+
 unsafe extern "C" fn post_validate_trampoline<F>(context: *mut c_void, raw_timestamp: u32) -> i32
 where
     F: FnOnce(MakoTimestamp) -> bool,
@@ -4397,6 +4563,63 @@ where
     // reserved for the candidate through the synchronous native terminal.
     unsafe {
         sequence_out.write(target.sequence.get());
+        record_bytes_out.write(target.bytes.as_ptr());
+        record_capacity_out.write(target.exact_record_bytes);
+    }
+    state.bound = true;
+    1
+}
+
+/// Trusted post-ticket target binder for the native-assigned sequence path.
+///
+/// Native initializes `sequence_in_out` to the sequence paired with
+/// `raw_timestamp` under its validation ticket. The callback adopts that exact
+/// queue generation and returns its stable arena target after the ticket has
+/// already been released.
+#[allow(clippy::too_many_arguments)]
+unsafe extern "C" fn native_ordered_one_put_record_target_bind_trampoline<F>(
+    context: *mut c_void,
+    raw_timestamp: u32,
+    exact_record_bytes: usize,
+    sequence_in_out: *mut u64,
+    record_bytes_out: *mut *mut u8,
+    record_capacity_out: *mut usize,
+) -> i32
+where
+    F: FnOnce(MakoTimestamp, CommitRecordPreflight, NonZeroU64) -> Option<CommitRecordTarget>,
+{
+    debug_assert!(!context.is_null());
+    debug_assert!(!sequence_in_out.is_null());
+    debug_assert!(!record_bytes_out.is_null());
+    debug_assert!(!record_capacity_out.is_null());
+    debug_assert!(MakoTimestamp::new(raw_timestamp).is_some());
+
+    // SAFETY: the private terminal passes this exact live stack state and
+    // invokes the callback synchronously at most once after retiring its gate.
+    let state = unsafe { &mut *context.cast::<NativeOrderedRecordTargetBindHook<F>>() };
+    debug_assert_eq!(exact_record_bytes, state.preflight.exact_record_bytes);
+    // SAFETY: native assigned both scalars under the gate and guarantees they
+    // are nonzero before reaching this callback.
+    let timestamp = MakoTimestamp(unsafe { NonZeroU32::new_unchecked(raw_timestamp) });
+    let ordered_sequence = unsafe { sequence_in_out.read() };
+    debug_assert_ne!(ordered_sequence, 0);
+    let ordered_sequence = unsafe { NonZeroU64::new_unchecked(ordered_sequence) };
+    // SAFETY: this private callback is invoked once for the live state.
+    let hook = unsafe { state.hook.take().unwrap_unchecked() };
+    let Some(target) = hook(timestamp, state.preflight, ordered_sequence) else {
+        return 0;
+    };
+    if target.sequence != ordered_sequence || target.exact_record_bytes != exact_record_bytes {
+        // The callback may already have adopted the native-assigned dense
+        // generation. Returning a retryable rejection would risk releasing
+        // that obligation during unwinding, so terminate fail-closed.
+        std::process::abort();
+    }
+
+    // SAFETY: the target contract guarantees writable output pointers and a
+    // stable exact arena extent through native serialization.
+    unsafe {
+        sequence_in_out.write(target.sequence.get());
         record_bytes_out.write(target.bytes.as_ptr());
         record_capacity_out.write(target.exact_record_bytes);
     }

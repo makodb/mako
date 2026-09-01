@@ -57,6 +57,8 @@ struct alignas(64) record_validation_counter {
   std::atomic<uint64_t> value{0};
 };
 static_assert(sizeof(record_validation_counter) == 64);
+static_assert(__atomic_always_lock_free(sizeof(uint64_t), nullptr),
+              "the private Rust/native queue-tail seam requires lock-free u64 atomics");
 
 struct mako_local_db {
   // Record commits for one cache/database share this allocation-free ticket
@@ -1450,6 +1452,14 @@ struct record_bind_bridge {
   bool validation_gate_held = false;
   bool use_direct_write = false;
   bool use_unchecked_one_put_serializer = false;
+  // The restricted concurrent terminal lends native the queue tail and health
+  // atomics. Its ticket assigns timestamp and sequence together; publication
+  // cell binding and serialization follow only after the ticket is retired.
+  uint64_t *native_next_bound = nullptr;
+  const uint8_t *native_unhealthy = nullptr;
+  uint64_t *ordered_sequence_out = nullptr;
+  uint32_t *ordered_timestamp_out = nullptr;
+  bool assign_sequence_natively = false;
 };
 
 void record_validation_cpu_relax() noexcept {
@@ -1693,6 +1703,30 @@ bool invoke_record_bind_hook(void *opaque, uint32_t timestamp) noexcept {
     bridge->use_direct_write = true;
   }
 
+  if (bridge->assign_sequence_natively) {
+    assert(bridge->native_next_bound != nullptr);
+    assert(bridge->native_unhealthy != nullptr);
+    assert(bridge->ordered_sequence_out != nullptr);
+    assert(bridge->ordered_timestamp_out != nullptr);
+    // These words are Rust atomics borrowed for this synchronous same-build
+    // terminal. The validation ticket is the unique sequence writer; matching
+    // compiler atomics preserve the queue's health and tail ordering without a
+    // C++-to-Rust callback in the critical section.
+    if (__atomic_load_n(bridge->native_unhealthy, __ATOMIC_ACQUIRE) != 0)
+      return false;
+    const uint64_t previous =
+        __atomic_load_n(bridge->native_next_bound, __ATOMIC_ACQUIRE);
+    if (previous == UINT64_MAX)
+      return false;
+    const uint64_t sequence = previous + UINT64_C(1);
+    __atomic_store_n(bridge->native_next_bound, sequence, __ATOMIC_RELEASE);
+    bridge->final_shape = final_shape;
+    bridge->sequence = sequence;
+    *bridge->ordered_timestamp_out = timestamp;
+    *bridge->ordered_sequence_out = sequence;
+    return true;
+  }
+
   uint64_t sequence = 0;
   uint8_t *record = nullptr;
   size_t capacity = 0;
@@ -1722,6 +1756,23 @@ bool serialize_bound_record_after_gate(void *opaque,
   auto *bridge = static_cast<record_bind_bridge *>(opaque);
   assert(!bridge->validation_gate_held);
   assert(bridge->sequence != 0);
+  if (bridge->assign_sequence_natively) {
+    uint64_t returned_sequence = bridge->sequence;
+    uint8_t *record = nullptr;
+    size_t capacity = 0;
+    try {
+      if (bridge->hook(bridge->context, timestamp,
+                       bridge->final_shape.bytes, &returned_sequence, &record,
+                       &capacity) == 0)
+        return false;
+    } catch (...) {
+      return false;
+    }
+    if (returned_sequence != bridge->sequence || record == nullptr ||
+        capacity < bridge->final_shape.bytes)
+      return false;
+    bridge->record = record;
+  }
   assert(bridge->record != nullptr);
   const bool serialized = bridge->use_unchecked_one_put_serializer
       ? serialize_unchecked_one_put_cache_record(
@@ -2721,11 +2772,15 @@ reject_fast_preselected_record_terminal(mako_local_txn *txn) noexcept {
 [[gnu::always_inline]] static inline uint64_t commit_ready_record_and_destroy(
     mako_local_txn *txn, mako_rust_fast_record_bind_hook bind_hook,
     void *context, uint8_t *record_written_out,
-    bool unchecked_one_put,
+    bool unchecked_one_put, bool acquire_gate_after_validation = false,
     Transaction::commit_validation_gate::callback enter_validation_gate =
         enter_record_validation_gate,
     Transaction::commit_validation_gate::callback leave_validation_gate =
-        leave_record_validation_gate) noexcept {
+        leave_record_validation_gate,
+    uint64_t *native_next_bound = nullptr,
+    const uint8_t *native_unhealthy = nullptr,
+    uint64_t *ordered_sequence_out = nullptr,
+    uint32_t *ordered_timestamp_out = nullptr) noexcept {
   int status = MAKO_LOCAL_INTERNAL;
   try {
 #if defined(MAKO_LOCAL_TEST_HOOKS)
@@ -2735,9 +2790,15 @@ reject_fast_preselected_record_terminal(mako_local_txn *txn) noexcept {
         Transaction::preinstall_failure::none;
     record_bind_bridge bridge{txn, bind_hook, context, record_written_out};
     bridge.use_unchecked_one_put_serializer = unchecked_one_put;
+    bridge.native_next_bound = native_next_bound;
+    bridge.native_unhealthy = native_unhealthy;
+    bridge.ordered_sequence_out = ordered_sequence_out;
+    bridge.ordered_timestamp_out = ordered_timestamp_out;
+    bridge.assign_sequence_natively = native_next_bound != nullptr;
     const Transaction::commit_validation_gate validation_gate{
         enter_validation_gate, leave_validation_gate,
-        serialize_bound_record_after_gate, &bridge};
+        serialize_bound_record_after_gate, &bridge,
+        acquire_gate_after_validation};
     const bool committed = Sto::try_commit_no_paxos(
         invoke_record_bind_hook, &bridge, &failure, &validation_gate);
     finish_txn_known<true>(txn);
@@ -2970,7 +3031,54 @@ mako_rust_fast_txn_commit_unchecked_one_put_record_and_destroy(
   txn->record_plan_sealed = true;
   txn->record_plan_ready = true;
   return commit_ready_record_and_destroy(txn, bind_hook, context,
-                                         record_written_out, true);
+                                         record_written_out, true,
+                                         TThread::txn
+                                             ->can_order_record_after_validation());
+}
+
+MAKO_RUST_FAST_DEFINITION_HIDDEN uint64_t
+mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_record_and_destroy(
+    mako_local_txn *txn, uint32_t expected_record_bytes,
+    uint64_t *next_bound, const uint8_t *unhealthy,
+    mako_rust_fast_record_bind_hook bind_hook, void *context,
+    uint64_t *ordered_sequence_out, uint32_t *ordered_timestamp_out,
+    uint8_t *record_written_out) noexcept {
+  assert(txn != nullptr);
+  assert(on_owner_thread(txn));
+  assert(!txn->poisoned);
+  assert(!local_worker_poisoned);
+  assert(txn->active);
+  assert(local_active_txn == txn);
+  assert(txn->fast_table_impl != nullptr);
+
+  if (ordered_sequence_out != nullptr) *ordered_sequence_out = 0;
+  if (ordered_timestamp_out != nullptr) *ordered_timestamp_out = 0;
+  if (record_written_out != nullptr) *record_written_out = 0;
+  record_shape shape;
+  if (next_bound == nullptr || unhealthy == nullptr || bind_hook == nullptr ||
+      context == nullptr || ordered_sequence_out == nullptr ||
+      ordered_timestamp_out == nullptr || record_written_out == nullptr ||
+      reinterpret_cast<uintptr_t>(next_bound) % alignof(uint64_t) != 0 ||
+      expected_record_bytes == 0 ||
+      expected_record_bytes > kFastPutRecordBytesMax ||
+      txn->record_plan_sealed || txn->record_plan_ready ||
+      txn->record_plan_bytes != 0 || txn->record_plan_ops != 0 ||
+      !derive_fast_record_shape(
+          txn, MAKO_RUST_FAST_RECORD_CHECKSUM_NONE, &shape) ||
+      shape.operations != 1 || shape.bytes != expected_record_bytes) {
+    return reject_fast_record_terminal(txn);
+  }
+
+  txn->record_plan_bytes = shape.bytes;
+  txn->record_plan_ops = shape.operations;
+  txn->record_plan_checksum_mode = MAKO_RUST_FAST_RECORD_CHECKSUM_NONE;
+  txn->record_plan_sealed = true;
+  txn->record_plan_ready = true;
+  return commit_ready_record_and_destroy(
+      txn, bind_hook, context, record_written_out, true,
+      TThread::txn->can_order_record_after_validation(),
+      enter_record_validation_gate, leave_record_validation_gate, next_bound,
+      unhealthy, ordered_sequence_out, ordered_timestamp_out);
 }
 
 MAKO_RUST_FAST_DEFINITION_HIDDEN uint64_t
@@ -3013,7 +3121,7 @@ mako_rust_fast_txn_commit_unchecked_one_put_record_single_producer_and_destroy(
   txn->record_plan_sealed = true;
   txn->record_plan_ready = true;
   return commit_ready_record_and_destroy(
-      txn, bind_hook, context, record_written_out, true,
+      txn, bind_hook, context, record_written_out, true, false,
       enter_single_producer_record_validation_gate,
       leave_single_producer_record_validation_gate);
 }
@@ -3444,6 +3552,16 @@ mako_rust_fast_test_record_validation_wait_observations(
              ? 0
              : db->record_validation_wait_observations.load(
                    std::memory_order_acquire);
+}
+
+MAKO_RUST_FAST_DEFINITION_HIDDEN uint8_t
+mako_rust_fast_test_txn_can_order_record_after_validation(
+    const mako_local_txn *txn) noexcept {
+  if (txn == nullptr || !txn->active || txn->poisoned ||
+      !on_owner_thread(txn) || local_active_txn != txn ||
+      TThread::txn == nullptr)
+    return 0;
+  return TThread::txn->can_order_record_after_validation() ? 1 : 0;
 }
 
 MAKO_RUST_FAST_DEFINITION_HIDDEN const uint8_t *

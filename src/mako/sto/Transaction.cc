@@ -660,6 +660,35 @@ bool Transaction::visit_local_canonical_writes(
     return true;
 }
 
+// @unsafe: walks transaction-owned items whose lifetime is protected by the
+// active transaction. No borrowed key or value bytes escape this inspection.
+bool Transaction::can_order_record_after_validation() const noexcept {
+    assert(TThread::id() == threadid_);
+    assert(state_ == s_in_progress);
+
+    unsigned local_writes = 0;
+    const TransItem* item = nullptr;
+    for (unsigned tidx = 0; tidx != tset_size_; ++tidx) {
+        item = (tidx % tset_chunk ? item + 1
+                                  : tset_[tidx / tset_chunk]);
+        if (item->owner()->get_is_remote() || item->has_predicate())
+            return false;
+        if (hasInsertOp(item) || hasDeleteOp(item))
+            return false;
+        if (item->has_read() && !item->has_write())
+            return false;
+        if (item->has_write()) {
+            if (++local_writes != 1)
+                return false;
+        } else if (!item->has_read()) {
+            // Reject bookkeeping-only shapes which this proof does not know
+            // how to classify. The ordinary early gate remains available.
+            return false;
+        }
+    }
+    return local_writes == 1;
+}
+
 // @unsafe: complex commit protocol with remote operations, locking, and validation
 bool Transaction::try_commit(bool no_paxos,
                              post_validation_hook hook,
@@ -669,6 +698,16 @@ bool Transaction::try_commit(bool no_paxos,
     assert(TThread::id() == threadid_);
     assert(validation_gate == nullptr || hook != nullptr);
     commit_validation_gate_scope validation_gate_scope(validation_gate);
+    const bool requested_gate_after_validation =
+        validation_gate != nullptr &&
+        validation_gate->acquire_after_validation;
+    // The Paxos path assigns and merges its timestamp before phase-two
+    // validation. Falling back to the ordinary early gate preserves that
+    // timestamp/gate order even if a future caller requests the restricted
+    // local optimization on the wrong commit protocol.
+    assert(!requested_gate_after_validation || no_paxos);
+    const bool acquire_gate_after_validation =
+        requested_gate_after_validation && no_paxos;
     if (failure)
         *failure = preinstall_failure::none;
 #if ASSERT_TX_SIZE
@@ -811,14 +850,17 @@ bool Transaction::try_commit(bool no_paxos,
     }
 #endif
 
-    if (validation_gate != nullptr && nwriteset != 0)
+    if (validation_gate != nullptr && nwriteset != 0 &&
+        !acquire_gate_after_validation)
         validation_gate_scope.acquire();
 
-    // Allocate the cache record's Mako logical timestamp after the entire
-    // write set is locked but before validating the read set. A failed
-    // transaction may consume a harmless timestamp gap. No cache log position
-    // has been assigned yet, so validation failure needs no cancellation slot.
-    if (nwriteset != 0 &&
+    // The general path allocates the cache record's Mako logical timestamp
+    // after the entire write set is locked but before validating the read set.
+    // A failed transaction may consume a harmless timestamp gap. No cache log
+    // position has been assigned yet, so validation failure needs no
+    // cancellation slot. The restricted update path allocates below, after
+    // validation, so it consumes neither timestamp nor gate turn on conflict.
+    if (!acquire_gate_after_validation && nwriteset != 0 &&
         (hook != nullptr
 #if defined(MAKO_LOCAL_TEST_HOOKS)
          || has_test_commit_observer
@@ -867,7 +909,8 @@ bool Transaction::try_commit(bool no_paxos,
     }
 
 #if defined(MAKO_LOCAL_TEST_HOOKS)
-    if (nwriteset != 0 && has_test_commit_observer) {
+    if (!acquire_gate_after_validation && nwriteset != 0 &&
+        has_test_commit_observer) {
         assert(tid_unique_ != 0);
         notify_test_commit_observer(
             test_commit_phase::mako_timestamp_allocated, tid_unique_);
@@ -882,7 +925,7 @@ bool Transaction::try_commit(bool no_paxos,
         // writes. An ordered durability commit repeats them after entering its
         // validation gate so range anti-dependencies cannot slip between the
         // gate's timestamp order and the final point-read validation.
-        if (validation_gate_scope.held() && !isRemote &&
+        if (validation_gate != nullptr && !isRemote &&
             !it->has_read() && it->has_predicate()) {
             TXP_INCREMENT(txp_total_check_predicate);
             if (!it->owner()->check_predicate(*it, *this, true)) {
@@ -919,6 +962,30 @@ bool Transaction::try_commit(bool no_paxos,
             }
         }
     }
+
+    // The restricted one-local-update profile has no observation outside its
+    // complete write lock. It can therefore do ordinary validation in
+    // parallel and serialize only the timestamp/log-position pair. General
+    // transactions retain the early gate above so anti-dependencies and range
+    // predicates keep their established order.
+    if (acquire_gate_after_validation && nwriteset != 0) {
+        validation_gate_scope.acquire();
+        uint32_t timestamp = 0;
+        if (!try_assign_mako_timestamp(timestamp)) {
+            if (failure)
+                *failure = preinstall_failure::timestamp_exhausted;
+            goto abort;
+        }
+    }
+
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+    if (acquire_gate_after_validation && nwriteset != 0 &&
+        has_test_commit_observer) {
+        assert(tid_unique_ != 0);
+        notify_test_commit_observer(
+            test_commit_phase::mako_timestamp_allocated, tid_unique_);
+    }
+#endif
 
 #if defined(MAKO_LOCAL_TEST_HOOKS)
     if (nwriteset != 0 && has_test_commit_observer) {

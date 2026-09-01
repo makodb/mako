@@ -11,10 +11,10 @@
 //! Native retires that ordering turn, writes the complete record directly into
 //! that buffer while retaining all write locks, and only
 //! then installs the writes. Native success publishes the already-built record
-//! as Ready in the volatile queue. The caller is acknowledged only when Ready
-//! forms a dense prefix through that record; one background writer later
-//! decodes and replays a bounded contiguous prefix in one atomic RocksDB
-//! `WriteBatch`.
+//! as Ready in the volatile queue. The trusted concurrent one-Put terminal can
+//! return once its own record is Ready; explicit barriers and the background
+//! writer still wait for a dense prefix, then replay a bounded contiguous
+//! prefix in one atomic RocksDB `WriteBatch`.
 //!
 //! [`Cache::wait_applied`] and [`Cache::close`] drain acknowledged work into
 //! RocksDB, but neither operation adds a separate WAL flush or disk sync. The
@@ -647,13 +647,14 @@ impl<B: Blobs + 'static> Cache<B> {
         self.writeback.applied_sequence()
     }
 
-    /// Highest dense cache-sequence prefix acknowledged to callers.
+    /// Highest cache-sequence acknowledgement high-water mark.
     ///
-    /// A later record may already be Ready internally while its publisher
-    /// waits for an earlier bound transaction to resolve; such a suffix is not
-    /// included here.
+    /// This need not be a dense prefix: the trusted concurrent one-Put path
+    /// may acknowledge a Ready suffix before an earlier producer completes.
+    /// [`Self::wait_applied`] still waits for the complete prefix through this
+    /// sequence, or reports an earlier asynchronous fail-stop condition.
     pub fn highest_acknowledged_sequence(&self) -> u64 {
-        self.writeback.highest_acknowledged()
+        self.writeback.highest_caller_acknowledged()
     }
 
     /// Number of bound prepared or ready queue slots.
@@ -1374,10 +1375,10 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
 
 /// Complete the cache-private, common-arena one-Put terminal.
 ///
-/// Concurrent mode holds native's LocalDb validation ticket while
-/// `acquire_target` runs. That gate lets the specialized queue binder use
-/// single-writer load/store handoffs. The returned target is the final
-/// sequence-indexed arena block and remains owned through retirement.
+/// Native's LocalDb validation ticket pairs the Mako timestamp with the dense
+/// queue sequence. The exact publication cell and arena target are acquired
+/// only after native retires that ticket, then remain owned through backend
+/// retirement.
 #[allow(unsafe_code)]
 fn finish_trusted_one_put_arena<'cache, 'db, B: Blobs + 'static>(
     cache: &'cache Cache<B>,
@@ -1397,34 +1398,51 @@ fn finish_trusted_one_put_arena<'cache, 'db, B: Blobs + 'static>(
     }
 
     let mut bound = None;
-    let mut bind_error = None;
-    // SAFETY: the trusted native terminal invokes this callback synchronously
-    // while its per-LocalDb validation ticket excludes every other binder. The
-    // reservation retains its stable direct arena target in `bound`, and
-    // neither the callback nor its production operations unwind.
-    let acquire_target = |timestamp, native_preflight| {
+    let (next_bound, unhealthy) = cache.writeback.native_ordering_words();
+    // SAFETY: native invokes this callback synchronously after its validation
+    // ticket assigned the supplied timestamp/sequence pair. Adopting that
+    // exact FREE generation before returning the target keeps it exclusively
+    // owned through native serialization and backend retirement.
+    let acquire_target = |timestamp, native_preflight, ordered_sequence| {
         debug_assert_eq!(native_preflight, preflight);
-        match unsafe { permit.bind_externally_serialized(timestamp) } {
-            Ok(mut reservation) => {
-                // SAFETY: `reservation` is moved into `bound` before native can
-                // write, and `bound` remains alive through this terminal.
-                let target = unsafe { reservation.native_record_target() };
-                bound = Some(reservation);
-                #[cfg(test)]
-                crate::failpoint::hit(crate::failpoint::Point::PreinstallBound);
-                Some(target)
-            }
-            Err(error) => {
-                bind_error = Some(error);
-                None
-            }
-        }
+        let mut reservation = unsafe {
+            permit.bind_externally_ordered(timestamp, ordered_sequence)
+        };
+        // SAFETY: `reservation` is moved into `bound` before native can write,
+        // and `bound` remains alive through this terminal.
+        let target = unsafe { reservation.native_record_target() };
+        bound = Some(reservation);
+        #[cfg(test)]
+        crate::failpoint::hit(crate::failpoint::Point::PreinstallBound);
+        Some(target)
     };
-    // SAFETY: the candidate is the current trusted one-Put witness; capacity
-    // and an exact non-aliasing arena extent were reserved before native took
-    // locks, and `acquire_target` satisfies the synchronous target contract.
-    let outcome =
-        unsafe { native.commit_trusted_unchecked_one_put_record_target(preflight, acquire_target) };
+    // SAFETY: the candidate is current, the permit owns one bounded capacity
+    // claim, both atomics belong to this queue, and every concurrent cache
+    // terminal for this LocalDb uses the same native ticket protocol.
+    let outcome = unsafe {
+        native.commit_trusted_native_ordered_unchecked_one_put_record_target(
+            preflight,
+            next_bound,
+            unhealthy,
+            acquire_target,
+        )
+    };
+
+    // A partial scalar witness means native may have advanced next_bound but
+    // did not provide enough information to construct the matching record.
+    // Do not unwind and release the detached occupancy claim across that hole.
+    if !outcome.order_witness_valid() {
+        std::process::abort();
+    }
+
+    // An exception or malformed post-ticket callback can return after native
+    // assigned the order but before Rust acquired the cell. Adopt it now so
+    // the ordinary unwritten-record path pins the exact dense obligation.
+    if bound.is_none() {
+        if let Some((timestamp, sequence)) = outcome.accepted_order() {
+            bound = Some(unsafe { permit.bind_externally_ordered(timestamp, sequence) });
+        }
+    }
 
     if outcome.is_committed() {
         let reservation = bound
@@ -1436,7 +1454,7 @@ fn finish_trusted_one_put_arena<'cache, 'db, B: Blobs + 'static>(
         crate::failpoint::hit(crate::failpoint::Point::NativeCommittedBeforeReady);
         // SAFETY: `is_committed` proves the exact completion witness, definite
         // visibility, and successful cleanup. Publish directly BOUND -> READY.
-        unsafe { reservation.publish_completed()? };
+        unsafe { reservation.publish_completed_concurrent_nonblocking()? };
         return Ok(());
     }
 
@@ -1481,20 +1499,6 @@ fn finish_trusted_one_put_arena<'cache, 'db, B: Blobs + 'static>(
                     cleanup: report.cleanup.err(),
                 })
             }
-        };
-    }
-
-    if let Some(error) = bind_error {
-        debug_assert!(matches!(
-            report.disposition,
-            CommitDisposition::Aborted(LocalError::CommitHookRejected)
-        ));
-        return match report.cleanup {
-            Ok(()) => Err(Error::Reserve(error)),
-            Err(cleanup) => Err(Error::AbortCleanupFailed {
-                abort: LocalError::CommitHookRejected,
-                cleanup,
-            }),
         };
     }
 

@@ -94,6 +94,26 @@ extern "C" {
  * post-validation bind, serialization-before-install, and completion-witness
  * protocol as commit_record_and_destroy.
  *
+ * commit_native_ordered_unchecked_one_put_record_and_destroy narrows the
+ * concurrent critical section further. next_bound and unhealthy name stable,
+ * naturally aligned Rust atomic storage for the same write-back queue. After
+ * final validation and Mako timestamp assignment, native holds the LocalDb
+ * ticket while it Acquire-checks health and advances next_bound with one
+ * atomic load/Release-store. It publishes the accepted timestamp and sequence
+ * through the scalar outputs before retiring the ticket. Only then does it
+ * call bind_hook. For this spelling sequence_out is initialized to the exact
+ * assigned sequence and the hook must return that same value together with
+ * its stable target. Native serializes before install as usual.
+ *
+ * A nonzero ordered_sequence_out transfers an unconditional dense-slot
+ * obligation even if bind_hook was not reached or the terminal later reports
+ * uncertainty. Rust must acquire that exact publication generation and pin it
+ * when no complete known-success record can be published. The caller must
+ * ensure that all concurrent cache-record terminals for this LocalDb use the
+ * same queue atomics and native ticket ordering. This is a same-build unsafe
+ * seam; mixing an independent sequence allocator can duplicate or reorder
+ * cache positions.
+ *
  * commit_unchecked_one_put_record_single_producer_and_destroy is a still more
  * restricted opt-in spelling of that fused terminal. It preserves write-set
  * lock acquisition, Mako timestamp assignment, the repeated ordered predicate
@@ -348,6 +368,13 @@ mako_rust_fast_txn_commit_unchecked_one_put_record_and_destroy(
     mako_rust_fast_record_bind_hook bind_hook, void *context,
     uint8_t *record_written_out) MAKO_RUST_FAST_NOEXCEPT;
 MAKO_RUST_FAST_HIDDEN uint64_t
+mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_record_and_destroy(
+    mako_local_txn *txn, uint32_t expected_record_bytes,
+    uint64_t *next_bound, const uint8_t *unhealthy,
+    mako_rust_fast_record_bind_hook bind_hook, void *context,
+    uint64_t *ordered_sequence_out, uint32_t *ordered_timestamp_out,
+    uint8_t *record_written_out) MAKO_RUST_FAST_NOEXCEPT;
+MAKO_RUST_FAST_HIDDEN uint64_t
 mako_rust_fast_txn_commit_unchecked_one_put_record_single_producer_and_destroy(
     mako_local_txn *txn, uint32_t expected_record_bytes,
     mako_rust_fast_record_bind_hook bind_hook, void *context,
@@ -398,6 +425,11 @@ mako_rust_fast_test_record_validation_tickets(
 MAKO_RUST_FAST_HIDDEN uint64_t
 mako_rust_fast_test_record_validation_wait_observations(
     const mako_local_db *db) MAKO_RUST_FAST_NOEXCEPT;
+/* Returns one only when the active transaction's complete final validation
+ * set is covered by its sole local, non-insert update lock. */
+MAKO_RUST_FAST_HIDDEN uint8_t
+mako_rust_fast_test_txn_can_order_record_after_validation(
+    const mako_local_txn *txn) MAKO_RUST_FAST_NOEXCEPT;
 /* Returns the exact transaction-owned encoded value allocation used by the
  * one-put holder transfer, excluding STO's trailer from length_out. */
 MAKO_RUST_FAST_HIDDEN const uint8_t *

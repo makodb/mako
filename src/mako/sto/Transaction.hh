@@ -393,10 +393,14 @@ public:
     // unwind because the transaction still holds its complete write set.
     using post_validation_hook = bool (*)(void*, uint32_t) noexcept;
 
-    // Optional storage-agnostic ordering gate for a durability hook. enter
-    // runs only after the complete write set is locked and before the Mako
-    // timestamp and final validation; leave runs after an accepted hook but
-    // before install, or after abort cleanup has released the write locks.
+    // Optional storage-agnostic ordering gate for a durability hook. By
+    // default, enter runs after the complete write set is locked and before
+    // the Mako timestamp and final validation. A caller which has separately
+    // proved that every observation belongs to the locked write set may set
+    // acquire_after_validation: enter then runs after final validation and
+    // immediately before Mako timestamp allocation and the accepted hook.
+    // leave runs after an accepted hook but before install, or after abort
+    // cleanup has released the write locks.
     // after_leave optionally completes storage work after retiring the turn
     // while the transaction still owns every write lock and before install.
     // All callbacks must be allocation-free, must perform no I/O, and must not
@@ -410,6 +414,7 @@ public:
         callback leave;
         post_validation_hook after_leave;
         void* context;
+        bool acquire_after_validation = false;
     };
 
 #if defined(MAKO_LOCAL_TEST_HOOKS)
@@ -488,6 +493,14 @@ public:
     bool visit_local_canonical_writes(canonical_write_visitor visitor,
                                       void* context,
                                       uint32_t* count_out) const noexcept;
+
+    // True only when final validation observes no item outside one local
+    // update's complete write lock. Such a transaction may acquire a cache
+    // ordering gate after validation: same-key updates are already ordered by
+    // that write lock, while updates to different keys commute. Insert and
+    // predicate items are excluded because their observations can live on a
+    // separate Masstree node.
+    bool can_order_record_after_validation() const noexcept;
 private:
     static std::atomic<TransactionTid::type> _TID;
 public:

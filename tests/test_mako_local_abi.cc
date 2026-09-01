@@ -428,6 +428,29 @@ int bind_thin_record(void *context, uint32_t timestamp, size_t exact_bytes,
   return 1;
 }
 
+int bind_native_ordered_thin_record(void *context, uint32_t timestamp,
+                                    size_t exact_bytes,
+                                    uint64_t *sequence_in_out,
+                                    uint8_t **record_bytes_out,
+                                    size_t *record_capacity_out) {
+  auto *binding = static_cast<ThinRecordBinding *>(context);
+  ++binding->calls;
+  binding->timestamp = timestamp;
+  binding->exact_bytes = exact_bytes;
+  binding->sequence = *sequence_in_out;
+  if (binding->published_calls != nullptr)
+    binding->published_calls->fetch_add(1, std::memory_order_release);
+  if (!binding->accept) return 0;
+  *sequence_in_out = binding->invalidate_sequence ? 0 : binding->sequence;
+  *record_bytes_out = binding->storage == nullptr
+      ? nullptr
+      : binding->storage->data();
+  *record_capacity_out = binding->storage == nullptr
+      ? 0
+      : binding->storage->size();
+  return 1;
+}
+
 uint32_t test_crc32c(const uint8_t *bytes, size_t length) {
   constexpr uint32_t polynomial = UINT32_C(0x82f63b78);
   uint32_t crc = UINT32_MAX;
@@ -1145,6 +1168,350 @@ TEST_F(LocalAbiTest, TrustedUncheckedOnePutFusesV4PreflightAndCommit) {
             std::optional<std::string>(value));
   commit_and_destroy(verify);
 }
+
+TEST_F(LocalAbiTest, NativeOrderedOnePutAssignsBeforePostGateBinding) {
+  const std::string key = "native-ordered-existing";
+  auto *seed = begin();
+  ASSERT_EQ(put(seed, primary, key, "old"), MAKO_LOCAL_OK);
+  commit_and_destroy(seed);
+
+  mako_local_txn *txn = nullptr;
+  ASSERT_EQ(mako_rust_fast_txn_begin(db, primary, &txn), MAKO_LOCAL_OK);
+  txn_for_cleanup = txn;
+  const uint64_t put_result = fast_put(txn, key, "new");
+  ASSERT_EQ(MAKO_RUST_FAST_PUT_STATUS(put_result), MAKO_LOCAL_OK);
+  const uint32_t exact_bytes =
+      MAKO_RUST_FAST_PUT_UNCHECKED_RECORD_BYTES(put_result);
+  ASSERT_NE(exact_bytes, 0U);
+
+  alignas(uint64_t) uint64_t next_bound = 700;
+  const uint8_t unhealthy = 0;
+  std::vector<uint8_t> storage(exact_bytes, 0xa5);
+  ThinRecordBinding binding{&storage};
+  uint64_t ordered_sequence = UINT64_MAX;
+  uint32_t ordered_timestamp = UINT32_MAX;
+  uint8_t written = 99;
+  const uint64_t commit =
+      mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_record_and_destroy(
+          txn, exact_bytes, &next_bound, &unhealthy,
+          bind_native_ordered_thin_record, &binding, &ordered_sequence,
+          &ordered_timestamp, &written);
+  txn_for_cleanup = nullptr;
+
+  ASSERT_EQ(MAKO_RUST_FAST_TERMINAL_STATUS(commit), MAKO_LOCAL_OK);
+  ASSERT_EQ(MAKO_RUST_FAST_CLEANUP_STATUS(commit), MAKO_LOCAL_OK);
+  EXPECT_EQ(next_bound, 701U);
+  EXPECT_EQ(ordered_sequence, 701U);
+  EXPECT_NE(ordered_timestamp, 0U);
+  EXPECT_EQ(binding.sequence, ordered_sequence);
+  EXPECT_EQ(binding.timestamp, ordered_timestamp);
+  EXPECT_EQ(binding.calls, 1);
+  EXPECT_EQ(written, 1U);
+  DecodedThinRecord decoded;
+  ASSERT_TRUE(decode_thin_record(storage, &decoded));
+  EXPECT_EQ(decoded.sequence, ordered_sequence);
+  EXPECT_EQ(decoded.timestamp, ordered_timestamp);
+  ASSERT_EQ(decoded.mutations.size(), 1U);
+  EXPECT_EQ(decoded.mutations[0].key, key);
+  EXPECT_EQ(decoded.mutations[0].value, "new");
+
+  txn = nullptr;
+  ASSERT_EQ(mako_rust_fast_txn_begin(db, primary, &txn), MAKO_LOCAL_OK);
+  txn_for_cleanup = txn;
+  const uint64_t rejected_put = fast_put(txn, key, "rejected");
+  ASSERT_EQ(MAKO_RUST_FAST_PUT_STATUS(rejected_put), MAKO_LOCAL_OK);
+  const uint32_t rejected_bytes =
+      MAKO_RUST_FAST_PUT_UNCHECKED_RECORD_BYTES(rejected_put);
+  std::vector<uint8_t> rejected_storage(rejected_bytes, 0xa5);
+  ThinRecordBinding rejected{&rejected_storage};
+  rejected.accept = false;
+  ordered_sequence = UINT64_MAX;
+  ordered_timestamp = UINT32_MAX;
+  written = 99;
+  const uint64_t rejected_commit =
+      mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_record_and_destroy(
+          txn, rejected_bytes, &next_bound, &unhealthy,
+          bind_native_ordered_thin_record, &rejected, &ordered_sequence,
+          &ordered_timestamp, &written);
+  txn_for_cleanup = nullptr;
+  EXPECT_EQ(MAKO_RUST_FAST_TERMINAL_STATUS(rejected_commit),
+            MAKO_LOCAL_COMMIT_HOOK_REJECTED);
+  EXPECT_EQ(MAKO_RUST_FAST_CLEANUP_STATUS(rejected_commit), MAKO_LOCAL_OK);
+  EXPECT_EQ(next_bound, 702U);
+  EXPECT_EQ(ordered_sequence, 702U);
+  EXPECT_NE(ordered_timestamp, 0U);
+  EXPECT_EQ(rejected.sequence, ordered_sequence);
+  EXPECT_EQ(rejected.calls, 1);
+  EXPECT_EQ(written, 0U);
+
+  auto *verify = begin();
+  EXPECT_EQ(get(verify, primary, key).second,
+            std::optional<std::string>("new"));
+  commit_and_destroy(verify);
+}
+
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+TEST_F(LocalAbiTest, TrustedOnePutLateGateRequiresWriteCoveredValidation) {
+  auto *seed = begin();
+  ASSERT_EQ(put(seed, primary, "late-existing", "old"), MAKO_LOCAL_OK);
+  ASSERT_EQ(put(seed, primary, "late-other", "observed"), MAKO_LOCAL_OK);
+  commit_and_destroy(seed);
+
+  auto abort_fast = [&](mako_local_txn *txn) {
+    const uint64_t aborted = mako_rust_fast_txn_abort_and_destroy(txn);
+    txn_for_cleanup = nullptr;
+    EXPECT_EQ(MAKO_RUST_FAST_TERMINAL_STATUS(aborted), MAKO_LOCAL_OK);
+    EXPECT_EQ(MAKO_RUST_FAST_CLEANUP_STATUS(aborted), MAKO_LOCAL_OK);
+  };
+
+  mako_local_txn *txn = nullptr;
+  ASSERT_EQ(mako_rust_fast_txn_begin(db, primary, &txn), MAKO_LOCAL_OK);
+  txn_for_cleanup = txn;
+  ASSERT_EQ(MAKO_RUST_FAST_PUT_STATUS(
+                fast_put(txn, "late-existing", "pure-update")),
+            MAKO_LOCAL_OK);
+  EXPECT_EQ(
+      mako_rust_fast_test_txn_can_order_record_after_validation(txn), 1U);
+  abort_fast(txn);
+
+  txn = nullptr;
+  ASSERT_EQ(mako_rust_fast_txn_begin(db, primary, &txn), MAKO_LOCAL_OK);
+  txn_for_cleanup = txn;
+  ASSERT_EQ(get(txn, primary, "late-existing").first, MAKO_LOCAL_OK);
+  ASSERT_EQ(MAKO_RUST_FAST_PUT_STATUS(
+                fast_put(txn, "late-existing", "same-key-read")),
+            MAKO_LOCAL_OK);
+#if READ_MY_WRITES
+  EXPECT_EQ(
+      mako_rust_fast_test_txn_can_order_record_after_validation(txn), 1U);
+#else
+  EXPECT_EQ(
+      mako_rust_fast_test_txn_can_order_record_after_validation(txn), 0U);
+#endif
+  abort_fast(txn);
+
+  txn = nullptr;
+  ASSERT_EQ(mako_rust_fast_txn_begin(db, primary, &txn), MAKO_LOCAL_OK);
+  txn_for_cleanup = txn;
+  ASSERT_EQ(get(txn, primary, "late-other").first, MAKO_LOCAL_OK);
+  ASSERT_EQ(MAKO_RUST_FAST_PUT_STATUS(
+                fast_put(txn, "late-existing", "external-read")),
+            MAKO_LOCAL_OK);
+  EXPECT_EQ(
+      mako_rust_fast_test_txn_can_order_record_after_validation(txn), 0U);
+  abort_fast(txn);
+
+  txn = nullptr;
+  ASSERT_EQ(mako_rust_fast_txn_begin(db, primary, &txn), MAKO_LOCAL_OK);
+  txn_for_cleanup = txn;
+  ASSERT_EQ(MAKO_RUST_FAST_PUT_STATUS(
+                fast_put(txn, "late-absent", "insert")),
+            MAKO_LOCAL_OK);
+  EXPECT_EQ(
+      mako_rust_fast_test_txn_can_order_record_after_validation(txn), 0U);
+  abort_fast(txn);
+}
+
+TEST_F(LocalAbiTest, TrustedOnePutValidationAbortConsumesNoLateGateTicket) {
+  auto *seed = begin();
+  ASSERT_EQ(put(seed, primary, "late-conflict", "old"), MAKO_LOCAL_OK);
+  commit_and_destroy(seed);
+
+  mako_local_txn *loser = nullptr;
+  ASSERT_EQ(mako_rust_fast_txn_begin(db, primary, &loser), MAKO_LOCAL_OK);
+  txn_for_cleanup = loser;
+  const uint64_t loser_put =
+      fast_put(loser, "late-conflict", "must-not-install");
+  ASSERT_EQ(MAKO_RUST_FAST_PUT_STATUS(loser_put), MAKO_LOCAL_OK);
+  const uint32_t exact_bytes =
+      MAKO_RUST_FAST_PUT_UNCHECKED_RECORD_BYTES(loser_put);
+  ASSERT_NE(exact_bytes, 0U);
+  ASSERT_EQ(
+      mako_rust_fast_test_txn_can_order_record_after_validation(loser), 1U);
+
+  struct WinnerResult {
+    int attach = MAKO_LOCAL_INTERNAL;
+    int begin = MAKO_LOCAL_INTERNAL;
+    int put = MAKO_LOCAL_INTERNAL;
+    int commit = MAKO_LOCAL_INTERNAL;
+    int destroy = MAKO_LOCAL_INTERNAL;
+  } winner;
+  std::thread winning_worker([&] {
+    winner.attach = mako_local_thread_attach();
+    mako_local_txn *txn = nullptr;
+    if (winner.attach == MAKO_LOCAL_OK)
+      winner.begin = mako_local_txn_begin(db, &txn);
+    if (winner.begin == MAKO_LOCAL_OK)
+      winner.put = put(txn, primary, "late-conflict", "winner");
+    if (winner.put == MAKO_LOCAL_OK)
+      winner.commit = mako_local_txn_commit(txn);
+    if (txn != nullptr)
+      winner.destroy = mako_local_txn_destroy(txn);
+  });
+  winning_worker.join();
+  ASSERT_EQ(winner.attach, MAKO_LOCAL_OK);
+  ASSERT_EQ(winner.begin, MAKO_LOCAL_OK);
+  ASSERT_EQ(winner.put, MAKO_LOCAL_OK);
+  ASSERT_EQ(winner.commit, MAKO_LOCAL_OK);
+  ASSERT_EQ(winner.destroy, MAKO_LOCAL_OK);
+
+  const uint64_t tickets_before =
+      mako_rust_fast_test_record_validation_tickets(db);
+  std::vector<uint8_t> storage(exact_bytes, 0xa5);
+  const std::vector<uint8_t> untouched = storage;
+  ThinRecordBinding binding{&storage, 901};
+  uint8_t written = 99;
+  const uint64_t result =
+      mako_rust_fast_txn_commit_unchecked_one_put_record_and_destroy(
+          loser, exact_bytes, bind_thin_record, &binding, &written);
+  txn_for_cleanup = nullptr;
+
+  EXPECT_EQ(MAKO_RUST_FAST_TERMINAL_STATUS(result), MAKO_LOCAL_CONFLICT);
+  EXPECT_EQ(MAKO_RUST_FAST_CLEANUP_STATUS(result), MAKO_LOCAL_OK);
+  EXPECT_EQ(binding.calls, 0);
+  EXPECT_EQ(written, 0U);
+  EXPECT_EQ(storage, untouched);
+  EXPECT_EQ(mako_rust_fast_test_record_validation_tickets(db),
+            tickets_before);
+
+  auto *verify = begin();
+  EXPECT_EQ(get(verify, primary, "late-conflict").second,
+            std::optional<std::string>("winner"));
+  commit_and_destroy(verify);
+}
+
+TEST_F(LocalAbiTest, TrustedOnePutLateGateKeepsSameKeyRecordOrder) {
+  const std::string key = "late-same-key-order";
+  auto *seed = begin();
+  ASSERT_EQ(put(seed, primary, key, "initial"), MAKO_LOCAL_OK);
+  commit_and_destroy(seed);
+
+  struct ExactUpdateResult {
+    std::string value;
+    int attach = MAKO_LOCAL_INTERNAL;
+    int begin = MAKO_LOCAL_INTERNAL;
+    int put_status = MAKO_LOCAL_INTERNAL;
+    int retry_destroy = MAKO_LOCAL_OK;
+    uint64_t terminal = UINT64_MAX;
+    unsigned attempts = 0;
+    unsigned conflicts = 0;
+    bool conflict_bound_record = false;
+    uint8_t written = 0;
+    std::vector<uint8_t> storage;
+    ThinRecordBinding binding;
+    DecodedThinRecord decoded;
+  } first{"first"}, second{"second"};
+  std::atomic<uint64_t> next_sequence{31};
+  const uint64_t tickets_before =
+      mako_rust_fast_test_record_validation_tickets(db);
+  std::barrier staged(3);
+
+  auto commit_update = [&](ExactUpdateResult *result) {
+    result->attach = mako_local_thread_attach();
+    if (result->attach != MAKO_LOCAL_OK) {
+      staged.arrive_and_wait();
+      return;
+    }
+    bool initial_attempt = true;
+    constexpr unsigned kMaxAttempts = 10000;
+    while (result->attach == MAKO_LOCAL_OK &&
+           result->attempts != kMaxAttempts) {
+      ++result->attempts;
+      mako_local_txn *txn = nullptr;
+      result->begin = mako_rust_fast_txn_begin(db, primary, &txn);
+      if (result->begin != MAKO_LOCAL_OK) {
+        if (initial_attempt) staged.arrive_and_wait();
+        return;
+      }
+
+      const uint64_t put_result = fast_put(txn, key, result->value);
+      result->put_status = MAKO_RUST_FAST_PUT_STATUS(put_result);
+      const uint32_t exact_bytes =
+          MAKO_RUST_FAST_PUT_UNCHECKED_RECORD_BYTES(put_result);
+      if (initial_attempt) {
+        staged.arrive_and_wait();
+        initial_attempt = false;
+      }
+      if (result->put_status == MAKO_LOCAL_CONFLICT) {
+        result->retry_destroy = mako_local_txn_destroy(txn);
+        if (result->retry_destroy != MAKO_LOCAL_OK) return;
+        ++result->conflicts;
+        std::this_thread::yield();
+        continue;
+      }
+      if (result->put_status != MAKO_LOCAL_OK || exact_bytes == 0) {
+        if (result->put_status == MAKO_LOCAL_OK)
+          (void)mako_rust_fast_txn_abort_and_destroy(txn);
+        return;
+      }
+
+      result->storage.assign(exact_bytes, 0xa5);
+      result->binding.storage = &result->storage;
+      result->binding.next_sequence = &next_sequence;
+      result->written = 99;
+      result->terminal =
+          mako_rust_fast_txn_commit_unchecked_one_put_record_and_destroy(
+              txn, exact_bytes, bind_thin_record, &result->binding,
+              &result->written);
+      const int terminal_status =
+          MAKO_RUST_FAST_TERMINAL_STATUS(result->terminal);
+      if (terminal_status == MAKO_LOCAL_OK) return;
+      if (terminal_status != MAKO_LOCAL_CONFLICT) return;
+      ++result->conflicts;
+      if (result->binding.calls != 0 || result->written != 0)
+        result->conflict_bound_record = true;
+      std::this_thread::yield();
+    }
+  };
+
+  std::thread first_worker(commit_update, &first);
+  std::thread second_worker(commit_update, &second);
+  staged.arrive_and_wait();
+  first_worker.join();
+  second_worker.join();
+
+  for (ExactUpdateResult *result : {&first, &second}) {
+    EXPECT_EQ(result->attach, MAKO_LOCAL_OK);
+    EXPECT_EQ(result->begin, MAKO_LOCAL_OK);
+    EXPECT_EQ(result->put_status, MAKO_LOCAL_OK);
+    EXPECT_EQ(result->retry_destroy, MAKO_LOCAL_OK);
+    ASSERT_EQ(MAKO_RUST_FAST_TERMINAL_STATUS(result->terminal),
+              MAKO_LOCAL_OK);
+    EXPECT_EQ(MAKO_RUST_FAST_CLEANUP_STATUS(result->terminal),
+              MAKO_LOCAL_OK);
+    EXPECT_FALSE(result->conflict_bound_record);
+    EXPECT_EQ(result->binding.calls, 1);
+    EXPECT_EQ(result->written, 1U);
+    ASSERT_TRUE(decode_thin_record(result->storage, &result->decoded));
+    ASSERT_EQ(result->decoded.mutations.size(), 1U);
+    EXPECT_EQ(result->decoded.mutations[0].key, key);
+    EXPECT_EQ(result->decoded.mutations[0].value, result->value);
+  }
+  EXPECT_GE(first.conflicts + second.conflicts, 1U);
+
+  EXPECT_EQ(mako_rust_fast_test_record_validation_tickets(db),
+            tickets_before + 2);
+  std::array<ExactUpdateResult *, 2> ordered{&first, &second};
+  std::sort(ordered.begin(), ordered.end(),
+            [](const ExactUpdateResult *left,
+               const ExactUpdateResult *right) {
+              return left->binding.sequence < right->binding.sequence;
+            });
+  EXPECT_EQ(ordered[0]->binding.sequence, 31U);
+  EXPECT_EQ(ordered[1]->binding.sequence, 32U);
+  EXPECT_LT(ordered[0]->binding.timestamp,
+            ordered[1]->binding.timestamp);
+  for (const ExactUpdateResult *result : ordered) {
+    EXPECT_EQ(result->decoded.sequence, result->binding.sequence);
+    EXPECT_EQ(result->decoded.timestamp, result->binding.timestamp);
+  }
+
+  auto *verify = begin();
+  EXPECT_EQ(get(verify, primary, key).second,
+            std::optional<std::string>(ordered[1]->value));
+  commit_and_destroy(verify);
+}
+#endif
 
 TEST_F(LocalAbiTest,
        TrustedSingleProducerUncheckedOnePutSkipsOnlyValidationTicket) {
@@ -2820,7 +3187,7 @@ TEST_F(LocalAbiTest, TrustedThinRecordConflictNeverBindsOrWritesBuffer) {
 
 #if defined(MAKO_LOCAL_TEST_HOOKS)
 TEST_F(LocalAbiTest,
-       TrustedThinRecordGatePreservesReadWriteSerializationPrefix) {
+       TrustedThinRecordEarlyAndLateGatesPreserveReadWriteSerializationPrefix) {
   auto *seed = begin();
   ASSERT_EQ(put(seed, primary, "ordered-x", "old"), MAKO_LOCAL_OK);
   commit_and_destroy(seed);
@@ -2906,18 +3273,25 @@ TEST_F(LocalAbiTest,
           signal_commit_phase, &second_signal);
     if (second.observer_set == MAKO_LOCAL_OK)
       second.begin = mako_rust_fast_txn_begin(db, primary, &txn);
-    if (second.begin == MAKO_LOCAL_OK)
+    if (second.begin == MAKO_LOCAL_OK) {
       second.put = fast_put(txn, "ordered-x", "new");
-    if (MAKO_RUST_FAST_PUT_STATUS(second.put) == MAKO_LOCAL_OK)
-      second.preflight = mako_rust_fast_txn_record_preflight(
-          txn, 1 << 20, &second.exact_bytes, &second.operation_count);
+      second.exact_bytes =
+          MAKO_RUST_FAST_PUT_UNCHECKED_RECORD_BYTES(second.put);
+      if (MAKO_RUST_FAST_PUT_STATUS(second.put) == MAKO_LOCAL_OK &&
+          second.exact_bytes != 0) {
+        second.preflight = MAKO_LOCAL_OK;
+        second.operation_count = 1;
+      }
+    }
     if (second.preflight == MAKO_LOCAL_OK) {
       second.storage.assign(second.exact_bytes, 0xa5);
       second.binding.storage = &second.storage;
       second.binding.next_sequence = &next_sequence;
       second.binding.published_calls = &second_bind_calls;
-      second.commit = mako_rust_fast_txn_commit_record_and_destroy(
-          txn, bind_thin_record, &second.binding, &second.written);
+      second.commit =
+          mako_rust_fast_txn_commit_unchecked_one_put_record_and_destroy(
+              txn, second.exact_bytes, bind_thin_record,
+              &second.binding, &second.written);
       txn = nullptr;
     }
     if (txn != nullptr)
@@ -2939,10 +3313,10 @@ TEST_F(LocalAbiTest,
   }
 
   // The first transaction has read old X and validated, so it must precede
-  // the second transaction that writes X. Wait until both workers have
-  // actually fetched their validation tickets; unlike a timeout after the
-  // write-lock signal, this proves the second worker is queued behind the
-  // parked first worker before checking that it cannot bind.
+  // the exact unchecked update of X. The latter validates under X's write
+  // lock before requesting its late ticket. Waiting for both fetched tickets
+  // proves that the optimized late path still queues behind the parked
+  // general transaction before it can bind.
   const auto queued_deadline = std::chrono::steady_clock::now() +
                                std::chrono::seconds(5);
   while ((mako_rust_fast_test_record_validation_tickets(db) != 2 ||

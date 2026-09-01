@@ -5,24 +5,29 @@
 //! grows recycled vector storage here; a common small record needs only its
 //! exact length because its fixed 256-byte arena block is selected by the later
 //! dense sequence. The transaction does not yet receive that cache sequence or
-//! occupy an ordered slot. After the complete write set is locked, a
-//! per-database native gate orders Mako timestamp assignment, final validation,
-//! and the hook. A validation loser leaves only a harmless timestamp gap. A
-//! winner receives the next dense cache sequence, Acquires that sequence's
-//! exact ring turn, and the queue hands native a direct pointer to stable
-//! queue-owned storage. Native retires the ordering turn,
-//! then STO serializes while retaining its write locks and before installation.
+//! occupy an ordered slot. General transactions enter a per-database native
+//! gate after locking their complete write set; the gate orders Mako timestamp
+//! assignment, final validation, and the hook. A one-key update whose
+//! sole observation is covered by that key's write lock validates first and
+//! enters the gate only for timestamp and dense-sequence assignment. Native
+//! then retires the ordering turn; Rust Acquires the assigned sequence's exact
+//! ring generation and hands native a direct pointer to stable queue-owned
+//! storage. STO serializes while retaining its write locks and before
+//! installation.
 //! Rust treats the bytes as initialized only after native returns the exact
 //! completion witness. The hook-time operation is allocation-free and never
 //! performs backend IO.
 //!
 //! A bound slot remains Prepared until native commit returns successfully and
-//! Rust attaches the completed bytes. Publishing flips the slot Ready, but a
-//! caller receives success only after Ready spans the dense acknowledgement
-//! prefix through that slot. An ambiguous post-bind outcome pins the slot, so
-//! the background consumer can neither skip it nor mistake it for an abort.
-//! The consumer decodes records off the foreground path and replays a bounded
-//! contiguous Ready prefix in one atomic backend batch.
+//! Rust attaches the completed bytes. Publishing flips the slot Ready. General
+//! transactions wait for the dense Ready prefix through their slot; the
+//! trusted concurrent one-Put terminal may return as soon as its own exact
+//! cell is Ready and advertises that caller-visible high-water mark. Explicit
+//! barriers and the backend consumer still wait for a dense prefix. An
+//! ambiguous post-bind outcome pins the slot, so the consumer can neither skip
+//! it nor mistake it for an abort. The consumer decodes records off the
+//! foreground path and replays a bounded contiguous Ready prefix in one atomic
+//! backend batch.
 
 use std::cell::UnsafeCell;
 use std::collections::VecDeque;
@@ -67,6 +72,10 @@ pub const DEFAULT_MAX_RECORD_BYTES: usize = 8 * 1024 * 1024;
 /// use a separately recycled growable buffer.
 const NATIVE_RECORD_ARENA_BLOCK_BYTES: usize = 256;
 const CACHE_LINE_BYTES: usize = 64;
+/// Short out-of-order publication gaps are normal when several native
+/// transactions finish together. Keep those gaps in userspace instead of
+/// immediately entering the mutex/condition-variable protocol.
+const CONCURRENT_ACKNOWLEDGEMENT_SPINS: usize = 64;
 
 /// Issue one write-intent cache hint on processors which advertise PRFCHW.
 ///
@@ -698,6 +707,41 @@ impl PublicationCell {
         self.turn.store(bound, Ordering::Release);
     }
 
+    /// Publish an exact generation whose dense sequence was already assigned.
+    ///
+    /// # Safety
+    ///
+    /// The caller must own one detached occupancy claim converted to this
+    /// unique sequence. With live occupancy at most the configured capacity
+    /// and ring length at least that capacity, no other assigned live sequence
+    /// can alias this cell, even though other producers may bind distinct cells
+    /// concurrently. The prior generation must have retired before its
+    /// occupancy credit was released.
+    unsafe fn publish_bound_preassigned(
+        &self,
+        cold: &ColdPublicationCell,
+        sequence: CommitSeq,
+        ring_shift: u32,
+    ) {
+        let free = turn_token(sequence.get(), ring_shift, TURN_FREE);
+        let bound = turn_token(sequence.get(), ring_shift, TURN_BOUND);
+        if self.turn.load(Ordering::Acquire) != free {
+            // Native has already advanced the dense tail. Unwinding would let
+            // the permit release occupancy across an unfillable hole, so an
+            // ABI/invariant mismatch must terminate fail-closed.
+            std::process::abort();
+        }
+        // SAFETY: the capacity/sequence proof grants unique ownership of both
+        // paired cells until this generation is retired.
+        unsafe { self.arena_record_bytes.get().write(0) };
+        if unsafe { (&*cold.record.get()).is_some() } {
+            // The dense tail has already moved past this generation. Do not
+            // unwind across an obligation which can no longer be canceled.
+            std::process::abort();
+        }
+        self.turn.store(bound, Ordering::Release);
+    }
+
     /// Publish a previously retained single-producer reservation as BOUND.
     ///
     /// # Safety
@@ -1289,12 +1333,87 @@ impl CacheLineAtomicU64 {
     }
 
     #[inline(always)]
+    fn compare_exchange(
+        &self,
+        current: u64,
+        new: u64,
+        success: Ordering,
+        failure: Ordering,
+    ) -> Result<u64, u64> {
+        self.value
+            .compare_exchange(current, new, success, failure)
+    }
+
+    #[inline(always)]
+    fn fetch_max(&self, value: u64, ordering: Ordering) -> u64 {
+        self.value.fetch_max(value, ordering)
+    }
+
+    #[inline(always)]
+    fn fetch_add(&self, value: u64, ordering: Ordering) -> u64 {
+        self.value.fetch_add(value, ordering)
+    }
+
+    #[inline(always)]
+    fn fetch_update<F>(
+        &self,
+        set_order: Ordering,
+        fetch_order: Ordering,
+        f: F,
+    ) -> Result<u64, u64>
+    where
+        F: FnMut(u64) -> Option<u64>,
+    {
+        self.value.fetch_update(set_order, fetch_order, f)
+    }
+
+    #[inline(always)]
+    const fn atomic(&self) -> &AtomicU64 {
+        &self.value
+    }
+
+    #[inline(always)]
     fn as_ptr(&self) -> *mut u64 {
         self.value.as_ptr()
     }
 }
 
 const _: () = assert!(std::mem::size_of::<CacheLineAtomicU64>() == 64);
+
+/// One cache-line-isolated waiter count used by the acknowledgement handoff.
+///
+/// A publisher reads this only after it closes a dense-prefix hole. A sleeping
+/// out-of-order publisher writes it. Isolation keeps that uncommon exchange
+/// away from the frontiers touched by every transaction.
+#[repr(C, align(64))]
+struct CacheLineAtomicUsize {
+    value: AtomicUsize,
+}
+
+impl CacheLineAtomicUsize {
+    const fn new(value: usize) -> Self {
+        Self {
+            value: AtomicUsize::new(value),
+        }
+    }
+
+    #[inline(always)]
+    fn load(&self, ordering: Ordering) -> usize {
+        self.value.load(ordering)
+    }
+
+    #[inline(always)]
+    fn fetch_add(&self, value: usize, ordering: Ordering) -> usize {
+        self.value.fetch_add(value, ordering)
+    }
+
+    #[inline(always)]
+    fn fetch_sub(&self, value: usize, ordering: Ordering) -> usize {
+        self.value.fetch_sub(value, ordering)
+    }
+}
+
+const _: () = assert!(std::mem::size_of::<CacheLineAtomicUsize>() == 64);
 
 /// Producer-local capacity cursor owned by one thread-affine cache lease.
 ///
@@ -1576,17 +1695,28 @@ pub struct Writeback<B: Blobs> {
     /// `state`; a healthy commit avoids taking the queue mutex merely to prove
     /// that no fail-stop condition has ever been latched.
     unhealthy: AtomicBool,
+    /// Publishers sleeping until an earlier Ready hole closes. The count and
+    /// dense acknowledgement use a SeqCst registration/recheck handshake, so
+    /// a hole-closing publisher can skip the mutex and futex wake when every
+    /// later publisher is still spinning.
+    acknowledgement_waiters: CacheLineAtomicUsize,
     /// Dense prefix of records whose producers have published a known-success
     /// native outcome. Healthy in-order publication advances this without the
     /// queue-state mutex.
     acknowledged: CacheLineAtomicU64,
+    /// Highest sequence whose trusted foreground terminal has completed,
+    /// including an out-of-order READY suffix. This is a barrier target, not
+    /// the dense publication frontier consumed by the backend.
+    foreground_ack_high_watermark: CacheLineAtomicU64,
     /// Dense prefix whose arena/cold storage is no longer read by the sole
     /// consumer. SPSC producers Acquire this only when refreshing their local
     /// capacity cursor; it is the cross-generation storage-reuse handoff.
     applied_frontier: CacheLineAtomicU64,
     /// Highest sequence assigned after post-validation. Descriptor
-    /// publication may briefly lag this scalar when producers overlap.
-    next_bound: AtomicU64,
+    /// publication may briefly lag this scalar when producers overlap. Its
+    /// own cache line keeps the native ticket handoff from invalidating
+    /// occupancy and acknowledgement words touched by other producers.
+    next_bound: CacheLineAtomicU64,
     /// Detached plus bound transactions. Successful backend retirement and
     /// pre-bind cancellation are the only releases.
     occupied: Occupancy,
@@ -1748,9 +1878,11 @@ impl<B: Blobs> Writeback<B> {
             activity_waiters: AtomicUsize::new(0),
             consumer: Mutex::new(()),
             unhealthy: AtomicBool::new(false),
+            acknowledgement_waiters: CacheLineAtomicUsize::new(0),
             acknowledged: CacheLineAtomicU64::new(applied_seed.sequence),
+            foreground_ack_high_watermark: CacheLineAtomicU64::new(applied_seed.sequence),
             applied_frontier: CacheLineAtomicU64::new(applied_seed.sequence),
-            next_bound: AtomicU64::new(applied_seed.sequence),
+            next_bound: CacheLineAtomicU64::new(applied_seed.sequence),
             occupied: Occupancy::empty(),
             oversized_pool: OversizedPool::new(config.capacity)?,
             publication_shift,
@@ -1770,6 +1902,18 @@ impl<B: Blobs> Writeback<B> {
     /// Maximum native/log record extent accepted by this queue.
     pub(crate) const fn max_record_bytes(&self) -> usize {
         self.config.max_record_bytes
+    }
+
+    /// Stable atomic words borrowed by the same-build native ordering seam.
+    ///
+    /// Native accesses these addresses only during one synchronous terminal.
+    /// It Acquire-loads `unhealthy`, then advances `next_bound` with one
+    /// externally serialized atomic load/Release-store while holding the
+    /// LocalDb validation ticket. The Rust allocation must remain live for
+    /// that whole call.
+    #[inline(always)]
+    pub(crate) const fn native_ordering_words(&self) -> (&AtomicU64, &AtomicBool) {
+        (self.next_bound.atomic(), &self.unhealthy)
     }
 
     pub(crate) fn native_holder_pool(&self) -> Option<&TrustedOnePutHolderPool> {
@@ -2012,7 +2156,11 @@ impl<B: Blobs> Writeback<B> {
     /// Advance the dense acknowledgement prefix across every atomically
     /// published successor. Multiple out-of-order publishers may help one
     /// another; the CAS makes advancement linearizable without queue locking.
-    fn advance_atomic_acknowledgement(&self, mut acknowledged: u64, maximum: u64) -> u64 {
+    fn advance_atomic_acknowledgement_once(
+        &self,
+        mut acknowledged: u64,
+        maximum: u64,
+    ) -> u64 {
         loop {
             if acknowledged >= maximum {
                 return acknowledged;
@@ -2042,6 +2190,21 @@ impl<B: Blobs> Writeback<B> {
                 Ok(_) => acknowledged = raw_next,
                 Err(observed) => acknowledged = observed,
             }
+        }
+    }
+
+    /// Sweep the dense READY prefix, then close the weak-memory race with a
+    /// trusted suffix which advertised itself while the first sweep ran.
+    fn advance_atomic_acknowledgement(&self, acknowledged: u64, maximum: u64) -> u64 {
+        let first = self.advance_atomic_acknowledgement_once(acknowledged, maximum);
+        let advertised = self
+            .foreground_ack_high_watermark
+            .load(Ordering::SeqCst)
+            .min(maximum);
+        if advertised > first {
+            self.advance_atomic_acknowledgement_once(first, advertised)
+        } else {
+            first
         }
     }
 
@@ -2647,8 +2810,10 @@ impl<B: Blobs> Writeback<B> {
             .ok()
             .and_then(|capacity| u64::MAX.checked_sub(capacity))
             .is_some_and(|safe_tail| observed <= safe_tail);
-        // Only the final `capacity` values need the state mutex. The native
-        // specialization deliberately retains this cold checked-RMW path.
+        // Only the final `capacity` values need the state mutex. This legacy
+        // Rust-side binder retains the cold checked-RMW path; the newer native
+        // allocator relies on its already-claimed occupancy credit and checks
+        // MAX before advancing the same atomic tail.
         let sequence_guard = if fast_headroom {
             None
         } else {
@@ -2831,6 +2996,19 @@ impl<B: Blobs> Writeback<B> {
         }
     }
 
+    /// Wake out-of-order publishers only after one has left the bounded spin
+    /// path and enrolled in the condition-variable handoff.
+    fn notify_acknowledgement_waiters(&self) {
+        if self.acknowledgement_waiters.load(Ordering::SeqCst) != 0 {
+            // Registration and the acknowledgement recheck happen under this
+            // mutex. Taking it before notification closes the final
+            // predicate-to-wait window without taxing the no-sleeper path.
+            let state = lock_recover(&self.state);
+            self.acknowledgement_changed.notify_all();
+            drop(state);
+        }
+    }
+
     fn recycle_native_buffer(&self, buffer: NativeRecordBuffer) {
         if let NativeRecordBuffer::Owned(bytes) = buffer {
             self.oversized_pool.recycle(bytes, self.config.capacity);
@@ -2879,11 +3057,24 @@ impl<B: Blobs> Writeback<B> {
         self.applied_watermark().sequence()
     }
 
-    /// Highest dense sequence prefix acknowledged to callers as successful
-    /// native commits. This is deliberately distinct from both the queue tail
-    /// and out-of-order Ready publication.
+    /// Highest dense Ready sequence prefix available for ordered replay.
+    ///
+    /// This is deliberately distinct from both the queue tail and the
+    /// caller-visible high-water mark of trusted out-of-order publication.
     pub fn highest_acknowledged(&self) -> u64 {
         self.acknowledged.load(Ordering::Acquire)
+    }
+
+    /// Highest sequence acknowledged by any foreground terminal.
+    ///
+    /// This is a high-water mark, not a prefix. The trusted concurrent one-Put
+    /// path may complete a later READY cell while a lower sequence remains in
+    /// flight or becomes pinned. The backend still consumes only the dense
+    /// `acknowledged` prefix; barriers include this high-water mark and either
+    /// wait for every hole to close or report the earlier fail-stop condition.
+    pub fn highest_caller_acknowledged(&self) -> u64 {
+        self.highest_acknowledged()
+            .max(self.foreground_ack_high_watermark.load(Ordering::Acquire))
     }
 
     /// Number of bound queue slots. Detached permits are deliberately omitted.
@@ -2920,7 +3111,7 @@ impl<B: Blobs> Writeback<B> {
     /// submitted in bounded atomic `write_batch` calls. A failed prefix remains
     /// unchanged at the front for the next retry.
     pub fn wait_applied(&self) -> Result<u64, ApplyError> {
-        let target = { self.acknowledged.load(Ordering::Acquire) };
+        let target = self.highest_caller_acknowledged();
         self.wait_applied_through(target)
     }
 
@@ -3093,40 +3284,119 @@ impl<B: Blobs> Writeback<B> {
         // equivalent to the old implementation winning `state` first. If the
         // failure was already observed, do not extend caller ACK across it.
         let healthy = !self.unhealthy.load(Ordering::Acquire);
-        let prior_acknowledgement = self.acknowledged.load(Ordering::SeqCst);
-        let acknowledged = if healthy {
-            self.advance_atomic_acknowledgement(prior_acknowledgement, u64::MAX)
-        } else {
-            prior_acknowledgement
-        };
+        let mut acknowledged = self.acknowledged.load(Ordering::Relaxed);
 
         #[cfg(test)]
         self.acknowledgement_changed.notify_all();
 
-        if acknowledged > prior_acknowledgement {
-            // Atomic acknowledgement is the consumer gate. Once it advances,
-            // a registered sleeping apply barrier can safely harvest the new
-            // Ready prefix. The common no-waiter case avoids the
-            // condvar/futex call.
-            self.notify_activity_waiter();
-        }
+        if healthy {
+            // The publisher which owns the next dense sequence claims the ACK
+            // baton with one CAS, then sweeps any successors which are already
+            // Ready. Suffix publishers wait instead of all rescanning and
+            // racing on the same head cell.
+            for spin in 0..=CONCURRENT_ACKNOWLEDGEMENT_SPINS {
+                if acknowledged >= sequence.get() {
+                    return Ok(());
+                }
+                if acknowledged.checked_add(1) == Some(sequence.get()) {
+                    match self.acknowledged.compare_exchange(
+                        acknowledged,
+                        sequence.get(),
+                        // The Release half publishes this thread's already
+                        // Ready cell; SeqCst also closes both waiter-count
+                        // handshakes.
+                        Ordering::SeqCst,
+                        Ordering::Relaxed,
+                    ) {
+                        Ok(_) => {
+                            // This publisher now owns the dense-prefix baton.
+                            // Sweep successors which became READY before their
+                            // missing predecessor, otherwise no producer may
+                            // remain to move the consumer frontier again.
+                            self.advance_atomic_acknowledgement(sequence.get(), u64::MAX);
+                            self.notify_activity_waiter();
+                            // A later publisher may release Ready just after
+                            // this CAS, then enroll to sleep. Every frontier
+                            // advance participates in its waiter handshake.
+                            self.notify_acknowledgement_waiters();
+                            return Ok(());
+                        }
+                        Err(observed) => {
+                            acknowledged = observed;
+                            continue;
+                        }
+                    }
+                }
+                if spin == CONCURRENT_ACKNOWLEDGEMENT_SPINS {
+                    break;
+                }
+                // Health failure is exceptional. Poll it periodically while
+                // keeping the ordinary ACK handoff to one relaxed load.
+                if spin & 31 == 31 && self.unhealthy.load(Ordering::Acquire) {
+                    break;
+                }
+                std::hint::spin_loop();
+                acknowledged = self.acknowledged.load(Ordering::Relaxed);
+            }
 
-        if acknowledged > sequence.get() {
-            // This publication closed a Prepared hole and advanced across one
-            // or more later Ready producers. Acquire `state` before notifying:
-            // either their waiter observes the new atomic frontier before
-            // sleeping, or the condvar release-and-wait happens before this
-            // guard can be acquired, which closes the lost-wakeup window.
-            let state = lock_recover(&self.state);
-            self.acknowledgement_changed.notify_all();
-            drop(state);
-        }
-
-        if healthy && acknowledged >= sequence.get() {
-            return Ok(());
+            if !self.unhealthy.load(Ordering::Acquire) {
+                // A predecessor can Release-publish Ready and then lose its
+                // CPU before advancing the dense frontier. Help it once before
+                // paying for the locked fallback.
+                let prior_acknowledgement = self.acknowledged.load(Ordering::SeqCst);
+                let acknowledged =
+                    self.advance_atomic_acknowledgement(prior_acknowledgement, u64::MAX);
+                if acknowledged > prior_acknowledgement {
+                    self.notify_activity_waiter();
+                    self.notify_acknowledgement_waiters();
+                }
+                if !self.unhealthy.load(Ordering::Acquire) && acknowledged >= sequence.get() {
+                    return Ok(());
+                }
+            }
         }
 
         self.finish_published_locked(token)
+    }
+
+    /// Acknowledge one trusted native commit without waiting for an earlier
+    /// producer to close the dense READY prefix.
+    ///
+    /// The caller's exact cell is already READY and its native terminal has
+    /// reported definite visibility plus successful cleanup. A later caller
+    /// may therefore return independently, while RocksDB replay and explicit
+    /// barriers retain dense ordering through `acknowledged`.
+    fn finish_trusted_ready_publication_concurrent(
+        &self,
+        token: QueueToken,
+    ) -> Result<(), ResolveError> {
+        debug_assert!(!self.single_producer);
+        let sequence = token.sequence();
+        if self.unhealthy.load(Ordering::Acquire) {
+            return self.finish_published_locked(token);
+        }
+
+        // Advertise only after READY is visible, and before trying to close
+        // the dense prefix. Every prefix closer performs a post-sweep SeqCst
+        // recheck. It therefore either observes this advertisement and then
+        // Acquires READY, or precedes it in SC order and this sweep observes
+        // that closer's ACK update.
+        //
+        // Keep this as an actual RMW even when `sequence` is no larger than
+        // the current high-water mark. Its place in that atomic's modification
+        // order carries this READY publication into the closer's SeqCst load;
+        // a preliminary load plus a conditional RMW would break that proof.
+        self.foreground_ack_high_watermark
+            .fetch_max(sequence.get(), Ordering::SeqCst);
+        let prior_acknowledgement = self.acknowledged.load(Ordering::SeqCst);
+        let acknowledged =
+            self.advance_atomic_acknowledgement(prior_acknowledgement, u64::MAX);
+        if acknowledged > prior_acknowledgement {
+            self.notify_activity_waiter();
+            self.notify_acknowledgement_waiters();
+        }
+
+        Ok(())
     }
 
     fn finish_published_locked(&self, token: QueueToken) -> Result<(), ResolveError> {
@@ -3209,7 +3479,18 @@ impl<B: Blobs> Writeback<B> {
             if self.acknowledged.load(Ordering::Acquire) >= sequence.get() {
                 return Ok(());
             }
+
+            let acknowledgement_waiter = AcknowledgementWaiter::new(&self.acknowledgement_waiters);
+            // Registration and this SeqCst predicate read are the waiter half
+            // of a Dekker handoff. Either a hole-closing publisher observes a
+            // nonzero count and notifies under `state`, or this read observes
+            // the acknowledgement advancement and avoids sleeping.
+            if self.acknowledged.load(Ordering::SeqCst) >= sequence.get() {
+                drop(acknowledgement_waiter);
+                return Ok(());
+            }
             state = wait_recover(&self.acknowledgement_changed, state);
+            drop(acknowledgement_waiter);
         }
     }
 
@@ -3280,8 +3561,8 @@ impl<B: Blobs> Writeback<B> {
         if max_sequence.is_some_and(|maximum| first_sequence.get() > maximum) {
             return ProcessOutcome::Idle;
         }
-        // A pinned outcome is deliberately outside the caller-acknowledged
-        // prefix, so classify it before the generic dense-ACK gate below.
+        // A pinned outcome is deliberately outside the dense Ready/replay
+        // prefix, so classify it before the generic dense gate below.
         // Otherwise every unknown front would be reported merely as Blocked
         // and clean drains/background diagnostics could not distinguish a
         // permanent ordering barrier from a publisher that is still running.
@@ -3294,7 +3575,7 @@ impl<B: Blobs> Writeback<B> {
         }
         if first_sequence.get() > self.acknowledged.load(Ordering::Acquire) {
             // A publisher may have exposed immutable bytes out of order, but
-            // the consumer must not take ownership until the dense caller ACK
+            // the consumer must not take ownership until the dense Ready
             // frontier has crossed this exact slot.
             return ProcessOutcome::Blocked;
         }
@@ -3667,6 +3948,26 @@ impl Drop for ActivityWaiter<'_> {
     fn drop(&mut self) {
         let prior = self.0.fetch_sub(1, Ordering::SeqCst);
         debug_assert_ne!(prior, 0, "activity waiter registration underflow");
+    }
+}
+
+/// Registered participant in the dense-acknowledgement notification handoff.
+struct AcknowledgementWaiter<'a>(&'a CacheLineAtomicUsize);
+
+impl<'a> AcknowledgementWaiter<'a> {
+    fn new(waiters: &'a CacheLineAtomicUsize) -> Self {
+        waiters.fetch_add(1, Ordering::SeqCst);
+        Self(waiters)
+    }
+}
+
+impl Drop for AcknowledgementWaiter<'_> {
+    fn drop(&mut self) {
+        // Registration and the post-registration predicate read carry the
+        // handshake. A stale nonzero observation during deregistration merely
+        // causes one unnecessary notifier lock.
+        let prior = self.0.fetch_sub(1, Ordering::Relaxed);
+        debug_assert_ne!(prior, 0, "acknowledgement waiter registration underflow");
     }
 }
 
@@ -4073,6 +4374,68 @@ impl<'a, B: Blobs> NativeArenaPermit<'a, B> {
             on_drop: DropAction::PinUnknown,
         })
     }
+
+    /// Adopt a sequence already assigned by native under the validation gate.
+    ///
+    /// The exact publication cell is intentionally acquired here, after the
+    /// gate has been released. This keeps arena/cache-line acquisition out of
+    /// the timestamp-and-sequence critical section while retaining the same
+    /// dense order. Once native reports a sequence, this operation is
+    /// infallible by protocol and the resulting reservation must be published
+    /// or pinned.
+    ///
+    /// # Safety
+    ///
+    /// `sequence` must be the one successor native assigned by atomically
+    /// advancing this permit owner's `next_bound` while the matching LocalDb
+    /// validation ticket excluded every other externally serialized allocator.
+    /// This permit must still own its pre-commit capacity claim, and native
+    /// must not serialize into the returned target before this call completes.
+    pub(crate) unsafe fn bind_externally_ordered(
+        &mut self,
+        mako_timestamp: MakoTimestamp,
+        sequence: NonZeroU64,
+    ) -> NativeArenaBoundReservation<'a, B> {
+        if !self.owns_claim || self.single_sequence.is_some() {
+            // Native has already advanced the dense tail. Releasing the claim
+            // during unwinding would leave a permanent queue hole.
+            std::process::abort();
+        }
+        // `sequence` is nonzero by type, so this conversion cannot fail.
+        let sequence = CommitSeq::new(sequence.get()).unwrap_or_else(|| std::process::abort());
+        let publication = self.owner.publication_cell(sequence);
+        // SAFETY: the native-assigned sequence consumes this permit's unique
+        // occupancy claim. Distinct live assignments cannot alias one ring
+        // generation under the capacity invariant.
+        unsafe {
+            publication.publish_bound_preassigned(
+                self.owner.cold_publication_cell(sequence),
+                sequence,
+                self.owner.publication_shift,
+            )
+        };
+        self.owner.notify_descriptor_waiters();
+        if sequence.get() == u64::MAX {
+            self.owner.capacity_available.notify_all();
+        }
+        let block = self.owner.publication_index(sequence);
+        // SAFETY: the exact FREE -> BOUND transition above grants this
+        // reservation exclusive arena ownership through backend retirement.
+        let target = unsafe {
+            self.owner
+                .native_arena
+                .target(block, self.exact_record_bytes)
+        };
+        self.owns_claim = false;
+        NativeArenaBoundReservation {
+            owner: self.owner,
+            token: QueueToken::new(sequence),
+            mako_timestamp,
+            exact_record_bytes: self.exact_record_bytes,
+            target,
+            on_drop: DropAction::PinUnknown,
+        }
+    }
 }
 
 impl<B: Blobs> Drop for NativeArenaPermit<'_, B> {
@@ -4137,6 +4500,33 @@ impl<B: Blobs> NativeArenaBoundReservation<'_, B> {
             self.exact_record_bytes,
         );
         self.owner.finish_ready_publication(self.token)?;
+        self.on_drop = DropAction::Done;
+        Ok(sequence)
+    }
+
+    /// Publish a trusted concurrent commit without waiting for its dense
+    /// acknowledgement predecessor.
+    ///
+    /// # Safety
+    ///
+    /// In addition to [`Self::publish_completed`]'s requirements, this must be
+    /// the native-ordered concurrent one-Put terminal. That terminal makes an
+    /// accepted sequence non-cancelable and reports success only after STO
+    /// installation and cleanup have completed.
+    pub(crate) unsafe fn publish_completed_concurrent_nonblocking(
+        &mut self,
+    ) -> Result<CommitSeq, ResolveError> {
+        assert_eq!(self.on_drop, DropAction::PinUnknown);
+        assert!(!self.owner.single_producer);
+        let sequence = self.token.sequence();
+        self.owner.publication_cell(sequence).attach_arena_ready(
+            sequence,
+            self.owner.publication_shift,
+            self.mako_timestamp,
+            self.exact_record_bytes,
+        );
+        self.owner
+            .finish_trusted_ready_publication_concurrent(self.token)?;
         self.on_drop = DropAction::Done;
         Ok(sequence)
     }
@@ -5397,6 +5787,185 @@ mod tests {
     }
 
     #[test]
+    fn trusted_ready_suffix_wakes_parked_dense_apply_barrier() {
+        let backend = Arc::new(MemBlobs::new());
+        let writeback = Arc::new(Writeback::new(Arc::clone(&backend), 0, config(2, 0)).unwrap());
+        let first_mutations = vec![put(b"first", b"one")];
+        let second_mutations = vec![put(b"second", b"two")];
+        let mut first_permit = writeback
+            .reserve_native_arena_fast(record_encoded_len(first_mutations.clone()))
+            .unwrap()
+            .unwrap();
+        let mut second_permit = writeback
+            .reserve_native_arena_fast(record_encoded_len(second_mutations.clone()))
+            .unwrap()
+            .unwrap();
+
+        // SAFETY: this test serializes both dense assignments exactly as the
+        // native validation ticket does.
+        let mut first = unsafe {
+            first_permit
+                .bind_externally_serialized(mako_timestamp_of(1))
+                .unwrap()
+        };
+        let mut second = unsafe {
+            second_permit
+                .bind_externally_serialized(mako_timestamp_of(2))
+                .unwrap()
+        };
+        fill_fast_arena_reservation(&mut first, &encoded_native_record(1, 1, first_mutations));
+        fill_fast_arena_reservation(&mut second, &encoded_native_record(2, 2, second_mutations));
+
+        // SAFETY: both exact native targets are fully initialized and this
+        // test models definitely committed, successfully cleaned terminals.
+        assert_eq!(
+            unsafe { second.publish_completed_concurrent_nonblocking().unwrap() }.get(),
+            2
+        );
+        assert_eq!(writeback.highest_acknowledged(), 0);
+        assert_eq!(writeback.highest_caller_acknowledged(), 2);
+        assert!(matches!(writeback.process_front(), ProcessOutcome::Blocked));
+
+        let waiter_writeback = Arc::clone(&writeback);
+        let (returned_tx, returned_rx) = mpsc::channel();
+        let waiter = std::thread::spawn(move || {
+            returned_tx.send(waiter_writeback.wait_applied()).unwrap();
+        });
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while writeback.activity_waiter_count() == 0 {
+            assert!(
+                Instant::now() < deadline,
+                "dense apply barrier did not park behind sequence one"
+            );
+            std::thread::yield_now();
+        }
+        assert!(matches!(
+            returned_rx.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+
+        assert_eq!(
+            // SAFETY: the first target is complete. Use the ordinary general
+            // publisher to prove its ACK-baton win sweeps the trusted suffix.
+            unsafe { first.publish_completed().unwrap() }.get(),
+            1
+        );
+        assert_eq!(
+            returned_rx
+                .recv_timeout(Duration::from_secs(1))
+                .expect("sequence one did not wake the dense apply barrier")
+                .unwrap(),
+            2
+        );
+        waiter.join().unwrap();
+        assert_eq!(writeback.highest_acknowledged(), 2);
+        assert_eq!(writeback.activity_waiter_count(), 0);
+        assert_eq!(backend.batch_count(), 2);
+    }
+
+    #[test]
+    fn trusted_front_nonblocking_publication_sweeps_ready_suffix() {
+        let backend = Arc::new(MemBlobs::new());
+        let writeback = Writeback::new(Arc::clone(&backend), 0, config(2, 0)).unwrap();
+        let first_mutations = vec![put(b"first", b"one")];
+        let second_mutations = vec![put(b"second", b"two")];
+        let mut first_permit = writeback
+            .reserve_native_arena_fast(record_encoded_len(first_mutations.clone()))
+            .unwrap()
+            .unwrap();
+        let mut second_permit = writeback
+            .reserve_native_arena_fast(record_encoded_len(second_mutations.clone()))
+            .unwrap()
+            .unwrap();
+
+        // SAFETY: this test serializes dense assignments in native-ticket order.
+        let mut first = unsafe {
+            first_permit
+                .bind_externally_serialized(mako_timestamp_of(1))
+                .unwrap()
+        };
+        let mut second = unsafe {
+            second_permit
+                .bind_externally_serialized(mako_timestamp_of(2))
+                .unwrap()
+        };
+        fill_fast_arena_reservation(&mut first, &encoded_native_record(1, 1, first_mutations));
+        fill_fast_arena_reservation(&mut second, &encoded_native_record(2, 2, second_mutations));
+
+        // SAFETY: both exact native targets model definitely committed,
+        // successfully cleaned trusted terminals.
+        assert_eq!(
+            unsafe { second.publish_completed_concurrent_nonblocking().unwrap() }.get(),
+            2
+        );
+        assert_eq!(writeback.highest_acknowledged(), 0);
+        assert_eq!(
+            unsafe { first.publish_completed_concurrent_nonblocking().unwrap() }.get(),
+            1
+        );
+        assert_eq!(writeback.highest_acknowledged(), 2);
+        assert_eq!(writeback.highest_caller_acknowledged(), 2);
+        assert_eq!(writeback.wait_applied().unwrap(), 2);
+        assert_eq!(backend.batch_count(), 2);
+    }
+
+    #[test]
+    fn trusted_ready_suffix_stays_blocked_behind_unknown_predecessor() {
+        let backend = Arc::new(MemBlobs::new());
+        let writeback = Arc::new(Writeback::new(Arc::clone(&backend), 0, config(2, 0)).unwrap());
+        let first_mutations = vec![put(b"first-unknown", b"uncertain")];
+        let second_mutations = vec![put(b"second-ready", b"committed")];
+        let mut first_permit = writeback
+            .reserve_native_arena_fast(record_encoded_len(first_mutations))
+            .unwrap()
+            .unwrap();
+        let mut second_permit = writeback
+            .reserve_native_arena_fast(record_encoded_len(second_mutations.clone()))
+            .unwrap()
+            .unwrap();
+
+        // SAFETY: this test serializes dense assignments in native-ticket order.
+        let mut first = unsafe {
+            first_permit
+                .bind_externally_serialized(mako_timestamp_of(1))
+                .unwrap()
+        };
+        let mut second = unsafe {
+            second_permit
+                .bind_externally_serialized(mako_timestamp_of(2))
+                .unwrap()
+        };
+        fill_fast_arena_reservation(&mut second, &encoded_native_record(2, 2, second_mutations));
+
+        // SAFETY: the second target models a definitely committed,
+        // successfully cleaned trusted terminal.
+        assert_eq!(
+            unsafe { second.publish_completed_concurrent_nonblocking().unwrap() }.get(),
+            2
+        );
+        assert_eq!(writeback.highest_acknowledged(), 0);
+        assert_eq!(writeback.highest_caller_acknowledged(), 2);
+
+        assert_eq!(first.pin_unwritten_unknown().unwrap().get(), 1);
+        assert!(matches!(
+            writeback.wait_applied(),
+            Err(ApplyError::UnknownOutcome { sequence }) if sequence.get() == 1
+        ));
+        assert_eq!(writeback.applied_sequence(), 0);
+        assert_eq!(backend.batch_count(), 0);
+
+        let mut runtime = crate::runtime::Runtime::start(Arc::clone(&writeback)).unwrap();
+        assert!(matches!(
+            runtime.shutdown(),
+            Err(crate::runtime::RuntimeError::Apply(
+                ApplyError::UnknownOutcome { sequence }
+            )) if sequence.get() == 1
+        ));
+        assert_eq!(writeback.applied_sequence(), 0);
+        assert_eq!(backend.batch_count(), 0);
+    }
+
+    #[test]
     fn external_arena_and_concurrent_general_binders_interoperate() {
         let backend = Arc::new(MemBlobs::new());
         let writeback = Writeback::new(backend, 0, config(2, 0)).unwrap();
@@ -5588,6 +6157,17 @@ mod tests {
                 );
                 return;
             }
+        }
+    }
+
+    fn wait_for_acknowledgement_waiters<B: Blobs>(writeback: &Writeback<B>, expected: usize) {
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while writeback.acknowledgement_waiters.load(Ordering::SeqCst) < expected {
+            assert!(
+                Instant::now() < deadline,
+                "{expected} acknowledgement publishers did not enroll to sleep"
+            );
+            std::thread::yield_now();
         }
     }
 
@@ -6652,6 +7232,7 @@ mod tests {
             let third_publisher = scope.spawn(move || third_tx.send(third.publish()).unwrap());
             wait_until_ready(&writeback, 2);
             wait_until_ready(&writeback, 3);
+            wait_for_acknowledgement_waiters(&writeback, 2);
 
             assert_eq!(writeback.highest_acknowledged(), 0);
             assert!(matches!(
@@ -6665,7 +7246,6 @@ mod tests {
             assert!(matches!(writeback.process_front(), ProcessOutcome::Blocked));
 
             first.publish().unwrap();
-            assert_eq!(writeback.highest_acknowledged(), 3);
             assert_eq!(
                 second_rx
                     .recv_timeout(Duration::from_secs(1))
@@ -6682,10 +7262,12 @@ mod tests {
                     .get(),
                 3
             );
+            assert_eq!(writeback.highest_acknowledged(), 3);
             second_publisher.join().unwrap();
             third_publisher.join().unwrap();
         });
 
+        assert_eq!(writeback.acknowledgement_waiters.load(Ordering::SeqCst), 0);
         assert_eq!(writeback.wait_applied().unwrap(), 3);
         assert_eq!(backend.batch_count(), 3);
         assert_eq!(writeback.applied_sequence(), 3);
