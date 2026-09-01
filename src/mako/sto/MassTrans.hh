@@ -789,6 +789,14 @@ public:
     int oldval_len=e->length();\
     mako::ResetEncodedNodeState(oldval_str, static_cast<size_t>(oldval_len));
 
+  // The common single-version update copies payload bytes with relaxed
+  // atomic stores.  Clang emits that loop 128 bytes from the function entry;
+  // aligning the COMDAT function keeps the tight load/store/backedge group in
+  // one instruction-cache line instead of making its throughput depend on
+  // the final executable's unrelated link order. A future PGO build should
+  // own function and basic-block placement; retain this narrow alignment
+  // until that profile-guided layout is part of the production toolchain.
+  __attribute__((aligned(64)))
   void install(TransItem& item, Transaction& t) override {
     assert(!has_internode_key(item));
     versioned_value* e = item.key<versioned_value*>();
