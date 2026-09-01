@@ -86,10 +86,24 @@ fn tagged_native_holder_extent(exact_record_bytes: usize) -> usize {
     assert!(native_holder_record_supported(exact_record_bytes));
     NATIVE_HOLDER_RECORD_TAG | exact_record_bytes
 }
+/// Maximum number of packed concurrent capacity claims acquired by one shared
+/// occupancy RMW. The unused claims remain on their owner's private cache
+/// line until that worker consumes them or a cold path reclaims them.
+const PACKED_OCCUPANCY_CREDIT_BATCH_MAX: usize = 16;
+/// Bound all idle packed credits to at most roughly one eighth of configured
+/// capacity. Small queues retain no idle credits and preserve scalar claiming.
+const PACKED_OCCUPANCY_CREDIT_HOARD_DIVISOR: usize = 8;
 /// Short out-of-order publication gaps are normal when several native
 /// transactions finish together. Keep those gaps in userspace instead of
 /// immediately entering the mutex/condition-variable protocol.
 const CONCURRENT_ACKNOWLEDGEMENT_SPINS: usize = 64;
+
+fn packed_occupancy_credit_batch_size(capacity: usize) -> usize {
+    let all_worker_share = mako_local::MAX_WORKERS
+        .max(1)
+        .saturating_mul(PACKED_OCCUPANCY_CREDIT_HOARD_DIVISOR);
+    (capacity / all_worker_share.max(1)).clamp(1, PACKED_OCCUPANCY_CREDIT_BATCH_MAX)
+}
 
 /// Issue one write-intent cache hint on processors which advertise PRFCHW.
 ///
@@ -1369,6 +1383,37 @@ impl Occupancy {
         false
     }
 
+    /// Claim up to `maximum` logical rights with one shared RMW.
+    ///
+    /// This counter only enforces the numeric capacity bound. Exact ring-turn
+    /// Acquire/Release transitions, not occupancy, transfer arena ownership,
+    /// so the batch reservation needs no inter-thread memory ordering beyond
+    /// the atomic word's modification order.
+    #[inline(always)]
+    fn try_claim_batch_relaxed(&self, maximum: usize, capacity: usize) -> usize {
+        debug_assert_ne!(maximum, 0);
+        let prior = self.value.fetch_add(maximum, Ordering::Relaxed);
+        if prior >= capacity {
+            let rollback_prior = self.value.fetch_sub(maximum, Ordering::Relaxed);
+            assert!(
+                rollback_prior >= maximum,
+                "occupancy batch overclaim rollback underflow"
+            );
+            return 0;
+        }
+
+        let claimed = maximum.min(capacity - prior);
+        let excess = maximum - claimed;
+        if excess != 0 {
+            let rollback_prior = self.value.fetch_sub(excess, Ordering::Relaxed);
+            assert!(
+                rollback_prior >= excess,
+                "occupancy partial-batch rollback underflow"
+            );
+        }
+        claimed
+    }
+
     fn release(&self) {
         self.release_many(1);
     }
@@ -1493,6 +1538,11 @@ impl CacheLineAtomicUsize {
     }
 
     #[inline(always)]
+    fn store(&self, value: usize, ordering: Ordering) {
+        self.value.store(value, ordering);
+    }
+
+    #[inline(always)]
     fn fetch_add(&self, value: usize, ordering: Ordering) -> usize {
         self.value.fetch_add(value, ordering)
     }
@@ -1500,6 +1550,23 @@ impl CacheLineAtomicUsize {
     #[inline(always)]
     fn fetch_sub(&self, value: usize, ordering: Ordering) -> usize {
         self.value.fetch_sub(value, ordering)
+    }
+
+    #[inline(always)]
+    fn compare_exchange_weak(
+        &self,
+        current: usize,
+        new: usize,
+        success: Ordering,
+        failure: Ordering,
+    ) -> Result<usize, usize> {
+        self.value
+            .compare_exchange_weak(current, new, success, failure)
+    }
+
+    #[inline(always)]
+    fn swap(&self, value: usize, ordering: Ordering) -> usize {
+        self.value.swap(value, ordering)
     }
 }
 
@@ -1810,8 +1877,19 @@ pub struct Writeback<B: Blobs> {
     /// cache line keeps legacy traffic away from occupancy and acknowledgement
     /// words touched by other producers.
     next_bound: CacheLineAtomicU64,
+    /// Maximum aggregate rights acquired by one packed concurrent refill.
+    /// One preserves scalar occupancy behavior for small queues.
+    packed_occupancy_credit_batch: usize,
+    /// Idle occupancy rights owned by each process-lifetime writer slot.
+    ///
+    /// The slot's sole worker consumes its isolated line. Capacity pressure
+    /// may steal idle rights, but the process-lifetime slot allocator never
+    /// recycles a departed thread's index and this allocation belongs to only
+    /// one Writeback/cache namespace.
+    packed_occupancy_credits_by_worker: Box<[CacheLineAtomicUsize]>,
     /// Detached plus bound transactions. Successful backend retirement and
-    /// pre-bind cancellation are the only releases.
+    /// pre-bind cancellation release active rights; packed-credit reclamation
+    /// releases idle rights which never became a transaction.
     occupied: Occupancy,
     /// Recycled allocations used only by records larger than the fixed arena.
     oversized_pool: OversizedPool,
@@ -1946,6 +2024,19 @@ impl<B: Blobs> Writeback<B> {
             TrustedOnePutHolderPool::new(publication_capacity, 0, 0)
                 .map_err(|_| ConfigError::NativeHolderPool)?,
         );
+        let packed_occupancy_credit_batch = if single_producer {
+            1
+        } else {
+            packed_occupancy_credit_batch_size(config.capacity)
+        };
+        let packed_occupancy_credits_by_worker = if single_producer {
+            Vec::new().into_boxed_slice()
+        } else {
+            (0..mako_local::MAX_WORKERS)
+                .map(|_| CacheLineAtomicUsize::new(0))
+                .collect::<Vec<_>>()
+                .into_boxed_slice()
+        };
 
         Ok(Self {
             backend,
@@ -1975,6 +2066,8 @@ impl<B: Blobs> Writeback<B> {
                 .into_boxed_slice(),
             applied_frontier: CacheLineAtomicU64::new(applied_seed.sequence),
             next_bound: CacheLineAtomicU64::new(applied_seed.sequence),
+            packed_occupancy_credit_batch,
+            packed_occupancy_credits_by_worker,
             occupied: Occupancy::empty(),
             oversized_pool: OversizedPool::new(config.capacity)?,
             publication_shift,
@@ -1994,6 +2087,99 @@ impl<B: Blobs> Writeback<B> {
     /// Maximum native/log record extent accepted by this queue.
     pub(crate) const fn max_record_bytes(&self) -> usize {
         self.config.max_record_bytes
+    }
+
+    #[inline(always)]
+    fn packed_occupancy_credit_slot(&self, worker_slot: usize) -> &CacheLineAtomicUsize {
+        self.packed_occupancy_credits_by_worker
+            .get(worker_slot)
+            .expect("packed occupancy-credit worker slot is in range")
+    }
+
+    /// Transfer one idle right from this worker's private line to its returned
+    /// permit. Reclamation is the only concurrent writer of the line.
+    ///
+    /// Relaxed is sufficient: the atomic modification order decides whether
+    /// this CAS or a reclaiming swap owns each numeric right. Ring-turn
+    /// Acquire/Release transitions independently transfer record storage, and
+    /// the packed native word independently orders read-only history.
+    #[inline(always)]
+    fn try_take_packed_occupancy_credit(&self, worker_slot: usize) -> bool {
+        let credit = self.packed_occupancy_credit_slot(worker_slot);
+        let mut current = credit.load(Ordering::Relaxed);
+        loop {
+            if current == 0 {
+                return false;
+            }
+            match credit.compare_exchange_weak(
+                current,
+                current - 1,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return true,
+                Err(observed) => current = observed,
+            }
+        }
+    }
+
+    /// Acquire the current permit plus a bounded set of idle owner-local
+    /// rights. Only the owner can refill its line, and it reaches this method
+    /// only after observing zero. The Release store and a reclaimer's Acquire
+    /// swap keep the preceding aggregate batch claim before any subtraction of
+    /// those idle rights. A pressure scan which linearizes before this store
+    /// either claims remaining scalar capacity or fails and scans again.
+    #[inline(always)]
+    fn try_refill_packed_occupancy_credits(&self, worker_slot: usize) -> bool {
+        let credit = self.packed_occupancy_credit_slot(worker_slot);
+        debug_assert_eq!(credit.load(Ordering::Relaxed), 0);
+        let claimed = self
+            .occupied
+            .try_claim_batch_relaxed(self.packed_occupancy_credit_batch, self.config.capacity);
+        if claimed == 0 {
+            return false;
+        }
+        if claimed != 1 {
+            credit.store(claimed - 1, Ordering::Release);
+        }
+        true
+    }
+
+    #[inline(always)]
+    fn try_claim_packed_occupancy(&self, worker_slot: usize) -> bool {
+        if self.packed_occupancy_credit_batch == 1 {
+            return self.occupied.try_claim(self.config.capacity);
+        }
+        self.try_take_packed_occupancy_credit(worker_slot)
+            || self.try_refill_packed_occupancy_credits(worker_slot)
+    }
+
+    /// Steal every currently published idle right and return it to aggregate
+    /// occupancy. Each Acquire swap which observes a nonzero Release-published
+    /// credit also keeps its aggregate batch claim before the subtraction;
+    /// the slot's atomic modification order divides ownership with worker CASes.
+    fn reclaim_all_packed_occupancy_credits(&self) -> usize {
+        if self.packed_occupancy_credit_batch == 1 {
+            return 0;
+        }
+        let reclaimed = self
+            .packed_occupancy_credits_by_worker
+            .iter()
+            .map(|credit| credit.swap(0, Ordering::Acquire))
+            .try_fold(0usize, usize::checked_add)
+            .expect("packed occupancy-credit sum cannot exceed configured capacity");
+        if reclaimed != 0 {
+            self.occupied.release_many(reclaimed);
+        }
+        reclaimed
+    }
+
+    /// Return idle packed rights before exclusive cache shutdown.
+    ///
+    /// Safe `Cache::close`, `abort_without_flush`, and final Drop own the cache
+    /// value, so no foreground transaction can refill after this one-shot scan.
+    pub(crate) fn reclaim_packed_occupancy_credits_for_shutdown(&self) {
+        self.reclaim_all_packed_occupancy_credits();
     }
 
     /// Stable atomic words borrowed by the same-build native ordering seam.
@@ -2574,6 +2760,44 @@ impl<B: Blobs> Writeback<B> {
         self.reserve_native_arena_fast_inner(record_bytes, None)
     }
 
+    /// Claim the packed concurrent one-Put arena using this worker's isolated
+    /// occupancy-credit line.
+    ///
+    /// Record validation intentionally matches [`Self::reserve_native_arena_fast`].
+    /// Only the capacity accounting differs; general, legacy, oversized, and
+    /// single-producer transactions retain their scalar reservation paths.
+    #[inline(always)]
+    pub(crate) fn reserve_native_arena_fast_packed(
+        &self,
+        record_bytes: usize,
+        worker_slot: usize,
+    ) -> Result<Option<NativeArenaPermit<'_, B>>, ReserveError> {
+        assert!(
+            !self.single_producer,
+            "packed occupancy credits require a concurrent queue"
+        );
+        if record_bytes == 0 {
+            return Err(ReserveError::Record(RecordError::Truncated));
+        }
+        if record_bytes > self.config.max_record_bytes {
+            return Err(ReserveError::Record(RecordError::RecordTooLarge {
+                size: record_bytes,
+                max: self.config.max_record_bytes,
+            }));
+        }
+        if record_bytes > self.native_arena.block_bytes() {
+            return Ok(None);
+        }
+        self.claim_detached_capacity_packed(worker_slot)?;
+        Ok(Some(NativeArenaPermit {
+            owner: self,
+            exact_record_bytes: record_bytes,
+            single_sequence: None,
+            single_producer: None,
+            owns_claim: true,
+        }))
+    }
+
     pub(crate) fn reserve_native_arena_fast_single<'a>(
         &'a self,
         producer: &'a SingleProducerState,
@@ -2781,6 +3005,16 @@ impl<B: Blobs> Writeback<B> {
         self.claim_detached_capacity_concurrent_slow()
     }
 
+    #[inline(always)]
+    fn claim_detached_capacity_packed(&self, worker_slot: usize) -> Result<(), ReserveError> {
+        debug_assert!(!self.single_producer);
+        if !self.unhealthy.load(Ordering::Acquire) && self.try_claim_packed_occupancy(worker_slot) {
+            return Ok(());
+        }
+
+        self.claim_detached_capacity_concurrent_slow()
+    }
+
     fn claim_detached_capacity_concurrent_slow(&self) -> Result<(), ReserveError> {
         let mut state = lock_recover(&self.state);
         self.capacity_waiters.fetch_add(1, Ordering::AcqRel);
@@ -2789,6 +3023,11 @@ impl<B: Blobs> Writeback<B> {
             self.import_bound_locked(&mut state);
             if let Some(error) = state.reserve_health_error() {
                 return Err(error);
+            }
+            if self.reclaim_all_packed_occupancy_credits() != 0 {
+                // `state` closes the waiter predicate window. Notify directly
+                // because the ordinary helper would try to lock it again.
+                self.capacity_available.notify_all();
             }
             if self.occupied.try_claim(self.config.capacity) {
                 return Ok(());
@@ -3220,7 +3459,14 @@ impl<B: Blobs> Writeback<B> {
                     .is_bound(sequence, self.publication_shift)
             })
             .count();
-        occupied.saturating_sub(bound)
+        let idle_packed_credits = self
+            .packed_occupancy_credits_by_worker
+            .iter()
+            .map(|credit| credit.load(Ordering::Relaxed))
+            .sum::<usize>();
+        occupied
+            .saturating_sub(idle_packed_credits)
+            .saturating_sub(bound)
     }
 
     #[cfg(test)]
@@ -5465,6 +5711,267 @@ mod tests {
             release_tx.send(()).unwrap();
             producer.join().unwrap();
         });
+    }
+
+    #[test]
+    fn packed_occupancy_credit_batch_is_bounded_and_scalar_for_small_queues() {
+        let all_worker_share = mako_local::MAX_WORKERS * PACKED_OCCUPANCY_CREDIT_HOARD_DIVISOR;
+        assert_eq!(packed_occupancy_credit_batch_size(1), 1);
+        assert_eq!(packed_occupancy_credit_batch_size(all_worker_share), 1);
+        assert_eq!(packed_occupancy_credit_batch_size(all_worker_share * 2), 2);
+        assert_eq!(packed_occupancy_credit_batch_size(1_048_576), 16);
+        assert_eq!(
+            packed_occupancy_credit_batch_size(
+                all_worker_share * (PACKED_OCCUPANCY_CREDIT_BATCH_MAX + 1)
+            ),
+            PACKED_OCCUPANCY_CREDIT_BATCH_MAX
+        );
+
+        for capacity in [
+            1,
+            all_worker_share,
+            all_worker_share * 2,
+            1_048_576,
+            all_worker_share * 64,
+        ] {
+            let batch = packed_occupancy_credit_batch_size(capacity);
+            let maximum_idle = mako_local::MAX_WORKERS * (batch - 1);
+            assert!(
+                maximum_idle <= capacity / PACKED_OCCUPANCY_CREDIT_HOARD_DIVISOR,
+                "capacity {capacity} batch {batch} can hoard {maximum_idle} idle rights"
+            );
+        }
+    }
+
+    #[test]
+    fn packed_occupancy_credit_reuses_one_shared_batch_claim() {
+        let backend = Arc::new(MemBlobs::new());
+        let mut writeback = Writeback::new(backend, 0, config(2, 0)).unwrap();
+        writeback.packed_occupancy_credit_batch = 2;
+
+        let first = writeback
+            .reserve_native_arena_fast_packed(64, 0)
+            .unwrap()
+            .expect("the first packed reservation fits the arena");
+        assert_eq!(writeback.occupied.load(), 2);
+        assert_eq!(
+            writeback
+                .packed_occupancy_credit_slot(0)
+                .load(Ordering::Relaxed),
+            1
+        );
+        drop(first);
+        assert_eq!(writeback.occupied.load(), 1);
+
+        let second = writeback
+            .reserve_native_arena_fast_packed(64, 0)
+            .unwrap()
+            .expect("the owner-local right admits a second reservation");
+        assert_eq!(
+            writeback.occupied.load(),
+            1,
+            "consuming an idle right must not touch shared occupancy"
+        );
+        assert_eq!(
+            writeback
+                .packed_occupancy_credit_slot(0)
+                .load(Ordering::Relaxed),
+            0
+        );
+        drop(second);
+        assert_eq!(writeback.occupied.load(), 0);
+    }
+
+    #[test]
+    fn packed_occupancy_batch_preserves_partial_tail_capacity() {
+        let backend = Arc::new(MemBlobs::new());
+        let mut writeback = Writeback::new(backend, 0, config(3, 0)).unwrap();
+        writeback.packed_occupancy_credit_batch = 2;
+
+        let first = writeback
+            .reserve_native_arena_fast_packed(64, 0)
+            .unwrap()
+            .unwrap();
+        let second = writeback
+            .reserve_native_arena_fast_packed(64, 1)
+            .unwrap()
+            .unwrap();
+        assert_eq!(writeback.occupied.load(), 3);
+        assert_eq!(
+            writeback
+                .packed_occupancy_credit_slot(0)
+                .load(Ordering::Relaxed),
+            1
+        );
+        assert_eq!(
+            writeback
+                .packed_occupancy_credit_slot(1)
+                .load(Ordering::Relaxed),
+            0,
+            "the final capacity unit must admit an active permit, not an idle right"
+        );
+
+        drop(first);
+        drop(second);
+        assert_eq!(writeback.occupied.load(), 1);
+        assert_eq!(writeback.reclaim_all_packed_occupancy_credits(), 1);
+        assert_eq!(writeback.occupied.load(), 0);
+    }
+
+    #[test]
+    fn packed_credit_scalar_capacity_pressure_reclaims_idle_rights() {
+        let backend = Arc::new(MemBlobs::new());
+        let mut writeback = Writeback::new(backend, 0, config(2, 0)).unwrap();
+        writeback.packed_occupancy_credit_batch = 2;
+
+        let packed = writeback
+            .reserve_native_arena_fast_packed(64, 0)
+            .unwrap()
+            .unwrap();
+        assert_eq!(writeback.occupied.load(), 2);
+        let ordinary = writeback
+            .reserve_native_arena_fast(64)
+            .unwrap()
+            .expect("the slow scalar path must reclaim an idle packed right");
+        assert_eq!(writeback.occupied.load(), 2);
+        assert_eq!(
+            writeback
+                .packed_occupancy_credit_slot(0)
+                .load(Ordering::Relaxed),
+            0
+        );
+
+        drop(ordinary);
+        drop(packed);
+        assert_eq!(writeback.occupied.load(), 0);
+    }
+
+    #[test]
+    fn packed_credit_general_oversized_and_single_producer_paths_are_isolated() {
+        let backend = Arc::new(MemBlobs::new());
+        let mut concurrent = Writeback::new(Arc::clone(&backend), 0, config(4, 0)).unwrap();
+        concurrent.packed_occupancy_credit_batch = 3;
+
+        let general = concurrent
+            .reserve(vec![put(b"general", b"record")])
+            .unwrap();
+        let oversized = concurrent
+            .reserve_native(concurrent.native_arena.block_bytes() + 1)
+            .unwrap();
+        assert_eq!(concurrent.occupied.load(), 2);
+        assert!(
+            concurrent
+                .packed_occupancy_credits_by_worker
+                .iter()
+                .all(|credit| credit.load(Ordering::Relaxed) == 0),
+            "ordinary general and oversized reservations remain scalar"
+        );
+        drop(general);
+        drop(oversized);
+        assert_eq!(concurrent.occupied.load(), 0);
+
+        let single = Writeback::new_single(backend, 0, config(4, 0)).unwrap();
+        assert_eq!(single.packed_occupancy_credit_batch, 1);
+        assert!(single.packed_occupancy_credits_by_worker.is_empty());
+        let producer = single.single_producer_state();
+        let permit = single
+            .reserve_native_arena_fast_single(&producer, 64)
+            .unwrap()
+            .unwrap();
+        drop(permit);
+        single.reclaim_packed_occupancy_credits_for_shutdown();
+        assert_eq!(single.occupied.load(), 0);
+    }
+
+    #[test]
+    fn packed_credit_pressure_rescans_a_refill_published_after_its_first_scan() {
+        let backend = Arc::new(MemBlobs::new());
+        let mut writeback = Writeback::new(backend, 0, config(2, 0)).unwrap();
+        writeback.packed_occupancy_credit_batch = 2;
+        let credit = writeback.packed_occupancy_credit_slot(0);
+
+        // Pause a refill after its aggregate claim but before its idle-right
+        // store. A pressure scan may legitimately linearize in this window.
+        assert_eq!(writeback.occupied.try_claim_batch_relaxed(2, 2), 2);
+        assert_eq!(writeback.reclaim_all_packed_occupancy_credits(), 0);
+        credit.store(1, Ordering::Release);
+        assert!(!writeback.occupied.try_claim(2));
+
+        // The locked slow path loops after that failed scalar claim. Its next
+        // scan sees the late publication and restores the final capacity unit.
+        assert_eq!(writeback.reclaim_all_packed_occupancy_credits(), 1);
+        assert!(writeback.occupied.try_claim(2));
+        writeback.occupied.release_many(2);
+        assert_eq!(writeback.occupied.load(), 0);
+    }
+
+    #[test]
+    fn packed_credit_exclusive_shutdown_reclaims_and_cache_allocations_are_isolated() {
+        let backend = Arc::new(MemBlobs::new());
+        let mut first_writeback = Writeback::new(Arc::clone(&backend), 0, config(3, 0)).unwrap();
+        first_writeback.packed_occupancy_credit_batch = 3;
+        let first = first_writeback
+            .reserve_native_arena_fast_packed(64, 0)
+            .unwrap()
+            .unwrap();
+        assert_eq!(first_writeback.occupied.load(), 3);
+
+        let mut second_writeback = Writeback::new(backend, 0, config(3, 0)).unwrap();
+        second_writeback.packed_occupancy_credit_batch = 3;
+        let second = second_writeback
+            .reserve_native_arena_fast_packed(64, 0)
+            .unwrap()
+            .unwrap();
+        assert_eq!(second_writeback.occupied.load(), 3);
+        assert_eq!(first_writeback.occupied.load(), 3);
+        drop(first);
+        drop(second);
+        assert_eq!(first_writeback.occupied.load(), 2);
+        assert_eq!(second_writeback.occupied.load(), 2);
+
+        first_writeback.reclaim_packed_occupancy_credits_for_shutdown();
+        first_writeback.reclaim_packed_occupancy_credits_for_shutdown();
+        second_writeback.reclaim_packed_occupancy_credits_for_shutdown();
+        assert_eq!(first_writeback.occupied.load(), 0);
+        assert_eq!(second_writeback.occupied.load(), 0);
+    }
+
+    #[test]
+    fn packed_credit_owner_consumption_races_reclamation_without_capacity_loss() {
+        const OWNER_ITERATIONS: usize = 20_000;
+        const RECLAIM_ITERATIONS: usize = 5_000;
+
+        let backend = Arc::new(MemBlobs::new());
+        let mut writeback = Writeback::new(backend, 0, config(8, 0)).unwrap();
+        writeback.packed_occupancy_credit_batch = 4;
+        let writeback = Arc::new(writeback);
+        let start = Arc::new(Barrier::new(2));
+
+        let owner_writeback = Arc::clone(&writeback);
+        let owner_start = Arc::clone(&start);
+        let owner = std::thread::spawn(move || {
+            owner_start.wait();
+            for _ in 0..OWNER_ITERATIONS {
+                let permit = owner_writeback
+                    .reserve_native_arena_fast_packed(64, 0)
+                    .unwrap()
+                    .expect("one owner and a reclaimer cannot exhaust eight rights");
+                drop(permit);
+            }
+        });
+
+        start.wait();
+        for _ in 0..RECLAIM_ITERATIONS {
+            writeback.reclaim_all_packed_occupancy_credits();
+            std::hint::spin_loop();
+        }
+        owner.join().unwrap();
+        writeback.reclaim_packed_occupancy_credits_for_shutdown();
+        assert_eq!(writeback.occupied.load(), 0);
+        assert!(writeback
+            .packed_occupancy_credits_by_worker
+            .iter()
+            .all(|credit| credit.load(Ordering::Relaxed) == 0));
     }
 
     fn put(key: &[u8], value: &[u8]) -> Mutation {

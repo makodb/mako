@@ -889,6 +889,8 @@ impl<B: Blobs + 'static> Cache<B> {
     /// sequence above the applied watermark may be lost.
     #[doc(hidden)]
     pub fn abort_without_flush(self) -> Result<(), Error> {
+        self.writeback
+            .reclaim_packed_occupancy_credits_for_shutdown();
         let mut runtime = self
             .runtime
             .lock()
@@ -900,6 +902,8 @@ impl<B: Blobs + 'static> Cache<B> {
     }
 
     fn shutdown(&self) -> Result<u64, Error> {
+        self.writeback
+            .reclaim_packed_occupancy_credits_for_shutdown();
         let mut runtime = self
             .runtime
             .lock()
@@ -1383,22 +1387,35 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
                     }
                 }
             }
-            let reserved = match foreground.single_producer() {
-                Some(producer) => self
-                    .cache
-                    .writeback
-                    .reserve_native_arena_fast_single(producer, preflight.exact_record_bytes()),
-                None => self
-                    .cache
-                    .writeback
-                    .reserve_native_arena_fast(preflight.exact_record_bytes()),
+            let (reserved, concurrent_worker_slot) = match foreground.single_producer() {
+                Some(producer) => (
+                    self.cache
+                        .writeback
+                        .reserve_native_arena_fast_single(producer, preflight.exact_record_bytes()),
+                    None,
+                ),
+                None => {
+                    let worker_slot = CommitFence::current_thread_slot();
+                    (
+                        self.cache.writeback.reserve_native_arena_fast_packed(
+                            preflight.exact_record_bytes(),
+                            worker_slot,
+                        ),
+                        Some(worker_slot),
+                    )
+                }
             };
             match reserved {
                 Ok(Some(permit)) => {
                     return match foreground {
                         TransactionForeground::Concurrent => {
                             finish_trusted_one_put_concurrent(
-                                self.cache, native, preflight, permit,
+                                self.cache,
+                                native,
+                                preflight,
+                                permit,
+                                concurrent_worker_slot
+                                    .expect("a concurrent arena reserve retains its worker slot"),
                             )
                         }
                         TransactionForeground::SingleProducer(_) => {
@@ -1647,11 +1664,12 @@ fn finish_trusted_one_put_concurrent<'cache, 'db, B: Blobs + 'static>(
     native: mako_local::Transaction<'db>,
     preflight: mako_local::CommitRecordPreflight,
     mut permit: writeback::NativeArenaPermit<'cache, B>,
+    worker_slot: usize,
 ) -> Result<(), Error> {
     #[cfg(test)]
     crate::failpoint::hit(crate::failpoint::Point::DetachedPrepared);
 
-    let fence = cache.commit_fence.enter_writer();
+    let fence = cache.commit_fence.enter_writer_slot(worker_slot);
     if let Err(error) = cache.writeback.ensure_no_unknown() {
         return Err(abort_after_precommit_failure(native, Error::Apply(error)));
     }
