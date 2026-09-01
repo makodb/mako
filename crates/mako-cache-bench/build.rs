@@ -2,16 +2,23 @@
 //! native Mako build it measures.
 //!
 //! Dependency build-script link arguments are package-local.  The benchmark
-//! is a separate package, so it must repeat the two rpaths used by
-//! `mako-cache`: Mako's in-tree yaml-cpp and the configured libc++.
+//! is a separate package, so it must repeat the rpaths used by `mako-cache`:
+//! Mako's in-tree yaml-cpp, the configured libc++, and any non-system process
+//! allocator resolved by CMake.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+#[path = "../mako-local/build_support/native_allocator.rs"]
+mod native_allocator;
+
+use native_allocator::{NativeAllocator, ResolvedAllocator, CONTRACT_RELATIVE_PATH};
 
 fn main() {
     for variable in ["MAKO_BUILD_DIR", "LIBCXX_DIR"] {
         println!("cargo:rerun-if-env-changed={variable}");
     }
+    println!("cargo:rerun-if-changed=../mako-local/build_support/native_allocator.rs");
 
     let build = std::env::var_os("MAKO_BUILD_DIR")
         .map(PathBuf::from)
@@ -48,11 +55,44 @@ fn main() {
     println!("cargo:rustc-link-search=native={}", libcxx.display());
     println!("cargo:rustc-link-arg=-Wl,-rpath,{}", libcxx.display());
 
+    // Preserve Mako's private yaml-cpp/libc++ precedence if the allocator is
+    // found in a broad directory such as /usr/lib.
+    configure_allocator_rpath(&build, &cache);
+
     // mrx-masstree's native archive contains the snapshot implementation,
     // whose object file references LZ4 even though this benchmark never calls
     // that path. Declare the final binary's dependency directly instead of
     // relying on mako-local's production-only link metadata to supply it.
     println!("cargo:rustc-link-lib=dylib=lz4");
+}
+
+fn configure_allocator_rpath(build: &Path, cache: &str) {
+    let configured = NativeAllocator::from_cmake_cache(cache)
+        .unwrap_or_else(|error| panic!("cannot read CMake allocator mode: {error}"));
+    let contract_path = build.join(CONTRACT_RELATIVE_PATH);
+    println!("cargo:rerun-if-changed={}", contract_path.display());
+    let contract = std::fs::read_to_string(&contract_path)
+        .unwrap_or_else(|error| panic!("cannot read {}: {error}", contract_path.display()));
+    let allocator = ResolvedAllocator::from_contract(&contract)
+        .and_then(|resolved| resolved.validate_mode(configured))
+        .and_then(|resolved| {
+            resolved.validate_library_path()?;
+            Ok(resolved)
+        })
+        .unwrap_or_else(|error| {
+            panic!(
+                "mako-cache-bench refused allocator contract {}: {error}",
+                contract_path.display()
+            )
+        });
+    if let Some(library_path) = allocator.library_path() {
+        let directory = allocator
+            .library_directory()
+            .expect("resolved allocator library must have a parent directory");
+        println!("cargo:rerun-if-changed={}", library_path.display());
+        println!("cargo:rustc-link-search=native={}", directory.display());
+        println!("cargo:rustc-link-arg=-Wl,-rpath,{}", directory.display());
+    }
 }
 
 fn libcxx_dir(cache: &str) -> Option<PathBuf> {

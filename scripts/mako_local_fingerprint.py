@@ -36,6 +36,7 @@ DOMAIN = b"mako-local-build-fingerprint\0v1\0"
 FINGERPRINT_SIZE = 32
 DEFAULT_MANIFEST = "generated/mako_local_build_manifest.json"
 NATIVE_LINK_ARCHIVE_MANIFEST = "crates/mako-local/native-link-archives.txt"
+ALLOCATOR_CONTRACT = "generated/mako_allocator_contract.txt"
 
 # ``libmako.a`` also physically bundles every object from this object target,
 # so it is part of the same closure even though Cargo does not name it as a
@@ -54,6 +55,7 @@ RECIPE_FILES = (
     "src/masstree/ConfigureMasstree.cmake",
     "src/masstree/config-cmake.h.in",
     "third-party/rusty-cpp/CMakeLists.txt",
+    "cmake/MakoAllocator.cmake",
     "crates/mako-local/build.rs",
     "crates/mako-local/build_support/native_allocator.rs",
     NATIVE_LINK_ARCHIVE_MANIFEST,
@@ -215,6 +217,28 @@ class ObjectContent:
     @classmethod
     def from_bytes(cls, basename: str, contents: bytes) -> "ObjectContent":
         return cls(basename, len(contents), hashlib.sha256(contents).hexdigest())
+
+
+@dataclasses.dataclass(frozen=True)
+class AllocatorContract:
+    mode: int
+    kind: str
+    linkage: str
+    link_name: str
+    library_path: Path | None
+    soname: str
+    sha256: str
+
+    def normalized(self) -> bytes:
+        return (
+            "schema=1\n"
+            f"mode={self.mode}\n"
+            f"kind={self.kind}\n"
+            f"linkage={self.linkage}\n"
+            f"link_name={self.link_name}\n"
+            f"soname={self.soname}\n"
+            f"sha256={self.sha256}\n"
+        ).encode("utf-8")
 
 
 @dataclasses.dataclass
@@ -1133,6 +1157,175 @@ def read_engine_contract(header: Path) -> tuple[str, int]:
     return engine_id, size
 
 
+def read_allocator_contract(path: Path, configured_mode: str | None) -> AllocatorContract:
+    expected_keys = {
+        "schema",
+        "mode",
+        "kind",
+        "linkage",
+        "link_name",
+        "library_path",
+        "soname",
+        "sha256",
+    }
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError) as error:
+        raise FingerprintError(f"cannot read allocator contract {path}: {error}") from error
+    fields: dict[str, str] = {}
+    for line_number, line in enumerate(lines, 1):
+        if not line or "=" not in line:
+            raise FingerprintError(
+                f"allocator contract {path}:{line_number} must be a nonempty key=value field"
+            )
+        key, value = line.split("=", 1)
+        if key not in expected_keys:
+            raise FingerprintError(
+                f"allocator contract {path}:{line_number} has unknown field {key!r}"
+            )
+        if key in fields:
+            raise FingerprintError(
+                f"allocator contract {path}:{line_number} repeats field {key!r}"
+            )
+        fields[key] = value
+    missing = sorted(expected_keys - fields.keys())
+    if missing:
+        raise FingerprintError(
+            f"allocator contract {path} is missing fields: {', '.join(missing)}"
+        )
+    if fields["schema"] != "1":
+        raise FingerprintError(
+            f"allocator contract {path} has unsupported schema {fields['schema']!r}"
+        )
+
+    expected_kinds = {"0": "system", "1": "jemalloc", "2": "tcmalloc", "3": "flow"}
+    if fields["mode"] not in expected_kinds:
+        raise FingerprintError(
+            f"allocator contract {path} has unsupported mode {fields['mode']!r}"
+        )
+    if configured_mode != fields["mode"]:
+        raise FingerprintError(
+            f"allocator contract mode {fields['mode']!r} does not match "
+            f"CMakeCache USE_MALLOC_MODE {configured_mode!r}"
+        )
+    expected_kind = expected_kinds[fields["mode"]]
+    if fields["kind"] != expected_kind:
+        raise FingerprintError(
+            f"allocator mode {fields['mode']} requires kind {expected_kind!r}, "
+            f"found {fields['kind']!r}"
+        )
+
+    mode = int(fields["mode"])
+    if mode == 0:
+        if fields["linkage"] != "none":
+            raise FingerprintError("system allocator contract must use linkage='none'")
+        populated = [
+            key
+            for key in ("link_name", "library_path", "soname", "sha256")
+            if fields[key]
+        ]
+        if populated:
+            raise FingerprintError(
+                "system allocator contract must leave link fields empty: "
+                + ", ".join(populated)
+            )
+        return AllocatorContract(mode, expected_kind, "none", "", None, "", "")
+
+    if fields["linkage"] != "shared":
+        raise FingerprintError(
+            f"allocator mode {mode} requires shared linkage, found {fields['linkage']!r}"
+        )
+    if fields["link_name"] != expected_kind:
+        raise FingerprintError(
+            f"allocator mode {mode} requires link_name {expected_kind!r}, "
+            f"found {fields['link_name']!r}"
+        )
+    library_path = Path(fields["library_path"])
+    if not library_path.is_absolute():
+        raise FingerprintError(
+            f"allocator library path must be canonical and absolute: {library_path}"
+        )
+    try:
+        canonical_library = library_path.resolve(strict=True)
+    except OSError as error:
+        raise FingerprintError(
+            f"cannot resolve allocator library {library_path}: {error}"
+        ) from error
+    if canonical_library != library_path:
+        raise FingerprintError(
+            f"allocator library path is not canonical: {library_path} resolves to "
+            f"{canonical_library}"
+        )
+    soname = fields["soname"]
+    if not soname or Path(soname).name != soname:
+        raise FingerprintError(f"allocator SONAME is not a basename: {soname!r}")
+    sha256 = fields["sha256"]
+    if not re.fullmatch(r"[0-9a-f]{64}", sha256):
+        raise FingerprintError(
+            f"allocator SHA-256 must be lowercase hexadecimal, found {sha256!r}"
+        )
+    linker_spelling = library_path.parent / f"lib{fields['link_name']}.so"
+    try:
+        linker_target = linker_spelling.resolve(strict=True)
+    except OSError as error:
+        raise FingerprintError(
+            f"allocator link name -l{fields['link_name']} is unavailable as "
+            f"{linker_spelling}: {error}"
+        ) from error
+    if linker_target != library_path:
+        raise FingerprintError(
+            f"allocator link name -l{fields['link_name']} resolves to {linker_target}, "
+            f"not {library_path}"
+        )
+    runtime_spelling = library_path.parent / soname
+    try:
+        runtime_target = runtime_spelling.resolve(strict=True)
+    except OSError as error:
+        raise FingerprintError(
+            f"allocator SONAME {soname!r} is unavailable as {runtime_spelling}: {error}"
+        ) from error
+    if runtime_target != library_path:
+        raise FingerprintError(
+            f"allocator SONAME {soname!r} resolves to {runtime_target}, not {library_path}"
+        )
+    library_bytes = _read_file(library_path, "allocator library")
+    actual_sha256 = hashlib.sha256(library_bytes).hexdigest()
+    if actual_sha256 != sha256:
+        raise FingerprintError(
+            f"allocator library hash changed at {library_path}: contract has {sha256}, "
+            f"current bytes have {actual_sha256}; rerun CMake configuration"
+        )
+    return AllocatorContract(
+        mode,
+        expected_kind,
+        "shared",
+        fields["link_name"],
+        library_path,
+        soname,
+        sha256,
+    )
+
+
+def allocator_fingerprint_records(contract: AllocatorContract) -> list[Record]:
+    records = [
+        Record.from_bytes(
+            "configuration",
+            "allocator-contract",
+            contract.normalized(),
+            show_text=True,
+        )
+    ]
+    if contract.library_path is not None:
+        records.append(
+            Record.from_bytes(
+                "tool",
+                f"allocator-{contract.kind}:{contract.soname}",
+                _read_file(contract.library_path, "allocator library"),
+            )
+        )
+    return records
+
+
 def _read_file(path: Path, description: str) -> bytes:
     try:
         return path.read_bytes()
@@ -1147,6 +1340,10 @@ def compute_snapshot(source_root: Path, build_dir: Path) -> Snapshot:
     cache_path = build_dir / "CMakeCache.txt"
     database = read_compile_commands(compile_db_path)
     cache = parse_cmake_cache(cache_path)
+    allocator_contract_path = build_dir / ALLOCATOR_CONTRACT
+    allocator_contract = read_allocator_contract(
+        allocator_contract_path, cache.get("USE_MALLOC_MODE")
+    )
     roots = select_compile_roots(database, source_root, build_dir)
     compiler = roots[0].compiler
     normalizer = PathNormalizer(
@@ -1157,7 +1354,13 @@ def compute_snapshot(source_root: Path, build_dir: Path) -> Snapshot:
     header = source_root / "src/mako/storage/mako_local_abi.h"
     engine_id, _size = read_engine_contract(header)
     records: list[Record] = []
-    dependencies: set[Path] = {compile_db_path.resolve(), cache_path.resolve()}
+    dependencies: set[Path] = {
+        compile_db_path.resolve(),
+        cache_path.resolve(),
+        allocator_contract_path.resolve(),
+    }
+    if allocator_contract.library_path is not None:
+        dependencies.add(allocator_contract.library_path)
 
     # Hash every compiler-reported input once. This includes generated config,
     # compiler resource headers, libc++ headers, and system ABI headers.
@@ -1197,6 +1400,7 @@ def compute_snapshot(source_root: Path, build_dir: Path) -> Snapshot:
     records.append(
         Record.from_bytes("configuration", "cmake-cache", cache_text.encode(), show_text=True)
     )
+    records.extend(allocator_fingerprint_records(allocator_contract))
 
     records.extend(
         (

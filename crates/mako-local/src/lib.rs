@@ -20,6 +20,12 @@
 //! attached to the current OS thread. Do not hold one across `.await`, even on
 //! a single-thread executor, because another task could attempt to begin a
 //! transaction on the same ambient native state.
+//!
+//! Native builds also select a process-wide allocator. Cargo propagates its
+//! link search path and library name from CMake's verified allocator contract.
+//! A downstream final executable that uses an allocator outside the platform's
+//! default loader paths must add that directory to its runtime search path;
+//! dependency build scripts cannot add an rpath to an unrelated final package.
 
 #![warn(missing_docs)]
 

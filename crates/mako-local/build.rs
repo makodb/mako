@@ -12,7 +12,7 @@ use std::process::Command;
 #[path = "build_support/native_allocator.rs"]
 mod native_allocator;
 
-use native_allocator::NativeAllocator;
+use native_allocator::{NativeAllocator, ResolvedAllocator, CONTRACT_RELATIVE_PATH};
 
 const DEFAULT_BUILD_DIRS: [&str; 4] = ["build_mrx", "build_c22", "build", "build_docker"];
 const NATIVE_LINK_ARCHIVES: &str = include_str!("native-link-archives.txt");
@@ -84,16 +84,32 @@ fn main() {
         println!("cargo:rustc-link-lib=static={lib}");
     }
 
-    configure_native_allocator(&build);
-
     // Mako's in-tree yaml-cpp is built against the same libc++ as libmako.
     // The distro library uses libstdc++ and therefore has different mangled
-    // std::string symbols. Put the CMake copy first in the search path.
+    // std::string symbols. Put the CMake copy before an allocator directory
+    // such as /usr/lib, which may also contain an incompatible yaml-cpp.
     let yaml_dir = build.join("third-party/yaml-cpp");
     if yaml_dir.join("libyaml-cpp.so").exists() {
         println!("cargo:rustc-link-search=native={}", yaml_dir.display());
         println!("cargo:rustc-link-arg=-Wl,-rpath,{}", yaml_dir.display());
     }
+
+    // Keep the configured libc++ ahead of the allocator directory for the
+    // same reason: a broad system library directory can contain a different
+    // libc++ ABI. configure_native_allocator still emits its search path
+    // before its own link-lib directive.
+    let libcxx = libcxx_dir(&build).unwrap_or_else(|| {
+        panic!(
+            "could not derive libmako's libc++ directory from {}; \
+             set LIBCXX_DIR to the exact toolchain library directory",
+            build.join("CMakeCache.txt").display()
+        )
+    });
+    println!("cargo:rustc-link-search=native={}", libcxx.display());
+    println!("cargo:rustc-link-arg=-Wl,-rpath,{}", libcxx.display());
+
+    configure_native_allocator(&build);
+
     for lib in [
         "rocksdb",
         "yaml-cpp",
@@ -106,16 +122,6 @@ fn main() {
     ] {
         println!("cargo:rustc-link-lib=dylib={lib}");
     }
-
-    let libcxx = libcxx_dir(&build).unwrap_or_else(|| {
-        panic!(
-            "could not derive libmako's libc++ directory from {}; \
-             set LIBCXX_DIR to the exact toolchain library directory",
-            build.join("CMakeCache.txt").display()
-        )
-    });
-    println!("cargo:rustc-link-search=native={}", libcxx.display());
-    println!("cargo:rustc-link-arg=-Wl,-rpath,{}", libcxx.display());
     println!("cargo:rustc-link-lib=dylib=c++");
     println!("cargo:rustc-link-lib=dylib=c++abi");
     println!("cargo:rustc-cfg=have_mako");
@@ -125,18 +131,52 @@ fn configure_native_allocator(build: &Path) {
     let cache_path = build.join("CMakeCache.txt");
     let cache = fs::read_to_string(&cache_path)
         .unwrap_or_else(|error| panic!("cannot read {}: {error}", cache_path.display()));
-    let allocator = NativeAllocator::from_cmake_cache(&cache).unwrap_or_else(|error| {
+    let configured = NativeAllocator::from_cmake_cache(&cache).unwrap_or_else(|error| {
         panic!(
             "mako-local cannot reproduce the native allocator from {}: {error}",
             cache_path.display()
         )
     });
+    let contract_path = build.join(CONTRACT_RELATIVE_PATH);
+    println!("cargo:rerun-if-changed={}", contract_path.display());
+    let contract = fs::read_to_string(&contract_path)
+        .unwrap_or_else(|error| panic!("cannot read {}: {error}", contract_path.display()));
+    let allocator = ResolvedAllocator::from_contract(&contract)
+        .and_then(|resolved| resolved.validate_mode(configured))
+        .and_then(|resolved| {
+            resolved.validate_library_path()?;
+            Ok(resolved)
+        })
+        .unwrap_or_else(|error| {
+            panic!(
+                "mako-local refused allocator contract {}: {error}",
+                contract_path.display()
+            )
+        });
 
     // Rust's system allocator and libc++ both reach malloc/new through the
     // process link map. Match CMake's allocator so a Cargo executable has the
     // same process-wide allocation contract as Mako's native executables.
-    if let Some(library) = allocator.link_library() {
-        println!("cargo:rustc-link-lib=dylib={library}");
+    if let Some(library_path) = allocator.library_path() {
+        let library_directory = allocator
+            .library_directory()
+            .expect("resolved allocator library must have a parent directory");
+        let link_name = allocator
+            .link_name()
+            .expect("resolved allocator library must have a link name");
+        println!("cargo:rerun-if-changed={}", library_path.display());
+        // Search metadata propagates to downstream links. The rpath argument
+        // applies to mako-local's own test/binary targets; final downstream
+        // executables with a non-system allocator path must repeat it.
+        println!(
+            "cargo:rustc-link-search=native={}",
+            library_directory.display()
+        );
+        println!(
+            "cargo:rustc-link-arg=-Wl,-rpath,{}",
+            library_directory.display()
+        );
+        println!("cargo:rustc-link-lib=dylib={link_name}");
     }
 }
 

@@ -231,6 +231,7 @@ if(ENABLE_BORROW_CHECKING)
 endif()
 
 find_package(PkgConfig REQUIRED)
+include(cmake/MakoAllocator.cmake)
 pkg_check_modules(DPDK REQUIRED libdpdk)
 
 # Find Python for the txlog_core build surface.
@@ -862,19 +863,24 @@ set(LZ4LDFLAGS
 
 if(USE_MALLOC_MODE EQUAL 1)
   list(APPEND CXXFLAGS -DUSE_JEMALLOC)
-  list(APPEND LDFLAGS -ljemalloc)
   set(MASSTREE_CONFIG "${MASSTREE_CONFIG} --with-malloc=jemalloc")
 elseif(USE_MALLOC_MODE EQUAL 2)
   list(APPEND CXXFLAGS -DUSE_TCMALLOC)
-  list(APPEND LDFLAGS -ltcmalloc)
   set(MASSTREE_CONFIG "${MASSTREE_CONFIG} --with-malloc=tcmalloc")
 elseif(USE_MALLOC_MODE EQUAL 3)
   list(APPEND CXXFLAGS -DUSE_FLOW)
-  list(APPEND LDFLAGS -lflow)
   set(MASSTREE_CONFIG "${MASSTREE_CONFIG} --with-malloc=flow")
-else()
+elseif(USE_MALLOC_MODE EQUAL 0)
   set(MASSTREE_CONFIG "${MASSTREE_CONFIG} --with-malloc=malloc")
+else()
+  message(FATAL_ERROR
+    "USE_MALLOC_MODE must be exactly 0, 1, 2, or 3; got '${USE_MALLOC_MODE}'")
 endif()
+
+# Resolve the selected process allocator once. Its INTERFACE link contract is
+# attached PUBLICly to libmako below, and its generated metadata is consumed by
+# Cargo when Rust links the same static archive outside CMake.
+mako_configure_allocator()
 
 if(DEFINED CUSTOM_LDPATH)
   set(LDFLAGS "${LDFLAGS} ${CUSTOM_LDPATH}")
@@ -904,7 +910,6 @@ pkg_check_modules(LIBEVENT REQUIRED libevent)
 pkg_check_modules(GFLAGS REQUIRED gflags)
 #pkg_check_modules(MEMCACHED REQUIRED memcached)
 pkg_check_modules(PROTOBUF REQUIRED protobuf)
-pkg_check_modules(JEMALLOC REQUIRED jemalloc)
 list(APPEND CFLAGS ${LIBEVENT_CFLAGS})
 list(APPEND LDFLAGS ${LIBEVENT_LDFLAGS})
 list(APPEND CXXFLAGS -fno-omit-frame-pointer)
@@ -942,7 +947,9 @@ add_custom_command(
     "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/storage/mako_local_abi.cc"
     "${CMAKE_BINARY_DIR}/compile_commands.json"
     "${CMAKE_BINARY_DIR}/CMakeCache.txt"
+    "${MAKO_ALLOCATOR_METADATA}"
     "${MASSTREE_GENERATED_CONFIG_H}"
+    ${MAKO_ALLOCATOR_LIBRARY}
   DEPFILE "${MAKO_LOCAL_BUILD_IDENTITY_DEPFILE}"
   COMMENT "Generating source-derived mako-local native build identity"
   VERBATIM
@@ -1511,7 +1518,7 @@ target_include_directories(mako PUBLIC
 target_compile_options(mako PUBLIC ${BENCH_CXXFLAGS} ${MASSTREE_FORCE_INCLUDE_FLAG})
 target_compile_definitions(mako PUBLIC CONFIG_H=\"${CONFIG_H}\")
 # Inherit srpc module BMI paths from txlog_core_obj.
-target_link_libraries(mako PUBLIC txlog_core_obj masstree)
+target_link_libraries(mako PUBLIC txlog_core_obj masstree mako_allocator)
 target_include_directories(mako PUBLIC ${LIBEVENT_INCLUDE_DIRS})
 set_target_properties(mako PROPERTIES OUTPUT_NAME "mako")
 
@@ -1756,7 +1763,6 @@ function(add_apps exec_name exec_path)
       ${LIBEVENT_LDFLAGS}
       ${GFLAGS_LDFLAGS}
       ${PROTOBUF_LDFLAGS}
-      $<$<NOT:$<BOOL:${MAKO_ASAN_ENABLED}>>:${JEMALLOC_LDFLAGS}>
   )
 
   # Add dependencies

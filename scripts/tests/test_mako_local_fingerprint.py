@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 from collections import Counter
+import hashlib
 import os
 from pathlib import Path
 import sys
@@ -24,10 +25,81 @@ SPEC.loader.exec_module(fingerprint)
 
 class FingerprintTests(unittest.TestCase):
     def test_native_allocator_parser_is_a_recipe_input(self) -> None:
-        self.assertIn(
+        for recipe in (
+            "cmake/MakoAllocator.cmake",
             "crates/mako-local/build_support/native_allocator.rs",
-            fingerprint.RECIPE_FILES,
-        )
+        ):
+            self.assertIn(recipe, fingerprint.RECIPE_FILES)
+
+    def test_system_allocator_contract_has_no_library_record(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            contract_path = Path(temporary) / "allocator.txt"
+            contract_path.write_text(
+                "schema=1\n"
+                "mode=0\n"
+                "kind=system\n"
+                "linkage=none\n"
+                "link_name=\n"
+                "library_path=\n"
+                "soname=\n"
+                "sha256=\n",
+                encoding="utf-8",
+            )
+            contract = fingerprint.read_allocator_contract(contract_path, "0")
+            self.assertIsNone(contract.library_path)
+            records = fingerprint.allocator_fingerprint_records(contract)
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0].name, "allocator-contract")
+
+    def test_shared_allocator_contract_hashes_bytes_without_absolute_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            library = root / "libjemalloc.so.2"
+            library.write_bytes(b"resolved jemalloc bytes")
+            (root / "libjemalloc.so").symlink_to(library.name)
+            digest = hashlib.sha256(library.read_bytes()).hexdigest()
+            contract_path = root / "allocator.txt"
+            contract_path.write_text(
+                "schema=1\n"
+                "mode=1\n"
+                "kind=jemalloc\n"
+                "linkage=shared\n"
+                "link_name=jemalloc\n"
+                f"library_path={library}\n"
+                "soname=libjemalloc.so.2\n"
+                f"sha256={digest}\n",
+                encoding="utf-8",
+            )
+            contract = fingerprint.read_allocator_contract(contract_path, "1")
+            records = fingerprint.allocator_fingerprint_records(contract)
+            self.assertEqual(len(records), 2)
+            self.assertEqual(records[1].name, "allocator-jemalloc:libjemalloc.so.2")
+            self.assertNotIn(str(root), contract.normalized().decode("utf-8"))
+
+            library.write_bytes(b"changed allocator bytes")
+            with self.assertRaisesRegex(
+                fingerprint.FingerprintError, "allocator library hash changed"
+            ):
+                fingerprint.read_allocator_contract(contract_path, "1")
+
+    def test_allocator_contract_rejects_cache_mode_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            contract_path = Path(temporary) / "allocator.txt"
+            contract_path.write_text(
+                "schema=1\n"
+                "mode=0\n"
+                "kind=system\n"
+                "linkage=none\n"
+                "link_name=\n"
+                "library_path=\n"
+                "soname=\n"
+                "sha256=\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                fingerprint.FingerprintError, "does not match CMakeCache"
+            ):
+                fingerprint.read_allocator_contract(contract_path, "1")
 
     def make_archive_inventory(self, root: Path):
         source_root = root / "source"
