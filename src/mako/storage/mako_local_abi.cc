@@ -53,34 +53,22 @@ struct mako_local_table {
   uint64_t id;
 };
 
-struct alignas(64) record_validation_node {
-  std::atomic<record_validation_node *> next{nullptr};
-  std::atomic<uint8_t> waiting{0};
+struct alignas(64) record_validation_counter {
+  std::atomic<uint64_t> value{0};
 };
-static_assert(sizeof(record_validation_node) == 64);
-static_assert(std::atomic<record_validation_node *>::is_always_lock_free,
-              "the record validation queue requires lock-free pointers");
-static_assert(std::atomic<uint8_t>::is_always_lock_free,
-              "the record validation queue requires lock-free wait flags");
-
-struct alignas(64) record_validation_queue_tail {
-  std::atomic<record_validation_node *> value{nullptr};
-};
-static_assert(sizeof(record_validation_queue_tail) == 64);
-static_assert(
-    __atomic_always_lock_free(sizeof(uint64_t), nullptr),
-    "the private Rust/native queue-tail seam requires lock-free u64 atomics");
+static_assert(sizeof(record_validation_counter) == 64);
+static_assert(__atomic_always_lock_free(sizeof(uint64_t), nullptr),
+              "the private Rust/native queue-tail seam requires lock-free u64 atomics");
 
 struct mako_local_db {
-  // Record commits for one cache/database share this allocation-free FIFO
+  // Record commits for one cache/database share this allocation-free ticket
   // gate. The turn is acquired only after STO owns the full write set, so a
   // waiter never holds the turn while acquiring another transaction lock.
-  // Waiters spin on their own bridge nodes; one handoff therefore invalidates
-  // only its successor instead of broadcasting a serving-line update to all
-  // contenders.
-  record_validation_queue_tail record_validation_tail;
+  // Isolate the producer and consumer words: enqueue fetch_add traffic must
+  // not invalidate the cache line polled by every waiter.
+  record_validation_counter record_validation_next;
+  record_validation_counter record_validation_serving;
 #if defined(MAKO_LOCAL_TEST_HOOKS)
-  std::atomic<uint64_t> record_validation_acquisitions{0};
   std::atomic<uint64_t> record_validation_wait_observations{0};
 #endif
   std::mutex tables_mu;
@@ -1565,13 +1553,13 @@ struct record_bind_bridge {
   record_shape final_shape;
   uint64_t sequence = 0;
   uint8_t *record = nullptr;
-  record_validation_node validation_node{};
+  uint64_t validation_ticket = 0;
   bool validation_gate_held = false;
   bool use_direct_write = false;
   bool use_unchecked_one_put_serializer = false;
   // The restricted concurrent terminal lends native the queue tail and health
-  // atomics. Its turn assigns timestamp and sequence together; publication
-  // cell binding and serialization follow only after the turn is retired.
+  // atomics. Its ticket assigns timestamp and sequence together; publication
+  // cell binding and serialization follow only after the ticket is retired.
   uint64_t *native_next_bound = nullptr;
   const uint8_t *native_unhealthy = nullptr;
   uint64_t *ordered_sequence_out = nullptr;
@@ -1587,44 +1575,33 @@ void record_validation_cpu_relax() noexcept {
 #endif
 }
 
-// @unsafe - Enqueues only after Transaction has acquired the complete write
-// set. FIFO queue order therefore fixes Mako timestamp/final-validation order
-// without assigning a persistent cache sequence to a transaction that may
-// still abort. Every node lives in its record_bind_bridge until release has
-// either removed it from the tail or handed ownership to its linked successor.
+// @unsafe - Spins only after Transaction has acquired the complete write set.
+// Ticket order therefore fixes Mako timestamp/final-validation order without
+// assigning a persistent cache sequence to a transaction that may still
+// abort. Unsigned ticket wrap remains correct while fewer than 2^64 turns are
+// simultaneously outstanding, which is structurally guaranteed by workers.
 void enter_record_validation_gate(void *opaque) noexcept {
   auto *bridge = static_cast<record_bind_bridge *>(opaque);
   assert(bridge != nullptr);
   assert(!bridge->validation_gate_held);
   mako_local_db *const db = bridge->txn->owner;
-  record_validation_node &node = bridge->validation_node;
-  assert(node.next.load(std::memory_order_relaxed) == nullptr);
-  assert(node.waiting.load(std::memory_order_relaxed) == 0);
-  node.next.store(nullptr, std::memory_order_relaxed);
-  node.waiting.store(1, std::memory_order_relaxed);
-  record_validation_node *const predecessor =
-      db->record_validation_tail.value.exchange(&node,
-                                                std::memory_order_acq_rel);
+  const uint64_t ticket = db->record_validation_next.value.fetch_add(
+      UINT64_C(1), std::memory_order_relaxed);
+  bool reported_wait = false;
+  while (db->record_validation_serving.value.load(std::memory_order_acquire) !=
+         ticket) {
 #if defined(MAKO_LOCAL_TEST_HOOKS)
-  db->record_validation_acquisitions.fetch_add(UINT64_C(1),
-                                               std::memory_order_release);
-#endif
-  if (predecessor != nullptr) {
-    predecessor->next.store(&node, std::memory_order_release);
-#if defined(MAKO_LOCAL_TEST_HOOKS)
-    bool reported_wait = false;
-#endif
-    while (node.waiting.load(std::memory_order_acquire) != 0) {
-#if defined(MAKO_LOCAL_TEST_HOOKS)
-      if (!reported_wait) {
-        db->record_validation_wait_observations.fetch_add(
-            UINT64_C(1), std::memory_order_release);
-        reported_wait = true;
-      }
-#endif
-      record_validation_cpu_relax();
+    if (!reported_wait) {
+      db->record_validation_wait_observations.fetch_add(
+          UINT64_C(1), std::memory_order_release);
+      reported_wait = true;
     }
+#else
+    (void)reported_wait;
+#endif
+    record_validation_cpu_relax();
   }
+  bridge->validation_ticket = ticket;
   bridge->validation_gate_held = true;
 }
 
@@ -1633,26 +1610,8 @@ void leave_record_validation_gate(void *opaque) noexcept {
   assert(bridge != nullptr);
   assert(bridge->validation_gate_held);
   bridge->validation_gate_held = false;
-  mako_local_db *const db = bridge->txn->owner;
-  record_validation_node &node = bridge->validation_node;
-  record_validation_node *successor =
-      node.next.load(std::memory_order_acquire);
-  if (successor == nullptr) {
-    record_validation_node *expected = &node;
-    if (db->record_validation_tail.value.compare_exchange_strong(
-            expected, nullptr, std::memory_order_release,
-            std::memory_order_relaxed)) {
-      node.waiting.store(0, std::memory_order_relaxed);
-      return;
-    }
-    do {
-      record_validation_cpu_relax();
-      successor = node.next.load(std::memory_order_acquire);
-    } while (successor == nullptr);
-  }
-  successor->waiting.store(0, std::memory_order_release);
-  node.next.store(nullptr, std::memory_order_relaxed);
-  node.waiting.store(0, std::memory_order_relaxed);
+  bridge->txn->owner->record_validation_serving.value.store(
+      bridge->validation_ticket + UINT64_C(1), std::memory_order_release);
 }
 
 // @unsafe - This callback deliberately provides no mutual exclusion. The
@@ -1667,8 +1626,8 @@ void enter_single_producer_record_validation_gate(void *opaque) noexcept {
   assert(!bridge->validation_gate_held);
 #ifndef NDEBUG
   mako_local_db *const db = bridge->txn->owner;
-  assert(db->record_validation_tail.value.load(std::memory_order_acquire) ==
-         nullptr);
+  assert(db->record_validation_next.value.load(std::memory_order_relaxed) ==
+         db->record_validation_serving.value.load(std::memory_order_acquire));
 #endif
   bridge->validation_gate_held = true;
 }
@@ -3420,7 +3379,7 @@ mako_rust_fast_txn_commit_unchecked_one_put_record_single_producer_and_destroy(
     mako_rust_fast_record_bind_hook bind_hook, void *context,
     uint8_t *record_written_out) noexcept {
   // This entry intentionally cannot verify its global exclusion contract.
-  // Its caller guarantees that no concurrent or already-queued cache-record
+  // Its caller guarantees that no concurrent or already-ticketed cache-record
   // terminal for txn->owner overlaps this entire call. The ordinary fused
   // spelling above remains the safe default for concurrent producers.
   assert(txn != nullptr);
@@ -3445,7 +3404,7 @@ mako_rust_fast_txn_commit_unchecked_one_put_record_single_producer_and_destroy(
   }
 
   // Preserve the ordinary fused terminal's exact predicate recheck and
-  // fail-closed plan seal. Only the validation gate's queue operations are
+  // fail-closed plan seal. Only the validation gate's ticket operations are
   // replaced; Transaction still calls enter, bind, leave, and after_leave in
   // the same order while retaining the complete write set.
   txn->record_plan_bytes = shape.bytes;
@@ -3474,8 +3433,10 @@ mako_rust_fast_txn_commit_preselected_unchecked_one_put_record_single_producer_a
   assert(local_active_txn == txn);
   assert(txn->fast_table_impl != nullptr);
 #ifndef NDEBUG
-  assert(txn->owner->record_validation_tail.value.load(
-             std::memory_order_acquire) == nullptr);
+  assert(txn->owner->record_validation_next.value.load(
+             std::memory_order_relaxed) ==
+         txn->owner->record_validation_serving.value.load(
+             std::memory_order_acquire));
 #endif
 
   record_shape shape;
@@ -3516,8 +3477,10 @@ commit_preselected_unchecked_one_put_holder_single_producer_and_destroy(
   assert(txn->active);
   assert(local_active_txn == txn);
   assert(txn->fast_table_impl != nullptr);
-  assert(txn->owner->record_validation_tail.value.load(
-             std::memory_order_acquire) == nullptr);
+  assert(txn->owner->record_validation_next.value.load(
+             std::memory_order_relaxed) ==
+         txn->owner->record_validation_serving.value.load(
+             std::memory_order_acquire));
   assert(selected_holder != nullptr);
   assert(sequence != 0);
   one_put_holder &holder = *selected_holder;
@@ -3871,8 +3834,7 @@ mako_rust_fast_test_record_validation_tickets(
     const mako_local_db *db) noexcept {
   return db == nullptr
              ? 0
-             : db->record_validation_acquisitions.load(
-                   std::memory_order_acquire);
+             : db->record_validation_next.value.load(std::memory_order_acquire);
 }
 
 MAKO_RUST_FAST_DEFINITION_HIDDEN uint64_t
