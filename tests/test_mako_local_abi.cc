@@ -393,6 +393,42 @@ mako_rust_fast_spsc_holder_control make_fused_holder_control(
       capacity, max_record_bytes, 0, {0, 0}};
 }
 
+struct alignas(64) TestRustPublicationCell {
+  uint64_t turn = UINT64_MAX;
+  uint32_t mako_timestamp = 0;
+  uint32_t timestamp_padding = 0;
+  size_t record_bytes = SIZE_MAX;
+  std::array<uint8_t, 40> padding{};
+};
+
+struct alignas(64) TestRustArenaBlock {
+  std::array<uint8_t, 256> bytes{};
+};
+
+static_assert(sizeof(TestRustPublicationCell) == 64);
+static_assert(alignof(TestRustPublicationCell) == 64);
+static_assert(offsetof(TestRustPublicationCell, turn) == 0);
+static_assert(offsetof(TestRustPublicationCell, mako_timestamp) == 8);
+static_assert(offsetof(TestRustPublicationCell, record_bytes) == 16);
+static_assert(sizeof(TestRustArenaBlock) == 256);
+static_assert(alignof(TestRustArenaBlock) == 64);
+
+mako_rust_fast_native_ordered_arena_control make_native_arena_control(
+    uint64_t *next_bound, const uint8_t *unhealthy,
+    TestRustPublicationCell *publications, TestRustArenaBlock *arena,
+    size_t mask = 3, uint32_t block_bytes = 256) {
+  return mako_rust_fast_native_ordered_arena_control{
+      next_bound,
+      unhealthy,
+      reinterpret_cast<uint8_t *>(publications),
+      reinterpret_cast<uint8_t *>(arena),
+      mask,
+      2,
+      static_cast<uint32_t>(sizeof(TestRustPublicationCell)),
+      static_cast<uint32_t>(sizeof(TestRustArenaBlock)),
+      block_bytes};
+}
+
 struct ThinRecordBinding {
   std::vector<uint8_t> *storage = nullptr;
   uint64_t sequence = 0;
@@ -700,6 +736,41 @@ TEST(MakoLocalAbiIdentity, VersionAndStatusStringsAreStable) {
                 0);
   static_assert(MAKO_RUST_FAST_PRESELECTED_HOLDER_SEALED(preselected_probe) ==
                 1);
+  static_assert(sizeof(mako_rust_fast_native_ordered_arena_control) == 56);
+  static_assert(alignof(mako_rust_fast_native_ordered_arena_control) == 8);
+  static_assert(offsetof(mako_rust_fast_native_ordered_arena_control,
+                         next_bound) == 0);
+  static_assert(offsetof(mako_rust_fast_native_ordered_arena_control,
+                         unhealthy) == 8);
+  static_assert(offsetof(mako_rust_fast_native_ordered_arena_control,
+                         publication_base) == 16);
+  static_assert(offsetof(mako_rust_fast_native_ordered_arena_control,
+                         arena_base) == 24);
+  static_assert(offsetof(mako_rust_fast_native_ordered_arena_control,
+                         publication_mask) == 32);
+  static_assert(offsetof(mako_rust_fast_native_ordered_arena_control,
+                         publication_shift) == 40);
+  static_assert(offsetof(mako_rust_fast_native_ordered_arena_control,
+                         publication_stride) == 44);
+  static_assert(offsetof(mako_rust_fast_native_ordered_arena_control,
+                         arena_stride) == 48);
+  static_assert(offsetof(mako_rust_fast_native_ordered_arena_control,
+                         arena_block_bytes) == 52);
+  static_assert(sizeof(mako_rust_fast_native_ordered_arena_result) == 24);
+  static_assert(alignof(mako_rust_fast_native_ordered_arena_result) == 8);
+  static_assert(offsetof(mako_rust_fast_native_ordered_arena_result,
+                         terminal) == 0);
+  static_assert(offsetof(mako_rust_fast_native_ordered_arena_result,
+                         ordered_sequence) == 8);
+  static_assert(offsetof(mako_rust_fast_native_ordered_arena_result,
+                         record_state) == 16);
+  constexpr mako_rust_fast_native_ordered_arena_result arena_probe{
+      0, 9, UINT64_C(7) | (UINT64_C(1) << 32)};
+  static_assert(MAKO_RUST_FAST_NATIVE_ORDERED_ARENA_TIMESTAMP(arena_probe) ==
+                7);
+  static_assert(MAKO_RUST_FAST_NATIVE_ORDERED_ARENA_WRITTEN(arena_probe) == 1);
+  static_assert(MAKO_RUST_FAST_NATIVE_ORDERED_ARENA_RESERVED(arena_probe) ==
+                0);
   static_assert(sizeof(mako_rust_fast_spsc_holder_control) == 72);
   static_assert(alignof(mako_rust_fast_spsc_holder_control) == 8);
   static_assert(offsetof(mako_rust_fast_spsc_holder_control, pool) == 0);
@@ -1247,6 +1318,96 @@ TEST_F(LocalAbiTest, NativeOrderedOnePutAssignsBeforePostGateBinding) {
   auto *verify = begin();
   EXPECT_EQ(get(verify, primary, key).second,
             std::optional<std::string>("new"));
+  commit_and_destroy(verify);
+}
+
+TEST_F(LocalAbiTest, NativeOrderedArenaBindsAndSerializesWithoutCallback) {
+  const std::string key = "native-ordered-arena";
+  const std::string value = "direct-record";
+  mako_local_txn *txn = nullptr;
+  ASSERT_EQ(mako_rust_fast_txn_begin(db, primary, &txn), MAKO_LOCAL_OK);
+  txn_for_cleanup = txn;
+  const uint64_t put_result = fast_put(txn, key, value);
+  ASSERT_EQ(MAKO_RUST_FAST_PUT_STATUS(put_result), MAKO_LOCAL_OK);
+  const uint32_t exact_bytes =
+      MAKO_RUST_FAST_PUT_UNCHECKED_RECORD_BYTES(put_result);
+  ASSERT_NE(exact_bytes, 0U);
+  ASSERT_LE(exact_bytes, 256U);
+
+  alignas(uint64_t) uint64_t next_bound = 900;
+  const uint8_t unhealthy = 0;
+  std::array<TestRustPublicationCell, 4> publications{};
+  std::array<TestRustArenaBlock, 4> arena{};
+  constexpr uint64_t sequence = 901;
+  const size_t index = static_cast<size_t>(sequence) & 3;
+  const uint64_t free_turn = (sequence >> 2) << 2;
+  __atomic_store_n(&publications[index].turn, free_turn, __ATOMIC_RELAXED);
+  auto control = make_native_arena_control(
+      &next_bound, &unhealthy, publications.data(), arena.data());
+
+  const mako_rust_fast_native_ordered_arena_result commit =
+      mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_arena_and_destroy(
+          txn, exact_bytes, &control);
+  txn_for_cleanup = nullptr;
+  ASSERT_EQ(MAKO_RUST_FAST_TERMINAL_STATUS(commit.terminal), MAKO_LOCAL_OK);
+  ASSERT_EQ(MAKO_RUST_FAST_CLEANUP_STATUS(commit.terminal), MAKO_LOCAL_OK);
+  EXPECT_EQ(next_bound, sequence);
+  EXPECT_EQ(commit.ordered_sequence, sequence);
+  EXPECT_NE(MAKO_RUST_FAST_NATIVE_ORDERED_ARENA_TIMESTAMP(commit), 0U);
+  EXPECT_EQ(MAKO_RUST_FAST_NATIVE_ORDERED_ARENA_WRITTEN(commit), 1U);
+  EXPECT_EQ(MAKO_RUST_FAST_NATIVE_ORDERED_ARENA_RESERVED(commit), 0U);
+  EXPECT_EQ(__atomic_load_n(&publications[index].turn, __ATOMIC_ACQUIRE),
+            free_turn | UINT64_C(1));
+  EXPECT_EQ(publications[index].record_bytes, 0U);
+
+  const std::vector<uint8_t> storage(
+      arena[index].bytes.begin(), arena[index].bytes.begin() + exact_bytes);
+  DecodedThinRecord decoded;
+  ASSERT_TRUE(decode_thin_record(storage, &decoded));
+  EXPECT_EQ(decoded.sequence, sequence);
+  EXPECT_EQ(decoded.timestamp,
+            MAKO_RUST_FAST_NATIVE_ORDERED_ARENA_TIMESTAMP(commit));
+  ASSERT_EQ(decoded.mutations.size(), 1U);
+  EXPECT_EQ(decoded.mutations[0].key, key);
+  EXPECT_EQ(decoded.mutations[0].value, value);
+
+  auto *verify = begin();
+  EXPECT_EQ(get(verify, primary, key).second,
+            std::optional<std::string>(value));
+  commit_and_destroy(verify);
+}
+
+TEST_F(LocalAbiTest, NativeOrderedArenaRejectsLayoutBeforeAssigningOrder) {
+  const std::string key = "native-arena-invalid-layout";
+  mako_local_txn *txn = nullptr;
+  ASSERT_EQ(mako_rust_fast_txn_begin(db, primary, &txn), MAKO_LOCAL_OK);
+  txn_for_cleanup = txn;
+  const uint64_t put_result = fast_put(txn, key, "must-not-install");
+  ASSERT_EQ(MAKO_RUST_FAST_PUT_STATUS(put_result), MAKO_LOCAL_OK);
+  const uint32_t exact_bytes =
+      MAKO_RUST_FAST_PUT_UNCHECKED_RECORD_BYTES(put_result);
+  ASSERT_NE(exact_bytes, 0U);
+
+  alignas(uint64_t) uint64_t next_bound = 920;
+  const uint8_t unhealthy = 0;
+  std::array<TestRustPublicationCell, 4> publications{};
+  std::array<TestRustArenaBlock, 4> arena{};
+  auto control = make_native_arena_control(
+      &next_bound, &unhealthy, publications.data(), arena.data());
+  control.publication_stride = 63;
+  const mako_rust_fast_native_ordered_arena_result commit =
+      mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_arena_and_destroy(
+          txn, exact_bytes, &control);
+  txn_for_cleanup = nullptr;
+  EXPECT_EQ(MAKO_RUST_FAST_TERMINAL_STATUS(commit.terminal),
+            MAKO_LOCAL_INVALID_ARGUMENT);
+  EXPECT_EQ(MAKO_RUST_FAST_CLEANUP_STATUS(commit.terminal), MAKO_LOCAL_OK);
+  EXPECT_EQ(commit.ordered_sequence, 0U);
+  EXPECT_EQ(commit.record_state, 0U);
+  EXPECT_EQ(next_bound, 920U);
+
+  auto *verify = begin();
+  EXPECT_FALSE(get(verify, primary, key).second.has_value());
   commit_and_destroy(verify);
 }
 

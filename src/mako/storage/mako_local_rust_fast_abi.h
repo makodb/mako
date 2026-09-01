@@ -114,6 +114,25 @@ extern "C" {
  * seam; mixing an independent sequence allocator can duplicate or reorder
  * cache positions.
  *
+ * commit_native_ordered_unchecked_one_put_arena_and_destroy removes that
+ * terminal's post-ticket Rust callback. Its synchronous control describes the
+ * queue's stable publication-cell and record-arena layouts. Native validates
+ * the complete layout and one-Put extent before commit can assign a sequence.
+ * After final validation, the LocalDb ticket still pairs the Mako timestamp
+ * with next_bound. Native then retires the ticket, acquires the exact FREE
+ * cell generation, publishes BOUND, and serializes directly into that
+ * sequence's arena block before STO may install the write.
+ *
+ * A nonzero ordered_sequence in the three-word result is an unconditional
+ * dense-slot obligation and guarantees that the matching publication cell is
+ * already BOUND. record_state bits 0..31 carry the paired Mako timestamp, bit
+ * 32 witnesses complete record initialization, and bits 33..63 are zero. A
+ * preaccept failure returns both ordering words as zero. Layout mismatch,
+ * queue illness, sequence exhaustion, or ordinary OCC abort detected before
+ * assignment consumes the transaction without touching next_bound. Once the
+ * tail advances, an impossible cell generation or layout state terminates the
+ * process instead of returning an unbound hole.
+ *
  * commit_unchecked_one_put_record_single_producer_and_destroy is a still more
  * restricted opt-in spelling of that fused terminal. It preserves write-set
  * lock acquisition, Mako timestamp assignment, the repeated ordered predicate
@@ -260,6 +279,30 @@ typedef struct mako_rust_fast_preselected_record_result {
   uint64_t record_state;
 } mako_rust_fast_preselected_record_result;
 
+/* Synchronous queue layout for the callback-free concurrent arena terminal.
+ * Rust owns every target. Native accesses next_bound and unhealthy with
+ * compiler atomics, uses publication_base as a ring of publication_stride-byte
+ * cells, and uses arena_base as the matching ring of arena_stride-byte blocks.
+ * The power-of-two ring has publication_mask + 1 cells and
+ * publication_shift == log2(publication_mask + 1). */
+typedef struct mako_rust_fast_native_ordered_arena_control {
+  uint64_t *next_bound;
+  const uint8_t *unhealthy;
+  uint8_t *publication_base;
+  uint8_t *arena_base;
+  size_t publication_mask;
+  uint32_t publication_shift;
+  uint32_t publication_stride;
+  uint32_t arena_stride;
+  uint32_t arena_block_bytes;
+} mako_rust_fast_native_ordered_arena_control;
+
+typedef struct mako_rust_fast_native_ordered_arena_result {
+  uint64_t terminal;
+  uint64_t ordered_sequence;
+  uint64_t record_state;
+} mako_rust_fast_native_ordered_arena_result;
+
 typedef struct mako_rust_fast_one_put_holder_pool
     mako_rust_fast_one_put_holder_pool;
 
@@ -307,6 +350,12 @@ typedef struct mako_rust_fast_one_put_holder_view {
 #define MAKO_RUST_FAST_PRESELECTED_HOLDER_SEALED(result)                       \
   MAKO_RUST_FAST_PRESELECTED_RECORD_WRITTEN(result)
 #define MAKO_RUST_FAST_PRESELECTED_RECORD_RESERVED(result)                     \
+  ((uint64_t)((result).record_state >> 33))
+#define MAKO_RUST_FAST_NATIVE_ORDERED_ARENA_TIMESTAMP(result)                  \
+  ((uint32_t)((result).record_state))
+#define MAKO_RUST_FAST_NATIVE_ORDERED_ARENA_WRITTEN(result)                    \
+  ((uint8_t)((((result).record_state) >> 32) & UINT64_C(1)))
+#define MAKO_RUST_FAST_NATIVE_ORDERED_ARENA_RESERVED(result)                   \
   ((uint64_t)((result).record_state >> 33))
 
 /* Register-sized fused-terminal control word. Low 32 bits select one explicit
@@ -374,6 +423,11 @@ mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_record_and_destroy(
     mako_rust_fast_record_bind_hook bind_hook, void *context,
     uint64_t *ordered_sequence_out, uint32_t *ordered_timestamp_out,
     uint8_t *record_written_out) MAKO_RUST_FAST_NOEXCEPT;
+MAKO_RUST_FAST_HIDDEN mako_rust_fast_native_ordered_arena_result
+mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_arena_and_destroy(
+    mako_local_txn *txn, uint32_t expected_record_bytes,
+    const mako_rust_fast_native_ordered_arena_control *control)
+    MAKO_RUST_FAST_NOEXCEPT;
 MAKO_RUST_FAST_HIDDEN uint64_t
 mako_rust_fast_txn_commit_unchecked_one_put_record_single_producer_and_destroy(
     mako_local_txn *txn, uint32_t expected_record_bytes,

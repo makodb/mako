@@ -1576,33 +1576,55 @@ fn finish_trusted_one_put_arena<'cache, 'db, B: Blobs + 'static>(
     }
 
     let mut bound = None;
-    let (next_bound, unhealthy) = cache.writeback.native_ordering_words();
-    // SAFETY: native invokes this callback synchronously after its validation
-    // ticket assigned the supplied timestamp/sequence pair. Adopting that
-    // exact FREE generation before returning the target keeps it exclusively
-    // owned through native serialization and backend retirement.
-    let acquire_target = |timestamp, native_preflight, ordered_sequence| {
-        debug_assert_eq!(native_preflight, preflight);
-        let mut reservation =
-            unsafe { permit.bind_externally_ordered(timestamp, ordered_sequence) };
-        // SAFETY: `reservation` is moved into `bound` before native can write,
-        // and `bound` remains alive through this terminal.
-        let target = unsafe { reservation.native_record_target() };
-        bound = Some(reservation);
-        #[cfg(test)]
-        crate::failpoint::hit(crate::failpoint::Point::PreinstallBound);
-        Some(target)
-    };
-    // SAFETY: the candidate is current, the permit owns one bounded capacity
-    // claim, both atomics belong to this queue, and every concurrent cache
-    // terminal for this LocalDb uses the same native ticket protocol.
-    let outcome = unsafe {
-        native.commit_trusted_native_ordered_unchecked_one_put_record_target(
-            preflight,
-            next_bound,
-            unhealthy,
-            acquire_target,
-        )
+    // The crash matrix retains its exact post-bind/pre-serialization seam by
+    // selecting the legacy callback terminal only in the helper process which
+    // armed that point. Ordinary tests and every production commit use the
+    // callback-free native arena binder.
+    #[cfg(test)]
+    let direct_arena =
+        !crate::failpoint::is_armed(crate::failpoint::Point::PreinstallBound);
+    #[cfg(not(test))]
+    let direct_arena = true;
+
+    let outcome = if direct_arena {
+        // SAFETY: the candidate is current, the permit owns one concurrent
+        // occupancy claim, and the control borrows this queue's stable exact
+        // publication/arena layout for the synchronous native terminal.
+        let control = unsafe { cache.writeback.native_ordered_arena_control() };
+        unsafe {
+            native.commit_trusted_native_ordered_unchecked_one_put_arena(
+                preflight,
+                &control,
+            )
+        }
+    } else {
+        let (next_bound, unhealthy) = cache.writeback.native_ordering_words();
+        // SAFETY: this test-only callback runs synchronously after the native
+        // validation ticket assigned its timestamp/sequence pair. Adopting the
+        // exact FREE generation before returning its target retains the prior
+        // crash seam and the same backend-retirement ownership.
+        let acquire_target = |timestamp, native_preflight, ordered_sequence| {
+            debug_assert_eq!(native_preflight, preflight);
+            let mut reservation =
+                unsafe { permit.bind_externally_ordered(timestamp, ordered_sequence) };
+            // SAFETY: `reservation` moves into `bound` before native can write
+            // and remains alive through this synchronous terminal.
+            let target = unsafe { reservation.native_record_target() };
+            bound = Some(reservation);
+            #[cfg(test)]
+            crate::failpoint::hit(crate::failpoint::Point::PreinstallBound);
+            Some(target)
+        };
+        // SAFETY: the crash helper uses the established callback contract and
+        // every concurrent terminal shares the same ordering words/ticket.
+        unsafe {
+            native.commit_trusted_native_ordered_unchecked_one_put_record_target(
+                preflight,
+                next_bound,
+                unhealthy,
+                acquire_target,
+            )
+        }
     };
 
     // A partial scalar witness means native may have advanced next_bound but
@@ -1617,7 +1639,15 @@ fn finish_trusted_one_put_arena<'cache, 'db, B: Blobs + 'static>(
     // the ordinary unwritten-record path pins the exact dense obligation.
     if bound.is_none() {
         if let Some((timestamp, sequence)) = outcome.accepted_order() {
-            bound = Some(unsafe { permit.bind_externally_ordered(timestamp, sequence) });
+            bound = Some(if direct_arena {
+                // SAFETY: a nonzero order returned by the direct terminal also
+                // proves native Release-published this exact BOUND generation.
+                unsafe { permit.adopt_externally_bound(timestamp, sequence) }
+            } else {
+                // SAFETY: a callback-terminal exception can expose its order
+                // before the Rust binder ran; acquire that FREE generation now.
+                unsafe { permit.bind_externally_ordered(timestamp, sequence) }
+            });
         }
     }
 

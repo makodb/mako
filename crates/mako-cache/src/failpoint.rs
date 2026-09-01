@@ -168,6 +168,16 @@ pub(crate) fn arm(point: Point, marker: PathBuf) {
     assert!(ARMED.set(armed).is_ok(), "a crash helper arms only once");
 }
 
+/// Whether this fresh helper process armed one exact Rust-side rendezvous.
+///
+/// The concurrent direct-arena terminal has no Rust callback between native
+/// validation and record serialization. Crash-matrix helpers which need the
+/// historical post-bind seam use this test-only predicate to select the
+/// callback terminal for that one transaction.
+pub(crate) fn is_armed(point: Point) -> bool {
+    ARMED.get().is_some_and(|armed| armed.point == point)
+}
+
 /// Publish a rendezvous marker and park until the parent sends SIGKILL.
 ///
 /// When no point is armed, or a different point is armed, this is only a

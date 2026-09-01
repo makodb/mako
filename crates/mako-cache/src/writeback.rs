@@ -562,7 +562,17 @@ unsafe impl Sync for ColdPublicationCell {}
 unsafe impl Send for SpscArenaPublication {}
 unsafe impl Sync for SpscArenaPublication {}
 
-const _: () = assert!(std::mem::size_of::<PublicationCell>() == 64);
+const _: () = {
+    assert!(std::mem::size_of::<PublicationCell>() == 64);
+    assert!(std::mem::align_of::<PublicationCell>() == 64);
+    assert!(std::mem::offset_of!(PublicationCell, turn) == 0);
+    assert!(std::mem::offset_of!(PublicationCell, arena_mako_timestamp) == 8);
+    assert!(std::mem::offset_of!(PublicationCell, arena_record_bytes) == 16);
+    assert!(TURN_FREE == 0);
+    assert!(TURN_BOUND == 1);
+    assert!(TURN_WRITTEN == 2);
+    assert!(TURN_READY == 3);
+};
 const _: () = assert!(std::mem::size_of::<SpscArenaPublication>() == 64);
 
 impl ColdPublicationCell {
@@ -1045,6 +1055,12 @@ impl PublicationCell {
 struct NativeRecordArenaBlock {
     bytes: UnsafeCell<[MaybeUninit<u8>; NATIVE_RECORD_ARENA_BLOCK_BYTES]>,
 }
+
+const _: () = {
+    assert!(std::mem::size_of::<NativeRecordArenaBlock>() == 256);
+    assert!(std::mem::align_of::<NativeRecordArenaBlock>() == 64);
+    assert!(std::mem::offset_of!(NativeRecordArenaBlock, bytes) == 0);
+};
 
 struct NativeRecordArena {
     blocks: Box<[NativeRecordArenaBlock]>,
@@ -1914,6 +1930,49 @@ impl<B: Blobs> Writeback<B> {
     #[inline(always)]
     pub(crate) const fn native_ordering_words(&self) -> (&AtomicU64, &AtomicBool) {
         (self.next_bound.atomic(), &self.unhealthy)
+    }
+
+    /// Borrow the stable ring layout used by the callback-free native binder.
+    ///
+    /// The returned control is valid only while this write-back queue remains
+    /// alive. Native uses it synchronously to assign one sequence under the
+    /// LocalDb validation ticket, acquire that generation's exact FREE turn,
+    /// publish BOUND, and serialize into the matching arena block.
+    ///
+    /// # Safety
+    ///
+    /// The caller must retain one concurrent detached occupancy claim and may
+    /// pass this control only to the matching same-build trusted one-Put
+    /// terminal. Every cache-record terminal for the LocalDb must share this
+    /// queue's `next_bound` and native validation-ticket protocol.
+    #[inline(always)]
+    pub(crate) unsafe fn native_ordered_arena_control(
+        &self,
+    ) -> mako_local::TrustedNativeOrderedArenaControl {
+        debug_assert!(!self.single_producer);
+        debug_assert!(self.publication_cells.len().is_power_of_two());
+        let publication_stride = u32::try_from(std::mem::size_of::<PublicationCell>())
+            .expect("the native publication stride fits u32");
+        let arena_stride = u32::try_from(std::mem::size_of::<NativeRecordArenaBlock>())
+            .expect("the native arena stride fits u32");
+        let arena_block_bytes = u32::try_from(self.native_arena.block_bytes())
+            .expect("the native arena block extent fits u32");
+        // SAFETY: both boxed arrays have stable addresses for `self`'s
+        // lifetime, their exact layouts are asserted above, and the terminal
+        // borrows every pointer only for its synchronous call.
+        unsafe {
+            mako_local::TrustedNativeOrderedArenaControl::from_raw_parts(
+                self.next_bound.as_ptr(),
+                self.unhealthy.as_ptr().cast::<u8>(),
+                self.publication_cells.as_ptr().cast_mut().cast::<u8>(),
+                self.native_arena.blocks.as_ptr().cast_mut().cast::<u8>(),
+                self.publication_cells.len() - 1,
+                self.publication_shift,
+                publication_stride,
+                arena_stride,
+                arena_block_bytes,
+            )
+        }
     }
 
     pub(crate) fn native_holder_pool(&self) -> Option<&TrustedOnePutHolderPool> {
@@ -4464,6 +4523,69 @@ impl<'a, B: Blobs> NativeArenaPermit<'a, B> {
             on_drop: DropAction::PinUnknown,
         }
     }
+
+    /// Adopt one generation which native already changed from FREE to BOUND.
+    ///
+    /// This is the callback-free counterpart of
+    /// [`Self::bind_externally_ordered`]. Native assigned the dense sequence
+    /// under its LocalDb validation ticket, retired that turn, acquired the
+    /// exact publication cell, and selected the matching arena address before
+    /// serializing. Rust only transfers this permit's occupancy ownership into
+    /// the ordinary bound-reservation RAII state.
+    ///
+    /// # Safety
+    ///
+    /// `sequence` must be the accepted sequence returned by the immediately
+    /// preceding same-build direct-arena terminal using this permit owner's
+    /// control. That terminal must have Release-published the exact BOUND turn
+    /// and must no longer access the control or record target after returning.
+    pub(crate) unsafe fn adopt_externally_bound(
+        &mut self,
+        mako_timestamp: MakoTimestamp,
+        sequence: NonZeroU64,
+    ) -> NativeArenaBoundReservation<'a, B> {
+        if !self.owns_claim || self.single_sequence.is_some() {
+            // Native has already advanced the dense tail. Releasing this
+            // detached credit would leave a permanent unfillable hole.
+            std::process::abort();
+        }
+        let sequence = CommitSeq::new(sequence.get()).unwrap_or_else(|| std::process::abort());
+        let publication = self.owner.publication_cell(sequence);
+        let expected_bound = turn_token(sequence.get(), self.owner.publication_shift, TURN_BOUND);
+        if publication.turn.load(Ordering::Acquire) != expected_bound {
+            // A nonzero native order owns this exact generation. Returning or
+            // unwinding without its BOUND descriptor would corrupt dense replay.
+            std::process::abort();
+        }
+        // The exact BOUND Acquire transfers ownership from native and observes
+        // retirement of the prior generation's cold state.
+        if unsafe { (&*self.owner.cold_publication_cell(sequence).record.get()).is_some() } {
+            std::process::abort();
+        }
+
+        self.owner.notify_descriptor_waiters();
+        if sequence.get() == u64::MAX {
+            self.owner.capacity_available.notify_all();
+        }
+        let block = self.owner.publication_index(sequence);
+        // SAFETY: native selected this same masked block and has returned from
+        // its final synchronous write. The bound reservation retains it until
+        // backend retirement.
+        let target = unsafe {
+            self.owner
+                .native_arena
+                .target(block, self.exact_record_bytes)
+        };
+        self.owns_claim = false;
+        NativeArenaBoundReservation {
+            owner: self.owner,
+            token: QueueToken::new(sequence),
+            mako_timestamp,
+            exact_record_bytes: self.exact_record_bytes,
+            target,
+            on_drop: DropAction::PinUnknown,
+        }
+    }
 }
 
 impl<B: Blobs> Drop for NativeArenaPermit<'_, B> {
@@ -5811,6 +5933,46 @@ mod tests {
                 ProcessOutcome::Advanced
             ));
         }
+    }
+
+    #[test]
+    fn direct_native_bound_adoption_transfers_the_detached_claim_once() {
+        let backend = Arc::new(MemBlobs::new());
+        let writeback = Writeback::new(Arc::clone(&backend), 0, config(2, 0)).unwrap();
+        let mutations = vec![put(b"direct-bound", b"value")];
+        let encoded = encoded_native_record(1, 1, mutations);
+        let mut permit = writeback
+            .reserve_native_arena_fast(encoded.len())
+            .unwrap()
+            .unwrap();
+        let sequence = CommitSeq::new(1).unwrap();
+
+        // Model exactly the same-build terminal: its validation-ticket turn
+        // advances the tail, then its post-gate direct binder owns FREE and
+        // Release-publishes BOUND before returning the nonzero order.
+        writeback.next_bound.store(1, Ordering::Release);
+        unsafe {
+            writeback.publication_cell(sequence).publish_bound_preassigned(
+                writeback.cold_publication_cell(sequence),
+                sequence,
+                writeback.publication_shift,
+            )
+        };
+        let mut reservation = unsafe {
+            permit.adopt_externally_bound(mako_timestamp_of(1), NonZeroU64::new(1).unwrap())
+        };
+        assert_eq!(reservation.sequence(), sequence);
+        assert_eq!(writeback.detached_len(), 0);
+        assert_eq!(writeback.queue_len(), 1);
+
+        fill_fast_arena_reservation(&mut reservation, &encoded);
+        // SAFETY: the exact simulated native target is completely initialized.
+        assert_eq!(
+            unsafe { reservation.publish_completed_concurrent_nonblocking(0).unwrap() }.get(),
+            1
+        );
+        assert_eq!(writeback.wait_applied().unwrap(), 1);
+        assert_eq!(backend.batch_count(), 1);
     }
 
     #[test]

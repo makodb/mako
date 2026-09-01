@@ -53,6 +53,105 @@ struct FastPreselectedRecordResult {
 const _: [(); 16] = [(); std::mem::size_of::<FastPreselectedRecordResult>()];
 const _: [(); 8] = [(); std::mem::align_of::<FastPreselectedRecordResult>()];
 
+/// Return value of the cache-private callback-free concurrent arena terminal.
+///
+/// Keep this layout in lockstep with
+/// `mako_rust_fast_native_ordered_arena_result` in the private native header.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+struct FastNativeOrderedArenaResult {
+    terminal: u64,
+    ordered_sequence: u64,
+    record_state: u64,
+}
+
+const _: [(); 24] = [(); std::mem::size_of::<FastNativeOrderedArenaResult>()];
+const _: [(); 8] = [(); std::mem::align_of::<FastNativeOrderedArenaResult>()];
+const _: () = {
+    assert!(std::mem::offset_of!(FastNativeOrderedArenaResult, terminal) == 0);
+    assert!(std::mem::offset_of!(FastNativeOrderedArenaResult, ordered_sequence) == 8);
+    assert!(std::mem::offset_of!(FastNativeOrderedArenaResult, record_state) == 16);
+};
+
+/// Stable Rust queue layout lent to the callback-free native arena terminal.
+///
+/// Native validates this same-build layout before assigning a sequence. The
+/// fields stay private because changing any pointer or stride while a terminal
+/// runs would break the dense-log and exclusive-arena ownership proofs.
+#[doc(hidden)]
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct TrustedNativeOrderedArenaControl {
+    next_bound: *mut u64,
+    unhealthy: *const u8,
+    publication_base: *mut u8,
+    arena_base: *mut u8,
+    publication_mask: usize,
+    publication_shift: u32,
+    publication_stride: u32,
+    arena_stride: u32,
+    arena_block_bytes: u32,
+}
+
+const _: [(); 56] = [(); std::mem::size_of::<TrustedNativeOrderedArenaControl>()];
+const _: [(); 8] = [(); std::mem::align_of::<TrustedNativeOrderedArenaControl>()];
+const _: () = {
+    assert!(std::mem::offset_of!(TrustedNativeOrderedArenaControl, next_bound) == 0);
+    assert!(std::mem::offset_of!(TrustedNativeOrderedArenaControl, unhealthy) == 8);
+    assert!(std::mem::offset_of!(TrustedNativeOrderedArenaControl, publication_base) == 16);
+    assert!(std::mem::offset_of!(TrustedNativeOrderedArenaControl, arena_base) == 24);
+    assert!(std::mem::offset_of!(TrustedNativeOrderedArenaControl, publication_mask) == 32);
+    assert!(std::mem::offset_of!(TrustedNativeOrderedArenaControl, publication_shift) == 40);
+    assert!(std::mem::offset_of!(TrustedNativeOrderedArenaControl, publication_stride) == 44);
+    assert!(std::mem::offset_of!(TrustedNativeOrderedArenaControl, arena_stride) == 48);
+    assert!(std::mem::offset_of!(TrustedNativeOrderedArenaControl, arena_block_bytes) == 52);
+};
+
+impl TrustedNativeOrderedArenaControl {
+    /// Describe one stable publication ring and its matching record arena.
+    ///
+    /// # Safety
+    ///
+    /// `next_bound` must point to a live, naturally aligned `AtomicU64`, and
+    /// `unhealthy` must point to a live `AtomicBool`. Native accesses both with
+    /// matching compiler atomics. `publication_base` must address
+    /// `publication_mask + 1` fixed-stride cells whose atomic turn is at byte
+    /// zero, Mako timestamp at byte 8, and record extent at byte 16.
+    /// `arena_base` must address the same number of fixed-stride blocks with
+    /// payload at byte zero. Both allocations and atomic words must remain at
+    /// stable addresses until every call using this control has returned.
+    ///
+    /// The mask must describe a power-of-two ring and `publication_shift` must
+    /// equal its base-two logarithm. Each prior generation must be retired
+    /// before native can reuse its cell or arena block. Every concurrent
+    /// cache-record terminal for the associated `LocalDb` must use the same
+    /// `next_bound`, health word, and validation-ticket ordering protocol.
+    #[allow(clippy::too_many_arguments)]
+    pub const unsafe fn from_raw_parts(
+        next_bound: *mut u64,
+        unhealthy: *const u8,
+        publication_base: *mut u8,
+        arena_base: *mut u8,
+        publication_mask: usize,
+        publication_shift: u32,
+        publication_stride: u32,
+        arena_stride: u32,
+        arena_block_bytes: u32,
+    ) -> Self {
+        Self {
+            next_bound,
+            unhealthy,
+            publication_base,
+            arena_base,
+            publication_mask,
+            publication_shift,
+            publication_stride,
+            arena_stride,
+            arena_block_bytes,
+        }
+    }
+}
+
 /// Opaque build-private native holder-pool handle.
 #[repr(C)]
 struct FastOnePutHolderPool {
@@ -117,8 +216,8 @@ mod fast_abi {
     use std::ffi::c_void;
 
     use super::{
-        FastOnePutHolderPool, FastOnePutHolderView, FastPreselectedRecordResult,
-        FastSpscHolderControl, sys,
+        FastNativeOrderedArenaResult, FastOnePutHolderPool, FastOnePutHolderView,
+        FastPreselectedRecordResult, FastSpscHolderControl, TrustedNativeOrderedArenaControl, sys,
     };
 
     pub(super) type RecordBindHook = Option<
@@ -189,6 +288,12 @@ mod fast_abi {
             ordered_timestamp_out: *mut u32,
             record_written_out: *mut u8,
         ) -> u64;
+
+        pub(super) fn mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_arena_and_destroy(
+            txn: *mut sys::mako_local_txn,
+            expected_record_bytes: u32,
+            control: *const TrustedNativeOrderedArenaControl,
+        ) -> FastNativeOrderedArenaResult;
 
         pub(super) fn mako_rust_fast_txn_commit_unchecked_one_put_record_single_producer_and_destroy(
             txn: *mut sys::mako_local_txn,
@@ -3605,6 +3710,82 @@ impl<'db> Transaction<'db> {
             ordered_sequence,
             ordered_timestamp,
             target_bound: state.bound,
+        }
+    }
+
+    /// Commit one verified one-Put directly into the native record arena.
+    ///
+    /// Native assigns the Mako timestamp and dense sequence under the LocalDb
+    /// validation ticket. After retiring that ticket it binds the exact
+    /// publication generation and serializes into the matching arena block,
+    /// without a Rust callback. A returned nonzero order therefore already
+    /// owns a BOUND publication cell.
+    ///
+    /// # Safety
+    ///
+    /// `self` must be an active trusted-bound transaction, and `candidate`
+    /// must be its exact current
+    /// [`Self::unchecked_one_put_record_candidate`] after the final operation.
+    /// `control` must satisfy
+    /// [`TrustedNativeOrderedArenaControl::from_raw_parts`] for this
+    /// transaction's LocalDb and the one queue used by all of its concurrent
+    /// cache-record terminals. The caller must already own one capacity claim
+    /// which covers native's next dense sequence and exact arena generation.
+    ///
+    /// Whenever the result exposes an accepted order, the caller must adopt
+    /// the cell that native already bound and publish or pin it, even when the
+    /// terminal reports cleanup uncertainty or an unwritten record.
+    #[doc(hidden)]
+    #[inline(always)]
+    pub unsafe fn commit_trusted_native_ordered_unchecked_one_put_arena(
+        mut self,
+        candidate: CommitRecordPreflight,
+        control: &TrustedNativeOrderedArenaControl,
+    ) -> TrustedNativeOrderedOnePutRecordOutcome {
+        debug_assert!(self.fast_bound_table.is_some());
+        debug_assert!(self.record_preflight.is_none());
+        debug_assert!(self.active);
+        debug_assert!(self.raw.is_some());
+        debug_assert!(!candidate.is_empty());
+        debug_assert_eq!(candidate.op_count, 1);
+        debug_assert_eq!(candidate.checksum, CommitRecordChecksum::None);
+        debug_assert_ne!(candidate.exact_record_bytes, 0);
+        debug_assert!(candidate.exact_record_bytes <= u32::MAX as usize);
+        debug_assert_eq!(
+            NonZeroU32::new(candidate.exact_record_bytes as u32),
+            self.unchecked_one_put_record_bytes
+        );
+
+        // SAFETY: the trusted terminal consumes the live thread-affine handle
+        // on every outcome. The method contract keeps the full queue layout
+        // and its capacity claim valid through native's synchronous call.
+        let raw = unsafe { self.raw.take().unwrap_unchecked() };
+        self.active = false;
+        let result = unsafe {
+            fast_abi::mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_arena_and_destroy(
+                raw.as_ptr(),
+                candidate.exact_record_bytes as u32,
+                std::ptr::from_ref(control),
+            )
+        };
+        let ordered_timestamp = result.record_state as u32;
+        let record_written = if result.record_state >> 33 == 0 {
+            ((result.record_state >> 32) & 1) as u8
+        } else {
+            // Preserve malformed reserved bits for the existing cold decoder.
+            // A value above one can never satisfy its completion contract.
+            u8::MAX
+        };
+        let target_bound = result.ordered_sequence != 0;
+        TrustedNativeOrderedOnePutRecordOutcome {
+            inner: TrustedUncheckedOnePutRecordOutcome {
+                packed: result.terminal,
+                record_bound: target_bound,
+                record_written,
+            },
+            ordered_sequence: result.ordered_sequence,
+            ordered_timestamp,
+            target_bound,
         }
     }
 

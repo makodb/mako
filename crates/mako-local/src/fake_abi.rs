@@ -14,8 +14,8 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use super::{
-    FastOnePutHolderPool, FastOnePutHolderView, FastPreselectedRecordResult, FastSpscHolderControl,
-    sys,
+    FastNativeOrderedArenaResult, FastOnePutHolderPool, FastOnePutHolderView,
+    FastPreselectedRecordResult, FastSpscHolderControl, TrustedNativeOrderedArenaControl, sys,
 };
 
 static ENGINE_ID: &[u8] = b"mako-local/sto-masstrans\0";
@@ -50,6 +50,7 @@ pub(super) enum Call {
     FastRecordCommitDestroy,
     FastUncheckedOnePutRecordCommitDestroy,
     FastNativeOrderedUncheckedOnePutRecordCommitDestroy,
+    FastNativeOrderedUncheckedOnePutArenaCommitDestroy,
     FastSingleProducerUncheckedOnePutRecordCommitDestroy,
     FastPreselectedSingleProducerUncheckedOnePutRecordCommitDestroy,
     FastOnePutHolderPoolCreate,
@@ -1354,6 +1355,152 @@ pub(super) unsafe fn mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_
             state.txn = None;
         }
         u64::from(commit as u32) | (u64::from(cleanup as u32) << 32)
+    })
+}
+
+pub(super) unsafe fn mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_arena_and_destroy(
+    _txn: *mut sys::mako_local_txn,
+    expected_record_bytes: u32,
+    control: *const TrustedNativeOrderedArenaControl,
+) -> FastNativeOrderedArenaResult {
+    with_state(|state| {
+        state
+            .calls
+            .push(Call::FastNativeOrderedUncheckedOnePutArenaCommitDestroy);
+        state.last_unchecked_record_bytes = Some(expected_record_bytes);
+        let (commit, timestamp, exact_record_bytes, record, reported_written) =
+            match state.steps.pop_front() {
+                Some(Step::CommitRecord {
+                    status,
+                    timestamp,
+                    exact_record_bytes,
+                    record,
+                    reported_written,
+                }) => (
+                    status,
+                    timestamp,
+                    exact_record_bytes,
+                    record,
+                    reported_written,
+                ),
+                found => unexpected("fast native-ordered one-put arena commit", found),
+            };
+
+        // SAFETY: the wrapper lends its live repr(C) control for this entire
+        // synchronous fake call.
+        let control = unsafe { control.as_ref() };
+        let layout_valid = control.is_some_and(|control| {
+            let capacity = control.publication_mask.checked_add(1);
+            !control.next_bound.is_null()
+                && !control.unhealthy.is_null()
+                && !control.publication_base.is_null()
+                && !control.arena_base.is_null()
+                && (control.next_bound as usize) % std::mem::align_of::<u64>() == 0
+                && (control.publication_base as usize) % 64 == 0
+                && (control.arena_base as usize) % 64 == 0
+                && capacity.is_some_and(|capacity| {
+                    capacity >= 4
+                        && capacity.is_power_of_two()
+                        && 1usize.checked_shl(control.publication_shift) == Some(capacity)
+                })
+                && control.publication_stride == 64
+                && control.arena_stride == 256
+                && control.arena_block_bytes != 0
+                && control.arena_block_bytes <= 256
+                && expected_record_bytes != 0
+                && expected_record_bytes <= control.arena_block_bytes
+        });
+
+        let exact_candidate = exact_record_bytes == expected_record_bytes as usize;
+        let mut sequence = 0u64;
+        let mut assigned = false;
+        if layout_valid && exact_candidate && timestamp.is_some() {
+            let control = control.unwrap();
+            // SAFETY: construction promises this byte is one live AtomicBool
+            // and layout validation above rejected a null pointer.
+            let health = unsafe {
+                AtomicBool::from_ptr(control.unhealthy.cast_mut().cast::<bool>())
+            };
+            let healthy = !health.load(Ordering::Acquire);
+            if healthy {
+                // SAFETY: construction and validation supply a naturally
+                // aligned AtomicU64 word for the synchronous call.
+                let tail = unsafe { AtomicU64::from_ptr(control.next_bound) };
+                if let Ok(previous) = tail.fetch_update(
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                    |current| current.checked_add(1),
+                ) {
+                    let next = previous + 1;
+                    sequence = next;
+                    assigned = true;
+
+                    let index = sequence as usize & control.publication_mask;
+                    // SAFETY: the unsafe control contract provides both full
+                    // rings and the validated index/strides stay in bounds.
+                    let publication = unsafe {
+                        control
+                            .publication_base
+                            .add(index * control.publication_stride as usize)
+                    };
+                    let turn = publication.cast::<u64>();
+                    let free = (sequence >> control.publication_shift) << 2;
+                    let bound = free | 1;
+                    // SAFETY: byte zero is the aligned AtomicU64 turn word.
+                    let turn = unsafe { AtomicU64::from_ptr(turn) };
+                    assert_eq!(turn.load(Ordering::Acquire), free);
+                    // SAFETY: the exact FREE generation grants unique access
+                    // to the native record-extent field at byte 16.
+                    unsafe { publication.add(16).cast::<usize>().write(0) };
+                    turn.store(bound, Ordering::Release);
+                }
+            }
+        }
+
+        let initialize_record = reported_written != Some(0);
+        let actual_written = if assigned
+            && initialize_record
+            && record.len() == exact_record_bytes
+        {
+            let control = control.unwrap();
+            let index = sequence as usize & control.publication_mask;
+            // SAFETY: assignment bound this exact ring generation and the
+            // validated arena block covers expected_record_bytes.
+            let destination = unsafe {
+                control
+                    .arena_base
+                    .add(index * control.arena_stride as usize)
+            };
+            if exact_record_bytes != 0 {
+                unsafe {
+                    ptr::copy_nonoverlapping(record.as_ptr(), destination, exact_record_bytes)
+                };
+            }
+            1u8
+        } else {
+            0u8
+        };
+        let reported_state = reported_written.unwrap_or(actual_written);
+        let record_state = if assigned {
+            u64::from(timestamp.unwrap()) | (u64::from(reported_state) << 32)
+        } else {
+            u64::from(reported_state) << 32
+        };
+
+        let cleanup = match state.steps.pop_front() {
+            Some(Step::Destroy(status)) => status,
+            found => unexpected("fast native-ordered one-put arena cleanup", found),
+        };
+        observe_status(state, commit);
+        observe_status(state, cleanup);
+        if cleanup == sys::MAKO_LOCAL_OK {
+            state.txn = None;
+        }
+        FastNativeOrderedArenaResult {
+            terminal: u64::from(commit as u32) | (u64::from(cleanup as u32) << 32),
+            ordered_sequence: sequence,
+            record_state,
+        }
     })
 }
 
@@ -3121,6 +3268,111 @@ mod tests {
         assert_drained();
     }
 
+    fn exercise_native_ordered_one_put_arena_terminal() {
+        #[repr(C, align(64))]
+        struct TestPublicationCell {
+            turn: AtomicU64,
+            mako_timestamp: std::cell::UnsafeCell<u32>,
+            record_bytes: std::cell::UnsafeCell<usize>,
+            padding: [u8; 40],
+        }
+
+        #[repr(C, align(64))]
+        struct TestArenaBlock {
+            bytes: [std::mem::MaybeUninit<u8>; 256],
+        }
+
+        const _: () = {
+            assert!(std::mem::size_of::<TestPublicationCell>() == 64);
+            assert!(std::mem::align_of::<TestPublicationCell>() == 64);
+            assert!(std::mem::offset_of!(TestPublicationCell, turn) == 0);
+            assert!(std::mem::offset_of!(TestPublicationCell, mako_timestamp) == 8);
+            assert!(std::mem::offset_of!(TestPublicationCell, record_bytes) == 16);
+            assert!(std::mem::size_of::<TestArenaBlock>() == 256);
+            assert!(std::mem::align_of::<TestArenaBlock>() == 64);
+        };
+
+        const EXACT_BYTES: u32 = 43 + 3 + 5;
+        let mut cells = Box::new(std::array::from_fn::<_, 4, _>(|_| TestPublicationCell {
+            turn: AtomicU64::new(u64::MAX),
+            mako_timestamp: std::cell::UnsafeCell::new(0),
+            record_bytes: std::cell::UnsafeCell::new(usize::MAX),
+            padding: [0; 40],
+        }));
+        let mut arena = Box::new(std::array::from_fn::<_, 4, _>(|_| TestArenaBlock {
+            bytes: [std::mem::MaybeUninit::uninit(); 256],
+        }));
+
+        reset();
+        let db = open_db();
+        let table = db.open_table("trusted-native-ordered-arena", 94).unwrap();
+        let mut transaction = db.trusted_transaction(&table).unwrap();
+        push(Step::Put(ByteReply {
+            status: sys::MAKO_LOCAL_OK,
+            value: 1,
+            unchecked_record_bytes: EXACT_BYTES,
+        }));
+        transaction.put(&table, b"key", b"value").unwrap();
+        let candidate = transaction.unchecked_one_put_record_candidate().unwrap();
+        let expected = vec![0x4d; EXACT_BYTES as usize];
+        push(Step::CommitRecord {
+            status: sys::MAKO_LOCAL_OK,
+            timestamp: Some(95),
+            exact_record_bytes: EXACT_BYTES as usize,
+            record: expected.clone(),
+            reported_written: None,
+        });
+        push(Step::Destroy(sys::MAKO_LOCAL_OK));
+        let next_bound = AtomicU64::new(10);
+        let unhealthy = AtomicBool::new(false);
+        let index = 11usize & 3;
+        cells[index].turn.store((11 >> 2) << 2, Ordering::Relaxed);
+        let control = unsafe {
+            crate::TrustedNativeOrderedArenaControl::from_raw_parts(
+                next_bound.as_ptr(),
+                unhealthy.as_ptr().cast::<u8>(),
+                cells.as_mut_ptr().cast::<u8>(),
+                arena.as_mut_ptr().cast::<u8>(),
+                3,
+                2,
+                64,
+                256,
+                256,
+            )
+        };
+        let outcome = unsafe {
+            transaction.commit_trusted_native_ordered_unchecked_one_put_arena(
+                candidate, &control,
+            )
+        };
+        assert!(outcome.order_witness_valid());
+        assert_eq!(
+            outcome.accepted_order().map(|(timestamp, sequence)| (
+                timestamp.get(),
+                sequence.get()
+            )),
+            Some((95, 11))
+        );
+        assert!(outcome.is_committed());
+        let report = outcome.into_report();
+        assert!(report.completion_contract_valid);
+        assert!(report.record_bound);
+        assert!(report.record_written);
+        assert_eq!(next_bound.load(Ordering::Acquire), 11);
+        assert_eq!(cells[index].turn.load(Ordering::Acquire), ((11 >> 2) << 2) | 1);
+        assert_eq!(unsafe { cells[index].record_bytes.get().read() }, 0);
+        let written = unsafe {
+            std::slice::from_raw_parts(
+                arena[index].bytes.as_ptr().cast::<u8>(),
+                EXACT_BYTES as usize,
+            )
+        };
+        assert_eq!(written, expected);
+        assert_call_count(Call::FastNativeOrderedUncheckedOnePutArenaCommitDestroy, 1);
+        drop(db);
+        assert_drained();
+    }
+
     fn exercise_unchecked_one_put_outcome_contract() {
         const EXACT_BYTES: u32 = 43 + 3 + 5;
 
@@ -4426,6 +4678,7 @@ mod tests {
         exercise_commit_record_raw_target_path();
         exercise_unchecked_one_put_record_terminal();
         exercise_native_ordered_one_put_record_terminal();
+        exercise_native_ordered_one_put_arena_terminal();
         exercise_unchecked_one_put_outcome_contract();
         exercise_preselected_one_put_record_terminal();
         exercise_preselected_one_put_holder_terminal();
