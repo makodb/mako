@@ -1273,21 +1273,19 @@ impl Occupancy {
     }
 
     fn try_claim(&self, capacity: usize) -> bool {
-        let mut occupied = self.value.load(Ordering::Acquire);
-        loop {
-            if occupied >= capacity {
-                return false;
-            }
-            match self.value.compare_exchange_weak(
-                occupied,
-                occupied + 1,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            ) {
-                Ok(_) => return true,
-                Err(observed) => occupied = observed,
-            }
+        // The old load/CAS loop could issue several locked cmpxchg operations
+        // when concurrent producers raced below the limit. Give every attempt
+        // one position with fetch_add instead. An over-limit attempt retracts
+        // its provisional count before taking the slow path. Provisional
+        // overclaims only make another claimant fail conservatively: the
+        // atomic value is never below the number of successful live claims.
+        let prior = self.value.fetch_add(1, Ordering::AcqRel);
+        if prior < capacity {
+            return true;
         }
+        let rollback_prior = self.value.fetch_sub(1, Ordering::Release);
+        assert_ne!(rollback_prior, 0, "occupancy overclaim rollback underflow");
+        false
     }
 
     fn release(&self) {
