@@ -4122,9 +4122,12 @@ impl<B: Blobs> Writeback<B> {
                     })?;
             let raw = NonZeroU64::new(holder.sequence().get())
                 .expect("cache commit sequences are nonzero");
-            // SAFETY: harvesting this descriptor followed an Acquire of the
-            // dense SPSC published tail. Applied has not advanced, so the
-            // producer cannot reuse the masked holder while this view lives.
+            // SAFETY: harvesting this descriptor followed an Acquire of
+            // either the dense SPSC published tail or this concurrent
+            // generation's exact READY turn. The captured record retains its
+            // occupancy right and the cell is not retired to FREE until
+            // materialization and backend application finish, so no producer
+            // can reuse the masked holder while this view lives.
             let view =
                 unsafe { pool.view(raw) }.map_err(|_| RecordError::NativeHolderUnavailable {
                     sequence: holder.sequence().get(),
@@ -4524,11 +4527,13 @@ impl<B: Blobs> Writeback<B> {
     }
 }
 
-/// Arena-only detached claim for the trusted native one-Put terminal.
+/// Detached capacity claim for the trusted native one-Put terminal.
 ///
 /// Unlike [`DetachedPermit`], this hot representation has no record-kind enum,
-/// optional buffer, or cold legacy ownership. The future sequence selects its
-/// stable arena block only after native validation succeeds.
+/// optional buffer, or cold legacy ownership. After native validation, the
+/// accepted sequence selects either its stable arena block or the matching
+/// deferred holder generation. The arena extent remains available as the
+/// compatibility and failpoint path.
 pub(crate) struct NativeArenaPermit<'a, B: Blobs> {
     owner: &'a Writeback<B>,
     exact_record_bytes: usize,
@@ -4838,16 +4843,20 @@ impl<'a, B: Blobs> NativeArenaPermit<'a, B> {
     /// This is the callback-free counterpart of
     /// [`Self::bind_externally_ordered`]. Native assigned the dense sequence
     /// with its packed pair CAS, acquired the exact publication cell, and
-    /// selected the matching arena address before serializing. Rust only
-    /// transfers this permit's occupancy ownership into the ordinary
-    /// bound-reservation RAII state.
+    /// selected either the matching arena address or deferred holder before
+    /// completing the record. Rust only transfers this permit's occupancy
+    /// ownership into the ordinary bound-reservation RAII state. The retained
+    /// arena target is meaningful only when the caller later resolves this as
+    /// an arena record; holder resolution publishes the holder tag instead.
     ///
     /// # Safety
     ///
     /// `sequence` must be the accepted sequence returned by the immediately
-    /// preceding same-build direct-arena terminal using this permit owner's
-    /// control. That terminal must have Release-published the exact BOUND turn
-    /// and must no longer access the control or record target after returning.
+    /// preceding same-build direct-arena or deferred-holder terminal using
+    /// this permit owner's matching control. That terminal must have
+    /// Release-published the exact BOUND turn and must no longer access the
+    /// control, arena target, or holder after returning. The caller must use
+    /// the resolution method corresponding to the terminal it invoked.
     pub(crate) unsafe fn adopt_externally_bound(
         &mut self,
         mako_timestamp: MakoTimestamp,
@@ -4877,9 +4886,10 @@ impl<'a, B: Blobs> NativeArenaPermit<'a, B> {
             self.owner.capacity_available.notify_all();
         }
         let block = self.owner.publication_index(sequence);
-        // SAFETY: native selected this same masked block and has returned from
-        // its final synchronous write. The bound reservation retains it until
-        // backend retirement.
+        // SAFETY: this masked arena block belongs to the same exact BOUND
+        // generation and remains stable through backend retirement. An arena
+        // terminal selected and initialized it; a holder terminal leaves it
+        // unused and resolves the reservation through the holder-only method.
         let target = unsafe {
             self.owner
                 .native_arena
@@ -4906,11 +4916,11 @@ impl<B: Blobs> Drop for NativeArenaPermit<'_, B> {
     }
 }
 
-/// Bound common-arena record with a precomputed direct native target.
+/// Bound trusted one-Put record with a precomputed compatibility arena target.
 ///
 /// Dropping an unresolved value pins its exact sequence. The record becomes
 /// replayable only after an exact native completion witness is supplied to one
-/// of the unsafe resolution methods below.
+/// of the unsafe arena- or holder-specific resolution methods below.
 pub(crate) struct NativeArenaBoundReservation<'a, B: Blobs> {
     owner: &'a Writeback<B>,
     token: QueueToken,
