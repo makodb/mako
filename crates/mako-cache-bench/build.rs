@@ -31,6 +31,7 @@ fn main() {
     }
 
     let cache_path = build.join("CMakeCache.txt");
+    println!("cargo:rerun-if-changed={}", cache_path.display());
     let cache = std::fs::read_to_string(&cache_path)
         .unwrap_or_else(|error| panic!("cannot read {}: {error}", cache_path.display()));
 
