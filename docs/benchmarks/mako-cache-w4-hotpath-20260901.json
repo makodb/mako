@@ -381,6 +381,7 @@
     },
     "schema": "mako-cache-w4-result-v1",
     "source": {
+        "baseline_commit": "564ee736012d7788fbf8bfeb81eb649b9522a0ae",
         "base564_cache_binary_sha256": null,
         "base564_cache_binary_sha256_status": "not_captured_in_retained_local_provenance",
         "base564_glibc_wrapper_sha256": "932d773174aebc7a11caad0c950bd7bc68bfd8afdeb1607b90a09326fe8991f7",
@@ -392,7 +393,7 @@
         "holder_reuse_binary_sha256": "b2ccaa828607cd2bb01febe7ad837272d679d6471da1d6222726b42d50412b6d",
         "holder_reuse_wrapper_sha256": "083eaccdfc5db2e565232ddbe726cf6ceecfaa0d5f6b7d991398b303fa0a9a76",
         "native_archive_sha256": "0829acaa37153e65d973a4a62c97c2dd4e877b12db2e35631cbaf1297a1c4722",
-        "parent": "564ee736012d7788fbf8bfeb81eb649b9522a0ae",
+        "parent": "74dcba12e5f886e6ae6cbad6849e392c40dd6058",
         "raw_c_abi_binary_sha256": "05a7782f7b83fcd368547a83cd79d9f0b3f48c3b47771b40fc1601df0fe6ad5e",
         "tree": "ad992117897d993bc0f55843c0cc3946217f4929"
     }

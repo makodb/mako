@@ -198,7 +198,7 @@ dependency of these results.
 The complete five-repetition arrays, protocols, available binary and wrapper
 hashes, deltas, and artifact paths are in the
 [machine-readable follow-up](benchmarks/mako-cache-w4-hotpath-20260901.json),
-SHA-256 `26b3bee94c57deb2e76817cdf1cbcc6761ed60539517f43ea2860b3ebaa5d678`.
+SHA-256 `fdcbb2b25b8cb4a86871df9a85f7c889f3fcc131e5c4de4c82c01dde4375dcf6`.
 The released base-candidate binary hash was not available locally and is
 marked as such rather than reconstructed.
 
