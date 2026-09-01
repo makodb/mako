@@ -1535,6 +1535,15 @@ TEST_F(LocalAbiTest, NativeOrderedOnePutAssignsBeforePostGateBinding) {
   EXPECT_EQ(binding.timestamp, ordered_timestamp);
   EXPECT_EQ(binding.calls, 1);
   EXPECT_EQ(written, 1U);
+  const uint64_t accepted_snapshot =
+      mako_rust_fast_db_cache_order_snapshot(db);
+  EXPECT_EQ(test_cache_order_sequence(accepted_snapshot), ordered_sequence);
+  EXPECT_EQ(test_cache_order_timestamp(accepted_snapshot),
+            ordered_timestamp + 1);
+  uint32_t next_scalar_timestamp = 0;
+  ASSERT_TRUE(
+      Transaction::try_allocate_mako_timestamp(next_scalar_timestamp));
+  EXPECT_EQ(next_scalar_timestamp, ordered_timestamp + 1);
   DecodedThinRecord decoded;
   ASSERT_TRUE(decode_thin_record(storage, &decoded));
   EXPECT_EQ(decoded.sequence, ordered_sequence);

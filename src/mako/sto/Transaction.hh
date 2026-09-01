@@ -396,7 +396,10 @@ public:
     // Optional restricted-path replacement for the ordinary late gate,
     // timestamp allocation, and accepted hook. Storage adapters may use this
     // only after can_order_record_after_validation() proves that one locked
-    // local update covers the transaction's complete observation.
+    // local update covers the transaction's complete observation. Returning
+    // accepted must allocate the reported timestamp by advancing the same
+    // packed process clock past it; phase 3 relies on that stronger contract
+    // instead of repeating observe_mako_timestamp().
     enum class ordered_accept_result : uint8_t {
         accepted,
         hook_rejected,
