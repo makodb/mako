@@ -247,9 +247,9 @@ RustWrapper::Result RustWrapper::execute_request(OpCode op,
 
             try {
                 std::string unused_value;
-                bool exists = customerTable->get(txn, tl_key_buf, unused_value);
+                bool exists = tx_get(customerTable, txn, tl_key_buf, unused_value);
                 if (exists) {
-                    customerTable->remove(txn, tl_key_buf);
+                    tx_remove(customerTable, txn, tl_key_buf);
                 }
                 db->commit_txn(txn);
                 result = exists ? "1" : "0";
@@ -272,7 +272,7 @@ RustWrapper::Result RustWrapper::execute_request(OpCode op,
 
             try {
                 std::string unused_value;
-                bool exists = customerTable->get(txn, tl_key_buf, unused_value);
+                bool exists = tx_get(customerTable, txn, tl_key_buf, unused_value);
                 db->commit_txn(txn);
                 result = exists ? "1" : "0";
             } catch (abstract_db::abstract_abort_exception &ex) {
