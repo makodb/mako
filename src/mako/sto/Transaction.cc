@@ -1200,10 +1200,12 @@ bool Transaction::try_commit(bool no_paxos,
     }
 #endif
 
-    // A remote/read-set maximum may have raised the chosen timestamp above
-    // this coordinator's local ticket. Floor the next-to-return clock before
-    // either phase-3 layout installs the write set.
-    if (nwriteset)
+    // @safe: A remote/read-set maximum may have raised the chosen timestamp
+    // above this coordinator's local ticket. Floor the next-to-return clock
+    // before either phase-3 layout installs the write set. A successful
+    // ordered callback replaced timestamp allocation with a packed CAS that
+    // already advanced this same clock past tid_unique_.
+    if (nwriteset && !ordered_hook_already_accepted)
         observe_mako_timestamp(tid_unique_);
 
     //phase3
