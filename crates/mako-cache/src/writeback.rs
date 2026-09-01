@@ -2571,13 +2571,13 @@ impl<B: Blobs> Writeback<B> {
                 None
             }
         };
-        match single_sequence {
-            None => {
-                self.prefetch_predicted_native_arena(record_bytes);
-            }
-            Some(sequence) => {
-                self.prefetch_native_arena(sequence, record_bytes, false);
-            }
+        // Only the single producer knows its exact sequence here. Concurrent
+        // prediction made every worker issue PREFETCHW for the same likely
+        // cell before the native ordering gate, creating ownership traffic on
+        // a cache line most predictors would not receive. A future concurrent
+        // hint belongs in native after exact sequence assignment.
+        if let Some(sequence) = single_sequence {
+            self.prefetch_native_arena(sequence, record_bytes, false);
         }
         Ok(Some(NativeArenaPermit {
             owner: self,
@@ -2586,21 +2586,6 @@ impl<B: Blobs> Writeback<B> {
             single_producer: producer,
             owns_claim: true,
         }))
-    }
-
-    /// Hint the next likely hot cell and common arena extent before native
-    /// starts lock acquisition. One worker predicts exactly; concurrent
-    /// binders may advance the tail, in which case a hint to another valid ring
-    /// cell is semantically harmless.
-    #[inline]
-    fn prefetch_predicted_native_arena(&self, record_bytes: usize) {
-        let Some(raw_sequence) = self.next_bound.load(Ordering::Relaxed).checked_add(1) else {
-            return;
-        };
-        let Some(sequence) = CommitSeq::new(raw_sequence) else {
-            return;
-        };
-        self.prefetch_native_arena(sequence, record_bytes, true);
     }
 
     /// Hint one already-selected direct arena target and its mode-specific
