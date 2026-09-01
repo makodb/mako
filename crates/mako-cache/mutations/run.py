@@ -816,7 +816,15 @@ def run_baseline(
                 "compile": compile_result,
             }
 
-        test_command_line = [args.cargo, *BASE_CARGO_ARGS]
+        # Native cache instances share one process-wide cache-order namespace.
+        # The ordinary CMake Rust gate serializes cache cases for the same
+        # reason; preserve that contract in this isolated baseline too.
+        test_command_line = [
+            args.cargo,
+            *BASE_CARGO_ARGS,
+            "--",
+            "--test-threads=1",
+        ]
         print(f"baseline tests:   {command_display(test_command_line)}", file=sys.stderr)
         test_result = command_result(
             test_command_line,
