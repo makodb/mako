@@ -18,6 +18,7 @@ use mako_local::{
 use mrx_core::fakes::MemBlobs;
 
 const REQUIRE_NATIVE_HOOKS_ENV: &str = "MAKO_CACHE_REQUIRE_NATIVE_CRASH_HOOKS";
+const CLEANUP_SCENARIO_ENV: &str = "MAKO_CACHE_CLEANUP_SCENARIO";
 
 type TestCache = Cache<Arc<MemBlobs>>;
 
@@ -181,6 +182,16 @@ fn ambiguous_commit_pins_the_complete_record() {
     assert!(backend.snapshot().is_empty());
 }
 
+fn run_isolated_scenario(name: &str) {
+    let status = std::process::Command::new(std::env::current_exe().unwrap())
+        .arg("--exact")
+        .arg("cleanup_uncertainty_quarantines_fresh_cache_workers")
+        .env(CLEANUP_SCENARIO_ENV, name)
+        .status()
+        .expect("run cleanup-quarantine subprocess");
+    assert!(status.success(), "cleanup scenario {name} failed: {status}");
+}
+
 #[test]
 fn cleanup_uncertainty_quarantines_fresh_cache_workers() {
     let cleanup_hooks = features()
@@ -196,17 +207,35 @@ fn cleanup_uncertainty_quarantines_fresh_cache_workers() {
         return;
     }
 
-    fresh_quarantined_worker(
+    if let Some(scenario) = std::env::var_os(CLEANUP_SCENARIO_ENV) {
+        match scenario.to_str().expect("cleanup scenario must be UTF-8") {
+            "preparation-error-drop" => fresh_quarantined_worker(
+                "preparation-error-drop",
+                preparation_error_drop_quarantines_without_a_slot,
+            ),
+            "explicit-abort" => fresh_quarantined_worker(
+                "explicit-abort",
+                explicit_abort_quarantines_without_a_slot,
+            ),
+            "active-transaction-drop" => fresh_quarantined_worker(
+                "active-transaction-drop",
+                active_transaction_drop_quarantines_without_a_slot,
+            ),
+            "ambiguous-commit" => fresh_quarantined_worker(
+                "ambiguous-commit",
+                ambiguous_commit_pins_the_complete_record,
+            ),
+            other => panic!("unknown cleanup scenario: {other}"),
+        }
+        return;
+    }
+
+    for scenario in [
         "preparation-error-drop",
-        preparation_error_drop_quarantines_without_a_slot,
-    );
-    fresh_quarantined_worker("explicit-abort", explicit_abort_quarantines_without_a_slot);
-    fresh_quarantined_worker(
+        "explicit-abort",
         "active-transaction-drop",
-        active_transaction_drop_quarantines_without_a_slot,
-    );
-    fresh_quarantined_worker(
         "ambiguous-commit",
-        ambiguous_commit_pins_the_complete_record,
-    );
+    ] {
+        run_isolated_scenario(scenario);
+    }
 }

@@ -1364,6 +1364,11 @@ impl CacheLineAtomicU64 {
     }
 
     #[inline(always)]
+    fn fetch_max(&self, value: u64, ordering: Ordering) -> u64 {
+        self.value.fetch_max(value, ordering)
+    }
+
+    #[inline(always)]
     fn fetch_update<F>(
         &self,
         set_order: Ordering,
@@ -1723,10 +1728,11 @@ pub struct Writeback<B: Blobs> {
     /// consumer. SPSC producers Acquire this only when refreshing their local
     /// capacity cursor; it is the cross-generation storage-reuse handoff.
     applied_frontier: CacheLineAtomicU64,
-    /// Highest sequence assigned after post-validation. Descriptor
-    /// publication may briefly lag this scalar when producers overlap. Its
-    /// own cache line keeps the native ticket handoff from invalidating
-    /// occupancy and acknowledgement words touched by other producers.
+    /// Highest sequence visible to barriers and capacity accounting. In
+    /// concurrent mode native raises this mirror only after publishing BOUND;
+    /// the legacy single-producer mode allocates from it directly. Its own
+    /// cache line isolates this observation point from occupancy and
+    /// acknowledgement words touched by other producers.
     next_bound: CacheLineAtomicU64,
     /// Detached plus bound transactions. Successful backend retirement and
     /// pre-bind cancellation are the only releases.
@@ -1921,10 +1927,10 @@ impl<B: Blobs> Writeback<B> {
     /// Stable atomic words borrowed by the same-build native ordering seam.
     ///
     /// Native accesses these addresses only during one synchronous terminal.
-    /// It Acquire-loads `unhealthy`, then advances `next_bound` with one
-    /// externally serialized atomic load/Release-store while holding the
-    /// LocalDb validation ticket. The Rust allocation must remain live for
-    /// that whole call.
+    /// It Acquire-loads `unhealthy`; packed native state is the sole concurrent
+    /// allocator. `next_bound` is raised only as a monotonic observation mirror
+    /// after the exact generation is BOUND. Both Rust allocations must remain
+    /// live for that whole call.
     #[inline(always)]
     pub(crate) const fn native_ordering_words(&self) -> (&AtomicU64, &AtomicBool) {
         (self.next_bound.atomic(), &self.unhealthy)
@@ -1933,16 +1939,16 @@ impl<B: Blobs> Writeback<B> {
     /// Borrow the stable ring layout used by the callback-free native binder.
     ///
     /// The returned control is valid only while this write-back queue remains
-    /// alive. Native uses it synchronously to assign one sequence under the
-    /// LocalDb validation ticket, acquire that generation's exact FREE turn,
-    /// publish BOUND, and serialize into the matching arena block.
+    /// alive. Native uses its packed pair CAS to assign one sequence, acquires
+    /// that generation's exact FREE turn, publishes BOUND, raises the mirror,
+    /// and serializes into the matching arena block.
     ///
     /// # Safety
     ///
     /// The caller must retain one concurrent detached occupancy claim and may
     /// pass this control only to the matching same-build trusted one-Put
-    /// terminal. Every cache-record terminal for the LocalDb must share this
-    /// queue's `next_bound` and native validation-ticket protocol.
+    /// terminal. The LocalDb must hold an immutable Concurrent cache-order
+    /// claim, and every cache-record terminal must use that packed namespace.
     #[inline(always)]
     pub(crate) unsafe fn native_ordered_arena_control(
         &self,
@@ -2826,11 +2832,10 @@ impl<B: Blobs> Writeback<B> {
 
     /// Assign and publish the next dense bound descriptor.
     ///
-    /// `ExternallySerialized` is selected only by the unsafe native-arena
-    /// binder. Its caller proves the LocalDb validation ticket excludes every
-    /// concurrent sequence allocator for this Writeback. Mixing that mode
-    /// concurrently with the ordinary binder would lose a tail update and
-    /// assign one sequence twice.
+    /// `ExternallySerialized` is selected only by the legacy unsafe native
+    /// binder. Its caller proves an external exclusion covers every sequence
+    /// allocator for this Writeback. Mixing that mode concurrently with the
+    /// ordinary binder would lose a tail update and assign one sequence twice.
     fn bind_sequence(&self, mode: BindSequenceMode) -> Result<CommitSeq, ReserveError> {
         debug_assert!(!self.single_producer);
         if self.unhealthy.load(Ordering::Acquire) {
@@ -2868,10 +2873,10 @@ impl<B: Blobs> Writeback<B> {
                     self.next_bound.fetch_add(1, Ordering::AcqRel)
                 }
                 BindSequenceMode::ExternallySerialized => {
-                    // SAFETY CONTRACT: the native validation ticket supplies
-                    // the missing single-writer exclusion. Its preceding
-                    // Release / this turn's Acquire also prevents a new binder
-                    // from observing an older externally serialized tail.
+                    // SAFETY CONTRACT: the caller supplies the missing
+                    // single-writer exclusion. Its preceding Release and this
+                    // turn's Acquire prevent a new binder from observing an
+                    // older externally serialized tail.
                     self.next_bound.store(observed + 1, Ordering::Release);
                     observed
                 }
@@ -3982,7 +3987,7 @@ enum DropAction {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum BindSequenceMode {
     Concurrent,
-    /// The native LocalDb validation ticket excludes every other binder for
+    /// The caller's native ordering exclusion covers every other binder for
     /// this Writeback until the callback returns.
     ExternallySerialized,
 }
@@ -4399,13 +4404,13 @@ impl<'a, B: Blobs> NativeArenaPermit<'a, B> {
         Ok(sequence)
     }
 
-    /// Bind under native's per-LocalDb validation ticket.
+    /// Bind under a caller-provided native ordering exclusion.
     ///
     /// # Safety
     ///
     /// For a concurrent claim, the caller must be executing the cache-private
-    /// one-Put bind callback while the LocalDb validation ticket excludes every
-    /// other binder for this Writeback. For a single-producer claim, the
+    /// one-Put bind callback while native excludes every other binder for this
+    /// Writeback. For a single-producer claim, the
     /// thread-affine mutable lease must instead exclude every foreground
     /// terminal for the whole native call. Otherwise the load/Release-store
     /// tail allocation can race another allocator, duplicate a dense sequence,
@@ -4445,7 +4450,7 @@ impl<'a, B: Blobs> NativeArenaPermit<'a, B> {
         })
     }
 
-    /// Adopt a sequence already assigned by native under the validation gate.
+    /// Adopt a sequence already assigned by native's packed order state.
     ///
     /// The exact publication cell is intentionally acquired here, after the
     /// gate has been released. This keeps arena/cache-line acquisition out of
@@ -4456,11 +4461,10 @@ impl<'a, B: Blobs> NativeArenaPermit<'a, B> {
     ///
     /// # Safety
     ///
-    /// `sequence` must be the one successor native assigned by atomically
-    /// advancing this permit owner's `next_bound` while the matching LocalDb
-    /// validation ticket excluded every other externally serialized allocator.
-    /// This permit must still own its pre-commit capacity claim, and native
-    /// must not serialize into the returned target before this call completes.
+    /// `sequence` must be the exact successor assigned by native's packed CAS
+    /// while this LocalDb held its immutable Concurrent claim. This permit must
+    /// still own its pre-commit capacity claim, and native must not serialize
+    /// into the returned target before this call completes.
     pub(crate) unsafe fn bind_externally_ordered(
         &mut self,
         mako_timestamp: MakoTimestamp,
@@ -4484,6 +4488,12 @@ impl<'a, B: Blobs> NativeArenaPermit<'a, B> {
                 self.owner.publication_shift,
             )
         };
+        // The packed native word is the allocator. Keep `next_bound` only as
+        // a monotonic queue-observation mirror; out-of-order bind callbacks
+        // may raise it past this sequence, so a plain store would regress it.
+        self.owner
+            .next_bound
+            .fetch_max(sequence.get(), Ordering::Release);
         self.owner.notify_descriptor_waiters();
         if sequence.get() == u64::MAX {
             self.owner.capacity_available.notify_all();
@@ -4511,8 +4521,8 @@ impl<'a, B: Blobs> NativeArenaPermit<'a, B> {
     ///
     /// This is the callback-free counterpart of
     /// [`Self::bind_externally_ordered`]. Native assigned the dense sequence
-    /// under its LocalDb validation ticket, retired that turn, acquired the
-    /// exact publication cell, and selected the matching arena address before
+    /// with its packed pair CAS, acquired the exact publication cell, raised
+    /// the post-BOUND mirror, and selected the matching arena address before
     /// serializing. Rust only transfers this permit's occupancy ownership into
     /// the ordinary bound-reservation RAII state.
     ///
@@ -4540,6 +4550,9 @@ impl<'a, B: Blobs> NativeArenaPermit<'a, B> {
             // unwinding without its BOUND descriptor would corrupt dense replay.
             std::process::abort();
         }
+        self.owner
+            .next_bound
+            .fetch_max(sequence.get(), Ordering::Release);
         // The exact BOUND Acquire transfers ownership from native and observes
         // retirement of the prior generation's cold state.
         if unsafe { (&*self.owner.cold_publication_cell(sequence).record.get()).is_some() } {
@@ -4771,6 +4784,61 @@ impl<'a, B: Blobs> DetachedPermit<'a, B> {
             "materialized record permits must use bind"
         );
         self.bind_inner(mako_timestamp)
+    }
+
+    /// Adopt one dense sequence assigned by native's packed order state.
+    ///
+    /// This is the general/oversized-record counterpart of
+    /// [`NativeArenaPermit::bind_externally_ordered`]. Native has already
+    /// crossed the non-cancelable dense assignment point, so every invariant
+    /// failure below terminates rather than unwinding and releasing occupancy.
+    ///
+    /// # Safety
+    ///
+    /// `sequence` must be the exact successor assigned while native owned the
+    /// packed general-certification bit for this cache namespace. This permit
+    /// must own one concurrent detached claim, and no other path may allocate
+    /// the same sequence from the Rust `next_bound` mirror.
+    pub(crate) unsafe fn bind_native_externally_ordered(
+        &mut self,
+        mako_timestamp: MakoTimestamp,
+        sequence: NonZeroU64,
+    ) -> BoundReservation<'a, B> {
+        if !self.owns_claim || self.single_sequence.is_some() || !self.native_record {
+            std::process::abort();
+        }
+        if self.prepared.is_some() || self.native_buffer.is_none() {
+            std::process::abort();
+        }
+        let sequence = CommitSeq::new(sequence.get()).unwrap_or_else(|| std::process::abort());
+        let publication = self.owner.publication_cell(sequence);
+        // SAFETY: native's packed allocator and this permit's unique occupancy
+        // claim select a distinct live ring generation.
+        unsafe {
+            publication.publish_bound_preassigned(
+                self.owner.cold_publication_cell(sequence),
+                sequence,
+                self.owner.publication_shift,
+            )
+        };
+        self.owner
+            .next_bound
+            .fetch_max(sequence.get(), Ordering::Release);
+        self.owner.notify_descriptor_waiters();
+
+        let native_buffer = self
+            .native_buffer
+            .take()
+            .map(|buffer| buffer.bind_arena(self.owner.publication_index(sequence)));
+        self.owns_claim = false;
+        BoundReservation {
+            owner: self.owner,
+            token: QueueToken::new(sequence),
+            mako_timestamp,
+            legacy_prepared: None,
+            native_buffer,
+            on_drop: DropAction::PinUnknown,
+        }
     }
 
     fn bind_inner(
@@ -5930,9 +5998,9 @@ mod tests {
             .unwrap();
         let sequence = CommitSeq::new(1).unwrap();
 
-        // Model exactly the same-build terminal: its validation-ticket turn
-        // advances the tail, then its post-gate direct binder owns FREE and
-        // Release-publishes BOUND before returning the nonzero order.
+        // Model exactly the same-build terminal: packed assignment selects the
+        // order, then its direct binder owns FREE and Release-publishes BOUND
+        // before raising the observation mirror and returning that order.
         writeback.next_bound.store(1, Ordering::Release);
         unsafe {
             writeback.publication_cell(sequence).publish_bound_preassigned(
@@ -5974,7 +6042,7 @@ mod tests {
             .unwrap();
 
         // SAFETY: this test serializes both dense assignments exactly as the
-        // native validation ticket does.
+        // legacy native ordering exclusion does.
         let mut first = unsafe {
             first_permit
                 .bind_externally_serialized(mako_timestamp_of(1))

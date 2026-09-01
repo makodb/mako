@@ -6,39 +6,40 @@ use loom::sync::Arc;
 use loom::thread;
 
 #[test]
-fn validation_ticket_cut_orders_prefix_generation_and_clear() {
+fn packed_order_cut_orders_prefix_generation_and_clear() {
     loom::model(|| {
-        let ticket = Arc::new(AtomicU64::new(0));
+        let packed_order = Arc::new(AtomicU64::new(0));
         let generation = Arc::new(AtomicU64::new(0));
         let payload = Arc::new(AtomicU64::new(0));
 
-        let writer_ticket = Arc::clone(&ticket);
+        let writer_order = Arc::clone(&packed_order);
         let writer_generation = Arc::clone(&generation);
         let writer_payload = Arc::clone(&payload);
         let writer = thread::spawn(move || {
             writer_generation.store(1, Ordering::Release);
-            let own_ticket = writer_ticket.fetch_add(1, Ordering::Release);
-            // Model another writer's intervening ticket allocation. Its
-            // Relaxed RMW remains in the first writer's release sequence.
-            writer_ticket.fetch_add(1, Ordering::Relaxed);
+            let own_order = writer_order.fetch_add(1, Ordering::AcqRel);
+            // Model an intervening timestamp-only CAS. This RMW remains in the
+            // packed writer's release sequence even though it changes another
+            // logical field in the production word.
+            writer_order.fetch_add(1, Ordering::Relaxed);
             writer_payload.store(1, Ordering::Relaxed);
             writer_generation.store(2, Ordering::Release);
-            own_ticket
+            own_order
         });
 
-        let reader_ticket = Arc::clone(&ticket);
+        let reader_order = Arc::clone(&packed_order);
         let reader_generation = Arc::clone(&generation);
         let reader_payload = Arc::clone(&payload);
         let reader = thread::spawn(move || {
-            let cut = reader_ticket.fetch_add(0, Ordering::Acquire);
+            let cut = reader_order.fetch_add(0, Ordering::Acquire);
             let observed_generation = reader_generation.load(Ordering::Acquire);
             let observed_payload = reader_payload.load(Ordering::Relaxed);
             (cut, observed_generation, observed_payload)
         });
 
-        let own_ticket = writer.join().unwrap();
+        let own_order = writer.join().unwrap();
         let (cut, observed_generation, observed_payload) = reader.join().unwrap();
-        if own_ticket < cut && observed_generation != 1 {
+        if own_order < cut && observed_generation != 1 {
             // A prefix writer not observed at its exact active generation
             // must have published its outcome before the Release clear.
             assert_eq!(

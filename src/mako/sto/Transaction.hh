@@ -393,6 +393,18 @@ public:
     // unwind because the transaction still holds its complete write set.
     using post_validation_hook = bool (*)(void*, uint32_t) noexcept;
 
+    // Optional restricted-path replacement for the ordinary late gate,
+    // timestamp allocation, and accepted hook. Storage adapters may use this
+    // only after can_order_record_after_validation() proves that one locked
+    // local update covers the transaction's complete observation.
+    enum class ordered_accept_result : uint8_t {
+        accepted,
+        hook_rejected,
+        timestamp_exhausted,
+    };
+    using ordered_accept_hook = ordered_accept_result (*)(
+        void*, uint32_t*) noexcept;
+
     // Optional storage-agnostic ordering gate for a durability hook. By
     // default, enter runs after the complete write set is locked and before
     // the Mako timestamp and final validation. A caller which has separately
@@ -415,6 +427,7 @@ public:
         post_validation_hook after_leave;
         void* context;
         bool acquire_after_validation = false;
+        ordered_accept_hook accept_ordered = nullptr;
     };
 
 #if defined(MAKO_LOCAL_TEST_HOOKS)
@@ -933,6 +946,54 @@ public:
     // contract belongs to the distributed protocol, not this local allocator.
     static constexpr uint32_t max_mako_timestamp =
         (std::numeric_limits<uint32_t>::max() - 9) / 10;
+
+    // One process-wide u64 contains the cache's dense sequence and Mako's
+    // next-to-return base timestamp. The timestamp limit is below 2^29. Every
+    // durable cache record consumes a distinct increasing timestamp, so a
+    // valid dense sequence fits the same width before timestamp exhaustion.
+    static constexpr uint32_t cache_order_field_bits = 29;
+    static constexpr uint64_t cache_order_field_mask =
+        (UINT64_C(1) << cache_order_field_bits) - 1;
+    static constexpr uint32_t cache_order_timestamp_shift =
+        cache_order_field_bits;
+    static constexpr uint32_t cache_order_general_lock_shift = 58;
+    static constexpr uint64_t cache_order_general_lock =
+        UINT64_C(1) << cache_order_general_lock_shift;
+    static constexpr uint32_t cache_order_epoch_shift = 59;
+    static constexpr uint64_t cache_order_epoch_mask =
+        UINT64_C(31) << cache_order_epoch_shift;
+    static_assert(max_mako_timestamp <
+                  (UINT32_C(1) << cache_order_field_bits));
+
+    enum class cache_order_allocation : uint8_t {
+        accepted,
+        general_locked,
+        timestamp_exhausted,
+        sequence_exhausted,
+    };
+
+    // Atomically allocate one timestamp/dense-sequence pair for a restricted
+    // transaction whose complete observation is covered by its write lock.
+    static cache_order_allocation try_allocate_cache_order_pair(
+        uint64_t& sequence, uint32_t& timestamp) noexcept;
+
+    // General cache commits own the packed general lock across final
+    // validation. Timestamp allocation still uses the process-wide clock;
+    // this helper advances only the dense field before the accepted hook.
+    static bool try_allocate_locked_cache_sequence(
+        uint64_t& sequence) noexcept;
+
+    static void enter_cache_order_general() noexcept;
+    static void leave_cache_order_general() noexcept;
+
+    // An Acquire RMW is a modification-order cut for the Rust read-only
+    // generation fence. A load alone would not establish the required prefix.
+    static uint64_t order_cache_validation_prefix() noexcept;
+    static uint64_t cache_order_snapshot() noexcept;
+
+    // Cache namespace admission owns this operation exclusively. It resets
+    // the namespace-local dense sequence but never lowers the process clock.
+    static bool reseed_cache_order_sequence(uint64_t sequence) noexcept;
 
     // Allocate from Mako's process-wide logical clock without permitting its
     // encoded u32 domain to wrap. Zero is the unassigned sentinel and

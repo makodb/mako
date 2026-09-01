@@ -53,9 +53,10 @@ extern "C" {
  * A cap rejection for a nonempty plan returns VALUE_TOO_LARGE and leaves the
  * transaction sealed for consuming abort.
  *
- * commit_record_and_destroy requires a successful, nonempty preflight. After
- * STO has locked the complete write set, a per-database native ticket gate
- * orders Mako timestamp assignment, repeated/final predicate validation,
+ * On an unclaimed legacy facade, or in a claimed SINGLE_PRODUCER general
+ * fallback, commit_record_and_destroy requires a successful, nonempty
+ * preflight. After STO has locked the complete write set, a per-database
+ * ticket gate orders Mako timestamp assignment, repeated/final predicate validation,
  * point-read validation and bind_hook. The gate prevents a later
  * anti-dependent commit from binding an earlier dense sequence. It is retired
  * after an accepted binding; native then serializes the record while retaining
@@ -94,44 +95,57 @@ extern "C" {
  * post-validation bind, serialization-before-install, and completion-witness
  * protocol as commit_record_and_destroy.
  *
+ * commit_native_ordered_record_and_destroy is the claimed-cache general
+ * terminal. A process-wide packed u64 is the sole authority for both the
+ * next-to-return Mako base timestamp and dense cache sequence. Native sets its
+ * general-certification bit after locking the complete write set and before
+ * timestamp allocation, repeated predicate validation, and final point-read
+ * validation. Only after validation succeeds does the accepted hook advance
+ * the packed dense field. Native clears the bit before bind_hook and record
+ * serialization, while retaining every STO write lock until installation.
+ * Restricted pair allocators cannot pass the bit, so a general transaction's
+ * anti-dependencies are ordered consistently with its durable record.
+ *
  * commit_native_ordered_unchecked_one_put_record_and_destroy narrows the
- * concurrent critical section further. next_bound and unhealthy name stable,
- * naturally aligned Rust atomic storage for the same write-back queue. After
- * final validation and Mako timestamp assignment, native holds the LocalDb
- * ticket while it Acquire-checks health and advances next_bound with one
- * atomic load/Release-store. It publishes the accepted timestamp and sequence
- * through the scalar outputs before retiring the ticket. Only then does it
- * call bind_hook. For this spelling sequence_out is initialized to the exact
- * assigned sequence and the hook must return that same value together with
- * its stable target. Native serializes before install as usual.
+ * concurrent ordering operation further. After final validation, a restricted
+ * one-local-update transaction Acquire-checks queue health and performs one
+ * packed AcqRel CAS which increments timestamp and dense sequence together,
+ * provided the general bit is clear. It publishes that pair through the
+ * scalar outputs before calling bind_hook. For this spelling sequence_out is
+ * initialized to the exact assigned sequence and the hook must return that
+ * same value together with its stable target. `next_bound` is a live aligned
+ * queue-observation mirror, never an allocator: the Rust hook must first
+ * publish the exact FREE generation as BOUND, then raise the mirror with a
+ * monotonic Release fetch-max before notifying descriptor waiters. Native
+ * serializes before install as usual.
  *
  * A nonzero ordered_sequence_out transfers an unconditional dense-slot
  * obligation even if bind_hook was not reached or the terminal later reports
  * uncertainty. Rust must acquire that exact publication generation and pin it
  * when no complete known-success record can be published. The caller must
  * ensure that all concurrent cache-record terminals for this LocalDb use the
- * same queue atomics and native ticket ordering. This is a same-build unsafe
- * seam; mixing an independent sequence allocator can duplicate or reorder
- * cache positions.
+ * same claimed packed namespace and queue. This is a same-build unsafe seam;
+ * any independent dense allocator can duplicate or reorder cache positions.
  *
  * commit_native_ordered_unchecked_one_put_arena_and_destroy removes that
- * terminal's post-ticket Rust callback. Its synchronous control describes the
+ * terminal's post-assignment Rust callback. Its synchronous control describes the
  * queue's stable publication-cell and record-arena layouts. Native validates
  * the complete layout and one-Put extent before commit can assign a sequence.
- * After final validation, the LocalDb ticket still pairs the Mako timestamp
- * with next_bound. Native then retires the ticket, acquires the exact FREE
- * cell generation, publishes BOUND, and serializes directly into that
- * sequence's arena block before STO may install the write.
+ * After final validation, a write-covered update uses the restricted pair CAS.
+ * Insert/predicate fallback instead assigns under the packed general bit.
+ * Native then acquires the exact FREE cell generation, Release-publishes
+ * BOUND, monotonically raises next_bound as a mirror, and serializes directly
+ * into that sequence's arena block before STO may install the write.
  *
  * A nonzero ordered_sequence in the three-word result is an unconditional
  * dense-slot obligation and guarantees that the matching publication cell is
  * already BOUND. record_state bits 0..31 carry the paired Mako timestamp, bit
  * 32 witnesses complete record initialization, and bits 33..63 are zero. A
  * preaccept failure returns both ordering words as zero. Layout mismatch,
- * queue illness, sequence exhaustion, or ordinary OCC abort detected before
- * assignment consumes the transaction without touching next_bound. Once the
- * tail advances, an impossible cell generation or layout state terminates the
- * process instead of returning an unbound hole.
+ * queue illness, packed timestamp/sequence exhaustion, or ordinary OCC abort
+ * detected before assignment consumes the transaction without a dense slot.
+ * Once the packed sequence advances, an impossible cell generation or layout
+ * state terminates the process instead of returning an unbound hole.
  *
  * commit_unchecked_one_put_record_single_producer_and_destroy is a still more
  * restricted opt-in spelling of that fused terminal. It preserves write-set
@@ -143,15 +157,19 @@ extern "C" {
  *
  * This entry point does not provide mutual exclusion. From before invocation
  * until it returns, the caller must guarantee that no other cache-record
- * commit terminal for txn's database is running or waiting, whether it uses
- * the ordinary concurrent gate or this single-producer spelling. In
- * particular, there must be no outstanding ticket already issued by a
- * concurrent record terminal. Sequential calls may freely alternate between
- * the two spellings. Violating this same-database exclusivity precondition is
- * undefined behavior: timestamp order and dense cache-sequence order can
- * diverge even though STO's data locks remain memory-safe. All other fused
- * one-Put preconditions and fail-closed terminal/witness rules above apply
- * unchanged.
+ * commit terminal for txn's database is running or waiting. A successful
+ * cache-order namespace claim makes that choice immutable for the facade's
+ * lifetime: CONCURRENT admits only the three packed native-ordered terminals
+ * and rejects every Rust-sequence record terminal; SINGLE_PRODUCER admits the
+ * generic/explicit/preselected Rust-sequence terminals and rejects every
+ * packed terminal and packed read-only cut. Sequential alternation is not
+ * permitted until the facade closes and a new claim recovers/reseeds its own
+ * dense namespace. Consequently cache_order_snapshot's dense field is not a
+ * queue-tail diagnostic in SINGLE_PRODUCER mode. Unclaimed low-level facades
+ * retain the legacy record-terminal behavior for isolated tests/embedders.
+ * Violating the single-producer whole-call exclusion remains undefined
+ * behavior. All other fused one-Put preconditions and fail-closed
+ * terminal/witness rules above apply unchanged.
  *
  * commit_preselected_unchecked_one_put_record_single_producer_and_destroy
  * removes the synchronous C-to-Rust bind callback from that same exclusive
@@ -280,11 +298,12 @@ typedef struct mako_rust_fast_preselected_record_result {
 } mako_rust_fast_preselected_record_result;
 
 /* Synchronous queue layout for the callback-free concurrent arena terminal.
- * Rust owns every target. Native accesses next_bound and unhealthy with
- * compiler atomics, uses publication_base as a ring of publication_stride-byte
- * cells, and uses arena_base as the matching ring of arena_stride-byte blocks.
- * The power-of-two ring has publication_mask + 1 cells and
- * publication_shift == log2(publication_mask + 1). */
+ * Rust owns every target. Native Acquire-checks unhealthy and raises
+ * next_bound only as a post-BOUND monotonic mirror; dense allocation belongs
+ * exclusively to Transaction's packed process word. publication_base is a
+ * ring of publication_stride-byte cells and arena_base is the matching ring
+ * of arena_stride-byte blocks. The power-of-two ring has publication_mask + 1
+ * cells and publication_shift == log2(publication_mask + 1). */
 typedef struct mako_rust_fast_native_ordered_arena_control {
   uint64_t *next_bound;
   const uint8_t *unhealthy;
@@ -379,6 +398,8 @@ typedef struct mako_rust_fast_one_put_holder_view {
  * validated on replay but cannot detect arbitrary payload corruption. */
 #define MAKO_RUST_FAST_RECORD_CHECKSUM_NONE UINT32_C(0)
 #define MAKO_RUST_FAST_RECORD_CHECKSUM_CRC32C UINT32_C(1)
+#define MAKO_RUST_FAST_CACHE_ORDER_CONCURRENT UINT32_C(1)
+#define MAKO_RUST_FAST_CACHE_ORDER_SINGLE_PRODUCER UINT32_C(2)
 
 #if defined(__GNUC__) || defined(__clang__)
 #define MAKO_RUST_FAST_HIDDEN __attribute__((visibility("hidden")))
@@ -411,6 +432,12 @@ MAKO_RUST_FAST_HIDDEN int mako_rust_fast_txn_record_preflight_with_checksum(
 MAKO_RUST_FAST_HIDDEN uint64_t mako_rust_fast_txn_commit_record_and_destroy(
     mako_local_txn *txn, mako_rust_fast_record_bind_hook bind_hook,
     void *context, uint8_t *record_written_out) MAKO_RUST_FAST_NOEXCEPT;
+MAKO_RUST_FAST_HIDDEN uint64_t
+mako_rust_fast_txn_commit_native_ordered_record_and_destroy(
+    mako_local_txn *txn, const uint8_t *unhealthy,
+    mako_rust_fast_record_bind_hook bind_hook, void *context,
+    uint64_t *ordered_sequence_out, uint32_t *ordered_timestamp_out,
+    uint8_t *record_written_out) MAKO_RUST_FAST_NOEXCEPT;
 MAKO_RUST_FAST_HIDDEN uint64_t
 mako_rust_fast_txn_commit_unchecked_one_put_record_and_destroy(
     mako_local_txn *txn, uint32_t expected_record_bytes,
@@ -468,12 +495,33 @@ MAKO_RUST_FAST_HIDDEN uint64_t mako_rust_fast_txn_commit_with_hook_and_destroy(
     void *context) MAKO_RUST_FAST_NOEXCEPT;
 MAKO_RUST_FAST_HIDDEN uint64_t mako_rust_fast_txn_abort_and_destroy(
     mako_local_txn *txn) MAKO_RUST_FAST_NOEXCEPT;
-/* Order a following Rust outcome-slot scan after every record-validation
- * ticket already allocated for this database. The database pointer belongs to
- * the same live LocalDb facade for the complete synchronous call. */
+/* Place a packed-state modification-order cut before a following Rust outcome
+ * scan. The facade must hold the immutable CONCURRENT claim; SINGLE_PRODUCER
+ * exclusion supplies its own cut. A mode or null-pointer violation terminates
+ * instead of admitting a read-only prefix under the wrong ordering protocol. */
 MAKO_RUST_FAST_HIDDEN void
 mako_rust_fast_db_order_record_validation_prefix(
     mako_local_db *db) MAKO_RUST_FAST_NOEXCEPT;
+
+/* Construction-only namespace admission. foreground_mode is one of the two
+ * MAKO_RUST_FAST_CACHE_ORDER_* constants and remains immutable until close.
+ * No transaction or terminal may overlap this call. Only one facade can hold
+ * the process namespace; a second claim returns BUSY. */
+MAKO_RUST_FAST_HIDDEN int
+mako_rust_fast_db_claim_cache_order_namespace(
+    mako_local_db *db, uint32_t foreground_mode) MAKO_RUST_FAST_NOEXCEPT;
+
+/* Construction/recovery-only dense reseed. The caller must own the claimed
+ * facade exclusively and admit no foreground transaction or ordering cut.
+ * It never lowers the process-wide Mako timestamp field. */
+MAKO_RUST_FAST_HIDDEN int
+mako_rust_fast_db_reseed_cache_order_namespace(
+    mako_local_db *db,
+    uint64_t recovered_sequence) MAKO_RUST_FAST_NOEXCEPT;
+
+MAKO_RUST_FAST_HIDDEN uint64_t
+mako_rust_fast_db_cache_order_snapshot(
+    const mako_local_db *db) MAKO_RUST_FAST_NOEXCEPT;
 
 #if defined(MAKO_LOCAL_TEST_HOOKS)
 /* Test-only observation of the number of record-validation tickets issued by

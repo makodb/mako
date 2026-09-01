@@ -67,6 +67,9 @@ public:
         : gate_(gate) {
         assert(gate_ == nullptr ||
                ((gate_->enter == nullptr) == (gate_->leave == nullptr)));
+        assert(gate_ == nullptr || gate_->accept_ordered == nullptr ||
+               (gate_->acquire_after_validation && gate_->enter == nullptr &&
+                gate_->leave == nullptr));
     }
 
     void acquire() noexcept {
@@ -163,21 +166,182 @@ std::atomic<TransactionTid::type> __attribute__((aligned(128)))
 #endif
    // reserve TransactionTid::increment_value for prepopulated
 
-// @safe: atomically allocates from the process-wide Mako logical clock
+namespace {
+static_assert(std::atomic<uint64_t>::is_always_lock_free,
+              "packed cache ordering requires a lock-free u64 CAS");
+
+// @safe: pure extraction from the immutable packed scalar argument.
+constexpr uint64_t cache_order_timestamp(uint64_t state) noexcept {
+    return (state >> Transaction::cache_order_timestamp_shift) &
+        Transaction::cache_order_field_mask;
+}
+
+// @safe: pure extraction from the immutable packed scalar argument.
+constexpr uint64_t cache_order_sequence(uint64_t state) noexcept {
+    return state & Transaction::cache_order_field_mask;
+}
+
+// @safe: pure checked-layout replacement; callers validate the 29-bit value.
+constexpr uint64_t with_cache_order_timestamp(
+    uint64_t state, uint64_t timestamp) noexcept {
+    return (state & ~(Transaction::cache_order_field_mask <<
+                      Transaction::cache_order_timestamp_shift)) |
+        (timestamp << Transaction::cache_order_timestamp_shift);
+}
+
+// @safe: pure checked-layout replacement; callers validate the 29-bit value.
+constexpr uint64_t with_cache_order_sequence(
+    uint64_t state, uint64_t sequence) noexcept {
+    return (state & ~Transaction::cache_order_field_mask) | sequence;
+}
+}  // namespace
+
+// @safe: atomically allocates from the process-wide packed Mako clock while
+// preserving the cache sequence and general-certification state.
 bool Transaction::try_allocate_mako_timestamp(uint32_t& result) noexcept {
-    auto& clock = sync_util::sync_logger::local_replica_id;
-    uint32_t current = clock.load(std::memory_order_acquire);
-    while (current != 0 && current <= max_mako_timestamp) {
-        const uint32_t next = current + 1;
-        if (clock.compare_exchange_weak(current, next,
+    auto& state = sync_util::sync_logger::cache_order_state;
+    uint64_t current = state.load(std::memory_order_acquire);
+    for (;;) {
+        const uint64_t timestamp = cache_order_timestamp(current);
+        if (timestamp == 0 || timestamp > max_mako_timestamp) {
+            result = 0;
+            return false;
+        }
+        const uint64_t desired =
+            with_cache_order_timestamp(current, timestamp + 1);
+        if (state.compare_exchange_weak(current, desired,
                                         std::memory_order_acq_rel,
                                         std::memory_order_acquire)) {
-            result = current;
+            result = static_cast<uint32_t>(timestamp);
             return true;
         }
     }
-    result = 0;
-    return false;
+}
+
+// @safe: one lock-free u64 CAS assigns the timestamp and dense sequence which
+// name a restricted validated cache update. A visible general lock makes the
+// caller wait outside this helper; no field changes on exhaustion.
+Transaction::cache_order_allocation
+Transaction::try_allocate_cache_order_pair(
+    uint64_t& sequence, uint32_t& timestamp) noexcept {
+    sequence = 0;
+    timestamp = 0;
+    auto& state = sync_util::sync_logger::cache_order_state;
+    uint64_t current = state.load(std::memory_order_acquire);
+    for (;;) {
+        if ((current & cache_order_general_lock) != 0)
+            return cache_order_allocation::general_locked;
+        const uint64_t next_timestamp = cache_order_timestamp(current);
+        if (next_timestamp == 0 || next_timestamp > max_mako_timestamp)
+            return cache_order_allocation::timestamp_exhausted;
+        const uint64_t previous_sequence = cache_order_sequence(current);
+        if (previous_sequence >= max_mako_timestamp)
+            return cache_order_allocation::sequence_exhausted;
+        const uint64_t desired = with_cache_order_timestamp(
+            with_cache_order_sequence(current, previous_sequence + 1),
+            next_timestamp + 1);
+        if (state.compare_exchange_weak(current, desired,
+                                        std::memory_order_acq_rel,
+                                        std::memory_order_acquire)) {
+            sequence = previous_sequence + 1;
+            timestamp = static_cast<uint32_t>(next_timestamp);
+            return cache_order_allocation::accepted;
+        }
+    }
+}
+
+// @safe: the caller owns the packed general lock, so no restricted allocator
+// can change the dense field. Timestamp-only allocators may still update the
+// same word; the CAS loop preserves those independent changes.
+bool Transaction::try_allocate_locked_cache_sequence(
+    uint64_t& sequence) noexcept {
+    sequence = 0;
+    auto& state = sync_util::sync_logger::cache_order_state;
+    uint64_t current = state.load(std::memory_order_acquire);
+    for (;;) {
+        assert((current & cache_order_general_lock) != 0);
+        const uint64_t previous = cache_order_sequence(current);
+        if (previous >= max_mako_timestamp)
+            return false;
+        const uint64_t desired =
+            with_cache_order_sequence(current, previous + 1);
+        if (state.compare_exchange_weak(current, desired,
+                                        std::memory_order_acq_rel,
+                                        std::memory_order_acquire)) {
+            sequence = previous + 1;
+            return true;
+        }
+    }
+}
+
+// @safe: acquire the cache-only general certification bit. Restricted updates
+// perform only a load while it is owned. Every caller already holds its full
+// STO write set, so waiting here cannot create a lock-order cycle.
+void Transaction::enter_cache_order_general() noexcept {
+    auto& state = sync_util::sync_logger::cache_order_state;
+    uint64_t current = state.load(std::memory_order_acquire);
+    for (;;) {
+        if ((current & cache_order_general_lock) != 0) {
+            relax_fence();
+            current = state.load(std::memory_order_acquire);
+            continue;
+        }
+        if (state.compare_exchange_weak(
+                current, current | cache_order_general_lock,
+                std::memory_order_acq_rel, std::memory_order_acquire))
+            return;
+    }
+}
+
+// @safe: release general certification while preserving any timestamp-only
+// allocations which raced during validation. The five-bit epoch is diagnostic
+// only; successful cache commits also change the non-wrapping packed fields.
+void Transaction::leave_cache_order_general() noexcept {
+    auto& state = sync_util::sync_logger::cache_order_state;
+    uint64_t current = state.load(std::memory_order_acquire);
+    for (;;) {
+        assert((current & cache_order_general_lock) != 0);
+        const uint64_t epoch =
+            ((current & cache_order_epoch_mask) >> cache_order_epoch_shift) + 1;
+        const uint64_t desired =
+            (current & ~(cache_order_general_lock | cache_order_epoch_mask)) |
+            ((epoch & UINT64_C(31)) << cache_order_epoch_shift);
+        if (state.compare_exchange_weak(current, desired,
+                                        std::memory_order_acq_rel,
+                                        std::memory_order_acquire))
+            return;
+    }
+}
+
+// @safe: an Acquire RMW reads the immediately preceding modification in the
+// packed word's total order and joins a preceding writer's release sequence.
+uint64_t Transaction::order_cache_validation_prefix() noexcept {
+    return sync_util::sync_logger::cache_order_state.fetch_add(
+        UINT64_C(0), std::memory_order_acquire);
+}
+
+// @safe: diagnostic/cold snapshot of the process-wide packed state.
+uint64_t Transaction::cache_order_snapshot() noexcept {
+    return sync_util::sync_logger::cache_order_state.load(
+        std::memory_order_acquire);
+}
+
+// @safe: namespace admission excludes cache terminals while this CAS resets
+// only the dense field. Timestamp-only process users remain concurrent.
+bool Transaction::reseed_cache_order_sequence(uint64_t sequence) noexcept {
+    if (sequence > max_mako_timestamp)
+        return false;
+    auto& state = sync_util::sync_logger::cache_order_state;
+    uint64_t current = state.load(std::memory_order_acquire);
+    for (;;) {
+        if ((current & cache_order_general_lock) != 0)
+            return false;
+        const uint64_t desired = with_cache_order_sequence(current, sequence);
+        if (state.compare_exchange_weak(current, desired,
+                                        std::memory_order_acq_rel,
+                                        std::memory_order_acquire))
+            return true;
+    }
 }
 
 // @safe: assigns one checked nonzero Mako timestamp to this transaction
@@ -198,12 +362,15 @@ void Transaction::observe_mako_timestamp(uint32_t observed) noexcept {
     const uint32_t desired = observed < max_mako_timestamp
         ? observed + 1
         : max_mako_timestamp + 1;
-    auto& clock = sync_util::sync_logger::local_replica_id;
-    uint32_t current = clock.load(std::memory_order_acquire);
-    while (current != 0 && current < desired &&
-           !clock.compare_exchange_weak(current, desired,
+    auto& state = sync_util::sync_logger::cache_order_state;
+    uint64_t current = state.load(std::memory_order_acquire);
+    while (cache_order_timestamp(current) != 0 &&
+           cache_order_timestamp(current) < desired) {
+        const uint64_t next = with_cache_order_timestamp(current, desired);
+        if (state.compare_exchange_weak(current, next,
                                         std::memory_order_acq_rel,
-                                        std::memory_order_acquire)) {
+                                        std::memory_order_acquire))
+            return;
     }
 }
 
@@ -216,15 +383,18 @@ bool Transaction::advance_mako_timestamp_past(uint32_t observed) noexcept {
         return false;
 
     const uint32_t desired = observed + 1;
-    auto& clock = sync_util::sync_logger::local_replica_id;
-    uint32_t current = clock.load(std::memory_order_acquire);
-    while (current != 0 && current < desired) {
-        if (clock.compare_exchange_weak(current, desired,
+    auto& state = sync_util::sync_logger::cache_order_state;
+    uint64_t current = state.load(std::memory_order_acquire);
+    while (cache_order_timestamp(current) != 0 &&
+           cache_order_timestamp(current) < desired) {
+        const uint64_t next = with_cache_order_timestamp(current, desired);
+        if (state.compare_exchange_weak(current, next,
                                         std::memory_order_acq_rel,
                                         std::memory_order_acquire))
             return true;
     }
-    return current != 0 && current <= max_mako_timestamp;
+    const uint64_t timestamp = cache_order_timestamp(current);
+    return timestamp != 0 && timestamp <= max_mako_timestamp;
 }
 
 static void __attribute__((used)) check_static_assertions() {
@@ -708,6 +878,7 @@ bool Transaction::try_commit(bool no_paxos,
     assert(!requested_gate_after_validation || no_paxos);
     const bool acquire_gate_after_validation =
         requested_gate_after_validation && no_paxos;
+    bool ordered_hook_already_accepted = false;
     if (failure)
         *failure = preinstall_failure::none;
 #if ASSERT_TX_SIZE
@@ -969,12 +1140,31 @@ bool Transaction::try_commit(bool no_paxos,
     // transactions retain the early gate above so anti-dependencies and range
     // predicates keep their established order.
     if (acquire_gate_after_validation && nwriteset != 0) {
-        validation_gate_scope.acquire();
         uint32_t timestamp = 0;
-        if (!try_assign_mako_timestamp(timestamp)) {
-            if (failure)
-                *failure = preinstall_failure::timestamp_exhausted;
-            goto abort;
+        if (validation_gate->accept_ordered != nullptr) {
+            const ordered_accept_result accepted =
+                validation_gate->accept_ordered(validation_gate->context,
+                                                 &timestamp);
+            if (accepted != ordered_accept_result::accepted) {
+                if (failure) {
+                    *failure = accepted ==
+                            ordered_accept_result::timestamp_exhausted
+                        ? preinstall_failure::timestamp_exhausted
+                        : preinstall_failure::hook_rejected;
+                }
+                goto abort;
+            }
+            assert(timestamp != 0 && timestamp <= max_mako_timestamp);
+            assert(tid_unique_ == 0);
+            tid_unique_ = timestamp;
+            ordered_hook_already_accepted = true;
+        } else {
+            validation_gate_scope.acquire();
+            if (!try_assign_mako_timestamp(timestamp)) {
+                if (failure)
+                    *failure = preinstall_failure::timestamp_exhausted;
+                goto abort;
+            }
         }
     }
 
@@ -997,7 +1187,7 @@ bool Transaction::try_commit(bool no_paxos,
     // Every validation has succeeded and no write is visible yet. The hook
     // attaches preallocated storage to the ordered cache log. Rejection is a
     // definite abort because phase3 has not begun.
-    if (hook != nullptr && nwriteset != 0 &&
+    if (!ordered_hook_already_accepted && hook != nullptr && nwriteset != 0 &&
         !hook(hook_context, tid_unique_)) {
         if (failure)
             *failure = preinstall_failure::hook_rejected;

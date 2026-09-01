@@ -125,7 +125,7 @@ impl TrustedNativeOrderedArenaControl {
     /// equal its base-two logarithm. Each prior generation must be retired
     /// before native can reuse its cell or arena block. Every concurrent
     /// cache-record terminal for the associated `LocalDb` must use the same
-    /// `next_bound`, health word, and validation-ticket ordering protocol.
+    /// packed namespace, `next_bound` mirror, and health word.
     #[allow(clippy::too_many_arguments)]
     pub const unsafe fn from_raw_parts(
         next_bound: *mut u64,
@@ -269,6 +269,16 @@ mod fast_abi {
             record_written_out: *mut u8,
         ) -> u64;
 
+        pub(super) fn mako_rust_fast_txn_commit_native_ordered_record_and_destroy(
+            txn: *mut sys::mako_local_txn,
+            unhealthy: *const u8,
+            hook: RecordBindHook,
+            context: *mut c_void,
+            ordered_sequence_out: *mut u64,
+            ordered_timestamp_out: *mut u32,
+            record_written_out: *mut u8,
+        ) -> u64;
+
         pub(super) fn mako_rust_fast_txn_commit_unchecked_one_put_record_and_destroy(
             txn: *mut sys::mako_local_txn,
             expected_record_bytes: u32,
@@ -357,6 +367,20 @@ mod fast_abi {
         pub(super) fn mako_rust_fast_txn_abort_and_destroy(txn: *mut sys::mako_local_txn) -> u64;
 
         pub(super) fn mako_rust_fast_db_order_record_validation_prefix(db: *mut sys::mako_local_db);
+
+        pub(super) fn mako_rust_fast_db_claim_cache_order_namespace(
+            db: *mut sys::mako_local_db,
+            foreground_mode: u32,
+        ) -> i32;
+
+        pub(super) fn mako_rust_fast_db_reseed_cache_order_namespace(
+            db: *mut sys::mako_local_db,
+            recovered_sequence: u64,
+        ) -> i32;
+
+        pub(super) fn mako_rust_fast_db_cache_order_snapshot(
+            db: *const sys::mako_local_db,
+        ) -> u64;
     }
 }
 
@@ -560,6 +584,17 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// Largest Mako base timestamp representable by its `timestamp * 10 + term`
 /// encoding when `term` is a decimal digit.
 pub const MAX_MAKO_TIMESTAMP: u32 = sys::MAKO_LOCAL_MAX_MAKO_TIMESTAMP;
+
+/// Immutable dense-order authority selected for one claimed cache namespace.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum CacheOrderMode {
+    /// Native's packed process word allocates every concurrent dense sequence.
+    Concurrent = 1,
+    /// The exclusive Rust producer owns dense allocation for the claim.
+    SingleProducer = 2,
+}
 
 /// A nonzero 32-bit Mako logical transaction timestamp.
 ///
@@ -930,9 +965,9 @@ impl TrustedUncheckedOnePutRecordOutcome {
 /// Compact outcome for native-assigned concurrent cache ordering.
 ///
 /// Native writes the accepted Mako timestamp and dense cache sequence while
-/// holding the same validation ticket, then invokes the target callback only
-/// after releasing that ticket. A nonzero pair must be adopted and published
-/// or pinned even when the callback was not reached.
+/// certifying against the same packed process word, then invokes the target
+/// callback after retiring the short ordering operation. A nonzero pair must
+/// be adopted and published or pinned even when the callback was not reached.
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy)]
 #[must_use = "an accepted native order must be adopted before acknowledgement"]
@@ -945,12 +980,17 @@ pub struct TrustedNativeOrderedOnePutRecordOutcome {
 
 impl TrustedNativeOrderedOnePutRecordOutcome {
     /// Whether native returned either no order or one complete timestamp/sequence pair.
+    ///
+    /// Both members of a packed cache order fit the native 29-bit domain,
+    /// whose largest representable value is [`MAX_MAKO_TIMESTAMP`].
     #[inline(always)]
     pub const fn order_witness_valid(self) -> bool {
         if self.ordered_sequence == 0 {
             self.ordered_timestamp == 0
         } else {
-            self.ordered_timestamp != 0 && self.ordered_timestamp <= MAX_MAKO_TIMESTAMP
+            self.ordered_sequence <= MAX_MAKO_TIMESTAMP as u64
+                && self.ordered_timestamp != 0
+                && self.ordered_timestamp <= MAX_MAKO_TIMESTAMP
         }
     }
 
@@ -961,6 +1001,9 @@ impl TrustedNativeOrderedOnePutRecordOutcome {
     /// contract so the cache terminates rather than losing an obligation.
     #[inline(always)]
     pub fn accepted_order(self) -> Option<(MakoTimestamp, NonZeroU64)> {
+        if !self.order_witness_valid() {
+            return None;
+        }
         Some((
             MakoTimestamp::new(self.ordered_timestamp)?,
             NonZeroU64::new(self.ordered_sequence)?,
@@ -2436,12 +2479,63 @@ impl LocalDb {
         Ok((table, transaction))
     }
 
-    /// Order a following cache outcome scan after every record-validation
-    /// ticket already allocated for this database.
+    /// Claim the process-wide cache-order namespace for this database.
+    ///
+    /// The local cache supports one recovered namespace per process. This
+    /// build-private call enforces that contract before recovery admits work,
+    /// records one immutable foreground mode, and resets only the
+    /// namespace-local dense sequence.
+    ///
+    /// # Safety
+    ///
+    /// The caller must exclusively own this newly opened facade. No legacy or
+    /// packed record terminal may overlap the claim, and `mode` must remain the
+    /// cache's foreground mode until the facade closes.
+    #[doc(hidden)]
+    pub unsafe fn claim_cache_order_namespace(&self, mode: CacheOrderMode) -> Result<()> {
+        // SAFETY: `self.raw` is live for this synchronous claim. Native keeps
+        // only the facade identity and releases it when the facade closes.
+        status(unsafe {
+            fast_abi::mako_rust_fast_db_claim_cache_order_namespace(
+                self.raw.as_ptr(),
+                mode as u32,
+            )
+        })
+    }
+
+    /// Set the recovered dense cache tail for this claimed namespace.
+    ///
+    /// # Safety
+    ///
+    /// The caller must exclusively own construction/recovery for this claimed
+    /// LocalDb. No foreground transaction, cache-order terminal, or read-only
+    /// cut may overlap this reset; lowering a live dense field would duplicate
+    /// an already assigned sequence.
+    #[doc(hidden)]
+    pub unsafe fn reseed_cache_order_namespace(&self, recovered_sequence: u64) -> Result<()> {
+        // SAFETY: cache construction calls this before sharing the facade or
+        // admitting a foreground terminal.
+        status(unsafe {
+            fast_abi::mako_rust_fast_db_reseed_cache_order_namespace(
+                self.raw.as_ptr(),
+                recovered_sequence,
+            )
+        })
+    }
+
+    /// Return the packed cache-order state for diagnostics and cold checks.
+    #[doc(hidden)]
+    pub fn cache_order_snapshot(&self) -> u64 {
+        // SAFETY: the live claimed facade is borrowed for this load only.
+        unsafe { fast_abi::mako_rust_fast_db_cache_order_snapshot(self.raw.as_ptr()) }
+    }
+
+    /// Place a packed-state modification-order cut before a following cache
+    /// outcome scan.
     ///
     /// This build-private synchronization seam is used only by mako-cache's
     /// read-only commit fence. Concurrent cache writers publish their Rust
-    /// outcome slot before native allocates its ticket, then clear it only
+    /// outcome slot before native assigns its packed order, then clear it only
     /// after the native outcome is represented in write-back.
     #[doc(hidden)]
     #[inline]
@@ -3529,6 +3623,77 @@ impl<'db> Transaction<'db> {
         }
     }
 
+    /// Commit one preflighted general transaction with a native-assigned
+    /// timestamp/dense-sequence pair.
+    ///
+    /// Native owns the packed general-certification bit across timestamp
+    /// allocation and final validation, assigns the dense sequence only after
+    /// validation succeeds, then releases the bit before invoking `acquire`.
+    /// The callback must adopt that exact sequence into the cache queue; it
+    /// must never allocate or substitute a Rust-side sequence.
+    ///
+    /// # Safety
+    ///
+    /// The transaction must be active, bound to the claimed cache-order
+    /// LocalDb, and hold the exact current nonempty record preflight. The
+    /// `unhealthy` word and every target returned by `acquire` must remain live
+    /// for this synchronous call. Once native exposes a nonzero order, the
+    /// caller must publish or pin that exact generation on every outcome.
+    #[doc(hidden)]
+    pub unsafe fn commit_trusted_native_ordered_record_target<F>(
+        mut self,
+        unhealthy: &AtomicBool,
+        acquire: F,
+    ) -> TrustedNativeOrderedOnePutRecordOutcome
+    where
+        F: FnOnce(MakoTimestamp, CommitRecordPreflight, NonZeroU64) -> Option<CommitRecordTarget>,
+    {
+        debug_assert!(self.fast_bound_table.is_some());
+        debug_assert!(self.active);
+        debug_assert!(self.raw.is_some());
+        let preflight = self
+            .record_preflight
+            .expect("native-ordered general commit requires preflight");
+        debug_assert!(!preflight.is_empty());
+
+        // SAFETY: this trusted terminal consumes the live thread-affine handle
+        // on every outcome, and the method contract retains all borrowed state.
+        let raw = unsafe { self.raw.take().unwrap_unchecked() };
+        self.active = false;
+        let mut state = NativeOrderedRecordTargetBindHook {
+            hook: Some(acquire),
+            preflight,
+            bound: false,
+        };
+        let mut ordered_sequence = 0u64;
+        let mut ordered_timestamp = 0u32;
+        let mut record_written = 0u8;
+        // SAFETY: the callback state and scalar outputs remain live and pinned
+        // until the same-build synchronous terminal has returned.
+        let packed = unsafe {
+            fast_abi::mako_rust_fast_txn_commit_native_ordered_record_and_destroy(
+                raw.as_ptr(),
+                unhealthy.as_ptr().cast::<u8>(),
+                Some(native_ordered_one_put_record_target_bind_trampoline::<F>),
+                std::ptr::from_mut(&mut state).cast::<c_void>(),
+                &mut ordered_sequence,
+                &mut ordered_timestamp,
+                &mut record_written,
+            )
+        };
+        debug_assert!(!state.bound || ordered_sequence != 0);
+        TrustedNativeOrderedOnePutRecordOutcome {
+            inner: TrustedUncheckedOnePutRecordOutcome {
+                packed,
+                record_bound: ordered_sequence != 0,
+                record_written,
+            },
+            ordered_sequence,
+            ordered_timestamp,
+            target_bound: state.bound,
+        }
+    }
+
     /// Commit a direct one-Put transaction without a separate preflight call.
     ///
     /// `candidate` must be the value returned by
@@ -3647,19 +3812,18 @@ impl<'db> Transaction<'db> {
 
     /// Commit one verified one-Put while native assigns the cache sequence.
     ///
-    /// The LocalDb validation ticket pairs Mako timestamp allocation with an
-    /// advance of `next_bound`. Native releases that ticket before invoking
-    /// `acquire`, which receives the already-assigned dense sequence and lends
-    /// its exact target for serialization-before-install.
+    /// One packed native CAS pairs Mako timestamp allocation with the dense
+    /// sequence after restricted validation. `acquire` receives that exact
+    /// sequence and lends its target for serialization-before-install.
     ///
     /// # Safety
     ///
     /// Every target and transaction requirement of
     /// [`Self::commit_trusted_unchecked_one_put_record_target`] applies.
     /// `next_bound` and `unhealthy` must belong to the one write-back queue
-    /// used by every cache-record terminal for this LocalDb and must remain
-    /// alive through this synchronous call. No independent allocator may
-    /// modify `next_bound` outside the same validation-ticket protocol.
+    /// used by every cache-record terminal for this Concurrent-claimed LocalDb
+    /// and must remain alive through this synchronous call. `next_bound` is a
+    /// post-BOUND monotonic mirror and must never be used as an allocator.
     /// Whenever the returned outcome exposes an accepted order, the caller
     /// must adopt and publish or pin that exact sequence, including when
     /// `acquire` was not reached.
@@ -3732,11 +3896,11 @@ impl<'db> Transaction<'db> {
 
     /// Commit one verified one-Put directly into the native record arena.
     ///
-    /// Native assigns the Mako timestamp and dense sequence under the LocalDb
-    /// validation ticket. After retiring that ticket it binds the exact
-    /// publication generation and serializes into the matching arena block,
-    /// without a Rust callback. A returned nonzero order therefore already
-    /// owns a BOUND publication cell.
+    /// Native uses the restricted pair CAS when the write lock covers final
+    /// validation. Insert/predicate fallback instead assigns under the packed
+    /// general-certification bit. It then binds the exact publication
+    /// generation and serializes into the matching arena block without a Rust
+    /// callback. A returned nonzero order already owns a BOUND cell.
     ///
     /// # Safety
     ///
@@ -4768,12 +4932,11 @@ where
     1
 }
 
-/// Trusted post-ticket target binder for the native-assigned sequence path.
+/// Trusted target binder for the native-assigned sequence path.
 ///
 /// Native initializes `sequence_in_out` to the sequence paired with
-/// `raw_timestamp` under its validation ticket. The callback adopts that exact
-/// queue generation and returns its stable arena target after the ticket has
-/// already been released.
+/// `raw_timestamp` in packed state. The callback adopts that exact queue
+/// generation and returns its stable arena target after pair assignment.
 #[allow(clippy::too_many_arguments)]
 unsafe extern "C" fn native_ordered_one_put_record_target_bind_trampoline<F>(
     context: *mut c_void,
@@ -4790,18 +4953,22 @@ where
     debug_assert!(!sequence_in_out.is_null());
     debug_assert!(!record_bytes_out.is_null());
     debug_assert!(!record_capacity_out.is_null());
-    debug_assert!(MakoTimestamp::new(raw_timestamp).is_some());
-
     // SAFETY: the private terminal passes this exact live stack state and
     // invokes the callback synchronously at most once after retiring its gate.
     let state = unsafe { &mut *context.cast::<NativeOrderedRecordTargetBindHook<F>>() };
-    debug_assert_eq!(exact_record_bytes, state.preflight.exact_record_bytes);
-    // SAFETY: native assigned both scalars under the gate and guarantees they
-    // are nonzero before reaching this callback.
-    let timestamp = MakoTimestamp(unsafe { NonZeroU32::new_unchecked(raw_timestamp) });
-    let ordered_sequence = unsafe { sequence_in_out.read() };
-    debug_assert_ne!(ordered_sequence, 0);
-    let ordered_sequence = unsafe { NonZeroU64::new_unchecked(ordered_sequence) };
+    let Some(timestamp) = MakoTimestamp::new(raw_timestamp) else {
+        return 0;
+    };
+    // SAFETY: the hidden terminal supplies a readable, non-null in/out word.
+    let raw_sequence = unsafe { sequence_in_out.read() };
+    let Some(ordered_sequence) = NonZeroU64::new(raw_sequence) else {
+        return 0;
+    };
+    if raw_sequence > u64::from(MAX_MAKO_TIMESTAMP)
+        || exact_record_bytes != state.preflight.exact_record_bytes
+    {
+        return 0;
+    }
     // SAFETY: this private callback is invoked once for the live state.
     let hook = unsafe { state.hook.take().unwrap_unchecked() };
     let Some(target) = hook(timestamp, state.preflight, ordered_sequence) else {
@@ -4889,6 +5056,78 @@ mod tests {
         );
         assert_eq!(MakoTimestamp::new(MAX_MAKO_TIMESTAMP + 1), None);
         assert_eq!(MakoTimestamp::new(u32::MAX), None);
+    }
+
+    #[test]
+    fn native_order_witness_rejects_sequence_outside_packed_domain() {
+        let malformed = TrustedNativeOrderedOnePutRecordOutcome {
+            inner: TrustedUncheckedOnePutRecordOutcome {
+                packed: 0,
+                record_bound: false,
+                record_written: 0,
+            },
+            ordered_sequence: u64::from(MAX_MAKO_TIMESTAMP) + 1,
+            ordered_timestamp: 1,
+            target_bound: false,
+        };
+
+        assert!(!malformed.order_witness_valid());
+        assert_eq!(malformed.accepted_order(), None);
+        assert!(!malformed.into_report().completion_contract_valid);
+    }
+
+    #[test]
+    fn native_ordered_binder_rejects_overrange_sequence_before_publication() {
+        type Hook = fn(
+            MakoTimestamp,
+            CommitRecordPreflight,
+            NonZeroU64,
+        ) -> Option<CommitRecordTarget>;
+        static CALLS: std::sync::atomic::AtomicUsize =
+            std::sync::atomic::AtomicUsize::new(0);
+        fn count_call(
+            _: MakoTimestamp,
+            _: CommitRecordPreflight,
+            _: NonZeroU64,
+        ) -> Option<CommitRecordTarget> {
+            CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            None
+        }
+
+        CALLS.store(0, std::sync::atomic::Ordering::Relaxed);
+        let preflight = CommitRecordPreflight {
+            exact_record_bytes: 64,
+            op_count: 1,
+            checksum: CommitRecordChecksum::None,
+        };
+        let mut state = NativeOrderedRecordTargetBindHook {
+            hook: Some(count_call as Hook),
+            preflight,
+            bound: false,
+        };
+        let mut sequence = u64::from(MAX_MAKO_TIMESTAMP) + 1;
+        let mut record_bytes = std::ptr::null_mut();
+        let mut record_capacity = 0;
+
+        // SAFETY: all pointers refer to live test storage for this synchronous
+        // call. The malformed sequence models a same-build native ABI defect.
+        let accepted = unsafe {
+            native_ordered_one_put_record_target_bind_trampoline::<Hook>(
+                (&mut state as *mut NativeOrderedRecordTargetBindHook<Hook>).cast(),
+                1,
+                preflight.exact_record_bytes,
+                &mut sequence,
+                &mut record_bytes,
+                &mut record_capacity,
+            )
+        };
+
+        assert_eq!(accepted, 0);
+        assert_eq!(CALLS.load(std::sync::atomic::Ordering::Relaxed), 0);
+        assert!(state.hook.is_some());
+        assert!(!state.bound);
+        assert!(record_bytes.is_null());
+        assert_eq!(record_capacity, 0);
     }
 
     #[test]

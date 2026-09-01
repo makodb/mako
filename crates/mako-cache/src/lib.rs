@@ -4,12 +4,12 @@
 //! Before commit, STO sizes and seals its canonical final write set while Rust
 //! claims bounded queue capacity and checks out one output buffer from a
 //! queue-sized small-record arena (with a recycled oversized fallback). After
-//! Silo locks the complete write set, then a per-database native gate orders
-//! Mako timestamp assignment, final validation, and record binding. A failed
-//! validation may leave a timestamp gap but never a cache-log slot. A
-//! successful hook assigns the next dense, serialization-safe cache sequence.
-//! Native retires that ordering turn, writes the complete record directly into
-//! that buffer while retaining all write locks, and only
+//! Silo locks the complete write set, then native orders Mako timestamp
+//! assignment, final validation, and dense record binding. Concurrent caches
+//! use one packed process word; single-producer caches retain their exclusive
+//! Rust sequence allocator. A failed validation may leave a timestamp gap but
+//! never a cache-log slot. Native writes the complete record directly into the
+//! claimed buffer while retaining all write locks, and only
 //! then installs the writes. Native success publishes the already-built record
 //! as Ready in the volatile queue. The trusted concurrent one-Put terminal can
 //! return once its own record is Ready; explicit barriers and the background
@@ -152,8 +152,8 @@ const _: () = assert!(std::mem::size_of::<CommitWriterSlot>() == 64);
 /// An asymmetric outcome fence for common writers and rare read-only commits.
 ///
 /// Each attached writer modifies only its own cache line before entering the
-/// native record-validation ticket gate. A read-only commit marks a cut in
-/// that gate, then guarantees that every writer which precedes the cut has
+/// native packed cache-order protocol. A read-only commit marks a cut in that
+/// atomic modification order, then guarantees that every writer before it has
 /// drained. A scan may also conservatively wait for one observed post-cut
 /// generation. Later writers may proceed because STO orders them after the
 /// read-only transaction or rejects read-only validation on a conflicting
@@ -219,16 +219,16 @@ impl CommitFence {
             .read_only_serial
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        // A writer's odd-generation Release publication precedes its native
-        // ticket-allocation Release RMW. The callback's Acquire RMW reads the
-        // last preceding ticket or an all-RMW release-sequence successor. Each
-        // following Acquire load must therefore see a prefix writer's active
+        // A writer's odd-generation Release publication precedes its packed
+        // assignment or general-lock Release RMW. The callback's Acquire RMW
+        // reads that modification or a later member of its release sequence.
+        // Each following Acquire load must see a prefix writer's active
         // generation, or its later Release clear after the outcome is
         // represented in write-back.
         //
-        // A writer can publish its generation before this cut but allocate its
-        // ticket after it. Native has acquired that writer's complete write
-        // set before ticket allocation, but cannot install until afterward.
+        // A writer can publish its generation before this cut but enter packed
+        // order after it. Native acquires that writer's complete write set
+        // first, but cannot install until after ordering and validation.
         // STO validation therefore either rejects this read-only transaction
         // on a conflicting lock/predicate, or admits the reader-before-writer
         // serialization. Missing that post-cut generation is safe.
@@ -695,6 +695,7 @@ impl<B: Blobs + 'static> Cache<B> {
     /// Recovery and validation complete before the background writer starts
     /// or this cache becomes accessible to callers. The Phase 1 process model
     /// permits only one pre-existing cache namespace; see [`Cache`].
+    #[allow(unsafe_code)]
     pub fn from_backend(backend: B, options: CacheOptions) -> Result<Self, Error> {
         let features = mako_local::features()?;
         if options.require_read_my_writes
@@ -707,7 +708,19 @@ impl<B: Blobs + 'static> Cache<B> {
         }
 
         let local = LocalDb::open()?;
+        // Claim before recovery mutates process-local tables or exposes work.
+        // Native enforces the documented one-cache-namespace process model.
+        let cache_order_mode = match options.foreground_mode {
+            ForegroundMode::Concurrent => mako_local::CacheOrderMode::Concurrent,
+            ForegroundMode::SingleProducer => mako_local::CacheOrderMode::SingleProducer,
+        };
+        // SAFETY: construction exclusively owns the fresh facade and fixes
+        // foreground mode for the complete Cache lifetime.
+        unsafe { local.claim_cache_order_namespace(cache_order_mode)? };
         let applied_seed = recover(&local, &backend, options.writeback.max_record_bytes)?;
+        // SAFETY: construction still exclusively owns the claimed LocalDb;
+        // no foreground handle or ordering terminal exists until return.
+        unsafe { local.reseed_cache_order_namespace(applied_seed.sequence())? };
         local.bind_trusted_table(DEFAULT_TABLE_NAME, DEFAULT_TABLE_ID)?;
         let writeback = Arc::new(Writeback::new_with_watermark_mode(
             backend,
@@ -1319,7 +1332,7 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
 
         if preflight.is_empty() {
             if foreground.is_concurrent() {
-                // Mark one record-validation ticket cut, then drain every
+                // Mark one packed cache-order cut, then drain every
                 // writer ordered before it. A later writer may proceed: STO
                 // either orders it after this read-only transaction or makes
                 // the read-set/predicate validation reject this commit.
@@ -1435,45 +1448,99 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
 
         let mut bound = None;
         let mut bind_error = None;
-        // SAFETY: bind_native transfers one uniquely checked-out, stable arena
-        // block or Vec allocation into `reservation`. Moving the reservation
-        // into `bound` does not move that storage, and `bound` stays live until
-        // this synchronous native terminal returns. The callback contains no
-        // unwinding operation in production; test crash seams only park the
-        // process for SIGKILL. Bytes are accepted below only after the exact
-        // native completion witness.
-        let acquire_target = |timestamp, native_preflight| {
-            debug_assert_eq!(native_preflight, preflight);
-            match permit.bind_native(timestamp) {
-                Ok(mut reservation) => {
-                    // SAFETY: this reservation remains alive in `bound`
-                    // through the complete synchronous native terminal.
+        let record_report = match foreground {
+            TransactionForeground::Concurrent => {
+                let (next_bound, unhealthy) = self.cache.writeback.native_ordering_words();
+                // SAFETY: native is the sole concurrent dense allocator. This
+                // callback adopts exactly the assigned generation into the
+                // uniquely claimed arena/owned buffer and retains it through
+                // the synchronous terminal.
+                let acquire_target = |timestamp, native_preflight, ordered_sequence| {
+                    debug_assert_eq!(native_preflight, preflight);
+                    let mut reservation = unsafe {
+                        permit.bind_native_externally_ordered(timestamp, ordered_sequence)
+                    };
+                    // SAFETY: `bound` retains the stable exact target until
+                    // native has completed serialization or returned failure.
                     let target = unsafe { reservation.native_record_target() };
                     bound = Some(reservation);
                     #[cfg(test)]
                     crate::failpoint::hit(crate::failpoint::Point::PreinstallBound);
                     Some(target)
+                };
+                let outcome = if unchecked_one_put.is_some() {
+                    // SAFETY: native rederives the current restricted one-Put
+                    // candidate and assigns its packed pair only after final
+                    // validation. `next_bound` is an observation mirror, never
+                    // an allocator; the callback raises it while adopting.
+                    unsafe {
+                        native
+                            .commit_trusted_native_ordered_unchecked_one_put_record_target(
+                                preflight,
+                                next_bound,
+                                unhealthy,
+                                acquire_target,
+                            )
+                    }
+                } else {
+                    // SAFETY: the preflight is current and nonempty. Native
+                    // owns the packed general bit through timestamp allocation,
+                    // final validation, and dense assignment.
+                    unsafe {
+                        native.commit_trusted_native_ordered_record_target(
+                            unhealthy,
+                            acquire_target,
+                        )
+                    }
+                };
+                if !outcome.order_witness_valid() {
+                    std::process::abort();
                 }
-                Err(error) => {
-                    bind_error = Some(error);
-                    None
+                // A native exception after dense assignment but before the
+                // callback cannot make that order cancelable. Adopt it here so
+                // the ordinary unwritten path pins the exact hole fail-closed.
+                if bound.is_none() {
+                    if let Some((timestamp, sequence)) = outcome.accepted_order() {
+                        bound = Some(unsafe {
+                            permit.bind_native_externally_ordered(timestamp, sequence)
+                        });
+                    }
+                }
+                outcome.into_report()
+            }
+            TransactionForeground::SingleProducer(_) => {
+                // The exclusive producer retains its existing private dense
+                // cursor. No concurrent packed allocator can run in this cache
+                // mode, and recovery reseeds the packed namespace on reopen.
+                let acquire_target = |timestamp, native_preflight| {
+                    debug_assert_eq!(native_preflight, preflight);
+                    match permit.bind_native(timestamp) {
+                        Ok(mut reservation) => {
+                            // SAFETY: this reservation remains alive in
+                            // `bound` through the synchronous terminal.
+                            let target = unsafe { reservation.native_record_target() };
+                            bound = Some(reservation);
+                            #[cfg(test)]
+                            crate::failpoint::hit(crate::failpoint::Point::PreinstallBound);
+                            Some(target)
+                        }
+                        Err(error) => {
+                            bind_error = Some(error);
+                            None
+                        }
+                    }
+                };
+                if unchecked_one_put.is_some() {
+                    unsafe {
+                        native.commit_report_with_unchecked_one_put_record_target(
+                            preflight,
+                            acquire_target,
+                        )
+                    }
+                } else {
+                    unsafe { native.commit_report_with_record_target(acquire_target) }
                 }
             }
-        };
-        let record_report = if unchecked_one_put.is_some() {
-            // SAFETY: the candidate came from this transaction after its final
-            // operation. Capacity and exact stable storage were reserved above,
-            // and the callback retains the same non-unwinding lifetime contract
-            // as the general target terminal. Native revalidates the candidate
-            // before acquiring locks and aborts without binding if it is stale.
-            unsafe {
-                native.commit_report_with_unchecked_one_put_record_target(preflight, acquire_target)
-            }
-        } else {
-            // SAFETY: bind_native transfers one uniquely checked-out, stable
-            // arena block or Vec allocation into the reservation retained by
-            // acquire_target until this synchronous native terminal returns.
-            unsafe { native.commit_report_with_record_target(acquire_target) }
         };
         enforce_record_completion_contract(&record_report);
         let report = record_report.commit;
@@ -1566,10 +1633,9 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
 
 /// Complete the cache-private, common-arena one-Put terminal.
 ///
-/// Native's LocalDb validation ticket pairs the Mako timestamp with the dense
-/// queue sequence. The exact publication cell and arena target are acquired
-/// only after native retires that ticket, then remain owned through backend
-/// retirement.
+/// Native's packed process word pairs the Mako timestamp with the dense queue
+/// sequence. The exact publication cell and arena target are acquired only
+/// after native assigns that pair, then remain owned through backend retirement.
 #[allow(unsafe_code)]
 fn finish_trusted_one_put_arena<'cache, 'db, B: Blobs + 'static>(
     cache: &'cache Cache<B>,
@@ -1610,7 +1676,7 @@ fn finish_trusted_one_put_arena<'cache, 'db, B: Blobs + 'static>(
     } else {
         let (next_bound, unhealthy) = cache.writeback.native_ordering_words();
         // SAFETY: this test-only callback runs synchronously after the native
-        // validation ticket assigned its timestamp/sequence pair. Adopting the
+        // packed CAS assigned its timestamp/sequence pair. Adopting the
         // exact FREE generation before returning its target retains the prior
         // crash seam and the same backend-retirement ownership.
         let acquire_target = |timestamp, native_preflight, ordered_sequence| {
@@ -1626,7 +1692,7 @@ fn finish_trusted_one_put_arena<'cache, 'db, B: Blobs + 'static>(
             Some(target)
         };
         // SAFETY: the crash helper uses the established callback contract and
-        // every concurrent terminal shares the same ordering words/ticket.
+        // every concurrent terminal shares the same packed order namespace.
         unsafe {
             native.commit_trusted_native_ordered_unchecked_one_put_record_target(
                 preflight,
@@ -1637,14 +1703,14 @@ fn finish_trusted_one_put_arena<'cache, 'db, B: Blobs + 'static>(
         }
     };
 
-    // A partial scalar witness means native may have advanced next_bound but
+    // A partial scalar witness means native may have advanced packed order but
     // did not provide enough information to construct the matching record.
     // Do not unwind and release the detached occupancy claim across that hole.
     if !outcome.order_witness_valid() {
         std::process::abort();
     }
 
-    // An exception or malformed post-ticket callback can return after native
+    // An exception or malformed post-order callback can return after native
     // assigned the order but before Rust acquired the cell. Adopt it now so
     // the ordinary unwritten-record path pins the exact dense obligation.
     if bound.is_none() {
@@ -3246,6 +3312,18 @@ mod tests {
     #[cfg(have_mako)]
     #[test]
     fn preparation_failure_surfaces_native_abort_cleanup_quarantine() {
+        const ROLE: &str = "MAKO_CACHE_ABORT_CLEANUP_QUARANTINE_ROLE";
+        if std::env::var_os(ROLE).is_none() {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .arg("--exact")
+                .arg("tests::preparation_failure_surfaces_native_abort_cleanup_quarantine")
+                .env(ROLE, "1")
+                .status()
+                .expect("run abort-cleanup quarantine subprocess");
+            assert!(status.success(), "quarantine subprocess failed: {status}");
+            return;
+        }
+
         if !mako_local::features().unwrap().test_cleanup_failures() {
             return;
         }
