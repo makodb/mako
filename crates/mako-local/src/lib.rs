@@ -1367,8 +1367,10 @@ impl TrustedPreselectedUncheckedOnePutHolderOutcome {
 ///
 /// The pool owns one holder per power-of-two queue ring position. It is safe
 /// to share the handle, but access to each holder is governed by the cache's
-/// external SPSC published/applied frontier protocol rather than an atomic in
-/// the native holder itself.
+/// external exact-generation publication/reuse protocol rather than an atomic
+/// in the native holder itself. SPSC mode uses dense published/applied
+/// frontiers; concurrent mode uses each publication cell's exact READY/FREE
+/// turns.
 #[doc(hidden)]
 pub struct TrustedOnePutHolderPool {
     raw: NonNull<FastOnePutHolderPool>,
@@ -1394,7 +1396,7 @@ unsafe impl Send for TrustedOnePutHolderPool {}
 unsafe impl Sync for TrustedOnePutHolderPool {}
 
 impl TrustedOnePutHolderPool {
-    /// Allocate an independent holder pool for one SPSC write-back ring.
+    /// Allocate an independent holder pool for one write-back publication ring.
     ///
     /// `capacity` must be a nonzero power of two and must equal the physical
     /// publication-ring capacity. The reserve values are cold allocation
@@ -1539,8 +1541,9 @@ impl TrustedOnePutHolderPool {
     /// # Safety
     ///
     /// Every backend use of the view's key/value must be complete. The caller
-    /// must publish the matching applied frontier with Release only after this
-    /// function succeeds.
+    /// must publish the matching reuse frontier with Release only after this
+    /// function succeeds: either the dense SPSC applied frontier or the
+    /// concurrent generation's exact FREE turn.
     pub unsafe fn release(&self, view: TrustedOnePutHolderView<'_>) -> Result<()> {
         if !std::ptr::eq(self, view.pool) {
             return Err(Error::InvalidArgument);
@@ -1749,8 +1752,9 @@ impl TrustedOnePutHolderView<'_> {
     /// # Safety
     ///
     /// Every backend use of [`Self::key`] and [`Self::value`] must be complete.
-    /// The caller must publish the corresponding applied frontier with Release
-    /// only after this function returns successfully.
+    /// The caller must publish the corresponding mode-specific reuse frontier
+    /// with Release only after this function returns successfully: either the
+    /// dense SPSC applied frontier or the concurrent exact FREE turn.
     pub unsafe fn release_after_backend(self) -> Result<()> {
         let pool = self.pool;
         // SAFETY: delegated unchanged to this method's contract. Consuming

@@ -3376,9 +3376,11 @@ impl<B: Blobs> Writeback<B> {
                 let raw =
                     NonZeroU64::new(sequence.get()).expect("cache commit sequences are nonzero");
                 // SAFETY: successful backend retirement is the consumer's
-                // final use of this exact generation. `state` remains locked;
-                // the applied frontier is Release-published only after every
-                // holder in the batch has synchronously released.
+                // final use of this exact generation. `state` remains locked.
+                // After this synchronous release, retirement Release-publishes
+                // either the dense SPSC applied frontier or this concurrent
+                // cell's exact FREE turn before its occupancy becomes
+                // claimable again.
                 let view = match unsafe { pool.view(raw) } {
                     Ok(view) => view,
                     Err(_) => std::process::abort(),
