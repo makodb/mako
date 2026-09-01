@@ -1790,9 +1790,10 @@ add_apps(masstree_rocks_bench src/mako/benchmarks/masstree_rocks_bench.cc)
 # is between implementations rather than between two machine states.
 if (TARGET mrxffi)
   # mrxffi is a static archive and selects native objects that reference
-  # yaml-cpp. Keep yaml-cpp after that consumer so one-pass ELF linkers can
-  # resolve those references.
-  target_link_libraries(masstree_rocks_bench mrxffi yaml-cpp)
+  # yaml-cpp and libevent. Keep both after that consumer so one-pass ELF
+  # linkers using --as-needed can resolve those references.
+  target_link_libraries(masstree_rocks_bench
+      mrxffi yaml-cpp ${LIBEVENT_LDFLAGS})
   target_include_directories(masstree_rocks_bench PRIVATE
       ${CMAKE_SOURCE_DIR}/crates/mrx-ffi/include)
   add_dependencies(masstree_rocks_bench mrx_ffi_build)
@@ -1802,7 +1803,8 @@ if (TARGET mrxffi)
   # compiler, generated module map, STO definitions, and current dependency
   # closure instead of reconstructing those details in a host-specific script.
   add_apps(mrx_kernel_probe src/mako/benchmarks/mrx_kernel_probe.cc)
-  target_link_libraries(mrx_kernel_probe mrxffi yaml-cpp)
+  target_link_libraries(mrx_kernel_probe
+      mrxffi yaml-cpp ${LIBEVENT_LDFLAGS})
   target_include_directories(mrx_kernel_probe PRIVATE
       ${CMAKE_SOURCE_DIR}/crates/mrx-ffi/include)
   add_dependencies(mrx_kernel_probe mrx_ffi_build)
@@ -1818,7 +1820,8 @@ add_apps(mrx_write_ablation src/mako/benchmarks/mrx_write_ablation.cc)
 # throughput ladders cannot supply.
 add_apps(mrx_callgrind src/mako/benchmarks/mrx_callgrind.cc)
 if (TARGET mrxffi)
-  target_link_libraries(mrx_callgrind mrxffi yaml-cpp)
+  target_link_libraries(mrx_callgrind
+      mrxffi yaml-cpp ${LIBEVENT_LDFLAGS})
   target_include_directories(mrx_callgrind PRIVATE
       ${CMAKE_SOURCE_DIR}/crates/mrx-ffi/include)
   add_dependencies(mrx_callgrind mrx_ffi_build)
@@ -3028,6 +3031,9 @@ if(BUILD_TESTS)
             )
         endif()
 
+        # A process has one native cache-order namespace. Individual tests
+        # still exercise concurrent workers, but separate cache cases cannot
+        # claim that namespace at the same time inside one Rust test binary.
         add_custom_target(run_mako_cache_rust_tests
             COMMAND ${CMAKE_COMMAND} -E env
                     ${MAKO_CACHE_CARGO_ENV}
@@ -3036,7 +3042,7 @@ if(BUILD_TESTS)
                     "MAKO_LOCAL_REQUIRE_NATIVE=1"
                     ${MAKO_CACHE_NATIVE_CRASH_TEST_ENV}
                     ${CARGO_EXECUTABLE} test --locked --features test-support
-                    -p mako-cache --all-targets
+                    -p mako-cache --all-targets -- --test-threads=1
             COMMAND ${CMAKE_COMMAND} -E env
                     ${MAKO_CACHE_CARGO_ENV}
                     "MAKO_BUILD_DIR=${CMAKE_BINARY_DIR}"
