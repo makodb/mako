@@ -1,11 +1,10 @@
 # Mako cache Milestone 1 acceptance
 
-Status: **CURRENT DETACHED-WRITEBACK PASS** on 2026-08-30. The retained
-performance evidence is for candidate `153e14c78`. Later commits add this
-documentation and an MSRV-compatible safety annotation around the same CPUID
-feature checks; the measured transaction path is otherwise unchanged. The
-earlier native-record rewrite and the full comparative acceptance remain below
-as historical evidence; newer measurements do not retroactively alter those
+Status: **CURRENT DETACHED-WRITEBACK PASS**, with the latest four-worker
+hot-path follow-up measured on 2026-09-01. The original acceptance evidence is
+for candidate `153e14c78`; the newer isolated comparison is recorded below.
+The earlier native-record rewrite and full comparative acceptance remain as
+historical evidence, and newer measurements do not retroactively alter those
 artifacts.
 
 Milestone 1 is complete for its declared scope: one process, one recovered
@@ -114,6 +113,94 @@ hooks-off C++ suite with 75 passes and one expected hook-only skip, and 27/27
 supporting `mrx-ffi`, `mrx-masstree`, `mrx`, and `mtree-sys` tests. Two
 independent holder hot-path unsafe-code reviews reported no remaining
 actionable finding.
+
+## Four-worker hot-path follow-up
+
+The 2026-09-01 follow-up isolates four disjoint writers on `zoo-002`. Workers
+run on CPUs 0-3, helper threads on 33-63, and writeback on CPU 32. These are
+distinct physical cores 0-3, 33-63, and 32 on socket 0; writeback does not share
+an SMT core with a worker. Each cold-cache repetition performs 65,536 warmup
+transactions and a 1,048,576-transaction untimed ramp per worker, followed by
+2,097,152 measured transactions per worker. The queue has 16,777,216 entries,
+keys are eight bytes, values are 128 bytes, worker key windows are disjoint,
+CRC is disabled, and RocksDB writeback uses WAL with `sync=false`. All five
+repetitions in every arm committed exactly 8,388,608 measured transactions
+with zero conflicts and passed PMU and host-interference checks. The cache arms
+also passed acknowledgement, queue, and capacity accounting.
+
+Cycles and instructions are the primary comparison because the machine ran
+the in-memory controls near 3.33 GHz and the cache arms at lower frequencies.
+The C++ and raw-C-ABI controls both used the same jemalloc process mapping via
+`LD_PRELOAD`; the prior cache row named `glibc` deliberately preserves the old
+Rust-link mismatch.
+
+| Path | Cycles/txn | Instructions/txn | ACK Mtxn/s |
+| --- | ---: | ---: | ---: |
+| Direct C++ STO/Masstree | 888.630 | 2,279.102 | 14.867 |
+| Raw fast C ABI | 922.260 | 2,407.102 | 14.363 |
+| Prior cache, glibc-linked Rust | 1,665.325 | 3,541.406 | 5.645 |
+| Prior cache, allocator-matched jemalloc | 1,651.115 | 3,385.262 | 6.807 |
+| Retained packed-order stack, jemalloc | 1,580.986 | 3,370.625 | 7.054 |
+
+The raw C ABI facade is 3.78% more cycles than direct C++, so the native facade
+itself is no longer the material gap. This control does not include Rust
+wrapper dispatch. Matching the configured allocator removes 0.85% of cycles
+and 4.41% of instructions from the prior cache. Prefetching the packed order
+word before restricted validation and skipping the redundant post-accept
+clock observation remove another 4.25% of cycles against the
+allocator-matched prior code. Together they reduce cycles by 5.06% and
+instructions by 4.82% from the old glibc-linked cache. The optimized cold
+cache remains 71.43% more cycles than raw C ABI; this follow-up improves that
+gap but does not claim it has disappeared.
+
+The allocator change is also a build-contract correction. CMake now resolves
+one process allocator and propagates it through the static `mako` target to all
+native consumers. It emits a fingerprinted contract containing the selected
+mode, shared-library identity, SONAME, and byte hash; Cargo validates the same
+contract before linking Rust. This prevents future C++/Rust comparisons from
+silently using different allocators. A non-system allocator directory is
+propagated as a link search path, while a final downstream executable remains
+responsible for carrying its runtime search path when the allocator is outside
+the system loader configuration.
+
+### First generation versus holder reuse
+
+The authoritative cold protocol intentionally never wraps its 16-million-entry
+holder ring, so every measured transaction first-touches one 128-byte holder
+and acquires a fresh value allocation. A separate diagnostic used a
+4,194,304-entry ring, committed and fully drained one complete generation,
+then measured below capacity after a short ramp:
+
+| Holder state | Cycles/txn | Instructions/txn | ACK Mtxn/s |
+| --- | ---: | ---: | ---: |
+| Cold first generation | 1,580.986 | 3,370.625 | 7.054 |
+| Reused generation | 1,451.385 | 3,190.044 | 9.131 |
+
+Reuse removes 8.20% of cycles and 5.36% of instructions. The roughly 130-cycle
+first-generation cost explains about 19.7% of the cold cache's remaining gap
+over raw C ABI. For this fixed 128-byte-value workload it is not a sustained
+default-production cost: the production holder capacity defaults to 1,024, so
+holders and their value allocations are reused after the first short lap. The
+reused diagnostic is still not promoted to the authoritative result because
+it uses a different capacity and measured count.
+
+Profiling leaves the packed timestamp/dense-order CAS, BOUND/READY publication,
+holder metadata and string-ownership rotation, foreground acknowledgement and
+capacity claims, and background log ownership as the sustained cache-specific
+work. An independent `zoo-005` prototype that deferred holder materialization
+until after MassTrans installation passed 106/106 native ABI tests but
+regressed four-worker throughput by 2.57%, so it is deliberately not retained.
+Full arena encoding, hard-coded whole-ring prewarming, post-CAS holder
+prefetch, and a cached MassTrans late-order variant likewise failed their
+measured acceptance gates. PGO remains documented future work rather than a
+dependency of these results.
+
+The complete five-repetition arrays, protocols, available binary and wrapper
+hashes, deltas, and artifact paths are in the
+[machine-readable follow-up](benchmarks/mako-cache-w4-hotpath-20260901.json),
+SHA-256 `26b3bee94c57deb2e76817cdf1cbcc6761ed60539517f43ea2860b3ebaa5d678`.
+The released base-candidate binary hash was not available locally and is
+marked as such rather than reconstructed.
 
 ## Previous native-record and bounded-batching validation
 

@@ -1,0 +1,399 @@
+{
+    "artifacts": {
+        "allocator_binding": "/var/tmp/mako-w4-winning-stack-matched-final/w4-ramp-pure-vs-raw-20260901T133654Z-3i_kq51r/allocator-binding.txt",
+        "cold_expansion": "/var/tmp/mako-w4-winning-stack-screening-expand/w4-ramp-screen-20260901T132938Z-kpr3hf98",
+        "cold_initial": "/var/tmp/mako-w4-winning-stack-screening/w4-ramp-screen-20260901T132754Z-9il1crkm",
+        "holder_reuse_expansion": "/var/tmp/mako-w4-winning-stack-holder-reuse-expand/w4-ramp-screen-20260901T134703Z-a5_j0wo1",
+        "holder_reuse_initial": "/var/tmp/mako-w4-winning-stack-holder-reuse/w4-ramp-screen-20260901T134119Z-t8qx3i1i",
+        "raw_pure": "/var/tmp/mako-w4-winning-stack-matched-final/w4-ramp-pure-vs-raw-20260901T133654Z-3i_kq51r"
+    },
+    "cold_deltas": {
+        "allocator_only_base564_jemalloc_vs_glibc": {
+            "median_ack_tx_per_s_pct": 20.5742244252791,
+            "median_cycles_per_commit_pct": -0.8532983680415329,
+            "median_instructions_per_commit_pct": -4.409085615892083
+        },
+        "source_stack_vs_allocator_matched_base": {
+            "median_ack_tx_per_s_pct": 3.625314457757356,
+            "median_cycles_per_commit_pct": -4.247383043820552,
+            "median_instructions_per_commit_pct": -0.4323751394726516
+        },
+        "total_stack_jemalloc_vs_base_glibc": {
+            "median_ack_tx_per_s_pct": 24.94541921569755,
+            "median_cycles_per_commit_pct": -5.064438561664697,
+            "median_instructions_per_commit_pct": -4.822396965283559
+        }
+    },
+    "cold_protocol": {
+        "allocator": "jemalloc via LD_PRELOAD except named glibc baseline",
+        "authoritative": true,
+        "initial_seed_keys": 1024,
+        "initial_seed_wait_applied": true,
+        "helper_affinity": "33-63",
+        "topology": {
+            "helper_physical_cores": "33-63",
+            "numa_node": 0,
+            "worker_physical_cores": "0-3",
+            "worker_smt_siblings": "64-67",
+            "writeback_physical_core": 32,
+            "writeback_smt_sibling": 96
+        },
+        "key_bytes": 8,
+        "measured_duration_min_ns": 1000000000,
+        "measured_per_worker": 2097152,
+        "measured_total": 8388608,
+        "pmu_ref_cycles_supported": false,
+        "pmu_running_ratio_min": 0.995,
+        "pmu_scope": "per-thread measured region only",
+        "queue_capacity": 16777216,
+        "record_checksum": "none",
+        "rocks_sync": false,
+        "rocks_wal_enabled": true,
+        "teardown": "abort_without_flush_after_invariant_checks",
+        "transaction_ramp_per_worker": 1048576,
+        "value_bytes": 128,
+        "warmup_per_worker": 65536,
+        "window_keys_per_worker": 256,
+        "worker_cpus": "0-3",
+        "workers": 4,
+        "writeback_batch_bytes": 1048576,
+        "writeback_batch_records": 64,
+        "writeback_cpu": 32
+    },
+    "cold_results": {
+        "base564_glibc": {
+            "ack_rate_cv_pct": 3.1918267185822495,
+            "ack_tx_per_s": [
+                5957689.66,
+                5645359.057,
+                5499597.459,
+                5450043.65,
+                5726236.001
+            ],
+            "all_conflicts_zero": true,
+            "all_pmu_running_ratio": true,
+            "average_ghz": [
+                2.493168428,
+                2.40930743,
+                2.346488653,
+                2.348776823,
+                2.418859031
+            ],
+            "cycles_cv_pct": 0.6704787149772315,
+            "cycles_per_commit": [
+                1665.325346,
+                1683.905199,
+                1664.940218,
+                1690.738961,
+                1664.292158
+            ],
+            "instructions_per_commit": [
+                3541.398498,
+                3541.394949,
+                3541.417086,
+                3541.405534,
+                3541.407994
+            ],
+            "median_ack_tx_per_s": 5645359.057,
+            "median_average_ghz": 2.40930743,
+            "median_cycles_per_commit": 1665.325346,
+            "median_instructions_per_commit": 3541.405534,
+            "repetitions": 5
+        },
+        "base564_jemalloc": {
+            "ack_rate_cv_pct": 0.36477109542553215,
+            "ack_tx_per_s": [
+                6809163.979,
+                6779753.777,
+                6806847.899,
+                6762678.89,
+                6833953.431
+            ],
+            "all_conflicts_zero": true,
+            "all_pmu_running_ratio": true,
+            "average_ghz": [
+                2.826031138,
+                2.828489526,
+                2.818297025,
+                2.81809134,
+                2.813154129
+            ],
+            "cycles_cv_pct": 0.4730343291559792,
+            "cycles_per_commit": [
+                1656.069054,
+                1661.903867,
+                1651.115152,
+                1643.430056,
+                1640.827343
+            ],
+            "instructions_per_commit": [
+                3385.260247,
+                3385.314579,
+                3385.261932,
+                3385.282099,
+                3385.256129
+            ],
+            "median_ack_tx_per_s": 6806847.899,
+            "median_average_ghz": 2.818297025,
+            "median_cycles_per_commit": 1651.115152,
+            "median_instructions_per_commit": 3385.261932,
+            "repetitions": 5
+        },
+        "stack832_jemalloc": {
+            "ack_rate_cv_pct": 0.577058865635158,
+            "ack_tx_per_s": [
+                7097643.009,
+                6982576.671,
+                7013567.118,
+                7068368.944,
+                7053617.54
+            ],
+            "all_conflicts_zero": true,
+            "all_pmu_running_ratio": true,
+            "average_ghz": [
+                2.800216938,
+                2.812180153,
+                2.806946034,
+                2.799144512,
+                2.801714154
+            ],
+            "cycles_cv_pct": 0.7384101279440431,
+            "cycles_per_commit": [
+                1575.078831,
+                1605.030333,
+                1595.485863,
+                1576.431912,
+                1580.985967
+            ],
+            "instructions_per_commit": [
+                3370.621893,
+                3370.624901,
+                3370.627676,
+                3370.626586,
+                3370.624176
+            ],
+            "median_ack_tx_per_s": 7053617.54,
+            "median_average_ghz": 2.801714154,
+            "median_cycles_per_commit": 1580.985967,
+            "median_instructions_per_commit": 3370.624901,
+            "repetitions": 5
+        }
+    },
+    "date_utc": "2026-09-01",
+    "holder_reuse_diagnostic": {
+        "authoritative": false,
+        "delta_vs_cold_stack": {
+            "median_ack_tx_per_s_pct": 29.457084966928914,
+            "median_cycles_per_commit_pct": -8.197456821575955,
+            "median_instructions_per_commit_pct": -5.3575030537045265
+        },
+        "delta_vs_raw_c_abi": {
+            "median_ack_tx_per_s_pct": -36.42409350976218,
+            "median_cycles_per_commit_pct": 57.37271984476702,
+            "median_instructions_per_commit_pct": 32.52631354300735
+        },
+        "protocol": {
+            "allocator": "jemalloc via LD_PRELOAD",
+            "full_holder_lap_commits": 4194304,
+            "full_holder_lap_drained_before_ramp": true,
+            "helper_affinity": "33-63",
+            "initial_seed_keys": 1024,
+            "initial_seed_wait_applied": true,
+            "key_bytes": 8,
+            "measured_per_worker": 524288,
+            "measured_total": 2097152,
+            "pmu_running_ratio_min": 0.995,
+            "pmu_scope": "per-thread measured region only",
+            "queue_capacity": 4194304,
+            "record_checksum": "none",
+            "rocks_sync": false,
+            "rocks_wal_enabled": true,
+            "teardown": "abort_without_flush_after_invariant_checks",
+            "transaction_ramp_per_worker": 262144,
+            "value_bytes": 128,
+            "warmup_per_worker": 1048576,
+            "window_keys_per_worker": 256,
+            "worker_cpus": "0-3",
+            "workers": 4,
+            "writeback_batch_bytes": 1048576,
+            "writeback_batch_records": 64,
+            "writeback_cpu": 32
+        },
+        "result": {
+            "ack_rate_cv_pct": 0.7581952990628144,
+            "ack_tx_per_s": [
+                9116538.472,
+                9131407.652,
+                9143342.381,
+                8965784.003,
+                9151713.21
+            ],
+            "all_conflicts_zero": true,
+            "all_pmu_running_ratio": true,
+            "average_ghz": [
+                3.316206884,
+                3.308556863,
+                3.327229615,
+                3.271559417,
+                3.328694032
+            ],
+            "cycles_cv_pct": 0.2027840962007142,
+            "cycles_per_commit": [
+                1451.385325,
+                1445.321303,
+                1453.460443,
+                1448.051749,
+                1451.91158
+            ],
+            "instructions_per_commit": [
+                3190.043569,
+                3190.044445,
+                3190.042803,
+                3190.04498,
+                3190.043418
+            ],
+            "median_ack_tx_per_s": 9131407.652,
+            "median_average_ghz": 3.316206884,
+            "median_cycles_per_commit": 1451.385325,
+            "median_instructions_per_commit": 3190.043569,
+            "repetitions": 5
+        }
+    },
+    "host": "zoo-002",
+    "matched_in_memory_deltas": {
+        "cold_stack_vs_direct_cpp": {
+            "median_ack_tx_per_s_pct": -52.5548273648472,
+            "median_cycles_per_commit_pct": 77.91265468475108,
+            "median_instructions_per_commit_pct": 47.89267119478042
+        },
+        "cold_stack_vs_raw_c_abi": {
+            "median_ack_tx_per_s_pct": -50.890361461113606,
+            "median_cycles_per_commit_pct": 71.42522897094823,
+            "median_instructions_per_commit_pct": 40.02833591574502
+        },
+        "raw_c_abi_vs_direct_cpp": {
+            "median_ack_tx_per_s_pct": -3.389285592920077,
+            "median_cycles_per_commit_pct": 3.784405453471673,
+            "median_instructions_per_commit_pct": 5.616245617435167
+        }
+    },
+    "matched_in_memory_protocol": {
+        "allocator": "LD_PRELOAD:/lib/x86_64-linux-gnu/libjemalloc.so.2",
+        "arms": [
+            "pure-cpp-sto-direct",
+            "raw-fast-cpp"
+        ],
+        "db_path_ignored": true,
+        "launcher_cpu_set": "33-63",
+        "key_bytes": 8,
+        "measured_per_worker": 2097152,
+        "measured_total": 8388608,
+        "pmu_running_ratio_min": 0.995,
+        "pmu_scope": "per-thread measured region only",
+        "rocks_or_writeback": false,
+        "transaction_ramp_per_worker": 1048576,
+        "value_bytes": 128,
+        "warmup_per_worker": 65536,
+        "window_keys_per_worker": 256,
+        "worker_cpus": "0-3",
+        "workers": 4,
+        "workload": "fixed-u64-one-Put"
+    },
+    "matched_in_memory_results": {
+        "pure": {
+            "ack_rate_cv_pct": 0.4534186262766627,
+            "ack_tx_per_s": [
+                14867471.398,
+                14833777.746,
+                14976224.94,
+                14866881.388,
+                14768137.019
+            ],
+            "all_conflicts_zero": true,
+            "all_pmu_running_ratio": true,
+            "average_ghz": [
+                3.332579907,
+                3.332194804,
+                3.334111949,
+                3.335545034,
+                3.330698661
+            ],
+            "cycles_cv_pct": 0.3498264881010108,
+            "cycles_per_commit": [
+                888.630418,
+                890.527382,
+                884.49329,
+                885.687938,
+                892.996435
+            ],
+            "instructions_per_commit": [
+                2279.10205,
+                2279.10245,
+                2279.100773,
+                2279.102928,
+                2279.100773
+            ],
+            "median_ack_tx_per_s": 14866881.388,
+            "median_average_ghz": 3.332579907,
+            "median_cycles_per_commit": 888.630418,
+            "median_instructions_per_commit": 2279.10205,
+            "repetitions": 5
+        },
+        "raw": {
+            "ack_rate_cv_pct": 0.8940234975615035,
+            "ack_tx_per_s": [
+                14130629.736,
+                14491845.351,
+                14363000.319,
+                14375931.554,
+                14212008.57
+            ],
+            "all_conflicts_zero": true,
+            "all_pmu_running_ratio": true,
+            "average_ghz": [
+                3.331523291,
+                3.336035499,
+                3.336038335,
+                3.334993958,
+                3.334559454
+            ],
+            "cycles_cv_pct": 0.5191028389873382,
+            "cycles_per_commit": [
+                932.808204,
+                919.412789,
+                920.661744,
+                925.535965,
+                922.259796
+            ],
+            "instructions_per_commit": [
+                2407.100365,
+                2407.102019,
+                2407.102035,
+                2407.10122,
+                2407.102081
+            ],
+            "median_ack_tx_per_s": 14363000.319,
+            "median_average_ghz": 3.334993958,
+            "median_cycles_per_commit": 922.259796,
+            "median_instructions_per_commit": 2407.102019,
+            "repetitions": 5
+        }
+    },
+    "schema": "mako-cache-w4-result-v1",
+    "source": {
+        "base564_cache_binary_sha256": null,
+        "base564_cache_binary_sha256_status": "not_captured_in_retained_local_provenance",
+        "base564_glibc_wrapper_sha256": "932d773174aebc7a11caad0c950bd7bc68bfd8afdeb1607b90a09326fe8991f7",
+        "base564_jemalloc_wrapper_sha256": "7b7592f07b71971f27ff0594e3a9ed342316b35cd4ce48968016579650383914",
+        "cache_binary_sha256": "597433a26f506c07643ed3967b214d686cb9b6fa0154c01686b75de09833a280",
+        "cache_wrapper_sha256": "f785f585efaec197d3736fef70ddc223f1882122275a3642aa11a27c1016683a",
+        "commit": "832790a212dd33727798c746fde8186fa3247e16",
+        "direct_cpp_binary_sha256": "5caa4a706df8978b2dd50fd3ed571b65830d95a371959737763122e42d4d148d",
+        "holder_reuse_binary_sha256": "b2ccaa828607cd2bb01febe7ad837272d679d6471da1d6222726b42d50412b6d",
+        "holder_reuse_wrapper_sha256": "083eaccdfc5db2e565232ddbe726cf6ceecfaa0d5f6b7d991398b303fa0a9a76",
+        "native_archive_sha256": "0829acaa37153e65d973a4a62c97c2dd4e877b12db2e35631cbaf1297a1c4722",
+        "parent": "564ee736012d7788fbf8bfeb81eb649b9522a0ae",
+        "raw_c_abi_binary_sha256": "05a7782f7b83fcd368547a83cd79d9f0b3f48c3b47771b40fc1601df0fe6ad5e",
+        "tree": "ad992117897d993bc0f55843c0cc3946217f4929"
+    }
+}
