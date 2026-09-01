@@ -205,7 +205,7 @@ impl CommitFence {
         // storage, avoiding a locked RMW on the writer's publication slot.
         std::sync::atomic::fence(Ordering::SeqCst);
         if !self.read_only_closed.load(Ordering::SeqCst) {
-            return Some(CommitWriterGuard { writer });
+            return Some(CommitWriterGuard { writer, slot });
         }
         writer.active.store(false, Ordering::Release);
         None
@@ -246,6 +246,14 @@ fn commit_fence_backoff(spins: &mut usize) {
 
 struct CommitWriterGuard<'a> {
     writer: &'a CommitWriterSlot,
+    slot: usize,
+}
+
+impl CommitWriterGuard<'_> {
+    #[inline(always)]
+    fn slot(&self) -> usize {
+        self.slot
+    }
 }
 
 impl Drop for CommitWriterGuard<'_> {
@@ -1562,7 +1570,7 @@ fn finish_trusted_one_put_arena<'cache, 'db, B: Blobs + 'static>(
     #[cfg(test)]
     crate::failpoint::hit(crate::failpoint::Point::DetachedPrepared);
 
-    let _fence = cache.commit_fence.enter_writer();
+    let fence = cache.commit_fence.enter_writer();
     if let Err(error) = cache.writeback.ensure_no_unknown() {
         return Err(abort_after_precommit_failure(native, Error::Apply(error)));
     }
@@ -1623,7 +1631,7 @@ fn finish_trusted_one_put_arena<'cache, 'db, B: Blobs + 'static>(
         crate::failpoint::hit(crate::failpoint::Point::NativeCommittedBeforeReady);
         // SAFETY: `is_committed` proves the exact completion witness, definite
         // visibility, and successful cleanup. Publish directly BOUND -> READY.
-        unsafe { reservation.publish_completed_concurrent_nonblocking()? };
+        unsafe { reservation.publish_completed_concurrent_nonblocking(fence.slot())? };
         return Ok(());
     }
 

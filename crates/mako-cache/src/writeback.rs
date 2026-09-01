@@ -1345,11 +1345,6 @@ impl CacheLineAtomicU64 {
     }
 
     #[inline(always)]
-    fn fetch_max(&self, value: u64, ordering: Ordering) -> u64 {
-        self.value.fetch_max(value, ordering)
-    }
-
-    #[inline(always)]
     fn fetch_add(&self, value: u64, ordering: Ordering) -> u64 {
         self.value.fetch_add(value, ordering)
     }
@@ -1704,10 +1699,12 @@ pub struct Writeback<B: Blobs> {
     /// native outcome. Healthy in-order publication advances this without the
     /// queue-state mutex.
     acknowledged: CacheLineAtomicU64,
-    /// Highest sequence whose trusted foreground terminal has completed,
-    /// including an out-of-order READY suffix. This is a barrier target, not
-    /// the dense publication frontier consumed by the backend.
-    foreground_ack_high_watermark: CacheLineAtomicU64,
+    /// Latest sequence returned by each process-lifetime native worker.
+    ///
+    /// Trusted one-Put publishers touch only their own cache line after
+    /// publishing READY. Barriers Acquire-scan these high-water marks; the
+    /// backend consumer remains responsible for advancing the dense prefix.
+    trusted_caller_ack_by_worker: Box<[CacheLineAtomicU64]>,
     /// Dense prefix whose arena/cold storage is no longer read by the sole
     /// consumer. SPSC producers Acquire this only when refreshing their local
     /// capacity cursor; it is the cross-generation storage-reuse handoff.
@@ -1880,7 +1877,10 @@ impl<B: Blobs> Writeback<B> {
             unhealthy: AtomicBool::new(false),
             acknowledgement_waiters: CacheLineAtomicUsize::new(0),
             acknowledged: CacheLineAtomicU64::new(applied_seed.sequence),
-            foreground_ack_high_watermark: CacheLineAtomicU64::new(applied_seed.sequence),
+            trusted_caller_ack_by_worker: (0..mako_local::MAX_WORKERS)
+                .map(|_| CacheLineAtomicU64::new(applied_seed.sequence))
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
             applied_frontier: CacheLineAtomicU64::new(applied_seed.sequence),
             next_bound: CacheLineAtomicU64::new(applied_seed.sequence),
             occupied: Occupancy::empty(),
@@ -2193,19 +2193,13 @@ impl<B: Blobs> Writeback<B> {
         }
     }
 
-    /// Sweep the dense READY prefix, then close the weak-memory race with a
-    /// trusted suffix which advertised itself while the first sweep ran.
+    /// Sweep the dense READY prefix.
+    ///
+    /// Trusted publishers deliberately do not call this helper. The sole
+    /// consumer and general publishers close the prefix, so the trusted
+    /// foreground terminal has no shared acknowledgement cache line.
     fn advance_atomic_acknowledgement(&self, acknowledged: u64, maximum: u64) -> u64 {
-        let first = self.advance_atomic_acknowledgement_once(acknowledged, maximum);
-        let advertised = self
-            .foreground_ack_high_watermark
-            .load(Ordering::SeqCst)
-            .min(maximum);
-        if advertised > first {
-            self.advance_atomic_acknowledgement_once(first, advertised)
-        } else {
-            first
-        }
+        self.advance_atomic_acknowledgement_once(acknowledged, maximum)
     }
 
     /// Move one atomically published record into its ordinary queue slot.
@@ -3073,8 +3067,18 @@ impl<B: Blobs> Writeback<B> {
     /// `acknowledged` prefix; barriers include this high-water mark and either
     /// wait for every hole to close or report the earlier fail-stop condition.
     pub fn highest_caller_acknowledged(&self) -> u64 {
-        self.highest_acknowledged()
-            .max(self.foreground_ack_high_watermark.load(Ordering::Acquire))
+        self.trusted_caller_ack_by_worker
+            .iter()
+            .fold(self.highest_acknowledged(), |highest, worker| {
+                highest.max(worker.load(Ordering::Acquire))
+            })
+    }
+
+    #[inline(always)]
+    fn trusted_caller_ack_slot(&self, worker_slot: usize) -> &CacheLineAtomicU64 {
+        self.trusted_caller_ack_by_worker
+            .get(worker_slot)
+            .expect("trusted caller-ack worker slot is in range")
     }
 
     /// Number of bound queue slots. Detached permits are deliberately omitted.
@@ -3369,6 +3373,7 @@ impl<B: Blobs> Writeback<B> {
     fn finish_trusted_ready_publication_concurrent(
         &self,
         token: QueueToken,
+        caller_ack: &CacheLineAtomicU64,
     ) -> Result<(), ResolveError> {
         debug_assert!(!self.single_producer);
         let sequence = token.sequence();
@@ -3376,25 +3381,17 @@ impl<B: Blobs> Writeback<B> {
             return self.finish_published_locked(token);
         }
 
-        // Advertise only after READY is visible, and before trying to close
-        // the dense prefix. Every prefix closer performs a post-sweep SeqCst
-        // recheck. It therefore either observes this advertisement and then
-        // Acquires READY, or precedes it in SC order and this sweep observes
-        // that closer's ACK update.
-        //
-        // Keep this as an actual RMW even when `sequence` is no larger than
-        // the current high-water mark. Its place in that atomic's modification
-        // order carries this READY publication into the closer's SeqCst load;
-        // a preliminary load plus a conditional RMW would break that proof.
-        self.foreground_ack_high_watermark
-            .fetch_max(sequence.get(), Ordering::SeqCst);
-        let prior_acknowledgement = self.acknowledged.load(Ordering::SeqCst);
-        let acknowledged =
-            self.advance_atomic_acknowledgement(prior_acknowledgement, u64::MAX);
-        if acknowledged > prior_acknowledgement {
-            self.notify_activity_waiter();
-            self.notify_acknowledgement_waiters();
-        }
+        // READY is Release-published before this Release store. The native
+        // worker owns this cache line for process lifetime, so its accepted
+        // sequences are strictly increasing and no RMW is needed. A barrier
+        // which Acquire-observes this marker consequently also observes the
+        // immutable record bytes. Dense acknowledgement is left to the sole
+        // consumer (or an ordinary general publisher).
+        debug_assert!(
+            caller_ack.load(Ordering::Relaxed) < sequence.get(),
+            "one native worker's trusted caller acknowledgements are monotonic"
+        );
+        caller_ack.store(sequence.get(), Ordering::Release);
 
         Ok(())
     }
@@ -3481,15 +3478,20 @@ impl<B: Blobs> Writeback<B> {
             }
 
             let acknowledgement_waiter = AcknowledgementWaiter::new(&self.acknowledgement_waiters);
-            // Registration and this SeqCst predicate read are the waiter half
-            // of a Dekker handoff. Either a hole-closing publisher observes a
-            // nonzero count and notifies under `state`, or this read observes
-            // the acknowledgement advancement and avoids sleeping.
+            // Registration and this SeqCst predicate read retain the direct
+            // notification handoff between ordinary publishers. Trusted
+            // publishers deliberately touch neither this count nor this
+            // condition variable, so the bounded wait below also provides
+            // progress when such a publisher closes the missing READY cell.
             if self.acknowledged.load(Ordering::SeqCst) >= sequence.get() {
                 drop(acknowledgement_waiter);
                 return Ok(());
             }
-            state = wait_recover(&self.acknowledgement_changed, state);
+            state = wait_timeout_recover(
+                &self.acknowledgement_changed,
+                state,
+                Duration::from_millis(1),
+            );
             drop(acknowledgement_waiter);
         }
     }
@@ -3552,6 +3554,36 @@ impl<B: Blobs> Writeback<B> {
         let _consumer = lock_recover(&self.consumer);
         let mut state = lock_recover(&self.state);
         self.import_bound_locked(&mut state);
+
+        // Trusted foreground terminals publish only their own READY cell and
+        // per-worker caller marker. The sole consumer closes the dense replay
+        // prefix here. Never extend it across a fail-stop boundary discovered
+        // by an earlier consumer or unknown-outcome publisher.
+        let health_barrier = match (
+            state.first_unknown,
+            state
+                .permanent_record_failure
+                .as_ref()
+                .map(|failure| failure.sequence),
+        ) {
+            (Some(unknown), Some(failure)) => Some(unknown.min(failure)),
+            (Some(unknown), None) => Some(unknown),
+            (None, Some(failure)) => Some(failure),
+            (None, None) => None,
+        };
+        let health_maximum = health_barrier
+            .map(|barrier| barrier.get().saturating_sub(1))
+            .unwrap_or(u64::MAX);
+        let sweep_maximum = max_sequence.unwrap_or(u64::MAX).min(health_maximum);
+        let prior_acknowledgement = self.acknowledged.load(Ordering::Acquire);
+        let acknowledged =
+            self.advance_atomic_acknowledgement(prior_acknowledgement, sweep_maximum);
+        if acknowledged > prior_acknowledgement {
+            // `state` closes the predicate-to-wait window for slow ordinary
+            // publishers. Apply waiters are notified after backend progress;
+            // their bounded poll also covers a consumer which stops here.
+            self.acknowledgement_changed.notify_all();
+        }
         self.harvest_acknowledged_locked(&mut state);
 
         let Some(front) = state.queue.front() else {
@@ -3864,15 +3896,11 @@ impl<B: Blobs> Writeback<B> {
         }
 
         // Holding `state` until the wait atomically releases it closes the
-        // usual predicate/notification gap. SPSC acknowledgement deliberately
-        // uses an ordinary Release store rather than the MPMC SeqCst Dekker
-        // handshake, so keep that mode's explicit barriers on a bounded poll;
-        // a missed advisory notification can delay but never strand progress.
-        state = if self.single_producer {
-            wait_timeout_recover(&self.changed, state, Duration::from_millis(10))
-        } else {
-            wait_recover(&self.changed, state)
-        };
+        // usual predicate/notification gap for notifying publishers. SPSC and
+        // trusted concurrent publication intentionally avoid that shared
+        // notification path, so every mode uses a bounded poll: a missed
+        // advisory wake can delay but never strand a barrier.
+        state = wait_timeout_recover(&self.changed, state, Duration::from_millis(10));
         drop(waiter);
         drop(state);
     }
@@ -4515,10 +4543,15 @@ impl<B: Blobs> NativeArenaBoundReservation<'_, B> {
     /// installation and cleanup have completed.
     pub(crate) unsafe fn publish_completed_concurrent_nonblocking(
         &mut self,
+        worker_slot: usize,
     ) -> Result<CommitSeq, ResolveError> {
         assert_eq!(self.on_drop, DropAction::PinUnknown);
         assert!(!self.owner.single_producer);
         let sequence = self.token.sequence();
+        // Validate the process-lifetime worker identity before making this
+        // definitely committed record READY. The caller owns this slot until
+        // its CommitWriterGuard drops after we return.
+        let caller_ack = self.owner.trusted_caller_ack_slot(worker_slot);
         self.owner.publication_cell(sequence).attach_arena_ready(
             sequence,
             self.owner.publication_shift,
@@ -4526,7 +4559,7 @@ impl<B: Blobs> NativeArenaBoundReservation<'_, B> {
             self.exact_record_bytes,
         );
         self.owner
-            .finish_trusted_ready_publication_concurrent(self.token)?;
+            .finish_trusted_ready_publication_concurrent(self.token, caller_ack)?;
         self.on_drop = DropAction::Done;
         Ok(sequence)
     }
@@ -5027,12 +5060,6 @@ pub(crate) enum ProcessOutcome {
 fn lock_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
-fn wait_recover<'a, T>(condvar: &Condvar, guard: MutexGuard<'a, T>) -> MutexGuard<'a, T> {
-    condvar
-        .wait(guard)
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
@@ -5819,7 +5846,7 @@ mod tests {
         // SAFETY: both exact native targets are fully initialized and this
         // test models definitely committed, successfully cleaned terminals.
         assert_eq!(
-            unsafe { second.publish_completed_concurrent_nonblocking().unwrap() }.get(),
+            unsafe { second.publish_completed_concurrent_nonblocking(1).unwrap() }.get(),
             2
         );
         assert_eq!(writeback.highest_acknowledged(), 0);
@@ -5845,11 +5872,13 @@ mod tests {
         ));
 
         assert_eq!(
-            // SAFETY: the first target is complete. Use the ordinary general
-            // publisher to prove its ACK-baton win sweeps the trusted suffix.
-            unsafe { first.publish_completed().unwrap() }.get(),
+            // SAFETY: the first target is complete. This trusted publisher
+            // emits no condition-variable notification and does not sweep;
+            // the barrier's bounded poll must wake and consume both records.
+            unsafe { first.publish_completed_concurrent_nonblocking(0).unwrap() }.get(),
             1
         );
+        assert_eq!(writeback.highest_acknowledged(), 0);
         assert_eq!(
             returned_rx
                 .recv_timeout(Duration::from_secs(1))
@@ -5864,7 +5893,7 @@ mod tests {
     }
 
     #[test]
-    fn trusted_front_nonblocking_publication_sweeps_ready_suffix() {
+    fn consumer_sweeps_two_trusted_nonblocking_publications() {
         let backend = Arc::new(MemBlobs::new());
         let writeback = Writeback::new(Arc::clone(&backend), 0, config(2, 0)).unwrap();
         let first_mutations = vec![put(b"first", b"one")];
@@ -5895,18 +5924,148 @@ mod tests {
         // SAFETY: both exact native targets model definitely committed,
         // successfully cleaned trusted terminals.
         assert_eq!(
-            unsafe { second.publish_completed_concurrent_nonblocking().unwrap() }.get(),
+            unsafe { second.publish_completed_concurrent_nonblocking(1).unwrap() }.get(),
             2
         );
         assert_eq!(writeback.highest_acknowledged(), 0);
         assert_eq!(
-            unsafe { first.publish_completed_concurrent_nonblocking().unwrap() }.get(),
+            unsafe { first.publish_completed_concurrent_nonblocking(0).unwrap() }.get(),
             1
         );
+        // Neither trusted writer scans or contends on the dense frontier.
+        assert_eq!(writeback.highest_acknowledged(), 0);
+        assert_eq!(writeback.highest_caller_acknowledged(), 2);
+        assert_eq!(writeback.wait_applied().unwrap(), 2);
         assert_eq!(writeback.highest_acknowledged(), 2);
+        assert_eq!(backend.batch_count(), 2);
+    }
+
+    #[test]
+    fn one_worker_marker_tracks_repeated_trusted_commits() {
+        let backend = Arc::new(MemBlobs::new());
+        let writeback = Writeback::new(Arc::clone(&backend), 0, config(2, 0)).unwrap();
+        let first_mutations = vec![put(b"same-worker-first", b"one")];
+        let second_mutations = vec![put(b"same-worker-second", b"two")];
+        let mut first_permit = writeback
+            .reserve_native_arena_fast(record_encoded_len(first_mutations.clone()))
+            .unwrap()
+            .unwrap();
+        let mut second_permit = writeback
+            .reserve_native_arena_fast(record_encoded_len(second_mutations.clone()))
+            .unwrap()
+            .unwrap();
+
+        // SAFETY: this test serializes dense assignments in native-ticket
+        // order and models two consecutive commits by worker zero.
+        let mut first = unsafe {
+            first_permit
+                .bind_externally_serialized(mako_timestamp_of(1))
+                .unwrap()
+        };
+        let mut second = unsafe {
+            second_permit
+                .bind_externally_serialized(mako_timestamp_of(2))
+                .unwrap()
+        };
+        fill_fast_arena_reservation(&mut first, &encoded_native_record(1, 1, first_mutations));
+        fill_fast_arena_reservation(&mut second, &encoded_native_record(2, 2, second_mutations));
+
+        // SAFETY: both exact targets model definitely committed, successfully
+        // cleaned terminals from the same process-lifetime worker.
+        assert_eq!(
+            unsafe { first.publish_completed_concurrent_nonblocking(0).unwrap() }.get(),
+            1
+        );
+        assert_eq!(writeback.highest_caller_acknowledged(), 1);
+        assert_eq!(
+            unsafe { second.publish_completed_concurrent_nonblocking(0).unwrap() }.get(),
+            2
+        );
+        assert_eq!(writeback.highest_acknowledged(), 0);
         assert_eq!(writeback.highest_caller_acknowledged(), 2);
         assert_eq!(writeback.wait_applied().unwrap(), 2);
         assert_eq!(backend.batch_count(), 2);
+    }
+
+    #[test]
+    fn structural_failure_caps_consumer_before_trusted_ready_suffix() {
+        let backend = Arc::new(MemBlobs::new());
+        let writeback = Writeback::new(Arc::clone(&backend), 0, config(3, 0)).unwrap();
+        let mut first = bind(
+            writeback
+                .reserve(vec![put(b"general-first", b"one")])
+                .unwrap(),
+            1,
+        );
+        let mut second = bind(
+            writeback
+                .reserve(vec![put(b"general-failed", b"two")])
+                .unwrap(),
+            2,
+        );
+        let third_mutations = vec![put(b"trusted-suffix", b"three")];
+        let mut third_permit = writeback
+            .reserve_native_arena_fast(record_encoded_len(third_mutations.clone()))
+            .unwrap()
+            .unwrap();
+        // SAFETY: both general binders above and this external binder are
+        // serialized exactly as native validation-ticket assignment is.
+        let mut third = unsafe {
+            third_permit
+                .bind_externally_serialized(mako_timestamp_of(3))
+                .unwrap()
+        };
+        fill_fast_arena_reservation(&mut third, &encoded_native_record(3, 3, third_mutations));
+
+        assert_eq!(first.publish().unwrap().get(), 1);
+        assert_eq!(second.publish().unwrap().get(), 2);
+        // SAFETY: the exact third target models a definitely committed,
+        // successfully cleaned trusted terminal racing with failure discovery.
+        assert_eq!(
+            unsafe { third.publish_completed_concurrent_nonblocking(0).unwrap() }.get(),
+            3
+        );
+        assert_eq!(writeback.highest_acknowledged(), 2);
+        assert_eq!(writeback.highest_caller_acknowledged(), 3);
+
+        // Model a consumer which has just restored sequence two after finding
+        // structural corruption while sequence three's trusted terminal raced
+        // immediately before the health latch.
+        assert!(matches!(
+            writeback.record_failure_outcome(
+                CommitSeq::new(2).unwrap(),
+                RecordError::BadMagic,
+            ),
+            ProcessOutcome::RecordFailed {
+                sequence,
+                error: RecordError::BadMagic,
+            } if sequence.get() == 2
+        ));
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::Advanced
+        ));
+        assert_eq!(writeback.applied_sequence(), 1);
+        assert_eq!(
+            writeback.highest_acknowledged(),
+            2,
+            "the consumer must not sweep READY sequence three past failure two"
+        );
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::RecordFailed {
+                sequence,
+                error: RecordError::BadMagic,
+            } if sequence.get() == 2
+        ));
+        assert!(matches!(
+            writeback.wait_applied(),
+            Err(ApplyError::Record {
+                sequence,
+                source: RecordError::BadMagic,
+            }) if sequence.get() == 2
+        ));
+        assert_eq!(backend.batch_count(), 1);
     }
 
     #[test]
@@ -5940,7 +6099,7 @@ mod tests {
         // SAFETY: the second target models a definitely committed,
         // successfully cleaned trusted terminal.
         assert_eq!(
-            unsafe { second.publish_completed_concurrent_nonblocking().unwrap() }.get(),
+            unsafe { second.publish_completed_concurrent_nonblocking(1).unwrap() }.get(),
             2
         );
         assert_eq!(writeback.highest_acknowledged(), 0);
