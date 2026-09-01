@@ -23,6 +23,12 @@ SPEC.loader.exec_module(fingerprint)
 
 
 class FingerprintTests(unittest.TestCase):
+    def test_native_allocator_parser_is_a_recipe_input(self) -> None:
+        self.assertIn(
+            "crates/mako-local/build_support/native_allocator.rs",
+            fingerprint.RECIPE_FILES,
+        )
+
     def make_archive_inventory(self, root: Path):
         source_root = root / "source"
         build_dir = root / "build"

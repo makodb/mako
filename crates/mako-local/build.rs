@@ -9,6 +9,11 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
+#[path = "build_support/native_allocator.rs"]
+mod native_allocator;
+
+use native_allocator::NativeAllocator;
+
 const DEFAULT_BUILD_DIRS: [&str; 4] = ["build_mrx", "build_c22", "build", "build_docker"];
 const NATIVE_LINK_ARCHIVES: &str = include_str!("native-link-archives.txt");
 
@@ -19,6 +24,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed=LIBCXX_DIR");
     println!("cargo:rerun-if-env-changed=PYTHON");
     println!("cargo:rerun-if-changed=native-link-archives.txt");
+    println!("cargo:rerun-if-changed=build_support/native_allocator.rs");
     println!("cargo:rustc-check-cfg=cfg(have_mako)");
 
     if fake_abi_requested() {
@@ -78,6 +84,8 @@ fn main() {
         println!("cargo:rustc-link-lib=static={lib}");
     }
 
+    configure_native_allocator(&build);
+
     // Mako's in-tree yaml-cpp is built against the same libc++ as libmako.
     // The distro library uses libstdc++ and therefore has different mangled
     // std::string symbols. Put the CMake copy first in the search path.
@@ -111,6 +119,25 @@ fn main() {
     println!("cargo:rustc-link-lib=dylib=c++");
     println!("cargo:rustc-link-lib=dylib=c++abi");
     println!("cargo:rustc-cfg=have_mako");
+}
+
+fn configure_native_allocator(build: &Path) {
+    let cache_path = build.join("CMakeCache.txt");
+    let cache = fs::read_to_string(&cache_path)
+        .unwrap_or_else(|error| panic!("cannot read {}: {error}", cache_path.display()));
+    let allocator = NativeAllocator::from_cmake_cache(&cache).unwrap_or_else(|error| {
+        panic!(
+            "mako-local cannot reproduce the native allocator from {}: {error}",
+            cache_path.display()
+        )
+    });
+
+    // Rust's system allocator and libc++ both reach malloc/new through the
+    // process link map. Match CMake's allocator so a Cargo executable has the
+    // same process-wide allocation contract as Mako's native executables.
+    if let Some(library) = allocator.link_library() {
+        println!("cargo:rustc-link-lib=dylib={library}");
+    }
 }
 
 fn native_link_archives() -> Vec<(&'static str, &'static str)> {

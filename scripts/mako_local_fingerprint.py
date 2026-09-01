@@ -55,6 +55,7 @@ RECIPE_FILES = (
     "src/masstree/config-cmake.h.in",
     "third-party/rusty-cpp/CMakeLists.txt",
     "crates/mako-local/build.rs",
+    "crates/mako-local/build_support/native_allocator.rs",
     NATIVE_LINK_ARCHIVE_MANIFEST,
     "scripts/mako_local_fingerprint.py",
 )
