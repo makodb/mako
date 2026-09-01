@@ -489,6 +489,13 @@ pub(super) unsafe fn mako_local_db_close(db: *mut sys::mako_local_db) -> c_int {
     })
 }
 
+pub(super) unsafe fn mako_rust_fast_db_order_record_validation_prefix(db: *mut sys::mako_local_db) {
+    assert!(
+        !db.is_null(),
+        "the private validation-prefix helper needs a db"
+    );
+}
+
 pub(super) unsafe fn mako_local_table_open(
     _db: *mut sys::mako_local_db,
     _name: *const u8,

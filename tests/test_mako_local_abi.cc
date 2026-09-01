@@ -1412,6 +1412,16 @@ TEST_F(LocalAbiTest, NativeOrderedArenaRejectsLayoutBeforeAssigningOrder) {
 }
 
 #if defined(MAKO_LOCAL_TEST_HOOKS)
+TEST_F(LocalAbiTest, RecordValidationPrefixCutConsumesNoTicket) {
+  const uint64_t tickets_before =
+      mako_rust_fast_test_record_validation_tickets(db);
+
+  mako_rust_fast_db_order_record_validation_prefix(db);
+
+  EXPECT_EQ(mako_rust_fast_test_record_validation_tickets(db),
+            tickets_before);
+}
+
 TEST_F(LocalAbiTest, TrustedOnePutLateGateRequiresWriteCoveredValidation) {
   auto *seed = begin();
   ASSERT_EQ(put(seed, primary, "late-existing", "old"), MAKO_LOCAL_OK);

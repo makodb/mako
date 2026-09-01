@@ -1586,7 +1586,7 @@ void enter_record_validation_gate(void *opaque) noexcept {
   assert(!bridge->validation_gate_held);
   mako_local_db *const db = bridge->txn->owner;
   const uint64_t ticket = db->record_validation_next.value.fetch_add(
-      UINT64_C(1), std::memory_order_relaxed);
+      UINT64_C(1), std::memory_order_release);
   bool reported_wait = false;
   while (db->record_validation_serving.value.load(std::memory_order_acquire) !=
          ticket) {
@@ -2576,6 +2576,23 @@ void mako_local_bytes_free(void *bytes) noexcept {
 #else
 #define MAKO_RUST_FAST_DEFINITION_HIDDEN
 #endif
+
+// @unsafe - The build-private Rust wrapper supplies one live, non-null LocalDb
+// for this synchronous call. The helper touches only its naturally aligned,
+// C++-owned atomic counter; no borrowed pointer escapes. Its Acquire RMW pairs
+// with preceding writer ticket Release RMWs before returning to the Rust scan.
+MAKO_RUST_FAST_DEFINITION_HIDDEN void
+mako_rust_fast_db_order_record_validation_prefix(
+    mako_local_db *db) noexcept {
+  assert(db != nullptr);
+  // Every concurrent cache writer Release-publishes its Rust outcome slot
+  // before allocating a record-validation ticket. This Acquire RMW reads the
+  // last preceding ticket allocation or its all-RMW release-sequence
+  // successor. A later Rust Acquire scan must therefore observe each writer's
+  // active generation in this validation prefix or its later Release clear.
+  db->record_validation_next.value.fetch_add(UINT64_C(0),
+                                              std::memory_order_acquire);
+}
 
 MAKO_RUST_FAST_DEFINITION_HIDDEN int
 mako_rust_fast_one_put_holder_pool_create(

@@ -47,7 +47,7 @@ use std::marker::PhantomData;
 use std::num::{NonZeroU32, NonZeroU64};
 use std::path::Path;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use mako_local::{CommitDisposition, LocalDb};
@@ -107,13 +107,42 @@ thread_local! {
 
 #[repr(align(64))]
 struct CommitWriterSlot {
-    active: AtomicBool,
+    /// Owner-written generations: even is idle and the following odd value is
+    /// one active outcome. A reader waits for one exact observed odd value, so
+    /// a later writer generation cannot extend that wait indefinitely.
+    generation: AtomicU64,
 }
 
 impl CommitWriterSlot {
     const fn new() -> Self {
         Self {
-            active: AtomicBool::new(false),
+            generation: AtomicU64::new(0),
+        }
+    }
+
+    #[inline(always)]
+    fn begin(&self) -> u64 {
+        let idle = self.generation.load(Ordering::Relaxed);
+        assert_eq!(
+            idle & 1,
+            0,
+            "one native worker cannot overlap two cache commit outcomes"
+        );
+        let active = idle.wrapping_add(1);
+        self.generation.store(active, Ordering::Release);
+        active
+    }
+
+    #[inline(always)]
+    fn drain_observed(&self, observed: u64, spins: &mut usize) {
+        if observed & 1 == 0 {
+            return;
+        }
+        // Equality can alias a later active generation only after 2^64 owner
+        // transitions. No finite read-only scan can overlap that many native
+        // outcomes from one process-lifetime worker.
+        while self.generation.load(Ordering::Acquire) == observed {
+            commit_fence_backoff(spins);
         }
     }
 }
@@ -122,11 +151,14 @@ const _: () = assert!(std::mem::size_of::<CommitWriterSlot>() == 64);
 
 /// An asymmetric outcome fence for common writers and rare read-only commits.
 ///
-/// Each attached writer modifies only its own cache line. A read-only commit
-/// closes admission, drains all earlier writer slots, and keeps admission
-/// closed through native validation and the final queue-health check.
+/// Each attached writer modifies only its own cache line before entering the
+/// native record-validation ticket gate. A read-only commit marks a cut in
+/// that gate, then guarantees that every writer which precedes the cut has
+/// drained. A scan may also conservatively wait for one observed post-cut
+/// generation. Later writers may proceed because STO orders them after the
+/// read-only transaction or rejects read-only validation on a conflicting
+/// lock, version, or predicate.
 struct CommitFence {
-    read_only_closed: AtomicBool,
     read_only_serial: Mutex<()>,
     writers: Box<[CommitWriterSlot]>,
 }
@@ -138,7 +170,6 @@ impl CommitFence {
             .collect::<Vec<_>>()
             .into_boxed_slice();
         Self {
-            read_only_closed: AtomicBool::new(false),
             read_only_serial: Mutex::new(()),
             writers,
         }
@@ -168,69 +199,47 @@ impl CommitFence {
 
     #[inline(always)]
     fn enter_writer_slot(&self, slot: usize) -> CommitWriterGuard<'_> {
-        let mut spins = 0;
-        loop {
-            if let Some(guard) = self.try_enter_writer_slot(slot) {
-                return guard;
-            }
-            while self.read_only_closed.load(Ordering::Acquire) {
-                commit_fence_backoff(&mut spins);
-            }
-        }
-    }
-
-    /// Try the enrollment half even when a closer may already be active.
-    ///
-    /// Let A be the slot's Release publication, F the following SeqCst fence,
-    /// W the writer's SeqCst closed load, C the read-only closer's SeqCst store,
-    /// and L its later SeqCst slot load. If W observed the value before C, the
-    /// SC order would have W < C. If L observed the value before A, SC-fence
-    /// coherence would have L < F. Program order already has F < W and C < L,
-    /// so both misses would create the impossible cycle F < W < C < L < F.
-    /// Thus the closer either drains this writer until its Release clear or
-    /// the writer observes the close, clears its slot, and retries.
-    #[inline(always)]
-    fn try_enter_writer_slot(&self, slot: usize) -> Option<CommitWriterGuard<'_>> {
         let writer = self
             .writers
             .get(slot)
             .expect("commit-fence writer slot is in range");
-        assert!(
-            !writer.active.load(Ordering::Relaxed),
-            "one native worker cannot overlap two cache commit outcomes"
-        );
-        writer.active.store(true, Ordering::Release);
-        // This Store->Load barrier is the writer's half of the SC-fence cycle
-        // above. On x86-64 LLVM lowers it to a locked no-op on private stack
-        // storage, avoiding a locked RMW on the writer's publication slot.
-        std::sync::atomic::fence(Ordering::SeqCst);
-        if !self.read_only_closed.load(Ordering::SeqCst) {
-            return Some(CommitWriterGuard { writer, slot });
+        let active_generation = writer.begin();
+        CommitWriterGuard {
+            writer,
+            active_generation,
+            slot,
         }
-        writer.active.store(false, Ordering::Release);
-        None
     }
 
-    fn close_for_read_only(&self) -> CommitReadOnlyGuard<'_> {
+    fn close_for_read_only(
+        &self,
+        order_validation_prefix: impl FnOnce(),
+    ) -> CommitReadOnlyGuard<'_> {
         let serial = self
             .read_only_serial
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        debug_assert!(!self.read_only_closed.load(Ordering::Relaxed));
-        self.read_only_closed.store(true, Ordering::SeqCst);
+        // A writer's odd-generation Release publication precedes its native
+        // ticket-allocation Release RMW. The callback's Acquire RMW reads the
+        // last preceding ticket or an all-RMW release-sequence successor. Each
+        // following Acquire load must therefore see a prefix writer's active
+        // generation, or its later Release clear after the outcome is
+        // represented in write-back.
+        //
+        // A writer can publish its generation before this cut but allocate its
+        // ticket after it. Native has acquired that writer's complete write
+        // set before ticket allocation, but cannot install until afterward.
+        // STO validation therefore either rejects this read-only transaction
+        // on a conflicting lock/predicate, or admits the reader-before-writer
+        // serialization. Missing that post-cut generation is safe.
+        order_validation_prefix();
 
         let mut spins = 0;
-        while self
-            .writers
-            .iter()
-            .any(|writer| writer.active.load(Ordering::SeqCst))
-        {
-            commit_fence_backoff(&mut spins);
+        for writer in &self.writers {
+            let observed = writer.generation.load(Ordering::Acquire);
+            writer.drain_observed(observed, &mut spins);
         }
-        CommitReadOnlyGuard {
-            fence: self,
-            _serial: serial,
-        }
+        CommitReadOnlyGuard { _serial: serial }
     }
 }
 
@@ -246,6 +255,7 @@ fn commit_fence_backoff(spins: &mut usize) {
 
 struct CommitWriterGuard<'a> {
     writer: &'a CommitWriterSlot,
+    active_generation: u64,
     slot: usize,
 }
 
@@ -259,24 +269,20 @@ impl CommitWriterGuard<'_> {
 impl Drop for CommitWriterGuard<'_> {
     #[inline(always)]
     fn drop(&mut self) {
-        // The closer's Acquire-capable SC scan carries all native outcome and
-        // queue-resolution effects which precede this release.
-        self.writer.active.store(false, Ordering::Release);
+        // The closer's Acquire scan carries all native outcome and
+        // queue-resolution effects which precede this Release clear.
+        debug_assert_eq!(
+            self.writer.generation.load(Ordering::Relaxed),
+            self.active_generation
+        );
+        self.writer
+            .generation
+            .store(self.active_generation.wrapping_add(1), Ordering::Release);
     }
 }
 
 struct CommitReadOnlyGuard<'a> {
-    fence: &'a CommitFence,
     _serial: MutexGuard<'a, ()>,
-}
-
-impl Drop for CommitReadOnlyGuard<'_> {
-    fn drop(&mut self) {
-        // Keep new writers excluded until the read-only result and its final
-        // health check are both complete. The serial mutex still belongs to
-        // this guard while admission reopens.
-        self.fence.read_only_closed.store(false, Ordering::Release);
-    }
 }
 
 /// Foreground transaction concurrency accepted by one cache instance.
@@ -1313,9 +1319,13 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
 
         if preflight.is_empty() {
             if foreground.is_concurrent() {
-                // Close writer admission and drain every outcome which entered
-                // before this read-only commit validates.
-                let _fence = self.cache.commit_fence.close_for_read_only();
+                // Mark one record-validation ticket cut, then drain every
+                // writer ordered before it. A later writer may proceed: STO
+                // either orders it after this read-only transaction or makes
+                // the read-set/predicate validation reject this commit.
+                let _fence = self.cache.commit_fence.close_for_read_only(|| {
+                    self.cache.local.order_record_validation_prefix();
+                });
                 if let Err(error) = self.cache.writeback.ensure_no_unknown() {
                     return Err(abort_after_precommit_failure(native, Error::Apply(error)));
                 }
@@ -2367,29 +2377,34 @@ mod tests {
 
     #[test]
     fn commit_fence_read_only_closer_drains_an_enrolled_writer() {
-        use std::sync::mpsc::{TryRecvError, channel};
-        use std::time::{Duration, Instant};
+        use std::sync::mpsc::{channel, TryRecvError};
+        use std::time::Duration;
 
         let fence = Arc::new(CommitFence::new());
         let payload = Arc::new(AtomicUsize::new(0));
+        let validation_next = Arc::new(AtomicUsize::new(0));
         let writer = fence.enter_writer_slot(0);
+        validation_next.fetch_add(1, Ordering::Release);
         payload.store(17, Ordering::Relaxed);
 
         let reader_fence = Arc::clone(&fence);
         let reader_payload = Arc::clone(&payload);
+        let reader_validation_next = Arc::clone(&validation_next);
+        let (cut_tx, cut_rx) = channel();
         let (entered_tx, entered_rx) = channel();
         let reader = std::thread::spawn(move || {
-            let _reader = reader_fence.close_for_read_only();
+            let _reader = reader_fence.close_for_read_only(|| {
+                reader_validation_next.fetch_add(0, Ordering::Acquire);
+                cut_tx.send(()).unwrap();
+            });
             entered_tx
                 .send(reader_payload.load(Ordering::Relaxed))
                 .unwrap();
         });
 
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while !fence.read_only_closed.load(Ordering::Acquire) {
-            assert!(Instant::now() < deadline, "read-only closer did not start");
-            std::thread::yield_now();
-        }
+        cut_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("read-only validation cut did not run");
         assert_eq!(entered_rx.try_recv(), Err(TryRecvError::Empty));
 
         drop(writer);
@@ -2398,21 +2413,69 @@ mod tests {
     }
 
     #[test]
-    fn commit_fence_writer_enrollment_after_close_must_retry() {
+    fn commit_fence_writer_after_validation_cut_is_not_blocked() {
         let fence = CommitFence::new();
-        let reader = fence.close_for_read_only();
+        let validation_next = AtomicUsize::new(0);
+        let reader = fence.close_for_read_only(|| {
+            validation_next.fetch_add(0, Ordering::Acquire);
+        });
 
+        let writer = fence.enter_writer_slot(1);
+        validation_next.fetch_add(1, Ordering::Release);
         assert!(
-            fence.try_enter_writer_slot(1).is_none(),
-            "a writer enrolled after close entered its native outcome"
+            fence.writers[1].generation.load(Ordering::Acquire) & 1 != 0,
+            "a post-cut writer should enter without waiting for the reader"
         );
-        assert!(!fence.writers[1].active.load(Ordering::Acquire));
-
-        drop(reader);
-        let writer = fence
-            .try_enter_writer_slot(1)
-            .expect("reopening admits the rejected writer enrollment");
         drop(writer);
+        drop(reader);
+    }
+
+    #[test]
+    fn commit_fence_exact_generation_does_not_bridge_worker_reuse() {
+        use std::sync::mpsc::{channel, sync_channel};
+        use std::time::Duration;
+
+        let fence = Arc::new(CommitFence::new());
+        let validation_next = Arc::new(AtomicUsize::new(0));
+        let first = fence.enter_writer_slot(2);
+        validation_next.fetch_add(1, Ordering::Release);
+
+        let reader_fence = Arc::clone(&fence);
+        let reader_validation_next = Arc::clone(&validation_next);
+        let (observed_tx, observed_rx) = channel();
+        let (reused_tx, reused_rx) = sync_channel(0);
+        let (drained_tx, drained_rx) = channel();
+        let reader = std::thread::spawn(move || {
+            reader_validation_next.fetch_add(0, Ordering::Acquire);
+            let observed = reader_fence.writers[2].generation.load(Ordering::Acquire);
+            assert_eq!(observed & 1, 1);
+            observed_tx.send(observed).unwrap();
+            reused_rx.recv().unwrap();
+            let mut spins = 0;
+            reader_fence.writers[2].drain_observed(observed, &mut spins);
+            drained_tx.send(()).unwrap();
+        });
+
+        let first_generation = observed_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("reader did not observe the first active generation");
+        drop(first);
+        let second = fence.enter_writer_slot(2);
+        validation_next.fetch_add(1, Ordering::Release);
+        assert_ne!(
+            fence.writers[2].generation.load(Ordering::Acquire),
+            first_generation
+        );
+        reused_tx.send(()).unwrap();
+        drained_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the first generation wait bridged into its successor");
+
+        // The reader returned while the deliberately post-cut successor still
+        // owned the same worker slot.
+        assert_eq!(fence.writers[2].generation.load(Ordering::Acquire) & 1, 1);
+        drop(second);
+        reader.join().unwrap();
     }
 
     #[test]

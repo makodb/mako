@@ -355,6 +355,8 @@ mod fast_abi {
         ) -> i32;
 
         pub(super) fn mako_rust_fast_txn_abort_and_destroy(txn: *mut sys::mako_local_txn) -> u64;
+
+        pub(super) fn mako_rust_fast_db_order_record_validation_prefix(db: *mut sys::mako_local_db);
     }
 }
 
@@ -2432,6 +2434,21 @@ impl LocalDb {
         };
         let transaction = self.trusted_transaction(&table)?;
         Ok((table, transaction))
+    }
+
+    /// Order a following cache outcome scan after every record-validation
+    /// ticket already allocated for this database.
+    ///
+    /// This build-private synchronization seam is used only by mako-cache's
+    /// read-only commit fence. Concurrent cache writers publish their Rust
+    /// outcome slot before native allocates its ticket, then clear it only
+    /// after the native outcome is represented in write-back.
+    #[doc(hidden)]
+    #[inline]
+    pub fn order_record_validation_prefix(&self) {
+        // SAFETY: `self.raw` is the live database allocation for this shared
+        // facade. The private helper borrows it only for this synchronous RMW.
+        unsafe { fast_abi::mako_rust_fast_db_order_record_validation_prefix(self.raw.as_ptr()) }
     }
 
     /// Explicitly close and consume this database facade.

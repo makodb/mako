@@ -468,6 +468,12 @@ MAKO_RUST_FAST_HIDDEN uint64_t mako_rust_fast_txn_commit_with_hook_and_destroy(
     void *context) MAKO_RUST_FAST_NOEXCEPT;
 MAKO_RUST_FAST_HIDDEN uint64_t mako_rust_fast_txn_abort_and_destroy(
     mako_local_txn *txn) MAKO_RUST_FAST_NOEXCEPT;
+/* Order a following Rust outcome-slot scan after every record-validation
+ * ticket already allocated for this database. The database pointer belongs to
+ * the same live LocalDb facade for the complete synchronous call. */
+MAKO_RUST_FAST_HIDDEN void
+mako_rust_fast_db_order_record_validation_prefix(
+    mako_local_db *db) MAKO_RUST_FAST_NOEXCEPT;
 
 #if defined(MAKO_LOCAL_TEST_HOOKS)
 /* Test-only observation of the number of record-validation tickets issued by

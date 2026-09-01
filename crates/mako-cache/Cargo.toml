@@ -24,6 +24,7 @@ mrx-rocks = { path = "../mrx-rocks" }
 nix = { version = "0.30.1", default-features = false, features = ["sched"] }
 
 [dev-dependencies]
+loom = "0.7"
 mako-history = { path = "../mako-history" }
 # Unit crash tests need deterministic wrapper-level RocksDB rendezvous points;
 # normal builds keep mrx-rocks' default, hook-free profile.
