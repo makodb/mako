@@ -1663,7 +1663,7 @@ fn finish_trusted_one_put_concurrent<'cache, 'db, B: Blobs + 'static>(
     cache: &'cache Cache<B>,
     native: mako_local::Transaction<'db>,
     preflight: mako_local::CommitRecordPreflight,
-    mut permit: writeback::NativeArenaPermit<'cache, B>,
+    permit: writeback::NativeArenaPermit<'cache, B>,
     worker_slot: usize,
 ) -> Result<(), Error> {
     #[cfg(test)]
@@ -1674,6 +1674,12 @@ fn finish_trusted_one_put_concurrent<'cache, 'db, B: Blobs + 'static>(
         return Err(abort_after_precommit_failure(native, Error::Apply(error)));
     }
 
+    // Native holder success can publish READY and let the consumer retire its
+    // occupancy before this thread resumes. Suppress automatic permit Drop
+    // across every terminal; after decoding we either transfer the claim to a
+    // BOUND/READY generation or explicitly drop the still-unassigned permit.
+    let mut permit = std::mem::ManuallyDrop::new(permit);
+
     let mut bound = None;
     // The crash matrix retains its exact post-bind/pre-serialization seam by
     // selecting the legacy callback terminal only in the helper process which
@@ -1683,7 +1689,14 @@ fn finish_trusted_one_put_concurrent<'cache, 'db, B: Blobs + 'static>(
     let force_callback = crate::failpoint::is_armed(crate::failpoint::Point::PreinstallBound);
     #[cfg(not(test))]
     let force_callback = false;
+    #[cfg(test)]
+    let force_rust_ready = crate::failpoint::is_armed(
+        crate::failpoint::Point::NativeCommittedBeforeReady,
+    ) || crate::failpoint::post_native_commit_observer_installed();
+    #[cfg(not(test))]
+    let force_rust_ready = false;
     let use_holder_terminal = !force_callback
+        && !force_rust_ready
         && writeback::native_holder_record_supported(preflight.exact_record_bytes());
 
     let outcome = if use_holder_terminal {
@@ -1744,6 +1757,42 @@ fn finish_trusted_one_put_concurrent<'cache, 'db, B: Blobs + 'static>(
         std::process::abort();
     }
 
+    if outcome.native_holder_ready() {
+        if !use_holder_terminal || !outcome.is_committed() {
+            // READY can already be consumer-owned. A malformed native witness
+            // must terminate without unwinding and releasing its occupancy.
+            std::process::abort();
+        }
+        let Some((_, sequence)) = outcome.accepted_order() else {
+            std::process::abort();
+        };
+        #[cfg(test)]
+        crate::failpoint::observe_post_native_holder_ready();
+        #[cfg(test)]
+        crate::failpoint::observe_post_native_commit();
+        #[cfg(test)]
+        crate::failpoint::hit(crate::failpoint::Point::NativeCommittedBeforeReady);
+        // SAFETY: exact OK/OK, sealed, order, terminal kind, and bit-33 READY
+        // witnesses were all checked above. This disarms occupancy before its
+        // health resolver and stores caller ACK only after native's Release.
+        let result = unsafe {
+            permit.acknowledge_native_holder_ready_concurrent_nonblocking(
+                sequence,
+                fence.slot(),
+            )
+        };
+        // SAFETY: the acknowledgement method disarmed the claim before any
+        // fallible resolution. Dropping now cannot race consumer retirement.
+        unsafe { std::mem::ManuallyDrop::drop(&mut permit) };
+        result?;
+        return Ok(());
+    }
+    if use_holder_terminal && outcome.is_committed() {
+        // Exact holder success is required to carry the native READY witness;
+        // falling back to Rust publication would hide a same-build ABI drift.
+        std::process::abort();
+    }
+
     // An exception or malformed post-order callback can return after native
     // assigned the order but before Rust acquired the cell. Adopt it now so
     // the ordinary unwritten-record path pins the exact dense obligation.
@@ -1761,6 +1810,10 @@ fn finish_trusted_one_put_concurrent<'cache, 'db, B: Blobs + 'static>(
         }
     }
 
+    // SAFETY: accepted outcomes transferred the occupancy right into `bound`;
+    // preaccept failures still own it and release it exactly once here.
+    unsafe { std::mem::ManuallyDrop::drop(&mut permit) };
+
     if outcome.is_committed() {
         let reservation = bound
             .as_mut()
@@ -1771,14 +1824,8 @@ fn finish_trusted_one_put_concurrent<'cache, 'db, B: Blobs + 'static>(
         crate::failpoint::hit(crate::failpoint::Point::NativeCommittedBeforeReady);
         // SAFETY: `is_committed` proves the exact sealed-holder witness,
         // definite visibility, and successful cleanup. Publish BOUND -> READY.
-        if use_holder_terminal {
-            unsafe {
-                reservation
-                    .publish_holder_completed_concurrent_nonblocking(fence.slot())?
-            };
-        } else {
-            unsafe { reservation.publish_completed_concurrent_nonblocking(fence.slot())? };
-        }
+        debug_assert!(!use_holder_terminal);
+        unsafe { reservation.publish_completed_concurrent_nonblocking(fence.slot())? };
         return Ok(());
     }
 
@@ -3112,6 +3159,82 @@ mod tests {
         drop(producer);
         assert_eq!(cache.applied_sequence(), 3);
         cache.close().unwrap();
+    }
+
+    #[cfg(have_mako)]
+    #[test]
+    fn native_ready_can_retire_before_rust_ack_without_releasing_occupancy_twice() {
+        use std::sync::Arc;
+        use std::time::{Duration, Instant};
+
+        use mrx_core::fakes::MemBlobs;
+
+        let backend = Arc::new(MemBlobs::new());
+        let mut options = CacheOptions::default();
+        options.record_checksum = RecordChecksum::None;
+        options.writeback.capacity = 1;
+        options.writeback.max_batch_records = 1;
+        let cache = Arc::new(
+            Cache::from_backend(Arc::clone(&backend), options)
+                .expect("open capacity-one concurrent cache"),
+        );
+
+        let observer_cache = Arc::clone(&cache);
+        crate::failpoint::install_post_native_holder_ready_observer(move || {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while observer_cache.applied_sequence() != 1 && Instant::now() < deadline {
+                std::thread::yield_now();
+            }
+            assert_eq!(
+                observer_cache.applied_sequence(),
+                1,
+                "the consumer did not retire native READY before Rust resumed"
+            );
+            assert_eq!(
+                observer_cache.queued_transactions(),
+                0,
+                "retirement must free the exact publication generation"
+            );
+        });
+
+        cache
+            .put(b"native-ready-retirement", b"first-generation")
+            .expect("commit the generation retired before Rust ACK");
+        assert!(
+            !crate::failpoint::post_native_holder_ready_observer_installed(),
+            "the native holder terminal did not reach its READY observer"
+        );
+        assert_eq!(cache.highest_acknowledged_sequence(), 1);
+
+        // Capacity one maps this commit back onto the same publication cell
+        // and holder. A stale permit Drop would already have underflowed
+        // aggregate occupancy; unsafe early holder reuse would corrupt this
+        // second sealed generation or its replay.
+        cache
+            .put(b"native-ready-retirement", b"reused-generation")
+            .expect("reuse the holder retired before the first caller ACK");
+        assert_eq!(cache.wait_applied().expect("replay reused holder"), 2);
+        assert_eq!(
+            cache
+                .get(b"native-ready-retirement")
+                .expect("read reused holder value")
+                .as_deref(),
+            Some(&b"reused-generation"[..])
+        );
+
+        let cache = Arc::try_unwrap(cache)
+            .unwrap_or_else(|_| panic!("READY observer retained the cache after firing"));
+        assert_eq!(cache.close().expect("close native-READY cache"), 2);
+        let reopened = Cache::from_backend(Arc::clone(&backend), options)
+            .expect("recover native-READY replay");
+        assert_eq!(
+            reopened
+                .get(b"native-ready-retirement")
+                .expect("read recovered holder generation")
+                .as_deref(),
+            Some(&b"reused-generation"[..])
+        );
+        assert_eq!(reopened.close().expect("close recovered cache"), 2);
     }
 
     #[cfg(have_mako)]

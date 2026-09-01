@@ -825,6 +825,12 @@ TEST(MakoLocalAbiIdentity, VersionAndStatusStringsAreStable) {
   static_assert(MAKO_RUST_FAST_NATIVE_ORDERED_ARENA_WRITTEN(arena_probe) == 1);
   static_assert(MAKO_RUST_FAST_NATIVE_ORDERED_ARENA_RESERVED(arena_probe) ==
                 0);
+  constexpr mako_rust_fast_native_ordered_arena_result holder_ready_probe{
+      0, 9, UINT64_C(7) | (UINT64_C(1) << 32) | (UINT64_C(1) << 33)};
+  static_assert(
+      MAKO_RUST_FAST_NATIVE_ORDERED_HOLDER_READY(holder_ready_probe) == 1);
+  static_assert(
+      MAKO_RUST_FAST_NATIVE_ORDERED_HOLDER_RESERVED(holder_ready_probe) == 0);
   static_assert(sizeof(mako_rust_fast_native_ordered_holder_control) == 48);
   static_assert(alignof(mako_rust_fast_native_ordered_holder_control) == 8);
   static_assert(offsetof(mako_rust_fast_native_ordered_holder_control, pool) ==
@@ -1673,10 +1679,14 @@ TEST_F(LocalAbiTest, NativeOrderedHolderDefersEncodingWithoutCopyingValue) {
       MAKO_RUST_FAST_NATIVE_ORDERED_ARENA_TIMESTAMP(commit);
   EXPECT_NE(timestamp, 0U);
   EXPECT_EQ(MAKO_RUST_FAST_NATIVE_ORDERED_ARENA_WRITTEN(commit), 1U);
-  EXPECT_EQ(MAKO_RUST_FAST_NATIVE_ORDERED_ARENA_RESERVED(commit), 0U);
+  EXPECT_EQ(MAKO_RUST_FAST_NATIVE_ORDERED_HOLDER_READY(commit), 1U);
+  EXPECT_EQ(MAKO_RUST_FAST_NATIVE_ORDERED_HOLDER_RESERVED(commit), 0U);
   EXPECT_EQ(__atomic_load_n(&publications[index].turn, __ATOMIC_ACQUIRE),
-            free_turn | UINT64_C(1));
-  EXPECT_EQ(publications[index].record_bytes, 0U);
+            free_turn | UINT64_C(3));
+  EXPECT_EQ(publications[index].mako_timestamp, timestamp);
+  EXPECT_EQ(publications[index].record_bytes,
+            (size_t{1} << (std::numeric_limits<size_t>::digits - 1)) |
+                exact_bytes);
 
   mako_rust_fast_one_put_holder_view view{};
   ASSERT_EQ(mako_rust_fast_one_put_holder_pool_get_view(

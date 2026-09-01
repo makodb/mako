@@ -1,6 +1,6 @@
 //! Test-only process-crash rendezvous points.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
@@ -123,6 +123,10 @@ thread_local! {
     /// A Rust-side response-delay seam. Unlike the native phase observer, this
     /// runs only after the commit C ABI has returned and released Silo locks.
     static POST_NATIVE_COMMIT_OBSERVER: Cell<Option<fn()>> = const { Cell::new(None) };
+    /// One-shot seam after the holder terminal's native READY Release and
+    /// before Rust disarms the detached permit or publishes caller ACK.
+    static POST_NATIVE_HOLDER_READY_OBSERVER: RefCell<Option<Box<dyn FnOnce()>>> =
+        const { RefCell::new(None) };
 }
 
 /// Install a callback for the post-native, pre-publication point on this
@@ -154,6 +158,45 @@ pub(crate) fn observe_post_native_commit() {
             observer();
         }
     });
+}
+
+/// Whether this thread needs the historical post-native/pre-READY seam.
+///
+/// The native holder terminal normally publishes READY before returning. A
+/// test which installs this observer selects the arena terminal instead so the
+/// callback remains strictly before Rust's READY publication.
+pub(crate) fn post_native_commit_observer_installed() -> bool {
+    POST_NATIVE_COMMIT_OBSERVER.with(|slot| slot.get().is_some())
+}
+
+/// Install one callback at native holder READY, before Rust acknowledges it.
+///
+/// Unlike [`install_post_native_commit_observer`], this observer deliberately
+/// retains the holder terminal. Ownership tests use it to let the background
+/// consumer retire and recycle the exact READY generation while the foreground
+/// permit remains in `ManuallyDrop`.
+pub(crate) fn install_post_native_holder_ready_observer(
+    observer: impl FnOnce() + 'static,
+) {
+    POST_NATIVE_HOLDER_READY_OBSERVER.with(|slot| {
+        assert!(
+            slot.borrow_mut().replace(Box::new(observer)).is_none(),
+            "post-native holder READY observer already installed on this thread"
+        );
+    });
+}
+
+/// Invoke and remove the current thread's holder-READY observer, if any.
+pub(crate) fn observe_post_native_holder_ready() {
+    let observer = POST_NATIVE_HOLDER_READY_OBSERVER.with(|slot| slot.borrow_mut().take());
+    if let Some(observer) = observer {
+        observer();
+    }
+}
+
+/// Whether this thread still retains an unconsumed holder-READY observer.
+pub(crate) fn post_native_holder_ready_observer_installed() -> bool {
+    POST_NATIVE_HOLDER_READY_OBSERVER.with(|slot| slot.borrow().is_some())
 }
 
 /// Arm one point in a fresh helper process.

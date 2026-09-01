@@ -4907,6 +4907,51 @@ impl<'a, B: Blobs> NativeArenaPermit<'a, B> {
             on_drop: DropAction::PinUnknown,
         }
     }
+
+    /// Transfer an exact generation which native already published READY and
+    /// release-acknowledge it for this caller.
+    ///
+    /// This path deliberately does not reread the publication cell. The
+    /// same-build terminal's scalar witness certifies that native wrote the
+    /// exact timestamp and high-bit-tagged extent before its READY Release.
+    /// Descriptor waiters retain their bounded timeout fallback; avoiding a
+    /// Rust notification is part of this restricted hot-path contract.
+    ///
+    /// # Safety
+    ///
+    /// `sequence` must come from the immediately preceding concurrent holder
+    /// terminal using this permit and must carry its exact ordinary-success,
+    /// sealed-holder, and native-READY witnesses. The permit must have been in
+    /// `ManuallyDrop` across that call because a consumer may retire READY
+    /// before Rust resumes. Every failure/unknown outcome must use
+    /// [`Self::adopt_externally_bound`] instead.
+    pub(crate) unsafe fn acknowledge_native_holder_ready_concurrent_nonblocking(
+        &mut self,
+        sequence: NonZeroU64,
+        worker_slot: usize,
+    ) -> Result<CommitSeq, ResolveError> {
+        if !self.owns_claim
+            || self.single_sequence.is_some()
+            || !native_holder_record_supported(self.exact_record_bytes)
+        {
+            std::process::abort();
+        }
+        let sequence = CommitSeq::new(sequence.get()).unwrap_or_else(|| std::process::abort());
+        let Some(caller_ack) = self.owner.trusted_caller_ack_by_worker.get(worker_slot) else {
+            std::process::abort();
+        };
+
+        // Native READY made the generation consumer-owned. Disarm before the
+        // health check or locked resolver can return an error; permit Drop must
+        // never release occupancy after consumer retirement did so.
+        self.owns_claim = false;
+        self.owner
+            .finish_trusted_ready_publication_concurrent(
+                QueueToken::new(sequence),
+                caller_ack,
+            )?;
+        Ok(sequence)
+    }
 }
 
 impl<B: Blobs> Drop for NativeArenaPermit<'_, B> {

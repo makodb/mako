@@ -328,6 +328,15 @@ constexpr uint64_t pack_preselected_record_state(uint32_t mako_timestamp,
          (record_written ? UINT64_C(1) << 32 : UINT64_C(0));
 }
 
+// @safe - Pure scalar packing for the same-build concurrent terminal result.
+// Bit 33 is meaningful only after native has Release-published holder READY.
+constexpr uint64_t pack_native_ordered_record_state(
+    uint32_t mako_timestamp, bool record_written,
+    bool holder_ready) noexcept {
+  return pack_preselected_record_state(mako_timestamp, record_written) |
+         (holder_ready ? UINT64_C(1) << 33 : UINT64_C(0));
+}
+
 constexpr uint64_t
 pack_fused_holder_control_word(uint32_t code, uint32_t payload = 0) noexcept {
   return static_cast<uint64_t>(code) | (static_cast<uint64_t>(payload) << 32);
@@ -390,6 +399,13 @@ static_assert(offsetof(mako_rust_fast_native_ordered_arena_result,
                        ordered_sequence) == 8);
 static_assert(offsetof(mako_rust_fast_native_ordered_arena_result,
                        record_state) == 16);
+constexpr mako_rust_fast_native_ordered_arena_result
+    kNativeOrderedHolderReadyLayoutProbe{
+        0, 9, pack_native_ordered_record_state(7, true, true)};
+static_assert(MAKO_RUST_FAST_NATIVE_ORDERED_HOLDER_READY(
+                  kNativeOrderedHolderReadyLayoutProbe) == 1);
+static_assert(MAKO_RUST_FAST_NATIVE_ORDERED_HOLDER_RESERVED(
+                  kNativeOrderedHolderReadyLayoutProbe) == 0);
 static_assert(sizeof(mako_rust_fast_native_ordered_holder_control) == 48);
 static_assert(alignof(mako_rust_fast_native_ordered_holder_control) ==
               alignof(uint64_t));
@@ -466,6 +482,8 @@ struct alignas(64) rust_publication_cell_layout {
 struct alignas(64) rust_record_arena_block_layout {
   std::array<uint8_t, 256> bytes;
 };
+constexpr size_t kRustNativeHolderRecordTag =
+    size_t{1} << (std::numeric_limits<size_t>::digits - 1);
 static_assert(sizeof(rust_publication_cell_layout) == 64);
 static_assert(alignof(rust_publication_cell_layout) == 64);
 static_assert(offsetof(rust_publication_cell_layout, turn) == 0);
@@ -568,6 +586,7 @@ bool valid_native_ordered_holder_control(
       (size_t{1} << control->publication_shift) != capacity ||
       control->publication_stride != sizeof(rust_publication_cell_layout) ||
       expected_record_bytes == 0 ||
+      expected_record_bytes >= kRustNativeHolderRecordTag ||
       expected_record_bytes > control->max_record_bytes)
     return false;
   return valid_indexed_byte_layout(
@@ -2019,6 +2038,7 @@ Transaction::ordered_accept_result accept_packed_cache_order(
 constexpr uint64_t kRustPublicationPhaseBits = 2;
 constexpr uint64_t kRustPublicationFree = 0;
 constexpr uint64_t kRustPublicationBound = 1;
+constexpr uint64_t kRustPublicationReady = 3;
 
 uint64_t rust_publication_turn(uint64_t sequence, uint32_t ring_shift,
                                uint64_t phase) noexcept {
@@ -2142,6 +2162,51 @@ void bind_native_ordered_holder(record_bind_bridge *bridge) noexcept {
               &no_record, sizeof(no_record));
   __atomic_store_n(turn, bound, __ATOMIC_RELEASE);
   bridge->selected_holder = &holder;
+}
+
+// @unsafe - The terminal has completed installation, successful STO cleanup,
+// facade recycling, and exact holder sealing while retaining the detached Rust
+// occupancy right. The earlier FREE Acquire and BOUND Release grant this
+// generation's unique scalar writes. The READY Release transfers the sealed
+// holder plus exact timestamp/extent to Rust's consumer before caller ACK.
+[[gnu::always_inline]] static inline void publish_native_ordered_holder_ready(
+    const record_bind_bridge &bridge) noexcept {
+  if (!bridge.assign_sequence_natively || bridge.holder_control == nullptr ||
+      bridge.selected_holder == nullptr || bridge.sequence == 0 ||
+      bridge.ordered_timestamp_out == nullptr ||
+      *bridge.ordered_timestamp_out == 0 || bridge.final_shape.bytes == 0 ||
+      bridge.final_shape.bytes >= kRustNativeHolderRecordTag)
+    std::abort();
+
+  const auto &control = *bridge.holder_control;
+  const one_put_holder &holder = *bridge.selected_holder;
+  if (holder.state != one_put_holder_state::sealed ||
+      holder.sequence != bridge.sequence ||
+      holder.mako_timestamp != *bridge.ordered_timestamp_out)
+    std::abort();
+
+  const size_t index =
+      static_cast<size_t>(bridge.sequence) & control.publication_mask;
+  uint8_t *const publication =
+      control.publication_base + index * control.publication_stride;
+  auto *const turn = reinterpret_cast<uint64_t *>(publication);
+  const uint64_t bound = rust_publication_turn(
+      bridge.sequence, control.publication_shift, kRustPublicationBound);
+  const uint64_t ready = rust_publication_turn(
+      bridge.sequence, control.publication_shift, kRustPublicationReady);
+  if (__atomic_load_n(turn, __ATOMIC_ACQUIRE) != bound)
+    std::abort();
+
+  const uint32_t mako_timestamp = *bridge.ordered_timestamp_out;
+  const size_t tagged_extent =
+      kRustNativeHolderRecordTag | bridge.final_shape.bytes;
+  std::memcpy(publication +
+                  offsetof(rust_publication_cell_layout, mako_timestamp),
+              &mako_timestamp, sizeof(mako_timestamp));
+  std::memcpy(publication +
+                  offsetof(rust_publication_cell_layout, record_bytes),
+              &tagged_extent, sizeof(tagged_extent));
+  __atomic_store_n(turn, ready, __ATOMIC_RELEASE);
 }
 
 // @unsafe - Completes the already-bound record after native releases its
@@ -3310,11 +3375,12 @@ reject_fast_preselected_record_terminal(mako_local_txn *txn) noexcept {
 [[gnu::always_inline]] static inline
 mako_rust_fast_native_ordered_arena_result pack_native_ordered_arena_result(
     uint64_t terminal, const record_bind_bridge &bridge,
-    uint32_t accepted_timestamp, uint8_t record_written) noexcept {
+    uint32_t accepted_timestamp, uint8_t record_written,
+    bool holder_ready = false) noexcept {
   return mako_rust_fast_native_ordered_arena_result{
       terminal, bridge.sequence,
-      pack_preselected_record_state(accepted_timestamp,
-                                    record_written == 1)};
+      pack_native_ordered_record_state(accepted_timestamp,
+                                       record_written == 1, holder_ready)};
 }
 
 [[gnu::always_inline]] static inline
@@ -3518,9 +3584,15 @@ commit_native_ordered_holder_and_destroy(
   }
 
   recycle_txn(txn);
+  const bool holder_ready = status == MAKO_LOCAL_OK;
+  if (holder_ready) {
+    if (holder_sealed != 1)
+      std::abort();
+    publish_native_ordered_holder_ready(bridge);
+  }
   return pack_native_ordered_arena_result(
       pack_fast_terminal_result(status, MAKO_LOCAL_OK), bridge,
-      accepted_timestamp, holder_sealed);
+      accepted_timestamp, holder_sealed, holder_ready);
 }
 
 [[gnu::always_inline]] static inline

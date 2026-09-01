@@ -139,8 +139,11 @@ extern "C" {
  *
  * A nonzero ordered_sequence in the three-word result is an unconditional
  * dense-slot obligation and guarantees that the matching publication cell is
- * already BOUND. record_state bits 0..31 carry the paired Mako timestamp, bit
- * 32 witnesses complete record initialization, and bits 33..63 are zero. A
+ * at least BOUND. record_state bits 0..31 carry the paired Mako timestamp and
+ * bit 32 witnesses complete record initialization. The arena terminal requires
+ * bits 33..63 to be zero. The holder terminal may additionally set bit 33 only
+ * on exact ordinary success, after it has written the holder-tagged extent and
+ * Release-published the matching cell READY; its bits 34..63 remain zero. A
  * preaccept failure returns both ordering words as zero. Layout mismatch,
  * queue illness, packed timestamp/sequence exhaustion, or ordinary OCC abort
  * detected before assignment consumes the transaction without a dense slot.
@@ -329,9 +332,11 @@ typedef struct mako_rust_fast_one_put_holder_pool
 /* Synchronous queue layout for the callback-free concurrent holder terminal.
  * The exact publication turn supplies holder-generation ownership: native
  * Acquire-checks FREE before touching the holder selected by the same dense
- * sequence, then Release-publishes BOUND. Rust publishes READY only after the
- * terminal reports that the holder was sealed. The pool and every pointed-to
- * allocation must remain stable for the complete synchronous call. */
+ * sequence, then Release-publishes BOUND. Exact ordinary success writes the
+ * timestamp and high-bit-tagged record extent, then Release-publishes READY
+ * before returning its bit-33 witness. Failure or uncertainty leaves BOUND for
+ * Rust's fail-closed pinning path. The pool and every pointed-to allocation
+ * must remain stable for the complete synchronous call. */
 typedef struct mako_rust_fast_native_ordered_holder_control {
   mako_rust_fast_one_put_holder_pool *pool;
   const uint8_t *unhealthy;
@@ -394,6 +399,10 @@ typedef struct mako_rust_fast_one_put_holder_view {
   ((uint8_t)((((result).record_state) >> 32) & UINT64_C(1)))
 #define MAKO_RUST_FAST_NATIVE_ORDERED_ARENA_RESERVED(result)                   \
   ((uint64_t)((result).record_state >> 33))
+#define MAKO_RUST_FAST_NATIVE_ORDERED_HOLDER_READY(result)                     \
+  ((uint8_t)((((result).record_state) >> 33) & UINT64_C(1)))
+#define MAKO_RUST_FAST_NATIVE_ORDERED_HOLDER_RESERVED(result)                  \
+  ((uint64_t)((result).record_state >> 34))
 
 /* Register-sized fused-terminal control word. Low 32 bits select one explicit
  * lifecycle state. The high 32 bits are zero except for NEED_SLOW's exact

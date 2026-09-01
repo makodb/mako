@@ -1052,6 +1052,7 @@ pub struct TrustedNativeOrderedOnePutRecordOutcome {
     ordered_sequence: u64,
     ordered_timestamp: u32,
     target_bound: bool,
+    native_holder_ready: bool,
 }
 
 impl TrustedNativeOrderedOnePutRecordOutcome {
@@ -1095,13 +1096,28 @@ impl TrustedNativeOrderedOnePutRecordOutcome {
             && self.inner.is_committed()
     }
 
+    /// Whether the concurrent holder terminal claims it published exact
+    /// holder metadata and changed this generation from BOUND to READY.
+    ///
+    /// This raw same-build witness is meaningful only for the holder terminal.
+    /// A caller must additionally require [`Self::is_committed`]; every other
+    /// combination is ABI corruption and must terminate without releasing the
+    /// accepted occupancy right.
+    #[inline(always)]
+    pub const fn native_holder_ready(self) -> bool {
+        self.native_holder_ready
+    }
+
     /// Decode the cold fail-closed completion report.
     #[cold]
     #[inline(never)]
     pub fn into_report(self) -> CommitRecordReport {
         let order_pair_valid = self.order_witness_valid();
         let mut report = self.inner.into_report();
-        if !order_pair_valid || (self.inner.record_written == 1 && !self.target_bound) {
+        if !order_pair_valid
+            || (self.inner.record_written == 1 && !self.target_bound)
+            || (self.native_holder_ready && !self.is_committed())
+        {
             report.completion_contract_valid = false;
             report.record_written = false;
         }
@@ -3771,6 +3787,7 @@ impl<'db> Transaction<'db> {
             ordered_sequence,
             ordered_timestamp,
             target_bound: state.bound,
+            native_holder_ready: false,
         }
     }
 
@@ -3972,6 +3989,7 @@ impl<'db> Transaction<'db> {
             ordered_sequence,
             ordered_timestamp,
             target_bound: state.bound,
+            native_holder_ready: false,
         }
     }
 
@@ -4048,6 +4066,7 @@ impl<'db> Transaction<'db> {
             ordered_sequence: result.ordered_sequence,
             ordered_timestamp,
             target_bound,
+            native_holder_ready: false,
         }
     }
 
@@ -4058,6 +4077,8 @@ impl<'db> Transaction<'db> {
     /// terminal. Native acquires the exact publication generation before it
     /// touches the matching holder, transfers the transaction's staged value
     /// allocation after installation, and returns a sealed-holder witness.
+    /// Exact ordinary success also publishes the holder-tagged metadata and
+    /// changes the matching cell from BOUND to READY before returning.
     /// Foreground code does not encode or copy a commit record.
     ///
     /// # Safety
@@ -4066,9 +4087,10 @@ impl<'db> Transaction<'db> {
     /// [`Self::commit_trusted_native_ordered_unchecked_one_put_arena`]. The
     /// control must describe the same concurrent queue and holder pool used by
     /// all of its packed terminals, and the caller must retain one detached
-    /// capacity right. Every accepted sequence owns an already-BOUND turn and
-    /// must be published or pinned; a sealed witness may be exposed only
-    /// through that exact turn.
+    /// capacity right. Every accepted non-success sequence owns an already-
+    /// BOUND turn and must be published or pinned. Exact ordinary success owns
+    /// an already-READY turn which must be caller-acknowledged without
+    /// releasing the detached occupancy claim a second time.
     #[doc(hidden)]
     #[inline(always)]
     pub unsafe fn commit_trusted_native_ordered_unchecked_one_put_holder(
@@ -4102,7 +4124,7 @@ impl<'db> Transaction<'db> {
             )
         };
         let ordered_timestamp = result.record_state as u32;
-        let holder_sealed = if result.record_state >> 33 == 0 {
+        let holder_sealed = if result.record_state >> 34 == 0 {
             ((result.record_state >> 32) & 1) as u8
         } else {
             u8::MAX
@@ -4117,6 +4139,7 @@ impl<'db> Transaction<'db> {
             ordered_sequence: result.ordered_sequence,
             ordered_timestamp,
             target_bound,
+            native_holder_ready: result.record_state & (1u64 << 33) != 0,
         }
     }
 
@@ -5219,11 +5242,61 @@ mod tests {
             ordered_sequence: u64::from(MAX_MAKO_TIMESTAMP) + 1,
             ordered_timestamp: 1,
             target_bound: false,
+            native_holder_ready: false,
         };
 
         assert!(!malformed.order_witness_valid());
         assert_eq!(malformed.accepted_order(), None);
         assert!(!malformed.into_report().completion_contract_valid);
+    }
+
+    #[test]
+    fn native_holder_ready_requires_exact_committed_witnesses() {
+        let packed_ok = (sys::MAKO_LOCAL_OK as u32 as u64)
+            | ((sys::MAKO_LOCAL_OK as u32 as u64) << 32);
+        let ready = TrustedNativeOrderedOnePutRecordOutcome {
+            inner: TrustedUncheckedOnePutRecordOutcome {
+                packed: packed_ok,
+                record_bound: true,
+                record_written: 1,
+            },
+            ordered_sequence: 11,
+            ordered_timestamp: 17,
+            target_bound: true,
+            native_holder_ready: true,
+        };
+        assert!(ready.is_committed());
+        assert!(ready.native_holder_ready());
+        assert!(ready.into_report().completion_contract_valid);
+
+        let malformed = TrustedNativeOrderedOnePutRecordOutcome {
+            inner: TrustedUncheckedOnePutRecordOutcome {
+                packed: sys::MAKO_LOCAL_CONFLICT as u32 as u64
+                    | ((sys::MAKO_LOCAL_OK as u32 as u64) << 32),
+                record_bound: true,
+                record_written: 1,
+            },
+            native_holder_ready: true,
+            ..ready
+        };
+        assert!(!malformed.is_committed());
+        assert!(!malformed.into_report().completion_contract_valid);
+
+        // The native decoder maps any holder bit above READY (bit 33) to this
+        // invalid sealed witness. READY plus one reserved bit must therefore
+        // fail closed even when the terminal statuses and order are otherwise
+        // an exact success.
+        let malformed_reserved = TrustedNativeOrderedOnePutRecordOutcome {
+            inner: TrustedUncheckedOnePutRecordOutcome {
+                packed: packed_ok,
+                record_bound: true,
+                record_written: u8::MAX,
+            },
+            native_holder_ready: true,
+            ..ready
+        };
+        assert!(!malformed_reserved.is_committed());
+        assert!(!malformed_reserved.into_report().completion_contract_valid);
     }
 
     #[test]
