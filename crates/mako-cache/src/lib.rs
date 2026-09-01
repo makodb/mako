@@ -166,29 +166,29 @@ impl CommitFence {
         self.enter_writer_slot(Self::current_thread_slot())
     }
 
+    #[inline(always)]
     fn enter_writer_slot(&self, slot: usize) -> CommitWriterGuard<'_> {
         let mut spins = 0;
         loop {
-            while self.read_only_closed.load(Ordering::Acquire) {
-                commit_fence_backoff(&mut spins);
-            }
             if let Some(guard) = self.try_enter_writer_slot(slot) {
                 return guard;
             }
-            commit_fence_backoff(&mut spins);
+            while self.read_only_closed.load(Ordering::Acquire) {
+                commit_fence_backoff(&mut spins);
+            }
         }
     }
 
     /// Try the enrollment half even when a closer may already be active.
     ///
-    /// Let E be this slot's successful SeqCst CAS and C the read-only closer's
-    /// SeqCst store. If E precedes C in the single SC order, the closer's later
-    /// SC slot load observes this writer until its outcome has resolved. If C
-    /// precedes E, the writer's later SC closed load is ordered after both and
-    /// observes true because reopening cannot occur until the reader guard is
-    /// dropped. It clears its slot and retries. Thus the closer either drains
-    /// a preexisting writer or prevents that writer from entering native
-    /// commit; the two sides cannot miss one another.
+    /// Let A be the slot's Release publication, F the following SeqCst fence,
+    /// W the writer's SeqCst closed load, C the read-only closer's SeqCst store,
+    /// and L its later SeqCst slot load. If W observed the value before C, the
+    /// SC order would have W < C. If L observed the value before A, SC-fence
+    /// coherence would have L < F. Program order already has F < W and C < L,
+    /// so both misses would create the impossible cycle F < W < C < L < F.
+    /// Thus the closer either drains this writer until its Release clear or
+    /// the writer observes the close, clears its slot, and retries.
     #[inline(always)]
     fn try_enter_writer_slot(&self, slot: usize) -> Option<CommitWriterGuard<'_>> {
         let writer = self
@@ -196,12 +196,14 @@ impl CommitFence {
             .get(slot)
             .expect("commit-fence writer slot is in range");
         assert!(
-            writer
-                .active
-                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-                .is_ok(),
+            !writer.active.load(Ordering::Relaxed),
             "one native worker cannot overlap two cache commit outcomes"
         );
+        writer.active.store(true, Ordering::Release);
+        // This Store->Load barrier is the writer's half of the SC-fence cycle
+        // above. On x86-64 LLVM lowers it to a locked no-op on private stack
+        // storage, avoiding a locked RMW on the writer's publication slot.
+        std::sync::atomic::fence(Ordering::SeqCst);
         if !self.read_only_closed.load(Ordering::SeqCst) {
             return Some(CommitWriterGuard { writer });
         }
