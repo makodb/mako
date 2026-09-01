@@ -1,5 +1,6 @@
 // mtree_abi.cc - hardened C boundary for an integral-valued Masstree.
 
+#define MAKO_MTREE_ABI_TRUSTED_RUST_BRIDGE 1
 #include "mako/storage/mtree_abi.h"
 
 #include "mako/core.h"
@@ -13,6 +14,7 @@
 #include <atomic>
 #include <bit>
 #include <climits>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <limits>
@@ -60,6 +62,7 @@ static_assert(std::is_standard_layout_v<mt_scan_bound>);
 static_assert(std::is_standard_layout_v<mt_scan_entry>);
 static_assert(std::is_standard_layout_v<mt_scan_result>);
 static_assert(std::is_standard_layout_v<mt_read_scope>);
+static_assert(std::is_same_v<mt_rcu_scope, mt_read_scope>);
 static_assert(MASSTREE_MAXKEYLEN >= MT_CONFIGURED_MAX_KEY_LENGTH,
               "the native Masstree key limit is below the ABI contract");
 static_assert(NMAXCORES <= std::numeric_limits<uint32_t>::max());
@@ -86,7 +89,10 @@ struct mt_runtime {
   std::atomic<mt_runtime_health_state> health{MT_RUNTIME_HEALTHY};
   std::atomic<mt_thread *> thread_registry{nullptr};
   std::atomic<mt_tree *> tree_registry{nullptr};
-  /* One independently cached structural-read publication per native core. */
+  /*
+   * One independently cached structural-read publication per native core.
+   * Writers inspect only slots named by release-published worker handles.
+   */
   std::array<mt_structure_reader_slot, NMAXCORES> structure_readers{};
   std::vector<mt_thread *> threads;
   std::vector<mt_tree *> trees;
@@ -96,13 +102,16 @@ struct mt_thread {
   mt_runtime *runtime;
   std::thread::id owner;
   int native_core_id;
+  /* Owner-thread-only mirror; native TLS remains the scope authority. */
+  bool controlled_rcu_active;
   /* Immutable after release-publication through runtime.thread_registry. */
   mt_thread *registry_next;
 
   mt_thread(mt_runtime *runtime_arg, std::thread::id owner_arg,
             int native_core_id_arg) noexcept
       : runtime(runtime_arg), owner(owner_arg),
-        native_core_id(native_core_id_arg), registry_next(nullptr) {}
+        native_core_id(native_core_id_arg), controlled_rcu_active(false),
+        registry_next(nullptr) {}
 };
 
 struct mt_tree {
@@ -143,12 +152,45 @@ constexpr mt_feature_set kFeatures =
     MT_FEATURE_INTEGRAL_RECORD_IDS | MT_FEATURE_RUNTIME_HEALTH |
     MT_FEATURE_SINGLETON_RUNTIME | MT_FEATURE_COPIED_RANGE_SCANS |
     MT_FEATURE_SCOPED_POINT_READS | MT_FEATURE_SCOPED_STRIDED_POINT_READS |
-    MT_FEATURE_STRIDED_POINT_READS;
+    MT_FEATURE_STRIDED_POINT_READS | MT_FEATURE_SCOPED_RCU;
 
 /* Deliberately excludes MT_FEATURE_GRACEFUL_SHUTDOWN. */
 static_assert((kFeatures & MT_FEATURE_GRACEFUL_SHUTDOWN) == 0);
 
 thread_local mt_thread *tls_thread = nullptr;
+
+/*
+ * Tree facade objects are release-published once and intentionally retained
+ * for the process lifetime. Cache only pointers that have already passed the
+ * registry walk: an arbitrary foreign pointer is still compared as an opaque
+ * value and is never dereferenced. TPC-C alternates among a small working set
+ * of tables, so this removes the otherwise linear registry walk from nearly
+ * every point operation without weakening the hostile-pointer boundary.
+ */
+constexpr size_t kTreeValidationCacheSlots = 64;
+static_assert(std::has_single_bit(kTreeValidationCacheSlots));
+
+class tree_validation_cache final {
+public:
+  bool contains(const mt_tree *candidate) const noexcept {
+    return entries_[slot(candidate)] == candidate;
+  }
+
+  void remember(const mt_tree *candidate) noexcept {
+    entries_[slot(candidate)] = candidate;
+  }
+
+private:
+  static size_t slot(const mt_tree *candidate) noexcept {
+    std::uintptr_t bits = reinterpret_cast<std::uintptr_t>(candidate);
+    bits = (bits >> 6) ^ (bits >> 17) ^ (bits >> 31);
+    return static_cast<size_t>(bits) & (kTreeValidationCacheSlots - 1);
+  }
+
+  std::array<const mt_tree *, kTreeValidationCacheSlots> entries_{};
+};
+
+thread_local tree_validation_cache tls_tree_validation_cache;
 
 /*
  * Standards-race-free structural admission for inherited Masstree.
@@ -191,10 +233,33 @@ private:
 
 class structure_write_guard final {
 public:
-  explicit structure_write_guard(mt_tree &tree)
+  structure_write_guard(mt_tree &tree, const mt_thread &writer)
       : tree_(tree), writer_lock_(tree.structure_writer_mutex) {
     tree_.structure_writer_active.store(true, std::memory_order_seq_cst);
-    for (mt_structure_reader_slot &slot : tree_.runtime->structure_readers) {
+    /*
+     * Thread handles and registry links live for the process lifetime. Registry
+     * publication, reader slot publication/recheck, and the writer flag/snapshot
+     * form one sequentially consistent order. If a reader publishes its slot
+     * first, its preceding handle publication is in this snapshot; if the
+     * writer flag comes first, the reader observes it and retracts before native
+     * access. Thus a writer drains only registered slots, rather than all
+     * NMAXCORES capacity slots.
+     */
+    for (const mt_thread *thread =
+             tree_.runtime->thread_registry.load(std::memory_order_seq_cst);
+         thread != nullptr; thread = thread->registry_next) {
+      const int core_id = thread->native_core_id;
+      if (core_id < 0 || core_id >= static_cast<int>(NMAXCORES)) {
+        INVARIANT(false);
+        continue;
+      }
+      mt_structure_reader_slot &slot =
+          tree_.runtime->structure_readers[static_cast<size_t>(core_id)];
+      if (thread == &writer) {
+        /* checked_operation excludes a structural read on this worker. */
+        INVARIANT(slot.active_tree.load(std::memory_order_relaxed) != &tree_);
+        continue;
+      }
       while (slot.active_tree.load(std::memory_order_seq_cst) == &tree_) {
         nop_pause();
       }
@@ -282,6 +347,97 @@ private:
 };
 
 thread_local read_scope_state tls_read_scope;
+
+/*
+ * A controlled worker-wide RCU scope. Unlike read_scope_state this owns no
+ * structural admission and is therefore valid across several trees and
+ * get-or-insert calls. Ordinary operations retain their local structural
+ * guards. Once checked_operation has validated this scope's runtime and worker
+ * identity, they reuse its RCU protection instead of entering a nested region.
+ */
+class rcu_scope_state final {
+public:
+  rcu_scope_state() = default;
+  rcu_scope_state(const rcu_scope_state &) = delete;
+  rcu_scope_state &operator=(const rcu_scope_state &) = delete;
+
+  ~rcu_scope_state() noexcept { close(); }
+
+  bool active() const noexcept { return active_; }
+
+  bool can_advance_generation() const noexcept {
+    return generation_ != std::numeric_limits<uint64_t>::max();
+  }
+
+  void enter(mt_runtime &runtime, mt_thread &thread) {
+    INVARIANT(!active_ && !thread.controlled_rcu_active);
+    runtime_ = &runtime;
+    thread_ = &thread;
+    rcu_.emplace();
+    ++generation_;
+    active_ = true;
+    thread.controlled_rcu_active = true;
+  }
+
+  void close() noexcept {
+    if (thread_ != nullptr) {
+      INVARIANT(thread_->controlled_rcu_active == active_);
+      thread_->controlled_rcu_active = false;
+    }
+    active_ = false;
+    rcu_.reset();
+    thread_ = nullptr;
+    runtime_ = nullptr;
+  }
+
+  bool matches(const mt_rcu_scope &token) const noexcept {
+    return active_ && token.owner == owner_identity() &&
+           token.generation == generation_;
+  }
+
+  bool matches(mt_runtime *runtime, mt_thread *thread) const noexcept {
+    return active_ && runtime_ == runtime && thread_ == thread;
+  }
+
+  uintptr_t owner_identity() const noexcept {
+    return reinterpret_cast<uintptr_t>(this);
+  }
+
+  uint64_t generation() const noexcept { return generation_; }
+
+private:
+  mt_runtime *runtime_ = nullptr;
+  mt_thread *thread_ = nullptr;
+  uint64_t generation_ = 0;
+  bool active_ = false;
+  std::optional<scoped_rcu_region> rcu_;
+};
+
+thread_local rcu_scope_state tls_rcu_scope;
+
+/*
+ * Preserves the established standalone-operation behavior while making the
+ * controlled worker scope's hot path a single predictable branch. `covered`
+ * is produced only after checked_operation has validated tree/runtime/worker
+ * affinity. The invariant makes accidental elision without an active native
+ * region fail loudly in invariant-enabled builds.
+ */
+class operation_rcu_guard final {
+public:
+  explicit operation_rcu_guard(bool covered) {
+    if (covered) {
+      INVARIANT(rcu::s_instance.in_rcu_region());
+    } else {
+      local_.emplace();
+    }
+  }
+
+  operation_rcu_guard(const operation_rcu_guard &) = delete;
+  operation_rcu_guard &operator=(const operation_rcu_guard &) = delete;
+
+private:
+  std::optional<scoped_rcu_region> local_;
+};
 
 mt_runtime &singleton_runtime() noexcept {
   static mt_runtime runtime;
@@ -391,7 +547,12 @@ bool registered_tree(const mt_runtime &runtime,
 }
 
 mt_status checked_thread(mt_runtime *expected_runtime, mt_thread *candidate,
-                         bool reject_active_rcu) {
+                         bool reject_active_rcu,
+                         bool allow_controlled_rcu = false,
+                         bool *controlled_rcu_out = nullptr) {
+  if (controlled_rcu_out != nullptr) {
+    *controlled_rcu_out = false;
+  }
   if (candidate == nullptr) {
     return MT_ERR_NOT_ATTACHED;
   }
@@ -419,7 +580,21 @@ mt_status checked_thread(mt_runtime *expected_runtime, mt_thread *candidate,
                                           candidate->native_core_id)) {
     return MT_ERR_NOT_ATTACHED;
   }
-  if (reject_active_rcu &&
+  /*
+   * Full validation above proves this is the current worker's opaque handle,
+   * so its owner-thread-only mirror avoids a dynamic TLS-wrapper lookup on
+   * every operation. Native TLS still owns the guard, token, and cleanup.
+   */
+  INVARIANT(candidate->controlled_rcu_active ==
+            tls_rcu_scope.matches(expected_runtime, candidate));
+  INVARIANT(!candidate->controlled_rcu_active ||
+            rcu::s_instance.in_rcu_region());
+  const bool controlled_rcu =
+      allow_controlled_rcu && candidate->controlled_rcu_active;
+  if (controlled_rcu_out != nullptr) {
+    *controlled_rcu_out = controlled_rcu;
+  }
+  if (reject_active_rcu && !controlled_rcu &&
       (tls_read_scope.active() || rcu::s_instance.in_rcu_region())) {
     return MT_ERR_ACTIVE_GUARDS;
   }
@@ -435,9 +610,14 @@ mt_status checked_tree(mt_tree *candidate, mt_tree **out) {
     return MT_ERR_INVALID;
   }
   mt_runtime &runtime = singleton_runtime();
-  if (!runtime.acquired.load(std::memory_order_acquire) ||
-      !registered_tree(runtime, candidate)) {
+  if (!runtime.acquired.load(std::memory_order_acquire)) {
     return MT_ERR_INVALID;
+  }
+  if (!tls_tree_validation_cache.contains(candidate)) {
+    if (!registered_tree(runtime, candidate)) {
+      return MT_ERR_INVALID;
+    }
+    tls_tree_validation_cache.remember(candidate);
   }
   /* Dereference only after registry membership proves this is our handle. */
   if (!candidate->open.load(std::memory_order_acquire)) {
@@ -449,12 +629,15 @@ mt_status checked_tree(mt_tree *candidate, mt_tree **out) {
 
 mt_status checked_operation(mt_tree *tree_candidate,
                             mt_thread *thread_candidate, mt_tree **tree_out,
-                            mt_runtime **runtime_out) {
+                            mt_runtime **runtime_out,
+                            bool allow_controlled_rcu,
+                            bool &controlled_rcu_out) {
   if (tree_out == nullptr || runtime_out == nullptr) {
     return MT_ERR_INVALID;
   }
   *tree_out = nullptr;
   *runtime_out = nullptr;
+  controlled_rcu_out = false;
 
   mt_tree *tree = nullptr;
   mt_status status = checked_tree(tree_candidate, &tree);
@@ -462,11 +645,15 @@ mt_status checked_operation(mt_tree *tree_candidate,
     return status;
   }
   mt_runtime *runtime = tree->runtime;
-  status = checked_thread(runtime, thread_candidate, true);
+  status = checked_thread(runtime, thread_candidate, true,
+                          allow_controlled_rcu,
+                          &controlled_rcu_out);
   if (status != MT_OK) {
+    controlled_rcu_out = false;
     return status;
   }
   if (runtime->health.load(std::memory_order_acquire) != MT_RUNTIME_HEALTHY) {
+    controlled_rcu_out = false;
     return MT_ERR_POISONED;
   }
   *tree_out = tree;
@@ -597,8 +784,337 @@ void initialize_insert_result(mt_get_or_insert_result *out) noexcept {
   out->reserved[2] = 0;
 }
 
+void initialize_insert_results(size_t count,
+                               mt_get_or_insert_result *out) noexcept {
+  for (size_t index = 0; index != count; ++index) {
+    initialize_insert_result(&out[index]);
+  }
+}
+
+/*
+ * Preflight for the private Rust-owned-handle lane. References are formed by
+ * the trusted entry points before reaching this function, so none of these
+ * assertions is a hostile-pointer defense. They document and diagnose the
+ * unsafe caller contract without retaining the release-build validation cost.
+ */
+mt_status trusted_operation(mt_tree &tree, mt_thread &thread,
+                            mt_runtime **runtime_out,
+                            bool &controlled_rcu_out) noexcept {
+  mt_runtime *runtime = tree.runtime;
+  INVARIANT(runtime != nullptr);
+  INVARIANT(runtime == &singleton_runtime());
+  INVARIANT(runtime->acquired.load(std::memory_order_acquire));
+  INVARIANT(tree.open.load(std::memory_order_acquire));
+  INVARIANT(&thread == tls_thread);
+  INVARIANT(thread.runtime == runtime);
+  INVARIANT(tl_silo_runtime == runtime->native);
+  INVARIANT(thread.native_core_id >= 0);
+  INVARIANT(thread.native_core_id < static_cast<int>(NMAXCORES));
+  INVARIANT(coreid::matches_current_assignment(runtime->native->id(),
+                                               thread.native_core_id));
+  INVARIANT(thread.controlled_rcu_active ==
+            tls_rcu_scope.matches(runtime, &thread));
+  INVARIANT(!thread.controlled_rcu_active ||
+            rcu::s_instance.in_rcu_region());
+
+  controlled_rcu_out = thread.controlled_rcu_active;
+  if (!controlled_rcu_out &&
+      (tls_read_scope.active() || rcu::s_instance.in_rcu_region())) {
+    return MT_ERR_ACTIVE_GUARDS;
+  }
+  if (runtime->health.load(std::memory_order_acquire) != MT_RUNTIME_HEALTHY) {
+    controlled_rcu_out = false;
+    return MT_ERR_POISONED;
+  }
+  *runtime_out = runtime;
+  return MT_OK;
+}
+
+mt_status point_get_validated(mt_tree &tree, mt_thread &thread,
+                              mt_runtime *runtime, bool controlled_rcu,
+                              const void *key, size_t key_length,
+                              mt_record_id *out) noexcept {
+  try {
+    mt_record_id found = MT_RECORD_ID_NONE;
+    {
+      structure_read_guard structure_guard(tree, thread);
+      /* A writer may have poisoned the runtime while this reader waited. */
+      if (runtime->health.load(std::memory_order_acquire) !=
+          MT_RUNTIME_HEALTHY) {
+        return MT_ERR_POISONED;
+      }
+      try {
+        operation_rcu_guard region(controlled_rcu);
+        const varkey native_key = make_key(key, key_length);
+        mt_record_id value = MT_RECORD_ID_NONE;
+        if (tree.native.search(native_key, value)) {
+          if (value == MT_RECORD_ID_NONE) {
+            poison(runtime);
+            return MT_ERR_INTERNAL;
+          }
+          found = value;
+        }
+      } catch (const std::bad_alloc &) {
+        throw;
+      } catch (...) {
+        /* Poison before a queued structural writer can pass admission. */
+        poison(runtime);
+        throw;
+      }
+    }
+    *out = found;
+    return MT_OK;
+  } catch (const std::bad_alloc &) {
+    return MT_ERR_OUT_OF_MEMORY;
+  } catch (...) {
+    poison(runtime);
+    return MT_ERR_CPP_EXCEPTION;
+  }
+}
+
+mt_status point_get_strided_validated(mt_tree &tree, mt_thread &thread,
+                                      mt_runtime *runtime, bool controlled_rcu,
+                                      const uint8_t *cursor, size_t key_count,
+                                      size_t key_length, size_t key_stride,
+                                      mt_record_id *out) noexcept {
+  try {
+    {
+      structure_read_guard structure_guard(tree, thread);
+      /* A writer may have poisoned the runtime while this reader waited. */
+      if (runtime->health.load(std::memory_order_acquire) !=
+          MT_RUNTIME_HEALTHY) {
+        return MT_ERR_POISONED;
+      }
+      try {
+        operation_rcu_guard region(controlled_rcu);
+        const mt_status status = search_strided(
+            tree, runtime, cursor, key_count, key_length, key_stride, out);
+        if (status != MT_OK) {
+          clear_strided_output(key_count, out);
+          return status;
+        }
+      } catch (const std::bad_alloc &) {
+        throw;
+      } catch (...) {
+        /* Poison before a queued structural writer can pass admission. */
+        poison(runtime);
+        throw;
+      }
+    }
+    return MT_OK;
+  } catch (const std::bad_alloc &) {
+    clear_strided_output(key_count, out);
+    return MT_ERR_OUT_OF_MEMORY;
+  } catch (...) {
+    clear_strided_output(key_count, out);
+    poison(runtime);
+    return MT_ERR_CPP_EXCEPTION;
+  }
+}
+
+mt_status get_or_insert_validated(mt_tree &tree, mt_thread &thread,
+                                  mt_runtime *runtime, bool controlled_rcu,
+                                  const void *key, size_t key_length,
+                                  mt_record_id candidate,
+                                  mt_get_or_insert_result *out) noexcept {
+  bool publication_attempted = false;
+  bool publication_classified = false;
+  const auto classify_unfinished_publication = [&]() noexcept {
+    if (!publication_classified) {
+      out->winner = MT_RECORD_ID_NONE;
+      out->inserted = 0;
+      out->publication = publication_attempted
+                             ? MT_PUBLICATION_UNKNOWN
+                             : MT_PUBLICATION_FAILURE_BEFORE_PUBLICATION;
+    }
+  };
+
+  try {
+    {
+      structure_write_guard structure_guard(tree, thread);
+      /* A preceding queued writer may have poisoned before releasing. */
+      if (runtime->health.load(std::memory_order_acquire) !=
+          MT_RUNTIME_HEALTHY) {
+        return MT_ERR_POISONED;
+      }
+      try {
+        operation_rcu_guard region(controlled_rcu);
+        const varkey native_key = make_key(key, key_length);
+        mt_record_id winner = MT_RECORD_ID_NONE;
+
+        /*
+         * Resolve or publish with one locked cursor. Structural-writer
+         * admission makes the cursor's observed old value the stable
+         * append-only winner.
+         */
+        publication_attempted = true;
+        const bool inserted =
+            tree.native.insert_if_absent_with_old(native_key, candidate,
+                                                  winner);
+        if (inserted) {
+          out->winner = candidate;
+          out->inserted = 1;
+          out->publication = MT_PUBLICATION_CANDIDATE_INSERTED;
+          publication_classified = true;
+        } else {
+          /* A false return proves this candidate was not stored. */
+          out->publication = MT_PUBLICATION_CANDIDATE_PROVEN_UNPUBLISHED;
+          publication_classified = true;
+          if (winner == MT_RECORD_ID_NONE) {
+            poison(runtime);
+            return MT_ERR_INTERNAL;
+          }
+          out->winner = winner;
+        }
+      } catch (const std::bad_alloc &) {
+        classify_unfinished_publication();
+        if (out->publication == MT_PUBLICATION_UNKNOWN) {
+          poison(runtime);
+        }
+        /* Rethrow only after readers will observe the poisoned runtime. */
+        throw;
+      } catch (...) {
+        classify_unfinished_publication();
+        poison(runtime);
+        /* The structural writer guard remains held until this rethrow. */
+        throw;
+      }
+    }
+    return MT_OK;
+  } catch (const std::bad_alloc &) {
+    classify_unfinished_publication();
+    if (out->publication == MT_PUBLICATION_UNKNOWN) {
+      poison(runtime);
+    }
+    return MT_ERR_OUT_OF_MEMORY;
+  } catch (...) {
+    classify_unfinished_publication();
+    poison(runtime);
+    return MT_ERR_CPP_EXCEPTION;
+  }
+}
+
+/*
+ * Trusted fixed-shape batch counterpart to get_or_insert_validated. The safe
+ * Rust facade has already proved all slice spans, key shape, handle affinity,
+ * and pairwise-distinct nonzero candidates. Keeping the publication state of
+ * the current row outside the Masstree call is intentional: every catch path
+ * can classify that row before releasing structural-writer admission, while
+ * the already completed prefix and untouched suffix remain exact.
+ */
+mt_status get_or_insert_strided_trusted_validated(
+    mt_tree &tree, mt_thread &thread, mt_runtime *runtime,
+    bool controlled_rcu, const uint8_t *cursor, size_t key_count,
+    size_t key_length, size_t key_stride, const mt_record_id *candidates,
+    mt_get_or_insert_result *out) noexcept {
+  size_t current = key_count;
+  bool publication_attempted = false;
+  bool publication_classified = false;
+  const auto classify_unfinished_publication = [&]() noexcept {
+    if (current == key_count || publication_classified) {
+      return;
+    }
+    mt_get_or_insert_result &result = out[current];
+    result.winner = MT_RECORD_ID_NONE;
+    result.inserted = 0;
+    result.publication = publication_attempted
+                             ? MT_PUBLICATION_UNKNOWN
+                             : MT_PUBLICATION_FAILURE_BEFORE_PUBLICATION;
+  };
+
+  try {
+    {
+      structure_write_guard structure_guard(tree, thread);
+      /* A preceding queued writer may have poisoned before releasing. */
+      if (runtime->health.load(std::memory_order_acquire) !=
+          MT_RUNTIME_HEALTHY) {
+        return MT_ERR_POISONED;
+      }
+      try {
+        operation_rcu_guard region(controlled_rcu);
+        for (current = 0; current != key_count; ++current) {
+          publication_attempted = false;
+          publication_classified = false;
+          mt_get_or_insert_result &result = out[current];
+          const varkey native_key = make_key(cursor, key_length);
+          mt_record_id winner = MT_RECORD_ID_NONE;
+
+          publication_attempted = true;
+          const bool inserted = tree.native.insert_if_absent_with_old(
+              native_key, candidates[current], winner);
+          if (inserted) {
+            result.winner = candidates[current];
+            result.inserted = 1;
+            result.publication = MT_PUBLICATION_CANDIDATE_INSERTED;
+            publication_classified = true;
+          } else {
+            /* A false return proves this exact candidate was not stored. */
+            result.publication = MT_PUBLICATION_CANDIDATE_PROVEN_UNPUBLISHED;
+            publication_classified = true;
+            if (winner == MT_RECORD_ID_NONE) {
+              poison(runtime);
+              return MT_ERR_INTERNAL;
+            }
+            result.winner = winner;
+          }
+          if (key_length != 0 && current + 1 != key_count) {
+            cursor += key_stride;
+          }
+        }
+        current = key_count;
+      } catch (const std::bad_alloc &) {
+        classify_unfinished_publication();
+        if (current != key_count &&
+            out[current].publication == MT_PUBLICATION_UNKNOWN) {
+          poison(runtime);
+        }
+        throw;
+      } catch (...) {
+        classify_unfinished_publication();
+        poison(runtime);
+        throw;
+      }
+    }
+    return MT_OK;
+  } catch (const std::bad_alloc &) {
+    classify_unfinished_publication();
+    if (current != key_count &&
+        out[current].publication == MT_PUBLICATION_UNKNOWN) {
+      poison(runtime);
+    }
+    return MT_ERR_OUT_OF_MEMORY;
+  } catch (...) {
+    classify_unfinished_publication();
+    poison(runtime);
+    return MT_ERR_CPP_EXCEPTION;
+  }
+}
+
 void initialize_scan_result(mt_scan_result *out) noexcept {
   *out = mt_scan_result{};
+  out->stop_reason = MT_SCAN_STOP_END;
+  out->resume = MT_SCAN_RESUME_NONE;
+}
+
+/* Private result used only by the Rust bounded RecordId scan. */
+struct trusted_record_id_scan_result {
+  size_t records_written;
+  size_t continuation_bytes_used;
+  size_t next_key_bytes_required;
+  mt_scan_stop_reason stop_reason;
+  mt_scan_resume_kind resume;
+  uint64_t reserved[2];
+};
+
+constexpr mt_scan_resume_kind kTrustedScanResumeInclusiveNext = 3;
+
+static_assert(std::is_standard_layout_v<trusted_record_id_scan_result>);
+static_assert(sizeof(trusted_record_id_scan_result) == 48);
+static_assert(alignof(trusted_record_id_scan_result) == alignof(uint64_t));
+
+void initialize_trusted_record_id_scan_result(
+    trusted_record_id_scan_result *out) noexcept {
+  *out = trusted_record_id_scan_result{};
   out->stop_reason = MT_SCAN_STOP_END;
   out->resume = MT_SCAN_RESUME_NONE;
 }
@@ -751,6 +1267,214 @@ private:
   bool invalid_native_entry_ = false;
 };
 
+mt_status copied_scan_validated(mt_tree &tree, mt_thread &thread,
+                                mt_runtime *runtime, bool controlled_rcu,
+                                mt_scan_direction direction,
+                                const mt_scan_bound &lower,
+                                const mt_scan_bound &upper,
+                                mt_scan_entry *entries, size_t entry_capacity,
+                                uint8_t *key_arena,
+                                size_t key_arena_capacity,
+                                mt_scan_result *out) noexcept {
+  try {
+    if (bound_is_present(lower) && bound_is_present(upper)) {
+      const int ordering = compare_byte_strings(
+          lower.key, lower.key_length, upper.key, upper.key_length);
+      if (ordering > 0 ||
+          (ordering == 0 && (lower.kind == MT_SCAN_BOUND_EXCLUSIVE ||
+                             upper.kind == MT_SCAN_BOUND_EXCLUSIVE))) {
+        return MT_OK;
+      }
+    }
+
+    copied_scan_collector collector(direction, lower, upper, entries,
+                                    entry_capacity, key_arena,
+                                    key_arena_capacity);
+    {
+      structure_read_guard structure_guard(tree, thread);
+      /* A writer may have poisoned the runtime while this reader waited. */
+      if (runtime->health.load(std::memory_order_acquire) !=
+          MT_RUNTIME_HEALTHY) {
+        return MT_ERR_POISONED;
+      }
+      try {
+        operation_rcu_guard region(controlled_rcu);
+        if (direction == MT_SCAN_FORWARD) {
+          const varkey native_lower =
+              bound_is_present(lower) ? make_key(lower.key, lower.key_length)
+                                      : make_key(nullptr, 0);
+          if (upper.kind == MT_SCAN_BOUND_EXCLUSIVE) {
+            const varkey native_upper = make_key(upper.key, upper.key_length);
+            tree.native.search_range_call_bounded(native_lower, native_upper,
+                                                  collector);
+          } else {
+            tree.native.search_range_call_unbounded(native_lower, collector);
+          }
+        } else {
+          std::array<uint8_t, MT_CONFIGURED_MAX_KEY_LENGTH> maximum_key{};
+          maximum_key.fill(UINT8_MAX);
+          const varkey native_upper =
+              bound_is_present(upper)
+                  ? make_key(upper.key, upper.key_length)
+                  : make_key(maximum_key.data(), maximum_key.size());
+          if (lower.kind == MT_SCAN_BOUND_EXCLUSIVE) {
+            const varkey native_lower = make_key(lower.key, lower.key_length);
+            tree.native.rsearch_range_call_bounded(native_upper, native_lower,
+                                                   collector);
+          } else {
+            tree.native.rsearch_range_call_unbounded(native_upper, collector);
+          }
+        }
+      } catch (const std::bad_alloc &) {
+        throw;
+      } catch (...) {
+        /* Poison before a queued structural writer can pass admission. */
+        poison(runtime);
+        throw;
+      }
+
+      if (collector.invalid_native_entry()) {
+        poison(runtime);
+        return MT_ERR_INTERNAL;
+      }
+    }
+
+    collector.publish(out);
+    return MT_OK;
+  } catch (const std::bad_alloc &) {
+    return MT_ERR_OUT_OF_MEMORY;
+  } catch (...) {
+    poison(runtime);
+    return MT_ERR_CPP_EXCEPTION;
+  }
+}
+
+class trusted_record_id_scan_collector final
+    : public mt_abi_detail::record_tree::low_level_search_range_callback {
+public:
+  using record_tree = mt_abi_detail::record_tree;
+
+  trusted_record_id_scan_collector(mt_record_id *records,
+                                   size_t record_capacity,
+                                   uint8_t *continuation,
+                                   size_t continuation_capacity) noexcept
+      : records_(records), record_capacity_(record_capacity),
+        continuation_(continuation),
+        continuation_capacity_(continuation_capacity) {}
+
+  ~trusted_record_id_scan_collector() noexcept override = default;
+
+  void on_resp_node(const record_tree::node_opaque_t *,
+                    uint64_t) noexcept override {}
+
+  bool invoke(const record_tree::string_type &key, mt_record_id record_id,
+              const record_tree::node_opaque_t *, uint64_t) noexcept override {
+    if (key.len < 0 ||
+        static_cast<size_t>(key.len) > MT_CONFIGURED_MAX_KEY_LENGTH ||
+        (key.len != 0 && key.s == nullptr) || record_id == MT_RECORD_ID_NONE) {
+      invalid_native_entry_ = true;
+      return false;
+    }
+
+    if (records_written_ != record_capacity_) {
+      records_[records_written_++] = record_id;
+      return true;
+    }
+
+    const size_t key_length = static_cast<size_t>(key.len);
+    next_key_bytes_required_ = key_length;
+    if (key_length > continuation_capacity_) {
+      stop_reason_ = MT_SCAN_STOP_KEY_ARENA_CAPACITY;
+      return false;
+    }
+    if (key_length != 0) {
+      std::memcpy(continuation_, key.s, key_length);
+    }
+    continuation_bytes_used_ = key_length;
+    stop_reason_ = MT_SCAN_STOP_ENTRY_CAPACITY;
+    return false;
+  }
+
+  bool invalid_native_entry() const noexcept { return invalid_native_entry_; }
+
+  void publish(trusted_record_id_scan_result *out) const noexcept {
+    out->stop_reason = stop_reason_;
+    out->next_key_bytes_required = next_key_bytes_required_;
+    if (stop_reason_ == MT_SCAN_STOP_END) {
+      out->records_written = records_written_;
+      return;
+    }
+    if (stop_reason_ == MT_SCAN_STOP_ENTRY_CAPACITY) {
+      out->records_written = records_written_;
+      out->continuation_bytes_used = continuation_bytes_used_;
+      out->resume = kTrustedScanResumeInclusiveNext;
+      return;
+    }
+
+    /* Rust grows the one-key buffer and retries the unchanged lower bound. */
+    out->resume = MT_SCAN_RESUME_UNCHANGED_INPUT;
+  }
+
+private:
+  mt_record_id *records_;
+  size_t record_capacity_;
+  uint8_t *continuation_;
+  size_t continuation_capacity_;
+  size_t records_written_ = 0;
+  size_t continuation_bytes_used_ = 0;
+  size_t next_key_bytes_required_ = 0;
+  mt_scan_stop_reason stop_reason_ = MT_SCAN_STOP_END;
+  bool invalid_native_entry_ = false;
+};
+
+mt_status trusted_record_id_scan_validated(
+    mt_tree &tree, mt_thread &thread, mt_runtime *runtime, bool controlled_rcu,
+    const void *lower, size_t lower_length, const void *upper,
+    size_t upper_length, mt_record_id *records, size_t record_capacity,
+    uint8_t *continuation, size_t continuation_capacity,
+    trusted_record_id_scan_result *out) noexcept {
+  try {
+    if (compare_byte_strings(lower, lower_length, upper, upper_length) >= 0) {
+      return MT_OK;
+    }
+
+    trusted_record_id_scan_collector collector(
+        records, record_capacity, continuation, continuation_capacity);
+    {
+      structure_read_guard structure_guard(tree, thread);
+      if (runtime->health.load(std::memory_order_acquire) !=
+          MT_RUNTIME_HEALTHY) {
+        return MT_ERR_POISONED;
+      }
+      try {
+        operation_rcu_guard region(controlled_rcu);
+        const varkey native_lower = make_key(lower, lower_length);
+        const varkey native_upper = make_key(upper, upper_length);
+        tree.native.search_range_call_bounded(native_lower, native_upper,
+                                              collector);
+      } catch (const std::bad_alloc &) {
+        throw;
+      } catch (...) {
+        poison(runtime);
+        throw;
+      }
+
+      if (collector.invalid_native_entry()) {
+        poison(runtime);
+        return MT_ERR_INTERNAL;
+      }
+    }
+
+    collector.publish(out);
+    return MT_OK;
+  } catch (const std::bad_alloc &) {
+    return MT_ERR_OUT_OF_MEMORY;
+  } catch (...) {
+    poison(runtime);
+    return MT_ERR_CPP_EXCEPTION;
+  }
+}
+
 constexpr uint64_t fnv1a_append(uint64_t hash, const char *text) noexcept {
   while (*text != '\0') {
     hash ^= static_cast<unsigned char>(*text++);
@@ -781,7 +1505,8 @@ constexpr char kExportedSymbols[] =
     "mt_runtime_shutdown;mt_thread_attach;mt_thread_quiesce;mt_tree_create;"
     "mt_tree_release;mt_get;mt_get_strided;mt_read_scope_begin;mt_read_scope_"
     "get;"
-    "mt_read_scope_get_strided;mt_read_scope_end;mt_get_or_insert;mt_scan";
+    "mt_read_scope_get_strided;mt_read_scope_end;mt_rcu_scope_begin;"
+    "mt_rcu_scope_end;mt_get_or_insert;mt_scan";
 
 constexpr char kBuildDescription[] =
     "mtree-abi=" MT_STRINGIFY(MT_ABI_VERSION) ";cxx=" MT_STRINGIFY(
@@ -1051,7 +1776,7 @@ extern "C" mt_status mt_thread_attach(mt_runtime *runtime_candidate,
     if (runtime->health.load(std::memory_order_acquire) != MT_RUNTIME_HEALTHY) {
       return MT_ERR_POISONED;
     }
-    if (tls_read_scope.active()) {
+    if (tls_read_scope.active() || tls_rcu_scope.active()) {
       return MT_ERR_ACTIVE_GUARDS;
     }
     if (SiloRuntime::Current() != runtime->native) {
@@ -1092,7 +1817,8 @@ extern "C" mt_status mt_thread_attach(mt_runtime *runtime_candidate,
     runtime->threads.push_back(pending.get());
     pending->registry_next =
         runtime->thread_registry.load(std::memory_order_relaxed);
-    runtime->thread_registry.store(pending.get(), std::memory_order_release);
+    /* Participates in structural admission's attach-versus-writer SC proof. */
+    runtime->thread_registry.store(pending.get(), std::memory_order_seq_cst);
     tls_thread = pending.release();
     *out = tls_thread;
     return MT_OK;
@@ -1207,10 +1933,12 @@ extern "C" mt_status mt_get(mt_tree *tree_candidate, mt_thread *thread,
   }
   *out = MT_RECORD_ID_NONE;
   mt_runtime *operation_runtime = nullptr;
+  bool controlled_rcu = false;
   try {
     mt_tree *tree = nullptr;
-    mt_status status =
-        checked_operation(tree_candidate, thread, &tree, &operation_runtime);
+    mt_status status = checked_operation(tree_candidate, thread, &tree,
+                                         &operation_runtime, true,
+                                         controlled_rcu);
     if (status != MT_OK) {
       return status;
     }
@@ -1218,42 +1946,60 @@ extern "C" mt_status mt_get(mt_tree *tree_candidate, mt_thread *thread,
     if (status != MT_OK) {
       return status;
     }
-
-    mt_record_id found = MT_RECORD_ID_NONE;
-    {
-      structure_read_guard structure_guard(*tree, *thread);
-      /* A writer may have poisoned the runtime while this reader waited. */
-      if (operation_runtime->health.load(std::memory_order_acquire) !=
-          MT_RUNTIME_HEALTHY) {
-        return MT_ERR_POISONED;
-      }
-      try {
-        scoped_rcu_region region;
-        const varkey native_key = make_key(key, key_length);
-        mt_record_id value = MT_RECORD_ID_NONE;
-        if (tree->native.search(native_key, value)) {
-          if (value == MT_RECORD_ID_NONE) {
-            poison(operation_runtime);
-            return MT_ERR_INTERNAL;
-          }
-          found = value;
-        }
-      } catch (const std::bad_alloc &) {
-        throw;
-      } catch (...) {
-        /* Poison before a queued structural writer can pass admission. */
-        poison(operation_runtime);
-        throw;
-      }
-    }
-    *out = found;
-    return MT_OK;
+    return point_get_validated(*tree, *thread, operation_runtime,
+                               controlled_rcu, key, key_length, out);
   } catch (const std::bad_alloc &) {
     return MT_ERR_OUT_OF_MEMORY;
   } catch (...) {
     poison(operation_runtime);
     return MT_ERR_CPP_EXCEPTION;
   }
+}
+
+extern "C" mt_status mako_mtree_get_trusted(mt_tree *tree, mt_thread *thread,
+                                            const void *key,
+                                            size_t key_length,
+                                            mt_record_id *out) noexcept {
+  *out = MT_RECORD_ID_NONE;
+  mt_runtime *operation_runtime = nullptr;
+  bool controlled_rcu = false;
+  const mt_status status = trusted_operation(*tree, *thread,
+                                             &operation_runtime,
+                                             controlled_rcu);
+  if (status != MT_OK) {
+    return status;
+  }
+  return point_get_validated(*tree, *thread, operation_runtime,
+                             controlled_rcu, key, key_length, out);
+}
+
+extern "C" mt_status
+mako_mtree_get_strided_trusted(mt_tree *tree, mt_thread *thread,
+                               const void *keys, size_t key_count,
+                               size_t key_length, mt_record_id *out) noexcept {
+  INVARIANT(key_count == 0 || out != nullptr);
+  INVARIANT(key_count <=
+            std::numeric_limits<size_t>::max() / sizeof(mt_record_id));
+  clear_strided_output(key_count, out);
+
+  mt_runtime *operation_runtime = nullptr;
+  bool controlled_rcu = false;
+  const mt_status status =
+      trusted_operation(*tree, *thread, &operation_runtime, controlled_rcu);
+  if (status != MT_OK || key_count == 0) {
+    return status;
+  }
+
+  INVARIANT(key_length <= operation_runtime->max_key_length);
+  INVARIANT(key_length <= MT_CONFIGURED_MAX_KEY_LENGTH);
+  INVARIANT(key_length <= static_cast<size_t>(INT_MAX));
+  INVARIANT(key_length == 0 || keys != nullptr);
+  INVARIANT(key_length == 0 ||
+            key_count <= std::numeric_limits<size_t>::max() / key_length);
+  return point_get_strided_validated(*tree, *thread, operation_runtime,
+                                     controlled_rcu,
+                                     static_cast<const uint8_t *>(keys),
+                                     key_count, key_length, key_length, out);
 }
 
 extern "C" mt_status mt_get_strided(mt_tree *tree_candidate, mt_thread *thread,
@@ -1266,10 +2012,11 @@ extern "C" mt_status mt_get_strided(mt_tree *tree_candidate, mt_thread *thread,
   }
 
   mt_runtime *operation_runtime = nullptr;
+  bool controlled_rcu = false;
   try {
     mt_tree *tree = nullptr;
-    status =
-        checked_operation(tree_candidate, thread, &tree, &operation_runtime);
+    status = checked_operation(tree_candidate, thread, &tree,
+                               &operation_runtime, true, controlled_rcu);
     if (status != MT_OK) {
       return status;
     }
@@ -1280,31 +2027,9 @@ extern "C" mt_status mt_get_strided(mt_tree *tree_candidate, mt_thread *thread,
     if (status != MT_OK || key_count == 0) {
       return status;
     }
-
-    {
-      structure_read_guard structure_guard(*tree, *thread);
-      /* A writer may have poisoned the runtime while this reader waited. */
-      if (operation_runtime->health.load(std::memory_order_acquire) !=
-          MT_RUNTIME_HEALTHY) {
-        return MT_ERR_POISONED;
-      }
-      try {
-        scoped_rcu_region region;
-        status = search_strided(*tree, operation_runtime, cursor, key_count,
-                                key_length, key_stride, out);
-        if (status != MT_OK) {
-          clear_strided_output(key_count, out);
-          return status;
-        }
-      } catch (const std::bad_alloc &) {
-        throw;
-      } catch (...) {
-        /* Poison before a queued structural writer can pass admission. */
-        poison(operation_runtime);
-        throw;
-      }
-    }
-    return MT_OK;
+    return point_get_strided_validated(*tree, *thread, operation_runtime,
+                                       controlled_rcu, cursor, key_count,
+                                       key_length, key_stride, out);
   } catch (const std::bad_alloc &) {
     clear_strided_output(key_count, out);
     return MT_ERR_OUT_OF_MEMORY;
@@ -1322,18 +2047,21 @@ extern "C" mt_status mt_read_scope_begin(mt_tree *tree_candidate,
     return MT_ERR_INVALID;
   }
   *token = mt_read_scope{};
-  if (tls_read_scope.active()) {
+  if (tls_read_scope.active() || tls_rcu_scope.active()) {
     return MT_ERR_ACTIVE_GUARDS;
   }
 
   mt_runtime *operation_runtime = nullptr;
+  bool controlled_rcu = false;
   try {
     mt_tree *tree = nullptr;
-    mt_status status =
-        checked_operation(tree_candidate, thread, &tree, &operation_runtime);
+    mt_status status = checked_operation(tree_candidate, thread, &tree,
+                                         &operation_runtime, false,
+                                         controlled_rcu);
     if (status != MT_OK) {
       return status;
     }
+    INVARIANT(!controlled_rcu);
     if (!tls_read_scope.can_advance_generation()) {
       return MT_ERR_INTERNAL;
     }
@@ -1490,6 +2218,60 @@ extern "C" mt_status mt_read_scope_end(mt_read_scope *token) noexcept {
   return MT_OK;
 }
 
+extern "C" mt_status mt_rcu_scope_begin(mt_thread *thread,
+                                         mt_rcu_scope *token) noexcept {
+  if (token == nullptr) {
+    return MT_ERR_INVALID;
+  }
+  *token = mt_rcu_scope{};
+  if (tls_read_scope.active() || tls_rcu_scope.active()) {
+    return MT_ERR_ACTIVE_GUARDS;
+  }
+
+  return status_boundary([&]() -> mt_status {
+    if (thread == nullptr) {
+      return MT_ERR_NOT_ATTACHED;
+    }
+    mt_runtime &singleton = singleton_runtime();
+    if (!singleton.acquired.load(std::memory_order_acquire) ||
+        (thread != tls_thread && !registered_thread(singleton, thread))) {
+      return MT_ERR_INVALID;
+    }
+    /* Dereference only after registry membership proves this handle. */
+    mt_runtime *runtime = thread->runtime;
+    mt_status status = checked_thread(runtime, thread, true);
+    if (status != MT_OK) {
+      return status;
+    }
+    if (runtime->health.load(std::memory_order_acquire) !=
+        MT_RUNTIME_HEALTHY) {
+      return MT_ERR_POISONED;
+    }
+    if (!tls_rcu_scope.can_advance_generation()) {
+      return MT_ERR_INTERNAL;
+    }
+
+    try {
+      tls_rcu_scope.enter(*runtime, *thread);
+    } catch (...) {
+      tls_rcu_scope.close();
+      throw;
+    }
+    token->owner = tls_rcu_scope.owner_identity();
+    token->generation = tls_rcu_scope.generation();
+    return MT_OK;
+  });
+}
+
+extern "C" mt_status mt_rcu_scope_end(mt_rcu_scope *token) noexcept {
+  if (token == nullptr || !tls_rcu_scope.matches(*token)) {
+    return MT_ERR_INVALID;
+  }
+  tls_rcu_scope.close();
+  *token = mt_rcu_scope{};
+  return MT_OK;
+}
+
 extern "C" mt_status mt_get_or_insert(mt_tree *tree_candidate,
                                       mt_thread *thread, const void *key,
                                       size_t key_length, mt_record_id candidate,
@@ -1500,21 +2282,12 @@ extern "C" mt_status mt_get_or_insert(mt_tree *tree_candidate,
   initialize_insert_result(out);
 
   mt_runtime *operation_runtime = nullptr;
-  bool publication_attempted = false;
-  bool publication_classified = false;
-  const auto classify_unfinished_publication = [&]() noexcept {
-    if (!publication_classified) {
-      out->winner = MT_RECORD_ID_NONE;
-      out->inserted = 0;
-      out->publication = publication_attempted
-                             ? MT_PUBLICATION_UNKNOWN
-                             : MT_PUBLICATION_FAILURE_BEFORE_PUBLICATION;
-    }
-  };
+  bool controlled_rcu = false;
   try {
     mt_tree *tree = nullptr;
-    mt_status status =
-        checked_operation(tree_candidate, thread, &tree, &operation_runtime);
+    mt_status status = checked_operation(tree_candidate, thread, &tree,
+                                         &operation_runtime, true,
+                                         controlled_rcu);
     if (status != MT_OK) {
       return status;
     }
@@ -1525,75 +2298,64 @@ extern "C" mt_status mt_get_or_insert(mt_tree *tree_candidate,
     if (candidate == MT_RECORD_ID_NONE) {
       return MT_ERR_INVALID;
     }
-
-    {
-      structure_write_guard structure_guard(*tree);
-      /* A preceding queued writer may have poisoned before releasing. */
-      if (operation_runtime->health.load(std::memory_order_acquire) !=
-          MT_RUNTIME_HEALTHY) {
-        return MT_ERR_POISONED;
-      }
-      try {
-        scoped_rcu_region region;
-        const varkey native_key = make_key(key, key_length);
-        mt_record_id winner = MT_RECORD_ID_NONE;
-
-        /* Existing keys dominate this workload, so avoid a native write. */
-        if (tree->native.search(native_key, winner)) {
-          out->publication = MT_PUBLICATION_CANDIDATE_PROVEN_UNPUBLISHED;
-          publication_classified = true;
-          if (winner == MT_RECORD_ID_NONE) {
-            poison(operation_runtime);
-            return MT_ERR_INTERNAL;
-          }
-          out->winner = winner;
-        } else {
-          publication_attempted = true;
-          const bool inserted =
-              tree->native.insert_if_absent(native_key, candidate);
-          if (inserted) {
-            out->winner = candidate;
-            out->inserted = 1;
-            out->publication = MT_PUBLICATION_CANDIDATE_INSERTED;
-            publication_classified = true;
-          } else {
-            /* A false return proves this candidate was not stored. */
-            out->publication = MT_PUBLICATION_CANDIDATE_PROVEN_UNPUBLISHED;
-            publication_classified = true;
-            if (!tree->native.search(native_key, winner) ||
-                winner == MT_RECORD_ID_NONE) {
-              poison(operation_runtime);
-              return MT_ERR_INTERNAL;
-            }
-            out->winner = winner;
-          }
-        }
-      } catch (const std::bad_alloc &) {
-        classify_unfinished_publication();
-        if (out->publication == MT_PUBLICATION_UNKNOWN) {
-          poison(operation_runtime);
-        }
-        /* Rethrow only after readers will observe the poisoned runtime. */
-        throw;
-      } catch (...) {
-        classify_unfinished_publication();
-        poison(operation_runtime);
-        /* The structural writer guard remains held until this rethrow. */
-        throw;
-      }
-    }
-    return MT_OK;
+    return get_or_insert_validated(*tree, *thread, operation_runtime,
+                                   controlled_rcu, key, key_length,
+                                   candidate, out);
   } catch (const std::bad_alloc &) {
-    classify_unfinished_publication();
-    if (out->publication == MT_PUBLICATION_UNKNOWN) {
-      poison(operation_runtime);
-    }
     return MT_ERR_OUT_OF_MEMORY;
   } catch (...) {
-    classify_unfinished_publication();
     poison(operation_runtime);
     return MT_ERR_CPP_EXCEPTION;
   }
+}
+
+extern "C" mt_status mako_mtree_get_or_insert_trusted(
+    mt_tree *tree, mt_thread *thread, const void *key, size_t key_length,
+    mt_record_id candidate, mt_get_or_insert_result *out) noexcept {
+  initialize_insert_result(out);
+  mt_runtime *operation_runtime = nullptr;
+  bool controlled_rcu = false;
+  const mt_status status = trusted_operation(*tree, *thread,
+                                             &operation_runtime,
+                                             controlled_rcu);
+  if (status != MT_OK) {
+    return status;
+  }
+  return get_or_insert_validated(*tree, *thread, operation_runtime,
+                                 controlled_rcu, key, key_length, candidate,
+                                 out);
+}
+
+extern "C" mt_status mako_mtree_get_or_insert_strided_trusted(
+    mt_tree *tree, mt_thread *thread, const void *keys, size_t key_count,
+    size_t key_length, size_t key_stride, const mt_record_id *candidates,
+    mt_get_or_insert_result *out) noexcept {
+  initialize_insert_results(key_count, out);
+  if (key_count == 0) {
+    return MT_OK;
+  }
+
+  /* These checks diagnose violations of the private unsafe-call contract. */
+  INVARIANT(keys != nullptr);
+  INVARIANT(key_stride >= key_length);
+  INVARIANT(candidates != nullptr);
+  INVARIANT(out != nullptr);
+  for (size_t index = 0; index != key_count; ++index) {
+    INVARIANT(candidates[index] != MT_RECORD_ID_NONE);
+  }
+
+  mt_runtime *operation_runtime = nullptr;
+  bool controlled_rcu = false;
+  const mt_status status = trusted_operation(*tree, *thread,
+                                             &operation_runtime,
+                                             controlled_rcu);
+  if (status != MT_OK) {
+    return status;
+  }
+  return get_or_insert_strided_trusted_validated(
+      *tree, *thread, operation_runtime, controlled_rcu,
+      static_cast<const uint8_t *>(keys), key_count, key_length, key_stride,
+      candidates, out);
 }
 
 extern "C" mt_status
@@ -1608,10 +2370,12 @@ mt_scan(mt_tree *tree_candidate, mt_thread *thread, mt_scan_direction direction,
   initialize_scan_result(out);
 
   mt_runtime *operation_runtime = nullptr;
+  bool controlled_rcu = false;
   try {
     mt_tree *tree = nullptr;
-    mt_status status =
-        checked_operation(tree_candidate, thread, &tree, &operation_runtime);
+    mt_status status = checked_operation(tree_candidate, thread, &tree,
+                                         &operation_runtime, true,
+                                         controlled_rcu);
     if (status != MT_OK) {
       return status;
     }
@@ -1629,70 +2393,10 @@ mt_scan(mt_tree *tree_candidate, mt_thread *thread, mt_scan_direction direction,
     if (status != MT_OK) {
       return status;
     }
-    if (bound_is_present(*lower) && bound_is_present(*upper)) {
-      const int ordering = compare_byte_strings(lower->key, lower->key_length,
-                                                upper->key, upper->key_length);
-      if (ordering > 0 ||
-          (ordering == 0 && (lower->kind == MT_SCAN_BOUND_EXCLUSIVE ||
-                             upper->kind == MT_SCAN_BOUND_EXCLUSIVE))) {
-        return MT_OK;
-      }
-    }
-
-    copied_scan_collector collector(
-        direction, *lower, *upper, entries, entry_capacity,
-        static_cast<uint8_t *>(key_arena), key_arena_capacity);
-    {
-      structure_read_guard structure_guard(*tree, *thread);
-      /* A writer may have poisoned the runtime while this reader waited. */
-      if (operation_runtime->health.load(std::memory_order_acquire) !=
-          MT_RUNTIME_HEALTHY) {
-        return MT_ERR_POISONED;
-      }
-      try {
-        scoped_rcu_region region;
-        if (direction == MT_SCAN_FORWARD) {
-          const varkey native_lower =
-              bound_is_present(*lower) ? make_key(lower->key, lower->key_length)
-                                       : make_key(nullptr, 0);
-          if (upper->kind == MT_SCAN_BOUND_EXCLUSIVE) {
-            const varkey native_upper = make_key(upper->key, upper->key_length);
-            tree->native.search_range_call_bounded(native_lower, native_upper,
-                                                   collector);
-          } else {
-            tree->native.search_range_call_unbounded(native_lower, collector);
-          }
-        } else {
-          std::array<uint8_t, MT_CONFIGURED_MAX_KEY_LENGTH> maximum_key{};
-          maximum_key.fill(UINT8_MAX);
-          const varkey native_upper =
-              bound_is_present(*upper)
-                  ? make_key(upper->key, upper->key_length)
-                  : make_key(maximum_key.data(), maximum_key.size());
-          if (lower->kind == MT_SCAN_BOUND_EXCLUSIVE) {
-            const varkey native_lower = make_key(lower->key, lower->key_length);
-            tree->native.rsearch_range_call_bounded(native_upper, native_lower,
-                                                    collector);
-          } else {
-            tree->native.rsearch_range_call_unbounded(native_upper, collector);
-          }
-        }
-      } catch (const std::bad_alloc &) {
-        throw;
-      } catch (...) {
-        /* Poison before a queued structural writer can pass admission. */
-        poison(operation_runtime);
-        throw;
-      }
-
-      if (collector.invalid_native_entry()) {
-        poison(operation_runtime);
-        return MT_ERR_INTERNAL;
-      }
-    }
-
-    collector.publish(out);
-    return MT_OK;
+    return copied_scan_validated(
+        *tree, *thread, operation_runtime, controlled_rcu, direction, *lower,
+        *upper, entries, entry_capacity, static_cast<uint8_t *>(key_arena),
+        key_arena_capacity, out);
   } catch (const std::bad_alloc &) {
     return MT_ERR_OUT_OF_MEMORY;
   } catch (...) {
@@ -1700,3 +2404,59 @@ mt_scan(mt_tree *tree_candidate, mt_thread *thread, mt_scan_direction direction,
     return MT_ERR_CPP_EXCEPTION;
   }
 }
+
+#if defined(__GNUC__) || defined(__clang__)
+#define MAKO_MTREE_PRIVATE_HIDDEN __attribute__((visibility("hidden")))
+#else
+#define MAKO_MTREE_PRIVATE_HIDDEN
+#endif
+extern "C" MAKO_MTREE_PRIVATE_HIDDEN mt_status mako_mtree_scan_trusted(
+    mt_tree *tree, mt_thread *thread, mt_scan_direction direction,
+    const mt_scan_bound *lower, const mt_scan_bound *upper,
+    mt_scan_entry *entries, size_t entry_capacity, void *key_arena,
+    size_t key_arena_capacity, mt_scan_result *out) noexcept {
+  initialize_scan_result(out);
+  mt_runtime *operation_runtime = nullptr;
+  bool controlled_rcu = false;
+  const mt_status status = trusted_operation(*tree, *thread,
+                                             &operation_runtime,
+                                             controlled_rcu);
+  if (status != MT_OK) {
+    return status;
+  }
+  return copied_scan_validated(
+      *tree, *thread, operation_runtime, controlled_rcu, direction, *lower,
+      *upper, entries, entry_capacity, static_cast<uint8_t *>(key_arena),
+      key_arena_capacity, out);
+}
+
+extern "C" MAKO_MTREE_PRIVATE_HIDDEN mt_status
+mako_mtree_scan_record_ids_bounded_trusted(
+    mt_tree *tree, mt_thread *thread, const void *lower, size_t lower_length,
+    const void *upper, size_t upper_length, mt_record_id *records,
+    size_t record_capacity, void *continuation,
+    size_t continuation_capacity,
+    trusted_record_id_scan_result *out) noexcept {
+  initialize_trusted_record_id_scan_result(out);
+
+  INVARIANT(lower != nullptr || lower_length == 0);
+  INVARIANT(upper != nullptr || upper_length == 0);
+  INVARIANT(records != nullptr || record_capacity == 0);
+  INVARIANT(continuation != nullptr || continuation_capacity == 0);
+
+  mt_runtime *operation_runtime = nullptr;
+  bool controlled_rcu = false;
+  const mt_status status = trusted_operation(*tree, *thread,
+                                             &operation_runtime,
+                                             controlled_rcu);
+  if (status != MT_OK) {
+    return status;
+  }
+  INVARIANT(lower_length <= operation_runtime->max_key_length);
+  INVARIANT(upper_length <= operation_runtime->max_key_length);
+  return trusted_record_id_scan_validated(
+      *tree, *thread, operation_runtime, controlled_rcu, lower, lower_length,
+      upper, upper_length, records, record_capacity,
+      static_cast<uint8_t *>(continuation), continuation_capacity, out);
+}
+#undef MAKO_MTREE_PRIVATE_HIDDEN

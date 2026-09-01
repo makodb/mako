@@ -375,11 +375,17 @@ test7()
   typename testing_concurrent_btree::value_type v;
   ALWAYS_ASSERT(btr.search(u64_varkey(0), v));
   ALWAYS_ASSERT(v == (typename testing_concurrent_btree::value_type) 1);
-  ALWAYS_ASSERT(!btr.insert_if_absent(u64_varkey(0), (typename testing_concurrent_btree::value_type) 2));
+  typename testing_concurrent_btree::value_type old_v;
+  ALWAYS_ASSERT(!btr.insert_if_absent_with_old(
+      u64_varkey(0), (typename testing_concurrent_btree::value_type) 2,
+      old_v));
+  ALWAYS_ASSERT(old_v == (typename testing_concurrent_btree::value_type) 1);
   ALWAYS_ASSERT(btr.search(u64_varkey(0), v));
   ALWAYS_ASSERT(v == (typename testing_concurrent_btree::value_type) 1);
   ALWAYS_ASSERT(btr.remove(u64_varkey(0)));
-  ALWAYS_ASSERT(btr.insert_if_absent(u64_varkey(0), (typename testing_concurrent_btree::value_type) 2));
+  ALWAYS_ASSERT(btr.insert_if_absent_with_old(
+      u64_varkey(0), (typename testing_concurrent_btree::value_type) 2,
+      old_v));
   ALWAYS_ASSERT(btr.search(u64_varkey(0), v));
   ALWAYS_ASSERT(v == (typename testing_concurrent_btree::value_type) 2);
 }

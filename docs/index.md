@@ -100,6 +100,7 @@ Welcome to the Mako documentation.
 ## Performance
 
 - **[Profiling & Plotting](performance/profiling.md)** - CPU profiling, memory analysis, and plotting
+- **[Rust STO TPC-C PGO](performance/sto-tpcc-rust-pgo.md)** - Reproducible two-pass Rust-staticlib PGO build
 - **[CPU Throttling](performance/cpu_throttling.md)** - CPU throttling for scaling tests
   - [CPU Limiting Plan](performance/cpu_limiting_plan.md)
 

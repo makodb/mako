@@ -23,6 +23,14 @@ from pathlib import Path
 RESULT_PREFIX = "TPCC_BENCH_RESULT "
 ENGINES = ("cpp", "rust")
 MIX_KEYS = ("NewOrder", "Payment", "Delivery", "OrderStatus", "StockLevel")
+RECORDED_ENVIRONMENT_KEYS = (
+    "MAKO_TPCC_WORKLOAD_MIX",
+    "MAKO_STO_TPCC_DISABLE_PAYMENT_FULL",
+    "MAKO_STO_TPCC_DISABLE_PAYMENT_PREFIX",
+    "MAKO_STO_TPCC_DISABLE_NEW_ORDER_FULL",
+    "MAKO_STO_TPCC_DISABLE_DELIVERY_FULL",
+    "MAKO_STO_TPCC_DISABLE_STOCK_LEVEL_FULL",
+)
 # tpcc.cc opens 11 separate per-warehouse trees and one shared item tree.
 # The native C++ wrapper reserves 200 table IDs per shard, so 18 warehouses
 # (11 * 18 + 1 = 199) is the largest valid paired comparison cell.
@@ -97,6 +105,72 @@ def parse_csv_cpus(text: str) -> list[int]:
     return values
 
 
+def parse_linux_cpu_list(text: str) -> list[int]:
+    cpus: set[int] = set()
+    for field in text.strip().split(","):
+        if not field:
+            continue
+        bounds = field.split("-", maxsplit=1)
+        first = int(bounds[0])
+        last = int(bounds[-1])
+        if first < 0 or last < first:
+            raise ValueError(f"invalid Linux CPU-list field: {field!r}")
+        cpus.update(range(first, last + 1))
+    if not cpus:
+        raise ValueError("Linux CPU list is empty")
+    return sorted(cpus)
+
+
+def benchmark_guard_cpus(selected_cpus: list[int]) -> list[int]:
+    guarded = set(selected_cpus)
+    for cpu in selected_cpus:
+        siblings_path = Path(
+            f"/sys/devices/system/cpu/cpu{cpu}/topology/thread_siblings_list"
+        )
+        try:
+            guarded.update(parse_linux_cpu_list(siblings_path.read_text()))
+        except (OSError, ValueError):
+            # Non-Linux hosts and restricted containers still guard each
+            # explicitly selected CPU.
+            continue
+    return sorted(guarded)
+
+
+def parse_workload_mix(text: str) -> list[int]:
+    try:
+        values = [int(part.strip()) for part in text.split(",")]
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(
+            "workload mix must contain five integer percentages"
+        ) from error
+    if len(values) != len(MIX_KEYS) or any(value < 0 for value in values):
+        raise argparse.ArgumentTypeError(
+            "workload mix must contain five nonnegative integer percentages"
+        )
+    if sum(values) != 100:
+        raise argparse.ArgumentTypeError("workload mix percentages must sum to 100")
+    return values
+
+
+def benchmark_environment(workload_mix: list[int] | None) -> dict[str, str]:
+    environment = os.environ.copy()
+    if workload_mix is None:
+        environment.pop("MAKO_TPCC_WORKLOAD_MIX", None)
+    else:
+        environment["MAKO_TPCC_WORKLOAD_MIX"] = ",".join(
+            str(value) for value in workload_mix
+        )
+    return environment
+
+
+def recorded_environment_overrides(environment: dict[str, str]) -> dict[str, str]:
+    return {
+        key: environment[key]
+        for key in RECORDED_ENVIRONMENT_KEYS
+        if key in environment
+    }
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", required=True, type=Path)
@@ -114,6 +188,14 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--repetitions", type=positive_int, default=5)
     parser.add_argument("--runtime-seconds", type=positive_int, default=30)
+    parser.add_argument(
+        "--workload-mix",
+        type=parse_workload_mix,
+        help=(
+            "optional NewOrder,Payment,Delivery,OrderStatus,StockLevel "
+            "percentages; defaults to the benchmark's standard mix"
+        ),
+    )
     parser.add_argument("--schedule-seed", type=int, default=0x5EED)
     parser.add_argument(
         "--physical-cpus",
@@ -130,7 +212,19 @@ def parse_args() -> argparse.Namespace:
             "useful when a known restart loop is shorter than a long pair"
         ),
     )
+    parser.add_argument(
+        "--align-between-engines",
+        action="store_true",
+        help=(
+            "when restart alignment is enabled, wait for another restart and "
+            "quiet window before the second engine so both samples begin in "
+            "equivalent fresh intervals"
+        ),
+    )
     args = parser.parse_args()
+
+    if args.align_between_engines and not args.align_after_lxd_restart:
+        parser.error("--align-between-engines requires --align-after-lxd-restart")
 
     if not args.binary.is_file() or not os.access(args.binary, os.X_OK):
         parser.error(f"benchmark is not executable: {args.binary}")
@@ -346,7 +440,7 @@ def quiet_window_violations(sample: dict[str, object]) -> list[str]:
 
 
 def capture_quiet_window(args: argparse.Namespace, threads: int) -> dict[str, object]:
-    cpus = args.physical_cpus[:threads]
+    cpus = benchmark_guard_cpus(args.physical_cpus[:threads])
     started = time.monotonic()
     restart_before = read_lxd_restart_count()
     competing_before = find_competing_processes(args)
@@ -422,6 +516,44 @@ def wait_for_next_lxd_restart(pair_id: str, pair_attempt: int) -> dict[str, obje
     )
 
 
+def wait_for_aligned_quiet_window(
+    args: argparse.Namespace, threads: int, pair_id: str, pair_attempt: int
+) -> dict[str, object]:
+    """Find a quiet opening immediately after a restart.
+
+    A restart can itself leave enough CPU activity to fail the quiet-window
+    gate. Retry from the *next* restart in that case; accepting a later generic
+    quiet window would no longer prove that two engines started at comparable
+    positions in the restart cycle.
+    """
+    last_violations: list[str] | None = None
+    for alignment_attempt in range(1, GUARD_MAX_ATTEMPTS + 1):
+        alignment = wait_for_next_lxd_restart(pair_id, pair_attempt)
+        window = capture_quiet_window(args, threads)
+        violations = list(window["violations"])
+        aligned_restart = alignment["restart_count_after"]
+        if window["restart_count_before"] != aligned_restart:
+            violations.append(
+                "the quiet window did not start in the aligned restart interval"
+            )
+        window["violations"] = violations
+        if violations:
+            last_violations = violations
+            print(
+                f"[guard] {pair_id} attempt={pair_attempt} restart-window "
+                f"attempt={alignment_attempt} skipped: {', '.join(violations)}",
+                flush=True,
+            )
+            continue
+        window["lxd_restart_alignment"] = alignment
+        return window
+    assert last_violations is not None
+    raise RuntimeError(
+        f"pair {pair_id} did not observe a quiet aligned restart window: "
+        f"{', '.join(last_violations)}"
+    )
+
+
 def run_one(
     args: argparse.Namespace,
     engine: str,
@@ -447,6 +579,7 @@ def run_one(
         "--storage-engine",
         engine,
     ]
+    environment = benchmark_environment(args.workload_mix)
     log_stem = f"{run_order:03d}-{pair_id}-{engine}"
     stdout_path = args.output_dir / f"{log_stem}.stdout.log"
     stderr_path = args.output_dir / f"{log_stem}.stderr.log"
@@ -458,6 +591,7 @@ def run_one(
         capture_output=True,
         text=True,
         timeout=args.timeout_seconds,
+        env=environment,
     )
     elapsed_wall = time.monotonic() - started_monotonic
     stdout_path.write_text(completed.stdout, encoding="utf-8")
@@ -488,6 +622,7 @@ def run_one(
             "started_at_utc": started.isoformat(),
             "wall_seconds_including_load": elapsed_wall,
             "command": command,
+            "environment_overrides": recorded_environment_overrides(environment),
             "stdout_log": stdout_path.name,
             "stderr_log": stderr_path.name,
         }
@@ -505,16 +640,30 @@ def run_guarded_pair(
 ) -> list[dict[str, object]]:
     rejected_attempts: list[dict[str, object]] = []
     for pair_attempt in range(1, GUARD_MAX_ATTEMPTS + 1):
-        alignment = None
         if getattr(args, "align_after_lxd_restart", False):
-            alignment = wait_for_next_lxd_restart(pair_id, pair_attempt)
-        window = wait_for_quiet_window(args, threads, pair_id, pair_attempt)
-        if alignment is not None:
-            window["lxd_restart_alignment"] = alignment
+            window = wait_for_aligned_quiet_window(
+                args, threads, pair_id, pair_attempt
+            )
+        else:
+            window = wait_for_quiet_window(args, threads, pair_id, pair_attempt)
         restart_before = int(window["restart_count_after"])
         attempted_results: list[dict[str, object]] = []
         execution_error: Exception | None = None
+        intermediate_rejection_reasons: list[str] = []
+        engine_windows: list[dict[str, object]] = []
         for pair_position, engine in enumerate(engines):
+            if pair_position and getattr(args, "align_between_engines", False):
+                window = wait_for_aligned_quiet_window(
+                    args, threads, pair_id, pair_attempt
+                )
+                restart_before = int(window["restart_count_after"])
+            engine_windows.append(
+                {
+                    "engine": engine,
+                    "pre_run_window": window,
+                    "restart_count_before_run": restart_before,
+                }
+            )
             logical_run_order = first_run_order + pair_position
             print(
                 f"[{logical_run_order}] {engine} TPC-C "
@@ -537,7 +686,34 @@ def run_guarded_pair(
                 execution_error = error
                 break
 
-        rejection_reasons: list[str] = []
+            try:
+                restart_after_run = read_lxd_restart_count()
+            except (OSError, RuntimeError, subprocess.TimeoutExpired):
+                restart_after_run = None
+                intermediate_rejection_reasons.append(
+                    f"{engine}_lxd_restart_count_unavailable"
+                )
+            engine_windows[-1]["restart_count_after_run"] = restart_after_run
+            if restart_after_run is not None and restart_after_run != restart_before:
+                intermediate_rejection_reasons.append(
+                    f"{engine}_lxd_restart_count_changed"
+                )
+            try:
+                competing_after_run = find_competing_processes(args)
+            except OSError:
+                competing_after_run = []
+                intermediate_rejection_reasons.append(
+                    f"{engine}_competitor_check_unavailable"
+                )
+            engine_windows[-1]["competing_after_run"] = competing_after_run
+            if competing_after_run:
+                intermediate_rejection_reasons.append(
+                    f"{engine}_competing_sto_or_perf_job_started"
+                )
+            if intermediate_rejection_reasons:
+                break
+
+        rejection_reasons: list[str] = list(intermediate_rejection_reasons)
         try:
             restart_after: int | None = read_lxd_restart_count()
         except (OSError, RuntimeError, subprocess.TimeoutExpired):
@@ -567,6 +743,7 @@ def run_guarded_pair(
                 "restart_count_after_pair": restart_after,
                 "competing_after_pair": competing_after,
                 "rejected_attempts": rejected_attempts,
+                "engine_windows": engine_windows,
             }
             for result in attempted_results:
                 result["guard"] = guard
@@ -712,9 +889,12 @@ def main() -> int:
         "threads_and_warehouses": args.threads,
         "repetitions": args.repetitions,
         "runtime_seconds": args.runtime_seconds,
+        "workload_mix": args.workload_mix,
         "schedule_seed": args.schedule_seed,
         "physical_cpus": args.physical_cpus,
+        "guard_cpus": benchmark_guard_cpus(args.physical_cpus),
         "align_after_lxd_restart": args.align_after_lxd_restart,
+        "align_between_engines": args.align_between_engines,
         "git_commit": command_output(
             [
                 "git",
@@ -741,13 +921,21 @@ def main() -> int:
             "loads a fresh database. Throughput is the benchmark's measured "
             "interval, excluding its deliberate shutdown sleep. Before each "
             "pair, require a two-second quiet window with stable LXD restarts, "
-            "at least 95% idle on every selected CPU, and no recognized "
-            "competing STO/perf job. Reject and retry both samples if the LXD "
-            "counter changes or a competitor is present after the pair."
+            "at least 95% idle on every selected CPU and its SMT siblings, and "
+            "no recognized competing STO/perf job. Reject and retry both "
+            "samples if the LXD counter changes or a competitor is present "
+            "after the pair."
             + (
                 " Before every pair attempt, wait for the next LXD restart "
-                "before applying the quiet-window gate."
+                "before applying the quiet-window gate. Failed post-restart "
+                "quiet windows restart alignment from the next interval."
                 if args.align_after_lxd_restart
+                else ""
+            )
+            + (
+                " Repeat that restart alignment between the two engines so "
+                "each sample begins in its own fresh interval."
+                if args.align_between_engines
                 else ""
             )
         ),

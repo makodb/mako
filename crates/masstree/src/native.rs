@@ -5,9 +5,11 @@
 use std::{ffi::c_void, mem, num::NonZeroUsize, ptr};
 
 use crate::{
-    status_result, Error, InsertError, InsertOutcome, KeyBound, NativeStatus, PointReadResult,
-    PublicationDisposition, RecordId, RuntimeConfig, RuntimeHealth, ScanChunk, ScanDirection,
-    ScanEntry, ScanRequest, ScanResume, ScanStopReason,
+    status_result, BoundedRecordIdScanChunkRef, BoundedRecordIdScanResumeMetadata, Error,
+    FixedInsertResult, InsertError, InsertOutcome, KeyBound, NativeStatus, PackedScanChunk,
+    PackedScanChunkRef, PackedScanResumeMetadata, PackedScanScratch, PointReadResult,
+    PublicationDisposition, RecordId, RuntimeConfig, RuntimeHealth, ScanDirection, ScanRequest,
+    ScanStopReason,
 };
 
 pub(crate) struct AcquiredRuntime {
@@ -20,6 +22,9 @@ pub(crate) struct AcquiredRuntime {
 
 #[derive(Debug)]
 pub(crate) struct ReadScopeHandle(mtree_sys::ReadScope);
+
+#[derive(Debug)]
+pub(crate) struct RcuScopeHandle(mtree_sys::RcuScope);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct RuntimeHandle(NonZeroUsize);
@@ -294,9 +299,11 @@ pub(crate) fn runtime_shutdown(runtime: RuntimeHandle, thread: ThreadHandle) -> 
 pub(crate) fn get(tree: TreeHandle, thread: ThreadHandle, key: &[u8]) -> Result<u64, Error> {
     let mut result = u64::MAX;
     // SAFETY: the key slice remains live for the call and output points to a
-    // writable scalar. Safe-side checks cover thread/runtime/key bounds.
+    // writable scalar. The safe facade retains both handles and checks their
+    // shared runtime, worker affinity, and negotiated key bound immediately
+    // before entering this private trusted bridge.
     let status = unsafe {
-        mtree_sys::mt_get(
+        mtree_sys::trusted::mako_mtree_get_trusted(
             tree.as_mut_ptr(),
             thread.as_mut_ptr(),
             key.as_ptr().cast::<c_void>(),
@@ -326,13 +333,12 @@ pub(crate) fn get_strided<const KEY_LENGTH: usize>(
     // transparent u64 result slot. The safe facade checked worker ownership,
     // runtime identity, and the negotiated key limit before this call.
     let status = unsafe {
-        mtree_sys::mt_get_strided(
+        mtree_sys::trusted::mako_mtree_get_strided_trusted(
             tree.as_mut_ptr(),
             thread.as_mut_ptr(),
             keys.as_ptr().cast::<c_void>(),
             keys.len(),
             KEY_LENGTH,
-            mem::size_of::<[u8; KEY_LENGTH]>(),
             results.as_mut_ptr().cast::<u64>(),
         )
     };
@@ -447,6 +453,39 @@ pub(crate) fn read_scope_end(scope: &mut ReadScopeHandle) -> Result<(), Error> {
     Ok(())
 }
 
+pub(crate) fn rcu_scope_begin(thread: ThreadHandle) -> Result<RcuScopeHandle, Error> {
+    let mut token = mtree_sys::RcuScope::default();
+    // SAFETY: `thread` is a live same-thread worker handle and `token` is
+    // writable exact-layout storage. Native scope state remains thread-local.
+    let status = unsafe { mtree_sys::mt_rcu_scope_begin(thread.as_mut_ptr(), &mut token) };
+    if let Some(status) = NativeStatus::from_raw(status) {
+        if token != mtree_sys::RcuScope::default() {
+            return Err(Error::AbiMismatch(
+                "failed RCU-scope begin returned a capability",
+            ));
+        }
+        return Err(Error::Native(status));
+    }
+    if token.owner == 0 || token.generation == 0 {
+        return Err(Error::AbiMismatch(
+            "RCU-scope begin returned an invalid capability",
+        ));
+    }
+    Ok(RcuScopeHandle(token))
+}
+
+pub(crate) fn rcu_scope_end(scope: &mut RcuScopeHandle) -> Result<(), Error> {
+    // SAFETY: safe ownership calls end at most once for this live same-thread
+    // token. Native end invalidates the token before returning success.
+    status_result(unsafe { mtree_sys::mt_rcu_scope_end(&mut scope.0) })?;
+    if scope.0 != mtree_sys::RcuScope::default() {
+        return Err(Error::AbiMismatch(
+            "RCU-scope end did not invalidate its capability",
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) fn get_or_insert(
     tree: TreeHandle,
     thread: ThreadHandle,
@@ -459,10 +498,10 @@ pub(crate) fn get_or_insert(
         inserted: u8::MAX,
         reserved: [u8::MAX; 3],
     };
-    // SAFETY: identical handle/key/output proof to `get`; candidate is
-    // nonzero by construction.
+    // SAFETY: identical retained-handle/key/output proof to `get`; candidate
+    // is nonzero by construction.
     let raw_status = unsafe {
-        mtree_sys::mt_get_or_insert(
+        mtree_sys::trusted::mako_mtree_get_or_insert_trusted(
             tree.as_mut_ptr(),
             thread.as_mut_ptr(),
             key.as_ptr().cast::<c_void>(),
@@ -493,11 +532,67 @@ pub(crate) fn get_or_insert(
     })
 }
 
+pub(crate) fn get_or_insert_strided<const KEY_LENGTH: usize, const KEY_STRIDE: usize>(
+    tree: TreeHandle,
+    thread: ThreadHandle,
+    keys: &[[u8; KEY_STRIDE]],
+    candidates: &[RecordId],
+    results: &mut [FixedInsertResult],
+) -> Result<(), Error> {
+    debug_assert_eq!(keys.len(), candidates.len());
+    debug_assert_eq!(keys.len(), results.len());
+    debug_assert!(KEY_LENGTH <= KEY_STRIDE);
+    const {
+        assert!(
+            mem::size_of::<FixedInsertResult>() == mem::size_of::<mtree_sys::GetOrInsertResult>()
+        );
+        assert!(
+            mem::align_of::<FixedInsertResult>() == mem::align_of::<mtree_sys::GetOrInsertResult>()
+        );
+        assert!(mem::size_of::<RecordId>() == mem::size_of::<mtree_sys::RecordId>());
+        assert!(mem::align_of::<RecordId>() == mem::align_of::<mtree_sys::RecordId>());
+    }
+
+    // SAFETY: the safe facade retained and validated both handles, checked
+    // the fixed shape and equal slice lengths, and proved all candidates
+    // nonzero and pairwise distinct. `RecordId` is transparent over NonZeroU64
+    // and `FixedInsertResult` has the asserted exact C result layout.
+    let raw_status = unsafe {
+        mtree_sys::trusted::mako_mtree_get_or_insert_strided_trusted(
+            tree.as_mut_ptr(),
+            thread.as_mut_ptr(),
+            keys.as_ptr().cast::<c_void>(),
+            keys.len(),
+            KEY_LENGTH,
+            KEY_STRIDE,
+            candidates.as_ptr().cast::<u64>(),
+            results.as_mut_ptr().cast::<mtree_sys::GetOrInsertResult>(),
+        )
+    };
+
+    let native_error = NativeStatus::from_raw(raw_status).map(Error::Native);
+    for (result, candidate) in results.iter().copied().zip(candidates.iter().copied()) {
+        let valid = if native_error.is_some() {
+            decode_fixed_insert_result(result, candidate).is_ok()
+        } else {
+            decode_successful_fixed_insert(result, candidate).is_ok()
+        };
+        if !valid {
+            return Err(Error::InvalidPublication);
+        }
+    }
+    match native_error {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
+}
+
 pub(crate) fn scan(
     tree: TreeHandle,
     thread: ThreadHandle,
     request: ScanRequest<'_>,
-) -> Result<ScanChunk, Error> {
+    max_key_length: usize,
+) -> Result<PackedScanChunk, Error> {
     let mut entries = Vec::new();
     entries
         .try_reserve_exact(request.entry_capacity())
@@ -557,7 +652,274 @@ pub(crate) fn scan(
         }
         return Err(Error::Native(status));
     }
-    decode_scan(entries, arena, result, request)
+    decode_scan(entries, arena, result, request, max_key_length)
+}
+
+pub(crate) fn scan_reusing<'scratch>(
+    tree: TreeHandle,
+    thread: ThreadHandle,
+    request: ScanRequest<'_>,
+    max_key_length: usize,
+    scratch: &'scratch mut PackedScanScratch,
+) -> Result<PackedScanChunkRef<'scratch>, Error> {
+    scan_reusing_inner(tree, thread, request, max_key_length, scratch, true)
+}
+
+/// Runs the packed scan while trusting the native tree's key-order and bound
+/// semantics. The common decoder still checks every length and offset before
+/// constructing Rust slices.
+///
+/// # Safety
+///
+/// The caller must own the native tree's complete semantic access path and
+/// guarantee that a successful native scan returns keys in the requested
+/// order and bounds, with no key above `max_key_length`.
+pub(crate) unsafe fn scan_reusing_trusted<'scratch>(
+    tree: TreeHandle,
+    thread: ThreadHandle,
+    request: ScanRequest<'_>,
+    max_key_length: usize,
+    scratch: &'scratch mut PackedScanScratch,
+) -> Result<PackedScanChunkRef<'scratch>, Error> {
+    scan_reusing_inner(tree, thread, request, max_key_length, scratch, false)
+}
+
+/// Runs the private forward bounded scan that emits only RecordIds.
+///
+/// # Safety
+///
+/// The caller must own the native tree's complete access path and guarantee
+/// the native lower-inclusive, upper-exclusive ordering contract.
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn scan_record_ids_bounded_reusing_trusted<'scratch>(
+    tree: TreeHandle,
+    thread: ThreadHandle,
+    lower: &[u8],
+    upper: &[u8],
+    entry_capacity: usize,
+    continuation_capacity: usize,
+    max_key_length: usize,
+    scratch: &'scratch mut PackedScanScratch,
+) -> Result<BoundedRecordIdScanChunkRef<'scratch>, Error> {
+    ensure_scan_storage(&mut scratch.record_ids, entry_capacity, 0)?;
+    ensure_scan_storage(&mut scratch.continuation_key, continuation_capacity, 0)?;
+    let record_ids = &mut scratch.record_ids[..entry_capacity];
+    let continuation = &mut scratch.continuation_key[..continuation_capacity];
+    let initialized = initialized_record_id_scan_result();
+    let mut result = mtree_sys::trusted::RecordIdScanResult {
+        records_written: usize::MAX,
+        continuation_bytes_used: usize::MAX,
+        next_key_bytes_required: usize::MAX,
+        stop_reason: u32::MAX,
+        resume: u32::MAX,
+        reserved: [u64::MAX; 2],
+    };
+    // SAFETY: Handles and bounds were validated by the safe facade. Both
+    // output slices are live, initialized, and exclusively borrowed. The
+    // private native entry point initializes `result` before any failure.
+    let raw_status = unsafe {
+        mtree_sys::trusted::mako_mtree_scan_record_ids_bounded_trusted(
+            tree.as_mut_ptr(),
+            thread.as_mut_ptr(),
+            lower.as_ptr().cast::<c_void>(),
+            lower.len(),
+            upper.as_ptr().cast::<c_void>(),
+            upper.len(),
+            record_ids.as_mut_ptr(),
+            record_ids.len(),
+            continuation.as_mut_ptr().cast::<c_void>(),
+            continuation.len(),
+            &mut result,
+        )
+    };
+    if let Some(status) = NativeStatus::from_raw(raw_status) {
+        if result != initialized {
+            return Err(Error::AbiMismatch(
+                "failed bounded RecordId scan did not initialize its result",
+            ));
+        }
+        return Err(Error::Native(status));
+    }
+    decode_record_id_scan(record_ids, continuation, result, max_key_length)
+}
+
+fn initialized_record_id_scan_result() -> mtree_sys::trusted::RecordIdScanResult {
+    mtree_sys::trusted::RecordIdScanResult {
+        records_written: 0,
+        continuation_bytes_used: 0,
+        next_key_bytes_required: 0,
+        stop_reason: mtree_sys::SCAN_STOP_END,
+        resume: mtree_sys::SCAN_RESUME_NONE,
+        reserved: [0; 2],
+    }
+}
+
+fn decode_record_id_scan<'scratch>(
+    record_ids: &'scratch [mtree_sys::RecordId],
+    continuation: &'scratch [u8],
+    result: mtree_sys::trusted::RecordIdScanResult,
+    max_key_length: usize,
+) -> Result<BoundedRecordIdScanChunkRef<'scratch>, Error> {
+    if result.reserved != [0; 2]
+        || result.records_written > record_ids.len()
+        || result.continuation_bytes_used > continuation.len()
+        || result.next_key_bytes_required > max_key_length
+    {
+        return Err(Error::AbiMismatch(
+            "bounded RecordId scan result exceeds caller storage",
+        ));
+    }
+    for record_id in &record_ids[..result.records_written] {
+        RecordId::new(*record_id).ok_or(Error::AbiMismatch(
+            "bounded scan returned the reserved RecordId",
+        ))?;
+    }
+
+    let (stop_reason, resume) = match (result.stop_reason, result.resume) {
+        (mtree_sys::SCAN_STOP_END, mtree_sys::SCAN_RESUME_NONE)
+            if result.continuation_bytes_used == 0 && result.next_key_bytes_required == 0 =>
+        {
+            (ScanStopReason::End, BoundedRecordIdScanResumeMetadata::None)
+        }
+        (mtree_sys::SCAN_STOP_ENTRY_CAPACITY, mtree_sys::trusted::SCAN_RESUME_INCLUSIVE_NEXT)
+            if result.records_written == record_ids.len()
+                && result.continuation_bytes_used == result.next_key_bytes_required =>
+        {
+            (
+                ScanStopReason::EntryCapacity,
+                BoundedRecordIdScanResumeMetadata::InclusiveNext,
+            )
+        }
+        (mtree_sys::SCAN_STOP_KEY_ARENA_CAPACITY, mtree_sys::SCAN_RESUME_UNCHANGED_INPUT)
+            if result.records_written == 0
+                && result.continuation_bytes_used == 0
+                && result.next_key_bytes_required > continuation.len() =>
+        {
+            (
+                ScanStopReason::KeyArenaCapacity,
+                BoundedRecordIdScanResumeMetadata::UnchangedInput,
+            )
+        }
+        _ => {
+            return Err(Error::AbiMismatch(
+                "bounded RecordId scan stop metadata is inconsistent",
+            ));
+        }
+    };
+
+    Ok(BoundedRecordIdScanChunkRef {
+        record_ids: &record_ids[..result.records_written],
+        continuation_key: &continuation[..result.continuation_bytes_used],
+        stop_reason,
+        resume,
+        next_key_bytes_required: result.next_key_bytes_required,
+    })
+}
+
+fn scan_reusing_inner<'scratch>(
+    tree: TreeHandle,
+    thread: ThreadHandle,
+    request: ScanRequest<'_>,
+    max_key_length: usize,
+    scratch: &'scratch mut PackedScanScratch,
+    validate_semantics: bool,
+) -> Result<PackedScanChunkRef<'scratch>, Error> {
+    ensure_scan_storage(
+        &mut scratch.entries,
+        request.entry_capacity(),
+        mtree_sys::ScanEntry::default(),
+    )?;
+    ensure_scan_storage(&mut scratch.key_arena, request.key_arena_capacity(), 0_u8)?;
+
+    let entries = &mut scratch.entries[..request.entry_capacity()];
+    let arena = &mut scratch.key_arena[..request.key_arena_capacity()];
+    let lower = encode_bound(request.lower());
+    let upper = encode_bound(request.upper());
+    let direction = match request.direction() {
+        ScanDirection::Forward => mtree_sys::SCAN_FORWARD,
+        ScanDirection::Reverse => mtree_sys::SCAN_REVERSE,
+    };
+    let initialized = initialized_scan_result();
+    let mut result = mtree_sys::ScanResult {
+        entries_written: usize::MAX,
+        arena_bytes_used: usize::MAX,
+        next_key_bytes_required: usize::MAX,
+        stop_reason: u32::MAX,
+        resume: u32::MAX,
+        resume_key_offset: usize::MAX,
+        resume_key_length: usize::MAX,
+        reserved: [u64::MAX; 2],
+    };
+    // SAFETY: Both slices are initialized, live caller-owned storage, and the
+    // returned view cannot outlive them. The safe facade retained and checked
+    // both handles and encoded valid direction and bound values. The trusted
+    // branch additionally relies on its caller's exclusive native access
+    // contract; the public branch retains the hardened C validation boundary.
+    let raw_status = unsafe {
+        if validate_semantics {
+            mtree_sys::mt_scan(
+                tree.as_mut_ptr(),
+                thread.as_mut_ptr(),
+                direction,
+                &lower,
+                &upper,
+                entries.as_mut_ptr(),
+                entries.len(),
+                arena.as_mut_ptr().cast::<c_void>(),
+                arena.len(),
+                &mut result,
+            )
+        } else {
+            mtree_sys::trusted::mako_mtree_scan_trusted(
+                tree.as_mut_ptr(),
+                thread.as_mut_ptr(),
+                direction,
+                &lower,
+                &upper,
+                entries.as_mut_ptr(),
+                entries.len(),
+                arena.as_mut_ptr().cast::<c_void>(),
+                arena.len(),
+                &mut result,
+            )
+        }
+    };
+    if let Some(status) = NativeStatus::from_raw(raw_status) {
+        if result != initialized {
+            return Err(Error::AbiMismatch(
+                "failed scan did not initialize its result",
+            ));
+        }
+        return Err(Error::Native(status));
+    }
+
+    let decoded = if validate_semantics {
+        validate_scan_result(entries, arena, &result, request, max_key_length)?
+    } else {
+        validate_trusted_scan_layout(entries, arena, &result, request, max_key_length)?
+    };
+    Ok(PackedScanChunkRef {
+        entries: &entries[..result.entries_written],
+        key_arena: &arena[..result.arena_bytes_used],
+        stop_reason: decoded.stop_reason,
+        resume: decoded.resume,
+        next_key_bytes_required: result.next_key_bytes_required,
+    })
+}
+
+fn ensure_scan_storage<T: Clone>(
+    storage: &mut Vec<T>,
+    requested: usize,
+    initial: T,
+) -> Result<(), Error> {
+    if requested <= storage.len() {
+        return Ok(());
+    }
+    storage
+        .try_reserve_exact(requested - storage.len())
+        .map_err(|_| Error::AllocationLimit { requested })?;
+    storage.resize(requested, initial);
+    Ok(())
 }
 
 fn encode_bound(bound: KeyBound<'_>) -> mtree_sys::ScanBound {
@@ -597,11 +959,37 @@ fn initialized_scan_result() -> mtree_sys::ScanResult {
 }
 
 fn decode_scan(
-    raw_entries: Vec<mtree_sys::ScanEntry>,
-    arena: Vec<u8>,
+    mut raw_entries: Vec<mtree_sys::ScanEntry>,
+    mut arena: Vec<u8>,
     result: mtree_sys::ScanResult,
     request: ScanRequest<'_>,
-) -> Result<ScanChunk, Error> {
+    max_key_length: usize,
+) -> Result<PackedScanChunk, Error> {
+    let decoded = validate_scan_result(&raw_entries, &arena, &result, request, max_key_length)?;
+    raw_entries.truncate(result.entries_written);
+    arena.truncate(result.arena_bytes_used);
+    Ok(PackedScanChunk {
+        entries: raw_entries,
+        key_arena: arena,
+        stop_reason: decoded.stop_reason,
+        resume: decoded.resume,
+        next_key_bytes_required: result.next_key_bytes_required,
+    })
+}
+
+#[derive(Clone, Copy)]
+struct DecodedScanResult {
+    stop_reason: ScanStopReason,
+    resume: PackedScanResumeMetadata,
+}
+
+fn validate_scan_result(
+    raw_entries: &[mtree_sys::ScanEntry],
+    arena: &[u8],
+    result: &mtree_sys::ScanResult,
+    request: ScanRequest<'_>,
+    max_key_length: usize,
+) -> Result<DecodedScanResult, Error> {
     if result.reserved != [0; 2]
         || result.entries_written > raw_entries.len()
         || result.arena_bytes_used > arena.len()
@@ -609,12 +997,6 @@ fn decode_scan(
         return Err(Error::AbiMismatch("scan result exceeds caller storage"));
     }
 
-    let mut decoded = Vec::new();
-    decoded
-        .try_reserve_exact(result.entries_written)
-        .map_err(|_| Error::AllocationLimit {
-            requested: result.entries_written,
-        })?;
     let mut expected_offset = 0_usize;
     let mut previous: Option<&[u8]> = None;
     for raw in raw_entries.iter().take(result.entries_written) {
@@ -628,8 +1010,13 @@ fn decode_scan(
             ));
         }
         let key = &arena[raw.key_offset..end];
-        let record_id = RecordId::new(raw.record_id)
+        RecordId::new(raw.record_id)
             .ok_or(Error::AbiMismatch("scan returned the reserved RecordId"))?;
+        if key.len() > max_key_length {
+            return Err(Error::AbiMismatch(
+                "scan returned a key above the negotiated maximum",
+            ));
+        }
         if !key_in_bounds(key, request.lower(), request.upper()) {
             return Err(Error::AbiMismatch("scan returned a key outside its bounds"));
         }
@@ -640,17 +1027,6 @@ fn decode_scan(
             return Err(Error::AbiMismatch("scan keys are not strictly ordered"));
         }
 
-        let mut owned = Vec::new();
-        owned
-            .try_reserve_exact(key.len())
-            .map_err(|_| Error::AllocationLimit {
-                requested: key.len(),
-            })?;
-        owned.extend_from_slice(key);
-        decoded.push(ScanEntry {
-            key: owned.into_boxed_slice(),
-            record_id,
-        });
         previous = Some(key);
         expected_offset = end;
     }
@@ -658,28 +1034,73 @@ fn decode_scan(
         return Err(Error::AbiMismatch("scan arena contains unreferenced bytes"));
     }
 
-    let (stop_reason, resume) = decode_scan_stop(&result, &raw_entries, &arena, request)?;
-    Ok(ScanChunk {
-        entries: decoded,
+    if result.next_key_bytes_required > max_key_length {
+        return Err(Error::AbiMismatch(
+            "scan continuation key exceeds the negotiated maximum",
+        ));
+    }
+
+    let (stop_reason, resume) = decode_scan_stop(result, raw_entries, request)?;
+    Ok(DecodedScanResult {
         stop_reason,
         resume,
-        next_key_bytes_required: result.next_key_bytes_required,
+    })
+}
+
+/// Checks every condition needed to construct the borrowed Rust view while
+/// accepting key ordering and range membership from an exclusively owned
+/// native tree.
+fn validate_trusted_scan_layout(
+    raw_entries: &[mtree_sys::ScanEntry],
+    arena: &[u8],
+    result: &mtree_sys::ScanResult,
+    request: ScanRequest<'_>,
+    max_key_length: usize,
+) -> Result<DecodedScanResult, Error> {
+    if result.reserved != [0; 2]
+        || result.entries_written > raw_entries.len()
+        || result.arena_bytes_used > arena.len()
+    {
+        return Err(Error::AbiMismatch("scan result exceeds caller storage"));
+    }
+
+    for raw in raw_entries.iter().take(result.entries_written) {
+        let end = raw
+            .key_offset
+            .checked_add(raw.key_length)
+            .ok_or(Error::AbiMismatch("scan key offset overflowed"))?;
+        if end > result.arena_bytes_used {
+            return Err(Error::AbiMismatch("scan key slice exceeds its arena"));
+        }
+        RecordId::new(raw.record_id)
+            .ok_or(Error::AbiMismatch("scan returned the reserved RecordId"))?;
+    }
+
+    if result.next_key_bytes_required > max_key_length {
+        return Err(Error::AbiMismatch(
+            "scan continuation key exceeds the negotiated maximum",
+        ));
+    }
+
+    let (stop_reason, resume) = decode_scan_stop(result, raw_entries, request)?;
+    Ok(DecodedScanResult {
+        stop_reason,
+        resume,
     })
 }
 
 fn decode_scan_stop(
     result: &mtree_sys::ScanResult,
     raw_entries: &[mtree_sys::ScanEntry],
-    arena: &[u8],
     request: ScanRequest<'_>,
-) -> Result<(ScanStopReason, ScanResume), Error> {
+) -> Result<(ScanStopReason, PackedScanResumeMetadata), Error> {
     match (result.stop_reason, result.resume) {
         (mtree_sys::SCAN_STOP_END, mtree_sys::SCAN_RESUME_NONE)
             if result.next_key_bytes_required == 0
                 && result.resume_key_offset == 0
                 && result.resume_key_length == 0 =>
         {
-            Ok((ScanStopReason::End, ScanResume::None))
+            Ok((ScanStopReason::End, PackedScanResumeMetadata::None))
         }
         (
             raw_stop @ (mtree_sys::SCAN_STOP_ENTRY_CAPACITY
@@ -690,7 +1111,10 @@ fn decode_scan_stop(
             && result.resume_key_length == 0
             && capacity_stop_is_consistent(raw_stop, result, request) =>
         {
-            Ok((scan_stop_reason(raw_stop), ScanResume::UnchangedInput))
+            Ok((
+                scan_stop_reason(raw_stop),
+                PackedScanResumeMetadata::UnchangedInput,
+            ))
         }
         (
             raw_stop @ (mtree_sys::SCAN_STOP_ENTRY_CAPACITY
@@ -717,7 +1141,10 @@ fn decode_scan_stop(
             }
             Ok((
                 scan_stop_reason(raw_stop),
-                ScanResume::Exclusive(arena[last.key_offset..end].into()),
+                PackedScanResumeMetadata::Exclusive {
+                    offset: last.key_offset,
+                    length: last.key_length,
+                },
             ))
         }
         _ => Err(Error::AbiMismatch("scan stop and resume metadata disagree")),
@@ -801,6 +1228,21 @@ fn decode_successful_insert(
     }
 }
 
+fn decode_successful_fixed_insert(
+    result: FixedInsertResult,
+    candidate: RecordId,
+) -> Result<InsertOutcome, ()> {
+    decode_successful_insert(
+        mtree_sys::GetOrInsertResult {
+            winner: result.winner,
+            publication: result.publication,
+            inserted: result.inserted,
+            reserved: result.reserved,
+        },
+        candidate,
+    )
+}
+
 fn decode_failed_insert(
     result: mtree_sys::GetOrInsertResult,
     candidate: RecordId,
@@ -821,6 +1263,22 @@ fn decode_failed_insert(
         }
         _ => Err(()),
     }
+}
+
+pub(crate) fn decode_fixed_insert_result(
+    result: FixedInsertResult,
+    candidate: RecordId,
+) -> Result<(PublicationDisposition, Option<RecordId>), Error> {
+    decode_failed_insert(
+        mtree_sys::GetOrInsertResult {
+            winner: result.winner,
+            publication: result.publication,
+            inserted: result.inserted,
+            reserved: result.reserved,
+        },
+        candidate,
+    )
+    .map_err(|()| Error::InvalidPublication)
 }
 
 #[cfg(test)]
@@ -974,7 +1432,7 @@ mod tests {
     }
 
     #[test]
-    fn scan_decoder_owns_packed_binary_keys_and_preserves_empty_keys() {
+    fn scan_decoder_keeps_binary_and_empty_keys_in_one_packed_arena() {
         let entries = vec![
             mtree_sys::ScanEntry {
                 key_offset: 0,
@@ -999,15 +1457,22 @@ mod tests {
             mtree_sys::SCAN_STOP_END,
             mtree_sys::SCAN_RESUME_NONE,
         );
-        let chunk =
-            decode_scan(entries, arena, result, scan_request(ScanDirection::Forward)).unwrap();
+        let chunk = decode_scan(
+            entries,
+            arena,
+            result,
+            scan_request(ScanDirection::Forward),
+            1024,
+        )
+        .unwrap();
 
         assert_eq!(chunk.stop_reason(), ScanStopReason::End);
-        assert_eq!(chunk.resume(), &ScanResume::None);
-        assert_eq!(chunk.entries()[0].key(), b"");
-        assert_eq!(chunk.entries()[1].key(), &[0, 0xff]);
-        assert_eq!(chunk.entries()[2].key(), b"z");
-        assert_eq!(chunk.entries()[2].record_id().get(), 3);
+        assert_eq!(chunk.resume(), crate::PackedScanResume::None);
+        let entries: Vec<_> = chunk.entries().collect();
+        assert_eq!(entries[0].key(), b"");
+        assert_eq!(entries[1].key(), &[0, 0xff]);
+        assert_eq!(entries[2].key(), b"z");
+        assert_eq!(entries[2].record_id().get(), 3);
     }
 
     #[test]
@@ -1035,13 +1500,10 @@ mod tests {
         result.resume_key_offset = 1;
         result.resume_key_length = 2;
         let request = scan_request(ScanDirection::Forward).with_entry_capacity(2);
-        let chunk = decode_scan(entries, arena, result, request).unwrap();
+        let chunk = decode_scan(entries, arena, result, request, 1024).unwrap();
 
         assert_eq!(chunk.stop_reason(), ScanStopReason::EntryCapacity);
-        assert_eq!(
-            chunk.resume(),
-            &ScanResume::Exclusive(Box::from(&b"bb"[..]))
-        );
+        assert_eq!(chunk.resume(), crate::PackedScanResume::Exclusive(b"bb"));
         assert_eq!(chunk.next_key_bytes_required(), 7);
     }
 
@@ -1061,7 +1523,8 @@ mod tests {
                 vec![entry(0, 1, 0)],
                 b"a".to_vec(),
                 end,
-                scan_request(ScanDirection::Forward)
+                scan_request(ScanDirection::Forward),
+                1024,
             ),
             Err(Error::AbiMismatch(_))
         ));
@@ -1071,7 +1534,8 @@ mod tests {
                 vec![entry(0, 1, 1), entry(1, 1, 2)],
                 b"aa".to_vec(),
                 two,
-                scan_request(ScanDirection::Forward)
+                scan_request(ScanDirection::Forward),
+                1024,
             ),
             Err(Error::AbiMismatch(_))
         ));
@@ -1080,7 +1544,8 @@ mod tests {
                 vec![entry(1, 1, 1)],
                 b"a".to_vec(),
                 end,
-                scan_request(ScanDirection::Forward)
+                scan_request(ScanDirection::Forward),
+                1024,
             ),
             Err(Error::AbiMismatch(_))
         ));
@@ -1089,7 +1554,8 @@ mod tests {
                 vec![entry(0, 1, 1)],
                 b"z".to_vec(),
                 end,
-                scan_request(ScanDirection::Forward).with_upper(KeyBound::Excluded(b"z"))
+                scan_request(ScanDirection::Forward).with_upper(KeyBound::Excluded(b"z")),
+                1024,
             ),
             Err(Error::AbiMismatch(_))
         ));
@@ -1107,8 +1573,66 @@ mod tests {
                 vec![entry(0, 1, 1)],
                 b"a".to_vec(),
                 bad_resume,
-                scan_request(ScanDirection::Forward)
+                scan_request(ScanDirection::Forward),
+                1024,
             ),
+            Err(Error::AbiMismatch(_))
+        ));
+    }
+
+    #[test]
+    fn trusted_scan_layout_still_rejects_every_borrowing_hazard() {
+        fn entry(offset: usize, key_length: usize, record_id: u64) -> mtree_sys::ScanEntry {
+            mtree_sys::ScanEntry {
+                key_offset: offset,
+                key_length,
+                record_id,
+            }
+        }
+
+        let request = scan_request(ScanDirection::Forward);
+        let complete = scan_result(1, 1, mtree_sys::SCAN_STOP_END, mtree_sys::SCAN_RESUME_NONE);
+        for entries in [
+            vec![entry(usize::MAX, 2, 1)],
+            vec![entry(1, 1, 1)],
+            vec![entry(0, 1, 0)],
+        ] {
+            assert!(matches!(
+                validate_trusted_scan_layout(&entries, b"a", &complete, request, 1024),
+                Err(Error::AbiMismatch(_))
+            ));
+        }
+
+        let too_many = scan_result(2, 1, mtree_sys::SCAN_STOP_END, mtree_sys::SCAN_RESUME_NONE);
+        assert!(matches!(
+            validate_trusted_scan_layout(&[entry(0, 1, 1)], b"a", &too_many, request, 1024,),
+            Err(Error::AbiMismatch(_))
+        ));
+
+        let mut too_much_arena = complete;
+        too_much_arena.arena_bytes_used = 2;
+        assert!(matches!(
+            validate_trusted_scan_layout(&[entry(0, 1, 1)], b"a", &too_much_arena, request, 1024,),
+            Err(Error::AbiMismatch(_))
+        ));
+
+        let mut bad_reserved = complete;
+        bad_reserved.reserved[0] = 1;
+        assert!(matches!(
+            validate_trusted_scan_layout(&[entry(0, 1, 1)], b"a", &bad_reserved, request, 1024,),
+            Err(Error::AbiMismatch(_))
+        ));
+
+        let mut bad_resume = scan_result(
+            1,
+            1,
+            mtree_sys::SCAN_STOP_KEY_ARENA_CAPACITY,
+            mtree_sys::SCAN_RESUME_EXCLUSIVE_LAST,
+        );
+        bad_resume.resume_key_offset = 1;
+        bad_resume.resume_key_length = 1;
+        assert!(matches!(
+            validate_trusted_scan_layout(&[entry(0, 1, 1)], b"a", &bad_resume, request, 1024,),
             Err(Error::AbiMismatch(_))
         ));
     }

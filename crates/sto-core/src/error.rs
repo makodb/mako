@@ -55,6 +55,9 @@ pub enum InvalidUse {
     WorkerBusy,
     TransactionFinished,
     TransactionDoomed,
+    /// A direct unique group cannot start or append in the current item
+    /// representation. The historical name also covers a repeated resource
+    /// binding or a differently typed/ordinary active frame.
     UniqueBatchRequiresEmptyTransaction,
     DuplicateResourceClass,
     ResourceTypeMismatch,

@@ -60,6 +60,72 @@ class RunnerTests(unittest.TestCase):
         ):
             MODULE.parse_thread_counts("1,19")
 
+    def test_linux_cpu_lists_expand_ranges_and_reject_reversed_bounds(self) -> None:
+        self.assertEqual(
+            MODULE.parse_linux_cpu_list("0-2,8,10-11\n"),
+            [0, 1, 2, 8, 10, 11],
+        )
+        with self.assertRaisesRegex(ValueError, "invalid Linux CPU-list field"):
+            MODULE.parse_linux_cpu_list("3-1")
+
+    def test_quiet_guard_includes_smt_siblings(self) -> None:
+        with mock.patch.object(
+            MODULE.Path,
+            "read_text",
+            side_effect=["0,64\n", "1,65\n"],
+        ):
+            self.assertEqual(
+                MODULE.benchmark_guard_cpus([0, 1]),
+                [0, 1, 64, 65],
+            )
+
+    def test_workload_mix_requires_five_nonnegative_percentages(self) -> None:
+        self.assertEqual(MODULE.parse_workload_mix("45,43,4,4,4"), [45, 43, 4, 4, 4])
+        with self.assertRaisesRegex(argparse.ArgumentTypeError, "five nonnegative"):
+            MODULE.parse_workload_mix("50,50")
+        with self.assertRaisesRegex(argparse.ArgumentTypeError, "sum to 100"):
+            MODULE.parse_workload_mix("45,43,4,4,3")
+        with self.assertRaisesRegex(argparse.ArgumentTypeError, "five nonnegative"):
+            MODULE.parse_workload_mix("101,0,0,0,-1")
+
+    def test_workload_mix_is_forwarded_through_the_benchmark_environment(self) -> None:
+        with mock.patch.dict(
+            MODULE.os.environ,
+            {"MAKO_TPCC_WORKLOAD_MIX": "stale"},
+            clear=True,
+        ):
+            self.assertNotIn(
+                "MAKO_TPCC_WORKLOAD_MIX", MODULE.benchmark_environment(None)
+            )
+            self.assertEqual(
+                MODULE.benchmark_environment([45, 43, 4, 4, 4])[
+                    "MAKO_TPCC_WORKLOAD_MIX"
+                ],
+                "45,43,4,4,4",
+            )
+
+    def test_diagnostic_fallback_switches_are_recorded(self) -> None:
+        environment = {
+            "MAKO_TPCC_WORKLOAD_MIX": "0,100,0,0,0",
+            "MAKO_STO_TPCC_DISABLE_PAYMENT_FULL": "1",
+            "MAKO_STO_TPCC_DISABLE_PAYMENT_PREFIX": "1",
+            "MAKO_STO_TPCC_DISABLE_NEW_ORDER_FULL": "1",
+            "MAKO_STO_TPCC_DISABLE_DELIVERY_FULL": "1",
+            "MAKO_STO_TPCC_DISABLE_STOCK_LEVEL_FULL": "1",
+            "UNRELATED": "not recorded",
+        }
+        self.assertEqual(
+            MODULE.recorded_environment_overrides(environment),
+            {
+                "MAKO_TPCC_WORKLOAD_MIX": "0,100,0,0,0",
+                "MAKO_STO_TPCC_DISABLE_PAYMENT_FULL": "1",
+                "MAKO_STO_TPCC_DISABLE_PAYMENT_PREFIX": "1",
+                "MAKO_STO_TPCC_DISABLE_NEW_ORDER_FULL": "1",
+                "MAKO_STO_TPCC_DISABLE_DELIVERY_FULL": "1",
+                "MAKO_STO_TPCC_DISABLE_STOCK_LEVEL_FULL": "1",
+            },
+        )
+
     def test_extract_result_accepts_one_valid_record(self) -> None:
         record = result("rust", 80.0)
         stdout = "noise\n" + MODULE.RESULT_PREFIX + MODULE.json.dumps(record) + "\n"
@@ -124,6 +190,78 @@ class RunnerTests(unittest.TestCase):
         self.assertAlmostEqual(alignment["waited_seconds"], 0.3)
         self.assertEqual(sleep.call_count, 2)
 
+    def test_aligned_quiet_window_restarts_alignment_after_noisy_opening(self) -> None:
+        alignments = [
+            {"restart_count_before": 10, "restart_count_after": 11},
+            {"restart_count_before": 11, "restart_count_after": 12},
+        ]
+        windows = [
+            {
+                "restart_count_before": 11,
+                "restart_count_after": 11,
+                "violations": ["restart was noisy"],
+            },
+            {
+                "restart_count_before": 12,
+                "restart_count_after": 12,
+                "violations": [],
+            },
+        ]
+        with (
+            mock.patch.object(
+                MODULE, "wait_for_next_lxd_restart", side_effect=alignments
+            ) as align,
+            mock.patch.object(
+                MODULE,
+                "capture_quiet_window",
+                side_effect=windows,
+            ) as capture,
+            mock.patch("builtins.print"),
+        ):
+            observed = MODULE.wait_for_aligned_quiet_window(
+                SimpleNamespace(), 1, "pair-1", 2
+            )
+
+        self.assertEqual(align.call_count, 2)
+        self.assertEqual(capture.call_count, 2)
+        self.assertEqual(observed["restart_count_after"], 12)
+        self.assertEqual(observed["lxd_restart_alignment"], alignments[1])
+
+    def test_aligned_quiet_window_realigns_if_capture_starts_late(self) -> None:
+        alignments = [
+            {"restart_count_before": 20, "restart_count_after": 21},
+            {"restart_count_before": 22, "restart_count_after": 23},
+        ]
+        windows = [
+            {
+                "restart_count_before": 22,
+                "restart_count_after": 22,
+                "violations": [],
+            },
+            {
+                "restart_count_before": 23,
+                "restart_count_after": 23,
+                "violations": [],
+            },
+        ]
+        with (
+            mock.patch.object(
+                MODULE, "wait_for_next_lxd_restart", side_effect=alignments
+            ) as align,
+            mock.patch.object(
+                MODULE, "capture_quiet_window", side_effect=windows
+            ) as capture,
+            mock.patch("builtins.print"),
+        ):
+            observed = MODULE.wait_for_aligned_quiet_window(
+                SimpleNamespace(), 1, "pair-1", 1
+            )
+
+        self.assertEqual(align.call_count, 2)
+        self.assertEqual(capture.call_count, 2)
+        self.assertEqual(observed["restart_count_before"], 23)
+        self.assertEqual(observed["lxd_restart_alignment"], alignments[1])
+
     def test_guard_rejects_both_rows_and_reuses_logical_slots(self) -> None:
         args = SimpleNamespace()
         windows = [
@@ -149,7 +287,11 @@ class RunnerTests(unittest.TestCase):
         with (
             mock.patch.object(MODULE, "wait_for_quiet_window", side_effect=windows),
             mock.patch.object(MODULE, "run_one", side_effect=fake_run_one),
-            mock.patch.object(MODULE, "read_lxd_restart_count", side_effect=[11, 11]),
+            mock.patch.object(
+                MODULE,
+                "read_lxd_restart_count",
+                side_effect=[11, 11, 11, 11, 11],
+            ),
             mock.patch.object(MODULE, "find_competing_processes", return_value=[]),
             mock.patch.object(MODULE.time, "sleep"),
         ):
@@ -164,18 +306,54 @@ class RunnerTests(unittest.TestCase):
 
         self.assertEqual(
             calls,
-            [("cpp", 7), ("rust", 8), ("cpp", 7), ("rust", 8)],
+            [("cpp", 7), ("cpp", 7), ("rust", 8)],
         )
-        self.assertEqual([record["execution"] for record in accepted], [3, 4])
+        self.assertEqual([record["execution"] for record in accepted], [2, 3])
         self.assertEqual([record["run_order"] for record in accepted], [7, 8])
         guard = accepted[0]["guard"]
         self.assertEqual(guard["accepted_pair_attempt"], 2)
         self.assertEqual(len(guard["rejected_attempts"]), 1)
         self.assertEqual(
             guard["rejected_attempts"][0]["reasons"],
-            ["lxd_restart_count_changed"],
+            ["cpp_lxd_restart_count_changed", "lxd_restart_count_changed"],
         )
         self.assertEqual(accepted[1]["guard"], guard)
+
+    def test_guard_can_align_each_engine_in_a_distinct_restart_window(self) -> None:
+        first_window = {"restart_count_after": 11, "interval": "first"}
+        second_window = {"restart_count_after": 12, "interval": "second"}
+        args = SimpleNamespace(
+            align_after_lxd_restart=True,
+            align_between_engines=True,
+        )
+        attempted = [result("cpp", 100.0), result("rust", 80.0)]
+        with (
+            mock.patch.object(
+                MODULE,
+                "wait_for_aligned_quiet_window",
+                side_effect=[first_window, second_window],
+            ) as aligned,
+            mock.patch.object(MODULE, "run_one", side_effect=attempted),
+            mock.patch.object(
+                MODULE, "read_lxd_restart_count", side_effect=[11, 12, 12]
+            ),
+            mock.patch.object(MODULE, "find_competing_processes", return_value=[]),
+        ):
+            accepted = MODULE.run_guarded_pair(
+                args,
+                ["cpp", "rust"],
+                threads=1,
+                repetition=0,
+                pair_id="pair-1",
+                first_run_order=1,
+            )
+
+        self.assertEqual(aligned.call_count, 2)
+        engine_windows = accepted[0]["guard"]["engine_windows"]
+        self.assertEqual(
+            [window["pre_run_window"]["interval"] for window in engine_windows],
+            ["first", "second"],
+        )
 
     def test_guard_does_not_mask_an_uncontaminated_benchmark_failure(self) -> None:
         with (
@@ -203,7 +381,6 @@ class RunnerTests(unittest.TestCase):
     def test_guard_rejects_a_pair_when_a_competitor_appears(self) -> None:
         attempted = [
             result("cpp", 100.0),
-            result("rust", 80.0),
             result("cpp", 101.0),
             result("rust", 81.0),
         ]
@@ -217,11 +394,15 @@ class RunnerTests(unittest.TestCase):
                 ],
             ),
             mock.patch.object(MODULE, "run_one", side_effect=attempted) as run_one,
-            mock.patch.object(MODULE, "read_lxd_restart_count", side_effect=[10, 10]),
+            mock.patch.object(
+                MODULE,
+                "read_lxd_restart_count",
+                side_effect=[10, 10, 10, 10, 10],
+            ),
             mock.patch.object(
                 MODULE,
                 "find_competing_processes",
-                side_effect=[[{"pid": 123}], []],
+                side_effect=[[{"pid": 123}], [], [], [], []],
             ),
             mock.patch.object(MODULE.time, "sleep"),
         ):
@@ -234,7 +415,7 @@ class RunnerTests(unittest.TestCase):
                 first_run_order=1,
             )
 
-        self.assertEqual(run_one.call_count, 4)
+        self.assertEqual(run_one.call_count, 3)
         self.assertEqual(
             [record["throughput_txn_s"] for record in accepted], [101.0, 81.0]
         )

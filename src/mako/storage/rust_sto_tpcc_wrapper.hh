@@ -6,19 +6,33 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <unordered_map>
 #include <vector>
 
 #include "abstract_db.h"
+#include "benchmarks/tpcc_fixed_batch.h"
 #include "sto_tpcc_ffi.h"
 
 class rust_sto_tpcc_wrapper;
 
+namespace rust_sto_tpcc_detail {
+
+// Exposed for the focused wrapper smoke test so table-name classification and
+// its mutually dependent retained-record, key-byte, and consumed-ID bounds
+// remain one directly testable production decision.
+sto_tpcc_table_config table_config_for(std::string_view index_name);
+
+} // namespace rust_sto_tpcc_detail
+
 // FullOrderedIndex bridge used only by the matched TPC-C comparison target.
 // The application and record encoders remain the existing C++ TPC-C code;
 // all transactional storage operations below cross the narrow Rust C ABI.
-class rust_sto_tpcc_ordered_index final : public FullOrderedIndex {
+class rust_sto_tpcc_ordered_index final : public FullOrderedIndex,
+                                          public TxnFixedReadCapability,
+                                          public TxnFixedModifyCapability,
+                                          public TxnFixedPutCapability {
 public:
   rust_sto_tpcc_ordered_index(rust_sto_tpcc_wrapper *owner,
                               sto_tpcc_table *table,
@@ -42,6 +56,16 @@ public:
 
   bool tx_get(c_void *txn, lcdf::Str key, std::string &value,
               size_t max_bytes_read) override;
+  void tx_visit_fixed(c_void *txn, const char *keys, size_t key_width,
+                      size_t key_count, size_t max_bytes_read,
+                      oi_fixed_read_callback &callback) override;
+  void tx_modify_fixed(c_void *txn, const char *keys, size_t key_width,
+                       size_t key_count,
+                       oi_fixed_modify_callback &callback) override;
+  oi_fixed_put_result
+  tx_put_fixed(c_void *txn, const char *keys, size_t key_width,
+               size_t key_count, const std::string_view *encoded_values,
+               oi_fixed_put_mode mode) override;
   void tx_put(c_void *txn, lcdf::Str key, const std::string &value) override;
   void tx_insert(c_void *txn, lcdf::Str key,
                  const std::string &value) override;
@@ -72,7 +96,12 @@ private:
   friend class rust_sto_tpcc_wrapper;
 };
 
-class rust_sto_tpcc_wrapper final : public abstract_db {
+class rust_sto_tpcc_wrapper final : public abstract_db,
+                                    public TxnInsertBatchCapability,
+                                    public TxnTpccPaymentCapability,
+                                    public TxnTpccNewOrderCapability,
+                                    public TxnTpccDeliveryCapability,
+                                    public TxnTpccStockLevelCapability {
 public:
   rust_sto_tpcc_wrapper();
   ~rust_sto_tpcc_wrapper() noexcept override;
@@ -89,6 +118,34 @@ public:
   bool commit_txn_no_paxos(void *txn) override;
   void abort_txn(void *txn) override;
   void abort_txn_local(void *txn) override;
+  TxnFixedReadCapability *txn_fixed_read_capability(
+      abstract_ordered_index *index) noexcept override;
+  TxnFixedModifyCapability *txn_fixed_modify_capability(
+      abstract_ordered_index *index) noexcept override;
+  TxnFixedPutCapability *txn_fixed_put_capability(
+      abstract_ordered_index *index) noexcept override;
+  TxnInsertBatchCapability *txn_insert_batch_capability() noexcept override;
+  TxnTpccPaymentCapability *txn_tpcc_payment_capability() noexcept override;
+  TxnTpccNewOrderCapability *
+  txn_tpcc_new_order_capability() noexcept override;
+  TxnTpccDeliveryCapability *
+  txn_tpcc_delivery_capability() noexcept override;
+  TxnTpccStockLevelCapability *
+  txn_tpcc_stock_level_capability() noexcept override;
+  oi_fixed_put_result
+  tx_insert_many(c_void *txn, const oi_insert_operation *operations,
+                 size_t operation_count) override;
+  bool payment_full_enabled() const noexcept override;
+  tpcc_fixed_batch::payment_full_result tx_payment_full(
+      const tpcc_fixed_batch::payment_full_request &request) override;
+  tpcc_fixed_batch::payment_prefix_result tx_payment_prefix(
+      const tpcc_fixed_batch::payment_prefix_request &request) override;
+  tpcc_fixed_batch::new_order_full_result tx_new_order_full(
+      const tpcc_fixed_batch::new_order_full_request &request) override;
+  tpcc_fixed_batch::delivery_full_result tx_delivery_full(
+      const tpcc_fixed_batch::delivery_full_request &request) override;
+  tpcc_fixed_batch::stock_level_full_result tx_stock_level_full(
+      const tpcc_fixed_batch::stock_level_full_request &request) override;
 
   abstract_ordered_index *get_index_by_table_id(
       unsigned short table_id) override;
@@ -118,6 +175,9 @@ private:
   static thread_local sto_tpcc_thread *tls_thread_;
   static thread_local bool tls_transaction_active_;
   static thread_local bool tls_legacy_thread_initialized_;
+  static thread_local std::vector<sto_tpcc_fixed_value> tls_fixed_values_;
+  static thread_local std::vector<sto_tpcc_insert_operation>
+      tls_insert_operations_;
 
   [[noreturn]] static void throw_fatal(const char *operation,
                                        sto_tpcc_status status);
@@ -127,13 +187,28 @@ private:
   static void abort_current_transaction_noexcept();
 
   bool get_raw(const sto_tpcc_table *table, lcdf::Str key,
-               std::string &encoded_value);
+               std::string &encoded_value,
+               size_t max_bytes_read = std::string::npos);
+  // The *_active_raw variants require the caller to have just validated the
+  // transaction handle. Checked raw entry points remain for standalone and
+  // shard-facing paths.
+  bool get_active_raw(const sto_tpcc_table *table, lcdf::Str key,
+                      std::string &encoded_value,
+                      size_t max_bytes_read = std::string::npos);
   void put_raw(const sto_tpcc_table *table, lcdf::Str key,
                const std::string &encoded_value, bool insert_only);
+  void put_active_raw(const sto_tpcc_table *table, lcdf::Str key,
+                      const std::string &encoded_value, bool insert_only);
   bool remove_raw(const sto_tpcc_table *table, lcdf::Str key);
+  bool remove_active_raw(const sto_tpcc_table *table, lcdf::Str key);
   void scan_raw(const sto_tpcc_table *table, bool reverse,
                 const std::string &start_key, const std::string *end_key,
                 oi_scan_callback &callback, bool strip_value_metadata);
+  void scan_active_raw(const sto_tpcc_table *table, bool reverse,
+                       const std::string &start_key,
+                       const std::string *end_key,
+                       oi_scan_callback &callback,
+                       bool strip_value_metadata);
 
   friend class rust_sto_tpcc_ordered_index;
 };

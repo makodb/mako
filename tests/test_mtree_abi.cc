@@ -1,5 +1,6 @@
 #include "mako/storage/mtree_abi.h"
 
+#include "mako/rcu.h"
 #include "mako/silo_runtime.h"
 
 #include <gtest/gtest.h>
@@ -8,6 +9,7 @@
 #include <array>
 #include <atomic>
 #include <barrier>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -22,6 +24,7 @@ namespace {
 static_assert(std::is_standard_layout_v<mt_runtime_config>);
 static_assert(std::is_standard_layout_v<mt_build_id>);
 static_assert(std::is_standard_layout_v<mt_read_scope>);
+static_assert(std::is_same_v<mt_rcu_scope, mt_read_scope>);
 static_assert(std::is_standard_layout_v<mt_get_or_insert_result>);
 static_assert(std::is_standard_layout_v<mt_scan_bound>);
 static_assert(std::is_standard_layout_v<mt_scan_entry>);
@@ -41,7 +44,7 @@ mt_runtime *default_runtime() {
       MT_FEATURE_INTEGRAL_RECORD_IDS | MT_FEATURE_RUNTIME_HEALTH |
       MT_FEATURE_SINGLETON_RUNTIME | MT_FEATURE_COPIED_RANGE_SCANS |
       MT_FEATURE_SCOPED_POINT_READS | MT_FEATURE_SCOPED_STRIDED_POINT_READS |
-      MT_FEATURE_STRIDED_POINT_READS;
+      MT_FEATURE_STRIDED_POINT_READS | MT_FEATURE_SCOPED_RCU;
   mt_runtime *runtime = nullptr;
   EXPECT_EQ(mt_runtime_acquire(&config, &runtime), MT_OK);
   EXPECT_NE(runtime, nullptr);
@@ -178,6 +181,8 @@ TEST(MtreeAbiIdentity, ReportsExactPublicLayoutsAndLimits) {
             MT_FEATURE_SCOPED_STRIDED_POINT_READS);
   EXPECT_EQ(mt_feature_bits() & MT_FEATURE_STRIDED_POINT_READS,
             MT_FEATURE_STRIDED_POINT_READS);
+  EXPECT_EQ(mt_feature_bits() & MT_FEATURE_SCOPED_RCU,
+            MT_FEATURE_SCOPED_RCU);
   EXPECT_EQ(mt_feature_bits() & MT_FEATURE_GRACEFUL_SHUTDOWN, 0u);
   EXPECT_TRUE(mt_endianness() == MT_BYTE_ORDER_LITTLE_ENDIAN ||
               mt_endianness() == MT_BYTE_ORDER_BIG_ENDIAN);
@@ -201,7 +206,7 @@ TEST(MtreeAbiIdentity, ReportsExactPublicLayoutsAndLimits) {
   EXPECT_EQ(mt_scan_entry_alignment(), alignof(mt_scan_entry));
   EXPECT_EQ(mt_scan_result_size(), sizeof(mt_scan_result));
   EXPECT_EQ(mt_scan_result_alignment(), alignof(mt_scan_result));
-  EXPECT_EQ(mt_exported_symbols_fingerprint(), UINT64_C(0xdb5bed9b8f1490e3));
+  EXPECT_EQ(mt_exported_symbols_fingerprint(), UINT64_C(0x0b2ec2158e69d9c7));
 
   mt_build_id first{};
   mt_build_id second{};
@@ -388,6 +393,10 @@ TEST(MtreeAbiPoint, ScopedReadsRetainGuardsAndRejectStaleGenerations) {
   EXPECT_EQ(mt_read_scope_begin(tree, worker, &nested), MT_ERR_ACTIVE_GUARDS);
   EXPECT_EQ(nested.owner, 0u);
   EXPECT_EQ(nested.generation, 0u);
+  mt_rcu_scope blocked_rcu{uintptr_t{1}, UINT64_C(1)};
+  EXPECT_EQ(mt_rcu_scope_begin(worker, &blocked_rcu), MT_ERR_ACTIVE_GUARDS);
+  EXPECT_EQ(blocked_rcu.owner, 0u);
+  EXPECT_EQ(blocked_rcu.generation, 0u);
 
   found = 99;
   EXPECT_EQ(mt_get(tree, worker, present.data(), present.size(), &found),
@@ -450,6 +459,230 @@ TEST(MtreeAbiPoint, ScopedReadsRetainGuardsAndRejectStaleGenerations) {
   EXPECT_EQ(found, 92u);
   EXPECT_EQ(mt_read_scope_end(&next), MT_OK);
   EXPECT_EQ(mt_thread_quiesce(worker), MT_OK);
+}
+
+TEST(MtreeAbiPoint, WorkerRcuScopeSpansTreesReadsWritesAndScans) {
+  mt_runtime *runtime = default_runtime();
+  mt_thread *worker = current_worker(runtime);
+  mt_tree *first_tree = new_tree(runtime, worker);
+  mt_tree *second_tree = new_tree(runtime, worker);
+  const auto first_key = ordered_key(401);
+  const auto second_key = ordered_key(402);
+  insert_key(first_tree, worker, first_key.data(), first_key.size(), 401);
+
+  mt_rcu_scope scope;
+  std::memset(&scope, 0xa5, sizeof(scope));
+  ASSERT_EQ(mt_rcu_scope_begin(worker, &scope), MT_OK);
+  ASSERT_NE(scope.owner, 0u);
+  ASSERT_NE(scope.generation, 0u);
+  EXPECT_TRUE(rcu::s_instance.in_rcu_region());
+  const mt_rcu_scope stale = scope;
+  const mt_read_scope wrong_family = scope;
+
+  mt_record_id wrong_family_output = 99;
+  EXPECT_EQ(mt_read_scope_get(&wrong_family, first_key.data(), first_key.size(),
+                              &wrong_family_output),
+            MT_ERR_INVALID);
+  EXPECT_EQ(wrong_family_output, MT_RECORD_ID_NONE);
+
+  mt_record_id found = 99;
+  EXPECT_EQ(mt_get(first_tree, worker, first_key.data(), first_key.size(),
+                   &found),
+            MT_OK);
+  EXPECT_EQ(found, 401u);
+  EXPECT_TRUE(rcu::s_instance.in_rcu_region());
+
+  std::array<mt_record_id, 1> strided{MT_RECORD_ID_NONE};
+  EXPECT_EQ(mt_get_strided(first_tree, worker, first_key.data(), strided.size(),
+                           first_key.size(), first_key.size(), strided.data()),
+            MT_OK);
+  EXPECT_EQ(strided[0], 401u);
+  EXPECT_TRUE(rcu::s_instance.in_rcu_region());
+
+  mt_get_or_insert_result inserted{};
+  EXPECT_EQ(mt_get_or_insert(second_tree, worker, second_key.data(),
+                             second_key.size(), 402, &inserted),
+            MT_OK);
+  EXPECT_EQ(inserted.winner, 402u);
+  EXPECT_EQ(inserted.inserted, 1u);
+  EXPECT_TRUE(rcu::s_instance.in_rcu_region());
+
+  mt_get_or_insert_result existing{};
+  EXPECT_EQ(mt_get_or_insert(second_tree, worker, second_key.data(),
+                             second_key.size(), 999, &existing),
+            MT_OK);
+  EXPECT_EQ(existing.winner, 402u);
+  EXPECT_EQ(existing.inserted, 0u);
+  EXPECT_EQ(existing.publication,
+            MT_PUBLICATION_CANDIDATE_PROVEN_UNPUBLISHED);
+  EXPECT_TRUE(rcu::s_instance.in_rcu_region());
+
+  found = 99;
+  EXPECT_EQ(mt_get(second_tree, worker, second_key.data(), second_key.size(),
+                   &found),
+            MT_OK);
+  EXPECT_EQ(found, 402u);
+
+  const mt_scan_bound absent = absent_bound();
+  mt_scan_entry entry{};
+  std::array<uint8_t, 16> arena{};
+  mt_scan_result scan{};
+  EXPECT_EQ(mt_scan(second_tree, worker, MT_SCAN_FORWARD, &absent, &absent,
+                    &entry, 1, arena.data(), arena.size(), &scan),
+            MT_OK);
+  EXPECT_EQ(scan.entries_written, 1u);
+  EXPECT_EQ(entry.record_id, 402u);
+  EXPECT_TRUE(rcu::s_instance.in_rcu_region());
+
+  scan = mt_scan_result{};
+  EXPECT_EQ(mt_scan(second_tree, worker, MT_SCAN_REVERSE, &absent, &absent,
+                    &entry, 1, arena.data(), arena.size(), &scan),
+            MT_OK);
+  EXPECT_EQ(scan.entries_written, 1u);
+  EXPECT_EQ(entry.record_id, 402u);
+  EXPECT_TRUE(rcu::s_instance.in_rcu_region());
+
+  found = 99;
+  EXPECT_EQ(mt_get(first_tree, worker, nullptr, 1, &found), MT_ERR_INVALID);
+  EXPECT_EQ(found, MT_RECORD_ID_NONE);
+  EXPECT_TRUE(rcu::s_instance.in_rcu_region());
+  EXPECT_EQ(mt_get(first_tree, worker, first_key.data(), first_key.size(),
+                   &found),
+            MT_OK);
+  EXPECT_EQ(found, 401u);
+
+  mt_rcu_scope nested{uintptr_t{1}, UINT64_C(1)};
+  EXPECT_EQ(mt_rcu_scope_begin(worker, &nested), MT_ERR_ACTIVE_GUARDS);
+  EXPECT_EQ(nested.owner, 0u);
+  EXPECT_EQ(nested.generation, 0u);
+  mt_read_scope read_scope{uintptr_t{1}, UINT64_C(1)};
+  EXPECT_EQ(mt_read_scope_begin(first_tree, worker, &read_scope),
+            MT_ERR_ACTIVE_GUARDS);
+  EXPECT_EQ(read_scope.owner, 0u);
+  EXPECT_EQ(read_scope.generation, 0u);
+
+  mt_tree *blocked_tree = reinterpret_cast<mt_tree *>(uintptr_t{1});
+  EXPECT_EQ(mt_tree_create(runtime, worker, &blocked_tree),
+            MT_ERR_ACTIVE_GUARDS);
+  EXPECT_EQ(blocked_tree, nullptr);
+  mt_thread *blocked_attach = reinterpret_cast<mt_thread *>(uintptr_t{1});
+  EXPECT_EQ(mt_thread_attach(runtime, &blocked_attach), MT_ERR_ACTIVE_GUARDS);
+  EXPECT_EQ(blocked_attach, nullptr);
+  EXPECT_EQ(mt_runtime_shutdown(runtime, worker), MT_ERR_ACTIVE_GUARDS);
+  EXPECT_EQ(mt_thread_quiesce(worker), MT_ERR_ACTIVE_GUARDS);
+
+  EXPECT_EQ(mt_rcu_scope_end(&scope), MT_OK);
+  EXPECT_EQ(scope.owner, 0u);
+  EXPECT_EQ(scope.generation, 0u);
+  EXPECT_FALSE(rcu::s_instance.in_rcu_region());
+
+  /* Standalone calls still create and release their own local RCU region. */
+  found = MT_RECORD_ID_NONE;
+  EXPECT_EQ(mt_get(first_tree, worker, first_key.data(), first_key.size(),
+                   &found),
+            MT_OK);
+  EXPECT_EQ(found, 401u);
+  EXPECT_FALSE(rcu::s_instance.in_rcu_region());
+  mt_rcu_scope stale_for_end = stale;
+  EXPECT_EQ(mt_rcu_scope_end(&stale_for_end), MT_ERR_INVALID);
+
+  mt_rcu_scope next{};
+  ASSERT_EQ(mt_rcu_scope_begin(worker, &next), MT_OK);
+  EXPECT_EQ(next.owner, stale.owner);
+  EXPECT_NE(next.generation, stale.generation);
+  EXPECT_EQ(mt_rcu_scope_end(&next), MT_OK);
+  EXPECT_EQ(mt_thread_quiesce(worker), MT_OK);
+}
+
+TEST(MtreeAbiPoint, WorkerRcuScopeDoesNotRetainStructuralAdmission) {
+  mt_runtime *runtime = default_runtime();
+  mt_thread *reader = current_worker(runtime);
+  mt_tree *tree = new_tree(runtime, reader);
+  const auto stable_key = layered_key(601);
+  const auto inserted_key = layered_key(602);
+  insert_key(tree, reader, stable_key.data(), stable_key.size(), 601);
+
+  std::barrier attached(2);
+  std::barrier start_write(2);
+  std::atomic<mt_status> attach_status{MT_ERR_INTERNAL};
+  std::atomic<mt_status> insert_status{MT_ERR_INTERNAL};
+  std::atomic<mt_status> quiesce_status{MT_ERR_INTERNAL};
+  std::atomic<bool> writer_returned{false};
+  mt_get_or_insert_result inserted{};
+  std::thread writer([&]() {
+    mt_thread *worker = nullptr;
+    attach_status.store(mt_thread_attach(runtime, &worker),
+                        std::memory_order_release);
+    attached.arrive_and_wait();
+    start_write.arrive_and_wait();
+    if (attach_status.load(std::memory_order_acquire) != MT_OK) {
+      return;
+    }
+    insert_status.store(mt_get_or_insert(tree, worker, inserted_key.data(),
+                                         inserted_key.size(), 602, &inserted),
+                        std::memory_order_release);
+    writer_returned.store(true, std::memory_order_release);
+    quiesce_status.store(mt_thread_quiesce(worker), std::memory_order_release);
+  });
+
+  attached.arrive_and_wait();
+  if (attach_status.load(std::memory_order_acquire) != MT_OK) {
+    start_write.arrive_and_wait();
+    writer.join();
+    FAIL() << "writer worker attachment failed";
+  }
+
+  mt_rcu_scope scope{};
+  const mt_status begin_status = mt_rcu_scope_begin(reader, &scope);
+  if (begin_status != MT_OK) {
+    start_write.arrive_and_wait();
+    writer.join();
+    FAIL() << "reader RCU scope begin failed: " << begin_status;
+  }
+  mt_record_id found = MT_RECORD_ID_NONE;
+  const mt_status get_status =
+      mt_get(tree, reader, stable_key.data(), stable_key.size(), &found);
+  if (get_status != MT_OK || found != 601u) {
+    EXPECT_EQ(mt_rcu_scope_end(&scope), MT_OK);
+    start_write.arrive_and_wait();
+    writer.join();
+    FAIL() << "scoped reader setup failed: status=" << get_status
+           << ", value=" << found;
+  }
+  start_write.arrive_and_wait();
+
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (!writer_returned.load(std::memory_order_acquire) &&
+         std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::yield();
+  }
+  const bool returned_while_scope_active =
+      writer_returned.load(std::memory_order_acquire);
+
+  EXPECT_EQ(mt_rcu_scope_end(&scope), MT_OK);
+  writer.join();
+  EXPECT_TRUE(returned_while_scope_active)
+      << "worker RCU scope retained per-operation structural admission";
+  EXPECT_EQ(insert_status.load(std::memory_order_acquire), MT_OK);
+  EXPECT_EQ(inserted.winner, 602u);
+  EXPECT_EQ(inserted.inserted, 1u);
+  EXPECT_EQ(quiesce_status.load(std::memory_order_acquire), MT_OK);
+}
+
+TEST(MtreeAbiPoint, WorkerRcuTokenCannotCrossAnOsThread) {
+  mt_runtime *runtime = default_runtime();
+  mt_thread *worker = current_worker(runtime);
+  mt_rcu_scope scope{};
+  ASSERT_EQ(mt_rcu_scope_begin(worker, &scope), MT_OK);
+  mt_rcu_scope copied = scope;
+  std::atomic<mt_status> status{MT_OK};
+  std::thread other([&]() {
+    status.store(mt_rcu_scope_end(&copied), std::memory_order_release);
+  });
+  other.join();
+  EXPECT_EQ(status.load(std::memory_order_acquire), MT_ERR_INVALID);
+  EXPECT_EQ(mt_rcu_scope_end(&scope), MT_OK);
 }
 
 TEST(MtreeAbiPoint, OneShotStridedReadsValidateOnceAndReleaseEveryGuard) {
@@ -803,6 +1036,40 @@ TEST(MtreeAbiPoint, ThreadExitClosesAnUnendedReadScope) {
             MT_OK);
   EXPECT_EQ(inserted.winner, 32u);
   EXPECT_EQ(inserted.inserted, 1u);
+}
+
+TEST(MtreeAbiPoint, ThreadExitClosesAnUnendedWorkerRcuScope) {
+  mt_runtime *runtime = default_runtime();
+  mt_thread *creator = current_worker(runtime);
+  mt_tree *tree = new_tree(runtime, creator);
+  const auto key = ordered_key(33);
+  insert_key(tree, creator, key.data(), key.size(), 33);
+
+  std::atomic<mt_status> attach_status{MT_ERR_INTERNAL};
+  std::atomic<mt_status> begin_status{MT_ERR_INTERNAL};
+  std::atomic<mt_status> get_status{MT_ERR_INTERNAL};
+  std::thread exiting([&]() {
+    mt_thread *worker = nullptr;
+    attach_status.store(mt_thread_attach(runtime, &worker),
+                        std::memory_order_release);
+    if (attach_status.load(std::memory_order_acquire) != MT_OK) {
+      return;
+    }
+    mt_rcu_scope leaked{};
+    begin_status.store(mt_rcu_scope_begin(worker, &leaked),
+                       std::memory_order_release);
+    if (begin_status.load(std::memory_order_acquire) == MT_OK) {
+      mt_record_id found = 99;
+      get_status.store(mt_get(tree, worker, key.data(), key.size(), &found),
+                       std::memory_order_release);
+    }
+    /* Deliberately rely on TLS scope-state destruction at thread exit. */
+  });
+  exiting.join();
+  ASSERT_EQ(attach_status.load(std::memory_order_acquire), MT_OK);
+  ASSERT_EQ(begin_status.load(std::memory_order_acquire), MT_OK);
+  ASSERT_EQ(get_status.load(std::memory_order_acquire), MT_OK);
+  EXPECT_EQ(mt_thread_quiesce(creator), MT_OK);
 }
 
 TEST(MtreeAbiPoint, RecordIdsPreserveEveryBitWithoutPointerInterpretation) {
@@ -1250,6 +1517,16 @@ TEST(MtreeAbiScan, MalformedInputsAreRejectedAfterResultInitialization) {
   malformed.reserved = 1;
   expect_invalid_and_initialized(MT_SCAN_FORWARD, &malformed, &absent);
 
+  /* The private trusted scan must not bypass checks on the public path. */
+  malformed = inclusive_bound(nullptr, 1);
+  expect_invalid_and_initialized(MT_SCAN_FORWARD, &absent, &malformed);
+  malformed = absent;
+  malformed.kind = 99;
+  expect_invalid_and_initialized(MT_SCAN_REVERSE, &absent, &malformed);
+  malformed = absent;
+  malformed.reserved = 1;
+  expect_invalid_and_initialized(MT_SCAN_REVERSE, &absent, &malformed);
+
   std::vector<uint8_t> oversized(mt_max_key_length() + 1, 0);
   malformed = inclusive_bound(oversized.data(), oversized.size());
   mt_scan_result oversized_result;
@@ -1603,6 +1880,26 @@ TEST(MtreeAbiThreading,
             found != candidate) {
           violations.fetch_add(1, std::memory_order_relaxed);
         }
+
+        /*
+         * Exercise structural writer snapshots on one shared tree while peer
+         * worker handles are still being published by concurrent attach.
+         */
+        const uint64_t shared_coordinate = UINT64_C(0x300000) +
+                                           publisher * kTreesPerPublisher +
+                                           index;
+        const auto shared_key = ordered_key(shared_coordinate);
+        const mt_record_id shared_candidate = shared_coordinate + 1;
+        mt_get_or_insert_result shared_inserted{};
+        if (mt_get_or_insert(stable_tree, worker, shared_key.data(),
+                             shared_key.size(), shared_candidate,
+                             &shared_inserted) != MT_OK ||
+            shared_inserted.winner != shared_candidate ||
+            shared_inserted.inserted != 1 ||
+            shared_inserted.publication !=
+                MT_PUBLICATION_CANDIDATE_INSERTED) {
+          violations.fetch_add(1, std::memory_order_relaxed);
+        }
       }
       quiesce_statuses[publisher + 1] = mt_thread_quiesce(worker);
       publishers_done.fetch_add(1, std::memory_order_release);
@@ -1619,6 +1916,18 @@ TEST(MtreeAbiThreading,
     EXPECT_EQ(quiesce_statuses[index], MT_OK);
   }
   EXPECT_EQ(violations.load(std::memory_order_relaxed), 0u);
+
+  for (size_t publisher = 0; publisher != kPublishers; ++publisher) {
+    for (size_t index = 0; index != kTreesPerPublisher; ++index) {
+      const uint64_t coordinate = UINT64_C(0x300000) +
+                                  publisher * kTreesPerPublisher + index;
+      const auto key = ordered_key(coordinate);
+      mt_record_id found = MT_RECORD_ID_NONE;
+      ASSERT_EQ(mt_get(stable_tree, creator, key.data(), key.size(), &found),
+                MT_OK);
+      EXPECT_EQ(found, coordinate + 1);
+    }
+  }
 }
 
 TEST(MtreeAbiThreading, PointReadersRemainExactAcrossConcurrentSplits) {

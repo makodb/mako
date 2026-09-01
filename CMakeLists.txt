@@ -728,16 +728,56 @@ endif()
 if(TRACKING_ROLLBACK)
   list(APPEND CXXFLAGS -DTRACKING_ROLLBACK)
 endif()
+# CMake spells BOOL values as ON/OFF, but an undefined C preprocessor token in
+# `#if` is zero. Materialize numeric values so enabling one of these options
+# actually enables its guarded code.
+foreach(_MAKO_BOOLEAN_DEFINE IN ITEMS STO_RMW HASHTABLE OPACITY)
+  if(${_MAKO_BOOLEAN_DEFINE})
+    set(${_MAKO_BOOLEAN_DEFINE}_VALUE 1)
+  else()
+    set(${_MAKO_BOOLEAN_DEFINE}_VALUE 0)
+  endif()
+endforeach()
+unset(_MAKO_BOOLEAN_DEFINE)
 list(APPEND CXXFLAGS
-  -DREAD_MY_WRITES=${STO_RMW}
-  -DHASHTABLE=${HASHTABLE}
-  -DSTO_OPACITY=${OPACITY}
+  -DREAD_MY_WRITES=${STO_RMW_VALUE}
+  -DHASHTABLE=${HASHTABLE_VALUE}
+  -DSTO_OPACITY=${OPACITY_VALUE}
 )
 # The `-include <masstree/config.h>` forced-include injects tokens at the start
 # of every TU. It must NOT be applied to C++20 named module files, which
 # require `module;` to be the first token. Kept as a separate flag and added
 # only to targets that actually use Masstree, skipping rrr module files.
 set(MASSTREE_FORCE_INCLUDE_FLAG -include ${MASSTREE_GENERATED_CONFIG_H})
+
+# Attach Masstree's generated config to real translation units, never to a
+# target. CMake forwards target compile options to its synthetic `std.cppm`
+# compilation; a forced include there precedes the required leading `module;`
+# declaration and makes a clean C++23 build ill-formed.
+function(mako_force_include_masstree_config)
+  foreach(_MASSTREE_CONFIG_SOURCE IN LISTS ARGN)
+    if(_MASSTREE_CONFIG_SOURCE MATCHES "[.](cppm|ixx|mpp)$")
+      message(FATAL_ERROR
+        "Masstree config cannot be force-included in module source: ${_MASSTREE_CONFIG_SOURCE}")
+    endif()
+    get_filename_component(_MASSTREE_CONFIG_SOURCE_ABS
+      "${_MASSTREE_CONFIG_SOURCE}" ABSOLUTE
+      BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+    # A translation unit can belong to more than one target (notably
+    # dbtest.cc). Source properties are shared by those uses, so append the
+    # force-include exactly once instead of growing duplicate `-include`
+    # arguments as helper calls accumulate.
+    get_property(_MASSTREE_CONFIG_ATTACHED
+      SOURCE "${_MASSTREE_CONFIG_SOURCE_ABS}"
+      PROPERTY MAKO_MASSTREE_CONFIG_ATTACHED)
+    if(NOT _MASSTREE_CONFIG_ATTACHED)
+      set_property(SOURCE "${_MASSTREE_CONFIG_SOURCE_ABS}" APPEND PROPERTY
+        COMPILE_OPTIONS ${MASSTREE_FORCE_INCLUDE_FLAG})
+      set_property(SOURCE "${_MASSTREE_CONFIG_SOURCE_ABS}" PROPERTY
+        MAKO_MASSTREE_CONFIG_ATTACHED TRUE)
+    endif()
+  endforeach()
+endfunction()
 
 if(DEFINED LESSER_OPACITY)
   list(APPEND CXXFLAGS -DLESSER_OPACITY=${LESSER_OPACITY})
@@ -1093,7 +1133,8 @@ target_include_directories(txlog_bench_obj PRIVATE
     third-party/yaml-cpp/include
     ${Python3_INCLUDE_DIRS}
 )
-target_compile_options(txlog_bench_obj PRIVATE ${BENCH_CXXFLAGS} ${MASSTREE_FORCE_INCLUDE_FLAG})
+target_compile_options(txlog_bench_obj PRIVATE ${BENCH_CXXFLAGS})
+mako_force_include_masstree_config(${TXLOG_BENCH_SRC})
 target_compile_definitions(txlog_bench_obj PRIVATE CONFIG_H=\"${CONFIG_H}\")
 # Inherit rrr module BMI paths from txlog_core_obj (which owns the FILE_SET).
 target_link_libraries(txlog_bench_obj PUBLIC txlog_core_obj)
@@ -1174,7 +1215,8 @@ if(RAFT_BORROW_SRC)
         src/deptran
         ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
     )
-    target_compile_options(raft_borrow PUBLIC ${BENCH_CXXFLAGS} ${MASSTREE_FORCE_INCLUDE_FLAG})
+    target_compile_options(raft_borrow PUBLIC ${BENCH_CXXFLAGS})
+    mako_force_include_masstree_config(${RAFT_BORROW_SRC})
     target_compile_definitions(raft_borrow PUBLIC CONFIG_H="${CONFIG_H}")
 
     if(ENABLE_BORROW_CHECKING AND CPP_BORROW_CHECKER)
@@ -1266,7 +1308,8 @@ if(DEPTRAN_BORROW_SRC)
         ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
         third-party/yaml-cpp/include
     )
-    target_compile_options(deptran_borrow PUBLIC ${BENCH_CXXFLAGS} ${MASSTREE_FORCE_INCLUDE_FLAG})
+    target_compile_options(deptran_borrow PUBLIC ${BENCH_CXXFLAGS})
+    mako_force_include_masstree_config(${DEPTRAN_BORROW_SRC})
     target_compile_definitions(deptran_borrow PUBLIC CONFIG_H="${CONFIG_H}")
 
     # Add borrow checking for deptran files (same style as RRR library)
@@ -1331,7 +1374,8 @@ target_include_directories(mako PUBLIC
     "${HOME}"
     "${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include"
 )
-target_compile_options(mako PUBLIC ${BENCH_CXXFLAGS} ${MASSTREE_FORCE_INCLUDE_FLAG})
+target_compile_options(mako PUBLIC ${BENCH_CXXFLAGS})
+mako_force_include_masstree_config(${MAKO_SRCFILES})
 target_compile_definitions(mako PUBLIC CONFIG_H=\"${CONFIG_H}\")
 # Inherit rrr module BMI paths from txlog_core_obj.
 target_link_libraries(mako PUBLIC txlog_core_obj masstree)
@@ -1496,7 +1540,8 @@ function(add_apps exec_name exec_path)
       ${CMAKE_CURRENT_SOURCE_DIR}
   )
 
-  target_compile_options(${exec_name} PRIVATE ${BENCH_CXXFLAGS} ${MASSTREE_FORCE_INCLUDE_FLAG}) # include all flags
+  target_compile_options(${exec_name} PRIVATE ${BENCH_CXXFLAGS}) # include all flags
+  mako_force_include_masstree_config(${exec_path})
 
   # Link dbtest against mako library and dependencies
   target_link_libraries(${exec_name}
@@ -1583,7 +1628,8 @@ if(NOT TARGET memdb)
         src/rrr
         src/memdb
     )
-    target_compile_options(memdb PUBLIC ${BENCH_CXXFLAGS} ${MASSTREE_FORCE_INCLUDE_FLAG})
+    target_compile_options(memdb PUBLIC ${BENCH_CXXFLAGS})
+    mako_force_include_masstree_config(${MEMDB_BENCH_SRC})
     target_link_libraries(memdb rrr pthread)
 endif()
 
@@ -1604,8 +1650,8 @@ target_include_directories(sto_masstree_cpp_bench PRIVATE
 )
 target_compile_options(sto_masstree_cpp_bench PRIVATE
     ${BENCH_CXXFLAGS}
-    ${MASSTREE_FORCE_INCLUDE_FLAG}
 )
+mako_force_include_masstree_config(src/mako/benchmarks/sto_masstree_compare.cc)
 target_compile_definitions(sto_masstree_cpp_bench PRIVATE
     CONFIG_H=\"${CONFIG_H}\"
 )
@@ -1626,16 +1672,28 @@ target_link_libraries(sto_masstree_cpp_bench PRIVATE
 # workload code; only the abstract_db implementation changes.
 if(MAKO_CARGO_EXECUTABLE)
     set(STO_TPCC_RUST_TARGET_DIR
-        "${CMAKE_CURRENT_BINARY_DIR}/rust-sto-tpcc-target")
+        "${CMAKE_CURRENT_BINARY_DIR}/rust-sto-tpcc-target"
+        CACHE PATH "Cargo target directory for the Rust STO TPC-C static library")
+    set(STO_TPCC_RUST_EXTRA_RUSTFLAGS "" CACHE STRING
+        "Extra rustc flags appended when building the Rust STO TPC-C static library")
+    set(_STO_TPCC_RUSTFLAGS
+        "-C target-cpu=native -C force-frame-pointers=yes")
+    if(NOT STO_TPCC_RUST_EXTRA_RUSTFLAGS STREQUAL "")
+        string(APPEND _STO_TPCC_RUSTFLAGS
+            " ${STO_TPCC_RUST_EXTRA_RUSTFLAGS}")
+    endif()
     set(STO_TPCC_RUST_ARCHIVE
         "${STO_TPCC_RUST_TARGET_DIR}/release/libsto_tpcc_ffi.a")
     set(STO_TPCC_RUST_MANIFESTS
         "${CMAKE_CURRENT_SOURCE_DIR}/crates/Cargo.toml"
         "${CMAKE_CURRENT_SOURCE_DIR}/crates/masstree/Cargo.toml"
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/masstree/build.rs"
         "${CMAKE_CURRENT_SOURCE_DIR}/crates/mtree-sys/Cargo.toml"
         "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-core/Cargo.toml"
         "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-masstree/Cargo.toml"
-        "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-tpcc-ffi/Cargo.toml")
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-masstree/build.rs"
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-tpcc-ffi/Cargo.toml"
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-tpcc-ffi/build.rs")
     file(GLOB_RECURSE STO_TPCC_RUST_SOURCES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-tpcc-ffi/*.rs"
         "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-core/src/*.rs"
@@ -1652,9 +1710,9 @@ if(MAKO_CARGO_EXECUTABLE)
             "CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1"
             "CARGO_PROFILE_RELEASE_DEBUG=1"
             "CARGO_PROFILE_RELEASE_LTO=fat"
-            "CARGO_PROFILE_RELEASE_OPT_LEVEL=2"
+            "CARGO_PROFILE_RELEASE_OPT_LEVEL=3"
             "CARGO_PROFILE_RELEASE_PANIC=unwind"
-            "RUSTFLAGS=-C target-cpu=native -C force-frame-pointers=yes"
+            "RUSTFLAGS=${_STO_TPCC_RUSTFLAGS}"
             "${MAKO_CARGO_EXECUTABLE}" build --release --locked
             --manifest-path "${CMAKE_CURRENT_SOURCE_DIR}/crates/Cargo.toml"
             --package sto-tpcc-ffi
@@ -1685,8 +1743,10 @@ if(MAKO_CARGO_EXECUTABLE)
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-tpcc-ffi/include)
     target_compile_options(sto_tpcc_bench PRIVATE
-        ${BENCH_CXXFLAGS}
-        ${MASSTREE_FORCE_INCLUDE_FLAG})
+        ${BENCH_CXXFLAGS})
+    mako_force_include_masstree_config(
+        src/mako/benchmarks/dbtest.cc
+        src/mako/storage/rust_sto_tpcc_wrapper.cc)
     target_compile_definitions(sto_tpcc_bench PRIVATE
         CONFIG_H="${CONFIG_H}"
         MAKO_RUST_STO_TPCC=1)
@@ -1706,6 +1766,82 @@ if(MAKO_CARGO_EXECUTABLE)
         ${PROTOBUF_LDFLAGS}
         $<$<NOT:$<BOOL:${MAKO_ASAN_ENABLED}>>:${JEMALLOC_LDFLAGS}>)
     add_dependencies(sto_tpcc_bench mako sto_tpcc_rust_build ${TXLOG_BUILD_DEPS})
+
+    add_executable(sto_tpcc_cpp_wrapper_smoke EXCLUDE_FROM_ALL
+        crates/sto-tpcc-ffi/tests/cpp_wrapper_fixed_read_smoke.cc
+        src/mako/storage/rust_sto_tpcc_wrapper.cc)
+    target_include_directories(sto_tpcc_cpp_wrapper_smoke PRIVATE
+        ${MASSTREE_CONFIG_INCLUDE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/mako
+        ${CMAKE_CURRENT_SOURCE_DIR}/${MASSTREE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/rrr
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-tpcc-ffi/include)
+    target_compile_options(sto_tpcc_cpp_wrapper_smoke PRIVATE
+        ${BENCH_CXXFLAGS})
+    mako_force_include_masstree_config(
+        crates/sto-tpcc-ffi/tests/cpp_wrapper_fixed_read_smoke.cc
+        src/mako/storage/rust_sto_tpcc_wrapper.cc)
+    target_compile_definitions(sto_tpcc_cpp_wrapper_smoke PRIVATE
+        CONFIG_H="${CONFIG_H}"
+        MAKO_RUST_STO_TPCC=1)
+    target_link_libraries(sto_tpcc_cpp_wrapper_smoke PRIVATE
+        sto_tpcc_rust_ffi
+        mako
+        ${TXLOG_LINK_LIBS}
+        ${BENCH_LDFLAGS}
+        yaml-cpp
+        pthread
+        $<$<PLATFORM_ID:Linux>:util>
+        numa
+        event_pthreads
+        rocksdb
+        ${LIBEVENT_LDFLAGS}
+        ${GFLAGS_LDFLAGS}
+        ${PROTOBUF_LDFLAGS}
+        $<$<NOT:$<BOOL:${MAKO_ASAN_ENABLED}>>:${JEMALLOC_LDFLAGS}>)
+    add_dependencies(sto_tpcc_cpp_wrapper_smoke
+        mako sto_tpcc_rust_build ${TXLOG_BUILD_DEPS})
+
+    add_executable(sto_tpcc_cpp_wrapper_scan_smoke EXCLUDE_FROM_ALL
+        crates/sto-tpcc-ffi/tests/cpp_wrapper_scan_smoke.cc
+        src/mako/storage/rust_sto_tpcc_wrapper.cc)
+    target_include_directories(sto_tpcc_cpp_wrapper_scan_smoke PRIVATE
+        ${MASSTREE_CONFIG_INCLUDE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/mako
+        ${CMAKE_CURRENT_SOURCE_DIR}/${MASSTREE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/rrr
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-tpcc-ffi/include)
+    target_compile_options(sto_tpcc_cpp_wrapper_scan_smoke PRIVATE
+        ${BENCH_CXXFLAGS})
+    mako_force_include_masstree_config(
+        crates/sto-tpcc-ffi/tests/cpp_wrapper_scan_smoke.cc
+        src/mako/storage/rust_sto_tpcc_wrapper.cc)
+    target_compile_definitions(sto_tpcc_cpp_wrapper_scan_smoke PRIVATE
+        CONFIG_H="${CONFIG_H}"
+        MAKO_RUST_STO_TPCC=1)
+    target_link_libraries(sto_tpcc_cpp_wrapper_scan_smoke PRIVATE
+        sto_tpcc_rust_ffi
+        mako
+        ${TXLOG_LINK_LIBS}
+        ${BENCH_LDFLAGS}
+        yaml-cpp
+        pthread
+        $<$<PLATFORM_ID:Linux>:util>
+        numa
+        event_pthreads
+        rocksdb
+        ${LIBEVENT_LDFLAGS}
+        ${GFLAGS_LDFLAGS}
+        ${PROTOBUF_LDFLAGS}
+        $<$<NOT:$<BOOL:${MAKO_ASAN_ENABLED}>>:${JEMALLOC_LDFLAGS}>)
+    add_dependencies(sto_tpcc_cpp_wrapper_scan_smoke
+        mako sto_tpcc_rust_build ${TXLOG_BUILD_DEPS})
 else()
     message(STATUS "Cargo not found; sto_tpcc_bench target is unavailable")
 endif()
@@ -1716,6 +1852,22 @@ endif()
 
 # Enable testing
 enable_testing()
+
+if(TARGET sto_tpcc_cpp_wrapper_smoke)
+    add_test(NAME test_sto_tpcc_cpp_wrapper_smoke
+        COMMAND sto_tpcc_cpp_wrapper_smoke
+            "${CMAKE_CURRENT_SOURCE_DIR}/config/mako_sto_tpcc_local.yml")
+    set_tests_properties(test_sto_tpcc_cpp_wrapper_smoke PROPERTIES
+        LABELS "sto;masstree;rust;ffi")
+endif()
+
+if(TARGET sto_tpcc_cpp_wrapper_scan_smoke)
+    add_test(NAME test_sto_tpcc_cpp_wrapper_scan_smoke
+        COMMAND sto_tpcc_cpp_wrapper_scan_smoke
+            "${CMAKE_CURRENT_SOURCE_DIR}/config/mako_sto_tpcc_local.yml")
+    set_tests_properties(test_sto_tpcc_cpp_wrapper_scan_smoke PROPERTIES
+        LABELS "sto;masstree;rust;ffi")
+endif()
 
 # C consumers must be able to include the public ABI without any C++
 # compatibility layer. This executable contains no ABI calls and therefore
@@ -1737,6 +1889,72 @@ target_compile_options(test_mtree_abi_c11_header PRIVATE
 )
 add_test(NAME test_mtree_abi_c11_header COMMAND test_mtree_abi_c11_header)
 set_tests_properties(test_mtree_abi_c11_header PROPERTIES LABELS "masstree;abi;c11")
+
+# Keep the Rust STO public wrapper ABI independently consumable by strict C11
+# code. Like the Masstree header check above, this target requires no runtime
+# library because it verifies declarations and layout only.
+add_executable(test_sto_tpcc_ffi_c11_header EXCLUDE_FROM_ALL
+    tests/sto_tpcc_ffi_c11_header.c)
+target_include_directories(test_sto_tpcc_ffi_c11_header PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-tpcc-ffi/include"
+)
+set_target_properties(test_sto_tpcc_ffi_c11_header PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED YES
+    C_EXTENSIONS NO
+    CXX_MODULE_STD OFF
+    LINKER_LANGUAGE C
+)
+target_compile_options(test_sto_tpcc_ffi_c11_header PRIVATE
+    $<$<COMPILE_LANG_AND_ID:C,Clang,AppleClang,GNU>:-Wall;-Wextra;-Wpedantic;-Werror>
+)
+add_test(NAME test_sto_tpcc_ffi_c11_header
+    COMMAND test_sto_tpcc_ffi_c11_header)
+set_tests_properties(test_sto_tpcc_ffi_c11_header PROPERTIES
+    LABELS "sto;rust;ffi;c11")
+
+# This target is the build half of the Rust STO/Masstree CI gate. Its
+# dependencies compile every opt-in C/C++ consumer and run Rust against the
+# native archives. The final command covers the rest of the Rust workspace,
+# whose ordinary tests deliberately run without native link settings.
+if(MAKO_CARGO_EXECUTABLE)
+    add_custom_target(rust_sto_integration
+        COMMAND "${CMAKE_COMMAND}" -E env
+            --unset=CARGO_BUILD_TARGET
+            --unset=CARGO_ENCODED_RUSTFLAGS
+            "CARGO_TARGET_DIR=${CMAKE_CURRENT_BINARY_DIR}/rust-workspace-target"
+            "${MAKO_CARGO_EXECUTABLE}" clippy
+            --manifest-path "${CMAKE_CURRENT_SOURCE_DIR}/crates/Cargo.toml"
+            --workspace
+            --all-targets
+            --all-features
+            --locked
+            --
+            -D warnings
+        COMMAND "${CMAKE_COMMAND}" -E env
+            --unset=CARGO_BUILD_TARGET
+            --unset=CARGO_ENCODED_RUSTFLAGS
+            "CARGO_TARGET_DIR=${CMAKE_CURRENT_BINARY_DIR}/rust-workspace-target"
+            "${MAKO_CARGO_EXECUTABLE}" test
+            --manifest-path "${CMAKE_CURRENT_SOURCE_DIR}/crates/Cargo.toml"
+            --workspace
+            --all-targets
+            --all-features
+            --locked
+        DEPENDS
+            check_mtree_abi_exports
+            rust_masstree_native_integration
+            sto_tpcc_bench
+            sto_tpcc_cpp_wrapper_smoke
+            sto_tpcc_cpp_wrapper_scan_smoke
+            test_mtree_abi_c11_header
+            test_sto_tpcc_ffi_c11_header
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        USES_TERMINAL
+        VERBATIM
+        COMMENT "Checking the Rust STO workspace and native integration"
+    )
+endif()
 
 # Use vendored GoogleTest only (no system gtest dependency).
 set(BUILD_TESTS OFF)
@@ -1780,7 +1998,8 @@ else()
                 ${CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES}
             )
         endif()
-        target_compile_options(${MAKO_GTEST_LIB_TARGET} PRIVATE ${BENCH_CXXFLAGS} ${MASSTREE_FORCE_INCLUDE_FLAG})
+        target_compile_options(${MAKO_GTEST_LIB_TARGET} PRIVATE ${BENCH_CXXFLAGS})
+        mako_force_include_masstree_config(${MAKO_GTEST_SRC})
         target_compile_definitions(${MAKO_GTEST_LIB_TARGET} PUBLIC GTEST_HAS_PTHREAD=1)
         target_link_libraries(${MAKO_GTEST_LIB_TARGET} PUBLIC pthread)
     endif()
@@ -1796,7 +2015,8 @@ else()
                 ${CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES}
             )
         endif()
-        target_compile_options(${MAKO_GTEST_MAIN_TARGET} PRIVATE ${BENCH_CXXFLAGS} ${MASSTREE_FORCE_INCLUDE_FLAG})
+        target_compile_options(${MAKO_GTEST_MAIN_TARGET} PRIVATE ${BENCH_CXXFLAGS})
+        mako_force_include_masstree_config(${MAKO_GTEST_MAIN_SRC})
         target_compile_definitions(${MAKO_GTEST_MAIN_TARGET} PUBLIC GTEST_HAS_PTHREAD=1)
         target_link_libraries(${MAKO_GTEST_MAIN_TARGET} PUBLIC ${MAKO_GTEST_LIB_TARGET} pthread)
     endif()

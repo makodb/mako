@@ -13,6 +13,10 @@
 #include "../str_arena.h"
 
 class mbta_sharded_ordered_index;
+class TxnTpccPaymentCapability;
+class TxnTpccNewOrderCapability;
+class TxnTpccDeliveryCapability;
+class TxnTpccStockLevelCapability;
 
 /**
  * Abstract interface for a DB. This is to facilitate writing
@@ -173,6 +177,55 @@ public:
   virtual void shard_serialize_util(uint32_t timestamp)  = 0;
   virtual void shard_unlock(bool committed) = 0;
   virtual void shard_reset() = 0;
+
+  /**
+   * Returns an optional fixed-width point-read extension for an index opened
+   * by this database. The default keeps every existing backend on its literal
+   * scalar path. Implementations may use a zero-cost static downcast because
+   * callers must pass an index returned by this same abstract_db instance.
+   *
+   * Keep optional capability hooks at the tail so existing virtual method
+   * slots retain their order when this interface is rebuilt.
+   */
+  virtual TxnFixedReadCapability *
+  txn_fixed_read_capability(abstract_ordered_index *) noexcept {
+    return nullptr;
+  }
+
+  virtual TxnFixedModifyCapability *
+  txn_fixed_modify_capability(abstract_ordered_index *) noexcept {
+    return nullptr;
+  }
+
+  virtual TxnFixedPutCapability *
+  txn_fixed_put_capability(abstract_ordered_index *) noexcept {
+    return nullptr;
+  }
+
+  virtual TxnInsertBatchCapability *
+  txn_insert_batch_capability() noexcept {
+    return nullptr;
+  }
+
+  virtual TxnTpccPaymentCapability *
+  txn_tpcc_payment_capability() noexcept {
+    return nullptr;
+  }
+
+  virtual TxnTpccNewOrderCapability *
+  txn_tpcc_new_order_capability() noexcept {
+    return nullptr;
+  }
+
+  virtual TxnTpccDeliveryCapability *
+  txn_tpcc_delivery_capability() noexcept {
+    return nullptr;
+  }
+
+  virtual TxnTpccStockLevelCapability *
+  txn_tpcc_stock_level_capability() noexcept {
+    return nullptr;
+  }
 };
 
 #endif /* _ABSTRACT_DB_H_ */

@@ -1,8 +1,10 @@
-//! Canonical physical-lock planning and typed guard access.
+//! Physical-lock planning and typed guard access.
 //!
 //! Logical transaction items may name the same physical lock.  This module
-//! keeps lock-frame slots stable for typed [`LockUse`] tokens while acquiring
-//! the deduplicated frames in full [`LockIdentity`] order.
+//! keeps lock-frame slots stable for typed [`LockUse`] tokens. The general lane
+//! deduplicates and acquires frames in full [`LockIdentity`] order; an explicit
+//! transaction-wide unique lane acquires certified-distinct frames in request
+//! order.
 
 use std::any::{Any, TypeId};
 use std::marker::PhantomData;
@@ -90,26 +92,30 @@ impl<L: TransactionLock> LockRequest<L> {
     pub fn identity(&self) -> &LockIdentity {
         &self.identity
     }
+
+    pub(crate) fn into_parts(self) -> (LockIdentity, Arc<L>) {
+        (self.identity, self.target)
+    }
 }
 
-/// An unforgeable typed reference to one frame in the current lock plan.
+/// A type-erased reference to one frame in the current lock plan.
 ///
-/// This token is intentionally neither `Clone` nor `Copy`. An adapter stores
-/// the exact value returned by [`PreflightContext::require_lock`] in its
-/// prepared state. Its runtime ID and persistent per-owner plan generation
-/// prevent a retained token from aliasing a later plan, even after the owner
-/// slot is detached and reused.
-pub struct LockUse<L: TransactionLock> {
+/// This token is intentionally neither `Clone` nor `Copy`. Type erasure lets
+/// an adapter use one compact prepared-state representation for several lock
+/// classes. The lock class must be supplied again when resolving the token;
+/// the core verifies it against the retained frame before returning a target
+/// or guard.
+#[repr(C)]
+pub struct ErasedLockUse {
     runtime_id: RuntimeId,
     plan_nonce: u64,
     // Store the stable zero-based frame slot as slot + 1. Besides making an
-    // impossible slot unrepresentable, this gives enums containing LockUse a
-    // zero niche without dropping either plan-identity check.
+    // impossible slot unrepresentable, this gives enums containing the token
+    // a zero niche without dropping either plan-identity check.
     encoded_slot: NonZeroUsize,
-    lock_type: PhantomData<fn() -> L>,
 }
 
-impl<L: TransactionLock> LockUse<L> {
+impl ErasedLockUse {
     #[inline]
     fn encode_slot(slot: usize) -> Result<NonZeroUsize, CapacityError> {
         slot.checked_add(1)
@@ -121,10 +127,52 @@ impl<L: TransactionLock> LockUse<L> {
     fn slot(&self) -> usize {
         self.encoded_slot.get() - 1
     }
+}
+
+impl std::fmt::Debug for ErasedLockUse {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ErasedLockUse")
+            .field("runtime_id", &self.runtime_id)
+            .field("plan_nonce", &self.plan_nonce)
+            .field("slot", &self.slot())
+            .finish_non_exhaustive()
+    }
+}
+
+/// An unforgeable typed reference to one frame in the current lock plan.
+///
+/// This token is intentionally neither `Clone` nor `Copy`. An adapter stores
+/// the exact value returned by [`PreflightContext::require_lock`] in its
+/// prepared state. Its runtime ID and persistent per-owner plan generation
+/// prevent a retained token from aliasing a later plan, even after the owner
+/// slot is detached and reused. Call [`LockUse::erase`] when the prepared
+/// state must represent several lock classes without an enum payload.
+#[repr(transparent)]
+pub struct LockUse<L: TransactionLock> {
+    erased: ErasedLockUse,
+    lock_type: PhantomData<fn() -> L>,
+}
+
+impl<L: TransactionLock> LockUse<L> {
+    #[inline]
+    fn slot(&self) -> usize {
+        self.erased.slot()
+    }
+
+    /// Erases this token's lock class while retaining its unforgeable plan
+    /// and frame identity.
+    ///
+    /// Resolution through an erased context accessor still checks that the
+    /// requested lock class is the exact class retained in the frame.
+    #[inline]
+    pub fn erase(self) -> ErasedLockUse {
+        self.erased
+    }
 
     #[cfg(test)]
     pub(crate) const fn plan_nonce_for_test(&self) -> u64 {
-        self.plan_nonce
+        self.erased.plan_nonce
     }
 }
 
@@ -132,8 +180,8 @@ impl<L: TransactionLock> std::fmt::Debug for LockUse<L> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("LockUse")
-            .field("runtime_id", &self.runtime_id)
-            .field("plan_nonce", &self.plan_nonce)
+            .field("runtime_id", &self.erased.runtime_id)
+            .field("plan_nonce", &self.erased.plan_nonce)
             .field("slot", &self.slot())
             .finish_non_exhaustive()
     }
@@ -157,7 +205,7 @@ pub enum LockDisposition {
 }
 
 impl LockDisposition {
-    fn occ_commit_id(self) -> Option<OccCommitId> {
+    pub(crate) fn occ_commit_id(self) -> Option<OccCommitId> {
         match self {
             Self::Aborted => None,
             Self::Committed { occ_commit_id } | Self::Indeterminate { occ_commit_id } => {
@@ -202,6 +250,13 @@ impl AcquireContext<'_> {
     pub fn owner(&self) -> OwnerId {
         *self.owner
     }
+
+    pub(crate) fn new(owner: &OwnerId) -> AcquireContext<'_> {
+        AcquireContext {
+            owner,
+            not_send_or_sync: PhantomData,
+        }
+    }
 }
 
 /// Capabilities available while constructing the physical lock plan.
@@ -218,6 +273,29 @@ impl PreflightContext<'_> {
     ) -> Result<LockUse<L>, PrepareError> {
         self.plan.require_lock(request)
     }
+
+    /// Adds a physical lock whose identity is unique in this transaction and
+    /// selects request-order acquisition for the complete lock plan.
+    ///
+    /// This is a transaction-wide adapter contract: every lock request emitted
+    /// by every preflight callback in the plan must use this method, and no two
+    /// requests may carry equal [`LockIdentity`] values. Core rejects mixing
+    /// this lane with [`Self::require_lock`] and verifies the uniqueness claim
+    /// with a cheap filter plus exact equality on possible collisions.
+    ///
+    /// Unlike the general lane, acquisition follows successful request order
+    /// rather than canonical identity order. This remains deadlock-free because
+    /// [`TransactionLock::try_acquire`] is bounded and nonblocking; a failed
+    /// acquisition releases the already-acquired prefix in reverse order. It
+    /// can nevertheless change contention and retry behavior, so adapters
+    /// should select it only when their item-to-lock mapping supplies a clear
+    /// transaction-wide uniqueness argument.
+    pub fn require_unique_lock<L: TransactionLock>(
+        &mut self,
+        request: LockRequest<L>,
+    ) -> Result<LockUse<L>, PrepareError> {
+        self.plan.require_unique_lock(request)
+    }
 }
 
 /// Immutable held-lock capabilities used during predicate upgrade.
@@ -230,6 +308,17 @@ impl PredicateContext<'_> {
     /// Resolves a current-plan token to its typed, held guard.
     pub fn guard<L: TransactionLock>(&self, use_: &LockUse<L>) -> Result<&L::Guard, AdapterFault> {
         self.plan.guard(use_, AdapterPhase::PredicateUpgrade)
+    }
+
+    /// Resolves a type-erased current-plan token to a held guard of `L`.
+    ///
+    /// The retained frame must have exactly the requested lock class.
+    pub fn guard_erased<L: TransactionLock>(
+        &self,
+        use_: &ErasedLockUse,
+    ) -> Result<&L::Guard, AdapterFault> {
+        self.plan
+            .guard_erased::<L>(use_, AdapterPhase::PredicateUpgrade)
     }
 
     /// Returns the owner of all guards in this plan.
@@ -253,6 +342,16 @@ impl ValidationContext<'_> {
         self.plan.guard(use_, AdapterPhase::Validation)
     }
 
+    /// Resolves a type-erased current-plan token to a held guard of `L`.
+    ///
+    /// The retained frame must have exactly the requested lock class.
+    pub fn guard_erased<L: TransactionLock>(
+        &self,
+        use_: &ErasedLockUse,
+    ) -> Result<&L::Guard, AdapterFault> {
+        self.plan.guard_erased::<L>(use_, AdapterPhase::Validation)
+    }
+
     /// Resolves a current-plan token to its exact retained target and guard.
     ///
     /// The returned target is the same allocation supplied by the matching
@@ -263,6 +362,18 @@ impl ValidationContext<'_> {
         use_: &LockUse<L>,
     ) -> Result<(&L, &L::Guard), AdapterFault> {
         self.plan.target_and_guard(use_, AdapterPhase::Validation)
+    }
+
+    /// Resolves a type-erased current-plan token to the exact retained target
+    /// and held guard of `L`.
+    ///
+    /// Both borrows remain scoped to this validation context.
+    pub fn target_and_guard_erased<L: TransactionLock>(
+        &self,
+        use_: &ErasedLockUse,
+    ) -> Result<(&L, &L::Guard), AdapterFault> {
+        self.plan
+            .target_and_guard_erased::<L>(use_, AdapterPhase::Validation)
     }
 
     /// Returns the owner of all guards in this plan.
@@ -340,6 +451,17 @@ impl InstallContext<'_> {
         self.plan.guard_mut(use_, AdapterPhase::Install)
     }
 
+    /// Resolves a type-erased current-plan token to a mutable held guard of
+    /// `L`.
+    ///
+    /// The retained frame must have exactly the requested lock class.
+    pub fn guard_mut_erased<L: TransactionLock>(
+        &mut self,
+        use_: &ErasedLockUse,
+    ) -> Result<&mut L::Guard, AdapterFault> {
+        self.plan.guard_mut_erased::<L>(use_, AdapterPhase::Install)
+    }
+
     /// Resolves a current-plan token to its exact retained target and mutable
     /// guard.
     ///
@@ -351,6 +473,18 @@ impl InstallContext<'_> {
         use_: &LockUse<L>,
     ) -> Result<(&L, &mut L::Guard), AdapterFault> {
         self.plan.target_and_guard_mut(use_, AdapterPhase::Install)
+    }
+
+    /// Resolves a type-erased current-plan token to the exact retained target
+    /// and mutable guard of `L`.
+    ///
+    /// Both borrows remain scoped to this installation context.
+    pub fn target_and_guard_mut_erased<L: TransactionLock>(
+        &mut self,
+        use_: &ErasedLockUse,
+    ) -> Result<(&L, &mut L::Guard), AdapterFault> {
+        self.plan
+            .target_and_guard_mut_erased::<L>(use_, AdapterPhase::Install)
     }
 
     /// Returns the core OCC identity selected for this transaction.
@@ -375,6 +509,14 @@ impl ReleaseContext<'_> {
     /// Returns the core OCC identity associated with publication, if any.
     pub fn occ_commit_id(&self) -> Option<OccCommitId> {
         self.occ_commit_id
+    }
+
+    pub(crate) fn new(owner: &OwnerId, occ_commit_id: Option<OccCommitId>) -> ReleaseContext<'_> {
+        ReleaseContext {
+            owner,
+            occ_commit_id,
+            not_send_or_sync: PhantomData,
+        }
     }
 }
 
@@ -407,6 +549,13 @@ enum PlanState {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PlanningMode {
+    Unselected,
+    Canonical,
+    UniqueAccessOrder,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum FrameState {
     Planned,
     Held,
@@ -436,8 +585,8 @@ trait ErasedLockFrame: Any {
 }
 
 struct LockFrame<L: TransactionLock> {
-    // The guard is explicitly torn down before the target, with a separate
-    // unwind boundary for each adapter-owned value.
+    // The guard is explicitly torn down before the target. The enclosing plan
+    // supplies one unwind boundary for the whole reverse teardown pass.
     guard: Option<L::Guard>,
     target: Option<Arc<L>>,
     state: FrameState,
@@ -568,7 +717,7 @@ impl<L: TransactionLock> ErasedLockFrame for LockFrame<L> {
         // Mark release but retain the now-inert adapter-owned guard. The plan
         // drops all guards only after every physical lock has been released,
         // so arbitrary associated-type destructors never run under an earlier
-        // lock in the global order.
+        // lock in the selected acquisition order.
         self.state = FrameState::Released;
         Ok(())
     }
@@ -577,12 +726,8 @@ impl<L: TransactionLock> ErasedLockFrame for LockFrame<L> {
         if self.state == FrameState::Held {
             return Err(());
         }
-        if catch_unwind(AssertUnwindSafe(|| drop(self.guard.take()))).is_err() {
-            return Err(());
-        }
-        if catch_unwind(AssertUnwindSafe(|| drop(self.target.take()))).is_err() {
-            return Err(());
-        }
+        drop(self.guard.take());
+        drop(self.target.take());
         self.state = FrameState::Pooled;
         Ok(())
     }
@@ -600,13 +745,12 @@ pub(crate) struct LockPlanStorage {
     frames: Vec<Box<dyn ErasedLockFrame>>,
     identities: Vec<LockIdentity>,
     acquisition_order: Vec<usize>,
-    acquired: Vec<usize>,
 }
 
 /// Core-owned heterogeneous physical-lock plan.
 ///
-/// Frame slots never move. `acquisition_order` contains sorted slot indices,
-/// so sorting cannot invalidate any typed `LockUse<L>` retained by an adapter.
+/// Frame slots never move, so neither canonical sorting nor access-order
+/// planning can invalidate a typed `LockUse<L>` retained by an adapter.
 pub(crate) struct LockPlan {
     runtime_id: RuntimeId,
     // Reserved by the worker before any adapter preflight callback. RuntimeId
@@ -620,7 +764,15 @@ pub(crate) struct LockPlan {
     identities: Vec<LockIdentity>,
     active_frames: usize,
     acquisition_order: Vec<usize>,
-    acquired: Vec<usize>,
+    planning_mode: PlanningMode,
+    // One-bit fingerprints make the certified-unique lane's common append
+    // path O(1). A set bit triggers an exact scan, so collisions never reject
+    // distinct identities and duplicate identities never reach acquisition.
+    unique_identity_filter: u64,
+    // Successful acquisition always advances through a prefix of the selected
+    // order. A count therefore retains the exact recovery set without a second
+    // per-lock vector or a push on every successful callback.
+    acquired_len: usize,
     owner: Option<OwnerId>,
     state: PlanState,
     callback_in_progress: Option<usize>,
@@ -650,7 +802,6 @@ impl LockPlan {
         debug_assert!(storage.frames.iter().all(|frame| frame.is_reusable()));
         storage.identities.clear();
         storage.acquisition_order.clear();
-        storage.acquired.clear();
         Ok(Self {
             runtime_id,
             nonce,
@@ -659,7 +810,9 @@ impl LockPlan {
             identities: storage.identities,
             active_frames: 0,
             acquisition_order: storage.acquisition_order,
-            acquired: storage.acquired,
+            planning_mode: PlanningMode::Unselected,
+            unique_identity_filter: 0,
+            acquired_len: 0,
             owner: None,
             state: PlanState::Planning,
             callback_in_progress: None,
@@ -686,7 +839,7 @@ impl LockPlan {
 
     #[cfg(test)]
     pub(crate) fn has_acquired(&self) -> bool {
-        !self.acquired.is_empty()
+        self.acquired_len != 0
     }
 
     pub(crate) fn requires_release(&self) -> bool {
@@ -700,8 +853,6 @@ impl LockPlan {
             )));
         }
 
-        self.acquisition_order
-            .sort_unstable_by(|left, right| self.identities[*left].cmp(&self.identities[*right]));
         self.state = PlanState::Acquiring;
         self.owner = Some(owner);
 
@@ -730,9 +881,8 @@ impl LockPlan {
                 return Err(error);
             }
 
-            // Capacity for this push was reserved when the frame was planned,
-            // before any lock could be held.
-            self.acquired.push(slot);
+            debug_assert_eq!(self.acquired_len, order_index);
+            self.acquired_len += 1;
         }
 
         self.state = PlanState::Held;
@@ -793,11 +943,12 @@ impl LockPlan {
     /// Recovers every definitely acquired *other* frame after a lock callback
     /// panics.
     ///
-    /// `acquire_all` adds a slot to `acquired` only after its callback returns,
-    /// and `release_acquired` removes a slot before invoking its release
+    /// `acquire_all` advances `acquired_len` only after its callback returns,
+    /// and `release_acquired` shortens that prefix before invoking its release
     /// callback. Therefore `callback_in_progress` identifies the one uncertain
-    /// frame while `acquired` contains exactly the frames that can still be
-    /// released safely. The uncertain callback is never invoked again.
+    /// frame while the remaining prefix contains exactly the frames that can
+    /// still be released safely. The uncertain callback is never invoked
+    /// again.
     ///
     /// Even when this method returns `Ok(())`, the plan remains terminally
     /// quarantined and its owner must retain/forget it rather than run normal
@@ -851,51 +1002,111 @@ impl LockPlan {
                 AdapterFaultKind::LockIdentityMismatch,
             )));
         }
+        self.select_planning_mode(PlanningMode::Canonical)?;
 
-        if let Some(slot) = self.identities[..self.active_frames]
-            .iter()
-            .position(|identity| identity == &request.identity)
+        let insertion_index = match self
+            .acquisition_order
+            .binary_search_by(|slot| self.identities[*slot].cmp(&request.identity))
         {
-            let frame = self.frames.get(slot).ok_or_else(|| {
-                PrepareError::Fault(AdapterFault::invariant(AdapterPhase::Preflight))
-            })?;
-            if frame.target_type_id() != TypeId::of::<L>() {
-                return Err(PrepareError::Fault(AdapterFault::new(
-                    AdapterPhase::Preflight,
-                    AdapterFaultKind::TypeMismatch,
-                )));
-            }
-            let typed = frame
-                .as_any()
-                .downcast_ref::<LockFrame<L>>()
-                .ok_or_else(|| {
-                    PrepareError::Fault(AdapterFault::new(
-                        AdapterPhase::Preflight,
-                        AdapterFaultKind::TypeMismatch,
-                    ))
+            Ok(order_index) => {
+                let slot = self.acquisition_order[order_index];
+                let frame = self.frames.get(slot).ok_or_else(|| {
+                    PrepareError::Fault(AdapterFault::invariant(AdapterPhase::Preflight))
                 })?;
-            let Some(target) = typed.target.as_ref() else {
-                return Err(PrepareError::Fault(AdapterFault::invariant(
-                    AdapterPhase::Preflight,
-                )));
-            };
-            if !Arc::ptr_eq(target, &request.target) {
-                return Err(PrepareError::Fault(AdapterFault::new(
-                    AdapterPhase::Preflight,
-                    AdapterFaultKind::LockIdentityMismatch,
-                )));
+                let typed = frame
+                    .as_any()
+                    .downcast_ref::<LockFrame<L>>()
+                    .ok_or_else(|| {
+                        PrepareError::Fault(AdapterFault::new(
+                            AdapterPhase::Preflight,
+                            AdapterFaultKind::TypeMismatch,
+                        ))
+                    })?;
+                let Some(target) = typed.target.as_ref() else {
+                    return Err(PrepareError::Fault(AdapterFault::invariant(
+                        AdapterPhase::Preflight,
+                    )));
+                };
+                if !Arc::ptr_eq(target, &request.target) {
+                    return Err(PrepareError::Fault(AdapterFault::new(
+                        AdapterPhase::Preflight,
+                        AdapterFaultKind::LockIdentityMismatch,
+                    )));
+                }
+                return self.lock_use(slot);
             }
-            return self.lock_use(slot);
+            Err(insertion_index) => insertion_index,
+        };
+
+        self.append_new_lock(request, insertion_index)
+    }
+
+    fn require_unique_lock<L: TransactionLock>(
+        &mut self,
+        request: LockRequest<L>,
+    ) -> Result<LockUse<L>, PrepareError> {
+        if self.state != PlanState::Planning {
+            return Err(PrepareError::Fault(AdapterFault::invariant(
+                AdapterPhase::Preflight,
+            )));
+        }
+        if request.identity.runtime_id() != self.runtime_id {
+            return Err(PrepareError::Fault(AdapterFault::new(
+                AdapterPhase::Preflight,
+                AdapterFaultKind::LockIdentityMismatch,
+            )));
+        }
+        self.select_planning_mode(PlanningMode::UniqueAccessOrder)?;
+
+        let filter_bit = request.identity.planning_filter_bit();
+        if self.unique_identity_filter & filter_bit != 0
+            && self.identities[..self.active_frames]
+                .iter()
+                .any(|identity| identity == &request.identity)
+        {
+            return Err(PrepareError::Fault(AdapterFault::new(
+                AdapterPhase::Preflight,
+                AdapterFaultKind::LockIdentityMismatch,
+            )));
         }
 
+        let insertion_index = self.acquisition_order.len();
+        let lock_use = self.append_new_lock(request, insertion_index)?;
+        self.unique_identity_filter |= filter_bit;
+        Ok(lock_use)
+    }
+
+    fn select_planning_mode(&mut self, requested: PlanningMode) -> Result<(), PrepareError> {
+        match self.planning_mode {
+            PlanningMode::Unselected => {
+                self.planning_mode = requested;
+                Ok(())
+            }
+            current if current == requested => Ok(()),
+            PlanningMode::Canonical | PlanningMode::UniqueAccessOrder => {
+                Err(PrepareError::Fault(AdapterFault::new(
+                    AdapterPhase::Preflight,
+                    AdapterFaultKind::Other("mixed lock planning modes"),
+                )))
+            }
+        }
+    }
+
+    fn append_new_lock<L: TransactionLock>(
+        &mut self,
+        request: LockRequest<L>,
+        insertion_index: usize,
+    ) -> Result<LockUse<L>, PrepareError> {
         if self.active_frames >= self.max_locks {
             return Err(PrepareError::Capacity(CapacityError::LockLimit));
         }
+        if insertion_index > self.acquisition_order.len() {
+            return Err(PrepareError::Fault(AdapterFault::invariant(
+                AdapterPhase::Preflight,
+            )));
+        }
 
         self.acquisition_order
-            .try_reserve(1)
-            .map_err(|_| PrepareError::Capacity(CapacityError::LockLimit))?;
-        self.acquired
             .try_reserve(1)
             .map_err(|_| PrepareError::Capacity(CapacityError::LockLimit))?;
         self.identities
@@ -905,16 +1116,18 @@ impl LockPlan {
         let slot = self.active_frames;
         let LockRequest { identity, target } = request;
         if slot < self.frames.len() {
-            if self.frames[slot].target_type_id() != TypeId::of::<L>() {
+            let mut slot_has_type = self.frames[slot].target_type_id() == TypeId::of::<L>();
+            if !slot_has_type {
                 if let Some(offset) = self.frames[slot + 1..]
                     .iter()
                     .position(|frame| frame.target_type_id() == TypeId::of::<L>())
                 {
                     self.frames.swap(slot, slot + 1 + offset);
+                    slot_has_type = true;
                 }
             }
 
-            if self.frames[slot].target_type_id() == TypeId::of::<L>() {
+            if slot_has_type {
                 self.frames[slot]
                     .as_any_mut()
                     .downcast_mut::<LockFrame<L>>()
@@ -942,16 +1155,22 @@ impl LockPlan {
         }
         self.identities.push(identity);
         self.active_frames += 1;
-        self.acquisition_order.push(slot);
+        if insertion_index == self.acquisition_order.len() {
+            self.acquisition_order.push(slot);
+        } else {
+            self.acquisition_order.insert(insertion_index, slot);
+        }
         self.lock_use(slot)
     }
 
     fn lock_use<L: TransactionLock>(&mut self, slot: usize) -> Result<LockUse<L>, PrepareError> {
-        let encoded_slot = LockUse::<L>::encode_slot(slot).map_err(PrepareError::Capacity)?;
+        let encoded_slot = ErasedLockUse::encode_slot(slot).map_err(PrepareError::Capacity)?;
         Ok(LockUse {
-            runtime_id: self.runtime_id,
-            plan_nonce: self.nonce,
-            encoded_slot,
+            erased: ErasedLockUse {
+                runtime_id: self.runtime_id,
+                plan_nonce: self.nonce,
+                encoded_slot,
+            },
             lock_type: PhantomData,
         })
     }
@@ -959,6 +1178,14 @@ impl LockPlan {
     fn guard<L: TransactionLock>(
         &self,
         use_: &LockUse<L>,
+        phase: AdapterPhase,
+    ) -> Result<&L::Guard, AdapterFault> {
+        self.guard_erased::<L>(&use_.erased, phase)
+    }
+
+    fn guard_erased<L: TransactionLock>(
+        &self,
+        use_: &ErasedLockUse,
         phase: AdapterPhase,
     ) -> Result<&L::Guard, AdapterFault> {
         self.validate_use(use_, phase)?;
@@ -974,6 +1201,14 @@ impl LockPlan {
         use_: &LockUse<L>,
         phase: AdapterPhase,
     ) -> Result<&mut L::Guard, AdapterFault> {
+        self.guard_mut_erased::<L>(&use_.erased, phase)
+    }
+
+    fn guard_mut_erased<L: TransactionLock>(
+        &mut self,
+        use_: &ErasedLockUse,
+        phase: AdapterPhase,
+    ) -> Result<&mut L::Guard, AdapterFault> {
         self.validate_use(use_, phase)?;
         self.frames[use_.slot()]
             .as_any_mut()
@@ -985,6 +1220,14 @@ impl LockPlan {
     fn target_and_guard<L: TransactionLock>(
         &self,
         use_: &LockUse<L>,
+        phase: AdapterPhase,
+    ) -> Result<(&L, &L::Guard), AdapterFault> {
+        self.target_and_guard_erased::<L>(&use_.erased, phase)
+    }
+
+    fn target_and_guard_erased<L: TransactionLock>(
+        &self,
+        use_: &ErasedLockUse,
         phase: AdapterPhase,
     ) -> Result<(&L, &L::Guard), AdapterFault> {
         self.validate_use(use_, phase)?;
@@ -1000,6 +1243,14 @@ impl LockPlan {
         use_: &LockUse<L>,
         phase: AdapterPhase,
     ) -> Result<(&L, &mut L::Guard), AdapterFault> {
+        self.target_and_guard_mut_erased::<L>(&use_.erased, phase)
+    }
+
+    fn target_and_guard_mut_erased<L: TransactionLock>(
+        &mut self,
+        use_: &ErasedLockUse,
+        phase: AdapterPhase,
+    ) -> Result<(&L, &mut L::Guard), AdapterFault> {
         self.validate_use(use_, phase)?;
         self.frames[use_.slot()]
             .as_any_mut()
@@ -1008,20 +1259,12 @@ impl LockPlan {
             .target_and_guard_mut(phase)
     }
 
-    fn validate_use<L: TransactionLock>(
-        &self,
-        use_: &LockUse<L>,
-        phase: AdapterPhase,
-    ) -> Result<(), AdapterFault> {
+    fn validate_use(&self, use_: &ErasedLockUse, phase: AdapterPhase) -> Result<(), AdapterFault> {
         if use_.runtime_id != self.runtime_id || use_.plan_nonce != self.nonce {
             return Err(AdapterFault::new(phase, AdapterFaultKind::StaleLockUse));
         }
-        let frame = self
-            .frames
-            .get(use_.slot())
-            .ok_or_else(|| AdapterFault::new(phase, AdapterFaultKind::StaleLockUse))?;
-        if frame.target_type_id() != TypeId::of::<L>() {
-            return Err(AdapterFault::new(phase, AdapterFaultKind::TypeMismatch));
+        if use_.slot() >= self.active_frames {
+            return Err(AdapterFault::new(phase, AdapterFaultKind::StaleLockUse));
         }
         Ok(())
     }
@@ -1041,7 +1284,12 @@ impl LockPlan {
         disposition: LockDisposition,
         cx: &ReleaseContext<'_>,
     ) -> Result<(), AdapterFault> {
-        while let Some(slot) = self.acquired.pop() {
+        while self.acquired_len != 0 {
+            self.acquired_len -= 1;
+            let slot = *self
+                .acquisition_order
+                .get(self.acquired_len)
+                .ok_or_else(|| AdapterFault::invariant(AdapterPhase::Release))?;
             self.callback_in_progress = Some(slot);
             self.frames[slot].release(disposition, cx)?;
             self.callback_in_progress = None;
@@ -1058,10 +1306,16 @@ impl LockPlan {
         if !matches!(self.state, PlanState::Planning | PlanState::Released) {
             return Err(());
         }
-        for frame in self.frames[..self.active_frames].iter_mut().rev() {
-            frame.teardown_adapter_state()?;
+        let teardown = catch_unwind(AssertUnwindSafe(|| {
+            for frame in self.frames[..self.active_frames].iter_mut().rev() {
+                frame.teardown_adapter_state()?;
+            }
+            Ok::<(), ()>(())
+        }));
+        match teardown {
+            Ok(result) => result,
+            Err(_) => Err(()),
         }
-        Ok(())
     }
 
     /// Returns the core-owned allocation pool after all adapter state was
@@ -1072,7 +1326,7 @@ impl LockPlan {
             || self.callback_in_progress.is_some()
             || self.quarantined_callback.is_some()
             || self.owner.is_some()
-            || !self.acquired.is_empty()
+            || self.acquired_len != 0
             || self.identities.len() != self.active_frames
             || !self.frames.iter().all(|frame| frame.is_reusable())
         {
@@ -1085,12 +1339,10 @@ impl LockPlan {
 
         self.identities.clear();
         self.acquisition_order.clear();
-        self.acquired.clear();
         Ok(LockPlanStorage {
             frames: std::mem::take(&mut self.frames),
             identities: std::mem::take(&mut self.identities),
             acquisition_order: std::mem::take(&mut self.acquisition_order),
-            acquired: std::mem::take(&mut self.acquired),
         })
     }
 }
@@ -1307,6 +1559,90 @@ mod tests {
     }
 
     #[test]
+    fn erased_lock_use_resolves_in_each_held_context() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let (target, request) = request(17, 10, false, &events);
+        let mut plan = LockPlan::new(runtime_id(), 1).unwrap();
+        let erased = plan
+            .preflight_context()
+            .unwrap()
+            .require_lock(request)
+            .unwrap()
+            .erase();
+
+        plan.acquire_all(owner_id()).unwrap();
+        {
+            let context = plan.predicate_context().unwrap();
+            assert_eq!(context.guard_erased::<TestLock>(&erased).unwrap().id, 17);
+        }
+        {
+            let context = plan.validation_context(None).unwrap();
+            assert_eq!(context.guard_erased::<TestLock>(&erased).unwrap().id, 17);
+            let (retained_target, guard) = context
+                .target_and_guard_erased::<TestLock>(&erased)
+                .unwrap();
+            assert!(std::ptr::eq(retained_target, target.as_ref()));
+            assert_eq!(guard.id, 17);
+        }
+        {
+            let mut context = plan.install_context(None).unwrap();
+            context.guard_mut_erased::<TestLock>(&erased).unwrap().id = 71;
+            let (retained_target, guard) = context
+                .target_and_guard_mut_erased::<TestLock>(&erased)
+                .unwrap();
+            assert!(std::ptr::eq(retained_target, target.as_ref()));
+            assert_eq!(guard.id, 71);
+            // Restore the fixture invariant checked by TestLock::release.
+            guard.id = target.id;
+        }
+        plan.release_all(LockDisposition::Aborted).unwrap();
+    }
+
+    #[test]
+    fn erased_lock_use_rejects_wrong_type_runtime_plan_and_slot() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut other_plan = LockPlan::new(runtime_id(), 1).unwrap();
+        let (_, other_request) = request(1, 10, false, &events);
+        let wrong_plan = other_plan
+            .preflight_context()
+            .unwrap()
+            .require_lock(other_request)
+            .unwrap()
+            .erase();
+
+        let mut plan = LockPlan::new(runtime_id(), 1).unwrap();
+        let (_, current_request) = request(2, 20, false, &events);
+        let current = plan
+            .preflight_context()
+            .unwrap()
+            .require_lock(current_request)
+            .unwrap()
+            .erase();
+        let wrong_runtime = ErasedLockUse {
+            runtime_id: RuntimeId::new(8).unwrap(),
+            plan_nonce: current.plan_nonce,
+            encoded_slot: current.encoded_slot,
+        };
+        let wrong_slot = ErasedLockUse {
+            runtime_id: current.runtime_id,
+            plan_nonce: current.plan_nonce,
+            encoded_slot: ErasedLockUse::encode_slot(1).unwrap(),
+        };
+
+        plan.acquire_all(owner_id()).unwrap();
+        let context = plan.validation_context(None).unwrap();
+        let wrong_type = context.guard_erased::<OtherLock>(&current).unwrap_err();
+        assert_eq!(wrong_type.phase(), AdapterPhase::Validation);
+        assert_eq!(*wrong_type.kind(), AdapterFaultKind::TypeMismatch);
+        for stale in [&wrong_runtime, &wrong_plan, &wrong_slot] {
+            let error = context.guard_erased::<TestLock>(stale).unwrap_err();
+            assert_eq!(error.phase(), AdapterPhase::Validation);
+            assert_eq!(*error.kind(), AdapterFaultKind::StaleLockUse);
+        }
+        plan.release_all(LockDisposition::Aborted).unwrap();
+    }
+
+    #[test]
     fn target_and_guard_access_rejects_stale_typed_and_wrong_plan_uses() {
         let events = Arc::new(Mutex::new(Vec::new()));
         let mut other_plan = LockPlan::new(runtime_id(), 1).unwrap();
@@ -1325,15 +1661,19 @@ mod tests {
             .require_lock(current_request)
             .unwrap();
         let stale_slot = LockUse::<TestLock> {
-            runtime_id: current.runtime_id,
-            plan_nonce: current.plan_nonce,
-            encoded_slot: LockUse::<TestLock>::encode_slot(1).unwrap(),
+            erased: ErasedLockUse {
+                runtime_id: current.erased.runtime_id,
+                plan_nonce: current.erased.plan_nonce,
+                encoded_slot: ErasedLockUse::encode_slot(1).unwrap(),
+            },
             lock_type: PhantomData,
         };
         let wrong_type = LockUse::<OtherLock> {
-            runtime_id: current.runtime_id,
-            plan_nonce: current.plan_nonce,
-            encoded_slot: current.encoded_slot,
+            erased: ErasedLockUse {
+                runtime_id: current.erased.runtime_id,
+                plan_nonce: current.erased.plan_nonce,
+                encoded_slot: current.erased.encoded_slot,
+            },
             lock_type: PhantomData,
         };
 
@@ -1590,7 +1930,7 @@ mod tests {
     }
 
     #[test]
-    fn sorting_does_not_change_typed_slots_and_release_is_reverse() {
+    fn sorted_planning_does_not_change_typed_slots_and_release_is_reverse() {
         let events = Arc::new(Mutex::new(Vec::new()));
         let mut plan = LockPlan::new(runtime_id(), 8).unwrap();
         let mut uses = Vec::new();
@@ -1604,7 +1944,14 @@ mod tests {
             );
         }
 
+        assert_eq!(
+            plan.acquisition_order,
+            vec![1, 2, 0],
+            "planning keeps canonical lock order without moving frame slots"
+        );
+
         plan.acquire_all(owner_id()).unwrap();
+        assert_eq!(plan.acquisition_order, vec![1, 2, 0]);
         assert_eq!(
             *events.lock().unwrap(),
             vec![Event::Acquire(10), Event::Acquire(20), Event::Acquire(30)]
@@ -1650,6 +1997,177 @@ mod tests {
     }
 
     #[test]
+    fn unique_planning_acquires_in_request_order_and_releases_in_reverse() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut plan = LockPlan::new(runtime_id(), 8).unwrap();
+
+        let (_, first_request) = request(30, 30, false, &events);
+        let first = plan
+            .preflight_context()
+            .unwrap()
+            .require_unique_lock(first_request)
+            .unwrap();
+        let (_, second_request) = request(10, 10, false, &events);
+        let second = plan
+            .preflight_context()
+            .unwrap()
+            .require_unique_lock(second_request)
+            .unwrap()
+            .erase();
+        let (_, third_request) = request(20, 20, false, &events);
+        let third = plan
+            .preflight_context()
+            .unwrap()
+            .require_unique_lock(third_request)
+            .unwrap();
+
+        assert_eq!(plan.acquisition_order, vec![0, 1, 2]);
+        plan.acquire_all(owner_id()).unwrap();
+        {
+            let context = plan.validation_context(None).unwrap();
+            assert_eq!(context.guard(&first).unwrap().id, 30);
+            assert_eq!(context.guard_erased::<TestLock>(&second).unwrap().id, 10);
+            assert_eq!(context.guard(&third).unwrap().id, 20);
+        }
+        plan.release_all(LockDisposition::Aborted).unwrap();
+
+        assert_eq!(
+            *events.lock().unwrap(),
+            vec![
+                Event::Acquire(30),
+                Event::Acquire(10),
+                Event::Acquire(20),
+                Event::Release(20, LockDisposition::Aborted),
+                Event::Release(10, LockDisposition::Aborted),
+                Event::Release(30, LockDisposition::Aborted),
+            ]
+        );
+    }
+
+    #[test]
+    fn unique_planning_rejects_duplicate_identity_without_mutating_the_plan() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut plan = LockPlan::new(runtime_id(), 8).unwrap();
+        let (_, first_request) = request(1, 10, false, &events);
+        plan.preflight_context()
+            .unwrap()
+            .require_unique_lock(first_request)
+            .unwrap();
+
+        let (_, duplicate_request) = request(2, 10, false, &events);
+        let error = plan
+            .preflight_context()
+            .unwrap()
+            .require_unique_lock(duplicate_request)
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            PrepareError::Fault(fault)
+                if *fault.kind() == AdapterFaultKind::LockIdentityMismatch
+        ));
+        assert_eq!(plan.len(), 1);
+        assert_eq!(plan.acquisition_order, vec![0]);
+    }
+
+    #[test]
+    fn unique_planning_filter_collisions_still_accept_distinct_identities() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let first_identity = identity(1);
+        let first_bit = first_identity.planning_filter_bit();
+        let colliding_key = (2_u64..)
+            .find(|key| identity(*key).planning_filter_bit() == first_bit)
+            .expect("the 64-bit filter has another key in an unbounded search");
+
+        let mut plan = LockPlan::new(runtime_id(), 8).unwrap();
+        for (id, lock_identity) in [(1, first_identity), (2, identity(colliding_key))] {
+            let target = Arc::new(TestLock {
+                id,
+                fail: false,
+                panic_acquire: false,
+                panic_release: false,
+                events: Arc::clone(&events),
+            });
+            plan.preflight_context()
+                .unwrap()
+                .require_unique_lock(LockRequest::new(lock_identity, target))
+                .unwrap();
+        }
+
+        assert_eq!(plan.len(), 2);
+        plan.acquire_all(owner_id()).unwrap();
+        plan.release_all(LockDisposition::Aborted).unwrap();
+    }
+
+    #[test]
+    fn lock_plan_rejects_mixing_canonical_and_unique_planning() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+
+        let mut canonical_first = LockPlan::new(runtime_id(), 8).unwrap();
+        let (_, first_request) = request(1, 10, false, &events);
+        canonical_first
+            .preflight_context()
+            .unwrap()
+            .require_lock(first_request)
+            .unwrap();
+        let (_, second_request) = request(2, 20, false, &events);
+        let unique_error = canonical_first
+            .preflight_context()
+            .unwrap()
+            .require_unique_lock(second_request)
+            .unwrap_err();
+        assert!(matches!(
+            unique_error,
+            PrepareError::Fault(fault)
+                if *fault.kind() == AdapterFaultKind::Other("mixed lock planning modes")
+        ));
+        assert_eq!(canonical_first.len(), 1);
+
+        let mut unique_first = LockPlan::new(runtime_id(), 8).unwrap();
+        let (_, first_request) = request(1, 10, false, &events);
+        unique_first
+            .preflight_context()
+            .unwrap()
+            .require_unique_lock(first_request)
+            .unwrap();
+        let (_, second_request) = request(2, 20, false, &events);
+        let canonical_error = unique_first
+            .preflight_context()
+            .unwrap()
+            .require_lock(second_request)
+            .unwrap_err();
+        assert!(matches!(
+            canonical_error,
+            PrepareError::Fault(fault)
+                if *fault.kind() == AdapterFaultKind::Other("mixed lock planning modes")
+        ));
+        assert_eq!(unique_first.len(), 1);
+    }
+
+    #[test]
+    fn unique_acquisition_failure_releases_only_the_request_order_prefix() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut plan = LockPlan::new(runtime_id(), 8).unwrap();
+        for (id, key, fail) in [(30, 30, false), (10, 10, true), (20, 20, false)] {
+            let (_, lock_request) = request(id, key, fail, &events);
+            plan.preflight_context()
+                .unwrap()
+                .require_unique_lock(lock_request)
+                .unwrap();
+        }
+
+        assert!(plan.acquire_all(owner_id()).is_err());
+        assert!(!plan.has_acquired());
+        assert_eq!(
+            *events.lock().unwrap(),
+            vec![
+                Event::Acquire(30),
+                Event::Acquire(10),
+                Event::Release(30, LockDisposition::Aborted),
+            ]
+        );
+    }
+
+    #[test]
     fn rejects_stale_and_wrongly_typed_uses_without_unchecked_casts() {
         let events = Arc::new(Mutex::new(Vec::new()));
         let mut first_plan = LockPlan::new(runtime_id(), 8).unwrap();
@@ -1674,18 +2192,22 @@ mod tests {
             assert_eq!(*stale_error.kind(), AdapterFaultKind::StaleLockUse);
 
             let wrong_type = LockUse::<OtherLock> {
-                runtime_id: current.runtime_id,
-                plan_nonce: current.plan_nonce,
-                encoded_slot: current.encoded_slot,
+                erased: ErasedLockUse {
+                    runtime_id: current.erased.runtime_id,
+                    plan_nonce: current.erased.plan_nonce,
+                    encoded_slot: current.erased.encoded_slot,
+                },
                 lock_type: PhantomData,
             };
             let type_error = context.guard(&wrong_type).unwrap_err();
             assert_eq!(*type_error.kind(), AdapterFaultKind::TypeMismatch);
 
             let wrong_runtime = LockUse::<TestLock> {
-                runtime_id: RuntimeId::new(8).unwrap(),
-                plan_nonce: current.plan_nonce,
-                encoded_slot: current.encoded_slot,
+                erased: ErasedLockUse {
+                    runtime_id: RuntimeId::new(8).unwrap(),
+                    plan_nonce: current.erased.plan_nonce,
+                    encoded_slot: current.erased.encoded_slot,
+                },
                 lock_type: PhantomData,
             };
             assert_eq!(
@@ -1694,9 +2216,11 @@ mod tests {
             );
 
             let out_of_bounds = LockUse::<TestLock> {
-                runtime_id: current.runtime_id,
-                plan_nonce: current.plan_nonce,
-                encoded_slot: NonZeroUsize::new(usize::MAX).unwrap(),
+                erased: ErasedLockUse {
+                    runtime_id: current.erased.runtime_id,
+                    plan_nonce: current.erased.plan_nonce,
+                    encoded_slot: NonZeroUsize::new(usize::MAX).unwrap(),
+                },
                 lock_type: PhantomData,
             };
             assert_eq!(
@@ -1709,22 +2233,22 @@ mod tests {
 
     #[test]
     fn lock_use_slot_encoding_checks_capacity_and_supplies_an_enum_niche() {
-        assert_eq!(LockUse::<TestLock>::encode_slot(0).unwrap().get(), 1);
+        assert_eq!(ErasedLockUse::encode_slot(0).unwrap().get(), 1);
         assert_eq!(
-            LockUse::<TestLock>::encode_slot(usize::MAX - 1)
-                .unwrap()
-                .get(),
+            ErasedLockUse::encode_slot(usize::MAX - 1).unwrap().get(),
             usize::MAX
         );
         assert_eq!(
-            LockUse::<TestLock>::encode_slot(usize::MAX),
+            ErasedLockUse::encode_slot(usize::MAX),
             Err(CapacityError::LockLimit)
         );
 
         let last = LockUse::<TestLock> {
-            runtime_id: runtime_id(),
-            plan_nonce: 1,
-            encoded_slot: LockUse::<TestLock>::encode_slot(usize::MAX - 1).unwrap(),
+            erased: ErasedLockUse {
+                runtime_id: runtime_id(),
+                plan_nonce: 1,
+                encoded_slot: ErasedLockUse::encode_slot(usize::MAX - 1).unwrap(),
+            },
             lock_type: PhantomData,
         };
         assert_eq!(last.slot(), usize::MAX - 1);
@@ -1737,6 +2261,8 @@ mod tests {
 
         #[cfg(target_pointer_width = "64")]
         {
+            assert_eq!(std::mem::size_of::<ErasedLockUse>(), 24);
+            assert_eq!(std::mem::size_of::<Option<ErasedLockUse>>(), 24);
             assert_eq!(std::mem::size_of::<LockUse<TestLock>>(), 24);
             assert_eq!(std::mem::size_of::<Option<LockUse<TestLock>>>(), 24);
             assert_eq!(std::mem::size_of::<PreparedShape>(), 24);
@@ -1765,7 +2291,6 @@ mod tests {
             first_plan.frames.capacity(),
             first_plan.identities.capacity(),
             first_plan.acquisition_order.capacity(),
-            first_plan.acquired.capacity(),
         );
         first_plan.acquire_all(owner_id()).unwrap();
         first_plan.release_all(LockDisposition::Aborted).unwrap();
@@ -1774,7 +2299,6 @@ mod tests {
         assert_eq!(storage.frames.capacity(), capacities.0);
         assert_eq!(storage.identities.capacity(), capacities.1);
         assert_eq!(storage.acquisition_order.capacity(), capacities.2);
-        assert_eq!(storage.acquired.capacity(), capacities.3);
 
         let mut second_plan =
             LockPlan::with_storage(runtime_id(), 8, next_test_plan_nonce(), storage).unwrap();
@@ -1796,7 +2320,6 @@ mod tests {
         assert_eq!(second_plan.frames.capacity(), capacities.0);
         assert_eq!(second_plan.identities.capacity(), capacities.1);
         assert_eq!(second_plan.acquisition_order.capacity(), capacities.2);
-        assert_eq!(second_plan.acquired.capacity(), capacities.3);
 
         second_plan.acquire_all(owner_id()).unwrap();
         let context = second_plan.validation_context(None).unwrap();
@@ -1810,7 +2333,7 @@ mod tests {
     }
 
     #[test]
-    fn linear_identity_scan_distinguishes_nearby_byte_keys() {
+    fn sorted_identity_lookup_distinguishes_nearby_byte_keys() {
         let events = Arc::new(Mutex::new(Vec::new()));
         let mut plan = LockPlan::new(runtime_id(), 16).unwrap();
         let mut targets = Vec::new();

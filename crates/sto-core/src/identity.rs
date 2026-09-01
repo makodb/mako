@@ -393,6 +393,53 @@ impl LockIdentity {
     pub const fn key(&self) -> &LockKey {
         &self.key
     }
+
+    /// Returns a cheap deterministic hash for duplicate detection while
+    /// constructing an access-ordered lock plan.
+    ///
+    /// Equal identities always return the same value. Unequal identities may
+    /// collide; lock planners resolve matching hashes with full equality
+    /// before rejecting a request. The common integral-key path deliberately
+    /// uses only a handful of integer operations because this is a preflight
+    /// hot path, not a hash-table correctness boundary.
+    #[inline]
+    pub(crate) fn planning_hash(&self) -> u64 {
+        const MIX: u64 = 0x517c_c1b7_2722_0a95;
+        const FINAL_MIX: u64 = 0xd6e8_feb8_6659_fd93;
+
+        let mut fingerprint =
+            self.namespace_id.get().wrapping_mul(MIX) ^ u64::from(self.class.get()).rotate_left(21);
+        match &self.key {
+            LockKey::U64(value) => {
+                fingerprint ^= value.rotate_left(37).wrapping_mul(MIX);
+            }
+            LockKey::Bytes(bytes) => {
+                fingerprint ^= (bytes.len() as u64).wrapping_mul(MIX);
+                for byte in bytes.iter().copied() {
+                    fingerprint = (fingerprint.rotate_left(5) ^ u64::from(byte)).wrapping_mul(MIX);
+                }
+            }
+        }
+        // Direct-record identities use stable arena addresses as their scalar
+        // keys. Those addresses are cache-line aligned, and rotating their
+        // varying low address bits above bit 32 leaves the low bits of the
+        // preliminary fingerprint highly correlated. Both the small-plan
+        // filter and the exact open-addressed planner consume those low bits.
+        // Fold, multiply, and fold once more so aligned or sequential scalar
+        // keys do not collapse onto one filter bit or one initial bucket. Full
+        // identity equality, rather than this hash, remains the correctness
+        // boundary for collisions.
+        fingerprint ^= fingerprint >> 32;
+        fingerprint = fingerprint.wrapping_mul(FINAL_MIX);
+        fingerprint ^ (fingerprint >> 32)
+    }
+
+    /// Returns one bit derived from [`Self::planning_hash`] for small-plan
+    /// duplicate filtering.
+    #[inline]
+    pub(crate) fn planning_filter_bit(&self) -> u64 {
+        1_u64 << (self.planning_hash() & 63)
+    }
 }
 
 #[cfg(test)]
@@ -443,5 +490,30 @@ mod tests {
 
         let other_runtime = LockIdentity::new(RuntimeId::new(2).unwrap(), namespace, class, 7_u64);
         assert_ne!(integer, other_runtime);
+    }
+
+    #[test]
+    fn planning_hash_spreads_aligned_and_sequential_scalar_keys() {
+        let runtime = RuntimeId::new(1).unwrap();
+        let namespace = LockNamespaceId::new(2).unwrap();
+        let class = LockClass::new(3).unwrap();
+
+        for keys in [
+            (0_u64..32).collect::<Vec<_>>(),
+            (0_u64..32)
+                .map(|index| 0x0000_7f00_0000_0000 + index * 64)
+                .collect::<Vec<_>>(),
+        ] {
+            let mut buckets = 0_u32;
+            for key in keys {
+                let identity = LockIdentity::new(runtime, namespace, class, key);
+                buckets |= 1_u32 << (identity.planning_hash() & 31);
+            }
+            assert!(
+                buckets.count_ones() >= 16,
+                "planner hash used only {} of 32 low-bit buckets",
+                buckets.count_ones()
+            );
+        }
     }
 }

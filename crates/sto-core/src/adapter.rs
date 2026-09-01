@@ -7,6 +7,7 @@
 use std::{fmt, hash::Hash, marker::PhantomData, rc::Rc};
 
 use crate::{
+    direct_commit::DirectCommitCapability,
     error::{CheckError, ItemInitError, PrepareError},
     identity::OccVersion,
 };
@@ -240,6 +241,21 @@ pub trait TransactionalResource: Send + Sync + Sized + 'static {
     /// `Some` is an explicit, stable adapter contract; see
     /// [`TerminalReadBatchCapability`].
     fn terminal_read_batch_capability(&self) -> Option<&'static TerminalReadBatchCapability<Self>> {
+        None
+    }
+
+    /// Optionally selects core's concrete direct commit plan for an eligible
+    /// homogeneous typed batch.
+    ///
+    /// Core checks the capability once when each distinct exact registered
+    /// resource binding first becomes live and requires the same static value
+    /// across all such bindings. The result must therefore remain stable for
+    /// the lifetime of a binding. Returning `Some` is suitable for role- or
+    /// backend-specific opt-in; a scan/directory binding can return `None` and
+    /// transparently retain the ordinary lock plan. See
+    /// [`DirectCommitCapability`] for the stronger alternate-protocol
+    /// requirements.
+    fn direct_commit_capability(&self) -> Option<&'static DirectCommitCapability<Self>> {
         None
     }
 

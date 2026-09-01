@@ -22,6 +22,8 @@ _Static_assert(MT_FEATURE_SCOPED_STRIDED_POINT_READS == (UINT64_C(1) << 10),
                "strided scoped-read feature bit changed");
 _Static_assert(MT_FEATURE_STRIDED_POINT_READS == (UINT64_C(1) << 11),
                "strided point-read feature bit changed");
+_Static_assert(MT_FEATURE_SCOPED_RCU == (UINT64_C(1) << 12),
+               "worker RCU-scope feature bit changed");
 _Static_assert((MT_FEATURE_POINT_GET & MT_FEATURE_SCOPED_POINT_READS) == 0,
                "feature bits must be disjoint");
 _Static_assert((MT_FEATURE_STRIDED_POINT_READS &
@@ -47,6 +49,8 @@ _Static_assert(offsetof(mt_read_scope, owner) == 0,
                "scope owner identity must be the first word");
 _Static_assert(offsetof(mt_read_scope, generation) >= sizeof(uintptr_t),
                "scope generation must follow its owner identity");
+_Static_assert(sizeof(mt_rcu_scope) == sizeof(mt_read_scope),
+               "RCU and read capabilities must share a representation");
 _Static_assert(offsetof(mt_get_or_insert_result, publication) >=
                    sizeof(mt_record_id),
                "publication must follow the winning record ID");
@@ -87,6 +91,9 @@ MT_ASSERT_FUNCTION(mt_read_scope_get_strided,
                    mt_status (*)(const mt_read_scope *, const void *, size_t,
                                  size_t, size_t, mt_record_id *));
 MT_ASSERT_FUNCTION(mt_read_scope_end, mt_status (*)(mt_read_scope *));
+MT_ASSERT_FUNCTION(mt_rcu_scope_begin,
+                   mt_status (*)(mt_thread *, mt_rcu_scope *));
+MT_ASSERT_FUNCTION(mt_rcu_scope_end, mt_status (*)(mt_rcu_scope *));
 MT_ASSERT_FUNCTION(mt_get_or_insert,
                    mt_status (*)(mt_tree *, mt_thread *, const void *, size_t,
                                  mt_record_id, mt_get_or_insert_result *));

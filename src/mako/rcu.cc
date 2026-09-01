@@ -305,15 +305,71 @@ rcu::dealloc_rcu(void *p, size_t sz)
   ++evt_rcu_frees;
 }
 
+#if defined(__linux__)
+namespace {
+struct rcu_thread_affinity_state {
+  bitmask *baseline;
+  bitmask *last_applied;
+  bitmask *working;
+  bitmask *node_cpus;
+  bool has_last_applied;
+
+  rcu_thread_affinity_state()
+    : baseline(numa_allocate_cpumask()),
+      last_applied(numa_allocate_cpumask()),
+      working(numa_allocate_cpumask()),
+      node_cpus(numa_allocate_cpumask()),
+      has_last_applied(false)
+  {
+    ALWAYS_ASSERT(baseline && last_applied && working && node_cpus);
+  }
+
+  ~rcu_thread_affinity_state()
+  {
+    numa_free_cpumask(node_cpus);
+    numa_free_cpumask(working);
+    numa_free_cpumask(last_applied);
+    numa_free_cpumask(baseline);
+  }
+};
+}
+#endif
+
 void
 rcu::pin_current_thread(size_t cpu)
 {
   sync &s = mysync();
   s.set_pin_cpu(cpu);
-  auto node = numa_node_of_cpu(cpu);
-  // pin to node
+  ALWAYS_ASSERT(cpu <= static_cast<size_t>(numeric_limits<int>::max()));
+  auto node = numa_node_of_cpu(static_cast<int>(cpu));
+#if defined(__linux__)
+  ALWAYS_ASSERT(node >= 0);
+  static thread_local rcu_thread_affinity_state affinity;
+  // libnuma returns the kernel affinity-mask byte count on success.
+  ALWAYS_ASSERT(numa_sched_getaffinity(0, affinity.working) >= 0);
+  if (!affinity.has_last_applied
+      || !numa_bitmask_equal(affinity.working, affinity.last_applied)) {
+    copy_bitmask_to_bitmask(affinity.working, affinity.baseline);
+  }
+  copy_bitmask_to_bitmask(affinity.baseline, affinity.working);
+  numa_bitmask_clearall(affinity.node_cpus);
+  ALWAYS_ASSERT(!numa_node_to_cpus(node, affinity.node_cpus));
+  for (unsigned int candidate = 0;
+       candidate < affinity.working->size; ++candidate) {
+    if (!numa_bitmask_isbitset(affinity.node_cpus, candidate))
+      numa_bitmask_clearbit(affinity.working, candidate);
+  }
+  // Keep taskset/cpuset constraints while narrowing the thread to the
+  // allocator arena's NUMA node. The baseline lets one thread move between
+  // nodes on later calls; a caller-applied mask change replaces that baseline.
+  ALWAYS_ASSERT(numa_bitmask_weight(affinity.working));
+  ALWAYS_ASSERT(!numa_sched_setaffinity(0, affinity.working));
+  copy_bitmask_to_bitmask(affinity.working, affinity.last_applied);
+  affinity.has_last_applied = true;
+#else
   ALWAYS_ASSERT(!numa_run_on_node(node));
-  // is numa_run_on_node() guaranteed to take effect immediately?
+#endif
+  // Let a pending migration finish before releasing per-thread allocator state.
   ALWAYS_ASSERT(!sched_yield());
   // release current thread-local cache back to allocator
   s.do_release();

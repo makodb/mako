@@ -91,6 +91,7 @@ if(DEFINED MAKO_STO_NATIVE_TEST
             --manifest-path "${MAKO_RUST_MANIFEST}"
             --locked
             -p sto-masstree
+            --all-features
             --test native_integration
         COMMAND_ECHO STDOUT
         RESULT_VARIABLE _sto_masstree_result
@@ -121,4 +122,52 @@ if(DEFINED MAKO_STO_TPCC_NATIVE_TEST
         message(FATAL_ERROR
             "Rust STO TPC-C FFI integration failed with exit code ${_sto_tpcc_result}")
     endif()
+
+    get_filename_component(_sto_tpcc_test_dir
+        "${MAKO_STO_TPCC_NATIVE_TEST}" DIRECTORY)
+    set(_sto_tpcc_trusted_test "${_sto_tpcc_test_dir}/trusted_ffi.rs")
+    if(NOT EXISTS "${_sto_tpcc_trusted_test}")
+        message(FATAL_ERROR
+            "Rust STO TPC-C trusted integration test does not exist: ${_sto_tpcc_trusted_test}")
+    endif()
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" -E env ${_native_environment}
+            "${MAKO_CARGO_EXECUTABLE}" test
+            --manifest-path "${MAKO_RUST_MANIFEST}"
+            --locked
+            -p sto-tpcc-ffi
+            --test trusted_ffi
+        COMMAND_ECHO STDOUT
+        RESULT_VARIABLE _sto_tpcc_trusted_result
+    )
+    if(NOT _sto_tpcc_trusted_result EQUAL 0)
+        message(FATAL_ERROR
+            "Rust STO TPC-C trusted FFI integration failed with exit code ${_sto_tpcc_trusted_result}")
+    endif()
+
+    # Run each endpoint in its own process. The native Masstree runtime has a
+    # process-wide lifecycle, and isolation also proves each private fused
+    # transaction boundary from a clean runtime state.
+    foreach(_sto_tpcc_payment_test_name IN ITEMS payment_prefix payment_full new_order_full delivery_full stock_level_full)
+        set(_sto_tpcc_payment_test
+            "${_sto_tpcc_test_dir}/${_sto_tpcc_payment_test_name}.rs")
+        if(NOT EXISTS "${_sto_tpcc_payment_test}")
+            message(FATAL_ERROR
+                "Rust STO TPC-C ${_sto_tpcc_payment_test_name} integration test does not exist: ${_sto_tpcc_payment_test}")
+        endif()
+        execute_process(
+            COMMAND "${CMAKE_COMMAND}" -E env ${_native_environment}
+                "${MAKO_CARGO_EXECUTABLE}" test
+                --manifest-path "${MAKO_RUST_MANIFEST}"
+                --locked
+                -p sto-tpcc-ffi
+                --test "${_sto_tpcc_payment_test_name}"
+            COMMAND_ECHO STDOUT
+            RESULT_VARIABLE _sto_tpcc_payment_result
+        )
+        if(NOT _sto_tpcc_payment_result EQUAL 0)
+            message(FATAL_ERROR
+                "Rust STO TPC-C ${_sto_tpcc_payment_test_name} integration failed with exit code ${_sto_tpcc_payment_result}")
+        endif()
+    endforeach()
 endif()

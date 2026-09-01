@@ -3,9 +3,13 @@
 > **Status:** Implemented experimental non-opaque v1; pre-cutover
 >
 > **Implementation status:** `sto-core`, the raw and safe Masstree boundary,
-> transactional Masstree point operations, copied scans, membership validation,
+> transactional Masstree point operations, copied scans, physical-directory
+> generation validation, the homogeneous direct-commit lane, private direct
+> directory tokens, bounded atomic values, trusted scan-generation validation,
 > bounded registries, the terminal-read typestate, the optional fixed-`u64`
 > Masstree specialization, and the upper commit-hook seam exist on this branch.
+> The closed TPC-C bridge also implements fused full Payment, exact-home
+> NewOrder, local Delivery, and the local StockLevel scan-and-join tail.
 > A reproducible zoo-2 point-workload comparison is complete; the optional
 > opacity profile, graceful native shutdown, production upper-layer
 > facade/cutover, and production-wide performance acceptance remain deferred.
@@ -15,7 +19,7 @@
 > **Baseline:** Mako `mako-dev` at `abfb6ea96739`; compatibility oracle
 > `worktree-masstree-rocks` at `1daec550f`
 >
-> **Last updated:** 2026-08-28
+> **Last updated:** 2026-08-31
 
 This document defines the intended semantics and architecture of Mako's native
 Rust implementation of STO. It is a living design contract: implementation
@@ -80,8 +84,10 @@ transaction coordinator. Rust adapters make arbitrary concurrent datatypes
 transactional by implementing a typed protocol over stable logical items.
 Masstree remains a C++ structural index behind a narrow C ABI, but record
 versions, locks, values, tombstones, predicates, and transaction state live in
-Rust. The C ABI exposes no C++ cursor, node pointer, value pointer, callback, or
-transaction object.
+Rust. The versioned public Masstree ABI exposes no C++ cursor, node pointer,
+value pointer, callback, or transaction object. A hidden static-link lane lets
+the safe Rust facade omit checks it has already discharged; it is not part of
+the public ABI and exposes no additional safe application surface.
 
 The first release provides strictly serializable, non-opaque transactions,
 read-your-writes, heterogeneous composition, point operations, logical deletes,
@@ -215,12 +221,17 @@ The initial production profile includes:
 - bounded forward and reverse scans;
 - scan read-your-writes and conservative phantom detection; and
 - a restricted terminal homogeneous read-batch typestate for adapters that can
-  prove final certification and drop-only cleanup; and
+  prove final certification and drop-only cleanup;
+- an optional homogeneous direct-commit plan with explicit lock-injectivity and
+  exact-token write-certification capabilities;
+- private direct-directory tokens and opt-in bounded atomic values for the
+  Masstree adapter;
+- an opt-in trusted scan-generation profile for closed direct tables; and
 - an optional, nonblocking pre-install hook with an upper-layer watchdog budget.
 
 The `sto-masstree/fixed-u64` feature additionally provides an optional,
 specialized all-present point-workload profile. It is not a replacement for the
-general binary-value table and does not add transactional membership changes or
+general binary-value table and does not add transactional liveness changes or
 range operations; its exact restrictions are normative in
 [Section 14.7](#147-optional-fixed-u64-specialization).
 
@@ -240,7 +251,7 @@ runtime.
 
 A **logical resource** is the smallest adapter-defined state segment whose
 observation or mutation participates in conflicts. Examples include an array
-index, counter value, map record, bucket generation, or table membership
+index, counter value, map record, bucket generation, or table directory
 generation.
 
 A **transaction item** is the unique transaction-local entry for
@@ -347,9 +358,25 @@ application / existing upper Rust transaction API
                                       |
                                   mtree-sys
                                       |
-                             Masstree-only C ABI
+                        public mt_* / hidden mako_mtree_*
                                       |
                        C++ Masstree structural kernel
+
+current C++ TPC-C integration
+             |
+   rust_sto_tpcc_wrapper
+             |
+       sto-tpcc-ffi
+             |
+          sto-core
+             |
+       sto-masstree
+             |
+          masstree
+             |
+          mtree-sys
+             |
+   hidden/public native ABI
 ```
 
 ### 5.1 Crates
@@ -362,6 +389,7 @@ crates/
   mtree-sys/      Raw generated or mechanically checked C declarations
   masstree/       Safe runtime, worker, tree, point, and scan wrapper
   sto-masstree/   Rust records and the transactional Masstree adapter
+  sto-tpcc-ffi/   Closed C bridge used by the current C++ TPC-C integration
 ```
 
 An upper `sto-mako` or equivalent integration crate MAY own Mako timestamps,
@@ -379,11 +407,20 @@ crate validates lifetimes, thread affinity, sizes, statuses, and output buffers.
 Adapter implementations are part of the **transactional-correctness trusted
 base**, even when written entirely in safe Rust. Rust memory safety cannot prove
 that an adapter chose a covering version or a sound conflict unit.
-`TransactionalResource`, `OpacityToken`, and `TransactionLock` are nevertheless
-safe traits. A bad implementation can violate isolation or progress, but
-`sto-core` memory safety MUST NOT depend on its semantic claims. Any adapter
-that touches `UnsafeCell`, raw pointers, or FFI owns the corresponding unsafe
-proof and must check the required lock or guard itself.
+`TransactionalResource`, `OpacityToken`, `TransactionLock`, and
+`DirectBorrowedLockTarget` are nevertheless safe traits. A bad implementation
+can violate isolation or progress, but `sto-core` memory safety MUST NOT depend
+on its semantic claims. Any adapter that touches `UnsafeCell`, raw pointers, or
+FFI owns the corresponding unsafe proof and must check the required lock or
+guard itself.
+
+The optional compact direct-commit path is a narrower unsafe extension seam.
+`DirectTokenLock` is an unsafe public trait, and injective borrowed-token
+capabilities use explicit unsafe constructors. Their proof binds each stable
+token to exactly one retained physical lock and proves injectivity across every
+eligible resource binding. Safe application code does not implement or invoke
+that seam. The core still owns the plan driver, callback ordering, failure
+containment, guard release, and item teardown.
 
 The private erased item and lock vtables perform checked type transitions only.
 If a future optimization cannot satisfy that boundary, it requires a separately
@@ -649,8 +686,8 @@ ItemIdentity = (ObjectId, ResourceClass, ResourceKey)
 ```
 
 `ObjectId` is unique and never reused while reachable objects or transactions
-exist. `ResourceClass` distinguishes adapter resource domains such as table
-membership and records. `ResourceKey` is an adapter-owned, stable,
+exist. `ResourceClass` distinguishes adapter resource domains such as records
+and a scan-only directory generation. `ResourceKey` is an adapter-owned, stable,
 equality-comparable and totally ordered value. Together they MUST describe
 logical identity, not a temporary address, cursor, vector slot that can move,
 or hash value that can collide.
@@ -693,7 +730,10 @@ Staged:   Unchanged | Absent | Present(new_snapshot)
 ```
 
 Reads return `Staged` when present. Insert, put, and remove update `Staged`
-according to their documented abstract semantics.
+according to their documented abstract semantics. The conceptual snapshot need
+not be retained in the item: the general Masstree adapter stores a compact
+first-observation token and reloads committed bytes against that same OCC
+generation on every later unmodified access.
 
 ### 7.3 Item contents
 
@@ -713,15 +753,15 @@ permit unchecked combinations of observation fields.
 
 External adapters implement the typed protocol in Section 8.
 `Transaction::with_item`, resolved access, item sessions, and the exactly
-unique batch-append lane feed the same private typed item storage. The core
+unique resource-group append lane feed the same private typed item storage. The core
 performs `TypeId`-checked key and item downcasts; no public `Any`,
 caller-supplied vtable, or unchecked extraction exists. Applications normally
 call adapter methods such as `get` and `put`, not this adapter-author surface
 directly.
 
-### 7.4 Total physical lock order
+### 7.4 Physical lock planning modes
 
-**[RUST]** The correctness-first implementation deduplicates physical lock
+**[RUST]** The default correctness-first implementation deduplicates physical lock
 requests by full `LockIdentity`, sorts the unique requests by that identity,
 acquires them in ascending order, and releases them exactly once in reverse
 order. Logical items sharing a coarse lock retain independent observations and
@@ -729,9 +769,41 @@ install state, but share one core-owned lock token. Sorting `ItemIdentity` alone
 is insufficient because different logical orderings can alias the same pair of
 physical locks and form a cycle.
 
-For the Masstree adapter, a table's membership lock sorts before its record
-locks. It is acquired first and released last, after all affected record states
-and versions are published.
+For the general Masstree adapter, only staged record items emit physical lock
+requests. Its scan-only directory-generation item is a prepared-free read and
+emits no lock, intent, or install callback. Canonical ordering therefore applies
+only to the transaction's record locks.
+
+The core also exposes `PreflightContext::require_unique_lock` for a proven
+transaction-wide uniqueness profile. If any callback selects this lane, every
+physical lock request emitted by every adapter in that transaction MUST use the
+same lane, and no two requests may have equal `LockIdentity` values. Core
+rejects a canonical/unique mixture and verifies the uniqueness claim with a
+cheap filter followed by exact equality on possible collisions. Successful
+requests are acquired in request order and released in reverse request order;
+there is no deduplication or sorting pass. This remains deadlock-free only
+because every `try_acquire` is bounded and nonblocking and a failure releases
+the acquired prefix.
+
+`TableConfig::with_unique_lock_requests(true)` makes record writes from that
+table select this lane, but a table-local flag cannot prove a transaction-wide
+property. The embedding integration must ensure that every other lock-emitting
+adapter reachable by the transaction uses the unique lane and that its physical
+identities cannot alias. The table's directory-generation resource is read-only,
+emits no request, and does not constrain the mode. Enabling one table and writing
+through a default-configured table or unrelated canonical adapter in the same
+transaction is an integration error that fails during preflight.
+
+The direct-commit capability in Section 8.3 is a separate homogeneous plan,
+not another `PreflightContext` request mode. It is selected only when the live
+typed batch contains at least one write, contains no predicate, has not created
+ordinary `Prepared` state, and every exact resource binding returns the same
+static capability. Safe direct constructors retain core's exact duplicate-lock
+check. An unsafe injective constructor may omit that identity vector only when
+the adapter proves that distinct full item identities map to distinct physical
+locks or distinct `(target, token)` pairs across every eligible binding. Direct
+acquisition remains bounded and nonblocking, and every acquired prefix is
+released exactly once in reverse order on failure.
 
 An adapter that cannot expose a canonical identity for an internal physical
 lock MUST use a strictly nonblocking or finitely bounded acquisition attempt.
@@ -739,18 +811,21 @@ It MUST never wait indefinitely while holding another lock, and it MUST release
 every successful acquisition exactly once on failure. This fallback may cause
 false aborts and is not permission to hide a blocking mutex from the lock plan.
 
-This deliberately differs from the paper, which used item insertion order plus
-bounded spinning. The paper reports a nearly 10% combined TPC-C improvement
-from expected-`O(1)` item lookup and avoiding write-set sorting, without
-isolating sorting's contribution. The sorted policy may be replaced only after
-deterministic schedule tests and benchmarks show that an unsorted,
-abort-on-contention policy preserves safety and improves relevant workloads.
+The canonical default deliberately differs from the paper, which used item
+insertion order plus bounded spinning. The paper reports a nearly 10% combined
+TPC-C improvement from expected-`O(1)` item lookup and avoiding write-set
+sorting, without isolating sorting's contribution. The unique lane recovers
+request-order planning only for an integration that proves its stronger
+contract. The homogeneous direct lane can additionally omit the general
+identity and prepared-state representation under its explicit capability
+proof. Neither alternative weakens the general adapter default.
 
 ## 8. Rust adapter interface and protocol
 
 The v1 signatures in this section are the normative adapter-author contract.
-The ownership, type-state, phase, fallibility, and safe-trait properties are
-design requirements. The signature blocks use `unimplemented!()` only to keep
+The ownership, type-state, phase, fallibility, safe base traits, and explicit
+unsafe direct-token seam are design requirements. The signature blocks use
+`unimplemented!()` only to keep
 the document focused on public shape; the corresponding real methods and an
 out-of-crate adapter contract fixture compile in `crates/sto-core`.
 
@@ -777,8 +852,9 @@ hierarchy or ask adapters to implement type erasure.
 | `TObject::install` | `A::install` | Called only after an internal irreversible permit exists; no `Result`. |
 | `TObject::unlock` | `TransactionLock::release` | One core-owned guard selects abort, commit, or indeterminate publication. |
 | `TObject::cleanup` | `A::finish` | Runs after all physical locks are released on definite outcomes. |
+| specialized homogeneous commit callbacks | `A::direct_commit_capability()` returning a core-defined `DirectCommitCapability<A>` | An optional typed capability selects a sealed direct plan; safe constructors keep exact duplicate-lock checking, while unsafe injective constructors make the omitted check and any write-at-acquisition certification an explicit proof obligation. |
 | `Sto::commit_id()` | `InstallContext::occ_commit_id` and committed `LockDisposition` | Core OCC identity is phase-scoped and remains distinct from upper timestamps. |
-| `new_item`, `fresh_item`, `read_item`, `check_item` | `with_item`, resolved access, `with_unique_item_batch`, and `ObservationState` transitions | The fast lane requires a core-checked exact uniqueness proof and an empty transaction; it exposes no unchecked item access. |
+| `new_item`, `fresh_item`, `read_item`, `check_item` | `with_item`, resolved access, `with_unique_item_batch`, and `ObservationState` transitions | The fast lane requires a core-checked exact uniqueness proof; the first group starts an empty transaction and later groups use distinct resource bindings of the same adapter type. An earlier exact indexed prefix is allowed. It exposes no unchecked item access. |
 | specialized terminal read loop | `TerminalReadTransaction<Open/Ready>`, `TerminalReadEntry`, and `TerminalReadBatchCapability` | A distinct consuming typestate proves there can be no later operation or mutation; the batch stores only typed keys and observations. |
 | clear/user flags | private observation/preparation states and `A::Local` | Adapters own typed local data, not core flag bits. |
 | `TObject::print` | ordinary adapter diagnostics outside the commit protocol | No formatting callback runs while committing. |
@@ -790,11 +866,43 @@ equivalent of `TItem` a core-controlled generic type. A datatype exposes normal
 methods such as `get`, `put`, or `increment`; those methods use the entry API
 below and are not themselves required trait methods.
 
+The implemented public relationships are:
+
+```text
+ResourceKey                 OpacityToken
+     |                           |
+     +------ associated types ---+
+                    |
+          TransactionalResource
+             |              |
+             |              +-- optional PreflightFreeReadCapability
+             |              +-- optional TerminalReadBatchCapability
+             |              +-- optional DirectCommitCapability
+             |
+             +-- optional DirectBorrowedLockTarget<L>
+
+TransactionLock
+     |
+     +-- DirectTokenLock                    unsafe compact-token extension
+
+RegisteredResource<A>                      typed registered binding
+Transaction<'worker, Active>               core-owned item coordinator
+```
+
+`TransactionalResource` is the adapter extension trait. `TransactionLock` is
+the independent physical-lock contract used by preflight and commit. The
+capability types are core-owned structs, not adapter-defined commit drivers.
+They authorize narrower sealed paths while leaving the ordinary trait methods
+available as fallback. `DirectBorrowedLockTarget` only supplies a stable
+adapter-owned lock target. `DirectTokenLock` is the sole unsafe trait in this
+hierarchy because its compact token must name the exact stable lock that its
+guard protects.
+
 ### 8.2 Object registration and typed item access
 
 One transactional object can expose several resource classes. For example, one
-Masstree table registers a record resource and a membership resource under the
-same `ObjectId`. Each `(ObjectId, ResourceClass)` pair binds exactly one
+Masstree table registers a record resource and a scan-only directory-generation
+resource under the same `ObjectId`. Each `(ObjectId, ResourceClass)` pair binds exactly one
 adapter type and key type for the lifetime of the registration.
 `RegisteredResource<A>` is a cloneable `Send + Sync`, one-`Arc` handle to a
 private immutable typed binding. That allocation contains the adapter, object
@@ -820,10 +928,38 @@ pub struct ObjectRegistration { /* private RuntimeId and ObjectId lease */ }
 pub struct RegisteredResource<A: TransactionalResource> { /* private */ }
 pub struct Entry<'entry, A: TransactionalResource> { /* private */ }
 pub struct ResolvedItemSession<'session, A: TransactionalResource> { /* private */ }
+pub struct UniqueItemKeyIndex { /* reusable private buckets */ }
 pub struct UniqueItemKeys<'keys, K: ResourceKey> { /* private */ }
+
+impl UniqueItemKeyIndex {
+    pub const fn new() -> Self {
+        unimplemented!("signature-only design target")
+    }
+
+    pub fn try_reserve_for_len(
+        &mut self,
+        needed: usize,
+    ) -> Result<(), std::collections::TryReserveError> {
+        unimplemented!("signature-only design target")
+    }
+}
 
 impl<'keys, K: ResourceKey> UniqueItemKeys<'keys, K> {
     pub fn try_new(keys: &'keys [K]) -> Option<Self> {
+        unimplemented!("signature-only design target")
+    }
+
+    pub fn try_new_indexed(
+        keys: &'keys [K],
+        order: &mut Vec<usize>,
+    ) -> Result<Option<Self>, std::collections::TryReserveError> {
+        unimplemented!("signature-only design target")
+    }
+
+    pub fn try_new_hashed(
+        keys: &'keys [K],
+        index: &mut UniqueItemKeyIndex,
+    ) -> Result<Option<Self>, std::collections::TryReserveError> {
         unimplemented!("signature-only design target")
     }
 }
@@ -970,44 +1106,81 @@ a partially completed adapter operation returns the outer error instead.
 The frame may cache the most recently successful binding validation by the
 nonzero allocation-address identity of its compact `RegisteredResource`
 binding. An address-equal hit can skip repeated runtime and `TypeId` checks,
-but the erased address is never dereferenced or converted back into an `Arc`. Successful item
-access retains a strong binding handle in the live item; any failure before
-that retention dooms the transaction, so the token cannot be consulted again.
-The cache is reset at every transaction begin. Distinct classes, adapter types,
-and runtimes always have distinct live binding allocations and take the full
-validation path.
+but the erased address is never dereferenced or converted back into an `Arc`.
+A successful scalar access retains a strong binding handle in the live item.
+Within a scoped resource session the caller's borrowed handle keeps a newly
+validated address alive; if that session or a direct unique batch succeeds
+without retaining any item, core restores the previous item-backed cache entry
+before the borrow ends. Any error or unwind dooms the attempt before another
+access can consult a possibly unretained entry. The one-word cache is reset at
+every transaction begin. Distinct live classes, adapter types, and runtimes
+have distinct binding allocations and take the full validation path.
 
-`with_unique_item_batch` is a safe optimization for a small batch whose stable
-item identities are already available. `UniqueItemKeys::try_new` compares each
-key with full `Eq` equality and returns no proof if any key repeats; hashes are
-not part of the proof. The operation requires an otherwise empty transaction
-and one registered resource binding, so exact key uniqueness implies uniqueness
-of every full `(ObjectId, ResourceClass, key)` identity. Core checks the whole
-batch against the configured item limit and reserves its item-vector capacity
-before initialization. It then appends pooled typed boxes in input order
-without hashing, probing, or populating the item index.
+`with_unique_item_batch` is a safe optimization for a batch whose stable item
+identities are already available. `UniqueItemKeys::try_new` performs an
+allocation-free pairwise `Eq` scan. `try_new_indexed` sorts a reusable index
+permutation and checks adjacent keys with exact equality.
+`try_new_hashed` uses a reusable generation-tagged open-addressed
+`UniqueItemKeyIndex`; a hash selects candidate buckets, but full `Eq` confirms
+every possible duplicate. Hash collisions therefore neither alias distinct
+keys nor admit a repeated key. All three constructors return no proof when an
+exact duplicate exists, and all allocation growth is fallible. The first group
+requires an otherwise empty transaction.
+Another group may append without hashing when the transaction still uses the
+same typed storage and the group has a distinct exact `RegisteredResource`
+binding. Earlier scalar accesses may already have populated an exact item-index
+prefix. A binding may occur in only one direct group; therefore exact
+uniqueness inside each group implies uniqueness of every full `(ObjectId,
+ResourceClass, key)` identity even when two resources use equal keys. Core
+checks the proposed total live-item count against the configured limit and
+reserves the enlarged typed vectors before initializing any item in the new
+group. It then appends pooled typed items in group and key order without
+hashing, probing, or extending the item index.
 
 The operation receives the ordinary full `Entry`, so observations, predicates,
 and intents retain their normal transition rules. If a later ordinary or
-resolved access follows the batch, core notices that the index length trails
-the live item count, reserves the complete open-addressed table, hashes the
-unique prefix once, and installs every entry before the later lookup. Full
-erased-identity equality still resolves hash collisions, and a later access to
-a batched identity therefore reuses its snapshot or staged intent. A commit or
-abort needs no item index and leaves an all-batch transaction unindexed. Any
-misuse, capacity failure, callback error, or unwind dooms the transaction; only
-fully initialized prefix items participate in abort cleanup. Successful finish
-retains the same worker-local typed boxes and adapter bindings as the ordinary
-path.
+resolved access follows the groups, core notices that the index length trails
+the live item count, reserves the complete open-addressed table, hashes only
+the missing suffix, and installs those entries before the later lookup. At all
+times current-generation index entries cover exactly the live slots
+`[0, item_index.len)`, while `[item_index.len, item_count)` is an unindexed
+typed suffix. Full erased-identity equality still resolves hash collisions and
+distinguishes equal keys in different resource bindings, so a later access to
+a batched identity reuses its observation or staged intent. An unmodified
+Masstree record reloads its committed value and checks the original generation;
+a staged record reads its intent directly. A commit or abort traverses the
+complete typed batch independently of index coverage. When all live bindings
+select the same exact direct-commit capability, those groups also remain
+eligible for one concrete direct plan; distinct physical lock identity is
+still enforced by that capability.
+
+A repeated binding, a different adapter type, or prior materialization into
+ordinary heterogeneous storage makes another direct group ineligible. Capacity
+failure, callback error, initialization failure, or unwind dooms the transaction. Items
+successfully activated before a later group's failure join the earlier prefix
+in reverse abort cleanup; the failing item never becomes active. Successful
+finish retains the same worker-local typed slots and their exact adapter
+bindings as the ordinary path, so later attempts may reactivate the same group
+layout or rebind each pooled slot under the ordinary contained-destruction
+boundary.
+
+`sto-masstree` uses pairwise comparison for batches of at most 32 keys. Larger
+general batches use the sorted indexed proof when their cold duplicate path
+needs a permutation. Larger fixed-record batches use the hashed proof and run
+the sorted exact key-to-record alias check only when a duplicate resolved
+identity is found. This policy changes proof cost, not equality semantics.
 
 The same append operation is available inside `ResolvedItemSession` as
 `try_with_unique_item_batch`. It returns `Ok(false)` without invoking the
-operation or changing transaction state when an earlier item makes the frame
-nonempty. An adapter can therefore perform lookup and prefetch work once, try
-the append lane, and take ordinary per-item session lookup on `false` without
-opening another failure boundary. A real append error is latched as the
-session's first error, and later session operations report a doomed
-transaction.
+operation or changing transaction state when the session's resource binding
+already appeared, the active typed adapter differs, or typed storage has
+already been materialized. `can_start_unique_item_batch` performs the same cheap structural check
+before the caller constructs an exact uniqueness proof. An adapter can
+therefore perform lookup and prefetch work once, try the append lane, and take
+ordinary per-item session lookup on `false` without opening another failure
+boundary. That scalar fallback builds or uses the exact index and safely
+handles a repeated identity. A real append error is latched as the session's
+first error, and later session operations report a doomed transaction.
 
 ### 8.3 The transactional-resource trait
 
@@ -1075,6 +1248,95 @@ impl<A: TransactionalResource> PreflightFreeReadCapability<A> {
     }
 }
 
+pub struct UniqueLockCommitCapability<
+    A: TransactionalResource,
+    L: TransactionLock,
+> { /* private callbacks */ }
+
+pub struct BorrowedUniqueLockCommitCapability<
+    A: TransactionalResource,
+    L: TransactionLock,
+> { /* private callbacks */ }
+
+pub struct BorrowedInjectiveLockCommitCapability<
+    A: TransactionalResource,
+    L: DirectTokenLock,
+> { /* private callbacks */ }
+
+pub struct DirectCommitCapability<A: TransactionalResource> { /* sealed */ }
+
+pub trait DirectBorrowedLockTarget<L: TransactionLock>:
+    TransactionalResource
+{
+    fn direct_borrowed_lock_target(&self) -> &L;
+}
+
+pub unsafe trait DirectTokenLock: TransactionLock {
+    type Token: Copy + 'static;
+
+    fn try_acquire_token(
+        &self,
+        runtime_id: RuntimeId,
+        token: Self::Token,
+        cx: &AcquireContext<'_>,
+    ) -> Result<Self::Guard, AcquireError>;
+}
+
+impl<A, L> BorrowedInjectiveLockCommitCapability<A, L>
+where
+    A: TransactionalResource,
+    L: DirectTokenLock,
+{
+    pub const unsafe fn with_write_acquisition_certification(mut self) -> Self {
+        unimplemented!("signature-only design target")
+    }
+}
+
+impl<A: TransactionalResource> DirectCommitCapability<A> {
+    pub const fn unique_lock<L: TransactionLock>(
+        implementation: &'static UniqueLockCommitCapability<A, L>,
+    ) -> Self
+    where
+        A: TransactionalResource<Predicate = NoPredicate>,
+    {
+        unimplemented!("signature-only design target")
+    }
+
+    pub const fn borrowed_unique_lock<L: TransactionLock>(
+        implementation: &'static BorrowedUniqueLockCommitCapability<A, L>,
+    ) -> Self
+    where
+        A: DirectBorrowedLockTarget<L>
+            + TransactionalResource<Predicate = NoPredicate>,
+    {
+        unimplemented!("signature-only design target")
+    }
+
+    pub const unsafe fn borrowed_injective_lock<L: TransactionLock>(
+        implementation: &'static BorrowedUniqueLockCommitCapability<A, L>,
+    ) -> Self
+    where
+        A: DirectBorrowedLockTarget<L>
+            + TransactionalResource<Predicate = NoPredicate>,
+    {
+        unimplemented!("signature-only design target")
+    }
+
+    pub const unsafe fn borrowed_injective_token_lock<L: DirectTokenLock>(
+        implementation: &'static BorrowedInjectiveLockCommitCapability<A, L>,
+    ) -> Self
+    where
+        A: DirectBorrowedLockTarget<L>
+            + TransactionalResource<Predicate = NoPredicate>,
+    {
+        unimplemented!("signature-only design target")
+    }
+
+    pub const fn with_drop_only_committed_finish(self) -> Self {
+        unimplemented!("signature-only design target")
+    }
+}
+
 pub trait TransactionalResource: Send + Sync + Sized + 'static {
     type Key: ResourceKey;
     type Local: 'static;
@@ -1097,6 +1359,12 @@ pub trait TransactionalResource: Send + Sync + Sized + 'static {
     fn terminal_read_batch_capability(
         &self,
     ) -> Option<&'static TerminalReadBatchCapability<Self>> {
+        None
+    }
+
+    fn direct_commit_capability(
+        &self,
+    ) -> Option<&'static DirectCommitCapability<Self>> {
         None
     }
 
@@ -1221,6 +1489,27 @@ implement each method explicitly. `Local = ()` is valid when no datatype-
 private operation state is needed, and `Prepared = ()` is valid when no commit
 scratch or physical lock is needed. `new_local` constructs owned
 transaction-local state only; it MUST NOT perform an unrecorded shared read.
+
+`direct_commit_capability` is the optional replacement for the ordinary
+`preflight`/`Prepared`/general-lock-plan sequence. The returned capability MUST
+be one static value for the complete binding lifetime. It supplies typed
+prepare, validate, and install callbacks to a sealed core driver. The core
+selects it only for the homogeneous eligibility conditions in Section 7.4;
+otherwise the same adapter takes the ordinary trait methods above. The direct
+plan uses its own callbacks rather than making the ordinary callbacks
+conditionally valid, and it does not expose a pluggable commit driver.
+
+The unsafe `with_write_acquisition_certification` builder is narrower still.
+For every writing item, prepare MUST bind the exact execution observation and
+exact physical lock into the compact token. `try_acquire_token` MUST atomically
+reject a stale observation or return a guard that holds that exact lock and
+excludes every change through install and release. Install MUST independently
+check that same target, owner, held guard, and commit generation. The skipped
+write-validation callback MUST have no side effect and MUST be guaranteed to
+return success for that guard. Core still runs the direct validation callback
+for every read-only item, including scan- or directory-generation resources;
+it skips only writes already certified by exact-token acquisition. Token
+compactness never removes certification.
 
 The `ObservationOrder` returned by `revalidate_predicate` is the bound through
 which the unchanged predicate was just certified. The core advances its
@@ -1436,6 +1725,13 @@ impl PreflightContext<'_> {
     ) -> Result<LockUse<L>, PrepareError> {
         unimplemented!("signature-only design target")
     }
+
+    pub fn require_unique_lock<L: TransactionLock>(
+        &mut self,
+        request: LockRequest<L>,
+    ) -> Result<LockUse<L>, PrepareError> {
+        unimplemented!("signature-only design target")
+    }
 }
 
 impl PredicateContext<'_> {
@@ -1470,18 +1766,20 @@ impl InstallContext<'_> {
 }
 ```
 
-`require_lock` allocates one private erased lock frame during preflight. That
-frame contains an inline `Option<L::Guard>`, so `try_acquire` can place its
-result into already allocated storage. Lock acquisition MUST be bounded and
-nonblocking and MUST NOT allocate. `Err` leaves the lock unowned. A successful
-guard remains in core custody until release; `release` makes it inert and does
-not fail or panic.
+`require_lock` and `require_unique_lock` allocate one private erased lock frame
+during preflight. That frame contains an inline `Option<L::Guard>`, so
+`try_acquire` can place its result into already allocated storage. Lock
+acquisition MUST be bounded and nonblocking and MUST NOT allocate. `Err` leaves
+the lock unowned. A successful guard remains in core custody until release;
+`release` makes it inert and does not fail or panic.
 
-The core deduplicates and sorts by full `LockIdentity`. Duplicate requests must
-also have the same lock target `TypeId` and canonical `Arc` instance before they
-share a frame; a mismatch is `AdapterFault`, not an unchecked cast. `LockUse<L>`
-is unforgeable and tied to one plan nonce. Every phase-context access checks
-that nonce, slot, identity, and `TypeId` before downcasting. A mismatch during
+The canonical lane deduplicates and sorts by full `LockIdentity`. Duplicate
+requests must also have the same lock target `TypeId` and canonical `Arc`
+instance before they share a frame; a mismatch is `AdapterFault`, not an
+unchecked cast. The unique lane instead rejects duplicate identities and
+preserves request order under the transaction-wide restriction in Section 7.4.
+`LockUse<L>` is unforgeable and tied to one plan nonce. Every phase-context
+access checks that nonce, slot, identity, and `TypeId` before downcasting. A mismatch during
 predicate upgrade or validation is a pre-irrevocable `AdapterFault`; presenting
 a stale token for the first time during `install` is an adapter-contract
 violation that becomes indeterminate and quarantines the runtime, never an
@@ -1542,7 +1840,11 @@ sealed lock frame stores `L::Guard`. The transaction may therefore hold
 heterogeneous items and locks, while `Any::downcast_ref`/`downcast_mut` checks
 every transition. The erased traits and their constructors are private to
 `sto-core`; external crates never implement them, name `Any`, or supply a
-vtable. There is no `unsafe` public trait in this protocol.
+vtable. The base adapter protocol is safe. The optional compact direct-token
+extension deliberately adds the unsafe public `DirectTokenLock` trait and
+unsafe injective capability constructors. Their safety contract covers stable
+target/token identity, token validation before dereference, and one-to-one
+physical-lock mapping; it does not alter the safety of the base traits.
 
 Conceptually, the private item vtable has this shape:
 
@@ -1639,7 +1941,12 @@ can be reacquired out of order.
 
 For every definite committed or aborted path whose lock callbacks all return,
 including explicit abort and Drop, the core calls `finish` exactly once for
-every inserted item. If `finish` itself violates the contract, the
+every inserted item unless the item entered an explicitly authorized
+core-owned drop-only cleanup path. Terminal batches use drop-only cleanup on
+both outcomes and never call `finish`. A direct capability may opt into
+drop-only cleanup only after committed validation, installation, and release;
+aborted direct items still call `finish` exactly once. If `finish` itself
+violates the contract, the
 already-known outcome is returned as `CommitFailure::Poisoned { outcome, .. }`;
 the callback is not retried, and unfinished cleanup state is retained for
 diagnosis. An unwind from acquire or abort-release leaves that callback frame's
@@ -1655,11 +1962,17 @@ code and access its registered datatype, but it cannot `.await`, migrate the
 worker, perform blocking I/O, or reenter the mutably borrowed transaction. No
 preflight-or-later callback may perform network or disk I/O, await, invoke
 arbitrary application code, recursively enter STO on the same worker, or
-acquire an untracked blocking lock. `install` MUST NOT drop displaced `Arc`s,
-buffers, or foreign allocations while transaction locks are held. It moves
-them into preallocated cleanup state;
-`finish(FinishDisposition::Committed)` releases or retires them after all
-transaction locks are published and released.
+acquire an untracked blocking lock. `install` MUST NOT run arbitrary or foreign
+destructors, block, allocate fallibly, or perform cleanup whose latency or
+effects are outside the adapter's audited publication protocol. Displaced
+user-owned buffers, foreign allocations, and general cleanup obligations move
+into preallocated state; `finish(FinishDisposition::Committed)` releases or
+retires them after all transaction locks are published and released. A
+representation may perform a bounded internal reference-count decrement and
+possible deallocation during install only when the referent contains no user
+destructor or foreign resource and the adapter's install proof explicitly
+accounts for that operation. The Masstree committed-state `ArcSwap` replacement
+uses this narrow exception for its internal byte-only `SharedValue`.
 
 ### 8.8 Normative adapter obligations
 
@@ -1785,16 +2098,25 @@ undefined behavior. A seqlock-style “copy mutable bytes, then check the versio
 is therefore invalid when the copy can race with a writer, even if the retry
 would reject it.
 
-Rust-owned record values MUST be either:
+Rust-owned record values MUST use one of these race-free forms:
 
-- immutable snapshots published through a sound atomic `Arc`/hazard mechanism;
-- copied while holding a real synchronization guard; or
-- copied inside C++ while C++ owns the synchronization and the ABI returns only
-  owned bytes.
+- payload and descriptor words are atomic, and bytes are exposed only after an
+  OCC version-before/version-after sandwich succeeds;
+- an immutable allocation is acquired through a sound atomic `Arc` or hazard
+  mechanism and retained until the reader finishes, with the same OCC
+  sandwich when the reference is part of versioned record state;
+- bytes are copied while holding a real synchronization guard; or
+- bytes are copied inside C++ while C++ owns the synchronization and the ABI
+  returns only owned bytes.
 
-The Masstree v1 design uses immutable Rust-owned record-state snapshots. The
-`live` flag and value are in the same snapshot so a reader cannot observe a
-torn membership/value pair.
+Masstree v1 uses the first two forms. Values through 38 bytes occupy inline
+atomic words. An opted-in bounded table stores values through 160 bytes in the
+same inline prefix plus an adjacent stable atomic cell. Longer values, and
+standard-table values longer than 38 bytes, use an owned immutable allocation
+published through the record's embedded `ArcSwapOption`. Liveness and the value
+representation are encoded by one packed atomic descriptor. Readers accept
+that descriptor and payload only after the surrounding OCC version sandwich
+succeeds, so no torn liveness/value combination is exposed.
 
 ### 9.4 Baseline ordering table
 
@@ -1804,11 +2126,12 @@ tests.
 
 | Event | Baseline ordering | Required effect |
 | --- | --- | --- |
-| Load an unlocked version before a snapshot | `Acquire` | Observe state published before the version. |
-| Load immutable snapshot handle | `Acquire` | Retain a fully initialized snapshot. |
-| Reload version after snapshot | `Acquire` | Detect intervening lock/install. |
+| Load an unlocked version before a committed value | `Acquire` | Observe state published before the version. |
+| Load packed descriptor and atomic payload words | `Acquire` | Copy only the representation and length named by the descriptor. |
+| Acquire a shared fallback lease | `ArcSwapOption::load_full` | Retain one fully initialized immutable allocation. |
+| Reload version after the value load | `Acquire` | Detect intervening lock/install. |
 | Acquire version lock with CAS | `AcqRel` success, `Acquire` failure | Own mutation and observe prior state. |
-| Publish prepared snapshot under own lock | `Release` | Order initialized payload before commit-unlock. |
+| Publish a prepared value representation under own lock | `Release` | Order initialized atomic words or the shared allocation before commit-unlock. |
 | Advance generation while retaining own lock | `Release` | Keep the resource unavailable until publication completes. |
 | Commit-unlock with the new generation | `Release` | Atomically make the installed state available to acquiring readers. |
 | Abort-unlock to original version | `Release` | Release ownership without publishing a write. |
@@ -1816,8 +2139,11 @@ tests.
 | Advance runtime commit clock | `AcqRel` | Produce a unique ordered commit value. |
 
 Rust and C++ atomics are not assumed to have interoperable object layout.
-Masstree stores only a scalar `RecordId`; every record atomic is owned and
-accessed by Rust.
+Masstree stores only a nonzero scalar directory token. In the general lane that
+token is a logical `RecordId`; in a private direct table it is the exposed
+address of a stable Rust registry entry. C++ stores, copies, and compares that
+scalar but never dereferences or prefetches it as a pointer. Every record atomic
+is owned and accessed by Rust.
 
 ## 10. Commit, abort, and failure state machine
 
@@ -1851,11 +2177,15 @@ Any uncontained failure at/after Irrevocable -> Poisoned/Indeterminate
 
 ### 10.2 Commit phases
 
-The normative local protocol is:
+The normative ordinary local protocol is listed below. The homogeneous direct
+protocol later in this section replaces its general preflight, plan, and
+callback representation while retaining the same metadata, certification,
+irreversibility, publication, and failure boundaries.
 
-1. **Preflight.** Deduplicate and finalize items; allocate all write snapshots,
-   adapter scratch, and lock vectors; derive, deduplicate, and sort the canonical
-   physical lock plan by calling `TransactionalResource::preflight` for each
+1. **Preflight.** Deduplicate and finalize items; allocate all prepared write
+   representations, adapter scratch, and lock vectors; derive, deduplicate, and
+   sort the canonical physical lock plan by calling
+   `TransactionalResource::preflight` for each
    item except an eligible prepared-free ordinary read. `Conflict` or
    `Capacity` returns `Ok(CommitOutcome::Aborted(..))` with no locks held.
    `Fault` performs the same definite-abort cleanup but returns
@@ -1907,14 +2237,18 @@ The normative local protocol is:
 9. **Install.** Call `TransactionalResource::install` for every item with an
    intent while all resources retain their own-lock state. The method is
    infallible and nonpanicking. Install callbacks may run in any item order;
-   correctness MUST NOT depend on their relative position. In particular, a
-   membership resource may prepare its next locked generation before or after
-   record snapshots, because none is visible while its lock remains held.
+   correctness MUST NOT depend on their relative position. The Masstree
+   directory-generation observation has no intent and therefore has no install
+   callback.
 10. **Unlock and finish.** Call `TransactionLock::release` with
     `LockDisposition::Committed` in reverse acquisition order, publishing new
-    generations. This releases Masstree record resources before their table
-    membership resource. Then finish items in reverse order. Ordinary items use
-    `TransactionalResource::finish` with `FinishDisposition::Committed`;
+    generations. The canonical Masstree plan releases its record locks in
+    reverse canonical order; a proven unique-request plan releases them in
+    reverse request order. All installs have already completed, and any
+    still-locked or newly advanced record prevents a reader from certifying a
+    partial result. Then finish items in reverse order. Ordinary
+    items use `TransactionalResource::finish` with
+    `FinishDisposition::Committed`;
     prepared-free reads use their committed-finish callback, or core-owned
     teardown alone when their capability was constructed with `new_drop_only`.
     Return committed only after required cleanup and worker-state restoration
@@ -1957,6 +2291,64 @@ heterogeneous lock and validation protocol. If every item is an eligible
 prepared-free ordinary read, the core additionally skips creation of the empty
 lock plan and runs the restricted final-certification pass directly. Neither
 form substitutes execution-time `revalidate_read` for final certification.
+
+#### Homogeneous direct commit
+
+`DirectCommitCapability<A>` is the public opt-in handle for one sealed,
+core-owned alternate plan. Its typed construction hierarchy is:
+
+```text
+DirectCommitCapability<A>
+  -> UniqueLockCommitCapability<A, L>
+       owns one LockRequest<L> per write; core checks exact identities
+  -> BorrowedUniqueLockCommitCapability<A, L>
+       reborrows one stable adapter-owned target; core checks identities
+  -> BorrowedInjectiveLockCommitCapability<A, L>
+       retains one compact token per write; unsafe injectivity proof;
+       optional exact-observation certification during token acquisition
+       L: DirectTokenLock (unsafe trait)
+```
+
+The first two forms use safe constructors and retain an exact duplicate-lock
+proof. The borrowed injective forms use unsafe constructors because core omits
+that transaction-wide identity set. `DirectBorrowedLockTarget<L>` promises a
+stable target borrow. `DirectTokenLock` additionally proves that every token
+accepted by its safe acquisition method names exactly one stable physical lock,
+that all malleable token shape is checked before dereference, and that the
+returned guard owns that same lock. The unsafe capability proof extends this
+to injectivity across distinct full `(binding, key)` item identities. A compact
+token still participates in certification: under the write-at-acquisition
+option it also carries the exact observed state that acquisition must prove
+current before returning the held guard.
+
+The plan is eligible only for a nonempty homogeneous typed batch with at least
+one intent, no predicate, no prior ordinary preparation, and the same exact
+static capability from every live resource binding. A failed eligibility check
+silently selects the ordinary trait protocol. Direct preparation emits no lock
+for a read and exactly one lock or token for a write. Core enforces the lock
+limit, acquires in item/request order with bounded nonblocking attempts, and
+reverse-releases the acquired prefix on failure. It then reserves the normal
+commit metadata and defines the certification cut immediately before its final
+validation pass. The default form validates every item through the capability
+callback. A compact capability constructed with
+`with_write_acquisition_certification` instead validates every read-only item
+and skips only a writing item whose exact token acquisition already compared
+its execution observation and returned the retained guard. Because that guard
+excludes changes from acquisition through the certification cut and install,
+the earlier check still proves the write's observed state at the cut. The plan
+then crosses the same irreversible boundary, installs each write through its
+exact held guard, and reverse-publishes/releases all guards. Callback panics
+and release failures retain the ordinary definite-outcome or indeterminate
+quarantine rules.
+
+The direct plan does not construct `A::Prepared` and does not call the ordinary
+`preflight`, `validate_read`, or `install` methods for that attempt. It does
+retain `A::Local`, observations, intents, keys, and exact registered bindings.
+By default it calls `A::finish` with `prepared == None` on every definite
+outcome. `with_drop_only_committed_finish` may replace only the committed
+finish callback with reverse core-owned field teardown after all publication
+and release complete. Aborts still call `finish`; indeterminate attempts remain
+quarantined without invented cleanup.
 
 #### Terminal homogeneous read batches
 
@@ -2020,7 +2412,8 @@ Abort performs, exactly once:
 1. reverse `TransactionLock::release(LockDisposition::Aborted)` for every
    acquired lock;
 2. reverse `TransactionalResource::finish(FinishDisposition::Aborted)` for
-   every inserted item;
+   every ordinary or direct item; a terminal read handle instead performs its
+   authorized reverse drop-only teardown;
 3. resource-scope exit; and
 4. worker transaction-state reset.
 
@@ -2124,20 +2517,27 @@ that record's version.
 
 ### 11.5 Range predicates
 
-A range scan must detect membership changes inside its logical bounds. The v1
-Masstree adapter uses one coarse, versioned and exclusively lockable membership
-resource per table:
+A range scan must detect both a newly published directory entry and a liveness
+change to a physical record already in its bounds. The v1 Masstree adapter uses
+two covering observations:
 
-- every scan reads it;
-- every transaction whose committed final liveness for any record differs from
-  its observed committed liveness writes it exactly once;
-- validation accepts the resource if it is unchanged or locked by the same
-  transaction; and
-- scan output overlays all staged mutations from the scanning transaction.
+- every nontrivial scan reads one coarse physical-directory generation;
+- every admitted tombstone-interning attempt advances that generation while
+  holding exclusive structural admission and before native publication can
+  become visible;
+- the scan holds shared structural admission while sampling the generation and
+  traversing every physical record through its logical limit; and
+- it observes each traversed record, including tombstones, and overlays its own
+  staged mutations.
 
-This serializes all membership-changing transactions in a table and causes
-false conflicts between unrelated ranges. It is a correctness baseline, not a
-claim of MassTrans-equivalent precision.
+The directory generation is an unordered, prepared-free read. It has no
+transactional intent or lock. Existing tombstone resurrection, live removal,
+and value replacement do not change physical structure and are covered by the
+corresponding record observations. A new physical key anywhere in the table
+invalidates every earlier scan, even if the key is outside that scan's bounds or
+the inserting transaction later aborts. These safe false conflicts are the v1
+price for avoiding table-wide liveness intents and locks; this remains a
+conservative baseline, not a claim of MassTrans-equivalent precision.
 
 ## 12. Opacity profiles
 
@@ -2236,29 +2636,45 @@ implementation-owned owner cookie; that cookie may encode a native TLS address
 but MUST be treated as opaque and MUST NOT be interpreted or dereferenced. The
 actual RCU objects remain in native TLS.
 
-Each ordinary scalar, one-shot strided, or scan ABI call opens and closes its
-own native RCU region. The opt-in retention mode is an explicit worker-affine
-point read scope, which the safe Rust facade owns through RAII. It may cover the
-point-access execution phase of a transaction. While active, it retains
+Each ordinary scalar, one-shot strided, or scan ABI call is independently safe
+and enters a native RCU region. Two explicit retention modes are available and
+owned through safe Rust RAII. A tree-bound point-read scope retains both
 structural-reader admission and RCU protection, rejects unrelated operations
-through that worker, and makes same-tree structural writers on any worker wait
-for scope exit. Callers MUST keep the scope synchronous and SHOULD keep it
-short; they MUST NOT deliberately hold it across I/O, blocking waits, `.await`,
-or reentrant native work. A safe fixed-batch helper may grow caller-owned result
-storage while the scope is active, so v1 does not claim allocation-free or hard
-duration-bounded scopes. Any higher-layer visitor or callback executed while a
-scope is active inherits the same caller contract.
+through that worker, and makes same-tree structural writers wait. A worker-wide
+RCU scope retains only the tree-independent RCU region: ordinary operations
+keep their per-call structural admission, so one transaction may safely access
+several trees and perform both reads and get-or-insert. This mirrors the C++ STO
+transaction lifetime without turning the RCU capability into a snapshot or a
+structural lock. After ordinary-operation validation proves that the active
+scope belongs to the same runtime and worker, the native call reuses that RCU
+region and omits its otherwise redundant local RCU guard. Calls without a
+validated worker scope retain their established self-contained RCU lifetime.
+Structural admission remains local to every operation in both modes.
 
-Repeated fixed-width calls SHOULD use the strided batch or explicit scoped
-capability. Implicit ambient pins, raw RCU-implementation guards, and
-cross-worker scope transfer remain deferred.
+Both capabilities use generation-tagged, implementation-owned owner cookies
+and are mutually exclusive on one worker. Their shared POD representation does
+not make their tokens interchangeable: distinct native TLS owner identities
+reject cross-family use. Callers MUST keep either scope synchronous and SHOULD
+keep it short; they MUST NOT deliberately hold it across I/O, blocking waits,
+`.await`, or reentrant native work. A safe fixed-batch helper may grow
+caller-owned result storage while a scope is active, so v1 does not claim
+allocation-free or hard duration-bounded scopes. Any higher-layer visitor or
+callback executed while a scope is active inherits the same caller contract.
+
+Repeated fixed-width calls SHOULD use the strided batch or explicit point-read
+scope. Transaction-shaped multi-tree access SHOULD use the worker RCU scope.
+Implicit unowned pins, raw RCU-implementation guards, and cross-worker scope
+transfer remain forbidden.
 
 ### 13.4 Reclamation policy
 
 Published Masstree directory entries and published or publication-unknown Rust
-records are append-only in v1. Their `RecordId`s are never reused. A candidate
+records are append-only in v1. Their consumed registry slots and logical IDs
+are never reused. A candidate
 proved never to have entered the directory may release directory-reachable
-record and key-byte quota, but its numeric ID remains consumed. An
+record and key-byte quota, but its internal numeric slot ID remains consumed.
+The private direct-directory mode may publish the stable slot address rather
+than that numeric ID; the same no-move and no-reuse rule applies. An
 implementation may drop separately allocated candidate backing or retain its
 in-place arena slot; in the latter case the consumed-ID limit is also the hard
 bound on failed-candidate slot memory. Logical deletion installs a tombstone;
@@ -2268,7 +2684,7 @@ entire ownership unit after quiescence.
 
 Physical reclamation requires all of:
 
-- conditional directory removal tied to the expected `RecordId`;
+- conditional directory removal tied to the expected scalar directory token;
 - proof that no transaction can resolve or retain the record;
 - an explicit native grace-period barrier;
 - a real worker unregister/shutdown model; and
@@ -2284,32 +2700,46 @@ operational limits MUST measure.
 Masstree is an append-only ordered directory:
 
 ```text
-binary key  ->  nonzero RecordId
+binary key  ->  nonzero 64-bit directory token
+                standard table: monotonic RegistryId
+                private direct table: stable RegistryEntry address
 ```
 
 C++ owns tree nodes, traversal, splits, allocation, and native RCU. Rust owns
-the record registry, record locks/versions, immutable state snapshots,
-tombstones, transaction items, membership predicate, and values.
+the record registry, record locks/versions, atomic inline and stable-cell
+storage, shared-value publication, tombstones, transaction items, the
+physical-directory generation, and values.
 
 One `TableInner` owns the native directory handle, record registry, and
-membership resource as one lifetime unit. The runtime retains that unit until
-no operation can return an ID from its directory. The registry and membership
-resource cannot be dropped independently of the native tree's safe reachability.
+directory-generation resource as one lifetime unit. The runtime retains that
+unit until no operation can return an ID from its directory. The registry and
+directory-generation resource cannot be dropped independently of the native
+tree's safe reachability.
 
 Masstree MUST use a dedicated integral `uint64_t` value type with value prefetch
-disabled. The existing `concurrent_btree` pointer-value configuration MUST NOT
-reinterpret small `RecordId` integers as pointers or prefetch them as addresses.
+disabled. C++ MUST NOT reinterpret, dereference, or pointer-prefetch either
+token mode. Address reconstruction belongs only to the audited Rust direct-table
+module after the private ownership invariant has been established.
 
 ### 14.2 Record registry
 
-`RecordId(0)` means absence at the raw directory layer and is never allocated.
-IDs are monotonically allocated from a checked nonzero `u64` domain and never
-reused in v1. The allocatable domain is bounded by the minimum of the configured
-consumed-ID limit, the registry-addressable slot domain, and `u64::MAX`; scalar
-ABI support for every nonzero `u64` does not imply the registry can allocate
-every value.
-Exhaustion is a terminal capacity error before native publication. Wrapping to
-zero or aliasing any consumed slot is forbidden.
+The raw Rust wrapper continues to call the scalar type `RecordId`, and zero
+means directory absence in both modes. Its semantic payload depends on table
+construction. `Table::new` stores a monotonically allocated nonzero
+`RegistryId`. `Table::new_direct` creates and retains a fresh private directory
+and stores the stable address of the corresponding registry entry as an opaque
+`u64` token. C++ never uses the address as a pointer. Safe code cannot publish
+through another handle, so every direct token was minted from this exact
+registry and remains valid while `TableShared` is retained.
+
+The registry still consumes an internal numeric slot ID monotonically in both
+modes. IDs and slots are never reused in v1. The allocatable domain is bounded
+by the minimum of the configured consumed-ID limit, the registry-addressable
+slot domain, and `u64::MAX`; scalar ABI support for every nonzero `u64` does not
+imply the registry can allocate every value. Exhaustion is a terminal capacity
+error before native publication. Wrapping to zero or aliasing any consumed slot
+is forbidden. Direct mode additionally rejects zero, misaligned, or
+non-pointer-domain address encodings before publication.
 
 A registry slot follows:
 
@@ -2331,18 +2761,18 @@ native error becomes `PublicationUnknown`:
 the ready record and its quota remain retained permanently, its ID is not
 reused, and the table is poisoned or quarantined before further access.
 
-`RecordId` construction and registry resolution remain private to
-`sto-masstree`. Safe callers cannot resolve guessed IDs or access
+Directory-token construction and registry resolution remain private to
+`sto-masstree`. Safe callers cannot resolve guessed IDs or addresses or access
 proven-unpublished/publication-unknown slots outside quarantine diagnostics.
 
 An implementation may use segmented append-only storage or another design that
 keeps registry lookup stable while the registry grows. The default
 `RegistryLayout::LazySegmented` publishes fixed-size `RegistrySegment`s through
 segment-level `OnceLock`s. A published segment already contains eagerly
-initialized, stable `RegistryEntry` slots; an atomic `UNALLOCATED -> RESERVED ->
-READY` transition claims and publishes a slot. There is no per-slot `OnceLock`.
-Each entry owns its `Record` in place, and both `Ready` and `Published`
-resolution borrow the same address. This removes a second
+initialized slots of the table's standard or extended entry type; an atomic
+`UNALLOCATED -> RESERVED -> READY` transition claims and publishes a slot.
+There is no per-slot `OnceLock`. Each entry owns its `Record` in place, and both
+`Ready` and `Published` resolution borrow the same address. This removes a second
 candidate/published-pointer layer while preserving the race in which the native
 directory exposes a winner before its inserter records `Published`.
 
@@ -2377,44 +2807,193 @@ struct Record {
     state: CommittedRecordState,
 }
 
-enum RecordState {
-    Tombstone,
-    Live(Value),
+enum ValueRepr {
+    Inline { len: u8, bytes: [u8; 38] },
+    Shared(Arc<SharedValue>),
+    Staged(Box<[u8]>),
+    BorrowedStaged(&'static [u8]), // private, unsafe transaction-lifetime proof
+}
+
+enum SharedValue {
+    Medium { len: u8, bytes: [u8; 128] },
+    Heap(Vec<u8>),
 }
 
 struct CommittedRecordState {
-    inline: AtomicU64,
-    shared: ArcSwapOption<Vec<u8>>,
-    tag: AtomicU8,
+    inline_head: [AtomicU64; 4],
+    tail_and_descriptor: AtomicU64,
+    shared: ArcSwapOption<SharedValue>,
+}
+
+struct StableAtomicValueCell {
+    suffix: [AtomicU64; 16],
+}
+
+#[repr(C, align(64))]
+struct RegistryEntry { /* Record at offset zero; total size 64 */ }
+
+#[repr(C, align(64))]
+struct StableRegistryEntry {
+    base: RegistryEntry,         // offset 0
+    cell: StableAtomicValueCell, // offset 64; total size 192
 }
 ```
 
-The implemented registry entry has a measured 48-byte stride. Values of up to
-eight bytes are copied through the inline atomic payload; larger immutable
-values use the protected shared pointer. Per-record physical lock targets are
-stored separately in `Arc`-owned 16-record segments. A detached guard names the
-exact inline `AtomicVersion`, while its core lock frame retains the owning slot
-arena through release. Thus point reads pay neither an `Arc` clone for the
-record nor a separately allocated lock object.
+Values through 38 bytes are copied inline in both transaction-local and
+committed state. This bound covers the measured TPC-C new-order, stock,
+order-line, and secondary-index payloads without allocation or reference-count
+traffic. The committed copy uses four full `AtomicU64` head words. Bytes 32--37
+occupy the low 48 bits of a fifth `AtomicU64`; its high 16 bits hold the state
+descriptor. Code accesses the tail and descriptor only through the complete
+64-bit atomic, never through a mixed-size alias.
+
+The standard table policy stores longer committed values through the embedded
+`ArcSwapOption`. `SharedValue::Medium` keeps values through 128 bytes in the
+same `Arc` allocation; larger values use `SharedValue::Heap`. Arbitrary lengths
+and arbitrary binary bytes remain supported. `ValueRepr::Staged` is private
+owned transaction storage used only when bounded atomic publication is enabled;
+it never aliases a committed atomic cell. `BorrowedStaged` is restricted to an
+unsafe private write lane for 39--160 byte replacements. The caller keeps the
+slice fixed, readable, and immutable until commit or abort; install copies it
+into the stable atomic cell, and safe cloning first converts it to owned
+storage.
+
+`TableConfig::with_bounded_atomic_values(true)` selects the extended entry.
+Values from 39 through 160 bytes are staged in `Box<[u8]>` and committed through
+the existing 38-byte atomic prefix plus the adjacent 16-word atomic suffix.
+The private borrowed lane may replace the `Box` with `BorrowedStaged` for the
+same size range. Values above 160 bytes use an owned `Arc<SharedValue>` while
+staged and the embedded `ArcSwapOption` when committed. When the option is
+disabled, the standard 64-byte entry and the same shared fallback begin at 39
+bytes. Reads of an extended value reconstruct bytes into private scratch,
+close the same OCC version sandwich, and expose the bytes only after
+validation. The option is a table construction policy and never changes an
+entry's layout after publication.
+
+On the supported 64-bit layout, `Value`, `RecordState`, and `TableIntent` are 40
+bytes; `Arc<SharedValue>` and `ArcSwapOption<SharedValue>` are eight bytes; the
+four head words, packed tail/descriptor word, and embedded ArcSwap keep
+`CommittedRecordState` at 48 bytes. The enclosing `Record` remains 56 bytes,
+and the registry publication byte plus seven explicit padding bytes produces a
+64-byte-aligned, 64-byte `RegistryEntry` stride. `StableAtomicValueCell` is 128
+bytes, so `StableRegistryEntry` is 192 bytes with 64-byte alignment; its base is
+at offset zero and its cell is at offset 64. The eager registry `max_bytes`
+accounts for the selected concrete stride, and lazy segments allocate a
+homogeneous standard or extended arena. There is no side directory for bounded
+or shared values.
+
+Per-record physical lock targets are stored separately in `Arc`-owned
+16-record segments. A detached guard names the exact inline `AtomicVersion`,
+while its core lock frame retains the owning slot arena through release. Point
+reads pay neither an `Arc` clone for the record nor a separately allocated lock
+object.
+
+The transaction-local record metadata is deliberately smaller than a value:
+
+```rust
+struct RecordObservation {
+    version: OccVersion,
+    original_live: bool,
+    old_was_shared: bool,
+}
+```
+
+The transaction-local value is only an `AdapterRole` tag distinguishing record
+and directory items. Record state is resolved through the stable registry when
+an operation needs it, and writer preflight independently resolves the owning
+lock-target segment before cloning its Arc into the lock plan. No registry or
+lock-target pointer is retained in an item local.
+
+On the supported 64-bit layout, `AdapterRole` and `Option<AdapterRole>` are one
+byte, `RecordObservation` and the containing `TableObservation` are 16 bytes,
+and the erased `TablePrepared` lock token is 24 bytes. An operation copies an
+inline or stable-cell value into its own `Value` or output buffer. A shared
+fallback read retains its acquired `Arc` lease until the operation finishes.
+
+Shared fallback values use the eight-byte ArcSwap embedded in their exact
+record. Reads and writes therefore need neither an ID-to-value side lookup nor
+a hash or table-wide map lock. Replacing a shared value swaps the new Arc into
+that slot; removing, shrinking, or moving it to bounded atomic storage clears
+the slot while any Arc already acquired by a reader remains alive
+independently.
 
 The exact binary key is owned once by the private append-only directory. A
-successful directory lookup returns a `RecordId` capability into this table's
-private registry; safe callers cannot forge IDs, insert through another handle,
-or pair one registry with another directory. Repeating every key in `Record`
+successful directory lookup returns a scalar capability into this table's
+private registry, either a logical registry ID or a direct stable address;
+safe callers cannot forge tokens, insert through another handle, or pair one
+registry with another directory. Repeating every key in `Record`
 and comparing it on each hit would therefore duplicate the trusted directory
 binding rather than strengthen the safe contract. Likewise, the per-record
 lock identity is reconstructed without allocation from table identity plus
-`RecordId` only for a changed record during preflight; it is not stored in the
-read-hot slot.
+the scalar token only for a staged record; it is not stored in the read-hot
+slot.
 
-`AtomicImmutableSnapshot` is descriptive, not a commitment to a specific crate.
-Its implementation must have a sound reference-count and memory-order proof.
-A lock-backed immutable snapshot is acceptable only when that synchronization
-guard is itself the tracked record lock, is acquired by
-`TransactionLock::try_acquire` in the global lock order, and remains in the
-core-owned lock frame through installation.
-`install` MUST NOT acquire a second mutex. Otherwise the adapter must use a
-sound atomic immutable-snapshot publication primitive.
+#### Direct cached-record layout
+
+The direct plan's held guard caches one `CachedRecord`, represented by one
+eight-byte `NonNull<RegistryEntry>` on the supported 64-bit target. Bit zero is
+the extended-entry tag. Both concrete entries are 64-byte aligned,
+`RegistryEntry::record` and `StableRegistryEntry::base` are at offset zero, and
+the extended cell is at offset 64, so the tag consumes no address information.
+Tag insertion and removal use strict-provenance `NonNull::map_addr`; code masks
+the tag before any dereference.
+
+Debug builds re-resolve the original directory token and require the same entry
+address and standard/extended kind before using the cache. Release builds rely
+on the closed direct-directory proof: one immutable layout kind per table,
+only this registry mints directory values, boxed arenas are append-only and
+stable, slots never move or are reused, and the transaction item and lock target
+retain `TableShared` through the last guard access. Pinned layout tests require
+`CachedRecord` size/alignment 8/8, `RegistryEntry` size/alignment 64/64,
+`StableRegistryEntry` size/alignment 192/64, base offset zero, and cell offset
+64.
+
+The inline snapshot is race-free without a read-side mutex. A reader observes
+the OCC version, Acquire-loads the packed tail/descriptor word first, decodes
+its descriptor and tail, loads only the head words named by its length, then
+validates the same OCC version. A writer already holds that version exclusively,
+Release-publishes the updating descriptor through the whole packed word,
+writes the needed head words, Release-publishes one final packed
+tail/descriptor word, and later Release-unlocks the OCC version. The final
+Release and initial Acquire order the relaxed head stores. A reader that
+overlaps publication may assemble words from different generations, but its
+version sandwich must reject. A reader that observes the new unlocked
+generation also observes the preceding descriptor and word stores. Bytes
+beyond the descriptor's length are never exposed.
+
+The bounded atomic snapshot extends the same proof. A reader samples the
+descriptor, loads the inline prefix and only the suffix words named by its
+length, and validates the same OCC version before copying private scratch to
+the caller. A writer owns that version, publishes the updating descriptor,
+stores the prefix and suffix atoms, publishes the final length descriptor, and
+then releases the version. A torn reconstruction therefore cannot pass the
+version sandwich.
+
+The large snapshot has a separate, narrow reference-safety proof. After seeing
+the shared descriptor, a reader uses that record's embedded
+`ArcSwapOption::load_full` to acquire an owned `Arc<SharedValue>`, then validates
+the same OCC version. A writer already holds that record's OCC version
+exclusively, publishes the updating descriptor, atomically swaps or clears the
+Arc, and publishes the final descriptor before Release-unlocking the OCC
+version. ArcSwap keeps a concurrently acquired old Arc alive even after the
+slot drops its reference. Any reader overlapping physical replacement rejects
+its version sandwich. A delayed reader that sampled the old shared descriptor
+may find a cleared slot, but the version check is classified first and makes
+that race a retryable conflict. A missing payload under the same stable
+unlocked generation, or an interrupted publication, fails closed and poisons
+the table. Dropping an incomplete publication guard Release-publishes the
+poisoned descriptor through the complete packed word.
+
+The embedded ArcSwap is atomic reference publication, not a second
+transactional lock. It introduces no hidden wait-for edge during OCC install.
+Publishing a replacement swaps or clears one internal `Arc<SharedValue>` and
+may drop the displaced reference while the record lock is held. This is the
+bounded internal exception from Section 8.7: `SharedValue` owns bytes only and
+has no user callback or foreign resource, so the operation cannot run an
+application destructor or fallible cleanup. General displaced resources still
+belong in post-unlock `finish` state.
+Any replacement snapshot mechanism still requires an equivalent reclamation
+and ordering proof.
 
 ### 14.4 Point lookup and miss interning
 
@@ -2423,71 +3002,227 @@ Point access proceeds as follows:
 1. Look up the key through the copied/scalar C ABI.
 2. On a directory miss, atomically reserve quota and allocate a fully initialized
    tombstone candidate.
-3. If the native strong-scan guarantee is unavailable, lock the table's
-   structural version; then call atomic `get_or_insert` and complete the
-   advance/unlock disposition from Section 14.6.
-4. Resolve the winning `RecordId` through the table-private stable registry.
-   The exact key-to-ID association is the trusted result of the exclusively
+3. Acquire the table's nonblocking exclusive structural gate. If admission
+   fails, prove the reserved candidate unpublished and return a retryable
+   conflict without advancing the directory generation. Once admitted,
+   advance that generation before calling native atomic `get_or_insert`.
+4. When core creates the record's first transaction item, retain only its
+   record-role tag. A standard table resolves the winning logical ID through
+   the table-private registry and resolves its lock-target segment during
+   writer preflight. A direct table validates and reconstructs its private
+   address token; the direct lock guard may then retain the tagged
+   `CachedRecord` described above. Read-only final certification and the
+   restricted terminal batch use the corresponding checked table-private path.
+   The exact key-to-token association is the trusted result of the exclusively
    owned safe directory boundary; no duplicate Rust key comparison is needed.
    Release retained quota only for a candidate whose nonpublication was
    positively proved by the ABI outcome.
-5. Read a sound immutable state snapshot with a stable version-before/version-
-   after check.
-6. Record the version and logical present/absent result in the transaction item.
+5. On the first access, load an operation-local committed value through the
+   tier-specific atomic or `ArcSwap` path, close a stable
+   version-before/version-after check, and record its version,
+   `original_live`, and `old_was_shared` classifications.
+6. On a later unmodified access, resolve the checked directory token, reload another
+   operation-local committed value, and validate it against that first version. A
+   generation change or held lock is a retryable conflict and dooms the active
+   transaction.
+7. If the item already has a staged record intent, return that state directly
+   without reloading committed storage. Drop every non-returned value copy or
+   shared lease when its visitor or copy operation ends.
 
-Interning a tombstone changes physical tree structure but not logical table
-membership, so it does not advance the membership version. A later activation
-of that tombstone changes both record state and table membership transactionally.
+Metadata-only presence reads and presence-only mutations specialize steps
+5--7. `contains_resolving` resolves the key, interns a stable tombstone on a
+miss, and returns both transaction-local liveness and a `ResolvedRecord`.
+`contains_resolved` validates an existing token and skips the native directory.
+Both methods use staged liveness for read-your-writes. For an unstaged item they
+install an ordinary record observation and retain the first logical presence
+answer, so commit still rejects a concurrent record-generation change.
 
-### 14.5 Writes and membership changes
+On their first unstaged access, these reads,
+`put_with_previous_presence`, `remove_with_previous_presence`, their resolved
+forms, and the expected-absent insert observe the record version, Acquire-load
+only the committed packed descriptor word, validate the same version, and
+retain the resulting `original_live` and `old_was_shared` bits. They do not load
+inline head payload words, enter the embedded large-value `ArcSwap`, or decode
+application bytes. A later unstaged presence-only access returns
+`original_live`; a staged access returns the intent's liveness. Repeated
+presence tests therefore retain one transaction-local logical snapshot without
+another payload or descriptor access. A stable updating, poisoned, or invalid
+descriptor fails closed; the same descriptor sampled inside a changed or held
+version sandwich is a retryable conflict.
+
+Value-returning point operations, visitors, and scans retain the full reload
+path because they expose bytes. The fixed mutation callback also retains that
+path even when its result-capture flag is false: its public callback contract
+still receives `Option<&Value>` and may inspect the prior payload.
+
+Every structurally admitted interning attempt advances the directory generation,
+including a losing `Existing` outcome and an error after admission. This is a
+deliberate conservative witness: native publication can become visible to point
+lookups as soon as `get_or_insert` runs, so the generation must change first.
+An aborted insert may therefore leave an interned tombstone and always leaves an
+advanced generation, but it has no committed logical effect. A later activation
+or removal of an existing tombstone changes only that record's version.
+
+#### Resolved record tokens and bridge cache policy
+
+`sto-masstree::ResolvedRecord` is the reusable result of resolving one binary
+key through Masstree. Its fields are private. It carries the minting runtime,
+table object, and private directory token, so a resolved operation rejects a
+token from another runtime or table before interpreting its scalar payload.
+The type contains no borrow, version observation, lock guard, or public address
+operation. It remains valid across transactions while its table remains live
+because registry slots and their directory tokens are never reused in v1.
+
+Point lookups and scan rows can return a `ResolvedRecord` with the value. Later
+`visit_get_resolved*`, `copy_get_resolved`, `put_resolved*`, and
+`remove_resolved*` operations skip another Masstree traversal. They still enter
+the same `TableAdapter` item, load or reuse the same transaction observation,
+and run the normal final certification and commit protocol. A resolved token is
+therefore an index-lookup capability, not permission to bypass STO.
+
+The closed `sto-tpcc-ffi` bridge keeps a bounded worker-local mapping from an
+exact table and key to `ResolvedRecord`. Its table policy controls lookup cost,
+not correctness:
+
+| Policy | Point behavior | Scan behavior |
+| --- | --- | --- |
+| `Full` | Probe and update a 4,096-entry direct-mapped cache, with a most-recent hit shortcut. | Cache callback-visible rows only when the logical scan limit is at most 16. |
+| `LastOnly` | Probe and replace one exact most-recent point resolution. | Do not populate the cache. |
+| `ReadThenWrite` | A get always traverses Masstree, then retains its resolution for the next matching put or remove. | Do not populate the cache. |
+| `None` | Always resolve through Masstree and retain no point resolution. | Do not populate the cache. |
+
+Entries store at most 32 key bytes and confirm both the full key and the
+never-reused table identity. A hash collision can only evict or miss. It cannot
+alias records. `sto_tpcc_table_create` selects `Full` for compatibility, while
+the C++ TPC-C wrapper uses `sto_tpcc_table_create_with_cache_policy` and assigns
+policies by table role:
+
+| Current TPC-C tables | Policy | Reason |
+| --- | --- | --- |
+| `customer`, `warehouse`, `district`, `new_order`, `oorder` | `Full` | Reuse hot point resolutions, Delivery's scan-to-remove handoff, and its order get-to-put handoff. |
+| `stock` | `ReadThenWrite` | Preserve the immediate get-to-put handoff without keeping a large cross-transaction cache. |
+| `item`, `customer_name_idx`, `oorder_c_id_idx`, `history`, `stock_data`, `order_line` | `None` | Their current access pattern is point-read-only, insert-only, or scan/batch based, so retained point entries do not remove a later traversal. |
+
+`LastOnly` remains available to other bridge users but the current TPC-C table
+classifier does not select it. Fused Delivery also retains tokens directly from
+its value-only scans for the same transaction. That path does not depend on the
+cross-transaction cache and is why `order_line` can use `None` while Delivery
+still updates each scanned row without a second tree lookup.
+
+### 14.5 Writes and liveness changes
 
 `put`, `insert`, and `remove` change only transaction-local staged state during
-execution. Preflight allocates the complete replacement snapshot.
+execution. The intent owns the complete replacement; preflight resolves the
+record's lock-target segment, clones its Arc into the lock plan, and requests
+its identity through the table's selected canonical or unique-request lane.
+The owning Arc in the lock plan covers detached-guard release.
 
-At commit:
+At commit, every record with a staged intent is locked and certified. The
+ordinary plan performs final validation while holding the lock. The direct
+plan may instead certify the exact observed version while acquiring its token
+lock and retain that guard through install. Prepared value representations may
+install in any callback order while all record locks remain held; publication
+advances each affected record generation during release. There is no
+table-wide liveness intent, lock request, installation, or publication.
 
-- every changed record is locked and validated;
-- a transaction whose committed final liveness for any record differs from its
-  observed committed liveness also writes the table's membership item once;
-- the membership `LockIdentity` sorts before the table's record locks, so it is
-  acquired first;
-- record snapshots and locked generations may install in any callback order
-  while every affected resource, including membership, remains locked;
-- record resources publish and unlock before membership; and
-- membership's new unlocked generation publishes last, advancing once for the
-  transaction's net table change.
+Staging is the write boundary, matching C++ MassTrans. A same-value `put`, or a
+write sequence whose final bytes equal its initially observed bytes, remains a
+real writer and advances the record generation. An operation that never stages
+an intent, such as removing a tombstone or retaining a value with
+`PointMutation::Keep`, remains read-only. The observation's `original_live` bit
+preserves the first transaction-local presence answer for repeated presence-only
+operations; it no longer drives a table-wide intent. Its `old_was_shared` bit
+tells install whether the embedded slot must contain an old Arc and must be
+cleared when publishing an inline value or tombstone. Shared-to-shared
+publication likewise verifies that the replaced slot contained an Arc;
+nonshared-to-shared publication verifies that it did not. An invariant failure
+unwinds through the publication guard, publishes the poisoned descriptor, and
+poisons the table.
 
-The membership object is not a relaxed statistic. It is a real transaction item
-with exclusive lock and read validation. This prevents a scan from validating
-through a partially installed multi-record membership transaction.
+Liveness-changing transactions on distinct already-interned records therefore
+do not conflict merely because they share a table. A scanner that could expose
+a partially installed multi-record transaction cannot certify it: every
+traversed physical record has its own observation, so at least one affected
+record is still locked or has advanced from the observed generation.
 
-All such net membership-changing transactions on one table therefore conflict
-with one another in v1, even when their keys and scan ranges are disjoint.
+`Table::new_direct` exposes the Masstree adapter's direct capability for record
+and generation resources. Direct preparation retains one compact private
+directory token containing the record identity and exact observed OCC version
+for each write. Token acquisition compares that version while acquiring the
+exact record lock and returns a held guard only on equality. Final validation
+still rechecks every read-only record and directory- or scan-generation item;
+it skips only writes already certified by acquisition. Install uses the held
+guard, and release publishes in reverse acquisition order. The unsafe
+injectivity proof rests on core item deduplication, a distinct retained
+`TableShared` target for each table binding, and one stable address token per
+registry entry. Compact tokens omit the general `LockIdentity` vector and the
+repeated write-validation callback, not certification or core failure
+handling.
+
+The closed `sto-tpcc-ffi` integration constructs every TPC-C table with
+`Table::new_direct` and also enables
+`TableConfig::with_unique_lock_requests(true)` as the ordinary fallback. Its
+transaction handles expose only these `sto-masstree` resources: no caller can
+add a default-configured or unrelated adapter to the same transaction. Core
+item deduplication emits at most one record request per table/token; generation
+observations emit none, and each table owns a distinct lock target and
+namespace. Those properties establish both the direct injectivity proof and
+the fallback no-mixed-mode/unique-`LockIdentity` contract. General-purpose
+table construction keeps the unique flag disabled because it cannot prove the
+surrounding adapter graph.
+
+TPC-C enables bounded atomic values only for `customer`, `district`, and
+`warehouse`. It enables trusted scan value generation only for
+`customer_name_idx`, `oorder_c_id_idx`, `new_order`, and `order_line`; point-only
+tables avoid the shared generation RMW. The public `sto_tpcc_table_config`
+places `trusted_scan_value_generation` at byte offset 64 and
+`bounded_atomic_values` at byte offset 68, with size 72 on the supported 64-bit
+ABI. The bounded flag consumed former trailing padding, so every caller must be
+rebuilt and initialize the complete structure.
 
 ### 14.6 Scans
 
-A scan:
+The ordinary scan path:
 
-1. observes the table membership item;
-2. obtains copied key/`RecordId` chunks from Masstree;
-3. privately resolves every returned ID through the exclusively owned
+1. obtains the table's shared structural guard and observes the physical
+   directory generation while that guard is held;
+2. obtains copied key/scalar-token chunks from Masstree;
+3. privately resolves every returned token through the exclusively owned
    directory-to-registry capability;
-4. soundly snapshots every returned record, including tombstones, treating a
-   locked record as a conflict;
-5. adds a record read observation for each returned live value;
+4. soundly reloads every returned record, including tombstones, against that
+   item's first observed generation, or reads its staged intent directly;
+5. adds a compact record read observation for every newly encountered record;
 6. filters tombstones, whose later tombstone → live transition is covered by
-   the membership item;
+   that record's observation;
 7. applies lower/upper and inclusive/exclusive bounds exactly; and
 8. merges transaction-local writes and deletes into key order.
+
+`Table::visit_scan_with_scratch` is the allocation-retaining streaming form of
+this protocol. It invokes the visitor only after the row's ordinary record
+observation has been installed, borrows the packed directory key and the
+operation-local or staged value for that invocation, and stops immediately
+when the visitor requests it. Rows after that stop are not resolved or added to
+the read set. `Table::visit_scan` supplies temporary scratch for convenience;
+the existing owning `Table::scan` is a collector over the same internal engine,
+so bounds, tombstone handling, RYW overlay, logical limits, and validation do
+not fork into separate implementations.
+
+Streaming delivery is not transactional rollback for callback side effects.
+If a later chunk, record reload, or configured capacity limit fails, earlier
+visitor calls have already occurred and the method returns the later error.
+Callers must count or otherwise account for delivered rows as they run and
+then follow the transaction's ordinary abort/retry policy. The TPC-C C bridge
+does exactly this: `out_visited` includes every callback invocation even when a
+later scan error determines the final status.
 
 The C bridge serializes each possible tree insertion against point lookups and
 scans for that tree; read-only calls may proceed together. A single copied C
 chunk therefore has stable native structure, while a multi-chunk range remains
 structurally weakly consistent because mutations may occur between calls.
 Transactional consistency comes from the adapter's whole-scan structural gate,
-record observations, and membership validation. In opaque mode, the adapter
-additionally performs execution-time validation before exposing a chunk whose
-observations might be inconsistent.
+record observations, and directory-generation validation. In opaque mode, the
+adapter additionally performs execution-time validation before exposing a chunk
+whose observations might be inconsistent.
 
 For each call, “weakly consistent” still requires a gap-free key-ordered prefix
 up to the reported stop/resume boundary: a concurrent append-only insert or
@@ -2498,17 +3233,64 @@ operations. V1 takes the conservative serialization route twice: the ABI uses
 per-tree shared/exclusive structural access for each call, and the
 transactional table holds a nonblocking structural read guard across its whole
 multi-chunk scan while tombstone interning holds the write guard across every
-native publication outcome. This prevents a physical mutation between chunks
-without turning physical tombstone creation into an abstract transactional
-write. A later versioned protocol may replace the coarse gate only after it
-proves the same prefix and resumption properties. Logical membership validation
-alone cannot hide a structural traversal gap.
+native publication outcome. The interner advances the directory generation
+after write admission but before native publication. Thus a scan cannot overlap
+that structural change, and a completed scan whose guard has been released
+cannot later validate through it. A later protocol may replace the coarse gate
+only after it proves the same prefix, resumption, and pre-publication witness
+properties. Generation validation alone cannot hide a structural traversal gap.
+
+Bounded and reverse scans apply the same proof in their traversal direction.
+They observe all in-bound physical records, including tombstones, up to the
+logical result limit. An existing tombstone beyond that limit or outside the
+bounds cannot affect the result; a resurrection before the limit changes an
+observed record version. A new physical directory entry remains deliberately
+table-coarse and invalidates the scan regardless of bounds.
 
 The paper's `TMasstree` used transaction items for both stored values and leaf
 nodes and modified Masstree to expose the prior versions of leaves split by an
 insertion. That let the adapter repair an earlier range witness after the same
 transaction's eager insert. Rust v1 deliberately replaces that precision with
-the coarse membership resource and staged scan overlay.
+the coarse physical-directory generation, per-record observations, and staged
+scan overlay. Consequently, a transaction that scans and then interns its own
+first miss conservatively invalidates itself.
+
+#### Trusted direct-table scan generation
+
+`TableConfig::with_trusted_scan_value_generation(true)` enables a second,
+coarser scan strategy for `Table::new_direct`. The hidden unsafe
+`visit_scan_bytes_trusted_with_scratch` entry first falls back to the ordinary
+row-item path unless the option and direct-token mode are both active. It also
+falls back when the transaction already contains record items for this table,
+because only the ordinary path can merge prior staged liveness and values into
+the result.
+
+On the trusted path, the transaction records one scan-resource generation
+observation for the table. It holds one shared structural guard from that
+observation through every copied native chunk. Each returned record is still
+resolved through the private directory capability and read through its own OCC
+version sandwich before any bytes reach the visitor, but it does not create a
+per-row STO item. Before releasing structural admission, the operation checks
+the same scan generation again. Core performs another final generation check
+at the transaction certification cut. Thus the execution check prevents torn
+or lock-covered bytes from escaping, while the retained table observation
+certifies the complete result at commit.
+
+The scan generation advances for every structurally admitted directory
+interning attempt and every committed record publication. An update to an
+existing record after the scan may join the same transaction: it is installed
+after certification and serializes after the scan result. The first miss after
+the scan advances the generation during execution and therefore
+self-conflicts. Any other transaction's publication anywhere in the table also
+invalidates the scan, including a value change outside its bounds. This
+table-wide false-conflict cost and one atomic RMW per committed record
+publication are why the option is limited to scan-bearing TPC-C tables and
+disabled for point-only tables.
+
+The method is unsafe only at its callback and private-tree boundary. The caller
+must not retain borrowed pointers, reenter the transaction or worker, or unwind
+across FFI. Structural admission, native result memory validation, OCC checks,
+capacity limits, and final STO certification remain enforced.
 
 ### 14.7 Optional fixed-`u64` specialization
 
@@ -2535,7 +3317,7 @@ publishes a fully initialized record before its immutable key-to-ID binding;
 repeating a key is accepted only when the already published value is equal.
 No transactional worker may use the table until `finish_initial_load()` takes
 the structural publication gate and Release-publishes a permanent seal. After
-the seal, loader calls fail and neither directory membership nor cold slot
+the seal, loader calls fail and neither directory contents nor cold slot
 publication state may ever change. There is no unseal transition.
 
 #### Supported operation set
@@ -2547,7 +3329,7 @@ The specialized table supports only all-present, fixed-width point batches:
   empty general transaction.
 
 It provides no transactional insert, delete, resurrection, variable-width
-value, scan, range predicate, or membership item. A point miss invokes no
+value, scan, range predicate, or directory-generation item. A point miss invokes no
 visitor/mutator callback and does not create an STO item. The terminal API may
 return `RetryOrdinary` as a neutral dispatch result, and the mutation API may
 return `None`, but this table intentionally has no ordinary miss/insertion
@@ -2587,7 +3369,9 @@ guard is held, and committed release publishes the new OCC generation. The
 atomic value load/store may be relaxed because the version's acquire/release
 protocol supplies publication ordering and the payload itself remains atomic.
 `Intent = ()` marks the presence of a write while the replacement `u64` lives
-in typed transaction-local state; a same-value `Put` is a no-op.
+in typed transaction-local state; a same-value `Put` is a no-op in this sealed
+fixed-width specialization. The general Masstree adapter instead treats every
+staged intent as a write, as specified in Section 14.5.
 
 Thus fixed-`u64` uses the same core OCC certification, canonical locking,
 validation, failure dispositions, and exact-once publication protocol as the
@@ -2640,7 +3424,32 @@ The initial operation families are:
 - copied forward/reverse scan chunks.
 
 There is no update, value mutation, cursor, callback, borrowed output, physical
-delete, or raw RCU pin in v1.
+delete, or raw RCU pin in the public `mt_*` v1 ABI. The callback-free Payment
+prefix, the commit-owning Payment, NewOrder, and Delivery calls, and the
+commit-owning StockLevel tail in Section 17.1 are wrapper-private
+`sto-tpcc-ffi` integrations. They do not extend this public Masstree surface.
+
+Unless explicitly qualified below, this section's ABI requirements apply to
+the versioned public `mt_*` surface. The native library also provides hidden
+`mako_mtree_*_trusted` functions for its statically linked safe Rust facade.
+Those symbols are outside ABI-version and feature negotiation and outside the
+43-symbol public export fingerprint; shared-library consumers cannot link them.
+
+The safe facade owns the retained native handles and validates runtime/worker
+pairing, key lengths, enum values, candidate shape, slice relationships, and
+output capacities before calling a hidden function. `Worker` is `!Send +
+!Sync`, so safe Rust statically preserves its attaching-thread affinity; a
+dynamic thread-ID assertion remains in debug builds only. Caller-provided raw
+storage must still satisfy the documented readable/writable lifetime and
+non-aliasing preconditions. The hidden native body may omit only the checks
+covered by those safe types and preconditions. It still enforces
+runtime poison and active-scope rules, structural reader/writer admission,
+native RCU lifetime, C++ exception containment, and exact insertion publication
+classification. The trusted scan decoder still validates counts, offsets, and
+lengths before constructing Rust borrows, even where a private-tree caller
+accepts native key ordering and range membership. Calling a hidden symbol from
+application or foreign code, or violating any precondition, is outside the ABI
+contract and may be undefined behavior.
 
 ### 15.2 Keys and bounds
 
@@ -2676,6 +3485,13 @@ pointer is null, the call returns `INVALID` without dereferencing it. Resuming
 produces no gaps or duplicates under a quiescent tree; concurrent logical
 consistency is provided by STO validation.
 
+The safe Masstree wrapper offers both an owning packed result and a borrowed
+result backed by `PackedScanScratch`. Scratch storage retains initialized entry
+descriptors and key-arena bytes across calls. A call may grow it, but a later
+call at the same or smaller capacities performs no buffer allocation or
+clearing. Validation is identical for both result forms, and the borrowed view
+prevents scratch reuse until all entry and continuation-key borrows end.
+
 ### 15.4 Threading and RCU
 
 Every `mt_thread` is bound to its creating OS thread and runtime. Safe Rust
@@ -2684,16 +3500,29 @@ current native core-ID and threadinfo registrations are capped and not truly
 recycled. The ABI MUST report exhaustion rather than reaching an assertion or
 `abort()`.
 
-Every tree operation validates the worker's current OS thread, the worker's
-runtime, and the tree's runtime before traversal.
+Every public `mt_*` tree operation dynamically validates the worker's current
+OS thread, the worker's runtime, and the tree's runtime before traversal. The
+safe Rust facade uses `!Send + !Sync` ownership for the first property on its
+hidden fast lane, retains a debug-only thread-ID assertion, and dynamically
+checks runtime pairing.
 
-Ordinary scalar, one-shot strided, and scan calls enter and leave native RCU
-internally. The explicit read-scope capability is the only public retention
-mode; it is RAII-owned and worker-affine, admits only point reads on its tree,
-and follows the synchronous caller contract in Section 13.3. A
-bridge-internal, allocation-free, nonblocking collector may copy scan results
-into caller buffers. The scoped capability carries an opaque owner cookie, but
-no dereferenceable node, value, cursor, or raw guard escapes in either mode.
+Structural readers publish into cacheline-private native-core slots. A writer
+sets its per-tree exclusion flag and drains only slots named by the append-only
+thread registry, rather than scanning the configured maximum core capacity.
+Thread-handle publication participates in the same sequentially consistent
+order as reader publication/recheck and the writer flag/snapshot: a newly
+attaching reader is therefore either present in the writer snapshot or observes
+the flag and retracts before native access.
+
+Ordinary scalar, one-shot strided, and scan calls manage native RCU internally.
+The explicit point-read scope is tree-bound and admits only point reads. The
+explicit worker RCU scope is tree-independent and permits ordinary point,
+insert, and scan calls while retaining their per-operation structural guards.
+Both are RAII-owned, worker-affine, mutually exclusive, and follow the
+synchronous caller contract in Section 13.3. A bridge-internal,
+allocation-free, nonblocking collector may copy scan results into caller
+buffers. Each scoped capability carries an opaque owner cookie, but no
+dereferenceable node, value, cursor, or raw guard escapes in any mode.
 
 ### 15.5 Tree and runtime shutdown
 
@@ -2751,19 +3580,27 @@ symbols, and a native build fingerprint.
 The strict-serializability argument assumes:
 
 1. every adapter satisfies the obligations in Section 8;
-2. every commit-phase lock retained across callbacks either has one equality-
-   correct `LockIdentity` acquired in the unique planned order or satisfies the
-   finite hidden-lock fallback; every logical write resource remains exclusively
-   protected through installation;
-3. validation sees either the observed version, that version locked by self, or
-   failure;
+2. every commit-phase lock retained across callbacks is covered by the
+   equality-correct canonical plan, the checked unique-request plan, or an
+   exact direct capability whose safe duplicate check or unsafe injectivity
+   proof holds; every acquisition is bounded, every acquired prefix has one
+   reverse release path, and every logical write remains exclusively protected
+   through installation;
+3. final validation, or an explicitly certified exact-token acquisition, sees
+   either the observed version, that version locked by self, or failure;
 4. installation cannot fail or panic;
-5. published snapshots and versions obey the memory ordering in Section 9;
+5. published value representations and versions obey the memory ordering in
+   Section 9;
 6. item identities are stable and equality-correct;
 7. nontransactional operations participate in the same protocol; and
-8. native scans either preserve continuously present entries without omission
-   or duplication across concurrent splits, or validate a structural version
-   locked before and advanced after every possible directory mutation.
+8. an ordinary general-table scan holds shared structural admission from its
+   directory-generation sample through its final native chunk, and every
+   admitted interning attempt holds exclusive admission and advances that
+   generation before native publication can become visible; and
+9. a trusted direct-table scan retains one scan-generation item, reads each row
+   through a valid OCC sandwich under the same structural admission, and every
+   admitted interning attempt or committed record publication advances that
+   scan generation.
 
 ### 16.2 Writing transactions
 
@@ -2774,6 +3611,21 @@ changed before the cut remains mismatched or locked when checked. Success of the
 whole sequential pass therefore proves retrospectively that every read and
 predicate described shared state at the cut, except for resources locked by the
 same transaction at their observed pre-lock version.
+
+The homogeneous direct plan changes representation, not this argument. Its
+capability emits exactly one held lock for every write and none for a read, and
+its default final callback validates every item against the exact optional
+guard. Under the unsafe write-at-acquisition option, the write token binds the
+execution observation to the exact physical lock; acquisition proves that
+observation current before returning the guard. The retained guard excludes a
+change through the later certification cut and install, so the final pass may
+skip that certified write while it still validates every read-only record and
+scan- or directory-generation observation. Safe capability forms reject
+duplicate physical identities; unsafe injective forms assume the reviewed
+one-to-one token proof. All direct locks remain held through every install and
+are released only after the complete write set has been published. The same
+certification cut and partial-publication exclusion therefore apply without a
+general `Prepared` vector or `LockIdentity` plan.
 
 Serialize an ultimately committed transaction at that certification cut. Its
 ordered core ID was reserved immediately before the cut. Because a lower-ID
@@ -2802,27 +3654,46 @@ aborted transaction has no abstract effect.
 
 ### 16.5 Phantom safety in v1
 
-A scan observes the table membership version. Every transaction whose committed
-final liveness differs from its observed committed liveness writes and advances
-that version while holding its exclusive lock. A scan concurrent with such a
-net insertion, deletion, or resurrection either validates before the change,
-sees the lock/change and aborts, or validates after it. Per-record versions
-cover value updates. This is conservative but sufficient when every logical
-table mutation goes through the Rust adapter.
+An ordinary nontrivial scan samples the physical-directory generation while
+holding the table's shared structural guard, keeps that guard through every copied chunk,
+and finally validates the sample as an unordered prepared-free read. Every
+structurally admitted interning attempt holds the exclusive guard and advances
+the generation before it calls native `get_or_insert`. Therefore an attempt is
+either excluded from the traversal or invalidates the scan; native publication
+cannot appear in the interval between the scan's sample and that advance.
+Advancing for losing, failed, or subsequently aborted attempts adds only safe
+false conflicts.
 
-Tombstone interning changes only physical structure and therefore does not
-advance logical membership. Scan completeness additionally relies on Assumption
-8. In v1, per-call ABI synchronization and the table's whole-scan structural
-read guard exclude a concurrent split; an interning writer holds the matching
-write guard across the native outcome classification. Thus a physical-only
-insert cannot silently hide or duplicate a stable live record in a committed
-scan.
+The scan also observes every physical record traversed through its logical
+limit, including tombstones. Existing-record value changes, removal, and
+resurrection therefore encounter a held or advanced record generation at final
+validation. The same argument applies to forward/reverse direction and exact
+inclusive/exclusive bounds: an unobserved existing record lies outside the
+logical prefix that can affect the result. Scan overlay supplies read-your-
+writes. Together with Assumption 8, these witnesses prevent a committed scan
+from omitting, duplicating, or accepting a phantom. They remain conservative
+because an unrelated physical interning anywhere in the table invalidates the
+scan, and a scan followed by its own first miss self-conflicts.
+
+A trusted direct-table scan substitutes one table-wide value-generation
+observation for the per-row STO items. Its shared structural guard and eager
+generation advance retain the same no-traversal-gap proof for new directory
+entries. Each row's OCC sandwich prevents a torn or lock-covered value from
+being exposed during execution. Every committed value, liveness, or directory
+publication advances the scan generation, so the operation's final generation
+check and core's certification-time recheck reject any change that could alter
+the returned range. A transaction with prior record state takes the ordinary
+overlay path; a later existing-record write is installed after certification,
+while a later first miss changes the generation and self-conflicts. Assumption
+9 therefore provides phantom and existing-value coverage without retaining a
+record item per row. It is more conservative than the ordinary path because
+any committed record publication in the table invalidates it.
 
 ### 16.6 What this argument does not prove
 
 It does not prove fairness, bounded retries, crash durability, distributed
 atomicity, MVCC visibility, or correct behavior if a C++ or nontransactional
-path bypasses the Rust record/membership protocol.
+path bypasses the Rust record/directory-generation protocol.
 
 ## 17. Mako and upper-layer integration
 
@@ -2834,9 +3705,176 @@ The upper branch at `1daec550f` remains the behavioral oracle:
 safe Rust mako-local -> mako_local_* C ABI -> C++ STO/MassTrans/Masstree
 ```
 
-The native Rust backend bypasses that STO C ABI and calls `sto-core` directly.
-Both backends implement a backend-neutral upper transaction interface during
-rollout.
+The architectural native-backend target bypasses that STO C ABI and calls
+`sto-core` directly. Both target backends implement a backend-neutral upper
+transaction interface during rollout.
+
+The current C++ TPC-C comparison uses a narrower transitional bridge:
+
+```text
+C++ abstract_db / rust_sto_tpcc_wrapper
+                  |
+             sto-tpcc-ffi
+                  |
+       sto-core -> sto-masstree -> masstree -> hidden/public native ABI
+```
+
+`sto-tpcc-ffi` owns Rust runtime, worker, table, transaction, status, and panic
+containment for this closed integration. It is not a stable generic ABI for
+`sto-core` and does not expose the adapter trait hierarchy to arbitrary C
+callers. Its checked public calls require live handles and readable/writable,
+properly aligned, non-aliasing ranges for the full call. Within those caller
+safety preconditions they validate nullness, lengths and address overflow,
+owner-thread affinity, active transaction state, table ownership, enum values,
+callback presence, and output capacities.
+
+The paired C++ wrapper may use wrapper-private trusted transaction-lifecycle,
+scalar point-operation, and scan calls that are absent from the installed
+header. Its object graph and transaction state establish the live-handle and
+affinity invariants; request construction supplies the documented range,
+enum, callback, and unique-output preconditions. Capability and table
+ownership are construction invariants with debug assertions, not release-mode
+dynamic validation, and raw pointer liveness/readability remains an unsafe C++
+caller obligation. Direct application or foreign use violates the contract
+and may be undefined behavior. The private functions retain the Rust panic
+boundary and preserve semantic outcomes plus conflict, capacity, and fatal
+status classification; they remove only checks covered by those invariants.
+
+#### Private fixed-layout TPC-C capabilities
+
+[`tpcc_fixed_batch.h`](../../src/mako/benchmarks/tpcc_fixed_batch.h) defines
+four optional C++ workload interfaces:
+
+```text
+TxnTpccPaymentCapability
+  payment_full_enabled
+  tx_payment_prefix
+  tx_payment_full
+
+TxnTpccNewOrderCapability
+  tx_new_order_full
+
+TxnTpccDeliveryCapability
+  tx_delivery_full
+
+TxnTpccStockLevelCapability
+  tx_stock_level_full
+```
+
+`abstract_db` has default accessors that return null. The Rust TPC-C wrapper
+inherits these interfaces and returns itself only for enabled capabilities.
+The benchmark therefore keeps its existing scalar transaction as the semantic
+fallback. These classes are workload dispatch, not the STO adapter hierarchy.
+They neither replace `TransactionalResource` nor expose Rust transaction items
+to C++.
+
+The corresponding Rust entry points are hidden static-link symbols and are
+absent from the installed `sto_tpcc_ffi.h`. They use fixed-layout request and
+result records with matching Rust and C++ offset assertions. The current
+eligibility rules are deliberately narrow:
+
+| Capability | Required benchmark mode |
+| --- | --- |
+| Payment prefix and full Payment | Fixed Masstree keys, control mode 0, every row local, and no remote transaction path. |
+| Full NewOrder | The Payment locality rules, the nontransactional fast order-ID generator, 5 through 15 lines, and every supplier mapped to the exact home warehouse and stock table. |
+| Full Delivery | Fixed Masstree keys, control mode 0, and local `new_order`, `oorder`, `order_line`, and `customer` tables. |
+| StockLevel tail | Fixed Masstree keys, control mode 0, and local `order_line` and `stock` tables. The scalar prefix must already have read the district row and selected the current next-order ID. |
+
+`MAKO_STO_TPCC_DISABLE_PAYMENT_PREFIX`,
+`MAKO_STO_TPCC_DISABLE_PAYMENT_FULL`,
+`MAKO_STO_TPCC_DISABLE_NEW_ORDER_FULL`,
+`MAKO_STO_TPCC_DISABLE_DELIVERY_FULL`, and
+`MAKO_STO_TPCC_DISABLE_STOCK_LEVEL_FULL` allow controlled fallback
+comparisons. Disabling full Payment retains the fused prefix when the Payment
+capability itself remains enabled. Failure-injection modes, remote rows,
+transactional district order-ID allocation, and ineligible layouts stay on the
+scalar C++ path. Disabling the StockLevel capability keeps the complete scalar
+scan and stock-probe tail after the same district prefix.
+
+The fused operations preserve these benchmark transactions:
+
+| Call | Work performed inside Rust |
+| --- | --- |
+| `payment_prefix` | Update warehouse YTD, update district YTD, optionally scan at most 32 customer-name rows and select the lower median, then update the selected customer. The transaction remains active after success. |
+| `payment_full` | Perform the prefix, insert the exact encoded history row with duplicate as a no-op, update the separate customer-data row for bad credit, and commit. |
+| `new_order_full` | Batch-read item prices, batch-update exact-home stock rows, read the customer, warehouse, and district rows, insert the `new_order`, `oorder`, and customer-order-index headers, insert 5 through 15 order lines, and commit. The caller supplies the already-consumed fast order ID and timestamp. |
+| `delivery_full` | For districts 1 through 10, select the first new-order row at or after the worker cursor, read and update its order, scan and update at most 15 order lines, remove the new-order row, add the line total to the customer balance row, then commit the complete multi-district attempt. |
+| `stock_level_full` | Continue the active transaction after C++ has read the district row and selected its current next-order ID. Scan the preceding 20 orders, up to 300 order-line rows, deduplicate their item IDs, read each distinct local stock row, count quantities strictly below the threshold, and commit. |
+
+These functions build ordinary `sto-masstree` observations and intents. They
+do not implement a separate transaction algorithm. Because the bridge creates
+private direct tables and the live items use one adapter type and one static
+capability, eligible writes take the sealed homogeneous direct-commit plan in
+`sto-core`. Exact-token acquisition certifies each write. Read-only record and
+scan-generation items still run final validation before installation.
+
+Every commit-owning call owns the active attempt through commit or guarded abort
+and resolves it before returning. It writes its result only after a successful
+commit. `RETRY` maps to the benchmark's abort exception. Each lane preserves
+its documented missing-row and malformed-row status, while invalid private-ABI
+inputs, adapter faults, or contained panics map to a fatal error. The C++
+wrapper marks the transaction inactive after every commit-owning call returns,
+so no caller can commit or reuse a partially executed attempt.
+
+Delivery's ten `last_no_o_ids` cursors are intentionally outside STO. A cursor
+advances to one past the selected order before later reads or writes for that
+district. That change survives a later conflict or fatal abort, matching the
+scalar worker. An empty district leaves its cursor unchanged. Full NewOrder
+likewise consumes its nontransactional fast order ID and timestamp before the
+Rust call; an abort may leave an order-ID gap but publishes no database row.
+
+The StockLevel split is intentional. C++ retains the district get and chooses
+the current next-order ID from either the fast holder or the decoded district
+row. Rust receives that ID, scans the half-open order range
+`[max(current - 20, 0), current)`, decodes the leading item ID from at most 300
+order-line values, deduplicates in fixed-capacity storage, and reads the native
+`i16` quantity from each distinct stock row. Its commit validates the earlier
+district observation together with the Rust tail. A failure leaves the caller's
+result unchanged and resolves the active attempt.
+
+Full NewOrder needs the customer, warehouse, and district rows only as presence
+and OCC witnesses when the fast order-ID generator is active. It uses
+`contains_resolving` on a cache miss and `contains_resolved` on a cache hit, so
+it does not load or decode those three payloads. This preserves release-build
+database behavior for well-formed TPC-C data while retaining missing-row and
+commit-conflict detection. It deliberately does not reproduce the scalar
+decoder or `CHECK_INVARIANTS` corruption checks for those unused values.
+Eligibility therefore assumes valid benchmark encodings; malformed-row
+diagnostics are outside parity for this optimized lane.
+
+On the supported 64-bit target, the raw wrapper-private ABI request and result
+sizes are:
+
+| Call | Request bytes | Result bytes | Additional caller storage |
+| --- | ---: | ---: | --- |
+| Payment prefix | 120 | 32 | Three distinct 164-byte replacement buffers. |
+| Full Payment | 112 | 16 | None retained across the return. |
+| Full NewOrder | 112 | 8 | Readable item-ID and quantity arrays with `line_count` elements. |
+| Full Delivery | 56 | 16 | One writable, ten-element district cursor array. |
+| StockLevel tail | 40 | 24 | None retained across the return. |
+
+The C++ capability records in `tpcc_fixed_batch.h` are dispatch types, not the
+raw ABI records in this table. In particular,
+`tpcc_fixed_batch::stock_level_full_request` is 48 bytes and includes `txn` as
+its first field. The wrapper validates that handle, then translates the request
+to the 40-byte raw record because the Rust thread handle already owns the active
+transaction.
+
+Every request, result, handle, input array, and mutable output range obeys the
+private boundary's complete-call liveness, alignment, ownership, and
+non-aliasing rules. All table handles belong to the active wrapper database and
+the same Rust runtime. Fixed encoded keys are 4 bytes for warehouse, 8 for
+district, 12 for customer, 16 for order line, and 40 for customer-name bounds
+where applicable.
+
+The Payment prefix has the one longer lifetime contract. Its three output
+buffers remain at fixed addresses, readable, and immutable until the caller
+later commits or aborts the still-active transaction. Rows through 160 bytes
+use private borrowed intents and copy into stable atomic cells during install.
+Valid 161 through 164 byte rows use owned shared staging. The Rust boundary
+writes the three lengths and selected customer ID only after the complete
+prefix succeeds. Any reported failure or contained panic aborts the attempt and
+clears its borrowed intents.
 
 ### 17.2 Commit hook compatibility
 
@@ -3054,8 +4092,9 @@ direct C++ MassTrans -> native Rust STO/Masstree
 ```
 
 Track throughput, p50/p99 latency, abort rate, allocations, item bytes,
-lock-hold time, scan chunk cost, and false conflicts from the coarse membership
-item. Performance changes never weaken a stated correctness gate.
+lock-hold time, scan chunk cost, and false conflicts from the coarse physical-
+directory generation. Performance changes never weaken a stated correctness
+gate.
 
 The second line of the ladder now has a reproducible development comparison on
 `zoo-002`; the first line remains to be characterized separately. The workload
@@ -3112,26 +4151,32 @@ follows:
 
 | Surface | Repository implementation | V1 state |
 | --- | --- | --- |
-| Typed STO protocol, private erasure, lock planning, failure dispositions | [`crates/sto-core`](../../crates/sto-core) | Implemented for serializable non-opaque transactions. |
+| Typed STO protocol, private erasure, lock planning, direct exact-token write certification, and failure dispositions | [`crates/sto-core`](../../crates/sto-core) | Implemented for serializable non-opaque transactions. |
 | Restricted terminal-read typestate, homogeneous pooled storage, and adapter capability | [`terminal_read.rs`](../../crates/sto-core/src/terminal_read.rs), [`adapter.rs`](../../crates/sto-core/src/adapter.rs), and [`transaction.rs`](../../crates/sto-core/src/transaction.rs) | Implemented with final certification, drop-only cleanup, compile-fail API separation, and contained failure dispositions. |
 | Raw stable declarations | [`crates/mtree-sys`](../../crates/mtree-sys) | Implemented for ABI version 1. |
-| Native C boundary | [`mtree_abi.h`](../../src/mako/storage/mtree_abi.h) and [`mtree_abi.cc`](../../src/mako/storage/mtree_abi.cc) | Implemented for scalar/scoped/strided point operations and copied bounded scans. |
+| Native C boundary | [`mtree_abi.h`](../../src/mako/storage/mtree_abi.h) and [`mtree_abi.cc`](../../src/mako/storage/mtree_abi.cc) | Implemented for scalar/scoped/strided point operations, worker-wide RCU retention, and copied bounded scans. |
 | Safe runtime, worker, tree, point, and scan facade | [`crates/masstree`](../../crates/masstree) | Implemented; native cursors, pointers, and RCU guards remain private. |
-| Transactional records, tombstones, quotas, membership predicate, and scan overlay | [`crates/sto-masstree`](../../crates/sto-masstree) | Implemented for the conservative table-membership profile. |
-| Optional all-present fixed-`u64` point specialization | [`fixed_u64.rs`](../../crates/sto-masstree/src/fixed_u64.rs) | Implemented behind `fixed-u64`: private fresh directory, permanent loader seal, 16-byte atomic record, terminal reads, and exact-unique point updates; membership changes, scans, and miss fallback are intentionally unsupported. |
+| Transactional records, tiered atomic/shared values, tombstones, quotas, physical-directory generation, and scan overlay | [`crates/sto-masstree`](../../crates/sto-masstree) | Implemented with exact-token write acquisition, final read/generation validation, scan-only directory validation, and per-record coverage of existing liveness changes. |
+| Closed C++ TPC-C bridge, resolved-token cache policies, and fused workload capabilities | [`crates/sto-tpcc-ffi`](../../crates/sto-tpcc-ffi), [`rust_sto_tpcc_wrapper.cc`](../../src/mako/storage/rust_sto_tpcc_wrapper.cc), and [`tpcc_fixed_batch.h`](../../src/mako/benchmarks/tpcc_fixed_batch.h) | Implemented with checked public scalar operations plus wrapper-private fixed-layout Payment prefix, full Payment, exact-home NewOrder, local Delivery, and the local StockLevel tail. Commit-owning calls resolve their active attempt; ineligible modes retain the scalar path. |
+| Optional all-present fixed-`u64` point specialization | [`fixed_u64.rs`](../../crates/sto-masstree/src/fixed_u64.rs) | Implemented behind `fixed-u64`: private fresh directory, permanent loader seal, 16-byte atomic record, terminal reads, and exact-unique point updates; liveness changes, scans, and miss fallback are intentionally unsupported. |
 | Upper metadata reservation and pre-install coordination | [`hook.rs`](../../crates/sto-core/src/hook.rs) | Implemented as an optional caller-owned `CommitHook`. |
 | Opacity, graceful native shutdown, and upper backend cutover | Sections 12, 15.5, 17, and 19.2 | Deferred; callers receive explicit unsupported/capability outcomes rather than silent downgrade. |
 | Bounded point-workload performance characterization | [`sto-rust-zoo2-optimized-2026-08-28`](../performance/sto-rust-zoo2-optimized-2026-08-28/README.md) | Complete on `zoo-002`; production-wide budget acceptance remains deferred. |
 
 The branch-level validation record for this implementation includes the full
 workspace suite in debug and release modes on Rust 1.95, strict Clippy and
-rustdoc builds, C11 header compilation, the exact 41-symbol native allowlist,
-required feature mask `0x0f7f`, export-manifest FNV-1a fingerprint
-`0xdb5bed9b8f1490e3`, the raw ABI suite, native safe-wrapper and
+rustdoc builds, C11 header compilation, the exact 43-symbol native allowlist,
+required feature mask `0x1f7f`, export-manifest FNV-1a fingerprint
+`0x0b2ec2158e69d9c7`, the raw ABI suite, native safe-wrapper and
 transactional-adapter integration. The current feature-enabled suite also pins
 the terminal API/typestate failure protocol and fixed-`u64` record layout,
 loader seal, snapshot validation, stale-writer behavior, miss/duplicate
-outcomes, public ownership surface, and real-native load/update/read path.
+outcomes, public ownership surface, real-native load/update/read path, resolved
+cache policy behavior, metadata-only resolved presence and final-validation
+behavior, and native full Payment, NewOrder, Delivery, and StockLevel semantic
+fixtures. The StockLevel fixture covers empty and clamped ranges, strict
+threshold comparison, duplicate item IDs, the 300-row bound, missing-stock
+retry, result immutability on failure, and post-failure handle reuse.
 Earlier branch baselines included ASan, UBSan, and unsuppressed TSan stress, but
 those sanitizer suites were not rerun against the exact scoped/strided ABI
 performance commit and therefore are not a current cutover claim. The
@@ -3159,8 +4204,9 @@ in Section 19.2.
    preflight, lock/validate/install/abort, and in-memory adapters.
 4. **Point vertical slice.** Add the stable registry, tombstones, and
    transactional Masstree point operations.
-5. **Scans and predicates.** Add copied bounded scans, membership-item phantom
-   protection, and staged-write overlay required by v1.
+5. **Scans and predicates.** Add copied bounded scans, pre-publication physical-
+   directory generation validation, per-record liveness coverage, and the
+   staged-write overlay required by v1.
 6. **Upper integration and nonopaque cutover.** Implement the backend-neutral
    facade and differential corpus while retaining C++ as the reference backend;
    shadow or feature-flag production before changing the default.
@@ -3194,25 +4240,34 @@ satisfy, the performance and false-conflict gate.
 
 | ID | Source | Decision | Rationale |
 | --- | --- | --- | --- |
-| D1 | RUST | STO executes as native Rust; only Masstree is behind C. | This is the requested lower boundary and avoids a second STO ABI. |
-| D2 | STO/RUST | Items represent logical resources with stable owned identity. | Preserves type-aware conflict tracking without address identity. |
+| D1 | RUST | STO executes as native Rust; only Masstree remains behind the architectural C boundary. The current closed TPC-C integration also crosses `sto-tpcc-ffi`. | The target avoids a stable generic STO ABI while permitting the transitional C++ benchmark/backend wrapper. |
+| D2 | STO/RUST | Items represent logical resources with stable identity. The general path uses owned IDs; a private direct table may use a stable registry-entry address token under an explicit unsafe capability. | Preserves type-aware conflict tracking while making the one reviewed address-identity exception visible. |
 | D3 | RUST | Generic adapters use deferred writes in v1. | Makes abort and memory safety tractable. |
-| D4 | RUST | Masstree stores immutable nonzero `RecordId`s. | No Rust or C++ record pointer crosses the ABI. |
+| D4 | RUST | Masstree stores immutable nonzero scalar tokens: a monotonic registry ID in the standard lane or an opaque stable entry address in a private direct table. | C++ only stores and copies the scalar; pointer reconstruction and dereference remain in the audited Rust owner. |
 | D5 | RUST | Point misses intern tombstones; logical deletes retain them. | Gives stable absence witnesses without native leaf tokens. |
-| D6 | RUST | One lockable membership item per table protects scan phantoms. | Correct, conservative baseline; copied scans and structural exclusion keep native traversal behind the ABI. |
+| D6 | RUST | Ordinary scans observe physical-directory generation plus every traversed record; opted-in trusted direct scans observe one table-wide scan generation and use per-row execution OCC sandwiches. | The ordinary path preserves precise existing-record coverage and RYW overlay; the trusted path trades table-wide false conflicts and a write RMW for compact scan state. |
 | D7 | RUST | Published/publication-unknown records and all consumed IDs are not reclaimed or reused in v1; proven-unpublished candidates may be dropped. | Avoids premature cross-language reclamation without leaking proved losers. |
 | D8 | RUST | Explicit thread-affine worker contexts replace core TLS. | Makes ownership and finite worker resources visible. |
-| D9 | RUST | V1 deduplicates and sorts canonical physical `LockIdentity` requests. | Prevents deadlock even when logical resources share coarse locks. |
+| D9 | RUST | The default deduplicates and sorts canonical `LockIdentity` requests. A checked unique-request mode and an explicitly capable homogeneous direct plan may retain request order. | The general path prevents deadlock under aliasing; alternatives require bounded acquisition plus exact uniqueness or reviewed injectivity. |
 | D10 | STO/COMPAT | Serializable nonopaque OCC lands first; opacity is explicit. | Matches controlled Silo usage without claiming silent opacity. |
-| D11 | RUST | Installation and mandatory cleanup are infallible. | Prevents reporting a partially installed transaction as aborted. |
-| D12 | RUST | Native RCU remains behind ABI-owned one-shot regions or an explicit scoped-read capability that safe Rust owns through RAII. | The generation-tagged owner cookie is opaque, no dereferenceable native object escapes, and retained state remains worker-affine under a synchronous caller contract. |
+| D11 | RUST | Installation and mandatory cleanup are infallible; finish is exact-once except for explicitly authorized core-owned drop-only paths. | Prevents reporting partial publication as abort while documenting terminal and committed-direct cleanup. |
+| D12 | RUST | Native RCU remains behind ABI-owned one-shot regions, a tree-bound point-read scope, or a tree-independent worker RCU scope that safe Rust owns through RAII. | Generation-tagged owner cookies are opaque and scope-family checked, no dereferenceable native object escapes, structural admission remains operation-local for transaction-wide retention, and all retained state stays worker-affine under a synchronous caller contract. |
 | D13 | COMPAT | The pre-install hook runs once after lock+validation and before install. | Preserves the upper branch's commit seam. |
 | D14 | RUST | Distributed prepared state is outside core v1. | Network waiting while locks are held needs a separate liveness design. |
 | D15 | RUST | Native version encoding is private; the C++ layout is a parity oracle. | Rust records do not exchange atomic objects with C++. |
 | D16 | RUST/COMPAT | Native teardown requires negotiated `GRACEFUL_SHUTDOWN`; otherwise native allocations are process-lifetime. | Makes RCU/thread-affine destruction an explicit capability rather than a `Drop` guess. |
-| D17 | RUST | External adapters implement safe typed `TransactionalResource`, `OpacityToken`, and `TransactionLock` traits; heterogeneous item/guard erasure is sealed, private, and checked. | Preserves the paper's virtual extension seam without exposing untagged storage or making memory safety depend on adapter semantics. |
+| D17 | RUST | External adapters implement safe typed base traits and private checked erasure. Compact direct tokens use the separate unsafe `DirectTokenLock` and unsafe injective constructors. | Preserves the paper's extension seam while isolating the stable-token memory proof. Compactness may omit the general identity vector, but acquisition still certifies an exact observation when the capability selects that option. |
 | D18 | RUST | A terminal homogeneous read batch uses a distinct `Open -> Ready` consuming transaction typestate and an explicit stronger adapter capability. | The type surface proves that general item state, later operations, locks, installation, and outcome-dependent cleanup are unreachable, allowing a minimal key/observation representation without weakening certification. |
-| D19 | RUST | Fixed-`u64` is an optional permanently sealed, all-present point profile over a fresh privately owned Masstree, not a mode of the general table. | The 16-byte hot record and omitted publication checks are justified only by exclusive directory ownership and immutable post-load membership. |
+| D19 | RUST | Fixed-`u64` is an optional permanently sealed, all-present point profile over a fresh privately owned Masstree, not a mode of the general table. | The 16-byte hot record and omitted publication checks are justified only by exclusive directory ownership and immutable post-load liveness. |
+| D20 | RUST | A homogeneous direct capability selects a sealed core plan with typed prepare, validate, install, release, and cleanup phases. Its unsafe exact-token option may certify writes at acquisition and skip only those writes in the final pass. | Removes general identity/prepared representation and a repeated write callback only when one stable capability proves the observation-to-lock binding and retains the guard; reads and scan generations still receive final validation. |
+| D21 | RUST | Committed values through 38 bytes use inline atomics. Bounded-value tables use 192-byte entries and an adjacent stable atomic cell through 160 bytes. Values above the applicable atomic tier use owned staging and the embedded `ArcSwapOption`; standard 64-byte entries take that fallback above 38 bytes. | Makes the memory-versus-reference-publication tradeoff an immutable table policy while retaining arbitrary binary values. |
+| D22 | RUST | Hidden `mako_mtree_*` and wrapper-private TPC-C lifecycle, scalar, scan, and fused workload lanes may omit checks already proved by their owning facade. | Keeps the optimized boundary closed while retaining structural admission, RCU, panic/exception containment, status semantics, and explicit unsafe lifetime contracts. |
+| D23 | RUST/COMPAT | TPC-C uses private direct tables, unique-lock fallback, bounded values on customer/district/warehouse, and trusted scan generation only on its four range-scan tables. | Applies shared atomic costs only where measured workload shape can use them and records the closed integration proof. |
+| D24 | RUST/COMPAT | The local fixed-layout Payment prefix is one callback-free private call using three caller-owned 164-byte buffers. Rows through 160 bytes use borrowed bounded staging; 161--164 byte rows use owned shared staging. | Preserves scalar operation order while making the same-database, local-table, nonaliasing, and transaction-lifetime obligations explicit at the closed boundary. |
+| D25 | RUST | `ResolvedRecord` is a table-bound lookup capability, and the closed TPC-C bridge may retain it under a bounded per-table cache policy. | A cache hit skips Masstree traversal only. Exact table/key matching, transaction item reuse, OCC observation, and final certification remain mandatory. |
+| D26 | RUST/COMPAT | Full local Payment, exact-home NewOrder, local Delivery, and the local StockLevel tail use hidden fixed-layout calls that own the active attempt through commit or abort and publish result metadata only after a successful commit. | Removes repeated C ABI crossings without adding a second transaction protocol or exposing workload-specific calls as a stable application ABI. StockLevel retains its district read and current-ID selection in C++ before handing off the scan-and-join tail. |
+| D27 | COMPAT | Full NewOrder consumes its external fast order ID and timestamp before the Rust call. Full Delivery advances each worker cursor immediately after selecting a row, even if a later operation aborts. | Matches the benchmark's existing nontransactional state and retry semantics while keeping database writes atomic. |
+| D28 | RUST/COMPAT | `contains_resolving` and `contains_resolved` provide metadata-only transactional presence with ordinary final OCC validation. Full NewOrder uses them for customer, warehouse, and district witnesses. | Avoids loading and decoding payloads that the valid-data release path does not consume. Missing rows, staged liveness, resolved-token ownership, and commit conflicts remain checked; corruption diagnostics for unused payload bytes are not a parity promise. |
 
 ### 20.2 Deferred decisions and review triggers
 
@@ -3220,13 +4275,13 @@ satisfy, the performance and false-conflict gate.
 | --- | --- | --- |
 | Ordinary heterogeneous erased item lane | Typed unique batches and pooling are implemented; mixed external adapter items retain private erasure. | Profiling attributes material cost to the remaining heterogeneous allocation or dispatch. |
 | Unsorted write locking | Sorted total order | Benchmarks show sorting material and an unsorted proof/test suite exists. |
-| Precise range witnesses | Table membership item | False conflicts exceed an accepted workload budget. |
-| Implicit, raw, or cross-worker RCU pin | Fixed-width strided calls and an explicit worker-affine point scope (RAII-owned in safe Rust) are implemented; no raw RCU guard or ambient/cross-worker pin is exposed. | A use case requires a broader lifetime model with enforceable ownership and progress rules. |
+| Precise range witnesses | Ordinary scans use table-wide physical-directory generation plus traversed-record observations; trusted direct scans use one table-wide value generation. | False conflicts from either strategy exceed an accepted workload budget. |
+| Implicit, raw, or cross-worker RCU pin | Fixed-width strided calls, a tree-bound point scope, and a tree-independent worker RCU scope are RAII-owned in safe Rust; no raw guard or cross-worker pin is exposed. | A use case requires a broader lifetime model with enforceable ownership and progress rules. |
 | Commutative multi-owner locks | Exclusive locks plus semantic intents | Counter/queue workloads justify the additional protocol. |
 | Physical record GC | No reclamation | Growth is material and a grace-period design is proven. |
 | Distributed `PreparedTransaction` | Not exposed | `sto-mako` specifies IDs, terms, idempotence, recovery, and liveness. |
 | Native version bit allocation | Opaque `AtomicVersion` contract; legacy layout permitted but not exposed | Before the core implementation is performance-frozen. |
-| Fixed-`u64` membership changes, scans, or general miss fallback | Unsupported; use the general binary-value `Table` | A workload requires them and supplies a new conflict, publication, and representation proof without weakening the specialized sealed profile. |
+| Fixed-`u64` liveness changes, scans, or general miss fallback | Unsupported; use the general binary-value `Table` | A workload requires them and supplies a new conflict, publication, and representation proof without weakening the specialized sealed profile. |
 
 ### 20.3 Changing this guideline
 

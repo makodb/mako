@@ -50,6 +50,7 @@ pub const FEATURE_COPIED_RANGE_SCANS: FeatureSet = 1 << 8;
 pub const FEATURE_SCOPED_POINT_READS: FeatureSet = 1 << 9;
 pub const FEATURE_SCOPED_STRIDED_POINT_READS: FeatureSet = 1 << 10;
 pub const FEATURE_STRIDED_POINT_READS: FeatureSet = 1 << 11;
+pub const FEATURE_SCOPED_RCU: FeatureSet = 1 << 12;
 
 pub type ByteOrder = u32;
 pub const BYTE_ORDER_UNKNOWN: ByteOrder = 0;
@@ -105,6 +106,8 @@ pub struct ReadScope {
     pub owner: usize,
     pub generation: u64,
 }
+
+pub type RcuScope = ReadScope;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -174,7 +177,8 @@ pub const REQUIRED_V1_FEATURES: FeatureSet = FEATURE_POINT_GET
     | FEATURE_COPIED_RANGE_SCANS
     | FEATURE_SCOPED_POINT_READS
     | FEATURE_SCOPED_STRIDED_POINT_READS
-    | FEATURE_STRIDED_POINT_READS;
+    | FEATURE_STRIDED_POINT_READS
+    | FEATURE_SCOPED_RCU;
 
 const EXPORTED_SYMBOLS: &str = concat!(
     "mt_abi_version;mt_feature_bits;mt_endianness;mt_pointer_width;",
@@ -190,7 +194,8 @@ const EXPORTED_SYMBOLS: &str = concat!(
     "mt_runtime_health;mt_runtime_max_key_length;mt_runtime_max_threads;",
     "mt_runtime_shutdown;mt_thread_attach;mt_thread_quiesce;mt_tree_create;",
     "mt_tree_release;mt_get;mt_get_strided;mt_read_scope_begin;mt_read_scope_get;",
-    "mt_read_scope_get_strided;mt_read_scope_end;mt_get_or_insert;mt_scan"
+    "mt_read_scope_get_strided;mt_read_scope_end;mt_rcu_scope_begin;",
+    "mt_rcu_scope_end;mt_get_or_insert;mt_scan"
 );
 
 const fn fnv1a(bytes: &[u8]) -> u64 {
@@ -205,7 +210,7 @@ const fn fnv1a(bytes: &[u8]) -> u64 {
 }
 
 pub const EXPORTED_SYMBOLS_FINGERPRINT: u64 = fnv1a(EXPORTED_SYMBOLS.as_bytes());
-pub const EXPORTED_SYMBOL_COUNT: usize = 41;
+pub const EXPORTED_SYMBOL_COUNT: usize = 43;
 
 unsafe extern "C" {
     pub fn mt_abi_version() -> u32;
@@ -281,6 +286,8 @@ unsafe extern "C" {
         out: *mut RecordId,
     ) -> Status;
     pub fn mt_read_scope_end(token: *mut ReadScope) -> Status;
+    pub fn mt_rcu_scope_begin(thread: *mut Thread, token: *mut RcuScope) -> Status;
+    pub fn mt_rcu_scope_end(token: *mut RcuScope) -> Status;
     pub fn mt_get_or_insert(
         tree: *mut Tree,
         thread: *mut Thread,
@@ -303,6 +310,96 @@ unsafe extern "C" {
     ) -> Status;
 }
 
+/// Private static-link entry points used only by the safe `masstree` facade.
+///
+/// These symbols deliberately sit outside the versioned `mt_*` C ABI. They
+/// immediately dereference handles and rely on the caller to retain and
+/// validate every handle, key, output, thread-affinity, and runtime invariant.
+#[doc(hidden)]
+pub mod trusted {
+    use super::{
+        c_void, GetOrInsertResult, RecordId, ScanBound, ScanDirection, ScanEntry, ScanResult,
+        Status, Thread, Tree,
+    };
+
+    pub const SCAN_RESUME_INCLUSIVE_NEXT: super::ScanResumeKind = 3;
+
+    #[repr(C)]
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub struct RecordIdScanResult {
+        pub records_written: usize,
+        pub continuation_bytes_used: usize,
+        pub next_key_bytes_required: usize,
+        pub stop_reason: super::ScanStopReason,
+        pub resume: super::ScanResumeKind,
+        pub reserved: [u64; 2],
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    const _: [(); 48] = [(); core::mem::size_of::<RecordIdScanResult>()];
+
+    unsafe extern "C" {
+        pub fn mako_mtree_get_trusted(
+            tree: *mut Tree,
+            thread: *mut Thread,
+            key: *const c_void,
+            key_length: usize,
+            out: *mut RecordId,
+        ) -> Status;
+        pub fn mako_mtree_get_strided_trusted(
+            tree: *mut Tree,
+            thread: *mut Thread,
+            keys: *const c_void,
+            key_count: usize,
+            key_length: usize,
+            out: *mut RecordId,
+        ) -> Status;
+        pub fn mako_mtree_get_or_insert_trusted(
+            tree: *mut Tree,
+            thread: *mut Thread,
+            key: *const c_void,
+            key_length: usize,
+            candidate: RecordId,
+            out: *mut GetOrInsertResult,
+        ) -> Status;
+        pub fn mako_mtree_get_or_insert_strided_trusted(
+            tree: *mut Tree,
+            thread: *mut Thread,
+            keys: *const c_void,
+            key_count: usize,
+            key_length: usize,
+            key_stride: usize,
+            candidates: *const RecordId,
+            out: *mut GetOrInsertResult,
+        ) -> Status;
+        pub fn mako_mtree_scan_trusted(
+            tree: *mut Tree,
+            thread: *mut Thread,
+            direction: ScanDirection,
+            lower: *const ScanBound,
+            upper: *const ScanBound,
+            entries: *mut ScanEntry,
+            entry_capacity: usize,
+            key_arena: *mut c_void,
+            key_arena_capacity: usize,
+            out: *mut ScanResult,
+        ) -> Status;
+        pub fn mako_mtree_scan_record_ids_bounded_trusted(
+            tree: *mut Tree,
+            thread: *mut Thread,
+            lower: *const c_void,
+            lower_length: usize,
+            upper: *const c_void,
+            upper_length: usize,
+            records: *mut RecordId,
+            record_capacity: usize,
+            continuation: *mut c_void,
+            continuation_capacity: usize,
+            out: *mut RecordIdScanResult,
+        ) -> Status;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,6 +412,8 @@ mod tests {
         assert_eq!(core::mem::align_of::<BuildId>(), 8);
         assert_eq!(core::mem::size_of::<ReadScope>(), 16);
         assert_eq!(core::mem::align_of::<ReadScope>(), 8);
+        assert_eq!(core::mem::size_of::<RcuScope>(), 16);
+        assert_eq!(core::mem::align_of::<RcuScope>(), 8);
         assert_eq!(core::mem::size_of::<GetOrInsertResult>(), 16);
         assert_eq!(core::mem::align_of::<GetOrInsertResult>(), 8);
         assert_eq!(core::mem::size_of::<ScanBound>(), 24);
@@ -339,7 +438,8 @@ mod tests {
         assert_eq!(FEATURE_SCOPED_POINT_READS, 1 << 9);
         assert_eq!(FEATURE_SCOPED_STRIDED_POINT_READS, 1 << 10);
         assert_eq!(FEATURE_STRIDED_POINT_READS, 1 << 11);
-        assert_eq!(REQUIRED_V1_FEATURES, 0xf7f);
+        assert_eq!(FEATURE_SCOPED_RCU, 1 << 12);
+        assert_eq!(REQUIRED_V1_FEATURES, 0x1f7f);
         assert_eq!(REQUIRED_V1_FEATURES & FEATURE_GRACEFUL_SHUTDOWN, 0);
     }
 
@@ -415,9 +515,9 @@ mod tests {
 
     #[test]
     fn complete_exported_symbol_manifest_matches_the_finalized_header() {
-        assert_eq!(EXPORTED_SYMBOL_COUNT, 41);
+        assert_eq!(EXPORTED_SYMBOL_COUNT, 43);
         assert_eq!(EXPORTED_SYMBOLS.split(';').count(), EXPORTED_SYMBOL_COUNT);
-        assert_eq!(EXPORTED_SYMBOLS_FINGERPRINT, 0xdb5b_ed9b_8f14_90e3);
+        assert_eq!(EXPORTED_SYMBOLS_FINGERPRINT, 0x0b2e_c215_8e69_d9c7);
     }
 
     #[test]

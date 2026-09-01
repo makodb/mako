@@ -66,6 +66,42 @@ impl PointReadResult {
     }
 }
 
+/// One ordered result from a trusted fixed-shape get-or-insert batch.
+///
+/// Callers normally reuse a `Vec<FixedInsertResult>` across transactions.
+/// Fields stay private so the only observable classifications are values that
+/// passed the native ABI consistency checks performed by [`Tree`].
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FixedInsertResult {
+    winner: u64,
+    publication: u32,
+    inserted: u8,
+    reserved: [u8; 3],
+}
+
+impl Default for FixedInsertResult {
+    fn default() -> Self {
+        Self {
+            winner: 0,
+            publication: mtree_sys::PUBLICATION_FAILURE_BEFORE_PUBLICATION,
+            inserted: 0,
+            reserved: [0; 3],
+        }
+    }
+}
+
+impl FixedInsertResult {
+    /// Returns this candidate's publication disposition and optional stable
+    /// winner. This accepts both completed and interrupted batch slots.
+    pub fn classification(
+        self,
+        candidate: RecordId,
+    ) -> Result<(PublicationDisposition, Option<RecordId>), Error> {
+        native::decode_fixed_insert_result(self, candidate)
+    }
+}
+
 /// Stable classification of every native status code.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum NativeStatus {
@@ -126,6 +162,7 @@ pub enum Error {
     KeyTooLarge { length: usize, maximum: usize },
     ZeroRecordId,
     InvalidPublication,
+    InvalidBatch(&'static str),
     AllocationLimit { requested: usize },
 }
 
@@ -334,6 +371,26 @@ impl fmt::Debug for Worker {
 }
 
 impl Worker {
+    /// Holds one native RCU region across several ordinary tree operations.
+    ///
+    /// This scope is worker-bound but tree-independent. It amortizes native
+    /// RCU entry/exit for a short synchronous transaction-shaped sequence; it
+    /// is not a snapshot and does not hold structural-reader admission.
+    /// Operations on several trees, including `get_or_insert`, remain valid.
+    /// After native validation those operations reuse this retained RCU region
+    /// while preserving their ordinary per-operation structural admission.
+    /// Read-scope creation, quiescence, and native lifecycle calls are rejected
+    /// until the returned guard is closed or dropped.
+    pub fn rcu_scope(&self) -> Result<RcuScope<'_>, Error> {
+        self.ensure(&self.runtime)?;
+        let raw = native::rcu_scope_begin(self.raw)?;
+        Ok(RcuScope {
+            _worker: self,
+            raw: Some(raw),
+            not_send_sync: PhantomData,
+        })
+    }
+
     #[inline]
     pub fn quiesce(&self) -> Result<(), Error> {
         self.ensure(&self.runtime)?;
@@ -358,6 +415,61 @@ impl Drop for Worker {
     fn drop(&mut self) {
         let mut attached = recover_lock(&self.runtime.attached);
         attached.remove(&self.owner);
+    }
+}
+
+/// A worker-affine native RCU region spanning ordinary Masstree operations.
+///
+/// The borrowed [`Worker`] makes this guard neither sendable nor shareable.
+/// Native cleanup runs during ordinary return and Rust unwinding. Keep it
+/// synchronous and short; do not retain it across blocking work, I/O,
+/// `.await`, or unrelated native calls. The guard supplies memory-lifetime
+/// protection only: it is not a transaction, snapshot, or structural lock.
+///
+/// ```compile_fail
+/// fn require_send<T: Send>() {}
+/// require_send::<masstree::RcuScope<'static>>();
+/// ```
+///
+/// ```compile_fail
+/// fn require_sync<T: Sync>() {}
+/// require_sync::<masstree::RcuScope<'static>>();
+/// ```
+#[must_use = "dropping the RCU scope immediately provides no amortization"]
+pub struct RcuScope<'worker> {
+    _worker: &'worker Worker,
+    raw: Option<native::RcuScopeHandle>,
+    not_send_sync: PhantomData<Rc<()>>,
+}
+
+impl fmt::Debug for RcuScope<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RcuScope")
+            .field("active", &self.raw.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
+impl RcuScope<'_> {
+    /// Ends the native scope and reports any boundary invariant failure.
+    pub fn close(mut self) -> Result<(), Error> {
+        self.end()
+    }
+
+    fn end(&mut self) -> Result<(), Error> {
+        let Some(raw) = self.raw.as_mut() else {
+            return Ok(());
+        };
+        native::rcu_scope_end(raw)?;
+        self.raw = None;
+        Ok(())
+    }
+}
+
+impl Drop for RcuScope<'_> {
+    fn drop(&mut self) {
+        let _ = self.end();
     }
 }
 
@@ -470,6 +582,64 @@ impl Tree {
         native::get_or_insert(self.inner.raw, worker.raw, key, candidate)
     }
 
+    /// Resolves or publishes a strided array of equally sized binary keys.
+    ///
+    /// The native call preserves input order and owns one structural-writer
+    /// admission plus one RCU region for the complete nonempty batch. This is
+    /// intentionally a narrow trusted bridge for Rust-owned slices: candidates
+    /// must be pairwise distinct, the two slice lengths must match, and
+    /// `KEY_LENGTH` may not exceed either `KEY_STRIDE` or the negotiated key
+    /// limit. Duplicate keys are allowed and therefore observe earlier
+    /// publications in the same call.
+    ///
+    /// On a native error `results` still contains one validated publication
+    /// classification per candidate. If safe preflight or output allocation
+    /// fails, `results` is empty and no candidate reached native code.
+    pub fn get_or_insert_fixed_strided<const KEY_LENGTH: usize, const KEY_STRIDE: usize>(
+        &self,
+        worker: &Worker,
+        keys: &[[u8; KEY_STRIDE]],
+        candidates: &[RecordId],
+        results: &mut Vec<FixedInsertResult>,
+    ) -> Result<(), Error> {
+        results.clear();
+        worker.ensure(&self.inner.runtime)?;
+        if KEY_LENGTH > KEY_STRIDE {
+            return Err(Error::InvalidBatch("key length exceeds key stride"));
+        }
+        if KEY_LENGTH > self.inner.runtime.max_key_length {
+            return Err(Error::KeyTooLarge {
+                length: KEY_LENGTH,
+                maximum: self.inner.runtime.max_key_length,
+            });
+        }
+        if keys.len() != candidates.len() {
+            return Err(Error::InvalidBatch(
+                "key and candidate batch lengths differ",
+            ));
+        }
+        for (index, candidate) in candidates.iter().enumerate() {
+            if candidates[..index].contains(candidate) {
+                return Err(Error::InvalidBatch(
+                    "candidate record identities are not distinct",
+                ));
+            }
+        }
+        results
+            .try_reserve_exact(keys.len())
+            .map_err(|_| Error::AllocationLimit {
+                requested: keys.len(),
+            })?;
+        results.resize(keys.len(), FixedInsertResult::default());
+        native::get_or_insert_strided::<KEY_LENGTH, KEY_STRIDE>(
+            self.inner.raw,
+            worker.raw,
+            keys,
+            candidates,
+            results,
+        )
+    }
+
     /// Copies one weakly consistent, key-ordered directory chunk.
     ///
     /// All returned keys are Rust-owned. The native RCU scope ends before this
@@ -481,21 +651,140 @@ impl Tree {
         worker: &Worker,
         request: ScanRequest<'_>,
     ) -> Result<ScanChunk, Error> {
+        self.scan_packed_chunk(worker, request)?.try_into_owned()
+    }
+
+    /// Copies one weakly consistent, key-ordered directory chunk into a
+    /// packed key arena.
+    ///
+    /// Unlike [`Self::scan_chunk`], this representation does not allocate a
+    /// separate box for every key. Entry and continuation keys borrow the
+    /// chunk's single arena while they are inspected. The native RCU scope
+    /// still ends before this method returns; logical range validation remains
+    /// the transactional caller's responsibility.
+    pub fn scan_packed_chunk(
+        &self,
+        worker: &Worker,
+        request: ScanRequest<'_>,
+    ) -> Result<PackedScanChunk, Error> {
         worker.ensure(&self.inner.runtime)?;
         self.check_bound(request.lower)?;
         self.check_bound(request.upper)?;
-        let chunk = native::scan(self.inner.raw, worker.raw, request)?;
-        if chunk.next_key_bytes_required > self.inner.runtime.max_key_length
-            || chunk
-                .entries
-                .iter()
-                .any(|entry| entry.key.len() > self.inner.runtime.max_key_length)
-        {
-            return Err(Error::AbiMismatch(
-                "scan returned a key above the negotiated maximum",
-            ));
+        native::scan(
+            self.inner.raw,
+            worker.raw,
+            request,
+            self.inner.runtime.max_key_length,
+        )
+    }
+
+    /// Copies one packed directory chunk into caller-owned reusable storage.
+    ///
+    /// The first call grows `scratch` to the requested entry and key-arena
+    /// capacities. Later calls at the same or smaller capacities neither
+    /// allocate nor clear those buffers. The returned view borrows `scratch`,
+    /// so it must be consumed before the next reuse.
+    pub fn scan_packed_chunk_reusing<'scratch>(
+        &self,
+        worker: &Worker,
+        request: ScanRequest<'_>,
+        scratch: &'scratch mut PackedScanScratch,
+    ) -> Result<PackedScanChunkRef<'scratch>, Error> {
+        worker.ensure(&self.inner.runtime)?;
+        self.check_bound(request.lower)?;
+        self.check_bound(request.upper)?;
+        native::scan_reusing(
+            self.inner.raw,
+            worker.raw,
+            request,
+            self.inner.runtime.max_key_length,
+            scratch,
+        )
+    }
+
+    /// Copies one packed directory chunk while trusting native key semantics.
+    ///
+    /// The decoder still validates all storage counts and slice offsets and
+    /// lengths before it constructs a borrowed Rust view. It omits the second
+    /// key-order and range-membership walk used by
+    /// [`Self::scan_packed_chunk_reusing`].
+    ///
+    /// # Safety
+    ///
+    /// The caller must exclusively own every access path to this tree and
+    /// preserve the native scan contract: successful results contain only
+    /// keys within `request`, in strict directional order, and no returned key
+    /// exceeds the runtime's negotiated maximum length.
+    #[allow(
+        unsafe_code,
+        reason = "the private-tree caller opts into native scan semantics"
+    )]
+    #[doc(hidden)]
+    pub unsafe fn scan_packed_chunk_reusing_trusted<'scratch>(
+        &self,
+        worker: &Worker,
+        request: ScanRequest<'_>,
+        scratch: &'scratch mut PackedScanScratch,
+    ) -> Result<PackedScanChunkRef<'scratch>, Error> {
+        worker.ensure(&self.inner.runtime)?;
+        self.check_bound(request.lower)?;
+        self.check_bound(request.upper)?;
+        // SAFETY: This method exposes the native semantic preconditions to its
+        // caller. The decoder itself still proves every Rust memory-safety
+        // condition before returning a view.
+        unsafe {
+            native::scan_reusing_trusted(
+                self.inner.raw,
+                worker.raw,
+                request,
+                self.inner.runtime.max_key_length,
+                scratch,
+            )
         }
-        Ok(chunk)
+    }
+
+    /// Returns a lower-inclusive, upper-exclusive forward chunk of RecordIds.
+    ///
+    /// The native callback copies no emitted key or packed entry metadata. If
+    /// the chunk fills, it copies only the first omitted key for continuation.
+    ///
+    /// # Safety
+    ///
+    /// The caller must exclusively own every access path to this tree and
+    /// preserve the native bounded forward-scan contract. Successful IDs must
+    /// be nonzero and emitted in strict key order within `[lower, upper)`.
+    #[allow(
+        unsafe_code,
+        reason = "the private-tree caller opts into native bounded scan semantics"
+    )]
+    #[doc(hidden)]
+    pub unsafe fn scan_record_ids_bounded_reusing_trusted<'scratch>(
+        &self,
+        worker: &Worker,
+        lower: &[u8],
+        upper: &[u8],
+        entry_capacity: usize,
+        continuation_capacity: usize,
+        scratch: &'scratch mut PackedScanScratch,
+    ) -> Result<BoundedRecordIdScanChunkRef<'scratch>, Error> {
+        worker.ensure(&self.inner.runtime)?;
+        self.check_bound(KeyBound::Included(lower))?;
+        self.check_bound(KeyBound::Excluded(upper))?;
+        // SAFETY: This method exposes the native ordering, bounds, and private
+        // ownership preconditions to its caller. The decoder validates every
+        // count, token, and borrowed slice before returning.
+        unsafe {
+            native::scan_record_ids_bounded_reusing_trusted(
+                self.inner.raw,
+                worker.raw,
+                lower,
+                upper,
+                entry_capacity,
+                continuation_capacity,
+                self.inner.runtime.max_key_length,
+                scratch,
+            )
+        }
     }
 
     #[inline]
@@ -718,6 +1007,71 @@ pub struct ScanEntry {
     record_id: RecordId,
 }
 
+/// One borrowed entry in a [`PackedScanChunk`].
+///
+/// The key points into the chunk's single owned arena; copying or allocating
+/// it is unnecessary when the caller can consume the entry synchronously.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PackedScanEntry<'chunk> {
+    key: &'chunk [u8],
+    record_id: RecordId,
+}
+
+impl<'chunk> PackedScanEntry<'chunk> {
+    pub const fn key(self) -> &'chunk [u8] {
+        self.key
+    }
+
+    pub const fn record_id(self) -> RecordId {
+        self.record_id
+    }
+}
+
+/// Borrowing iterator over the metadata and shared key arena of a packed scan.
+#[derive(Clone, Debug)]
+pub struct PackedScanEntries<'chunk> {
+    entries: std::slice::Iter<'chunk, mtree_sys::ScanEntry>,
+    key_arena: &'chunk [u8],
+}
+
+impl<'chunk> Iterator for PackedScanEntries<'chunk> {
+    type Item = PackedScanEntry<'chunk>;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        self.entries.next().map(|entry| {
+            let end = entry.key_offset + entry.key_length;
+            PackedScanEntry {
+                key: &self.key_arena[entry.key_offset..end],
+                record_id: RecordId::new(entry.record_id)
+                    .expect("packed scan metadata was validated at construction"),
+            }
+        })
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.entries.size_hint()
+    }
+}
+
+impl DoubleEndedIterator for PackedScanEntries<'_> {
+    #[inline]
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.entries.next_back().map(|entry| {
+            let end = entry.key_offset + entry.key_length;
+            PackedScanEntry {
+                key: &self.key_arena[entry.key_offset..end],
+                record_id: RecordId::new(entry.record_id)
+                    .expect("packed scan metadata was validated at construction"),
+            }
+        })
+    }
+}
+
+impl ExactSizeIterator for PackedScanEntries<'_> {}
+impl std::iter::FusedIterator for PackedScanEntries<'_> {}
+
 impl ScanEntry {
     pub fn key(&self) -> &[u8] {
         &self.key
@@ -745,6 +1099,256 @@ pub enum ScanResume {
     UnchangedInput,
     /// Continue exclusively after (forward) or before (reverse) this key.
     Exclusive(Box<[u8]>),
+}
+
+/// Borrowed continuation metadata for a [`PackedScanChunk`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PackedScanResume<'chunk> {
+    /// The range is exhausted.
+    None,
+    /// No entry fit; grow the limiting buffer and retry the identical request.
+    UnchangedInput,
+    /// Continue exclusively after (forward) or before (reverse) this key.
+    Exclusive(&'chunk [u8]),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PackedScanResumeMetadata {
+    None,
+    UnchangedInput,
+    Exclusive { offset: usize, length: usize },
+}
+
+/// Reusable caller-owned storage for packed native scans.
+///
+/// Storage grows on demand and is retained until this value is dropped. It is
+/// deliberately opaque: only the packed scan methods on [`Tree`] may populate
+/// it, and their validated result borrows it for the duration of inspection.
+#[derive(Debug, Default)]
+pub struct PackedScanScratch {
+    pub(crate) entries: Vec<mtree_sys::ScanEntry>,
+    pub(crate) key_arena: Vec<u8>,
+    pub(crate) record_ids: Vec<mtree_sys::RecordId>,
+    pub(crate) continuation_key: Vec<u8>,
+}
+
+impl PackedScanScratch {
+    /// Number of entry descriptors currently retained for reuse.
+    pub const fn entry_capacity(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Number of key-arena bytes currently retained for reuse.
+    pub const fn key_arena_capacity(&self) -> usize {
+        self.key_arena.len()
+    }
+}
+
+/// Continuation state for the private bounded RecordId scan.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BoundedRecordIdScanResume<'chunk> {
+    None,
+    UnchangedInput,
+    InclusiveNext(&'chunk [u8]),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum BoundedRecordIdScanResumeMetadata {
+    None,
+    UnchangedInput,
+    InclusiveNext,
+}
+
+/// One private native scan chunk containing IDs and no copied row keys.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug)]
+pub struct BoundedRecordIdScanChunkRef<'scratch> {
+    pub(crate) record_ids: &'scratch [mtree_sys::RecordId],
+    pub(crate) continuation_key: &'scratch [u8],
+    pub(crate) stop_reason: ScanStopReason,
+    pub(crate) resume: BoundedRecordIdScanResumeMetadata,
+    pub(crate) next_key_bytes_required: usize,
+}
+
+impl<'scratch> BoundedRecordIdScanChunkRef<'scratch> {
+    #[inline]
+    pub fn record_ids(self) -> impl ExactSizeIterator<Item = RecordId> + 'scratch {
+        self.record_ids.iter().copied().map(|record_id| {
+            RecordId::new(record_id).expect("bounded RecordId scan validated every token")
+        })
+    }
+
+    pub const fn len(self) -> usize {
+        self.record_ids.len()
+    }
+
+    pub const fn is_empty(self) -> bool {
+        self.record_ids.is_empty()
+    }
+
+    pub const fn stop_reason(self) -> ScanStopReason {
+        self.stop_reason
+    }
+
+    pub const fn resume(self) -> BoundedRecordIdScanResume<'scratch> {
+        match self.resume {
+            BoundedRecordIdScanResumeMetadata::None => BoundedRecordIdScanResume::None,
+            BoundedRecordIdScanResumeMetadata::UnchangedInput => {
+                BoundedRecordIdScanResume::UnchangedInput
+            }
+            BoundedRecordIdScanResumeMetadata::InclusiveNext => {
+                BoundedRecordIdScanResume::InclusiveNext(self.continuation_key)
+            }
+        }
+    }
+
+    pub const fn next_key_bytes_required(self) -> usize {
+        self.next_key_bytes_required
+    }
+}
+
+/// One validated packed directory chunk borrowing caller-owned scan scratch.
+#[derive(Clone, Copy, Debug)]
+pub struct PackedScanChunkRef<'scratch> {
+    pub(crate) entries: &'scratch [mtree_sys::ScanEntry],
+    pub(crate) key_arena: &'scratch [u8],
+    pub(crate) stop_reason: ScanStopReason,
+    pub(crate) resume: PackedScanResumeMetadata,
+    pub(crate) next_key_bytes_required: usize,
+}
+
+impl<'scratch> PackedScanChunkRef<'scratch> {
+    #[inline]
+    pub fn entries(self) -> PackedScanEntries<'scratch> {
+        PackedScanEntries {
+            entries: self.entries.iter(),
+            key_arena: self.key_arena,
+        }
+    }
+
+    pub const fn len(self) -> usize {
+        self.entries.len()
+    }
+
+    pub const fn is_empty(self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub const fn stop_reason(self) -> ScanStopReason {
+        self.stop_reason
+    }
+
+    pub fn resume(self) -> PackedScanResume<'scratch> {
+        match self.resume {
+            PackedScanResumeMetadata::None => PackedScanResume::None,
+            PackedScanResumeMetadata::UnchangedInput => PackedScanResume::UnchangedInput,
+            PackedScanResumeMetadata::Exclusive { offset, length } => {
+                PackedScanResume::Exclusive(&self.key_arena[offset..offset + length])
+            }
+        }
+    }
+
+    pub const fn next_key_bytes_required(self) -> usize {
+        self.next_key_bytes_required
+    }
+}
+
+/// One fully owned, validated directory chunk using a single packed key arena.
+///
+/// Each entry occupies only its offset, length, and immutable record ID in the
+/// metadata vector. Use [`Self::entries`] and [`Self::resume`] to borrow keys
+/// without allocating one object per result.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PackedScanChunk {
+    pub(crate) entries: Vec<mtree_sys::ScanEntry>,
+    pub(crate) key_arena: Vec<u8>,
+    pub(crate) stop_reason: ScanStopReason,
+    pub(crate) resume: PackedScanResumeMetadata,
+    pub(crate) next_key_bytes_required: usize,
+}
+
+impl PackedScanChunk {
+    #[inline]
+    pub fn entries(&self) -> PackedScanEntries<'_> {
+        PackedScanEntries {
+            entries: self.entries.iter(),
+            key_arena: &self.key_arena,
+        }
+    }
+
+    pub const fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub const fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub const fn stop_reason(&self) -> ScanStopReason {
+        self.stop_reason
+    }
+
+    pub fn resume(&self) -> PackedScanResume<'_> {
+        match self.resume {
+            PackedScanResumeMetadata::None => PackedScanResume::None,
+            PackedScanResumeMetadata::UnchangedInput => PackedScanResume::UnchangedInput,
+            PackedScanResumeMetadata::Exclusive { offset, length } => {
+                PackedScanResume::Exclusive(&self.key_arena[offset..offset + length])
+            }
+        }
+    }
+
+    pub const fn next_key_bytes_required(&self) -> usize {
+        self.next_key_bytes_required
+    }
+
+    /// Converts to the compatibility representation with one allocation per
+    /// key. Prefer consuming the packed iterator directly on hot paths.
+    pub fn try_into_owned(self) -> Result<ScanChunk, Error> {
+        let Self {
+            entries: packed_entries,
+            key_arena,
+            stop_reason,
+            resume,
+            next_key_bytes_required,
+        } = self;
+        let mut entries = Vec::new();
+        entries
+            .try_reserve_exact(packed_entries.len())
+            .map_err(|_| Error::AllocationLimit {
+                requested: packed_entries.len(),
+            })?;
+        for packed in packed_entries {
+            let end = packed.key_offset + packed.key_length;
+            let key = &key_arena[packed.key_offset..end];
+            let mut owned = Vec::new();
+            owned
+                .try_reserve_exact(key.len())
+                .map_err(|_| Error::AllocationLimit {
+                    requested: key.len(),
+                })?;
+            owned.extend_from_slice(key);
+            entries.push(ScanEntry {
+                key: owned.into_boxed_slice(),
+                record_id: RecordId::new(packed.record_id)
+                    .expect("packed scan metadata was validated at construction"),
+            });
+        }
+        let resume = match resume {
+            PackedScanResumeMetadata::None => ScanResume::None,
+            PackedScanResumeMetadata::UnchangedInput => ScanResume::UnchangedInput,
+            PackedScanResumeMetadata::Exclusive { offset, length } => {
+                ScanResume::Exclusive(key_arena[offset..offset + length].into())
+            }
+        };
+        Ok(ScanChunk {
+            entries,
+            stop_reason,
+            resume,
+            next_key_bytes_required,
+        })
+    }
 }
 
 /// One fully owned, validated directory chunk.
@@ -858,6 +1462,43 @@ mod tests {
     }
 
     #[test]
+    fn fixed_insert_result_matches_native_layout_and_rejects_hostile_fields() {
+        assert_eq!(
+            std::mem::size_of::<FixedInsertResult>(),
+            std::mem::size_of::<mtree_sys::GetOrInsertResult>()
+        );
+        assert_eq!(
+            std::mem::align_of::<FixedInsertResult>(),
+            std::mem::align_of::<mtree_sys::GetOrInsertResult>()
+        );
+        let candidate = RecordId::new(7).unwrap();
+        assert_eq!(
+            FixedInsertResult::default()
+                .classification(candidate)
+                .unwrap(),
+            (PublicationDisposition::FailureBeforePublication, None)
+        );
+        let malformed = FixedInsertResult {
+            winner: candidate.get(),
+            publication: mtree_sys::PUBLICATION_CANDIDATE_INSERTED,
+            inserted: 0,
+            reserved: [0; 3],
+        };
+        assert_eq!(
+            malformed.classification(candidate),
+            Err(Error::InvalidPublication)
+        );
+        let malformed = FixedInsertResult {
+            reserved: [1, 0, 0],
+            ..FixedInsertResult::default()
+        };
+        assert_eq!(
+            malformed.classification(candidate),
+            Err(Error::InvalidPublication)
+        );
+    }
+
+    #[test]
     fn every_known_native_status_is_classified_without_boolean_loss() {
         for raw in 1..=17 {
             assert!(!matches!(
@@ -894,6 +1535,48 @@ mod tests {
     }
 
     #[test]
+    fn packed_scan_borrows_binary_keys_and_converts_to_owned_compatibility() {
+        let chunk = PackedScanChunk {
+            entries: vec![
+                mtree_sys::ScanEntry {
+                    key_offset: 0,
+                    key_length: 0,
+                    record_id: 7,
+                },
+                mtree_sys::ScanEntry {
+                    key_offset: 0,
+                    key_length: 3,
+                    record_id: 8,
+                },
+            ],
+            key_arena: vec![0, 0xff, b'k'],
+            stop_reason: ScanStopReason::EntryCapacity,
+            resume: PackedScanResumeMetadata::Exclusive {
+                offset: 0,
+                length: 3,
+            },
+            next_key_bytes_required: 5,
+        };
+
+        let entries: Vec<_> = chunk.entries().collect();
+        assert_eq!(entries[0].key(), b"");
+        assert_eq!(entries[0].record_id().get(), 7);
+        assert_eq!(entries[1].key(), &[0, 0xff, b'k']);
+        assert_eq!(
+            chunk.resume(),
+            PackedScanResume::Exclusive(&[0, 0xff, b'k'])
+        );
+
+        let owned = chunk.try_into_owned().unwrap();
+        assert_eq!(owned.entries()[0].key(), b"");
+        assert_eq!(owned.entries()[1].key(), &[0, 0xff, b'k']);
+        assert_eq!(
+            owned.resume(),
+            &ScanResume::Exclusive(Box::from(&[0, 0xff, b'k'][..]))
+        );
+    }
+
+    #[test]
     fn shareable_facades_are_send_sync_without_unsafe_impls() {
         fn assert_send_sync<T: Send + Sync>() {}
 
@@ -901,5 +1584,9 @@ mod tests {
         assert_send_sync::<Tree>();
         assert_send_sync::<ScanEntry>();
         assert_send_sync::<ScanChunk>();
+        assert_send_sync::<PackedScanChunk>();
+        assert_send_sync::<PackedScanScratch>();
+        assert_send_sync::<PackedScanEntry<'static>>();
+        assert_send_sync::<PackedScanEntries<'static>>();
     }
 }

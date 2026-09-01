@@ -95,6 +95,7 @@ impl From<RegistrationError> for FixedU64CreateError {
 pub struct FixedU64Batch {
     directory_results: Vec<DirectoryPointReadResult>,
     record_ids: Vec<RecordId>,
+    item_order: Vec<usize>,
 }
 
 impl FixedU64Batch {
@@ -103,6 +104,7 @@ impl FixedU64Batch {
         Self {
             directory_results: Vec::new(),
             record_ids: Vec::new(),
+            item_order: Vec::new(),
         }
     }
 
@@ -111,6 +113,7 @@ impl FixedU64Batch {
         Self {
             directory_results: Vec::with_capacity(capacity),
             record_ids: Vec::with_capacity(capacity),
+            item_order: Vec::with_capacity(capacity),
         }
     }
 
@@ -119,19 +122,25 @@ impl FixedU64Batch {
         self.directory_results
             .capacity()
             .min(self.record_ids.capacity())
+            .min(self.item_order.capacity())
     }
 
     /// Clears live scratch while retaining its allocations.
     pub fn clear(&mut self) {
         self.directory_results.clear();
         self.record_ids.clear();
+        self.item_order.clear();
     }
 
     fn prepare(&mut self, length: usize) -> Result<(), AccessError> {
         // Tree::get_fixed overwrites/resizes every result slot. Retain its
         // previous length so a same-sized call avoids redundant zero-filling.
         self.record_ids.clear();
+        self.item_order.clear();
         self.record_ids
+            .try_reserve_exact(length)
+            .map_err(|_| CapacityError::BufferLimit)?;
+        self.item_order
             .try_reserve_exact(length)
             .map_err(|_| CapacityError::BufferLimit)?;
         Ok(())
@@ -273,6 +282,7 @@ impl FixedU64Table {
             if !self.resolve_fixed_ids(worker, keys, batch)? {
                 return Ok(false);
             }
+            self.prove_unique_record_ids(keys, &batch.record_ids, &mut batch.item_order)?;
             self.prefetch_resolved_records(&batch.record_ids)?;
             Ok(true)
         })();
@@ -355,7 +365,9 @@ impl FixedU64Table {
                 batch.clear();
                 return Ok(None);
             }
-            let Some(unique) = UniqueItemKeys::try_new(&batch.record_ids) else {
+            let Some(unique) =
+                self.prove_unique_record_ids(keys, &batch.record_ids, &mut batch.item_order)?
+            else {
                 batch.clear();
                 return Ok(None);
             };
@@ -413,7 +425,6 @@ impl FixedU64Table {
             };
             batch.record_ids.push(record_id);
         }
-        self.verify_directory_aliases(keys, &batch.record_ids)?;
         Ok(true)
     }
 
@@ -434,7 +445,6 @@ impl FixedU64Table {
             };
             batch.record_ids.push(record_id);
         }
-        self.verify_directory_aliases(keys, &batch.record_ids)?;
         Ok(true)
     }
 
@@ -447,28 +457,35 @@ impl FixedU64Table {
         Ok(())
     }
 
-    fn verify_directory_aliases<const KEY_LENGTH: usize>(
+    fn prove_unique_record_ids<'ids, const KEY_LENGTH: usize>(
         &self,
         keys: &[[u8; KEY_LENGTH]],
-        record_ids: &[RecordId],
-    ) -> Result<(), AccessError> {
-        let mut fingerprints = 0_u64;
-        for (index, record_id) in record_ids.iter().enumerate() {
-            let record_id = *record_id;
-            let fingerprint = 1_u64 << ((record_id.get() - 1) & 63);
-            if fingerprints & fingerprint != 0 {
-                for prior in 0..index {
-                    if record_ids[prior] == record_id && keys[prior] != keys[index] {
-                        self.shared().poison();
-                        return Err(table_fault(
-                            "distinct fixed-u64 directory keys resolved to one record ID",
-                        ));
-                    }
-                }
-            }
-            fingerprints |= fingerprint;
+        record_ids: &'ids [RecordId],
+        item_order: &mut Vec<usize>,
+    ) -> Result<Option<UniqueItemKeys<'ids, RecordId>>, AccessError> {
+        debug_assert_eq!(keys.len(), record_ids.len());
+        let indexed = record_ids.len() > super::SMALL_UNIQUE_KEY_BATCH;
+        let unique = super::prove_unique_keys(record_ids, item_order)?;
+        if unique.is_some() {
+            return Ok(unique);
         }
-        Ok(())
+
+        if !indexed {
+            item_order.clear();
+            item_order.extend(0..record_ids.len());
+            item_order.sort_unstable_by_key(|&index| record_ids[index]);
+        }
+        for adjacent in item_order.windows(2) {
+            let prior = adjacent[0];
+            let current = adjacent[1];
+            if record_ids[prior] == record_ids[current] && keys[prior] != keys[current] {
+                self.shared().poison();
+                return Err(table_fault(
+                    "distinct fixed-u64 directory keys resolved to one record ID",
+                ));
+            }
+        }
+        Ok(None)
     }
 
     fn shared(&self) -> &Arc<FixedShared> {
@@ -1411,21 +1428,25 @@ mod tests {
     use crate::MemoryDirectory;
 
     fn table() -> (Arc<Runtime>, FixedU64Table) {
+        table_with_capacity(16)
+    }
+
+    fn table_with_capacity(maximum: usize) -> (Arc<Runtime>, FixedU64Table) {
         let runtime = Runtime::new(
             RuntimeConfig::new()
-                .with_max_items_per_transaction(16)
-                .with_max_locks_per_transaction(16),
+                .with_max_items_per_transaction(maximum)
+                .with_max_locks_per_transaction(maximum),
         )
         .unwrap();
         let table = FixedU64Table::with_directory(
             &runtime,
             Directory::Memory(MemoryDirectory::default()),
             TableConfig::new()
-                .with_max_retained_records(16)
-                .with_max_retained_key_bytes(128)
-                .with_max_consumed_record_ids(16)
+                .with_max_retained_records(maximum as u64)
+                .with_max_retained_key_bytes((maximum * 8) as u64)
+                .with_max_consumed_record_ids(maximum as u64)
                 .with_registry_layout(RegistryLayout::EagerContiguous {
-                    max_bytes: 64 * 1024,
+                    max_bytes: maximum * 4 * 1024,
                 }),
         )
         .unwrap();
@@ -1440,7 +1461,7 @@ mod tests {
     fn hot_record_and_batch_layout_are_pinned() {
         assert_eq!(std::mem::size_of::<FixedRecord>(), 16);
         assert_eq!(std::mem::align_of::<FixedRecord>(), 8);
-        assert_eq!(std::mem::size_of::<FixedU64Batch>(), 48);
+        assert_eq!(std::mem::size_of::<FixedU64Batch>(), 72);
         assert_eq!(
             std::mem::size_of::<Option<<FixedAdapter as TransactionalResource>::Intent>>(),
             1
@@ -1507,6 +1528,83 @@ mod tests {
         committed(transaction.commit().unwrap());
         assert_eq!(values, [8, 9]);
         assert_eq!(runtime.health(), RuntimeHealth::Healthy);
+    }
+
+    #[test]
+    fn large_fixed_u64_batches_reuse_indexed_uniqueness_scratch() {
+        const KEY_COUNT: usize = 96;
+        let (runtime, table) = table_with_capacity(KEY_COUNT);
+        let mut keys: Vec<[u8; 8]> = (0..KEY_COUNT as u64)
+            .map(|value| (value + 1).to_be_bytes())
+            .collect();
+        for (index, key) in keys.iter().enumerate() {
+            table
+                .shared()
+                .insert_initial(None, key, index as u64)
+                .unwrap();
+        }
+        table.finish_initial_load().unwrap();
+
+        let mut worker = runtime.attach().unwrap();
+        let mut batch = FixedU64Batch::with_capacity(KEY_COUNT + 1);
+        let item_order_allocation = batch.item_order.as_ptr();
+        let retained_capacity = batch.capacity();
+        let mut calls = 0;
+        let mut transaction = worker.begin().unwrap();
+        assert_eq!(
+            table
+                .modify_fixed_inner(&mut transaction, None, &keys, &mut batch, |index, value| {
+                    calls += 1;
+                    assert_eq!(value, index as u64);
+                    FixedU64Mutation::Keep
+                },)
+                .unwrap(),
+            Some(KEY_COUNT)
+        );
+        assert_eq!(calls, KEY_COUNT);
+        assert_eq!(batch.item_order.as_ptr(), item_order_allocation);
+        assert_eq!(batch.capacity(), retained_capacity);
+        committed(transaction.commit().unwrap());
+
+        keys.reverse();
+        let mut visited = 0;
+        {
+            let transaction = worker.begin_terminal_read_batch().unwrap();
+            match table
+                .visit_fixed_terminal_inner(transaction, None, &keys, &mut batch, |index, value| {
+                    visited += 1;
+                    assert_eq!(value, u64::from_be_bytes(keys[index]) - 1);
+                })
+                .unwrap()
+            {
+                TerminalReadVisitOutcome::Ready { transaction, .. } => {
+                    committed(transaction.commit().unwrap());
+                }
+                TerminalReadVisitOutcome::RetryOrdinary => {
+                    panic!("every preloaded record must remain present");
+                }
+            }
+        }
+        assert_eq!(visited, KEY_COUNT);
+        assert_eq!(batch.item_order.as_ptr(), item_order_allocation);
+        assert_eq!(batch.capacity(), retained_capacity);
+
+        keys.push(keys[0]);
+        let mut duplicate_calls = 0;
+        let mut transaction = worker.begin().unwrap();
+        assert_eq!(
+            table
+                .modify_fixed_inner(&mut transaction, None, &keys, &mut batch, |_, _| {
+                    duplicate_calls += 1;
+                    FixedU64Mutation::Keep
+                },)
+                .unwrap(),
+            None
+        );
+        assert_eq!(duplicate_calls, 0);
+        assert_eq!(batch.item_order.as_ptr(), item_order_allocation);
+        assert_eq!(batch.capacity(), retained_capacity);
+        committed(transaction.commit().unwrap());
     }
 
     #[test]

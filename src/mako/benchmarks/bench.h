@@ -323,10 +323,13 @@ public:
       const char *keyp, size_t keylen,
       const std::string &value)
   {
-    INVARIANT(limit == -1 || n < size_t(limit));
-    k->assign(keyp, keylen);
-    ++n;
-    return (limit == -1) || (n < size_t(limit));
+    return invoke_key(keyp, keylen);
+  }
+
+  bool invoke_bytes(const char *keyp, size_t keylen, const char *,
+                    size_t) override
+  {
+    return invoke_key(keyp, keylen);
   }
 
   inline size_t size() const { return n; }
@@ -338,6 +341,14 @@ public:
   }
 
 private:
+  bool invoke_key(const char *keyp, size_t keylen)
+  {
+    INVARIANT(limit == -1 || n < size_t(limit));
+    k->assign(keyp, keylen);
+    ++n;
+    return (limit == -1) || (n < size_t(limit));
+  }
+
   ssize_t limit;
   size_t n;
   std::string *k;
@@ -363,24 +374,13 @@ public:
       const char *keyp, size_t keylen,
       const std::string &value)
   {
-    INVARIANT(n < N);
-    INVARIANT(arena);
+    return invoke_value(keyp, keylen, value.data(), value.size());
+  }
 
-    // Copy values into the arena so callback consumers never hold references
-    // to transient strings owned by lower-level scan implementations.
-    std::string *const v_px = arena->next();
-    INVARIANT(v_px && v_px->empty());
-    v_px->assign(value);
-
-    if (ignore_key) {
-      values.emplace_back(nullptr, v_px);
-    } else {
-      std::string * const s_px = arena->next();
-      INVARIANT(s_px && s_px->empty());
-      s_px->assign(keyp, keylen);
-      values.emplace_back(s_px, v_px);
-    }
-    return ++n < N;
+  bool invoke_bytes(const char *keyp, size_t keylen, const char *valuep,
+                    size_t valuelen) override
+  {
+    return invoke_value(keyp, keylen, valuep, valuelen);
   }
 
   inline size_t
@@ -395,6 +395,32 @@ public:
   typename util::vec<kv_pair, N>::type values;
 
 private:
+  bool invoke_value(const char *keyp, size_t keylen, const char *valuep,
+                    size_t valuelen)
+  {
+    INVARIANT(n < N);
+    INVARIANT(arena);
+
+    // Copy values into the arena so callback consumers never hold references
+    // to transient strings owned by lower-level scan implementations.
+    std::string *const v_px = arena->next();
+    INVARIANT(v_px && v_px->empty());
+    if (valuelen == 0)
+      v_px->clear();
+    else
+      v_px->assign(valuep, valuelen);
+
+    if (ignore_key) {
+      values.emplace_back(nullptr, v_px);
+    } else {
+      std::string * const s_px = arena->next();
+      INVARIANT(s_px && s_px->empty());
+      s_px->assign(keyp, keylen);
+      values.emplace_back(s_px, v_px);
+    }
+    return ++n < N;
+  }
+
   size_t n;
   str_arena *arena;
   bool ignore_key;

@@ -8,6 +8,7 @@
 //! C++.
 
 pub mod adapter;
+pub mod direct_commit;
 pub mod error;
 pub mod hook;
 pub mod identity;
@@ -29,14 +30,21 @@ pub use adapter::{
     PreflightItem, ResourceKey, TerminalReadBatchCapability, TerminalReadBatchValidate,
     TransactionalResource,
 };
+pub use direct_commit::{
+    BorrowedDirectPrepare, BorrowedInjectiveLockCommitCapability, BorrowedLockToken,
+    BorrowedTokenPrepare, BorrowedUniqueLockCommitCapability, DirectBorrowedLockTarget,
+    DirectCommitCapability, DirectInstall, DirectInstallContext, DirectLockMut, DirectLockRef,
+    DirectPrepare, DirectTokenLock, DirectValidate, DirectValidationContext, DirectValidationItem,
+    UniqueLockCommitCapability,
+};
 pub use error::*;
 pub use hook::{CommitHook, CommitHookError};
 pub use identity::*;
 pub use item::Entry;
 pub use lock::{
-    AcquireContext, ExecutionCheckContext, FinishContext, InstallContext, LockDisposition,
-    LockRequest, LockUse, PredicateContext, PreflightContext, PreflightFreeValidationContext,
-    ReleaseContext, TransactionLock, ValidationContext,
+    AcquireContext, ErasedLockUse, ExecutionCheckContext, FinishContext, InstallContext,
+    LockDisposition, LockRequest, LockUse, PredicateContext, PreflightContext,
+    PreflightFreeValidationContext, ReleaseContext, TransactionLock, ValidationContext,
 };
 pub use runtime::{
     IsolationMode, ObjectRegistration, RegisteredResource, Runtime, RuntimeConfig, RuntimeHealth,
@@ -44,8 +52,8 @@ pub use runtime::{
 };
 pub use terminal_read::TerminalReadEntry;
 pub use transaction::{
-    Active, ResolvedItemSession, TerminalReadOpen, TerminalReadReady, TerminalReadTransaction,
-    Transaction, UniqueItemKeys,
+    Active, ItemBatchControl, ItemBatchOutcome, ResolvedItemSession, TerminalReadOpen,
+    TerminalReadReady, TerminalReadTransaction, Transaction, UniqueItemKeyIndex, UniqueItemKeys,
 };
 pub use txn_array::{ArrayBoundsError, TxnArray};
 pub use txn_cell::{TxnCell, VersionLock};

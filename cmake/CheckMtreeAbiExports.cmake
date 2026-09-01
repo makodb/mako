@@ -62,6 +62,8 @@ set(_expected
     mt_read_scope_get
     mt_read_scope_get_strided
     mt_read_scope_size
+    mt_rcu_scope_begin
+    mt_rcu_scope_end
     mt_runtime_acquire
     mt_runtime_config_alignment
     mt_runtime_config_init
@@ -103,9 +105,9 @@ if(_missing OR _unexpected)
 endif()
 
 list(LENGTH _actual _actual_count)
-if(NOT _actual_count EQUAL 41)
+if(NOT _actual_count EQUAL 43)
     message(FATAL_ERROR
-        "Masstree ABI must export exactly 41 mt_* symbols, found ${_actual_count}")
+        "Masstree ABI must export exactly 43 mt_* symbols, found ${_actual_count}")
 endif()
 message(STATUS
-    "Masstree ABI exports exactly the 41 allowlisted mt_* symbols")
+    "Masstree ABI exports exactly the 43 allowlisted mt_* symbols")

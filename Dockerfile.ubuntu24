@@ -30,7 +30,7 @@ RUN bash /tmp/apt_packages.sh && rm /tmp/apt_packages.sh
 
 # Install Rust toolchain from official static tarballs.
 # This avoids rustup runtime issues seen in some restricted Docker environments.
-ARG RUST_VERSION=1.91.0
+ARG RUST_VERSION=1.95.0
 RUN set -eux; \
     arch="$(dpkg --print-architecture)"; \
     case "${arch}" in \

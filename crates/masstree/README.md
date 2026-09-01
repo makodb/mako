@@ -30,3 +30,39 @@ returns. Its result `Vec` is resized in place and can be reused across calls.
 Use `Tree::read_scope` and `ReadScope::get_fixed` only when several separate
 calls must deliberately share one longer native read scope; ordinary worker
 operations remain blocked until that scope is closed or dropped.
+
+Use `Worker::rcu_scope` for a short transaction-shaped sequence that spans
+multiple trees or includes inserts/scans. It retains only worker-wide native
+RCU lifetime protection; each tree operation keeps its normal structural
+admission but reuses the validated outer RCU region, so the scope is neither a
+snapshot nor a structural lock. Calls outside such a scope retain their local
+native RCU guard. The scope is RAII-owned, worker-affine, and must not cross
+blocking work, I/O, or asynchronous suspension.
+
+Packed range scans have two allocation policies. `Tree::scan_packed_chunk`
+retains the simple owned result, while `Tree::scan_packed_chunk_reusing` fills
+a caller-owned `PackedScanScratch` and returns a validated borrowed chunk. The
+scratch grows its descriptor and key-arena buffers on demand and neither
+allocates nor clears them on later calls at the same or smaller capacities.
+The borrowed keys and resume key must be consumed or copied before reusing the
+scratch. Both APIs have identical bounds, ordering, stop, and resume semantics.
+
+## Hidden native fast lane
+
+The safe facade may call statically linked `mako_mtree_*_trusted` entry points
+while its owned wrappers retain handle lifetime and after it has validated
+runtime/worker pairing, key and enum shape, slice relationships, and output
+capacity. `Worker` is `!Send + !Sync`, so safe Rust statically preserves
+current-thread ownership; the implementation performs a dynamic thread-ID
+assertion only in debug builds. Caller-provided raw storage still has to meet
+the documented lifetime and non-aliasing preconditions. These hidden symbols
+are not part of the versioned public `mt_*` ABI, feature negotiation, or the
+43-symbol export fingerprint. They remain behind the facade and must not be
+called by application or foreign code; violating their preconditions may be
+undefined behavior.
+
+The native side still owns runtime poison and active-scope checks, structural
+admission, RCU protection, C++ exception containment, and exact insertion
+publication classification. Trusted scan decoding also validates every count,
+offset, and length before creating Rust borrows. The fast lane removes repeated
+boundary checks, not the concurrency, lifetime, or failure protocol.

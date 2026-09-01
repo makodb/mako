@@ -135,6 +135,37 @@ impl AtomicVersion {
         })
     }
 
+    /// Attempts to acquire this version at one exact observed generation.
+    ///
+    /// A different unlocked generation reports a read-validation conflict. A
+    /// held word reports a lock-busy conflict. Success returns a detached guard
+    /// whose `before` value equals `observed`; the guard excludes later writers
+    /// until its explicit release.
+    pub fn try_acquire_detached_observed(
+        &self,
+        observed: OccVersion,
+        owner: OwnerId,
+    ) -> Result<DetachedVersionGuard, AcquireError> {
+        let expected = encode_unlocked(observed);
+        match self.word.compare_exchange(
+            expected,
+            encode_locked(observed, owner),
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => Ok(DetachedVersionGuard {
+                target_address: self.address(),
+                before: observed,
+                owner,
+                held: true,
+            }),
+            Err(current) => match decode(current) {
+                VersionState::Unlocked(_) => Err(Conflict::ReadValidation.into()),
+                VersionState::Locked { .. } => Err(Conflict::LockBusy.into()),
+            },
+        }
+    }
+
     fn try_acquire_owned(self: Arc<Self>, owner: OwnerId) -> Result<VersionGuard, AcquireError> {
         let before = self.try_acquire_version(owner)?;
         Ok(VersionGuard {
@@ -627,6 +658,33 @@ mod tests {
             guard.release_abort(&atomic),
             Err(VersionError::GuardAlreadyReleased)
         );
+    }
+
+    #[test]
+    fn observed_detached_acquisition_rejects_stale_and_busy_words_without_a_leak() {
+        let atomic = AtomicVersion::new(version(31));
+
+        assert!(matches!(
+            atomic.try_acquire_detached_observed(version(30), owner(7)),
+            Err(AcquireError::Conflict(Conflict::ReadValidation))
+        ));
+        assert_eq!(atomic.observe().unwrap(), version(31));
+
+        let mut blocker = atomic.try_acquire_detached(owner(8)).unwrap();
+        assert!(matches!(
+            atomic.try_acquire_detached_observed(version(31), owner(7)),
+            Err(AcquireError::Conflict(Conflict::LockBusy))
+        ));
+        assert_eq!(blocker.owner(), owner(8));
+        assert!(blocker.is_held());
+        blocker.release_abort(&atomic).unwrap();
+
+        let mut acquired = atomic
+            .try_acquire_detached_observed(version(31), owner(7))
+            .unwrap();
+        assert_eq!(acquired.before(), version(31));
+        acquired.release_abort(&atomic).unwrap();
+        assert_eq!(atomic.observe().unwrap(), version(31));
     }
 
     #[test]

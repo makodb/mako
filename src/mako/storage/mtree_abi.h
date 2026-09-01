@@ -65,6 +65,7 @@ typedef uint64_t mt_feature_set;
 #define MT_FEATURE_SCOPED_POINT_READS (UINT64_C(1) << 9)
 #define MT_FEATURE_SCOPED_STRIDED_POINT_READS (UINT64_C(1) << 10)
 #define MT_FEATURE_STRIDED_POINT_READS (UINT64_C(1) << 11)
+#define MT_FEATURE_SCOPED_RCU (UINT64_C(1) << 12)
 
 typedef uint32_t mt_byte_order;
 enum {
@@ -106,6 +107,13 @@ typedef struct mt_read_scope {
   uintptr_t owner;
   uint64_t generation;
 } mt_read_scope;
+
+/*
+ * A worker-wide RCU scope uses the same opaque capability representation as a
+ * point-read scope, but the two token families are not interchangeable. The
+ * native TLS owner identity distinguishes them and rejects cross-family use.
+ */
+typedef mt_read_scope mt_rcu_scope;
 
 typedef uint32_t mt_publication_disposition;
 enum {
@@ -322,6 +330,27 @@ mt_status mt_read_scope_get_strided(const mt_read_scope *token,
 mt_status mt_read_scope_end(mt_read_scope *token) MT_NOEXCEPT;
 
 /*
+ * Holds one worker-affine native RCU region across a sequence of ordinary
+ * operations, allowing transaction-shaped callers to amortize RCU entry and
+ * exit. This is deliberately tree-independent and does not provide a
+ * snapshot or hold structural-reader admission: every get, insert, and scan
+ * retains its normal per-operation structural guard. Consequently the scope
+ * may cover operations on several trees and may include get-or-insert. Once
+ * an ordinary operation validates that this scope belongs to its runtime and
+ * worker, it reuses the retained RCU region instead of entering a nested one;
+ * standalone operations continue to manage their own RCU regions.
+ *
+ * A worker may own at most one RCU or point-read scope. Keep the scope
+ * synchronous and short; do not retain it across I/O, blocking waits,
+ * `.await`, or unrelated native work. Ordinary tree operations on the owning
+ * worker remain valid. Read-scope begin and worker/runtime lifecycle calls
+ * fail with MT_ERR_ACTIVE_GUARDS until mt_rcu_scope_end succeeds.
+ */
+mt_status mt_rcu_scope_begin(mt_thread *thread,
+                             mt_rcu_scope *token) MT_NOEXCEPT;
+mt_status mt_rcu_scope_end(mt_rcu_scope *token) MT_NOEXCEPT;
+
+/*
  * Atomically publishes candidate when the key is absent and always reports
  * whether that candidate was inserted, proved unpublished, or may have been
  * published. candidate must be nonzero. The whole call owns exclusive native
@@ -331,6 +360,62 @@ mt_status mt_read_scope_end(mt_read_scope *token) MT_NOEXCEPT;
 mt_status mt_get_or_insert(mt_tree *tree, mt_thread *thread, const void *key,
                            size_t key_length, mt_record_id candidate,
                            mt_get_or_insert_result *out) MT_NOEXCEPT;
+
+/*
+ * Private static-link bridge for the safe Rust facade. These symbols are not
+ * part of the versioned public ABI, feature negotiation, or exported-symbol
+ * fingerprint. They are hidden from shared-library consumers and declared
+ * only when the native implementation explicitly opts in.
+ *
+ * Unlike mt_get/mt_get_or_insert, these entry points dereference tree and
+ * thread without registry, liveness, runtime-identity, owner-thread, native
+ * core, or key/candidate validation. The caller must prove that both handles
+ * came from this runtime, are retained and open, thread is the current native
+ * worker, no foreign native call has changed its TLS/core assignment, the key
+ * storage is readable and within the negotiated limit, out is writable, and
+ * candidate is nonzero. Violating any precondition is undefined behavior.
+ * Runtime poison, active-scope rules, structural admission, RCU protection,
+ * exception containment, and publication classification remain enforced.
+ */
+#ifdef MAKO_MTREE_ABI_TRUSTED_RUST_BRIDGE
+#if defined(__GNUC__) || defined(__clang__)
+#define MAKO_MTREE_TRUSTED_HIDDEN __attribute__((visibility("hidden")))
+#else
+#define MAKO_MTREE_TRUSTED_HIDDEN
+#endif
+MAKO_MTREE_TRUSTED_HIDDEN mt_status
+mako_mtree_get_trusted(mt_tree *tree, mt_thread *thread, const void *key,
+                       size_t key_length, mt_record_id *out) MT_NOEXCEPT;
+/*
+ * The fixed-width read variant accepts one contiguous `key_count * key_length`
+ * key array and exactly `key_count` writable result slots. It preserves input
+ * order, including duplicate and zero-length keys. Every result is initialized
+ * to MT_RECORD_ID_NONE before a fallible native operation, and every failure
+ * leaves the complete result array cleared.
+ */
+MAKO_MTREE_TRUSTED_HIDDEN mt_status mako_mtree_get_strided_trusted(
+    mt_tree *tree, mt_thread *thread, const void *keys, size_t key_count,
+    size_t key_length, mt_record_id *out) MT_NOEXCEPT;
+MAKO_MTREE_TRUSTED_HIDDEN mt_status mako_mtree_get_or_insert_trusted(
+    mt_tree *tree, mt_thread *thread, const void *key, size_t key_length,
+    mt_record_id candidate, mt_get_or_insert_result *out) MT_NOEXCEPT;
+/*
+ * The strided variant preserves input order (including duplicate keys), but
+ * owns one structural-writer admission and one RCU region for the whole
+ * batch. `candidates[index]` is applied only to `keys[index]`. Every candidate
+ * must be nonzero; the trusted Rust facade additionally proves that candidate
+ * identities are pairwise distinct. `out` is initialized completely before
+ * publication starts. On error, completed slots retain their exact
+ * classification, the interrupted slot is UNKNOWN exactly when publication
+ * may have begun, and untouched suffix slots remain FAILURE_BEFORE_PUBLICATION.
+ */
+MAKO_MTREE_TRUSTED_HIDDEN mt_status
+mako_mtree_get_or_insert_strided_trusted(
+    mt_tree *tree, mt_thread *thread, const void *keys, size_t key_count,
+    size_t key_length, size_t key_stride, const mt_record_id *candidates,
+    mt_get_or_insert_result *out) MT_NOEXCEPT;
+#undef MAKO_MTREE_TRUSTED_HIDDEN
+#endif
 
 /*
  * Copies one bounded ascending or descending chunk into caller storage.
