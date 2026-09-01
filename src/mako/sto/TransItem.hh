@@ -391,6 +391,13 @@ class TransProxy {
         return *item_;
     }
 
+    // Borrow the transaction-owned copy installed by add_extra(). Callers
+    // must not retain this span past transaction cleanup or a later mutation
+    // of the same item.
+    inline const std::string& extra_string() const {
+        return item().extra;
+    }
+
 private:
     Transaction* t_;
     TransItem* item_;

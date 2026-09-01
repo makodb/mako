@@ -229,6 +229,43 @@ public:
   }
 
 private:
+  // @unsafe - Same-build local-cache storage kernel. The private Put calls
+  // this immediately after reallyHandlePutFound() has produced an ordinary
+  // existing-key update, so it may borrow MassTrans's concrete TransItem and
+  // encoded-string representation in place. The general decoder remains the
+  // checked fallback for inserts, remote tables, and every unexpected item or
+  // value representation; callers must not retain the borrowed spans after a
+  // later transaction mutation or cleanup.
+  [[gnu::always_inline]] bool export_found_update_canonical_write(
+      TransProxy& item,
+      Transaction::canonical_write_view* canonical_write_out) {
+    assert(canonical_write_out != nullptr);
+    const TransItem& native_item = item.item();
+    if (is_remote || !native_item.has_write() || has_insert(native_item) ||
+        has_delete(native_item)) [[unlikely]] {
+      return TThread::txn->export_local_canonical_write(
+          native_item, canonical_write_out);
+    }
+
+    const std::string& key = item.extra_string();
+    const std::string& value =
+        item.template write_value<std::string>();
+    if (value.size() < static_cast<size_t>(mako::EXTRA_BITS_FOR_VALUE))
+        [[unlikely]] {
+      return TThread::txn->export_local_canonical_write(
+          native_item, canonical_write_out);
+    }
+
+    *canonical_write_out = Transaction::canonical_write_view{
+        Transaction::canonical_write_view::operation::put,
+        table_id,
+        key.data(),
+        key.size(),
+        value.data(),
+        value.size() - static_cast<size_t>(mako::EXTRA_BITS_FOR_VALUE)};
+    return true;
+  }
+
   template <typename ValueType>
   bool compare_published(
       versioned_value *e, const ValueType& value,
@@ -1074,8 +1111,8 @@ protected:
       item.observe(tversion_type(v));
     }
     if (SET && canonical_write_out != nullptr)
-      (void)TThread::txn->export_local_canonical_write(
-          item.item(), canonical_write_out);
+      (void)export_found_update_canonical_write(item,
+                                                canonical_write_out);
     return true;
   }
 
