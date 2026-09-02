@@ -1,11 +1,11 @@
 # Mako cache Milestone 1 acceptance
 
-Status: **CURRENT DETACHED-WRITEBACK PASS**, with the latest four-worker
-hot-path follow-up measured on 2026-09-01. The original acceptance evidence is
-for candidate `153e14c78`; the newer isolated comparison is recorded below.
-The earlier native-record rewrite and full comparative acceptance remain as
-historical evidence, and newer measurements do not retroactively alter those
-artifacts.
+Status: **CURRENT DETACHED-WRITEBACK PASS**, with the latest 1/4/8/16/32-worker
+hot-path sweep measured on 2026-09-02 at `16e4b3bb2`. The original acceptance
+evidence is for candidate `153e14c78`; the newer isolated comparisons are
+recorded below. The earlier native-record rewrite and full comparative
+acceptance remain as historical evidence, and newer measurements do not
+retroactively alter those artifacts.
 
 Milestone 1 is complete for its declared scope: one process, one recovered
 cache namespace, C++ STO/MassTrans transactions behind the public revision-0 C
@@ -255,6 +255,49 @@ binary and protocol; its rate CV was 0.91%.
 Exact samples, hashes, deltas, memory observations, and retained zoo-2 paths
 are in the [final four-worker report](benchmarks/mako-cache-w4-final-20260901.json),
 SHA-256 `012bb86b82e79eb0141d29258b9bdefdc22030c952e2313245a50f6a47673c8f`.
+
+### Post-optimization thread sweep
+
+The final cache path was also measured at 1, 4, 8, 16, and 32 workers on
+`zoo-002`. The comparison uses the same disjoint write-only transaction,
+CPU placement, allocator, 65,536-transaction warmup, 1,048,576-transaction
+ramp, and 2,097,152 measured transactions per worker as the four-worker gate.
+The benchmark-only cache harness sizes the publication queue at 4,194,304
+slots per worker, preserving the exact prior W4 capacity while preventing
+capacity backpressure at larger worker counts.
+
+Five-repetition medians are:
+
+| Workers | Direct C++ Mtxn/s | Raw C ABI Mtxn/s | Rust cache Mtxn/s | Cache/raw | Cache linear efficiency |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 3.730 | 3.594 | 2.012 | 55.97% | 100.00% |
+| 4 | 14.763 | 14.029 | 7.317 | 52.16% | 90.94% |
+| 8 | 29.344 | 28.182 | 10.556 | 37.46% | 65.60% |
+| 16 | 56.739 | 54.210 | 19.859 | 36.63% | 61.70% |
+| 32 | 105.006 | 98.856 | 27.975 | 28.30% | 43.46% |
+
+Raw C ABI retains 94.14% to 96.34% of direct C++ throughput. The cache is
+stable through W4, then loses scaling at W8 and above. Cache instructions per
+transaction rise only 2.89%, from 3,260.851 at W1 to 3,354.938 at W32, while
+cycles rise 144.40%, from 1,341.778 to 3,279.307. This points to concurrency
+stalls, coherence traffic, or serialization rather than a growing instruction
+path. No accepted sample reached queue capacity, so foreground capacity waits
+do not explain the loss.
+
+All 75 accepted samples passed an independent audit with zero conflicts,
+exact commit/checksum/sequence/queue accounting, and a PMU running ratio of
+1.0. The W4 raw cell has one 9.863 Mtxn/s slow sample and four samples between
+13.962 and 14.085 Mtxn/s, giving it a 14.12% CV. A separate five-sample raw
+control produced a 13.934 Mtxn/s median and independently reproduced both the
+normal band and an occasional slow sample. The robust W4 medians agree within
+0.68%.
+
+This remains a foreground acknowledgement result. It does not wait for
+RocksDB apply or fsync, and teardown abandons the queued tail after invariant
+checks. Exact samples, hashes, ratios, validation results, and retained
+artifact paths are in the
+[thread-sweep report](benchmarks/mako-cache-thread-sweep-zoo002-20260902.json),
+SHA-256 `e6a1325a24bea3c98b82e4e4749b4128def2270fe163722452438f83be319b12`.
 
 ## Previous native-record and bounded-batching validation
 
