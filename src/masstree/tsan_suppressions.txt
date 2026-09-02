@@ -2,21 +2,16 @@
 #
 # Activate by exporting TSAN_OPTIONS before running a test binary:
 #
-#   export TSAN_OPTIONS="suppressions=$(realpath src/masstree/tsan_suppressions.txt):halt_on_error=0"
+#   export TSAN_OPTIONS="suppressions=$(realpath src/masstree/tsan_suppressions.txt):halt_on_error=1"
 #
-# The suppressions below scope out two classes of report that are
-# *expected* and not actionable in this codebase:
+# The suppressions below scope out one reviewed class of report that is
+# expected and not actionable in this codebase:
 #
 # 1. Intentional lock-free reads inside Masstree's optimistic
 #    concurrency machinery. Masstree readers race against writers on
 #    node fields (permuter, version, keylenx, etc.) by design — the
 #    algorithm validates the read via a version-counter retry. TSan
 #    correctly observes these races; they are not bugs.
-#
-# 2. The mako spinlock under src/mako/spinlock.h uses a plain `int`
-#    state rather than std::atomic<int>. Strictly UB per the C++
-#    memory model but tolerated on x86. Pre-existing; fix is a
-#    separate piece of work.
 
 # Masstree internal lock-free traversal / split / remove paths.
 race:masstree_insert.hh
@@ -36,3 +31,9 @@ race:masstree/compiler.hh
 # removed once the spinlock was migrated to std::atomic<uint32_t>
 # with explicit acquire/release ordering. See
 # docs/masstree-sanitizer-findings.md, Finding 5 (fixed).
+# STO's participant epochs and process-wide clocks are likewise fixed with
+# lock-free atomics rather than suppressed. See Finding 9 in the same report.
+# MassTrans version/lock words use layout-preserving atomic_ref operations
+# rather than a suppression. See Finding 11.
+# Masstree RCU participant publication/scanning and threadinfo one-time setup
+# are atomic/once-ordered rather than suppressed. See Finding 12.

@@ -4,6 +4,7 @@
 #include <assert.h>
 #include <string.h>
 #include <stdlib.h>
+#include <limits>
 
 #include "Transaction.hh"
 #include "MassTrans.hh"
@@ -56,15 +57,332 @@ __thread Transaction *TThread::txn = nullptr;
 __thread mako::ShardClient *TThread::sclient = nullptr;
 __thread HashWrapper *TThread::tprops = nullptr;
 std::function<void(threadinfo_t::epoch_type)> Transaction::epoch_advance_callback;
+namespace {
+thread_local bool local_transaction_cleanup_in_progress = false;
+
+class commit_validation_gate_scope {
+public:
+    explicit commit_validation_gate_scope(
+        const Transaction::commit_validation_gate* gate) noexcept
+        : gate_(gate) {
+        assert(gate_ == nullptr ||
+               ((gate_->enter == nullptr) == (gate_->leave == nullptr)));
+        assert(gate_ == nullptr || gate_->accept_ordered == nullptr ||
+               (gate_->acquire_after_validation && gate_->enter == nullptr &&
+                gate_->leave == nullptr));
+    }
+
+    void acquire() noexcept {
+        assert(gate_ != nullptr);
+        assert(!held_);
+        if (gate_->enter != nullptr)
+            gate_->enter(gate_->context);
+        held_ = true;
+    }
+
+    void release() noexcept {
+        if (!held_)
+            return;
+        held_ = false;
+        if (gate_->leave != nullptr)
+            gate_->leave(gate_->context);
+    }
+
+    bool held() const noexcept {
+        return held_;
+    }
+
+    ~commit_validation_gate_scope() {
+        release();
+    }
+
+private:
+    const Transaction::commit_validation_gate* gate_;
+    bool held_ = false;
+};
+
+// @safe: issues only a non-binding cache hint for the process-lifetime packed
+// order word. It neither reads nor changes the timestamp, dense sequence, or
+// general-certification bit; the later checked CAS remains the commit point.
+[[gnu::always_inline]] inline void
+prefetch_restricted_cache_order_state_for_write() noexcept {
+#if defined(__GNUC__) || defined(__clang__)
+    __builtin_prefetch(
+        &sync_util::sync_logger::cache_order_state, 1, 3);
+#endif
+}
+
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+thread_local Transaction::test_commit_observer local_test_commit_observer =
+    nullptr;
+thread_local void* local_test_commit_observer_context = nullptr;
+thread_local bool local_test_fail_next_cleanup = false;
+
+struct test_cleanup_failure {};
+#endif
+}  // namespace
+
+// @safe: reads the calling worker's cleanup-progress witness.
+bool Transaction::cleanup_in_progress() noexcept {
+    return local_transaction_cleanup_in_progress;
+}
+
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+// @unsafe: stores a caller-borrowed callback and opaque context in thread-local
+// state; their lifetime must cover every observed synchronous commit callback.
+void Transaction::set_test_commit_observer(
+    test_commit_observer observer, void* context) noexcept {
+    local_test_commit_observer_context = context;
+    local_test_commit_observer = observer;
+}
+
+// @safe: clears the thread-local borrowed observer before its context expires.
+void Transaction::clear_test_commit_observer() noexcept {
+    local_test_commit_observer = nullptr;
+    local_test_commit_observer_context = nullptr;
+}
+
+// @safe: reads only this worker's trivially initialized thread-local pointer.
+bool Transaction::test_commit_observer_registered() noexcept {
+    return local_test_commit_observer != nullptr;
+}
+
+// @unsafe: synchronously calls a non-owning test callback while transaction
+// write locks may be held. The callback is noexcept and must not allocate.
+void Transaction::notify_test_commit_observer(
+    test_commit_phase phase, uint32_t mako_timestamp) noexcept {
+    const auto observer = local_test_commit_observer;
+    if (observer != nullptr)
+        observer(local_test_commit_observer_context, phase, mako_timestamp);
+}
+
+// @safe: arms one thread-local, one-shot branch at Transaction::stop entry.
+void Transaction::test_fail_next_cleanup() noexcept {
+    local_test_fail_next_cleanup = true;
+}
+
+// @safe: clears only a failure that stop() has not consumed yet.
+bool Transaction::test_cancel_fail_next_cleanup() noexcept {
+    const bool was_armed = local_test_fail_next_cleanup;
+    local_test_fail_next_cleanup = false;
+    return was_armed;
+}
+#endif
 #if defined(SIMPLE_WORKLOAD)
-TransactionTid::type __attribute__((aligned(128))) Transaction::_TID = 1;
+std::atomic<TransactionTid::type> __attribute__((aligned(128)))
+    Transaction::_TID{1};
 #else
-TransactionTid::type __attribute__((aligned(128))) Transaction::_TID = 2 * TransactionTid::increment_value;
+std::atomic<TransactionTid::type> __attribute__((aligned(128)))
+    Transaction::_TID{2 * TransactionTid::increment_value};
 #endif
    // reserve TransactionTid::increment_value for prepopulated
 
+namespace {
+static_assert(std::atomic<uint64_t>::is_always_lock_free,
+              "packed cache ordering requires a lock-free u64 CAS");
+
+// @safe: pure extraction from the immutable packed scalar argument.
+constexpr uint64_t cache_order_timestamp(uint64_t state) noexcept {
+    return (state >> Transaction::cache_order_timestamp_shift) &
+        Transaction::cache_order_field_mask;
+}
+
+// @safe: pure extraction from the immutable packed scalar argument.
+constexpr uint64_t cache_order_sequence(uint64_t state) noexcept {
+    return state & Transaction::cache_order_field_mask;
+}
+
+// @safe: pure checked-layout replacement; callers validate the 29-bit value.
+constexpr uint64_t with_cache_order_timestamp(
+    uint64_t state, uint64_t timestamp) noexcept {
+    return (state & ~(Transaction::cache_order_field_mask <<
+                      Transaction::cache_order_timestamp_shift)) |
+        (timestamp << Transaction::cache_order_timestamp_shift);
+}
+
+// @safe: pure checked-layout replacement; callers validate the 29-bit value.
+constexpr uint64_t with_cache_order_sequence(
+    uint64_t state, uint64_t sequence) noexcept {
+    return (state & ~Transaction::cache_order_field_mask) | sequence;
+}
+}  // namespace
+
+// @safe: atomically allocates from the process-wide packed Mako clock while
+// preserving the cache sequence and general-certification state.
+bool Transaction::try_allocate_mako_timestamp(uint32_t& result) noexcept {
+    auto& state = sync_util::sync_logger::cache_order_state;
+    uint64_t current = state.load(std::memory_order_acquire);
+    for (;;) {
+        const uint64_t timestamp = cache_order_timestamp(current);
+        if (timestamp == 0 || timestamp > max_mako_timestamp) {
+            result = 0;
+            return false;
+        }
+        const uint64_t desired =
+            with_cache_order_timestamp(current, timestamp + 1);
+        if (state.compare_exchange_weak(current, desired,
+                                        std::memory_order_acq_rel,
+                                        std::memory_order_acquire)) {
+            result = static_cast<uint32_t>(timestamp);
+            return true;
+        }
+    }
+}
+
+// @safe: the caller owns the packed general lock, so no restricted allocator
+// can change the dense field. Timestamp-only allocators may still update the
+// same word; the CAS loop preserves those independent changes.
+bool Transaction::try_allocate_locked_cache_sequence(
+    uint64_t& sequence) noexcept {
+    sequence = 0;
+    auto& state = sync_util::sync_logger::cache_order_state;
+    uint64_t current = state.load(std::memory_order_acquire);
+    for (;;) {
+        assert((current & cache_order_general_lock) != 0);
+        const uint64_t previous = cache_order_sequence(current);
+        if (previous >= max_mako_timestamp)
+            return false;
+        const uint64_t desired =
+            with_cache_order_sequence(current, previous + 1);
+        if (state.compare_exchange_weak(current, desired,
+                                        std::memory_order_acq_rel,
+                                        std::memory_order_acquire)) {
+            sequence = previous + 1;
+            return true;
+        }
+    }
+}
+
+// @safe: acquire the cache-only general certification bit. Restricted updates
+// perform only a load while it is owned. Every caller already holds its full
+// STO write set, so waiting here cannot create a lock-order cycle.
+void Transaction::enter_cache_order_general() noexcept {
+    auto& state = sync_util::sync_logger::cache_order_state;
+    uint64_t current = state.load(std::memory_order_acquire);
+    for (;;) {
+        if ((current & cache_order_general_lock) != 0) {
+            relax_fence();
+            current = state.load(std::memory_order_acquire);
+            continue;
+        }
+        if (state.compare_exchange_weak(
+                current, current | cache_order_general_lock,
+                std::memory_order_acq_rel, std::memory_order_acquire))
+            return;
+    }
+}
+
+// @safe: release general certification while preserving any timestamp-only
+// allocations which raced during validation. The five-bit epoch is diagnostic
+// only; successful cache commits also change the non-wrapping packed fields.
+void Transaction::leave_cache_order_general() noexcept {
+    auto& state = sync_util::sync_logger::cache_order_state;
+    uint64_t current = state.load(std::memory_order_acquire);
+    for (;;) {
+        assert((current & cache_order_general_lock) != 0);
+        const uint64_t epoch =
+            ((current & cache_order_epoch_mask) >> cache_order_epoch_shift) + 1;
+        const uint64_t desired =
+            (current & ~(cache_order_general_lock | cache_order_epoch_mask)) |
+            ((epoch & UINT64_C(31)) << cache_order_epoch_shift);
+        if (state.compare_exchange_weak(current, desired,
+                                        std::memory_order_acq_rel,
+                                        std::memory_order_acquire))
+            return;
+    }
+}
+
+// @safe: an Acquire RMW reads the immediately preceding modification in the
+// packed word's total order and joins a preceding writer's release sequence.
+uint64_t Transaction::order_cache_validation_prefix() noexcept {
+    return sync_util::sync_logger::cache_order_state.fetch_add(
+        UINT64_C(0), std::memory_order_acquire);
+}
+
+// @safe: diagnostic/cold snapshot of the process-wide packed state.
+uint64_t Transaction::cache_order_snapshot() noexcept {
+    return sync_util::sync_logger::cache_order_state.load(
+        std::memory_order_acquire);
+}
+
+// @safe: namespace admission excludes cache terminals while this CAS resets
+// only the dense field. Timestamp-only process users remain concurrent.
+bool Transaction::reseed_cache_order_sequence(uint64_t sequence) noexcept {
+    if (sequence > max_mako_timestamp)
+        return false;
+    auto& state = sync_util::sync_logger::cache_order_state;
+    uint64_t current = state.load(std::memory_order_acquire);
+    for (;;) {
+        if ((current & cache_order_general_lock) != 0)
+            return false;
+        const uint64_t desired = with_cache_order_sequence(current, sequence);
+        if (state.compare_exchange_weak(current, desired,
+                                        std::memory_order_acq_rel,
+                                        std::memory_order_acquire))
+            return true;
+    }
+}
+
+// @safe: assigns one checked nonzero Mako timestamp to this transaction
+bool Transaction::try_assign_mako_timestamp(uint32_t& result) const noexcept {
+    assert(state_ == s_committing_locked || state_ == s_committing);
+    if (tid_unique_) {
+        result = tid_unique_;
+        return true;
+    }
+    if (!try_allocate_mako_timestamp(result))
+        return false;
+    tid_unique_ = result;
+    return true;
+}
+
+// @safe: atomically catches the process-wide Mako clock up to an observation
+void Transaction::observe_mako_timestamp(uint32_t observed) noexcept {
+    const uint32_t desired = observed < max_mako_timestamp
+        ? observed + 1
+        : max_mako_timestamp + 1;
+    auto& state = sync_util::sync_logger::cache_order_state;
+    uint64_t current = state.load(std::memory_order_acquire);
+    while (cache_order_timestamp(current) != 0 &&
+           cache_order_timestamp(current) < desired) {
+        const uint64_t next = with_cache_order_timestamp(current, desired);
+        if (state.compare_exchange_weak(current, next,
+                                        std::memory_order_acq_rel,
+                                        std::memory_order_acquire))
+            return;
+    }
+}
+
+// @safe: atomically advances the process-wide Mako logical clock
+bool Transaction::advance_mako_timestamp_past(uint32_t observed) noexcept {
+    // Store observed + 1, then leave room for that value to be minted while
+    // advancing the counter once more. Zero and max_mako_timestamp + 1 are
+    // permanent sentinels, so recovery cannot revive an exhausted clock.
+    if (observed == 0 || observed >= max_mako_timestamp)
+        return false;
+
+    const uint32_t desired = observed + 1;
+    auto& state = sync_util::sync_logger::cache_order_state;
+    uint64_t current = state.load(std::memory_order_acquire);
+    while (cache_order_timestamp(current) != 0 &&
+           cache_order_timestamp(current) < desired) {
+        const uint64_t next = with_cache_order_timestamp(current, desired);
+        if (state.compare_exchange_weak(current, next,
+                                        std::memory_order_acq_rel,
+                                        std::memory_order_acquire))
+            return true;
+    }
+    const uint64_t timestamp = cache_order_timestamp(current);
+    return timestamp != 0 && timestamp <= max_mako_timestamp;
+}
+
 static void __attribute__((used)) check_static_assertions() {
-    static_assert(sizeof(threadinfo_t) % 128 == 0, "threadinfo is 2-cache-line aligned");
+    static_assert(std::atomic<threadinfo_t::epoch_type>::is_always_lock_free,
+                  "the epoch protocol requires lock-free 64-bit atomics");
+    static_assert(std::atomic<TransactionTid::type>::is_always_lock_free,
+                  "the transaction clock requires lock-free 64-bit atomics");
+    static_assert(sizeof(threadinfo_t) % 128 == 0,
+                  "threadinfo occupies isolated 128-byte cache slots");
 }
 
 // @safe
@@ -105,19 +423,27 @@ void* Transaction::epoch_advancer(void*) {
 
     // don't bother epoch'ing til things have picked up
     usleep(100000);
-    while (global_epochs.run) {
-        epoch_type g = global_epochs.global_epoch;
+    while (global_epochs.run.load(std::memory_order_acquire)) {
+        const epoch_type g =
+            global_epochs.global_epoch.load(std::memory_order_seq_cst);
         epoch_type e = g;
         for (auto& t : tinfo) {
-            if (t.epoch != 0 && signed_epoch_type(t.epoch - e) < 0)
-                e = t.epoch;
+            const epoch_type participant_epoch =
+                t.epoch.load(std::memory_order_seq_cst);
+            if (participant_epoch != 0
+                && signed_epoch_type(participant_epoch - e) < 0)
+                e = participant_epoch;
         }
-        global_epochs.global_epoch = std::max(g + 1, epoch_type(1));
-        global_epochs.active_epoch = e;
-        global_epochs.recent_tid = Transaction::_TID;
+        const epoch_type next_epoch = std::max(g + 1, epoch_type(1));
+        global_epochs.global_epoch.store(next_epoch,
+                                         std::memory_order_seq_cst);
+        global_epochs.active_epoch.store(e, std::memory_order_seq_cst);
+        global_epochs.recent_tid.store(
+            Transaction::_TID.load(std::memory_order_acquire),
+            std::memory_order_relaxed);
 
         if (epoch_advance_callback)
-            epoch_advance_callback(global_epochs.global_epoch);
+            epoch_advance_callback(next_epoch);
 
         usleep(100000);
     }
@@ -168,7 +494,7 @@ void Transaction::hard_check_opacity(TransItem* item, TransactionTid::type t) {
         TXP_INCREMENT(txp_hco_invalid);
 
     state_ = s_opacity_check;
-    start_tid_ = _TID;
+    start_tid_ = _TID.load(std::memory_order_acquire);
     release_fence();
     TransItem* it = nullptr;
     for (unsigned tidx = 0; tidx != tset_size_; ++tidx) {
@@ -193,6 +519,16 @@ void Transaction::hard_check_opacity(TransItem* item, TransactionTid::type t) {
 
 // @unsafe: manipulates transaction items with unlock and cleanup operations
 void Transaction::stop(bool committed, unsigned* writeset, unsigned nwriteset) {
+    // This marker is a production safety witness, not only test machinery.
+    // It is deliberately cleared only after native cleanup publishes terminal
+    // state. Any exception leaves it set and forbids cleanup re-entry.
+    local_transaction_cleanup_in_progress = true;
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+    if (local_test_fail_next_cleanup) {
+        local_test_fail_next_cleanup = false;
+        throw test_cleanup_failure{};
+    }
+#endif
     if (!committed) {
         TXP_INCREMENT(txp_total_aborts);
 #if STO_DEBUG_ABORTS
@@ -243,16 +579,22 @@ void Transaction::stop(bool committed, unsigned* writeset, unsigned nwriteset) {
         // and no good way to set state_ = s_committing_locked; as try_commit do
         // so, we skip it blindly for participant
         if ((TThread::mode() == 1 && nwriteset>0) || state_ == s_committing_locked) {
-            it = &tset_[tset_size_ / tset_chunk][tset_size_ % tset_chunk];
-            for (unsigned tidx = tset_size_; tidx != first_write_; --tidx) {
-                it = (tidx % tset_chunk ? it - 1 : &tset_[(tidx - 1) / tset_chunk][tset_chunk - 1]);
+            for (unsigned tidx = tset_size_; tidx != first_write_; ) {
+                --tidx;
+                if (likely(tidx < tset_initial_capacity))
+                    it = &tset0_[tidx];
+                else
+                    it = &tset_[tidx / tset_chunk][tidx % tset_chunk];
                 if (it->needs_unlock())
                     it->owner()->unlock(*it);
             }
         }
-        it = &tset_[tset_size_ / tset_chunk][tset_size_ % tset_chunk];
-        for (unsigned tidx = tset_size_; tidx != first_write_; --tidx) {
-            it = (tidx % tset_chunk ? it - 1 : &tset_[(tidx - 1) / tset_chunk][tset_chunk - 1]);
+        for (unsigned tidx = tset_size_; tidx != first_write_; ) {
+            --tidx;
+            if (likely(tidx < tset_initial_capacity))
+                it = &tset0_[tidx];
+            else
+                it = &tset_[tidx / tset_chunk][tidx % tset_chunk];
             if (it->has_write())
                 it->owner()->cleanup(*it, committed);
         }
@@ -265,6 +607,7 @@ after_unlock:
         thr.trans_end_callback();
     // XXX should reset trans_end_callback after calling it...
     state_ = s_aborted + committed;
+    local_transaction_cleanup_in_progress = false;
 }
 
 // @safe
@@ -332,7 +675,7 @@ uint8_t Transaction::get_current_term() const {
     return current_term_;
 }
 
-// @unsafe: uses __sync_fetch_and_add and TObject::install
+// @unsafe: invokes TObject::install on transaction-owned items
 void Transaction::shard_install(uint32_t timestamp) {
     assert(TThread::id() == threadid_);
 
@@ -340,11 +683,8 @@ void Transaction::shard_install(uint32_t timestamp) {
     TThread::txn->maxTimestampReadSet = MAX(TThread::txn->maxTimestampReadSet, timestamp);
     tid_unique_ = timestamp;
 
-    // Update local_id to catch up with single timestamp
-    int delta = tid_unique_ - sync_util::sync_logger::local_replica_id;
-    if (delta > 0) {
-        __sync_fetch_and_add(&sync_util::sync_logger::local_replica_id, delta);
-    }
+    // Floor the process-wide Mako clock past the chosen timestamp.
+    observe_mako_timestamp(tid_unique_);
 
     TransItem* it = nullptr;
     if (tset_size_ == 0) return;
@@ -382,9 +722,144 @@ void Transaction::shard_unlock(bool committed) {
     }
 }
 
-// @unsafe: complex commit protocol with remote operations, locking, and validation
-bool Transaction::try_commit(bool no_paxos) {
+// @unsafe: decodes the three MassTrans write layouts from one borrowed
+// TransItem. The returned spans remain owned by the transaction/tree and are
+// valid only while the item cannot be mutated or cleaned up.
+bool Transaction::export_local_canonical_write(
+    const TransItem& item, canonical_write_view* write_out) const noexcept {
+    if (write_out == nullptr)
+        return false;
+    *write_out = canonical_write_view{};
     assert(TThread::id() == threadid_);
+    assert(state_ == s_in_progress || state_ == s_committing ||
+           state_ == s_committing_locked);
+
+    if (!item.has_write() || item.owner()->get_is_remote())
+        return false;
+    const bool is_insert = hasInsertOp(&item);
+    const bool is_delete = hasDeleteOp(&item);
+    if (is_insert && is_delete)
+        return false;
+
+    canonical_write_view view{};
+    view.table_id = item.owner()->get_table_id();
+    if (is_insert) {
+        const std::string& key = item.write_value<std::string>();
+        versioned_str_struct* row = item.key<versioned_str_struct*>();
+        if (row == nullptr || row->length() < mako::EXTRA_BITS_FOR_VALUE)
+            return false;
+        view.op = canonical_write_view::operation::put;
+        view.key = key.data();
+        view.key_length = key.size();
+        view.value = row->data();
+        view.value_length = static_cast<size_t>(row->length()) -
+                            mako::EXTRA_BITS_FOR_VALUE;
+    } else {
+        view.key = item.extra.data();
+        view.key_length = item.extra.size();
+        if (is_delete) {
+            view.op = canonical_write_view::operation::remove;
+            view.value = nullptr;
+            view.value_length = 0;
+        } else {
+            const std::string& value = item.write_value<std::string>();
+            if (value.size() < mako::EXTRA_BITS_FOR_VALUE)
+                return false;
+            view.op = canonical_write_view::operation::put;
+            view.value = value.data();
+            view.value_length = value.size() - mako::EXTRA_BITS_FOR_VALUE;
+        }
+    }
+    *write_out = view;
+    return true;
+}
+
+// @unsafe: visits the final MassTrans write set without copying. The
+// representation matches serialize_util(); insert-then-delete is a net-empty
+// mutation and is intentionally omitted.
+bool Transaction::visit_local_canonical_writes(
+    canonical_write_visitor visitor, void* context,
+    uint32_t* count_out) const noexcept {
+    if (count_out == nullptr)
+        return false;
+    *count_out = 0;
+    assert(TThread::id() == threadid_);
+    assert(state_ == s_in_progress || state_ == s_committing ||
+           state_ == s_committing_locked);
+
+    const TransItem* item = nullptr;
+    for (unsigned tidx = 0; tidx != tset_size_; ++tidx) {
+        item = (tidx % tset_chunk ? item + 1
+                                  : tset_[tidx / tset_chunk]);
+        if (!item->has_write() || item->owner()->get_is_remote())
+            continue;
+        if (hasInsertOp(item) && hasDeleteOp(item))
+            continue;
+
+        canonical_write_view view{};
+        if (!export_local_canonical_write(*item, &view))
+            return false;
+
+        if (*count_out == std::numeric_limits<uint32_t>::max())
+            return false;
+        if (visitor != nullptr && !visitor(context, view))
+            return false;
+        ++*count_out;
+    }
+    return true;
+}
+
+// @unsafe: walks transaction-owned items whose lifetime is protected by the
+// active transaction. No borrowed key or value bytes escape this inspection.
+bool Transaction::can_order_record_after_validation() const noexcept {
+    assert(TThread::id() == threadid_);
+    assert(state_ == s_in_progress);
+
+    unsigned local_writes = 0;
+    const TransItem* item = nullptr;
+    for (unsigned tidx = 0; tidx != tset_size_; ++tidx) {
+        item = (tidx % tset_chunk ? item + 1
+                                  : tset_[tidx / tset_chunk]);
+        if (item->owner()->get_is_remote() || item->has_predicate())
+            return false;
+        if (hasInsertOp(item) || hasDeleteOp(item))
+            return false;
+        if (item->has_read() && !item->has_write())
+            return false;
+        if (item->has_write()) {
+            if (++local_writes != 1)
+                return false;
+        } else if (!item->has_read()) {
+            // Reject bookkeeping-only shapes which this proof does not know
+            // how to classify. The ordinary early gate remains available.
+            return false;
+        }
+    }
+    return local_writes == 1;
+}
+
+// @unsafe: complex commit protocol with remote operations, locking, and validation
+bool Transaction::try_commit(bool no_paxos,
+                             post_validation_hook hook,
+                             void* hook_context,
+                             preinstall_failure* failure,
+                             const commit_validation_gate* validation_gate) {
+    assert(TThread::id() == threadid_);
+    assert(validation_gate == nullptr || hook != nullptr);
+    commit_validation_gate_scope validation_gate_scope(validation_gate);
+    const bool requested_gate_after_validation =
+        validation_gate != nullptr &&
+        validation_gate->acquire_after_validation;
+    // The Paxos path assigns and merges its timestamp before phase-two
+    // validation. Falling back to the ordinary early gate preserves that
+    // timestamp/gate order even if a future caller requests the restricted
+    // local optimization on the wrong commit protocol.
+    assert(!requested_gate_after_validation || no_paxos);
+    const bool acquire_gate_after_validation =
+        requested_gate_after_validation && no_paxos;
+    bool ordered_hook_already_accepted = false;
+    if (failure)
+        *failure = preinstall_failure::none;
 #if ASSERT_TX_SIZE
     if (tset_size_ > TX_SIZE_LIMIT) {
         std::cerr << "transSet_ size at " << tset_size_
@@ -416,6 +891,11 @@ bool Transaction::try_commit(bool no_paxos) {
     // Single watermark timestamp instead of vector
     uint32_t watermarkTimestamp = 0;
     writeset[0] = tset_size_;
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+    const bool has_test_commit_observer =
+        test_commit_observer_registered();
+    unsigned installed_write_count = 0;
+#endif
 
     //phase1
     TransItem* it = nullptr;
@@ -513,17 +993,60 @@ bool Transaction::try_commit(bool no_paxos) {
     }
 #endif
 
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+    if (nwriteset != 0 && has_test_commit_observer) {
+        notify_test_commit_observer(test_commit_phase::writeset_locked,
+                                    0 /* not allocated yet */);
+    }
+#endif
+
+    if (validation_gate != nullptr && nwriteset != 0 &&
+        !acquire_gate_after_validation)
+        validation_gate_scope.acquire();
+
+    // The general path allocates the cache record's Mako logical timestamp
+    // after the entire write set is locked but before validating the read set.
+    // A failed transaction may consume a harmless timestamp gap. No cache log
+    // position has been assigned yet, so validation failure needs no
+    // cancellation slot. The restricted update path allocates below, after
+    // validation, so it consumes neither timestamp nor gate turn on conflict.
+    if (!acquire_gate_after_validation && nwriteset != 0 &&
+        (hook != nullptr
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+         || has_test_commit_observer
+#endif
+        )) {
+        uint32_t timestamp = 0;
+        if (!try_assign_mako_timestamp(timestamp)) {
+            if (failure)
+                *failure = preinstall_failure::timestamp_exhausted;
+            goto abort;
+        }
+    }
 
 #if CONSISTENCY_CHECK
+    // The cache hook now carries Mako's logical timestamp; Silo's independent
+    // version clock retains its legacy consistency-check behavior.
     fence();
-    commit_tid();
+    if (!commit_tid_)
+        commit_tid();
     fence();
 #endif
 
     if (!no_paxos){
         // Update single timestamp system
-        updateSingleTimestamp(); // Updates tid_unique_ internally
-        // Merge with max timestamp from read set
+        if (!updateSingleTimestamp()) {
+            if (failure)
+                *failure = preinstall_failure::timestamp_exhausted;
+            goto abort;
+        }
+        // Merge with max timestamp from read set. Legacy or corrupt values
+        // outside the checked base domain must not reach u32 term encoding.
+        if (maxTimestampReadSet > max_mako_timestamp) {
+            if (failure)
+                *failure = preinstall_failure::timestamp_exhausted;
+            goto abort;
+        }
         if (maxTimestampReadSet > tid_unique_) {
             tid_unique_ = maxTimestampReadSet;
         }
@@ -535,10 +1058,40 @@ bool Transaction::try_commit(bool no_paxos) {
 #endif
     }
 
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+    if (!acquire_gate_after_validation && nwriteset != 0 &&
+        has_test_commit_observer) {
+        assert(tid_unique_ != 0);
+        notify_test_commit_observer(
+            test_commit_phase::mako_timestamp_allocated, tid_unique_);
+    }
+#endif
+
+    // The same-build caller selects accept_ordered only after proving that
+    // this transaction's complete observation is covered by its locked local
+    // update. Start the packed word's write-intent acquisition now so phase-2
+    // validation can overlap part of the later contended CAS latency. This is
+    // only a hint: no order is allocated until validation succeeds below.
+    if (acquire_gate_after_validation && nwriteset != 0 &&
+        validation_gate->accept_ordered != nullptr)
+        prefetch_restricted_cache_order_state_for_write();
+
     //phase2
     for (unsigned tidx = 0; tidx != tset_size_; ++tidx) {
         it = (tidx % tset_chunk ? it + 1 : tset_[tidx / tset_chunk]);
         bool isRemote = it->owner()->get_is_remote();
+        // Predicate checks normally happen while phase1 discovers and locks
+        // writes. An ordered durability commit repeats them after entering its
+        // validation gate so range anti-dependencies cannot slip between the
+        // gate's timestamp order and the final point-read validation.
+        if (validation_gate != nullptr && !isRemote &&
+            !it->has_read() && it->has_predicate()) {
+            TXP_INCREMENT(txp_total_check_predicate);
+            if (!it->owner()->check_predicate(*it, *this, true)) {
+                mark_abort_because(it, "ordered commit check_predicate");
+                goto abort;
+            }
+        }
         if (!isRemote && it->has_read()) {
             TXP_INCREMENT(txp_total_check_read);
             if (!it->owner()->check(*it, *this) // this is just a version check
@@ -569,6 +1122,92 @@ bool Transaction::try_commit(bool no_paxos) {
         }
     }
 
+    // The restricted one-local-update profile has no observation outside its
+    // complete write lock. It can therefore do ordinary validation in
+    // parallel and serialize only the timestamp/log-position pair. General
+    // transactions retain the early gate above so anti-dependencies and range
+    // predicates keep their established order.
+    if (acquire_gate_after_validation && nwriteset != 0) {
+        uint32_t timestamp = 0;
+        if (validation_gate->accept_ordered != nullptr) {
+            const ordered_accept_result accepted =
+                validation_gate->accept_ordered(validation_gate->context,
+                                                 &timestamp);
+            if (accepted != ordered_accept_result::accepted) {
+                if (failure) {
+                    *failure = accepted ==
+                            ordered_accept_result::timestamp_exhausted
+                        ? preinstall_failure::timestamp_exhausted
+                        : preinstall_failure::hook_rejected;
+                }
+                goto abort;
+            }
+            assert(timestamp != 0 && timestamp <= max_mako_timestamp);
+            assert(tid_unique_ == 0);
+            tid_unique_ = timestamp;
+            ordered_hook_already_accepted = true;
+        } else {
+            validation_gate_scope.acquire();
+            if (!try_assign_mako_timestamp(timestamp)) {
+                if (failure)
+                    *failure = preinstall_failure::timestamp_exhausted;
+                goto abort;
+            }
+        }
+    }
+
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+    if (acquire_gate_after_validation && nwriteset != 0 &&
+        has_test_commit_observer) {
+        assert(tid_unique_ != 0);
+        notify_test_commit_observer(
+            test_commit_phase::mako_timestamp_allocated, tid_unique_);
+    }
+#endif
+
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+    if (nwriteset != 0 && has_test_commit_observer) {
+        notify_test_commit_observer(
+            test_commit_phase::local_validation_complete, tid_unique_);
+    }
+#endif
+
+    // Every validation has succeeded and no write is visible yet. The hook
+    // attaches preallocated storage to the ordered cache log. Rejection is a
+    // definite abort because phase3 has not begun.
+    if (!ordered_hook_already_accepted && hook != nullptr && nwriteset != 0 &&
+        !hook(hook_context, tid_unique_)) {
+        if (failure)
+            *failure = preinstall_failure::hook_rejected;
+        goto abort;
+    }
+    // The ordered record is now bound. Later transactions retain their own
+    // write locks while waiting, so releasing here preserves anti-dependency
+    // validation order without serializing record bytes or phase3 installs.
+    validation_gate_scope.release();
+    if (validation_gate != nullptr && nwriteset != 0 &&
+        validation_gate->after_leave != nullptr &&
+        !validation_gate->after_leave(validation_gate->context, tid_unique_)) {
+        if (failure)
+            *failure = preinstall_failure::hook_rejected;
+        goto abort;
+    }
+
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+    if (nwriteset != 0 && has_test_commit_observer) {
+        notify_test_commit_observer(test_commit_phase::preinstall_accepted,
+                                    tid_unique_);
+    }
+#endif
+
+    // @safe: A remote/read-set maximum may have raised the chosen timestamp
+    // above this coordinator's local ticket. Floor the next-to-return clock
+    // before either phase-3 layout installs the write set. A successful
+    // ordered callback replaced timestamp allocation with a packed CAS that
+    // already advanced this same clock past tid_unique_.
+    if (nwriteset && !ordered_hook_already_accepted)
+        observe_mako_timestamp(tid_unique_);
+
     //phase3
 #if STO_SORT_WRITESET
     for (unsigned tidx = first_write_; tidx != tset_size_; ++tidx) {
@@ -576,17 +1215,19 @@ bool Transaction::try_commit(bool no_paxos) {
         if (it->has_write()) {
             TXP_INCREMENT(txp_total_w);
             it->owner()->install(*it, *this);
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+            ++installed_write_count;
+            if (installed_write_count == 1 && nwriteset > 1 &&
+                has_test_commit_observer) {
+                notify_test_commit_observer(
+                    test_commit_phase::first_write_installed, tid_unique_);
+            }
+#endif
         }
     }
 #else
     if (nwriteset) {
         auto writeset_end = writeset + nwriteset;
-
-        // Update local_id to catch up with single timestamp
-        int delta = tid_unique_ - sync_util::sync_logger::local_replica_id;
-        if (delta > 0) {
-            __sync_fetch_and_add(&sync_util::sync_logger::local_replica_id, delta);
-        }
 
         for (auto idxit = writeset; idxit != writeset_end; ++idxit) {
             if (likely(*idxit < tset_initial_capacity))
@@ -596,6 +1237,14 @@ bool Transaction::try_commit(bool no_paxos) {
             TXP_INCREMENT(txp_total_w);
             // to ensure invalid-bit to be reset in transPut for remote tables on the coordinator shard
             it->owner()->install(*it, *this);
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+            ++installed_write_count;
+            if (installed_write_count == 1 && nwriteset > 1 &&
+                has_test_commit_observer) {
+                notify_test_commit_observer(
+                    test_commit_phase::first_write_installed, tid_unique_);
+            }
+#endif
         }
         if (TThread::writeset_shard_bits > 0||TThread::readset_shard_bits>0) {
             if (TThread::sclient == nullptr) {
@@ -631,6 +1280,13 @@ bool Transaction::try_commit(bool no_paxos) {
     }
 #endif
 
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+    if (nwriteset != 0 && has_test_commit_observer) {
+        notify_test_commit_observer(test_commit_phase::all_writes_installed,
+                                    tid_unique_);
+    }
+#endif
+
     if (BenchmarkConfig::getInstance().getIsReplicated()) {
         if (!no_paxos) {
             #if defined(SIMPLE_WORKLOAD)
@@ -663,6 +1319,10 @@ bool Transaction::try_commit(bool no_paxos) {
 abort:
     TXP_INCREMENT(txp_commit_time_aborts);
     stop(false, nullptr, 0);
+    // On an ordinary abort, keep the gate until stop has released every write
+    // lock. If stop unwinds, the scope destructor still retires the turn so a
+    // quarantined worker cannot strand the database-wide record pipeline.
+    validation_gate_scope.release();
     if ((TThread::writeset_shard_bits > 0 || TThread::readset_shard_bits > 0) && TThread::sclient != nullptr) {
         TThread::sclient->remoteAbort();
     }
@@ -881,7 +1541,8 @@ void Transaction::print_stats() {
         auto base = tset_[tidx / tset_chunk];
         it = base + tidx % tset_chunk;
         versioned_str_struct *value = (*it).key<versioned_str_struct *>();
-        std::string val = std::string(value->data(), value->length());
+        std::string val;
+        value->copy_value_atomic(val);
         std::string key = "";
         if (hasInsertOp(it)) {  // key_write_value_type
             key = (*it).write_value<std::string>();

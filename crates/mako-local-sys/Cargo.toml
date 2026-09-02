@@ -1,0 +1,13 @@
+[package]
+name = "mako-local-sys"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.91"
+description = "Raw bindings for Mako's local STO/MassTrans C ABI"
+license = "MIT"
+publish = false
+
+[dependencies]
+
+[build-dependencies]
+bindgen = "=0.72.1"

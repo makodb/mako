@@ -31,7 +31,11 @@ namespace sync_util {
         static bool is_leader;
         static string cluster;
         static transport::Configuration *config;
-        static int local_replica_id; // local server incremental id
+        // Process-wide cache-order and Mako-clock word. Transaction owns the
+        // packed layout and every mutation. Keeping the dense cache sequence
+        // beside the next-to-return timestamp lets a restricted validated
+        // update allocate both with one lock-free u64 CAS.
+        alignas(128) static std::atomic<uint64_t> cache_order_state;
 
         // https://en.cppreference.com/w/cpp/thread/condition_variable
         static bool toLeader;

@@ -49,8 +49,8 @@ public:
   typedef typename std::conditional<Opacity, TVersion, TNonopaqueVersion>::type tversion_type;
 
   static __thread threadinfo_type mythreadinfo;
-  unsigned long long int table_id;
-  bool is_remote;
+  unsigned long long int table_id = 0;
+  bool is_remote = false;
   std::string table_name_;
 
 protected:
@@ -116,7 +116,8 @@ public:
     mythreadinfo.ti = new threadinfo;
     return;
 #else
-    if (!mythreadinfo.ti) {
+    auto current_context = MasstreeContext::Current();
+    if (!mythreadinfo.ti || mythreadinfo.ti->context() != current_context) {
       auto* ti = threadinfo::make(threadinfo::TI_PROCESS, TThread::id());
       mythreadinfo.ti = ti;
     }
@@ -149,20 +150,25 @@ public:
         TThread::transget_without_throw=true;
         return false;
       }
-// #if READ_MY_WRITES  // it's always false by default
-//       if (has_delete(item)) {
-//         return false;
-//       }
-//       if (item.has_write()) {
-//         // read directly from the element if we're inserting it
-//         if (has_insert(item)) {
-// 	  assign_val(retval, e->read_value());
-//         } else {
-// 	    retval = item.template write_value<write_value_type>();
-//         }
-//         return true;
-//       }
-// #endif
+#if READ_MY_WRITES
+      if (readMyWritesEnabled()) {
+        if (has_delete(item)) {
+          return false;
+        }
+        if (item.has_write()) {
+          // A newly inserted value already lives in its private, invalid
+          // Masstree entry. Updates remain copy-staged in the TransItem until
+          // install. Copy either representation into the caller's output;
+          // never expose transaction- or tree-owned storage.
+          if (has_insert(item)) {
+            assign_val(retval, e->read_value());
+          } else {
+            retval = item.template write_value<write_value_type>();
+          }
+          return true;
+        }
+      }
+#endif
       Version elem_vers;
       if(!atomicRead(e, elem_vers, retval)){ // atomicRead might throw an error as well
         return false;
@@ -183,13 +189,13 @@ public:
     bool found = lp.find_unlocked(*ti.ti);
     if (found) {
       versioned_value *e = lp.value();
-      Version v = e->version();
+      Version v = TransactionTid::atomic_load(e->version());
       fence();
       auto item = t_item(e);
       item.add_extra(key) ;
       bool valid = !(v & invalid_bit);
 #if READ_MY_WRITES
-      if (!valid && has_insert(item)) {
+      if (readMyWritesEnabled() && !valid && has_insert(item)) {
         if (has_delete(item)) {
           // insert-then-delete then delete, so second delete should return false
           return false;
@@ -208,7 +214,7 @@ public:
       assert(valid);
 #if READ_MY_WRITES
       // already deleted!
-      if (has_delete(item)) {
+      if (readMyWritesEnabled() && has_delete(item)) {
         return false;
       }
 #endif
@@ -223,8 +229,82 @@ public:
   }
 
 private:
+  // @unsafe - Same-build local-cache storage kernel. The private Put calls
+  // this immediately after reallyHandlePutFound() has produced an ordinary
+  // existing-key update, so it may borrow MassTrans's concrete TransItem and
+  // encoded-string representation in place. The general decoder remains the
+  // checked fallback for inserts, remote tables, and every unexpected item or
+  // value representation; callers must not retain the borrowed spans after a
+  // later transaction mutation or cleanup.
+  [[gnu::always_inline]] bool export_found_update_canonical_write(
+      TransProxy& item,
+      Transaction::canonical_write_view* canonical_write_out) {
+    assert(canonical_write_out != nullptr);
+    const TransItem& native_item = item.item();
+    if (is_remote || !native_item.has_write() || has_insert(native_item) ||
+        has_delete(native_item)) [[unlikely]] {
+      return TThread::txn->export_local_canonical_write(
+          native_item, canonical_write_out);
+    }
+
+    const std::string& key = item.extra_string();
+    const std::string& value =
+        item.template write_value<std::string>();
+    if (value.size() < static_cast<size_t>(mako::EXTRA_BITS_FOR_VALUE))
+        [[unlikely]] {
+      return TThread::txn->export_local_canonical_write(
+          native_item, canonical_write_out);
+    }
+
+    *canonical_write_out = Transaction::canonical_write_view{
+        Transaction::canonical_write_view::operation::put,
+        table_id,
+        key.data(),
+        key.size(),
+        value.data(),
+        value.size() - static_cast<size_t>(mako::EXTRA_BITS_FOR_VALUE)};
+    return true;
+  }
+
+  template <typename ValueType>
+  bool compare_published(
+      versioned_value *e, const ValueType& value,
+      bool(*compar)(const std::string& newValue,
+                    const std::string& oldValue)) {
+    auto item = t_item(e);
+#if READ_MY_WRITES
+    if (readMyWritesEnabled() && has_insert(item)) {
+      // This transaction owns the linked invalid row. Other transactions
+      // reject it, so its private payload needs neither a published-version
+      // observation nor atomicRead's invalid-bit rejection. Preserve the
+      // replay verb's historical insert-then-compare composition.
+      value_type private_value;
+      assign_val(private_value, e->read_value());
+      return compar(storageValue(value), private_value);
+    }
+#endif
+
+    value_type published_value;
+    Version published_version;
+    if (!atomicRead(e, published_version, published_value))
+      propagate_atomic_read_conflict();
+
+    // A conditional write is also a transactional read, even when the
+    // predicate is false. Observe the exact version whose payload was passed
+    // to the comparator so a later commit cannot validate a different value.
+    item.observe(tversion_type(published_version));
+    return compar(storageValue(value), published_value);
+  }
+
   template <bool INSERT, bool SET, typename StringType, typename ValueType>
-  bool trans_write(const StringType& key, const ValueType& value, bool(*compar)(const std::string& newValue,const std::string& oldValue), threadinfo_type& ti = mythreadinfo) {
+  bool trans_write(
+      const StringType& key, const ValueType& value,
+      bool(*compar)(const std::string& newValue,
+                    const std::string& oldValue),
+      threadinfo_type& ti = mythreadinfo,
+      Transaction::canonical_write_view* canonical_write_out = nullptr) {
+    if (canonical_write_out != nullptr)
+      *canonical_write_out = Transaction::canonical_write_view{};
     // optimization to do an unlocked lookup first
     if (SET) {
       auto lp = unlocked_cursor_type::from_mutable_str(table_, key);
@@ -232,11 +312,12 @@ private:
       if (found) {
         if (compar != nullptr) {
           versioned_value *e = lp.value ();
-          if(!compar(value, e->read_value())){
+          if (!compare_published(e, value, compar)) {
             return false;
           }
         }
-        return handlePutFound<INSERT, SET>(lp.value(), key, value);
+        return handlePutFound<INSERT, SET>(lp.value(), key, value,
+                                           canonical_write_out);
       } else {
         if (!INSERT) {
           ensureNotFound(lp.node(), lp.full_version_value());
@@ -249,17 +330,29 @@ private:
     bool found = lp.find_insert(*ti.ti);
     if (found) {
       versioned_value *e = lp.value();
+      // Do not take the record lock while retaining the Masstree cursor lock:
+      // payload comparison may allocate or abort, and neither path should
+      // retain Masstree structural state.
+      lp.finish(0, *ti.ti);
       if (compar != nullptr) {
-        if(!compar(value, e->read_value())){
-          lp.finish (0, *ti.ti);
+        if (!compare_published(e, value, compar)) {
           return false;
         }
       }
-      lp.finish(0, *ti.ti);
-      return handlePutFound<INSERT, SET>(e, key, value);
+      return handlePutFound<INSERT, SET>(e, key, value,
+                                         canonical_write_out);
     } else {
       //      auto p = ti.ti->allocate(sizeof(versioned_value), memtag_value);
-      versioned_value* val = (versioned_value*)versioned_value::make(value, invalid_bit);  // malloc customer::value 
+      versioned_value* val;
+      try {
+        val = (versioned_value*)versioned_value::make(value, invalid_bit);  // malloc customer::value
+      } catch (...) {
+        // find_insert holds the cursor lock and may have assigned an unpublished
+        // slot. Cancel that candidate before propagating allocation failure;
+        // otherwise the ABI catch would leave the Masstree node locked forever.
+        lp.finish(0, *ti.ti);
+        throw;
+      }
       lp.value() = val;
 #if ABORT_ON_WRITE_READ_CONFLICT
       auto orig_node = lp.node();
@@ -291,6 +384,9 @@ private:
       // TransItem::key_ is actuall value, TransItem::wdata_ or rdata_ is actual key in write-set and read-set, respectively
       auto item = Sto::new_item(this, val);
       item.template add_write<key_write_value_type>(key).add_flags(insert_bit);
+      if (canonical_write_out != nullptr)
+        (void)TThread::txn->export_local_canonical_write(
+            item.item(), canonical_write_out);
       return found;
     }
   }
@@ -299,6 +395,20 @@ public:
   template <typename KT, typename VT>
   bool transPut(const KT& k, const VT& v, threadinfo_type& ti = mythreadinfo) {
     return trans_write</*insert*/true, /*set*/true>(k, v, nullptr, ti);
+  }
+
+  // Private local-cache fast path. Borrow the exact canonical TransItem spans
+  // produced by this put so a one-mutation commit can avoid rediscovering the
+  // item during both record sizing and serialization. The facade must discard
+  // the witness before any later mutation or read that can grow/reorganize
+  // transaction state.
+  template <typename KT, typename VT>
+  bool transPutWithCanonicalWrite(
+      const KT& k, const VT& v,
+      Transaction::canonical_write_view* canonical_write_out,
+      threadinfo_type& ti = mythreadinfo) {
+    return trans_write</*insert*/true, /*set*/true>(
+        k, v, nullptr, ti, canonical_write_out);
   }
 
   template <typename KT, typename VT>
@@ -321,10 +431,9 @@ public:
 
 
   // Returns an approximate count of keys in the table (local shard only).
-  // Updated at commit time under lock; may be stale for recently aborted transactions.
+  // Updated at commit time; may be stale for recently aborted transactions.
   size_t approx_size() const {
-    // @safe - returns count updated at commit time (under lock); no atomics needed.
-    return size_count_;
+    return size_count_.load(std::memory_order_relaxed);
   }
 
   using RangeCallback = rusty::Function<bool(Str, value_type&)>;
@@ -335,35 +444,90 @@ public:
   }
 
   // range queries
-  void transQuery(Str begin, Str end, RangeCallback callback, ValueAllocator *va = nullptr, threadinfo_type& ti = mythreadinfo) {
+  void transQuery(Str begin, Str end, RangeCallback callback,
+                  ValueAllocator *va = nullptr,
+                  threadinfo_type& ti = mythreadinfo) {
+    (void)transQueryImpl(begin, end, callback,
+                         true /* begin inclusive */, false /* end exclusive */,
+                         va, nullptr, ti);
+  }
+
+  // A bounded scan never creates more than `remaining_items` new transaction
+  // items. It decrements the caller's counter only for a new leaf predicate or
+  // row item, and returns false iff the budget stopped traversal. A callback
+  // that returns false is a successful early stop and therefore returns true.
+  // READ_MY_WRITES semantics are guaranteed only when readMyWritesEnabled().
+  bool transQueryBounded(Str begin, Str end, RangeCallback callback,
+                         size_t& remaining_items,
+                         bool begin_inclusive = true,
+                         bool end_inclusive = false,
+                         ValueAllocator *va = nullptr,
+                         threadinfo_type& ti = mythreadinfo) {
+    return transQueryImpl(begin, end, callback, begin_inclusive,
+                          end_inclusive, va, &remaining_items, ti);
+  }
+
+protected:
+  bool transQueryImpl(Str begin, Str end, RangeCallback& callback,
+                      bool begin_inclusive, bool end_inclusive,
+                      ValueAllocator *va,
+                      size_t *remaining_items, threadinfo_type& ti) {
+    bool budget_exhausted = false;
+    auto reserve_item = [&] (auto key) {
+      if (!remaining_items)
+        return true;
+
+      // Local single-version RYW uses one deduplicated TransItem per object.
+      // Other modes use fresh read items and must charge every visit.
+      bool creates_item = true;
+#if READ_MY_WRITES
+      if (readMyWritesEnabled())
+        creates_item = !Sto::check_item(this, key);
+#endif
+      if (!creates_item)
+        return true;
+      if (*remaining_items == 0) {
+        budget_exhausted = true;
+        return false;
+      }
+      --*remaining_items;
+      return true;
+    };
     auto node_callback = [&] (leaf_type* node, typename unlocked_cursor_type::nodeversion_value_type version) {
-      this->ensureNotFound(node, version);
+      if (reserve_item(tag_inter(node)))
+        this->ensureNotFound(node, version);
     };
     int deleted_cnt=0;
     auto value_callback = [&] (Str key, versioned_value* e) {
-      // TODO: this needs to read my writes
+      if (budget_exhausted || !reserve_item(e))
+        return false;
       auto item = this->t_read_only_item(e);
-// #if READ_MY_WRITES
-//       if (has_delete(item)) {
-//         return true;
-//       }
-//       if (item.has_write()) {
-//         // read directly from the element if we're inserting it
-//         if (has_insert(item)) {
-// 	      return range_query_has_insert(callback, key, e, va);
-// 	  //return callback(key, val);
-//         } else {
-//           return callback(key, item.template write_value<write_value_type>());
-//         }
-//       }
-// #endif
+#if READ_MY_WRITES
+      if (readMyWritesEnabled()) {
+        // Inserts are already linked into Masstree as private invalid entries,
+        // while updates live in the TransItem. Deletions remain linked until
+        // install. Overlay those three representations before reading the
+        // published value so the callback sees the transaction's logical view.
+        if (has_delete(item))
+          return true;
+        if (item.has_write()) {
+          if (has_insert(item))
+            return range_query_has_staged_value(callback, key,
+                                                e->read_value(), va);
+          return range_query_has_staged_value(
+              callback, key,
+              item.template write_value<write_value_type>(), va);
+        }
+      }
+#endif
       // not sure of a better way to do this
       value_type stack_val;
       value_type& val = va ? *allocate_value(va) : stack_val;
       Version v;
-      if(!atomicRead(e, v, val)){
-        Sto::abort();
-      }
+      // Callback false is a successful early stop, so a record conflict must
+      // unwind explicitly. atomicRead already performed native cleanup.
+      if (!atomicRead(e, v, val))
+        propagate_atomic_read_conflict();
       item.observe(tversion_type(v));
 
       if (!TThread::is_multiversion())
@@ -385,37 +549,86 @@ public:
       }
     };
 
-    range_scanner<decltype(node_callback), decltype(value_callback)> scanner(end, node_callback, value_callback);
-    table_.scan(begin, true, scanner, *ti.ti);
+    range_scanner<decltype(node_callback), decltype(value_callback)> scanner(
+        end, end_inclusive, node_callback, value_callback);
+    table_.scan(begin, begin_inclusive, scanner, *ti.ti);
+    return !budget_exhausted;
   }
 
-  void transRQuery(Str begin, Str end, RangeCallback callback, ValueAllocator *va = nullptr, threadinfo_type& ti = mythreadinfo) {
+public:
+  void transRQuery(Str begin, Str end, RangeCallback callback,
+                   ValueAllocator *va = nullptr,
+                   threadinfo_type& ti = mythreadinfo) {
+    (void)transRQueryImpl(begin, end, callback,
+                          true /* begin inclusive */, false /* end exclusive */,
+                          va, nullptr, ti);
+  }
+
+  bool transRQueryBounded(Str begin, Str end, RangeCallback callback,
+                          size_t& remaining_items,
+                          bool begin_inclusive = true,
+                          bool end_inclusive = false,
+                          ValueAllocator *va = nullptr,
+                          threadinfo_type& ti = mythreadinfo) {
+    return transRQueryImpl(begin, end, callback, begin_inclusive,
+                           end_inclusive, va, &remaining_items, ti);
+  }
+
+protected:
+  bool transRQueryImpl(Str begin, Str end, RangeCallback& callback,
+                       bool begin_inclusive, bool end_inclusive,
+                       ValueAllocator *va,
+                       size_t *remaining_items, threadinfo_type& ti) {
+    bool budget_exhausted = false;
+    auto reserve_item = [&] (auto key) {
+      if (!remaining_items)
+        return true;
+
+      bool creates_item = true;
+#if READ_MY_WRITES
+      if (readMyWritesEnabled())
+        creates_item = !Sto::check_item(this, key);
+#endif
+      if (!creates_item)
+        return true;
+      if (*remaining_items == 0) {
+        budget_exhausted = true;
+        return false;
+      }
+      --*remaining_items;
+      return true;
+    };
     auto node_callback = [&] (leaf_type* node, typename unlocked_cursor_type::nodeversion_value_type version) {
-      this->ensureNotFound(node, version);
+      if (reserve_item(tag_inter(node)))
+        this->ensureNotFound(node, version);
     };
     int deleted_cnt=0;
     auto value_callback = [&] (Str key, versioned_value* e) {
+      if (budget_exhausted || !reserve_item(e))
+        return false;
       auto item = this->t_read_only_item(e);
+#if READ_MY_WRITES
+      if (readMyWritesEnabled()) {
+        // Match the forward overlay exactly; direction only changes tree
+        // traversal and bound comparison, not the transaction-visible value.
+        if (has_delete(item))
+          return true;
+        if (item.has_write()) {
+          if (has_insert(item))
+            return range_query_has_staged_value(callback, key,
+                                                e->read_value(), va);
+          return range_query_has_staged_value(
+              callback, key,
+              item.template write_value<write_value_type>(), va);
+        }
+      }
+#endif
       // not sure of a better way to do this
       value_type stack_val;
       value_type& val = va ? *allocate_value(va) : stack_val;
-// #if READ_MY_WRITES
-//       if (has_delete(item)) {
-//         return true;
-//       }
-//       if (item.has_write()) {
-//         // read directly from the element if we're inserting it
-//         if (has_insert(item)) {
-// 	        return range_query_has_insert(callback, key, e, va);
-//         } else {
-//             return callback(key, item.template write_value<write_value_type>());
-//         }
-//       }
-// #endif
       Version v;
-      if(!atomicRead(e, v, val)){
-        Sto::abort();
-      }
+      if (!atomicRead(e, v, val))
+        propagate_atomic_read_conflict();
       item.observe(tversion_type(v));
 
       if (!TThread::is_multiversion())
@@ -436,16 +649,24 @@ public:
       }
     };
 
-    range_scanner<decltype(node_callback), decltype(value_callback), true> scanner(end, node_callback, value_callback);
-    table_.rscan(begin, true, scanner, *ti.ti);
+    range_scanner<decltype(node_callback), decltype(value_callback), true>
+        scanner(end, end_inclusive, node_callback, value_callback);
+    table_.rscan(begin, begin_inclusive, scanner, *ti.ti);
+    return !budget_exhausted;
   }
 
 #if READ_MY_WRITES
+  template <typename StagedValue>
   // for some reason inlining this/not making it a function gives a 5% slowdown on g++...
-  static __attribute__((noinline)) bool range_query_has_insert(RangeCallback& callback, Str key, versioned_value *e, ValueAllocator *va) {
+  static __attribute__((noinline)) bool range_query_has_staged_value(
+      RangeCallback& callback, Str key, const StagedValue& staged,
+      ValueAllocator *va) {
+    // Callbacks historically receive a mutable reference and wrappers strip
+    // Mako's encoded trailer in place. Never lend them the transaction's own
+    // staged string: truncating it here would also truncate the eventual write.
     value_type stack_val;
     value_type& val = va ? *allocate_value(va) : stack_val;
-    assign_val(val, e->read_value());
+    assign_val(val, staged);
     return callback(key, val);
   }
 #endif
@@ -455,8 +676,11 @@ protected:
   template <typename Nodecallback, typename Valuecallback, bool Reverse = false>
   class range_scanner {
   public:
-    range_scanner(Str upper, Nodecallback nodecallback, Valuecallback valuecallback) : boundary_(upper), boundary_compar_(false),
-                                                                                       nodecallback_(nodecallback), valuecallback_(valuecallback) {}
+    range_scanner(Str upper, bool boundary_inclusive,
+                  Nodecallback nodecallback, Valuecallback valuecallback)
+        : boundary_(upper), boundary_compar_(false),
+          boundary_inclusive_(boundary_inclusive),
+          nodecallback_(nodecallback), valuecallback_(valuecallback) {}
 
     template <typename ITER, typename KEY>
     void check(const ITER& iter,
@@ -486,8 +710,13 @@ protected:
     }
     bool visit_value(const Masstree::key<uint64_t>& key, versioned_value *value, threadinfo&) {
       if (this->boundary_compar_) {
-        if ((!Reverse && boundary_ <= key.full_string()) ||
-            ( Reverse && boundary_ >= key.full_string()))
+        const bool past_boundary =
+            !Reverse
+                ? (boundary_inclusive_ ? boundary_ < key.full_string()
+                                       : boundary_ <= key.full_string())
+                : (boundary_inclusive_ ? boundary_ > key.full_string()
+                                       : boundary_ >= key.full_string());
+        if (past_boundary)
           return false;
       }
       
@@ -496,6 +725,7 @@ protected:
 
     Str boundary_;
     bool boundary_compar_;
+    bool boundary_inclusive_;
     Nodecallback nodecallback_;
     Valuecallback valuecallback_;
   };
@@ -587,32 +817,41 @@ public:
     if (!valid) {
       return false;
     }
-    return TransactionTid::check_version(e->version(), read_version);
+    return TransactionTid::check_version(
+        TransactionTid::atomic_load(e->version()), read_version);
   }
 
   #define RESET_NODE_BY_E(e) \
     char *oldval_str=(char*)e->data();\
     int oldval_len=e->length();\
-    mako::Node* header = reinterpret_cast<mako::Node*>(oldval_str+oldval_len-mako::BITS_OF_NODE);\
-    header->timestamp = 0; \
-    header->data_size = 0; 
+    mako::ResetEncodedNodeState(oldval_str, static_cast<size_t>(oldval_len));
 
+  // The common single-version update copies payload bytes with relaxed
+  // atomic stores.  Clang emits that loop 128 bytes from the function entry;
+  // aligning the COMDAT function keeps the tight load/store/backedge group in
+  // one instruction-cache line instead of making its throughput depend on
+  // the final executable's unrelated link order. A future PGO build should
+  // own function and basic-block placement; retain this narrow alignment
+  // until that profile-guided layout is part of the production toolchain.
+  __attribute__((aligned(64)))
   void install(TransItem& item, Transaction& t) override {
     assert(!has_internode_key(item));
     versioned_value* e = item.key<versioned_value*>();
-    assert(is_locked(e->version()));
+    assert(is_locked(TransactionTid::atomic_load(
+        e->version(), std::memory_order_relaxed)));
     bool isInsert = has_insert(item), isDelete = has_delete(item);
 
     if (isDelete) { // delete
-      // Update count at commit time (under lock), so no atomics needed.
+      // Update count at commit time.
       // insert-then-delete cancels out (net change = 0); plain delete decrements.
       if (!isInsert) {
-        size_count_--;
+        size_count_.fetch_sub(1, std::memory_order_relaxed);
       }
       if (!TThread::is_multiversion()) {
         if (!isInsert) { // update
-          assert(!(e->version() & invalid_bit));
-          e->version() |= invalid_bit;
+          assert(!(TransactionTid::atomic_load(
+              e->version(), std::memory_order_relaxed) & invalid_bit));
+          TransactionTid::atomic_fetch_or(e->version(), invalid_bit);
           fence();
         }
 
@@ -649,10 +888,11 @@ public:
     if (Opacity)  // false
       TransactionTid::set_version(e->version(), t.commit_tid());
     else if (isInsert) {  // insert
-      size_count_++;
-      Version v = e->version() & ~invalid_bit;
+      size_count_.fetch_add(1, std::memory_order_relaxed);
+      Version v = TransactionTid::atomic_load(
+          e->version(), std::memory_order_relaxed) & ~invalid_bit;
       fence();
-      e->version() = v;
+      TransactionTid::atomic_store(e->version(), v);
       if (TThread::is_multiversion())
         MultiVersionValue::mvInstall(isInsert, isDelete,
                                     "",
@@ -681,7 +921,9 @@ public:
 
   bool remove(const Str& key, threadinfo_type& ti = mythreadinfo) {
     auto lp = cursor_type::from_mutable_str(table_, key);
-    bool found = lp.find_locked(*ti.ti);
+    // finish() requires the original-node metadata initialized by
+    // find_insert(), including when this operation only removes a row.
+    bool found = lp.find_insert(*ti.ti);
     // Only deallocate when the key exists: on a miss the cursor's
     // value slot is uninitialized and dereferencing it is UB.
     if (found)
@@ -691,55 +933,131 @@ public:
   }
 
 protected:
+  bool readMyWritesEnabled() const {
+#if READ_MY_WRITES
+    // This milestone covers local single-version Silo. Native Mako's remote
+    // proxies and replicated multiversion participants have different staging
+    // and lock-transfer protocols and must retain their prior behavior.
+    return !is_remote && !TThread::is_multiversion();
+#else
+    return false;
+#endif
+  }
+
+  template <typename ValueType>
+  static const ValueType& storageValue(const ValueType& value) {
+    return value;
+  }
+
+  // StringWrapper deliberately keeps the transaction's std::string out of
+  // the transaction buffer. Normalize it once so sizing and in-place writes
+  // use that same backing value without materializing a temporary string.
+  static const std::string& storageValue(const StringWrapper& value) {
+    return *value.value();
+  }
+
   // called once we've checked our own writes for a found put()
   template <typename ValueType>
   void reallyHandlePutFound(TransProxy& item, versioned_value *e, Str key, const ValueType& value) {
     // resizing takes a lot of effort, so we first check if we'll need to
     // (values never shrink in size, so if we don't need to resize, we'll never need to)
+    const auto& storage_value = storageValue(value);
     auto *new_location = e;
-    bool needsResize = e->needsResize(value);
+    bool needsResize = e->needsResize(storage_value);
     if (needsResize) {
+#if READ_MY_WRITES
+      // Relocation changes the transaction-set key from the old allocation to
+      // its replacement. Preserve an earlier point read's observed version so
+      // read-then-grow still detects an intervening writer, and retire every
+      // read/write flag that could otherwise dereference the old allocation at
+      // commit. An inserted row additionally carries its cleanup key forward.
+      const bool preserve_ryw_state = readMyWritesEnabled();
+      const bool relocate_insert = preserve_ryw_state && has_insert(item);
+      const bool relocate_read = preserve_ryw_state && item.has_read();
+      Version relocated_read_version{};
+      if (relocate_read)
+        relocated_read_version = item.template read_value<Version>();
+#endif
       if (!has_insert(item)) {  // update
-        // TODO: might be faster to do this part at commit time but easiest to just do it now
+        // Allocate/copy while holding the old value lock, but do not invalidate
+        // the published value until allocation has succeeded. In particular,
+        // StandardMalloc now throws on OOM; invalidating first would leave a
+        // permanently poisoned tree entry when that exception reached the ABI.
         lock(e);
         // we had a weird race condition and now this element is gone. just abort at this point
-        if (e->version() & invalid_bit) {
+        if (TransactionTid::atomic_load(e->version()) & invalid_bit) {
           unlock(e);
           Sto::abort();
           return;
         }
-        e->version() |= invalid_bit;
+        try {
+          // Copies the old value into a larger, still-unpublished allocation.
+          new_location = e->resizeIfNeeded(storage_value);
+        } catch (...) {
+          unlock(e);
+          throw;
+        }
+        TransactionTid::atomic_fetch_or(e->version(), invalid_bit);
         // should be ok to unlock now because any attempted writes will be forced to abort
         unlock(e);
+        // The copy was made while e carried its lock bit. Derive the replacement
+        // version from the now-unlocked old entry and clear only invalid_bit.
+        TransactionTid::atomic_store(
+            new_location->version(),
+            TransactionTid::atomic_load(e->version()) & ~invalid_bit);
+      } else {
+        new_location = e->resizeIfNeeded(storage_value);
       }
-      // does the actual realloc. at this point e is marked invalid so we don't have to worry about
-      // other threads changing e's value
-      // copied original value
-      new_location = e->resizeIfNeeded(value);
       // e can't get bigger so this should always be true
       assert(new_location != e);
-      if (!has_insert(item)) {
-        // copied version is going to be invalid because we just had to mark e invalid
-        new_location->version() &= ~invalid_bit;
-      }
       auto lp = cursor_type::from_mutable_str(table_, key);
       // TODO: not even trying to pass around threadinfo here
-      bool found = lp.find_locked(*mythreadinfo.ti);
+      // find_insert initializes the cursor bookkeeping consumed by finish().
+      // find_locked alone leaves original_n_ unset, which is undefined
+      // behavior even when we only replace an existing value pointer.
+      bool found = lp.find_insert(*mythreadinfo.ti);
       (void)found;
       assert(found);
       lp.value() = new_location;
       lp.finish(0, *mythreadinfo.ti);
-      // now rcu free "e"
+      // The active transaction's RCU epoch keeps the retired item reachable
+      // to its old TransItem until abort/commit cleanup completes. Queue it
+      // immediately so a later replacement-item allocation failure cannot
+      // leak the now-unlinked allocation.
       e->deallocate_rcu(*mythreadinfo.ti);
+#if READ_MY_WRITES
+      if (preserve_ryw_state) {
+        auto relocated_item = Sto::new_item(this, new_location);
+        if (relocate_read)
+          relocated_item.observe(tversion_type(relocated_read_version));
+        if (relocate_insert)
+          relocated_item.template add_write<key_write_value_type>(key)
+              .add_flags(insert_bit);
+
+        // Build the replacement item completely before relinquishing the old
+        // insert's abort-cleanup ownership. If allocation or opacity checking
+        // above fails, abort can still remove the newly published invalid row
+        // by using the old item's retained key.
+        if (item.has_write())
+          item.clear_write();
+        if (relocate_read)
+          item.clear_read();
+        if (relocate_insert)
+          item.clear_flags(insert_bit);
+        item = relocated_item;
+      } else {
+        item = Sto::new_item(this, new_location);
+      }
+#else
+      item = Sto::new_item(this, new_location);
+#endif
     }
 #if READ_MY_WRITES
-    if (has_insert(item)) {
-      new_location->set_value(value_type(value));
+    if (readMyWritesEnabled() && has_insert(item)) {
+      new_location->set_value(storage_value);
     } else
 #endif
     {
-      if (new_location != e)
-        item = Sto::new_item(this, new_location);
       item.template add_write<write_value_type>(value); // write_value_type value0 = (write_value_type)value;
 
       item.add_extra(key) ;
@@ -749,20 +1067,25 @@ protected:
   // returns true if already in tree, false otherwise
   // handles a transactional put when the given key is already in the tree
   template <bool INSERT, bool SET, typename ValueType>
-  bool handlePutFound(versioned_value *e, Str key, const ValueType& value) {
+  bool handlePutFound(
+      versioned_value *e, Str key, const ValueType& value,
+      Transaction::canonical_write_view* canonical_write_out = nullptr) {
     auto item = t_item(e);
     if (!validityCheck(item, e)) {
       Sto::abort();
       return false;
     }
 #if READ_MY_WRITES
-    if (has_delete(item)) {
+    if (readMyWritesEnabled() && has_delete(item)) {
       // delete-then-insert == update (technically v# would get set to 0, but this doesn't matter
       // if user can't read v#)
       if (INSERT) {
         item.clear_flags(delete_bit);
         assert(!has_delete(item));
         reallyHandlePutFound(item, e, key, value);
+        if (canonical_write_out != nullptr)
+          (void)TThread::txn->export_local_canonical_write(
+              item.item(), canonical_write_out);
       } else {
         // delete-then-update == not found
         // delete will check for other deletes so we don't need to re-log that check
@@ -773,25 +1096,23 @@ protected:
     if (SET) {
       reallyHandlePutFound(item, e, key, value);
     }
-    // Observe version AFTER reallyHandlePutFound. If a resize occurred,
-    // `item` now points to the new location (via Sto::new_item in
-    // reallyHandlePutFound line 697). Observing here ensures we record
-    // the correct location's version. The old TransItem (keyed by the
-    // invalidated original location) has no read observation, so the
-    // commit validation (Transaction.cc:538) skips it.
-    // FIX: Previously, observe was called BEFORE reallyHandlePutFound,
-    // which recorded the OLD location's version. After resize, the old
-    // location was marked invalid, causing a spurious OCC abort.
+    // Observe after reallyHandlePutFound so a first write that resized the
+    // value records the replacement location. If there was an earlier read,
+    // the relocation path already transferred its observation instead.
 #if READ_MY_WRITES
     // make sure this item doesn't get deleted (we don't care about other updates to it though)
-    if (!item.has_read() && !has_insert(item))
+    if (!readMyWritesEnabled() ||
+        (!item.has_read() && !has_insert(item)))
 #endif
     {
       auto current_e = item.item().template key<versioned_value*>();
-      Version v = current_e->version();
+      Version v = TransactionTid::atomic_load(current_e->version());
       fence();
       item.observe(tversion_type(v));
     }
+    if (SET && canonical_write_out != nullptr)
+      (void)export_found_update_canonical_write(item,
+                                                canonical_write_out);
     return true;
   }
 
@@ -826,10 +1147,13 @@ protected:
   template <typename T>
   TransProxy t_read_only_item(T e) {
 #if READ_MY_WRITES
-    return Sto::read_item(this, e);
-#else
-    return Sto::fresh_item(this, e);
+    // RYW requires one transaction item per value. Sto::read_item may create
+    // duplicate read items before the transaction's first write, which leaves
+    // stale observations behind if a later growing write relocates the value.
+    if (readMyWritesEnabled())
+      return Sto::item(this, e);
 #endif
+    return Sto::fresh_item(this, e);
   }
 
   static bool has_insert(const TransItem& item) {
@@ -842,9 +1166,10 @@ protected:
       return item.flags() & delete_bit;
   }
 
-  static bool validityCheck(const TransItem& item, versioned_value *e) {
+  bool validityCheck(const TransItem& item, versioned_value *e) const {
     bool v =  //likely(has_insert(item)) || !(e->version & invalid_bit);
-      likely(!(e->version() & invalid_bit)) || has_insert(item);
+      likely(!(TransactionTid::atomic_load(e->version()) & invalid_bit)) ||
+      (readMyWritesEnabled() && has_insert(item));
     //Warning("validityCheck:%d,%d",!(e->version() & invalid_bit), has_insert(item));
     return v;
   }
@@ -888,7 +1213,7 @@ protected:
   }
 
   static void check_opacity(Version& v) {
-    Version v2 = v;
+    Version v2 = TransactionTid::atomic_load(v);
     fence();
     Sto::check_opacity(v2);
   }
@@ -918,22 +1243,51 @@ protected:
 #endif
   }
 
+  template <typename PublishedValue>
+  static bool assign_published_value(value_type& val, PublishedValue *e,
+                                     Version) {
+    assign_val(val, e->read_value());
+    return true;
+  }
+
+  static bool assign_published_value(std::string& val,
+                                     versioned_str_struct *e,
+                                     Version expected_version) {
+    if (TThread::is_multiversion()) {
+      assign_val(val, e->read_value());
+      return true;
+    }
+    return e->copy_value_atomic(val, expected_version);
+  }
+
+  [[noreturn]] static void propagate_atomic_read_conflict() {
+    // atomicRead uses the point-read soft-abort contract. Callers whose return
+    // value already has a non-conflict meaning must translate that marker into
+    // control flow themselves and must not leave the TLS marker stale.
+    TThread::transget_without_throw = false;
+    throw Transaction::Abort();
+  }
+
   static bool atomicRead(versioned_value *e, Version& vers, value_type& val) {
-    Version v2;
+    Version before;
     do {
-      v2 = e->version();
-      if (is_locked(v2)){
-        Sto::abort_without_throw(); //Sto::abort();
-        TThread::transget_without_throw=true;
+      before = TransactionTid::atomic_load(e->version());
+      if (is_locked(before) || (before & invalid_bit)) {
+        Sto::abort_without_throw();
+        TThread::transget_without_throw = true;
         return false;
       }
-	
+
       fence();
-      assign_val(val, e->read_value());
+      // versioned_str_struct copies its published length and bytes through
+      // atomic_ref. The generic fallback retains the historical behavior for
+      // non-boundary boxes; Item 4's local profile always uses versioned_str.
+      if (!assign_published_value(val, e, before))
+        continue;
       fence();
-      vers = e->version();
+      vers = TransactionTid::atomic_load(e->version());
       fence();
-    } while (vers != v2);
+    } while (vers != before);
     return true;
   }
 
@@ -946,8 +1300,9 @@ protected:
   }
 
   table_type table_;
-  // @safe - approximate key count; updated at commit time (under lock), so no atomics needed.
-  size_t size_count_{0};
+  // @safe - approximate key count. Per-record locks do not serialize commits
+  // to different keys, so the table-wide counter itself must be atomic.
+  std::atomic<size_t> size_count_{0};
 };
 
 template <typename V, typename Box, bool Opacity>

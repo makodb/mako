@@ -1,0 +1,444 @@
+//! Locate the existing CMake build that owns the C++ implementation.
+//!
+//! We deliberately do not compile STO or MassTrans from Cargo: doing so with
+//! different generated config or compile definitions creates incompatible
+//! template/layout instantiations in one process.
+
+use std::collections::HashSet;
+use std::fs;
+use std::path::{Component, Path, PathBuf};
+use std::process::Command;
+
+#[path = "build_support/native_allocator.rs"]
+mod native_allocator;
+
+use native_allocator::{NativeAllocator, ResolvedAllocator, CONTRACT_RELATIVE_PATH};
+
+const DEFAULT_BUILD_DIRS: [&str; 4] = ["build_mrx", "build_c22", "build", "build_docker"];
+const NATIVE_LINK_ARCHIVES: &str = include_str!("native-link-archives.txt");
+
+fn main() {
+    println!("cargo:rerun-if-env-changed=MAKO_BUILD_DIR");
+    println!("cargo:rerun-if-env-changed=MAKO_LOCAL_REQUIRE_NATIVE");
+    println!("cargo:rerun-if-env-changed=MAKO_LOCAL_FAKE_ABI");
+    println!("cargo:rerun-if-env-changed=LIBCXX_DIR");
+    println!("cargo:rerun-if-env-changed=PYTHON");
+    println!("cargo:rerun-if-changed=native-link-archives.txt");
+    println!("cargo:rerun-if-changed=build_support/native_allocator.rs");
+    println!("cargo:rustc-check-cfg=cfg(have_mako)");
+
+    if fake_abi_requested() {
+        assert!(
+            !native_is_required(),
+            "MAKO_LOCAL_FAKE_ABI=1 and MAKO_LOCAL_REQUIRE_NATIVE=1 are mutually exclusive"
+        );
+        return;
+    }
+
+    watch_default_build_candidates();
+    let Some(build) = find_build_dir() else {
+        if native_is_required() || std::env::var_os("MAKO_BUILD_DIR").is_some() {
+            panic!(
+                "mako-local native tests require a CMake build containing libmako.a; \
+                 set MAKO_BUILD_DIR to a valid build tree"
+            );
+        }
+        println!(
+            "cargo:warning=no mako build directory found; mako-local compiles, \
+             but native integration tests are skipped. Set MAKO_BUILD_DIR."
+        );
+        return;
+    };
+
+    verify_native_fingerprint(&build);
+    warn_about_newer_inputs(&build);
+
+    println!(
+        "cargo:rerun-if-changed={}",
+        build.join("libmako.a").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        build.join("CMakeCache.txt").display()
+    );
+    // Keep the same consumer-before-provider archive closure used by CMake's
+    // native executables. The smaller historical closure stopped working once
+    // real transaction tests selected srpc/deptran objects whose out-of-line
+    // implementations live in rusty-cpp port archives.
+    for (lib, rel) in native_link_archives() {
+        let path = build.join(rel);
+        let dir = path.parent().unwrap_or_else(|| {
+            panic!(
+                "native archive path has no parent directory: {}",
+                path.display()
+            )
+        });
+        assert!(
+            path.is_file(),
+            "mako-local native archive closure is incomplete: {} is missing; \
+             rebuild the CMake target before linking Rust",
+            path.display()
+        );
+        println!("cargo:rerun-if-changed={}", path.display());
+        println!("cargo:rustc-link-search=native={}", dir.display());
+        println!("cargo:rustc-link-lib=static={lib}");
+    }
+
+    // Mako's in-tree yaml-cpp is built against the same libc++ as libmako.
+    // The distro library uses libstdc++ and therefore has different mangled
+    // std::string symbols. Put the CMake copy before an allocator directory
+    // such as /usr/lib, which may also contain an incompatible yaml-cpp.
+    let yaml_dir = build.join("third-party/yaml-cpp");
+    if yaml_dir.join("libyaml-cpp.so").exists() {
+        println!("cargo:rustc-link-search=native={}", yaml_dir.display());
+        println!("cargo:rustc-link-arg=-Wl,-rpath,{}", yaml_dir.display());
+    }
+
+    // Keep the configured libc++ ahead of the allocator directory for the
+    // same reason: a broad system library directory can contain a different
+    // libc++ ABI. configure_native_allocator still emits its search path
+    // before its own link-lib directive.
+    let libcxx = libcxx_dir(&build).unwrap_or_else(|| {
+        panic!(
+            "could not derive libmako's libc++ directory from {}; \
+             set LIBCXX_DIR to the exact toolchain library directory",
+            build.join("CMakeCache.txt").display()
+        )
+    });
+    println!("cargo:rustc-link-search=native={}", libcxx.display());
+    println!("cargo:rustc-link-arg=-Wl,-rpath,{}", libcxx.display());
+
+    configure_native_allocator(&build);
+
+    for lib in [
+        "rocksdb",
+        "yaml-cpp",
+        "lz4",
+        "numa",
+        "event",
+        "event_pthreads",
+        "pthread",
+        "dl",
+    ] {
+        println!("cargo:rustc-link-lib=dylib={lib}");
+    }
+    println!("cargo:rustc-link-lib=dylib=c++");
+    println!("cargo:rustc-link-lib=dylib=c++abi");
+    println!("cargo:rustc-cfg=have_mako");
+}
+
+fn configure_native_allocator(build: &Path) {
+    let cache_path = build.join("CMakeCache.txt");
+    let cache = fs::read_to_string(&cache_path)
+        .unwrap_or_else(|error| panic!("cannot read {}: {error}", cache_path.display()));
+    let configured = NativeAllocator::from_cmake_cache(&cache).unwrap_or_else(|error| {
+        panic!(
+            "mako-local cannot reproduce the native allocator from {}: {error}",
+            cache_path.display()
+        )
+    });
+    let contract_path = build.join(CONTRACT_RELATIVE_PATH);
+    println!("cargo:rerun-if-changed={}", contract_path.display());
+    let contract = fs::read_to_string(&contract_path)
+        .unwrap_or_else(|error| panic!("cannot read {}: {error}", contract_path.display()));
+    let allocator = ResolvedAllocator::from_contract(&contract)
+        .and_then(|resolved| resolved.validate_mode(configured))
+        .and_then(|resolved| {
+            resolved.validate_library_path()?;
+            Ok(resolved)
+        })
+        .unwrap_or_else(|error| {
+            panic!(
+                "mako-local refused allocator contract {}: {error}",
+                contract_path.display()
+            )
+        });
+
+    // Rust's system allocator and libc++ both reach malloc/new through the
+    // process link map. Match CMake's allocator so a Cargo executable has the
+    // same process-wide allocation contract as Mako's native executables.
+    if let Some(library_path) = allocator.library_path() {
+        let library_directory = allocator
+            .library_directory()
+            .expect("resolved allocator library must have a parent directory");
+        let link_name = allocator
+            .link_name()
+            .expect("resolved allocator library must have a link name");
+        println!("cargo:rerun-if-changed={}", library_path.display());
+        // Search metadata propagates to downstream links. The rpath argument
+        // applies to mako-local's own test/binary targets; final downstream
+        // executables with a non-system allocator path must repeat it.
+        println!(
+            "cargo:rustc-link-search=native={}",
+            library_directory.display()
+        );
+        println!(
+            "cargo:rustc-link-arg=-Wl,-rpath,{}",
+            library_directory.display()
+        );
+        println!("cargo:rustc-link-lib=dylib={link_name}");
+    }
+}
+
+fn native_link_archives() -> Vec<(&'static str, &'static str)> {
+    let mut archives = Vec::new();
+    let mut names = HashSet::new();
+    let mut paths = HashSet::new();
+    for (index, raw_line) in NATIVE_LINK_ARCHIVES.lines().enumerate() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let fields: Vec<_> = line.split_whitespace().collect();
+        assert_eq!(
+            fields.len(),
+            2,
+            "native-link-archives.txt:{} must contain exactly a library name and path",
+            index + 1
+        );
+        let (name, relative) = (fields[0], fields[1]);
+        assert!(
+            name.chars()
+                .all(|character| character.is_ascii_alphanumeric() || character == '_'),
+            "native-link-archives.txt:{} has invalid library name {name:?}",
+            index + 1
+        );
+        assert!(
+            Path::new(relative)
+                .components()
+                .all(|component| matches!(component, Component::Normal(_))),
+            "native-link-archives.txt:{} path must stay relative to MAKO_BUILD_DIR: {relative:?}",
+            index + 1
+        );
+        assert!(
+            names.insert(name),
+            "native-link-archives.txt:{} repeats library {name:?}",
+            index + 1
+        );
+        assert!(
+            paths.insert(relative),
+            "native-link-archives.txt:{} repeats archive path {relative:?}",
+            index + 1
+        );
+        archives.push((name, relative));
+    }
+    assert!(
+        !archives.is_empty(),
+        "native-link-archives.txt contains no archives"
+    );
+    archives
+}
+
+fn find_build_dir() -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("MAKO_BUILD_DIR") {
+        let path = PathBuf::from(dir);
+        let path = if path.is_absolute() {
+            path
+        } else {
+            repository_root().join(path)
+        };
+        return canonical_existing_build_dir(path);
+    }
+    DEFAULT_BUILD_DIRS
+        .iter()
+        .map(|dir| repository_root().join(dir))
+        .find_map(canonical_existing_build_dir)
+}
+
+fn watch_default_build_candidates() {
+    for directory in DEFAULT_BUILD_DIRS {
+        println!(
+            "cargo:rerun-if-changed={}",
+            repository_root()
+                .join(directory)
+                .join("libmako.a")
+                .display()
+        );
+    }
+}
+
+fn canonical_existing_build_dir(path: PathBuf) -> Option<PathBuf> {
+    path.join("libmako.a").exists().then(|| {
+        path.canonicalize()
+            .unwrap_or_else(|error| panic!("cannot canonicalize {}: {error}", path.display()))
+    })
+}
+
+fn native_is_required() -> bool {
+    std::env::var("MAKO_LOCAL_REQUIRE_NATIVE").is_ok_and(|value| value == "1")
+}
+
+fn fake_abi_requested() -> bool {
+    std::env::var("MAKO_LOCAL_FAKE_ABI").is_ok_and(|value| value == "1")
+}
+
+fn repository_root() -> &'static Path {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("mako-local must remain inside the repository's crates directory")
+}
+
+fn verify_native_fingerprint(build: &Path) {
+    let root = repository_root();
+    let script = root.join("scripts/mako_local_fingerprint.py");
+    let manifest = build.join("generated/mako_local_build_manifest.json");
+    let compile_commands = build.join("compile_commands.json");
+    let cache = build.join("CMakeCache.txt");
+    for dependency in [&script, &manifest, &compile_commands, &cache] {
+        println!("cargo:rerun-if-changed={}", dependency.display());
+    }
+
+    let out_dir = PathBuf::from(
+        std::env::var_os("OUT_DIR").expect("Cargo did not set OUT_DIR for mako-local"),
+    );
+    // This path is intentionally never created. Cargo treats the missing
+    // rerun dependency as dirty, so every required-native Cargo invocation
+    // recomputes the content identity instead of trusting source mtimes.
+    // Fake/compile-only builds return before reaching this gate.
+    println!(
+        "cargo:rerun-if-changed={}",
+        out_dir
+            .join("mako_local_fingerprint_verify_always")
+            .display()
+    );
+    let rust_out = out_dir.join("mako_local_build_identity.rs");
+    let dependency_list = out_dir.join("mako_local_fingerprint_dependencies.txt");
+    let python = std::env::var_os("PYTHON").unwrap_or_else(|| "python3".into());
+    let output = Command::new(&python)
+        .arg(&script)
+        .arg("verify")
+        .arg("--source-root")
+        .arg(root)
+        .arg("--build-dir")
+        .arg(build)
+        .arg("--manifest")
+        .arg(&manifest)
+        .arg("--rust-out")
+        .arg(&rust_out)
+        .arg("--dependency-list")
+        .arg(&dependency_list)
+        .current_dir(root)
+        .output()
+        .unwrap_or_else(|error| {
+            panic!(
+                "could not run {} to verify libmako.a: {error}",
+                PathBuf::from(&python).display()
+            )
+        });
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        panic!(
+            "mako-local refused native archive {} because its content/configuration identity \n\
+             could not be verified. Rebuild with `cmake --build {} --target mako`.\n\
+             verifier stdout:\n{}\nverifier stderr:\n{}",
+            build.join("libmako.a").display(),
+            build.display(),
+            stdout.trim(),
+            stderr.trim()
+        );
+    }
+
+    let dependencies = fs::read_to_string(&dependency_list).unwrap_or_else(|error| {
+        panic!(
+            "fingerprint verifier did not leave a readable dependency list {}: {error}",
+            dependency_list.display()
+        )
+    });
+    for dependency in dependencies.lines().filter(|line| !line.is_empty()) {
+        println!("cargo:rerun-if-changed={dependency}");
+    }
+}
+
+fn warn_about_newer_inputs(build: &Path) {
+    let archive = build.join("libmako.a");
+    let archive_time = std::fs::metadata(&archive)
+        .and_then(|metadata| metadata.modified())
+        .unwrap_or_else(|error| panic!("cannot inspect {}: {error}", archive.display()));
+    let root = repository_root();
+    let inputs = [
+        "src/mako/storage/mako_local_abi.h",
+        "src/mako/storage/mako_local_rust_fast_abi.h",
+        "src/mako/storage/mako_local_abi.cc",
+        "src/mako/sto/thread_registration.hh",
+        "src/mako/sto/thread_registration.cc",
+        "src/mako/sto/MassTrans.hh",
+        "src/mako/sto/Transaction.hh",
+        "src/mako/sto/Transaction.cc",
+    ];
+    for input in inputs {
+        let path = root.join(input);
+        println!("cargo:rerun-if-changed={}", path.display());
+        let Ok(source_time) = std::fs::metadata(&path).and_then(|metadata| metadata.modified())
+        else {
+            continue;
+        };
+        if source_time > archive_time {
+            println!(
+                "cargo:warning={} is newer than {}, but their verified content fingerprint agrees; \
+                 modification times are advisory only",
+                path.display(),
+                archive.display()
+            );
+        }
+    }
+}
+
+fn libcxx_dir(build: &Path) -> Option<PathBuf> {
+    if let Ok(dir) = std::env::var("LIBCXX_DIR") {
+        let path = PathBuf::from(dir);
+        return has_libcxx(&path).then_some(path);
+    }
+
+    let cache = std::fs::read_to_string(build.join("CMakeCache.txt")).ok()?;
+
+    // Prefer the exact -L directory CMake placed in its executable linker
+    // flags. This remains correct when the compiler path is a wrapper.
+    if let Some(flags) = cmake_value(&cache, "CMAKE_EXE_LINKER_FLAGS") {
+        if let Some(path) = flags
+            .split_whitespace()
+            .filter_map(|flag| flag.strip_prefix("-L"))
+            .map(PathBuf::from)
+            .find(|path| has_libcxx(path))
+        {
+            return Some(path);
+        }
+    }
+
+    let compiler = PathBuf::from(cmake_value(&cache, "CMAKE_CXX_COMPILER")?);
+    compiler_libcxx_dir(&compiler)
+}
+
+fn compiler_libcxx_dir(compiler: &Path) -> Option<PathBuf> {
+    for library in ["libc++.so.1", "libc++.so"] {
+        let output = Command::new(compiler)
+            .arg(format!("--print-file-name={library}"))
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            continue;
+        }
+        let reported = String::from_utf8(output.stdout).ok()?;
+        let path = PathBuf::from(reported.trim());
+        // Clang echoes the input name when it cannot find the library.
+        if path == Path::new(library) || !path.is_file() {
+            continue;
+        }
+        let path = path.canonicalize().ok()?;
+        return path.parent().map(Path::to_path_buf);
+    }
+    None
+}
+
+fn cmake_value<'a>(cache: &'a str, key: &str) -> Option<&'a str> {
+    cache.lines().find_map(|line| {
+        let (entry, value) = line.split_once('=')?;
+        let (name, _) = entry.split_once(':')?;
+        (name == key).then_some(value)
+    })
+}
+
+fn has_libcxx(path: &Path) -> bool {
+    path.join("libc++.so.1").exists() || path.join("libc++.so").exists()
+}

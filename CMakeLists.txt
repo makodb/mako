@@ -16,7 +16,7 @@ if(POLICY CMP0167)
     cmake_policy(SET CMP0167 OLD)  # Use deprecated FindBoost for compatibility
 endif()
 
-# Mako pins its compiler to Clang 22 (or newer). Clang 21 and earlier
+# Mako pins its compiler to Clang 22.x. Clang 21 and earlier
 # frontend-crash compiling reactor.cpp's C++20-module codegen (the
 # `srpc.reactor` named module); Clang 22 fixes it — see the explicit
 # version check after project() below.
@@ -25,6 +25,9 @@ endif()
 #   * Clang 20 and earlier lack alias-template CTAD support that
 #     rusty-cpp's platform::threading aliases depend on.
 #   * CI standardizes on clang-22 (apt.llvm.org noble repo).
+# Homebrew's LLVM keg also installs its libc++.so.1 outside the driver's
+# default runtime search path. The linker setup below resolves libc++ from the
+# selected toolchain so a stale system copy cannot shadow it.
 #
 # To install on Ubuntu:
 #     wget -qO- https://apt.llvm.org/llvm.sh | sudo bash -s 22
@@ -228,6 +231,7 @@ if(ENABLE_BORROW_CHECKING)
 endif()
 
 find_package(PkgConfig REQUIRED)
+include(cmake/MakoAllocator.cmake)
 pkg_check_modules(DPDK REQUIRED libdpdk)
 
 # Find Python for the txlog_core build surface.
@@ -330,6 +334,21 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
             "codegen; Clang 23+ is untested. "
             "Install clang-22 via apt.llvm.org (Ubuntu) or use the CI image.")
     endif()
+
+    # Resolve libc++ from the toolchain's own lib directory, ahead of any
+    # system copy. Homebrew's LLVM keg puts libc++.so.1 where the driver does
+    # not search by default; a stale system libc++ would otherwise disagree
+    # with Clang 22 about out-of-line symbols such as __hash_memory.
+    get_filename_component(_MAKO_CLANG_BIN "${CMAKE_CXX_COMPILER}" DIRECTORY)
+    get_filename_component(_MAKO_CLANG_ROOT "${_MAKO_CLANG_BIN}" DIRECTORY)
+    set(_MAKO_LIBCXX_DIR "${_MAKO_CLANG_ROOT}/lib")
+    if (EXISTS "${_MAKO_LIBCXX_DIR}/libc++.so.1")
+        message(STATUS "Using toolchain libc++ from ${_MAKO_LIBCXX_DIR}")
+        set(CMAKE_EXE_LINKER_FLAGS
+            "${CMAKE_EXE_LINKER_FLAGS} -L${_MAKO_LIBCXX_DIR} -Wl,-rpath,${_MAKO_LIBCXX_DIR}")
+        set(CMAKE_SHARED_LINKER_FLAGS
+            "${CMAKE_SHARED_LINKER_FLAGS} -L${_MAKO_LIBCXX_DIR} -Wl,-rpath,${_MAKO_LIBCXX_DIR}")
+    endif()
 else()
     # Reject GCC, AppleClang, Intel, MSVC: the project's safety
     # annotations, `import std;` integration, and rusty-cpp are all
@@ -402,6 +421,13 @@ option(COCO "Enable COCO" OFF)
 option(MAKO_USE_RAFT "Build Mako with the Raft replication helper" OFF)
 option(RAFT_TEST "Enable Raft lab testing fiber" OFF)
 option(SINGLE_RAFT_INSTANCE "Default runtime Raft group mode (ON=single group, OFF=one group per partition)" ON)
+option(MAKO_LOCAL_TEST_HOOKS
+       "Enable test-only local commit observers and cleanup failures" OFF)
+
+if(MAKO_LOCAL_TEST_HOOKS)
+  add_compile_definitions(MAKO_LOCAL_TEST_HOOKS=1)
+  message(STATUS "Test-only local commit and cleanup seams enabled")
+endif()
 
 if(MAKO_USE_RAFT)
   add_compile_definitions(MAKO_USE_RAFT=1)
@@ -422,7 +448,7 @@ endif()
 
 set(USE_MALLOC_MODE 1 CACHE STRING "Malloc mode: 0=libc, 1=jemalloc, 2=tcmalloc, 3=flow")
 set(MODE "perf" CACHE STRING "Build mode: perf, backoff, factor-gc, factor-gc-nowriteinplace, factor-fake-compression, sandbox")
-option(STO_RMW "Enable STO read-modify-write" OFF)
+option(STO_RMW "Enable STO read-modify-write" ON)
 option(HASHTABLE "Enable hashtable" OFF)
 option(GPROF "Enable profiling with gprof" OFF)
 option(OPACITY "Enable opacity" OFF)
@@ -650,6 +676,79 @@ if(DEFINED ENV{MAKO_FUZZER} AND "$ENV{MAKO_FUZZER}" STREQUAL "1")
     add_compile_options(-fsanitize=fuzzer-no-link)
 endif()
 
+# Native Rust test executables link libmako.a outside CMake. An instrumented
+# static archive does not carry its sanitizer runtime with it, so propagate the
+# exact CMake sanitizer set to Cargo's final Clang++ link. Keep this separate
+# from Rust's own Miri gate: Item 4 instruments the C++ integration boundary,
+# while Miri interprets the Rust-only fake-ABI ownership model.
+set(MAKO_LOCAL_SANITIZERS_ENABLED)
+set(MAKO_LOCAL_SANITIZER_RUNTIME_ENV)
+if(MAKO_ASAN_ENABLED)
+    list(APPEND MAKO_LOCAL_SANITIZERS_ENABLED address)
+    list(APPEND MAKO_LOCAL_SANITIZER_RUNTIME_ENV
+         "ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:abort_on_error=1"
+         "LSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/src/mako/mako_local_lsan_suppressions.txt:print_suppressions=1")
+endif()
+if(MAKO_UBSAN_ENABLED)
+    list(APPEND MAKO_LOCAL_SANITIZERS_ENABLED undefined)
+    list(APPEND MAKO_LOCAL_SANITIZER_RUNTIME_ENV
+         "UBSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/src/masstree/ubsan_suppressions.txt:halt_on_error=1:print_stacktrace=1")
+endif()
+if(MAKO_TSAN_ENABLED)
+    list(APPEND MAKO_LOCAL_SANITIZERS_ENABLED thread)
+    list(APPEND MAKO_LOCAL_SANITIZER_RUNTIME_ENV
+         "TSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/src/masstree/tsan_suppressions.txt:halt_on_error=1:print_suppressions=1")
+endif()
+if(MAKO_LOCAL_SANITIZERS_ENABLED)
+    list(JOIN MAKO_LOCAL_SANITIZERS_ENABLED "," MAKO_LOCAL_SANITIZER_LIST)
+    set(MAKO_LOCAL_SANITIZER_FLAG "-fsanitize=${MAKO_LOCAL_SANITIZER_LIST}")
+    set(MAKO_LOCAL_SANITIZER_RUSTFLAGS "$ENV{RUSTFLAGS}")
+    set(MAKO_LOCAL_SANITIZER_CARGO_PREFIX)
+    set(MAKO_LOCAL_SANITIZER_CARGO_TARGET_ARGS)
+    if(MAKO_TSAN_ENABLED)
+        list(LENGTH MAKO_LOCAL_SANITIZERS_ENABLED
+             MAKO_LOCAL_SANITIZER_COUNT)
+        if(NOT MAKO_LOCAL_SANITIZER_COUNT EQUAL 1)
+            message(FATAL_ERROR
+                "mako-local Rust TSan must run without another sanitizer")
+        endif()
+        if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
+            message(FATAL_ERROR
+                "mako-local Rust TSan currently supports x86_64 Linux only")
+        endif()
+        execute_process(
+            COMMAND bash
+                    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_mako_local_miri.sh"
+                    --print-toolchain
+            OUTPUT_VARIABLE MAKO_LOCAL_RUST_TSAN_TOOLCHAIN
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            RESULT_VARIABLE MAKO_LOCAL_RUST_TSAN_TOOLCHAIN_STATUS)
+        if(NOT MAKO_LOCAL_RUST_TSAN_TOOLCHAIN_STATUS EQUAL 0 OR
+           MAKO_LOCAL_RUST_TSAN_TOOLCHAIN STREQUAL "")
+            message(FATAL_ERROR
+                "failed to resolve the pinned mako-local Rust TSan toolchain")
+        endif()
+
+        # Linking Clang TSan into a prebuilt, uninstrumented Rust std/libtest
+        # produces false races in Rust's lock-free synchronization internals.
+        # Rebuild the complete Rust side under the same dated nightly instead.
+        string(APPEND MAKO_LOCAL_SANITIZER_RUSTFLAGS
+               " -Zsanitizer=thread -C linker=${CMAKE_CXX_COMPILER}")
+        list(APPEND MAKO_LOCAL_SANITIZER_CARGO_PREFIX
+             "+${MAKO_LOCAL_RUST_TSAN_TOOLCHAIN}" "-Zbuild-std")
+        list(APPEND MAKO_LOCAL_SANITIZER_CARGO_TARGET_ARGS
+             "--target" "x86_64-unknown-linux-gnu")
+    else()
+        string(APPEND MAKO_LOCAL_SANITIZER_RUSTFLAGS
+               " -C linker=${CMAKE_CXX_COMPILER}"
+               " -C link-arg=${MAKO_LOCAL_SANITIZER_FLAG}")
+    endif()
+    string(STRIP "${MAKO_LOCAL_SANITIZER_RUSTFLAGS}"
+           MAKO_LOCAL_SANITIZER_RUSTFLAGS)
+    message(STATUS
+        "mako-local sanitizer gate enabled: ${MAKO_LOCAL_SANITIZER_LIST}")
+endif()
+
 # Add RAFT_TEST_CORO flag if enabled
 if(RAFT_TEST)
   message(STATUS "Raft lab testing fiber enabled")
@@ -702,10 +801,30 @@ endif()
 if(TRACKING_ROLLBACK)
   list(APPEND CXXFLAGS -DTRACKING_ROLLBACK)
 endif()
+
+# CMake boolean cache values are the strings ON/OFF. Passing those strings to
+# the C++ preprocessor makes both branches of a `#if` appear false because ON
+# and OFF are otherwise-undefined identifiers. Normalize the public options
+# to numeric definitions before they reach STO.
+if(STO_RMW)
+  set(READ_MY_WRITES_DEFINE 1)
+else()
+  set(READ_MY_WRITES_DEFINE 0)
+endif()
+if(HASHTABLE)
+  set(HASHTABLE_DEFINE 1)
+else()
+  set(HASHTABLE_DEFINE 0)
+endif()
+if(OPACITY)
+  set(STO_OPACITY_DEFINE 1)
+else()
+  set(STO_OPACITY_DEFINE 0)
+endif()
 list(APPEND CXXFLAGS
-  -DREAD_MY_WRITES=${STO_RMW}
-  -DHASHTABLE=${HASHTABLE}
-  -DSTO_OPACITY=${OPACITY}
+  -DREAD_MY_WRITES=${READ_MY_WRITES_DEFINE}
+  -DHASHTABLE=${HASHTABLE_DEFINE}
+  -DSTO_OPACITY=${STO_OPACITY_DEFINE}
 )
 # The `-include <masstree/config.h>` forced-include injects tokens at the start
 # of every TU. It must NOT be applied to C++20 named module files, which
@@ -744,19 +863,24 @@ set(LZ4LDFLAGS
 
 if(USE_MALLOC_MODE EQUAL 1)
   list(APPEND CXXFLAGS -DUSE_JEMALLOC)
-  list(APPEND LDFLAGS -ljemalloc)
   set(MASSTREE_CONFIG "${MASSTREE_CONFIG} --with-malloc=jemalloc")
 elseif(USE_MALLOC_MODE EQUAL 2)
   list(APPEND CXXFLAGS -DUSE_TCMALLOC)
-  list(APPEND LDFLAGS -ltcmalloc)
   set(MASSTREE_CONFIG "${MASSTREE_CONFIG} --with-malloc=tcmalloc")
 elseif(USE_MALLOC_MODE EQUAL 3)
   list(APPEND CXXFLAGS -DUSE_FLOW)
-  list(APPEND LDFLAGS -lflow)
   set(MASSTREE_CONFIG "${MASSTREE_CONFIG} --with-malloc=flow")
-else()
+elseif(USE_MALLOC_MODE EQUAL 0)
   set(MASSTREE_CONFIG "${MASSTREE_CONFIG} --with-malloc=malloc")
+else()
+  message(FATAL_ERROR
+    "USE_MALLOC_MODE must be exactly 0, 1, 2, or 3; got '${USE_MALLOC_MODE}'")
 endif()
+
+# Resolve the selected process allocator once. Its INTERFACE link contract is
+# attached PUBLICly to libmako below, and its generated metadata is consumed by
+# Cargo when Rust links the same static archive outside CMake.
+mako_configure_allocator()
 
 if(DEFINED CUSTOM_LDPATH)
   set(LDFLAGS "${LDFLAGS} ${CUSTOM_LDPATH}")
@@ -786,10 +910,50 @@ pkg_check_modules(LIBEVENT REQUIRED libevent)
 pkg_check_modules(GFLAGS REQUIRED gflags)
 #pkg_check_modules(MEMCACHED REQUIRED memcached)
 pkg_check_modules(PROTOBUF REQUIRED protobuf)
-pkg_check_modules(JEMALLOC REQUIRED jemalloc)
 list(APPEND CFLAGS ${LIBEVENT_CFLAGS})
 list(APPEND LDFLAGS ${LIBEVENT_LDFLAGS})
 list(APPEND CXXFLAGS -fno-omit-frame-pointer)
+
+# The Rust transaction facade must never link against a differently configured
+# native archive closure. Generate one identity translation unit from the
+# effective compile database and compile it as part of libmako, under the exact
+# same target settings as the facade.
+find_program(MAKO_LOCAL_PYTHON_EXECUTABLE NAMES python3 REQUIRED)
+set(MAKO_LOCAL_FINGERPRINT_SCRIPT
+    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/mako_local_fingerprint.py")
+set(MAKO_LOCAL_BUILD_IDENTITY_CPP
+    "${CMAKE_BINARY_DIR}/generated/mako_local_build_identity.cc")
+set(MAKO_LOCAL_BUILD_MANIFEST
+    "${CMAKE_BINARY_DIR}/generated/mako_local_build_manifest.json")
+set(MAKO_LOCAL_BUILD_IDENTITY_DEPFILE
+    "${CMAKE_BINARY_DIR}/generated/mako_local_build_identity.d")
+add_custom_command(
+  OUTPUT
+    "${MAKO_LOCAL_BUILD_IDENTITY_CPP}"
+    "${MAKO_LOCAL_BUILD_MANIFEST}"
+  COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/generated"
+  COMMAND "${MAKO_LOCAL_PYTHON_EXECUTABLE}"
+          "${MAKO_LOCAL_FINGERPRINT_SCRIPT}"
+          generate
+          --source-root "${CMAKE_CURRENT_SOURCE_DIR}"
+          --build-dir "${CMAKE_BINARY_DIR}"
+          --manifest "${MAKO_LOCAL_BUILD_MANIFEST}"
+          --cpp-out "${MAKO_LOCAL_BUILD_IDENTITY_CPP}"
+          --depfile "${MAKO_LOCAL_BUILD_IDENTITY_DEPFILE}"
+  DEPENDS
+    "${MAKO_LOCAL_FINGERPRINT_SCRIPT}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/storage/mako_local_abi.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/storage/mako_local_rust_fast_abi.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/storage/mako_local_abi.cc"
+    "${CMAKE_BINARY_DIR}/compile_commands.json"
+    "${CMAKE_BINARY_DIR}/CMakeCache.txt"
+    "${MAKO_ALLOCATOR_METADATA}"
+    "${MASSTREE_GENERATED_CONFIG_H}"
+    ${MAKO_ALLOCATOR_LIBRARY}
+  DEPFILE "${MAKO_LOCAL_BUILD_IDENTITY_DEPFILE}"
+  COMMENT "Generating source-derived mako-local native build identity"
+  VERBATIM
+)
 
 # The original Silo transaction engine is retained as source-only history.
 # Production Mako uses STO/MassTrans through storage/mbta_wrapper.hh. Keep the
@@ -913,6 +1077,7 @@ set(MAKO_SRCFILES
   "${W}/sto/Packer.cc"
   "${W}/sto/ReplayDB.cc"
   "${W}/sto/ThreadPool.cc"
+  "${W}/sto/thread_registration.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/lookup3.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/kv_store.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/message.cc"
@@ -929,6 +1094,15 @@ set(MAKO_SRCFILES
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/shardClient.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/server.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/storage/abstract_db.cc"
+  # The mtx_* C ABI over masstree. Deliberately part of the mako target
+  # rather than a separate library: a separate target compiled without
+  # the same CONFIG_H gets a different CHECK_INVARIANTS, which changes
+  # ticker::tick_us (40ms vs 1ms) and the percore/percore_lazy layouts.
+  # That is silent ODR corruption, not a compile error.
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/storage/mtree_abi.cc"
+  # Local STO/MassTrans transaction facade used by the Rust Mako port.
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/storage/mako_local_abi.cc"
+  "${MAKO_LOCAL_BUILD_IDENTITY_CPP}"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/cluster_bootstrap.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/rocks_interface/client_service.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/rocks_interface/client_proxy.cc"
@@ -1344,9 +1518,93 @@ target_include_directories(mako PUBLIC
 target_compile_options(mako PUBLIC ${BENCH_CXXFLAGS} ${MASSTREE_FORCE_INCLUDE_FLAG})
 target_compile_definitions(mako PUBLIC CONFIG_H=\"${CONFIG_H}\")
 # Inherit srpc module BMI paths from txlog_core_obj.
-target_link_libraries(mako PUBLIC txlog_core_obj masstree)
+target_link_libraries(mako PUBLIC txlog_core_obj masstree mako_allocator)
 target_include_directories(mako PUBLIC ${LIBEVENT_INCLUDE_DIRS})
 set_target_properties(mako PROPERTIES OUTPUT_NAME "mako")
+
+# Enforce the public mako-local symbol boundary in every native build, not
+# only in profiles that happen to have the vendored GoogleTest checkout.
+# libmako contains many unrelated C++ template symbols, so the checker limits
+# itself to the exact mako_local_* namespace and binds its one internal anchor
+# to the digest recorded by the generated native-build manifest.
+add_custom_target(check_mako_local_abi_symbols ALL
+    COMMAND "${MAKO_LOCAL_PYTHON_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/check_mako_local_symbols.py"
+            --nm "${CMAKE_NM}"
+            --archive "$<TARGET_FILE:mako>"
+            --allowlist
+              "${CMAKE_SOURCE_DIR}/tests/mako_local_abi_symbols.txt"
+            --manifest "${MAKO_LOCAL_BUILD_MANIFEST}"
+    DEPENDS
+        mako
+        "${MAKO_LOCAL_FINGERPRINT_SCRIPT}"
+        "${CMAKE_SOURCE_DIR}/scripts/check_mako_local_symbols.py"
+        "${CMAKE_SOURCE_DIR}/tests/mako_local_abi_symbols.txt"
+        "${MAKO_LOCAL_BUILD_MANIFEST}"
+    COMMENT "Checking exact mako-local exported-symbol surface"
+    VERBATIM
+)
+
+# Content verification is deliberately always-run when this explicit boundary
+# gate is requested: source mtimes are not trusted. Keep it out of the default
+# ALL target because a complete compiler-dependency scan is intentionally much
+# heavier than the exported-symbol check.
+set(MAKO_LOCAL_RUST_LINK_ARCHIVE_MANIFEST
+    "${CMAKE_SOURCE_DIR}/crates/mako-local/native-link-archives.txt")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${MAKO_LOCAL_RUST_LINK_ARCHIVE_MANIFEST}")
+file(STRINGS "${MAKO_LOCAL_RUST_LINK_ARCHIVE_MANIFEST}"
+    MAKO_LOCAL_RUST_LINK_ARCHIVE_LINES)
+set(MAKO_LOCAL_RUST_LINK_TARGETS "")
+foreach(MAKO_LOCAL_RUST_LINK_ARCHIVE_LINE
+        IN LISTS MAKO_LOCAL_RUST_LINK_ARCHIVE_LINES)
+    if(MAKO_LOCAL_RUST_LINK_ARCHIVE_LINE MATCHES "^[ \t]*(#|$)")
+        continue()
+    endif()
+    string(REGEX MATCH
+        "^([A-Za-z0-9_]+)[ \t]+([^ \t]+)$"
+        MAKO_LOCAL_RUST_LINK_ARCHIVE_MATCH
+        "${MAKO_LOCAL_RUST_LINK_ARCHIVE_LINE}")
+    if(NOT MAKO_LOCAL_RUST_LINK_ARCHIVE_MATCH)
+        message(FATAL_ERROR
+            "Invalid mako-local native archive manifest line: "
+            "${MAKO_LOCAL_RUST_LINK_ARCHIVE_LINE}")
+    endif()
+    set(MAKO_LOCAL_RUST_LINK_TARGET "${CMAKE_MATCH_1}")
+    if(NOT TARGET "${MAKO_LOCAL_RUST_LINK_TARGET}")
+        message(FATAL_ERROR
+            "Mako-local native archive target does not exist: "
+            "${MAKO_LOCAL_RUST_LINK_TARGET}")
+    endif()
+    list(FIND MAKO_LOCAL_RUST_LINK_TARGETS
+        "${MAKO_LOCAL_RUST_LINK_TARGET}"
+        MAKO_LOCAL_RUST_LINK_TARGET_INDEX)
+    if(NOT MAKO_LOCAL_RUST_LINK_TARGET_INDEX EQUAL -1)
+        message(FATAL_ERROR
+            "Duplicate mako-local native archive target: "
+            "${MAKO_LOCAL_RUST_LINK_TARGET}")
+    endif()
+    list(APPEND MAKO_LOCAL_RUST_LINK_TARGETS
+        "${MAKO_LOCAL_RUST_LINK_TARGET}")
+endforeach()
+if(NOT MAKO_LOCAL_RUST_LINK_TARGETS)
+    message(FATAL_ERROR "Mako-local native archive manifest is empty")
+endif()
+add_custom_target(check_mako_local_build_fingerprint
+    COMMAND "${MAKO_LOCAL_PYTHON_EXECUTABLE}"
+            "${MAKO_LOCAL_FINGERPRINT_SCRIPT}"
+            verify
+            --source-root "${CMAKE_SOURCE_DIR}"
+            --build-dir "${CMAKE_BINARY_DIR}"
+            --manifest "${MAKO_LOCAL_BUILD_MANIFEST}"
+    DEPENDS
+        ${MAKO_LOCAL_RUST_LINK_TARGETS}
+        "${MAKO_LOCAL_FINGERPRINT_SCRIPT}"
+        "${MAKO_LOCAL_RUST_LINK_ARCHIVE_MANIFEST}"
+        "${MAKO_LOCAL_BUILD_MANIFEST}"
+    COMMENT "Verifying complete mako-local native content identity"
+    VERBATIM
+)
 
 # ============================================================================
 # BORROW CHECKER REGISTRATION SILO/STO
@@ -1401,6 +1659,60 @@ endif()
 # txlog_lib is now built directly as a CMake target, no need for custom target
 
 
+# ---------------------------------------------------------------
+# The Rust cache, and the differential harness that compares it to
+# the C++ one.
+# ---------------------------------------------------------------
+#
+# cargo builds crates/mrx-ffi into a staticlib; CMake drives the
+# final link, exactly as it does for every other archive here. The
+# crate is NOT built by cargo's own test runner in this path -- that
+# runs separately via `cargo test` in crates/ -- so this target only
+# produces the archive.
+#
+# ALWAYS out of date on purpose: cargo is the incremental build
+# system for its own sources, and teaching CMake to track them would
+# be a second, divergent dependency graph. cargo no-ops in a few
+# milliseconds when nothing changed.
+find_program(CARGO_EXECUTABLE cargo)
+if (CARGO_EXECUTABLE)
+    set(MRX_FFI_PROFILE "release")
+    set(MRX_FFI_LIB
+        "${CMAKE_SOURCE_DIR}/crates/target/${MRX_FFI_PROFILE}/libmrxffi.a")
+    # add_custom_target, NOT add_custom_command(OUTPUT ...): a
+    # command with an OUTPUT is skipped once the file exists and its
+    # declared DEPENDS are unchanged, and CMake cannot see the Rust
+    # sources. That is not a slow build, it is a WRONG one -- a
+    # deliberate divergence probe injected into the Rust cache was
+    # silently not rebuilt, and the differential test passed against
+    # the stale archive. A custom target always runs, and cargo
+    # no-ops in milliseconds when nothing changed.
+    add_custom_target(mrx_ffi_build
+        BYPRODUCTS ${MRX_FFI_LIB}
+        COMMAND ${CMAKE_COMMAND} -E env
+                "MAKO_BUILD_DIR=${CMAKE_BINARY_DIR}"
+                ${CARGO_EXECUTABLE} build --release -p mrx-ffi
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/crates
+        COMMENT "Building the Rust cache (crates/mrx-ffi -> libmrxffi.a)"
+        VERBATIM
+    )
+    # libmako.a must exist first: mrx-masstree links the mtx_* symbols
+    # out of it, and its build script looks for the archive to decide
+    # whether masstree is available at all.
+    add_dependencies(mrx_ffi_build mako)
+
+    add_library(mrxffi STATIC IMPORTED GLOBAL)
+    set_target_properties(mrxffi PROPERTIES
+        IMPORTED_LOCATION ${MRX_FFI_LIB}
+        INTERFACE_INCLUDE_DIRECTORIES
+            ${CMAKE_SOURCE_DIR}/crates/mrx-ffi/include)
+    add_dependencies(mrxffi mrx_ffi_build)
+else()
+    message(STATUS
+        "cargo not found: the Rust cache, its differential tests, and the "
+        "Rust arm of masstree_rocks_bench are skipped")
+endif()
+
 function(add_apps exec_name exec_path)
   set(options)
   set(oneValueArgs)
@@ -1451,7 +1763,6 @@ function(add_apps exec_name exec_path)
       ${LIBEVENT_LDFLAGS}
       ${GFLAGS_LDFLAGS}
       ${PROTOBUF_LDFLAGS}
-      $<$<NOT:$<BOOL:${MAKO_ASAN_ENABLED}>>:${JEMALLOC_LDFLAGS}>
   )
 
   # Add dependencies
@@ -1472,6 +1783,49 @@ add_apps(continuousTransactions examples/continuousTransactions.cc)
 add_apps(simplePaxos examples/simplePaxos.cc)
 add_apps(test_rocksdb_persistence examples/test_rocksdb_persistence.cc)
 add_apps(rocksdb_replay_app src/mako/benchmarks/rocksdb_replay_app.cc)
+# Does the Masstree write-back cache beat plain RocksDB? Reports write
+# ack vs ack+flush separately, since the cache's trick is deferral.
+add_apps(masstree_rocks_bench src/mako/benchmarks/masstree_rocks_bench.cc)
+# The Rust arm runs in the SAME process as the C++ one, so the comparison
+# is between implementations rather than between two machine states.
+if (TARGET mrxffi)
+  # mrxffi is a static archive and selects native objects that reference
+  # yaml-cpp and libevent. Keep both after that consumer so one-pass ELF
+  # linkers using --as-needed can resolve those references.
+  target_link_libraries(masstree_rocks_bench
+      mrxffi yaml-cpp ${LIBEVENT_LDFLAGS})
+  target_include_directories(masstree_rocks_bench PRIVATE
+      ${CMAKE_SOURCE_DIR}/crates/mrx-ffi/include)
+  add_dependencies(masstree_rocks_bench mrx_ffi_build)
+
+  # Focused syscall/context-switch probe for the same C++ and Rust cache
+  # implementations. Keeping this in CMake makes it inherit the configured
+  # compiler, generated module map, STO definitions, and current dependency
+  # closure instead of reconstructing those details in a host-specific script.
+  add_apps(mrx_kernel_probe src/mako/benchmarks/mrx_kernel_probe.cc)
+  target_link_libraries(mrx_kernel_probe
+      mrxffi yaml-cpp ${LIBEVENT_LDFLAGS})
+  target_include_directories(mrx_kernel_probe PRIVATE
+      ${CMAKE_SOURCE_DIR}/crates/mrx-ffi/include)
+  add_dependencies(mrx_kernel_probe mrx_ffi_build)
+endif()
+# Peels the same write path one layer at a time (masstree -> entry CAS ->
+# byte accounting -> version draw -> announce floor -> ticket log ->
+# flusher), so the C++ and Rust ladders can be subtracted from each other
+# instead of compared as whole stacks.
+add_apps(mrx_write_ablation src/mako/benchmarks/mrx_write_ablation.cc)
+# Single-threaded, under callgrind: instructions and simulated D1/LL
+# misses for ONE write on each arm. valgrind serialises threads, so this
+# prices WORK PER OP, never contention -- which is exactly the datum the
+# throughput ladders cannot supply.
+add_apps(mrx_callgrind src/mako/benchmarks/mrx_callgrind.cc)
+if (TARGET mrxffi)
+  target_link_libraries(mrx_callgrind
+      mrxffi yaml-cpp ${LIBEVENT_LDFLAGS})
+  target_include_directories(mrx_callgrind PRIVATE
+      ${CMAKE_SOURCE_DIR}/crates/mrx-ffi/include)
+  add_dependencies(mrx_callgrind mrx_ffi_build)
+endif()
 add_apps(test_callback_demo examples/test_callback_demo.cc)
 add_apps(test_ordered_callbacks examples/test_ordered_callbacks.cc)
 add_apps(test_partitioned_queues examples/test_partitioned_queues.cc)
@@ -1594,6 +1948,12 @@ else()
 endif()
 
 if(BUILD_TESTS)
+    if(NOT CARGO_EXECUTABLE)
+        message(FATAL_ERROR
+            "cargo is required when BUILD_TESTS is enabled: the mandatory "
+            "mako-local native Rust link and identity gates must not be skipped")
+    endif()
+
     # Common test include directories
     set(TEST_INCLUDE_DIRS
         src
@@ -2080,6 +2440,278 @@ if(BUILD_TESTS)
     )
     add_test(NAME SiloAllocatorTests COMMAND test_silo_allocator)
 
+    # Test: masstree-rocks-cache capability
+    # (openspec/specs/masstree-rocks-cache/spec.md). Masstree as a
+    # write-back cache over RocksDB; needs the mako storage objects for
+    # concurrent_btree + RCU, and rocksdb for the system of record.
+    add_executable(test_masstree_rocks_cache tests/test_masstree_rocks_cache.cc)
+    target_link_libraries(test_masstree_rocks_cache
+        mako
+        srpc
+        ${TXLOG_LINK_LIBS}
+        ${GTEST_LIBRARIES}
+        ${GTEST_MAIN_LIBRARIES}
+        pthread
+        yaml-cpp
+        numa
+        event_pthreads
+        rocksdb
+        ${LIBEVENT_LDFLAGS}
+    )
+    target_include_directories(test_masstree_rocks_cache PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/mako
+        ${GTEST_INCLUDE_DIRS}
+    )
+    add_test(NAME MasstreeRocksCacheTests COMMAND test_masstree_rocks_cache)
+
+    # Crash-durability tests. Self-execs a child writer and SIGKILLs it,
+    # so it must be its own binary (see the file header for why fork()
+    # alone is unsound here).
+    add_executable(test_masstree_rocks_crash tests/test_masstree_rocks_crash.cc)
+    target_link_libraries(test_masstree_rocks_crash
+        mako
+        srpc
+        ${TXLOG_LINK_LIBS}
+        ${GTEST_LIBRARIES}
+        pthread
+        yaml-cpp
+        numa
+        event_pthreads
+        rocksdb
+        ${LIBEVENT_LDFLAGS}
+    )
+    target_include_directories(test_masstree_rocks_crash PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/mako
+        ${GTEST_INCLUDE_DIRS}
+    )
+    add_test(NAME MasstreeRocksCrashTests COMMAND test_masstree_rocks_crash)
+
+    # The mtx_* C ABI. WordsRoundTripBitIdentical is the tripwire for a
+    # masstree vendor bump that starts interpreting the stored word.
+    add_executable(test_mtree_abi tests/test_mtree_abi.cc)
+    target_link_libraries(test_mtree_abi
+        mako
+        srpc
+        ${TXLOG_LINK_LIBS}
+        ${GTEST_LIBRARIES}
+        ${GTEST_MAIN_LIBRARIES}
+        pthread
+        yaml-cpp
+        numa
+        event_pthreads
+        rocksdb
+        ${LIBEVENT_LDFLAGS}
+    )
+    target_include_directories(test_mtree_abi PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/mako
+        ${GTEST_INCLUDE_DIRS}
+    )
+    add_test(NAME MtreeAbiTests COMMAND test_mtree_abi)
+
+    # Stable local STO/MassTrans C boundary for the Rust Mako migration.
+    add_executable(test_mako_local_abi tests/test_mako_local_abi.cc)
+    target_link_libraries(test_mako_local_abi
+        mako
+        srpc
+        ${TXLOG_LINK_LIBS}
+        ${GTEST_LIBRARIES}
+        ${GTEST_MAIN_LIBRARIES}
+        pthread
+        yaml-cpp
+        numa
+        event_pthreads
+        rocksdb
+        ${LIBEVENT_LDFLAGS}
+    )
+    target_include_directories(test_mako_local_abi PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/mako
+        ${GTEST_INCLUDE_DIRS}
+    )
+    add_test(NAME MakoLocalAbiTests COMMAND test_mako_local_abi)
+
+    # Worker IDs are process-lifetime, so exhaustion must be tested in a
+    # disposable process that does not consume the rest of this test run's
+    # native slots.
+    add_executable(mako_local_thread_limit_probe
+        tests/mako_local_thread_limit_probe.cc)
+    target_link_libraries(mako_local_thread_limit_probe
+        mako
+        srpc
+        ${TXLOG_LINK_LIBS}
+        pthread
+        yaml-cpp
+        numa
+        event_pthreads
+        rocksdb
+        ${LIBEVENT_LDFLAGS}
+    )
+    target_include_directories(mako_local_thread_limit_probe PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/mako
+    )
+    add_test(NAME MakoLocalThreadLimitProbe
+        COMMAND mako_local_thread_limit_probe)
+
+    # Process-isolated differential runner. Direct MassTrans and the local C
+    # ABI permanently claim different STO worker-runtime identities, so the
+    # Rust orchestrator execs this binary once per mode and feeds both the
+    # exact same binary-safe transaction corpus.
+    add_executable(mako_local_differential_driver
+        tests/mako_local_differential_driver.cc)
+    target_link_libraries(mako_local_differential_driver
+        mako
+        srpc
+        ${TXLOG_LINK_LIBS}
+        pthread
+        yaml-cpp
+        numa
+        event_pthreads
+        rocksdb
+        ${LIBEVENT_LDFLAGS}
+    )
+    target_include_directories(mako_local_differential_driver PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/mako
+    )
+
+    # Process-isolated relative-overhead runner. Like the differential driver,
+    # direct MassTrans and the raw C ABI must execute in separate processes
+    # because they permanently claim different STO worker-runtime identities.
+    # The Rust integration test supplies separate public-safe and
+    # trusted-fast wrapper processes and validates the complete benchmark
+    # protocol before calculating ratios.
+    add_executable(mako_local_overhead_driver
+        tests/mako_local_overhead_driver.cc)
+    target_link_libraries(mako_local_overhead_driver
+        mako
+        srpc
+        ${TXLOG_LINK_LIBS}
+        pthread
+        yaml-cpp
+        numa
+        event_pthreads
+        rocksdb
+        ${LIBEVENT_LDFLAGS}
+    )
+    target_include_directories(mako_local_overhead_driver PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/mako
+    )
+
+    # The public local-transaction boundary must remain consumable as strict C.
+    # Compile the C source in an object target so libmako's public C++ compile
+    # options cannot leak into it; the final executable still uses the C++
+    # linker because it intentionally references every native ABI export.
+    add_library(mako_local_abi_c11_probe OBJECT
+        tests/test_mako_local_abi_c11.c)
+    set_target_properties(mako_local_abi_c11_probe PROPERTIES
+        C_STANDARD 11
+        C_STANDARD_REQUIRED YES
+        C_EXTENSIONS NO
+    )
+    target_compile_options(mako_local_abi_c11_probe PRIVATE
+        -Wall -Wextra -Werror -Wpedantic)
+    target_include_directories(mako_local_abi_c11_probe PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/mako
+    )
+    add_executable(test_mako_local_abi_c11
+        $<TARGET_OBJECTS:mako_local_abi_c11_probe>)
+    set_target_properties(test_mako_local_abi_c11 PROPERTIES
+        LINKER_LANGUAGE CXX)
+    target_link_libraries(test_mako_local_abi_c11
+        mako
+        srpc
+        ${TXLOG_LINK_LIBS}
+        pthread
+        yaml-cpp
+        numa
+        event_pthreads
+        rocksdb
+        ${LIBEVENT_LDFLAGS}
+    )
+    add_test(NAME MakoLocalAbiC11Probe COMMAND test_mako_local_abi_c11)
+
+    # C++ adds the noexcept/calling-type checks that the C type system cannot
+    # express. This is also a complete link probe, independent of GoogleTest.
+    add_library(mako_local_abi_cpp_conformance_probe OBJECT
+        tests/test_mako_local_abi_cpp_conformance.cc)
+    target_compile_options(mako_local_abi_cpp_conformance_probe PRIVATE
+        -Wall -Wextra -Werror -Wpedantic)
+    target_include_directories(mako_local_abi_cpp_conformance_probe PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/mako
+    )
+    add_executable(test_mako_local_abi_cpp_conformance
+        $<TARGET_OBJECTS:mako_local_abi_cpp_conformance_probe>)
+    set_target_properties(test_mako_local_abi_cpp_conformance PROPERTIES
+        LINKER_LANGUAGE CXX)
+    target_link_libraries(test_mako_local_abi_cpp_conformance
+        mako
+        srpc
+        ${TXLOG_LINK_LIBS}
+        pthread
+        yaml-cpp
+        numa
+        event_pthreads
+        rocksdb
+        ${LIBEVENT_LDFLAGS}
+    )
+    add_test(NAME MakoLocalAbiCppConformance
+        COMMAND test_mako_local_abi_cpp_conformance)
+
+    add_test(NAME MakoLocalAbiSymbols
+        COMMAND "${MAKO_LOCAL_PYTHON_EXECUTABLE}"
+                "${CMAKE_SOURCE_DIR}/scripts/check_mako_local_symbols.py"
+                --nm "${CMAKE_NM}"
+                --archive "$<TARGET_FILE:mako>"
+                --allowlist
+                  "${CMAKE_SOURCE_DIR}/tests/mako_local_abi_symbols.txt"
+                --manifest "${MAKO_LOCAL_BUILD_MANIFEST}"
+    )
+    add_test(NAME MakoLocalAbiSymbolCheckerUnit
+        COMMAND "${MAKO_LOCAL_PYTHON_EXECUTABLE}"
+                "${CMAKE_SOURCE_DIR}/tests/test_mako_local_symbol_checker.py"
+    )
+    add_test(NAME MakoLocalBuildFingerprintUnit
+        COMMAND "${MAKO_LOCAL_PYTHON_EXECUTABLE}"
+                "${CMAKE_SOURCE_DIR}/scripts/tests/test_mako_local_fingerprint.py"
+    )
+
+    if (TARGET mrxffi)
+        # Differential: drive the C++ cache and the Rust cache with the
+        # same operation stream and require identical observable
+        # behaviour. Two independent implementations of one specification
+        # disagreeing is a signal neither one's own tests can produce.
+        add_executable(test_mrx_differential tests/test_mrx_differential.cc)
+        add_dependencies(test_mrx_differential mrx_ffi_build)
+        target_link_libraries(test_mrx_differential
+            mrxffi
+            mako
+            srpc
+            ${TXLOG_LINK_LIBS}
+            ${GTEST_LIBRARIES}
+            ${GTEST_MAIN_LIBRARIES}
+            pthread
+            yaml-cpp
+            numa
+            event_pthreads
+            rocksdb
+            ${LIBEVENT_LDFLAGS}
+        )
+        target_include_directories(test_mrx_differential PRIVATE
+            ${CMAKE_SOURCE_DIR}/src
+            ${CMAKE_SOURCE_DIR}/src/mako
+            ${CMAKE_SOURCE_DIR}/crates/mrx-ffi/include
+            ${GTEST_INCLUDE_DIRS}
+        )
+        add_test(NAME MrxDifferentialTests COMMAND test_mrx_differential)
+    endif()
+
     # Test: SiloRuntime per-site isolation (moved out of src/masstree/tests
     # because its subject matter is the SiloRuntime, not Masstree).
     add_executable(test_silo_runtime tests/test_silo_runtime.cc)
@@ -2238,13 +2870,268 @@ if(BUILD_TESTS)
     )
     add_test(NAME STOTransactionRealTests COMMAND test_sto_transaction_real)
 
-    # Custom target to run live Silo-support and STO tests
+    if(CARGO_EXECUTABLE)
+        set(MAKO_CACHE_NATIVE_CRASH_TEST_ENV)
+        if(MAKO_LOCAL_TEST_HOOKS)
+            list(APPEND MAKO_CACHE_NATIVE_CRASH_TEST_ENV
+                 "MAKO_CACHE_REQUIRE_NATIVE_CRASH_HOOKS=1")
+        endif()
+        set(MAKO_RUST_TOOLCHAIN_ENV
+            "PYTHON=${MAKO_LOCAL_PYTHON_EXECUTABLE}")
+        if(DEFINED ENV{LIBCLANG_PATH})
+            list(APPEND MAKO_RUST_TOOLCHAIN_ENV
+                 "LIBCLANG_PATH=$ENV{LIBCLANG_PATH}")
+        endif()
+        set(MAKO_LOCAL_CARGO_ENV
+            ${MAKO_RUST_TOOLCHAIN_ENV}
+            "CARGO_TARGET_DIR=${CMAKE_BINARY_DIR}/cargo-target-mako-local")
+        set(MAKO_CACHE_CARGO_ENV
+            ${MAKO_RUST_TOOLCHAIN_ENV}
+            "CARGO_TARGET_DIR=${CMAKE_BINARY_DIR}/cargo-target-mako-cache")
+
+        # Miri is intentionally a Rust-only fake-ABI gate. The runner owns a
+        # dated nightly pin and fails loudly when that exact toolchain or Miri
+        # component is unavailable; this target must never degrade to `cargo
+        # test` or cross into the native C++ archive.
+        add_custom_target(run_mako_local_miri_tests
+            COMMAND ${CMAKE_COMMAND} -E env
+                    "CARGO=${CARGO_EXECUTABLE}"
+                    "CARGO_TARGET_DIR=${CMAKE_BINARY_DIR}/cargo-target-mako-local-miri"
+                    bash "${CMAKE_SOURCE_DIR}/scripts/run_mako_local_miri.sh"
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            COMMENT "Running pinned Miri safe-wrapper ownership gate"
+            VERBATIM
+        )
+
+        add_custom_target(run_mako_local_rust_tests
+            COMMAND ${CMAKE_COMMAND} -E env
+                    ${MAKO_LOCAL_CARGO_ENV}
+                    ${CARGO_EXECUTABLE} test --locked
+                    -p mako-history --all-targets
+            COMMAND ${CMAKE_COMMAND} -E env
+                    ${MAKO_LOCAL_CARGO_ENV}
+                    "MAKO_LOCAL_FAKE_ABI=1"
+                    "MAKO_LOCAL_REQUIRE_NATIVE=0"
+                    ${CARGO_EXECUTABLE} test --locked -p mako-local --lib
+            COMMAND ${CMAKE_COMMAND} -E env
+                    ${MAKO_LOCAL_CARGO_ENV}
+                    "MAKO_BUILD_DIR=${CMAKE_BINARY_DIR}"
+                    "MAKO_LOCAL_FAKE_ABI=0"
+                    "MAKO_LOCAL_REQUIRE_NATIVE=1"
+                    "MAKO_LOCAL_REQUIRE_DIFFERENTIAL=1"
+                    "MAKO_LOCAL_DIFFERENTIAL_DRIVER=$<TARGET_FILE:mako_local_differential_driver>"
+                    ${CARGO_EXECUTABLE} test --locked
+                    -p mako-local -p mako-local-sys --all-targets
+            COMMAND ${CMAKE_COMMAND} -E env
+                    ${MAKO_LOCAL_CARGO_ENV}
+                    "MAKO_BUILD_DIR=${CMAKE_BINARY_DIR}"
+                    "MAKO_LOCAL_FAKE_ABI=0"
+                    "MAKO_LOCAL_REQUIRE_NATIVE=1"
+                    ${CARGO_EXECUTABLE} test --locked -p mako-local --doc
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/crates
+            DEPENDS mako mako_local_differential_driver
+            COMMENT "Running safe Rust transaction-wrapper tests"
+            VERBATIM
+        )
+
+        # Cleanup-failure seams deliberately quarantine their sacrificial
+        # worker and retain uncertain native state. Keep this as a distinct
+        # hook-enabled functional profile rather than weakening the production
+        # ASan/LSan ownership baseline. Conditional target creation makes a
+        # missing -DMAKO_LOCAL_TEST_HOOKS=ON fail at target selection.
+        if(MAKO_LOCAL_TEST_HOOKS)
+            add_custom_target(run_mako_local_hook_tests
+                COMMAND ${CMAKE_CTEST_COMMAND}
+                        --test-dir ${CMAKE_BINARY_DIR} --verbose
+                        --output-on-failure --no-tests=error
+                        -R "^(MakoLocalAbiTests|MakoLocalAbiC11Probe|MakoLocalAbiCppConformance|MakoLocalThreadLimitProbe)$"
+                DEPENDS test_mako_local_abi test_mako_local_abi_c11
+                        test_mako_local_abi_cpp_conformance
+                        mako_local_thread_limit_probe
+                        run_mako_local_rust_tests
+                        check_mako_local_build_fingerprint
+                        check_mako_local_abi_symbols
+                COMMENT
+                    "Running hook-enabled cleanup/quarantine boundary gate"
+                VERBATIM
+            )
+        endif()
+
+        # Item 4's benchmark is intentionally opt-in: it requires optimized
+        # C++ and Rust code, performs warmup plus repeated samples over the
+        # complete workload matrix, and records same-host artifacts. Ordinary
+        # correctness targets still compile its protocol tests but do not make
+        # noisy performance measurements.
+        add_custom_target(run_mako_local_overhead_benchmarks
+            COMMAND ${CMAKE_COMMAND} -E make_directory
+                    "${CMAKE_BINARY_DIR}/mako-local-overhead-artifacts"
+            COMMAND ${CMAKE_COMMAND} -E env
+                    ${MAKO_RUST_TOOLCHAIN_ENV}
+                    "CARGO_TARGET_DIR=${CMAKE_BINARY_DIR}/cargo-target-mako-local-overhead"
+                    "MAKO_BUILD_DIR=${CMAKE_BINARY_DIR}"
+                    "MAKO_LOCAL_FAKE_ABI=0"
+                    "MAKO_LOCAL_REQUIRE_NATIVE=1"
+                    "MAKO_LOCAL_REQUIRE_OVERHEAD=1"
+                    "MAKO_LOCAL_OVERHEAD_DRIVER=$<TARGET_FILE:mako_local_overhead_driver>"
+                    "MAKO_LOCAL_OVERHEAD_ARTIFACT_DIR=${CMAKE_BINARY_DIR}/mako-local-overhead-artifacts"
+                    ${CARGO_EXECUTABLE} test --locked --release
+                    -p mako-local --test overhead --
+                    --exact wrapper_overhead_gate --nocapture
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/crates
+            DEPENDS mako mako_local_overhead_driver
+                    check_mako_local_build_fingerprint
+                    check_mako_local_abi_symbols
+            COMMENT "Running optimized five-surface wrapper-overhead gate"
+            VERBATIM
+        )
+
+        if(MAKO_LOCAL_SANITIZERS_ENABLED)
+            set(MAKO_LOCAL_SANITIZER_CARGO_ENV
+                ${MAKO_RUST_TOOLCHAIN_ENV}
+                ${MAKO_LOCAL_SANITIZER_RUNTIME_ENV}
+                "CARGO_TARGET_DIR=${CMAKE_BINARY_DIR}/cargo-target-mako-local-sanitizer"
+                "RUSTFLAGS=${MAKO_LOCAL_SANITIZER_RUSTFLAGS}")
+
+            # Required-native Item 4 gate. The gtest exercises the C ABI
+            # directly. The Rust integration suite then drives the same
+            # instrumented archive through safe Rust and execs the direct-C++
+            # and raw-C-ABI differential children. Sanitizer suppressions are
+            # restricted to the reviewed engine/process-lifetime lists above,
+            # and any other report terminates the gate.
+            add_custom_target(run_mako_local_sanitizer_tests
+                COMMAND ${CMAKE_COMMAND} -E env
+                        ${MAKO_LOCAL_SANITIZER_RUNTIME_ENV}
+                        ${CMAKE_CTEST_COMMAND}
+                        --test-dir ${CMAKE_BINARY_DIR} --verbose
+                        --output-on-failure --no-tests=error
+                        -R "^(MakoLocalAbiTests|MakoLocalAbiC11Probe|MakoLocalAbiCppConformance|MakoLocalThreadLimitProbe)$"
+                COMMAND ${CMAKE_COMMAND} -E env
+                        ${MAKO_LOCAL_SANITIZER_CARGO_ENV}
+                        "MAKO_BUILD_DIR=${CMAKE_BINARY_DIR}"
+                        "MAKO_LOCAL_FAKE_ABI=0"
+                        "MAKO_LOCAL_REQUIRE_NATIVE=1"
+                        "MAKO_LOCAL_REQUIRE_DIFFERENTIAL=1"
+                        "MAKO_LOCAL_DIFFERENTIAL_DRIVER=$<TARGET_FILE:mako_local_differential_driver>"
+                        ${CARGO_EXECUTABLE}
+                        ${MAKO_LOCAL_SANITIZER_CARGO_PREFIX}
+                        test --locked
+                        ${MAKO_LOCAL_SANITIZER_CARGO_TARGET_ARGS}
+                        -p mako-local -p mako-local-sys --all-targets --
+                        --test-threads=1 --nocapture
+                WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/crates
+                DEPENDS test_mako_local_abi test_mako_local_abi_c11
+                        test_mako_local_abi_cpp_conformance
+                        mako_local_thread_limit_probe
+                        mako_local_differential_driver
+                        check_mako_local_build_fingerprint
+                        check_mako_local_abi_symbols
+                COMMENT
+                    "Running required-native mako-local sanitizer boundary gate"
+                VERBATIM
+            )
+        endif()
+
+        # A process has one native cache-order namespace. Individual tests
+        # still exercise concurrent workers, but separate cache cases cannot
+        # claim that namespace at the same time inside one Rust test binary.
+        add_custom_target(run_mako_cache_rust_tests
+            COMMAND ${CMAKE_COMMAND} -E env
+                    ${MAKO_CACHE_CARGO_ENV}
+                    "MAKO_BUILD_DIR=${CMAKE_BINARY_DIR}"
+                    "MAKO_LOCAL_FAKE_ABI=0"
+                    "MAKO_LOCAL_REQUIRE_NATIVE=1"
+                    ${MAKO_CACHE_NATIVE_CRASH_TEST_ENV}
+                    ${CARGO_EXECUTABLE} test --locked --features test-support
+                    -p mako-cache --all-targets -- --test-threads=1
+            COMMAND ${CMAKE_COMMAND} -E env
+                    ${MAKO_CACHE_CARGO_ENV}
+                    "MAKO_BUILD_DIR=${CMAKE_BINARY_DIR}"
+                    "MAKO_LOCAL_FAKE_ABI=0"
+                    "MAKO_LOCAL_REQUIRE_NATIVE=1"
+                    ${CARGO_EXECUTABLE} test --locked -p mako-cache --doc
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/crates
+            DEPENDS mako
+            COMMENT "Running Rust transaction-cache tests"
+            VERBATIM
+        )
+
+        # Phase 1F's mutation runner compiles every mutant in an isolated
+        # workspace and accepts a kill only from its one designated exact
+        # test. It requires the hook-enabled archive for timestamp carriage
+        # and native recovery mutants, and writes the authoritative report
+        # under the CMake build tree rather than the source worktree.
+        if(MAKO_LOCAL_TEST_HOOKS)
+            add_custom_target(run_mako_cache_mutation_tests
+                # The isolated lockfile normalization is deliberately
+                # offline. Prime every locked target dependency first so a
+                # clean host also has archives such as windows-link that the
+                # Linux build itself never compiles.
+                COMMAND ${CMAKE_COMMAND} -E env
+                        ${MAKO_RUST_TOOLCHAIN_ENV}
+                        ${CARGO_EXECUTABLE} fetch --locked
+                        --manifest-path "${CMAKE_SOURCE_DIR}/crates/Cargo.toml"
+                COMMAND ${CMAKE_COMMAND} -E env
+                        ${MAKO_RUST_TOOLCHAIN_ENV}
+                        "MAKO_CACHE_MUTATION_TEMP_ROOT=${CMAKE_BINARY_DIR}/mako-cache-mutation-work"
+                        "${MAKO_LOCAL_PYTHON_EXECUTABLE}"
+                        "${CMAKE_SOURCE_DIR}/crates/mako-cache/mutations/run.py"
+                        --cargo "${CARGO_EXECUTABLE}"
+                        --hook-build-dir "${CMAKE_BINARY_DIR}"
+                        --report "${CMAKE_BINARY_DIR}/mako-cache-phase1f-mutations.json"
+                WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+                DEPENDS mako
+                COMMENT "Running isolated Phase 1F transaction-cache mutation gate"
+                VERBATIM
+            )
+        endif()
+    endif()
+
+    # Custom target to run all SILO/STO tests
     add_custom_target(run_silo_sto_tests
-        COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure -R "Silo|STO"
+        COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
+                -R "Silo|STO|silo|MakoLocal|kv_backends"
         DEPENDS test_silo_varint test_silo_rcu_thread test_silo_allocator
+                test_silo_runtime test_silo_multi_site_stress
+                test_silo_nontxn_api test_kv_backends test_mako_local_abi
+                test_mako_local_abi_c11
+                test_mako_local_abi_cpp_conformance
+                mako_local_thread_limit_probe
+                check_mako_local_build_fingerprint
+                check_mako_local_abi_symbols
                 test_sto_transaction test_sto_transaction_real
-        COMMENT "Running live Silo-support and STO tests"
+        COMMENT "Running all Silo/STO tests"
+        VERBATIM
     )
+    if(TARGET run_mako_local_rust_tests)
+        add_dependencies(run_mako_local_rust_tests
+            check_mako_local_build_fingerprint
+            check_mako_local_abi_symbols)
+        add_dependencies(run_silo_sto_tests run_mako_local_rust_tests)
+    endif()
+    if(TARGET run_mako_cache_rust_tests)
+        add_dependencies(run_mako_cache_rust_tests
+            check_mako_local_build_fingerprint
+            check_mako_local_abi_symbols)
+        # The hook profile is the mandatory cache cleanup/crash seam gate too.
+        # Keep the dependency one-way: the cache suite requires the hook
+        # archive, while its standalone target must remain usable in ordinary
+        # hook-off builds.
+        if(TARGET run_mako_local_hook_tests)
+            add_dependencies(run_mako_local_hook_tests
+                run_mako_cache_rust_tests)
+        endif()
+        add_dependencies(run_silo_sto_tests run_mako_cache_rust_tests)
+    endif()
+    if(TARGET run_mako_cache_mutation_tests)
+        # Run the ordinary baseline before spending time on isolated mutants.
+        # The aggregate hook gate is the mandatory CI entry point.
+        add_dependencies(run_mako_cache_mutation_tests
+            run_mako_cache_rust_tests)
+        if(TARGET run_mako_local_hook_tests)
+            add_dependencies(run_mako_local_hook_tests
+                run_mako_cache_mutation_tests)
+        endif()
+    endif()
 
     # Keep this summary honest: it must name only targets this file actually
     # defines. It went stale in 4a06ef0e (which stopped building srpc's

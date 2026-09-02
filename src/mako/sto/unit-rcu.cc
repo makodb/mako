@@ -78,7 +78,8 @@ int main(int argc, char* argv[]) {
     pthread_create(&advancer, NULL, Transaction::epoch_advancer, NULL);
     pthread_detach(advancer);
 
-    while (Transaction::global_epochs.global_epoch < nepochs + 1)
+    while (Transaction::global_epochs.global_epoch.load(
+               std::memory_order_seq_cst) < nepochs + 1)
         usleep(useconds_t(delay * 1e6));
     stop = true;
 

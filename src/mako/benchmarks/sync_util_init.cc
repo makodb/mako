@@ -18,7 +18,10 @@ std::vector<std::atomic<uint32_t>> sync_util::sync_logger::disk_timestamp_(80);
 #endif
 std::atomic<uint32_t> sync_util::sync_logger::single_watermark_(0);
 int sync_util::sync_logger::nshards = 0;
-int sync_util::sync_logger::local_replica_id = 0;
+// Dense sequence zero, next-to-return Mako timestamp one, unlocked epoch zero.
+// Keep this literal in lockstep with Transaction's packed cache-order layout.
+alignas(128) std::atomic<uint64_t> sync_util::sync_logger::cache_order_state{
+    UINT64_C(1) << 29};
 std::chrono::time_point<std::chrono::high_resolution_clock> sync_util::sync_logger::last_update = std::chrono::high_resolution_clock::now();
 int sync_util::sync_logger::nthreads = 0;
 bool sync_util::sync_logger::worker_running = false;

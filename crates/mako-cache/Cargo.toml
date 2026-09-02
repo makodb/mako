@@ -1,0 +1,31 @@
+[package]
+name = "mako-cache"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.91"
+description = "Transactional Mako write-back cache over RocksDB"
+license = "MIT"
+publish = false
+
+[features]
+# Test-only structural probes used by the Phase 1F mutation gate. Production
+# builds leave this disabled, so no probe or conditional branch is present in
+# the cache commit path.
+test-support = []
+
+[dependencies]
+mako-local = { path = "../mako-local" }
+mrx-core = { path = "../mrx-core" }
+mrx-rocks = { path = "../mrx-rocks" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Keep the cache crate free of direct unsafe affinity syscalls. `nix` exposes
+# the checked CpuSet wrapper and converts kernel errors into ordinary Results.
+nix = { version = "0.30.1", default-features = false, features = ["feature", "mman", "sched"] }
+
+[dev-dependencies]
+loom = "0.7"
+mako-history = { path = "../mako-history" }
+# Unit crash tests need deterministic wrapper-level RocksDB rendezvous points;
+# normal builds keep mrx-rocks' default, hook-free profile.
+mrx-rocks = { path = "../mrx-rocks", features = ["test-hooks"] }

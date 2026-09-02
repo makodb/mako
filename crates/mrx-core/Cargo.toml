@@ -1,0 +1,36 @@
+[package]
+name = "mrx-core"
+version = "0.1.0"
+edition = "2021"
+# Matches Dockerfile.ubuntu24, which installs 1.91.0 from a tarball with no
+# rustup. Deliberately NO rust-toolchain.toml: with no rustup in CI it would
+# be silently ignored here and authoritative locally, i.e. the two would
+# disagree exactly when it matters.
+rust-version = "1.91"
+description = "Masstree-over-RocksDB write-back cache: backend-agnostic core"
+license = "MIT"
+publish = false
+
+[dependencies]
+
+# LTO IS MANDATORY-OFF, and this is not a preference.
+#
+# Reproduced on this machine (rustc 1.97.1, GNU ld): mixing an lto="thin"
+# staticlib with the existing non-LTO rust-lib archive fails to link with
+# "multiple definition of <hashbrown::raw::Fallibility>::capacity_overflow".
+# Without LTO both archives ship the byte-identical precompiled std CGU
+# member and ld extracts it from the first archive only; LTO rewrites that
+# member into crate-specific monomorphisations, so BOTH get extracted and
+# the shared std/alloc symbols collide strong-vs-strong.
+#
+# --start-group cannot help (this is duplicate definition, not ordering),
+# and -Wl,--allow-multiple-definition "fixes" the link while silently
+# giving both crates one crate's std AND one crate's allocator.
+#
+# CMakeLists.txt links rust_lib into every add_apps() binary, so any crate
+# added here inherits this constraint.
+# See crates/Cargo.toml: profiles live at the workspace root.
+
+# panic = "abort" is release-only on purpose: `cargo test` needs unwinding
+# to report failures. The shipped staticlib is the release profile, where a
+# panic crossing extern "C" into C++ would be UB, so it aborts instead.

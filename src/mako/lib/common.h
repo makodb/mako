@@ -4,9 +4,12 @@
 #include "lib/timestamp.h"
 
 #include <iostream>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstddef>
+#include <cstdint>
+#include <cstring>
 #include <functional>
 #include <sys/file.h>
 #include <mutex>
@@ -102,7 +105,13 @@ namespace mako
         std::cout << "[" << prefix << "] printStringAsBit:" << std::endl;
         for (size_t i = 0; i < len; ++i) {
             unsigned char c = str[i];
-            std::cout << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(c) << " ";
+            // snprintf, not `std::hex << setw(2) << setfill('0')`: under
+            // clang 22 with `import std` the iomanip manipulators lose
+            // their operator<< overloads ("invalid operands ... and
+            // '__iom_t6'").
+            char hexbuf[8];
+            snprintf(hexbuf, sizeof(hexbuf), "%02x ", static_cast<int>(c));
+            std::cout << hexbuf;
             
             // Print newline every 8 bytes
             if ((i + 1) % 8 == 0) {
@@ -134,6 +143,33 @@ namespace mako
     const int BITS_OF_NODE = sizeof(struct Node);
     const int BITS_OF_TT = sizeof(uint32_t);
 
+    // Stored metadata follows arbitrary-length user bytes and is therefore not
+    // naturally aligned. Keep all accesses in byte/memcpy form rather than
+    // forming misaligned uint32_t* or Node* pointers.
+    inline void ResetEncodedNodeState(char* encoded_value, size_t encoded_size) {
+        uint32_t timestamp = 0;
+        int16_t data_size = 0;
+        char* node_bytes = encoded_value + encoded_size - BITS_OF_NODE;
+        const char* timestamp_bytes = reinterpret_cast<const char*>(&timestamp);
+        for (size_t i = 0; i != sizeof(timestamp); ++i)
+            std::atomic_ref<char>(node_bytes[offsetof(Node, timestamp) + i])
+                .store(timestamp_bytes[i], std::memory_order_relaxed);
+        const char* size_bytes = reinterpret_cast<const char*>(&data_size);
+        for (size_t i = 0; i != sizeof(data_size); ++i)
+            std::atomic_ref<char>(node_bytes[offsetof(Node, data_size) + i])
+                .store(size_bytes[i], std::memory_order_relaxed);
+    }
+
+    inline void ResetEncodedMetadata(char* encoded_value, size_t encoded_size) {
+        uint32_t time_term = 0;
+        char* data = nullptr;
+        std::memcpy(encoded_value + encoded_size - EXTRA_BITS_FOR_VALUE,
+                    &time_term, sizeof(time_term));
+        ResetEncodedNodeState(encoded_value, encoded_size);
+        char* node_bytes = encoded_value + encoded_size - BITS_OF_NODE;
+        std::memcpy(node_bytes + offsetof(Node, data), &data, sizeof(data));
+    }
+
     // Helper function to encode values with required metadata padding
     inline std::string Encode(const std::string& value) {
         // Create string with exact size needed - single allocation
@@ -143,17 +179,7 @@ namespace mako
         // Copy the value to the beginning - single memory copy
         std::memcpy(encoded_value.data(), value.data(), value.size());
 
-        // Initialize timestamp/term to 0 (already zeroed by resize)
-        uint32_t* time_term = reinterpret_cast<uint32_t*>(
-            encoded_value.data() + encoded_value.size() - EXTRA_BITS_FOR_VALUE);
-        *time_term = 0;  // Redundant but explicit
-
-        // Initialize Node structure
-        Node* node = reinterpret_cast<Node*>(
-            encoded_value.data() + encoded_value.size() - BITS_OF_NODE);
-        node->timestamp = 0;
-        node->data_size = 0;
-        node->data = nullptr;
+        ResetEncodedMetadata(encoded_value.data(), encoded_value.size());
 
         return encoded_value;
     }
@@ -606,9 +632,11 @@ namespace mako
     }
 
     static std::string intToString(long long num) {
-        std::ostringstream ss;
-        ss << std::setw(16) << std::setfill('0') << num;
-        return ss.str();
+        // snprintf rather than setw/setfill: see the note above about
+        // iomanip under clang 22 + `import std`.
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%016lld", num);
+        return std::string(buf);
     }
 
     static size_t parse_memory_spec(const std::string &s)
