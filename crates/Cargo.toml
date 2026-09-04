@@ -8,6 +8,7 @@ members = [
     "mtree-sys",
     "sto-core",
     "sto-masstree",
+    "sto-test-datatypes",
     "sto-tpcc-ffi",
 ]
 

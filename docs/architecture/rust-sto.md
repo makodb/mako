@@ -7,7 +7,8 @@
 > generation validation, the homogeneous direct-commit lane, private direct
 > directory tokens, bounded atomic values, trusted scan-generation validation,
 > bounded registries, the terminal-read typestate, the optional fixed-`u64`
-> Masstree specialization, and the upper commit-hook seam exist on this branch.
+> Masstree specialization, pure Rust reference map/vector/queue adapters, and
+> the upper commit-hook seam exist on this branch.
 > The closed TPC-C bridge also implements fused full Payment, exact-home
 > NewOrder, local Delivery, and the local StockLevel scan-and-join tail.
 > A reproducible zoo-2 point-workload comparison is complete; the optional
@@ -19,7 +20,7 @@
 > **Baseline:** Mako `mako-dev` at `abfb6ea96739`; compatibility oracle
 > `worktree-masstree-rocks` at `1daec550f`
 >
-> **Last updated:** 2026-08-31
+> **Last updated:** 2026-09-04
 
 This document defines the intended semantics and architecture of Mako's native
 Rust implementation of STO. It is a living design contract: implementation
@@ -389,6 +390,8 @@ crates/
   mtree-sys/      Raw generated or mechanically checked C declarations
   masstree/       Safe runtime, worker, tree, point, and scan wrapper
   sto-masstree/   Rust records and the transactional Masstree adapter
+  sto-test-datatypes/
+                  Pure Rust reference map, vector, and queue adapters
   sto-tpcc-ffi/   Closed C bridge used by the current C++ TPC-C integration
 ```
 
@@ -407,6 +410,10 @@ crate validates lifetimes, thread affinity, sizes, statuses, and output buffers.
 Adapter implementations are part of the **transactional-correctness trusted
 base**, even when written entirely in safe Rust. Rust memory safety cannot prove
 that an adapter chose a covering version or a sound conflict unit.
+`sto-test-datatypes` supplies deliberately simple external-crate examples: a
+fixed-bucket ordered map and whole-snapshot vector and queue. They are useful
+for adapter-contract, composition, and conflict tests, but their cloning costs
+and conservative conflict domains are not a production collection design.
 `TransactionalResource`, `OpacityToken`, `TransactionLock`, and
 `DirectBorrowedLockTarget` are nevertheless safe traits. A bad implementation
 can violate isolation or progress, but `sto-core` memory safety MUST NOT depend
