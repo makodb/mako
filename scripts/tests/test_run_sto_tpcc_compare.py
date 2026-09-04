@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import io
+from contextlib import redirect_stderr
 from pathlib import Path
 from types import SimpleNamespace
 import tempfile
@@ -39,7 +41,80 @@ def result(engine: str, throughput: float, pair_id: str = "p0") -> dict[str, obj
     }
 
 
+def benchmark_timeout(
+    engine: str, *, before_measurement: bool
+) -> MODULE.BenchmarkProcessTimeout:
+    phase = (
+        "before_measurement" if before_measurement else "after_measurement_start"
+    )
+    evidence: dict[str, object] = {
+        "type": "benchmark_timeout",
+        "phase": phase,
+        "engine": engine,
+        "stdout_log": f"{engine}.timeout.stdout.log",
+        "stderr_log": f"{engine}.timeout.stderr.log",
+        "metadata_log": f"{engine}.timeout.json",
+    }
+    timeout = MODULE.subprocess.TimeoutExpired(
+        ["sto_tpcc_bench", "--storage-engine", engine],
+        60,
+        output="partial stdout",
+        stderr="partial stderr",
+    )
+    return MODULE.BenchmarkProcessTimeout(
+        timeout,
+        before_measurement=before_measurement,
+        evidence=evidence,
+        stdout="partial stdout",
+        stderr="partial stderr",
+    )
+
+
 class RunnerTests(unittest.TestCase):
+    def test_external_mako_workloads_are_guarded_as_competitors(self) -> None:
+        self.assertIn("run_scalability_benchmark.py", MODULE.RUNNER_PROCESS_NAMES)
+        self.assertIn("makoCon", MODULE.BENCHMARK_PROCESS_NAMES)
+        self.assertIn("mako_bench_resp_scalability", MODULE.BENCHMARK_PROCESS_NAMES)
+
+    def test_persistent_pgo_driver_scripts_are_guarded_as_competitors(self) -> None:
+        for script in (
+            "build_sto_tpcc_pgo.sh",
+            "build_sto_masstree_pgo.sh",
+        ):
+            with self.subTest(script=script):
+                self.assertIn(script, MODULE.RUNNER_PROCESS_NAMES)
+                argv = ["bash", f"/tmp/pgo/{script}"]
+                self.assertTrue(
+                    any(
+                        Path(argument).name in MODULE.RUNNER_PROCESS_NAMES
+                        for argument in argv
+                    )
+                )
+
+    def test_native_pgo_training_is_guarded_with_truncated_linux_comm(self) -> None:
+        self.assertIn("sto_tpcc_bench-generate", MODULE.BENCHMARK_PROCESS_NAMES)
+        self.assertTrue(
+            MODULE.matches_process_name(
+                "unavailable",
+                "sto_tpcc_bench-generate",
+                MODULE.BENCHMARK_PROCESS_NAMES,
+            )
+        )
+        self.assertTrue(
+            MODULE.matches_process_name(
+                "sto_tpcc_bench-",
+                "",
+                MODULE.BENCHMARK_PROCESS_NAMES,
+            )
+        )
+        self.assertFalse(
+            MODULE.matches_process_name(
+                "sto_tpcc_train",
+                "unrelated",
+                MODULE.BENCHMARK_PROCESS_NAMES,
+            )
+        )
+
     def test_file_fingerprint_records_content_and_identity(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "binary"
@@ -88,6 +163,54 @@ class RunnerTests(unittest.TestCase):
         with self.assertRaisesRegex(argparse.ArgumentTypeError, "five nonnegative"):
             MODULE.parse_workload_mix("101,0,0,0,-1")
 
+    def test_allocator_memory_defaults_to_one_gibibyte(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            binary = root / "sto_tpcc_bench"
+            binary.write_bytes(b"#!/bin/sh\n")
+            binary.chmod(0o755)
+            config = root / "config.yml"
+            config.write_text("hosts: []\n", encoding="utf-8")
+            argv = [
+                str(SCRIPT),
+                "--binary",
+                str(binary),
+                "--config",
+                str(config),
+                "--output-dir",
+                str(root / "results"),
+                "--threads",
+                "1",
+                "--physical-cpus",
+                "0",
+            ]
+            with mock.patch.object(MODULE.sys, "argv", argv):
+                args = MODULE.parse_args()
+
+        self.assertEqual(args.allocator_memory, "1G")
+
+    def test_allocator_memory_accepts_strict_positive_memory_specs(self) -> None:
+        for spec in ("1", "4K", "512M", "2G"):
+            with self.subTest(spec=spec):
+                self.assertEqual(MODULE.parse_allocator_memory(spec), spec)
+
+    def test_allocator_memory_rejects_invalid_or_overflowing_specs(self) -> None:
+        invalid_specs = (
+            "",
+            "0",
+            "01G",
+            "-1G",
+            "1g",
+            "1GB",
+            "1.5G",
+            " 1G",
+            f"{2 * MODULE.sys.maxsize + 2}G",
+        )
+        for spec in invalid_specs:
+            with self.subTest(spec=spec):
+                with self.assertRaises(argparse.ArgumentTypeError):
+                    MODULE.parse_allocator_memory(spec)
+
     def test_workload_mix_is_forwarded_through_the_benchmark_environment(self) -> None:
         with mock.patch.dict(
             MODULE.os.environ,
@@ -95,36 +218,264 @@ class RunnerTests(unittest.TestCase):
             clear=True,
         ):
             self.assertNotIn(
-                "MAKO_TPCC_WORKLOAD_MIX", MODULE.benchmark_environment(None)
+                "MAKO_TPCC_WORKLOAD_MIX",
+                MODULE.benchmark_environment(None, "1G"),
             )
             self.assertEqual(
-                MODULE.benchmark_environment([45, 43, 4, 4, 4])[
+                MODULE.benchmark_environment(None, "1G")[
+                    "MAKO_TPCC_ALLOCATOR_MEMORY"
+                ],
+                "1G",
+            )
+            self.assertEqual(
+                MODULE.benchmark_environment([45, 43, 4, 4, 4], "2G")[
                     "MAKO_TPCC_WORKLOAD_MIX"
                 ],
                 "45,43,4,4,4",
             )
 
-    def test_diagnostic_fallback_switches_are_recorded(self) -> None:
-        environment = {
-            "MAKO_TPCC_WORKLOAD_MIX": "0,100,0,0,0",
-            "MAKO_STO_TPCC_DISABLE_PAYMENT_FULL": "1",
-            "MAKO_STO_TPCC_DISABLE_PAYMENT_PREFIX": "1",
-            "MAKO_STO_TPCC_DISABLE_NEW_ORDER_FULL": "1",
-            "MAKO_STO_TPCC_DISABLE_DELIVERY_FULL": "1",
-            "MAKO_STO_TPCC_DISABLE_STOCK_LEVEL_FULL": "1",
-            "UNRELATED": "not recorded",
-        }
-        self.assertEqual(
-            MODULE.recorded_environment_overrides(environment),
-            {
-                "MAKO_TPCC_WORKLOAD_MIX": "0,100,0,0,0",
-                "MAKO_STO_TPCC_DISABLE_PAYMENT_FULL": "1",
-                "MAKO_STO_TPCC_DISABLE_PAYMENT_PREFIX": "1",
-                "MAKO_STO_TPCC_DISABLE_NEW_ORDER_FULL": "1",
-                "MAKO_STO_TPCC_DISABLE_DELIVERY_FULL": "1",
-                "MAKO_STO_TPCC_DISABLE_STOCK_LEVEL_FULL": "1",
-            },
-        )
+    def test_allocator_memory_is_identical_and_recorded_for_both_engines(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            args = SimpleNamespace(
+                physical_cpus=[10, 11, 12, 13],
+                taskset="taskset",
+                binary=Path(directory) / "sto_tpcc_bench",
+                config=Path(directory) / "config.yml",
+                site="local_s0",
+                runtime_seconds=30,
+                workload_mix=[45, 43, 4, 4, 4],
+                allocator_memory="2G",
+                timeout_seconds=60,
+                output_dir=Path(directory),
+                guard_lxd_during_measurement=False,
+            )
+
+            def completed_run(command: list[str], **_kwargs: object) -> object:
+                engine = command[-1]
+                stdout = MODULE.RESULT_PREFIX + MODULE.json.dumps(
+                    result(engine, 80.0 if engine == "rust" else 100.0)
+                )
+                return SimpleNamespace(returncode=0, stdout=stdout, stderr="")
+
+            with (
+                mock.patch.dict(MODULE.os.environ, {}, clear=True),
+                mock.patch.object(
+                    MODULE.subprocess, "run", side_effect=completed_run
+                ) as run,
+            ):
+                records = [
+                    MODULE.run_one(args, engine, 4, 0, index, "p0")
+                    for index, engine in enumerate(("cpp", "rust"), start=1)
+                ]
+
+        for record, call in zip(records, run.call_args_list, strict=True):
+            environment = call.kwargs["env"]
+            self.assertEqual(environment["MAKO_TPCC_ALLOCATOR_MEMORY"], "2G")
+            self.assertEqual(record["command"], call.args[0])
+            self.assertEqual(record["pair_attempt"], 1)
+            self.assertIn("-attempt01-", record["stdout_log"])
+            self.assertEqual(
+                record["environment_overrides"],
+                {
+                    "MAKO_TPCC_ALLOCATOR_MEMORY": "2G",
+                    "MAKO_TPCC_WORKLOAD_MIX": "45,43,4,4,4",
+                },
+            )
+
+    def test_run_one_preserves_pre_measurement_timeout_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output_dir = Path(directory)
+            args = SimpleNamespace(
+                physical_cpus=[10],
+                taskset="taskset",
+                binary=output_dir / "sto_tpcc_bench",
+                config=output_dir / "config.yml",
+                site="local_s0",
+                runtime_seconds=5,
+                workload_mix=[45, 43, 4, 4, 4],
+                allocator_memory="2G",
+                timeout_seconds=60,
+                output_dir=output_dir,
+                guard_lxd_during_measurement=True,
+            )
+            timeout = MODULE.subprocess.TimeoutExpired(
+                ["sto_tpcc_bench"],
+                60,
+                output=b"partial stdout\n",
+                stderr=b"database loading completed\n",
+            )
+            with (
+                mock.patch.object(MODULE.subprocess, "run", side_effect=timeout),
+                mock.patch.object(MODULE.time, "monotonic", side_effect=[10.0, 70.0]),
+                self.assertRaises(MODULE.BenchmarkProcessTimeout) as raised,
+            ):
+                MODULE.run_one(
+                    args,
+                    "cpp",
+                    1,
+                    2,
+                    21,
+                    "r02-c00-1t",
+                    pair_attempt=3,
+                )
+
+            failure = raised.exception
+            evidence = failure.evidence
+            self.assertTrue(failure.before_measurement)
+            self.assertEqual(evidence["phase"], "before_measurement")
+            self.assertEqual(evidence["run_order"], 21)
+            self.assertEqual(evidence["pair_attempt"], 3)
+            self.assertIn("-attempt03-", evidence["stdout_log"])
+            self.assertEqual(evidence["wall_seconds_including_load"], 60.0)
+            self.assertEqual(
+                (output_dir / str(evidence["stdout_log"])).read_text(
+                    encoding="utf-8"
+                ),
+                "partial stdout\n",
+            )
+            self.assertEqual(
+                (output_dir / str(evidence["stderr_log"])).read_text(
+                    encoding="utf-8"
+                ),
+                "database loading completed\n",
+            )
+            self.assertEqual(
+                MODULE.json.loads(
+                    (output_dir / str(evidence["metadata_log"])).read_text(
+                        encoding="utf-8"
+                    )
+                ),
+                evidence,
+            )
+            self.assertFalse(
+                (
+                    output_dir
+                    / "021-r02-c00-1t-attempt03-cpp.stdout.log"
+                ).exists()
+            )
+
+    def test_run_one_preserves_completed_logs_from_each_pair_attempt(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output_dir = Path(directory)
+            args = SimpleNamespace(
+                physical_cpus=[10, 11, 12, 13],
+                taskset="taskset",
+                binary=output_dir / "sto_tpcc_bench",
+                config=output_dir / "config.yml",
+                site="local_s0",
+                runtime_seconds=30,
+                workload_mix=None,
+                allocator_memory="1G",
+                timeout_seconds=60,
+                output_dir=output_dir,
+                guard_lxd_during_measurement=False,
+            )
+            stdout = MODULE.RESULT_PREFIX + MODULE.json.dumps(result("cpp", 100.0))
+            completed = SimpleNamespace(returncode=0, stdout=stdout, stderr="")
+            with mock.patch.object(MODULE.subprocess, "run", return_value=completed):
+                first = MODULE.run_one(
+                    args, "cpp", 4, 0, 7, "pair-1", pair_attempt=1
+                )
+                second = MODULE.run_one(
+                    args, "cpp", 4, 0, 7, "pair-1", pair_attempt=2
+                )
+
+            self.assertEqual(first["run_order"], second["run_order"])
+            self.assertEqual([first["pair_attempt"], second["pair_attempt"]], [1, 2])
+            self.assertNotEqual(first["stdout_log"], second["stdout_log"])
+            self.assertIn("-attempt01-", first["stdout_log"])
+            self.assertIn("-attempt02-", second["stdout_log"])
+            self.assertEqual(
+                (output_dir / str(first["stdout_log"])).read_text(encoding="utf-8"),
+                stdout,
+            )
+            self.assertEqual(
+                (output_dir / str(second["stdout_log"])).read_text(encoding="utf-8"),
+                stdout,
+            )
+
+    def test_run_one_marks_timeout_after_measurement_start_as_terminal(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output_dir = Path(directory)
+            args = SimpleNamespace(
+                physical_cpus=[10],
+                taskset="taskset",
+                binary=output_dir / "sto_tpcc_bench",
+                config=output_dir / "config.yml",
+                site="local_s0",
+                runtime_seconds=5,
+                workload_mix=None,
+                allocator_memory="1G",
+                timeout_seconds=60,
+                output_dir=output_dir,
+                guard_lxd_during_measurement=True,
+            )
+            timeout = MODULE.subprocess.TimeoutExpired(
+                ["sto_tpcc_bench"],
+                60,
+                stderr=(
+                    b"20260904-17:04.01-123456(us) 1 ! run: "
+                    b"TPCC_BENCH_MEASURE_START\n"
+                ),
+            )
+            with (
+                mock.patch.object(MODULE.subprocess, "run", side_effect=timeout),
+                self.assertRaises(MODULE.BenchmarkProcessTimeout) as raised,
+            ):
+                MODULE.run_one(args, "rust", 1, 0, 1, "r00-c00-1t")
+
+            self.assertFalse(raised.exception.before_measurement)
+            self.assertEqual(
+                raised.exception.evidence["phase"], "after_measurement_start"
+            )
+
+    def test_diagnostic_fallback_switches_are_rejected_even_when_empty(self) -> None:
+        for variable in MODULE.TPCC_DIAGNOSTIC_FALLBACK_ENVIRONMENT_KEYS:
+            with self.subTest(variable=variable):
+                with self.assertRaisesRegex(RuntimeError, variable):
+                    MODULE.ensure_tpcc_diagnostic_fallbacks_unset({variable: ""})
+
+    def test_benchmark_environment_defensively_rejects_a_late_fallback(self) -> None:
+        variable = MODULE.TPCC_DIAGNOSTIC_FALLBACK_ENVIRONMENT_KEYS[0]
+        with (
+            mock.patch.dict(MODULE.os.environ, {variable: ""}, clear=True),
+            self.assertRaisesRegex(RuntimeError, variable),
+        ):
+            MODULE.benchmark_environment(None, "1G")
+
+    def test_parse_args_rejects_an_empty_fallback_at_startup(self) -> None:
+        variable = MODULE.TPCC_DIAGNOSTIC_FALLBACK_ENVIRONMENT_KEYS[0]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            binary = root / "sto_tpcc_bench"
+            binary.write_bytes(b"#!/bin/sh\n")
+            binary.chmod(0o755)
+            config = root / "config.yml"
+            config.write_text("hosts: []\n", encoding="utf-8")
+            argv = [
+                str(SCRIPT),
+                "--binary",
+                str(binary),
+                "--config",
+                str(config),
+                "--output-dir",
+                str(root / "results"),
+                "--threads",
+                "1",
+                "--physical-cpus",
+                "0",
+            ]
+            stderr = io.StringIO()
+            with (
+                mock.patch.object(MODULE.sys, "argv", argv),
+                mock.patch.dict(MODULE.os.environ, {variable: ""}, clear=True),
+                redirect_stderr(stderr),
+                self.assertRaises(SystemExit),
+            ):
+                MODULE.parse_args()
+
+        self.assertIn(variable, stderr.getvalue())
+        self.assertIn("including empty values", stderr.getvalue())
 
     def test_extract_result_accepts_one_valid_record(self) -> None:
         record = result("rust", 80.0)
@@ -356,7 +707,7 @@ class RunnerTests(unittest.TestCase):
             {"restart_count_after": 10},
             {"restart_count_after": 11},
         ]
-        calls: list[tuple[str, int]] = []
+        calls: list[tuple[str, int, int]] = []
 
         def fake_run_one(
             _args: object,
@@ -365,10 +716,21 @@ class RunnerTests(unittest.TestCase):
             _repetition: int,
             run_order: int,
             pair_id: str,
+            *,
+            pair_attempt: int,
         ) -> dict[str, object]:
-            calls.append((engine, run_order))
+            calls.append((engine, run_order, pair_attempt))
             record = result(engine, 100.0 if engine == "cpp" else 80.0, pair_id)
             record["run_order"] = run_order
+            record["pair_attempt"] = pair_attempt
+            record["stdout_log"] = (
+                f"{run_order:03d}-{pair_id}-attempt{pair_attempt:02d}-"
+                f"{engine}.stdout.log"
+            )
+            record["stderr_log"] = (
+                f"{run_order:03d}-{pair_id}-attempt{pair_attempt:02d}-"
+                f"{engine}.stderr.log"
+            )
             record["execution"] = len(calls)
             return record
 
@@ -394,7 +756,7 @@ class RunnerTests(unittest.TestCase):
 
         self.assertEqual(
             calls,
-            [("cpp", 7), ("cpp", 7), ("rust", 8)],
+            [("cpp", 7, 1), ("cpp", 7, 2), ("rust", 8, 2)],
         )
         self.assertEqual([record["execution"] for record in accepted], [2, 3])
         self.assertEqual([record["run_order"] for record in accepted], [7, 8])
@@ -404,6 +766,18 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(
             guard["rejected_attempts"][0]["reasons"],
             ["cpp_lxd_restart_count_changed", "lxd_restart_count_changed"],
+        )
+        self.assertEqual(
+            guard["rejected_attempts"][0]["completed_run_provenance"],
+            [
+                {
+                    "engine": "cpp",
+                    "run_order": 7,
+                    "pair_attempt": 1,
+                    "stdout_log": "007-pair-1-attempt01-cpp.stdout.log",
+                    "stderr_log": "007-pair-1-attempt01-cpp.stderr.log",
+                }
+            ],
         )
         self.assertEqual(accepted[1]["guard"], guard)
 
@@ -556,6 +930,212 @@ class RunnerTests(unittest.TestCase):
                     pair_id="pair-1",
                     first_run_order=1,
                 )
+
+    def test_guard_failure_is_terminal_with_restart_and_competitor_rejections(
+        self,
+    ) -> None:
+        failure = RuntimeError("malformed benchmark result")
+        with (
+            mock.patch.object(MODULE, "GUARD_MAX_ATTEMPTS", 2),
+            mock.patch.object(
+                MODULE,
+                "wait_for_quiet_window",
+                return_value={"restart_count_after": 10},
+            ),
+            mock.patch.object(MODULE, "run_one", side_effect=failure) as run_one,
+            mock.patch.object(MODULE, "read_lxd_restart_count", return_value=11),
+            mock.patch.object(
+                MODULE,
+                "find_competing_processes",
+                return_value=[{"pid": 123, "reasons": ["sto_build"]}],
+            ),
+            mock.patch.object(MODULE.time, "sleep") as sleep,
+        ):
+            with self.assertRaises(RuntimeError) as raised:
+                MODULE.run_guarded_pair(
+                    SimpleNamespace(),
+                    ["cpp", "rust"],
+                    threads=1,
+                    repetition=0,
+                    pair_id="pair-1",
+                    first_run_order=1,
+                )
+
+        self.assertIs(raised.exception, failure)
+        self.assertEqual(run_one.call_count, 1)
+        sleep.assert_not_called()
+
+    def test_guard_retries_a_pre_measurement_timeout_and_discards_the_pair(self) -> None:
+        timeout = benchmark_timeout("cpp", before_measurement=True)
+        attempted = [
+            timeout,
+            result("cpp", 101.0),
+            result("rust", 81.0),
+        ]
+        with (
+            mock.patch.object(
+                MODULE,
+                "wait_for_quiet_window",
+                side_effect=[
+                    {"restart_count_after": 10},
+                    {"restart_count_after": 10},
+                ],
+            ),
+            mock.patch.object(MODULE, "run_one", side_effect=attempted) as run_one,
+            mock.patch.object(MODULE, "read_lxd_restart_count", return_value=10),
+            mock.patch.object(MODULE, "find_competing_processes", return_value=[]),
+            mock.patch.object(MODULE.time, "sleep"),
+        ):
+            accepted = MODULE.run_guarded_pair(
+                SimpleNamespace(),
+                ["cpp", "rust"],
+                threads=1,
+                repetition=0,
+                pair_id="pair-1",
+                first_run_order=7,
+            )
+
+        self.assertEqual(run_one.call_count, 3)
+        self.assertEqual(
+            [call.args[4] for call in run_one.call_args_list],
+            [7, 7, 8],
+        )
+        self.assertEqual(
+            [call.kwargs["pair_attempt"] for call in run_one.call_args_list],
+            [1, 2, 2],
+        )
+        self.assertEqual(
+            [record["throughput_txn_s"] for record in accepted], [101.0, 81.0]
+        )
+        rejected = accepted[0]["guard"]["rejected_attempts"]
+        self.assertEqual(len(rejected), 1)
+        self.assertEqual(rejected[0]["reasons"], ["cpp_timeout_before_measurement"])
+        self.assertEqual(rejected[0]["completed_engines"], [])
+        self.assertEqual(
+            rejected[0]["engine_windows"][0]["execution_failure"],
+            timeout.evidence,
+        )
+
+    def test_guard_does_not_retry_a_timeout_after_measurement_starts(self) -> None:
+        timeout = benchmark_timeout("cpp", before_measurement=False)
+        with (
+            mock.patch.object(
+                MODULE,
+                "wait_for_quiet_window",
+                return_value={"restart_count_after": 10},
+            ) as quiet_window,
+            mock.patch.object(MODULE, "run_one", side_effect=timeout) as run_one,
+            mock.patch.object(MODULE, "read_lxd_restart_count", return_value=10),
+            mock.patch.object(MODULE, "find_competing_processes", return_value=[]),
+        ):
+            with self.assertRaises(MODULE.BenchmarkProcessTimeout) as raised:
+                MODULE.run_guarded_pair(
+                    SimpleNamespace(),
+                    ["cpp", "rust"],
+                    threads=1,
+                    repetition=0,
+                    pair_id="pair-1",
+                    first_run_order=1,
+                )
+
+        self.assertIs(raised.exception, timeout)
+        self.assertEqual(run_one.call_count, 1)
+        self.assertEqual(quiet_window.call_count, 1)
+
+    def test_post_measurement_timeout_is_terminal_with_a_restart_rejection(
+        self,
+    ) -> None:
+        timeout = benchmark_timeout("cpp", before_measurement=False)
+        with (
+            mock.patch.object(MODULE, "GUARD_MAX_ATTEMPTS", 2),
+            mock.patch.object(
+                MODULE,
+                "wait_for_quiet_window",
+                return_value={"restart_count_after": 10},
+            ),
+            mock.patch.object(MODULE, "run_one", side_effect=timeout) as run_one,
+            mock.patch.object(MODULE, "read_lxd_restart_count", return_value=11),
+            mock.patch.object(MODULE, "find_competing_processes", return_value=[]),
+            mock.patch.object(MODULE.time, "sleep") as sleep,
+        ):
+            with self.assertRaises(MODULE.BenchmarkProcessTimeout) as raised:
+                MODULE.run_guarded_pair(
+                    SimpleNamespace(),
+                    ["cpp", "rust"],
+                    threads=1,
+                    repetition=0,
+                    pair_id="pair-1",
+                    first_run_order=1,
+                )
+
+        self.assertIs(raised.exception, timeout)
+        self.assertEqual(run_one.call_count, 1)
+        sleep.assert_not_called()
+
+    def test_post_measurement_timeout_is_terminal_with_a_competitor_rejection(
+        self,
+    ) -> None:
+        timeout = benchmark_timeout("cpp", before_measurement=False)
+        with (
+            mock.patch.object(MODULE, "GUARD_MAX_ATTEMPTS", 2),
+            mock.patch.object(
+                MODULE,
+                "wait_for_quiet_window",
+                return_value={"restart_count_after": 10},
+            ),
+            mock.patch.object(MODULE, "run_one", side_effect=timeout) as run_one,
+            mock.patch.object(MODULE, "read_lxd_restart_count", return_value=10),
+            mock.patch.object(
+                MODULE,
+                "find_competing_processes",
+                return_value=[{"pid": 123, "reasons": ["sto_build"]}],
+            ),
+            mock.patch.object(MODULE.time, "sleep") as sleep,
+        ):
+            with self.assertRaises(MODULE.BenchmarkProcessTimeout) as raised:
+                MODULE.run_guarded_pair(
+                    SimpleNamespace(),
+                    ["cpp", "rust"],
+                    threads=1,
+                    repetition=0,
+                    pair_id="pair-1",
+                    first_run_order=1,
+                )
+
+        self.assertIs(raised.exception, timeout)
+        self.assertEqual(run_one.call_count, 1)
+        sleep.assert_not_called()
+
+    def test_guard_exhausts_its_existing_budget_on_pre_measurement_timeouts(
+        self,
+    ) -> None:
+        timeouts = [
+            benchmark_timeout("cpp", before_measurement=True),
+            benchmark_timeout("cpp", before_measurement=True),
+        ]
+        with (
+            mock.patch.object(MODULE, "GUARD_MAX_ATTEMPTS", 2),
+            mock.patch.object(
+                MODULE,
+                "wait_for_quiet_window",
+                return_value={"restart_count_after": 10},
+            ),
+            mock.patch.object(MODULE, "run_one", side_effect=timeouts) as run_one,
+            mock.patch.object(MODULE, "read_lxd_restart_count", return_value=10),
+            mock.patch.object(MODULE, "find_competing_processes", return_value=[]),
+            mock.patch.object(MODULE.time, "sleep"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "after 2 attempts"):
+                MODULE.run_guarded_pair(
+                    SimpleNamespace(),
+                    ["cpp", "rust"],
+                    threads=1,
+                    repetition=0,
+                    pair_id="pair-1",
+                    first_run_order=1,
+                )
+
+        self.assertEqual(run_one.call_count, 2)
 
     def test_guard_rejects_a_pair_when_a_competitor_appears(self) -> None:
         attempted = [

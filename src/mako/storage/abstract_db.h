@@ -184,8 +184,8 @@ public:
    * scalar path. Implementations may use a zero-cost static downcast because
    * callers must pass an index returned by this same abstract_db instance.
    *
-   * Keep optional capability hooks at the tail so existing virtual method
-   * slots retain their order when this interface is rebuilt.
+   * Keep additive capability and lifecycle hooks at the tail so existing
+   * virtual method slots retain their order when this interface is rebuilt.
    */
   virtual TxnFixedReadCapability *
   txn_fixed_read_capability(abstract_ordered_index *) noexcept {
@@ -226,6 +226,10 @@ public:
   txn_tpcc_stock_level_capability() noexcept {
     return nullptr;
   }
+
+  // Called once after a successful load and its synchronization barriers,
+  // before benchmark workers are created. Recovery and no-load runs skip it.
+  virtual void on_load_complete() {}
 };
 
 #endif /* _ABSTRACT_DB_H_ */

@@ -57,7 +57,7 @@ current-thread ownership; the implementation performs a dynamic thread-ID
 assertion only in debug builds. Caller-provided raw storage still has to meet
 the documented lifetime and non-aliasing preconditions. These hidden symbols
 are not part of the versioned public `mt_*` ABI, feature negotiation, or the
-43-symbol export fingerprint. They remain behind the facade and must not be
+44-symbol export fingerprint. They remain behind the facade and must not be
 called by application or foreign code; violating their preconditions may be
 undefined behavior.
 

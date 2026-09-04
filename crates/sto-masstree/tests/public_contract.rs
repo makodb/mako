@@ -1,8 +1,8 @@
 use sto_masstree::{
-    InsertOutcome, PointMutation, PointReadBatch, PointSession, RegistryLayout, ResolvedRecord,
-    ScanBound, ScanBytesRef, ScanControl, ScanDirection, ScanRecord, ScanRecordRef, ScanRequest,
-    ScanScratch, ScanVisitOutcome, Table, TableConfig, TableCreateError, TableHealth, TableUsage,
-    Value, ValueCopyOutcome,
+    DenseResolvedCache, InsertOutcome, PointMutation, PointReadBatch, PointSession, RegistryLayout,
+    ResolvedRecord, ScanBound, ScanBytesRef, ScanControl, ScanDirection, ScanRecord, ScanRecordRef,
+    ScanRequest, ScanScratch, ScanVisitOutcome, Table, TableConfig, TableCreateError, TableHealth,
+    TableUsage, Value, ValueCopyOutcome,
 };
 #[cfg(feature = "fixed-u64")]
 use {
@@ -93,10 +93,44 @@ fn borrowed_fixed_visitors_are_public(
     session: &mut PointSession<'_, '_>,
     batch: &mut PointReadBatch,
     keys: &[[u8; 8]],
+    resolved: ResolvedRecord,
 ) {
+    let hints = [Some(resolved)];
     let _ = session.visit_fixed(keys, batch, |_index, _value| {});
     let _ = session.visit_fixed_bytes(keys, batch, |_index, _value| {});
+    let _ = session.visit_fixed_resolving_bytes(keys, batch, |_index, _value, _resolved| {});
+    let _ = session.visit_fixed_hinted_bytes(
+        &keys[..1],
+        &hints,
+        &[],
+        &[],
+        batch,
+        |_index, _value, _resolved| {},
+    );
     let _ = session.modify_fixed_visit(keys, batch, |_index, _value| PointMutation::Keep);
+    let _ = session
+        .modify_fixed_resolving_visit(keys, batch, |_index, _value, _resolved| PointMutation::Keep);
+    let _ = session.modify_fixed_hinted_visit(
+        &keys[..1],
+        &hints,
+        &[],
+        &[],
+        batch,
+        |_index, _value, _resolved| PointMutation::Keep,
+    );
+}
+
+#[allow(dead_code)]
+fn dense_resolved_cache_is_public(
+    table: &Table,
+    resolved: ResolvedRecord,
+) -> Result<DenseResolvedCache, sto_core::CapacityError> {
+    let cache = table.dense_resolved_cache(4)?;
+    let _ = cache.len();
+    let _ = cache.is_empty();
+    let _ = cache.get(0);
+    let _ = cache.remember(0, resolved);
+    Ok(cache)
 }
 
 #[test]
@@ -106,6 +140,7 @@ fn public_handles_and_snapshots_have_shareable_ownership() {
     assert_send_sync::<Value>();
     assert_send_sync::<PointReadBatch>();
     assert_send_sync::<ResolvedRecord>();
+    assert_send_sync::<DenseResolvedCache>();
     assert_send_sync::<TableCreateError>();
     assert_send_sync::<ScanScratch>();
     assert_clone::<ResolvedRecord>();

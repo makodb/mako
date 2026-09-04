@@ -288,6 +288,12 @@ pub(crate) fn tree_release_best_effort(tree: TreeHandle) {
     let _ = unsafe { mtree_sys::mt_tree_release(tree.as_mut_ptr()) };
 }
 
+pub(crate) fn tree_seal_structure(tree: TreeHandle) -> Result<(), Error> {
+    // SAFETY: `tree` originates from successful native construction and the
+    // safe facade retains its process-lived allocation for this call.
+    status_result(unsafe { mtree_sys::mt_tree_seal_structure(tree.as_mut_ptr()) })
+}
+
 pub(crate) fn runtime_shutdown(runtime: RuntimeHandle, thread: ThreadHandle) -> Result<(), Error> {
     // SAFETY: same validated handles as other worker-scoped calls.
     status_result(unsafe {

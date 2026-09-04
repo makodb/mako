@@ -24,12 +24,15 @@ _Static_assert(MT_FEATURE_STRIDED_POINT_READS == (UINT64_C(1) << 11),
                "strided point-read feature bit changed");
 _Static_assert(MT_FEATURE_SCOPED_RCU == (UINT64_C(1) << 12),
                "worker RCU-scope feature bit changed");
+_Static_assert(MT_FEATURE_STRUCTURE_SEAL == (UINT64_C(1) << 13),
+               "structure-seal feature bit changed");
 _Static_assert((MT_FEATURE_POINT_GET & MT_FEATURE_SCOPED_POINT_READS) == 0,
                "feature bits must be disjoint");
 _Static_assert((MT_FEATURE_STRIDED_POINT_READS &
                 MT_FEATURE_SCOPED_STRIDED_POINT_READS) == 0,
                "strided feature bits must be disjoint");
-_Static_assert(MT_OK == 0 && MT_ERR_INVALID == 1 && MT_ERR_CLOSED == 17,
+_Static_assert(MT_OK == 0 && MT_ERR_INVALID == 1 &&
+                   MT_ERR_STRUCTURE_SEALED == 18,
                "status constants changed");
 
 _Static_assert(offsetof(mt_runtime_config, struct_size) == 0,
@@ -77,6 +80,7 @@ MT_ASSERT_FUNCTION(mt_runtime_acquire,
 MT_ASSERT_FUNCTION(mt_thread_attach, mt_status (*)(mt_runtime *, mt_thread **));
 MT_ASSERT_FUNCTION(mt_tree_create,
                    mt_status (*)(mt_runtime *, mt_thread *, mt_tree **));
+MT_ASSERT_FUNCTION(mt_tree_seal_structure, mt_status (*)(mt_tree *));
 MT_ASSERT_FUNCTION(mt_get, mt_status (*)(mt_tree *, mt_thread *, const void *,
                                          size_t, mt_record_id *));
 MT_ASSERT_FUNCTION(mt_get_strided,

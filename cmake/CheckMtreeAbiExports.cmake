@@ -83,6 +83,7 @@ set(_expected
     mt_thread_quiesce
     mt_tree_create
     mt_tree_release
+    mt_tree_seal_structure
 )
 list(SORT _expected)
 
@@ -105,9 +106,9 @@ if(_missing OR _unexpected)
 endif()
 
 list(LENGTH _actual _actual_count)
-if(NOT _actual_count EQUAL 43)
+if(NOT _actual_count EQUAL 44)
     message(FATAL_ERROR
-        "Masstree ABI must export exactly 43 mt_* symbols, found ${_actual_count}")
+        "Masstree ABI must export exactly 44 mt_* symbols, found ${_actual_count}")
 endif()
 message(STATUS
-    "Masstree ABI exports exactly the 43 allowlisted mt_* symbols")
+    "Masstree ABI exports exactly the 44 allowlisted mt_* symbols")

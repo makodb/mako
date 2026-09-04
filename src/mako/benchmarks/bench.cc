@@ -503,6 +503,8 @@ bench_runner::run()
         std::cout << "[ADVANCER-SEND] Sent ADVANCER_MARKER to partition " << i << std::endl;
       }
     }
+
+    db->on_load_complete();
   }
   const vector<bench_worker *> workers = make_workers();
   ALWAYS_ASSERT(!workers.empty());

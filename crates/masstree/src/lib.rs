@@ -122,6 +122,7 @@ pub enum NativeStatus {
     IncompatibleRuntime,
     Poisoned,
     Closed,
+    StructureSealed,
     Unknown(i32),
 }
 
@@ -146,6 +147,7 @@ impl NativeStatus {
             mtree_sys::ERR_INCOMPATIBLE_RUNTIME => Some(Self::IncompatibleRuntime),
             mtree_sys::ERR_POISONED => Some(Self::Poisoned),
             mtree_sys::ERR_CLOSED => Some(Self::Closed),
+            mtree_sys::ERR_STRUCTURE_SEALED => Some(Self::StructureSealed),
             unknown => Some(Self::Unknown(unknown)),
         }
     }
@@ -500,6 +502,16 @@ impl fmt::Debug for Tree {
 }
 
 impl Tree {
+    /// Permanently prevents this directory's key set from growing.
+    ///
+    /// The native transition waits for current structural readers and is
+    /// idempotent. Point reads and scans continue to work. Every later
+    /// get-or-insert fails before candidate publication, even for an existing
+    /// key. Sealing needs no worker because it enters neither Masstree nor RCU.
+    pub fn seal_structure(&self) -> Result<(), Error> {
+        native::tree_seal_structure(self.inner.raw)
+    }
+
     #[inline]
     pub fn get(&self, worker: &Worker, key: &[u8]) -> Result<Option<RecordId>, Error> {
         self.check(worker, key)?;
@@ -1500,7 +1512,7 @@ mod tests {
 
     #[test]
     fn every_known_native_status_is_classified_without_boolean_loss() {
-        for raw in 1..=17 {
+        for raw in 1..=18 {
             assert!(!matches!(
                 NativeStatus::from_raw(raw),
                 Some(NativeStatus::Unknown(_)) | None

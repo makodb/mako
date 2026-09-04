@@ -439,6 +439,13 @@ pub struct InstallContext<'a> {
 }
 
 impl InstallContext<'_> {
+    /// Returns the owner of all guards in this plan.
+    pub fn owner(&self) -> OwnerId {
+        self.plan
+            .owner
+            .expect("install context is constructed only for a held plan")
+    }
+
     /// Resolves a current-plan token to its typed, mutable held guard.
     ///
     /// A stale or mismatched token is reported explicitly. The caller is
@@ -1548,6 +1555,7 @@ mod tests {
         }
         {
             let mut context = plan.install_context(None).unwrap();
+            assert_eq!(context.owner(), owner_id());
             let (retained_target, guard) = context.target_and_guard_mut(&lock_use).unwrap();
             assert!(std::ptr::eq(retained_target, target.as_ref()));
             guard.id = 71;

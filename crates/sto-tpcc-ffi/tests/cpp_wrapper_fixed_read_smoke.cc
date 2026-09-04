@@ -245,6 +245,21 @@ int main(int argc, char **argv) {
   require(rust_sto_tpcc_detail::table_config_for("customer_name_idx_1")
               .bounded_atomic_values == 0);
 
+  for (const char *name : {
+           "customer", "customer_17", "customer_name_idx",
+           "customer_name_idx_17", "district", "district_17", "item",
+           "item_17", "stock", "stock_17", "stock_data", "stock_data_17",
+           "warehouse", "warehouse_00017"}) {
+    require(rust_sto_tpcc_detail::table_has_static_directory(name));
+  }
+  for (const char *name : {
+           "history", "history_17", "new_order", "new_order_17", "oorder",
+           "oorder_17", "oorder_c_id_idx", "oorder_c_id_idx_17",
+           "order_line", "order_line_17", "warehouse_", "warehouse_remote",
+           "warehouse_17x", "customer_name_idx_remote"}) {
+    require(!rust_sto_tpcc_detail::table_has_static_directory(name));
+  }
+
   rust_sto_tpcc_wrapper db;
   db.init();
   abstract_ordered_index *table = db.open_index("stock_1", -1);
@@ -1029,6 +1044,34 @@ int main(int argc, char **argv) {
   require(patched_c.c_ytd_payment == 32.25f);
   require(patched_c.c_payment_cnt == 2);
   require(db.commit_txn(txn));
+
+  db.thread_end();
+  db.on_load_complete();
+  db.thread_init(true, 0);
+
+  require(!table->put(lcdf::Str(fixed_key, sizeof(fixed_key)),
+                      "sealed-update"));
+  require(table->get(lcdf::Str(fixed_key, sizeof(fixed_key)), value,
+                     std::string::npos));
+  require(value == "sealed-update");
+
+  const char sealed_new_key[8] = {'s', 'e', 'a', 'l', 'e', 'd', '0', '2'};
+  bool rejected_new_static_key = false;
+  try {
+    (void)table->put(lcdf::Str(sealed_new_key, sizeof(sealed_new_key)),
+                     "rejected");
+  } catch (const std::runtime_error &error) {
+    rejected_new_static_key =
+        std::string(error.what()).find("sealed") != std::string::npos;
+  }
+  require(rejected_new_static_key);
+
+  const char growth_key[8] = {'g', 'r', 'o', 'w', 't', 'h', '0', '1'};
+  require(raw_table->put(lcdf::Str(growth_key, sizeof(growth_key)),
+                         "admitted"));
+  require(raw_table->get(lcdf::Str(growth_key, sizeof(growth_key)), value,
+                         std::string::npos));
+  require(value == "admitted");
 
   db.thread_end();
   return 0;

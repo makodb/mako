@@ -19,10 +19,11 @@ class rust_sto_tpcc_wrapper;
 
 namespace rust_sto_tpcc_detail {
 
-// Exposed for the focused wrapper smoke test so table-name classification and
-// its mutually dependent retained-record, key-byte, and consumed-ID bounds
-// remain one directly testable production decision.
+// Exposed for the focused wrapper smoke test so table-name classification,
+// registry bounds, and post-load sealing remain directly testable production
+// decisions.
 sto_tpcc_table_config table_config_for(std::string_view index_name);
+bool table_has_static_directory(std::string_view index_name);
 
 } // namespace rust_sto_tpcc_detail
 
@@ -107,6 +108,7 @@ public:
   ~rust_sto_tpcc_wrapper() noexcept override;
 
   void init() override;
+  void on_load_complete() override;
   void preallocate_open_index() override;
   ssize_t txn_max_batch_size() const override;
   size_t sizeof_txn_object(uint64_t txn_flags) const override;

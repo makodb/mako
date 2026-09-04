@@ -259,6 +259,52 @@ fn bounded_atomic_value_config_round_trips_cell_boundaries_through_the_c_abi() {
 }
 
 #[test]
+fn sealed_directory_keeps_existing_rows_mutable_and_rejects_new_keys() {
+    unsafe {
+        let mut db = ptr::null_mut();
+        expect(sto_tpcc_db_create(ptr::null(), &mut db), OK);
+        let mut table = ptr::null_mut();
+        expect(sto_tpcc_table_create(db, ptr::null(), &mut table), OK);
+
+        let mut loader = ptr::null_mut();
+        expect(sto_tpcc_thread_create(db, &mut loader), OK);
+        expect(sto_tpcc_txn_begin(loader), OK);
+        expect(put(loader, table, b"loaded", b"before"), OK);
+        expect(sto_tpcc_txn_commit(loader), OK);
+        expect(sto_tpcc_thread_destroy(loader), OK);
+
+        expect(sto_tpcc_table_seal_directory_structure(table), OK);
+
+        let mut worker = ptr::null_mut();
+        expect(sto_tpcc_thread_create(db, &mut worker), OK);
+        expect(sto_tpcc_txn_begin(worker), OK);
+        assert_eq!(get(worker, table, b"loaded"), Ok(b"before".to_vec()));
+        expect(put(worker, table, b"loaded", b"after"), OK);
+        expect(sto_tpcc_txn_commit(worker), OK);
+
+        expect(sto_tpcc_txn_begin(worker), OK);
+        assert_eq!(put(worker, table, b"new", b"rejected"), FATAL);
+        let error = last_error();
+        assert!(
+            error.contains("Masstree directory structure is sealed"),
+            "unexpected error: {error}"
+        );
+        expect(sto_tpcc_txn_abort(worker), OK);
+
+        expect(sto_tpcc_txn_begin(worker), OK);
+        assert_eq!(get(worker, table, b"loaded"), Ok(b"after".to_vec()));
+        expect(sto_tpcc_txn_commit(worker), OK);
+        let mut rows = u64::MAX;
+        expect(sto_tpcc_table_size(table, &mut rows), OK);
+        assert_eq!(rows, 1);
+
+        expect(sto_tpcc_thread_destroy(worker), OK);
+        expect(sto_tpcc_table_destroy(table), OK);
+        expect(sto_tpcc_db_destroy(db), OK);
+    }
+}
+
+#[test]
 fn fixed_mutation_batches_preserve_duplicate_order_size_and_abort_recovery() {
     unsafe {
         let mut db = ptr::null_mut();
@@ -1201,6 +1247,26 @@ fn additive_cache_policy_creator_preserves_crud_and_rejects_unknown_values() {
             ),
             OK,
         );
+        let mut dense_item = ptr::null_mut();
+        expect(
+            sto_tpcc_table_create_with_cache_policy(
+                db,
+                ptr::null(),
+                STO_TPCC_RESOLVED_CACHE_DENSE_ITEM,
+                &mut dense_item,
+            ),
+            OK,
+        );
+        let mut dense_stock = ptr::null_mut();
+        expect(
+            sto_tpcc_table_create_with_cache_policy(
+                db,
+                ptr::null(),
+                STO_TPCC_RESOLVED_CACHE_DENSE_STOCK,
+                &mut dense_stock,
+            ),
+            OK,
+        );
 
         let mut invalid = compatibility_full;
         assert_eq!(
@@ -1217,6 +1283,8 @@ fn additive_cache_policy_creator_preserves_crud_and_rejects_unknown_values() {
         expect(put(thread, last_only, b"last", b"value"), OK);
         expect(put(thread, read_then_write, b"handoff", b"value"), OK);
         expect(put(thread, uncached, b"none", b"value"), OK);
+        expect(put(thread, dense_item, b"dense-item", b"value"), OK);
+        expect(put(thread, dense_stock, b"dense-stock", b"value"), OK);
         expect(sto_tpcc_txn_commit(thread), OK);
 
         expect(sto_tpcc_txn_begin(thread), OK);
@@ -1232,9 +1300,20 @@ fn additive_cache_policy_creator_preserves_crud_and_rejects_unknown_values() {
         );
         expect(put(thread, read_then_write, b"handoff", b"updated"), OK);
         assert_eq!(get(thread, uncached, b"none"), Ok(b"value".to_vec()));
+        assert_eq!(
+            get(thread, dense_item, b"dense-item"),
+            Ok(b"value".to_vec())
+        );
+        assert_eq!(
+            get(thread, dense_stock, b"dense-stock"),
+            Ok(b"value".to_vec())
+        );
+        expect(put(thread, dense_stock, b"dense-stock", b"updated"), OK);
         expect(sto_tpcc_txn_commit(thread), OK);
 
         expect(sto_tpcc_thread_destroy(thread), OK);
+        expect(sto_tpcc_table_destroy(dense_stock), OK);
+        expect(sto_tpcc_table_destroy(dense_item), OK);
         expect(sto_tpcc_table_destroy(uncached), OK);
         expect(sto_tpcc_table_destroy(read_then_write), OK);
         expect(sto_tpcc_table_destroy(last_only), OK);

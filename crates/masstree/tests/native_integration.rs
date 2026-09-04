@@ -257,6 +257,75 @@ fn trusted_fixed_insert_batch_preserves_order_and_reuses_scratch() {
 }
 
 #[test]
+fn structure_seal_keeps_reads_open_and_rejects_every_publication_lane() {
+    fn padded(key: [u8; 4]) -> [u8; 16] {
+        let mut padded = [0_u8; 16];
+        padded[..4].copy_from_slice(&key);
+        padded
+    }
+
+    let runtime = Runtime::new(RuntimeConfig::new()).unwrap();
+    assert_ne!(
+        runtime.feature_bits() & mtree_sys::FEATURE_STRUCTURE_SEAL,
+        0
+    );
+    let worker = runtime.attach().unwrap();
+    let tree = runtime.create_tree(&worker).unwrap();
+    let present = RecordId::new(701).unwrap();
+    tree.get_or_insert(&worker, b"seal", present).unwrap();
+
+    tree.seal_structure().unwrap();
+    tree.seal_structure().unwrap();
+    assert_eq!(tree.get(&worker, b"seal").unwrap(), Some(present));
+    assert_eq!(tree.get(&worker, b"miss").unwrap(), None);
+
+    let scan = tree
+        .scan_chunk(
+            &worker,
+            ScanRequest::new(ScanDirection::Forward)
+                .with_entry_capacity(4)
+                .with_key_arena_capacity(64),
+        )
+        .unwrap();
+    assert_eq!(scan.entries().len(), 1);
+    assert_eq!(scan.entries()[0].key(), b"seal");
+    assert_eq!(scan.entries()[0].record_id(), present);
+
+    for key in [b"seal".as_slice(), b"miss"] {
+        let rejected = tree
+            .get_or_insert(&worker, key, RecordId::new(702).unwrap())
+            .unwrap_err();
+        assert_eq!(
+            rejected.error(),
+            Error::Native(NativeStatus::StructureSealed)
+        );
+        assert_eq!(
+            rejected.publication(),
+            PublicationDisposition::FailureBeforePublication
+        );
+        assert_eq!(rejected.winner(), None);
+    }
+
+    let keys = [padded(*b"seal"), padded(*b"new!")];
+    let candidates = [RecordId::new(703).unwrap(), RecordId::new(704).unwrap()];
+    let mut results = Vec::new();
+    assert_eq!(
+        tree.get_or_insert_fixed_strided::<4, 16>(&worker, &keys, &candidates, &mut results,)
+            .unwrap_err(),
+        Error::Native(NativeStatus::StructureSealed)
+    );
+    assert_eq!(results.len(), candidates.len());
+    for (result, candidate) in results.iter().copied().zip(candidates) {
+        assert_eq!(
+            result.classification(candidate).unwrap(),
+            (PublicationDisposition::FailureBeforePublication, None)
+        );
+    }
+    assert_eq!(tree.get(&worker, b"new!").unwrap(), None);
+    worker.quiesce().unwrap();
+}
+
+#[test]
 fn copied_scan_bounds_directions_and_resumption_round_trip() {
     let runtime = Runtime::new(RuntimeConfig::new()).unwrap();
     let worker = runtime.attach().unwrap();

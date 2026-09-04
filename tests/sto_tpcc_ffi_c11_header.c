@@ -5,7 +5,9 @@ _Static_assert(sizeof(sto_tpcc_status) == sizeof(int32_t),
 _Static_assert(STO_TPCC_OK == 0 && STO_TPCC_FATAL == 5,
                "status constants changed");
 _Static_assert(STO_TPCC_RESOLVED_CACHE_FULL == 0 &&
-                   STO_TPCC_RESOLVED_CACHE_NONE == 3,
+                   STO_TPCC_RESOLVED_CACHE_NONE == 3 &&
+                   STO_TPCC_RESOLVED_CACHE_DENSE_ITEM == 4 &&
+                   STO_TPCC_RESOLVED_CACHE_DENSE_STOCK == 5,
                "cache policy constants changed");
 _Static_assert(STO_TPCC_FIXED_MODIFY_KEEP == 0 &&
                    STO_TPCC_FIXED_MODIFY_FAILED == 3,
@@ -29,6 +31,9 @@ STO_TPCC_ASSERT_FUNCTION(
     sto_tpcc_table_create_with_cache_policy,
     sto_tpcc_status (*)(sto_tpcc_db *, const sto_tpcc_table_config *,
                         sto_tpcc_resolved_cache_policy, sto_tpcc_table **));
+STO_TPCC_ASSERT_FUNCTION(
+    sto_tpcc_table_seal_directory_structure,
+    sto_tpcc_status (*)(sto_tpcc_table *));
 STO_TPCC_ASSERT_FUNCTION(
     sto_tpcc_get,
     sto_tpcc_status (*)(sto_tpcc_thread *, const sto_tpcc_table *,

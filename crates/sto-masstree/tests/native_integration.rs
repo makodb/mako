@@ -3,7 +3,7 @@
 use masstree::{Runtime as MasstreeRuntime, RuntimeConfig as MasstreeRuntimeConfig};
 use sto_core::{
     AbortReason, AccessError, CapacityError, CommitOutcome, Conflict, InvalidUse, Runtime,
-    RuntimeConfig,
+    RuntimeConfig, Unsupported,
 };
 #[cfg(feature = "fixed-u64")]
 use sto_masstree::{FixedU64Batch, FixedU64Mutation, FixedU64Table, TerminalReadVisitOutcome};
@@ -11,6 +11,143 @@ use sto_masstree::{
     InsertOutcome, PointMutation, PointReadBatch, RegistryLayout, ScanBound, ScanControl,
     ScanDirection, ScanRequest, ScanScratch, Table, TableConfig, Value,
 };
+
+#[test]
+fn native_directory_seal_preserves_records_and_rejects_scalar_and_fixed_misses() {
+    let native_runtime = MasstreeRuntime::new(MasstreeRuntimeConfig::new()).unwrap();
+    let native_worker = native_runtime.attach().unwrap();
+    let sto_runtime = Runtime::new(RuntimeConfig::default()).unwrap();
+    let table = Table::new_direct(
+        &sto_runtime,
+        &native_runtime,
+        &native_worker,
+        TableConfig::default(),
+    )
+    .unwrap();
+    let mut sto_worker = sto_runtime.attach().unwrap();
+
+    let mut seed = sto_worker.begin().unwrap();
+    table
+        .put(&mut seed, &native_worker, b"live", b"before")
+        .unwrap();
+    assert_eq!(
+        table.get(&mut seed, &native_worker, b"tombstone").unwrap(),
+        None
+    );
+    assert!(matches!(
+        seed.commit().unwrap(),
+        CommitOutcome::Committed(_)
+    ));
+    let sealed_usage = table.usage();
+
+    table.seal_directory_structure().unwrap();
+    table.seal_directory_structure().unwrap();
+
+    let mut mutate = sto_worker.begin().unwrap();
+    assert_eq!(
+        table
+            .put(&mut mutate, &native_worker, b"live", b"updated")
+            .unwrap()
+            .as_deref(),
+        Some(&b"before"[..])
+    );
+    assert_eq!(
+        table
+            .put(&mut mutate, &native_worker, b"tombstone", b"resurrected")
+            .unwrap(),
+        None
+    );
+    assert!(matches!(
+        mutate.commit().unwrap(),
+        CommitOutcome::Committed(_)
+    ));
+
+    let mut remove = sto_worker.begin().unwrap();
+    assert_eq!(
+        table
+            .remove(&mut remove, &native_worker, b"live")
+            .unwrap()
+            .as_deref(),
+        Some(&b"updated"[..])
+    );
+    assert!(matches!(
+        remove.commit().unwrap(),
+        CommitOutcome::Committed(_)
+    ));
+
+    let mut resurrect = sto_worker.begin().unwrap();
+    assert_eq!(
+        table
+            .put(&mut resurrect, &native_worker, b"live", b"again")
+            .unwrap(),
+        None
+    );
+    assert!(matches!(
+        resurrect.commit().unwrap(),
+        CommitOutcome::Committed(_)
+    ));
+    assert_eq!(table.usage(), sealed_usage);
+
+    let mut scan = sto_worker.begin().unwrap();
+    let rows = table
+        .scan(
+            &mut scan,
+            &native_worker,
+            ScanRequest::new(ScanDirection::Forward, 8),
+        )
+        .unwrap();
+    assert_eq!(
+        rows.iter()
+            .map(|row| (row.key().to_vec(), row.value().to_vec()))
+            .collect::<Vec<_>>(),
+        [
+            (b"live".to_vec(), b"again".to_vec()),
+            (b"tombstone".to_vec(), b"resurrected".to_vec()),
+        ]
+    );
+    assert!(matches!(
+        scan.commit().unwrap(),
+        CommitOutcome::Committed(_)
+    ));
+
+    let sealed_error = AccessError::Unsupported(Unsupported::Capability(
+        "Masstree directory structure is sealed",
+    ));
+    let mut scalar_miss = sto_worker.begin().unwrap();
+    assert_eq!(
+        table
+            .get(&mut scalar_miss, &native_worker, b"new/scalar")
+            .unwrap_err(),
+        sealed_error
+    );
+    assert!(scalar_miss.is_doomed());
+    scalar_miss.abort();
+    assert_eq!(table.usage(), sealed_usage);
+
+    let keys = [[0x11; 8], [0x22; 8]];
+    let mut batch = PointReadBatch::with_capacity(keys.len());
+    let mut callbacks = 0;
+    let mut fixed_miss = sto_worker.begin().unwrap();
+    {
+        let mut points = table.point_session(&mut fixed_miss, &native_worker);
+        assert_eq!(
+            points
+                .modify_fixed_expected_absent_visit(&keys, &mut batch, |_index, _value| {
+                    callbacks += 1;
+                    PointMutation::Keep
+                })
+                .unwrap_err(),
+            sealed_error
+        );
+        points.close().unwrap();
+    }
+    assert_eq!(callbacks, 0);
+    assert!(batch.is_empty());
+    assert!(fixed_miss.is_doomed());
+    fixed_miss.abort();
+    assert_eq!(table.usage(), sealed_usage);
+    native_worker.quiesce().unwrap();
+}
 
 #[test]
 fn native_point_commit_read_and_abort_round_trip() {
@@ -712,6 +849,419 @@ fn fixed_point_batch_handles_binary_hits_misses_and_reuses_storage() {
         CommitOutcome::Committed(_)
     ));
     assert_eq!(batch.capacity(), retained_capacity);
+    native_worker.quiesce().unwrap();
+}
+
+#[test]
+fn fixed_resolving_visitors_return_reusable_tokens_and_preserve_duplicates() {
+    let native_runtime = MasstreeRuntime::new(MasstreeRuntimeConfig::new()).unwrap();
+    let native_worker = native_runtime.attach().unwrap();
+    let tree = native_runtime.create_tree(&native_worker).unwrap();
+    let sto_runtime = Runtime::new(RuntimeConfig::default()).unwrap();
+    let table = Table::new(&sto_runtime, tree, TableConfig::default()).unwrap();
+    let mut sto_worker = sto_runtime.attach().unwrap();
+    let first = [0x11; 8];
+    let second = [0x22; 8];
+    let missing = [0x33; 8];
+
+    let mut seed = sto_worker.begin().unwrap();
+    table
+        .put(&mut seed, &native_worker, &first, b"first")
+        .unwrap();
+    table
+        .put(&mut seed, &native_worker, &second, b"second")
+        .unwrap();
+    assert!(matches!(
+        seed.commit().unwrap(),
+        CommitOutcome::Committed(_)
+    ));
+
+    let read_keys = [first, missing, first];
+    let mut batch = PointReadBatch::with_capacity(read_keys.len());
+    let mut read_tokens = [None; 3];
+    let mut observed = Vec::new();
+    let mut read = sto_worker.begin().unwrap();
+    {
+        let mut points = table.point_session(&mut read, &native_worker);
+        assert_eq!(
+            points
+                .visit_fixed_resolving_bytes(&read_keys, &mut batch, |index, current, resolved| {
+                    read_tokens[index] = Some(resolved);
+                    observed.push((index, current.map(<[u8]>::to_vec)));
+                },)
+                .unwrap(),
+            read_keys.len()
+        );
+        points.close().unwrap();
+    }
+    assert_eq!(
+        observed,
+        [
+            (0, Some(b"first".to_vec())),
+            (1, None),
+            (2, Some(b"first".to_vec())),
+        ]
+    );
+    assert_eq!(read_tokens[0], read_tokens[2]);
+    assert_ne!(read_tokens[0], read_tokens[1]);
+    assert!(matches!(
+        read.commit().unwrap(),
+        CommitOutcome::Committed(_)
+    ));
+
+    let mut resolved_read = sto_worker.begin().unwrap();
+    let mut resolved_values = Vec::new();
+    for token in read_tokens.into_iter().flatten() {
+        table
+            .visit_get_resolved_bytes(&mut resolved_read, token, |current| {
+                resolved_values.push(current.map(<[u8]>::to_vec));
+            })
+            .unwrap();
+    }
+    assert_eq!(
+        resolved_values,
+        [Some(b"first".to_vec()), None, Some(b"first".to_vec())]
+    );
+    assert!(matches!(
+        resolved_read.commit().unwrap(),
+        CommitOutcome::Committed(_)
+    ));
+
+    let modify_keys = [first, first, second];
+    let mut modify_tokens = [None; 3];
+    let mut modified = Vec::new();
+    let mut modify = sto_worker.begin().unwrap();
+    {
+        let mut points = table.point_session(&mut modify, &native_worker);
+        assert_eq!(
+            points
+                .modify_fixed_resolving_visit(
+                    &modify_keys,
+                    &mut batch,
+                    |index, current, resolved| {
+                        modify_tokens[index] = Some(resolved);
+                        modified.push((index, current.map(|value| value.as_ref().to_vec())));
+                        match index {
+                            0 => PointMutation::Put(Value::from(&b"updated"[..])),
+                            _ => PointMutation::Keep,
+                        }
+                    },
+                )
+                .unwrap(),
+            modify_keys.len()
+        );
+        points.close().unwrap();
+    }
+    assert_eq!(
+        modified,
+        [
+            (0, Some(b"first".to_vec())),
+            (1, Some(b"updated".to_vec())),
+            (2, Some(b"second".to_vec())),
+        ]
+    );
+    assert_eq!(modify_tokens[0], modify_tokens[1]);
+    assert_ne!(modify_tokens[0], modify_tokens[2]);
+    assert!(matches!(
+        modify.commit().unwrap(),
+        CommitOutcome::Committed(_)
+    ));
+
+    let mut verify = sto_worker.begin().unwrap();
+    table
+        .visit_get_resolved_bytes(
+            &mut verify,
+            modify_tokens[0].expect("the first callback returned a token"),
+            |current| assert_eq!(current, Some(&b"updated"[..])),
+        )
+        .unwrap();
+    assert!(matches!(
+        verify.commit().unwrap(),
+        CommitOutcome::Committed(_)
+    ));
+    native_worker.quiesce().unwrap();
+}
+
+#[test]
+fn dense_resolved_cache_checks_bounds_identity_publication_and_lifetime() {
+    let native_runtime = MasstreeRuntime::new(MasstreeRuntimeConfig::new()).unwrap();
+    let native_worker = native_runtime.attach().unwrap();
+    let sto_runtime = Runtime::new(RuntimeConfig::default()).unwrap();
+    let table = Table::new_direct(
+        &sto_runtime,
+        &native_runtime,
+        &native_worker,
+        TableConfig::default(),
+    )
+    .unwrap();
+    let other = Table::new_direct(
+        &sto_runtime,
+        &native_runtime,
+        &native_worker,
+        TableConfig::default(),
+    )
+    .unwrap();
+    let mut sto_worker = sto_runtime.attach().unwrap();
+    let first_key = 1_u64.to_be_bytes();
+    let second_key = 2_u64.to_be_bytes();
+
+    let mut seed = sto_worker.begin().unwrap();
+    table
+        .put(&mut seed, &native_worker, &first_key, b"first")
+        .unwrap();
+    table
+        .put(&mut seed, &native_worker, &second_key, b"second")
+        .unwrap();
+    other
+        .put(&mut seed, &native_worker, &first_key, b"foreign")
+        .unwrap();
+    assert!(matches!(
+        seed.commit().unwrap(),
+        CommitOutcome::Committed(_)
+    ));
+
+    let mut resolve = sto_worker.begin().unwrap();
+    let (_, first) = table
+        .visit_get_resolving(&mut resolve, &native_worker, &first_key, |_| ())
+        .unwrap();
+    let (_, second) = table
+        .visit_get_resolving(&mut resolve, &native_worker, &second_key, |_| ())
+        .unwrap();
+    let (_, foreign) = other
+        .visit_get_resolving(&mut resolve, &native_worker, &first_key, |_| ())
+        .unwrap();
+    assert!(matches!(
+        resolve.commit().unwrap(),
+        CommitOutcome::Committed(_)
+    ));
+
+    let cache = std::sync::Arc::new(table.dense_resolved_cache(3).unwrap());
+    assert_eq!(cache.len(), 3);
+    assert!(!cache.is_empty());
+    assert_eq!(cache.get(0).unwrap(), None);
+    assert_eq!(
+        cache.get(3),
+        Err(AccessError::Capacity(CapacityError::KeyLimit))
+    );
+    assert_eq!(
+        cache.remember(3, first),
+        Err(AccessError::Capacity(CapacityError::KeyLimit))
+    );
+    assert_eq!(cache.remember(0, first), Ok(()));
+    assert_eq!(cache.remember(0, first), Ok(()));
+    assert_eq!(cache.get(0).unwrap(), Some(first));
+    assert_eq!(
+        cache.remember(0, second),
+        Err(AccessError::InvalidUse(InvalidUse::IllegalItemState))
+    );
+    assert_eq!(cache.get(0).unwrap(), Some(first));
+    assert_eq!(
+        cache.remember(1, foreign),
+        Err(AccessError::InvalidUse(InvalidUse::ResourceTypeMismatch))
+    );
+    assert_eq!(cache.get(1).unwrap(), None);
+
+    std::thread::scope(|scope| {
+        for _ in 0..8 {
+            let cache = std::sync::Arc::clone(&cache);
+            scope.spawn(move || assert_eq!(cache.remember(1, second), Ok(())));
+        }
+    });
+    assert_eq!(cache.get(1).unwrap(), Some(second));
+
+    let surviving_table = table.clone();
+    drop(table);
+    let mut read = sto_worker.begin().unwrap();
+    surviving_table
+        .visit_get_resolved_bytes(
+            &mut read,
+            cache.get(0).unwrap().expect("slot zero remains populated"),
+            |current| assert_eq!(current, Some(&b"first"[..])),
+        )
+        .unwrap();
+    assert!(matches!(
+        read.commit().unwrap(),
+        CommitOutcome::Committed(_)
+    ));
+    native_worker.quiesce().unwrap();
+}
+
+#[test]
+fn hinted_fixed_batches_preserve_order_mixes_duplicates_and_table_identity() {
+    let native_runtime = MasstreeRuntime::new(MasstreeRuntimeConfig::new()).unwrap();
+    let native_worker = native_runtime.attach().unwrap();
+    let sto_runtime = Runtime::new(RuntimeConfig::default()).unwrap();
+    let table = Table::new_direct(
+        &sto_runtime,
+        &native_runtime,
+        &native_worker,
+        TableConfig::default(),
+    )
+    .unwrap();
+    let other = Table::new_direct(
+        &sto_runtime,
+        &native_runtime,
+        &native_worker,
+        TableConfig::default(),
+    )
+    .unwrap();
+    let mut sto_worker = sto_runtime.attach().unwrap();
+    let key_a = 11_u64.to_be_bytes();
+    let key_b = 22_u64.to_be_bytes();
+    let key_c = 33_u64.to_be_bytes();
+
+    let mut seed = sto_worker.begin().unwrap();
+    for (key, value) in [(key_a, b"A"), (key_b, b"B"), (key_c, b"C")] {
+        table.put(&mut seed, &native_worker, &key, value).unwrap();
+    }
+    other
+        .put(&mut seed, &native_worker, &key_a, b"foreign")
+        .unwrap();
+    assert!(matches!(
+        seed.commit().unwrap(),
+        CommitOutcome::Committed(_)
+    ));
+
+    let mut resolve = sto_worker.begin().unwrap();
+    let mut tokens = [None; 3];
+    {
+        let mut points = table.point_session(&mut resolve, &native_worker);
+        let mut scratch = PointReadBatch::with_capacity(3);
+        points
+            .visit_fixed_resolving_bytes(&[key_a, key_b, key_c], &mut scratch, |index, _, token| {
+                tokens[index] = Some(token)
+            })
+            .unwrap();
+        points.close().unwrap();
+    }
+    let (_, foreign) = other
+        .visit_get_resolving(&mut resolve, &native_worker, &key_a, |_| ())
+        .unwrap();
+    assert!(matches!(
+        resolve.commit().unwrap(),
+        CommitOutcome::Committed(_)
+    ));
+
+    let mut batch = PointReadBatch::with_capacity(3);
+    for hints in [tokens, [None, None, None], [tokens[0], None, tokens[2]]] {
+        let mut missing_keys = [[0_u8; 8]; 3];
+        let mut missing_positions = [0_usize; 3];
+        let mut missing_count = 0;
+        for (index, hint) in hints.iter().enumerate() {
+            if hint.is_none() {
+                missing_keys[missing_count] = [key_a, key_b, key_c][index];
+                missing_positions[missing_count] = index;
+                missing_count += 1;
+            }
+        }
+        let mut read = sto_worker.begin().unwrap();
+        let mut observed = Vec::new();
+        {
+            let mut points = table.point_session(&mut read, &native_worker);
+            assert_eq!(
+                points
+                    .visit_fixed_hinted_bytes(
+                        &[key_a, key_b, key_c],
+                        &hints,
+                        &missing_keys[..missing_count],
+                        &missing_positions[..missing_count],
+                        &mut batch,
+                        |index, value, token| {
+                            observed.push((index, value.map(<[u8]>::to_vec), token));
+                        },
+                    )
+                    .unwrap(),
+                3
+            );
+            points.close().unwrap();
+        }
+        assert_eq!(
+            observed
+                .iter()
+                .map(|(index, value, _)| (*index, value.clone()))
+                .collect::<Vec<_>>(),
+            [
+                (0, Some(b"A".to_vec())),
+                (1, Some(b"B".to_vec())),
+                (2, Some(b"C".to_vec())),
+            ]
+        );
+        assert_eq!(
+            observed
+                .iter()
+                .map(|(_, _, token)| Some(*token))
+                .collect::<Vec<_>>(),
+            tokens
+        );
+        assert!(matches!(
+            read.commit().unwrap(),
+            CommitOutcome::Committed(_)
+        ));
+    }
+
+    let mut modify = sto_worker.begin().unwrap();
+    let mut observed = Vec::new();
+    {
+        let mut points = table.point_session(&mut modify, &native_worker);
+        assert_eq!(
+            points
+                .modify_fixed_hinted_visit(
+                    &[key_a, key_a, key_b],
+                    &[tokens[0], tokens[0], None],
+                    &[key_b],
+                    &[2],
+                    &mut batch,
+                    |index, value, token| {
+                        observed.push((index, value.map(|value| value.as_ref().to_vec()), token));
+                        if index == 0 {
+                            PointMutation::Put(Value::from(&b"A2"[..]))
+                        } else {
+                            PointMutation::Keep
+                        }
+                    },
+                )
+                .unwrap(),
+            3
+        );
+        points.close().unwrap();
+    }
+    assert_eq!(
+        observed
+            .iter()
+            .map(|(index, value, _)| (*index, value.clone()))
+            .collect::<Vec<_>>(),
+        [
+            (0, Some(b"A".to_vec())),
+            (1, Some(b"A2".to_vec())),
+            (2, Some(b"B".to_vec())),
+        ]
+    );
+    assert_eq!(observed[0].2, observed[1].2);
+    assert!(matches!(
+        modify.commit().unwrap(),
+        CommitOutcome::Committed(_)
+    ));
+
+    let mut wrong = sto_worker.begin().unwrap();
+    let mut callbacks = 0;
+    {
+        let mut points = table.point_session(&mut wrong, &native_worker);
+        assert_eq!(
+            points.visit_fixed_hinted_bytes(
+                &[key_a, key_b],
+                &[None, Some(foreign)],
+                &[key_a],
+                &[0],
+                &mut batch,
+                |_, _, _| callbacks += 1,
+            ),
+            Err(AccessError::InvalidUse(InvalidUse::ResourceTypeMismatch))
+        );
+        points.close().unwrap();
+    }
+    assert_eq!(callbacks, 0);
+    assert!(wrong.is_doomed());
+    wrong.abort();
     native_worker.quiesce().unwrap();
 }
 

@@ -17,6 +17,7 @@ import subprocess
 import sys
 import time
 from collections import defaultdict
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -24,13 +25,24 @@ from pathlib import Path
 RESULT_PREFIX = "TPCC_BENCH_RESULT "
 ENGINES = ("cpp", "rust")
 MIX_KEYS = ("NewOrder", "Payment", "Delivery", "OrderStatus", "StockLevel")
-RECORDED_ENVIRONMENT_KEYS = (
-    "MAKO_TPCC_WORKLOAD_MIX",
+ALLOCATOR_MEMORY_ENV = "MAKO_TPCC_ALLOCATOR_MEMORY"
+DEFAULT_ALLOCATOR_MEMORY = "1G"
+MEMORY_SPEC_RE = re.compile(r"[1-9][0-9]*[KMG]?")
+MEMORY_SPEC_MULTIPLIERS = {
+    "K": 1 << 10,
+    "M": 1 << 20,
+    "G": 1 << 30,
+}
+TPCC_DIAGNOSTIC_FALLBACK_ENVIRONMENT_KEYS = (
     "MAKO_STO_TPCC_DISABLE_PAYMENT_FULL",
     "MAKO_STO_TPCC_DISABLE_PAYMENT_PREFIX",
     "MAKO_STO_TPCC_DISABLE_NEW_ORDER_FULL",
     "MAKO_STO_TPCC_DISABLE_DELIVERY_FULL",
     "MAKO_STO_TPCC_DISABLE_STOCK_LEVEL_FULL",
+)
+RECORDED_ENVIRONMENT_KEYS = (
+    ALLOCATOR_MEMORY_ENV,
+    "MAKO_TPCC_WORKLOAD_MIX",
 )
 # tpcc.cc opens 11 separate per-warehouse trees and one shared item tree.
 # The native C++ wrapper reserves 200 table IDs per shard, so 18 warehouses
@@ -57,15 +69,57 @@ BENCHMARK_MEASUREMENT_END_RE = re.compile(
     r"TPCC_BENCH_MEASURE_END\s*$",
     re.MULTILINE,
 )
+
+
+class BenchmarkProcessTimeout(subprocess.TimeoutExpired):
+    """A reaped benchmark timeout with its captured diagnostic evidence."""
+
+    def __init__(
+        self,
+        timeout: subprocess.TimeoutExpired,
+        *,
+        before_measurement: bool,
+        evidence: dict[str, object],
+        stdout: str,
+        stderr: str,
+    ) -> None:
+        super().__init__(
+            timeout.cmd,
+            timeout.timeout,
+            output=stdout,
+            stderr=stderr,
+        )
+        self.before_measurement = before_measurement
+        self.evidence = evidence
+
+    def __str__(self) -> str:
+        phase = (
+            "before measurement started"
+            if self.before_measurement
+            else "after measurement started"
+        )
+        return (
+            f"{super().__str__()} ({phase}; see "
+            f"{self.evidence['metadata_log']})"
+        )
+
+
 RUNNER_PROCESS_NAMES = (
+    "build_sto_masstree_pgo.sh",
+    "build_sto_tpcc_pgo.sh",
     "run_sto_tpcc_compare.py",
     "run_sto_masstree_compare.py",
+    "run_scalability_benchmark.py",
 )
 BENCHMARK_PROCESS_NAMES = (
+    "makoCon",
+    "mako_bench_resp_scalability",
     "sto_masstree_compare",
     "sto_masstree_cpp_bench",
     "sto_tpcc_bench",
+    "sto_tpcc_bench-generate",
 )
+LINUX_COMM_NAME_MAX = 15
 BUILD_PROCESS_NAMES = (
     "cargo",
     "rustc",
@@ -163,8 +217,42 @@ def parse_workload_mix(text: str) -> list[int]:
     return values
 
 
-def benchmark_environment(workload_mix: list[int] | None) -> dict[str, str]:
+def parse_allocator_memory(text: str) -> str:
+    if MEMORY_SPEC_RE.fullmatch(text) is None:
+        raise argparse.ArgumentTypeError(
+            "allocator memory must be a positive integer with an optional "
+            "uppercase K, M, or G suffix"
+        )
+    suffix = text[-1] if text[-1] in MEMORY_SPEC_MULTIPLIERS else None
+    amount = int(text[:-1] if suffix else text)
+    multiplier = MEMORY_SPEC_MULTIPLIERS[suffix] if suffix else 1
+    max_size_t = 2 * sys.maxsize + 1
+    if amount > max_size_t // multiplier:
+        raise argparse.ArgumentTypeError("allocator memory exceeds size_t")
+    return text
+
+
+def ensure_tpcc_diagnostic_fallbacks_unset(
+    environment: Mapping[str, str],
+) -> None:
+    present = [
+        key
+        for key in TPCC_DIAGNOSTIC_FALLBACK_ENVIRONMENT_KEYS
+        if key in environment
+    ]
+    if present:
+        raise RuntimeError(
+            "TPC-C diagnostic fallback environment variables must be unset, "
+            f"including empty values: {', '.join(present)}"
+        )
+
+
+def benchmark_environment(
+    workload_mix: list[int] | None, allocator_memory: str
+) -> dict[str, str]:
     environment = os.environ.copy()
+    ensure_tpcc_diagnostic_fallbacks_unset(environment)
+    environment[ALLOCATOR_MEMORY_ENV] = allocator_memory
     if workload_mix is None:
         environment.pop("MAKO_TPCC_WORKLOAD_MIX", None)
     else:
@@ -199,6 +287,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--repetitions", type=positive_int, default=5)
     parser.add_argument("--runtime-seconds", type=positive_int, default=30)
+    parser.add_argument(
+        "--allocator-memory",
+        type=parse_allocator_memory,
+        default=DEFAULT_ALLOCATOR_MEMORY,
+        help=(
+            "NUMA allocator capacity shared by both engines, as a positive "
+            "integer with an optional K, M, or G suffix (default: 1G)"
+        ),
+    )
     parser.add_argument(
         "--workload-mix",
         type=parse_workload_mix,
@@ -242,6 +339,11 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     args = parser.parse_args()
+
+    try:
+        ensure_tpcc_diagnostic_fallbacks_unset(os.environ)
+    except RuntimeError as error:
+        parser.error(str(error))
 
     if args.align_between_engines and not args.align_after_lxd_restart:
         parser.error("--align-between-engines requires --align-after-lxd-restart")
@@ -483,6 +585,21 @@ def ancestor_pids() -> set[int]:
     return ancestors
 
 
+def matches_process_name(
+    comm: str,
+    argv0_name: str,
+    process_names: Sequence[str],
+) -> bool:
+    if argv0_name in process_names:
+        return True
+    # Linux TASK_COMM_LEN includes its terminating NUL, so /proc/PID/comm
+    # exposes at most 15 bytes. All guarded names are ASCII.
+    return any(
+        comm == process_name[:LINUX_COMM_NAME_MAX]
+        for process_name in process_names
+    )
+
+
 def find_competing_processes(args: argparse.Namespace) -> list[dict[str, object]]:
     ignored = ancestor_pids()
     target_executable = str(args.binary.resolve())
@@ -516,7 +633,11 @@ def find_competing_processes(args: argparse.Namespace) -> list[dict[str, object]
         is_runner = any(
             Path(argument).name in RUNNER_PROCESS_NAMES for argument in argv
         )
-        is_benchmark = argv0_name in BENCHMARK_PROCESS_NAMES
+        is_benchmark = matches_process_name(
+            comm,
+            argv0_name,
+            BENCHMARK_PROCESS_NAMES,
+        )
         is_sto_build = (
             comm in BUILD_PROCESS_NAMES or argv0_name in BUILD_PROCESS_NAMES
         ) and any(marker in command.lower() for marker in BUILD_COMMAND_MARKERS)
@@ -699,6 +820,14 @@ def wait_for_aligned_quiet_window(
     )
 
 
+def captured_output_text(output: bytes | str | None) -> str:
+    if output is None:
+        return ""
+    if isinstance(output, bytes):
+        return output.decode("utf-8", errors="replace")
+    return output
+
+
 def run_one(
     args: argparse.Namespace,
     engine: str,
@@ -706,7 +835,11 @@ def run_one(
     repetition: int,
     run_order: int,
     pair_id: str,
+    *,
+    pair_attempt: int = 1,
 ) -> dict[str, object]:
+    if pair_attempt <= 0:
+        raise ValueError("pair_attempt must be positive")
     cpu_affinity = affinity(args.physical_cpus, threads)
     command = [
         args.taskset,
@@ -724,20 +857,71 @@ def run_one(
         "--storage-engine",
         engine,
     ]
-    environment = benchmark_environment(args.workload_mix)
-    log_stem = f"{run_order:03d}-{pair_id}-{engine}"
+    environment = benchmark_environment(args.workload_mix, args.allocator_memory)
+    log_stem = f"{run_order:03d}-{pair_id}-attempt{pair_attempt:02d}-{engine}"
     stdout_path = args.output_dir / f"{log_stem}.stdout.log"
     stderr_path = args.output_dir / f"{log_stem}.stderr.log"
     started = datetime.now(timezone.utc)
     started_monotonic = time.monotonic()
-    completed = subprocess.run(
-        command,
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=args.timeout_seconds,
-        env=environment,
-    )
+    try:
+        completed = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=args.timeout_seconds,
+            env=environment,
+        )
+    except subprocess.TimeoutExpired as timeout:
+        # subprocess.run() has already killed and reaped the child before it
+        # raises. Persist its partial pipes under unique names so a retry's
+        # successful logs cannot overwrite the evidence.
+        elapsed_wall = time.monotonic() - started_monotonic
+        stdout = captured_output_text(timeout.stdout)
+        stderr = captured_output_text(timeout.stderr)
+        timeout_tag = started.strftime("%Y%m%dT%H%M%S.%fZ")
+        timeout_stem = f"{log_stem}.timeout-{timeout_tag}"
+        timeout_stdout_path = args.output_dir / f"{timeout_stem}.stdout.log"
+        timeout_stderr_path = args.output_dir / f"{timeout_stem}.stderr.log"
+        timeout_metadata_path = args.output_dir / f"{timeout_stem}.json"
+        timeout_stdout_path.write_text(stdout, encoding="utf-8")
+        timeout_stderr_path.write_text(stderr, encoding="utf-8")
+        before_measurement = BENCHMARK_MEASUREMENT_START_RE.search(stderr) is None
+        evidence: dict[str, object] = {
+            "type": "benchmark_timeout",
+            "phase": (
+                "before_measurement"
+                if before_measurement
+                else "after_measurement_start"
+            ),
+            "engine": engine,
+            "threads": threads,
+            "warehouses": threads,
+            "repetition": repetition,
+            "run_order": run_order,
+            "pair_id": pair_id,
+            "pair_attempt": pair_attempt,
+            "cpu_affinity": cpu_affinity,
+            "started_at_utc": started.isoformat(),
+            "wall_seconds_including_load": elapsed_wall,
+            "timeout_seconds": args.timeout_seconds,
+            "command": command,
+            "environment_overrides": recorded_environment_overrides(environment),
+            "stdout_log": timeout_stdout_path.name,
+            "stderr_log": timeout_stderr_path.name,
+            "metadata_log": timeout_metadata_path.name,
+        }
+        timeout_metadata_path.write_text(
+            json.dumps(evidence, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        raise BenchmarkProcessTimeout(
+            timeout,
+            before_measurement=before_measurement,
+            evidence=evidence,
+            stdout=stdout,
+            stderr=stderr,
+        ) from timeout
     elapsed_wall = time.monotonic() - started_monotonic
     stdout_path.write_text(completed.stdout, encoding="utf-8")
     stderr_path.write_text(completed.stderr, encoding="utf-8")
@@ -766,6 +950,7 @@ def run_one(
             "repetition": repetition,
             "run_order": run_order,
             "pair_id": pair_id,
+            "pair_attempt": pair_attempt,
             "cpu_affinity": cpu_affinity,
             "started_at_utc": started.isoformat(),
             "wall_seconds_including_load": elapsed_wall,
@@ -830,8 +1015,17 @@ def run_guarded_pair(
                         repetition,
                         logical_run_order,
                         pair_id,
+                        pair_attempt=pair_attempt,
                     )
                 )
+            except BenchmarkProcessTimeout as error:
+                execution_error = error
+                engine_windows[-1]["execution_failure"] = error.evidence
+                if error.before_measurement:
+                    intermediate_rejection_reasons.append(
+                        f"{engine}_timeout_before_measurement"
+                    )
+                break
             except Exception as error:
                 execution_error = error
                 break
@@ -907,10 +1101,14 @@ def run_guarded_pair(
         if competing_after:
             rejection_reasons.append("competing_sto_or_perf_job_started")
 
+        retryable_timeout = (
+            isinstance(execution_error, BenchmarkProcessTimeout)
+            and execution_error.before_measurement
+        )
+        if execution_error is not None and not retryable_timeout:
+            raise execution_error
         if execution_error is not None and not rejection_reasons:
             raise execution_error
-        if execution_error is not None:
-            rejection_reasons.append("benchmark_failed_during_rejected_pair")
         if not rejection_reasons:
             if len(attempted_results) != len(engines):
                 raise RuntimeError(f"pair {pair_id} completed with the wrong result count")
@@ -933,9 +1131,28 @@ def run_guarded_pair(
                 "completed_engines": [
                     str(result["engine"]) for result in attempted_results
                 ],
+                "completed_run_provenance": [
+                    {
+                        key: result[key]
+                        for key in (
+                            "engine",
+                            "run_order",
+                            "pair_attempt",
+                            "started_at_utc",
+                            "wall_seconds_including_load",
+                            "command",
+                            "environment_overrides",
+                            "stdout_log",
+                            "stderr_log",
+                        )
+                        if key in result
+                    }
+                    for result in attempted_results
+                ],
                 "restart_count_before": restart_before,
                 "restart_count_after": restart_after,
                 "competing_after_pair": competing_after,
+                "engine_windows": engine_windows,
             }
         )
         print(
@@ -1066,7 +1283,11 @@ def main() -> int:
         "threads_and_warehouses": args.threads,
         "repetitions": args.repetitions,
         "runtime_seconds": args.runtime_seconds,
+        "allocator_memory": args.allocator_memory,
         "workload_mix": args.workload_mix,
+        "diagnostic_fallback_environment": {
+            key: "unset" for key in TPCC_DIAGNOSTIC_FALLBACK_ENVIRONMENT_KEYS
+        },
         "schedule_seed": args.schedule_seed,
         "physical_cpus": args.physical_cpus,
         "guard_cpus": benchmark_guard_cpus(args.physical_cpus),
@@ -1102,6 +1323,10 @@ def main() -> int:
             "at least 95% idle on every selected CPU and its SMT siblings, and "
             "no recognized competing STO/perf job. Reject and retry both "
             "samples if a competitor is present after the pair."
+            " Native PGO training benchmarks, including Linux-truncated "
+            "process names, count as competitors. Startup requires every "
+            "TPC-C diagnostic fallback environment variable to be absent, "
+            "including empty values."
             + (
                 " LXD restarts during database setup or unmeasured process "
                 "teardown are permitted, but any LXD journal activity in a "
@@ -1124,6 +1349,16 @@ def main() -> int:
                 "each sample begins in its own fresh interval."
                 if args.align_between_engines
                 else ""
+            )
+            + (
+                " A benchmark timeout before the explicit measurement-start "
+                "marker rejects the entire pair and is retried within the "
+                "same guarded-attempt budget; partial output and timeout "
+                "provenance are retained. Every other execution failure, "
+                "including a timeout after measurement starts, remains "
+                "terminal regardless of environmental interference. "
+                "Each physical attempt has distinct attempt-scoped logs while "
+                "retries reuse the accepted sample's logical run order."
             )
         ),
     }

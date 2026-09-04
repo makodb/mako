@@ -219,6 +219,23 @@ impl AtomicVersion {
                 expected_owner: owner,
             })
     }
+
+    #[inline]
+    fn release_word_stable_target(
+        &self,
+        before: OccVersion,
+        owner: OwnerId,
+        new_word: u64,
+    ) -> Result<(), VersionError> {
+        let expected = encode_locked(before, owner);
+        if self.word.load(Ordering::Acquire) != expected {
+            return Err(VersionError::LostOwnership {
+                expected_owner: owner,
+            });
+        }
+        self.word.store(new_word, Ordering::Release);
+        Ok(())
+    }
 }
 
 impl Default for AtomicVersion {
@@ -416,6 +433,36 @@ impl DetachedVersionGuard {
         Ok(())
     }
 
+    /// Abort-unlocks a continuously stable target without an atomic RMW.
+    ///
+    /// This checks the complete owned word with an Acquire load before using a
+    /// Release store. A released token, wrong target, or mismatched word leaves
+    /// the supplied word and this token's held state unchanged.
+    ///
+    /// # Safety
+    ///
+    /// If `target` passes this guard's address check, it must be the same live,
+    /// initialized [`AtomicVersion`] continuously retained since acquisition.
+    /// It must not have been moved, replaced, reused, or reinitialized. If its
+    /// word matches this guard, the match must not result from releasing and
+    /// reacquiring the target through an ABA cycle. No operation may
+    /// successfully mutate the word between this method's checked load and
+    /// store.
+    #[allow(
+        unsafe_code,
+        reason = "the caller must prove continuous target identity across the checked release"
+    )]
+    #[inline]
+    pub unsafe fn release_abort_stable_target(
+        &mut self,
+        target: &AtomicVersion,
+    ) -> Result<(), VersionError> {
+        self.ensure_releasable(target)?;
+        target.release_word_stable_target(self.before, self.owner, encode_unlocked(self.before))?;
+        self.held = false;
+        Ok(())
+    }
+
     /// Commit-unlocks at an ordered commit generation strictly newer than the
     /// pre-acquisition generation.
     pub fn release_commit(
@@ -432,6 +479,45 @@ impl DetachedVersionGuard {
             });
         }
         target.release_word(self.before, self.owner, encode_unlocked(version))?;
+        self.held = false;
+        Ok(version)
+    }
+
+    /// Commit-unlocks a continuously stable target without an atomic RMW.
+    ///
+    /// The commit generation must be strictly newer than the acquisition
+    /// generation. A stale generation, released token, wrong target, or
+    /// mismatched word leaves the supplied word and this token's held state
+    /// unchanged.
+    ///
+    /// # Safety
+    ///
+    /// If `target` passes this guard's address check, it must be the same live,
+    /// initialized [`AtomicVersion`] continuously retained since acquisition.
+    /// It must not have been moved, replaced, reused, or reinitialized. If its
+    /// word matches this guard, the match must not result from releasing and
+    /// reacquiring the target through an ABA cycle. No operation may
+    /// successfully mutate the word between this method's checked load and
+    /// store.
+    #[allow(
+        unsafe_code,
+        reason = "the caller must prove continuous target identity across the checked release"
+    )]
+    #[inline]
+    pub unsafe fn release_commit_stable_target(
+        &mut self,
+        target: &AtomicVersion,
+        commit_id: OccCommitId,
+    ) -> Result<OccVersion, VersionError> {
+        self.ensure_releasable(target)?;
+        let version = commit_id.to_version();
+        if version <= self.before {
+            return Err(VersionError::CommitVersionNotNewer {
+                current: self.before,
+                proposed: commit_id,
+            });
+        }
+        target.release_word_stable_target(self.before, self.owner, encode_unlocked(version))?;
         self.held = false;
         Ok(version)
     }
@@ -456,6 +542,45 @@ impl DetachedVersionGuard {
                 .ok_or(VersionError::GenerationExhausted(self.before))?,
         };
         target.release_word(self.before, self.owner, encode_unlocked(version))?;
+        self.held = false;
+        Ok(version)
+    }
+
+    /// Conservatively unlocks a continuously stable target without an atomic
+    /// RMW after an indeterminate post-irrevocable failure.
+    ///
+    /// A usable commit ID advances the target to that generation; otherwise
+    /// the old generation is checked-incremented. Every error leaves the
+    /// supplied word and this token's held state unchanged.
+    ///
+    /// # Safety
+    ///
+    /// If `target` passes this guard's address check, it must be the same live,
+    /// initialized [`AtomicVersion`] continuously retained since acquisition.
+    /// It must not have been moved, replaced, reused, or reinitialized. If its
+    /// word matches this guard, the match must not result from releasing and
+    /// reacquiring the target through an ABA cycle. No operation may
+    /// successfully mutate the word between this method's checked load and
+    /// store.
+    #[allow(
+        unsafe_code,
+        reason = "the caller must prove continuous target identity across the checked release"
+    )]
+    #[inline]
+    pub unsafe fn release_indeterminate_stable_target(
+        &mut self,
+        target: &AtomicVersion,
+        commit_id: Option<OccCommitId>,
+    ) -> Result<OccVersion, VersionError> {
+        self.ensure_releasable(target)?;
+        let version = match commit_id.map(OccCommitId::to_version) {
+            Some(candidate) if candidate > self.before => candidate,
+            _ => self
+                .before
+                .checked_next()
+                .ok_or(VersionError::GenerationExhausted(self.before))?,
+        };
+        target.release_word_stable_target(self.before, self.owner, encode_unlocked(version))?;
         self.held = false;
         Ok(version)
     }
@@ -661,6 +786,30 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        unsafe_code,
+        reason = "the test retains one stable target and exercises its explicit release contract"
+    )]
+    fn stable_target_abort_restores_and_rejects_a_second_release() {
+        let atomic = AtomicVersion::new(version(32));
+        let mut guard = atomic.try_acquire_detached(owner(7)).unwrap();
+
+        // SAFETY: `atomic` remains at one address, and this guard is its only
+        // release authority.
+        unsafe { guard.release_abort_stable_target(&atomic) }.unwrap();
+        assert!(!guard.is_held());
+        assert_eq!(atomic.observe().unwrap(), version(32));
+
+        // SAFETY: the stable target remains unchanged. The held-state check
+        // rejects this call before another word check or store.
+        assert_eq!(
+            unsafe { guard.release_abort_stable_target(&atomic) },
+            Err(VersionError::GuardAlreadyReleased)
+        );
+        assert_eq!(atomic.observe().unwrap(), version(32));
+    }
+
+    #[test]
     fn observed_detached_acquisition_rejects_stale_and_busy_words_without_a_leak() {
         let atomic = AtomicVersion::new(version(31));
 
@@ -762,6 +911,122 @@ mod tests {
             version(73)
         );
         assert_eq!(atomic.observe().unwrap(), version(73));
+    }
+
+    #[test]
+    #[allow(
+        unsafe_code,
+        reason = "the test retains one stable target and exercises its explicit release contract"
+    )]
+    fn stable_target_commit_rejects_stale_and_publishes_newer_generation() {
+        let atomic = AtomicVersion::new(version(81));
+        let mut guard = atomic.try_acquire_detached(owner(11)).unwrap();
+
+        // SAFETY: `atomic` remains at one address, and this guard is its only
+        // release authority.
+        assert_eq!(
+            unsafe { guard.release_commit_stable_target(&atomic, commit(81)) },
+            Err(VersionError::CommitVersionNotNewer {
+                current: version(81),
+                proposed: commit(81),
+            })
+        );
+        assert!(guard.is_held());
+        assert_eq!(
+            atomic.state(),
+            VersionState::Locked {
+                version: version(81),
+                owner: owner(11),
+            }
+        );
+
+        // SAFETY: the failed call left the same target locked by this guard.
+        assert_eq!(
+            unsafe { guard.release_commit_stable_target(&atomic, commit(84)) }.unwrap(),
+            version(84)
+        );
+        assert_eq!(atomic.observe().unwrap(), version(84));
+    }
+
+    #[test]
+    #[allow(
+        unsafe_code,
+        reason = "the test retains stable targets and exercises their explicit release contracts"
+    )]
+    fn stable_target_indeterminate_advances_and_exhaustion_fails_closed() {
+        let atomic = AtomicVersion::new(version(90));
+        let mut incremented = atomic.try_acquire_detached(owner(12)).unwrap();
+
+        // SAFETY: `atomic` remains at one address, and this guard is its only
+        // release authority.
+        assert_eq!(
+            unsafe { incremented.release_indeterminate_stable_target(&atomic, None) }.unwrap(),
+            version(91)
+        );
+
+        let mut committed = atomic.try_acquire_detached(owner(12)).unwrap();
+        // SAFETY: the first guard is inert, and `committed` exclusively owns
+        // the same continuously stable target.
+        assert_eq!(
+            unsafe { committed.release_indeterminate_stable_target(&atomic, Some(commit(95))) }
+                .unwrap(),
+            version(95)
+        );
+        assert_eq!(atomic.observe().unwrap(), version(95));
+
+        let maximum = version(OccVersion::MAX_VALUE);
+        let exhausted = AtomicVersion::new(maximum);
+        let mut guard = exhausted.try_acquire_detached(owner(12)).unwrap();
+        // SAFETY: `exhausted` remains stable and exclusively owned. Exhaustion
+        // is checked before the word load and store.
+        assert_eq!(
+            unsafe { guard.release_indeterminate_stable_target(&exhausted, None) },
+            Err(VersionError::GenerationExhausted(maximum))
+        );
+        assert!(guard.is_held());
+        assert!(matches!(exhausted.state(), VersionState::Locked { .. }));
+        guard.release_abort(&exhausted).unwrap();
+    }
+
+    #[test]
+    #[allow(
+        unsafe_code,
+        reason = "the test keeps allocations stable while exercising checked rejection paths"
+    )]
+    fn stable_target_release_rejects_wrong_target_and_mismatched_word() {
+        let target = AtomicVersion::new(version(101));
+        let other = AtomicVersion::new(version(102));
+        let expected_owner = owner(13);
+        let mut guard = target.try_acquire_detached(expected_owner).unwrap();
+
+        // SAFETY: an address mismatch is rejected before the stable-target
+        // load/store path.
+        assert_eq!(
+            unsafe { guard.release_abort_stable_target(&other) },
+            Err(VersionError::GuardTargetMismatch)
+        );
+        assert_eq!(other.observe().unwrap(), version(102));
+        assert!(guard.is_held());
+
+        let replacement_owner = owner(14);
+        target.word.store(
+            encode_locked(version(101), replacement_owner),
+            Ordering::Release,
+        );
+        // SAFETY: the target allocation has not changed and no mutation races
+        // this call. The mismatched word is the checked error case, not ABA.
+        assert_eq!(
+            unsafe { guard.release_abort_stable_target(&target) },
+            Err(VersionError::LostOwnership { expected_owner })
+        );
+        assert!(guard.is_held());
+        assert_eq!(
+            target.state(),
+            VersionState::Locked {
+                version: version(101),
+                owner: replacement_owner,
+            }
+        );
     }
 
     #[test]

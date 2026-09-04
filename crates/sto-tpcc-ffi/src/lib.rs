@@ -19,7 +19,7 @@ use std::{
     panic::{catch_unwind, AssertUnwindSafe},
     ptr, slice,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicI32, AtomicU64, Ordering},
         Arc,
     },
 };
@@ -28,8 +28,9 @@ use sto_core::{
     Runtime, RuntimeConfig, RuntimeId, Transaction, WorkerContext,
 };
 use sto_masstree::{
-    PointMutation, PointReadBatch, ResolvedRecord, ScanBound, ScanBytesRef, ScanControl,
-    ScanDirection, ScanRequest, ScanScratch, Table, TableConfig, Value, ValueCopyOutcome,
+    DenseResolvedCache, PointMutation, PointReadBatch, ResolvedRecord, ScanBound, ScanBytesRef,
+    ScanControl, ScanDirection, ScanRequest, ScanScratch, Table, TableConfig, Value,
+    ValueCopyOutcome,
 };
 
 const ERROR_CAPACITY: usize = 1_024;
@@ -113,6 +114,8 @@ thread_local! {
     static CURRENT_THREAD_COOKIE: Cell<u64> = const { Cell::new(0) };
     #[cfg(test)]
     static RESOLVED_CACHE_SLOT_CALLS: Cell<usize> = const { Cell::new(0) };
+    #[cfg(test)]
+    static STOCK_LEVEL_CACHE_PARTITION: Cell<(usize, usize)> = const { Cell::new((0, 0)) };
 }
 
 #[inline(always)]
@@ -553,6 +556,9 @@ struct TableState {
 pub struct StoTpccTable {
     state: Arc<TableState>,
     cache_policy: ResolvedCachePolicy,
+    dense_policy: DenseCachePolicy,
+    dense_cache: Option<DenseResolvedCache>,
+    dense_stock_warehouse_id: AtomicI32,
 }
 
 struct PendingSizeDelta {
@@ -561,12 +567,15 @@ struct PendingSizeDelta {
 }
 
 const RESOLVED_CACHE_KEY_BYTES: usize = 32;
-// One TPC-C warehouse has 30,000 base customer rows. A 4,096-slot cache is a
-// bounded 256 KiB compromise: it retains about 14% under uniform access and
-// more under TPC-C's skew, while each hit bypasses a customer-tree traversal.
+// One TPC-C warehouse has 30,000 base customer rows and 100,000 sealed stock
+// rows. A 4,096-slot cache is a bounded 256 KiB compromise. Besides recurring
+// customer keys, it retains the recent NewOrder stock identities that
+// StockLevel is most likely to revisit; each exact hit bypasses one tree
+// traversal while retaining ordinary STO observation and validation.
 const RESOLVED_CACHE_ENTRIES: usize = 4_096;
 const LAST_ONLY_CACHE_SLOT: usize = RESOLVED_CACHE_ENTRIES;
 const RESOLVED_SCAN_CACHE_LIMIT: usize = 16;
+const DENSE_TPCC_ITEM_SLOTS: usize = 100_000;
 const _: () = assert!(RESOLVED_CACHE_ENTRIES.is_power_of_two());
 const _: () = assert!(LAST_ONLY_CACHE_SLOT == RESOLVED_CACHE_ENTRIES);
 
@@ -575,6 +584,8 @@ pub const STO_TPCC_RESOLVED_CACHE_FULL: StoTpccResolvedCachePolicy = 0;
 pub const STO_TPCC_RESOLVED_CACHE_LAST_ONLY: StoTpccResolvedCachePolicy = 1;
 pub const STO_TPCC_RESOLVED_CACHE_READ_THEN_WRITE: StoTpccResolvedCachePolicy = 2;
 pub const STO_TPCC_RESOLVED_CACHE_NONE: StoTpccResolvedCachePolicy = 3;
+pub const STO_TPCC_RESOLVED_CACHE_DENSE_ITEM: StoTpccResolvedCachePolicy = 4;
+pub const STO_TPCC_RESOLVED_CACHE_DENSE_STOCK: StoTpccResolvedCachePolicy = 5;
 
 pub type StoTpccFixedReadCallback = unsafe extern "C" fn(
     context: *mut std::ffi::c_void,
@@ -668,13 +679,26 @@ enum ResolvedCachePolicy {
     None,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DenseCachePolicy {
+    None,
+    Item,
+    Stock,
+}
+
 impl ResolvedCachePolicy {
-    fn from_raw(raw: StoTpccResolvedCachePolicy) -> FfiResult<Self> {
+    fn from_raw(raw: StoTpccResolvedCachePolicy) -> FfiResult<(Self, DenseCachePolicy)> {
         match raw {
-            STO_TPCC_RESOLVED_CACHE_FULL => Ok(Self::Full),
-            STO_TPCC_RESOLVED_CACHE_LAST_ONLY => Ok(Self::LastOnly),
-            STO_TPCC_RESOLVED_CACHE_READ_THEN_WRITE => Ok(Self::ReadThenWrite),
-            STO_TPCC_RESOLVED_CACHE_NONE => Ok(Self::None),
+            STO_TPCC_RESOLVED_CACHE_FULL => Ok((Self::Full, DenseCachePolicy::None)),
+            STO_TPCC_RESOLVED_CACHE_LAST_ONLY => Ok((Self::LastOnly, DenseCachePolicy::None)),
+            STO_TPCC_RESOLVED_CACHE_READ_THEN_WRITE => {
+                Ok((Self::ReadThenWrite, DenseCachePolicy::None))
+            }
+            STO_TPCC_RESOLVED_CACHE_NONE => Ok((Self::None, DenseCachePolicy::None)),
+            STO_TPCC_RESOLVED_CACHE_DENSE_ITEM => Ok((Self::None, DenseCachePolicy::Item)),
+            STO_TPCC_RESOLVED_CACHE_DENSE_STOCK => {
+                Ok((Self::ReadThenWrite, DenseCachePolicy::Stock))
+            }
             _ => Err(fatal(format_args!("invalid resolved-cache policy {raw}"))),
         }
     }
@@ -1324,7 +1348,7 @@ unsafe fn create_table(
     let db = unsafe { required_ref(db, "db")? };
     let output = unsafe { required_mut(out_table, "out_table")? };
     *output = ptr::null_mut();
-    let cache_policy = ResolvedCachePolicy::from_raw(cache_policy)?;
+    let (cache_policy, dense_policy) = ResolvedCachePolicy::from_raw(cache_policy)?;
     let raw = unsafe { optional_copy(config) };
     let worker = db.masstree.attach().map_err(|error| {
         fatal(format_args!(
@@ -1334,6 +1358,18 @@ unsafe fn create_table(
     let table = Table::new_direct(&db.sto, &db.masstree, &worker, table_config(raw))
         .map_err(|error| fatal(format_args!("unable to create STO table: {error}")))?;
     drop(worker);
+    let dense_cache = match dense_policy {
+        DenseCachePolicy::Item | DenseCachePolicy::Stock => Some(
+            table
+                .dense_resolved_cache(DENSE_TPCC_ITEM_SLOTS)
+                .map_err(|error| {
+                    fatal(format_args!(
+                        "unable to create dense TPC-C resolved cache: {error}"
+                    ))
+                })?,
+        ),
+        DenseCachePolicy::None => None,
+    };
     *output = Box::into_raw(Box::new(StoTpccTable {
         state: Arc::new(TableState {
             table,
@@ -1341,6 +1377,9 @@ unsafe fn create_table(
             runtime_id: db.sto.id(),
         }),
         cache_policy,
+        dense_policy,
+        dense_cache,
+        dense_stock_warehouse_id: AtomicI32::new(0),
     }));
     Ok(Status::Ok)
 }
@@ -1373,6 +1412,24 @@ pub unsafe extern "C" fn sto_tpcc_table_create_with_cache_policy(
 ) -> i32 {
     boundary("sto_tpcc_table_create_with_cache_policy", || unsafe {
         create_table(db, config, cache_policy, out_table)
+    })
+}
+
+/// Permanently closes this table's native directory to new keys.
+///
+/// Existing records remain readable and writable. Call this only after all
+/// loader transactions have finished and while no transaction uses `table`.
+///
+/// # Safety
+/// `table` must be a live table handle with no concurrent users.
+#[no_mangle]
+pub unsafe extern "C" fn sto_tpcc_table_seal_directory_structure(table: *mut StoTpccTable) -> i32 {
+    boundary("sto_tpcc_table_seal_directory_structure", || {
+        let table = unsafe { required_ref(table, "table")? };
+        match table.state.table.seal_directory_structure() {
+            Ok(()) => Ok(Status::Ok),
+            Err(error) => Ok(status_from_access("seal directory structure", error)),
+        }
     })
 }
 
@@ -5132,14 +5189,115 @@ fn stock_level_scan_item_ids(
     Ok((items, scanned_rows))
 }
 
-fn stock_level_count_low_stock(
+#[inline(always)]
+fn stock_level_observe_quantity(
+    current: Option<&[u8]>,
+    threshold: i32,
+) -> StockLevelQuantityObservation {
+    let Some(bytes) = current else {
+        return StockLevelQuantityObservation::Missing;
+    };
+    let Some(quantity_bytes) = bytes.get(..mem::size_of::<i16>()) else {
+        return StockLevelQuantityObservation::Malformed;
+    };
+    let quantity = i16::from_ne_bytes(
+        quantity_bytes
+            .try_into()
+            .expect("the checked StockLevel quantity has two bytes"),
+    );
+    if i32::from(quantity) < threshold {
+        StockLevelQuantityObservation::Low
+    } else {
+        StockLevelQuantityObservation::Present
+    }
+}
+
+#[derive(Clone, Copy)]
+enum StockLevelQuantityObservation {
+    Unvisited,
+    Present,
+    Low,
+    Missing,
+    Malformed,
+}
+
+#[inline(always)]
+fn dense_cache_for_policy<'table>(
+    table: &'table StoTpccTable,
+    expected: DenseCachePolicy,
+    operation: &'static str,
+) -> FfiResult<Option<&'table DenseResolvedCache>> {
+    if table.dense_policy != expected {
+        return Ok(None);
+    }
+    table
+        .dense_cache
+        .as_ref()
+        .map(Some)
+        .ok_or_else(|| fatal(format_args!("{operation}: dense cache is missing")))
+}
+
+#[inline(always)]
+fn dense_stock_cache_for_warehouse<'table>(
+    table: &'table StoTpccTable,
+    warehouse_id: i32,
+    operation: &'static str,
+) -> FfiResult<Option<&'table DenseResolvedCache>> {
+    let Some(cache) = dense_cache_for_policy(table, DenseCachePolicy::Stock, operation)? else {
+        return Ok(None);
+    };
+    if warehouse_id <= 0 {
+        table.dense_stock_warehouse_id.store(-1, Ordering::Release);
+        return Ok(None);
+    }
+    let mut bound = table.dense_stock_warehouse_id.load(Ordering::Acquire);
+    loop {
+        if bound == warehouse_id {
+            return Ok(Some(cache));
+        }
+        if bound == -1 {
+            return Ok(None);
+        }
+        let replacement = if bound == 0 { warehouse_id } else { -1 };
+        match table.dense_stock_warehouse_id.compare_exchange_weak(
+            bound,
+            replacement,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) if replacement == warehouse_id => return Ok(Some(cache)),
+            Ok(_) => return Ok(None),
+            Err(observed) => bound = observed,
+        }
+    }
+}
+
+#[inline(always)]
+fn dense_item_slot(item_id: u32) -> FfiResult<usize> {
+    if !(1..=DENSE_TPCC_ITEM_SLOTS as u32).contains(&item_id) {
+        return Err(fatal(format_args!(
+            "dense TPC-C cache item ID {item_id} is out of range"
+        )));
+    }
+    Ok(item_id as usize - 1)
+}
+
+fn stock_level_count_low_stock_worker_cache(
     handle: &mut StoTpccThread,
     table: &StoTpccTable,
     warehouse_id: i32,
-    item_ids: &[u32],
+    items: &StockLevelItemSet,
     threshold: i32,
 ) -> FfiResult<u32> {
+    if table.cache_policy != ResolvedCachePolicy::Full {
+        return Err(fatal(format_args!(
+            "StockLevel stock table must use the full resolved cache policy"
+        )));
+    }
+    let item_ids = items.as_slice();
     if item_ids.is_empty() {
+        #[cfg(test)]
+        STOCK_LEVEL_CACHE_PARTITION.with(|partition| partition.set((0, 0)));
         return Ok(0);
     }
     let mut keys = [[0_u8; 8]; STOCK_LEVEL_MAX_ORDER_LINE_ROWS];
@@ -5148,57 +5306,226 @@ fn stock_level_count_low_stock(
         key[4..].copy_from_slice(&item_id.to_be_bytes());
     }
 
-    let mut low_stock_count = 0_u32;
-    let mut missing = None;
-    let mut malformed = None;
-    let access = {
-        let transaction = active_transaction(&mut handle.active)?;
-        let mut session = table
-            .state
-            .table
-            .point_session(transaction, &handle.native_worker);
-        session.visit_fixed_bytes(
-            &keys[..item_ids.len()],
-            &mut handle.point_batch,
-            |index, current| {
-                if missing.is_some() || malformed.is_some() {
-                    return;
-                }
-                let Some(bytes) = current else {
-                    missing = Some(index);
-                    return;
-                };
-                let Some(quantity_bytes) = bytes.get(..mem::size_of::<i16>()) else {
-                    malformed = Some(index);
-                    return;
-                };
-                let quantity = i16::from_ne_bytes(
-                    quantity_bytes
-                        .try_into()
-                        .expect("the checked StockLevel quantity has two bytes"),
-                );
-                if i32::from(quantity) < threshold {
-                    low_stock_count += 1;
-                }
-            },
-        )
+    // StockLevel's set has already removed duplicate item IDs. Retain exact
+    // cache hits as stable tokens and compact only misses into the native
+    // fixed lookup. The miss batch runs first so it can still use the typed
+    // unique-item lane before scalar resolved hits create stock items.
+    let mut cached = [None; STOCK_LEVEL_MAX_ORDER_LINE_ROWS];
+    let mut miss_keys = [[0_u8; 8]; STOCK_LEVEL_MAX_ORDER_LINE_ROWS];
+    let mut miss_indices = [0_usize; STOCK_LEVEL_MAX_ORDER_LINE_ROWS];
+    let empty_probe = ResolvedCacheProbe {
+        record: None,
+        miss_slot: None,
     };
+    let mut miss_probes = [empty_probe; STOCK_LEVEL_MAX_ORDER_LINE_ROWS];
+    let mut miss_count = 0_usize;
+    for (index, key) in keys[..item_ids.len()].iter().enumerate() {
+        let probe = handle.resolved_cache.probe(&table.state.table, key);
+        if let Some(resolved) = probe.record {
+            cached[index] = Some(resolved);
+        } else {
+            miss_keys[miss_count] = *key;
+            miss_indices[miss_count] = index;
+            miss_probes[miss_count] = probe;
+            miss_count += 1;
+        }
+    }
+    #[cfg(test)]
+    STOCK_LEVEL_CACHE_PARTITION.with(|partition| {
+        partition.set((item_ids.len() - miss_count, miss_count));
+    });
+
+    let mut observations =
+        [StockLevelQuantityObservation::Unvisited; STOCK_LEVEL_MAX_ORDER_LINE_ROWS];
+    let native_worker = &handle.native_worker;
+    let point_batch = &mut handle.point_batch;
+    let resolved_cache = &mut handle.resolved_cache;
+    let transaction = active_transaction(&mut handle.active)?;
+    let access: Result<(), AccessError> = (|| {
+        if miss_count != 0 {
+            let mut session = table.state.table.point_session(transaction, native_worker);
+            session.visit_fixed_resolving_bytes(
+                &miss_keys[..miss_count],
+                point_batch,
+                |miss_index, current, resolved| {
+                    let original_index = miss_indices[miss_index];
+                    resolved_cache.remember_after_probe(
+                        &table.state.table,
+                        &miss_keys[miss_index],
+                        resolved,
+                        miss_probes[miss_index],
+                    );
+                    observations[original_index] = stock_level_observe_quantity(current, threshold);
+                },
+            )?;
+        }
+
+        for (index, resolved) in cached[..item_ids.len()].iter().copied().enumerate() {
+            let Some(resolved) = resolved else {
+                continue;
+            };
+            table
+                .state
+                .table
+                .visit_get_resolved_bytes(transaction, resolved, |current| {
+                    observations[index] = stock_level_observe_quantity(current, threshold);
+                })?;
+        }
+        Ok(())
+    })();
     if let Err(error) = access {
         return Err(status_from_access("StockLevel stock batch", error));
     }
-    if let Some(index) = missing {
-        set_last_error(format_args!(
-            "StockLevel stock batch: required row {index} is missing"
-        ));
-        return Err(Status::Retry);
-    }
-    if let Some(index) = malformed {
-        set_last_error(format_args!(
-            "StockLevel stock batch: row {index} has a truncated quantity"
-        ));
-        return Err(Status::Retry);
+
+    // The compact miss batch deliberately runs before cache hits. Reduce its
+    // captured outcomes in original item order so mixed hit/miss failures
+    // retain the scalar batch's first-error diagnostic while every item has
+    // still entered the OCC read set.
+    let mut low_stock_count = 0_u32;
+    for (index, observation) in observations[..item_ids.len()].iter().copied().enumerate() {
+        match observation {
+            StockLevelQuantityObservation::Present => {}
+            StockLevelQuantityObservation::Low => low_stock_count += 1,
+            StockLevelQuantityObservation::Missing => {
+                set_last_error(format_args!(
+                    "StockLevel stock batch: required row {index} is missing"
+                ));
+                return Err(Status::Retry);
+            }
+            StockLevelQuantityObservation::Malformed => {
+                set_last_error(format_args!(
+                    "StockLevel stock batch: row {index} has a truncated quantity"
+                ));
+                return Err(Status::Retry);
+            }
+            StockLevelQuantityObservation::Unvisited => {
+                return Err(fatal(format_args!(
+                    "StockLevel stock batch did not visit row {index}"
+                )));
+            }
+        }
     }
     Ok(low_stock_count)
+}
+
+fn stock_level_count_low_stock_dense(
+    handle: &mut StoTpccThread,
+    table: &StoTpccTable,
+    warehouse_id: i32,
+    items: &StockLevelItemSet,
+    threshold: i32,
+) -> FfiResult<u32> {
+    let item_ids = items.as_slice();
+    if item_ids.is_empty() {
+        #[cfg(test)]
+        STOCK_LEVEL_CACHE_PARTITION.with(|partition| partition.set((0, 0)));
+        return Ok(0);
+    }
+    let cache = dense_stock_cache_for_warehouse(table, warehouse_id, "StockLevel stock batch")?;
+    let mut keys = [[0_u8; 8]; STOCK_LEVEL_MAX_ORDER_LINE_ROWS];
+    let mut hints = [None; STOCK_LEVEL_MAX_ORDER_LINE_ROWS];
+    let mut dense_slots = [0_usize; STOCK_LEVEL_MAX_ORDER_LINE_ROWS];
+    let mut missing_keys = [[0_u8; 8]; STOCK_LEVEL_MAX_ORDER_LINE_ROWS];
+    let mut missing_positions = [0_usize; STOCK_LEVEL_MAX_ORDER_LINE_ROWS];
+    let mut miss_count = 0_usize;
+    for (index, item_id) in item_ids.iter().copied().enumerate() {
+        keys[index][..4].copy_from_slice(&warehouse_id.to_be_bytes());
+        keys[index][4..].copy_from_slice(&item_id.to_be_bytes());
+        dense_slots[index] = dense_item_slot(item_id)?;
+        hints[index] = match cache {
+            Some(cache) => cache
+                .get(dense_slots[index])
+                .map_err(|error| status_from_access("StockLevel dense stock cache", error))?,
+            None => None,
+        };
+        if hints[index].is_none() {
+            missing_keys[miss_count] = keys[index];
+            missing_positions[miss_count] = index;
+            miss_count += 1;
+        }
+    }
+    #[cfg(test)]
+    STOCK_LEVEL_CACHE_PARTITION.with(|partition| {
+        partition.set((item_ids.len() - miss_count, miss_count));
+    });
+
+    let mut observations =
+        [StockLevelQuantityObservation::Unvisited; STOCK_LEVEL_MAX_ORDER_LINE_ROWS];
+    let mut cache_error = None;
+    let transaction = active_transaction(&mut handle.active)?;
+    let mut session = table
+        .state
+        .table
+        .point_session(transaction, &handle.native_worker);
+    let access = session.visit_fixed_hinted_bytes(
+        &keys[..item_ids.len()],
+        &hints[..item_ids.len()],
+        &missing_keys[..miss_count],
+        &missing_positions[..miss_count],
+        &mut handle.point_batch,
+        |index, current, resolved| {
+            if hints[index].is_none() {
+                if let Some(cache) = cache {
+                    if let Err(error) = cache.remember(dense_slots[index], resolved) {
+                        cache_error.get_or_insert(error);
+                    }
+                }
+            }
+            observations[index] = stock_level_observe_quantity(current, threshold);
+        },
+    );
+    if let Err(error) = access {
+        return Err(status_from_access("StockLevel stock batch", error));
+    }
+    if let Some(error) = cache_error {
+        return Err(status_from_access("StockLevel dense stock cache", error));
+    }
+
+    let mut low_stock_count = 0_u32;
+    for (index, observation) in observations[..item_ids.len()].iter().copied().enumerate() {
+        match observation {
+            StockLevelQuantityObservation::Present => {}
+            StockLevelQuantityObservation::Low => low_stock_count += 1,
+            StockLevelQuantityObservation::Missing => {
+                set_last_error(format_args!(
+                    "StockLevel stock batch: required row {index} is missing"
+                ));
+                return Err(Status::Retry);
+            }
+            StockLevelQuantityObservation::Malformed => {
+                set_last_error(format_args!(
+                    "StockLevel stock batch: row {index} has a truncated quantity"
+                ));
+                return Err(Status::Retry);
+            }
+            StockLevelQuantityObservation::Unvisited => {
+                return Err(fatal(format_args!(
+                    "StockLevel stock batch did not visit row {index}"
+                )));
+            }
+        }
+    }
+    Ok(low_stock_count)
+}
+
+fn stock_level_count_low_stock(
+    handle: &mut StoTpccThread,
+    table: &StoTpccTable,
+    warehouse_id: i32,
+    items: &StockLevelItemSet,
+    threshold: i32,
+) -> FfiResult<u32> {
+    match (table.cache_policy, table.dense_policy) {
+        (ResolvedCachePolicy::Full, DenseCachePolicy::None) => {
+            stock_level_count_low_stock_worker_cache(handle, table, warehouse_id, items, threshold)
+        }
+        (_, DenseCachePolicy::Stock) => {
+            stock_level_count_low_stock_dense(handle, table, warehouse_id, items, threshold)
+        }
+        _ => Err(fatal(format_args!(
+            "StockLevel stock table must use the full or dense-stock resolved cache policy"
+        ))),
+    }
 }
 
 #[allow(
@@ -5253,13 +5580,8 @@ unsafe fn stock_level_full_body(
     let upper = new_order_key4(request.warehouse_id, request.district_id, upper_order_id, 0);
     let (item_ids, scanned_order_line_rows) =
         stock_level_scan_item_ids(handle, order_line, &lower, &upper)?;
-    let low_stock_count = stock_level_count_low_stock(
-        handle,
-        stock,
-        request.warehouse_id,
-        item_ids.as_slice(),
-        threshold,
-    )?;
+    let low_stock_count =
+        stock_level_count_low_stock(handle, stock, request.warehouse_id, &item_ids, threshold)?;
     let distinct_item_ids =
         u32::try_from(item_ids.len).expect("the bounded StockLevel distinct count fits u32");
 
@@ -5332,23 +5654,52 @@ fn new_order_read_items(
     table: &StoTpccTable,
     item_ids: &[u32],
 ) -> FfiResult<[f32; NEW_ORDER_MAX_LINES]> {
+    let dense_cache =
+        dense_cache_for_policy(table, DenseCachePolicy::Item, "new-order item batch")?;
     let mut keys = [[0_u8; 4]; NEW_ORDER_MAX_LINES];
-    for (key, item_id) in keys.iter_mut().zip(item_ids.iter().copied()) {
-        *key = item_id.to_be_bytes();
+    let mut hints = [None; NEW_ORDER_MAX_LINES];
+    let mut dense_slots = [0_usize; NEW_ORDER_MAX_LINES];
+    let mut missing_keys = [[0_u8; 4]; NEW_ORDER_MAX_LINES];
+    let mut missing_positions = [0_usize; NEW_ORDER_MAX_LINES];
+    let mut miss_count = 0_usize;
+    for (index, item_id) in item_ids.iter().copied().enumerate() {
+        keys[index] = item_id.to_be_bytes();
+        dense_slots[index] = dense_item_slot(item_id)?;
+        if let Some(cache) = dense_cache {
+            hints[index] = cache
+                .get(dense_slots[index])
+                .map_err(|error| status_from_access("new-order dense item cache", error))?;
+        }
+        if hints[index].is_none() {
+            missing_keys[miss_count] = keys[index];
+            missing_positions[miss_count] = index;
+            miss_count += 1;
+        }
     }
     let mut prices = [0_f32; NEW_ORDER_MAX_LINES];
     let mut missing = None;
     let mut codec_error = None;
+    let mut cache_error = None;
     let access = {
         let transaction = active_transaction(&mut handle.active)?;
         let mut session = table
             .state
             .table
             .point_session(transaction, &handle.native_worker);
-        session.visit_fixed_bytes(
+        session.visit_fixed_hinted_bytes(
             &keys[..item_ids.len()],
+            &hints[..item_ids.len()],
+            &missing_keys[..miss_count],
+            &missing_positions[..miss_count],
             &mut handle.point_batch,
-            |index, current| {
+            |index, current, resolved| {
+                if hints[index].is_none() {
+                    if let Some(cache) = dense_cache {
+                        if let Err(error) = cache.remember(dense_slots[index], resolved) {
+                            cache_error.get_or_insert(error);
+                        }
+                    }
+                }
                 if missing.is_some() || codec_error.is_some() {
                     return;
                 }
@@ -5365,6 +5716,9 @@ fn new_order_read_items(
     };
     if let Err(error) = access {
         return Err(status_from_access("new-order item batch", error));
+    }
+    if let Some(error) = cache_error {
+        return Err(status_from_access("new-order dense item cache", error));
     }
     if let Some(index) = missing {
         set_last_error(format_args!(
@@ -5383,13 +5737,18 @@ fn new_order_read_items(
     Ok(prices)
 }
 
-fn new_order_modify_stocks(
+fn new_order_modify_stocks_worker_cache(
     handle: &mut StoTpccThread,
     table: &StoTpccTable,
     warehouse_id: i32,
     item_ids: &[u32],
     quantities: &[u32],
 ) -> FfiResult<()> {
+    if table.cache_policy != ResolvedCachePolicy::Full {
+        return Err(fatal(format_args!(
+            "new-order stock table must use the full resolved cache policy"
+        )));
+    }
     let mut keys = [[0_u8; 8]; NEW_ORDER_MAX_LINES];
     for (index, item_id) in item_ids.iter().copied().enumerate() {
         keys[index][..4].copy_from_slice(&warehouse_id.to_be_bytes());
@@ -5398,15 +5757,17 @@ fn new_order_modify_stocks(
     let mut missing = None;
     let mut codec_error = None;
     let access = {
+        let resolved_cache = &mut handle.resolved_cache;
         let transaction = active_transaction(&mut handle.active)?;
         let mut session = table
             .state
             .table
             .point_session(transaction, &handle.native_worker);
-        session.modify_fixed_visit(
+        session.modify_fixed_resolving_visit(
             &keys[..item_ids.len()],
             &mut handle.point_batch,
-            |index, current| {
+            |index, current, resolved| {
+                resolved_cache.remember(&table.state.table, &keys[index], resolved);
                 if missing.is_some() || codec_error.is_some() {
                     return PointMutation::Keep;
                 }
@@ -5443,6 +5804,116 @@ fn new_order_modify_stocks(
         return Err(Status::Retry);
     }
     Ok(())
+}
+
+fn new_order_modify_stocks_dense(
+    handle: &mut StoTpccThread,
+    table: &StoTpccTable,
+    warehouse_id: i32,
+    item_ids: &[u32],
+    quantities: &[u32],
+) -> FfiResult<()> {
+    let dense_cache =
+        dense_stock_cache_for_warehouse(table, warehouse_id, "new-order stock batch")?;
+    let mut keys = [[0_u8; 8]; NEW_ORDER_MAX_LINES];
+    let mut hints = [None; NEW_ORDER_MAX_LINES];
+    let mut dense_slots = [0_usize; NEW_ORDER_MAX_LINES];
+    let mut missing_keys = [[0_u8; 8]; NEW_ORDER_MAX_LINES];
+    let mut missing_positions = [0_usize; NEW_ORDER_MAX_LINES];
+    let mut miss_count = 0_usize;
+    for (index, item_id) in item_ids.iter().copied().enumerate() {
+        keys[index][..4].copy_from_slice(&warehouse_id.to_be_bytes());
+        keys[index][4..].copy_from_slice(&item_id.to_be_bytes());
+        dense_slots[index] = dense_item_slot(item_id)?;
+        if let Some(cache) = dense_cache {
+            hints[index] = cache
+                .get(dense_slots[index])
+                .map_err(|error| status_from_access("new-order dense stock cache", error))?;
+        }
+        if hints[index].is_none() {
+            missing_keys[miss_count] = keys[index];
+            missing_positions[miss_count] = index;
+            miss_count += 1;
+        }
+    }
+
+    let mut missing = None;
+    let mut codec_error = None;
+    let mut cache_error = None;
+    let transaction = active_transaction(&mut handle.active)?;
+    let mut session = table
+        .state
+        .table
+        .point_session(transaction, &handle.native_worker);
+    let access = session.modify_fixed_hinted_visit(
+        &keys[..item_ids.len()],
+        &hints[..item_ids.len()],
+        &missing_keys[..miss_count],
+        &missing_positions[..miss_count],
+        &mut handle.point_batch,
+        |index, current, resolved| {
+            if hints[index].is_none() {
+                if let Some(cache) = dense_cache {
+                    if let Err(error) = cache.remember(dense_slots[index], resolved) {
+                        cache_error.get_or_insert(error);
+                    }
+                }
+            }
+            if missing.is_some() || codec_error.is_some() {
+                return PointMutation::Keep;
+            }
+            let Some(current) = current else {
+                missing = Some(index);
+                return PointMutation::Keep;
+            };
+            let mut replacement = [0_u8; NEW_ORDER_STOCK_VALUE_MAX];
+            match new_order_stock_replacement(current.as_ref(), quantities[index], &mut replacement)
+            {
+                Ok(length) => PointMutation::Put(Value::from(&replacement[..length])),
+                Err(error) => {
+                    codec_error = Some((index, error));
+                    PointMutation::Keep
+                }
+            }
+        },
+    );
+    if let Err(error) = access {
+        return Err(status_from_access("new-order stock batch", error));
+    }
+    if let Some(error) = cache_error {
+        return Err(status_from_access("new-order dense stock cache", error));
+    }
+    if let Some(index) = missing {
+        set_last_error(format_args!(
+            "new-order stock batch: required row {index} is missing"
+        ));
+        return Err(Status::Retry);
+    }
+    if let Some((index, error)) = codec_error {
+        set_last_error(format_args!("new-order stock batch row {index}: {error}"));
+        return Err(Status::Retry);
+    }
+    Ok(())
+}
+
+fn new_order_modify_stocks(
+    handle: &mut StoTpccThread,
+    table: &StoTpccTable,
+    warehouse_id: i32,
+    item_ids: &[u32],
+    quantities: &[u32],
+) -> FfiResult<()> {
+    match (table.cache_policy, table.dense_policy) {
+        (ResolvedCachePolicy::Full, DenseCachePolicy::None) => {
+            new_order_modify_stocks_worker_cache(handle, table, warehouse_id, item_ids, quantities)
+        }
+        (_, DenseCachePolicy::Stock) => {
+            new_order_modify_stocks_dense(handle, table, warehouse_id, item_ids, quantities)
+        }
+        _ => Err(fatal(format_args!(
+            "new-order stock table must use the full or dense-stock resolved cache policy"
+        ))),
+    }
 }
 
 fn new_order_insert_header(
@@ -5982,6 +6453,26 @@ mod tests {
         bytes
     }
 
+    #[cfg(mtree_native_integration)]
+    fn stock_fixture(quantity: i16) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&quantity.to_ne_bytes());
+        bytes.extend_from_slice(&0_f32.to_ne_bytes());
+        bytes.extend_from_slice(&test_encode_i32(0));
+        bytes.extend_from_slice(&test_encode_i32(0));
+        bytes
+    }
+
+    #[cfg(mtree_native_integration)]
+    fn item_fixture(price: f32) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        test_inline(&mut bytes, b"ITEM", 24);
+        bytes.extend_from_slice(&price.to_ne_bytes());
+        test_inline(&mut bytes, b"DATA", 50);
+        bytes.extend_from_slice(&test_encode_i32(1));
+        bytes
+    }
+
     fn fixture_f32(bytes: &[u8], offset: usize) -> f32 {
         f32::from_ne_bytes(bytes[offset..offset + 4].try_into().unwrap())
     }
@@ -6229,6 +6720,11 @@ mod tests {
     #[cfg(mtree_native_integration)]
     fn cache_slot_calls() -> usize {
         RESOLVED_CACHE_SLOT_CALLS.with(Cell::get)
+    }
+
+    #[cfg(mtree_native_integration)]
+    fn stock_level_cache_partition() -> (usize, usize) {
+        STOCK_LEVEL_CACHE_PARTITION.with(Cell::get)
     }
 
     #[test]
@@ -6630,23 +7126,37 @@ mod tests {
         assert_eq!(STO_TPCC_RESOLVED_CACHE_LAST_ONLY, 1);
         assert_eq!(STO_TPCC_RESOLVED_CACHE_READ_THEN_WRITE, 2);
         assert_eq!(STO_TPCC_RESOLVED_CACHE_NONE, 3);
+        assert_eq!(STO_TPCC_RESOLVED_CACHE_DENSE_ITEM, 4);
+        assert_eq!(STO_TPCC_RESOLVED_CACHE_DENSE_STOCK, 5);
         assert_eq!(
             ResolvedCachePolicy::from_raw(STO_TPCC_RESOLVED_CACHE_FULL),
-            Ok(ResolvedCachePolicy::Full)
+            Ok((ResolvedCachePolicy::Full, DenseCachePolicy::None))
         );
         assert_eq!(
             ResolvedCachePolicy::from_raw(STO_TPCC_RESOLVED_CACHE_LAST_ONLY),
-            Ok(ResolvedCachePolicy::LastOnly)
+            Ok((ResolvedCachePolicy::LastOnly, DenseCachePolicy::None))
         );
         assert_eq!(
             ResolvedCachePolicy::from_raw(STO_TPCC_RESOLVED_CACHE_READ_THEN_WRITE),
-            Ok(ResolvedCachePolicy::ReadThenWrite)
+            Ok((ResolvedCachePolicy::ReadThenWrite, DenseCachePolicy::None))
         );
         assert_eq!(
             ResolvedCachePolicy::from_raw(STO_TPCC_RESOLVED_CACHE_NONE),
-            Ok(ResolvedCachePolicy::None)
+            Ok((ResolvedCachePolicy::None, DenseCachePolicy::None))
         );
-        assert_eq!(ResolvedCachePolicy::from_raw(4), Err(Status::Fatal));
+        assert_eq!(
+            ResolvedCachePolicy::from_raw(STO_TPCC_RESOLVED_CACHE_DENSE_ITEM),
+            Ok((ResolvedCachePolicy::None, DenseCachePolicy::Item))
+        );
+        assert_eq!(
+            ResolvedCachePolicy::from_raw(STO_TPCC_RESOLVED_CACHE_DENSE_STOCK),
+            Ok((ResolvedCachePolicy::ReadThenWrite, DenseCachePolicy::Stock))
+        );
+        assert_eq!(ResolvedCachePolicy::from_raw(6), Err(Status::Fatal));
+        assert_eq!(dense_item_slot(1), Ok(0));
+        assert_eq!(dense_item_slot(100_000), Ok(99_999));
+        assert_eq!(dense_item_slot(0), Err(Status::Fatal));
+        assert_eq!(dense_item_slot(100_001), Err(Status::Fatal));
     }
 
     #[test]
@@ -7813,6 +8323,469 @@ mod tests {
             aliased_customer_data < 100,
             "{aliased_customer_data} customer and customer-data keys alias"
         );
+    }
+
+    #[cfg(mtree_native_integration)]
+    #[test]
+    fn dense_item_and_stock_paths_warm_mix_and_disable_on_warehouse_mismatch() {
+        unsafe {
+            let config = StoTpccDbConfig {
+                max_threads: NATIVE_TEST_MAX_THREADS,
+                max_key_length: NATIVE_TEST_MAX_KEY_LENGTH,
+                max_items_per_txn: 1_024,
+                max_locks_per_txn: 2_048,
+            };
+            let mut db = ptr::null_mut();
+            assert_eq!(sto_tpcc_db_create(&config, &mut db), Status::Ok.code());
+
+            let mut item = ptr::null_mut();
+            let mut stock = ptr::null_mut();
+            assert_eq!(
+                sto_tpcc_table_create_with_cache_policy(
+                    db,
+                    ptr::null(),
+                    STO_TPCC_RESOLVED_CACHE_DENSE_ITEM,
+                    &mut item,
+                ),
+                Status::Ok.code()
+            );
+            assert_eq!(
+                sto_tpcc_table_create_with_cache_policy(
+                    db,
+                    ptr::null(),
+                    STO_TPCC_RESOLVED_CACHE_DENSE_STOCK,
+                    &mut stock,
+                ),
+                Status::Ok.code()
+            );
+            let item_handle = &*item;
+            let stock_handle = &*stock;
+            assert_eq!(item_handle.cache_policy, ResolvedCachePolicy::None);
+            assert_eq!(item_handle.dense_policy, DenseCachePolicy::Item);
+            assert_eq!(
+                stock_handle.cache_policy,
+                ResolvedCachePolicy::ReadThenWrite
+            );
+            assert_eq!(stock_handle.dense_policy, DenseCachePolicy::Stock);
+            assert_eq!(item_handle.dense_cache.as_ref().unwrap().len(), 100_000);
+            assert_eq!(stock_handle.dense_cache.as_ref().unwrap().len(), 100_000);
+
+            let mut thread = ptr::null_mut();
+            assert_eq!(sto_tpcc_thread_create(db, &mut thread), Status::Ok.code());
+            let item_ids = [1_u32, 2, 3, 4];
+            let item_values = [
+                item_fixture(1.25),
+                item_fixture(2.5),
+                item_fixture(3.75),
+                item_fixture(5.0),
+            ];
+            let stock_values = [
+                stock_fixture(30),
+                stock_fixture(15),
+                stock_fixture(25),
+                stock_fixture(40),
+            ];
+            assert_eq!(sto_tpcc_txn_begin(thread), Status::Ok.code());
+            for index in 0..item_ids.len() {
+                let item_key = item_ids[index].to_be_bytes();
+                assert_eq!(
+                    sto_tpcc_insert(
+                        thread,
+                        item,
+                        item_key.as_ptr(),
+                        item_key.len(),
+                        item_values[index].as_ptr(),
+                        item_values[index].len(),
+                    ),
+                    Status::Ok.code()
+                );
+                for warehouse_id in [1_i32, 2] {
+                    let mut stock_key = [0_u8; 8];
+                    stock_key[..4].copy_from_slice(&warehouse_id.to_be_bytes());
+                    stock_key[4..].copy_from_slice(&item_key);
+                    assert_eq!(
+                        sto_tpcc_insert(
+                            thread,
+                            stock,
+                            stock_key.as_ptr(),
+                            stock_key.len(),
+                            stock_values[index].as_ptr(),
+                            stock_values[index].len(),
+                        ),
+                        Status::Ok.code()
+                    );
+                }
+            }
+            assert_eq!(sto_tpcc_txn_commit(thread), Status::Ok.code());
+            assert_eq!(
+                sto_tpcc_table_seal_directory_structure(item),
+                Status::Ok.code()
+            );
+            assert_eq!(
+                sto_tpcc_table_seal_directory_structure(stock),
+                Status::Ok.code()
+            );
+
+            (*thread).resolved_cache = ResolvedCache::default();
+            reset_cache_slot_calls();
+            assert_eq!(sto_tpcc_txn_begin(thread), Status::Ok.code());
+            assert_eq!(
+                &new_order_read_items(&mut *thread, item_handle, &item_ids[..2]).unwrap()[..2],
+                &[1.25, 2.5]
+            );
+            new_order_modify_stocks(&mut *thread, stock_handle, 1, &item_ids[..2], &[1, 1])
+                .unwrap();
+            assert_eq!(sto_tpcc_txn_abort(thread), Status::Ok.code());
+
+            let item_cache = item_handle.dense_cache.as_ref().unwrap();
+            let stock_cache = stock_handle.dense_cache.as_ref().unwrap();
+            for item_id in &item_ids[..2] {
+                assert!(item_cache
+                    .get(dense_item_slot(*item_id).unwrap())
+                    .unwrap()
+                    .is_some());
+                assert!(stock_cache
+                    .get(dense_item_slot(*item_id).unwrap())
+                    .unwrap()
+                    .is_some());
+            }
+            assert!(item_cache
+                .get(dense_item_slot(3).unwrap())
+                .unwrap()
+                .is_none());
+            assert!(stock_cache
+                .get(dense_item_slot(3).unwrap())
+                .unwrap()
+                .is_none());
+
+            let mixed_items = [item_ids[0], item_ids[2], item_ids[1], item_ids[0]];
+            assert_eq!(sto_tpcc_txn_begin(thread), Status::Ok.code());
+            assert_eq!(
+                &new_order_read_items(&mut *thread, item_handle, &mixed_items).unwrap()[..4],
+                &[1.25, 3.75, 2.5, 1.25]
+            );
+            let mut recent = StockLevelItemSet::new();
+            assert_eq!(recent.insert(item_ids[0]), Ok(true));
+            assert_eq!(recent.insert(item_ids[2]), Ok(true));
+            assert_eq!(recent.insert(item_ids[1]), Ok(true));
+            assert_eq!(
+                stock_level_count_low_stock(&mut *thread, stock_handle, 1, &recent, 20),
+                Ok(1)
+            );
+            assert_eq!(stock_level_cache_partition(), (2, 1));
+            assert_eq!(sto_tpcc_txn_commit(thread), Status::Ok.code());
+
+            assert!(item_cache
+                .get(dense_item_slot(3).unwrap())
+                .unwrap()
+                .is_some());
+            assert!(stock_cache
+                .get(dense_item_slot(3).unwrap())
+                .unwrap()
+                .is_some());
+            assert_eq!(
+                stock_handle
+                    .dense_stock_warehouse_id
+                    .load(Ordering::Acquire),
+                1
+            );
+            assert_eq!(cache_slot_calls(), 0);
+            assert!((*thread)
+                .resolved_cache
+                .entries
+                .iter()
+                .all(|entry| entry.record.is_none()));
+            assert_eq!((*thread).resolved_cache.last_slot, None);
+
+            let mixed_stocks = [item_ids[0], item_ids[3], item_ids[1], item_ids[0]];
+            assert_eq!(sto_tpcc_txn_begin(thread), Status::Ok.code());
+            new_order_modify_stocks(&mut *thread, stock_handle, 1, &mixed_stocks, &[3, 1, 2, 4])
+                .unwrap();
+            assert_eq!(sto_tpcc_txn_commit(thread), Status::Ok.code());
+
+            assert_eq!(sto_tpcc_txn_begin(thread), Status::Ok.code());
+            for (item_id, expected_quantity) in [(1_u32, 23_i16), (2, 13), (4, 39)] {
+                let resolved = stock_cache
+                    .get(dense_item_slot(item_id).unwrap())
+                    .unwrap()
+                    .unwrap();
+                let mut observed = None;
+                stock_handle
+                    .state
+                    .table
+                    .visit_get_resolved_bytes(
+                        active_transaction(&mut (*thread).active).unwrap(),
+                        resolved,
+                        |current| {
+                            observed = current
+                                .map(|bytes| i16::from_ne_bytes(bytes[..2].try_into().unwrap()));
+                        },
+                    )
+                    .unwrap();
+                assert_eq!(observed, Some(expected_quantity));
+            }
+            assert_eq!(sto_tpcc_txn_commit(thread), Status::Ok.code());
+
+            let mut other_warehouse = StockLevelItemSet::new();
+            assert_eq!(other_warehouse.insert(1), Ok(true));
+            assert_eq!(other_warehouse.insert(2), Ok(true));
+            assert_eq!(sto_tpcc_txn_begin(thread), Status::Ok.code());
+            assert_eq!(
+                stock_level_count_low_stock(&mut *thread, stock_handle, 2, &other_warehouse, 20,),
+                Ok(1)
+            );
+            assert_eq!(stock_level_cache_partition(), (0, 2));
+            assert_eq!(sto_tpcc_txn_commit(thread), Status::Ok.code());
+            assert_eq!(
+                stock_handle
+                    .dense_stock_warehouse_id
+                    .load(Ordering::Acquire),
+                -1
+            );
+
+            assert_eq!(sto_tpcc_txn_begin(thread), Status::Ok.code());
+            assert_eq!(
+                stock_level_count_low_stock(&mut *thread, stock_handle, 1, &other_warehouse, 20,),
+                Ok(1)
+            );
+            assert_eq!(stock_level_cache_partition(), (0, 2));
+            assert_eq!(sto_tpcc_txn_commit(thread), Status::Ok.code());
+            assert_eq!(cache_slot_calls(), 0);
+            assert!((*thread)
+                .resolved_cache
+                .entries
+                .iter()
+                .all(|entry| entry.record.is_none()));
+            assert_eq!((*thread).resolved_cache.last_slot, None);
+
+            assert_eq!(sto_tpcc_thread_destroy(thread), Status::Ok.code());
+            assert_eq!(sto_tpcc_table_destroy(item), Status::Ok.code());
+            assert_eq!(sto_tpcc_table_destroy(stock), Status::Ok.code());
+            assert_eq!(sto_tpcc_db_destroy(db), Status::Ok.code());
+        }
+    }
+
+    #[cfg(mtree_native_integration)]
+    #[test]
+    fn new_order_stock_tokens_drive_stock_level_hit_and_compact_miss_paths() {
+        unsafe {
+            let config = StoTpccDbConfig {
+                max_threads: NATIVE_TEST_MAX_THREADS,
+                max_key_length: NATIVE_TEST_MAX_KEY_LENGTH,
+                max_items_per_txn: 1_024,
+                max_locks_per_txn: 2_048,
+            };
+            let mut db = ptr::null_mut();
+            assert_eq!(sto_tpcc_db_create(&config, &mut db), Status::Ok.code());
+
+            let mut stock = ptr::null_mut();
+            assert_eq!(
+                sto_tpcc_table_create_with_cache_policy(
+                    db,
+                    ptr::null(),
+                    STO_TPCC_RESOLVED_CACHE_FULL,
+                    &mut stock,
+                ),
+                Status::Ok.code()
+            );
+            let stock_handle = &*stock;
+            let stock_table = &stock_handle.state.table;
+            let mut thread = ptr::null_mut();
+            assert_eq!(sto_tpcc_thread_create(db, &mut thread), Status::Ok.code());
+
+            let warehouse_id = 1_i32;
+            let mut item_ids = [0_u32; 4];
+            let mut item_slots = [usize::MAX; 4];
+            let mut item_count = 0_usize;
+            for item_id in 1_u32..=100_000 {
+                let mut key = [0_u8; 8];
+                key[..4].copy_from_slice(&warehouse_id.to_be_bytes());
+                key[4..].copy_from_slice(&item_id.to_be_bytes());
+                let slot = ResolvedCache::slot(stock_table, &key);
+                if item_slots[..item_count].contains(&slot) {
+                    continue;
+                }
+                item_ids[item_count] = item_id;
+                item_slots[item_count] = slot;
+                item_count += 1;
+                if item_count == item_ids.len() {
+                    break;
+                }
+            }
+            assert_eq!(item_count, item_ids.len());
+            let values = [
+                stock_fixture(5),
+                stock_fixture(15),
+                stock_fixture(25),
+                vec![0_u8],
+            ];
+            assert_eq!(sto_tpcc_txn_begin(thread), Status::Ok.code());
+            for (item_id, value) in item_ids.into_iter().zip(&values) {
+                let mut key = [0_u8; 8];
+                key[..4].copy_from_slice(&warehouse_id.to_be_bytes());
+                key[4..].copy_from_slice(&item_id.to_be_bytes());
+                assert_eq!(
+                    sto_tpcc_insert(
+                        thread,
+                        stock,
+                        key.as_ptr(),
+                        key.len(),
+                        value.as_ptr(),
+                        value.len(),
+                    ),
+                    Status::Ok.code()
+                );
+            }
+            assert_eq!(sto_tpcc_txn_commit(thread), Status::Ok.code());
+            assert_eq!(
+                sto_tpcc_table_seal_directory_structure(stock),
+                Status::Ok.code()
+            );
+
+            // NewOrder mints and retains each exact stock token before the
+            // attempt finishes. Aborting the values does not invalidate those
+            // stable identities.
+            (*thread).resolved_cache = ResolvedCache::default();
+            assert_eq!(sto_tpcc_txn_begin(thread), Status::Ok.code());
+            new_order_modify_stocks(&mut *thread, &*stock, warehouse_id, &item_ids[..2], &[1, 1])
+                .unwrap();
+            for item_id in &item_ids[..2] {
+                let mut key = [0_u8; 8];
+                key[..4].copy_from_slice(&warehouse_id.to_be_bytes());
+                key[4..].copy_from_slice(&item_id.to_be_bytes());
+                assert!((*thread)
+                    .resolved_cache
+                    .matching(stock_table, &key)
+                    .is_some());
+            }
+            assert_eq!(sto_tpcc_txn_abort(thread), Status::Ok.code());
+
+            let mut recent = StockLevelItemSet::new();
+            assert_eq!(recent.insert(item_ids[0]), Ok(true));
+            assert_eq!(recent.insert(item_ids[1]), Ok(true));
+            assert_eq!(sto_tpcc_txn_begin(thread), Status::Ok.code());
+            assert_eq!(
+                stock_level_count_low_stock(&mut *thread, &*stock, warehouse_id, &recent, 20),
+                Ok(2)
+            );
+            assert_eq!(stock_level_cache_partition(), (2, 0));
+            assert_eq!(sto_tpcc_txn_commit(thread), Status::Ok.code());
+
+            // An empty cache produces one compact all-miss batch. Every
+            // returned token is remembered, making the next attempt all-hit.
+            (*thread).resolved_cache = ResolvedCache::default();
+            let mut three = StockLevelItemSet::new();
+            for item_id in &item_ids[..3] {
+                assert_eq!(three.insert(*item_id), Ok(true));
+            }
+            assert_eq!(sto_tpcc_txn_begin(thread), Status::Ok.code());
+            assert_eq!(
+                stock_level_count_low_stock(&mut *thread, &*stock, warehouse_id, &three, 20),
+                Ok(2)
+            );
+            assert_eq!(stock_level_cache_partition(), (0, 3));
+            assert_eq!(sto_tpcc_txn_commit(thread), Status::Ok.code());
+
+            assert_eq!(sto_tpcc_txn_begin(thread), Status::Ok.code());
+            assert_eq!(
+                stock_level_count_low_stock(&mut *thread, &*stock, warehouse_id, &three, 20),
+                Ok(2)
+            );
+            assert_eq!(stock_level_cache_partition(), (3, 0));
+            assert_eq!(sto_tpcc_txn_commit(thread), Status::Ok.code());
+
+            // Evict only item 2. The next attempt must use two exact tokens
+            // and one compact miss, then restore item 2's resolution.
+            let mut second_key = [0_u8; 8];
+            second_key[..4].copy_from_slice(&warehouse_id.to_be_bytes());
+            second_key[4..].copy_from_slice(&item_ids[1].to_be_bytes());
+            let second_slot = ResolvedCache::slot(stock_table, &second_key);
+            (&mut (*thread).resolved_cache.entries)[second_slot] = ResolvedCacheEntry::default();
+            if (*thread).resolved_cache.last_slot == Some(second_slot) {
+                (*thread).resolved_cache.last_slot = None;
+            }
+            assert_eq!(sto_tpcc_txn_begin(thread), Status::Ok.code());
+            assert_eq!(
+                stock_level_count_low_stock(&mut *thread, &*stock, warehouse_id, &three, 20),
+                Ok(2)
+            );
+            assert_eq!(stock_level_cache_partition(), (2, 1));
+            assert!((*thread)
+                .resolved_cache
+                .matching(stock_table, &second_key)
+                .is_some());
+            assert_eq!(sto_tpcc_txn_commit(thread), Status::Ok.code());
+
+            // Item 1 is cached and item 4 is a compact miss. Its malformed
+            // row must still be reported at original input index 1.
+            let mut fourth_key = [0_u8; 8];
+            fourth_key[..4].copy_from_slice(&warehouse_id.to_be_bytes());
+            fourth_key[4..].copy_from_slice(&item_ids[3].to_be_bytes());
+            let fourth_slot = ResolvedCache::slot(stock_table, &fourth_key);
+            (&mut (*thread).resolved_cache.entries)[fourth_slot] = ResolvedCacheEntry::default();
+            if (*thread).resolved_cache.last_slot == Some(fourth_slot) {
+                (*thread).resolved_cache.last_slot = None;
+            }
+            let mut malformed = StockLevelItemSet::new();
+            assert_eq!(malformed.insert(item_ids[0]), Ok(true));
+            assert_eq!(malformed.insert(item_ids[3]), Ok(true));
+            assert_eq!(sto_tpcc_txn_begin(thread), Status::Ok.code());
+            assert_eq!(
+                stock_level_count_low_stock(&mut *thread, &*stock, warehouse_id, &malformed, 20,),
+                Err(Status::Retry)
+            );
+            assert_eq!(stock_level_cache_partition(), (1, 1));
+            let diagnostic = LAST_ERROR.with(|slot| {
+                let error = slot.borrow();
+                String::from_utf8(error.as_bytes().to_vec()).unwrap()
+            });
+            assert_eq!(
+                diagnostic,
+                "StockLevel stock batch: row 1 has a truncated quantity"
+            );
+            assert_eq!(sto_tpcc_txn_abort(thread), Status::Ok.code());
+
+            // Misses still run before hits. Tombstone the cached first row,
+            // force the malformed second row through the miss batch, and
+            // verify reduction restores the original batch's row-0 error
+            // precedence after both records entered the OCC read set.
+            let mut first_key = [0_u8; 8];
+            first_key[..4].copy_from_slice(&warehouse_id.to_be_bytes());
+            first_key[4..].copy_from_slice(&item_ids[0].to_be_bytes());
+            assert!((*thread)
+                .resolved_cache
+                .matching(stock_table, &first_key)
+                .is_some());
+            assert_eq!(sto_tpcc_txn_begin(thread), Status::Ok.code());
+            assert_eq!(
+                sto_tpcc_remove(thread, stock, first_key.as_ptr(), first_key.len()),
+                Status::Ok.code()
+            );
+            assert_eq!(sto_tpcc_txn_commit(thread), Status::Ok.code());
+            (&mut (*thread).resolved_cache.entries)[fourth_slot] = ResolvedCacheEntry::default();
+            if (*thread).resolved_cache.last_slot == Some(fourth_slot) {
+                (*thread).resolved_cache.last_slot = None;
+            }
+            assert_eq!(sto_tpcc_txn_begin(thread), Status::Ok.code());
+            assert_eq!(
+                stock_level_count_low_stock(&mut *thread, &*stock, warehouse_id, &malformed, 20,),
+                Err(Status::Retry)
+            );
+            assert_eq!(stock_level_cache_partition(), (1, 1));
+            let diagnostic = LAST_ERROR.with(|slot| {
+                let error = slot.borrow();
+                String::from_utf8(error.as_bytes().to_vec()).unwrap()
+            });
+            assert_eq!(
+                diagnostic,
+                "StockLevel stock batch: required row 0 is missing"
+            );
+            assert_eq!(sto_tpcc_txn_abort(thread), Status::Ok.code());
+
+            assert_eq!(sto_tpcc_thread_destroy(thread), Status::Ok.code());
+            assert_eq!(sto_tpcc_table_destroy(stock), Status::Ok.code());
+            assert_eq!(sto_tpcc_db_destroy(db), Status::Ok.code());
+        }
     }
 
     #[test]

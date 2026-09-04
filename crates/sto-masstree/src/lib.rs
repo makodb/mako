@@ -29,7 +29,7 @@ use std::{
     fmt,
     ops::Deref,
     sync::{
-        atomic::{AtomicU64, AtomicU8, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
         Arc, OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard, TryLockError,
     },
 };
@@ -61,13 +61,13 @@ use sto_core::{
     DirectValidationContext, DirectValidationItem, Entry, ErasedLockUse, ExecutionCheckContext,
     FinishContext, FinishDisposition, FinishItem, InstallContext, InstallItem, InvalidUse,
     ItemBatchControl, ItemBatchOutcome, LockClass, LockDisposition, LockIdentity, LockNamespaceId,
-    LockRequest, NoPredicate, ObjectId, ObservationOrder, ObservationRef, OccVersion, OpacityToken,
-    PredicateContext, PreflightContext, PreflightFreeReadCapability,
+    LockRequest, NoPredicate, ObjectId, ObservationOrder, ObservationRef, OccCommitId, OccVersion,
+    OpacityToken, OwnerId, PredicateContext, PreflightContext, PreflightFreeReadCapability,
     PreflightFreeValidationContext, PreflightItem, PrepareError, RegisteredResource,
     RegistrationError, ReleaseContext, ResourceClass, Runtime, RuntimeId,
     TerminalReadBatchCapability, TerminalReadOpen, TerminalReadReady, TerminalReadTransaction,
     Transaction, TransactionLock, TransactionalResource, UniqueItemKeyIndex, UniqueItemKeys,
-    ValidationContext,
+    Unsupported, ValidationContext,
 };
 #[cfg(not(test))]
 use sto_core::{FailurePhase, PoisonInfo};
@@ -810,9 +810,11 @@ impl TableConfig {
 
     /// Enables the trusted direct-table scan generation protocol.
     ///
-    /// Every committed record publication then performs one table-local atomic
-    /// increment. Leave this disabled for tables that never use the trusted
-    /// range-scan API so their point writes pay no global counter cost.
+    /// A transaction that commits one or more record publications advances the
+    /// table-local atomic generation once. Directory publications advance it
+    /// separately during transaction execution. Leave this disabled for tables
+    /// that never use the trusted range-scan API so their point writes pay no
+    /// global counter cost.
     pub const fn with_trusted_scan_value_generation(mut self, enabled: bool) -> Self {
         self.trusted_scan_value_generation = enabled;
         self
@@ -1159,6 +1161,75 @@ pub struct ResolvedRecord {
     record_id: RecordId,
 }
 
+/// Dense shared storage for stable record identities from one table.
+///
+/// This cache is intended for integrations that have a bounded, direct
+/// logical-key domain such as a TPC-C item ID. Each slot starts empty and may
+/// be bound exactly once. It stores no value or OCC state: every use of a
+/// returned [`ResolvedRecord`] still performs the normal transactional record
+/// observation and validation.
+///
+/// The cache retains a table handle so a published record identity cannot
+/// outlive the registry that minted it. Callers must use the same logical
+/// slot for the same table key. A conflicting second identity is rejected and
+/// never overwrites the first.
+#[doc(hidden)]
+pub struct DenseResolvedCache {
+    table: Table,
+    record_ids: Box<[AtomicU64]>,
+}
+
+impl DenseResolvedCache {
+    /// Returns the number of exact logical-key slots.
+    pub fn len(&self) -> usize {
+        self.record_ids.len()
+    }
+
+    /// Returns whether this cache has no logical-key slots.
+    pub fn is_empty(&self) -> bool {
+        self.record_ids.is_empty()
+    }
+
+    /// Loads one cached identity.
+    ///
+    /// An index outside the configured domain fails with
+    /// [`CapacityError::KeyLimit`].
+    #[inline(always)]
+    pub fn get(&self, index: usize) -> Result<Option<ResolvedRecord>, AccessError> {
+        let slot = self.record_ids.get(index).ok_or(CapacityError::KeyLimit)?;
+        let raw = slot.load(Ordering::Acquire);
+        Ok(RecordId::new(raw).map(|record_id| self.table.mint_resolved(record_id)))
+    }
+
+    /// Publishes one exact identity without replacing an existing binding.
+    ///
+    /// Repeating the same binding is idempotent. A token from another runtime
+    /// or table is rejected before touching the slot. A different token for an
+    /// occupied slot fails with [`InvalidUse::IllegalItemState`] and leaves the
+    /// original identity intact.
+    #[inline]
+    pub fn remember(&self, index: usize, resolved: ResolvedRecord) -> Result<(), AccessError> {
+        let record_id = self.table.validate_resolved(resolved)?;
+        let slot = self.record_ids.get(index).ok_or(CapacityError::KeyLimit)?;
+        match slot.compare_exchange(0, record_id.get(), Ordering::Release, Ordering::Acquire) {
+            Ok(_) => Ok(()),
+            Err(existing) if existing == record_id.get() => Ok(()),
+            Err(_) => Err(InvalidUse::IllegalItemState.into()),
+        }
+    }
+}
+
+impl fmt::Debug for DenseResolvedCache {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DenseResolvedCache")
+            .field("runtime_id", &self.table.record_resource.runtime_id())
+            .field("object_id", &self.table.object_id())
+            .field("len", &self.len())
+            .finish_non_exhaustive()
+    }
+}
+
 /// Result of copying one transactional point value into caller-owned storage.
 ///
 /// Missing values and insufficient output capacity never modify the supplied
@@ -1281,6 +1352,8 @@ impl Table {
             LockClass::new(RECORD_LOCK_CLASS_VALUE).expect("the record lock class is nonzero");
 
         let registry = Registry::new(config, object.runtime_id(), namespace, record_lock_class)?;
+        let scan_publication_owners =
+            scan_publication_owners(runtime, config.trusted_scan_value_generation)?;
         let shared = Arc::new(TableShared {
             directory,
             registry,
@@ -1292,6 +1365,7 @@ impl Table {
             record_lock_class,
             directory_generation: AtomicU64::new(0),
             scan_generation: AtomicU64::new(0),
+            scan_publication_owners,
         });
 
         let record_class = ResourceClass::new(RECORD_RESOURCE_CLASS_VALUE)
@@ -2078,12 +2152,70 @@ impl Table {
         self.record_resource.object_id()
     }
 
+    /// Allocates an exact-index cache for stable identities minted by this
+    /// table.
+    ///
+    /// The cache owns eight atomic bytes per slot and retains a clone of the
+    /// table. Slots are empty until [`DenseResolvedCache::remember`] publishes
+    /// an identity.
+    #[doc(hidden)]
+    pub fn dense_resolved_cache(
+        &self,
+        slot_count: usize,
+    ) -> Result<DenseResolvedCache, CapacityError> {
+        let mut record_ids = Vec::new();
+        record_ids
+            .try_reserve_exact(slot_count)
+            .map_err(|_| CapacityError::BufferLimit)?;
+        record_ids.resize_with(slot_count, || AtomicU64::new(0));
+        Ok(DenseResolvedCache {
+            table: self.clone(),
+            record_ids: record_ids.into_boxed_slice(),
+        })
+    }
+
     pub fn health(&self) -> TableHealth {
         self.shared().health()
     }
 
     pub fn usage(&self) -> TableUsage {
         self.shared().registry.usage()
+    }
+
+    /// Permanently prevents this table from adding physical directory keys.
+    ///
+    /// Existing records remain readable and mutable, including physical
+    /// tombstones that a later transaction resurrects. Once this call returns
+    /// successfully, a point miss fails with [`Unsupported::Capability`]
+    /// before reserving a record ID. Range scans also stop taking the Rust
+    /// structural read lock because no later directory publication is possible;
+    /// native RCU admission and all STO observation and validation remain.
+    ///
+    /// This administrative operation waits for an admitted structural scan or
+    /// publisher to leave the Rust gate. Calls after the first successful seal
+    /// are idempotent.
+    pub fn seal_directory_structure(&self) -> Result<(), AccessError> {
+        let shared = self.shared();
+        shared.ensure_healthy()?;
+        if shared.structural.is_sealed() {
+            return Ok(());
+        }
+
+        let structural = shared
+            .structural
+            .write()
+            .inspect_err(|error| shared.note_access_error(error))?;
+        if shared.structural.is_sealed() {
+            drop(structural);
+            return Ok(());
+        }
+        shared
+            .directory
+            .seal_structure()
+            .inspect_err(|error| shared.note_access_error(error))?;
+        shared.structural.mark_sealed();
+        drop(structural);
+        Ok(())
     }
 
     #[inline]
@@ -2477,6 +2609,26 @@ impl Table {
         mut visit: impl for<'value> FnMut(usize, Option<&'value [u8]>),
         lookup_batch: impl FnOnce(&mut PointReadBatch) -> Result<(), AccessError>,
     ) -> Result<usize, AccessError> {
+        self.visit_fixed_resolving_bytes_inner(
+            txn,
+            worker,
+            keys,
+            batch,
+            |index, current, _resolved| visit(index, current),
+            lookup_batch,
+        )
+    }
+
+    #[inline]
+    fn visit_fixed_resolving_bytes_inner<const KEY_LENGTH: usize>(
+        &self,
+        txn: &mut Transaction<'_, Active>,
+        worker: Option<&Worker>,
+        keys: &[[u8; KEY_LENGTH]],
+        batch: &mut PointReadBatch,
+        mut visit: impl for<'value> FnMut(usize, Option<&'value [u8]>, ResolvedRecord),
+        lookup_batch: impl FnOnce(&mut PointReadBatch) -> Result<(), AccessError>,
+    ) -> Result<usize, AccessError> {
         if keys.is_empty() {
             batch.clear();
             return Ok(0);
@@ -2519,7 +2671,14 @@ impl Table {
                             let record_id = record_ids[index]
                                 .expect("the all-hit unique batch contains a record ID");
                             let access = shared.resolve_directory_access(record_id)?;
-                            visit_fixed_bytes_value(adapter, entry, access, index, &mut visit)
+                            visit_fixed_bytes_value(
+                                adapter,
+                                entry,
+                                access,
+                                index,
+                                self.mint_resolved(record_id),
+                                &mut visit,
+                            )
                         })? {
                             return Ok(());
                         }
@@ -2557,7 +2716,14 @@ impl Table {
                         Ok((TableKey::Record(record_id), access))
                     },
                     |entry, access| {
-                        visit_fixed_bytes_value(adapter, entry, access, index, &mut visit)
+                        visit_fixed_bytes_value(
+                            adapter,
+                            entry,
+                            access,
+                            index,
+                            self.mint_resolved(access.record_id),
+                            &mut visit,
+                        )
                     },
                 )?;
             }
@@ -2693,6 +2859,29 @@ impl Table {
         ) -> Result<PointMutation, AccessError>,
         lookup_batch: impl FnOnce(&mut PointReadBatch) -> Result<(), AccessError>,
     ) -> Result<usize, AccessError> {
+        self.modify_fixed_resolving_visit_inner::<CAPTURE_VALUES, KEY_LENGTH>(
+            txn,
+            worker,
+            keys,
+            batch,
+            |index, current, _resolved| modify(index, current),
+            lookup_batch,
+        )
+    }
+
+    fn modify_fixed_resolving_visit_inner<const CAPTURE_VALUES: bool, const KEY_LENGTH: usize>(
+        &self,
+        txn: &mut Transaction<'_, Active>,
+        worker: Option<&Worker>,
+        keys: &[[u8; KEY_LENGTH]],
+        batch: &mut PointReadBatch,
+        mut modify: impl for<'value> FnMut(
+            usize,
+            Option<&'value Value>,
+            ResolvedRecord,
+        ) -> Result<PointMutation, AccessError>,
+        lookup_batch: impl FnOnce(&mut PointReadBatch) -> Result<(), AccessError>,
+    ) -> Result<usize, AccessError> {
         if keys.is_empty() {
             batch.clear();
             return Ok(0);
@@ -2787,6 +2976,7 @@ impl Table {
                                 entry,
                                 access,
                                 index,
+                                self.mint_resolved(record_id),
                                 &mut modify,
                                 values,
                             )
@@ -2835,6 +3025,7 @@ impl Table {
                             entry,
                             access,
                             index,
+                            self.mint_resolved(access.record_id),
                             &mut modify,
                             &mut batch.values,
                         )
@@ -4038,6 +4229,41 @@ impl Table {
         })
     }
 
+    fn prepare_hinted_fixed_lookup<const KEY_LENGTH: usize>(
+        &self,
+        keys: &[[u8; KEY_LENGTH]],
+        hints: &[Option<ResolvedRecord>],
+        missing_keys: &[[u8; KEY_LENGTH]],
+        missing_positions: &[usize],
+        batch: &mut PointReadBatch,
+    ) -> Result<(), AccessError> {
+        if hints.len() != keys.len() || missing_keys.len() != missing_positions.len() {
+            return Err(InvalidUse::IllegalItemState.into());
+        }
+
+        let mut next_missing = 0;
+        for (index, (key, hint)) in keys.iter().zip(hints).enumerate() {
+            match hint {
+                Some(resolved) => batch
+                    .record_ids
+                    .push(Some(self.validate_resolved(*resolved)?)),
+                None => {
+                    if missing_positions.get(next_missing) != Some(&index)
+                        || missing_keys.get(next_missing) != Some(key)
+                    {
+                        return Err(InvalidUse::IllegalItemState.into());
+                    }
+                    batch.record_ids.push(None);
+                    next_missing += 1;
+                }
+            }
+        }
+        if next_missing != missing_keys.len() {
+            return Err(InvalidUse::IllegalItemState.into());
+        }
+        Ok(())
+    }
+
     #[cfg(not(test))]
     #[inline]
     fn lookup_in_read_scope<'session>(
@@ -4105,6 +4331,63 @@ impl Table {
         // processing when any result may need lookup/intern fallback. The
         // one-shot fixed call owns and closes its native scope internally.
         if used_existing_scope && batch.record_ids.iter().any(Option::is_none) {
+            self.close_read_scope(read_scope)?;
+        }
+        Ok(())
+    }
+
+    #[cfg(not(test))]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the native lookup needs the original batch, validated hints, and caller-owned compact miss slices"
+    )]
+    fn lookup_fixed_hinted_in_read_scope<'session, const KEY_LENGTH: usize>(
+        &'session self,
+        worker: &'session Worker,
+        read_scope: &mut Option<NativeReadScope<'session, 'session>>,
+        keys: &[[u8; KEY_LENGTH]],
+        hints: &[Option<ResolvedRecord>],
+        missing_keys: &[[u8; KEY_LENGTH]],
+        missing_positions: &[usize],
+        batch: &mut PointReadBatch,
+    ) -> Result<(), AccessError> {
+        self.prepare_hinted_fixed_lookup(keys, hints, missing_keys, missing_positions, batch)?;
+        if missing_keys.is_empty() {
+            return Ok(());
+        }
+
+        let shared = self.shared();
+        shared.ensure_healthy()?;
+        let used_existing_scope = read_scope.is_some();
+        if let Some(read_scope) = read_scope.as_mut() {
+            read_scope
+                .get_fixed(missing_keys, &mut batch.directory_results)
+                .map_err(map_masstree_error)
+                .inspect_err(|error| shared.note_access_error(error))?;
+        } else {
+            let Directory::Native(directory) = &shared.directory;
+            directory
+                .tree
+                .get_fixed(worker, missing_keys, &mut batch.directory_results)
+                .map_err(map_masstree_error)
+                .inspect_err(|error| shared.note_access_error(error))?;
+        }
+        if batch.directory_results.len() != missing_positions.len() {
+            return Err(table_fault(
+                "hinted fixed point lookup returned the wrong result count",
+            ));
+        }
+        for (&index, result) in missing_positions.iter().zip(&batch.directory_results) {
+            batch.record_ids[index] = result.record_id();
+        }
+        // A preexisting scalar scope must close before the ordinary fallback
+        // interns any physical tombstone for a directory miss. A one-shot
+        // fixed lookup owns and closes its native scope internally.
+        if used_existing_scope
+            && missing_positions
+                .iter()
+                .any(|&index| batch.record_ids[index].is_none())
+        {
             self.close_read_scope(read_scope)?;
         }
         Ok(())
@@ -4181,6 +4464,23 @@ impl Table {
         Self::with_directory(
             runtime,
             Directory::Memory(MemoryDirectory::with_first_miss_barrier(barrier)),
+            config,
+        )
+        .expect("test table registration must succeed")
+    }
+
+    #[cfg(test)]
+    fn new_memory_with_candidate_reservation_pause(
+        runtime: &Arc<Runtime>,
+        config: TableConfig,
+        reserved: Arc<std::sync::Barrier>,
+        resume: Arc<std::sync::Barrier>,
+    ) -> Self {
+        Self::with_directory(
+            runtime,
+            Directory::Memory(MemoryDirectory::with_candidate_reservation_pause(
+                reserved, resume,
+            )),
             config,
         )
         .expect("test table registration must succeed")
@@ -4391,6 +4691,136 @@ impl<'session, 'context> PointSession<'session, 'context> {
         }
     }
 
+    /// Visits fixed-width keys as operation-scoped bytes and returns each
+    /// key's stable record identity through the same callback.
+    ///
+    /// This has the ordering, duplicate, miss, failure, and transactional
+    /// observation semantics of [`Self::visit_fixed_bytes`]. The byte borrow
+    /// cannot escape its callback, while the owned [`ResolvedRecord`] may be
+    /// retained and reused with this table after the callback returns. A
+    /// logical miss also supplies its stable tombstone identity.
+    #[inline]
+    pub fn visit_fixed_resolving_bytes<const KEY_LENGTH: usize>(
+        &mut self,
+        keys: &[[u8; KEY_LENGTH]],
+        batch: &mut PointReadBatch,
+        visit: impl for<'value> FnMut(usize, Option<&'value [u8]>, ResolvedRecord),
+    ) -> Result<usize, AccessError> {
+        #[cfg(not(test))]
+        {
+            let table = self.table;
+            let worker = self.worker;
+            let read_scope = &mut self.read_scope;
+            table.visit_fixed_resolving_bytes_inner(
+                &mut *self.transaction,
+                Some(worker),
+                keys,
+                batch,
+                visit,
+                |batch| table.lookup_fixed_in_read_scope(worker, read_scope, keys, batch),
+            )
+        }
+        #[cfg(test)]
+        {
+            let table = self.table;
+            table.visit_fixed_resolving_bytes_inner(
+                &mut *self.transaction,
+                Some(self.worker),
+                keys,
+                batch,
+                visit,
+                |batch| {
+                    for key in keys {
+                        batch.push_record_id(table.shared().lookup(None, key)?);
+                    }
+                    Ok(())
+                },
+            )
+        }
+    }
+
+    /// Visits a mixed batch of cached identities and unresolved fixed keys.
+    ///
+    /// `hints` must contain exactly one entry per key. A present hint is the
+    /// authoritative record for that position and skips Masstree. Every absent
+    /// hint must appear once in `missing_keys` and `missing_positions`. The
+    /// positions must be strictly ascending and each compact key must equal
+    /// its original key. These caller-owned compact arrays permit one native
+    /// fixed lookup without allocating. All records are then visited once in
+    /// original input order. Present hints and the compact mapping are checked
+    /// before native lookup or the first callback. The existing unique-item
+    /// batch is used when possible; duplicate identities retain the scalar
+    /// fallback's sequential read-your-writes behavior.
+    ///
+    /// A same-table hint is authoritative and cannot be checked against its
+    /// key without performing the directory lookup this API exists to skip.
+    /// The caller must therefore preserve an exact key-to-token mapping.
+    ///
+    /// The callback receives the stable identity used for each position, so a
+    /// caller may fill empty cache slots after resolution. As with
+    /// [`Self::visit_fixed_resolving_bytes`], a logical directory miss is
+    /// interned as a stable tombstone before its callback.
+    #[doc(hidden)]
+    #[inline]
+    pub fn visit_fixed_hinted_bytes<const KEY_LENGTH: usize>(
+        &mut self,
+        keys: &[[u8; KEY_LENGTH]],
+        hints: &[Option<ResolvedRecord>],
+        missing_keys: &[[u8; KEY_LENGTH]],
+        missing_positions: &[usize],
+        batch: &mut PointReadBatch,
+        visit: impl for<'value> FnMut(usize, Option<&'value [u8]>, ResolvedRecord),
+    ) -> Result<usize, AccessError> {
+        #[cfg(not(test))]
+        {
+            let table = self.table;
+            let worker = self.worker;
+            let read_scope = &mut self.read_scope;
+            table.visit_fixed_resolving_bytes_inner(
+                &mut *self.transaction,
+                Some(worker),
+                keys,
+                batch,
+                visit,
+                |batch| {
+                    table.lookup_fixed_hinted_in_read_scope(
+                        worker,
+                        read_scope,
+                        keys,
+                        hints,
+                        missing_keys,
+                        missing_positions,
+                        batch,
+                    )
+                },
+            )
+        }
+        #[cfg(test)]
+        {
+            let table = self.table;
+            table.visit_fixed_resolving_bytes_inner(
+                &mut *self.transaction,
+                Some(self.worker),
+                keys,
+                batch,
+                visit,
+                |batch| {
+                    table.prepare_hinted_fixed_lookup(
+                        keys,
+                        hints,
+                        missing_keys,
+                        missing_positions,
+                        batch,
+                    )?;
+                    for (&original_index, key) in missing_positions.iter().zip(missing_keys) {
+                        batch.record_ids[original_index] = table.shared().lookup(None, key)?;
+                    }
+                    Ok(())
+                },
+            )
+        }
+    }
+
     /// Reads and optionally mutates a contiguous batch of fixed-width keys.
     ///
     /// `modify` runs once per key in input order with that key's current
@@ -4489,6 +4919,135 @@ impl<'session, 'context> PointSession<'session, 'context> {
                 |batch| {
                     for key in keys {
                         batch.push_record_id(table.shared().lookup(None, key)?);
+                    }
+                    Ok(())
+                },
+            )
+        }
+    }
+
+    /// Reads and optionally mutates a fixed-width key batch while returning
+    /// each key's stable record identity to the mutation callback.
+    ///
+    /// This is the resolving counterpart to [`Self::modify_fixed_visit`]. It
+    /// preserves input order and sequential read-your-writes behavior for
+    /// duplicate keys. The owned [`ResolvedRecord`] may be retained after the
+    /// borrowed value is released and reused only with the table that minted
+    /// it.
+    #[inline]
+    pub fn modify_fixed_resolving_visit<const KEY_LENGTH: usize>(
+        &mut self,
+        keys: &[[u8; KEY_LENGTH]],
+        batch: &mut PointReadBatch,
+        mut modify: impl for<'value> FnMut(
+            usize,
+            Option<&'value Value>,
+            ResolvedRecord,
+        ) -> PointMutation,
+    ) -> Result<usize, AccessError> {
+        #[cfg(not(test))]
+        {
+            let table = self.table;
+            let worker = self.worker;
+            let read_scope = &mut self.read_scope;
+            table.modify_fixed_resolving_visit_inner::<false, KEY_LENGTH>(
+                &mut *self.transaction,
+                Some(worker),
+                keys,
+                batch,
+                |index, current, resolved| Ok(modify(index, current, resolved)),
+                |batch| table.lookup_fixed_in_read_scope(worker, read_scope, keys, batch),
+            )
+        }
+        #[cfg(test)]
+        {
+            let table = self.table;
+            table.modify_fixed_resolving_visit_inner::<false, KEY_LENGTH>(
+                &mut *self.transaction,
+                Some(self.worker),
+                keys,
+                batch,
+                |index, current, resolved| Ok(modify(index, current, resolved)),
+                |batch| {
+                    for key in keys {
+                        batch.push_record_id(table.shared().lookup(None, key)?);
+                    }
+                    Ok(())
+                },
+            )
+        }
+    }
+
+    /// Reads and optionally mutates a mixed batch of cached identities and
+    /// unresolved fixed keys.
+    ///
+    /// This is the mutation counterpart to [`Self::visit_fixed_hinted_bytes`].
+    /// It validates every present hint first, resolves all absent hints in one
+    /// compact native lookup, and invokes `modify` once per input position in
+    /// original order. Duplicate records use the sequential fallback, so a
+    /// later callback observes an earlier staged mutation. The returned token
+    /// is suitable for filling an empty exact cache slot.
+    ///
+    /// As on the read counterpart, the caller must preserve an exact mapping
+    /// between every present same-table hint and its key.
+    #[doc(hidden)]
+    #[inline]
+    pub fn modify_fixed_hinted_visit<const KEY_LENGTH: usize>(
+        &mut self,
+        keys: &[[u8; KEY_LENGTH]],
+        hints: &[Option<ResolvedRecord>],
+        missing_keys: &[[u8; KEY_LENGTH]],
+        missing_positions: &[usize],
+        batch: &mut PointReadBatch,
+        mut modify: impl for<'value> FnMut(
+            usize,
+            Option<&'value Value>,
+            ResolvedRecord,
+        ) -> PointMutation,
+    ) -> Result<usize, AccessError> {
+        #[cfg(not(test))]
+        {
+            let table = self.table;
+            let worker = self.worker;
+            let read_scope = &mut self.read_scope;
+            table.modify_fixed_resolving_visit_inner::<false, KEY_LENGTH>(
+                &mut *self.transaction,
+                Some(worker),
+                keys,
+                batch,
+                |index, current, resolved| Ok(modify(index, current, resolved)),
+                |batch| {
+                    table.lookup_fixed_hinted_in_read_scope(
+                        worker,
+                        read_scope,
+                        keys,
+                        hints,
+                        missing_keys,
+                        missing_positions,
+                        batch,
+                    )
+                },
+            )
+        }
+        #[cfg(test)]
+        {
+            let table = self.table;
+            table.modify_fixed_resolving_visit_inner::<false, KEY_LENGTH>(
+                &mut *self.transaction,
+                Some(self.worker),
+                keys,
+                batch,
+                |index, current, resolved| Ok(modify(index, current, resolved)),
+                |batch| {
+                    table.prepare_hinted_fixed_lookup(
+                        keys,
+                        hints,
+                        missing_keys,
+                        missing_positions,
+                        batch,
+                    )?;
+                    for (&original_index, key) in missing_positions.iter().zip(missing_keys) {
+                        batch.record_ids[original_index] = table.shared().lookup(None, key)?;
                     }
                     Ok(())
                 },
@@ -4994,6 +5553,39 @@ enum RecordTokenMode {
     DirectRecordPointer,
 }
 
+// Runtime owner IDs are exclusive to one attached worker at a time. Keeping
+// each owner's last committed publication on its own cache line lets one
+// transaction invalidate trusted scans once per table without adding a new
+// writer-writer false-sharing point.
+#[repr(align(64))]
+struct ScanPublicationOwner {
+    last_commit_id: AtomicU64,
+}
+
+impl ScanPublicationOwner {
+    const fn new() -> Self {
+        Self {
+            last_commit_id: AtomicU64::new(0),
+        }
+    }
+}
+
+fn scan_publication_owners(
+    runtime: &Runtime,
+    enabled: bool,
+) -> Result<Box<[ScanPublicationOwner]>, RegistrationError> {
+    if !enabled {
+        return Ok(Box::new([]));
+    }
+    let owner_count = runtime.config().max_workers();
+    let mut owners = Vec::new();
+    owners
+        .try_reserve_exact(owner_count)
+        .map_err(|_| RegistrationError::Capacity(CapacityError::BufferLimit))?;
+    owners.resize_with(owner_count, ScanPublicationOwner::new);
+    Ok(owners.into_boxed_slice())
+}
+
 struct TableShared {
     directory: Directory,
     registry: Registry,
@@ -5004,11 +5596,15 @@ struct TableShared {
     namespace: LockNamespaceId,
     record_lock_class: LockClass,
     directory_generation: AtomicU64,
-    // Opted-in directory changes and every completed committed-state
-    // publication advance this sequence. Trusted scans sandwich all untracked
-    // row snapshots with it and retain the observed value in one scan-role
-    // STO item.
+    // Opted-in directory changes and each transaction that commits record
+    // publications advance this sequence. Trusted scans sandwich all untracked
+    // row snapshots with it and retain the observed value in one scan-role STO
+    // item.
     scan_generation: AtomicU64,
+    // A commit ID never repeats within this table's runtime. An owner-local
+    // match therefore proves that this transaction already performed its
+    // table-wide committed-publication invalidation.
+    scan_publication_owners: Box<[ScanPublicationOwner]>,
 }
 
 impl TableShared {
@@ -5025,6 +5621,33 @@ impl TableShared {
             self.poison();
             panic!("sto-masstree scan generation exhausted");
         }
+    }
+
+    #[inline(always)]
+    fn advance_scan_generation_for_commit(&self, owner: OwnerId, commit_id: OccCommitId) {
+        if !self.registry.config.trusted_scan_value_generation {
+            return;
+        }
+        let Some(publication) = self.scan_publication_owners.get(owner.get() as usize) else {
+            self.poison();
+            panic!("sto-masstree scan publication owner exceeds the table runtime");
+        };
+        let commit_id = commit_id.get();
+        if publication.last_commit_id.load(Ordering::Relaxed) == commit_id {
+            return;
+        }
+
+        // Core acquires every transaction lock before install begins. This
+        // bump therefore precedes the first readable value from this commit:
+        // an older scan observes the change, while a newer scan encounters a
+        // held record version until the complete install pass has finished.
+        self.advance_scan_generation();
+        // Only the worker owning this slot can publish its commit ID. This is
+        // a deduplication token, not the scan synchronization edge; the AcqRel
+        // generation increment above supplies that edge.
+        publication
+            .last_commit_id
+            .store(commit_id, Ordering::Relaxed);
     }
 
     #[inline(always)]
@@ -5080,10 +5703,13 @@ impl TableShared {
 
     fn intern_missing(&self, worker: Option<&Worker>, key: &[u8]) -> Result<RecordId, AccessError> {
         self.ensure_healthy()?;
-        let (candidate, directory_token) = self
+        self.structural.ensure_unsealed()?;
+        let (mut candidate, directory_token) = self
             .registry
             .reserve_candidate_with_mode(key, self.record_token_mode)
             .inspect_err(|error| self.note_access_error(error))?;
+        #[cfg(test)]
+        self.directory.pause_after_candidate_reservation();
         let structural = match self.structural.try_write() {
             Ok(guard) => guard,
             Err(error) => {
@@ -5094,6 +5720,14 @@ impl TableShared {
                 return Err(error);
             }
         };
+        if let Err(error) = self.structural.ensure_unsealed() {
+            let cleanup = self
+                .registry
+                .prove_unpublished(&candidate)
+                .inspect_err(|cleanup| self.note_access_error(cleanup));
+            drop(structural);
+            return cleanup.and(Err(error));
+        }
 
         // Advance while exclusive structural admission is held and before
         // native publication can become visible to ungated point lookups. A
@@ -5113,7 +5747,7 @@ impl TableShared {
                     return Err(table_fault("inserted winner differs from candidate"));
                 }
                 self.registry
-                    .mark_published(&candidate)
+                    .mark_published(&mut candidate)
                     .inspect_err(|error| self.note_access_error(error))?;
                 Ok(winner)
             }
@@ -5123,7 +5757,7 @@ impl TableShared {
                     .inspect_err(|error| self.note_access_error(error))?;
                 Ok(winner)
             }
-            Err(error) => self.handle_insert_error(&candidate, error),
+            Err(error) => self.handle_insert_error(&mut candidate, error),
         };
         drop(structural);
         resolved
@@ -5148,6 +5782,7 @@ impl TableShared {
                 .count()
         );
         self.ensure_healthy()?;
+        self.structural.ensure_unsealed()?;
         let scratch = &mut batch.fixed_inserts;
         debug_assert!(scratch.candidates.is_empty());
         scratch.prepare(missing_count)?;
@@ -5244,6 +5879,11 @@ impl TableShared {
                 return cleanup.and(Err(error));
             }
         };
+        if let Err(error) = self.cleanup_fixed_candidates_if_sealed(&scratch.candidates) {
+            scratch.clear();
+            drop(structural);
+            return Err(error);
+        }
 
         // One conservative generation change covers every publication in this
         // structurally exclusive native batch. A scan either prevented this
@@ -5280,11 +5920,12 @@ impl TableShared {
         let mut inserted_before_error = false;
         let mut unknown_publication = false;
         for index in 0..scratch.candidates.len() {
-            let candidate = &scratch.candidates[index];
             let directory_token = scratch.directory_tokens[index];
+            let position = scratch.positions[index];
             let (publication, winner) = scratch.results[index]
                 .classification(directory_token)
                 .expect("the fixed insertion result was validated above");
+            let candidate = &mut scratch.candidates[index];
             let transition = match publication {
                 PublicationDisposition::CandidateInserted => {
                     if native_result.is_err() {
@@ -5293,13 +5934,13 @@ impl TableShared {
                     if winner != Some(directory_token) {
                         Err(table_fault("inserted winner differs from candidate"))
                     } else {
-                        batch.record_ids[scratch.positions[index]] = winner;
+                        batch.record_ids[position] = winner;
                         self.registry.mark_published(candidate)
                     }
                 }
                 PublicationDisposition::CandidateProvenUnpublished => {
                     if let Some(winner) = winner {
-                        batch.record_ids[scratch.positions[index]] = Some(winner);
+                        batch.record_ids[position] = Some(winner);
                     }
                     self.registry.prove_unpublished(candidate)
                 }
@@ -5362,7 +6003,6 @@ impl TableShared {
         Ok(())
     }
 
-    #[cfg(not(test))]
     fn prove_fixed_candidates_unpublished(
         &self,
         candidates: &[Candidate],
@@ -5380,6 +6020,18 @@ impl TableShared {
             Some(error) => Err(error),
             None => Ok(()),
         }
+    }
+
+    fn cleanup_fixed_candidates_if_sealed(
+        &self,
+        candidates: &[Candidate],
+    ) -> Result<(), AccessError> {
+        let seal_error = match self.structural.ensure_unsealed() {
+            Ok(()) => return Ok(()),
+            Err(error) => error,
+        };
+        self.prove_fixed_candidates_unpublished(candidates)
+            .and(Err(seal_error))
     }
 
     #[cfg(not(test))]
@@ -5402,7 +6054,7 @@ impl TableShared {
     #[cfg(not(test))]
     fn handle_insert_error(
         &self,
-        candidate: &Candidate,
+        candidate: &mut Candidate,
         error: MasstreeInsertError,
     ) -> Result<RecordId, AccessError> {
         match error.publication() {
@@ -5437,7 +6089,7 @@ impl TableShared {
     #[cfg(test)]
     fn handle_insert_error(
         &self,
-        _candidate: &Candidate,
+        _candidate: &mut Candidate,
         error: MemoryInsertError,
     ) -> Result<RecordId, AccessError> {
         match error {}
@@ -5551,17 +6203,43 @@ impl TableShared {
             })
     }
 
-    fn try_scan_structure(&self) -> Result<RwLockReadGuard<'_, ()>, AccessError> {
+    fn try_scan_structure(&self) -> Result<Option<RwLockReadGuard<'_, ()>>, AccessError> {
         self.structural.try_read()
     }
 }
 
 #[derive(Default)]
 struct StructuralGate {
+    sealed: AtomicBool,
     lock: RwLock<()>,
 }
 
 impl StructuralGate {
+    #[inline(always)]
+    fn is_sealed(&self) -> bool {
+        self.sealed.load(Ordering::Acquire)
+    }
+
+    #[inline(always)]
+    fn ensure_unsealed(&self) -> Result<(), AccessError> {
+        if self.is_sealed() {
+            Err(directory_structure_sealed())
+        } else {
+            Ok(())
+        }
+    }
+
+    #[inline(always)]
+    fn mark_sealed(&self) {
+        self.sealed.store(true, Ordering::Release);
+    }
+
+    fn write(&self) -> Result<RwLockWriteGuard<'_, ()>, AccessError> {
+        self.lock
+            .write()
+            .map_err(|_| table_fault("Masstree structural gate is poisoned"))
+    }
+
     fn try_write(&self) -> Result<RwLockWriteGuard<'_, ()>, AccessError> {
         match self.lock.try_write() {
             Ok(guard) => Ok(guard),
@@ -5572,9 +6250,19 @@ impl StructuralGate {
         }
     }
 
-    fn try_read(&self) -> Result<RwLockReadGuard<'_, ()>, AccessError> {
+    fn try_read(&self) -> Result<Option<RwLockReadGuard<'_, ()>>, AccessError> {
+        if self.is_sealed() {
+            return Ok(None);
+        }
         match self.lock.try_read() {
-            Ok(guard) => Ok(guard),
+            Ok(guard) => {
+                if self.is_sealed() {
+                    drop(guard);
+                    Ok(None)
+                } else {
+                    Ok(Some(guard))
+                }
+            }
             Err(TryLockError::WouldBlock) => Err(Conflict::HiddenLockBusy.into()),
             Err(TryLockError::Poisoned(_)) => {
                 Err(table_fault("Masstree structural gate is poisoned"))
@@ -5591,6 +6279,25 @@ enum Directory {
 }
 
 impl Directory {
+    fn seal_structure(&self) -> Result<(), AccessError> {
+        match self {
+            #[cfg(not(test))]
+            Self::Native(directory) => directory.seal_structure(),
+            #[cfg(test)]
+            Self::Memory(directory) => {
+                directory.seal_structure();
+                Ok(())
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn pause_after_candidate_reservation(&self) {
+        match self {
+            Self::Memory(directory) => directory.pause_after_candidate_reservation(),
+        }
+    }
+
     #[inline]
     fn get(&self, _worker: Option<&Worker>, key: &[u8]) -> Result<Option<RecordId>, AccessError> {
         match self {
@@ -5697,6 +6404,10 @@ struct NativeDirectory {
 
 #[cfg(not(test))]
 impl NativeDirectory {
+    fn seal_structure(&self) -> Result<(), AccessError> {
+        self.tree.seal_structure().map_err(map_masstree_error)
+    }
+
     #[inline]
     fn get(&self, worker: Option<&Worker>, key: &[u8]) -> Result<Option<RecordId>, AccessError> {
         let worker = worker.ok_or_else(|| table_fault("native worker capability is missing"))?;
@@ -5802,8 +6513,10 @@ impl NativeDirectory {
 struct MemoryDirectory {
     entries: RwLock<std::collections::BTreeMap<Vec<u8>, RecordId>>,
     first_miss_barrier: Option<Arc<std::sync::Barrier>>,
+    candidate_reservation_pause: Option<(Arc<std::sync::Barrier>, Arc<std::sync::Barrier>)>,
     coordinated_misses: AtomicU64,
     point_lookups: AtomicU64,
+    seal_calls: AtomicU64,
 }
 
 #[cfg(test)]
@@ -5812,8 +6525,35 @@ impl MemoryDirectory {
         Self {
             entries: RwLock::new(std::collections::BTreeMap::new()),
             first_miss_barrier: Some(barrier),
+            candidate_reservation_pause: None,
             coordinated_misses: AtomicU64::new(0),
             point_lookups: AtomicU64::new(0),
+            seal_calls: AtomicU64::new(0),
+        }
+    }
+
+    fn with_candidate_reservation_pause(
+        reserved: Arc<std::sync::Barrier>,
+        resume: Arc<std::sync::Barrier>,
+    ) -> Self {
+        Self {
+            entries: RwLock::new(std::collections::BTreeMap::new()),
+            first_miss_barrier: None,
+            candidate_reservation_pause: Some((reserved, resume)),
+            coordinated_misses: AtomicU64::new(0),
+            point_lookups: AtomicU64::new(0),
+            seal_calls: AtomicU64::new(0),
+        }
+    }
+
+    fn seal_structure(&self) {
+        self.seal_calls.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn pause_after_candidate_reservation(&self) {
+        if let Some((reserved, resume)) = &self.candidate_reservation_pause {
+            reserved.wait();
+            resume.wait();
         }
     }
 
@@ -5950,6 +6690,7 @@ fn map_masstree_error(error: MasstreeError) -> AccessError {
         }
         MasstreeError::Native(NativeStatus::OutOfMemory) => CapacityError::BufferLimit.into(),
         MasstreeError::Native(NativeStatus::ThreadLimit) => CapacityError::WorkerLimit.into(),
+        MasstreeError::Native(NativeStatus::StructureSealed) => directory_structure_sealed(),
         MasstreeError::Native(NativeStatus::Poisoned) => AccessError::Poisoned(PoisonInfo::new(
             FailurePhase::Execution,
             "native Masstree runtime is poisoned",
@@ -5964,6 +6705,10 @@ fn map_masstree_error(error: MasstreeError) -> AccessError {
         | MasstreeError::InvalidPublication
         | MasstreeError::InvalidBatch(_) => table_fault("Masstree boundary contract failed"),
     }
+}
+
+fn directory_structure_sealed() -> AccessError {
+    Unsupported::Capability("Masstree directory structure is sealed").into()
 }
 
 fn table_fault(reason: &'static str) -> AccessError {
@@ -6172,11 +6917,13 @@ impl Registry {
             // thread can release its retained-resource reservation.
             self.release_retained(key_bytes);
         })?;
-        transition_slot(access.entry, SLOT_RESERVED, SLOT_READY).inspect_err(|_| {
+        if access.entry.state.load(Ordering::Acquire) != SLOT_RESERVED {
             // No directory operation can observe this candidate before READY,
-            // so this exact transition has sole ownership of the reservation.
+            // so this owner is also the only legal RESERVED-state writer.
             self.release_retained(key_bytes);
-        })?;
+            return Err(table_fault("illegal record registry state transition"));
+        }
+        access.entry.state.store(SLOT_READY, Ordering::Release);
         let directory_token = match record_token_mode {
             RecordTokenMode::RegistryId => record_id,
             RecordTokenMode::DirectRecordPointer => match direct_record::encode(access) {
@@ -6207,9 +6954,9 @@ impl Registry {
     /// Lazy segments are fully initialized before the consumed-ID CAS. A
     /// successful CAS therefore proves exclusive ownership of initialized,
     /// UNALLOCATED slots. No directory token is visible yet, so publishing the
-    /// slots with Release stores is equivalent to the scalar
-    /// UNALLOCATED -> RESERVED -> READY transitions without two locked RMWs per
-    /// candidate.
+    /// slots with Release stores uses the same ownership rule as scalar
+    /// reservation. The scalar path retains RESERVED as a diagnostic state;
+    /// neither path needs a locked state-word RMW.
     fn reserve_candidate_batch_with_mode(
         &self,
         count: usize,
@@ -6410,16 +7157,13 @@ impl Registry {
             }
             RegistryStorage::EagerContiguous(storage) => storage.claim_access(index)?,
         };
-        access
-            .entry
-            .state
-            .compare_exchange(
-                SLOT_UNALLOCATED,
-                SLOT_RESERVED,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            )
-            .map_err(|_| table_fault("record ID registry slot was reused"))?;
+        // The consumed-ID RMW already granted this allocator exclusive
+        // ownership of the slot. A batch may inspect the same frontier, but it
+        // cannot write the slot unless its later consumed-range CAS wins.
+        if access.entry.state.load(Ordering::Acquire) != SLOT_UNALLOCATED {
+            return Err(table_fault("record ID registry slot was reused"));
+        }
+        access.entry.state.store(SLOT_RESERVED, Ordering::Release);
         Ok(access)
     }
 
@@ -6529,9 +7273,17 @@ impl Registry {
         }
     }
 
-    fn mark_published(&self, candidate: &Candidate) -> Result<(), AccessError> {
+    fn mark_published(&self, candidate: &mut Candidate) -> Result<(), AccessError> {
         let entry = self.entry(candidate.id)?;
-        transition_slot(entry, SLOT_READY, SLOT_PUBLISHED)
+        // Candidate is private and non-Clone. Its exclusive borrow represents
+        // the one classifier that holds the table's structural write guard;
+        // concurrent accesses only read the state and accept both READY and
+        // PUBLISHED. Keep the checked load so sequential misuse still fails.
+        if entry.state.load(Ordering::Acquire) != SLOT_READY {
+            return Err(table_fault("illegal record registry state transition"));
+        }
+        entry.state.store(SLOT_PUBLISHED, Ordering::Release);
+        Ok(())
     }
 
     fn prove_unpublished(&self, candidate: &Candidate) -> Result<(), AccessError> {
@@ -7019,6 +7771,10 @@ impl TransactionLock for RecordLockSegment {
         })
     }
 
+    #[allow(
+        unsafe_code,
+        reason = "the retained record-lock segment proves stable inline version identity"
+    )]
     fn release(
         &self,
         guard: &mut Self::Guard,
@@ -7032,23 +7788,32 @@ impl TransactionLock for RecordLockSegment {
             panic!("sto-masstree record lock received a mismatched detached guard");
         }
 
-        let result = match disposition {
-            LockDisposition::Aborted => {
-                guard.detached.release_abort(&record.version).map(|()| None)
+        // SAFETY: core retains this exact Arc<RecordLockSegment> through the
+        // callback. The segment owns a clone of the RegistryArena Arc, whose
+        // record entries live in one boxed slice and are never moved, reused,
+        // or reinitialized. The owner/address checks above bind the unique
+        // held guard to this inline version, so no legal operation can change
+        // its word between the checked load and release store.
+        let result = unsafe {
+            match disposition {
+                LockDisposition::Aborted => guard
+                    .detached
+                    .release_abort_stable_target(&record.version)
+                    .map(|()| None),
+                LockDisposition::Committed {
+                    occ_commit_id: Some(commit_id),
+                } => guard
+                    .detached
+                    .release_commit_stable_target(&record.version, commit_id)
+                    .map(Some),
+                LockDisposition::Committed {
+                    occ_commit_id: None,
+                } => panic!("sto-masstree committed record write has no OCC commit ID"),
+                LockDisposition::Indeterminate { occ_commit_id } => guard
+                    .detached
+                    .release_indeterminate_stable_target(&record.version, occ_commit_id)
+                    .map(Some),
             }
-            LockDisposition::Committed {
-                occ_commit_id: Some(commit_id),
-            } => guard
-                .detached
-                .release_commit(&record.version, commit_id)
-                .map(Some),
-            LockDisposition::Committed {
-                occ_commit_id: None,
-            } => panic!("sto-masstree committed record write has no OCC commit ID"),
-            LockDisposition::Indeterminate { occ_commit_id } => guard
-                .detached
-                .release_indeterminate(&record.version, occ_commit_id)
-                .map(Some),
         };
         if let Err(error) = result {
             panic!("sto-masstree record version release failed: {error}");
@@ -7154,6 +7919,10 @@ impl TransactionLock for TableShared {
         })
     }
 
+    #[allow(
+        unsafe_code,
+        reason = "the retained direct table proves stable cached-record version identity"
+    )]
     fn release(
         &self,
         guard: &mut Self::Guard,
@@ -7167,23 +7936,33 @@ impl TransactionLock for TableShared {
             panic!("sto-masstree direct record lock received a mismatched detached guard");
         }
 
-        let result = match disposition {
-            LockDisposition::Aborted => {
-                guard.detached.release_abort(&record.version).map(|()| None)
+        // SAFETY: core retains this exact TableShared through the ordinary
+        // Arc target or through the direct plan's live TableAdapter item. Its
+        // registry owns append-only boxed arenas whose entries are never moved,
+        // reused, or reinitialized. CachedRecord reborrows the entry under that
+        // registry, and the owner/address checks above bind the unique held
+        // guard to its inline version. No legal operation can change the word
+        // between the checked load and release store.
+        let result = unsafe {
+            match disposition {
+                LockDisposition::Aborted => guard
+                    .detached
+                    .release_abort_stable_target(&record.version)
+                    .map(|()| None),
+                LockDisposition::Committed {
+                    occ_commit_id: Some(commit_id),
+                } => guard
+                    .detached
+                    .release_commit_stable_target(&record.version, commit_id)
+                    .map(Some),
+                LockDisposition::Committed {
+                    occ_commit_id: None,
+                } => panic!("sto-masstree committed direct record write has no OCC commit ID"),
+                LockDisposition::Indeterminate { occ_commit_id } => guard
+                    .detached
+                    .release_indeterminate_stable_target(&record.version, occ_commit_id)
+                    .map(Some),
             }
-            LockDisposition::Committed {
-                occ_commit_id: Some(commit_id),
-            } => guard
-                .detached
-                .release_commit(&record.version, commit_id)
-                .map(Some),
-            LockDisposition::Committed {
-                occ_commit_id: None,
-            } => panic!("sto-masstree committed direct record write has no OCC commit ID"),
-            LockDisposition::Indeterminate { occ_commit_id } => guard
-                .detached
-                .release_indeterminate(&record.version, occ_commit_id)
-                .map(Some),
         };
         if let Err(error) = result {
             panic!("sto-masstree direct record version release failed: {error}");
@@ -7952,7 +8731,15 @@ struct CommittedStatePublication<'state> {
 }
 
 impl CommittedStatePublication<'_> {
-    fn publish(mut self, replacement: &RecordState, old_was_shared: bool) {
+    fn publish(
+        mut self,
+        replacement: &RecordState,
+        old_was_shared: bool,
+        owner: OwnerId,
+        commit_id: OccCommitId,
+    ) {
+        self.table
+            .advance_scan_generation_for_commit(owner, commit_id);
         let final_word = match replacement {
             RecordState::Tombstone => {
                 if old_was_shared {
@@ -8009,7 +8796,6 @@ impl CommittedStatePublication<'_> {
         self.state
             .tail_and_descriptor
             .store(final_word, Ordering::Release);
-        self.table.advance_scan_generation();
         self.completed = true;
     }
 
@@ -8542,6 +9328,7 @@ fn install_direct_record(
     let commit_id = cx
         .occ_commit_id()
         .expect("sto-masstree direct record write has no OCC commit ID");
+    let owner = cx.owner();
     let guard = lock.guard_mut();
     let publication_access = guard
         .access(adapter.table.as_ref(), AdapterPhase::Install)
@@ -8549,7 +9336,7 @@ fn install_direct_record(
     let record = publication_access.record;
     if !guard.is_held()
         || !guard.is_for(*record_id, &record.version)
-        || guard.owner() != cx.owner()
+        || guard.owner() != owner
         || commit_id.to_version() <= guard.before()
     {
         panic!("sto-masstree direct install received the wrong version guard");
@@ -8565,7 +9352,7 @@ fn install_direct_record(
     record
         .state
         .begin_publication(adapter.table.as_ref(), publication_access.stable)
-        .publish(replacement, old_was_shared);
+        .publish(replacement, old_was_shared, owner, commit_id);
 }
 
 impl TableAdapter {
@@ -9494,6 +10281,7 @@ impl TableAdapter {
         let commit_id = cx
             .occ_commit_id()
             .expect("sto-masstree record write has no OCC commit ID");
+        let owner = cx.owner();
         let publication_access = match self.table.record_token_mode {
             RecordTokenMode::RegistryId => {
                 let (lock_segment, guard) = cx
@@ -9507,6 +10295,7 @@ impl TableAdapter {
                 let record = slot_access.record();
                 if !guard.is_held()
                     || !guard.is_for(record_id, &record.version)
+                    || guard.owner() != owner
                     || commit_id.to_version() <= guard.before()
                 {
                     panic!("sto-masstree record install received the wrong version guard");
@@ -9531,6 +10320,7 @@ impl TableAdapter {
                 let record = access.record;
                 if !guard.is_held()
                     || !guard.is_for(record_id, &record.version)
+                    || guard.owner() != owner
                     || commit_id.to_version() <= guard.before()
                 {
                     panic!("sto-masstree direct install received the wrong version guard");
@@ -9556,7 +10346,7 @@ impl TableAdapter {
         record
             .state
             .begin_publication(self.table.as_ref(), publication_access.stable)
-            .publish(replacement, old_was_shared);
+            .publish(replacement, old_was_shared, owner, commit_id);
     }
 
     #[cold]
@@ -9591,9 +10381,10 @@ fn visit_fixed_bytes_value(
     entry: &mut Entry<'_, TableAdapter>,
     access: RecordAccess<'_>,
     index: usize,
-    visit: &mut impl for<'value> FnMut(usize, Option<&'value [u8]>),
+    resolved: ResolvedRecord,
+    visit: &mut impl for<'value> FnMut(usize, Option<&'value [u8]>, ResolvedRecord),
 ) -> Result<(), AccessError> {
-    adapter.visit_resolved_access_bytes(access, entry, |current| visit(index, current))
+    adapter.visit_resolved_access_bytes(access, entry, |current| visit(index, current, resolved))
 }
 
 #[inline(always)]
@@ -9602,16 +10393,18 @@ fn apply_fixed_mutation<const CAPTURE_VALUE: bool>(
     entry: &mut Entry<'_, TableAdapter>,
     access: RecordAccess<'_>,
     index: usize,
+    resolved: ResolvedRecord,
     modify: &mut impl for<'value> FnMut(
         usize,
         Option<&'value Value>,
+        ResolvedRecord,
     ) -> Result<PointMutation, AccessError>,
     values: &mut Vec<Option<Value>>,
 ) -> Result<(), AccessError> {
     let loaded = adapter.prepare_resolved_access(access, entry)?;
     let current = current_state(entry, loaded.as_ref())?;
     let previous = current.value();
-    let mutation = modify(index, previous)?;
+    let mutation = modify(index, previous, resolved)?;
     if CAPTURE_VALUE {
         values.push(previous.cloned());
     }
@@ -11535,7 +12328,7 @@ mod tests {
             Err(AccessError::Fault(_))
         ));
 
-        let published = registry.reserve_candidate(b"a").unwrap();
+        let mut published = registry.reserve_candidate(b"a").unwrap();
         let ready = registry.resolve(published.id).unwrap();
         let RegistryStorage::EagerContiguous(storage) = &registry.storage else {
             panic!("explicit eager configuration must remain contiguous");
@@ -11547,7 +12340,7 @@ mod tests {
         let (with_lock, lock_segment) = registry.resolve_with_segment(published.id).unwrap();
         assert!(std::ptr::eq(ready, with_lock));
         assert!(Arc::ptr_eq(lock_segment, &storage.lock_segments[0]));
-        registry.mark_published(&published).unwrap();
+        registry.mark_published(&mut published).unwrap();
         assert!(std::ptr::eq(ready, registry.resolve(published.id).unwrap()));
 
         let unpublished = registry.reserve_candidate(b"b").unwrap();
@@ -11802,8 +12595,8 @@ mod tests {
             );
         }
 
-        registry.mark_published(&candidates[0]).unwrap();
-        registry.mark_published(&candidates[1]).unwrap();
+        registry.mark_published(&mut candidates[0]).unwrap();
+        registry.mark_published(&mut candidates[1]).unwrap();
         registry.prove_unpublished(&candidates[2]).unwrap();
         registry.prove_unpublished(&candidates[3]).unwrap();
         assert_eq!(
@@ -11838,7 +12631,7 @@ mod tests {
                 .unwrap(),
             CandidateBatchReservation::Reserved
         );
-        for (candidate, token) in candidates.iter().zip(&tokens) {
+        for (candidate, token) in candidates.iter_mut().zip(&tokens) {
             assert!(std::ptr::eq(
                 registry.resolve(candidate.id).unwrap(),
                 registry.resolve_direct(*token).unwrap()
@@ -11926,8 +12719,8 @@ mod tests {
                 .with_max_consumed_record_ids(maximum as u64),
         );
         for _ in 0..(REGISTRY_SEGMENT_SLOTS - 2) {
-            let candidate = registry.reserve_candidate(b"x").unwrap();
-            registry.mark_published(&candidate).unwrap();
+            let mut candidate = registry.reserve_candidate(b"x").unwrap();
+            registry.mark_published(&mut candidate).unwrap();
         }
 
         let mut candidates = Vec::with_capacity(4);
@@ -12119,6 +12912,115 @@ mod tests {
     }
 
     #[test]
+    fn scalar_candidate_rejects_preclaimed_slot_without_overwrite_or_quota_leak() {
+        let registry = isolated_registry(
+            TableConfig::new()
+                .with_max_retained_records(2)
+                .with_max_retained_key_bytes(8)
+                .with_max_consumed_record_ids(2),
+        );
+        let segment = registry.ensure_segment(0).unwrap();
+        let slots = segment.arena.standard_slots();
+        slots[0].state.store(SLOT_PUBLISHED, Ordering::Release);
+
+        assert!(matches!(
+            registry.reserve_candidate(b"used"),
+            Err(AccessError::Fault(_))
+        ));
+        assert_eq!(slots[0].state.load(Ordering::Acquire), SLOT_PUBLISHED);
+        assert_eq!(
+            registry.usage(),
+            TableUsage {
+                retained_records: 0,
+                retained_key_bytes: 0,
+                consumed_record_ids: 1,
+            }
+        );
+
+        let second = registry.reserve_candidate(b"b").unwrap();
+        assert_eq!(second.id.get(), 2);
+        assert_eq!(slots[1].state.load(Ordering::Acquire), SLOT_READY);
+        assert_eq!(
+            registry.usage(),
+            TableUsage {
+                retained_records: 1,
+                retained_key_bytes: 1,
+                consumed_record_ids: 2,
+            }
+        );
+    }
+
+    #[test]
+    fn mixed_scalar_and_batch_reservations_claim_disjoint_ready_slots() {
+        const SCALAR_THREADS: usize = 4;
+        const BATCH_THREADS: usize = 4;
+        const BATCH_SIZE: usize = 3;
+        const THREADS: usize = SCALAR_THREADS + BATCH_THREADS;
+        const TOTAL: usize = SCALAR_THREADS + BATCH_THREADS * BATCH_SIZE;
+
+        let registry = Arc::new(isolated_registry(
+            TableConfig::new()
+                .with_max_retained_records(TOTAL as u64)
+                .with_max_retained_key_bytes(TOTAL as u64)
+                .with_max_consumed_record_ids(TOTAL as u64),
+        ));
+        let barrier = Arc::new(Barrier::new(THREADS));
+        let mut handles = Vec::with_capacity(THREADS);
+        for index in 0..THREADS {
+            let registry = Arc::clone(&registry);
+            let barrier = Arc::clone(&barrier);
+            handles.push(std::thread::spawn(move || {
+                barrier.wait();
+                if index < SCALAR_THREADS {
+                    vec![registry.reserve_candidate(b"s").unwrap()]
+                } else {
+                    let mut candidates = Vec::with_capacity(BATCH_SIZE);
+                    let mut tokens = Vec::with_capacity(BATCH_SIZE);
+                    assert_eq!(
+                        registry
+                            .reserve_candidate_batch_with_mode(
+                                BATCH_SIZE,
+                                1,
+                                RecordTokenMode::RegistryId,
+                                &mut candidates,
+                                &mut tokens,
+                            )
+                            .unwrap(),
+                        CandidateBatchReservation::Reserved
+                    );
+                    candidates
+                }
+            }));
+        }
+
+        let mut candidates = handles
+            .into_iter()
+            .flat_map(|handle| handle.join().unwrap())
+            .collect::<Vec<_>>();
+        candidates.sort_unstable_by_key(|candidate| candidate.id.get());
+        assert_eq!(
+            candidates
+                .iter()
+                .map(|candidate| candidate.id.get())
+                .collect::<Vec<_>>(),
+            (1..=TOTAL as u64).collect::<Vec<_>>()
+        );
+        assert!(candidates.iter().all(|candidate| {
+            registry
+                .entry(candidate.id)
+                .is_ok_and(|entry| entry.state.load(Ordering::Acquire) == SLOT_READY)
+        }));
+        assert_eq!(
+            registry.usage(),
+            TableUsage {
+                retained_records: TOTAL as u64,
+                retained_key_bytes: TOTAL as u64,
+                consumed_record_ids: TOTAL as u64,
+            }
+        );
+    }
+
+    #[test]
     fn unallocated_entries_reject_resolution_and_only_exact_transitions_publish() {
         let registry = isolated_registry(
             TableConfig::new()
@@ -12142,7 +13044,7 @@ mod tests {
         ));
         assert_eq!(entry.state.load(Ordering::Acquire), SLOT_UNALLOCATED);
 
-        let candidate = registry.reserve_candidate(b"record").unwrap();
+        let mut candidate = registry.reserve_candidate(b"record").unwrap();
         assert_eq!(candidate.id, unallocated_id);
         assert_eq!(entry.state.load(Ordering::Acquire), SLOT_READY);
         assert!(std::ptr::eq(
@@ -12155,7 +13057,7 @@ mod tests {
         ));
         assert_eq!(entry.state.load(Ordering::Acquire), SLOT_READY);
 
-        registry.mark_published(&candidate).unwrap();
+        registry.mark_published(&mut candidate).unwrap();
         assert_eq!(entry.state.load(Ordering::Acquire), SLOT_PUBLISHED);
         assert!(matches!(
             registry.prove_unpublished(&candidate),
@@ -12169,6 +13071,33 @@ mod tests {
             Err(AccessError::Fault(_))
         ));
         assert_eq!(slots[1].state.load(Ordering::Acquire), SLOT_UNALLOCATED);
+    }
+
+    #[test]
+    fn second_published_classification_is_rejected_without_state_change() {
+        let registry = isolated_registry(
+            TableConfig::new()
+                .with_max_retained_records(1)
+                .with_max_retained_key_bytes(8)
+                .with_max_consumed_record_ids(1),
+        );
+        let mut candidate = registry.reserve_candidate(b"record").unwrap();
+        registry.mark_published(&mut candidate).unwrap();
+        let usage = registry.usage();
+
+        assert!(matches!(
+            registry.mark_published(&mut candidate),
+            Err(AccessError::Fault(_))
+        ));
+        assert_eq!(
+            registry
+                .entry(candidate.id)
+                .unwrap()
+                .state
+                .load(Ordering::Acquire),
+            SLOT_PUBLISHED
+        );
+        assert_eq!(registry.usage(), usage);
     }
 
     #[test]
@@ -14712,12 +15641,16 @@ mod tests {
         let mut worker = runtime.attach().unwrap();
         let mut record_ids = Vec::new();
         for index in 0_u64..65 {
-            let candidate = table
+            let mut candidate = table
                 .shared()
                 .registry
                 .reserve_candidate(&index.to_le_bytes())
                 .unwrap();
-            table.shared().registry.mark_published(&candidate).unwrap();
+            table
+                .shared()
+                .registry
+                .mark_published(&mut candidate)
+                .unwrap();
             record_ids.push(candidate.id);
         }
         let first = record_ids[0];
@@ -16657,6 +17590,325 @@ mod tests {
     }
 
     #[test]
+    fn sealed_directory_preserves_existing_records_and_rejects_new_keys_without_quota() {
+        let (runtime, table) = runtime_and_table(TableConfig::default());
+        let mut worker = runtime.attach().unwrap();
+        seed(&table, &mut worker, &[(b"live", b"before")]);
+
+        let mut make_tombstone = worker.begin().unwrap();
+        assert_eq!(
+            table
+                .get_inner(&mut make_tombstone, None, b"tombstone")
+                .unwrap(),
+            None
+        );
+        committed(make_tombstone.commit());
+        let sealed_usage = table.usage();
+
+        table.seal_directory_structure().unwrap();
+        assert!(table.shared().structural.is_sealed());
+
+        let mut read = worker.begin().unwrap();
+        assert_eq!(
+            table
+                .get_inner(&mut read, None, b"live")
+                .unwrap()
+                .as_deref(),
+            Some(&b"before"[..])
+        );
+        assert_eq!(
+            table.get_inner(&mut read, None, b"tombstone").unwrap(),
+            None
+        );
+        committed(read.commit());
+
+        let mut update = worker.begin().unwrap();
+        assert_eq!(
+            table
+                .put_inner(&mut update, None, b"live", Value::from(&b"updated"[..]))
+                .unwrap()
+                .as_deref(),
+            Some(&b"before"[..])
+        );
+        committed(update.commit());
+
+        let mut remove = worker.begin().unwrap();
+        assert_eq!(
+            table
+                .remove_inner(&mut remove, None, b"live")
+                .unwrap()
+                .as_deref(),
+            Some(&b"updated"[..])
+        );
+        committed(remove.commit());
+
+        let mut resurrect = worker.begin().unwrap();
+        assert_eq!(
+            table
+                .put_inner(
+                    &mut resurrect,
+                    None,
+                    b"live",
+                    Value::from(&b"resurrected"[..]),
+                )
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            table
+                .put_inner(
+                    &mut resurrect,
+                    None,
+                    b"tombstone",
+                    Value::from(&b"also-live"[..]),
+                )
+                .unwrap(),
+            None
+        );
+        committed(resurrect.commit());
+        assert_eq!(table.usage(), sealed_usage);
+
+        for operation in ["get", "put", "remove"] {
+            let before = table.usage();
+            let mut missing = worker.begin().unwrap();
+            let error = match operation {
+                "get" => table.get_inner(&mut missing, None, b"new").map(|_| ()),
+                "put" => table
+                    .put_inner(&mut missing, None, b"new", Value::from(&b"value"[..]))
+                    .map(|_| ()),
+                "remove" => table.remove_inner(&mut missing, None, b"new").map(|_| ()),
+                _ => unreachable!(),
+            }
+            .unwrap_err();
+            assert_eq!(error, directory_structure_sealed());
+            assert!(missing.is_doomed());
+            missing.abort();
+            assert_eq!(table.usage(), before);
+            assert_eq!(table.health(), TableHealth::Healthy);
+        }
+    }
+
+    #[test]
+    fn concurrent_seals_are_idempotent_and_unsealed_tables_still_grow() {
+        let (runtime, table) = runtime_and_table(TableConfig::default());
+        let mut worker = runtime.attach().unwrap();
+        seed(&table, &mut worker, &[(b"before", b"B")]);
+        seed(&table, &mut worker, &[(b"dynamic", b"D")]);
+        assert_eq!(table.usage().retained_records(), 2);
+
+        std::thread::scope(|scope| {
+            let mut seals = Vec::new();
+            for _ in 0..8 {
+                let table = table.clone();
+                seals.push(scope.spawn(move || table.seal_directory_structure()));
+            }
+            for seal in seals {
+                seal.join().unwrap().unwrap();
+            }
+        });
+        table.seal_directory_structure().unwrap();
+
+        let seal_calls = match &table.shared().directory {
+            Directory::Memory(directory) => directory.seal_calls.load(Ordering::Relaxed),
+        };
+        assert_eq!(seal_calls, 1);
+        assert_eq!(table.health(), TableHealth::Healthy);
+    }
+
+    #[test]
+    fn seal_after_scalar_reservation_proves_candidate_unpublished() {
+        let runtime = Runtime::new(RuntimeConfig::default()).unwrap();
+        let reserved = Arc::new(Barrier::new(2));
+        let resume = Arc::new(Barrier::new(2));
+        let table = Table::new_memory_with_candidate_reservation_pause(
+            &runtime,
+            TableConfig::default(),
+            Arc::clone(&reserved),
+            Arc::clone(&resume),
+        );
+
+        std::thread::scope(|scope| {
+            let runtime = Arc::clone(&runtime);
+            let table_for_miss = table.clone();
+            let miss = scope.spawn(move || {
+                let mut worker = runtime.attach().unwrap();
+                let mut transaction = worker.begin().unwrap();
+                let error = table_for_miss
+                    .get_inner(&mut transaction, None, b"raced")
+                    .unwrap_err();
+                assert!(transaction.is_doomed());
+                transaction.abort();
+                error
+            });
+
+            reserved.wait();
+            table.seal_directory_structure().unwrap();
+            resume.wait();
+            assert_eq!(miss.join().unwrap(), directory_structure_sealed());
+        });
+
+        assert_eq!(
+            table.usage(),
+            TableUsage {
+                retained_records: 0,
+                retained_key_bytes: 0,
+                consumed_record_ids: 1,
+            }
+        );
+        assert_eq!(
+            table
+                .shared()
+                .registry
+                .entry(RecordId::new(1).unwrap())
+                .unwrap()
+                .state
+                .load(Ordering::Acquire),
+            SLOT_PROVEN_UNPUBLISHED
+        );
+        assert_eq!(table.health(), TableHealth::Healthy);
+
+        let consumed = table.usage().consumed_record_ids();
+        let mut worker = runtime.attach().unwrap();
+        let mut ordinary_miss = worker.begin().unwrap();
+        assert_eq!(
+            table.get_inner(&mut ordinary_miss, None, b"later"),
+            Err(directory_structure_sealed())
+        );
+        ordinary_miss.abort();
+        assert_eq!(table.usage().consumed_record_ids(), consumed);
+    }
+
+    #[test]
+    fn sealed_fixed_batch_cleanup_releases_every_retained_candidate() {
+        const COUNT: usize = 4;
+        let (runtime, table) = runtime_and_table(TableConfig::default());
+        let shared = table.shared();
+        let mut candidates = Vec::with_capacity(COUNT);
+        let mut directory_tokens = Vec::with_capacity(COUNT);
+        assert_eq!(
+            shared
+                .registry
+                .reserve_candidate_batch_with_mode(
+                    COUNT,
+                    8,
+                    shared.record_token_mode,
+                    &mut candidates,
+                    &mut directory_tokens,
+                )
+                .unwrap(),
+            CandidateBatchReservation::Reserved
+        );
+
+        let structural = shared.structural.write().unwrap();
+        shared.directory.seal_structure().unwrap();
+        shared.structural.mark_sealed();
+        assert_eq!(
+            shared
+                .cleanup_fixed_candidates_if_sealed(&candidates)
+                .unwrap_err(),
+            directory_structure_sealed()
+        );
+        drop(structural);
+
+        assert_eq!(
+            table.usage(),
+            TableUsage {
+                retained_records: 0,
+                retained_key_bytes: 0,
+                consumed_record_ids: COUNT as u64,
+            }
+        );
+        for candidate in candidates {
+            assert_eq!(
+                shared
+                    .registry
+                    .entry(candidate.id)
+                    .unwrap()
+                    .state
+                    .load(Ordering::Acquire),
+                SLOT_PROVEN_UNPUBLISHED
+            );
+        }
+
+        let consumed = table.usage().consumed_record_ids();
+        let keys = [[0x10; 8], [0x20; 8]];
+        let mut batch = PointReadBatch::with_capacity(keys.len());
+        let mut worker = runtime.attach().unwrap();
+        let mut transaction = worker.begin().unwrap();
+        let mut callbacks = 0;
+        let result = table.modify_fixed_visit_inner::<false, 8>(
+            &mut transaction,
+            None,
+            &keys,
+            &mut batch,
+            |_index, _value| {
+                callbacks += 1;
+                Ok(PointMutation::Keep)
+            },
+            |batch| {
+                for _ in &keys {
+                    batch.push_record_id(None);
+                }
+                Ok(())
+            },
+        );
+        assert_eq!(result, Err(directory_structure_sealed()));
+        assert_eq!(callbacks, 0);
+        assert!(batch.is_empty());
+        transaction.abort();
+        assert_eq!(table.usage().consumed_record_ids(), consumed);
+        assert_eq!(table.health(), TableHealth::Healthy);
+    }
+
+    #[test]
+    fn seal_waits_for_an_admitted_scan_then_scans_skip_the_rust_gate() {
+        let (runtime, table) = runtime_and_table(TableConfig::default());
+        let mut worker = runtime.attach().unwrap();
+        seed(&table, &mut worker, &[(b"a", b"A"), (b"b", b"B")]);
+
+        let admitted_scan = table
+            .shared()
+            .try_scan_structure()
+            .unwrap()
+            .expect("an unsealed scan must hold the structural read lock");
+        let entered = Arc::new(Barrier::new(2));
+        let finished = Arc::new(AtomicBool::new(false));
+        std::thread::scope(|scope| {
+            let table = table.clone();
+            let entered_for_seal = Arc::clone(&entered);
+            let finished_for_seal = Arc::clone(&finished);
+            let seal = scope.spawn(move || {
+                entered_for_seal.wait();
+                table.seal_directory_structure().unwrap();
+                finished_for_seal.store(true, Ordering::Release);
+            });
+            entered.wait();
+            std::thread::yield_now();
+            assert!(!finished.load(Ordering::Acquire));
+            drop(admitted_scan);
+            seal.join().unwrap();
+        });
+        assert!(finished.load(Ordering::Acquire));
+        assert!(table.shared().try_scan_structure().unwrap().is_none());
+
+        let structural_writer = table.shared().structural.write().unwrap();
+        let mut scan = worker.begin().unwrap();
+        assert_eq!(
+            scan_rows(
+                &table,
+                &mut scan,
+                ScanRequest::new(ScanDirection::Forward, 8),
+            ),
+            [
+                (b"a".to_vec(), b"A".to_vec()),
+                (b"b".to_vec(), b"B".to_vec())
+            ]
+        );
+        committed(scan.commit());
+        drop(structural_writer);
+    }
+
+    #[test]
     fn structural_scan_seam_never_blocks_a_miss_publisher() {
         let (runtime, table) = runtime_and_table(TableConfig::default());
         let generation_before = table.shared().directory_generation.load(Ordering::Acquire);
@@ -16764,6 +18016,42 @@ mod tests {
     }
 
     #[test]
+    fn dropping_unclassified_candidate_retains_ready_slot_and_quota() {
+        let registry = isolated_registry(
+            TableConfig::new()
+                .with_max_retained_records(1)
+                .with_max_retained_key_bytes(8)
+                .with_max_consumed_record_ids(2),
+        );
+        let record_id = {
+            let candidate = registry.reserve_candidate(b"held").unwrap();
+            candidate.id
+        };
+
+        assert_eq!(
+            registry
+                .entry(record_id)
+                .unwrap()
+                .state
+                .load(Ordering::Acquire),
+            SLOT_READY
+        );
+        assert_eq!(
+            registry.usage(),
+            TableUsage {
+                retained_records: 1,
+                retained_key_bytes: 4,
+                consumed_record_ids: 1,
+            }
+        );
+        assert!(matches!(
+            registry.reserve_candidate(b"next"),
+            Err(AccessError::Capacity(CapacityError::BufferLimit))
+        ));
+        assert_eq!(registry.usage().consumed_record_ids(), 1);
+    }
+
+    #[test]
     fn ready_and_published_resolution_borrow_the_same_stable_arena_record() {
         let registry = isolated_registry(
             TableConfig::new()
@@ -16771,14 +18059,14 @@ mod tests {
                 .with_max_retained_key_bytes(8)
                 .with_max_consumed_record_ids(1),
         );
-        let candidate = registry.reserve_candidate(b"record").unwrap();
+        let mut candidate = registry.reserve_candidate(b"record").unwrap();
         let ready = registry.resolve(candidate.id).unwrap();
         assert!(std::ptr::eq(
             ready,
             &registry.entry(candidate.id).unwrap().record
         ));
 
-        registry.mark_published(&candidate).unwrap();
+        registry.mark_published(&mut candidate).unwrap();
         let published = registry.resolve(candidate.id).unwrap();
         assert!(std::ptr::eq(ready, published));
         assert_eq!(
@@ -16801,7 +18089,7 @@ mod tests {
                 .with_max_retained_key_bytes(8)
                 .with_max_consumed_record_ids(1),
         ));
-        let candidate = registry.reserve_candidate(b"race").unwrap();
+        let mut candidate = registry.reserve_candidate(b"race").unwrap();
         let record_id = candidate.id;
         let stable_address = registry.resolve(record_id).unwrap() as *const Record as usize;
         let start = Arc::new(Barrier::new(READERS + 1));
@@ -16820,7 +18108,7 @@ mod tests {
             }
 
             start.wait();
-            registry.mark_published(&candidate).unwrap();
+            registry.mark_published(&mut candidate).unwrap();
         });
 
         assert_eq!(
@@ -17055,6 +18343,202 @@ mod tests {
             chunk.resume(),
             DirectoryScanResumeRef::Exclusive(key) if key == b"a"
         ));
+    }
+
+    #[test]
+    fn committed_scan_generation_advances_once_per_transaction_table() {
+        let runtime = Runtime::new(RuntimeConfig::default()).unwrap();
+        let first_table = Table::new_memory_direct(&runtime, trusted_scan_config());
+        let second_table = Table::new_memory_direct(&runtime, trusted_scan_config());
+        let mut worker = runtime.attach().unwrap();
+        seed(
+            &first_table,
+            &mut worker,
+            &[(b"a", b"old-a"), (b"b", b"old-b")],
+        );
+        seed(
+            &second_table,
+            &mut worker,
+            &[(b"c", b"old-c"), (b"d", b"old-d")],
+        );
+        let first_generation_before = first_table.shared().scan_generation.load(Ordering::Acquire);
+        let second_generation_before = second_table
+            .shared()
+            .scan_generation
+            .load(Ordering::Acquire);
+
+        let mut transaction = worker.begin().unwrap();
+        first_table
+            .put_inner(&mut transaction, None, b"a", Value::from(&b"new-a"[..]))
+            .unwrap();
+        first_table
+            .put_inner(&mut transaction, None, b"b", Value::from(&b"new-b"[..]))
+            .unwrap();
+        second_table
+            .put_inner(&mut transaction, None, b"c", Value::from(&b"new-c"[..]))
+            .unwrap();
+        second_table
+            .put_inner(&mut transaction, None, b"d", Value::from(&b"new-d"[..]))
+            .unwrap();
+        committed(transaction.commit());
+
+        assert_eq!(
+            first_table.shared().scan_generation.load(Ordering::Acquire),
+            first_generation_before + 1
+        );
+        assert_eq!(
+            second_table
+                .shared()
+                .scan_generation
+                .load(Ordering::Acquire),
+            second_generation_before + 1
+        );
+    }
+
+    #[test]
+    fn registry_token_commits_batch_scan_generation_per_table() {
+        let runtime = Runtime::new(RuntimeConfig::default()).unwrap();
+        let table = Table::new_memory(&runtime, trusted_scan_config());
+        let mut worker = runtime.attach().unwrap();
+        seed(&table, &mut worker, &[(b"a", b"old-a"), (b"b", b"old-b")]);
+        let generation_before = table.shared().scan_generation.load(Ordering::Acquire);
+
+        let mut transaction = worker.begin().unwrap();
+        table
+            .put_inner(&mut transaction, None, b"a", Value::from(&b"new-a"[..]))
+            .unwrap();
+        table
+            .put_inner(&mut transaction, None, b"b", Value::from(&b"new-b"[..]))
+            .unwrap();
+        committed(transaction.commit());
+
+        assert_eq!(
+            table.shared().scan_generation.load(Ordering::Acquire),
+            generation_before + 1
+        );
+    }
+
+    #[test]
+    fn reused_owner_id_still_advances_each_new_commit() {
+        let runtime = Runtime::new(RuntimeConfig::new().with_max_workers(1)).unwrap();
+        let table = Table::new_memory_direct(&runtime, trusted_scan_config());
+        let mut first_worker = runtime.attach().unwrap();
+        seed(
+            &table,
+            &mut first_worker,
+            &[(b"a", b"old-a"), (b"b", b"old-b")],
+        );
+        let reused_owner = first_worker.owner_id();
+        let first_generation_before = table.shared().scan_generation.load(Ordering::Acquire);
+
+        let mut first_transaction = first_worker.begin().unwrap();
+        table
+            .put_inner(
+                &mut first_transaction,
+                None,
+                b"a",
+                Value::from(&b"first-a"[..]),
+            )
+            .unwrap();
+        table
+            .put_inner(
+                &mut first_transaction,
+                None,
+                b"b",
+                Value::from(&b"first-b"[..]),
+            )
+            .unwrap();
+        committed(first_transaction.commit());
+        assert_eq!(
+            table.shared().scan_generation.load(Ordering::Acquire),
+            first_generation_before + 1
+        );
+        drop(first_worker);
+
+        let mut second_worker = runtime.attach().unwrap();
+        assert_eq!(second_worker.owner_id(), reused_owner);
+        let second_generation_before = table.shared().scan_generation.load(Ordering::Acquire);
+        let mut second_transaction = second_worker.begin().unwrap();
+        table
+            .put_inner(
+                &mut second_transaction,
+                None,
+                b"a",
+                Value::from(&b"second-a"[..]),
+            )
+            .unwrap();
+        table
+            .put_inner(
+                &mut second_transaction,
+                None,
+                b"b",
+                Value::from(&b"second-b"[..]),
+            )
+            .unwrap();
+        committed(second_transaction.commit());
+        assert_eq!(
+            table.shared().scan_generation.load(Ordering::Acquire),
+            second_generation_before + 1
+        );
+    }
+
+    #[test]
+    fn aborted_and_read_only_transactions_do_not_advance_scan_generation() {
+        let runtime = Runtime::new(RuntimeConfig::default()).unwrap();
+        let table = Table::new_memory_direct(&runtime, trusted_scan_config());
+        let mut worker = runtime.attach().unwrap();
+        seed(&table, &mut worker, &[(b"a", b"old-a")]);
+        let generation_before = table.shared().scan_generation.load(Ordering::Acquire);
+
+        let mut read_only = worker.begin().unwrap();
+        assert_eq!(
+            table
+                .get_inner(&mut read_only, None, b"a")
+                .unwrap()
+                .as_deref(),
+            Some(&b"old-a"[..])
+        );
+        committed(read_only.commit());
+        assert_eq!(
+            table.shared().scan_generation.load(Ordering::Acquire),
+            generation_before
+        );
+
+        let mut aborted = worker.begin().unwrap();
+        table
+            .put_inner(&mut aborted, None, b"a", Value::from(&b"new-a"[..]))
+            .unwrap();
+        aborted.abort();
+        assert_eq!(
+            table.shared().scan_generation.load(Ordering::Acquire),
+            generation_before
+        );
+    }
+
+    #[test]
+    fn structural_scan_generation_remains_separate_from_commit_batch() {
+        let runtime = Runtime::new(RuntimeConfig::default()).unwrap();
+        let table = Table::new_memory_direct(&runtime, trusted_scan_config());
+        let mut worker = runtime.attach().unwrap();
+        let generation_before = table.shared().scan_generation.load(Ordering::Acquire);
+
+        let mut transaction = worker.begin().unwrap();
+        table
+            .put_inner(&mut transaction, None, b"a", Value::from(&b"new-a"[..]))
+            .unwrap();
+        table
+            .put_inner(&mut transaction, None, b"b", Value::from(&b"new-b"[..]))
+            .unwrap();
+        assert_eq!(
+            table.shared().scan_generation.load(Ordering::Acquire),
+            generation_before + 2
+        );
+        committed(transaction.commit());
+
+        assert_eq!(
+            table.shared().scan_generation.load(Ordering::Acquire),
+            generation_before + 3
+        );
     }
 
     #[test]

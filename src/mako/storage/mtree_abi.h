@@ -49,7 +49,8 @@ enum {
   MT_ERR_UNSUPPORTED = 14,
   MT_ERR_INCOMPATIBLE_RUNTIME = 15,
   MT_ERR_POISONED = 16,
-  MT_ERR_CLOSED = 17
+  MT_ERR_CLOSED = 17,
+  MT_ERR_STRUCTURE_SEALED = 18
 };
 
 typedef uint64_t mt_feature_set;
@@ -66,6 +67,7 @@ typedef uint64_t mt_feature_set;
 #define MT_FEATURE_SCOPED_STRIDED_POINT_READS (UINT64_C(1) << 10)
 #define MT_FEATURE_STRIDED_POINT_READS (UINT64_C(1) << 11)
 #define MT_FEATURE_SCOPED_RCU (UINT64_C(1) << 12)
+#define MT_FEATURE_STRUCTURE_SEAL (UINT64_C(1) << 13)
 
 typedef uint32_t mt_byte_order;
 enum {
@@ -245,7 +247,9 @@ mt_status mt_runtime_max_threads(const mt_runtime *runtime,
 mt_status mt_runtime_shutdown(mt_runtime *runtime,
                               mt_thread *shutdown_thread) MT_NOEXCEPT;
 
-/* Worker handles are fixed, long-lived, and bound to the attaching OS thread.
+/*
+ * Worker handles are fixed, long-lived, and bound to the attaching OS thread.
+ * There is no native detach or reuse of their core IDs.
  */
 mt_status mt_thread_attach(mt_runtime *runtime, mt_thread **out) MT_NOEXCEPT;
 mt_status mt_thread_quiesce(mt_thread *thread) MT_NOEXCEPT;
@@ -257,6 +261,15 @@ mt_status mt_thread_quiesce(mt_thread *thread) MT_NOEXCEPT;
 mt_status mt_tree_create(mt_runtime *runtime, mt_thread *thread,
                          mt_tree **out) MT_NOEXCEPT;
 mt_status mt_tree_release(mt_tree *tree) MT_NOEXCEPT;
+
+/*
+ * Permanently declares that this tree's key set will no longer grow. The
+ * transition waits for admitted readers, excludes structural writers, and is
+ * idempotent. It needs no worker handle. Point reads and scans remain valid;
+ * every later get-or-insert fails with MT_ERR_STRUCTURE_SEALED before it can
+ * publish its candidate, including when the key already exists.
+ */
+mt_status mt_tree_seal_structure(mt_tree *tree) MT_NOEXCEPT;
 
 /*
  * Keys are binary. A null key pointer is accepted only when key_length is 0;
@@ -419,12 +432,13 @@ mako_mtree_get_or_insert_strided_trusted(
 
 /*
  * Copies one bounded ascending or descending chunk into caller storage.
- * Point reads and scans may proceed concurrently. Each publishes structural
- * read activity in a cacheline-private worker slot rather than updating one
- * shared reader counter. get-or-insert excludes and drains those readers, so a
- * call never overlaps Masstree's plain structural writes. A single scan chunk
- * therefore sees stable native structure; insertion may occur between scan
- * calls.
+ * Point reads and scans may proceed concurrently. Each tree remembers which
+ * worker cores have read it, and each active reader publishes the tree in a
+ * cacheline-private worker slot rather than updating one shared reader
+ * counter. Membership is process-lifetime state; only the transient slot is
+ * cleared. get-or-insert excludes and drains those readers, so a call never
+ * overlaps Masstree's plain structural writes. A single scan chunk therefore
+ * sees stable native structure; insertion may occur between scan calls.
  * `lower` and `upper` are required pointers; use MT_SCAN_BOUND_ABSENT for an
  * unbounded side. `entries`/`key_arena` may be null exactly when their
  * respective capacities are zero. `out` is required.

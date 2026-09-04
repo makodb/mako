@@ -22,6 +22,7 @@
 #   STO_TPCC_PGO_TRAIN_CPU       first allowed CPU by default
 #   STO_TPCC_PGO_TRAIN_SECONDS   60
 #   STO_TPCC_PGO_TRAIN_MIX       45,43,4,4,4
+#   STO_TPCC_PGO_TRAIN_ALLOCATOR_MEMORY  1G
 #   STO_TPCC_PGO_CONFIG          config/mako_sto_tpcc_local.yml
 #   STO_TPCC_PGO_SITE            local_s0
 #   STO_TPCC_PGO_BUILD_JOBS      8
@@ -78,6 +79,27 @@ require_positive() {
   local name=$1
   local value=$2
   [[ "$value" =~ ^[1-9][0-9]*$ ]] || die "$name must be a positive integer: $value"
+}
+
+require_memory_spec() {
+  local name=$1
+  local value=$2
+  local amount
+  local suffix
+  [[ "$value" =~ ^([1-9][0-9]*)([KMG]?)$ ]] || die \
+    "$name must be a positive integer with an optional uppercase K, M, or G suffix: $value"
+  amount=${BASH_REMATCH[1]}
+  suffix=${BASH_REMATCH[2]}
+  "$python_bin" - "$amount" "$suffix" <<'PY' || die "$name exceeds size_t: $value"
+import struct
+import sys
+
+amount = int(sys.argv[1])
+suffix = sys.argv[2]
+multiplier = {"": 1, "K": 1 << 10, "M": 1 << 20, "G": 1 << 30}[suffix]
+maximum = (1 << (8 * struct.calcsize("P"))) - 1
+raise SystemExit(amount > maximum // multiplier)
+PY
 }
 
 extract_llvm_version() {
@@ -197,7 +219,8 @@ validate_profile_runtime_link() {
 validate_training_result() {
   local log=$1
   local output_json=$2
-  "$python_bin" - "$log" "$train_seconds" "$train_mix" >"$output_json" <<'PY'
+  "$python_bin" - "$log" "$train_seconds" "$train_mix" \
+    "$train_allocator_memory" >"$output_json" <<'PY'
 import json
 import pathlib
 import sys
@@ -206,6 +229,7 @@ prefix = "TPCC_BENCH_RESULT "
 path = pathlib.Path(sys.argv[1])
 expected_seconds = int(sys.argv[2])
 configured_mix = [int(value) for value in sys.argv[3].split(",")]
+allocator_memory = sys.argv[4]
 records = [
     line[len(prefix):]
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -250,6 +274,10 @@ for name, weight in zip(mix_names, configured_mix, strict=True):
     if weight > 0 and mix[name] == 0:
         raise SystemExit(f"training committed no {name} transactions")
 
+result["environment_overrides"] = {
+    "MAKO_TPCC_ALLOCATOR_MEMORY": allocator_memory,
+    "MAKO_TPCC_WORKLOAD_MIX": ",".join(str(value) for value in configured_mix),
+}
 json.dump(result, sys.stdout, indent=2, sort_keys=True)
 sys.stdout.write("\n")
 PY
@@ -697,12 +725,14 @@ fi
 train_cpu=${STO_TPCC_PGO_TRAIN_CPU:-$(first_allowed_cpu)}
 train_seconds=${STO_TPCC_PGO_TRAIN_SECONDS:-60}
 train_mix=${STO_TPCC_PGO_TRAIN_MIX:-45,43,4,4,4}
+train_allocator_memory=${STO_TPCC_PGO_TRAIN_ALLOCATOR_MEMORY:-1G}
 train_config=${STO_TPCC_PGO_CONFIG:-$repo_root/config/mako_sto_tpcc_local.yml}
 train_site=${STO_TPCC_PGO_SITE:-local_s0}
 build_jobs=${STO_TPCC_PGO_BUILD_JOBS:-8}
 
 require_unsigned STO_TPCC_PGO_TRAIN_CPU "$train_cpu"
 require_positive STO_TPCC_PGO_TRAIN_SECONDS "$train_seconds"
+require_memory_spec STO_TPCC_PGO_TRAIN_ALLOCATOR_MEMORY "$train_allocator_memory"
 require_positive STO_TPCC_PGO_BUILD_JOBS "$build_jobs"
 [[ -f "$train_config" ]] || die "TPC-C shard config does not exist: $train_config"
 [[ -n "$train_site" ]] || die "STO_TPCC_PGO_SITE must not be empty"
@@ -972,6 +1002,7 @@ fi
   printf 'train_cpu=%s\n' "$train_cpu"
   printf 'train_seconds=%s\n' "$train_seconds"
   printf 'train_mix=%s\n' "$train_mix"
+  printf 'train_allocator_memory=%s\n' "$train_allocator_memory"
   printf 'tpcc_fallback_overrides=all-unset\n'
   printf 'train_config=%s\n' "$train_config"
   printf 'train_site=%s\n' "$train_site"
@@ -1090,8 +1121,8 @@ training_command=(
   --storage-engine rust
 )
 {
-  printf 'environment=MAKO_TPCC_WORKLOAD_MIX=%q LLVM_PROFILE_FILE=%q' \
-    "$train_mix" "$training_profile_pattern"
+  printf 'environment=MAKO_TPCC_ALLOCATOR_MEMORY=%q MAKO_TPCC_WORKLOAD_MIX=%q LLVM_PROFILE_FILE=%q' \
+    "$train_allocator_memory" "$train_mix" "$training_profile_pattern"
   for variable in "${tpcc_fallback_variables[@]}"; do
     printf ' %s=<unset>' "$variable"
   done
@@ -1100,6 +1131,7 @@ training_command=(
   printf '%q ' "${training_command[@]}"
   printf '\n'
 } >"$output/training.log"
+MAKO_TPCC_ALLOCATOR_MEMORY="$train_allocator_memory" \
 MAKO_TPCC_WORKLOAD_MIX="$train_mix" \
 LLVM_PROFILE_FILE="$training_profile_pattern" \
   "${training_command[@]}" 2>&1 |

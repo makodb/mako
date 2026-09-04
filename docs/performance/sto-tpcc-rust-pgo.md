@@ -83,12 +83,14 @@ whitespace. The script never reuses an existing output directory.
 ## Training controls
 
 The default training run pins one worker to the first CPU allowed to the
-process, uses one warehouse, runs for 60 seconds, selects the Rust engine, and
-sets the standard `45,43,4,4,4` TPC-C mix explicitly. Useful overrides are:
+process, uses one warehouse, runs for 60 seconds, selects the Rust engine, sets
+the standard `45,43,4,4,4` TPC-C mix, and gives the benchmark a `1G` allocator.
+Useful overrides are:
 
 - `STO_TPCC_PGO_TRAIN_CPU`
 - `STO_TPCC_PGO_TRAIN_SECONDS`
 - `STO_TPCC_PGO_TRAIN_MIX`
+- `STO_TPCC_PGO_TRAIN_ALLOCATOR_MEMORY`
 - `STO_TPCC_PGO_CONFIG`
 - `STO_TPCC_PGO_SITE`
 - `STO_TPCC_PGO_BUILD_JOBS` (clean mode only)
@@ -97,7 +99,10 @@ sets the standard `45,43,4,4,4` TPC-C mix explicitly. Useful overrides are:
 The training log must contain exactly one valid `TPCC_BENCH_RESULT`: one Rust
 worker, one warehouse, the requested duration, zero aborts, consistent
 attempt/abort totals, mix counters that sum to commits, and at least one commit
-for every transaction type with nonzero configured weight. Raw build-time
+for every transaction type with nonzero configured weight. The builder passes
+the allocator setting through `MAKO_TPCC_ALLOCATOR_MEMORY` and records the
+effective allocator and mix in `provenance.txt`, `training.log`, and the
+`environment_overrides` object in `training-result.json`. Raw build-time
 profiles are kept separate and are never merged into the workload profile.
 
 The builder rejects these diagnostic fallback variables even when they are set
@@ -117,10 +122,10 @@ in `provenance.txt` and `training.log`.
 
 Every run records the Git head, working-tree patch and untracked source files,
 a source-state digest, Rust/Cargo/LLVM versions and executable hashes, the
-training configuration hash, CPU information, commands, logs, ELF notes,
-dynamic dependencies, raw and merged profiles, and final artifact hashes. The
-source, Rust toolchain, and training configuration must remain unchanged
-between generate, train, and profile-use.
+shard-configuration hash, explicit training settings, CPU information,
+commands, logs, ELF notes, dynamic dependencies, raw and merged profiles, and
+final artifact hashes. The source, Rust toolchain, and training configuration
+must remain unchanged between generate, train, and profile-use.
 
 Reuse-native mode additionally verifies and records:
 
@@ -138,174 +143,202 @@ validated native build remains the caller's explicit provenance decision.
 Artifact paths in `/var/tmp` and their SHA-256 values are run-specific evidence,
 not durable repository locations.
 
-## Final one-worker standard-mix result
+## Implementation measured
 
-The final controlled comparison ran on `zoo-002` on 2026-09-01. It used one
-worker, one warehouse, CPU 10, a fixed 2 GHz frequency, disabled boost, and the
-explicit `45,43,4,4,4` NewOrder, Payment, Delivery, OrderStatus, and StockLevel
-mix. The Rust implementation was built with Rust 1.95.0 and LLVM PGO. The
-native graph used Clang 22.1.8.
+### Dense Item and Stock identity caches
 
-The 60-second profile-generate run committed 3,166,318 transactions with zero
-aborts over 60.399 measured seconds, or 52,423.022 transactions/s. Three paired
-five-second trials then produced:
+The TPC-C integration gives the shared Item table and each warehouse-local
+Stock table a dense cache with 100,000 exact slots. Each slot is one
+`AtomicU64` and stores only a stable `ResolvedRecord` identity. It does not
+store row bytes, a lock, or an OCC version. A cache hit skips the Masstree
+directory traversal, then performs the normal STO observation and validation
+against the current record state.
 
-| Engine | Median txn/s | Minimum | Maximum | Median abort % |
-| --- | ---: | ---: | ---: | ---: |
-| C++ STO/Masstree | 47,069.715 | 47,016.582 | 47,281.370 | 0.000 |
-| Rust STO/Masstree with PGO | 45,395.309 | 45,210.856 | 45,450.501 | 0.000 |
+The fused NewOrder path reads Item through this cache and uses it while
+modifying Stock. StockLevel uses it for Stock reads. These paths build compact,
+caller-owned arrays for unresolved positions, resolve those misses in one
+fixed-width native batch, and then visit every input in its original order.
+They do not allocate a miss vector during the transaction. A resolved miss
+publishes its identity into the empty slot with a checked atomic operation.
 
-The median of the three paired Rust/C++ ratios was **96.050840%**. The final
-one-worker gap was **3.949160%**. All six samples had zero aborts, and every
-pair was accepted on its first attempt.
+A Stock cache binds to one positive warehouse ID because its dense index is the
+item ID. If one table handle receives a different warehouse prefix, it
+permanently disables its dense path and resumes ordinary directory resolution.
+The cache is therefore optional for correctness and cannot silently reuse a
+Stock identity for the wrong warehouse.
 
-### Measurement controls
+### Post-load static directories
 
-Each process loaded a fresh database. Engine order alternated across pairs.
-Before every engine sample, the runner waited for a fresh LXD daemon restart
-and then required a stable two-second quiet window. CPU 10 and its SMT sibling,
-CPU 74, had to be at least 95% idle, and no recognized STO, compiler, or `perf`
-job could be active. Every CPU frequency policy was held in userspace mode at
-2 GHz with boost disabled during the comparison, then restored to `schedutil`
-with boost enabled.
+After loader transactions and their synchronization barriers finish, the
+benchmark calls the database's `on_load_complete` hook. The Rust wrapper seals
+the physical directories for `customer`, `customer_name_idx`, `district`,
+`item`, `stock`, `stock_data`, and `warehouse`. Existing records remain
+readable and mutable. New physical keys are rejected, and scans no longer take
+the Rust structural read gate because later directory publication is
+impossible. Tables that grow during TPC-C execution remain open.
 
-All five `MAKO_STO_TPCC_DISABLE_*` fallback variables were explicitly unset
-during PGO and comparison. Each raw comparison record contains only the
-explicit workload mix in `environment_overrides`, confirming that no fallback
-switch reached either engine.
+The final sweep measures this combined implementation, including the earlier
+fused transaction and fixed-batch work. It is not an isolated dense-cache or
+directory-seal ablation, so the results below must not be attributed to one
+change alone.
+
+### Allocator capacity
+
+The benchmark previously fixed its NUMA allocator at `1G` total. At 16 workers
+that gives each worker 64 MiB before huge-page rounding. A 16-worker Rust run
+exhausted one native RCU arena while a Masstree leaf split allocated another
+node. This was a capacity failure, not a throughput result.
+
+The comparison runner now accepts `--allocator-memory` and passes the selected
+`MAKO_TPCC_ALLOCATOR_MEMORY` value to both engines. It records the value in
+every raw sample and as `allocator_memory` in `run.json`. The final sweep uses
+`2G`, which gives 128 MiB per worker at 16 workers before huge-page rounding.
+The benchmark default remains `1G` for callers that do not select a value.
+
+## Current final results
+
+> Measurement status: complete. The values below come from the recorded PGO
+> and guarded comparison artifacts named in the evidence section.
+
+### PGO training
+
+The profile-generate run uses one Rust worker, one warehouse, 60 configured
+seconds, and the explicit `45,43,4,4,4` NewOrder, Payment, Delivery,
+OrderStatus, and StockLevel mix. The builder controls the allocator through
+`STO_TPCC_PGO_TRAIN_ALLOCATOR_MEMORY`, verifies the training result, excludes
+build-time profiles from the merged workload profile, and requires all five
+diagnostic fallback variables to be unset.
+
+- host and date: `zoo-002`, 2026-09-04
+- Git head: `105351016a8d2ae89d560857c32f85f6111df6f3`
+- recorded source state:
+  `3bf56754aa3ae3456318c071e07a483f7ba1cc27d92a5f43862feab327757af8`
+- Rust, LLVM, and native C++ toolchains: Rust 1.95.0, Rust LLVM 22.1.2,
+  and Homebrew Clang 22.1.8
+- training CPU and allocator: CPU 10 and `2G`
+- measured training time: 60.414727 seconds
+- commits, aborts, and throughput: 2,172,465 commits, zero aborts, and
+  35,959.196 txn/s
+
+The profile-use binary uses `target-cpu=native` and must be rebuilt for a host
+with a different processor.
+
+### Guarded sweep configuration
+
+The comparison uses one warehouse per worker, worker counts `1,2,4,8,16`,
+three paired repetitions per count, five measured seconds per process, mix
+`45,43,4,4,4`, schedule seed 4, and allocator `2G`. Physical worker CPUs are
+`10,11,12,13,14,15,16,18,19,20,21,22,23,24,25,26`. The runner also guards
+their SMT siblings. A controller outside the measured worker set holds every
+CPU frequency policy at 2 GHz in userspace mode with boost disabled, then
+restores `schedutil` and boost.
+
+Each process loads a fresh database. The runner shuffles worker-count cells and
+alternates which engine runs first. Before each pair and again between engines,
+it waits for a new LXD restart followed by a two-second quiet window. Every
+selected worker CPU and SMT sibling must be at least 95 percent idle, and no
+recognized benchmark, compiler, or `perf` process may be active.
+
+The benchmark emits timestamped `TPCC_BENCH_MEASURE_START` immediately before
+worker release and `TPCC_BENCH_MEASURE_END` after worker join and elapsed-time
+capture. The runner requires exactly one of each marker and a positive marked
+interval. LXD journal activity inside that interval rejects the complete pair.
+Activity during setup or teardown does not reject a sample.
+
+A process timeout before the start marker rejects the complete pair and uses
+the same bounded retry path as the other guard failures. The runner keeps the
+partial standard output, standard error, and a separate timeout JSON record.
+A timeout after measured work starts is terminal. This distinction prevents a
+slow or failed measured run from being silently retried until it looks fast.
+
+### Throughput
+
+| Workers and warehouses | C++ median txn/s | Rust median txn/s | Paired Rust/C++ median | Paired range | Rust gap |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 47,304.380 | 57,679.565 | 122.017% | 121.873-122.053% | +22.017% |
+| 2 | 97,081.750 | 111,222.685 | 114.548% | 113.746-115.337% | +14.548% |
+| 4 | 196,527.667 | 213,345.496 | 108.557% | 107.424-109.058% | +8.557% |
+| 8 | 356,438.970 | 380,287.488 | 106.691% | 105.264-107.701% | +6.691% |
+| 16 | 788,150.387 | 782,418.546 | 99.059% | 98.971-106.778% | -0.941% |
+
+Each percentage is the median of the three paired Rust/C++ throughput ratios,
+not the ratio of the two throughput medians.
+
+A positive Rust gap means Rust is faster. A negative value means Rust is
+slower. At 16 workers, the implementation is within 0.941 percent of C++ by
+the paired median. This replaces the historical 21.157 percent deficit. Rust
+is faster than C++ at each lower worker count in this sweep.
+
+The runner accepted all 30 samples in 15 pairs and rejected zero pair
+attempts. Pre-launch quiet-window skips do not create a sample. C++ recorded
+22,513,754 attempts, 22,510,198 commits, and 3,556 aborts. Rust recorded
+23,677,698 attempts, 23,675,493 commits, and 2,205 aborts. Every accepted row
+satisfies `attempts = commits + aborts`, and its five transaction counters sum
+to commits. Its recorded environment overrides are exactly
+`MAKO_TPCC_ALLOCATOR_MEMORY=2G` and
+`MAKO_TPCC_WORKLOAD_MIX=45,43,4,4,4`. The accepted measurement intervals must
+have empty LXD journal activity and no recorded competitor. An independent
+post-run query found zero LXD journal records across all 30 measurement
+intervals; the minimum accepted pre-launch CPU idle value was 95 percent.
+
+This is a single-shard concurrency sweep. The dataset grows from one to 16
+warehouses with the worker count, so it does not isolate concurrency from
+dataset size. It is not an official tpmC result or a fixed-dataset scaling
+experiment.
 
 ### Evidence
 
 The PGO artifact directory is
-`/var/tmp/sto-rust-stocklevel-pgo-20260901T0235Z`. Its relevant identifiers
-are:
+`/var/tmp/sto-rust-dense-release-pgo-20260904-resume1`:
 
 - source-state SHA-256:
-  `bfbf306a9fb12298b03a13cc8d55a8d1503da3ad4b886870c25f27e13c994f5b`
+  `3bf56754aa3ae3456318c071e07a483f7ba1cc27d92a5f43862feab327757af8`
+- native-graph SHA-256:
+  `e7b52c395852f2556bd9a8a15ea1fbc71e2adab9fe4c0b2b849f4e07a4f72823`
 - optimized benchmark SHA-256:
-  `b93d71c63954e31d75d1a2c50333586a537b33979cafaef277cf139cb7011d36`
+  `d9baffa4d9cd9f843ea07a00fe98dfe190550d6f1b91118a5a393820278ed492`
 - optimized Rust archive SHA-256:
-  `76054fa132ce72b238d5b8065e1f6da0268688f5642aea2f650801e5f29f33fd`
+  `9188463b8f4c59639b34f783d2c14eb50a6f4361ce0c2292e5a287af88fa648c`
 - merged profile SHA-256:
-  `b94fd5c8fbc6240f751a9e33a712703ec556cf5429d65af0279c09547d75ca78`
+  `5684fc957ce8ce28f226894e7217834225c5dee08d97410c2d44dae6bbffa8e4`
 
-The paired result directory is
-`/var/tmp/sto-rust-stocklevel-final-aligned-pgo-20260901T0259Z`. Its evidence
-hashes are:
+The guarded comparison directory is
+`/var/tmp/sto-rust-dense-release-sweep-20260904-resume1`:
 
 - `raw.jsonl`:
-  `e015df74183cd87c894ced0391e74306762c3fbe059697371ca171dfe1232dd9`
+  `553fb60e2cae939a1028f539e5f8e6ca52ca5e380b76706439c18756f5cd1493`
 - `summary.csv`:
-  `8e256860f8f4228a00604b409d5a9412a20f346faa35fb92bc6d70669410791c`
+  `314efd5de6c7f7dbecc53ff260b426990b505bb089d4ffceeeff4068b5ccd29d`
 - `run.json`:
-  `0843334d79023cd2ec2e767e5889764509955a2b2cf5586cb662205d6199ddaa`
+  `dd6197a6b4f2b18567e8d32fe52ea0bd61494c063ed12c62d4b2b5911c0de353`
 
 `STATUS`, `training-result.json`, `provenance.txt`,
-`artifacts-sha256.txt`, `run.json`, `raw.jsonl`, and `summary.csv` retain the
-full commands and controls. These `/var/tmp` paths are host-local and
-temporary; the hashes are the durable identifiers. The benchmark used Git
-head `f977554efb816a3c58669108ceeeb3b4b2a14f59` plus the recorded dirty source
-patch. Later working-tree changes hardened benchmark controls, repaired native
-test isolation, and updated documentation; they did not alter the measured
-benchmark binary.
+`artifacts-sha256.txt`, `run.json`, `raw.jsonl`, timeout records, and
+`summary.csv` retain the commands and controls. Paths under `/var/tmp` are
+host-local evidence. The hashes identify the exact files after those paths are
+removed.
 
-### Optimization history and scope
+The source-state digest covers the measured implementation and the placeholder
+version of this result section. Replacing those placeholders with the sealed
+artifact values above is the only post-measurement source-tree edit.
 
-The first completed pass34d comparison measured Rust at 54.410992% of C++.
-The final result follows transaction-level fusion of the Payment, NewOrder,
-Delivery, and StockLevel hot paths, resolved presence reads for NewOrder,
-fixed-capacity batch and scan paths, and Rust-only PGO. This progression cuts
-the measured one-worker penalty from 45.589008% to 3.949160%.
+## Historical baseline
 
-This result establishes one-worker parity for this local standard mix. It does
-not establish multiworker scaling. The `target-cpu=native` PGO binary is
-specific to the `zoo-002` processor and should be rebuilt for another host.
+The previous three-repetition sweep ran on `zoo-002` on 2026-09-01. It used
+the earlier source state and the old fixed `1G` allocator. These values explain
+why the 16-worker path received more work, but they are not a controlled
+ablation against the current implementation.
 
-## Current controlled 1-to-16-worker sweep
+| Workers and warehouses | C++ median txn/s | Rust median txn/s | Paired Rust/C++ median |
+| ---: | ---: | ---: | ---: |
+| 1 | 47,128.163 | 45,480.880 | 96.289% |
+| 2 | 96,697.623 | 90,090.300 | 93.029% |
+| 4 | 196,867.861 | 170,413.159 | 87.540% |
+| 8 | 383,108.617 | 328,380.029 | 85.715% |
+| 16 | 784,914.451 | 590,534.944 | 78.843% |
 
-The current clean-source reference is a three-repetition sweep from the same
-host on 2026-09-01. It uses Git head
-`d1d5c5d1c22deb67828bd9e6d12f4b750da87399`, including exact measurement
-markers immediately before worker release and after worker join and elapsed
-time capture. This sweep supersedes the one-worker number above when assessing
-the current benchmark and also measures scaling through 16 workers.
-
-The PGO training run used one Rust worker and the standard `45,43,4,4,4` mix.
-It committed 3,161,584 transactions with zero aborts over 60.401305 measured
-seconds, or 52,342.975 transactions/s. The comparison used one warehouse per
-worker, five measured seconds per process, and 15 matched pairs:
-
-| Workers and warehouses | C++ median txn/s | Rust median txn/s | Paired Rust/C++ median | Paired range | C++ scale-up | Rust scale-up |
-| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1 | 47,128.163 | 45,480.880 | **96.289%** | 96.081–96.542% | 1.000x | 1.000x |
-| 2 | 96,697.623 | 90,090.300 | **93.029%** | 92.197–94.229% | 2.052x | 1.981x |
-| 4 | 196,867.861 | 170,413.159 | **87.540%** | 86.216–88.068% | 4.177x | 3.747x |
-| 8 | 383,108.617 | 328,380.029 | **85.715%** | 82.466–92.747% | 8.129x | 7.220x |
-| 16 | 784,914.451 | 590,534.944 | **78.843%** | 75.054–79.305% | 16.655x | 12.984x |
-
-Each percentage is the median of three paired Rust/C++ throughput ratios, not
-the ratio of the two throughput medians. The one-worker penalty is therefore
-3.711%. The gap widens with worker and warehouse count. Relative to each
-engine's own one-worker median, C++ reaches 16.655x at 16 workers while Rust
-reaches 12.984x. This design changes concurrency and dataset size together, so
-it does not isolate their individual effects. The Rust profile was trained
-only at one worker, so the high-worker result also includes possible PGO
-workload mismatch.
-
-Abort rates were small throughout. Across all accepted samples, C++ recorded
-3,522 aborts in 22,611,497 attempts (0.015576%), and Rust recorded 1,341 in
-18,750,657 attempts (0.007152%). Thus abort frequency does not explain Rust's
-lower multithread throughput.
-
-### Sweep controls and audit
-
-The runner used physical CPUs 10 through 25, adding SMT siblings 74 through 89
-to the idle guard. It held all 128 policies at 2 GHz in userspace mode with
-boost disabled, then restored `schedutil` and boost. Seed 4 shuffled the cell
-order and balanced which engine ran first across worker counts. Every engine
-sample loaded a fresh database and started in its own newly aligned LXD restart
-interval after a two-second window in which each guarded CPU was at least 95%
-idle and no recognized benchmark, compiler, or `perf` process was present.
-
-All 30 accepted samples contain exactly one start marker and one end marker.
-Their stored LXD journal activity is empty, and a separate post-run journal
-query found no activity in any of the 30 exact measurement intervals. Every
-row satisfies `attempts = commits + aborts`, its transaction counters sum to
-commits, and its only recorded environment override is
-`MAKO_TPCC_WORKLOAD_MIX=45,43,4,4,4`; all diagnostic fallback variables were
-absent. The generated `summary.csv` was independently recomputed and matched
-at six decimal places.
-
-Two attempts for the first 8-worker pair were discarded after an unrelated
-Mako compilation appeared on the host. Three engine samples were discarded in
-total. The guard recorded the competing Cargo and Clang processes, waited for
-the host to become quiet, and accepted the third attempt. All other pairs were
-accepted on their first attempt.
-
-### Sweep evidence
-
-The PGO artifact directory is
-`/var/tmp/sto-rust-exact-markers-pgo-20260901T0430Z` on `zoo-002`:
-
-- source-state SHA-256:
-  `1285b5ab92d0bd467d4872afebc5a819a377c3be89c7f1e52a5ce5ec156064f6`
-- optimized benchmark SHA-256:
-  `2953193e9b577a9958845cacd30f946c9f62166546de8572aa95b2a556d47b53`
-- optimized Rust archive SHA-256:
-  `02284a8115384f97fcf81ac060bbe887f2da1aa9d93a457f1a462ae8741e6a24`
-- merged profile SHA-256:
-  `9d4e9efd997ab4789f0a28da98d6f604cb2f20745536bbe9c3cb47b083d8c6dd`
-
-The result directory is
-`/var/tmp/sto-rust-tpcc-sweep-exact-pgo-20260901T0435Z`:
-
-- `raw.jsonl`:
-  `9504ed0c1dac2a1c04c9f4d6404aece2f559b4e982c21aea85689de770ab21a2`
-- `summary.csv`:
-  `134c55e8c94ada29b40a5d33f57badd1557e37c1702acb0e6fded8bb4e306b8a`
-- `run.json`:
-  `1ba814a7f03bfdeeb3e1e3b7e78174d3749a1e69830566a6874c016abb463106`
-
-These paths are host-local evidence. This is a single-shard concurrency sweep
-whose dataset grows from one to 16 warehouses along with the worker count. It
-is not an official tpmC result and is not a fixed-dataset scaling experiment.
+The historical PGO artifact was
+`/var/tmp/sto-rust-exact-markers-pgo-20260901T0430Z`, and its comparison output
+was `/var/tmp/sto-rust-tpcc-sweep-exact-pgo-20260901T0435Z`. Those host-local
+paths may no longer exist. The old report recorded their hashes before this
+section was replaced; Git history preserves that report.

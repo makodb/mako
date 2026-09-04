@@ -67,16 +67,51 @@ static_assert(MASSTREE_MAXKEYLEN >= MT_CONFIGURED_MAX_KEY_LENGTH,
               "the native Masstree key limit is below the ABI contract");
 static_assert(NMAXCORES <= std::numeric_limits<uint32_t>::max());
 
+using structure_reader_mask_word = uint64_t;
+static constexpr size_t kStructureReaderMaskWordBits =
+    std::numeric_limits<structure_reader_mask_word>::digits;
+static constexpr size_t kStructureReaderMaskWords =
+    (NMAXCORES + kStructureReaderMaskWordBits - 1) /
+    kStructureReaderMaskWordBits;
+
 } // namespace mt_abi_detail
 
 struct alignas(CACHELINE_SIZE) mt_structure_reader_slot {
   std::atomic<mt_tree *> active_tree{nullptr};
 };
 
+struct alignas(CACHELINE_SIZE) mt_structure_sealed_flag {
+  std::atomic<bool> sealed{false};
+};
+
+struct alignas(CACHELINE_SIZE) mt_structure_writer_flag {
+  std::atomic<bool> active{false};
+};
+
+struct alignas(CACHELINE_SIZE) mt_structure_writer_lock {
+  std::mutex mutex;
+};
+
+struct alignas(CACHELINE_SIZE) mt_structure_reader_membership {
+  std::array<std::atomic<mt_abi_detail::structure_reader_mask_word>,
+             mt_abi_detail::kStructureReaderMaskWords>
+      words{};
+};
+
 static_assert(sizeof(mt_structure_reader_slot) == CACHELINE_SIZE);
 static_assert(alignof(mt_structure_reader_slot) == CACHELINE_SIZE);
+static_assert(sizeof(mt_structure_sealed_flag) == CACHELINE_SIZE);
+static_assert(alignof(mt_structure_sealed_flag) == CACHELINE_SIZE);
+static_assert(sizeof(mt_structure_writer_flag) == CACHELINE_SIZE);
+static_assert(alignof(mt_structure_writer_flag) == CACHELINE_SIZE);
+static_assert(sizeof(mt_structure_writer_lock) % CACHELINE_SIZE == 0);
+static_assert(alignof(mt_structure_writer_lock) == CACHELINE_SIZE);
+static_assert(sizeof(mt_structure_reader_membership) % CACHELINE_SIZE == 0);
+static_assert(alignof(mt_structure_reader_membership) == CACHELINE_SIZE);
 static_assert(std::atomic<mt_tree *>::is_always_lock_free);
 static_assert(std::atomic<bool>::is_always_lock_free);
+static_assert(
+    std::atomic<mt_abi_detail::structure_reader_mask_word>::is_always_lock_free);
 
 /* These definitions complete the opaque C tags from mtree_abi.h. */
 struct mt_runtime {
@@ -91,7 +126,7 @@ struct mt_runtime {
   std::atomic<mt_tree *> tree_registry{nullptr};
   /*
    * One independently cached structural-read publication per native core.
-   * Writers inspect only slots named by release-published worker handles.
+   * Writers inspect only slots named by each tree's persistent reader mask.
    */
   std::array<mt_structure_reader_slot, NMAXCORES> structure_readers{};
   std::vector<mt_thread *> threads;
@@ -132,13 +167,24 @@ struct mt_tree {
    * into their native-core slot, so steady reads never update one shared
    * reader-count cache line.
    */
-  alignas(CACHELINE_SIZE) std::atomic<bool> structure_writer_active;
-  std::mutex structure_writer_mutex;
+  mt_structure_sealed_flag structure_sealed;
+  mt_structure_writer_flag structure_writer;
+  mt_structure_writer_lock structure_lock;
+  /*
+   * A bit is set before its core first publishes a structural read on this
+   * tree and is never cleared. Core IDs are unique and non-recyclable for the
+   * lifetime of the native runtime. Keeping membership per tree avoids making
+   * an insertion inspect unrelated workers and process-lifetime loader handles.
+   */
+  mt_structure_reader_membership structure_readers;
   mt_abi_detail::record_tree native;
 
   explicit mt_tree(mt_runtime *runtime_arg)
-      : runtime(runtime_arg), open(true), registry_next(nullptr),
-        structure_writer_active(false), native() {}
+      : runtime(runtime_arg), open(true), registry_next(nullptr), native() {
+    for (auto &word : structure_readers.words) {
+      word.store(0, std::memory_order_relaxed);
+    }
+  }
 };
 
 namespace {
@@ -152,7 +198,8 @@ constexpr mt_feature_set kFeatures =
     MT_FEATURE_INTEGRAL_RECORD_IDS | MT_FEATURE_RUNTIME_HEALTH |
     MT_FEATURE_SINGLETON_RUNTIME | MT_FEATURE_COPIED_RANGE_SCANS |
     MT_FEATURE_SCOPED_POINT_READS | MT_FEATURE_SCOPED_STRIDED_POINT_READS |
-    MT_FEATURE_STRIDED_POINT_READS | MT_FEATURE_SCOPED_RCU;
+    MT_FEATURE_STRIDED_POINT_READS | MT_FEATURE_SCOPED_RCU |
+    MT_FEATURE_STRUCTURE_SEAL;
 
 /* Deliberately excludes MT_FEATURE_GRACEFUL_SHUTDOWN. */
 static_assert((kFeatures & MT_FEATURE_GRACEFUL_SHUTDOWN) == 0);
@@ -205,17 +252,41 @@ thread_local tree_validation_cache tls_tree_validation_cache;
 class structure_read_guard final {
 public:
   structure_read_guard(mt_tree &tree, const mt_thread &thread) noexcept
-      : tree_(tree), slot_(tree.runtime->structure_readers[static_cast<size_t>(
-                         thread.native_core_id)]) {
+      : tree_(tree) {
+    /*
+     * A seal is release-published only after the last pre-seal structural
+     * reader drains. No structural writer can pass the seal. An acquiring
+     * reader may therefore retain only native RCU protection.
+     */
+    if (tree_.structure_sealed.sealed.load(std::memory_order_acquire)) {
+      return;
+    }
+
+    const size_t core_id = static_cast<size_t>(thread.native_core_id);
+    slot_ = &tree.runtime->structure_readers[core_id];
+    const size_t word_index =
+        core_id / mt_abi_detail::kStructureReaderMaskWordBits;
+    const auto bit = mt_abi_detail::structure_reader_mask_word{1}
+                     << (core_id % mt_abi_detail::kStructureReaderMaskWordBits);
+    auto &reader_word = tree_.structure_readers.words[word_index];
+    if ((reader_word.load(std::memory_order_acquire) & bit) == 0) {
+      /*
+       * First registration joins the same SC order as the publication/flag
+       * handshake below. If a writer snapshots before this RMW, its preceding
+       * flag store is visible to the reader's recheck. Otherwise the writer's
+       * snapshot contains this core and it drains the published slot.
+       */
+      reader_word.fetch_or(bit, std::memory_order_seq_cst);
+    }
     for (;;) {
-      while (tree_.structure_writer_active.load(std::memory_order_seq_cst)) {
+      while (tree_.structure_writer.active.load(std::memory_order_seq_cst)) {
         nop_pause();
       }
-      slot_.active_tree.store(&tree_, std::memory_order_seq_cst);
-      if (!tree_.structure_writer_active.load(std::memory_order_seq_cst)) {
+      slot_->active_tree.store(&tree_, std::memory_order_seq_cst);
+      if (!tree_.structure_writer.active.load(std::memory_order_seq_cst)) {
         break;
       }
-      slot_.active_tree.store(nullptr, std::memory_order_release);
+      slot_->active_tree.store(nullptr, std::memory_order_release);
     }
   }
 
@@ -223,59 +294,89 @@ public:
   structure_read_guard &operator=(const structure_read_guard &) = delete;
 
   ~structure_read_guard() noexcept {
-    slot_.active_tree.store(nullptr, std::memory_order_release);
+    if (slot_ != nullptr) {
+      slot_->active_tree.store(nullptr, std::memory_order_release);
+    }
   }
 
 private:
   mt_tree &tree_;
-  mt_structure_reader_slot &slot_;
+  mt_structure_reader_slot *slot_ = nullptr;
 };
 
 class structure_write_guard final {
 public:
-  structure_write_guard(mt_tree &tree, const mt_thread &writer)
-      : tree_(tree), writer_lock_(tree.structure_writer_mutex) {
-    tree_.structure_writer_active.store(true, std::memory_order_seq_cst);
-    /*
-     * Thread handles and registry links live for the process lifetime. Registry
-     * publication, reader slot publication/recheck, and the writer flag/snapshot
-     * form one sequentially consistent order. If a reader publishes its slot
-     * first, its preceding handle publication is in this snapshot; if the
-     * writer flag comes first, the reader observes it and retracts before native
-     * access. Thus a writer drains only registered slots, rather than all
-     * NMAXCORES capacity slots.
-     */
-    for (const mt_thread *thread =
-             tree_.runtime->thread_registry.load(std::memory_order_seq_cst);
-         thread != nullptr; thread = thread->registry_next) {
-      const int core_id = thread->native_core_id;
-      if (core_id < 0 || core_id >= static_cast<int>(NMAXCORES)) {
-        INVARIANT(false);
-        continue;
-      }
-      mt_structure_reader_slot &slot =
-          tree_.runtime->structure_readers[static_cast<size_t>(core_id)];
-      if (thread == &writer) {
-        /* checked_operation excludes a structural read on this worker. */
-        INVARIANT(slot.active_tree.load(std::memory_order_relaxed) != &tree_);
-        continue;
-      }
-      while (slot.active_tree.load(std::memory_order_seq_cst) == &tree_) {
-        nop_pause();
-      }
+  explicit structure_write_guard(mt_tree &tree)
+      : tree_(tree), writer_lock_(tree.structure_lock.mutex) {}
+
+  bool try_admit() noexcept {
+    /* The mutex orders this load after the one-way seal publication. */
+    if (tree_.structure_sealed.sealed.load(std::memory_order_acquire)) {
+      return false;
     }
+    publish_and_drain();
+    return true;
+  }
+
+  bool sealed() const noexcept {
+    return tree_.structure_sealed.sealed.load(std::memory_order_acquire);
+  }
+
+  void synchronize_for_seal() noexcept {
+    INVARIANT(!active_);
+    publish_and_drain();
+  }
+
+  void publish_seal() noexcept {
+    INVARIANT(active_);
+    tree_.structure_sealed.sealed.store(true, std::memory_order_release);
   }
 
   structure_write_guard(const structure_write_guard &) = delete;
   structure_write_guard &operator=(const structure_write_guard &) = delete;
 
   ~structure_write_guard() noexcept {
-    tree_.structure_writer_active.store(false, std::memory_order_release);
+    if (active_) {
+      tree_.structure_writer.active.store(false, std::memory_order_release);
+    }
   }
 
 private:
+  void publish_and_drain() noexcept {
+    INVARIANT(!active_);
+    tree_.structure_writer.active.store(true, std::memory_order_seq_cst);
+    active_ = true;
+    /*
+     * Reader-mask registration, slot publication/recheck, and the writer
+     * flag/snapshot form one sequentially consistent order. If registration is
+     * absent from this snapshot, the reader must observe the preceding writer
+     * flag and retract. If registration is present, this writer drains that
+     * core's slot before entering inherited Masstree.
+     */
+    for (size_t word_index = 0;
+         word_index != mt_abi_detail::kStructureReaderMaskWords;
+         ++word_index) {
+      auto readers = tree_.structure_readers.words[word_index].load(
+          std::memory_order_seq_cst);
+      const size_t first_core_id =
+          word_index * mt_abi_detail::kStructureReaderMaskWordBits;
+      while (readers != 0) {
+        const size_t bit_index = static_cast<size_t>(std::countr_zero(readers));
+        const size_t core_id = first_core_id + bit_index;
+        INVARIANT(core_id < static_cast<size_t>(NMAXCORES));
+        mt_structure_reader_slot &slot =
+            tree_.runtime->structure_readers[core_id];
+        while (slot.active_tree.load(std::memory_order_seq_cst) == &tree_) {
+          nop_pause();
+        }
+        readers &= readers - 1;
+      }
+    }
+  }
+
   mt_tree &tree_;
   std::unique_lock<std::mutex> writer_lock_;
+  bool active_ = false;
 };
 
 /*
@@ -931,7 +1032,10 @@ mt_status get_or_insert_validated(mt_tree &tree, mt_thread &thread,
 
   try {
     {
-      structure_write_guard structure_guard(tree, thread);
+      structure_write_guard structure_guard(tree);
+      if (!structure_guard.try_admit()) {
+        return MT_ERR_STRUCTURE_SEALED;
+      }
       /* A preceding queued writer may have poisoned before releasing. */
       if (runtime->health.load(std::memory_order_acquire) !=
           MT_RUNTIME_HEALTHY) {
@@ -1024,7 +1128,10 @@ mt_status get_or_insert_strided_trusted_validated(
 
   try {
     {
-      structure_write_guard structure_guard(tree, thread);
+      structure_write_guard structure_guard(tree);
+      if (!structure_guard.try_admit()) {
+        return MT_ERR_STRUCTURE_SEALED;
+      }
       /* A preceding queued writer may have poisoned before releasing. */
       if (runtime->health.load(std::memory_order_acquire) !=
           MT_RUNTIME_HEALTHY) {
@@ -1503,8 +1610,8 @@ constexpr char kExportedSymbols[] =
     "mt_get_build_fingerprint;mt_runtime_config_init;mt_runtime_acquire;"
     "mt_runtime_health;mt_runtime_max_key_length;mt_runtime_max_threads;"
     "mt_runtime_shutdown;mt_thread_attach;mt_thread_quiesce;mt_tree_create;"
-    "mt_tree_release;mt_get;mt_get_strided;mt_read_scope_begin;mt_read_scope_"
-    "get;"
+    "mt_tree_release;mt_tree_seal_structure;mt_get;mt_get_strided;"
+    "mt_read_scope_begin;mt_read_scope_get;"
     "mt_read_scope_get_strided;mt_read_scope_end;mt_rcu_scope_begin;"
     "mt_rcu_scope_end;mt_get_or_insert;mt_scan";
 
@@ -1817,8 +1924,9 @@ extern "C" mt_status mt_thread_attach(mt_runtime *runtime_candidate,
     runtime->threads.push_back(pending.get());
     pending->registry_next =
         runtime->thread_registry.load(std::memory_order_relaxed);
-    /* Participates in structural admission's attach-versus-writer SC proof. */
-    runtime->thread_registry.store(pending.get(), std::memory_order_seq_cst);
+    /* Publish the initialized handle and immutable registry link for lifetime
+     * validation of untrusted pointers. */
+    runtime->thread_registry.store(pending.get(), std::memory_order_release);
     tls_thread = pending.release();
     *out = tls_thread;
     return MT_OK;
@@ -1907,6 +2015,49 @@ extern "C" mt_status mt_tree_release(mt_tree *tree_candidate) noexcept {
     }
     return MT_OK;
   });
+}
+
+extern "C" mt_status
+mt_tree_seal_structure(mt_tree *tree_candidate) noexcept {
+  mt_runtime *operation_runtime = nullptr;
+  try {
+    mt_tree *tree = nullptr;
+    mt_status status = checked_tree(tree_candidate, &tree);
+    if (status != MT_OK) {
+      return status;
+    }
+    operation_runtime = tree->runtime;
+    if (operation_runtime->health.load(std::memory_order_acquire) !=
+        MT_RUNTIME_HEALTHY) {
+      return MT_ERR_POISONED;
+    }
+    if (tls_read_scope.active() && tls_read_scope.tree() == tree) {
+      return MT_ERR_ACTIVE_GUARDS;
+    }
+
+    structure_write_guard structure_guard(*tree);
+    if (operation_runtime->health.load(std::memory_order_acquire) !=
+        MT_RUNTIME_HEALTHY) {
+      return MT_ERR_POISONED;
+    }
+    if (structure_guard.sealed()) {
+      return MT_OK;
+    }
+
+    structure_guard.synchronize_for_seal();
+    /* A draining reader may have poisoned this runtime before it left. */
+    if (operation_runtime->health.load(std::memory_order_acquire) !=
+        MT_RUNTIME_HEALTHY) {
+      return MT_ERR_POISONED;
+    }
+    structure_guard.publish_seal();
+    return MT_OK;
+  } catch (const std::bad_alloc &) {
+    return MT_ERR_OUT_OF_MEMORY;
+  } catch (...) {
+    poison(operation_runtime);
+    return MT_ERR_CPP_EXCEPTION;
+  }
 }
 
 extern "C" mt_status mt_runtime_shutdown(mt_runtime *runtime_candidate,

@@ -89,13 +89,19 @@ _Static_assert(sizeof(sto_tpcc_table_config) == 72,
  * LastOnly probes and updates just the most recent exact point resolution;
  * scans never populate it. ReadThenWrite skips the lookup on get, but keeps
  * that get's resolution for a following put/remove of the same key. None
- * always resolves through Masstree and retains no point or scan resolutions. */
+ * always resolves through Masstree and retains no point or scan resolutions.
+ * DenseItem and DenseStock allocate a table-wide 100,000-slot cache for the
+ * fused TPC-C Item and Stock paths. Ordinary scalar operations use None's
+ * behavior for DenseItem and ReadThenWrite's behavior for DenseStock. Fused
+ * operations do not populate the worker-local cache. */
 typedef int32_t sto_tpcc_resolved_cache_policy;
 enum {
   STO_TPCC_RESOLVED_CACHE_FULL = 0,
   STO_TPCC_RESOLVED_CACHE_LAST_ONLY = 1,
   STO_TPCC_RESOLVED_CACHE_READ_THEN_WRITE = 2,
   STO_TPCC_RESOLVED_CACHE_NONE = 3,
+  STO_TPCC_RESOLVED_CACHE_DENSE_ITEM = 4,
+  STO_TPCC_RESOLVED_CACHE_DENSE_STOCK = 5,
 };
 
 /* Receives each transaction-local value for a fixed-width key in input order.
@@ -200,6 +206,12 @@ sto_tpcc_status sto_tpcc_table_create_with_cache_policy(
     const sto_tpcc_table_config *config,
     sto_tpcc_resolved_cache_policy cache_policy,
     sto_tpcc_table **out_table) STO_TPCC_NOEXCEPT;
+/* Permanently reject new keys while preserving reads and updates of existing
+ * records. Call after loader transactions finish and with no concurrent table
+ * users. */
+sto_tpcc_status
+sto_tpcc_table_seal_directory_structure(sto_tpcc_table *table)
+    STO_TPCC_NOEXCEPT;
 sto_tpcc_status sto_tpcc_table_destroy(sto_tpcc_table *table)
     STO_TPCC_NOEXCEPT;
 sto_tpcc_status sto_tpcc_table_size(const sto_tpcc_table *table,

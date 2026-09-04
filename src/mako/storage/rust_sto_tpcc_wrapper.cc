@@ -356,14 +356,42 @@ tpcc_tablespace_name(std::string_view index_name) {
   return index_name.substr(0, separator);
 }
 
+constexpr bool
+tpcc_table_has_static_directory(std::string_view index_name) {
+  // These seven TPC-C tables finish their key set during loading. The same
+  // decision selects their smaller registry bounds and the post-load seal.
+  const std::string_view tablespace = tpcc_tablespace_name(index_name);
+  return tablespace == "customer" || tablespace == "customer_name_idx" ||
+         tablespace == "district" || tablespace == "item" ||
+         tablespace == "stock" || tablespace == "stock_data" ||
+         tablespace == "warehouse";
+}
+
+static_assert(tpcc_table_has_static_directory("customer"));
+static_assert(tpcc_table_has_static_directory("customer_name_idx_17"));
+static_assert(tpcc_table_has_static_directory("district_0"));
+static_assert(tpcc_table_has_static_directory("item_42"));
+static_assert(tpcc_table_has_static_directory("stock_3"));
+static_assert(tpcc_table_has_static_directory("stock_data_3"));
+static_assert(tpcc_table_has_static_directory("warehouse_3"));
+static_assert(!tpcc_table_has_static_directory("history_3"));
+static_assert(!tpcc_table_has_static_directory("new_order_3"));
+static_assert(!tpcc_table_has_static_directory("oorder_3"));
+static_assert(!tpcc_table_has_static_directory("oorder_c_id_idx_3"));
+static_assert(!tpcc_table_has_static_directory("order_line_3"));
+static_assert(!tpcc_table_has_static_directory("warehouse_remote"));
+
 constexpr sto_tpcc_resolved_cache_policy
 tpcc_resolved_cache_policy_for(std::string_view index_name) {
   const std::string_view tablespace = tpcc_tablespace_name(index_name);
 
-  // Stock uses an immediate point get->put over a much larger key set.
-  // Preserve that handoff without probing the cross-transaction cache.
+  // Item is global and Stock is warehouse-local. Their dense table-wide
+  // caches converge on the complete loaded key sets across all workers while
+  // every resolved access still observes the current record version.
+  if (tablespace == "item")
+    return STO_TPCC_RESOLVED_CACHE_DENSE_ITEM;
   if (tablespace == "stock")
-    return STO_TPCC_RESOLVED_CACHE_READ_THEN_WRITE;
+    return STO_TPCC_RESOLVED_CACHE_DENSE_STOCK;
 
   // One warehouse has only 3,000 customer rows. The worker-local Full cache
   // avoids most customer-tree traversals after warmup and still preserves the
@@ -373,7 +401,7 @@ tpcc_resolved_cache_policy_for(std::string_view index_name) {
 
   // These tables are point-read-only, insert-only, or scanned without a later
   // row update. Retaining their resolutions cannot avoid a native lookup.
-  if (tablespace == "item" || tablespace == "customer_name_idx" ||
+  if (tablespace == "customer_name_idx" ||
       tablespace == "oorder_c_id_idx" || tablespace == "history" ||
       tablespace == "stock_data" || tablespace == "order_line")
     return STO_TPCC_RESOLVED_CACHE_NONE;
@@ -389,7 +417,9 @@ tpcc_resolved_cache_policy_for(std::string_view index_name) {
 static_assert(tpcc_resolved_cache_policy_for("customer_1") ==
               STO_TPCC_RESOLVED_CACHE_FULL);
 static_assert(tpcc_resolved_cache_policy_for("stock_1") ==
-              STO_TPCC_RESOLVED_CACHE_READ_THEN_WRITE);
+              STO_TPCC_RESOLVED_CACHE_DENSE_STOCK);
+static_assert(tpcc_resolved_cache_policy_for("item") ==
+              STO_TPCC_RESOLVED_CACHE_DENSE_ITEM);
 static_assert(tpcc_resolved_cache_policy_for("history_1") ==
               STO_TPCC_RESOLVED_CACHE_NONE);
 static_assert(tpcc_resolved_cache_policy_for("order_line_1") ==
@@ -419,11 +449,7 @@ tpcc_table_config_for(std::string_view index_name) {
   // 16M retained-record tier needs 384M key bytes and thus also fits this
   // quota, while the 20M consumed-ID allowance retains collision headroom.
   const std::string_view tablespace = tpcc_tablespace_name(index_name);
-  const bool static_cardinality =
-      tablespace == "customer" || tablespace == "customer_name_idx" ||
-      tablespace == "district" || tablespace == "item" ||
-      tablespace == "stock" || tablespace == "stock_data" ||
-      tablespace == "warehouse";
+  const bool static_cardinality = tpcc_table_has_static_directory(index_name);
 
   sto_tpcc_table_config config{};
   if (tablespace == "order_line" || tablespace == "history") {
@@ -659,6 +685,11 @@ int32_t invoke_fixed_modify_bridge(
 sto_tpcc_table_config
 rust_sto_tpcc_detail::table_config_for(std::string_view index_name) {
   return tpcc_table_config_for(index_name);
+}
+
+bool rust_sto_tpcc_detail::table_has_static_directory(
+    std::string_view index_name) {
+  return tpcc_table_has_static_directory(index_name);
 }
 
 thread_local sto_tpcc_thread *rust_sto_tpcc_wrapper::tls_thread_ = nullptr;
@@ -1016,6 +1047,15 @@ void rust_sto_tpcc_wrapper::init() {
   ffi_config.max_items_per_txn = 1024;
   ffi_config.max_locks_per_txn = 2048;
   require_ok("db_create", sto_tpcc_db_create(&ffi_config, &db_));
+}
+
+void rust_sto_tpcc_wrapper::on_load_complete() {
+  for (const auto &table : tables_) {
+    if (!tpcc_table_has_static_directory(table->name_))
+      continue;
+    require_ok("table_seal_directory_structure",
+               sto_tpcc_table_seal_directory_structure(table->table_));
+  }
 }
 
 void rust_sto_tpcc_wrapper::preallocate_open_index() {}

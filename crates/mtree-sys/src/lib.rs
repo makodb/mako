@@ -36,6 +36,7 @@ pub const ERR_UNSUPPORTED: Status = 14;
 pub const ERR_INCOMPATIBLE_RUNTIME: Status = 15;
 pub const ERR_POISONED: Status = 16;
 pub const ERR_CLOSED: Status = 17;
+pub const ERR_STRUCTURE_SEALED: Status = 18;
 
 pub type FeatureSet = u64;
 pub const FEATURE_POINT_GET: FeatureSet = 1 << 0;
@@ -51,6 +52,7 @@ pub const FEATURE_SCOPED_POINT_READS: FeatureSet = 1 << 9;
 pub const FEATURE_SCOPED_STRIDED_POINT_READS: FeatureSet = 1 << 10;
 pub const FEATURE_STRIDED_POINT_READS: FeatureSet = 1 << 11;
 pub const FEATURE_SCOPED_RCU: FeatureSet = 1 << 12;
+pub const FEATURE_STRUCTURE_SEAL: FeatureSet = 1 << 13;
 
 pub type ByteOrder = u32;
 pub const BYTE_ORDER_UNKNOWN: ByteOrder = 0;
@@ -178,7 +180,8 @@ pub const REQUIRED_V1_FEATURES: FeatureSet = FEATURE_POINT_GET
     | FEATURE_SCOPED_POINT_READS
     | FEATURE_SCOPED_STRIDED_POINT_READS
     | FEATURE_STRIDED_POINT_READS
-    | FEATURE_SCOPED_RCU;
+    | FEATURE_SCOPED_RCU
+    | FEATURE_STRUCTURE_SEAL;
 
 const EXPORTED_SYMBOLS: &str = concat!(
     "mt_abi_version;mt_feature_bits;mt_endianness;mt_pointer_width;",
@@ -193,7 +196,8 @@ const EXPORTED_SYMBOLS: &str = concat!(
     "mt_get_build_fingerprint;mt_runtime_config_init;mt_runtime_acquire;",
     "mt_runtime_health;mt_runtime_max_key_length;mt_runtime_max_threads;",
     "mt_runtime_shutdown;mt_thread_attach;mt_thread_quiesce;mt_tree_create;",
-    "mt_tree_release;mt_get;mt_get_strided;mt_read_scope_begin;mt_read_scope_get;",
+    "mt_tree_release;mt_tree_seal_structure;mt_get;mt_get_strided;",
+    "mt_read_scope_begin;mt_read_scope_get;",
     "mt_read_scope_get_strided;mt_read_scope_end;mt_rcu_scope_begin;",
     "mt_rcu_scope_end;mt_get_or_insert;mt_scan"
 );
@@ -210,7 +214,7 @@ const fn fnv1a(bytes: &[u8]) -> u64 {
 }
 
 pub const EXPORTED_SYMBOLS_FINGERPRINT: u64 = fnv1a(EXPORTED_SYMBOLS.as_bytes());
-pub const EXPORTED_SYMBOL_COUNT: usize = 43;
+pub const EXPORTED_SYMBOL_COUNT: usize = 44;
 
 unsafe extern "C" {
     pub fn mt_abi_version() -> u32;
@@ -250,6 +254,7 @@ unsafe extern "C" {
         out: *mut *mut Tree,
     ) -> Status;
     pub fn mt_tree_release(tree: *mut Tree) -> Status;
+    pub fn mt_tree_seal_structure(tree: *mut Tree) -> Status;
     pub fn mt_get(
         tree: *mut Tree,
         thread: *mut Thread,
@@ -439,7 +444,8 @@ mod tests {
         assert_eq!(FEATURE_SCOPED_STRIDED_POINT_READS, 1 << 10);
         assert_eq!(FEATURE_STRIDED_POINT_READS, 1 << 11);
         assert_eq!(FEATURE_SCOPED_RCU, 1 << 12);
-        assert_eq!(REQUIRED_V1_FEATURES, 0x1f7f);
+        assert_eq!(FEATURE_STRUCTURE_SEAL, 1 << 13);
+        assert_eq!(REQUIRED_V1_FEATURES, 0x3f7f);
         assert_eq!(REQUIRED_V1_FEATURES & FEATURE_GRACEFUL_SHUTDOWN, 0);
     }
 
@@ -465,8 +471,9 @@ mod tests {
                 ERR_INCOMPATIBLE_RUNTIME,
                 ERR_POISONED,
                 ERR_CLOSED,
+                ERR_STRUCTURE_SEALED,
             ],
-            [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+            [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,]
         );
         assert_eq!(
             [
@@ -515,9 +522,9 @@ mod tests {
 
     #[test]
     fn complete_exported_symbol_manifest_matches_the_finalized_header() {
-        assert_eq!(EXPORTED_SYMBOL_COUNT, 43);
+        assert_eq!(EXPORTED_SYMBOL_COUNT, 44);
         assert_eq!(EXPORTED_SYMBOLS.split(';').count(), EXPORTED_SYMBOL_COUNT);
-        assert_eq!(EXPORTED_SYMBOLS_FINGERPRINT, 0x0b2e_c215_8e69_d9c7);
+        assert_eq!(EXPORTED_SYMBOLS_FINGERPRINT, 0x8275_e6fa_a88a_4fe0);
     }
 
     #[test]

@@ -3417,6 +3417,7 @@ The initial operation families are:
 - same-thread worker attachment and quiescence;
 - tree creation and capability-gated runtime shutdown, both with a matching
   worker;
+- one-way directory sealing after all structural writers have stopped;
 - scalar point lookup, a scoped repeated-read form, and fixed-width strided
   batch lookup (`mt_get_strided`);
 - atomic get-or-insert with explicit publication disposition, `inserted`, and
@@ -3433,7 +3434,7 @@ Unless explicitly qualified below, this section's ABI requirements apply to
 the versioned public `mt_*` surface. The native library also provides hidden
 `mako_mtree_*_trusted` functions for its statically linked safe Rust facade.
 Those symbols are outside ABI-version and feature negotiation and outside the
-43-symbol public export fingerprint; shared-library consumers cannot link them.
+44-symbol public export fingerprint; shared-library consumers cannot link them.
 
 The safe facade owns the retained native handles and validates runtime/worker
 pairing, key lengths, enum values, candidate shape, slice relationships, and
@@ -4165,9 +4166,9 @@ follows:
 
 The branch-level validation record for this implementation includes the full
 workspace suite in debug and release modes on Rust 1.95, strict Clippy and
-rustdoc builds, C11 header compilation, the exact 43-symbol native allowlist,
-required feature mask `0x1f7f`, export-manifest FNV-1a fingerprint
-`0x0b2ec2158e69d9c7`, the raw ABI suite, native safe-wrapper and
+rustdoc builds, C11 header compilation, the exact 44-symbol native allowlist,
+required feature mask `0x3f7f`, export-manifest FNV-1a fingerprint
+`0x8275e6faa88a4fe0`, the raw ABI suite, native safe-wrapper and
 transactional-adapter integration. The current feature-enabled suite also pins
 the terminal API/typestate failure protocol and fixed-`u64` record layout,
 loader seal, snapshot validation, stale-writer behavior, miss/duplicate
