@@ -28,7 +28,8 @@ RUN git config --global --add safe.directory /workspace
 COPY apt_packages.sh /tmp/apt_packages.sh
 RUN bash /tmp/apt_packages.sh && rm /tmp/apt_packages.sh
 
-# Install Rust toolchain from official static tarballs.
+# Install Rust and rust-src from official static tarballs. The compile-fail
+# snapshots include standard-library spans and require matching sources.
 # This avoids rustup runtime issues seen in some restricted Docker environments.
 ARG RUST_VERSION=1.95.0
 RUN set -eux; \
@@ -39,10 +40,19 @@ RUN set -eux; \
       *) echo "Unsupported architecture: ${arch}" >&2; exit 1 ;; \
     esac; \
     rust_tarball="rust-${RUST_VERSION}-${rust_target}.tar.gz"; \
-    curl -LO "https://static.rust-lang.org/dist/${rust_tarball}"; \
+    rust_src_tarball="rust-src-${RUST_VERSION}.tar.gz"; \
+    curl -fLO "https://static.rust-lang.org/dist/${rust_tarball}"; \
+    curl -fLO "https://static.rust-lang.org/dist/${rust_src_tarball}"; \
     tar xzf "${rust_tarball}"; \
+    tar xzf "${rust_src_tarball}"; \
     "./rust-${RUST_VERSION}-${rust_target}/install.sh" --prefix=/opt/rust; \
-    rm -rf "rust-${RUST_VERSION}-${rust_target}" "${rust_tarball}"
+    "./rust-src-${RUST_VERSION}/install.sh" --prefix=/opt/rust; \
+    test -r /opt/rust/lib/rustlib/src/rust/library/core/src/marker.rs; \
+    rm -rf \
+      "rust-${RUST_VERSION}-${rust_target}" \
+      "rust-src-${RUST_VERSION}" \
+      "${rust_tarball}" \
+      "${rust_src_tarball}"
 ENV PATH="/opt/rust/bin:${PATH}"
 
 # Pre-create build directory

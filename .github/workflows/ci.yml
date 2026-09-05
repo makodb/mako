@@ -201,14 +201,18 @@ jobs:
           submodules: recursive  # if you use submodules (e.g., third-party libs)
 
       # The current published image predates the Rust STO workspace MSRV.
-      # Keep pull requests runnable while Dockerfile.ubuntu24 rolls forward;
-      # once the image carries this version, the step exits without a download.
+      # The compile-fail snapshots also need rust-src so standard-library spans
+      # render identically under rustup and the standalone CI toolchain.
       - name: Install Rust workspace toolchain
         shell: bash
         run: |
           set -euo pipefail
-          if [ "$(rustc --version | awk '{print $2}')" = "1.95.0" ]; then
-            exit 0
+          if command -v rustc >/dev/null 2>&1; then
+            rust_sysroot="$(rustc --print sysroot)"
+            if [ "$(rustc --version | awk '{print $2}')" = "1.95.0" ] &&
+               [ -r "${rust_sysroot}/lib/rustlib/src/rust/library/core/src/marker.rs" ]; then
+              exit 0
+            fi
           fi
           bash ./install_rustc.sh
           echo "${HOME}/.local-rust/bin" >> "${GITHUB_PATH}"
