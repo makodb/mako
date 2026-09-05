@@ -2715,6 +2715,7 @@ if(BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/src/mako
         ${GTEST_INCLUDE_DIRS}
     )
+    mako_force_include_masstree_config(tests/test_sto_transaction.cc)
     add_test(NAME STOTransactionTests COMMAND test_sto_transaction)
 
     # Test: STO Transaction Real (Integration)
