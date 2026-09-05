@@ -30,3 +30,26 @@ writes to the same collection.
 Use `sto-masstree` when the workload needs a production ordered index. These
 adapters exist to exercise the public datatype trait, cross-adapter atomicity,
 read-your-writes, stale-read detection, and rollback.
+
+## Isolation checks
+
+`tests/isolation_litmus.rs` fixes the relevant thread interleavings with
+channels. It checks write-skew rejection across independent array slots,
+invisibility and rollback of a staged write, and rejection of a fractured
+read across a hash map and vector.
+
+`tests/strict_serializability.rs` runs 128 seeded concurrent workloads. Each
+history has three workers execute two transactions over independently
+versioned map buckets. The test records transaction invocation and response
+times, every operation result, commit outcomes, and final state. An independent
+depth-first checker searches all legal orders of the committed transactions,
+preserves real-time precedence, replays their operations against a small model,
+and requires the replayed final state to match storage. Checker self-tests
+include a valid history, a write-skew cycle, and a real-time-order violation.
+
+The supported `Serializable` profile is deliberately nonopaque, so observations
+from aborted transactions are not required to form a consistent snapshot and
+are excluded from the serial-order search. The targeted tests separately check
+that uncommitted state is never published and that a fractured view cannot
+commit. These bounded tests are executable regression checks, not a proof over
+all programs or machine-level schedules.

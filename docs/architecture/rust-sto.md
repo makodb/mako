@@ -4090,6 +4090,21 @@ insert/delete/resurrection, hook rejection, and abort cleanup. An independent
 history checker verifies strict serializability; an additional checker is used
 when opacity is enabled.
 
+The current pure-Rust reference suite implements the bounded checker in
+[`strict_serializability.rs`](../../crates/sto-test-datatypes/tests/strict_serializability.rs).
+For each of 128 seeded workloads, three workers run two transactions over
+distinct hash-map buckets. The checker enumerates legal serial orders of
+committed transactions, respects invocation/response real-time edges, validates
+every observed result, and compares the replayed final state with storage. Its
+own fixtures reject both a write-skew cycle and a real-time-order violation.
+Deterministic litmus tests in
+[`isolation_litmus.rs`](../../crates/sto-test-datatypes/tests/isolation_litmus.rs)
+also cover write skew, dirty-read prevention with explicit abort, and a
+fractured read across two adapter types. Aborted observations are excluded from
+the serial-order search because the implemented Serializable profile is
+nonopaque. General concurrent differential histories across the native
+Masstree layers remain future work.
+
 ### 18.5 Performance ladder
 
 Measure each boundary separately:
@@ -4168,6 +4183,7 @@ follows:
 | Closed C++ TPC-C bridge, resolved-token cache policies, and fused workload capabilities | [`crates/sto-tpcc-ffi`](../../crates/sto-tpcc-ffi), [`rust_sto_tpcc_wrapper.cc`](../../src/mako/storage/rust_sto_tpcc_wrapper.cc), and [`tpcc_fixed_batch.h`](../../src/mako/benchmarks/tpcc_fixed_batch.h) | Implemented with checked public scalar operations plus wrapper-private fixed-layout Payment prefix, full Payment, exact-home NewOrder, local Delivery, and the local StockLevel tail. Commit-owning calls resolve their active attempt; ineligible modes retain the scalar path. |
 | Optional all-present fixed-`u64` point specialization | [`fixed_u64.rs`](../../crates/sto-masstree/src/fixed_u64.rs) | Implemented behind `fixed-u64`: private fresh directory, permanent loader seal, 16-byte atomic record, terminal reads, and exact-unique point updates; liveness changes, scans, and miss fallback are intentionally unsupported. |
 | Upper metadata reservation and pre-install coordination | [`hook.rs`](../../crates/sto-core/src/hook.rs) | Implemented as an optional caller-owned `CommitHook`. |
+| Pure-Rust reference adapters and bounded isolation checks | [`crates/sto-test-datatypes`](../../crates/sto-test-datatypes) | Implemented for map, vector, and queue composition, deterministic isolation litmus tests, and model-checked strict-serializability histories. |
 | Opacity, graceful native shutdown, and upper backend cutover | Sections 12, 15.5, 17, and 19.2 | Deferred; callers receive explicit unsupported/capability outcomes rather than silent downgrade. |
 | Bounded point-workload performance characterization | [`sto-rust-zoo2-optimized-2026-08-28`](../performance/sto-rust-zoo2-optimized-2026-08-28/README.md) | Complete on `zoo-002`; production-wide budget acceptance remains deferred. |
 
