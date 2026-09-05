@@ -519,8 +519,8 @@ pub(super) unsafe fn mako_rust_fast_db_order_record_validation_prefix(db: *mut s
     assert!(!db.is_null(), "the private cache-order cut needs a db");
     with_state(|state| {
         assert!(
-            fake_packed_order_allowed(state),
-            "the private cache-order cut needs a Concurrent namespace claim"
+            fake_packed_order_coordination_allowed(state),
+            "the private cache-order cut needs a Concurrent or PerWorker namespace claim"
         );
     });
 }
@@ -531,6 +531,7 @@ const CACHE_ORDER_TIMESTAMP_SHIFT: u32 = 29;
 const CACHE_ORDER_TIMESTAMP_MASK: u64 = CACHE_ORDER_FIELD_MASK << CACHE_ORDER_TIMESTAMP_SHIFT;
 const CACHE_ORDER_CONCURRENT: u32 = super::CacheOrderMode::Concurrent as u32;
 const CACHE_ORDER_SINGLE_PRODUCER: u32 = super::CacheOrderMode::SingleProducer as u32;
+const CACHE_ORDER_PER_WORKER: u32 = super::CacheOrderMode::PerWorker as u32;
 
 fn assign_fake_cache_order_pair(state: &mut State, timestamp: Option<u32>) -> Option<(u64, u32)> {
     let timestamp = timestamp.filter(|raw| *raw != 0 && *raw <= crate::MAX_MAKO_TIMESTAMP)?;
@@ -553,7 +554,19 @@ fn fake_packed_order_allowed(state: &State) -> bool {
     state.cache_order_claimed && state.cache_order_mode == CACHE_ORDER_CONCURRENT
 }
 
+fn fake_packed_order_coordination_allowed(state: &State) -> bool {
+    state.cache_order_claimed
+        && (state.cache_order_mode == CACHE_ORDER_CONCURRENT
+            || state.cache_order_mode == CACHE_ORDER_PER_WORKER)
+}
+
 fn fake_rust_sequence_order_allowed(state: &State) -> bool {
+    !state.cache_order_claimed
+        || state.cache_order_mode == CACHE_ORDER_SINGLE_PRODUCER
+        || state.cache_order_mode == CACHE_ORDER_PER_WORKER
+}
+
+fn fake_single_producer_order_allowed(state: &State) -> bool {
     !state.cache_order_claimed || state.cache_order_mode == CACHE_ORDER_SINGLE_PRODUCER
 }
 
@@ -570,13 +583,15 @@ pub(super) unsafe fn mako_rust_fast_db_claim_cache_order_namespace(
     with_state(|state| {
         if db.is_null()
             || (foreground_mode != CACHE_ORDER_CONCURRENT
-                && foreground_mode != CACHE_ORDER_SINGLE_PRODUCER)
+                && foreground_mode != CACHE_ORDER_SINGLE_PRODUCER
+                && foreground_mode != CACHE_ORDER_PER_WORKER)
             || state.cache_order_claimed
         {
             return if db.is_null() {
                 sys::MAKO_LOCAL_INVALID_ARGUMENT
             } else if foreground_mode != CACHE_ORDER_CONCURRENT
                 && foreground_mode != CACHE_ORDER_SINGLE_PRODUCER
+                && foreground_mode != CACHE_ORDER_PER_WORKER
             {
                 sys::MAKO_LOCAL_INVALID_ARGUMENT
             } else {
@@ -1364,6 +1379,7 @@ pub(super) unsafe fn mako_rust_fast_txn_commit_native_ordered_record_and_destroy
 
 unsafe fn fast_unchecked_one_put_record_commit_and_destroy(
     call: Call,
+    single_producer_only: bool,
     _txn: *mut sys::mako_local_txn,
     expected_record_bytes: u32,
     hook: RecordBindHook,
@@ -1377,7 +1393,12 @@ unsafe fn fast_unchecked_one_put_record_commit_and_destroy(
     with_state(|state| {
         state.calls.push(call);
         state.last_unchecked_record_bytes = Some(expected_record_bytes);
-        if !fake_rust_sequence_order_allowed(state) {
+        let mode_allowed = if single_producer_only {
+            fake_single_producer_order_allowed(state)
+        } else {
+            fake_rust_sequence_order_allowed(state)
+        };
+        if !mode_allowed {
             return reject_fake_fast_terminal(state);
         }
         let (commit, timestamp, exact_record_bytes, record, reported_written) =
@@ -1466,6 +1487,7 @@ pub(super) unsafe fn mako_rust_fast_txn_commit_unchecked_one_put_record_and_dest
     unsafe {
         fast_unchecked_one_put_record_commit_and_destroy(
             Call::FastUncheckedOnePutRecordCommitDestroy,
+            false,
             txn,
             expected_record_bytes,
             hook,
@@ -1946,6 +1968,7 @@ pub(super) unsafe fn mako_rust_fast_txn_commit_unchecked_one_put_record_single_p
     unsafe {
         fast_unchecked_one_put_record_commit_and_destroy(
             Call::FastSingleProducerUncheckedOnePutRecordCommitDestroy,
+            true,
             txn,
             expected_record_bytes,
             hook,
@@ -1967,7 +1990,7 @@ pub(super) unsafe fn mako_rust_fast_txn_commit_preselected_unchecked_one_put_rec
             .calls
             .push(Call::FastPreselectedSingleProducerUncheckedOnePutRecordCommitDestroy);
         state.last_unchecked_record_bytes = Some(expected_record_bytes);
-        if !fake_rust_sequence_order_allowed(state) {
+        if !fake_single_producer_order_allowed(state) {
             return FastPreselectedRecordResult {
                 terminal: reject_fake_fast_terminal(state),
                 record_state: 0,
@@ -2205,7 +2228,7 @@ pub(super) unsafe fn mako_rust_fast_txn_commit_preselected_unchecked_one_put_hol
             .calls
             .push(Call::FastPreselectedSingleProducerUncheckedOnePutHolderCommitDestroy);
         state.last_unchecked_record_bytes = Some(expected_record_bytes);
-        if !fake_rust_sequence_order_allowed(state) {
+        if !fake_single_producer_order_allowed(state) {
             return FastPreselectedRecordResult {
                 terminal: reject_fake_fast_terminal(state),
                 record_state: 0,
@@ -2213,6 +2236,33 @@ pub(super) unsafe fn mako_rust_fast_txn_commit_preselected_unchecked_one_put_hol
         }
         // SAFETY: the outer fake ABI entry inherits the private holder and
         // unique-generation contract from the safe wrapper.
+        unsafe {
+            fake_preselected_one_put_holder_commit(state, expected_record_bytes, pool, sequence)
+        }
+    })
+}
+
+pub(super) unsafe fn mako_rust_fast_txn_commit_preselected_unchecked_one_put_holder_per_worker_and_destroy(
+    _txn: *mut sys::mako_local_txn,
+    expected_record_bytes: u32,
+    pool: *mut FastOnePutHolderPool,
+    sequence: u64,
+    unhealthy: *const u8,
+) -> FastPreselectedRecordResult {
+    with_state(|state| {
+        state
+            .calls
+            .push(Call::FastPreselectedSingleProducerUncheckedOnePutHolderCommitDestroy);
+        state.last_unchecked_record_bytes = Some(expected_record_bytes);
+        if state.cache_order_mode != CACHE_ORDER_PER_WORKER || unhealthy.is_null() {
+            return FastPreselectedRecordResult {
+                terminal: reject_fake_fast_terminal(state),
+                record_state: 0,
+            };
+        }
+        // The fake is deterministic rather than concurrent. Healthy calls
+        // exercise the same holder lifecycle; cross-lane health races are
+        // covered by the native observer and cache writeback tests.
         unsafe {
             fake_preselected_one_put_holder_commit(state, expected_record_bytes, pool, sequence)
         }
@@ -5171,6 +5221,19 @@ mod tests {
         assert!(
             cut.is_err(),
             "SingleProducer mode must reject the packed cut"
+        );
+        drop(db);
+        assert_drained();
+
+        let db = open_db();
+        claim_cache_order_mode(&db, crate::CacheOrderMode::PerWorker, 11);
+        let per_worker_snapshot = db.cache_order_snapshot();
+        db.order_record_validation_prefix();
+        assert_eq!(db.cache_order_snapshot(), per_worker_snapshot);
+        assert_eq!(per_worker_snapshot & CACHE_ORDER_FIELD_MASK, 11);
+        assert_eq!(
+            (per_worker_snapshot & CACHE_ORDER_TIMESTAMP_MASK) >> CACHE_ORDER_TIMESTAMP_SHIFT,
+            18
         );
         drop(db);
         assert_drained();

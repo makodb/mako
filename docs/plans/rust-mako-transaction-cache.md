@@ -57,18 +57,18 @@ behavior is captured by an executable compatibility suite.
    an executor.
 4. **Conflicts do not cause invisible retries.** Commit returns `Conflict`;
    the caller decides whether and how to rerun application logic.
-5. **Backend application is transaction-atomic and physically prefix-batched.**
-   Each committed transaction's record and mutations remain one indivisible,
-   ordered application unit, while one physical RocksDB `WriteBatch` may hold
-   a bounded contiguous prefix of transactions. A later durability milestone
-   must preserve those transaction boundaries and order when it defines sync
-   and recovery guarantees.
-6. **MassTrans OCC versions, cache sequence numbers, and Mako timestamps
-   remain separate types and number spaces.** `MakoTimestamp` wraps the
-   checked, nonzero 32-bit `tid_unique_`; `CacheSeq` orders local application
-   obligations; and MassTrans row versions remain engine-private validation
-   state. Accidental comparison or conversion between them should be
-   impossible in Rust.
+5. **Backend application is transaction-atomic and lane-prefix-batched.** Each
+   worker publishes to its own single-producer lane. A physical RocksDB
+   `WriteBatch` may hold a bounded contiguous prefix from one lane, but batches
+   from different lanes need not follow serialization order. Every batch keeps
+   each transaction's commit record and selected materialized mutations atomic.
+   Mako timestamps, not physical batch order, decide which value wins.
+6. **MassTrans OCC versions, physical log IDs, and Mako timestamps remain
+   separate types and number spaces.** `MakoTimestamp` wraps the checked,
+   nonzero 32-bit `tid_unique_` and supplies the local logical order. A
+   `CacheSeq` identifies a position in one physical writeback lane. MassTrans
+   row versions remain engine-private validation state. Accidental comparison
+   or conversion between these values should be impossible in Rust.
 7. **Process-lifetime native resources are honest in the API.** STO has
    exactly 460 process-lifetime thread slots, and current MassTrans teardown
    lacks a verified global RCU quiescence protocol. The first ABI does not
@@ -87,11 +87,11 @@ Rust application / database facade
                 |
        +--------+---------------------------+
        |                                    |
-local transaction participant          async application pipeline
+local transaction participant          per-worker SPSC writeback lanes
        |                                    |
-safe `mako-local` crate                 transaction records / RocksDB batches
+safe `mako-local` crate                 shared timestamp apply coordinator
        |                                    |
-raw `mako-local-sys` declarations       in-memory applied watermark
+raw `mako-local-sys` declarations       black-box RocksDB batches
        |                                    |
 `mako_local_*` C ABI                    later sync/recovery policy
        |
@@ -121,11 +121,13 @@ The local cache protocol must not call every ordering value a "timestamp":
   current distributed path also takes maxima from remote participants and the
   read set, but permits ties and therefore must not yet treat this scalar as a
   globally unique history key.
-- **`CacheSeq`** is the local, nonzero application-queue sequence. It is
-  allocated only when a validated transaction binds its prepared record in
-  the preinstall hook. It orders publication, RocksDB application, replay, and
-  the in-memory applied watermark; it is not an OCC version or a distributed
-  timestamp.
+- **`CacheSeq`** is a nonzero physical log ID. Concurrent mode stores the
+  one-based worker lane tag in the upper 16 bits and a dense lane-local
+  sequence in the low 48 bits. The lane tag is the cache's process-lifetime
+  thread slot plus one; it need not equal STO's independent worker ID. An upper
+  16-bit value of zero denotes the legacy dense stream. A `CacheSeq` orders
+  records only within its lane; it is not a global serialization order, an OCC
+  version, or a progress count.
 - **MassTrans row versions** remain the current nonopaque profile's per-record
   OCC counters. Carrying `tid_unique_` does not replace them. An opaque STO
   profile may separately use the 64-bit `commit_tid_` clock for row versions,
@@ -440,8 +442,10 @@ three. No API may use the single word “committed” when those states differ.
 
 ### 1E. Correct unbounded asynchronous write-back cache
 
-Phases 1A-1D establish an in-memory engine binding. This phase adds ordered,
-asynchronous application to a black-box RocksDB backend.
+Phases 1A-1D establish an in-memory engine binding. This phase adds
+asynchronous application to a black-box RocksDB backend. It preserves logical
+last-writer-wins and recovery semantics with Mako timestamps instead of forcing
+every worker through one physical publication order.
 
 Create a new `mako-cache` layer rather than adding transaction semantics to
 `mrx-core`:
@@ -451,32 +455,35 @@ Create a new `mako-cache` layer rather than adding transaction semantics to
   define recovery of an unflushed tail.
 - Start unbounded: every live value remains in Silo. Eviction is a later
   subphase so it cannot obscure transaction/durability correctness.
-- Assign a cache commit sequence distinct from Mako's logical timestamp and
-  MassTrans's per-record OCC versions.
-- Before entering native commit, acquire bounded write-back capacity and an
-  exact-size uninitialized record buffer. The permit is still detached: it has
-  no `CacheSeq` and is not visible to the ordered writer. After final native
-  validation, STO serializes its canonical write set directly into that buffer;
-  Rust constructs RocksDB keys only on the background replay path. This closes
-  the allocation/backpressure publish gap without forcing transactions that
-  later conflict to consume log positions.
-- Store each transaction as one checksummed, versioned commit record. Apply a
-  bounded contiguous prefix of transactions in one atomic `WriteBatch`, with
-  operations kept in logical transaction order.
+- Give each foreground worker a lazily initialized SPSC writeback lane. Each
+  lane has its own bounded capacity and dense local sequence. After validation,
+  the native engine serializes its canonical write set directly into the
+  caller-provided record buffer and publishes it to that worker's lane.
+- Store each transaction as one versioned commit record. CRC remains an
+  optional record-format choice. The background runtime polls lanes in round-
+  robin order and may apply records in a different physical order than their
+  Mako timestamps.
+- Route every backend batch through one shared apply coordinator. It always
+  retains the commit log, but it sends a put or delete to the materialized data
+  key only when that record has the greatest Mako timestamp seen for the key.
+  This makes a late older record harmless without exposing RocksDB internals.
 - Define `wait_applied()` as: every transaction acknowledged before the call
   has reached a successful atomic RocksDB batch. The compatibility spelling
   `flush()` means the same thing and must not add a separate RocksDB flush, WAL
   sync, or `fsync` beyond the configured ordinary batch writes.
-- Keep the applied watermark only in memory. Recovery from complete backend
-  records may reconstruct it on open, but recovery of an unflushed log tail is
-  outside this phase.
+- Keep progress only in memory. The acknowledged and applied sequence APIs
+  report aggregate record counts across initialized lanes. The applied
+  watermark also reports the greatest applied Mako timestamp. Neither value
+  claims a contiguous global serialization prefix. Recovery from complete
+  backend records may reconstruct these values on open, but recovery of an
+  unflushed log tail is outside this phase.
 
-The selected first-slice protocol is below. It supersedes the earlier design
-that put a global commit gate around native commit and assigned a sequence plus
-cancellation marker before Silo validation. Record validation, ordered
-writeback, atomic RocksDB batches, retry/fail-stop behavior, native multi-key
-transactions, and reopen recovery are covered both as components and through
-integrated cache acceptance tests. Those tests establish the Phase 1E
+The selected first-slice protocol is below. It supersedes both the early global
+commit gate and the later global dense publication queue. Record validation,
+per-worker publication, timestamp-filtered atomic RocksDB batches,
+retry/fail-stop behavior, native multi-key transactions, and reopen recovery
+are covered both as components and through integrated cache acceptance tests.
+Those tests establish the Phase 1E
 functional contract under bounded sustained overload, clean drain/reopen,
 forced process stop, and near-exhaustion recovery. Transactional scan
 read-your-writes and its C ABI, safe Rust, and cache integration slice are
@@ -498,14 +505,15 @@ retains the evidence.
 Interruption inside RocksDB's WAL is deliberately not a milestone gate:
 RocksDB remains a black box.
 
-1. **Prepare a detached permit before native commit.** First seal and preflight
-   STO's canonical final write-set extent. Then acquire one unit of bounded
-   queue capacity and its publication cell, followed by exactly one encoded-
-   record buffer sized from that preflight.
+1. **Prepare against the worker's lane before native commit.** First seal and
+   preflight STO's canonical final write-set extent. Then acquire one unit of
+   capacity from the current worker's lane and its publication cell, followed
+   by exactly one encoded-record buffer sized from that preflight.
    No Rust mutation journal or tagged RocksDB keys are constructed on the
    foreground path; the background decoder materializes those keys later.
    Every size check and fallible allocation finishes while Silo holds no commit
-   locks. The detached permit occupies capacity but no ordered queue position.
+   locks. The detached permit occupies lane capacity but has no physical log ID
+   and is not visible to the consumer.
 2. **Allocate Mako's timestamp under Silo's locks, then validate.** Native
    commit performs its existing phase-1 predicate checks while collecting and
    locking the write set. Once the complete write set is locked, it allocates a
@@ -515,71 +523,64 @@ RocksDB remains a black box.
    its exhausted sentinel. Silo's lock order
    supplies the serialization constraints; allocating while the locks are held
    assigns Mako's transaction-history timestamp consistently with them. A lock
-   or validation conflict drops the detached permit. It consumes no `CacheSeq`,
-   creates no queue slot, and therefore needs no cancellation marker; only the
-   already allocated Mako timestamp may contain a harmless gap.
+   or validation conflict drops the detached permit. It consumes no lane-local
+   sequence and needs no cancellation marker. Only the already allocated Mako
+   timestamp may contain a harmless gap.
 3. **Bind after validation and before install.** After every validation has
    succeeded, but before phase 3 can make any write visible, native code calls
-   a narrow preinstall hook with `MakoTimestamp`. Under only the queue's short
-   metadata lock, the hook checks fail-stop health, assigns the next
-   `CacheSeq`, and moves the preallocated cell into a Prepared queue slot.
-   Native fills both fixed-width fields during the immediately following
-   direct serialization. This bind is allocation-free and performs
-   no RocksDB IO. Rejection is a definite native abort because install has not
-   begun. A Rust panic is converted to rejection in unwind-enabled builds;
-   the workspace release profile uses `panic = "abort"`, so production hook
-   code must remain non-panicking and a violated invariant fail-stops the
-   process before unwinding can cross C.
-4. **Serialize, install, and acknowledge.** After binding retires the short
-   validation-order turn, native walks the canonical STO write set directly,
-   fills the caller-owned record and CRC, and then Silo installs the write set.
-   All write locks remain held until install, but the next disjoint validator
-   can already take its turn. Rust attaches the witnessed complete bytes in
-   constant time and changes the bound slot from Prepared to Ready. A commit is
-   acknowledged only when Ready records form a dense prefix through its
-   `CacheSeq`; an out-of-order Ready publisher waits for the earlier slot to
-   resolve. The transaction-wide Mako timestamp remains history metadata even
-   though the current nonopaque MassTrans profile advances per-record versions
-   separately.
+   a narrow preinstall hook with `MakoTimestamp`. The hook checks the cache-wide
+   fail-stop state, assigns the next dense sequence in this worker's lane, and
+   combines it with the lane tag to form the physical `CacheSeq`. Native fills
+   the fixed-width record fields during direct serialization. This bind is
+   allocation-free and performs no RocksDB IO. Rejection is a definite native
+   abort because install has not begun. A Rust panic is converted to rejection
+   in unwind-enabled builds. The workspace release profile uses
+   `panic = "abort"`, so production hook code must remain non-panicking and a
+   violated invariant fail-stops the process before unwinding can cross C.
+4. **Serialize, install, publish, and acknowledge independently.** Native walks
+   the canonical STO write set directly, fills the caller-owned record and the
+   optional CRC, then Silo installs the write set. Rust attaches the complete
+   bytes in constant time and publishes the record to its SPSC lane. A worker
+   may acknowledge its transaction as soon as that lane publication succeeds.
+   It does not wait for a lower-timestamp transaction on another worker to
+   publish. The Mako timestamp records the logical serialization order even
+   when physical publication order differs.
    The bounded queue is volatile, so an acknowledged but unapplied tail may be
    lost on process crash. This phase also makes no promise for an applied but
    unsynced RocksDB tail.
-5. **Pin any unresolved post-bind obligation.** Once bind succeeds, no failure
-   may be treated as an ordinary conflict or cancellation that frees the dense
-   slot. If native install/cleanup has an unknown outcome, or publication cannot
-   prove the bound record Ready, that `CacheSeq` pins the queue and applied
-   watermark. When serialization completed, its exact finalized write set
-   remains attached to the ambiguous slot. A post-bind serializer rejection is
-   a definite pre-install abort, so the application may retry the logical
-   transaction, but it leaves an intentionally unwritten ordering hole: there
-   are no trustworthy bytes to replay, so the empty slot itself stays pinned.
-   A known-committed suffix is likewise retained and pinned if an earlier
-   obligation wins the publication race. New binds fail and no later sequence
-   can be acknowledged or applied until a higher-level recovery protocol
-   resolves the hole.
-6. **Apply a bounded Ready prefix in one atomic RocksDB batch.** The background
-   writer consumes Ready slots strictly in `CacheSeq` order. One `WriteBatch`
-   contains each selected transaction's retained commit record and puts/deletes,
-   preserving logical transaction order; bounds on record count and encoded
-   bytes cap the physical batch. One RocksDB write atomically applies that whole
-   prefix before advancing the in-memory `AppliedWatermark`. That watermark is
-   the pair consisting of the dense `CacheSeq` frontier and the exact
-   `MakoTimestamp` on that frontier; the sequence proves contiguity, while the
-   timestamp identifies the Mako transaction. A backend failure retains the
-   same unchanged front and leaves the watermark unchanged. A retry begins at
-   that front and may absorb a newly Ready contiguous suffix within the same
-   bounds; no later sequence can pass it. Ordinary conflicts never appear in
-   this queue.
+5. **Fail-stop unresolved post-bind obligations.** Once bind succeeds, native
+   install or publication uncertainty cannot become an ordinary conflict. The
+   affected lane retains its exact finalized record when those bytes exist, and
+   the shared unhealthy state rejects new work in every lane. This preserves
+   the obligation without a cross-worker acknowledgement gate. A higher-level
+   recovery protocol must resolve any unknown outcome.
+6. **Poll lanes and apply through one coordinator.** One background runtime
+   visits initialized lanes in round-robin order. It takes a bounded contiguous
+   Ready prefix from a lane, then enters the shared apply coordinator. The
+   coordinator serializes black-box backend calls across lanes. Every selected
+   transaction contributes its commit-log operation. For each data key, the
+   coordinator emits only the mutation with a timestamp newer than the latest
+   timestamp recorded for that key. One RocksDB `WriteBatch` atomically stores
+   those log records and winning materialized mutations before the lane
+   advances. A failure retains the lane prefix for retry and leaves its applied
+   position unchanged. Physical application order may differ from timestamp
+   order, but an older late batch cannot overwrite a newer value or resurrect a
+   newer delete.
 7. **Validate complete backend history on open.** Reopen validates any records
-   RocksDB presents by version, checksum, `CacheSeq`, and checked
-   `MakoTimestamp`, then replays them in cache-sequence order. It reconstructs
-   the in-memory applied position from the last `CacheSeq` record, while
-   separately flooring Mako's process-wide clock past the maximum recovered
-   timestamp. This validation does not promise recovery of a RocksDB tail that
-   had not been synced before a machine failure. The first slice exposes one
-   default logical table and uses a tagged RocksDB key format separating user
-   data, commit records, and future internal namespaces; compatibility or
-   migration from `mrx`'s raw-key layout remains a separate task.
+   RocksDB presents by version, optional checksum, physical `CacheSeq`, and
+   checked `MakoTimestamp`. It requires a dense local sequence and increasing
+   timestamps within each lane, accepts the upper-zero legacy dense stream, and
+   rejects duplicate Mako timestamps across the cache. Recovery reconstructs
+   the latest timestamp for every data key from the permanent commit logs,
+   including delete records, and checks the raw materialized state against
+   those winners. It then sorts whole transactions by Mako timestamp for native
+   replay and floors Mako's process-wide clock past the recovered maximum. The
+   progress sequence is the recovered record count, not the last physical ID.
+   This validation does not promise recovery of a RocksDB tail that had not
+   been synced before a machine failure. The first slice exposes one default
+   logical table and uses a tagged RocksDB key format separating user data,
+   commit records, and future internal namespaces. Compatibility or migration
+   from `mrx`'s raw-key layout remains a separate task.
 
 The timestamp switch bumps the draft commit-record value format from v2 to v3:
 v2 carried a 64-bit Silo TID, while v3 carries the exact 32-bit base
@@ -587,17 +588,23 @@ v2 carried a 64-bit Silo TID, while v3 carries the exact 32-bit base
 timestamp. This is allowed while both the C ABI and durable format remain
 pre-v1; a production format must ship an explicit migration policy.
 
-The protocol has no gate around the whole native commit. Disjoint transactions
-may acquire write locks and install concurrently. A per-database ticket turn
-orders only Mako timestamp assignment, final validation, and the irrevocable
-`CacheSeq` bind; byte copying and CRC occur after that turn is released. This
-short ordered region prevents a later anti-dependent writer from taking an
-earlier log sequence. Consequently successful records have increasing Mako
-timestamps in dense `CacheSeq` order. `MakoTimestamp` remains separate from the
-current nonopaque row version.
+The protocol has no global publication ticket. Disjoint transactions may
+validate, bind a lane-local sequence, install, publish, and return concurrently.
+Silo's locks determine the serialization constraints, and the native Mako
+timestamp records that logical order. A worker's physical log IDs increase
+densely within its own lane. No ordering relationship exists between physical
+IDs in different lanes. `MakoTimestamp` remains separate from the current
+nonopaque row version.
 
 - This slice is unbounded and local: it has no value eviction, distributed
   routing, 2PC, replication, or distributed-finality semantics.
+- The timestamp filter is currently an in-memory index over raw RocksDB values.
+  Correct reopen therefore depends on retaining every commit log, including
+  deletes, so recovery can rebuild the index. Milestone 1 never prunes those
+  logs.
+- One cache exclusively owns the backend and its tagged keyspace. External
+  writers, a second cache writer, or distributed writers would bypass the
+  shared apply coordinator and invalidate last-writer-wins materialization.
 - Phase 1 admits exactly one recovered cache namespace per process. This is a
   deployment precondition, not a mutex-enforced runtime feature. Native tables
   and the timestamp authority are process-wide, so independently opening a
@@ -605,13 +612,23 @@ current nonopaque row version.
   history. Supporting multiple caches requires a supervisor that identifies
   every namespace, scans every backend, and floors the shared timestamp clock
   before admitting any transaction to any of them.
+- Before log pruning or distributed backend writers, store the winning
+  timestamp with each materialized value and tombstone. A RocksDB merge
+  operator or an equivalent conditional-update envelope must compare that
+  timestamp atomically in persistent state. The current raw-value layout and
+  process-local coordinator are not sufficient for either extension.
 
 The in-memory applied watermark has one meaning in every RocksDB write mode:
-the complete ordered batch is confirmed present in RocksDB. During live
-application that confirmation is a successful `rocksdb_write` return; during
-open it is validated backend history. It never means “synced.” The current
+its sequence is the aggregate number of commit records confirmed present in
+RocksDB, and its timestamp is the greatest applied Mako timestamp. During live
+application, confirmation is a successful `rocksdb_write` return. During open,
+it is validated backend history. Neither field claims that all smaller Mako
+timestamps have been applied, and neither means "synced." The current
 production default is `Wal`: ordinary writes use `sync=false`, and the cache
-adds no separate `FlushWAL`, `SyncWAL`, or memtable-flush call.
+adds no separate `FlushWAL`, `SyncWAL`, or memtable-flush call. The analogous
+acknowledgement API also reports an aggregate count. `wait_applied()` snapshots
+each initialized lane's acknowledged position and waits for every snapshot,
+rather than waiting for a global prefix.
 
 - `Sync`: an explicitly configured atomic batch asks RocksDB to synchronize
   its WAL. This lower-level option is useful for separate durability tests but
@@ -650,8 +667,10 @@ asynchronous milestone. Recovery of an unflushed log tail, forced sync, torn
 WAL simulation, and interruption inside RocksDB are deferred to the later
 durability milestone. No private RocksDB C++ shim is required here.
 
-The Phase 1F correctness gate is complete for the current asynchronous
-contract:
+The historical Phase 1F correctness gate is complete for the asynchronous
+contract. The per-worker-lane revision now passes its
+[fresh production, hook-enabled, Rust, recovery, and comparative gates](../mako-cache-milestone1-acceptance.md#fresh-per-worker-validation).
+The accepted coverage includes:
 
 - Pre-preparation plus every reachable cache abort/commit-cleanup path has a
   fresh-worker quarantine assertion. The raw ABI independently covers all five
@@ -660,11 +679,13 @@ contract:
   capacity discharge, hook-time allocation, conflict cancellation slots,
   missing/premature Ready publication, unpinned unknown outcomes, partial
   replay, reordered commits, duplicate replay, wrong Mako timestamps, and a
-  recovered native clock not advanced past the recovered maximum; all twelve
-  mutants are killed only by their designated exact tests.
+  recovered native clock not advanced past the recovered maximum. The
+  per-worker-lane revision adds lane-local density, duplicate-timestamp, stale
+  materialization, and shared fail-stop cases.
 - Synthetic and real cache histories run through the transaction oracle first,
-  then add cache order, backend batches/retries, visible/applied frontiers,
-  wait barriers, pinned suffixes, and one-global-clock validation.
+  then add physical lane order, timestamp order, backend batches and retries,
+  aggregate progress, wait barriers, pinned lane suffixes, and one-global-clock
+  validation.
 - Deliberate decoded-batch divergence turns the same full-history checker path
   red; partial materialization is rejected earlier by transcript decoding.
 
@@ -675,7 +696,9 @@ every live value in Silo, so the complete live dataset must fit in RAM. It also
 does not reclaim the commit-record history accumulated in RocksDB. This is
 separate from writeback backpressure: detached permits plus prepared/ready
 in-memory records are bounded by `WritebackConfig::capacity`, and producers
-block before native commit when that capacity is exhausted.
+block before native commit when that capacity is exhausted. Concurrent mode
+applies that configured capacity to each initialized worker lane, so total
+queue capacity grows with the number of active lanes.
 
 The post-Milestone-1 eviction design may retain a complete key index in Silo
 while bounding resident value bytes:
@@ -693,35 +716,44 @@ separate designs.
 
 ### Milestone 1 final acceptance gate
 
-The checklist below separates the two validation waves. Historical candidate
+The checklist below separates the completed historical validation waves from
+the per-worker-lane revision. Historical candidate
 `6574cf47c` passed the original functional/contract gate and complete
-comparative zoo-2 matrix on 2026-08-26. The current
+comparative zoo-2 matrix on 2026-08-26. The later
 native-record/bounded-batching rewrite passed its delta correctness gates and
 old-versus-rewrite zoo-2 scaling run on 2026-08-29. The retained
 [Milestone 1 acceptance record](../mako-cache-milestone1-acceptance.md) reports
-both evidence sets and their concurrent-write scaling limitations; PASS is not
-a claim that Mako beat a predeclared performance SLA.
+both evidence sets and their concurrent-write scaling limitations. The
+per-worker-lane implementation supersedes that rewrite's global publication
+queue; its fresh full-suite and W1/W4 comparative evidence are recorded in the
+linked acceptance record.
 
 - [x] **Historical foundation:** every Phase 1A-1D boundary gate is green,
       including the resolved
       Phase 1C/1D freeze choices.
-- [x] **Current rewrite:** transaction-atomic multi-key application, with a
-      bounded contiguous
-      transaction prefix per black-box RocksDB `WriteBatch`.
-- [x] **Current rewrite:** reopen advances Mako's native logical counter past
-      every recovered
-      record before admitting work, including near-exhaustion and
-      corrupt-timestamp tests.
-- [x] **Current rewrite:** an honest in-memory `AppliedWatermark` and
+- [x] **Per-worker lane revision:** transaction-atomic multi-key application,
+      with a
+      bounded contiguous lane prefix per black-box RocksDB `WriteBatch` and one
+      shared timestamp-filtering apply coordinator.
+- [x] **Per-worker lane revision:** reopen advances Mako's native logical
+      counter past every recovered record before admitting work, including
+      near-exhaustion and corrupt-timestamp cases.
+- [x] **Per-worker lane revision:** an honest in-memory `AppliedWatermark` and
       `wait_applied()` barrier under concurrent writers, write failures, and
-      sustained overload; neither claims disk sync.
-- [x] **Current rewrite:** concurrent disjoint commits demonstrate that only
-      the per-database
-      timestamp/final-validation/bind turn is serialized; record copying and
-      native installation remain concurrent.
-- [x] **Current rewrite:** clean cache/process shutdown drains all accepted
-      transactions to RocksDB. A forced cache/process stop may discard the
-      acknowledged but unapplied in-memory tail. A machine or power failure
+      sustained overload. Progress is an aggregate count plus the greatest
+      applied timestamp, not a global prefix, and neither claims disk sync.
+- [x] **Per-worker lane revision:** concurrent disjoint commits publish and
+      acknowledge independently through per-worker SPSC lanes. The runtime
+      polls lanes in round-robin order, and stale cross-lane application cannot
+      overwrite a newer timestamp.
+- [x] **Per-worker lane revision:** physical log IDs encode the one-based
+      worker lane in the upper 16 bits and a dense lane-local sequence in the
+      low 48 bits. Reopen also accepts upper-zero legacy records, validates
+      each lane, rejects duplicate timestamps, and replays whole transactions
+      in Mako timestamp order.
+- [x] **Per-worker lane revision:** clean cache/process shutdown drains all
+      accepted transactions to RocksDB. A forced cache/process stop may discard
+      the acknowledged but unapplied in-memory tail. A machine or power failure
       may additionally lose an applied RocksDB WAL tail that was accepted with
       `sync=false`; `AppliedWatermark` never claims otherwise.
 - [x] **Historical foundation:** on zoo-2, measure throughput, abort rate,
@@ -731,10 +763,14 @@ a claim that Mako beat a predeclared performance SLA.
       Record the candidate commit, build fingerprint, exact command, hardware,
       CPU affinity, methodology, machine-readable artifact, and acceptance
       result in the linked Milestone 1 acceptance record.
-- [x] **Current rewrite:** on zoo-2, run the frozen-source 1/2/4/8/16/32-worker
-      read/write comparison against the pre-rewrite implementation, retain all
-      84 raw samples, and independently verify their accounting, recovery, and
-      report-integrity invariants.
+- [x] **Previous global-queue rewrite:** on zoo-2, run the frozen-source
+      1/2/4/8/16/32-worker read/write comparison against the pre-rewrite
+      implementation, retain all 84 raw samples, and independently verify their
+      accounting, recovery, and report-integrity invariants.
+- [x] **Per-worker lane validation:** the full production and hook-enabled
+      native/cache suites pass, and the frozen zoo-2 W1/W4 comparison confirms
+      near-constant scaling efficiency. The linked acceptance record retains
+      exact commands, identities, logs, and samples.
 
 ## Milestone 2: distributed Mako with C++ Silo participants
 
@@ -811,13 +847,13 @@ recovery.
 
 ## Immediate execution order
 
-This section records the historical execution status before the
-native-record/bounded-batching rewrite. Transactional scan chunks, scan
+This section records the historical execution status and the later per-worker
+lane revision. Transactional scan chunks, scan
 read-your-writes, and their C ABI, safe Rust, and cache exposure were complete
 for the RYW profile. The hook-enabled
 fresh-process suite now exercises sixteen write-path and eight repeated
 recovery boundaries. The in-memory applied watermark is now explicit and
-advances only after a successful ordered backend call. Item 3's native
+advances only after successful coordinated backend calls. Item 3's native
 history oracle is complete. Item 4's sanitizer/Miri, fixed-worker concurrency,
 and overhead gate was accepted on historical candidate `5a3dd3eaf`; the linked
 [validation record](../mako-local-boundary-gates.md#validation-record) retains
@@ -832,7 +868,9 @@ adapter, and integrated overload/shutdown/exhaustion acceptance tests. Phase
 candidate `6574cf47c`; its
 [acceptance record](../mako-cache-milestone1-acceptance.md) retains the raw
 artifact and reports the observed concurrent-write scaling cost.
-Inside-RocksDB instrumentation is intentionally outside this milestone.
+Inside-RocksDB instrumentation remains outside this milestone. The per-worker
+lane code, fresh full-suite, canonical hook gate, and comparative performance
+run are complete; the linked acceptance record retains their evidence.
 
 1. The revision-0 operation/status contract and numeric reservations 0 through
    19 are now published and mechanically checked across the C header, C++
@@ -883,18 +921,20 @@ Inside-RocksDB instrumentation is intentionally outside this milestone.
    fresh-worker cache cleanup/quarantine scenarios complement all five raw ABI
    seams; the 12-mutant isolated suite has no survivor or harness error; and the
    application-aware oracle accepts real sequential and response-reordered
-   concurrent cache histories while rejecting injected divergence. The current
-   rewrite separately adds the stronger case where a later Ready transaction
-   waits for dense-prefix acknowledgement. The
+   concurrent cache histories while rejecting injected divergence. The
+   per-worker revision removes cross-worker prefix waiting and instead checks
+   independent acknowledgement, lane-local density, and timestamp-filtered
+   stale application. The
    dedicated hook-enabled profile is mandatory for native seam tests; the
    production-default native commit hot path contains no observer branches.
    See the
    [Item 5 validation record](../mako-local-boundary-gates.md#item-5-phase-1f-validation-record).
 6. Treat disk-sync observation, unflushed-tail recovery, and log reclamation as
    a separate durability milestone. They do not block beginning the
-   distributed Rust port once the local transaction and ordered-application
+   distributed Rust port once the local transaction and timestamp-arbitrated
    contract passes its gate.
 7. The final cache-level comparative benchmark completed on zoo-2 on
    2026-08-26. Its machine-readable evidence and independently checked medians
-   are retained in the linked acceptance record. Milestone 1 is finally
-   accepted within its explicitly single-machine, asynchronous scope.
+   are retained in the linked acceptance record. That historical revision was
+   accepted within its single-machine, asynchronous scope. The per-worker-lane
+   revision has now passed fresh validation and is the accepted current design.

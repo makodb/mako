@@ -1,9 +1,11 @@
 //! Versioned transaction commit records with an explicit integrity mode.
 //!
-//! A record is both the recovery description of one cache transaction and
-//! the source of the single RocksDB batch that materializes that transaction.
-//! The backend keyspace is private to `mako-cache`; raw application keys are
-//! never used as RocksDB keys directly.
+//! A record is the recovery description of one cache transaction. One RocksDB
+//! batch may contain a bounded dense prefix from a single worker lane. Every
+//! selected record contributes its permanent log operation, while the shared
+//! timestamp coordinator chooses which mutations materialize. The backend
+//! keyspace is private to `mako-cache`; raw application keys are never used as
+//! RocksDB keys directly.
 //!
 //! The value format is deliberately small and fixed-width where practical:
 //!
@@ -64,15 +66,43 @@ const fn expected_magic(version: u16) -> Option<&'static [u8; 8]> {
 
 // The leading NUL and binary keyspace version make this visibly an internal
 // namespace in RocksDB dumps. The kind byte makes log and materialized data
-// keys disjoint, while the fixed-width table/sequence fields make each
+// keys disjoint, while the fixed-width table/log-ID fields make each
 // mapping injective.
 const LOG_KEY_PREFIX: &[u8] = b"\0mako-cache\0\x01L";
 const DATA_KEY_PREFIX: &[u8] = b"\0mako-cache\0\x01D";
 
-/// Monotonic cache commit sequence, distinct from Mako's transaction timestamp.
+/// Upper bits used to distinguish worker-local physical log streams from the
+/// legacy dense stream.  Existing databases cannot have reached this range:
+/// Mako's finite timestamp domain exhausts first.
+pub(crate) const LOG_LANE_SHIFT: u32 = 48;
+pub(crate) const LOG_LOCAL_MASK: u64 = (1u64 << LOG_LANE_SHIFT) - 1;
+
+/// Physical base for one process-lifetime cache worker slot.
+pub(crate) fn worker_log_base(worker_slot: usize) -> Option<u64> {
+    let tag = u64::try_from(worker_slot).ok()?.checked_add(1)?;
+    (tag <= u16::MAX as u64).then(|| tag << LOG_LANE_SHIFT)
+}
+
+/// Split a physical log identifier into its optional worker lane and local
+/// dense position.  Upper-zero identifiers belong to the legacy stream.
+pub(crate) fn split_log_sequence(sequence: CommitSeq) -> Option<(Option<usize>, u64)> {
+    let raw = sequence.get();
+    let tag = raw >> LOG_LANE_SHIFT;
+    let local = raw & LOG_LOCAL_MASK;
+    if local == 0 {
+        return None;
+    }
+    if tag == 0 {
+        return Some((None, local));
+    }
+    let lane = usize::try_from(tag - 1).ok()?;
+    Some((Some(lane), local))
+}
+
+/// Physical cache log ID, distinct from Mako's transaction timestamp.
 ///
-/// Zero is not a valid sequence. Construction is crate-private so only the
-/// cache's reservation allocator can mint sequence numbers.
+/// IDs are monotonic only within one worker lane. Zero is not valid.
+/// Construction is crate-private so only the cache can mint IDs.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct CommitSeq(NonZeroU64);
 
@@ -119,7 +149,7 @@ impl Mutation {
         }
     }
 
-    fn key(&self) -> &[u8] {
+    pub(crate) fn key(&self) -> &[u8] {
         match self {
             Self::Put { key, .. } | Self::Delete { key, .. } => key,
         }
@@ -136,7 +166,7 @@ impl Mutation {
 /// Classification of one key found in the private RocksDB keyspace.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum BackendKey<'a> {
-    /// A complete transaction record, identified by its commit sequence.
+    /// A complete transaction record, identified by its physical log ID.
     Log(CommitSeq),
     /// A materialized application key.
     Data {
@@ -153,7 +183,7 @@ pub(crate) enum BackendKey<'a> {
 ///
 /// Log keys must have exactly one eight-byte sequence suffix. Data keys have
 /// an eight-byte table identifier followed by an arbitrary (possibly empty)
-/// raw application key. Zero is never accepted as a log sequence.
+/// raw application key. Zero is never accepted as a log ID.
 pub(crate) fn classify_backend_key(key: &[u8]) -> BackendKey<'_> {
     if key.starts_with(LOG_KEY_PREFIX) {
         let suffix = &key[LOG_KEY_PREFIX.len()..];
@@ -942,19 +972,32 @@ impl CommitRecord {
         self.mutations.len() + 1
     }
 
-    /// Append this transaction's log record and materialized mutations to a
-    /// larger atomic backend batch.
+    /// Append only this transaction's authoritative log record.
     ///
-    /// Callers append records in dense cache-sequence order. Consequently a
-    /// later transaction updating the same key naturally wins inside the one
-    /// RocksDB `WriteBatch`, while every individual recovery record remains
-    /// present.
-    pub(crate) fn append_backend_ops<'a>(&'a self, ops: &mut Vec<BlobOp<'a>>) {
-        debug_assert_eq!(self.mutations.len(), self.data_keys.len());
+    /// Materialized data mutations may be applied out of physical log order
+    /// by the multi-lane writeback path.  Their timestamp arbitration therefore
+    /// lives in the shared apply coordinator rather than this record helper.
+    pub(crate) fn append_log_op<'a>(&'a self, ops: &mut Vec<BlobOp<'a>>) {
         ops.push(BlobOp::Put {
             key: &self.log_key,
             val: &self.encoded,
         });
+    }
+
+    /// Private backend keys paired one-for-one with [`Self::mutations`].
+    pub(crate) fn data_keys(&self) -> &[Vec<u8>] {
+        &self.data_keys
+    }
+
+    /// Append this transaction's log record and materialized mutations to a
+    /// larger atomic backend batch.
+    ///
+    /// This helper is for a known single-lane sequence or test fixture. The
+    /// multi-lane cache instead routes data mutations through timestamp
+    /// arbitration in the shared apply coordinator.
+    pub(crate) fn append_backend_ops<'a>(&'a self, ops: &mut Vec<BlobOp<'a>>) {
+        debug_assert_eq!(self.mutations.len(), self.data_keys.len());
+        self.append_log_op(ops);
 
         for (mutation, data_key) in self.mutations.iter().zip(&self.data_keys) {
             match mutation {
@@ -1387,6 +1430,25 @@ mod tests {
 
     fn mako_timestamp(raw: u32) -> MakoTimestamp {
         MakoTimestamp::new(raw).expect("test Mako timestamp must be nonzero")
+    }
+
+    #[test]
+    fn physical_log_ids_round_trip_legacy_and_worker_lanes() {
+        assert_eq!(split_log_sequence(seq(1)), Some((None, 1)));
+        assert_eq!(
+            split_log_sequence(seq(LOG_LOCAL_MASK)),
+            Some((None, LOG_LOCAL_MASK))
+        );
+
+        for slot in [0, 1, mako_local::MAX_WORKERS - 1] {
+            let base = worker_log_base(slot).unwrap();
+            assert_eq!(split_log_sequence(seq(base + 1)), Some((Some(slot), 1)));
+            assert_eq!(
+                split_log_sequence(seq(base + LOG_LOCAL_MASK)),
+                Some((Some(slot), LOG_LOCAL_MASK))
+            );
+            assert_eq!(split_log_sequence(seq(base)), None);
+        }
     }
 
     fn refresh_checksum(bytes: &mut [u8]) {

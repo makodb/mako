@@ -1,43 +1,35 @@
-//! Transaction-ordered, asynchronous RocksDB write-back.
+//! One dense physical lane of asynchronous RocksDB writeback.
 //!
-//! Before entering native commit, STO preflights its canonical write set while
-//! Rust claims bounded queue capacity. An oversized record also checks out and
-//! grows recycled vector storage here; a common small record needs only its
-//! exact length because its fixed 256-byte arena block is selected by the later
-//! dense sequence. The transaction does not yet receive that cache sequence or
-//! occupy an ordered slot. General transactions enter a per-database native
-//! gate after locking their complete write set; the gate orders Mako timestamp
-//! assignment, final validation, and the hook. A one-key update whose
-//! sole observation is covered by that key's write lock validates first and
-//! enters the gate only for timestamp and dense-sequence assignment. Native
-//! then retires the ordering turn; Rust Acquires the assigned sequence's exact
-//! ring generation and hands native a direct pointer to stable queue-owned
-//! storage. STO serializes while retaining its write locks and before
-//! installation.
+//! A concurrent cache gives each process-lifetime worker one SPSC instance of
+//! this type. The legacy and explicit single-producer profiles use one instance.
+//! Before native commit, STO preflights its canonical write set while Rust
+//! claims lane capacity and prepares stable storage. The SPSC producer may
+//! privately select its next dense local sequence, but validation failure does
+//! not publish a log ID or leave a hole. After STO locks the complete write set,
+//! native coordinates the process-wide Mako timestamp and general validation
+//! gate. It serializes the canonical record while retaining the write locks and
+//! before installation.
 //! Rust treats the bytes as initialized only after native returns the exact
 //! completion witness. The hook-time operation is allocation-free and never
 //! performs backend IO.
 //!
 //! A bound slot remains Prepared until native commit returns successfully and
-//! Rust attaches the completed bytes. Publishing flips the slot Ready. General
-//! transactions wait for the dense Ready prefix through their slot; the
-//! trusted concurrent one-Put terminal may return as soon as its own exact
-//! cell is Ready and advertises that caller-visible high-water mark. Explicit
-//! barriers and the backend consumer still wait for a dense prefix. An
-//! ambiguous post-bind outcome pins the slot, so the consumer can neither skip
-//! it nor mistake it for an abort. The consumer decodes records off the
-//! foreground path and replays a bounded contiguous Ready prefix in one atomic
-//! backend batch.
+//! Rust attaches the completed bytes. Publishing flips the slot Ready. Within
+//! this lane, barriers and the backend consumer retain dense prefix order. An
+//! ambiguous post-bind outcome pins the slot, and a concurrent cache also
+//! latches shared fail-stop state across every lane. The consumer decodes
+//! records off the foreground path and submits a bounded contiguous Ready
+//! prefix to the shared timestamp coordinator in one atomic backend batch.
 
 use std::cell::UnsafeCell;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::mem::{ManuallyDrop, MaybeUninit};
 use std::num::{NonZeroU32, NonZeroU64};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering};
-use std::sync::{Condvar, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::Duration;
 
 use mako_local::{CommitRecordTarget, MakoTimestamp, TrustedOnePutHolderPool};
@@ -231,18 +223,193 @@ fn prefetch_write_supported() -> bool {
     }
 }
 
-/// In-memory progress of the ordered RocksDB consumer.
+/// In-memory progress of the RocksDB consumer.
 ///
-/// `sequence` is the dense, serialization-safe [`CommitSeq`] prefix and is
-/// therefore the field that proves contiguity. `mako_timestamp` identifies the
-/// record at exactly that frontier. Mako timestamps remain strictly increasing
-/// for production cache records but may contain gaps from validation aborts or
-/// unrelated native work, so the timestamp alone is not a dense log position.
-/// Neither field claims that RocksDB has synced data to disk.
+/// In single-producer mode, `sequence` is the dense applied prefix and
+/// `mako_timestamp` identifies its final record. In concurrent mode, workers
+/// publish independent dense lanes: `sequence` is the total applied record
+/// count and `mako_timestamp` is the greatest applied Mako timestamp. Neither
+/// concurrent field claims that every smaller timestamp is present, and
+/// neither mode claims that RocksDB has synced data to disk.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct AppliedWatermark {
     sequence: u64,
     mako_timestamp: Option<MakoTimestamp>,
+}
+
+/// Serialized timestamp arbitration for materialized RocksDB values.
+///
+/// Commit-log records are never discarded. That lets recovery reconstruct
+/// this index, including the timestamp of a physical delete, while user values
+/// keep their existing raw representation.  Every writeback lane shares one
+/// coordinator, so a physically late record cannot overwrite a mutation with
+/// a newer Mako timestamp.
+struct ApplyCoordinatorState {
+    latest: HashMap<Vec<u8>, MakoTimestamp>,
+    /// Exact physical batch whose backend outcome became uncertain when the
+    /// backend unwound. No other lane may apply until this batch is retried to
+    /// a normal success, because its materialized mutations may already be
+    /// visible even though the in-memory timestamp index did not advance.
+    retry_batch: Option<Vec<CommitSeq>>,
+}
+
+pub(crate) struct ApplyCoordinator {
+    state: Mutex<ApplyCoordinatorState>,
+}
+
+enum CoordinatorApplyOutcome {
+    Applied,
+    BlockedByRetry,
+}
+
+enum CoordinatorCaptureRequirement {
+    Unrestricted,
+    Exact(Vec<CommitSeq>),
+    BlockedByRetry,
+}
+
+impl ApplyCoordinator {
+    pub(crate) fn empty() -> Self {
+        Self {
+            state: Mutex::new(ApplyCoordinatorState {
+                latest: HashMap::new(),
+                retry_batch: None,
+            }),
+        }
+    }
+
+    pub(crate) fn recovered(latest: HashMap<Vec<u8>, MakoTimestamp>) -> Self {
+        Self {
+            state: Mutex::new(ApplyCoordinatorState {
+                latest,
+                retry_batch: None,
+            }),
+        }
+    }
+
+    fn capture_requirement(&self, first_sequence: CommitSeq) -> CoordinatorCaptureRequirement {
+        let state = lock_recover(&self.state);
+        let Some(required) = state.retry_batch.as_ref() else {
+            return CoordinatorCaptureRequirement::Unrestricted;
+        };
+        if required.first().copied() != Some(first_sequence) {
+            return CoordinatorCaptureRequirement::BlockedByRetry;
+        }
+        CoordinatorCaptureRequirement::Exact(required.clone())
+    }
+
+    fn apply<B: Blobs>(
+        &self,
+        backend: &B,
+        records: &[crate::record::CommitRecord],
+    ) -> Result<CoordinatorApplyOutcome, BlobError> {
+        // This mutex is also the cross-lane backend-writer lock. The winner
+        // index and the physical RocksDB state therefore advance together.
+        let mut state = lock_recover(&self.state);
+        let batch_sequences = records
+            .iter()
+            .map(crate::record::CommitRecord::sequence)
+            .collect::<Vec<_>>();
+        if let Some(required) = state.retry_batch.as_deref() {
+            if required != batch_sequences.as_slice() {
+                return Ok(CoordinatorApplyOutcome::BlockedByRetry);
+            }
+        }
+
+        let mut winners = HashMap::<&[u8], MakoTimestamp>::new();
+        let mutation_count = records
+            .iter()
+            .map(|record| record.mutations().len())
+            .sum::<usize>();
+        winners
+            .try_reserve(mutation_count)
+            .map_err(|error| BlobError(format!("cannot stage timestamp winners: {error}")))?;
+
+        for record in records {
+            let timestamp = record.mako_timestamp();
+            debug_assert_eq!(record.mutations().len(), record.data_keys().len());
+            for data_key in record.data_keys() {
+                if state
+                    .latest
+                    .get(data_key.as_slice())
+                    .is_some_and(|current| *current >= timestamp)
+                {
+                    continue;
+                }
+                winners
+                    .entry(data_key.as_slice())
+                    .and_modify(|current| *current = (*current).max(timestamp))
+                    .or_insert(timestamp);
+            }
+        }
+
+        let new_keys = winners
+            .keys()
+            .filter(|key| !state.latest.contains_key(**key))
+            .count();
+        state
+            .latest
+            .try_reserve(new_keys)
+            .map_err(|error| BlobError(format!("cannot grow timestamp index: {error}")))?;
+
+        let mut updates = Vec::<(Vec<u8>, MakoTimestamp)>::new();
+        updates
+            .try_reserve_exact(winners.len())
+            .map_err(|error| BlobError(format!("cannot stage timestamp updates: {error}")))?;
+        let operation_count = records
+            .len()
+            .checked_add(winners.len())
+            .ok_or_else(|| BlobError("writeback operation count overflow".to_owned()))?;
+        let mut operations = Vec::new();
+        operations
+            .try_reserve_exact(operation_count)
+            .map_err(|error| BlobError(format!("cannot stage backend batch: {error}")))?;
+
+        for record in records {
+            record.append_log_op(&mut operations);
+            let timestamp = record.mako_timestamp();
+            for (mutation, data_key) in record.mutations().iter().zip(record.data_keys()) {
+                if winners.get(data_key.as_slice()).copied() != Some(timestamp) {
+                    continue;
+                }
+                // Remove now so an impossible duplicate timestamp still emits
+                // at most one physical mutation for this key.
+                winners.remove(data_key.as_slice());
+                updates.push((data_key.clone(), timestamp));
+                match mutation {
+                    Mutation::Put { value, .. } => operations.push(mrx_core::BlobOp::Put {
+                        key: data_key,
+                        val: value,
+                    }),
+                    Mutation::Delete { .. } => {
+                        operations.push(mrx_core::BlobOp::Delete { key: data_key })
+                    }
+                }
+            }
+        }
+        debug_assert!(winners.is_empty());
+
+        let result = catch_unwind(AssertUnwindSafe(|| backend.write_batch(&operations)));
+        match result {
+            Ok(Ok(())) => {
+                drop(operations);
+                for (key, timestamp) in updates {
+                    state.latest.insert(key, timestamp);
+                }
+                state.retry_batch = None;
+                Ok(CoordinatorApplyOutcome::Applied)
+            }
+            Ok(Err(error)) => Err(error),
+            Err(_) => {
+                if state.retry_batch.is_none() {
+                    state.retry_batch = Some(batch_sequences);
+                }
+                Err(BlobError(
+                    "backend panicked with an uncertain atomic-batch outcome".to_owned(),
+                ))
+            }
+        }
+    }
 }
 
 impl AppliedWatermark {
@@ -254,12 +421,18 @@ impl AppliedWatermark {
         }
     }
 
-    /// Highest contiguous cache sequence accepted by the backend.
+    /// Applied record count.
+    ///
+    /// This is a dense physical prefix in single-producer mode and an
+    /// aggregate count across independent worker lanes in concurrent mode.
     pub const fn sequence(self) -> u64 {
         self.sequence
     }
 
-    /// Mako timestamp of the transaction at the applied sequence frontier.
+    /// Applied Mako timestamp.
+    ///
+    /// This names the dense frontier in single-producer mode and is the
+    /// greatest applied timestamp across worker lanes in concurrent mode.
     pub const fn mako_timestamp(self) -> Option<MakoTimestamp> {
         self.mako_timestamp
     }
@@ -278,12 +451,14 @@ impl AppliedWatermark {
 /// Controls the bounded commit queue and synchronous drain retries.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct WritebackConfig {
-    /// Maximum number of detached permits plus prepared or ready slots.
+    /// Maximum number of detached permits plus prepared or ready slots in one
+    /// worker lane. Concurrent mode allocates this bounded capacity lazily for
+    /// each worker that first begins a transaction.
     pub capacity: usize,
     /// Maximum encoded size accepted by native record preflight.
     pub max_record_bytes: usize,
-    /// Maximum number of consecutive Ready transactions submitted in one
-    /// atomic backend batch.
+    /// Maximum number of consecutive Ready transactions from one worker lane
+    /// submitted in one atomic backend batch.
     pub max_batch_records: usize,
     /// Approximate encoded-log byte budget for one backend batch. A front
     /// record larger than this limit is submitted alone.
@@ -1715,6 +1890,21 @@ impl SingleProducerState {
         );
         self.next_sequence.store(sequence.get(), Ordering::Relaxed);
     }
+
+    #[inline(always)]
+    fn synchronize_acknowledged(&self, acknowledged: u64) -> u64 {
+        let cached = self.next_sequence.load(Ordering::Relaxed);
+        if acknowledged > cached {
+            // The native fused terminal deliberately updates only the shared
+            // ACK word on its exact success path. A later non-fused commit is
+            // cold relative to that terminal and imports the canonical tail
+            // here before reserving another lane-local generation.
+            self.next_sequence.store(acknowledged, Ordering::Relaxed);
+            acknowledged
+        } else {
+            cached
+        }
+    }
 }
 
 /// Cold recycled storage for records larger than the fixed arena block.
@@ -1883,10 +2073,15 @@ impl State {
 /// [`Blobs`] for `Arc<B>`.
 pub struct Writeback<B: Blobs> {
     backend: B,
+    apply_coordinator: Arc<ApplyCoordinator>,
     config: WritebackConfig,
     /// Fixed at construction. A single-producer queue never mixes aggregate
     /// Occupancy accounting with its lease-owned logical capacity credits.
     single_producer: bool,
+    /// True when this SPSC queue is one lane of a larger cache. In that mode,
+    /// any ambiguous outcome in any lane stops acknowledgement and replay in
+    /// every lane; physical lane identifiers do not define a safe prefix.
+    shared_fail_stop: bool,
     state: Mutex<State>,
     changed: Condvar,
     acknowledgement_changed: Condvar,
@@ -1908,7 +2103,11 @@ pub struct Writeback<B: Blobs> {
     /// Monotonic fast-path health summary. The detailed error remains under
     /// `state`; a healthy commit avoids taking the queue mutex merely to prove
     /// that no fail-stop condition has ever been latched.
-    unhealthy: AtomicBool,
+    unhealthy: Arc<AtomicBool>,
+    /// First fail-stop physical identifier published before `unhealthy`.
+    /// Other lanes use it only for a conservative diagnostic rejection; the
+    /// owning lane retains the exact detailed error under its state mutex.
+    unhealthy_sequence: Arc<AtomicU64>,
     /// Publishers sleeping until an earlier Ready hole closes. The count and
     /// dense acknowledgement use a SeqCst registration/recheck handshake, so
     /// a hole-closing publisher can skip the mutex and futex wake when every
@@ -1970,6 +2169,36 @@ pub struct Writeback<B: Blobs> {
 }
 
 impl<B: Blobs> Writeback<B> {
+    pub(crate) fn validate_config(
+        config: WritebackConfig,
+        applied_seed: u64,
+    ) -> Result<(), ConfigError> {
+        if config.capacity == 0 {
+            return Err(ConfigError::ZeroCapacity);
+        }
+        if config.max_record_bytes == 0 {
+            return Err(ConfigError::ZeroRecordBudget);
+        }
+        if config.max_batch_records == 0 {
+            return Err(ConfigError::ZeroBatchRecords);
+        }
+        if config.max_batch_bytes == 0 {
+            return Err(ConfigError::ZeroBatchBytes);
+        }
+        if config.retry_delay.is_zero() {
+            return Err(ConfigError::ZeroRetryDelay);
+        }
+        if applied_seed == u64::MAX {
+            return Err(ConfigError::SequenceExhausted);
+        }
+        config
+            .capacity
+            .max(1 << TURN_PHASE_BITS)
+            .checked_next_power_of_two()
+            .ok_or(ConfigError::NativeRecordArenaTooLarge)?;
+        Ok(())
+    }
+
     /// Create an empty queue whose first reservation is `applied_seed + 1`.
     ///
     /// This constructor is used by tests that only need a sequence seed. Cache
@@ -2019,24 +2248,31 @@ impl<B: Blobs> Writeback<B> {
         config: WritebackConfig,
         single_producer: bool,
     ) -> Result<Self, ConfigError> {
-        if config.capacity == 0 {
-            return Err(ConfigError::ZeroCapacity);
-        }
-        if config.max_record_bytes == 0 {
-            return Err(ConfigError::ZeroRecordBudget);
-        }
-        if config.max_batch_records == 0 {
-            return Err(ConfigError::ZeroBatchRecords);
-        }
-        if config.max_batch_bytes == 0 {
-            return Err(ConfigError::ZeroBatchBytes);
-        }
-        if config.retry_delay.is_zero() {
-            return Err(ConfigError::ZeroRetryDelay);
-        }
-        if applied_seed.sequence == u64::MAX {
-            return Err(ConfigError::SequenceExhausted);
-        }
+        Self::new_with_shared_state(
+            backend,
+            applied_seed,
+            config,
+            single_producer,
+            false,
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(ApplyCoordinator::empty()),
+        )
+    }
+
+    /// Construct one queue whose health and timestamp-winner state are shared
+    /// with every other worker lane in the same cache.
+    pub(crate) fn new_with_shared_state(
+        backend: B,
+        applied_seed: AppliedWatermark,
+        config: WritebackConfig,
+        single_producer: bool,
+        shared_fail_stop: bool,
+        unhealthy: Arc<AtomicBool>,
+        unhealthy_sequence: Arc<AtomicU64>,
+        apply_coordinator: Arc<ApplyCoordinator>,
+    ) -> Result<Self, ConfigError> {
+        Self::validate_config(config, applied_seed.sequence)?;
 
         // A power-of-two ring lets the publication hot path map a sequence to
         // its stable cell with one mask instead of a hardware integer divide.
@@ -2107,8 +2343,10 @@ impl<B: Blobs> Writeback<B> {
 
         Ok(Self {
             backend,
+            apply_coordinator,
             config,
             single_producer,
+            shared_fail_stop,
             state: Mutex::new(State {
                 queue: VecDeque::with_capacity(config.capacity),
                 last_bound: applied_seed.sequence,
@@ -2124,7 +2362,8 @@ impl<B: Blobs> Writeback<B> {
             descriptor_waiters: AtomicUsize::new(0),
             activity_waiters: AtomicUsize::new(0),
             consumer: Mutex::new(()),
-            unhealthy: AtomicBool::new(false),
+            unhealthy,
+            unhealthy_sequence,
             acknowledgement_waiters: CacheLineAtomicUsize::new(0),
             acknowledged: CacheLineAtomicU64::new(applied_seed.sequence),
             trusted_caller_ack_by_worker: (0..mako_local::MAX_WORKERS)
@@ -2257,8 +2496,8 @@ impl<B: Blobs> Writeback<B> {
     /// concurrent terminals do not read or update its value. Both Rust
     /// allocations must remain live for that whole call.
     #[inline(always)]
-    pub(crate) const fn native_ordering_words(&self) -> (&AtomicU64, &AtomicBool) {
-        (self.next_bound.atomic(), &self.unhealthy)
+    pub(crate) fn native_ordering_words(&self) -> (&AtomicU64, &AtomicBool) {
+        (self.next_bound.atomic(), self.unhealthy.as_ref())
     }
 
     /// Borrow the stable ring layout used by the callback-free native binder.
@@ -2709,7 +2948,7 @@ impl<B: Blobs> Writeback<B> {
     }
 
     #[cfg(test)]
-    fn reserve_single<'a>(
+    pub(crate) fn reserve_single<'a>(
         &'a self,
         producer: &'a SingleProducerState,
         mutations: Vec<Mutation>,
@@ -3087,6 +3326,9 @@ impl<B: Blobs> Writeback<B> {
             if let Some(error) = state.reserve_health_error() {
                 return Err(error);
             }
+            if self.unhealthy.load(Ordering::Acquire) {
+                return Err(self.shared_unknown_reserve_error());
+            }
             if self.reclaim_all_packed_occupancy_credits() != 0 {
                 // `state` closes the waiter predicate window. Notify directly
                 // because the ordinary helper would try to lock it again.
@@ -3122,7 +3364,8 @@ impl<B: Blobs> Writeback<B> {
         );
         let capacity = u64::try_from(self.config.capacity).unwrap_or(u64::MAX);
         if !self.unhealthy.load(Ordering::Acquire) {
-            let tail = producer.next_sequence.load(Ordering::Relaxed);
+            let acknowledged = self.acknowledged.load(Ordering::Acquire);
+            let tail = producer.synchronize_acknowledged(acknowledged);
             let capacity_limit = producer.capacity_limit.load(Ordering::Relaxed);
             if tail < capacity_limit {
                 return self.acquire_single_detached_turn(tail);
@@ -3143,7 +3386,8 @@ impl<B: Blobs> Writeback<B> {
         capacity: u64,
     ) -> Result<CommitSeq, ReserveError> {
         if !self.unhealthy.load(Ordering::Acquire) {
-            let tail = producer.next_sequence.load(Ordering::Relaxed);
+            let acknowledged = self.acknowledged.load(Ordering::Acquire);
+            let tail = producer.synchronize_acknowledged(acknowledged);
             // Refresh the cross-generation handoff without taking the queue
             // mutex. Acquire observes the consumer's final arena/cold reads
             // before admitting reuse of that applied generation.
@@ -3164,6 +3408,9 @@ impl<B: Blobs> Writeback<B> {
             self.import_bound_locked(&mut state);
             if let Some(error) = state.reserve_health_error() {
                 return Err(error);
+            }
+            if self.unhealthy.load(Ordering::Acquire) {
+                return Err(self.shared_unknown_reserve_error());
             }
             let tail = producer.next_sequence.load(Ordering::Relaxed);
             producer.capacity_limit.store(
@@ -3212,6 +3459,7 @@ impl<B: Blobs> Writeback<B> {
             if let Some(error) = state.reserve_health_error() {
                 return Err(error);
             }
+            return Err(self.shared_unknown_reserve_error());
         }
 
         let observed = self.next_bound.load(Ordering::Acquire);
@@ -3309,6 +3557,7 @@ impl<B: Blobs> Writeback<B> {
             if let Some(error) = state.reserve_health_error() {
                 return Err(error);
             }
+            return Err(self.shared_unknown_reserve_error());
         }
 
         producer.accept(sequence);
@@ -3403,6 +3652,31 @@ impl<B: Blobs> Writeback<B> {
             self.changed.notify_one();
             drop(state);
         }
+    }
+
+    fn latch_unhealthy(&self, sequence: CommitSeq) {
+        let _ = self.unhealthy_sequence.compare_exchange(
+            0,
+            sequence.get(),
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        );
+        self.unhealthy.store(true, Ordering::Release);
+    }
+
+    fn shared_unknown_reserve_error(&self) -> ReserveError {
+        ReserveError::UnknownOutcome {
+            sequence: self.shared_unknown_sequence(),
+        }
+    }
+
+    fn shared_unknown_sequence(&self) -> CommitSeq {
+        let raw = self.unhealthy_sequence.load(Ordering::Acquire);
+        CommitSeq::new(raw).unwrap_or_else(|| {
+            // `unhealthy` is Release-published only after this word. Seeing
+            // true without a sequence is therefore same-process corruption.
+            std::process::abort()
+        })
     }
 
     /// Wake out-of-order publishers only after one has left the bounded spin
@@ -3559,7 +3833,12 @@ impl<B: Blobs> Writeback<B> {
     /// synchronous barrier must not inspect or materialize a suffix published
     /// after it captured `target`. Otherwise corruption or transient memory
     /// pressure in later work can incorrectly fail an earlier barrier.
-    fn wait_applied_through(&self, target: u64) -> Result<u64, ApplyError> {
+    pub(crate) fn wait_applied_through(&self, target: u64) -> Result<u64, ApplyError> {
+        if self.shared_fail_stop && self.unhealthy.load(Ordering::Acquire) {
+            return Err(ApplyError::UnknownOutcome {
+                sequence: self.shared_unknown_sequence(),
+            });
+        }
         if let Some(error) = lock_recover(&self.state).apply_health_error_through(target) {
             return Err(error);
         }
@@ -3568,6 +3847,11 @@ impl<B: Blobs> Writeback<B> {
         let mut failed_attempts = 0usize;
 
         loop {
+            if self.shared_fail_stop && self.unhealthy.load(Ordering::Acquire) {
+                return Err(ApplyError::UnknownOutcome {
+                    sequence: self.shared_unknown_sequence(),
+                });
+            }
             {
                 let state = lock_recover(&self.state);
                 if let Some(error) = state.apply_health_error_through(target) {
@@ -3708,6 +3992,17 @@ impl<B: Blobs> Writeback<B> {
             #[cfg(test)]
             self.acknowledgement_changed.notify_all();
             return Ok(());
+        }
+
+        if self.shared_fail_stop {
+            // This lane has no local ordered relationship with the lane that
+            // failed. Keep the immutable READY generation retained, but do
+            // not turn a cache-wide failure into a local ACK merely because this
+            // queue has no local `first_unknown` entry.
+            return Err(ResolveError::BlockedByPriorUnknown {
+                sequence,
+                prior_unknown: self.shared_unknown_sequence(),
+            });
         }
 
         // Any observed health barrier retains the established state-locked
@@ -3960,7 +4255,7 @@ impl<B: Blobs> Writeback<B> {
         // Publish the slow-path marker while holding `state`, before installing
         // detailed health. A racing observer that sees true must acquire this
         // mutex and therefore cannot miss the first unknown sequence.
-        self.unhealthy.store(true, Ordering::Release);
+        self.latch_unhealthy(sequence);
         state.first_unknown = Some(match state.first_unknown {
             Some(current) => current.min(sequence),
             None => sequence,
@@ -3980,7 +4275,10 @@ impl<B: Blobs> Writeback<B> {
     /// Process a bounded Ready prefix, optionally capped at an inclusive
     /// sequence. `None` is the background worker's ordinary unbounded mode;
     /// synchronous barriers pass their immutable acknowledgement snapshot.
-    fn process_front_through(&self, max_sequence: Option<u64>) -> ProcessOutcome {
+    pub(crate) fn process_front_through(&self, max_sequence: Option<u64>) -> ProcessOutcome {
+        if self.shared_fail_stop && self.unhealthy.load(Ordering::Acquire) {
+            return ProcessOutcome::Pinned(self.shared_unknown_sequence());
+        }
         // This guard is separate from the queue state so the single-consumer
         // rule remains explicit if the state lock is narrowed around IO later.
         // Both locks deliberately recover poison: if a backend panics, the
@@ -4024,7 +4322,14 @@ impl<B: Blobs> Writeback<B> {
             return ProcessOutcome::Idle;
         };
         let first_sequence = front.sequence;
-        if max_sequence.is_some_and(|maximum| first_sequence.get() > maximum) {
+        let retry_batch = match self.apply_coordinator.capture_requirement(first_sequence) {
+            CoordinatorCaptureRequirement::Unrestricted => None,
+            CoordinatorCaptureRequirement::Exact(required) => Some(required),
+            CoordinatorCaptureRequirement::BlockedByRetry => return ProcessOutcome::Blocked,
+        };
+        if retry_batch.is_none()
+            && max_sequence.is_some_and(|maximum| first_sequence.get() > maximum)
+        {
             return ProcessOutcome::Idle;
         }
         // A pinned outcome is deliberately outside the dense Ready/replay
@@ -4069,15 +4374,26 @@ impl<B: Blobs> Writeback<B> {
         // not retire the complete prefix.
         let mut capture_len = 0usize;
         let mut encoded_bytes = 0usize;
+        let capture_limit = retry_batch
+            .as_ref()
+            .map_or(self.config.max_batch_records, Vec::len);
         let acknowledged = self.acknowledged.load(Ordering::Acquire);
         for slot in &state.queue {
-            if slot.state != SlotState::Ready || capture_len == self.config.max_batch_records {
+            if slot.state != SlotState::Ready || capture_len == capture_limit {
+                break;
+            }
+            if retry_batch
+                .as_ref()
+                .is_some_and(|required| required.get(capture_len) != Some(&slot.sequence))
+            {
                 break;
             }
             if slot.sequence.get() > acknowledged {
                 break;
             }
-            if max_sequence.is_some_and(|maximum| slot.sequence.get() > maximum) {
+            if retry_batch.is_none()
+                && max_sequence.is_some_and(|maximum| slot.sequence.get() > maximum)
+            {
                 break;
             }
             if permanent_record_failure
@@ -4098,6 +4414,12 @@ impl<B: Blobs> Writeback<B> {
             }
             encoded_bytes = next_bytes;
             capture_len += 1;
+        }
+        if retry_batch
+            .as_ref()
+            .is_some_and(|required| capture_len != required.len())
+        {
+            return ProcessOutcome::Blocked;
         }
         assert!(capture_len != 0, "a Ready front must form a nonempty batch");
         let mut captured_records = Vec::with_capacity(capture_len);
@@ -4130,17 +4452,19 @@ impl<B: Blobs> Writeback<B> {
             }
         }
 
-        let operation_count = records.iter().fold(0usize, |total, record| {
-            total.saturating_add(record.backend_op_count())
-        });
-        let mut operations = Vec::with_capacity(operation_count);
-        for record in &records {
-            record.append_backend_ops(&mut operations);
+        // A different lane may have failed while this consumer was decoding.
+        // The Acquire load is this batch's fail-stop linearization point: a
+        // failure observed here restores the complete local batch, while a
+        // later latch treats this already-entered backend batch as in flight.
+        if self.shared_fail_stop && self.unhealthy.load(Ordering::Acquire) {
+            captured.restore();
+            return ProcessOutcome::Pinned(self.shared_unknown_sequence());
         }
-        let result = self.backend.write_batch(&operations);
+
+        let result = self.apply_coordinator.apply(&self.backend, &records);
 
         match result {
-            Ok(()) => {
+            Ok(CoordinatorApplyOutcome::Applied) => {
                 #[cfg(test)]
                 crate::failpoint::hit(crate::failpoint::Point::BackendWrittenBeforeApplied);
                 captured.retire(&records);
@@ -4152,6 +4476,10 @@ impl<B: Blobs> Writeback<B> {
                 self.capacity_available.notify_all();
                 self.changed.notify_all();
                 ProcessOutcome::Advanced
+            }
+            Ok(CoordinatorApplyOutcome::BlockedByRetry) => {
+                captured.restore();
+                ProcessOutcome::Blocked
             }
             Err(error) => {
                 captured.restore();
@@ -4227,7 +4555,7 @@ impl<B: Blobs> Writeback<B> {
         let failure = {
             let mut state = lock_recover(&self.state);
             // See the matching ordering argument in the unknown-outcome path.
-            self.unhealthy.store(true, Ordering::Release);
+            self.latch_unhealthy(sequence);
             let replace = state
                 .permanent_record_failure
                 .as_ref()
@@ -4305,8 +4633,16 @@ impl<B: Blobs> Writeback<B> {
     fn ensure_no_unknown_slow(&self) -> Result<(), ApplyError> {
         match lock_recover(&self.state).health_error() {
             Some(error) => Err(error),
-            None => Ok(()),
+            None => {
+                let raw = self.unhealthy_sequence.load(Ordering::Acquire);
+                let sequence = CommitSeq::new(raw).unwrap_or_else(|| std::process::abort());
+                Err(ApplyError::UnknownOutcome { sequence })
+            }
         }
+    }
+
+    pub(crate) fn local_health_error(&self) -> Option<ApplyError> {
+        lock_recover(&self.state).health_error()
     }
 
     pub(crate) fn wake_waiters(&self) {
@@ -5509,8 +5845,13 @@ impl<B: Blobs> BoundReservation<'_, B> {
             self.native_buffer.is_none(),
             "native bytes need an exact completion witness before publication"
         );
-        self.owner.resolve(self.token, Resolution::Publish)?;
+        let result = self.owner.resolve(self.token, Resolution::Publish);
+        // `publish_record` makes the immutable record READY before it tries
+        // to advance caller ACK. Even when a fail-stop barrier rejects that
+        // ACK, this known-committed generation is already retained and must
+        // not be reclassified as an unknown outcome by Drop.
         self.on_drop = DropAction::Done;
+        result?;
         Ok(self.token.sequence())
     }
 
@@ -5726,7 +6067,6 @@ fn wait_timeout_recover<'a, T>(
 
 #[cfg(test)]
 mod tests {
-    use std::panic::{catch_unwind, AssertUnwindSafe};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{mpsc, Arc, Barrier};
     use std::time::Instant;
@@ -5768,6 +6108,110 @@ mod tests {
 
         let single = Writeback::new_single(Arc::new(MemBlobs::new()), 0, config(8, 0)).unwrap();
         assert_eq!(single.spsc_arena_publications.len(), 8);
+    }
+
+    fn coordinator_record(
+        sequence: u64,
+        timestamp: u32,
+        mutation: Mutation,
+    ) -> crate::record::CommitRecord {
+        PreparedCommitRecord::prepare(vec![mutation], 4_096)
+            .unwrap()
+            .bind(
+                CommitSeq::new(sequence).unwrap(),
+                MakoTimestamp::new(timestamp).unwrap(),
+            )
+            .finalize()
+    }
+
+    #[test]
+    fn timestamp_coordinator_rejects_late_stale_puts_and_deletes() {
+        let backend = Arc::new(MemBlobs::new());
+        let coordinator = ApplyCoordinator::empty();
+
+        let newer_put = coordinator_record(
+            2,
+            20,
+            Mutation::Put {
+                table_id: TABLE,
+                key: b"put-wins".to_vec(),
+                value: b"new".to_vec(),
+            },
+        );
+        let put_key = newer_put.data_keys()[0].clone();
+        coordinator
+            .apply(&backend, std::slice::from_ref(&newer_put))
+            .unwrap();
+        let older_delete = coordinator_record(
+            1,
+            10,
+            Mutation::Delete {
+                table_id: TABLE,
+                key: b"put-wins".to_vec(),
+            },
+        );
+        coordinator
+            .apply(&backend, std::slice::from_ref(&older_delete))
+            .unwrap();
+        assert_eq!(backend.get(&put_key).unwrap(), Some(b"new".to_vec()));
+
+        let newer_delete = coordinator_record(
+            4,
+            40,
+            Mutation::Delete {
+                table_id: TABLE,
+                key: b"delete-wins".to_vec(),
+            },
+        );
+        let delete_key = newer_delete.data_keys()[0].clone();
+        coordinator
+            .apply(&backend, std::slice::from_ref(&newer_delete))
+            .unwrap();
+        let older_put = coordinator_record(
+            3,
+            30,
+            Mutation::Put {
+                table_id: TABLE,
+                key: b"delete-wins".to_vec(),
+                value: b"stale".to_vec(),
+            },
+        );
+        coordinator
+            .apply(&backend, std::slice::from_ref(&older_put))
+            .unwrap();
+        assert_eq!(backend.get(&delete_key).unwrap(), None);
+
+        assert!(backend.get(newer_put.log_key()).unwrap().is_some());
+        assert!(backend.get(older_delete.log_key()).unwrap().is_some());
+        assert!(backend.get(newer_delete.log_key()).unwrap().is_some());
+        assert!(backend.get(older_put.log_key()).unwrap().is_some());
+    }
+
+    #[test]
+    fn timestamp_coordinator_coalesces_one_batch_by_highest_timestamp() {
+        let backend = Arc::new(MemBlobs::new());
+        let coordinator = ApplyCoordinator::empty();
+        let high = coordinator_record(
+            8,
+            80,
+            Mutation::Put {
+                table_id: TABLE,
+                key: b"same".to_vec(),
+                value: b"high".to_vec(),
+            },
+        );
+        let data_key = high.data_keys()[0].clone();
+        let low = coordinator_record(
+            7,
+            70,
+            Mutation::Put {
+                table_id: TABLE,
+                key: b"same".to_vec(),
+                value: b"low".to_vec(),
+            },
+        );
+        coordinator.apply(&backend, &[high, low]).unwrap();
+        assert_eq!(backend.get(&data_key).unwrap(), Some(b"high".to_vec()));
     }
 
     /// Guard the native ACK path against accidentally re-inlining the legacy
@@ -6308,6 +6752,23 @@ mod tests {
         ));
         assert_eq!(writeback.applied_sequence(), 1);
         assert_eq!(writeback.occupied.load(), 0);
+    }
+
+    #[test]
+    fn single_producer_general_reserve_imports_a_native_fused_ack() {
+        let writeback = Writeback::new_single(MemBlobs::new(), 0, config(4, 0)).unwrap();
+        let producer = writeback.single_producer_state();
+
+        // The exact fused native terminal publishes only the canonical ACK on
+        // its success path. Simulate that handoff without touching Rust's
+        // producer-local cursor, then enter a general reservation.
+        writeback.acknowledged.store(1, Ordering::Release);
+        let permit = writeback
+            .reserve_single(&producer, vec![put(b"general", b"two")])
+            .unwrap();
+
+        assert_eq!(permit.single_sequence.unwrap().get(), 2);
+        assert_eq!(producer.next_sequence.load(Ordering::Relaxed), 1);
     }
 
     #[test]
@@ -7827,7 +8288,7 @@ mod tests {
     }
 
     #[test]
-    fn same_key_updates_preserve_transaction_order_inside_one_batch() {
+    fn same_key_updates_coalesce_to_the_newest_timestamp_inside_one_batch() {
         let backend = Arc::new(RecordingBlobs::default());
         let writeback =
             Writeback::new(Arc::clone(&backend), 0, batch_config(2, 2, usize::MAX)).unwrap();
@@ -7843,23 +8304,10 @@ mod tests {
 
         let attempts = backend.attempts();
         assert_eq!(attempts.len(), 1);
-        assert_eq!(attempts[0].len(), 4);
-        match (&attempts[0][1], &attempts[0][3]) {
-            (
-                OwnedBlobOp::Put {
-                    key: first_key,
-                    value: first_value,
-                },
-                OwnedBlobOp::Put {
-                    key: second_key,
-                    value: second_value,
-                },
-            ) => {
-                assert_eq!(first_key, second_key);
-                assert_eq!(first_value, b"first");
-                assert_eq!(second_value, b"second");
-            }
-            operations => panic!("unexpected data operation order: {operations:?}"),
+        assert_eq!(attempts[0].len(), 3, "two logs plus one winning value");
+        match &attempts[0][2] {
+            OwnedBlobOp::Put { value, .. } => assert_eq!(value, b"second"),
+            operation => panic!("unexpected winning data operation: {operation:?}"),
         }
 
         let snapshot = backend.inner.snapshot();
@@ -9196,7 +9644,7 @@ mod tests {
     }
 
     #[test]
-    fn poisoned_consumer_retries_the_untouched_ready_record() {
+    fn backend_panic_is_caught_and_retries_the_exact_ready_record() {
         let writeback = Writeback::new(PanicOnceBlobs::new(), 0, config(2, 0)).unwrap();
         writeback
             .reserve(vec![put(b"a", b"one")])
@@ -9206,7 +9654,11 @@ mod tests {
             .publish()
             .unwrap();
 
-        assert!(catch_unwind(AssertUnwindSafe(|| writeback.process_front())).is_err());
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::BackendFailed { sequence, .. }
+                if sequence == CommitSeq::new(1).unwrap()
+        ));
         assert_eq!(writeback.queue_len(), 1);
         assert_eq!(writeback.applied_watermark(), AppliedWatermark::default());
         assert!(matches!(

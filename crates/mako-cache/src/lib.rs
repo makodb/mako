@@ -2,19 +2,18 @@
 //!
 //! Native C++ Silo is the authoritative live state while this process runs.
 //! Before commit, STO sizes and seals its canonical final write set while Rust
-//! claims bounded queue capacity and checks out one output buffer from a
-//! queue-sized small-record arena (with a recycled oversized fallback). After
-//! Silo locks the complete write set, then native orders Mako timestamp
-//! assignment, final validation, and dense record binding. Concurrent caches
-//! use one packed process word; single-producer caches retain their exclusive
-//! Rust sequence allocator. A failed validation may leave a timestamp gap but
-//! never a cache-log slot. Native writes the complete record directly into the
-//! claimed buffer while retaining all write locks, and only
-//! then installs the writes. Native success publishes the already-built record
-//! as Ready in the volatile queue. The trusted concurrent one-Put terminal can
-//! return once its own record is Ready; explicit barriers and the background
-//! writer still wait for a dense prefix, then replay a bounded contiguous
-//! prefix in one atomic RocksDB `WriteBatch`.
+//! claims bounded capacity in the current worker's SPSC writeback lane. Native
+//! coordinates Mako timestamp assignment with final validation while Silo
+//! holds the complete write set. A failed validation may leave a timestamp gap
+//! but never a physical log record. Native writes the complete record directly
+//! into lane-owned storage before installing the writes. A successful worker
+//! acknowledges as soon as its own record is Ready, without waiting for another
+//! lane. The background writer polls lanes in round-robin order and applies a
+//! bounded contiguous prefix from one lane in each atomic RocksDB
+//! `WriteBatch`. Because physical batch order may differ from serialization
+//! order, a shared coordinator uses Mako timestamps to prevent an older record
+//! from replacing a newer materialized value. Every transaction's log record
+//! is retained.
 //!
 //! [`Cache::wait_applied`] and [`Cache::close`] drain acknowledged work into
 //! RocksDB, but neither operation adds a separate WAL flush or disk sync. The
@@ -41,7 +40,7 @@
 #![warn(missing_docs)]
 
 use std::cell::Cell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::marker::PhantomData;
 use std::num::{NonZeroU32, NonZeroU64};
@@ -68,6 +67,7 @@ pub mod test_support;
 // Reviewed fixed-address queue/arena implementation.
 #[allow(unsafe_code)]
 mod writeback;
+mod writeback_set;
 
 #[cfg(all(test, have_mako, have_rocksdb, target_family = "unix"))]
 mod crash_tests;
@@ -86,9 +86,12 @@ pub use writeback::{
     WritebackConfig,
 };
 
-use record::{BackendKey, CommitRecord, DEFAULT_TABLE_ID, Mutation, classify_backend_key};
+use record::{
+    classify_backend_key, split_log_sequence, BackendKey, CommitRecord, Mutation, DEFAULT_TABLE_ID,
+};
 use runtime::{Runtime, RuntimeError};
 use writeback::Writeback;
+use writeback_set::{RecoveredWriteback, WritebackSet};
 
 const DEFAULT_TABLE_NAME: &[u8] = b"mako-cache/default";
 
@@ -98,10 +101,9 @@ static NEXT_COMMIT_FENCE_THREAD_SLOT: AtomicUsize = AtomicUsize::new(0);
 thread_local! {
     /// Process-lifetime slot paired with native's process-lifetime worker.
     ///
-    /// A slot number need not equal STO's worker ID. Every thread which gets
-    /// here already attached to STO, so no more than `MAX_WORKERS` distinct
-    /// threads can allocate one. Neither allocator recycles a departed OS
-    /// thread's slot.
+    /// A slot number need not equal STO's worker ID. Cache transaction begin
+    /// attaches to STO before allocating this slot. Neither allocator recycles
+    /// a departed OS thread's slot.
     static COMMIT_FENCE_THREAD_SLOT: Cell<usize> = const { Cell::new(usize::MAX) };
 }
 
@@ -121,12 +123,12 @@ impl CommitWriterSlot {
     }
 
     #[inline(always)]
-    fn begin(&self) -> u64 {
+    fn begin(&self, slot: usize) -> u64 {
         let idle = self.generation.load(Ordering::Relaxed);
         assert_eq!(
             idle & 1,
             0,
-            "one native worker cannot overlap two cache commit outcomes"
+            "one native worker cannot overlap two cache commit outcomes: slot={slot}, generation={idle:#018x}"
         );
         let active = idle.wrapping_add(1);
         self.generation.store(active, Ordering::Release);
@@ -176,20 +178,26 @@ impl CommitFence {
     }
 
     #[inline(always)]
-    fn current_thread_slot() -> usize {
+    fn try_current_thread_slot() -> Result<usize, LocalError> {
         COMMIT_FENCE_THREAD_SLOT.with(|thread_slot| {
             let current = thread_slot.get();
             if current != usize::MAX {
-                return current;
+                return Ok(current);
             }
-            let allocated = NEXT_COMMIT_FENCE_THREAD_SLOT.fetch_add(1, Ordering::Relaxed);
-            assert!(
-                allocated < mako_local::MAX_WORKERS,
-                "a cache writer reached the outcome fence without a native worker slot"
-            );
+            let allocated = NEXT_COMMIT_FENCE_THREAD_SLOT
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+                    (next < mako_local::MAX_WORKERS).then_some(next + 1)
+                })
+                .map_err(|_| LocalError::ThreadLimit)?;
             thread_slot.set(allocated);
-            allocated
+            Ok(allocated)
         })
+    }
+
+    #[inline(always)]
+    fn current_thread_slot() -> usize {
+        Self::try_current_thread_slot()
+            .expect("an attached cache transaction must own a commit-fence slot")
     }
 
     #[inline(always)]
@@ -203,11 +211,11 @@ impl CommitFence {
             .writers
             .get(slot)
             .expect("commit-fence writer slot is in range");
-        let active_generation = writer.begin();
+        let active_generation = writer.begin(slot);
         CommitWriterGuard {
+            slot,
             writer,
             active_generation,
-            slot,
         }
     }
 
@@ -254,9 +262,9 @@ fn commit_fence_backoff(spins: &mut usize) {
 }
 
 struct CommitWriterGuard<'a> {
+    slot: usize,
     writer: &'a CommitWriterSlot,
     active_generation: u64,
-    slot: usize,
 }
 
 impl CommitWriterGuard<'_> {
@@ -399,7 +407,8 @@ pub enum Error {
     /// A bound write-back reservation could not be resolved safely.
     ///
     /// In particular, a transaction that is known committed is retained and
-    /// left unacknowledged when an earlier queue slot has an unknown outcome.
+    /// left unacknowledged when this cache has already observed an unknown
+    /// post-bind outcome, including one in another worker lane.
     Resolve(ResolveError),
     /// An application barrier could not cover its acknowledged snapshot.
     Apply(ApplyError),
@@ -440,8 +449,8 @@ pub enum Error {
         /// Native cleanup failure.
         source: LocalError,
     },
-    /// Native definitely aborted after consuming a dense cache sequence, but
-    /// rejected before it could produce a replayable record.
+    /// Native definitely aborted after consuming a lane-local cache sequence,
+    /// but rejected before it could produce a replayable record.
     ///
     /// Visibility is not ambiguous, so callers may retry the logical
     /// transaction. The consumed ordering slot is nevertheless permanently
@@ -456,9 +465,9 @@ pub enum Error {
     },
     /// Native commit returned an outcome that cannot safely be called abort.
     ///
-    /// The corresponding queue slot is permanently pinned; later commits and
-    /// application barriers fail rather than risk skipping a possibly visible
-    /// transaction.
+    /// The corresponding lane slot is permanently pinned. Cache-wide fail-stop
+    /// rejects later commits and application barriers rather than risk skipping
+    /// a possibly visible transaction.
     UnknownCommitOutcome {
         /// Pinned cache commit sequence.
         sequence: CommitSeq,
@@ -665,8 +674,8 @@ impl From<RuntimeError> for Error {
 /// multi-cache supervisor must preflight every backend before admitting work.
 pub struct Cache<B: Blobs + 'static> {
     local: LocalDb,
-    writeback: Arc<Writeback<B>>,
-    runtime: Mutex<Option<Runtime<B>>>,
+    writeback: Arc<WritebackSet<B>>,
+    runtime: Mutex<Option<Runtime<WritebackSet<B>>>>,
     record_checksum: RecordChecksum,
     foreground_mode: ForegroundMode,
     /// Lease acquisition is a cold, once-per-owner operation. The lease
@@ -711,22 +720,27 @@ impl<B: Blobs + 'static> Cache<B> {
         // Claim before recovery mutates process-local tables or exposes work.
         // Native enforces the documented one-cache-namespace process model.
         let cache_order_mode = match options.foreground_mode {
-            ForegroundMode::Concurrent => mako_local::CacheOrderMode::Concurrent,
+            ForegroundMode::Concurrent => mako_local::CacheOrderMode::PerWorker,
             ForegroundMode::SingleProducer => mako_local::CacheOrderMode::SingleProducer,
         };
         // SAFETY: construction exclusively owns the fresh facade and fixes
         // foreground mode for the complete Cache lifetime.
         unsafe { local.claim_cache_order_namespace(cache_order_mode)? };
-        let applied_seed = recover(&local, &backend, options.writeback.max_record_bytes)?;
+        let recovered = recover(&local, &backend, options.writeback.max_record_bytes)?;
         // SAFETY: construction still exclusively owns the claimed LocalDb;
         // no foreground handle or ordering terminal exists until return.
-        unsafe { local.reseed_cache_order_namespace(applied_seed.sequence())? };
+        let native_sequence_seed = if options.foreground_mode == ForegroundMode::SingleProducer {
+            recovered.legacy.local_tail
+        } else {
+            0
+        };
+        unsafe { local.reseed_cache_order_namespace(native_sequence_seed)? };
         local.bind_trusted_table(DEFAULT_TABLE_NAME, DEFAULT_TABLE_ID)?;
-        let writeback = Arc::new(Writeback::new_with_watermark_mode(
+        let writeback = Arc::new(WritebackSet::new(
             backend,
-            applied_seed,
+            recovered,
             options.writeback,
-            options.foreground_mode == ForegroundMode::SingleProducer,
+            options.foreground_mode == ForegroundMode::Concurrent,
         )?);
         let runtime = Runtime::start_on_cpu(Arc::clone(&writeback), options.writeback_cpu)
             .map_err(Error::RuntimeStart)?;
@@ -757,7 +771,7 @@ impl<B: Blobs + 'static> Cache<B> {
             .map_err(|_| Error::SingleProducerAlreadyClaimed)?;
         Ok(SingleProducer {
             cache: self,
-            state: self.writeback.single_producer_state(),
+            state: self.writeback.single_lane().producer(),
             _thread_affine: PhantomData,
         })
     }
@@ -772,26 +786,22 @@ impl<B: Blobs + 'static> Cache<B> {
         if self.foreground_mode == ForegroundMode::SingleProducer {
             return Err(Error::SingleProducerHandleRequired);
         }
-        self.transaction_with(TransactionForeground::Concurrent)
-    }
-
-    fn transaction_with<'cache>(
-        &'cache self,
-        foreground: TransactionForeground<'cache>,
-    ) -> Result<Transaction<'cache, B>, Error> {
         // This is an early fail-fast check. Commit rechecks under its outcome
         // fence, which closes the race with an in-flight ambiguous writer.
         self.writeback.ensure_no_unknown()?;
         let (table, native) = self.local.trusted_bound_transaction()?;
+        let worker_slot = CommitFence::try_current_thread_slot()?;
+        let lane = self.writeback.lane(worker_slot)?;
         // The cache and table borrows establish the invariants required by
         // mako-local's build-private trusted Put path. Public cache semantics
         // are unchanged: reads/scans and conditional mutations still use the
         // checked ABI, and commit retains separate visibility/cleanup results.
         Ok(Transaction {
             cache: self,
+            writeback: lane.writeback(),
             table,
             native: Some(native),
-            foreground,
+            foreground: TransactionForeground::Concurrent(lane.producer()),
         })
     }
 
@@ -844,27 +854,30 @@ impl<B: Blobs + 'static> Cache<B> {
         self.wait_applied()
     }
 
-    /// Current in-memory progress of the ordered RocksDB consumer.
+    /// Current in-memory progress of the RocksDB consumer.
+    ///
+    /// Concurrent workers have independent physical log lanes. In that mode,
+    /// the sequence is the total applied record count and the timestamp is the
+    /// greatest applied Mako timestamp, not a claim of a contiguous global
+    /// serialization prefix.
     pub fn applied_watermark(&self) -> AppliedWatermark {
         self.writeback.applied_watermark()
     }
 
-    /// Highest contiguous cache sequence applied to RocksDB.
+    /// Number of cache transactions applied to RocksDB.
     pub fn applied_sequence(&self) -> u64 {
-        self.writeback.applied_sequence()
+        self.writeback.applied_watermark().sequence()
     }
 
-    /// Highest cache-sequence acknowledgement high-water mark.
+    /// Number of cache transactions acknowledged to foreground callers.
     ///
-    /// This need not be a dense prefix: the trusted concurrent one-Put path
-    /// may acknowledge a Ready suffix before an earlier producer completes.
-    /// [`Self::wait_applied`] still waits for the complete prefix through this
-    /// sequence, or reports an earlier asynchronous fail-stop condition.
+    /// [`Self::wait_applied`] snapshots every initialized worker lane and waits
+    /// for each lane through its acknowledged position.
     pub fn highest_acknowledged_sequence(&self) -> u64 {
-        self.writeback.highest_caller_acknowledged()
+        self.writeback.highest_acknowledged()
     }
 
-    /// Number of bound prepared or ready queue slots.
+    /// Number of bound prepared or ready slots across initialized lanes.
     pub fn queued_transactions(&self) -> usize {
         self.writeback.queue_len()
     }
@@ -878,19 +891,18 @@ impl<B: Blobs + 'static> Cache<B> {
         self.writeback.backend()
     }
 
-    /// Cleanly drain the acknowledged queue and stop the background writer.
+    /// Cleanly drain every acknowledged lane snapshot and stop the writer.
     pub fn close(self) -> Result<u64, Error> {
         self.shutdown()
     }
 
     /// Stop without draining, modelling loss of the volatile queue on crash.
     ///
-    /// This is intended for crash tests and controlled process teardown. Any
-    /// sequence above the applied watermark may be lost.
+    /// This is intended for crash tests and controlled process teardown.
+    /// Acknowledged records not yet applied in any lane may be lost.
     #[doc(hidden)]
     pub fn abort_without_flush(self) -> Result<(), Error> {
-        self.writeback
-            .reclaim_packed_occupancy_credits_for_shutdown();
+        self.writeback.reclaim_credits_for_shutdown();
         let mut runtime = self
             .runtime
             .lock()
@@ -902,15 +914,14 @@ impl<B: Blobs + 'static> Cache<B> {
     }
 
     fn shutdown(&self) -> Result<u64, Error> {
-        self.writeback
-            .reclaim_packed_occupancy_credits_for_shutdown();
+        self.writeback.reclaim_credits_for_shutdown();
         let mut runtime = self
             .runtime
             .lock()
             .map_err(|_| Error::RuntimeLockPoisoned)?;
         match runtime.take() {
             Some(mut runtime) => Ok(runtime.shutdown()?),
-            None => Ok(self.writeback.applied_sequence()),
+            None => Ok(self.writeback.applied_watermark().sequence()),
         }
     }
 }
@@ -939,7 +950,7 @@ impl<B: Blobs + 'static> Cache<B> {
 /// ```
 pub struct SingleProducer<'cache, B: Blobs + 'static> {
     cache: &'cache Cache<B>,
-    state: writeback::SingleProducerState,
+    state: &'cache writeback::SingleProducerState,
     _thread_affine: PhantomData<Rc<()>>,
 }
 
@@ -958,9 +969,10 @@ impl<'cache, B: Blobs + 'static> SingleProducer<'cache, B> {
         let (table, native) = self.cache.local.trusted_bound_transaction()?;
         Ok(Transaction {
             cache: self.cache,
+            writeback: self.cache.writeback.single_lane().writeback(),
             table,
             native: Some(native),
-            foreground: TransactionForeground::SingleProducer(&self.state),
+            foreground: TransactionForeground::SingleProducer(self.state),
         })
     }
 
@@ -1032,19 +1044,18 @@ impl<B: Blobs + 'static> Drop for Cache<B> {
 
 #[derive(Clone, Copy)]
 enum TransactionForeground<'cache> {
-    Concurrent,
+    Concurrent(&'cache writeback::SingleProducerState),
     SingleProducer(&'cache writeback::SingleProducerState),
 }
 
 impl<'cache> TransactionForeground<'cache> {
     const fn is_concurrent(self) -> bool {
-        matches!(self, Self::Concurrent)
+        matches!(self, Self::Concurrent(_))
     }
 
-    const fn single_producer(self) -> Option<&'cache writeback::SingleProducerState> {
+    const fn producer(self) -> &'cache writeback::SingleProducerState {
         match self {
-            Self::Concurrent => None,
-            Self::SingleProducer(state) => Some(state),
+            Self::Concurrent(state) | Self::SingleProducer(state) => state,
         }
     }
 }
@@ -1056,6 +1067,7 @@ impl<'cache> TransactionForeground<'cache> {
 /// future RAII field must be released or transferred before that fast return.
 pub struct Transaction<'db, B: Blobs + 'static> {
     cache: &'db Cache<B>,
+    writeback: &'db Writeback<Arc<B>>,
     table: mako_local::Table<'db>,
     native: Option<mako_local::Transaction<'db>>,
     foreground: TransactionForeground<'db>,
@@ -1146,49 +1158,67 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
     #[inline(always)]
     pub fn commit(mut self) -> Result<(), Error> {
         let foreground = self.foreground;
-        if self.cache.record_checksum == RecordChecksum::None {
-            if let Some(producer) = foreground.single_producer() {
-                #[cfg(test)]
-                crate::failpoint::hit(crate::failpoint::Point::BeforeDetachedPreparation);
-
-                let mut cold_attempt = std::mem::MaybeUninit::uninit();
-                #[cfg(test)]
-                let cache = self.cache;
-                // SAFETY: this transaction borrows the unique thread-affine
-                // producer for its whole lifetime. The producer control and
-                // both local atomic words remain stable with the borrowed
-                // cache through this synchronous attempt. On true, native has
-                // consumed the raw handle and this branch immediately forgets
-                // the outer facade with its stale native ownership state. On
-                // false, the Rust wrapper initializes the cold lifecycle value
-                // before it is read below; native only initializes control
-                // scratch for consumed cold codes.
-                let published = unsafe {
-                    self.native
-                        .as_mut()
-                        .unwrap_unchecked()
-                        .try_commit_trusted_fused_single_producer_one_put_holder_fast_forget_on_publish(
-                            producer.fused_holder_control(),
-                            producer.next_sequence_ptr(),
-                            producer.capacity_limit_ptr(),
-                            &mut cold_attempt,
-                        )
-                };
-                if published {
-                    // Native destroyed the only owned resource. Every
-                    // remaining field is borrowed or scalar. Forget first so
-                    // even a test notifier panic cannot drop the stale native
-                    // facade. A future owned field must be released or
-                    // transferred before this point.
-                    std::mem::forget(self);
-                    #[cfg(test)]
-                    cache.writeback.notify_fused_holder_published_for_test();
-                    return Ok(());
-                }
-                // SAFETY: guaranteed by the false fast-terminal result.
-                let attempt = unsafe { cold_attempt.assume_init() };
-                return self.finish_single_producer_fused_cold(producer, attempt);
+        let fused_candidate = self.cache.record_checksum == RecordChecksum::None
+            && unsafe {
+                self.native
+                    .as_ref()
+                    .unwrap_unchecked()
+                    .trusted_unchecked_one_put_record_bytes_candidate()
             }
+            .is_some_and(|bytes| bytes.get() as usize <= self.writeback.max_record_bytes());
+        if fused_candidate {
+            let producer = foreground.producer();
+            let _fence = foreground
+                .is_concurrent()
+                .then(|| self.cache.commit_fence.enter_writer());
+            if let Err(error) = self.cache.writeback.ensure_no_unknown() {
+                let native = unsafe { self.native.take().unwrap_unchecked() };
+                return Err(abort_after_precommit_failure(native, Error::Apply(error)));
+            }
+            #[cfg(test)]
+            crate::failpoint::hit(crate::failpoint::Point::BeforeDetachedPreparation);
+
+            let mut cold_attempt = std::mem::MaybeUninit::uninit();
+            #[cfg(test)]
+            let writeback = self.writeback;
+            // SAFETY: this transaction borrows the unique thread-affine
+            // producer for its whole lifetime. The producer control and
+            // both local atomic words remain stable with the borrowed
+            // cache through this synchronous attempt. On true, native has
+            // consumed the raw handle and this branch immediately forgets
+            // the outer facade with its stale native ownership state. On
+            // false, the Rust wrapper initializes the cold lifecycle value
+            // before it is read below; native only initializes control
+            // scratch for consumed cold codes.
+            let published = unsafe {
+                self.native
+                    .as_mut()
+                    .unwrap_unchecked()
+                    .try_commit_trusted_fused_single_producer_one_put_holder_fast_forget_on_publish(
+                        producer.fused_holder_control(),
+                        producer.next_sequence_ptr(),
+                        producer.capacity_limit_ptr(),
+                        &mut cold_attempt,
+                    )
+            };
+            if published {
+                // Native destroyed the only owned resource. Every
+                // remaining field is borrowed or scalar. Forget first so
+                // even a test notifier panic cannot drop the stale native
+                // facade. A future owned field must be released or
+                // transferred before this point.
+                std::mem::forget(self);
+                #[cfg(test)]
+                writeback.notify_fused_holder_published_for_test();
+                return Ok(());
+            }
+            // SAFETY: guaranteed by the false fast-terminal result.
+            let attempt = unsafe { cold_attempt.assume_init() };
+            return self.finish_single_producer_fused_cold(
+                producer,
+                attempt,
+                foreground.is_concurrent(),
+            );
         }
         self.commit_general()
     }
@@ -1207,18 +1237,22 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
         mut self,
         producer: &writeback::SingleProducerState,
         mut attempt: mako_local::TrustedFusedOnePutHolderAttempt,
+        writer_fence_active: bool,
     ) -> Result<(), Error> {
         loop {
             match attempt {
                 mako_local::TrustedFusedOnePutHolderAttempt::Published => std::process::abort(),
                 mako_local::TrustedFusedOnePutHolderAttempt::UntouchedGeneral => {
-                    return self.commit_general();
+                    return self.commit_general_inner(writer_fence_active);
                 }
                 mako_local::TrustedFusedOnePutHolderAttempt::UntouchedSlow {
                     exact_record_bytes,
                 } => {
+                    if let Err(error) = self.cache.writeback.ensure_no_unknown() {
+                        let native = unsafe { self.native.take().unwrap_unchecked() };
+                        return Err(abort_after_precommit_failure(native, Error::Apply(error)));
+                    }
                     match self
-                        .cache
                         .writeback
                         .reserve_native_holder_single_slow(producer, exact_record_bytes)
                     {
@@ -1229,7 +1263,7 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
                             // still-active transaction retries the fused gate.
                             let mut cold_attempt = std::mem::MaybeUninit::uninit();
                             #[cfg(test)]
-                            let cache = self.cache;
+                            let writeback = self.writeback;
                             // SAFETY: the first fused attempt established this
                             // method's unique-producer and stable-pointer
                             // invariants. The successful slow reservation
@@ -1248,7 +1282,7 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
                             if published {
                                 std::mem::forget(self);
                                 #[cfg(test)]
-                                cache.writeback.notify_fused_holder_published_for_test();
+                                writeback.notify_fused_holder_published_for_test();
                                 return Ok(());
                             }
                             // SAFETY: guaranteed by the false retry result.
@@ -1273,7 +1307,7 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
                     // the producer-local cursor. A concurrent fail-stop latch
                     // prevented ACK publication.
                     finish_committed_native_holder_cold(
-                        &self.cache.writeback,
+                        self.writeback,
                         producer.accepted_sequence(),
                         timestamp,
                         exact_record_bytes,
@@ -1289,7 +1323,7 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
                     // now accept or pin only when the timestamp proves that
                     // native installed the write.
                     finish_holder_outcome_cold(
-                        &self.cache.writeback,
+                        self.writeback,
                         producer,
                         producer.retained_sequence(),
                         exact_record_bytes,
@@ -1311,6 +1345,12 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
     #[inline(never)]
     #[allow(unsafe_code)]
     fn commit_general(&mut self) -> Result<(), Error> {
+        self.commit_general_inner(false)
+    }
+
+    #[inline(never)]
+    #[allow(unsafe_code)]
+    fn commit_general_inner(&mut self, writer_fence_active: bool) -> Result<(), Error> {
         let foreground = self.foreground;
         let mut native = self
             .native
@@ -1321,7 +1361,7 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
         // that shape at the consuming terminal, so we can avoid a second ABI
         // call and plan-sealing pass without trusting Rust for write coverage.
         // Every other transaction retains the general canonical preflight.
-        let max_record_bytes = self.cache.writeback.max_record_bytes();
+        let max_record_bytes = self.writeback.max_record_bytes();
         let unchecked_one_put = (self.cache.record_checksum == RecordChecksum::None)
             .then(|| native.unchecked_one_put_record_candidate())
             .flatten()
@@ -1359,73 +1399,35 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
         #[cfg(test)]
         crate::failpoint::hit(crate::failpoint::Point::BeforeDetachedPreparation);
 
-        // The trusted one-Put terminal is the only native path whose exact
-        // small-record shape and bind exclusion are both known here. The
-        // concurrent profile uses native's validation gate; the explicit
-        // producer lease supplies stronger whole-call exclusion. Oversized
-        // and general transactions retain the defensive binder below.
+        // Each concurrent worker owns one SPSC lane. The outcome fence remains
+        // global only so a read-only commit can close a timestamp-order cut.
+        let _fence = (foreground.is_concurrent() && !writer_fence_active)
+            .then(|| self.cache.commit_fence.enter_writer());
+        if let Err(error) = self.cache.writeback.ensure_no_unknown() {
+            return Err(abort_after_precommit_failure(native, Error::Apply(error)));
+        }
+
+        // The same callback-free holder terminal is safe for one producer per
+        // lane. Native's PerWorker mode supplies timestamp ordering against
+        // other lanes and the general validation gate.
         if unchecked_one_put.is_some() {
-            if let Some(producer) = foreground.single_producer() {
-                let exact_record_bytes = NonZeroU32::new(preflight.exact_record_bytes() as u32)
-                    .expect("a trusted one-Put record has a nonzero u32 extent");
-                let reserved = self
-                    .cache
-                    .writeback
-                    .reserve_native_holder_single_slow(producer, exact_record_bytes);
-                match reserved {
-                    Ok(sequence) => {
-                        return finish_trusted_one_put_holder_single(
-                            self.cache,
-                            native,
-                            exact_record_bytes,
-                            producer,
-                            sequence,
-                        );
-                    }
-                    Err(error) => {
-                        return Err(abort_after_precommit_failure(native, Error::Reserve(error)));
-                    }
+            let producer = foreground.producer();
+            let exact_record_bytes = NonZeroU32::new(preflight.exact_record_bytes() as u32)
+                .expect("a trusted one-Put record has a nonzero u32 extent");
+            match self
+                .writeback
+                .reserve_native_holder_single_slow(producer, exact_record_bytes)
+            {
+                Ok(sequence) => {
+                    return finish_trusted_one_put_holder_single(
+                        self.writeback,
+                        native,
+                        exact_record_bytes,
+                        producer,
+                        sequence,
+                        foreground.is_concurrent(),
+                    );
                 }
-            }
-            let (reserved, concurrent_worker_slot) = match foreground.single_producer() {
-                Some(producer) => (
-                    self.cache
-                        .writeback
-                        .reserve_native_arena_fast_single(producer, preflight.exact_record_bytes()),
-                    None,
-                ),
-                None => {
-                    let worker_slot = CommitFence::current_thread_slot();
-                    (
-                        self.cache.writeback.reserve_native_arena_fast_packed(
-                            preflight.exact_record_bytes(),
-                            worker_slot,
-                        ),
-                        Some(worker_slot),
-                    )
-                }
-            };
-            match reserved {
-                Ok(Some(permit)) => {
-                    return match foreground {
-                        TransactionForeground::Concurrent => {
-                            finish_trusted_one_put_concurrent(
-                                self.cache,
-                                native,
-                                preflight,
-                                permit,
-                                concurrent_worker_slot
-                                    .expect("a concurrent arena reserve retains its worker slot"),
-                            )
-                        }
-                        TransactionForeground::SingleProducer(_) => {
-                            finish_trusted_one_put_arena_single(
-                                self.cache, native, preflight, permit,
-                            )
-                        }
-                    };
-                }
-                Ok(None) => {}
                 Err(error) => {
                     return Err(abort_after_precommit_failure(native, Error::Reserve(error)));
                 }
@@ -1435,16 +1437,9 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
         // Capacity waits and buffer checkout/growth complete before native Silo
         // takes write locks. Common records use a queue-capacity fixed arena;
         // oversized buffers are recycled after background application.
-        let reserved = match foreground.single_producer() {
-            Some(producer) => self
-                .cache
-                .writeback
-                .reserve_native_single(producer, preflight.exact_record_bytes()),
-            None => self
-                .cache
-                .writeback
-                .reserve_native(preflight.exact_record_bytes()),
-        };
+        let reserved = self
+            .writeback
+            .reserve_native_single(foreground.producer(), preflight.exact_record_bytes());
         let mut permit = match reserved {
             Ok(permit) => permit,
             Err(error) => {
@@ -1454,113 +1449,36 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
         #[cfg(test)]
         crate::failpoint::hit(crate::failpoint::Point::DetachedPrepared);
 
-        // The concurrent profile excludes read-only acknowledgement while a
-        // writer's native outcome is unresolved. Each concurrent worker owns
-        // a separate cache-line slot; the unique mutable producer lease needs
-        // no outcome fence.
-        let _fence = foreground
-            .is_concurrent()
-            .then(|| self.cache.commit_fence.enter_writer());
         if let Err(error) = self.cache.writeback.ensure_no_unknown() {
             return Err(abort_after_precommit_failure(native, Error::Apply(error)));
         }
 
         let mut bound = None;
         let mut bind_error = None;
-        let record_report = match foreground {
-            TransactionForeground::Concurrent => {
-                let (next_bound, unhealthy) = self.cache.writeback.native_ordering_words();
-                // SAFETY: native is the sole concurrent dense allocator. This
-                // callback adopts exactly the assigned generation into the
-                // uniquely claimed arena/owned buffer and retains it through
-                // the synchronous terminal.
-                let acquire_target = |timestamp, native_preflight, ordered_sequence| {
-                    debug_assert_eq!(native_preflight, preflight);
-                    let mut reservation = unsafe {
-                        permit.bind_native_externally_ordered(timestamp, ordered_sequence)
-                    };
-                    // SAFETY: `bound` retains the stable exact target until
-                    // native has completed serialization or returned failure.
+        let acquire_target = |timestamp, native_preflight| {
+            debug_assert_eq!(native_preflight, preflight);
+            match permit.bind_native(timestamp) {
+                Ok(mut reservation) => {
+                    // SAFETY: this reservation remains alive in `bound`
+                    // through the synchronous native terminal.
                     let target = unsafe { reservation.native_record_target() };
                     bound = Some(reservation);
                     #[cfg(test)]
                     crate::failpoint::hit(crate::failpoint::Point::PreinstallBound);
                     Some(target)
-                };
-                let outcome = if unchecked_one_put.is_some() {
-                    // SAFETY: native rederives the current restricted one-Put
-                    // candidate and assigns its packed pair only after final
-                    // validation. `next_bound` is retained only by the ABI;
-                    // exact-turn publication makes the assigned generation
-                    // discoverable without another shared tail update.
-                    unsafe {
-                        native
-                            .commit_trusted_native_ordered_unchecked_one_put_record_target(
-                                preflight,
-                                next_bound,
-                                unhealthy,
-                                acquire_target,
-                            )
-                    }
-                } else {
-                    // SAFETY: the preflight is current and nonempty. Native
-                    // owns the packed general bit through timestamp allocation,
-                    // final validation, and dense assignment.
-                    unsafe {
-                        native.commit_trusted_native_ordered_record_target(
-                            unhealthy,
-                            acquire_target,
-                        )
-                    }
-                };
-                if !outcome.order_witness_valid() {
-                    std::process::abort();
                 }
-                // A native exception after dense assignment but before the
-                // callback cannot make that order cancelable. Adopt it here so
-                // the ordinary unwritten path pins the exact hole fail-closed.
-                if bound.is_none() {
-                    if let Some((timestamp, sequence)) = outcome.accepted_order() {
-                        bound = Some(unsafe {
-                            permit.bind_native_externally_ordered(timestamp, sequence)
-                        });
-                    }
-                }
-                outcome.into_report()
-            }
-            TransactionForeground::SingleProducer(_) => {
-                // The exclusive producer retains its existing private dense
-                // cursor. No concurrent packed allocator can run in this cache
-                // mode, and recovery reseeds the packed namespace on reopen.
-                let acquire_target = |timestamp, native_preflight| {
-                    debug_assert_eq!(native_preflight, preflight);
-                    match permit.bind_native(timestamp) {
-                        Ok(mut reservation) => {
-                            // SAFETY: this reservation remains alive in
-                            // `bound` through the synchronous terminal.
-                            let target = unsafe { reservation.native_record_target() };
-                            bound = Some(reservation);
-                            #[cfg(test)]
-                            crate::failpoint::hit(crate::failpoint::Point::PreinstallBound);
-                            Some(target)
-                        }
-                        Err(error) => {
-                            bind_error = Some(error);
-                            None
-                        }
-                    }
-                };
-                if unchecked_one_put.is_some() {
-                    unsafe {
-                        native.commit_report_with_unchecked_one_put_record_target(
-                            preflight,
-                            acquire_target,
-                        )
-                    }
-                } else {
-                    unsafe { native.commit_report_with_record_target(acquire_target) }
+                Err(error) => {
+                    bind_error = Some(error);
+                    None
                 }
             }
+        };
+        let record_report = if unchecked_one_put.is_some() {
+            unsafe {
+                native.commit_report_with_unchecked_one_put_record_target(preflight, acquire_target)
+            }
+        } else {
+            unsafe { native.commit_report_with_record_target(acquire_target) }
         };
         enforce_record_completion_contract(&record_report);
         let report = record_report.commit;
@@ -1661,6 +1579,7 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
 #[allow(unsafe_code)]
 fn finish_trusted_one_put_concurrent<'cache, 'db, B: Blobs + 'static>(
     cache: &'cache Cache<B>,
+    writeback: &'cache Writeback<Arc<B>>,
     native: mako_local::Transaction<'db>,
     preflight: mako_local::CommitRecordPreflight,
     permit: writeback::NativeArenaPermit<'cache, B>,
@@ -1670,7 +1589,7 @@ fn finish_trusted_one_put_concurrent<'cache, 'db, B: Blobs + 'static>(
     crate::failpoint::hit(crate::failpoint::Point::DetachedPrepared);
 
     let fence = cache.commit_fence.enter_writer_slot(worker_slot);
-    if let Err(error) = cache.writeback.ensure_no_unknown() {
+    if let Err(error) = writeback.ensure_no_unknown() {
         return Err(abort_after_precommit_failure(native, Error::Apply(error)));
     }
 
@@ -1690,9 +1609,9 @@ fn finish_trusted_one_put_concurrent<'cache, 'db, B: Blobs + 'static>(
     #[cfg(not(test))]
     let force_callback = false;
     #[cfg(test)]
-    let force_rust_ready = crate::failpoint::is_armed(
-        crate::failpoint::Point::NativeCommittedBeforeReady,
-    ) || crate::failpoint::post_native_commit_observer_installed();
+    let force_rust_ready =
+        crate::failpoint::is_armed(crate::failpoint::Point::NativeCommittedBeforeReady)
+            || crate::failpoint::post_native_commit_observer_installed();
     #[cfg(not(test))]
     let force_rust_ready = false;
     let use_holder_terminal = !force_callback
@@ -1703,25 +1622,17 @@ fn finish_trusted_one_put_concurrent<'cache, 'db, B: Blobs + 'static>(
         // SAFETY: the candidate is current, the permit owns one concurrent
         // occupancy claim, and the control borrows this queue's stable exact
         // publication/holder layout for the synchronous native terminal.
-        let control = unsafe { cache.writeback.native_ordered_holder_control() };
+        let control = unsafe { writeback.native_ordered_holder_control() };
         unsafe {
-            native.commit_trusted_native_ordered_unchecked_one_put_holder(
-                preflight,
-                &control,
-            )
+            native.commit_trusted_native_ordered_unchecked_one_put_holder(preflight, &control)
         }
     } else if !force_callback {
         // SAFETY: this is the same direct packed terminal and exact generation
         // ownership, with bytes stored in the queue arena instead of a holder.
-        let control = unsafe { cache.writeback.native_ordered_arena_control() };
-        unsafe {
-            native.commit_trusted_native_ordered_unchecked_one_put_arena(
-                preflight,
-                &control,
-            )
-        }
+        let control = unsafe { writeback.native_ordered_arena_control() };
+        unsafe { native.commit_trusted_native_ordered_unchecked_one_put_arena(preflight, &control) }
     } else {
-        let (next_bound, unhealthy) = cache.writeback.native_ordering_words();
+        let (next_bound, unhealthy) = writeback.native_ordering_words();
         // SAFETY: this test-only callback runs synchronously after the native
         // packed CAS assigned its timestamp/sequence pair. Adopting the
         // exact FREE generation before returning its target retains the prior
@@ -1776,10 +1687,7 @@ fn finish_trusted_one_put_concurrent<'cache, 'db, B: Blobs + 'static>(
         // witnesses were all checked above. This disarms occupancy before its
         // health resolver and stores caller ACK only after native's Release.
         let result = unsafe {
-            permit.acknowledge_native_holder_ready_concurrent_nonblocking(
-                sequence,
-                fence.slot(),
-            )
+            permit.acknowledge_native_holder_ready_concurrent_nonblocking(sequence, fence.slot())
         };
         // SAFETY: the acknowledgement method disarmed the claim before any
         // fallible resolution. Dropping now cannot race consumer retirement.
@@ -1856,8 +1764,7 @@ fn finish_trusted_one_put_concurrent<'cache, 'db, B: Blobs + 'static>(
                 // direct holder or callback arena target is complete.
                 let sequence = if use_holder_terminal {
                     unsafe {
-                        reservation
-                            .publish_holder_completed_concurrent_nonblocking(fence.slot())?
+                        reservation.publish_holder_completed_concurrent_nonblocking(fence.slot())?
                     }
                 } else {
                     unsafe { reservation.publish_completed()? }
@@ -1910,56 +1817,53 @@ fn finish_trusted_one_put_concurrent<'cache, 'db, B: Blobs + 'static>(
 #[allow(unsafe_code)]
 #[inline(always)]
 fn finish_trusted_one_put_holder_single<'cache, 'db, B: Blobs + 'static>(
-    cache: &'cache Cache<B>,
+    writeback: &'cache Writeback<Arc<B>>,
     native: mako_local::Transaction<'db>,
     exact_record_bytes: NonZeroU32,
     producer: &'cache writeback::SingleProducerState,
     sequence: NonZeroU64,
+    per_worker: bool,
 ) -> Result<(), Error> {
     #[cfg(test)]
     crate::failpoint::hit(crate::failpoint::Point::DetachedPrepared);
 
     // SAFETY: this terminal is reachable only for a queue and lease created in
     // single-producer mode; the cache outlives the synchronous native call.
-    let pool = unsafe { cache.writeback.native_holder_pool_single_unchecked() };
-
     // SAFETY: the thread-affine producer lease owns this future dense
     // generation and the corresponding masked holder through the synchronous
     // consuming terminal. No consumer can view it before Rust's later Release.
     let outcome = unsafe {
-        native.commit_trusted_preselected_single_producer_unchecked_one_put_holder_bytes(
-            exact_record_bytes,
-            pool,
-            sequence,
-        )
+        if per_worker {
+            native.commit_trusted_preselected_per_worker_unchecked_one_put_holder_bytes(
+                exact_record_bytes,
+                producer.fused_holder_control(),
+                sequence,
+            )
+        } else {
+            native.commit_trusted_preselected_single_producer_unchecked_one_put_holder_bytes(
+                exact_record_bytes,
+                writeback.native_holder_pool_single_unchecked(),
+                sequence,
+            )
+        }
     };
 
     if let Some(timestamp) = outcome.committed_timestamp() {
         // SAFETY: the fused compact predicate proves definite visibility,
         // successful cleanup, and a sealed exact-generation holder. Ordinary
         // publication consists only of the producer cursor and ACK stores.
-        if unsafe {
-            cache
-                .writeback
-                .try_publish_native_holder_single(producer, sequence)
-        } {
+        if unsafe { writeback.try_publish_native_holder_single(producer, sequence) } {
             return Ok(());
         }
         return finish_committed_native_holder_cold(
-            &cache.writeback,
+            writeback,
             sequence,
             timestamp,
             exact_record_bytes,
         );
     }
 
-    finish_holder_outcome_cold(
-        &cache.writeback,
-        producer,
-        sequence,
-        exact_record_bytes,
-        outcome,
-    )
+    finish_holder_outcome_cold(writeback, producer, sequence, exact_record_bytes, outcome)
 }
 
 /// Attach a definitely committed holder behind a concurrently latched
@@ -2332,7 +2236,7 @@ fn recover<B: Blobs>(
     local: &LocalDb,
     backend: &B,
     max_bytes: usize,
-) -> Result<AppliedWatermark, Error> {
+) -> Result<RecoveredWriteback, Error> {
     let mut keys = Vec::<Vec<u8>>::new();
     backend.for_each_key(&mut |key| keys.push(key.to_vec()))?;
     #[cfg(test)]
@@ -2360,19 +2264,39 @@ fn recover<B: Blobs>(
     records
         .try_reserve_exact(log_keys.len())
         .map_err(|_| Error::AllocationFailed)?;
-    let mut previous = 0u64;
-    let mut previous_mako_timestamp = None;
-    for (sequence, key) in log_keys {
-        let expected = previous.checked_add(1).ok_or(Error::BackendStateMismatch)?;
-        if sequence.get() != expected {
-            return Err(Error::BackendStateMismatch);
-        }
+    let mut recovered = RecoveredWriteback::empty();
+    let mut seen_timestamps = HashSet::new();
+    seen_timestamps
+        .try_reserve(log_keys.len())
+        .map_err(|_| Error::AllocationFailed)?;
+    for (_sequence, key) in log_keys {
         let value = backend.get(&key)?.ok_or(Error::BackendStateMismatch)?;
         let record = CommitRecord::decode(&key, &value, max_bytes)?;
-        if previous_mako_timestamp.is_some_and(|timestamp| record.mako_timestamp() <= timestamp) {
+        if !seen_timestamps.insert(record.mako_timestamp()) {
             return Err(Error::BackendStateMismatch);
         }
-        previous_mako_timestamp = Some(record.mako_timestamp());
+        let (lane, local_sequence) =
+            split_log_sequence(record.sequence()).ok_or(Error::BackendStateMismatch)?;
+        let lane_recovery = match lane {
+            Some(lane) => recovered
+                .lanes
+                .get_mut(lane)
+                .ok_or(Error::BackendStateMismatch)?,
+            None => &mut recovered.legacy,
+        };
+        let expected = lane_recovery
+            .local_tail
+            .checked_add(1)
+            .ok_or(Error::BackendStateMismatch)?;
+        if local_sequence != expected
+            || lane_recovery
+                .mako_timestamp
+                .is_some_and(|timestamp| record.mako_timestamp() <= timestamp)
+        {
+            return Err(Error::BackendStateMismatch);
+        }
+        lane_recovery.local_tail = local_sequence;
+        lane_recovery.mako_timestamp = Some(record.mako_timestamp());
         for mutation in record.mutations() {
             let table_id = match mutation {
                 Mutation::Put { table_id, .. } | Mutation::Delete { table_id, .. } => *table_id,
@@ -2381,7 +2305,6 @@ fn recover<B: Blobs>(
                 return Err(Error::UnsupportedTable(table_id));
             }
         }
-        previous = record.sequence().get();
         records.push(record);
         #[cfg(test)]
         {
@@ -2394,7 +2317,10 @@ fn recover<B: Blobs>(
         }
     }
 
-    validate_materialized_data(backend, &records, data_keys)?;
+    // Physical lane order is not the serialization order.  Whole
+    // transactions replay by their unique Mako timestamp.
+    records.sort_unstable_by_key(CommitRecord::mako_timestamp);
+    recovered.latest = validate_materialized_data(backend, &records, data_keys)?;
     #[cfg(test)]
     crate::failpoint::hit(crate::failpoint::Point::RecoveryMaterializedValidated);
 
@@ -2412,30 +2338,34 @@ fn recover<B: Blobs>(
     replay_records(local, &records)?;
     #[cfg(test)]
     crate::failpoint::hit(crate::failpoint::Point::RecoveryReplayComplete);
-    Ok(AppliedWatermark::recovered(
-        previous,
-        applied_mako_timestamp,
-    ))
+    recovered.record_count = u64::try_from(records.len()).map_err(|_| Error::AllocationFailed)?;
+    recovered.maximum_timestamp = applied_mako_timestamp;
+    Ok(recovered)
 }
 
 fn validate_materialized_data<B: Blobs>(
     backend: &B,
     records: &[CommitRecord],
     data_keys: Vec<(Vec<u8>, u64, Vec<u8>)>,
-) -> Result<(), Error> {
-    let mut final_state = BTreeMap::<(u64, Vec<u8>), Option<Vec<u8>>>::new();
+) -> Result<HashMap<Vec<u8>, MakoTimestamp>, Error> {
+    let mut final_state = BTreeMap::<(u64, Vec<u8>), (MakoTimestamp, Option<Vec<u8>>)>::new();
+    let mut latest = HashMap::<Vec<u8>, MakoTimestamp>::new();
     for record in records {
-        for mutation in record.mutations() {
+        for (mutation, data_key) in record.mutations().iter().zip(record.data_keys()) {
+            latest.insert(data_key.clone(), record.mako_timestamp());
             match mutation {
                 Mutation::Put {
                     table_id,
                     key,
                     value,
                 } => {
-                    final_state.insert((*table_id, key.clone()), Some(value.clone()));
+                    final_state.insert(
+                        (*table_id, key.clone()),
+                        (record.mako_timestamp(), Some(value.clone())),
+                    );
                 }
                 Mutation::Delete { table_id, key } => {
-                    final_state.insert((*table_id, key.clone()), None);
+                    final_state.insert((*table_id, key.clone()), (record.mako_timestamp(), None));
                 }
             }
         }
@@ -2444,7 +2374,7 @@ fn validate_materialized_data<B: Blobs>(
     for (backend_key, table_id, raw_key) in data_keys {
         let expected = final_state
             .remove(&(table_id, raw_key))
-            .flatten()
+            .and_then(|(_, value)| value)
             .ok_or(Error::BackendStateMismatch)?;
         let actual = backend
             .get(&backend_key)?
@@ -2453,10 +2383,10 @@ fn validate_materialized_data<B: Blobs>(
             return Err(Error::BackendStateMismatch);
         }
     }
-    if final_state.values().any(Option::is_some) {
+    if final_state.values().any(|(_, value)| value.is_some()) {
         return Err(Error::BackendStateMismatch);
     }
-    Ok(())
+    Ok(latest)
 }
 
 fn replay_records(local: &LocalDb, records: &[CommitRecord]) -> Result<(), Error> {
@@ -2768,7 +2698,7 @@ mod tests {
     #[cfg(have_mako)]
     #[test]
     fn anomalous_accepted_holder_stays_pinned_if_decoder_panics() {
-        use std::panic::{AssertUnwindSafe, catch_unwind};
+        use std::panic::{catch_unwind, AssertUnwindSafe};
         use std::sync::Arc;
 
         use mrx_core::fakes::MemBlobs;
@@ -3163,82 +3093,6 @@ mod tests {
 
     #[cfg(have_mako)]
     #[test]
-    fn native_ready_can_retire_before_rust_ack_without_releasing_occupancy_twice() {
-        use std::sync::Arc;
-        use std::time::{Duration, Instant};
-
-        use mrx_core::fakes::MemBlobs;
-
-        let backend = Arc::new(MemBlobs::new());
-        let mut options = CacheOptions::default();
-        options.record_checksum = RecordChecksum::None;
-        options.writeback.capacity = 1;
-        options.writeback.max_batch_records = 1;
-        let cache = Arc::new(
-            Cache::from_backend(Arc::clone(&backend), options)
-                .expect("open capacity-one concurrent cache"),
-        );
-
-        let observer_cache = Arc::clone(&cache);
-        crate::failpoint::install_post_native_holder_ready_observer(move || {
-            let deadline = Instant::now() + Duration::from_secs(5);
-            while observer_cache.applied_sequence() != 1 && Instant::now() < deadline {
-                std::thread::yield_now();
-            }
-            assert_eq!(
-                observer_cache.applied_sequence(),
-                1,
-                "the consumer did not retire native READY before Rust resumed"
-            );
-            assert_eq!(
-                observer_cache.queued_transactions(),
-                0,
-                "retirement must free the exact publication generation"
-            );
-        });
-
-        cache
-            .put(b"native-ready-retirement", b"first-generation")
-            .expect("commit the generation retired before Rust ACK");
-        assert!(
-            !crate::failpoint::post_native_holder_ready_observer_installed(),
-            "the native holder terminal did not reach its READY observer"
-        );
-        assert_eq!(cache.highest_acknowledged_sequence(), 1);
-
-        // Capacity one maps this commit back onto the same publication cell
-        // and holder. A stale permit Drop would already have underflowed
-        // aggregate occupancy; unsafe early holder reuse would corrupt this
-        // second sealed generation or its replay.
-        cache
-            .put(b"native-ready-retirement", b"reused-generation")
-            .expect("reuse the holder retired before the first caller ACK");
-        assert_eq!(cache.wait_applied().expect("replay reused holder"), 2);
-        assert_eq!(
-            cache
-                .get(b"native-ready-retirement")
-                .expect("read reused holder value")
-                .as_deref(),
-            Some(&b"reused-generation"[..])
-        );
-
-        let cache = Arc::try_unwrap(cache)
-            .unwrap_or_else(|_| panic!("READY observer retained the cache after firing"));
-        assert_eq!(cache.close().expect("close native-READY cache"), 2);
-        let reopened = Cache::from_backend(Arc::clone(&backend), options)
-            .expect("recover native-READY replay");
-        assert_eq!(
-            reopened
-                .get(b"native-ready-retirement")
-                .expect("read recovered holder generation")
-                .as_deref(),
-            Some(&b"reused-generation"[..])
-        );
-        assert_eq!(reopened.close().expect("close recovered cache"), 2);
-    }
-
-    #[cfg(have_mako)]
-    #[test]
     fn concurrent_mode_rejects_a_single_producer_lease() {
         use std::sync::Arc;
 
@@ -3276,7 +3130,8 @@ mod tests {
             CacheOptions::default().writeback.max_record_bytes,
         )
         .unwrap();
-        assert_eq!(record.sequence().get(), sequence);
+        let (_, local_sequence) = split_log_sequence(record.sequence()).unwrap();
+        assert_eq!(local_sequence, sequence);
         assert_ne!(record.mako_timestamp().get(), 0);
 
         cache.close().unwrap();
@@ -3317,6 +3172,57 @@ mod tests {
 
     #[cfg(have_mako)]
     #[test]
+    fn fused_put_then_general_commit_uses_the_next_lane_sequence() {
+        use std::sync::Arc;
+
+        use mrx_core::fakes::MemBlobs;
+
+        let backend = Arc::new(MemBlobs::new());
+        let mut options = CacheOptions::default();
+        options.record_checksum = RecordChecksum::None;
+        let cache = Cache::from_backend(Arc::clone(&backend), options).unwrap();
+
+        cache.put(b"fused-first", b"one").unwrap();
+        let mut general = cache.transaction().unwrap();
+        general.put(b"general-second-a", b"two-a").unwrap();
+        general.put(b"general-second-b", b"two-b").unwrap();
+        general.commit().unwrap();
+        assert_eq!(cache.wait_applied().unwrap(), 2);
+
+        let mut local_sequences = backend
+            .snapshot()
+            .into_iter()
+            .filter_map(|(key, encoded)| {
+                matches!(classify_backend_key(&key), BackendKey::Log(_)).then(|| {
+                    let record = CommitRecord::decode(
+                        &key,
+                        &encoded,
+                        CacheOptions::default().writeback.max_record_bytes,
+                    )
+                    .unwrap();
+                    split_log_sequence(record.sequence()).unwrap().1
+                })
+            })
+            .collect::<Vec<_>>();
+        local_sequences.sort_unstable();
+        assert_eq!(local_sequences, vec![1, 2]);
+        assert_eq!(
+            cache.get(b"fused-first").unwrap().as_deref(),
+            Some(&b"one"[..])
+        );
+        assert_eq!(
+            cache.get(b"general-second-a").unwrap().as_deref(),
+            Some(&b"two-a"[..])
+        );
+        assert_eq!(
+            cache.get(b"general-second-b").unwrap().as_deref(),
+            Some(&b"two-b"[..])
+        );
+        assert_eq!(cache.close().unwrap(), 2);
+    }
+
+    #[cfg(have_mako)]
+    #[test]
     fn recovery_rejects_a_cache_sequence_gap() {
         use std::sync::Arc;
 
@@ -3330,6 +3236,50 @@ mod tests {
             Cache::from_backend(backend, CacheOptions::default()),
             Err(Error::BackendStateMismatch)
         ));
+    }
+
+    #[cfg(have_mako)]
+    #[test]
+    fn recovery_accepts_cross_lane_physical_reordering_and_replays_by_timestamp() {
+        use std::sync::Arc;
+
+        use mrx_core::fakes::MemBlobs;
+
+        let backend = Arc::new(MemBlobs::new());
+        let lane_zero = record::worker_log_base(0).unwrap() + 1;
+        let lane_one = record::worker_log_base(1).unwrap() + 1;
+        let newer = test_record_with_mutations(
+            lane_zero,
+            402,
+            vec![Mutation::Put {
+                table_id: DEFAULT_TABLE_ID,
+                key: b"cross-lane".to_vec(),
+                value: b"newer".to_vec(),
+            }],
+        );
+        let older = test_record_with_mutations(
+            lane_one,
+            401,
+            vec![Mutation::Put {
+                table_id: DEFAULT_TABLE_ID,
+                key: b"cross-lane".to_vec(),
+                value: b"older".to_vec(),
+            }],
+        );
+        // The timestamp winner is materialized last. Physical key order is the
+        // opposite order and must not define recovery serialization.
+        backend.write_batch(&older.backend_ops()).unwrap();
+        backend.write_batch(&newer.backend_ops()).unwrap();
+
+        begin_replay_audit();
+        let cache = Cache::from_backend(Arc::clone(&backend), CacheOptions::default()).unwrap();
+        assert_eq!(finish_replay_audit(), vec![lane_one, lane_zero]);
+        assert_eq!(
+            cache.get(b"cross-lane").unwrap().as_deref(),
+            Some(&b"newer"[..])
+        );
+        assert_eq!(cache.applied_sequence(), 2);
+        cache.close().unwrap();
     }
 
     #[cfg(have_mako)]
@@ -3406,11 +3356,19 @@ mod tests {
         let (log_key, encoded) = backend
             .snapshot()
             .into_iter()
-            .find(|(key, _)| {
-                matches!(
-                    classify_backend_key(key),
-                    BackendKey::Log(sequence) if sequence.get() == 2
-                )
+            .find(|(key, encoded)| {
+                matches!(classify_backend_key(key), BackendKey::Log(_))
+                    && CommitRecord::decode(
+                        key,
+                        encoded,
+                        CacheOptions::default().writeback.max_record_bytes,
+                    )
+                    .is_ok_and(|record| {
+                        record
+                            .mutations()
+                            .iter()
+                            .any(|mutation| mutation.key() == b"after-recovery")
+                    })
             })
             .expect("post-recovery transaction record");
         let record = CommitRecord::decode(
@@ -3453,13 +3411,20 @@ mod tests {
         let cache = Cache::from_backend(backend, CacheOptions::default()).unwrap();
         let in_flight = cache.transaction().unwrap();
 
-        cache
+        let lane = cache
             .writeback
-            .reserve(vec![Mutation::Put {
-                table_id: DEFAULT_TABLE_ID,
-                key: b"uncertain".to_vec(),
-                value: b"value".to_vec(),
-            }])
+            .lane(CommitFence::current_thread_slot())
+            .unwrap();
+        let pinned = lane
+            .writeback()
+            .reserve_single(
+                lane.producer(),
+                vec![Mutation::Put {
+                    table_id: DEFAULT_TABLE_ID,
+                    key: b"uncertain".to_vec(),
+                    value: b"value".to_vec(),
+                }],
+            )
             .unwrap()
             .bind(MakoTimestamp::new(1).unwrap())
             .unwrap()
@@ -3469,19 +3434,19 @@ mod tests {
         assert!(matches!(
             cache.transaction(),
             Err(Error::Apply(ApplyError::UnknownOutcome { sequence }))
-                if sequence.get() == 1
+                if sequence == pinned
         ));
         assert!(matches!(
             in_flight.commit(),
             Err(Error::Apply(ApplyError::UnknownOutcome { sequence }))
-                if sequence.get() == 1
+                if sequence == pinned
         ));
 
         assert!(matches!(
             cache.close(),
             Err(Error::Runtime(RuntimeError::Apply(
                 ApplyError::UnknownOutcome { sequence }
-            ))) if sequence.get() == 1
+            ))) if sequence == pinned
         ));
     }
 
@@ -3508,7 +3473,7 @@ mod tests {
             use std::sync::Arc;
 
             use mako_local::{
-                TestCleanupBoundary, WorkerHealth, arm_test_cleanup_failure, worker_health,
+                arm_test_cleanup_failure, worker_health, TestCleanupBoundary, WorkerHealth,
             };
             use mrx_core::fakes::MemBlobs;
 
@@ -3519,13 +3484,19 @@ mod tests {
                 .put(b"preparation-cleanup", b"never-installed")
                 .unwrap();
 
-            cache
+            let lane = cache
                 .writeback
-                .reserve(vec![Mutation::Put {
-                    table_id: DEFAULT_TABLE_ID,
-                    key: b"prior-unknown".to_vec(),
-                    value: b"uncertain".to_vec(),
-                }])
+                .lane(CommitFence::current_thread_slot())
+                .unwrap();
+            lane.writeback()
+                .reserve_single(
+                    lane.producer(),
+                    vec![Mutation::Put {
+                        table_id: DEFAULT_TABLE_ID,
+                        key: b"prior-unknown".to_vec(),
+                        value: b"uncertain".to_vec(),
+                    }],
+                )
                 .unwrap()
                 .bind(MakoTimestamp::new(1).unwrap())
                 .unwrap()

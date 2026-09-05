@@ -97,10 +97,37 @@ bool packed_cache_order_allowed(const mako_local_db *db) noexcept {
       db->cache_order_mode == MAKO_RUST_FAST_CACHE_ORDER_CONCURRENT;
 }
 
+// @safe - Both concurrent cache protocols use the packed general bit and
+// process timestamp clock. Only Concurrent also assigns dense sequences from
+// that word.
+static bool packed_cache_order_coordination_allowed(
+    const mako_local_db *db) noexcept {
+  return db != nullptr &&
+      (db->cache_order_mode == MAKO_RUST_FAST_CACHE_ORDER_CONCURRENT ||
+       db->cache_order_mode == MAKO_RUST_FAST_CACHE_ORDER_PER_WORKER);
+}
+
+// @safe - PerWorker uses a Rust-owned sequence within each worker lane while
+// retaining native packed timestamp/general coordination.
+static bool per_worker_cache_order_allowed(const mako_local_db *db) noexcept {
+  return db != nullptr &&
+      db->cache_order_mode == MAKO_RUST_FAST_CACHE_ORDER_PER_WORKER;
+}
+
 // @safe - Unclaimed low-level facades retain their legacy test/embedding
-// behavior. A claimed namespace admits Rust-sequence terminals only in the
-// immutable single-producer mode.
+// behavior. Claimed Rust-sequence terminals are admitted by either the
+// exclusive producer or independent per-worker lane protocol.
 bool rust_sequence_cache_order_allowed(const mako_local_db *db) noexcept {
+  return db != nullptr &&
+      (db->cache_order_mode == 0 ||
+       db->cache_order_mode == MAKO_RUST_FAST_CACHE_ORDER_SINGLE_PRODUCER ||
+       db->cache_order_mode == MAKO_RUST_FAST_CACHE_ORDER_PER_WORKER);
+}
+
+// @safe - The ticket-free callback terminal still requires whole-database
+// exclusion and therefore remains unavailable to PerWorker lanes.
+static bool single_producer_cache_order_allowed(
+    const mako_local_db *db) noexcept {
   return db != nullptr &&
       (db->cache_order_mode == 0 ||
        db->cache_order_mode == MAKO_RUST_FAST_CACHE_ORDER_SINGLE_PRODUCER);
@@ -1782,7 +1809,7 @@ void enter_packed_cache_order_gate(void *opaque) noexcept {
   auto *bridge = static_cast<record_bind_bridge *>(opaque);
   assert(bridge != nullptr);
   assert(!bridge->validation_gate_held);
-  assert(packed_cache_order_allowed(bridge->txn->owner));
+  assert(packed_cache_order_coordination_allowed(bridge->txn->owner));
   Transaction::enter_cache_order_general();
   bridge->validation_gate_held = true;
 }
@@ -1849,7 +1876,33 @@ struct preselected_one_put_holder_bridge {
   mako_rust_fast_one_put_holder_pool::key_storage key_location;
   uint32_t mako_timestamp = 0;
   bool holder_sealed = false;
+  bool validation_gate_held = false;
+  const uint8_t *native_unhealthy = nullptr;
 };
+
+// @unsafe - A first-time one-Put cannot use the restricted timestamp path, so
+// it briefly owns the packed general bit after STO has locked and validated
+// its write set. These callbacks intentionally use the holder bridge's exact
+// type: record_bind_bridge has a different layout and must never be used for
+// this terminal's opaque context.
+void enter_preselected_holder_packed_cache_order_gate(void *opaque) noexcept {
+  auto *bridge = static_cast<preselected_one_put_holder_bridge *>(opaque);
+  assert(bridge != nullptr);
+  assert(bridge->txn != nullptr);
+  assert(!bridge->validation_gate_held);
+  assert(per_worker_cache_order_allowed(bridge->txn->owner));
+  Transaction::enter_cache_order_general();
+  bridge->validation_gate_held = true;
+}
+
+// @unsafe - Paired only with the holder-specific enter callback above.
+void leave_preselected_holder_packed_cache_order_gate(void *opaque) noexcept {
+  auto *bridge = static_cast<preselected_one_put_holder_bridge *>(opaque);
+  assert(bridge != nullptr);
+  assert(bridge->validation_gate_held);
+  bridge->validation_gate_held = false;
+  Transaction::leave_cache_order_general();
+}
 
 bool accept_preselected_one_put_holder(void *opaque,
                                        uint32_t timestamp) noexcept {
@@ -1859,8 +1912,45 @@ bool accept_preselected_one_put_holder(void *opaque,
   assert(bridge->holder != nullptr);
   assert(timestamp != 0);
   assert(bridge->mako_timestamp == 0);
+  if (bridge->native_unhealthy != nullptr &&
+      __atomic_load_n(bridge->native_unhealthy, __ATOMIC_ACQUIRE) != 0)
+    return false;
   bridge->mako_timestamp = timestamp;
   return true;
+}
+
+// @unsafe - PerWorker already owns the holder's lane-local sequence. After
+// final validation, allocate only the process Mako timestamp while respecting
+// a general transaction's packed certification bit, then accept that exact
+// timestamp into the preselected holder obligation.
+Transaction::ordered_accept_result
+accept_per_worker_preselected_one_put_holder(
+    void *opaque, uint32_t *timestamp_out) noexcept {
+  auto *bridge = static_cast<preselected_one_put_holder_bridge *>(opaque);
+  assert(bridge != nullptr);
+  assert(timestamp_out != nullptr);
+  assert(per_worker_cache_order_allowed(bridge->txn->owner));
+  *timestamp_out = 0;
+
+  if (bridge->native_unhealthy != nullptr &&
+      __atomic_load_n(bridge->native_unhealthy, __ATOMIC_ACQUIRE) != 0)
+    return Transaction::ordered_accept_result::hook_rejected;
+
+  for (;;) {
+    uint32_t timestamp = 0;
+    switch (Transaction::try_allocate_restricted_mako_timestamp(timestamp)) {
+    case Transaction::cache_order_timestamp_allocation::accepted:
+      if (!accept_preselected_one_put_holder(opaque, timestamp))
+        return Transaction::ordered_accept_result::hook_rejected;
+      *timestamp_out = timestamp;
+      return Transaction::ordered_accept_result::accepted;
+    case Transaction::cache_order_timestamp_allocation::general_locked:
+      record_validation_cpu_relax();
+      break;
+    case Transaction::cache_order_timestamp_allocation::timestamp_exhausted:
+      return Transaction::ordered_accept_result::timestamp_exhausted;
+    }
+  }
 }
 
 // @unsafe - The same-build one-Put witness proves a non-null stable key span
@@ -2967,7 +3057,8 @@ void mako_local_bytes_free(void *bytes) noexcept {
 MAKO_RUST_FAST_DEFINITION_HIDDEN void
 mako_rust_fast_db_order_record_validation_prefix(
     mako_local_db *db) noexcept {
-  if (db == nullptr || !packed_cache_order_allowed(db)) [[unlikely]]
+  if (db == nullptr || !packed_cache_order_coordination_allowed(db))
+      [[unlikely]]
     std::abort();
   assert(active_cache_order_db.load(std::memory_order_acquire) == db);
   (void)Transaction::order_cache_validation_prefix();
@@ -2983,7 +3074,8 @@ mako_rust_fast_db_claim_cache_order_namespace(
     mako_local_db *db, uint32_t foreground_mode) noexcept {
   if (db == nullptr ||
       (foreground_mode != MAKO_RUST_FAST_CACHE_ORDER_CONCURRENT &&
-       foreground_mode != MAKO_RUST_FAST_CACHE_ORDER_SINGLE_PRODUCER))
+       foreground_mode != MAKO_RUST_FAST_CACHE_ORDER_SINGLE_PRODUCER &&
+       foreground_mode != MAKO_RUST_FAST_CACHE_ORDER_PER_WORKER))
     return MAKO_LOCAL_INVALID_ARGUMENT;
   std::lock_guard<std::mutex> claim_guard(active_cache_order_mu);
   if (active_cache_order_db.load(std::memory_order_acquire) != nullptr)
@@ -3746,9 +3838,14 @@ pack_preselected_holder_result(
 commit_preselected_one_put_holder_and_destroy(
     mako_local_txn *txn, one_put_holder *holder, uint64_t sequence,
     uint64_t table_id, uint16_t key_len,
-    mako_rust_fast_one_put_holder_pool::key_storage key_location) noexcept {
+    mako_rust_fast_one_put_holder_pool::key_storage key_location,
+    const uint8_t *native_unhealthy) noexcept {
   preselected_one_put_holder_bridge bridge{
       txn, holder, sequence, table_id, key_len, key_location};
+  bridge.native_unhealthy = native_unhealthy;
+  const bool per_worker = per_worker_cache_order_allowed(txn->owner);
+  const bool can_accept_after_validation =
+      per_worker && TThread::txn->can_order_record_after_validation();
   int status = MAKO_LOCAL_INTERNAL;
   try {
 #if defined(MAKO_LOCAL_TEST_HOOKS)
@@ -3757,7 +3854,16 @@ commit_preselected_one_put_holder_and_destroy(
     Transaction::preinstall_failure failure =
         Transaction::preinstall_failure::none;
     const Transaction::commit_validation_gate validation_gate{
-        nullptr, nullptr, nullptr, &bridge};
+        per_worker && !can_accept_after_validation
+            ? enter_preselected_holder_packed_cache_order_gate
+            : nullptr,
+        per_worker && !can_accept_after_validation
+            ? leave_preselected_holder_packed_cache_order_gate
+            : nullptr,
+        nullptr, &bridge, can_accept_after_validation,
+        can_accept_after_validation
+            ? accept_per_worker_preselected_one_put_holder
+            : nullptr};
     const bool committed = Sto::try_commit_no_paxos(
         accept_preselected_one_put_holder, &bridge, &failure,
         &validation_gate);
@@ -3838,8 +3944,13 @@ mako_rust_fast_txn_commit_record_and_destroy(
     return reject_fast_record_terminal(txn);
   }
 
-  return commit_ready_record_and_destroy(txn, bind_hook, context,
-                                         record_written_out, false);
+  const bool per_worker = per_worker_cache_order_allowed(txn->owner);
+  return commit_ready_record_and_destroy(
+      txn, bind_hook, context, record_written_out, false, false,
+      per_worker ? enter_packed_cache_order_gate
+                 : enter_record_validation_gate,
+      per_worker ? leave_packed_cache_order_gate
+                 : leave_record_validation_gate);
 }
 
 MAKO_RUST_FAST_DEFINITION_HIDDEN uint64_t
@@ -3915,10 +4026,14 @@ mako_rust_fast_txn_commit_unchecked_one_put_record_and_destroy(
   txn->record_plan_checksum_mode = MAKO_RUST_FAST_RECORD_CHECKSUM_NONE;
   txn->record_plan_sealed = true;
   txn->record_plan_ready = true;
-  return commit_ready_record_and_destroy(txn, bind_hook, context,
-                                         record_written_out, true,
-                                         TThread::txn
-                                             ->can_order_record_after_validation());
+  const bool per_worker = per_worker_cache_order_allowed(txn->owner);
+  return commit_ready_record_and_destroy(
+      txn, bind_hook, context, record_written_out, true,
+      TThread::txn->can_order_record_after_validation(),
+      per_worker ? enter_packed_cache_order_gate
+                 : enter_record_validation_gate,
+      per_worker ? leave_packed_cache_order_gate
+                 : leave_record_validation_gate);
 }
 
 MAKO_RUST_FAST_DEFINITION_HIDDEN uint64_t
@@ -4113,7 +4228,7 @@ mako_rust_fast_txn_commit_unchecked_one_put_record_single_producer_and_destroy(
 
   if (record_written_out != nullptr) *record_written_out = 0;
   record_shape shape;
-  if (!rust_sequence_cache_order_allowed(txn->owner) ||
+  if (!single_producer_cache_order_allowed(txn->owner) ||
       bind_hook == nullptr || record_written_out == nullptr ||
       expected_record_bytes == 0 ||
       expected_record_bytes > kFastPutRecordBytesMax ||
@@ -4162,7 +4277,7 @@ mako_rust_fast_txn_commit_preselected_unchecked_one_put_record_single_producer_a
 #endif
 
   record_shape shape;
-  if (!rust_sequence_cache_order_allowed(txn->owner) || sequence == 0 ||
+  if (!single_producer_cache_order_allowed(txn->owner) || sequence == 0 ||
       record == nullptr || expected_record_bytes == 0 ||
       expected_record_bytes > kFastPutRecordBytesMax ||
       record_capacity < expected_record_bytes || txn->record_plan_sealed ||
@@ -4189,10 +4304,11 @@ mako_rust_fast_txn_commit_preselected_unchecked_one_put_record_single_producer_a
 [[gnu::always_inline]] static inline uint64_t
 commit_preselected_unchecked_one_put_holder_single_producer_and_destroy(
     mako_local_txn *txn, uint32_t expected_record_bytes,
-    one_put_holder *selected_holder, uint64_t sequence) noexcept {
-  // This entry has the record terminal's same whole-database exclusivity
-  // requirement plus the holder generation proof documented in the header.
-  // Neither global invariant can be reconstructed from opaque native state.
+    one_put_holder *selected_holder, uint64_t sequence,
+    const uint8_t *native_unhealthy) noexcept {
+  // SingleProducer supplies whole-database exclusion. PerWorker instead owns
+  // this holder generation within one lane and coordinates against general
+  // commits through the packed timestamp allocator selected below.
   assert(txn != nullptr);
   assert(on_owner_thread(txn));
   assert(!txn->poisoned);
@@ -4202,10 +4318,12 @@ commit_preselected_unchecked_one_put_holder_single_producer_and_destroy(
   assert(txn->fast_table_impl != nullptr);
   if (!rust_sequence_cache_order_allowed(txn->owner))
     return abort_fast_record_terminal(txn, MAKO_LOCAL_INVALID_ARGUMENT);
-  assert(txn->owner->record_validation_next.value.load(
-             std::memory_order_relaxed) ==
-         txn->owner->record_validation_serving.value.load(
-             std::memory_order_acquire));
+  if (!per_worker_cache_order_allowed(txn->owner)) {
+    assert(txn->owner->record_validation_next.value.load(
+               std::memory_order_relaxed) ==
+           txn->owner->record_validation_serving.value.load(
+               std::memory_order_acquire));
+  }
   assert(selected_holder != nullptr);
   assert(sequence != 0);
   one_put_holder &holder = *selected_holder;
@@ -4276,7 +4394,8 @@ commit_preselected_unchecked_one_put_holder_single_producer_and_destroy(
   // so the post-validation hook need only capture the Mako timestamp.
   return commit_preselected_one_put_holder_and_destroy(
       txn, &holder, sequence, write.table_id,
-      static_cast<uint16_t>(write.key_length), key_location);
+      static_cast<uint16_t>(write.key_length), key_location,
+      native_unhealthy);
 }
 
 MAKO_RUST_FAST_DEFINITION_HIDDEN mako_rust_fast_preselected_record_result
@@ -4286,12 +4405,30 @@ mako_rust_fast_txn_commit_preselected_unchecked_one_put_holder_single_producer_a
   assert(pool != nullptr);
   assert(sequence != 0);
   assert(is_nonzero_power_of_two(pool->capacity));
-  if (!rust_sequence_cache_order_allowed(txn->owner)) [[unlikely]]
+  if (!single_producer_cache_order_allowed(txn->owner)) [[unlikely]]
     return reject_fast_preselected_record_terminal(txn);
   one_put_holder &holder = one_put_holder_for(pool, sequence);
   const uint64_t terminal =
       commit_preselected_unchecked_one_put_holder_single_producer_and_destroy(
-          txn, expected_record_bytes, &holder, sequence);
+          txn, expected_record_bytes, &holder, sequence, nullptr);
+  return pack_preselected_holder_result(terminal, holder);
+}
+
+MAKO_RUST_FAST_DEFINITION_HIDDEN mako_rust_fast_preselected_record_result
+mako_rust_fast_txn_commit_preselected_unchecked_one_put_holder_per_worker_and_destroy(
+    mako_local_txn *txn, uint32_t expected_record_bytes,
+    mako_rust_fast_one_put_holder_pool *pool, uint64_t sequence,
+    const uint8_t *unhealthy) noexcept {
+  assert(pool != nullptr);
+  assert(sequence != 0);
+  assert(is_nonzero_power_of_two(pool->capacity));
+  if (!per_worker_cache_order_allowed(txn->owner) || unhealthy == nullptr)
+      [[unlikely]]
+    return reject_fast_preselected_record_terminal(txn);
+  one_put_holder &holder = one_put_holder_for(pool, sequence);
+  const uint64_t terminal =
+      commit_preselected_unchecked_one_put_holder_single_producer_and_destroy(
+          txn, expected_record_bytes, &holder, sequence, unhealthy);
   return pack_preselected_holder_result(terminal, holder);
 }
 
@@ -4393,7 +4530,7 @@ mako_rust_fast_txn_try_commit_fused_one_put_holder_single_producer_and_destroy(
       holders[static_cast<size_t>(sequence - 1) & control->holder_mask];
   const uint64_t terminal =
       commit_preselected_unchecked_one_put_holder_single_producer_and_destroy(
-          txn, exact_record_bytes, &holder, sequence);
+          txn, exact_record_bytes, &holder, sequence, unhealthy);
   constexpr uint64_t kExactOk =
       pack_fast_terminal_result(MAKO_LOCAL_OK, MAKO_LOCAL_OK);
   if (terminal == kExactOk) [[likely]] {

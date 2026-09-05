@@ -1,0 +1,561 @@
+{
+  "artifact": "/var/tmp/mako-current-w1w4-final-20260905.VhLpFu/results/thread-sweep-20260905T072730Z-tids_3uu",
+  "host": "zoo-002",
+  "identity": {
+    "cache_binary_sha256": "6f310c0147eceab6d6214607dc4e6a9be07842661c811d1af7a7c822afcfd495",
+    "frozen_uncommitted_source_sha256": "8bfeff490e715eeffe84b159dac5a170ddcc3d182c9da5f047605ab43e469a45",
+    "git_head": "a3ede48859a4b1e8cab4ee0c194ffac0a8544927",
+    "harness_main_sha256": "83ae5ec00540a20561cb8abe88a7b9825906788aedee785ba31a44253b808cd3",
+    "libmako_sha256": "6394d9c2dd5caa173c3cb1e4bae084d2af25f541fd9f3d95857fd10ebab27b2a",
+    "native_fingerprint": "6c48a3e2f904d9781d1e5c8a7af0448de24bebf900712eeb25952cfc8af65a74",
+    "raw_binary_sha256": "f0a946465d4df5528befa3bf8a90eeded43fef94b46847cef8715cf74ecddc49",
+    "runner_sha256": "9c40e1a603768920a67faec9568bbfb8380fcb18abb017341d087fac28896796",
+    "tracked_diff_sha256": "6cae22a7c15fa39715d9765823a1dac2f1aa2265f05e02cf6f46b4e22e26cbde",
+    "untracked_writeback_set_sha256": "f33e3774cafd62c98164e8cdb21c3724c7886a8f023047b60751c3552a0f553a"
+  },
+  "protocol": {
+    "aggregate_queue_capacity": {
+      "1": 4194304,
+      "4": 16777216
+    },
+    "allocator": "LD_PRELOAD:/lib/x86_64-linux-gnu/libjemalloc.so.2",
+    "helper_affinity": "33-63",
+    "key_bytes": 8,
+    "malloc_conf": "unset",
+    "max_batch_records": 64,
+    "measured_per_worker": 2097152,
+    "measurement": "foreground ACK; not RocksDB apply/durability",
+    "queue_capacity_per_lane": 4194304,
+    "ramp_per_worker": 1048576,
+    "record_checksum": "none",
+    "repetitions": 5,
+    "rocks_sync": false,
+    "rocks_wal_enabled": true,
+    "teardown": "abort_without_flush",
+    "value_bytes": 128,
+    "warmup_per_worker": 65536,
+    "window_keys_per_worker": 256,
+    "worker_cpus": "0..workers-1",
+    "workers": [
+      1,
+      4
+    ],
+    "writeback_cpu": 32
+  },
+  "results": {
+    "1": {
+      "cache": {
+        "cv_pct": {
+          "average_ghz": 0.2758400043354312,
+          "cycles_per_commit": 0.7828835756175329,
+          "instructions_per_commit": 3.9936857041402946e-05,
+          "rate": 0.6087894367588705
+        },
+        "median": {
+          "average_ghz": 2.704251822,
+          "cycles_per_commit": 1287.835529,
+          "instructions_per_commit": 3061.911751,
+          "rate_mtxn_s": 2.101588382,
+          "rate_txn_s": 2101588.382
+        },
+        "samples": [
+          {
+            "accounting": {
+              "acknowledged": 3211520,
+              "aggregate_queue_capacity": 4194304,
+              "applied": 266880,
+              "expected_acknowledged": 3211520,
+              "in_flight": 0,
+              "max_batch_records": 64,
+              "queued": 2944640
+            },
+            "attempt": 1,
+            "average_ghz": 2.696881979,
+            "checksum": 346030080,
+            "commits": 2097152,
+            "conflicts": 0,
+            "cycles_per_commit": 1266.591814,
+            "instructions_per_commit": 3061.910999,
+            "phase_lxd_cpu_pct": 0.0,
+            "pmu_running_ratio": 1.0,
+            "ramp_commits": 1048576,
+            "ramp_conflicts": 0,
+            "rate_txn_s": 2128921.722,
+            "rep": 1
+          },
+          {
+            "accounting": {
+              "acknowledged": 3211520,
+              "aggregate_queue_capacity": 4194304,
+              "applied": 266112,
+              "expected_acknowledged": 3211520,
+              "in_flight": 0,
+              "max_batch_records": 64,
+              "queued": 2945408
+            },
+            "attempt": 1,
+            "average_ghz": 2.711538246,
+            "checksum": 346030080,
+            "commits": 2097152,
+            "conflicts": 0,
+            "cycles_per_commit": 1291.617198,
+            "instructions_per_commit": 3061.911751,
+            "phase_lxd_cpu_pct": 0.0,
+            "pmu_running_ratio": 1.0,
+            "ramp_commits": 1048576,
+            "ramp_conflicts": 0,
+            "rate_txn_s": 2099053.583,
+            "rep": 2
+          },
+          {
+            "accounting": {
+              "acknowledged": 3211520,
+              "aggregate_queue_capacity": 4194304,
+              "applied": 259648,
+              "expected_acknowledged": 3211520,
+              "in_flight": 0,
+              "max_batch_records": 64,
+              "queued": 2951872
+            },
+            "attempt": 1,
+            "average_ghz": 2.710625346,
+            "checksum": 346030080,
+            "commits": 2097152,
+            "conflicts": 0,
+            "cycles_per_commit": 1289.127692,
+            "instructions_per_commit": 3061.911111,
+            "phase_lxd_cpu_pct": 0.0,
+            "pmu_running_ratio": 1.0,
+            "ramp_commits": 1048576,
+            "ramp_conflicts": 0,
+            "rate_txn_s": 2102093.328,
+            "rep": 3
+          },
+          {
+            "accounting": {
+              "acknowledged": 3211520,
+              "aggregate_queue_capacity": 4194304,
+              "applied": 264256,
+              "expected_acknowledged": 3211520,
+              "in_flight": 0,
+              "max_batch_records": 64,
+              "queued": 2947264
+            },
+            "attempt": 1,
+            "average_ghz": 2.695555775,
+            "checksum": 346030080,
+            "commits": 2097152,
+            "conflicts": 0,
+            "cycles_per_commit": 1282.227143,
+            "instructions_per_commit": 3061.913819,
+            "phase_lxd_cpu_pct": 0.0,
+            "pmu_running_ratio": 1.0,
+            "ramp_commits": 1048576,
+            "ramp_conflicts": 0,
+            "rate_txn_s": 2101588.382,
+            "rep": 4
+          },
+          {
+            "accounting": {
+              "acknowledged": 3211520,
+              "aggregate_queue_capacity": 4194304,
+              "applied": 265216,
+              "expected_acknowledged": 3211520,
+              "in_flight": 0,
+              "max_batch_records": 64,
+              "queued": 2946304
+            },
+            "attempt": 1,
+            "average_ghz": 2.704251822,
+            "checksum": 346030080,
+            "commits": 2097152,
+            "conflicts": 0,
+            "cycles_per_commit": 1287.835529,
+            "instructions_per_commit": 3061.912947,
+            "phase_lxd_cpu_pct": 0.334078,
+            "pmu_running_ratio": 1.0,
+            "ramp_commits": 1048576,
+            "ramp_conflicts": 0,
+            "rate_txn_s": 2098978.558,
+            "rep": 5
+          }
+        ]
+      },
+      "median_ratios": {
+        "cache_minus_raw": {
+          "cycles_per_commit": 347.65194599999995,
+          "instructions_per_commit": 667.5479989999999,
+          "rate_txn_s": -1444359.8779999996
+        },
+        "cache_over_raw": {
+          "cycles_per_commit": 1.3697702792157773,
+          "instructions_per_commit": 1.27879974312274,
+          "rate": 0.592673166077161
+        },
+        "raw_over_cache": {
+          "cycles_per_commit": 0.7300494215515622,
+          "instructions_per_commit": 0.7819832662446973,
+          "rate": 1.6872705856060444
+        }
+      },
+      "raw": {
+        "cv_pct": {
+          "average_ghz": 0.014438311725200305,
+          "cycles_per_commit": 0.4042778780203468,
+          "instructions_per_commit": 2.2217903772371892e-07,
+          "rate": 0.3965709006536709
+        },
+        "median": {
+          "average_ghz": 3.334715374,
+          "cycles_per_commit": 940.183583,
+          "instructions_per_commit": 2394.363752,
+          "rate_mtxn_s": 3.54594826,
+          "rate_txn_s": 3545948.26
+        },
+        "samples": [
+          {
+            "attempt": 1,
+            "average_ghz": 3.334799958,
+            "checksum": 346030080,
+            "commits": 2097152,
+            "conflicts": 0,
+            "cycles_per_commit": 940.183583,
+            "instructions_per_commit": 2394.363763,
+            "phase_lxd_cpu_pct": 0.984751,
+            "pmu_running_ratio": 1.0,
+            "ramp_commits": 1048576,
+            "ramp_conflicts": 0,
+            "rate_txn_s": 3546443.605,
+            "rep": 1
+          },
+          {
+            "attempt": 1,
+            "average_ghz": 3.334715374,
+            "checksum": 346030080,
+            "commits": 2097152,
+            "conflicts": 0,
+            "cycles_per_commit": 940.137696,
+            "instructions_per_commit": 2394.363751,
+            "phase_lxd_cpu_pct": 0.0,
+            "pmu_running_ratio": 1.0,
+            "ramp_commits": 1048576,
+            "ramp_conflicts": 0,
+            "rate_txn_s": 3545948.26,
+            "rep": 2
+          },
+          {
+            "attempt": 2,
+            "average_ghz": 3.333865734,
+            "checksum": 346030080,
+            "commits": 2097152,
+            "conflicts": 0,
+            "cycles_per_commit": 935.909257,
+            "instructions_per_commit": 2394.36375,
+            "phase_lxd_cpu_pct": 0.0,
+            "pmu_running_ratio": 1.0,
+            "ramp_commits": 1048576,
+            "ramp_conflicts": 0,
+            "rate_txn_s": 3561136.211,
+            "rep": 3
+          },
+          {
+            "attempt": 1,
+            "average_ghz": 3.334516237,
+            "checksum": 346030080,
+            "commits": 2097152,
+            "conflicts": 0,
+            "cycles_per_commit": 945.160009,
+            "instructions_per_commit": 2394.363752,
+            "phase_lxd_cpu_pct": 0.0,
+            "pmu_running_ratio": 1.0,
+            "ramp_commits": 1048576,
+            "ramp_conflicts": 0,
+            "rate_txn_s": 3527199.408,
+            "rep": 4
+          },
+          {
+            "attempt": 1,
+            "average_ghz": 3.33517338,
+            "checksum": 346030080,
+            "commits": 2097152,
+            "conflicts": 0,
+            "cycles_per_commit": 944.675819,
+            "instructions_per_commit": 2394.363752,
+            "phase_lxd_cpu_pct": 0.0,
+            "pmu_running_ratio": 1.0,
+            "ramp_commits": 1048576,
+            "ramp_conflicts": 0,
+            "rate_txn_s": 3529014.426,
+            "rep": 5
+          }
+        ]
+      }
+    },
+    "4": {
+      "cache": {
+        "cv_pct": {
+          "average_ghz": 0.09426745359057252,
+          "cycles_per_commit": 0.43898562847804407,
+          "instructions_per_commit": 3.3247195088908565e-05,
+          "rate": 0.5265895399581032
+        },
+        "median": {
+          "average_ghz": 2.704146435,
+          "cycles_per_commit": 1310.89402,
+          "instructions_per_commit": 3077.668906,
+          "rate_mtxn_s": 8.220722071,
+          "rate_txn_s": 8220722.071
+        },
+        "samples": [
+          {
+            "accounting": {
+              "acknowledged": 12846080,
+              "aggregate_queue_capacity": 16777216,
+              "applied": 413824,
+              "expected_acknowledged": 12846080,
+              "in_flight": 0,
+              "max_batch_records": 64,
+              "queued": 12432256
+            },
+            "attempt": 1,
+            "average_ghz": 2.701714735,
+            "checksum": 1384120320,
+            "commits": 8388608,
+            "conflicts": 0,
+            "cycles_per_commit": 1302.313616,
+            "instructions_per_commit": 3077.66828,
+            "phase_lxd_cpu_pct": 0.0,
+            "pmu_running_ratio": 1.0,
+            "ramp_commits": 4194304,
+            "ramp_conflicts": 0,
+            "rate_txn_s": 8261096.871,
+            "rep": 1
+          },
+          {
+            "accounting": {
+              "acknowledged": 12846080,
+              "aggregate_queue_capacity": 16777216,
+              "applied": 410176,
+              "expected_acknowledged": 12846080,
+              "in_flight": 0,
+              "max_batch_records": 64,
+              "queued": 12435904
+            },
+            "attempt": 1,
+            "average_ghz": 2.706213698,
+            "checksum": 1384120320,
+            "commits": 8388608,
+            "conflicts": 0,
+            "cycles_per_commit": 1310.89402,
+            "instructions_per_commit": 3077.668906,
+            "phase_lxd_cpu_pct": 0.227973,
+            "pmu_running_ratio": 1.0,
+            "ramp_commits": 4194304,
+            "ramp_conflicts": 0,
+            "rate_txn_s": 8220722.071,
+            "rep": 2
+          },
+          {
+            "accounting": {
+              "acknowledged": 12846080,
+              "aggregate_queue_capacity": 16777216,
+              "applied": 410368,
+              "expected_acknowledged": 12846080,
+              "in_flight": 0,
+              "max_batch_records": 64,
+              "queued": 12435712
+            },
+            "attempt": 1,
+            "average_ghz": 2.706773647,
+            "checksum": 1384120320,
+            "commits": 8388608,
+            "conflicts": 0,
+            "cycles_per_commit": 1311.867717,
+            "instructions_per_commit": 3077.66778,
+            "phase_lxd_cpu_pct": 0.0,
+            "pmu_running_ratio": 1.0,
+            "ramp_commits": 4194304,
+            "ramp_conflicts": 0,
+            "rate_txn_s": 8212939.684,
+            "rep": 3
+          },
+          {
+            "accounting": {
+              "acknowledged": 12846080,
+              "aggregate_queue_capacity": 16777216,
+              "applied": 409088,
+              "expected_acknowledged": 12846080,
+              "in_flight": 0,
+              "max_batch_records": 64,
+              "queued": 12436992
+            },
+            "attempt": 1,
+            "average_ghz": 2.704146435,
+            "checksum": 1384120320,
+            "commits": 8388608,
+            "conflicts": 0,
+            "cycles_per_commit": 1304.463769,
+            "instructions_per_commit": 3077.669056,
+            "phase_lxd_cpu_pct": 0.229473,
+            "pmu_running_ratio": 1.0,
+            "ramp_commits": 4194304,
+            "ramp_conflicts": 0,
+            "rate_txn_s": 8249471.709,
+            "rep": 4
+          },
+          {
+            "accounting": {
+              "acknowledged": 12846080,
+              "aggregate_queue_capacity": 16777216,
+              "applied": 409856,
+              "expected_acknowledged": 12846080,
+              "in_flight": 0,
+              "max_batch_records": 64,
+              "queued": 12436224
+            },
+            "attempt": 2,
+            "average_ghz": 2.701144835,
+            "checksum": 1384120320,
+            "commits": 8388608,
+            "conflicts": 0,
+            "cycles_per_commit": 1316.430463,
+            "instructions_per_commit": 3077.670489,
+            "phase_lxd_cpu_pct": 0.0,
+            "pmu_running_ratio": 1.0,
+            "ramp_commits": 4194304,
+            "ramp_conflicts": 0,
+            "rate_txn_s": 8150063.451,
+            "rep": 5
+          }
+        ]
+      },
+      "median_ratios": {
+        "cache_minus_raw": {
+          "cycles_per_commit": 366.53325199999995,
+          "instructions_per_commit": 667.5668619999997,
+          "rate_txn_s": -5793200.741
+        },
+        "cache_over_raw": {
+          "cycles_per_commit": 1.3881284191594032,
+          "instructions_per_commit": 1.2769869697683223,
+          "rate": 0.586611056824194
+        },
+        "raw_over_cache": {
+          "cycles_per_commit": 0.7203944434806409,
+          "instructions_per_commit": 0.7830933468188993,
+          "rate": 1.7047070428808808
+        }
+      },
+      "raw": {
+        "cv_pct": {
+          "average_ghz": 0.05902083511709469,
+          "cycles_per_commit": 0.6486569822425939,
+          "instructions_per_commit": 3.3011067471596213e-06,
+          "rate": 0.8555018775951734
+        },
+        "median": {
+          "average_ghz": 3.333664501,
+          "cycles_per_commit": 944.360768,
+          "instructions_per_commit": 2410.102044,
+          "rate_mtxn_s": 14.013922812,
+          "rate_txn_s": 14013922.812
+        },
+        "samples": [
+          {
+            "attempt": 1,
+            "average_ghz": 3.333664501,
+            "checksum": 1384120320,
+            "commits": 8388608,
+            "conflicts": 0,
+            "cycles_per_commit": 945.548055,
+            "instructions_per_commit": 2410.102031,
+            "phase_lxd_cpu_pct": 0.0,
+            "pmu_running_ratio": 1.0,
+            "ramp_commits": 4194304,
+            "ramp_conflicts": 0,
+            "rate_txn_s": 13965010.781,
+            "rep": 1
+          },
+          {
+            "attempt": 1,
+            "average_ghz": 3.33182737,
+            "checksum": 1384120320,
+            "commits": 8388608,
+            "conflicts": 0,
+            "cycles_per_commit": 944.360768,
+            "instructions_per_commit": 2410.102057,
+            "phase_lxd_cpu_pct": 0.0,
+            "pmu_running_ratio": 1.0,
+            "ramp_commits": 4194304,
+            "ramp_conflicts": 0,
+            "rate_txn_s": 14013922.812,
+            "rep": 2
+          },
+          {
+            "attempt": 1,
+            "average_ghz": 3.335309174,
+            "checksum": 1384120320,
+            "commits": 8388608,
+            "conflicts": 0,
+            "cycles_per_commit": 944.217414,
+            "instructions_per_commit": 2410.101873,
+            "phase_lxd_cpu_pct": 0.0,
+            "pmu_running_ratio": 1.0,
+            "ramp_commits": 4194304,
+            "ramp_conflicts": 0,
+            "rate_txn_s": 14062208.242,
+            "rep": 3
+          },
+          {
+            "attempt": 1,
+            "average_ghz": 3.335342605,
+            "checksum": 1384120320,
+            "commits": 8388608,
+            "conflicts": 0,
+            "cycles_per_commit": 939.202143,
+            "instructions_per_commit": 2410.102063,
+            "phase_lxd_cpu_pct": 0.0,
+            "pmu_running_ratio": 1.0,
+            "ramp_commits": 4194304,
+            "ramp_conflicts": 0,
+            "rate_txn_s": 14185145.569,
+            "rep": 4
+          },
+          {
+            "attempt": 1,
+            "average_ghz": 3.331048696,
+            "checksum": 1384120320,
+            "commits": 8388608,
+            "conflicts": 0,
+            "cycles_per_commit": 955.91977,
+            "instructions_per_commit": 2410.102044,
+            "phase_lxd_cpu_pct": 0.0,
+            "pmu_running_ratio": 1.0,
+            "ramp_commits": 4194304,
+            "ramp_conflicts": 0,
+            "rate_txn_s": 13860495.7,
+            "rep": 5
+          }
+        ]
+      }
+    }
+  },
+  "schema": "mako-cache-raw-vs-cache-w1w4-v1",
+  "validation": {
+    "accepted_rows": 20,
+    "all_cache_in_flight_bounded": true,
+    "all_exact_cache_acknowledgements": true,
+    "all_exact_cache_queue_accounting": true,
+    "all_exact_checksums": true,
+    "all_exact_commit_counts": true,
+    "all_zero_conflicts": true,
+    "expected_rows": 20,
+    "maximum_accepted_phase_lxd_cpu_pct": 0.984751,
+    "minimum_pmu_running_ratio": 1.0,
+    "preflight_rejections": [
+      "PREFLIGHT_REJECT w1-raw-rep3-attempt1",
+      "PREFLIGHT_REJECT w4-cache-rep5-attempt1"
+    ],
+    "run_rejections": []
+  }
+}

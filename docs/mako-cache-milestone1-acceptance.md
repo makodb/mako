@@ -1,19 +1,125 @@
 # Mako cache Milestone 1 acceptance
 
-Status: **CURRENT DETACHED-WRITEBACK PASS**, with the latest 1/4/8/16/32-worker
-hot-path sweep measured on 2026-09-02 at `16e4b3bb2`. The original acceptance
-evidence is for candidate `153e14c78`; the newer isolated comparisons are
-recorded below. The earlier native-record rewrite and full comparative
-acceptance remain as historical evidence, and newer measurements do not
-retroactively alter those artifacts.
+Status: **PER-WORKER LANE REVISION ACCEPTED**. The production native-backed
+suites, canonical hook-enabled gate, and replacement one-worker/four-worker
+measurements passed on the frozen source. Results after the current per-worker
+section describe superseded global-queue revisions and remain historical
+evidence only.
 
-Milestone 1 is complete for its declared scope: one process, one recovered
-cache namespace, C++ STO/MassTrans transactions behind the public revision-0 C
-ABI plus its fingerprint-checked build-private fast extension, the safe Rust
-transaction/cache layer, and asynchronous atomic RocksDB application. Phase 1G
-eviction and all distributed work remain deferred.
+The current implementation covers Milestone 1's declared scope: one process,
+one recovered cache namespace, C++ STO/MassTrans transactions behind the public
+revision-0 C ABI plus its fingerprint-checked build-private fast extension, the
+safe Rust transaction/cache layer, and asynchronous atomic RocksDB application.
+The fresh functional, hook-enabled, and comparative gates accept the
+per-worker revision. Phase 1G eviction and all distributed work remain
+deferred.
 
-## Current detached holder fast path
+## Current per-worker lane design
+
+Concurrent workers no longer share one dense publication sequence. Each
+process-lifetime cache worker slot lazily owns one SPSC lane. A physical log ID
+stores the one-based lane tag in its upper 16 bits and a dense lane-local
+sequence in its lower 48 bits. Upper-zero IDs identify the legacy dense stream.
+Physical IDs order records only within one lane. The Mako timestamp remains the
+logical transaction order used for replay and last-writer-wins decisions.
+
+One background runtime polls initialized lanes in round-robin order. A shared
+apply coordinator serializes RocksDB calls, retains every transaction log, and
+materializes a key mutation only when its Mako timestamp is newer than the
+coordinator's recorded winner for that key. Batches from different lanes may
+therefore reach RocksDB out of timestamp order without letting a stale value or
+delete win.
+
+`wait_applied()` snapshots each initialized lane and drains every captured
+frontier. The public acknowledged and applied sequence values are aggregate
+record counts. `AppliedWatermark::mako_timestamp()` is the greatest applied
+timestamp. These values do not describe a contiguous global serialization
+prefix and do not claim disk sync. A post-bind unknown outcome or permanent
+record failure latches cache-wide fail-stop state, retains the affected lane's
+obligation, and rejects work in every lane.
+
+The current recovery contract depends on retaining all commit logs, including
+deletes, so reopen can reconstruct the per-key timestamp index. Log pruning is
+deferred until materialized values and tombstones persist their winning
+timestamps. Recovery of an acknowledged but unapplied memory tail, and of an
+applied RocksDB tail not synced by `sync=false`, is also deferred.
+
+## Fresh per-worker validation
+
+The frozen per-worker source passed the production native ABI suite with 91
+tests and one intentional hook-only skip. Its native-backed Rust suite passed
+153 library tests and 21 integration/Loom tests. The fake-ABI `mako-local`
+suite passed 18 tests, and all three `mako-cache` doctests passed. An
+independent review found no remaining issue in cross-lane fail-stop, barriers,
+uncertain-batch retry, log-ID recovery, timestamp arbitration, watermarks, or
+read-only ordering.
+
+The canonical hook-enabled gate also passed on `zoo-005`:
+
+```bash
+BUILD_DIR=/build-mako-local-hooks \
+  CMAKE_BUILD_TYPE=RelWithDebInfo CMAKE_GENERATOR=Ninja CI_MAKE_JOBS=4 \
+  MAKO_NO_GDB=1 \
+  ./ci/ci.sh makoLocalHookGates
+```
+
+It passed all 111 native ABI tests, 153 cache library tests, 23 cache
+integration/Loom tests, three cache doctests, all four CTest targets, and the
+12-mutant campaign with every mutant killed. The hook-enabled native build
+fingerprint is
+`c05a4ab2b89694e7b331cae7ed72b6554ce2f2196a08086fb4bbfd0903a70847`.
+The persistent complete log is
+`/home/users/shuai/mako/.codex-hook-gates/per-worker-20260905/hook-gate-canonical-green.log`,
+SHA-256 `fb07cfdf78624c15d026679d3a45f1426bb91888822c90f960281c64648cab9a`.
+The mutation report beside it has SHA-256
+`5d2f1f09d608bbe53aac7b945620c50d9451e7ce89bbfe14996b985b02ee7049`.
+
+The comparative `zoo-002` run used workers on CPUs 0-3, helper threads on CPUs
+33-63, and writeback on CPU 32. Each cold-cache repetition used 65,536 warmup,
+1,048,576 ramp, and 2,097,152 measured transactions per worker, with eight-byte
+keys, 128-byte values, 256 disjoint keys per worker, checksum disabled, RocksDB
+WAL enabled with `sync=false`, and 4,194,304 queue slots per initialized lane.
+These are foreground acknowledgement results: teardown checks the queue
+invariants and then deliberately abandons the unapplied tail.
+
+Five-repetition medians are:
+
+| Workers | Path | ACK Mtxn/s | Cycles/txn | Instructions/txn | Rate CV |
+| ---: | --- | ---: | ---: | ---: | ---: |
+| 1 | Raw fast C ABI | 3.546 | 940.184 | 2,394.364 | 0.397% |
+| 1 | Per-worker Rust cache | 2.102 | 1,287.836 | 3,061.912 | 0.609% |
+| 4 | Raw fast C ABI | 14.014 | 944.361 | 2,410.102 | 0.856% |
+| 4 | Per-worker Rust cache | 8.221 | 1,310.894 | 3,077.669 | 0.527% |
+
+The cache retains 73.00% of raw cycle-normalized throughput at W1 and 72.04%
+at W4. Its fixed foreground cost is 347.7-366.5 cycles and 667.5 instructions
+per commit. The cache samples ran near 2.70 GHz while the raw control ran near
+3.33 GHz, so wall throughput retains only 59.27% and 58.66%; cycles and
+instructions are the primary comparison.
+
+The important result for this revision is scaling. W1 to W4 cache efficiency
+is 97.79%, compared with 98.80% for the raw ABI and 90.94% for the superseded
+global queue. Against that prior queue, the new cache reduces W1 cycles by
+4.02% and W4 cycles by 12.11%; acknowledgement throughput rises 4.47% and
+12.35%, respectively. The nearly identical instruction delta at W1 and W4
+shows that the shared dense publication protocol no longer adds work as
+writers are introduced. This revision fixes the scaling-specific contention;
+it does not meet the separate 95% raw-ABI target for the remaining per-commit
+cache work.
+
+All 20 accepted samples had zero conflicts, a PMU running ratio of 1.0, exact
+commit/checksum/acknowledgement counts, and exact
+`acknowledged - applied = queued + in_flight` accounting. Two preflight samples
+were rejected for host conditions and passed on their second attempt; no timed
+run was rejected. The complete samples and identities are in the
+[machine-readable per-worker report](benchmarks/mako-cache-per-worker-w1w4-zoo002-20260905.json),
+SHA-256 `5e09cacf9613053fd52ace965b6f0862e1858a13dcdc33b357870daa5358c505`.
+The frozen source identity is
+`8bfeff490e715eeffe84b159dac5a170ddcc3d182c9da5f047605ab43e469a45`;
+the production benchmark native build fingerprint is
+`6c48a3e2f904d9781d1e5c8a7af0448de24bebf900712eeb25952cfc8af65a74`.
+
+## Historical detached holder fast path
 
 Candidate `153e14c78fc1a1ea6efa68713b5bda8b87d6ce44` moves the
 checksum-none, single-producer, one-Put acknowledgement path off record
@@ -107,7 +213,8 @@ foreground contention target. The dedicated writer and foreground CPU metric
 make that limitation visible without charging background replay CPU to a
 workload worker.
 
-Current functional evidence includes 142/142 native-backed `mako-cache` unit
+Functional evidence for that candidate includes 142/142 native-backed
+`mako-cache` unit
 tests, 23/23 integration and Loom tests, 18/18 `mako-local` fake-ABI unit tests,
 the hooks-off C++ suite with 87 passes and one expected hook-only skip, and the
 canonical Goal-0 source gate. The combined required-native ASan/UBSan boundary
@@ -328,7 +435,7 @@ cleanup after that run; no measured production source changed. The fresh
 hooks-off native fingerprint was
 `a7b05a47436b86b764c7b3f8078f986d4125e5bdf6c2e803a9cd54e11b95fb55`.
 
-Current functional evidence includes the 66/66 hook-enabled native ABI suite,
+Functional evidence for that rewrite includes the 66/66 hook-enabled native ABI suite,
 the 56/56 fresh hooks-off zoo-2 ABI suite, the complete required-native
 `mako-local` suite, all 96 `mako-cache` tests, 38/38 focused writeback tests,
 100/100 point and 100/100 predicate ordering runs, 13/13 Miri fake-ABI tests,
@@ -542,8 +649,8 @@ repetitions: ACK maximum/minimum is 1.022x and p99 spans 17.42-19.39 ms, so it
 is not one noisy sample. That diagnosis applies only to the historical
 candidate. The rewrite replaces the linear pending-record lookup with dense
 queue-token indexing, constructs records directly in native STO, and batches
-contiguous records. Current scaling results are reported above; these
-historical W16 values must not be read as current performance.
+contiguous records. Later global-queue scaling results are reported above;
+these historical W16 values must not be read as current performance.
 
 ## Representative transactional context (semantically non-equivalent baselines)
 
@@ -572,16 +679,18 @@ not measurements of an equivalent transaction implementation.
 
 ## Acceptance conclusion and deferred scope
 
-The functional gates and the final comparative evidence gate are complete, so
-Milestone 1 is accepted. The historical concurrent-write collapse was largely
-removed by the native-record rewrite. The new W32 foreground drop is carried
-forward as a narrower profiling target; changing it does not require weakening
-the transaction or writeback contract established here.
+The per-worker lane revision passed its production, hook-enabled, Rust, and
+comparative gates, so Milestone 1 is accepted for the single-machine
+asynchronous scope stated here. The revision removes the global publication
+bottleneck while preserving lane-local density, cache-wide fail-stop,
+timestamp-arbitrated replay, and transaction-atomic RocksDB batches. The
+remaining raw-ABI gap is per-commit cache work, not a scaling failure.
 
 This acceptance deliberately does not claim:
 
 - cross-host reproducibility beyond this seven-repetition `zoo-002` run;
-- cold-cache or WAL-replay recovery;
+- recovery of an acknowledged but unapplied memory tail or an applied but
+  unsynced RocksDB tail;
 - durable ACK or durable applied state (`sync=false` remains intentional);
 - per-transaction applied latency from the phase-level drain measurement;
 - bounded resident values or reclaimed commit-record history (Phase 1G);

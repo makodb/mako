@@ -162,14 +162,15 @@ extern "C" {
  * until it returns, the caller must guarantee that no other cache-record
  * commit terminal for txn's database is running or waiting. A successful
  * cache-order namespace claim makes that choice immutable for the facade's
- * lifetime: CONCURRENT admits only the three packed native-ordered terminals
- * and rejects every Rust-sequence record terminal; SINGLE_PRODUCER admits the
- * generic/explicit/preselected Rust-sequence terminals and rejects every
- * packed terminal and packed read-only cut. Sequential alternation is not
- * permitted until the facade closes and a new claim recovers/reseeds its own
- * dense namespace. Consequently cache_order_snapshot's dense field is not a
- * queue-tail diagnostic in SINGLE_PRODUCER mode. Unclaimed low-level facades
- * retain the legacy record-terminal behavior for isolated tests/embedders.
+ * lifetime: CONCURRENT admits only the packed native-ordered terminals;
+ * SINGLE_PRODUCER admits the exclusive Rust-sequence terminals; and
+ * PER_WORKER admits Rust lane sequences while retaining the packed general
+ * certification bit and process timestamp clock. Sequential alternation is
+ * not permitted until the facade closes and a new claim recovers/reseeds its
+ * own namespace. Consequently cache_order_snapshot's dense field is not a
+ * queue-tail diagnostic in SINGLE_PRODUCER or PER_WORKER mode. Unclaimed
+ * low-level facades retain the legacy record-terminal behavior for isolated
+ * tests/embedders.
  * Violating the single-producer whole-call exclusion remains undefined
  * behavior. All other fused one-Put preconditions and fail-closed
  * terminal/witness rules above apply unchanged.
@@ -197,9 +198,10 @@ extern "C" {
  * callback-based single-producer terminal applies.
  *
  * The one-put holder extension removes the remaining value copy from that
- * callback-free profile. Rust owns an independent fixed-capacity holder pool
- * for exactly the lifetime of its write-back queue. Capacity is a nonzero
- * power of two, and sequence N exclusively leases holder
+ * callback-free profile. It is admitted in both SINGLE_PRODUCER and
+ * PER_WORKER modes. Rust owns an independent fixed-capacity holder pool for
+ * exactly the lifetime of one write-back lane. Capacity is a nonzero power of
+ * two, and lane sequence N exclusively leases holder
  * (N - 1) & (capacity - 1). The caller's queue-capacity/applied-tail proof
  * must prevent reuse until the consumer has called pool_release for the old
  * generation. key_reserve_bytes and value_reserve_bytes are optional cold
@@ -212,17 +214,26 @@ extern "C" {
  * storage and are copied before validation; an OCC abort leaves those bytes
  * invisible and the retained generation immediately reusable. Long keys are
  * likewise staged before validation because their allocation can fail. The
- * post-validation hook therefore only captures the accepted timestamp.
+ * post-validation hook therefore only captures the accepted timestamp. In
+ * PER_WORKER mode an update fully covered by its write lock allocates that
+ * timestamp after final validation with a timestamp-only packed CAS which
+ * cannot pass the general bit. Insert/predicate fallback takes the real
+ * packed general gate before timestamp allocation. SINGLE_PRODUCER retains
+ * its existing no-ticket path.
  *
  * This symbol is a same-build unsafe terminal, not a checked holder API. The
  * immediately preceding fast Put's exact nonzero record-size witness, the
  * consuming transaction call, and the unique SPSC generation lease prove the
  * one-Put shape, stable spans, FREE target, power-of-two pool, and nonzero
- * sequence. Diagnostic builds assert those invariants; production deliberately
- * does not rederive the record shape or reread holder lifecycle state. A caller
- * which violates any of them has undefined behavior. Pool create/get/release
- * remain checked cold APIs. No foreground atomic read-modify-write protects
- * the holder: the single-producer lease is the ownership proof.
+ * sequence. In SINGLE_PRODUCER mode the lease also proves whole-database
+ * exclusion. In PER_WORKER mode it proves exclusion only within that lane;
+ * other lanes may commit concurrently because native coordinates their Mako
+ * timestamps and general certification. Diagnostic builds assert the local
+ * invariants; production deliberately does not rederive the record shape or
+ * reread holder lifecycle state. A caller which violates any of them has
+ * undefined behavior. Pool create/get/release remain checked cold APIs. No
+ * foreground atomic read-modify-write protects the holder: the lane lease is
+ * the ownership proof.
  *
  * The result uses the same two-word representation as the record terminal,
  * but bit 32 means that the holder is sealed. A nonzero timestamp always has
@@ -239,14 +250,14 @@ extern "C" {
  *
  * The fused SPSC holder terminal extends that unsafe same-build contract
  * across the remaining Rust reservation/publication bookkeeping. A persistent
- * control block lends the queue-global holder pool, acknowledged frontier,
+ * control block lends the lane-wide holder pool, acknowledged frontier,
  * monotonic unhealthy flag, logical capacity, and record-size bound. Each
  * synchronous call passes the acknowledged and unhealthy pointers directly in
  * registers plus a Relaxed snapshot of the producer's exclusive capacity
  * limit. Both atomic pointers must be naturally aligned and must match the
  * stable addresses cached in the control. The capacity limit must be a
  * snapshot of applied_frontier.saturating_add(control.capacity) for this same
- * queue. It may lag the current frontier, which rejects capacity
+ * lane. It may lag the current frontier, which rejects capacity
  * conservatively, but must never exceed the limit derived from the current
  * frontier. Native Relaxed-loads ACK, Release-stores ACK after sealing the
  * holder, and Acquire-loads unhealthy through GCC/Clang __atomic operations.
@@ -256,7 +267,7 @@ extern "C" {
  *
  * Before changing either the transaction or an external word, native checks
  * for a live direct one-Put candidate within max_record_bytes, an initially
- * healthy queue, a representable successor, and producer-local capacity. It
+ * healthy cache, a representable successor, and producer-local capacity. It
  * returns UNTOUCHED_NEED_GENERAL for a candidate/size miss and
  * UNTOUCHED_NEED_SLOW for a health/capacity miss; the latter carries the exact
  * candidate extent in the return payload. Both leave the transaction active,
@@ -348,7 +359,7 @@ typedef struct mako_rust_fast_native_ordered_holder_control {
   uint32_t reserved;
 } mako_rust_fast_native_ordered_holder_control;
 
-/* Persistent queue-global inputs for the fused SPSC holder terminal. The
+/* Persistent lane-wide inputs for the fused SPSC holder terminal. The
  * pointer targets and this control block must outlive every synchronous call
  * and its cold decode. Calls and cold decodes using one control must not
  * overlap because cold_out is non-atomic scratch owned by the unique producer.
@@ -427,6 +438,7 @@ typedef struct mako_rust_fast_one_put_holder_view {
 #define MAKO_RUST_FAST_RECORD_CHECKSUM_CRC32C UINT32_C(1)
 #define MAKO_RUST_FAST_CACHE_ORDER_CONCURRENT UINT32_C(1)
 #define MAKO_RUST_FAST_CACHE_ORDER_SINGLE_PRODUCER UINT32_C(2)
+#define MAKO_RUST_FAST_CACHE_ORDER_PER_WORKER UINT32_C(3)
 
 #if defined(__GNUC__) || defined(__clang__)
 #define MAKO_RUST_FAST_HIDDEN __attribute__((visibility("hidden")))
@@ -516,6 +528,16 @@ mako_rust_fast_txn_commit_preselected_unchecked_one_put_holder_single_producer_a
     mako_local_txn *txn, uint32_t expected_record_bytes,
     mako_rust_fast_one_put_holder_pool *pool,
     uint64_t sequence) MAKO_RUST_FAST_NOEXCEPT;
+/* PerWorker sibling of the preselected SPSC holder terminal. `unhealthy`
+ * names the cache-wide AtomicBool byte and remains live for this synchronous
+ * call. Native Acquire-checks it before timestamp allocation and again in the
+ * post-validation acceptance hook. A nonzero observation rejects before
+ * installation and seals no holder. */
+MAKO_RUST_FAST_HIDDEN mako_rust_fast_preselected_record_result
+mako_rust_fast_txn_commit_preselected_unchecked_one_put_holder_per_worker_and_destroy(
+    mako_local_txn *txn, uint32_t expected_record_bytes,
+    mako_rust_fast_one_put_holder_pool *pool, uint64_t sequence,
+    const uint8_t *unhealthy) MAKO_RUST_FAST_NOEXCEPT;
 MAKO_RUST_FAST_HIDDEN uint64_t
 mako_rust_fast_txn_try_commit_fused_one_put_holder_single_producer_and_destroy(
     mako_local_txn *txn, uint64_t *acknowledged, const uint8_t *unhealthy,
@@ -535,14 +557,15 @@ MAKO_RUST_FAST_HIDDEN uint64_t mako_rust_fast_txn_commit_with_hook_and_destroy(
 MAKO_RUST_FAST_HIDDEN uint64_t mako_rust_fast_txn_abort_and_destroy(
     mako_local_txn *txn) MAKO_RUST_FAST_NOEXCEPT;
 /* Place a packed-state modification-order cut before a following Rust outcome
- * scan. The facade must hold the immutable CONCURRENT claim; SINGLE_PRODUCER
- * exclusion supplies its own cut. A mode or null-pointer violation terminates
- * instead of admitting a read-only prefix under the wrong ordering protocol. */
+ * scan. The facade must hold an immutable CONCURRENT or PER_WORKER claim;
+ * SINGLE_PRODUCER exclusion supplies its own cut. A mode or null-pointer
+ * violation terminates instead of admitting a read-only prefix under the
+ * wrong ordering protocol. */
 MAKO_RUST_FAST_HIDDEN void
 mako_rust_fast_db_order_record_validation_prefix(
     mako_local_db *db) MAKO_RUST_FAST_NOEXCEPT;
 
-/* Construction-only namespace admission. foreground_mode is one of the two
+/* Construction-only namespace admission. foreground_mode is one of the three
  * MAKO_RUST_FAST_CACHE_ORDER_* constants and remains immutable until close.
  * No transaction or terminal may overlap this call. Only one facade can hold
  * the process namespace; a second claim returns BUSY. */

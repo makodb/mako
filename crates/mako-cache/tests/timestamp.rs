@@ -64,9 +64,11 @@ fn native_timestamp_matches_the_persisted_record_and_applied_frontier() {
     // cleanup panic during assertion unwinding and obscure the exact failure.
     assert_eq!(applied.expect("apply observed transaction"), 1);
     assert_eq!(closed.expect("close timestamp cache"), 1);
+    // Concurrent cache slot zero owns lane tag one in the physical log ID.
+    const FIRST_WORKER_LOG_ID: u64 = (1u64 << 48) | 1;
     assert_eq!(
         persisted_timestamps,
-        vec![(1, native_timestamp)],
+        vec![(FIRST_WORKER_LOG_ID, native_timestamp)],
         "the record must carry the exact timestamp allocated at the native serialization point"
     );
     assert_eq!(

@@ -1,10 +1,15 @@
-//! One background consumer for [`crate::writeback::Writeback`].
+//! One background consumer for a writeback target.
+//!
+//! A concurrent cache supplies a per-worker lane set. The target polls those
+//! lanes in round-robin order and routes their batches through the shared apply
+//! coordinator. The legacy and explicit single-producer profiles supply one
+//! [`crate::writeback::Writeback`] lane directly.
 
 use std::fmt;
 use std::io;
-use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, mpsc};
+use std::sync::{mpsc, Arc};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -13,6 +18,37 @@ use mrx_core::Blobs;
 use crate::writeback::{ApplyError, ProcessOutcome, Writeback};
 
 const IDLE_POLL: Duration = Duration::from_millis(10);
+
+/// Operations required by the single background writeback thread.
+pub(crate) trait RuntimeTarget: Send + Sync + 'static {
+    fn process_front(&self) -> ProcessOutcome;
+    fn wait_applied(&self) -> Result<u64, ApplyError>;
+    fn ensure_no_unknown(&self) -> Result<(), ApplyError>;
+    fn retry_delay(&self) -> Duration;
+    fn wake_waiters(&self);
+}
+
+impl<B: Blobs + 'static> RuntimeTarget for Writeback<B> {
+    fn process_front(&self) -> ProcessOutcome {
+        Writeback::process_front(self)
+    }
+
+    fn wait_applied(&self) -> Result<u64, ApplyError> {
+        Writeback::wait_applied(self)
+    }
+
+    fn ensure_no_unknown(&self) -> Result<(), ApplyError> {
+        Writeback::ensure_no_unknown(self)
+    }
+
+    fn retry_delay(&self) -> Duration {
+        Writeback::retry_delay(self)
+    }
+
+    fn wake_waiters(&self) {
+        Writeback::wake_waiters(self)
+    }
+}
 
 /// Failure while stopping or cleanly draining the background runtime.
 #[derive(Debug, Clone)]
@@ -42,24 +78,24 @@ impl std::error::Error for RuntimeError {
     }
 }
 
-/// A single background consumer attached to a shared write-back queue.
+/// A single background consumer attached to a writeback target.
 ///
 /// [`Runtime::shutdown`] stops the worker and then synchronously drains the
-/// highest acknowledged snapshot. [`Runtime::abort`] stops without a drain,
-/// preserving the existing cache contract that an unapplied in-memory tail may
-/// be lost on process failure. A panic from a backend attempt leaves the exact
-/// Ready record queued and is retried after the configured delay. Dropping the
-/// runtime is equivalent to aborting.
-pub struct Runtime<B: Blobs + 'static> {
-    writeback: Arc<Writeback<B>>,
+/// acknowledged snapshot from each initialized lane. [`Runtime::abort`] stops
+/// without a drain, preserving the cache contract that an unapplied in-memory
+/// tail may be lost on process failure. A panic from a backend attempt retains
+/// the exact original batch for retry before any other lane may apply. Dropping
+/// the runtime is equivalent to aborting.
+pub struct Runtime<T: RuntimeTarget> {
+    writeback: Arc<T>,
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
 }
 
-impl<B: Blobs + 'static> Runtime<B> {
+impl<T: RuntimeTarget> Runtime<T> {
     /// Start one named background consumer.
     #[cfg(test)]
-    pub fn start(writeback: Arc<Writeback<B>>) -> std::io::Result<Self> {
+    pub fn start(writeback: Arc<T>) -> std::io::Result<Self> {
         Self::start_on_cpu(writeback, None)
     }
 
@@ -70,7 +106,7 @@ impl<B: Blobs + 'static> Runtime<B> {
     /// thread to install its affinity, so an invalid CPU, a cgroup restriction,
     /// or an unsupported platform is returned to the caller instead of being
     /// silently ignored.
-    pub fn start_on_cpu(writeback: Arc<Writeback<B>>, cpu: Option<usize>) -> std::io::Result<Self> {
+    pub fn start_on_cpu(writeback: Arc<T>, cpu: Option<usize>) -> std::io::Result<Self> {
         let stop = Arc::new(AtomicBool::new(false));
         let worker_writeback = Arc::clone(&writeback);
         let worker_stop = Arc::clone(&stop);
@@ -107,14 +143,15 @@ impl<B: Blobs + 'static> Runtime<B> {
         })
     }
 
-    /// Stop the worker and apply the highest acknowledged snapshot.
+    /// Stop the worker and apply every captured lane acknowledgement snapshot.
     ///
-    /// The drain is attempted even if the worker panicked, since both queue and
-    /// consumer mutexes recover poison and a Ready record remains retryable. A
-    /// pinned unknown outcome is rejected even when it lies after the applied
-    /// snapshot, so clean close cannot discard possibly visible native state.
-    /// If both the worker and synchronous drain fail, the application error is
-    /// returned instead of the less specific worker panic.
+    /// The drain is attempted even if the worker panicked, since queue and
+    /// consumer mutexes recover poison and Ready records remain retryable. A
+    /// cache-wide unknown outcome is rejected even when its lane lies outside
+    /// a captured applied snapshot, so clean close cannot discard possibly
+    /// visible native state. If both the worker and synchronous drain fail, the
+    /// application error is returned instead of the less specific worker
+    /// panic.
     pub fn shutdown(&mut self) -> Result<u64, RuntimeError> {
         let worker_result = self.stop_worker();
         let apply_result = self
@@ -155,7 +192,7 @@ impl<B: Blobs + 'static> Runtime<B> {
 
 #[cfg(target_os = "linux")]
 fn pin_current_thread(cpu: Option<usize>) -> io::Result<()> {
-    use nix::sched::{CpuSet, sched_setaffinity};
+    use nix::sched::{sched_setaffinity, CpuSet};
     use nix::unistd::Pid;
 
     let Some(cpu) = cpu else {
@@ -179,13 +216,13 @@ fn pin_current_thread(cpu: Option<usize>) -> io::Result<()> {
     }
 }
 
-impl<B: Blobs + 'static> Drop for Runtime<B> {
+impl<T: RuntimeTarget> Drop for Runtime<T> {
     fn drop(&mut self) {
         let _ = self.abort();
     }
 }
 
-fn run<B: Blobs + 'static>(writeback: Arc<Writeback<B>>, stop: Arc<AtomicBool>) {
+fn run<T: RuntimeTarget>(writeback: Arc<T>, stop: Arc<AtomicBool>) {
     while !stop.load(Ordering::Acquire) {
         let outcome = catch_unwind(AssertUnwindSafe(|| writeback.process_front()));
         match outcome {
@@ -223,7 +260,7 @@ fn wait_interruptibly(stop: &AtomicBool, duration: Duration) {
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::AtomicUsize;
-    use std::sync::{Arc, mpsc};
+    use std::sync::{mpsc, Arc};
 
     use mako_local::MakoTimestamp;
     use mrx_core::fakes::MemBlobs;
@@ -257,7 +294,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn affinity_helper_pins_only_the_calling_thread() {
-        use nix::sched::{CpuSet, sched_getaffinity};
+        use nix::sched::{sched_getaffinity, CpuSet};
         use nix::unistd::Pid;
 
         let allowed = sched_getaffinity(Pid::from_raw(0)).expect("read test affinity");

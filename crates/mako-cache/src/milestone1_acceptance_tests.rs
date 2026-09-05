@@ -7,13 +7,13 @@
 use std::env;
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Barrier, Condvar, Mutex, mpsc};
+use std::sync::{mpsc, Arc, Barrier, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use mrx_core::fakes::MemBlobs;
 use mrx_core::{BlobError, BlobOp, Blobs};
 
-use crate::record::{BackendKey, CommitSeq, DEFAULT_TABLE_ID, Mutation, PreparedCommitRecord};
+use crate::record::{BackendKey, CommitSeq, Mutation, PreparedCommitRecord, DEFAULT_TABLE_ID};
 use crate::{Cache, CacheOptions, Error, LocalError, MakoTimestamp, WritebackConfig};
 
 const WAIT_LIMIT: Duration = Duration::from_secs(5);
@@ -136,6 +136,7 @@ fn wait_until(mut predicate: impl FnMut() -> bool) -> bool {
 fn bounded_writeback_backpressures_sustained_concurrent_writers_then_recovers() {
     const CAPACITY: usize = 2;
     const WORKERS: usize = 8;
+    const TOTAL_LANE_CAPACITY: usize = WORKERS * CAPACITY;
     const COMMITS_PER_WORKER: usize = 16;
     const TOTAL_COMMITS: usize = WORKERS * COMMITS_PER_WORKER;
 
@@ -155,10 +156,9 @@ fn bounded_writeback_backpressures_sustained_concurrent_writers_then_recovers() 
         let mut seed = cache.transaction().expect("begin overload seed");
         for transaction in 0..COMMITS_PER_WORKER {
             let key = format!("milestone1/overload/{worker:02}/{transaction:02}");
-            assert!(
-                seed.put(key.as_bytes(), b"seed")
-                    .expect("stage overload seed")
-            );
+            assert!(seed
+                .put(key.as_bytes(), b"seed")
+                .expect("stage overload seed"));
         }
         seed.commit().expect("commit overload seed");
     }
@@ -183,11 +183,9 @@ fn bounded_writeback_backpressures_sustained_concurrent_writers_then_recovers() 
                 let key = format!("milestone1/overload/{worker:02}/{transaction:02}");
                 let value = format!("value-{worker:02}-{transaction:02}");
                 let mut cache_transaction = cache.transaction().expect("begin overload commit");
-                assert!(
-                    !cache_transaction
-                        .put(key.as_bytes(), value.as_bytes())
-                        .expect("stage existing disjoint overload write")
-                );
+                assert!(!cache_transaction
+                    .put(key.as_bytes(), value.as_bytes())
+                    .expect("stage existing disjoint overload write"));
                 if transaction == 0 {
                     first_commit_ready.wait();
                 }
@@ -205,7 +203,7 @@ fn bounded_writeback_backpressures_sustained_concurrent_writers_then_recovers() 
     // deterministic rather than scheduler- or RocksDB-speed-dependent.
     first_commit_ready.wait();
     let backend_was_blocked = backend.wait_until_entered();
-    let queue_saturated = wait_until(|| completed.load(Ordering::SeqCst) >= CAPACITY);
+    let queue_saturated = wait_until(|| completed.load(Ordering::SeqCst) >= TOTAL_LANE_CAPACITY);
     let completed_while_blocked = completed.load(Ordering::SeqCst);
     let acknowledged_while_blocked = cache.highest_acknowledged_sequence();
     let applied_while_blocked = cache.applied_sequence();
@@ -227,15 +225,18 @@ fn bounded_writeback_backpressures_sustained_concurrent_writers_then_recovers() 
         "bounded queue never reached configured capacity"
     );
     assert_eq!(
-        completed_while_blocked, CAPACITY,
-        "more commits acknowledged than the closed write-back queue can retain"
+        completed_while_blocked, TOTAL_LANE_CAPACITY,
+        "workers did not stop at their combined per-lane capacity"
     );
-    assert_eq!(acknowledged_while_blocked, base_sequence + CAPACITY as u64);
+    assert_eq!(
+        acknowledged_while_blocked,
+        base_sequence + TOTAL_LANE_CAPACITY as u64
+    );
     assert_eq!(applied_while_blocked, base_sequence);
-    assert_eq!(queued_while_blocked, CAPACITY);
+    assert_eq!(queued_while_blocked, TOTAL_LANE_CAPACITY);
     assert!(
-        maximum_observed_queue.load(Ordering::SeqCst) <= CAPACITY,
-        "observed queue occupancy exceeded its configured bound"
+        maximum_observed_queue.load(Ordering::SeqCst) <= TOTAL_LANE_CAPACITY,
+        "observed queue occupancy exceeded the active lanes' combined bound"
     );
     assert_eq!(completed.load(Ordering::SeqCst), TOTAL_COMMITS);
     assert_eq!(
@@ -447,16 +448,20 @@ fn near_exhaustion_child_role() {
         .into_iter()
         .find_map(
             |(key, encoded)| match crate::record::classify_backend_key(&key) {
-                BackendKey::Log(sequence) if sequence.get() == 2 => Some(
-                    crate::record::CommitRecord::decode(
+                BackendKey::Log(_) => {
+                    let record = crate::record::CommitRecord::decode(
                         &key,
                         &encoded,
                         WritebackConfig::default().max_record_bytes,
                     )
-                    .expect("decode MAX transaction record")
-                    .mako_timestamp(),
-                ),
-                BackendKey::Log(_) | BackendKey::Data { .. } | BackendKey::Foreign => None,
+                    .expect("decode MAX transaction record");
+                    record
+                        .mutations()
+                        .iter()
+                        .any(|mutation| mutation.key() == b"milestone1/exhaustion/final")
+                        .then(|| record.mako_timestamp())
+                }
+                BackendKey::Data { .. } | BackendKey::Foreign => None,
             },
         )
         .expect("find MAX transaction record");

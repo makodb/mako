@@ -465,6 +465,10 @@ int bind_thin_record(void *context, uint32_t timestamp, size_t exact_bytes,
   ++binding->calls;
   binding->timestamp = timestamp;
   binding->exact_bytes = exact_bytes;
+  if (binding->snapshot_db != nullptr) {
+    binding->snapshot_at_bind =
+        mako_rust_fast_db_cache_order_snapshot(binding->snapshot_db);
+  }
   if (binding->published_calls != nullptr)
     binding->published_calls->fetch_add(1, std::memory_order_release);
   if (!binding->accept) return 0;
@@ -1361,6 +1365,255 @@ TEST_F(LocalAbiTest, CacheOrderClaimIsExclusiveAndPreservesProcessClock) {
             91U);
 
   EXPECT_EQ(mako_local_db_close(other), MAKO_LOCAL_OK);
+}
+
+TEST_F(LocalAbiTest,
+       PerWorkerHolderTerminalsKeepRustLaneSequenceOutOfPackedDenseField) {
+  create_holder_pool(4);
+
+  auto *seed = begin();
+  ASSERT_EQ(put(seed, primary, "per-worker-preselected", "seed"),
+            MAKO_LOCAL_OK);
+  ASSERT_EQ(put(seed, primary, "per-worker-fused", "seed"), MAKO_LOCAL_OK);
+  commit_and_destroy(seed);
+
+  ASSERT_EQ(mako_rust_fast_db_claim_cache_order_namespace(
+                db, MAKO_RUST_FAST_CACHE_ORDER_PER_WORKER),
+            MAKO_LOCAL_OK);
+  ASSERT_EQ(mako_rust_fast_db_reseed_cache_order_namespace(db, 321),
+            MAKO_LOCAL_OK);
+  const uint64_t before = mako_rust_fast_db_cache_order_snapshot(db);
+  const uint32_t timestamp_before = test_cache_order_timestamp(before);
+  ASSERT_NE(timestamp_before, 0U);
+  ASSERT_LE(timestamp_before, MAKO_LOCAL_MAX_MAKO_TIMESTAMP);
+  mako_rust_fast_db_order_record_validation_prefix(db);
+  EXPECT_EQ(mako_rust_fast_db_cache_order_snapshot(db), before);
+
+  mako_local_txn *txn = nullptr;
+  ASSERT_EQ(mako_rust_fast_txn_begin(db, primary, &txn), MAKO_LOCAL_OK);
+  txn_for_cleanup = txn;
+  const uint64_t preselected_put =
+      fast_put(txn, "per-worker-preselected", "updated");
+  ASSERT_EQ(MAKO_RUST_FAST_PUT_STATUS(preselected_put), MAKO_LOCAL_OK);
+  const uint32_t preselected_bytes =
+      MAKO_RUST_FAST_PUT_UNCHECKED_RECORD_BYTES(preselected_put);
+  constexpr uint64_t kPreselectedLaneSequence = 7;
+  uint8_t unhealthy = 0;
+  const mako_rust_fast_preselected_record_result preselected =
+      mako_rust_fast_txn_commit_preselected_unchecked_one_put_holder_per_worker_and_destroy(
+          txn, preselected_bytes, holder_pool, kPreselectedLaneSequence,
+          &unhealthy);
+  txn_for_cleanup = nullptr;
+  ASSERT_EQ(MAKO_RUST_FAST_TERMINAL_STATUS(preselected.terminal),
+            MAKO_LOCAL_OK);
+  ASSERT_EQ(MAKO_RUST_FAST_CLEANUP_STATUS(preselected.terminal),
+            MAKO_LOCAL_OK);
+  ASSERT_EQ(MAKO_RUST_FAST_PRESELECTED_HOLDER_SEALED(preselected), 1U);
+  EXPECT_EQ(MAKO_RUST_FAST_PRESELECTED_RECORD_TIMESTAMP(preselected),
+            timestamp_before);
+
+  const uint64_t after_preselected =
+      mako_rust_fast_db_cache_order_snapshot(db);
+  EXPECT_EQ(test_cache_order_sequence(after_preselected), 321U);
+  EXPECT_EQ(test_cache_order_timestamp(after_preselected),
+            timestamp_before + 1);
+  mako_rust_fast_one_put_holder_view preselected_view{};
+  ASSERT_EQ(mako_rust_fast_one_put_holder_pool_get_view(
+                holder_pool, kPreselectedLaneSequence, &preselected_view),
+            MAKO_LOCAL_OK);
+  EXPECT_EQ(preselected_view.sequence, kPreselectedLaneSequence);
+  EXPECT_EQ(preselected_view.mako_timestamp, timestamp_before);
+  EXPECT_EQ(mako_rust_fast_one_put_holder_pool_release(
+                holder_pool, kPreselectedLaneSequence),
+            MAKO_LOCAL_OK);
+
+  ASSERT_EQ(mako_rust_fast_txn_begin(db, primary, &txn), MAKO_LOCAL_OK);
+  txn_for_cleanup = txn;
+  const uint64_t fused_put = fast_put(txn, "per-worker-fused", "updated");
+  ASSERT_EQ(MAKO_RUST_FAST_PUT_STATUS(fused_put), MAKO_LOCAL_OK);
+  alignas(uint64_t) uint64_t acknowledged = kPreselectedLaneSequence;
+  auto control = make_fused_holder_control(
+      holder_pool, &acknowledged, &unhealthy, 4);
+  const uint64_t fused =
+      mako_rust_fast_txn_try_commit_fused_one_put_holder_single_producer_and_destroy(
+          txn, &acknowledged, &unhealthy, &control,
+          kPreselectedLaneSequence + 4);
+  txn_for_cleanup = nullptr;
+  ASSERT_EQ(MAKO_RUST_FAST_FUSED_HOLDER_CODE(fused),
+            MAKO_RUST_FAST_FUSED_HOLDER_CONSUMED_PUBLISHED);
+  EXPECT_EQ(MAKO_RUST_FAST_FUSED_HOLDER_PAYLOAD(fused), 0U);
+  constexpr uint64_t kFusedLaneSequence = kPreselectedLaneSequence + 1;
+  EXPECT_EQ(acknowledged, kFusedLaneSequence);
+
+  const uint64_t after_fused = mako_rust_fast_db_cache_order_snapshot(db);
+  EXPECT_EQ(test_cache_order_sequence(after_fused), 321U);
+  EXPECT_EQ(test_cache_order_timestamp(after_fused), timestamp_before + 2);
+  mako_rust_fast_one_put_holder_view fused_view{};
+  ASSERT_EQ(mako_rust_fast_one_put_holder_pool_get_view(
+                holder_pool, kFusedLaneSequence, &fused_view),
+            MAKO_LOCAL_OK);
+  EXPECT_EQ(fused_view.sequence, kFusedLaneSequence);
+  EXPECT_EQ(fused_view.mako_timestamp, timestamp_before + 1);
+  EXPECT_EQ(mako_rust_fast_one_put_holder_pool_release(
+                holder_pool, kFusedLaneSequence),
+            MAKO_LOCAL_OK);
+}
+
+TEST_F(LocalAbiTest,
+       PerWorkerHolderGeneralGateSupportsConsecutiveFirstTimePuts) {
+  create_holder_pool(4);
+  ASSERT_EQ(mako_rust_fast_db_claim_cache_order_namespace(
+                db, MAKO_RUST_FAST_CACHE_ORDER_PER_WORKER),
+            MAKO_LOCAL_OK);
+
+  mako_local_txn *txn = nullptr;
+  ASSERT_EQ(mako_rust_fast_txn_begin(db, primary, &txn), MAKO_LOCAL_OK);
+  txn_for_cleanup = txn;
+  const uint64_t first_put = fast_put(txn, "per-worker-new-first", "one");
+  ASSERT_EQ(MAKO_RUST_FAST_PUT_STATUS(first_put), MAKO_LOCAL_OK);
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+  ASSERT_EQ(
+      mako_rust_fast_test_txn_can_order_record_after_validation(txn), 0U);
+#endif
+  uint8_t unhealthy = 0;
+  const mako_rust_fast_preselected_record_result first =
+      mako_rust_fast_txn_commit_preselected_unchecked_one_put_holder_per_worker_and_destroy(
+          txn, MAKO_RUST_FAST_PUT_UNCHECKED_RECORD_BYTES(first_put),
+          holder_pool, 1, &unhealthy);
+  txn_for_cleanup = nullptr;
+  ASSERT_EQ(MAKO_RUST_FAST_TERMINAL_STATUS(first.terminal), MAKO_LOCAL_OK);
+  ASSERT_EQ(MAKO_RUST_FAST_CLEANUP_STATUS(first.terminal), MAKO_LOCAL_OK);
+  ASSERT_EQ(MAKO_RUST_FAST_PRESELECTED_HOLDER_SEALED(first), 1U);
+  ASSERT_EQ(mako_rust_fast_one_put_holder_pool_release(holder_pool, 1),
+            MAKO_LOCAL_OK);
+  EXPECT_EQ(mako_rust_fast_db_cache_order_snapshot(db) &
+                kTestCacheOrderGeneralLock,
+            0U);
+
+  ASSERT_EQ(mako_rust_fast_txn_begin(db, primary, &txn), MAKO_LOCAL_OK);
+  txn_for_cleanup = txn;
+  const uint64_t second_put = fast_put(txn, "per-worker-new-second", "two");
+  ASSERT_EQ(MAKO_RUST_FAST_PUT_STATUS(second_put), MAKO_LOCAL_OK);
+  alignas(uint64_t) uint64_t acknowledged = 1;
+  auto control =
+      make_fused_holder_control(holder_pool, &acknowledged, &unhealthy, 4);
+  const uint64_t second =
+      mako_rust_fast_txn_try_commit_fused_one_put_holder_single_producer_and_destroy(
+          txn, &acknowledged, &unhealthy, &control, 4);
+  txn_for_cleanup = nullptr;
+  ASSERT_EQ(MAKO_RUST_FAST_FUSED_HOLDER_CODE(second),
+            MAKO_RUST_FAST_FUSED_HOLDER_CONSUMED_PUBLISHED);
+  EXPECT_EQ(MAKO_RUST_FAST_FUSED_HOLDER_PAYLOAD(second), 0U);
+  EXPECT_EQ(acknowledged, 2U);
+  ASSERT_EQ(mako_rust_fast_one_put_holder_pool_release(holder_pool, 2),
+            MAKO_LOCAL_OK);
+  EXPECT_EQ(mako_rust_fast_db_cache_order_snapshot(db) &
+                kTestCacheOrderGeneralLock,
+            0U);
+
+  auto *verify = begin();
+  EXPECT_EQ(get(verify, primary, "per-worker-new-first").second,
+            std::optional<std::string>("one"));
+  EXPECT_EQ(get(verify, primary, "per-worker-new-second").second,
+            std::optional<std::string>("two"));
+  commit_and_destroy(verify);
+}
+
+TEST_F(LocalAbiTest,
+       PerWorkerPreselectedHolderRejectsUnhealthyAfterValidation) {
+  create_holder_pool(4);
+
+  auto *seed = begin();
+  ASSERT_EQ(put(seed, primary, "per-worker-health", "seed"), MAKO_LOCAL_OK);
+  commit_and_destroy(seed);
+
+  ASSERT_EQ(mako_rust_fast_db_claim_cache_order_namespace(
+                db, MAKO_RUST_FAST_CACHE_ORDER_PER_WORKER),
+            MAKO_LOCAL_OK);
+  mako_local_txn *txn = nullptr;
+  ASSERT_EQ(mako_rust_fast_txn_begin(db, primary, &txn), MAKO_LOCAL_OK);
+  txn_for_cleanup = txn;
+  // Keep the replacement the same length as the seed. A growing MassTrans
+  // value adds relocation bookkeeping, which correctly selects the general
+  // validation path instead of the restricted post-validation timestamp path
+  // this test is meant to exercise.
+  const uint64_t update = fast_put(txn, "per-worker-health", "deny");
+  ASSERT_EQ(MAKO_RUST_FAST_PUT_STATUS(update), MAKO_LOCAL_OK);
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+  ASSERT_EQ(
+      mako_rust_fast_test_txn_can_order_record_after_validation(txn), 1U);
+#endif
+
+  uint8_t unhealthy = 1;
+  const mako_rust_fast_preselected_record_result result =
+      mako_rust_fast_txn_commit_preselected_unchecked_one_put_holder_per_worker_and_destroy(
+          txn, MAKO_RUST_FAST_PUT_UNCHECKED_RECORD_BYTES(update), holder_pool,
+          1, &unhealthy);
+  txn_for_cleanup = nullptr;
+  EXPECT_EQ(MAKO_RUST_FAST_TERMINAL_STATUS(result.terminal),
+            MAKO_LOCAL_COMMIT_HOOK_REJECTED);
+  EXPECT_EQ(MAKO_RUST_FAST_CLEANUP_STATUS(result.terminal), MAKO_LOCAL_OK);
+  EXPECT_EQ(MAKO_RUST_FAST_PRESELECTED_HOLDER_SEALED(result), 0U);
+  EXPECT_EQ(MAKO_RUST_FAST_PRESELECTED_RECORD_TIMESTAMP(result), 0U);
+
+  auto *verify = begin();
+  const auto read = get(verify, primary, "per-worker-health");
+  EXPECT_EQ(read.first, MAKO_LOCAL_OK);
+  EXPECT_EQ(read.second, std::optional<std::string>("seed"));
+  abort_and_destroy(verify);
+}
+
+TEST_F(LocalAbiTest, PerWorkerGeneralCommitUsesPackedGateAndRustLaneSequence) {
+  ASSERT_EQ(mako_rust_fast_db_claim_cache_order_namespace(
+                db, MAKO_RUST_FAST_CACHE_ORDER_PER_WORKER),
+            MAKO_LOCAL_OK);
+  ASSERT_EQ(mako_rust_fast_db_reseed_cache_order_namespace(db, 222),
+            MAKO_LOCAL_OK);
+  const uint64_t before = mako_rust_fast_db_cache_order_snapshot(db);
+  const uint32_t timestamp_before = test_cache_order_timestamp(before);
+
+  mako_local_txn *txn = nullptr;
+  ASSERT_EQ(mako_rust_fast_txn_begin(db, primary, &txn), MAKO_LOCAL_OK);
+  txn_for_cleanup = txn;
+  ASSERT_EQ(MAKO_RUST_FAST_PUT_STATUS(
+                fast_put(txn, "per-worker-general-a", "first")),
+            MAKO_LOCAL_OK);
+  ASSERT_EQ(MAKO_RUST_FAST_PUT_STATUS(
+                fast_put(txn, "per-worker-general-b", "second")),
+            MAKO_LOCAL_OK);
+
+  size_t exact_bytes = 0;
+  uint32_t operation_count = 0;
+  ASSERT_EQ(mako_rust_fast_txn_record_preflight_with_checksum(
+                txn, 1 << 20, MAKO_RUST_FAST_RECORD_CHECKSUM_NONE,
+                &exact_bytes, &operation_count),
+            MAKO_LOCAL_OK);
+  ASSERT_EQ(operation_count, 2U);
+  std::vector<uint8_t> storage(exact_bytes, 0xa5);
+  constexpr uint64_t kLaneSequence = 55;
+  ThinRecordBinding binding{&storage, kLaneSequence};
+  binding.snapshot_db = db;
+  uint8_t written = 99;
+  const uint64_t terminal =
+      mako_rust_fast_txn_commit_record_and_destroy(
+          txn, bind_thin_record, &binding, &written);
+  txn_for_cleanup = nullptr;
+  ASSERT_EQ(MAKO_RUST_FAST_TERMINAL_STATUS(terminal), MAKO_LOCAL_OK);
+  ASSERT_EQ(MAKO_RUST_FAST_CLEANUP_STATUS(terminal), MAKO_LOCAL_OK);
+  ASSERT_EQ(binding.calls, 1);
+  ASSERT_EQ(written, 1U);
+  EXPECT_NE(binding.snapshot_at_bind & kTestCacheOrderGeneralLock, 0U);
+
+  DecodedThinRecord decoded;
+  ASSERT_TRUE(decode_thin_record(storage, &decoded));
+  EXPECT_EQ(decoded.sequence, kLaneSequence);
+  EXPECT_EQ(decoded.timestamp, timestamp_before);
+  ASSERT_EQ(decoded.mutations.size(), 2U);
+
+  const uint64_t after = mako_rust_fast_db_cache_order_snapshot(db);
+  EXPECT_EQ(test_cache_order_sequence(after), 222U);
+  EXPECT_EQ(test_cache_order_timestamp(after), timestamp_before + 1);
+  EXPECT_EQ(after & kTestCacheOrderGeneralLock, 0U);
 }
 
 TEST_F(LocalAbiTest, NativeOrderedGeneralCommitAssignsOnePackedOrder) {

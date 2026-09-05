@@ -156,17 +156,21 @@ fn ambiguous_commit_pins_the_complete_record() {
         } => sequence,
         other => panic!("unexpected ambiguous-commit result: {other}"),
     };
-    assert_eq!(sequence.get(), 1);
+    // Concurrent cache slot zero owns lane tag one in the high 16 bits; the
+    // ambiguous commit is its first lane-local record.
+    const FIRST_WORKER_LOG_ID: u64 = (1u64 << 48) | 1;
+    assert_eq!(sequence.get(), FIRST_WORKER_LOG_ID);
 
     assert_eq!(cache.queued_transactions(), 1);
     assert_eq!(cache.highest_acknowledged_sequence(), 0);
     assert_eq!(cache.applied_sequence(), 0);
-    assert_eq!(
-        cache
-            .flush()
-            .expect("an unacknowledged pin is outside the flush snapshot"),
-        0
-    );
+    match cache.flush() {
+        Err(Error::Apply(ApplyError::UnknownOutcome { sequence: pinned })) => {
+            assert_eq!(pinned, sequence)
+        }
+        Ok(_) => panic!("a cache-wide unknown outcome allowed a flush barrier"),
+        Err(other) => panic!("unexpected post-pin flush result: {other}"),
+    }
     assert_eq!(backend.batch_count(), 0);
     assert!(backend.snapshot().is_empty());
 

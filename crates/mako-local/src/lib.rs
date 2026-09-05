@@ -233,7 +233,7 @@ impl TrustedNativeOrderedHolderControl {
     }
 }
 
-/// Stable queue-global inputs for the private fused SPSC terminal.
+/// Stable lane-wide inputs for the private fused SPSC terminal.
 ///
 /// Keep this layout in lockstep with `mako_rust_fast_spsc_holder_control` in
 /// the private native header. The pointed-to words are Rust atomics accessed
@@ -432,6 +432,14 @@ mod fast_abi {
             expected_record_bytes: u32,
             pool: *mut FastOnePutHolderPool,
             sequence: u64,
+        ) -> FastPreselectedRecordResult;
+
+        pub(super) fn mako_rust_fast_txn_commit_preselected_unchecked_one_put_holder_per_worker_and_destroy(
+            txn: *mut sys::mako_local_txn,
+            expected_record_bytes: u32,
+            pool: *mut FastOnePutHolderPool,
+            sequence: u64,
+            unhealthy: *const u8,
         ) -> FastPreselectedRecordResult;
 
         pub(super) fn mako_rust_fast_txn_try_commit_fused_one_put_holder_single_producer_and_destroy(
@@ -681,6 +689,9 @@ pub enum CacheOrderMode {
     Concurrent = 1,
     /// The exclusive Rust producer owns dense allocation for the claim.
     SingleProducer = 2,
+    /// Independent Rust worker lanes own their local sequences while native's
+    /// packed word coordinates the process timestamp and general-commit gate.
+    PerWorker = 3,
 }
 
 /// A nonzero 32-bit Mako logical transaction timestamp.
@@ -1624,7 +1635,7 @@ unsafe impl Send for TrustedSpscOnePutHolderControl {}
 unsafe impl Sync for TrustedSpscOnePutHolderControl {}
 
 impl TrustedSpscOnePutHolderControl {
-    /// Snapshot stable queue-global inputs for the private fused terminal.
+    /// Snapshot stable lane-wide inputs for the private fused terminal.
     ///
     /// # Safety
     ///
@@ -1746,7 +1757,7 @@ impl fmt::Debug for TrustedOnePutHolderView<'_> {
 }
 
 impl TrustedOnePutHolderView<'_> {
-    /// Exact dense sequence naming this holder generation.
+    /// Exact lane-local sequence naming this holder generation.
     pub const fn sequence(&self) -> NonZeroU64 {
         self.sequence
     }
@@ -2590,8 +2601,9 @@ impl LocalDb {
     ///
     /// The local cache supports one recovered namespace per process. This
     /// build-private call enforces that contract before recovery admits work,
-    /// records one immutable foreground mode, and resets only the
-    /// namespace-local dense sequence.
+    /// records one immutable foreground mode, and resets only the packed
+    /// compatibility sequence. Per-worker physical lane tails are owned and
+    /// recovered by the Rust cache.
     ///
     /// # Safety
     ///
@@ -2607,7 +2619,7 @@ impl LocalDb {
         })
     }
 
-    /// Set the recovered dense cache tail for this claimed namespace.
+    /// Set the recovered packed compatibility tail for this claimed namespace.
     ///
     /// # Safety
     ///
@@ -2640,7 +2652,9 @@ impl LocalDb {
     /// This build-private synchronization seam is used only by mako-cache's
     /// read-only commit fence. Concurrent cache writers publish their Rust
     /// outcome slot before native assigns its packed order, then clear it only
-    /// after the native outcome is represented in write-back.
+    /// after the native outcome is represented in write-back. It is valid for
+    /// both Concurrent and PerWorker claims; SingleProducer supplies its own
+    /// exclusion instead.
     #[doc(hidden)]
     #[inline]
     pub fn order_record_validation_prefix(&self) {
@@ -3485,10 +3499,12 @@ impl<'db> Transaction<'db> {
     /// [`Self::commit_record_preflight`], and `record` must have been allocated
     /// from those exact bounds. For this record-only terminal, native orders
     /// Mako timestamp assignment, final validation, and `acquire` with a
-    /// per-database gate. Thus successful callbacks can bind the next dense
-    /// serialization-safe slot while validation losers consume no slot. Native
-    /// retires that short turn before walking/copying the canonical record, but
-    /// retains every write lock and installs nothing until serialization ends.
+    /// ordering gate. Unclaimed/SingleProducer facades use the per-database
+    /// ticket, while PerWorker uses the packed general bit. Thus successful
+    /// callbacks can bind the next serialization-safe lane slot while
+    /// validation losers consume no slot. Native retires that short turn
+    /// before walking/copying the canonical record, but retains every write
+    /// lock and installs nothing until serialization ends.
     /// `acquire` runs synchronously before installation and must return its
     /// nonzero sequence without allocating, performing I/O, waiting for
     /// capacity, re-entering mako-local, or unwinding. Returning `None`
@@ -4275,16 +4291,16 @@ impl<'db> Transaction<'db> {
     /// `self` must be an active trusted-bound transaction, and `candidate`
     /// must be its exact current [`Self::unchecked_one_put_record_candidate`]
     /// after the final operation. `sequence` must be the unique producer's
-    /// retained next dense sequence, and its `(sequence - 1) % pool.capacity()`
+    /// retained next lane sequence, and its `(sequence - 1) % pool.capacity()`
     /// generation must be FREE. The caller must retain the pool and unique
-    /// single-producer lease through this call.
+    /// lane-producer lease through this call.
     ///
-    /// No other cache-record or holder terminal for this transaction's
-    /// `LocalDb` may run or wait during the call. A returned accepted timestamp
-    /// transfers an unconditional obligation to publish or pin `sequence`,
-    /// even when terminal visibility is unknown. A zero accepted timestamp
-    /// permits reuse only after the complete result decodes as a valid
-    /// pre-acceptance abort.
+    /// A SingleProducer claim requires whole-`LocalDb` exclusion. A returned
+    /// accepted timestamp transfers an unconditional obligation to publish or
+    /// pin `sequence`, even when terminal visibility is unknown. A zero
+    /// accepted timestamp permits reuse only after the complete result decodes
+    /// as a valid pre-acceptance abort. PerWorker lanes must use the dedicated
+    /// health-aware sibling below.
     #[doc(hidden)]
     #[inline(always)]
     pub unsafe fn commit_trusted_preselected_single_producer_unchecked_one_put_holder(
@@ -4342,8 +4358,9 @@ impl<'db> Transaction<'db> {
     /// A stale snapshot may lag the current applied frontier, but it must never
     /// exceed the limit derived from that current frontier. The control's pool
     /// and queue pointers must satisfy
-    /// [`TrustedSpscOnePutHolderControl::new`]. No other cache-record or holder
-    /// terminal for this `LocalDb` may run or wait during the call.
+    /// [`TrustedSpscOnePutHolderControl::new`]. SingleProducer requires no
+    /// overlapping terminal for the `LocalDb`; PerWorker permits independent
+    /// lanes but requires exclusive use of this control and its holder pool.
     ///
     /// The caller must inspect the returned ownership state exactly once. It
     /// may continue using this transaction only for an explicit untouched
@@ -4470,8 +4487,8 @@ impl<'db> Transaction<'db> {
         // naturally aligned AtomicU64 storage for this whole call.
         let capacity_limit_value =
             unsafe { AtomicU64::from_ptr(capacity_limit.cast_mut()).load(Ordering::Relaxed) };
-        // SAFETY: the caller supplies the transaction, unique-producer,
-        // stable-pointer, pool-generation, and whole-call exclusion proofs.
+        // SAFETY: the caller supplies the transaction, unique lane producer,
+        // stable-pointer, pool-generation, and mode-appropriate exclusion.
         let raw_result = unsafe {
             fast_abi::mako_rust_fast_txn_try_commit_fused_one_put_holder_single_producer_and_destroy(
                 self.raw.unwrap_unchecked().as_ptr(),
@@ -4646,15 +4663,65 @@ impl<'db> Transaction<'db> {
         // consumes it here on every terminal outcome.
         let raw = unsafe { self.raw.take().unwrap_unchecked() };
         self.active = false;
-        // SAFETY: the method contract proves exact candidate, holder
-        // generation, whole-call exclusion, and pool lifetime. Native
-        // independently revalidates the one-Put shape before lock acquisition.
+        // SAFETY: the method contract proves the exact candidate, holder
+        // generation, mode-appropriate lane exclusion, and pool lifetime.
+        // Native independently revalidates the one-Put shape before locking.
         let result = unsafe {
             fast_abi::mako_rust_fast_txn_commit_preselected_unchecked_one_put_holder_single_producer_and_destroy(
                 raw.as_ptr(),
                 exact_record_bytes.get(),
                 pool.raw.as_ptr(),
                 sequence.get(),
+            )
+        };
+        TrustedPreselectedUncheckedOnePutHolderOutcome {
+            terminal: result.terminal,
+            holder_state: result.record_state,
+        }
+    }
+
+    /// Commit a preselected one-Put holder in one PerWorker SPSC lane.
+    ///
+    /// This is the PerWorker counterpart of the single-producer terminal. In
+    /// addition to the same exact-candidate and holder-generation invariants,
+    /// `control` must belong to this lane and its cache-wide health word must
+    /// outlive the synchronous call. Native checks that word before timestamp
+    /// allocation and again after final Silo validation. Either check rejects
+    /// before installation if another lane has failed.
+    ///
+    /// # Safety
+    ///
+    /// The transaction must belong to a LocalDb claimed in PerWorker mode.
+    /// The caller must uniquely own `sequence` in `control`'s SPSC lane and
+    /// must publish or pin every accepted nonzero timestamp.
+    #[doc(hidden)]
+    #[inline(always)]
+    pub unsafe fn commit_trusted_preselected_per_worker_unchecked_one_put_holder_bytes(
+        mut self,
+        exact_record_bytes: NonZeroU32,
+        control: &TrustedSpscOnePutHolderControl,
+        sequence: NonZeroU64,
+    ) -> TrustedPreselectedUncheckedOnePutHolderOutcome {
+        debug_assert!(self.fast_bound_table.is_some());
+        debug_assert!(self.record_preflight.is_none());
+        debug_assert!(self.active);
+        debug_assert!(self.raw.is_some());
+        debug_assert_eq!(
+            Some(exact_record_bytes),
+            self.unchecked_one_put_record_bytes
+        );
+
+        // SAFETY: the trusted caller retains the lane control, pool, health
+        // word, and exact future generation while this consuming call runs.
+        let raw = unsafe { self.raw.take().unwrap_unchecked() };
+        self.active = false;
+        let result = unsafe {
+            fast_abi::mako_rust_fast_txn_commit_preselected_unchecked_one_put_holder_per_worker_and_destroy(
+                raw.as_ptr(),
+                exact_record_bytes.get(),
+                control.raw.pool,
+                sequence.get(),
+                control.raw.unhealthy,
             )
         };
         TrustedPreselectedUncheckedOnePutHolderOutcome {
@@ -5396,6 +5463,9 @@ mod tests {
 
     #[test]
     fn test_commit_phase_ids_and_feature_bit_are_stable() {
+        assert_eq!(CacheOrderMode::Concurrent as u32, 1);
+        assert_eq!(CacheOrderMode::SingleProducer as u32, 2);
+        assert_eq!(CacheOrderMode::PerWorker as u32, 3);
         let phases = [
             (
                 sys::MAKO_LOCAL_TEST_COMMIT_WRITESET_LOCKED,
