@@ -1,0 +1,68 @@
+{
+  "source": {
+    "branch": "codex/sto-rust",
+    "commit": "214724b2ae01c416774b7c2399bcee1626561a21"
+  },
+  "host": {
+    "hostname": "zoo-002.lab.compas.cs.stonybrook.edu",
+    "os": "Ubuntu 24.04.4 LTS",
+    "kernel": "6.8.0-137-generic",
+    "architecture": "x86_64",
+    "cpu": "AMD EPYC 7702P 64-Core Processor",
+    "sockets": 1,
+    "cores_per_socket": 64,
+    "threads_per_core": 2,
+    "numa_nodes": 1,
+    "memory_gib": 503,
+    "measured_logical_cpus": "0-63",
+    "measured_cpu_kind": "one hardware thread from each physical core",
+    "scaling_governor": "schedutil",
+    "boost_enabled": true
+  },
+  "toolchain": {
+    "cmake": "4.3.4",
+    "cxx": "Homebrew clang 22.1.8",
+    "rustc": "1.95.0 (59807616e 2026-04-14)",
+    "python": "3.12.3"
+  },
+  "build": {
+    "cmake_build_type": "Release",
+    "cxx_effective_flags": [
+      "-O2",
+      "-g",
+      "-DNDEBUG",
+      "-march=native",
+      "-fno-omit-frame-pointer"
+    ],
+    "rust_profile": {
+      "opt_level": 2,
+      "debug": 1,
+      "lto": false,
+      "codegen_units": 16
+    },
+    "rustflags": [
+      "-Dwarnings",
+      "-C target-cpu=native",
+      "-C force-frame-pointers=yes",
+      "-C link-arg=-Wl,-rpath,/home/users/shuai/.linuxbrew/opt/llvm@22/lib"
+    ],
+    "allocator": "glibc malloc for both engines (USE_MALLOC_MODE=0)",
+    "cxx_runtime": "Homebrew LLVM 22 libc++, libc++abi, and libunwind for both engines; C++ also loads system libstdc++ transitively through RocksDB",
+    "native_integration": true
+  },
+  "binaries": {
+    "cpp-sto-masstree": {
+      "path": "/var/tmp/mako-sto-bench-20260827.J2TZj6/build/sto_masstree_cpp_bench",
+      "sha256": "cefeb576ecd7df4fbb5173ef7d6c2ba590c58a177dc21d26125268e7be924c11"
+    },
+    "rust-sto-masstree": {
+      "path": "/var/tmp/mako-sto-bench-20260827.J2TZj6/rust-target/release/sto_masstree_compare",
+      "sha256": "a30808a2590c1182b8e07722f9ac047d01103919d6d7dd2172c44cf2029a3093"
+    }
+  },
+  "result_artifacts": {
+    "raw.jsonl": "5a0b7b03a7a58a346036515254467f8e0868b6eb771a94bb5cd0a19347ee22ab",
+    "run.json": "3567176d1619a029b692ec5711982b52bb78c89eef96bad7435041968de3a95a",
+    "summary.csv": "1573c531d932837458577c038a93c2f7b79e3350155396e95286564827ed2e16"
+  }
+}

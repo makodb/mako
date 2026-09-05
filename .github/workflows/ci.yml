@@ -200,6 +200,23 @@ jobs:
         with:
           submodules: recursive  # if you use submodules (e.g., third-party libs)
 
+      # The current published image predates the Rust STO workspace MSRV.
+      # The compile-fail snapshots also need rust-src so standard-library spans
+      # render identically under rustup and the standalone CI toolchain.
+      - name: Install Rust workspace toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v rustc >/dev/null 2>&1; then
+            rust_sysroot="$(rustc --print sysroot)"
+            if [ "$(rustc --version | awk '{print $2}')" = "1.95.0" ] &&
+               [ -r "${rust_sysroot}/lib/rustlib/src/rust/library/core/src/marker.rs" ]; then
+              exit 0
+            fi
+          fi
+          bash ./install_rustc.sh
+          echo "${HOME}/.local-rust/bin" >> "${GITHUB_PATH}"
+
       - name: Environments
         run: |
           pwd
@@ -227,6 +244,22 @@ jobs:
 
       - name: Compile
         run: ./ci/ci.sh compile
+
+      - name: Build Rust STO and Masstree integration
+        run: >-
+          cmake --build build
+          --parallel "${CI_MAKE_JOBS}"
+          --target rust_sto_integration
+          -- -k 0
+
+      # The aggregate target above builds these EXCLUDE_FROM_ALL executables.
+      # Name them explicitly here so a renamed or unregistered test fails CI.
+      - name: Run Rust STO C and C++ boundary tests
+        run: >-
+          ctest --test-dir build
+          --output-on-failure
+          --no-tests=error
+          -R '^(test_mtree_abi_c11_header|test_sto_tpcc_ffi_c11_header|test_sto_tpcc_cpp_wrapper_smoke|test_sto_tpcc_cpp_wrapper_scan_smoke)$'
 
       - name: Run tests - SRPC unit tests
         run: ./ci/ci.sh srpcTests

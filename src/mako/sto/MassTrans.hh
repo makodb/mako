@@ -20,6 +20,7 @@
 #include <rusty/function.hpp>
 #include "common.hh"
 #include "stdlib.h"
+#include <type_traits>
 
 #define RCU 1
 #define ABORT_ON_WRITE_READ_CONFLICT 0
@@ -33,6 +34,12 @@
 template <typename V, typename Box = versioned_value_struct<V>, bool Opacity = true>
 class MassTrans : public TObject {
 public:
+  // Mako's multiversion representation is specific to versioned_str_struct:
+  // it stores timestamp metadata in a packed string footer. Ordinary Box
+  // implementations do not have that layout or its data/length API.
+  static constexpr bool supports_packed_multiversion =
+      std::is_base_of_v<versioned_str_struct, Box>;
+
 #if !RCU
   typedef debug_threadinfo threadinfo;
 #endif
@@ -112,6 +119,7 @@ public:
   }
 
   static void thread_init() {
+    ensure_supported_runtime_mode();
 #if !RCU
     mythreadinfo.ti = new threadinfo;
     return;
@@ -134,6 +142,7 @@ public:
 
   template <typename ValType>
   bool transGet(Str key, ValType& retval, threadinfo_type& ti = mythreadinfo) {
+    ensure_supported_runtime_mode();
     // if false:
     //   1) not found a key
     //   2) found a key, but updated by other writes 
@@ -168,8 +177,10 @@ public:
         return false;
       }
       item.observe(tversion_type(elem_vers));
-      if (TThread::is_multiversion())
-        return MultiVersionValue::mvGET(retval, (char*)e->data(), TThread::txn->get_current_term(), sync_util::sync_logger::hist_timestamp);
+      if constexpr (supports_packed_multiversion) {
+        if (TThread::is_multiversion())
+          return MultiVersionValue::mvGET(retval, (char*)e->data(), TThread::txn->get_current_term(), sync_util::sync_logger::hist_timestamp);
+      }
     } else {
       //Warning("Not found a value");
       ensureNotFound(lp.node(), lp.full_version_value());
@@ -179,6 +190,7 @@ public:
 
   template <typename K>
   bool transDelete(const K& key, threadinfo_type& ti = mythreadinfo) {
+    ensure_supported_runtime_mode();
     auto lp = unlocked_cursor_type::from_mutable_str(table_, key);
     bool found = lp.find_unlocked(*ti.ti);
     if (found) {
@@ -225,6 +237,7 @@ public:
 private:
   template <bool INSERT, bool SET, typename StringType, typename ValueType>
   bool trans_write(const StringType& key, const ValueType& value, bool(*compar)(const std::string& newValue,const std::string& oldValue), threadinfo_type& ti = mythreadinfo) {
+    ensure_supported_runtime_mode();
     // optimization to do an unlocked lookup first
     if (SET) {
       auto lp = unlocked_cursor_type::from_mutable_str(table_, key);
@@ -232,9 +245,12 @@ private:
       if (found) {
         if (compar != nullptr) {
           versioned_value *e = lp.value ();
-          if(!compar(value, e->read_value())){
-            return false;
-          }
+          if constexpr (requires { compar(value, e->read_value()); }) {
+            if(!compar(value, e->read_value())){
+              return false;
+            }
+          } else
+            always_assert(false && "comparator is incompatible with MassTrans value type");
         }
         return handlePutFound<INSERT, SET>(lp.value(), key, value);
       } else {
@@ -250,10 +266,13 @@ private:
     if (found) {
       versioned_value *e = lp.value();
       if (compar != nullptr) {
-        if(!compar(value, e->read_value())){
-          lp.finish (0, *ti.ti);
-          return false;
-        }
+        if constexpr (requires { compar(value, e->read_value()); }) {
+          if(!compar(value, e->read_value())){
+            lp.finish (0, *ti.ti);
+            return false;
+          }
+        } else
+          always_assert(false && "comparator is incompatible with MassTrans value type");
       }
       lp.finish(0, *ti.ti);
       return handlePutFound<INSERT, SET>(e, key, value);
@@ -336,6 +355,7 @@ public:
 
   // range queries
   void transQuery(Str begin, Str end, RangeCallback callback, ValueAllocator *va = nullptr, threadinfo_type& ti = mythreadinfo) {
+    ensure_supported_runtime_mode();
     auto node_callback = [&] (leaf_type* node, typename unlocked_cursor_type::nodeversion_value_type version) {
       this->ensureNotFound(node, version);
     };
@@ -366,22 +386,26 @@ public:
       }
       item.observe(tversion_type(v));
 
-      if (!TThread::is_multiversion())
-        return callback(key, val);
+      if constexpr (supports_packed_multiversion) {
+        if (!TThread::is_multiversion())
+          return callback(key, val);
 
-      // key and val are both only guaranteed until callback returns
-      bool ret = MultiVersionValue::mvGET(val,
-                                          (char*)e->data(),
-                                          TThread::txn->get_current_term(), 
-                                          sync_util::sync_logger::hist_timestamp);
-      if (ret){
-        return callback(key, val);
-      }else {
-        deleted_cnt++;
-        if (deleted_cnt>10){
-          return false; // TODO, it's better to keep new_order id for taking over
+        // key and val are both only guaranteed until callback returns
+        bool ret = MultiVersionValue::mvGET(val,
+                                            (char*)e->data(),
+                                            TThread::txn->get_current_term(),
+                                            sync_util::sync_logger::hist_timestamp);
+        if (ret){
+          return callback(key, val);
+        }else {
+          deleted_cnt++;
+          if (deleted_cnt>10){
+            return false; // TODO, it's better to keep new_order id for taking over
+          }
+          return true;//skip the deleted items
         }
-        return true;//skip the deleted items
+      } else {
+        return callback(key, val);
       }
     };
 
@@ -390,6 +414,7 @@ public:
   }
 
   void transRQuery(Str begin, Str end, RangeCallback callback, ValueAllocator *va = nullptr, threadinfo_type& ti = mythreadinfo) {
+    ensure_supported_runtime_mode();
     auto node_callback = [&] (leaf_type* node, typename unlocked_cursor_type::nodeversion_value_type version) {
       this->ensureNotFound(node, version);
     };
@@ -418,21 +443,25 @@ public:
       }
       item.observe(tversion_type(v));
 
-      if (!TThread::is_multiversion())
-        return callback(key, val);
+      if constexpr (supports_packed_multiversion) {
+        if (!TThread::is_multiversion())
+          return callback(key, val);
 
-      bool ret = MultiVersionValue::mvGET(val,
-                                          (char*)e->data(),
-                                          TThread::txn->get_current_term(), 
-                                          sync_util::sync_logger::hist_timestamp);
-      if (ret)
-        return callback(key, val);
-      else {
-        deleted_cnt++;
-        if (deleted_cnt>10){
-          return false; // TODO, it's better to keep new_order id for taking over
+        bool ret = MultiVersionValue::mvGET(val,
+                                            (char*)e->data(),
+                                            TThread::txn->get_current_term(),
+                                            sync_util::sync_logger::hist_timestamp);
+        if (ret)
+          return callback(key, val);
+        else {
+          deleted_cnt++;
+          if (deleted_cnt>10){
+            return false; // TODO, it's better to keep new_order id for taking over
+          }
+          return true;//skip the deleted items
         }
-        return true;//skip the deleted items
+      } else {
+        return callback(key, val);
       }
     };
 
@@ -598,6 +627,7 @@ public:
     header->data_size = 0; 
 
   void install(TransItem& item, Transaction& t) override {
+    ensure_supported_runtime_mode();
     assert(!has_internode_key(item));
     versioned_value* e = item.key<versioned_value*>();
     assert(is_locked(e->version()));
@@ -624,26 +654,32 @@ public:
         return;
       }
 
-      string v=string(1+mako::EXTRA_BITS_FOR_VALUE, 'B');
-      MultiVersionValue::mvInstall(isInsert, isDelete,
-                                   v,
-                                   e,
-                                   TThread::txn->get_current_term());
-      e->set_length(v.length());
+      if constexpr (supports_packed_multiversion) {
+        string v=string(1+mako::EXTRA_BITS_FOR_VALUE, 'B');
+        MultiVersionValue::mvInstall(isInsert, isDelete,
+                                     v,
+                                     e,
+                                     TThread::txn->get_current_term());
+        e->set_length(v.length());
+      }
       return;
     }  // end of deletion
 
     if (!isInsert) { // update
         write_value_type& v = item.template write_value<write_value_type>();
-        if (!TThread::is_multiversion()) {
+        if constexpr (!supports_packed_multiversion) {
           e->set_value(v);
-          RESET_NODE_BY_E(e)
         } else {
-          MultiVersionValue::mvInstall(isInsert, isDelete,
-                                     v,
-                                     e,
-                                     TThread::txn->get_current_term());
-          e->set_length(v.length());
+          if (!TThread::is_multiversion()) {
+            e->set_value(v);
+            RESET_NODE_BY_E(e)
+          } else {
+            MultiVersionValue::mvInstall(isInsert, isDelete,
+                                       v,
+                                       e,
+                                       TThread::txn->get_current_term());
+            e->set_length(v.length());
+          }
         }
     }
     if (Opacity)  // false
@@ -653,11 +689,13 @@ public:
       Version v = e->version() & ~invalid_bit;
       fence();
       e->version() = v;
-      if (TThread::is_multiversion())
-        MultiVersionValue::mvInstall(isInsert, isDelete,
-                                    "",
-                                    e,
-                                    TThread::txn->get_current_term());
+      if constexpr (supports_packed_multiversion) {
+        if (TThread::is_multiversion())
+          MultiVersionValue::mvInstall(isInsert, isDelete,
+                                      "",
+                                      e,
+                                      TThread::txn->get_current_term());
+      }
     } else // update
       TransactionTid::inc_nonopaque_version(e->version());
       //RESET_NODE_BY_E(e)
@@ -680,6 +718,7 @@ public:
   }
 
   bool remove(const Str& key, threadinfo_type& ti = mythreadinfo) {
+    ensure_supported_runtime_mode();
     auto lp = cursor_type::from_mutable_str(table_, key);
     bool found = lp.find_locked(*ti.ti);
     // Only deallocate when the key exists: on a miss the cursor's
@@ -691,6 +730,11 @@ public:
   }
 
 protected:
+  static void ensure_supported_runtime_mode() {
+    if constexpr (!supports_packed_multiversion)
+      always_assert(!TThread::is_multiversion());
+  }
+
   // called once we've checked our own writes for a found put()
   template <typename ValueType>
   void reallyHandlePutFound(TransProxy& item, versioned_value *e, Str key, const ValueType& value) {

@@ -488,6 +488,14 @@ public:
   inline bool
   insert_if_absent(const key_type &k, value_type v);
 
+  /*
+   * Resolves the winning value in the same locked cursor traversal. When the
+   * key already exists, writes that value to old_v and returns false.
+   */
+  inline bool
+  insert_if_absent_with_old(const key_type &k, value_type v,
+                            value_type &old_v);
+
   /**
    * return true if a value was removed, false otherwise.
    *
@@ -564,6 +572,7 @@ public:
                    value_type *old_v,
                    insert_info_t *insert_info);
   bool insert_if_absent_impl(const key_type &k, value_type v,
+                             value_type *old_v,
                              insert_info_t *insert_info);
   bool remove_impl(const key_type &k, value_type *old_v);
 
@@ -762,23 +771,34 @@ template <typename P>
 inline bool mbtree<P>::insert_if_absent(const key_type &k, value_type v,
                                         insert_info_t &insert_info)
 {
-  return insert_if_absent_impl(k, v, &insert_info);
+  return insert_if_absent_impl(k, v, nullptr, &insert_info);
 }
 
 template <typename P>
 inline bool mbtree<P>::insert_if_absent(const key_type &k, value_type v)
 {
-  return insert_if_absent_impl(k, v, nullptr);
+  return insert_if_absent_impl(k, v, nullptr, nullptr);
+}
+
+template <typename P>
+inline bool mbtree<P>::insert_if_absent_with_old(const key_type &k,
+                                                 value_type v,
+                                                 value_type &old_v)
+{
+  return insert_if_absent_impl(k, v, &old_v, nullptr);
 }
 
 template <typename P>
 inline bool mbtree<P>::insert_if_absent_impl(const key_type &k, value_type v,
+                                             value_type *old_v,
                                              insert_info_t *insert_info)
 {
   rcu_region guard;
   threadinfo ti;
   auto lp = Masstree::tcursor<P>::from_mutable_bytes(table_, k.data(), k.length());
   bool found = lp.find_insert(ti);
+  if (found && old_v)
+    *old_v = lp.value();
   if (!found) {
     ti.observe_phantoms(lp.node());
     lp.value() = v;

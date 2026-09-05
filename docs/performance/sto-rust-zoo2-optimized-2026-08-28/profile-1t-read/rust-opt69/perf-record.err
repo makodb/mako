@@ -1,0 +1,2 @@
+[ perf record: Woken up 3 times to write data ]
+[ perf record: Captured and wrote 0.628 MB /var/tmp/mako-sto-bench-20260827.J2TZj6/profile-opt69-1t-read-20260828/perf.data (4849 samples) ]

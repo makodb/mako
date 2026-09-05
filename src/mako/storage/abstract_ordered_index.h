@@ -2,7 +2,9 @@
 #define _ABSTRACT_ORDERED_INDEX_H_
 
 #include <stdint.h>
+#include <limits>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <map>
 #include "masstree/str.hh"
@@ -53,6 +55,28 @@ public:
   // strings are generated
   virtual bool invoke(const char *keyp, size_t keylen,
                       const std::string &value) = 0;
+
+  // Borrowed-byte form used by adapters whose scan engine already exposes a
+  // stable row slice for the duration of the callback. Implementations may
+  // override this to avoid materializing an intermediate std::string. The
+  // default deliberately preserves the historical invoke() contract.
+  // Neither pointer may be retained; valuep may be null only when valuelen is
+  // zero.
+  virtual bool invoke_bytes(const char *keyp, size_t keylen,
+                            const char *valuep, size_t valuelen) {
+    std::string value;
+    if (valuelen != 0)
+      value.assign(valuep, valuelen);
+    return invoke(keyp, keylen, value);
+  }
+
+  // Upper bound on the number of records the caller can consume. Backends
+  // that materialize scans (notably the Rust STO adapter) use this to avoid
+  // walking and copying the rest of a range after invoke() would stop. The
+  // default preserves the historical streaming/unbounded contract.
+  virtual size_t max_records_hint() const {
+    return std::numeric_limits<size_t>::max();
+  }
 };
 
 // Spellings for the DSL's raw-pointer types (`*mut c_void` etc.).
@@ -93,12 +117,13 @@ pub trait OrderedIndex {
 
 // The transactional ops. txn is the opaque handle from
 // abstract_db::new_txn (thread-local Sto state in the mbta backend).
-// Unlike the non-txn surface, values passed to put/insert here must
-// be mako::Encode()'d by the caller and outlive the commit (the
-// backend stores a pointer into the caller's buffer). get covers a
-// point read; scan/rscan mirror the non-txn ranges; scanRemoteOne is
-// the remote-table single-match range read used by the txn'd remote
-// path.
+// Unlike the non-txn surface, values passed here must be mako::Encode()'d.
+// A put value must keep the same address and bytes until commit or abort; a
+// backend may retain that pointer in its transaction write set. Existing
+// loaders reuse insert buffers before commit, so an implementation that
+// defers insert publication must copy its value during tx_insert. get covers
+// a point read; scan/rscan mirror the non-txn ranges; scanRemoteOne is the
+// remote-table single-match range read used by the txn'd remote path.
 pub trait TxnOrderedIndex: OrderedIndex {
     fn tx_get(&mut self, txn: *mut c_void, key: lcdf::Str, value: &mut std::string, max_bytes_read: usize) -> bool;
     fn tx_put(&mut self, txn: *mut c_void, key: lcdf::Str, value: &std::string);
@@ -220,6 +245,174 @@ template <class U> class FullOrderedIndexAdapterRefMut;
  * subclasses keep compiling verbatim.
  */
 using abstract_ordered_index = FullOrderedIndex;
+
+// Optional fixed-width point-read extension. Keys are packed without padding
+// and callbacks observe at most max_bytes_read bytes of each logical
+// (metadata-stripped) value in input order. nullptr denotes absence. The
+// callback is synchronous and must not retain current_value. This extension is
+// deliberately opt-in: unsupported backends keep their literal scalar paths,
+// including any backend-specific per-get control and failure bookkeeping.
+class oi_fixed_read_callback {
+public:
+  virtual ~oi_fixed_read_callback() noexcept(false) {}
+  virtual void invoke(size_t index, const char *current_value,
+                      size_t current_value_length) = 0;
+};
+
+class TxnFixedReadCapability {
+public:
+  virtual ~TxnFixedReadCapability() noexcept(false) {}
+  virtual void tx_visit_fixed(c_void *txn, const char *keys,
+                              size_t key_width, size_t key_count,
+                              size_t max_bytes_read,
+                              oi_fixed_read_callback &callback) = 0;
+
+protected:
+  TxnFixedReadCapability() = default;
+};
+
+// Runs `invoke` only for an opted-in backend. The owning abstract_db supplies
+// this pointer through its default-null capability hook, so an unsupported
+// backend never performs RTTI and key packing remains inside the callable.
+template <class Invoke>
+inline bool tx_visit_fixed_if_supported(TxnFixedReadCapability *capability,
+                                        Invoke &&invoke) {
+  if (capability != nullptr) {
+    std::forward<Invoke>(invoke)(*capability);
+    return true;
+  }
+  return false;
+}
+
+// Optional fixed-width mutation extension. A put result references bytes that
+// are already encoded according to tx_put's value convention. The referenced
+// string remains caller-owned and is copied synchronously by the backend.
+enum class oi_fixed_mutation_action : uint8_t { keep, put, remove };
+
+class oi_fixed_mutation_result {
+public:
+  static oi_fixed_mutation_result keep() {
+    return oi_fixed_mutation_result(oi_fixed_mutation_action::keep, nullptr);
+  }
+  static oi_fixed_mutation_result put(
+      const std::string &encoded_replacement) {
+    return oi_fixed_mutation_result(oi_fixed_mutation_action::put,
+                                    &encoded_replacement);
+  }
+  static oi_fixed_mutation_result remove() {
+    return oi_fixed_mutation_result(oi_fixed_mutation_action::remove,
+                                    nullptr);
+  }
+
+  oi_fixed_mutation_action action() const { return action_; }
+  const std::string *replacement() const { return replacement_; }
+
+private:
+  oi_fixed_mutation_result(oi_fixed_mutation_action action,
+                           const std::string *replacement)
+      : action_(action), replacement_(replacement) {}
+
+  oi_fixed_mutation_action action_;
+  const std::string *replacement_;
+};
+
+class oi_fixed_modify_callback {
+public:
+  virtual ~oi_fixed_modify_callback() noexcept(false) {}
+  virtual oi_fixed_mutation_result invoke(size_t index,
+                                           const char *current_value,
+                                           size_t current_value_length) = 0;
+};
+
+class TxnFixedModifyCapability {
+public:
+  virtual ~TxnFixedModifyCapability() noexcept(false) {}
+  virtual void tx_modify_fixed(c_void *txn, const char *keys,
+                               size_t key_width, size_t key_count,
+                               oi_fixed_modify_callback &callback) = 0;
+
+protected:
+  TxnFixedModifyCapability() = default;
+};
+
+// Like the read extension, unsupported backends execute no callback and no
+// hidden scalar operations. The workload owns its literal fallback path.
+template <class Invoke>
+inline bool tx_modify_fixed_if_supported(TxnFixedModifyCapability *capability,
+                                         Invoke &&invoke) {
+  if (capability != nullptr) {
+    std::forward<Invoke>(invoke)(*capability);
+    return true;
+  }
+  return false;
+}
+
+// Optional fixed-width put/insert extension. Encoded values use tx_put's
+// storage convention and remain caller-owned; an implementing backend copies
+// every staged value before returning. Insert mode preserves present values,
+// processes the complete input in order, and reports the first duplicate.
+enum class oi_fixed_put_mode : uint8_t { upsert, insert };
+
+struct oi_fixed_put_result {
+  size_t inserted;
+  size_t first_duplicate;
+
+  bool has_duplicate() const {
+    return first_duplicate != std::numeric_limits<size_t>::max();
+  }
+};
+
+class TxnFixedPutCapability {
+public:
+  virtual ~TxnFixedPutCapability() noexcept(false) {}
+  virtual oi_fixed_put_result
+  tx_put_fixed(c_void *txn, const char *keys, size_t key_width,
+               size_t key_count, const std::string_view *encoded_values,
+               oi_fixed_put_mode mode) = 0;
+
+protected:
+  TxnFixedPutCapability() = default;
+};
+
+template <class Invoke>
+inline bool tx_put_fixed_if_supported(TxnFixedPutCapability *capability,
+                                      Invoke &&invoke) {
+  if (capability != nullptr) {
+    std::forward<Invoke>(invoke)(*capability);
+    return true;
+  }
+  return false;
+}
+
+// Optional heterogeneous INSERT extension. Each key and encoded value remains
+// caller-owned and is copied synchronously. Operations execute in input order;
+// duplicates are unchanged but do not prevent later positions from staging.
+struct oi_insert_operation {
+  FullOrderedIndex *table;
+  std::string_view key;
+  std::string_view encoded_value;
+};
+
+class TxnInsertBatchCapability {
+public:
+  virtual ~TxnInsertBatchCapability() noexcept(false) {}
+  virtual oi_fixed_put_result
+  tx_insert_many(c_void *txn, const oi_insert_operation *operations,
+                 size_t operation_count) = 0;
+
+protected:
+  TxnInsertBatchCapability() = default;
+};
+
+template <class Invoke>
+inline bool tx_insert_many_if_supported(TxnInsertBatchCapability *capability,
+                                        Invoke &&invoke) {
+  if (capability != nullptr) {
+    std::forward<Invoke>(invoke)(*capability);
+    return true;
+  }
+  return false;
+}
 
 // ---------------------------------------------------------------------------
 // Convenience FREE functions (deliberately not members: free-function

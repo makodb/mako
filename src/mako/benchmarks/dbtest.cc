@@ -38,12 +38,14 @@ static void parse_command_line_args(int argc,
       {"sync-dir"                   , required_argument , 0                          , 'S'} ,
       {"replication"                , required_argument , 0                          , 'R'} ,
       {"startup-timeout-sec"        , required_argument , 0                          , 'T'} ,
+      {"runtime"                    , required_argument , 0                          , 'u'} ,
+      {"storage-engine"             , required_argument , 0                          , 'E'} ,
       {"is-micro"                   , no_argument       , &is_micro                  ,   1} ,
       {"is-replicated"              , no_argument       , &is_replicated             ,   1} ,
       {0, 0, 0, 0}
     };
     int option_index = 0;
-    int c = getopt_long(argc, argv, "t:g:q:F:P:N:L:C:Y:S:R:T:", long_options, &option_index);
+    int c = getopt_long(argc, argv, "t:g:q:F:P:N:L:C:Y:S:R:T:u:E:", long_options, &option_index);
     if (c == -1)
       break;
 
@@ -125,6 +127,22 @@ static void parse_command_line_args(int argc,
       ALWAYS_ASSERT(parsed >= 0 && parsed <= 86400);
       startup_timeout_sec = static_cast<int>(parsed);
       startup_timeout_explicit = true;
+      }
+      break;
+
+    case 'u': {
+      char* endptr = nullptr;
+      unsigned long parsed = strtoul(optarg, &endptr, 10);
+      ALWAYS_ASSERT(endptr != optarg && *endptr == '\0');
+      ALWAYS_ASSERT(parsed > 0 && parsed <= 86400);
+      BenchmarkConfig::getInstance().setRuntime(parsed);
+      }
+      break;
+
+    case 'E': {
+      const string engine(optarg);
+      ALWAYS_ASSERT(engine == "cpp" || engine == "rust");
+      BenchmarkConfig::getInstance().setStorageEngine(engine);
       }
       break;
 
@@ -422,6 +440,16 @@ main(int argc, char **argv)
   // Parse command line arguments
   parse_command_line_args(argc, argv, is_micro, is_replicated, startup_timeout_sec, startup_timeout_explicit,
                           site_name, paxos_config_file, local_shards_str, replication_type);
+
+#if defined(MAKO_RUST_STO_TPCC)
+  benchConfig.setEmitTpccResult(true);
+#else
+  if (benchConfig.getStorageEngine() != "cpp") {
+    cerr << "[ERROR] This dbtest binary has no Rust STO TPC-C adapter; "
+            "use the sto_tpcc_bench target." << endl;
+    return 2;
+  }
+#endif
 
   // Keep dbtest CLI responsive to process-level termination signals (SIGTERM/SIGINT),
   // which are commonly used by timeout/docker stop/script cleanup flows.

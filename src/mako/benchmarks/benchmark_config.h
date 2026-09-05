@@ -121,6 +121,11 @@ class BenchmarkConfig {
       double cpu_limit_percent_;      // 0.0-100.0, 0 = no limit
       uint32_t throttle_cycle_ms_;    // Duty cycle period in ms
 
+      // Selected by matched storage-comparison binaries. Ordinary dbtest
+      // builds accept only the native C++ default.
+      std::string storage_engine_{"cpp"};
+      bool emit_tpcc_result_{false};
+
       // Watermark tracking for latency measurements
       std::vector<std::pair<uint32_t, uint32_t>> advanceWatermarkTracker_;
 
@@ -188,6 +193,8 @@ class BenchmarkConfig {
       int getIsMicro() const { return is_micro_; }
       // @safe
       int getIsReplicated() const { return is_replicated_; }
+      const std::string& getStorageEngine() const { return storage_engine_; }
+      bool getEmitTpccResult() const { return emit_tpcc_result_; }
       // @unsafe: returns std::string by value
       std::string getPaxosProcName() const { return paxos_proc_name_; }
       // @safe
@@ -241,6 +248,8 @@ class BenchmarkConfig {
       void setUseHashtable(int use) { use_hashtable_ = use; }
       void setIsMicro(int micro) { is_micro_ = micro; }
       void setIsReplicated(int replicated) { is_replicated_ = replicated; }
+      void setStorageEngine(const std::string& engine) { storage_engine_ = engine; }
+      void setEmitTpccResult(bool emit) { emit_tpcc_result_ = emit; }
       void setPaxosProcName(std::string paxos_proc_name) { paxos_proc_name_ = paxos_proc_name; setCluster(paxos_proc_name); setClusterRole(mako::convertCluster(paxos_proc_name));}
       void setPaxosConfigFile(const std::vector<std::string>& paxos_config_file) { paxos_config_file_ = paxos_config_file; }
       

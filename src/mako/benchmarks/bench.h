@@ -297,6 +297,11 @@ public:
     return (limit == -1) || (++n < size_t(limit));
   }
 
+  size_t max_records_hint() const override {
+    return limit == -1 ? std::numeric_limits<size_t>::max()
+                       : static_cast<size_t>(limit);
+  }
+
   typedef std::pair<std::string, std::string> kv_pair;
   std::vector<kv_pair> values;
 
@@ -318,16 +323,32 @@ public:
       const char *keyp, size_t keylen,
       const std::string &value)
   {
+    return invoke_key(keyp, keylen);
+  }
+
+  bool invoke_bytes(const char *keyp, size_t keylen, const char *,
+                    size_t) override
+  {
+    return invoke_key(keyp, keylen);
+  }
+
+  inline size_t size() const { return n; }
+  inline std::string &kstr() { return *k; }
+
+  size_t max_records_hint() const override {
+    return limit == -1 ? std::numeric_limits<size_t>::max()
+                       : static_cast<size_t>(limit);
+  }
+
+private:
+  bool invoke_key(const char *keyp, size_t keylen)
+  {
     INVARIANT(limit == -1 || n < size_t(limit));
     k->assign(keyp, keylen);
     ++n;
     return (limit == -1) || (n < size_t(limit));
   }
 
-  inline size_t size() const { return n; }
-  inline std::string &kstr() { return *k; }
-
-private:
   ssize_t limit;
   size_t n;
   std::string *k;
@@ -353,6 +374,30 @@ public:
       const char *keyp, size_t keylen,
       const std::string &value)
   {
+    return invoke_value(keyp, keylen, value.data(), value.size());
+  }
+
+  bool invoke_bytes(const char *keyp, size_t keylen, const char *valuep,
+                    size_t valuelen) override
+  {
+    return invoke_value(keyp, keylen, valuep, valuelen);
+  }
+
+  inline size_t
+  size() const
+  {
+    return values.size();
+  }
+
+  size_t max_records_hint() const override { return N; }
+
+  typedef std::pair<const std::string *, const std::string *> kv_pair;
+  typename util::vec<kv_pair, N>::type values;
+
+private:
+  bool invoke_value(const char *keyp, size_t keylen, const char *valuep,
+                    size_t valuelen)
+  {
     INVARIANT(n < N);
     INVARIANT(arena);
 
@@ -360,7 +405,10 @@ public:
     // to transient strings owned by lower-level scan implementations.
     std::string *const v_px = arena->next();
     INVARIANT(v_px && v_px->empty());
-    v_px->assign(value);
+    if (valuelen == 0)
+      v_px->clear();
+    else
+      v_px->assign(valuep, valuelen);
 
     if (ignore_key) {
       values.emplace_back(nullptr, v_px);
@@ -373,16 +421,6 @@ public:
     return ++n < N;
   }
 
-  inline size_t
-  size() const
-  {
-    return values.size();
-  }
-
-  typedef std::pair<const std::string *, const std::string *> kv_pair;
-  typename util::vec<kv_pair, N>::type values;
-
-private:
   size_t n;
   str_arena *arena;
   bool ignore_key;

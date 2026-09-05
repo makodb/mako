@@ -1,0 +1,1 @@
+BENCH_RESULT={"engine":"rust-sto-masstree","threads":32,"keyspace":100000,"ops_per_txn":10,"write_percent":0,"warmup_ms":5000,"duration_ms":1000,"seed":996,"commits":103922,"attempts":103922,"aborts":0,"logical_ops":1039220,"elapsed_ns":1000124131,"txn_per_sec":103909.101659,"ops_per_sec":1039091.016593,"checksum":52112112107}

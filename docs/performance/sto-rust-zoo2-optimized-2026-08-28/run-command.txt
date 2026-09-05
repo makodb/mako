@@ -1,0 +1,17 @@
+python3 /home/users/shuai/mako/.claude/worktrees/sto-rust/scripts/run_sto_masstree_compare.py \
+  --cpp /var/tmp/mako-sto-bench-20260827.J2TZj6/build/sto_masstree_cpp_bench \
+  --rust /var/tmp/mako-sto-bench-20260827.J2TZj6/rust-target-final-6936abb30000-fatlto/release/sto_masstree_compare \
+  --output-dir /var/tmp/mako-sto-bench-20260827.J2TZj6/final-cpp-rust-20260828-a \
+  --threads 1,2,4,8,16,32,64 \
+  --scenario read10:10:0 \
+  --scenario rw95_10:10:5 \
+  --scenario rw50_10:10:50 \
+  --repetitions 3 \
+  --keyspace 100000 \
+  --warmup-ms 1000 \
+  --duration-ms 5000 \
+  --seed 1 \
+  --schedule-seed 24301 \
+  --physical-cpus 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63 \
+  --taskset /usr/bin/taskset \
+  --timeout-seconds 600

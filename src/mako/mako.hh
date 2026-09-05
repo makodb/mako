@@ -2,7 +2,9 @@
 #define _MAKO_COMMON_H_
 
 #include <fstream>
+#include <limits>
 #include <sstream>
+#include <stdexcept>
 #include <vector>
 #include <utility>
 #include <string>
@@ -25,6 +27,9 @@
 #include "benchmarks/bench.h"
 #include "sto/sync_util.hh"
 #include "storage/mbta_wrapper.hh"
+#if defined(MAKO_RUST_STO_TPCC)
+#include "storage/rust_sto_tpcc_wrapper.hh"
+#endif
 #include "benchmarks/common.h"
 #include "benchmarks/common2.h"
 #include "benchmarks/benchmark_config.h"
@@ -71,6 +76,7 @@ static void print_system_info()
   cerr << "  nshards     : " << benchConfig.getNshards()   << endl;
   cerr << "  is_micro    : " << benchConfig.getIsMicro()   << endl;
   cerr << "  is_replicated : " << benchConfig.getIsReplicated()   << endl;
+  cerr << "  storage_engine : " << benchConfig.getStorageEngine() << endl;
 #ifdef USE_VARINT_ENCODING
   cerr << "  var-encode  : yes"                           << endl;
 #else
@@ -104,6 +110,17 @@ static void print_system_info()
 // Global multi-transport manager (for multi-shard mode)
 static mako::MultiTransportManager* g_multi_transport_manager = nullptr;
 
+static abstract_db* make_benchmark_db() {
+  const auto &engine = BenchmarkConfig::getInstance().getStorageEngine();
+#if defined(MAKO_RUST_STO_TPCC)
+  if (engine == "rust")
+    return new rust_sto_tpcc_wrapper;
+#endif
+  if (engine != "cpp")
+    throw std::runtime_error("unsupported storage engine: " + engine);
+  return new mbta_wrapper;
+}
+
 // Initialize database for a specific shard (multi-shard mode)
 // This allows creating isolated database instances for each shard
 static abstract_db* initShardDB(int shard_idx, bool is_leader, const std::string& cluster_role) {
@@ -113,7 +130,7 @@ static abstract_db* initShardDB(int shard_idx, bool is_leader, const std::string
          shard_idx, cluster_role.c_str(), is_leader);
 
   // Create and initialize database instance for this shard
-  abstract_db *db = new mbta_wrapper;
+  abstract_db *db = make_benchmark_db();
   db->init();
 
   return db;
@@ -149,6 +166,49 @@ static void stopMultiShardTransports() {
   }
 }
 
+static size_t tpcc_allocator_memory_bytes() {
+  static constexpr const char *kEnvironment = "MAKO_TPCC_ALLOCATOR_MEMORY";
+  static constexpr const char *kDefault = "1G";
+  const char *configured = getenv(kEnvironment);
+  const std::string spec = configured == nullptr ? kDefault : configured;
+
+  const bool has_suffix =
+      !spec.empty() &&
+      (spec.back() == 'K' || spec.back() == 'M' || spec.back() == 'G');
+  const size_t digit_count = spec.size() - static_cast<size_t>(has_suffix);
+  if (digit_count == 0 || spec.front() == '0') {
+    throw std::runtime_error("invalid " + std::string(kEnvironment) + ": " +
+                             spec);
+  }
+
+  size_t amount = 0;
+  for (size_t index = 0; index < digit_count; ++index) {
+    const char digit = spec[index];
+    if (digit < '0' || digit > '9') {
+      throw std::runtime_error("invalid " + std::string(kEnvironment) + ": " +
+                               spec);
+    }
+    const size_t value = static_cast<size_t>(digit - '0');
+    if (amount > (std::numeric_limits<size_t>::max() - value) / 10) {
+      throw std::runtime_error(std::string(kEnvironment) +
+                               " exceeds size_t: " + spec);
+    }
+    amount = amount * 10 + value;
+  }
+
+  size_t multiplier = 1;
+  if (has_suffix) {
+    multiplier = static_cast<size_t>(1) << (spec.back() == 'G'   ? 30
+                                            : spec.back() == 'M' ? 20
+                                                                 : 10);
+  }
+  if (amount > std::numeric_limits<size_t>::max() / multiplier) {
+    throw std::runtime_error(std::string(kEnvironment) +
+                             " exceeds size_t: " + spec);
+  }
+  return amount * multiplier;
+}
+
 // init all threads (single-shard mode, backward compatible)
 static abstract_db* initWithDB() {
   auto& benchConfig = BenchmarkConfig::getInstance();
@@ -156,7 +216,7 @@ static abstract_db* initWithDB() {
   //initialize_rust_wrapper();
 
   // initialize the numa allocator
-  size_t numa_memory = mako::parse_memory_spec("1G");
+  size_t numa_memory = tpcc_allocator_memory_bytes();
   if (numa_memory > 0) {
     const size_t maxpercpu = util::iceil(
         numa_memory / benchConfig.getNthreads(), ::allocator::GetHugepageSize());
@@ -173,7 +233,7 @@ static abstract_db* initWithDB() {
                                benchConfig.getCluster(),
                                benchConfig.getConfig());
 
-  abstract_db *db = new mbta_wrapper; // on the leader replica
+  abstract_db *db = make_benchmark_db(); // on the leader replica
   db->init() ;
   return db;
 }

@@ -42,10 +42,7 @@ static event_counter evt_silo_runtime_region_usage("silo_runtime_region_usage_by
 // @safe
 SiloRuntime::SiloRuntime()
     : runtime_id_(s_next_runtime_id_.fetch_add(1, std::memory_order_relaxed)),
-      // @unsafe {
-      // MasstreeContext is non-copyable/non-movable, so use raw pointer constructor
-      masstree_ctx_(new MasstreeContext()) {
-      // }
+      masstree_ctx_(rusty::Box<MasstreeContext>::emplace()) {
     // MasstreeContext is created inline and owned by this SiloRuntime
 }
 
