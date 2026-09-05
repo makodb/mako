@@ -133,9 +133,10 @@ if(DEFINED MAKO_STO_TPCC_NATIVE_TEST
     endif()
 
     # The FFI crate's unit-test binary retains references from its exported
-    # entry points into the native Masstree adapter. Link and run it here with
-    # the authoritative CMake archives. Serial execution also keeps the
-    # process-wide native runtime deterministic across unit cases.
+    # entry points into the native Masstree adapter, so link it here with the
+    # authoritative CMake archives. Several unit cases create their own native
+    # runtime and table set. The native registries have process-wide lifetimes,
+    # so discover the cases first and run each one in a fresh process.
     execute_process(
         COMMAND "${CMAKE_COMMAND}" -E env ${_native_environment}
             "${MAKO_CARGO_EXECUTABLE}" test
@@ -144,14 +145,58 @@ if(DEFINED MAKO_STO_TPCC_NATIVE_TEST
             -p sto-tpcc-ffi
             --lib
             --
-            --test-threads=1
+            --list
+            --format terse
         COMMAND_ECHO STDOUT
-        RESULT_VARIABLE _sto_tpcc_unit_result
+        RESULT_VARIABLE _sto_tpcc_unit_list_result
+        OUTPUT_VARIABLE _sto_tpcc_unit_list_output
+        ERROR_VARIABLE _sto_tpcc_unit_list_error
     )
-    if(NOT _sto_tpcc_unit_result EQUAL 0)
+    if(NOT _sto_tpcc_unit_list_result EQUAL 0)
         message(FATAL_ERROR
-            "Rust STO TPC-C FFI unit tests failed with exit code ${_sto_tpcc_unit_result}")
+            "Could not list Rust STO TPC-C FFI unit tests (exit code "
+            "${_sto_tpcc_unit_list_result}):\n${_sto_tpcc_unit_list_error}"
+            "${_sto_tpcc_unit_list_output}")
     endif()
+
+    string(REPLACE "\r\n" "\n" _sto_tpcc_unit_list_output
+        "${_sto_tpcc_unit_list_output}")
+    string(REPLACE "\n" ";" _sto_tpcc_unit_list_lines
+        "${_sto_tpcc_unit_list_output}")
+    set(_sto_tpcc_unit_tests "")
+    foreach(_sto_tpcc_unit_line IN LISTS _sto_tpcc_unit_list_lines)
+        string(STRIP "${_sto_tpcc_unit_line}" _sto_tpcc_unit_line)
+        if(_sto_tpcc_unit_line MATCHES "^(.+): test$")
+            list(APPEND _sto_tpcc_unit_tests "${CMAKE_MATCH_1}")
+        endif()
+    endforeach()
+    if(NOT _sto_tpcc_unit_tests)
+        message(FATAL_ERROR
+            "Cargo listed no Rust STO TPC-C FFI unit tests:\n"
+            "${_sto_tpcc_unit_list_output}")
+    endif()
+
+    foreach(_sto_tpcc_unit_test IN LISTS _sto_tpcc_unit_tests)
+        execute_process(
+            COMMAND "${CMAKE_COMMAND}" -E env ${_native_environment}
+                "${MAKO_CARGO_EXECUTABLE}" test
+                --manifest-path "${MAKO_RUST_MANIFEST}"
+                --locked
+                -p sto-tpcc-ffi
+                --lib
+                "${_sto_tpcc_unit_test}"
+                --
+                --exact
+                --test-threads=1
+            COMMAND_ECHO STDOUT
+            RESULT_VARIABLE _sto_tpcc_unit_result
+        )
+        if(NOT _sto_tpcc_unit_result EQUAL 0)
+            message(FATAL_ERROR
+                "Rust STO TPC-C FFI unit test ${_sto_tpcc_unit_test} failed "
+                "with exit code ${_sto_tpcc_unit_result}")
+        endif()
+    endforeach()
 
     execute_process(
         COMMAND "${CMAKE_COMMAND}" -E env ${_native_environment}
