@@ -18,5 +18,9 @@ arc-swap = "1.7"
 masstree = { path = "../masstree" }
 sto-core = { path = "../sto-core" }
 
+[dev-dependencies]
+mako-history = { path = "../mako-history" }
+sto-test-datatypes = { path = "../sto-test-datatypes" }
+
 [lints.rust]
 unsafe_code = "deny"

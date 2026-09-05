@@ -1424,6 +1424,12 @@ if(MAKO_CARGO_EXECUTABLE)
             "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-masstree/tests/native_integration.rs")
     endif()
 
+    set(_MAKO_STO_MASSTREE_HISTORY_TEST "")
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-masstree/tests/history_oracle.rs")
+        set(_MAKO_STO_MASSTREE_HISTORY_TEST
+            "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-masstree/tests/history_oracle.rs")
+    endif()
+
     set(_MAKO_STO_TPCC_NATIVE_TEST "")
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-tpcc-ffi/tests/native_ffi.rs")
         set(_MAKO_STO_TPCC_NATIVE_TEST
@@ -1441,6 +1447,7 @@ if(MAKO_CARGO_EXECUTABLE)
             "-DMAKO_LOADER_PATH_VARIABLE=${_MAKO_MTREE_LOADER_PATH_VARIABLE}"
             "-DMAKO_NATIVE_LIBS=${MAKO_MTREE_RUST_NATIVE_LIBS}"
             "-DMAKO_STO_NATIVE_TEST=${_MAKO_STO_MASSTREE_NATIVE_TEST}"
+            "-DMAKO_STO_HISTORY_TEST=${_MAKO_STO_MASSTREE_HISTORY_TEST}"
             "-DMAKO_STO_TPCC_NATIVE_TEST=${_MAKO_STO_TPCC_NATIVE_TEST}"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunRustMasstreeNativeIntegration.cmake"
         DEPENDS check_mtree_abi_exports masstree

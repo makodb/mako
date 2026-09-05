@@ -17,6 +17,9 @@
 mod direct_record;
 mod record_prefetch;
 
+#[cfg(test)]
+mod history_tests;
+
 #[cfg(feature = "fixed-u64")]
 mod fixed_u64;
 

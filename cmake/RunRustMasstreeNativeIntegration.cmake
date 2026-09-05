@@ -76,9 +76,9 @@ if(NOT _masstree_result EQUAL 0)
         "Rust Masstree native integration failed with exit code ${_masstree_result}")
 endif()
 
-# Keep the lower integration target forward-compatible with the transactional
-# adapter without making a not-yet-present test an error. Reconfiguring after
-# that test file is added automatically enables this second command.
+# Run each transactional-adapter suite in its own process. Native runtime and
+# worker registrations have process-wide lifetimes, so process isolation keeps
+# one suite's registrations out of the next suite's fixed worker budget.
 if(DEFINED MAKO_STO_NATIVE_TEST
         AND NOT "${MAKO_STO_NATIVE_TEST}" STREQUAL "")
     if(NOT EXISTS "${MAKO_STO_NATIVE_TEST}")
@@ -99,6 +99,29 @@ if(DEFINED MAKO_STO_NATIVE_TEST
     if(NOT _sto_masstree_result EQUAL 0)
         message(FATAL_ERROR
             "Rust STO Masstree native integration failed with exit code ${_sto_masstree_result}")
+    endif()
+endif()
+
+if(DEFINED MAKO_STO_HISTORY_TEST
+        AND NOT "${MAKO_STO_HISTORY_TEST}" STREQUAL "")
+    if(NOT EXISTS "${MAKO_STO_HISTORY_TEST}")
+        message(FATAL_ERROR
+            "Configured sto-masstree history test does not exist: ${MAKO_STO_HISTORY_TEST}")
+    endif()
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" -E env ${_native_environment}
+            "${MAKO_CARGO_EXECUTABLE}" test
+            --manifest-path "${MAKO_RUST_MANIFEST}"
+            --locked
+            -p sto-masstree
+            --all-features
+            --test history_oracle
+        COMMAND_ECHO STDOUT
+        RESULT_VARIABLE _sto_masstree_history_result
+    )
+    if(NOT _sto_masstree_history_result EQUAL 0)
+        message(FATAL_ERROR
+            "Rust STO Masstree history oracle failed with exit code ${_sto_masstree_history_result}")
     endif()
 endif()
 

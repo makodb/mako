@@ -4090,20 +4090,55 @@ insert/delete/resurrection, hook rejection, and abort cleanup. An independent
 history checker verifies strict serializability; an additional checker is used
 when opacity is enabled.
 
-The current pure-Rust reference suite implements the bounded checker in
-[`strict_serializability.rs`](../../crates/sto-test-datatypes/tests/strict_serializability.rs).
-For each of 128 seeded workloads, three workers run two transactions over
-distinct hash-map buckets. The checker enumerates legal serial orders of
-committed transactions, respects invocation/response real-time edges, validates
-every observed result, and compares the replayed final state with storage. Its
-own fixtures reject both a write-skew cycle and a real-time-order violation.
-Deterministic litmus tests in
+The reusable, implementation-independent checker lives in
+[`mako-history`](../../crates/mako-history). It validates complete call
+intervals, operation/result type agreement, exact binary values returned by
+point mutations, ordered scan rows, and the independently observed final
+state. It then searches serial orders of committed transactions while enforcing
+response-before-begin real-time edges. A bounded search is reported as
+inconclusive when its node budget is exhausted, never as success. Checker
+fixtures accept legal read-your-writes histories and reject write-skew,
+phantom, stale-read, malformed-interval, and corrupted-prior-value histories.
+Replay diagnostics encode all keys and values in hexadecimal.
+
+The original pure-Rust reference suite in
+[`strict_serializability.rs`](../../crates/sto-test-datatypes/tests/strict_serializability.rs)
+still runs 128 seeded workloads with three workers and two transactions per
+worker. Deterministic litmus tests in
 [`isolation_litmus.rs`](../../crates/sto-test-datatypes/tests/isolation_litmus.rs)
 also cover write skew, dirty-read prevention with explicit abort, and a
-fractured read across two adapter types. Aborted observations are excluded from
-the serial-order search because the implemented Serializable profile is
-nonopaque. General concurrent differential histories across the native
-Masstree layers remain future work.
+fractured read across two adapter types.
+
+The transactional Masstree suite in
+[`history_tests.rs`](../../crates/sto-masstree/src/history_tests.rs) applies the
+independent checker to both registry-ID and direct-token memory tables. Each
+mode runs the same 128 by three by two seeded schedule over `get`, `put`,
+conditional insert, remove, resurrection, and bounded forward and reverse
+scans. The key and value corpus includes empty, NUL-containing, and high-byte
+data. Exact full scans establish each final state. Committed-only coverage,
+commit-count, and overlapping-interval thresholds prevent an all-abort or
+effectively sequential run from passing. A deterministic overlapping history
+also requires a committed reader to observe a committed writer's value and
+requires the oracle witness to order the writer before the reader. A separate
+transaction commits and aborts a Masstree update together with a `TxnVec`
+update to pin cross-adapter atomicity.
+
+The opt-in
+[`history_oracle.rs`](../../crates/sto-masstree/tests/history_oracle.rs)
+integration test runs an analogous 128-seed schedule through the public
+`sto-masstree` API and the real Masstree C ABI in both table modes. Three
+persistent worker threads are reused across all seeds in each mode because
+native worker registrations have process lifetime. Every seed must contain an
+overlapping committed writer-to-reader dependency, and the oracle witness must
+order that writer before the reader. Every operation category must also occur
+in the committed projection. The
+`rust_masstree_native_integration` CMake target runs this test in its own
+process after the lower Masstree and transactional-adapter suites.
+
+Aborted observations are excluded from these serial-order searches because the
+implemented Serializable profile is nonopaque. Running one identical corpus
+through direct C++ MassTrans, raw `mako_local_*`, and the upper Rust wrapper is
+still required to complete the five-backend differential ladder above.
 
 ### 18.5 Performance ladder
 
@@ -4179,11 +4214,12 @@ follows:
 | Raw stable declarations | [`crates/mtree-sys`](../../crates/mtree-sys) | Implemented for ABI version 1. |
 | Native C boundary | [`mtree_abi.h`](../../src/mako/storage/mtree_abi.h) and [`mtree_abi.cc`](../../src/mako/storage/mtree_abi.cc) | Implemented for scalar/scoped/strided point operations, worker-wide RCU retention, and copied bounded scans. |
 | Safe runtime, worker, tree, point, and scan facade | [`crates/masstree`](../../crates/masstree) | Implemented; native cursors, pointers, and RCU guards remain private. |
-| Transactional records, tiered atomic/shared values, tombstones, quotas, physical-directory generation, and scan overlay | [`crates/sto-masstree`](../../crates/sto-masstree) | Implemented with exact-token write acquisition, final read/generation validation, scan-only directory validation, and per-record coverage of existing liveness changes. |
+| Transactional records, tiered atomic/shared values, tombstones, quotas, physical-directory generation, and scan overlay | [`crates/sto-masstree`](../../crates/sto-masstree) | Implemented with exact-token write acquisition, final read/generation validation, scan-only directory validation, per-record coverage of existing liveness changes, and seeded history checks in both registry-ID and direct-token modes. |
 | Closed C++ TPC-C bridge, resolved-token cache policies, and fused workload capabilities | [`crates/sto-tpcc-ffi`](../../crates/sto-tpcc-ffi), [`rust_sto_tpcc_wrapper.cc`](../../src/mako/storage/rust_sto_tpcc_wrapper.cc), and [`tpcc_fixed_batch.h`](../../src/mako/benchmarks/tpcc_fixed_batch.h) | Implemented with checked public scalar operations plus wrapper-private fixed-layout Payment prefix, full Payment, exact-home NewOrder, local Delivery, and the local StockLevel tail. Commit-owning calls resolve their active attempt; ineligible modes retain the scalar path. |
 | Optional all-present fixed-`u64` point specialization | [`fixed_u64.rs`](../../crates/sto-masstree/src/fixed_u64.rs) | Implemented behind `fixed-u64`: private fresh directory, permanent loader seal, 16-byte atomic record, terminal reads, and exact-unique point updates; liveness changes, scans, and miss fallback are intentionally unsupported. |
 | Upper metadata reservation and pre-install coordination | [`hook.rs`](../../crates/sto-core/src/hook.rs) | Implemented as an optional caller-owned `CommitHook`. |
 | Pure-Rust reference adapters and bounded isolation checks | [`crates/sto-test-datatypes`](../../crates/sto-test-datatypes) | Implemented for map, vector, and queue composition, deterministic isolation litmus tests, and model-checked strict-serializability histories. |
+| Independent binary-safe transaction-history oracle | [`crates/mako-history`](../../crates/mako-history) | Implemented with exact interval and result validation, bounded strict-serializability and opacity search, final-state checking, negative fixtures, and hexadecimal replay diagnostics. |
 | Opacity, graceful native shutdown, and upper backend cutover | Sections 12, 15.5, 17, and 19.2 | Deferred; callers receive explicit unsupported/capability outcomes rather than silent downgrade. |
 | Bounded point-workload performance characterization | [`sto-rust-zoo2-optimized-2026-08-28`](../performance/sto-rust-zoo2-optimized-2026-08-28/README.md) | Complete on `zoo-002`; production-wide budget acceptance remains deferred. |
 
@@ -4192,7 +4228,9 @@ workspace suite in debug and release modes on Rust 1.95, strict Clippy and
 rustdoc builds, C11 header compilation, the exact 44-symbol native allowlist,
 required feature mask `0x3f7f`, export-manifest FNV-1a fingerprint
 `0x8275e6faa88a4fe0`, the raw ABI suite, native safe-wrapper and
-transactional-adapter integration. The current feature-enabled suite also pins
+transactional-adapter integration. It also includes independent-oracle
+self-tests and seeded in-memory and real-C-ABI Masstree histories in both
+registry-ID and direct-token modes. The current feature-enabled suite also pins
 the terminal API/typestate failure protocol and fixed-`u64` record layout,
 loader seal, snapshot validation, stale-writer behavior, miss/duplicate
 outcomes, public ownership surface, real-native load/update/read path, resolved
