@@ -413,24 +413,20 @@ host:
 
 ## Advanced Options
 
-### Mode Configuration *(To be implemented)*
+### Replication Mode Configuration
 
 ```yaml
 mode:
-  protocol: mako      # Transaction protocol
-  storage: masstree   # Storage engine
-  persistence: rocksdb  # Persistence backend
+  ab: multi_paxos     # multi_paxos (or paxos), raft, or none
+  batch: false
+  retry: 20
 ```
 
-**Protocols** *(To be implemented - most under development)*:
-- `mako` - Speculative 2PC (default)
-- `2pl` - Two-phase locking
-- `occ` - Optimistic concurrency control
-- `paxos` - Paxos-based replication
-
-**Storage engines**:
-- `masstree` - In-memory B+tree (default)
-- `rocksdb` - Persistent storage *(To be implemented)*
+`mode` selects replication only. It does not select a transaction protocol,
+storage engine, or persistence backend. Production transactions always use
+STO `Transaction` with MassTrans/Masstree through `mbta_wrapper`. The original
+Silo/NDB transaction engine is retired and cannot be selected. `mode.cc`,
+`mode.protocol`, `mode.storage`, and `mode.persistence` are unsupported.
 
 ### Client Configuration *(To be implemented)*
 

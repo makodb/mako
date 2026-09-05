@@ -6,10 +6,10 @@
 #include "gtest/gtest.h"
 import cluster;   // config/sharding metadata module (was #include "cluster/...")
 #include "sharding_policy_test_util.h"  // make_table_policy / make_policy_set
-// The policy value types serialize via their rrr Serializable save()/load()
+// The policy value types serialize via their srpc Serializable save()/load()
 // methods (BinaryWriteArchive), pulled in transitively by sharding_policy.h.
-// No operator<< / rrr::Marshal.
-#include "rrr/misc/serializable.hpp"
+// No operator<< / srpc::Marshal.
+#include "srpc/misc/serializable.hpp"
 
 namespace janus {
 
@@ -19,17 +19,17 @@ protected:
     void TearDown() override {}
 };
 
-// Round-trip a value type through its rrr Serializable save()/load(): save
+// Round-trip a value type through its srpc Serializable save()/load(): save
 // into a BufferSink, then load from a BufferSource over those bytes.
 template <class T>
 static T serialize_roundtrip(const T& in) {
-    rrr::BufferSink sink;
+    srpc::BufferSink sink;
     {
-        rrr::BinaryWriteArchive w(rrr::make_sink_proxy_buffer(&sink));
+        srpc::BinaryWriteArchive w(srpc::make_sink_proxy_buffer(&sink));
         in.save(w);
     }
-    rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-    rrr::BinaryReadArchive r(rrr::make_source_proxy_buffer(&src));
+    srpc::BufferSource src(sink.bytes.data(), sink.bytes.len());
+    srpc::BinaryReadArchive r(srpc::make_source_proxy_buffer(&src));
     T out;
     out.load(r);
     return out;
@@ -233,10 +233,10 @@ TEST_F(ShardingPolicyTest, ShardingPolicySetSerialization) {
     // inline via the with_shards() factory.
     ShardingPolicySet restored = ShardingPolicySet::with_shards(0);
     {
-        rrr::BufferSink sink;
-        { rrr::BinaryWriteArchive w(rrr::make_sink_proxy_buffer(&sink)); original.save(w); }
-        rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-        rrr::BinaryReadArchive r(rrr::make_source_proxy_buffer(&src));
+        srpc::BufferSink sink;
+        { srpc::BinaryWriteArchive w(srpc::make_sink_proxy_buffer(&sink)); original.save(w); }
+        srpc::BufferSource src(sink.bytes.data(), sink.bytes.len());
+        srpc::BinaryReadArchive r(srpc::make_source_proxy_buffer(&src));
         restored.load(r);
     }
 

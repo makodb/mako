@@ -118,7 +118,7 @@ public:
 ## File Structure
 
 ```
-src/rrr/rpc/
+src/srpc/rpc/
 ├── log_storage.hpp      # LogEntry struct and LogStorage interface (~150 LOC)
 └── memory_log_storage.hpp  # InMemoryLogStorage implementation (~150 LOC)
 ```

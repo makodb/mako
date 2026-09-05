@@ -41,7 +41,7 @@ public:
     // @unsafe - RPC handler; delegates to DoReadConfigKey then replies.
     void ReadConfigKey(const RpcReadConfigKeyRequest& req,
                        RpcReadConfigKeyResponse& resp,
-                       rrr::DeferredReply defer) override {
+                       srpc::DeferredReply defer) override {
         std::string value;
         const bool found = DoReadConfigKey(req.key, &value);
         resp.found = found ? 1 : 0;

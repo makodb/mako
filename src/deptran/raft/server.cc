@@ -6,18 +6,17 @@
 
 #include "server.h"
 // #include "paxos_worker.h"
-#include "exec.h"
 #include "frame.h"
-#include "coordinator.h"
-#include "../classic/tpc_command.h"
+#include "../legacy_raft_log_payload.h"
+#include "../tpc_command.h"
 #include "file_snapshot_manager.hpp"
 #include "replicated_db.h"
 
 import std;
 
 // @external: {
-//   rrr::RandomGenerator::rand_double: [safe, (double, double) -> double]
-//   rrr::RandomGenerator::rand: [safe, (int, int) -> int]
+//   srpc::RandomGenerator::rand_double: [safe, (double, double) -> double]
+//   srpc::RandomGenerator::rand: [safe, (int, int) -> int]
 //   Log_info: [safe, (...) -> void]
 //   Log_debug: [safe, (...) -> void]
 //   Log_warn: [safe, (...) -> void]
@@ -59,8 +58,8 @@ import std;
 //   std::shared_ptr::operator=: [safe, (&'a mut, &'a) -> &'a mut]
 //   std::shared_ptr::get: [safe, (&'a) -> *]
 //   operator bool: [safe, (&'a) -> bool]
-//   rrr::Fiber::create_run: [safe, (...) -> owned]
-//   rrr::Fiber::sleep: [safe, (int) -> void]
+//   srpc::Fiber::create_run: [safe, (...) -> owned]
+//   srpc::Fiber::sleep: [safe, (int) -> void]
 //   Reactor::create_sp_event: [safe, (...) -> owned]
 //   Config::GetConfig: [safe, () -> *]
 //   janus::TpcBatchCommand::AddCmds: [safe, (&'a mut, &'a mut) -> void]
@@ -68,10 +67,10 @@ import std;
 //   std::thread::joinable: [safe, (&'a) -> bool]
 //   std::thread::join: [safe, (&'a mut) -> void]
 //   std::thread::detach: [safe, (&'a mut) -> void]
-//   rrr::IntEvent::set: [safe, (&'a mut, int) -> void]
-//   rrr::IntEvent::wait: [safe, (&'a, int) -> void]
-//   rrr::Event::wait: [safe, (&'a, int) -> void]
-//   rrr::EventStatus::TIMEOUT: [safe, () -> int]
+//   srpc::IntEvent::set: [safe, (&'a mut, int) -> void]
+//   srpc::IntEvent::wait: [safe, (&'a, int) -> void]
+//   srpc::Event::wait: [safe, (&'a, int) -> void]
+//   srpc::EventStatus::TIMEOUT: [safe, () -> int]
 //   janus::View::View: [safe, (...) -> owned]
 //   janus::View::operator=: [safe, (&'a mut, const &'a) -> &'a mut]
 //   janus::TxLogServer::DestroyTx: [safe, (&'a mut, uint64_t) -> void]
@@ -665,73 +664,18 @@ void RaftServer::LogTermChange(const char* reason,
   }
 }
 
-namespace {
-
-// @unsafe
-bool JetpackRecoveryEnabled() {
-  static const bool enabled = []() {
-    const char* flag = std::getenv("MAKO_DISABLE_JETPACK");
-    if (!flag || flag[0] == '\0') {
-      return true;
-    }
-    std::string value(flag);
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
-      return static_cast<char>(std::tolower(c));
-    });
-
-    auto is_true = [](const std::string& v) {
-      return v == "1" || v == "true" || v == "yes" || v == "on";
-    };
-    auto is_false = [](const std::string& v) {
-      return v == "0" || v == "false" || v == "no" || v == "off";
-    };
-
-    if (is_true(value)) {
-      Log_info("[JETPACK-RUNTIME] MAKO_DISABLE_JETPACK={} -> Jetpack recovery disabled", flag);
-      return false;
-    }
-    if (is_false(value)) {
-      return true;
-    }
-
-    Log_info("[JETPACK-RUNTIME] MAKO_DISABLE_JETPACK has unrecognised value '{}'; defaulting to disabled", flag);
-    return false;
-  }();
-  return enabled;
-}
-
-}  // namespace
-
-// @unsafe - raw pointer parameter is bounded (frame outlives server)
-RaftServer::RaftServer(Frame * frame)
+RaftServer::RaftServer()
   : timer_(rusty::Box<Timer>::make(Timer()))  // Initialize Box in member initializer list
 {
-  frame_ = frame ;
+  async_callback_lifetime_->server = this;
+  // RocksDB recovery deserializes polymorphic commands during Setup().  Make
+  // the immutable kind-4 compatibility factory available as soon as a Raft
+  // server exists, before any storage backend can be opened or replayed.
+  EnsureLegacyRaftLogPayloadRegistered();
 #ifdef RAFT_TEST_CORO
   setIsLeader(false);
 #endif
   stop_ = false ;
-}
-
-// @unsafe - raw pointer output params from base class virtual interface
-void RaftServer::OnJetpackPullCmd(const epoch_t& jepoch,
-                                   const epoch_t& oepoch,
-                                   const std::vector<key_t>& keys,
-                                   bool_t* ok,
-                                   epoch_t* reply_jepoch,
-                                   epoch_t* reply_oepoch,
-                                   janus::Command* reply_old_view,
-                                   janus::Command* reply_new_view,
-                                   KeyCmdBatchData& batch) {
-  TxLogServer::OnJetpackPullCmd(jepoch, oepoch, keys, ok, reply_jepoch, reply_oepoch,
-                                reply_old_view, reply_new_view, batch);
-  if (!IsLeader()) {
-    resetTimer("JetpackPullCmd RPC");
-#ifdef RAFT_LEADER_ELECTION_DEBUG
-    // Log_info("[RAFT_TIMER] server {} reset election timer due to JetpackPullCmd (keys={})",
-    //          site_id_, keys.size());
-#endif
-  }
 }
 
 // @unsafe - Election timeout calculation (Time::now and RandomGenerator::rand marked safe via @external)
@@ -816,11 +760,7 @@ void RaftServer::StartApplyThread() {
     uint64_t apply_count = 0;
     auto last_log_time = std::chrono::steady_clock::now();
     while (!stop_ && apply_thread_running_.load()) {
-      // Drain entries from the queue
-      // apply_queue_ holds Command; entry is
-      // pair<slotid_t, Command>.  RuleWitnessGC takes
-      // shared_ptr<Marshallable> so unwrap at the boundary; app_next_
-      // takes Command directly.
+      // Drain entries from the queue.
       std::pair<slotid_t, Command> entry;
       bool got_entry = false;
       size_t queue_size = 0;
@@ -843,7 +783,6 @@ void RaftServer::StartApplyThread() {
                    site_id_, id, queue_size);
         }
         // @unsafe - callback may have side effects
-        RuleWitnessGC(log_entry);
         app_next_(id, log_entry);
         if (id >= 470 && id <= 500) {
           Log_info("[APPLY-THREAD] Site {}: DONE APPLYING entry {}", site_id_, id);
@@ -1066,46 +1005,16 @@ void RaftServer::Setup() {
   // Election timer will be started in Start() method when first command is submitted
 }
 
-// @unsafe - modifies connection state, accesses proxy maps
 void RaftServer::Disconnect(const bool disconnect) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
-  verify(disconnected_ != disconnect);
-  // global map of rpc_par_proxies_ values accessed by partition then by site
-  static map<parid_t, map<siteid_t, map<siteid_t, vector<SiteProxyPair>>>> _proxies{};
-  if (_proxies.find(partition_id_) == _proxies.end()) {
-    _proxies[partition_id_] = {};
-  }
-  RaftCommo *c = (RaftCommo*) commo();
-  if (disconnect) {
-    // Clear any stale proxy data from previous Kill/Restart cycle
-    // This can happen when a server is killed, restarted (with new proxies),
-    // and then killed again - the old _proxies data was never cleared
-    if (_proxies[partition_id_][loc_id_].size() > 0) {
-      Log_info("[DISCONNECT] Clearing stale proxy data for partition {}, site {} (had {} entries)",
-               partition_id_, loc_id_, _proxies[partition_id_][loc_id_].size());
-      _proxies[partition_id_][loc_id_].clear();
-    }
-    verify(c->rpc_par_proxies_.size() > 0);
-    auto sz = c->rpc_par_proxies_.size();
-    _proxies[partition_id_][loc_id_].insert(c->rpc_par_proxies_.begin(), c->rpc_par_proxies_.end());
-    c->rpc_par_proxies_ = {};
-    verify(_proxies[partition_id_][loc_id_].size() == sz);
-    verify(c->rpc_par_proxies_.size() == 0);
-  } else {
-    verify(_proxies[partition_id_][loc_id_].size() > 0);
-    auto sz = _proxies[partition_id_][loc_id_].size();
-    c->rpc_par_proxies_ = {};
-    c->rpc_par_proxies_.insert(_proxies[partition_id_][loc_id_].begin(), _proxies[partition_id_][loc_id_].end());
-    _proxies[partition_id_][loc_id_] = {};
-    verify(_proxies[partition_id_][loc_id_].size() == 0);
-    verify(c->rpc_par_proxies_.size() == sz);
-  }
-  disconnected_ = disconnect;
+  verify(disconnected_.load(std::memory_order_acquire) != disconnect);
+  commo()->SetNetworkEnabled(!disconnect);
+  disconnected_.store(disconnect, std::memory_order_release);
 }
 
 // @safe
 bool RaftServer::IsDisconnected() {
-  return disconnected_;
+  return disconnected_.load(std::memory_order_acquire);
 }
 
 // @safe - read-only leader hint lookup
@@ -1124,38 +1033,27 @@ void RaftServer::setIsLeader(bool isLeader) {
   bool prev_is_leader = is_leader_;
 #ifdef RAFT_LEADER_ELECTION_DEBUG
   Log_info("[RAFT_STATE] setIsLeader invoked site {} (loc {}) term {}: prev_is_leader={} new_is_leader={}",
-           site_id_, frame_->site_info_->locale_id, currentTerm, prev_is_leader, isLeader);
+           site_id_, loc_id_, currentTerm, prev_is_leader, isLeader);
 #endif
 
 
-  if (isLeader) {  // [Jetpack] This need to be done before new leader realized it is a leader, otherwise new leader will use incorrect next_index_ balabala
-    // Add null check for communicator
-    if (commo_ == nullptr) {
-      Log_info("commo_ is null, skipping leader initialization");
-    } else {
-      // Reset leader volatile state
-      vector<SiteProxyPair> proxies;
-      // @unsafe
-      {
-      RaftCommo *c = (RaftCommo*) commo();
-      verify(c != nullptr);
-      proxies = c->rpc_par_proxies_[partition_id_];
+  if (isLeader && failover_) {
+    std::set<siteid_t> replication_targets = current_config_;
+    replication_targets.insert(learners_.begin(), learners_.end());
+    for (const auto peer_id : replication_targets) {
+      if (peer_id == site_id_) {
+        continue;
       }
-      if(failover_) {
-        for (auto& p : proxies) {
-          if (p.first != site_id_) {
-            // set matchIndex = 0
-            match_index_[p.first] = 0;
-            // set nextIndex = lastLogIndex + 1
-            next_index_[p.first] = lastLogIndex + 1;
-            Log_debug("loc_id_={} match_index_[{}]={}, next_index_[{}]={}", loc_id_, p.first, match_index_[p.first], p.first, next_index_[p.first]);
-          }
-        }
-        // matchedIndex and nextIndex should have indices for all servers + learners except self
-        verify(match_index_.size() == current_config_.size() + learners_.size() - 1);
-        verify(next_index_.size() == current_config_.size() + learners_.size() - 1);
-      }
+      match_index_[peer_id] = 0;
+      next_index_[peer_id] = lastLogIndex + 1;
+      Log_debug("loc_id_={} match_index_[{}]={}, next_index_[{}]={}",
+                loc_id_, peer_id, match_index_[peer_id],
+                peer_id, next_index_[peer_id]);
     }
+    const size_t expected = replication_targets.size() -
+        static_cast<size_t>(replication_targets.count(site_id_) > 0);
+    verify(match_index_.size() == expected);
+    verify(next_index_.size() == expected);
   }
 
 
@@ -1188,35 +1086,14 @@ void RaftServer::setIsLeader(bool isLeader) {
     transferring_leadership_ = false;
 
     // Only update view if we have enough information (not during initialization)
-    if (partition_id_ != 0xFFFFFFFF && site_id_ != -1 && frame_ != nullptr) {
-      // Move current new_view to old_view before updating
-      int n_replicas = 0;
-      // @unsafe
-      {
-      old_view_ = new_view_;
-
-      // Update new_view with this server as the leader
-      n_replicas = static_cast<int>(current_config_.size());
-      }
-      new_view_ = View(n_replicas, site_id_, currentTerm);
+    if (partition_id_ != 0xFFFFFFFF && site_id_ != INVALID_SITEID) {
+      const View old_view = current_view_;
+      const int n_replicas = static_cast<int>(current_config_.size());
+      current_view_ = View(n_replicas, site_id_, currentTerm);
       Log_info("[RAFT_VIEW] Server {} became leader for partition {}, term={}, old_view={}, new_view={}", 
                site_id_, partition_id_, currentTerm, 
-               old_view_.ToString().c_str(), new_view_.ToString().c_str());
+               old_view.ToString().c_str(), current_view_.ToString().c_str());
       
-      // IMPORTANT: Update the communicator's view so it knows this server is the leader
-      if (commo_) {
-        auto view_data = std::make_shared<ViewData>(new_view_, partition_id_);
-        // @unsafe
-        { commo()->UpdatePartitionView(partition_id_, *view_data); }
-        Log_info("[RAFT_VIEW] Updated communicator view for partition {} with new leader {}",
-                 partition_id_, site_id_);
-      }
-      
-#ifndef RAFT_TEST_CORO
-      if (JetpackRecoveryEnabled()) {
-        JetpackRecoveryEntry();
-      }
-#endif
     }
 
     // ============================================================================
@@ -1350,10 +1227,6 @@ void RaftServer::applyLogs() {
       if (next_instance && next_instance->log_.has_value()) {
         // @unsafe
         {
-        // RuleWitnessGC takes shared_ptr<Marshallable>;
-        // app_next_ takes Command — Command's auto-conversion +
-        // explicit unwrap meet at the boundary.
-        RuleWitnessGC(next_instance->log_);
         Log_info("[APPLY-LOGS] site={} applying index={}", site_id_, id);
         app_next_(id, next_instance->log_);  // Pass both id and log (signature requires 2 args)
         executeIndex = id;
@@ -1422,26 +1295,19 @@ void RaftServer::HeartbeatLoop() {
   }
 
   parid_t partition_id = partition_id_;
-  // Log_info("!!!!!!! if (!failover_)");
-  // if (!failover_) {
-    vector<SiteProxyPair> proxies;
-    // @unsafe
-    {
-    proxies = commo()->rpc_par_proxies_[partition_id];
+  std::set<siteid_t> replication_targets = current_config_;
+  replication_targets.insert(learners_.begin(), learners_.end());
+  for (const auto peer_id : replication_targets) {
+    if (peer_id == site_id_) {
+      continue;
     }
-    for (auto& p : proxies) {
-      if (p.first == site_id_) {
-        continue;  // skip self
-      }
-      // set matchIndex = 0
-      match_index_[p.first] = 0;
-      // set nextIndex = 1
-      next_index_[p.first] = 1;
-    }
-    // matchedIndex and nextIndex should have indices for all servers + learners except self
-    verify(match_index_.size() == current_config_.size() + learners_.size() - 1);
-    verify(next_index_.size() == current_config_.size() + learners_.size() - 1);
-  // }
+    match_index_[peer_id] = 0;
+    next_index_[peer_id] = 1;
+  }
+  const size_t expected = replication_targets.size() -
+      static_cast<size_t>(replication_targets.count(site_id_) > 0);
+  verify(match_index_.size() == expected);
+  verify(next_index_.size() == expected);
 
   Log_debug("heartbeat loop init from site: {}", site_id_);
   looping_ = true;
@@ -1552,30 +1418,39 @@ void RaftServer::HeartbeatLoop() {
               uint64_t snap_last_idx = snap_meta.last_included_index;
               uint64_t snap_last_term = snap_meta.last_included_term;
               uint64_t send_term = currentTerm;
+              auto callback_lifetime = async_callback_lifetime_;
               commo()->SendInstallSnapshot(
                   site_id, partition_id_,
                   send_term, site_id_,
                   snap_last_idx, snap_last_term,
                   snap_data,
-                  [this, site_id, snap_last_idx, send_term](uint64_t follower_term) {
+                  [callback_lifetime, site_id, snap_last_idx, send_term](uint64_t follower_term) {
+                    std::lock_guard<std::mutex> lifetime_lock(
+                        callback_lifetime->mutex);
+                    auto* server = callback_lifetime->server;
+                    if (server == nullptr) {
+                      return;
+                    }
                     // @unsafe - callback modifies shared state under lock
-                    std::lock_guard<std::recursive_mutex> lock(mtx_);
-                    if (follower_term > currentTerm) {
+                    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+                    if (follower_term > server->currentTerm) {
                       Log_info("[HEARTBEAT-SNAPSHOT] Site {}: Follower {} has higher term {} > {}, stepping down",
-                               site_id_, site_id, follower_term, currentTerm);
-                      currentTerm = follower_term;
-                      stepDown(StepDownReason::HigherTerm);
+                               server->site_id_, site_id, follower_term,
+                               server->currentTerm);
+                      server->currentTerm = follower_term;
+                      server->stepDown(StepDownReason::HigherTerm);
                       return;
                     }
-                    if (currentTerm != send_term) {
+                    if (server->currentTerm != send_term) {
                       Log_info("[HEARTBEAT-SNAPSHOT] Site {}: Term changed since snapshot send, ignoring response",
-                               site_id_);
+                               server->site_id_);
                       return;
                     }
-                    next_index_[site_id] = snap_last_idx + 1;
-                    match_index_[site_id] = snap_last_idx;
+                    server->next_index_[site_id] = snap_last_idx + 1;
+                    server->match_index_[site_id] = snap_last_idx;
                     Log_info("[HEARTBEAT-SNAPSHOT] Site {}: Updated follower {}: next_index={} match_index={}",
-                             site_id_, site_id, snap_last_idx + 1, snap_last_idx);
+                             server->site_id_, site_id, snap_last_idx + 1,
+                             snap_last_idx);
                   });
               skip_follower = true;  // Skip normal AppendEntries for this follower
             } else {
@@ -1931,6 +1806,11 @@ RaftServer::~RaftServer() {
   // This must happen before vtable collapse to prevent race conditions
   stop_ = true;
 
+  {
+    std::lock_guard<std::mutex> lifetime_lock(async_callback_lifetime_->mutex);
+    async_callback_lifetime_->server = nullptr;
+  }
+
   // Stop and join the background apply thread if it was started. The thread
   // captures `this` and walks apply_queue_ / app_next_, so it must finish
   // before any member state is destroyed.
@@ -1976,9 +1856,8 @@ RaftServer::~RaftServer() {
   // The election timer coroutine (StartElectionTimer) and leadership transfer coroutine
   // (InitiateLeadershipTransfer) are detached and check stop_ before calling RequestVote().
   // We need to give them time to notice stop_=true and return before the vtable collapses.
-  // Without this sleep, there's a race where the coroutine wakes up, checks stop_=false,
-  // then the destructor runs (vtable collapses), then the coroutine calls RequestVote()
-  // through the base class vtable, hitting verify(0) and aborting.
+  // Without this sleep, a coroutine can wake after the derived object has begun
+  // destruction and access state that is no longer alive.
   std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
   Log_info("site par {}, loc {}: prepare {}, accept {}, commit {}",
@@ -1988,9 +1867,8 @@ RaftServer::~RaftServer() {
 // @unsafe - external calls marked @external [safe], mutex/pointer ops in @unsafe blocks
 bool RaftServer::RequestVote() {
   // FIX 2: Prevent RequestVote during shutdown
-  // The election timer coroutine may fire after ~RaftServer destructor runs,
-  // causing a call to the base class TxLogServer::RequestVote() which hits verify(0)
-  // Check stop_ flag to avoid this crash during teardown
+  // The election timer coroutine may fire while ~RaftServer is running. Check
+  // stop_ before touching election state.
   if (stop_) {
     Log_debug("[RAFT-SHUTDOWN] RequestVote called during shutdown (site={}), ignoring to prevent crash", site_id_);
     return false;
@@ -1998,13 +1876,8 @@ bool RaftServer::RequestVote() {
 
   // for(int i = 0; i < 1000; i++) Log_info("not calling the wrong method");
 
-  parid_t par_id = 0;
-  parid_t loc_id = 0;
-  // @unsafe
-  {
-  par_id = this->frame_->site_info_->partition_id_ ;
-  loc_id = this->frame_->site_info_->locale_id ;
-  }
+  const parid_t par_id = partition_id_;
+  const locid_t loc_id = loc_id_;
 
   uint32_t lstoff = 0  ;
   slotid_t lst_idx = 0 ;
@@ -2048,7 +1921,8 @@ bool RaftServer::RequestVote() {
   shared_ptr<RaftVoteQuorumEvent> sp_quorum;
   // @unsafe
   {
-  sp_quorum = ((RaftCommo *)(this->commo_))->BroadcastVote(par_id,lst_idx,lst_term,loc_id, term );
+  sp_quorum = commo()->BroadcastVote(
+      par_id, lst_idx, lst_term, loc_id, term);
   sp_quorum->wait_timeout(1000000);
   }
   std::lock_guard<std::recursive_mutex> lock1(mtx_);
@@ -2104,24 +1978,9 @@ bool RaftServer::RequestVote() {
              site_id_, term, sp_quorum->q().n_voted_yes_.get(), sp_quorum->q().n_voted_no_.get());
 #endif
 
-    this->rep_frame_ = this->frame_ ;
-
-    // auto co = ((TxLogServer *)(this))->CreateRepCoord(0);
-    // auto empty_cmd = std::make_shared<TpcEmptyCommand>();
-    // verify(TpcEmptyCommand::kMarshallKind == TpcEmptyCommand::static_kind());
-    // auto sp_m = wrap_typed_marshallable(empty_cmd);
-    // ((CoordinatorRaft*)co)->Submit(sp_m);
-    
     if(IsLeader()) {
 	  	//for(int i = 0; i < 100; i++) Log_info("wait wait wait");
       Log_debug("vote accepted {} curterm {}", loc_id, currentTerm);
-#ifdef RAFT_TEST_CORO
-      // Skip JetpackRecovery in test environment to avoid RPC handler issues
-#else
-      if (JetpackRecoveryEnabled()) {
-        JetpackRecoveryEntry(); // Trigger Jetpack recovery on new leader election
-      }
-#endif
   		req_voting_ = false ;
 			return true;
     } else {
@@ -2515,10 +2374,7 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
 
       // // Update follower's view to track the current leader
       // if (!IsLeader() && leaderSiteId != INVALID_SITEID) {
-      //     int prev_leader = new_view_.GetLeader();
-      //     old_view_ = new_view_;
       //     int n_replicas = Config::GetConfig()->GetPartitionSize(partition_id_);
-      //     new_view_ = View(n_replicas, leaderSiteId, leaderCurrentTerm);
       //     Log_info("[RAFT_VIEW_FOLLOWER] Server {} observed leader change {}->{} term={} prev_term={}",
       //              site_id_, prev_leader, leaderSiteId, leaderCurrentTerm, currentTerm);
       // }
@@ -2645,36 +2501,6 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
       // Re-acquire mutex before returning (to handle remaining code safely)
       lock.lock();
 
-#ifndef RAFT_TEST_CORO
-      if (cmd.has_value()) {
-        if (cmd.kind_ == TpcCommitCommand::static_kind()){
-          const auto p_cmd = marshallable_cast<TpcCommitCommand>(cmd);
-          const auto vec_piece_data = marshallable_cast<VecPieceData>(p_cmd.unwrap()->cmd_);
-          verify(vec_piece_data.is_some());
-          auto sp_vec_piece = vec_piece_data.unwrap()->sp_vec_piece_data_;
-          
-          vector<struct KeyValue> kv_vector;
-          int index = 0;
-          for (auto it = sp_vec_piece->begin(); it != sp_vec_piece->end(); it++){
-            auto cmd_input = (*it)->input.values_;
-            for (auto it2 = cmd_input->begin(); it2 != cmd_input->end(); it2++) {
-              struct KeyValue key_value = {it2->first, it2->second.get_i32()};
-              kv_vector.push_back(key_value);
-            }
-          }
-
-          struct KeyValue key_values[kv_vector.size()];
-          std::copy(kv_vector.begin(), kv_vector.end(), key_values);
-
-          // auto de = IO::write(filename, key_values, sizeof(struct KeyValue), kv_vector.size());
-          // de->wait();
-        } else {
-          int value = -1;
-          // auto de = IO::write(filename, &value, sizeof(int), 1);
-          // de->wait();
-        }
-      }
-#endif
     }
     else {
         Log_info("[APPEND_REJECT] Site {} rejecting AppendEntries from leader {} - term_ok={} index_ok={} prev_term_ok={} (leaderTerm={} myTerm={} prevIdx={} myLastIdx={} local_prev_term={})",

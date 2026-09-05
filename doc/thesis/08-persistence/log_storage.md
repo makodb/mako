@@ -7,12 +7,12 @@ persistence layer provides a common `LogStorage` interface with two
 implementations: `InMemoryLogStorage` for testing and
 `RocksDBLogStorage` for production.
 
-All persistence code lives in `src/rrr/rpc/` and is shared between
+All persistence code lives in `src/srpc/rpc/` and is shared between
 Raft and Paxos.
 
 ## 2. LogEntry Structure
 
-**File**: `src/rrr/rpc/log_storage.hpp` (302 lines)
+**File**: `src/srpc/rpc/log_storage.hpp` (302 lines)
 
 The `LogEntry` struct is the fundamental unit of persistent storage:
 
@@ -44,7 +44,7 @@ ballot tracking.
 
 ## 3. LogStorage Interface
 
-**File**: `src/rrr/rpc/log_storage.hpp` (302 lines)
+**File**: `src/srpc/rpc/log_storage.hpp` (302 lines)
 
 The abstract `LogStorage` class defines the storage contract:
 
@@ -95,7 +95,7 @@ Metadata operations store key-value pairs for consensus state such as
 
 ## 4. InMemoryLogStorage
 
-**File**: `src/rrr/rpc/memory_log_storage.hpp` (292 lines)
+**File**: `src/srpc/rpc/memory_log_storage.hpp` (292 lines)
 
 A thread-safe in-memory implementation used for testing.
 
@@ -129,7 +129,7 @@ such as multiple threads submitting entries while others read.
 
 ## 5. RocksDBLogStorage
 
-**File**: `src/rrr/rpc/rocksdb_log_storage.hpp` (480 lines)
+**File**: `src/srpc/rpc/rocksdb_log_storage.hpp` (480 lines)
 
 The production-grade persistent storage backend.
 
@@ -248,8 +248,8 @@ use RocksDB iterators:
 ### 6.1 Storage Members
 
 ```cpp
-std::shared_ptr<rrr::LogStorage> log_storage_;        // line 52
-std::shared_ptr<rrr::SnapshotManager> snapshot_manager_;  // line 57
+std::shared_ptr<srpc::LogStorage> log_storage_;        // line 52
+std::shared_ptr<srpc::SnapshotManager> snapshot_manager_;  // line 57
 ```
 
 ### 6.2 Metadata Keys
@@ -286,7 +286,7 @@ I/O through the RocksDB library.
 ### 6.5 SetLogStorage and RecoverFromStorage
 
 ```cpp
-void SetLogStorage(std::shared_ptr<rrr::LogStorage> storage);  // set storage
+void SetLogStorage(std::shared_ptr<srpc::LogStorage> storage);  // set storage
 void RecoverFromStorage();  // restore state from persistent storage
 ```
 

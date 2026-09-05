@@ -653,7 +653,7 @@ struct MultiVersionValue {
 
 Mako exposes a RocksDB-shaped API — `mako::IDatabase` / `mako::ITable` — as a facade over the transactional layer described in §8 ("Mako Integration: Transactions"). Two backends implement the interface: `mako::DB` (in-process, wraps a `SiloRuntime` directly) and `mako::RemoteDB` (RPC client to a remote Mako server).
 
-For the current method-level mapping (RocksDB C++ API → `IDatabase`/`ITable`), the conceptual analysis of where Silo/Masstree aligns with and diverges from RocksDB (persistence, snapshots, epochs, iteration model, secondary indexes, extension points), the compatibility feasibility matrix, and the roadmap for further extensions, see the standalone reference:
+For the current method-level mapping (RocksDB C++ API → `IDatabase`/`ITable`), the conceptual analysis of where STO/MassTrans/Masstree aligns with and diverges from RocksDB (persistence, snapshots, epochs, iteration model, secondary indexes, extension points), the compatibility feasibility matrix, and the roadmap for further extensions, see the standalone reference:
 
 **→ [`docs/rocksdb_interface.md`](rocksdb_interface.md)**
 

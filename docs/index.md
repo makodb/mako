@@ -57,10 +57,10 @@ Welcome to the Mako documentation.
 ## Developer Guide
 
 - **[Development Setup](developer/development.md)** - Setting up development environment
-- **[Coroutines & Reactor](developer/coroutines.md)** - Understanding RRR's async model
+- **[Coroutines & Reactor](developer/coroutines.md)** - Understanding SRPC's async model
 - **[Fiber API](developer/fiber-api.md)** - Fiber API documentation
   - [Fiber API Refactoring](developer/fiber-api-refactoring.md)
-- **[Transport Backend](developer/transport-backends.md)** - The rrr/rpc transport layer
+- **[Transport Backend](developer/transport-backends.md)** - The srpc/rpc transport layer
   - [Transport Stop Fix](developer/transport-stop-fix.md)
 - **[C++ Multicore Optimizations](developer/cpp-multicore-optimizations.md)** - CPU optimization techniques
 
@@ -68,7 +68,7 @@ Welcome to the Mako documentation.
 
 ## RPC Framework
 
-- **[RPC Overview](rpc/overview.md)** - RRR RPC framework guide
+- **[RPC Overview](rpc/overview.md)** - SRPC RPC framework guide
 - **[RPC API Reference](rpc/api.md)** - RPC reliability API reference
 - **[RPC Reliability](rpc/reliability.md)** - RPC reliability mechanisms
   - [Reliability Plan](rpc/reliability-plan.md)
@@ -112,9 +112,9 @@ Welcome to the Mako documentation.
 
 - **[Migration Overview](migration/rustycpp/overview.md)** - Master RustyCpp migration plan
 - **[Safety Roadmap](migration/rustycpp/safety-roadmap.md)** - 5-phase safety roadmap
-- **[RRR Migration](migration/rustycpp/rrr-migration.md)** - RRR-specific migration
+- **[SRPC Migration](migration/rustycpp/srpc-migration.md)** - SRPC-specific migration
 - **[Safety Conversion](migration/rustycpp/safety-conversion.md)** - Safety conversion details
-- **[RRR Unsafe Blocks](migration/rustycpp/rrr-unsafe-blocks.md)** - RRR unsafe code documentation
+- **[SRPC Unsafe Blocks](migration/rustycpp/srpc-unsafe-blocks.md)** - SRPC unsafe code documentation
 - **[Reactor RefCell](migration/rustycpp/reactor-refcell.md)** - Reactor RefCell migration
 - **[Reactor Unsafe Blocks](migration/rustycpp/reactor-unsafe-blocks.md)** - Reactor unsafe code
 - **[Raft Migration](migration/rustycpp/raft-migration.md)** - Raft-specific migration
@@ -217,7 +217,7 @@ Legacy documentation kept for reference:
 
 - **[Mako Book](mako-book.md)** - Complete developer guide to the Mako transactional datastore
 - **[Raft Book](raft-book.md)** - Detailed guide to Raft consensus implementation in Mako
-- **[SRPC Book](srpc-book.md)** - Technical guide to the RRR/RPC framework
+- **[SRPC Book](srpc-book.md)** - Technical guide to the SRPC/RPC framework
 
 ---
 

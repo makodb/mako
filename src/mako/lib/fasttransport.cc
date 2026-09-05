@@ -2,7 +2,7 @@
 /***********************************************************************
  *
  * fasttransport.cc:
- *   Transport layer over the rrr/rpc (TCP/IP) backend
+ *   Transport layer over the srpc/rpc (TCP/IP) backend
  *
  **********************************************************************/
 
@@ -11,7 +11,7 @@
 #include "lib/message.h"
 #include "lib/fasttransport.h"
 #include "lib/common.h"
-#include "lib/rrr_rpc_backend.h"
+#include "lib/srpc_rpc_backend.h"
 
 #include <event2/event.h>
 #include <event2/thread.h>
@@ -103,7 +103,7 @@ FastTransport::FastTransport(std::string file,
     fasttransport_lock.unlock();
 
     // Create the transport backend
-    backend_ = new mako::RrrRpcBackend(config_, shardIdx, id, cluster);
+    backend_ = new mako::SrpcRpcBackend(config_, shardIdx, id, cluster);
 
     // Initialize the backend
     int port = std::atoi(config_.shard(shardIdx, mako::convertCluster(cluster)).port.c_str());
@@ -115,7 +115,7 @@ FastTransport::FastTransport(std::string file,
         Panic("Failed to initialize transport backend");
     }
 
-    Notice("FastTransport initialized with rrr/rpc backend on %s",
+    Notice("FastTransport initialized with srpc/rpc backend on %s",
            local_uri.c_str());
 }
 
@@ -192,7 +192,7 @@ int FastTransport::GetSession(TransportReceiver *src, uint8_t dstShardIdx,
     (void)id;
     (void)forceCenter;
 
-    // rrr/rpc manages sessions internally.
+    // srpc/rpc manages sessions internally.
     return 0;
 }
 
@@ -251,7 +251,7 @@ void FastTransport::Stop()
 void FastTransport::setBreakTimeout(bool bt)
 {
     Assert(backend_ != nullptr);
-    // rrr/rpc has no break-timeout hook.
+    // srpc/rpc has no break-timeout hook.
     (void)bt;
 }
 

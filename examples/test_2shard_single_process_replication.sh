@@ -71,7 +71,7 @@ SHARD1_P1_PID=""
 CLEANUP_DONE=0
 
 # Determine transport type and create unique log prefix
-transport="rrr"
+transport="srpc"
 log_prefix="${script_name}_${transport}"
 
 # Kill only dbtest worker processes by executable name.
@@ -253,7 +253,7 @@ fi
 echo "Starting combined leader process for shards 0 and 1..."
 log_file="${log_prefix}_leader.log"
 
-CMD="./${BUILD_DIR:-build}/dbtest --num-threads $trd --shard-config $config_path -F ${MAKO_PAXOS_CONFIG_DIR}/paxos${trd}_shardidx0.yml -F ${MAKO_PAXOS_CONFIG_DIR}/paxos${trd}_shardidx1.yml -F config/occ_paxos.yml -P localhost -L 0,1 --is-replicated --startup-timeout-sec $leader_startup_timeout"
+CMD="./${BUILD_DIR:-build}/dbtest --num-threads $trd --shard-config $config_path -F ${MAKO_PAXOS_CONFIG_DIR}/paxos${trd}_shardidx0.yml -F ${MAKO_PAXOS_CONFIG_DIR}/paxos${trd}_shardidx1.yml -F config/paxos.yml -P localhost -L 0,1 --is-replicated --startup-timeout-sec $leader_startup_timeout"
 THROTTLE_ARGS="$(mako_dbtest_throttle_args)" || exit 1
 if [ -n "$THROTTLE_ARGS" ]; then
     CMD="$CMD$THROTTLE_ARGS"

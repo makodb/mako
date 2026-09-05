@@ -8,7 +8,7 @@ This document provides a complete walkthrough of the Raft leader election mechan
 - `src/deptran/raft/server.cc` — `RequestVote()`, `StartElectionTimer()`, `OnRequestVote()`, `doVote()`
 - `src/deptran/raft/commo.cc` — `BroadcastVote()`
 - `src/deptran/raft/commo.h` — `RaftVoteQuorumEvent`
-- `src/rrr/reactor/quorum_event.h` — `QuorumEvent` base class
+- `src/srpc/reactor/quorum_event.h` — `QuorumEvent` base class
 
 ---
 
@@ -113,7 +113,7 @@ Three outcomes:
 **Won** (`sp_quorum->yes()`):
 1. Verify term hasn't advanced during the wait (stale election guard)
 2. `setIsLeader(true)` — initialize leader state, update views
-3. Trigger Jetpack recovery if enabled
+3. Reach the legacy Jetpack recovery entry point (unsupported and under a separate audit)
 4. Fire `leader_change_cb_(true)` to notify the upper layer
 
 **Lost** (`sp_quorum->no()`):
@@ -152,7 +152,7 @@ The quorum threshold is `n/2` (not `n/2 + 1`) because the candidate already coun
 
 ## 4. RaftVoteQuorumEvent — Quorum Detection
 
-**Location**: `commo.h:11-38`, inherits from `QuorumEvent` (`src/rrr/reactor/quorum_event.h:18-112`)
+**Location**: `commo.h:11-38`, inherits from `QuorumEvent` (`src/srpc/reactor/quorum_event.h:18-112`)
 
 ### Class Hierarchy
 

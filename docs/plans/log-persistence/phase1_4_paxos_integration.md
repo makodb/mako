@@ -55,8 +55,8 @@ void PersistLogEntry(slotid_t slot_id, const PaxosData& data);
 void PersistLogEntries(const std::vector<std::pair<slotid_t, std::shared_ptr<PaxosData>>>& entries);
 
 // Public API
-void SetLogStorage(std::shared_ptr<rrr::LogStorage> storage);
-std::shared_ptr<rrr::LogStorage> GetLogStorage() const;
+void SetLogStorage(std::shared_ptr<srpc::LogStorage> storage);
+std::shared_ptr<srpc::LogStorage> GetLogStorage() const;
 bool RecoverFromStorage();
 ```
 

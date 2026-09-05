@@ -7,7 +7,9 @@ tracking.  Every function and significant code block has safety
 annotations (`@safe` or `@unsafe`), and Rust-style smart pointers
 replace raw pointers and STL ownership types.
 
-Total annotations across 12 Raft files: **122 occurrences**.
+The inventory below covers the core files discussed in this appendix. It is
+an architectural snapshot, not a generated count of every annotation in the
+current Raft directory.
 
 ## 2. Annotation Summary by File
 
@@ -23,8 +25,6 @@ Total annotations across 12 Raft files: **122 occurrences**.
 | `frame.h` (49 lines) | 1 | 0 | Arc, Box, Cell, Option | Shared state |
 | `coordinator.cc` (199 lines) | 5 | 2 | Arc, Cell | Output params @unsafe |
 | `coordinator.h` (82 lines) | 3 | 0 | Arc, Cell, Option | Slot management |
-| `exec.cc` (31 lines) | 4 | 0 | -- | All @safe |
-| `exec.h` (29 lines) | 4 | 0 | -- | All @safe |
 
 ## 3. Which Methods Are @safe and Why
 
@@ -40,22 +40,16 @@ All 5 RPC handlers in `service.cc` are `@safe`:
 | `HandleEmptyAppendEntries()` | 69 | Delegates to server via reference |
 | `HandleTimeoutNow()` | 101 | Delegates to server via reference |
 
-### 3.2 All @safe — Executor
+### 3.2 All @safe — Frame Factory Methods
 
-All 4 executor methods are `@safe` (lines 5-25 of `exec.cc`):
-`Prepare()`, `Accept()`, `AppendEntries()`, `Decide()`.
-These delegate to the parent `TxnExecutor` class.
-
-### 3.3 All @safe — Frame Factory Methods
-
-All 7 frame methods are `@safe` (lines 23-206 of `frame.cc`):
-`RaftFrame()`, `~RaftFrame()`, `CreateExecutor()`,
-`CreateCoordinator()`, `CreateScheduler()`, `CreateCommo()`,
+All 6 frame methods are `@safe` (lines 23-206 of `frame.cc`):
+`RaftFrame()`, `~RaftFrame()`, `CreateCoordinator()`,
+`CreateScheduler()`, `CreateCommo()`,
 `CreateRpcServices()`.
 
 These construct new objects using `rusty::make_box` and smart pointers.
 
-### 3.4 All @safe — Communication Layer
+### 3.3 All @safe — Communication Layer
 
 All 5 commo methods are `@safe` (lines 20-227 of `commo.cc`):
 `RaftCommo()`, `SendAppendEntries2()`, `SendAppendEntries()`,
@@ -63,7 +57,7 @@ All 5 commo methods are `@safe` (lines 20-227 of `commo.cc`):
 
 These create `rusty::Arc<Future>` objects for async RPC callbacks.
 
-### 3.5 @safe — Read-Only Accessors
+### 3.4 @safe — Read-Only Accessors
 
 | Method | File:Line | Why Safe |
 |--------|-----------|----------|
@@ -284,18 +278,15 @@ marked with inline `// @unsafe { reason }` comments.
 
 ## 8. Safety Statistics
 
-| Category | Count | Percentage |
-|----------|-------|------------|
-| @safe methods | 52 | 68% |
-| @unsafe methods | 24 | 32% |
-| Inline @unsafe blocks | 8 | — |
-| Files with all @safe | 4 | exec.cc, exec.h, service.cc, frame.cc |
-| Files with @unsafe | 4 | server.cc, server.h, coordinator.cc, commo.h |
+| Category | Files highlighted in this appendix |
+|----------|------------------------------------------|
+| Files whose listed methods are all @safe | service.cc, frame.cc |
+| Files with @unsafe methods or blocks | server.cc, server.h, coordinator.cc, commo.h |
 
 The @unsafe annotations cluster in two areas:
 1. **Persistence** (8 methods): I/O through LogStorage
 2. **State mutation** (16 methods): Modifying consensus state, timers,
    connections, and log entries
 
-The RPC service layer, executor, frame, and communication layer are
-entirely @safe.
+The RPC service layer, frame, and communication layer are entirely
+`@safe`.

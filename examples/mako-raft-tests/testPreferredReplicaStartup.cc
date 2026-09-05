@@ -78,7 +78,7 @@ int main(int argc, char **argv) {
     safe_print("[" + proc_name + "] Step 1: Configuring Raft cluster...");
 
     vector<string> config{
-        get_current_absolute_path() + "../config/none_raft.yml",
+        get_current_absolute_path() + "../config/raft.yml",
         get_current_absolute_path() + "../config/1c1s5r1p_cluster_test.yml"
     };
 

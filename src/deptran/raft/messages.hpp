@@ -5,19 +5,19 @@
  * @brief Plain C++ Raft RPC payload structs.
  *
  * These structs are the abstract representation of every Raft RPC carried
- * over the wire today. They do not contain any rrr-specific machinery
+ * over the wire today. They do not contain any srpc-specific machinery
  * (Future, DeferredReply, Proxy) so they can be used by either the
- * production rrr transport or an in-memory channel transport for tests.
+ * production srpc transport or an in-memory channel transport for tests.
  *
  * The field layout matches the current `RaftProxy::Rpc*` structs in
- * src/deptran/rcc_rpc.h, so the rrr adapter is a trivial memberwise copy.
+ * src/deptran/rcc_rpc.h, so the srpc adapter is a trivial memberwise copy.
  *
  * Rusty-safety:
  *  - No virtual functions; no inheritance.
  *  - No std smart pointers in new fields. The one exception is the
- *    existing `rrr::MarshallDeputy` command payload, which is still the
+ *    existing `srpc::MarshallDeputy` command payload, which is still the
  *    on-the-wire format for AppendEntries. When the LogEntry / command
- *    representation itself is moved off rrr (later plan phase), these
+ *    representation itself is moved off srpc (later plan phase), these
  *    structs will follow.
  */
 
@@ -27,7 +27,7 @@
 #include <rusty/option.hpp>
 #include <rusty/vec.hpp>
 
-#include "rrr/rrr.hpp"
+#include "srpc/srpc.hpp"
 
 #include "../constants.h"
 #include "../mako_commands.h"  // janus::Command

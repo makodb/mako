@@ -3,11 +3,7 @@
 #include "__dep__.h"
 #include "frame.h"
 #include "paxos_worker.h"
-#include "client_worker.h"
-#include "procedure.h"
-#include "command_marshaler.h"
 #include "benchmark_control_rpc.h"
-#include "server_worker.h"
 #include "concurrentqueue.h"
 #include "sys/time.h"
 #ifdef CPU_PROFILE
@@ -16,34 +12,17 @@
 #include "config.h"
 #include "s_main.h"
 #include "paxos/server.h"
-#include "network_client/network_impl.h"
 #include <time.h>
 
 import std;
 
 using namespace janus;
-using namespace network_client;
 
 // ============================================================================
 // Paxos Implementation Namespace
 // ============================================================================
 namespace paxos_impl {
 
-// removed
-//   `std::vector<shared_ptr<network_client::NetworkClientServiceImpl>>
-//    nc_services = {};`
-// — never populated anywhere (only `vector::push_back` etc. would
-// add elements).  Reads at the now-deleted `nc_get_*_requests`
-// getter functions accessed `nc_services[par_id]` which would have
-// been UB on the empty vector.  The live `nc_setup_server` /
-// `nc_start_server` create their own `NetworkClientServiceImpl`
-// instances inside an `rrr::Server` and never touch this global.
-// removed
-//   `std::vector<shared_ptr<pthread_t>> nc_service_pthreads = {};`
-// — declared but never written or read anywhere in the codebase.
-// end of network client
-
-vector<unique_ptr<ClientWorker>> client_workers_g = {};
 //vector<shared_ptr<PaxosWorker>> pxs_workers_g = {};
 //static vector<shared_ptr<Coordinator>> bulk_coord_g = {};
 //static vector<pair<string, pair<int,uint32_t>>> submit_loggers(10000000);
@@ -59,7 +38,7 @@ typedef pair<const char*, pair<int,int>> queue_entry_par;
 // removed
 //   `static std::queue<queue_entry_par> submit_queue_nc;`
 // — only used inside the now-deleted `PollSubQNc` function.
-// removed `static rrr::SpinLock l_;` —
+// removed `static srpc::SpinLock l_;` —
 // declared but no `lock()` / `unlock()` calls anywhere in the file
 // or codebase.
 // removed `static atomic<int> producer{0};`
@@ -558,7 +537,7 @@ void stuff_todo_learner_upgrade(){
 
 void* heartbeatBackground(void* arg) {
   auto poll_arc = PollThread::create();
-  auto rpc_cli = rrr::Client::create(poll_arc);
+  auto rpc_cli = srpc::Client::create(poll_arc);
   auto site_leader = Config::GetConfig()->LeaderSiteByPartitionId(0);
   // get the leader's host + port
   auto port = site_leader.port + PaxosWorker::CtrlPortDelta;
@@ -569,7 +548,7 @@ void* heartbeatBackground(void* arg) {
   }
 
   // Arc::get() returns const T*, but proxy doesn't mutate client
-  ServerControlProxy *client_proxy = new ServerControlProxy(const_cast<rrr::Client*>(rpc_cli.get()));
+  ServerControlProxy *client_proxy = new ServerControlProxy(const_cast<srpc::Client*>(rpc_cli.get()));
   while (es->running) {
     ServerControlProxy::RpcServerHeartBeatRequest req;
     auto connected = client_proxy->server_heart_beat(req);
@@ -594,7 +573,6 @@ void* heartbeatMonitor2(void* arg) { // happens on the learner
 
   while (es->running) {
     auto duration2 = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now() - es->heartbeat_seen);
-    WAN_WAIT_TIME(5); // 5ms is far enough within the same datacenter, otherwise, several seconds across data-center
     auto xx1 = std::chrono::high_resolution_clock::now() ;
     if (duration2.count()/1000.0/1000.0 > 1000) { // timeout: 1s
      Log_info("the time for the heartbeat: {:f} ms", duration2.count()/1000.0/1000.0);
@@ -750,89 +728,5 @@ void pre_shutdown_step(){
 // — never called from production paths (only the now-deleted
 // dispatcher in `replication_helper.cc` referenced it; nothing
 // referenced the dispatcher either).
-
-// http://www.cse.cuhk.edu.hk/~ericlo/teaching/os/lab/9-PThread/Pass.html
-struct args {
-    int port;
-    char* server_ip;
-    int par_id;
-};
-
-static void
-nc_pclock(char *msg, clockid_t cid)
-{
-    struct timespec ts;
-
-    printf("%s", msg);
-    if (clock_gettime(cid, &ts) == -1)
-        std::cout << "clock_gettime error" << std::endl;
-    printf("%4jd.%03ld\n", (intmax_t)ts.tv_sec, ts.tv_nsec / 1000000);
-}
-
-void *nc_start_server(void *input) {
-    auto poll_arc = PollThread::create();
-    rrr::Server *server = new rrr::Server(rrr::Server::new_(rusty::Some(poll_arc)));
-
-    server->reg_service_typed(rusty::make_box<NetworkClientServiceImpl>());
-    server->start(reinterpret_cast<const int8_t*>((std::string(((struct args*)input)->server_ip)+std::string(":")+std::to_string(((struct args*)input)->port)).c_str())  );
-    // Service is now owned by server
-    int c=0;
-    while (1) {
-      c++;
-      sleep(1);
-      if (c==40) break;
-
-      // if (track_cputime) {
-      //   clockid_t cid;
-      //   int s = pthread_getcpuclockid(*ps, &cid);
-      //   if (s != 0)
-      //       std::cout << "error\n";
-      //   nc_pclock("sub threads thread CPU time:   ", cid);
-      // }
-      
-      /*
-      std::cout << "received on par_id: " << std::to_string(((struct args*)input)->par_id) << "\n";
-      std::cout << "  new_order_counter:" << impl->counter_new_order << "\n"
-                << "  counter_payement:" << impl->counter_payement << "\n"
-                << "  counter_delivery:" << impl->counter_delivery << "\n"
-                << "  counter_order_status:" << impl->counter_order_status << "\n"
-                << "  counter_stock_level:" << impl->counter_stock_level << "\n"
-                << "  in total:" << (impl->counter_new_order+impl->counter_payement+impl->counter_delivery+impl->counter_order_status+impl->counter_stock_level) << "\n\n" ;
-                */
-    }
-    return nullptr;
-}
-
-// setup nthreads servers
-void nc_setup_server(int nthreads, std::string host) {
-  // std::map<std::string, std::string> hosts = getHosts(filename) ;
-  // (char*)hosts["localhost"]
-  for (int i=0; i<nthreads; i++) {
-    struct args *ps = (struct args *)malloc(sizeof(struct args));
-    ps->port=10010+i;
-    ps->server_ip=(char*)host.c_str();
-    ps->par_id=i;
-    pthread_t ph_s;
-    pthread_create(&ph_s, NULL, nc_start_server, (void *)ps);
-    pthread_detach(ph_s);
-    usleep(10 * 1000); // wait for 10ms
-  }
-}
-
-// removed seven `nc_get_*_requests` getter
-// functions (~30 lines):
-//   nc_get_new_order_requests, nc_get_payment_requests,
-//   nc_get_delivery_requests, nc_get_order_status_requests,
-//   nc_get_stock_level_requests, nc_get_read_requests,
-//   nc_get_rmw_requests.
-// All seven returned `&nc_services[par_id]->{varies}_requests`, but
-// `nc_services` was never populated, so any call would have been
-// UB on an empty vector.  The only external caller in `nc_main.cc`
-// at line 381 was already a single-line `//` comment.  The
-// matching dispatchers in `replication_helper.cc` and the seven
-// declarations in each of `paxos_impl` / `raft_impl` / global
-// namespaces in `replication_helper.h` (21 total) were removed
-// alongside, plus the seven Raft-side `Log_warn`-only
-// placeholders in `raft_main_helper.cc`.
 
 }  // namespace paxos_impl

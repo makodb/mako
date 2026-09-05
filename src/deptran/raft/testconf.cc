@@ -9,8 +9,10 @@
 #include "service.h"
 #include "commo.h"
 #include "recovery_manager.hpp"
+#include "application_log.h"
+#include "../replication_log_entry.h"
 
-#include "rrr/rrr.hpp"
+#include "srpc/srpc.hpp"
 
 import std;
 
@@ -32,7 +34,6 @@ RaftTestConfig::RaftTestConfig(std::map<siteid_t, RaftFrame*>& replicas) {
   for (auto& pair : replicas) {
     auto svr = pair.first;
     auto frame = pair.second;
-    frame->svr_->rep_frame_ = frame->svr_->frame_;  // Set rep_frame_ directly like lab solution
     RaftTestConfig::committed_cmds[svr].push_back(-1);
     RaftTestConfig::rpc_count_last[svr] = 0;
     disconnected_[svr] = false;
@@ -44,7 +45,6 @@ void RaftTestConfig::SetLearnerAction(void) {
   for (auto& pair : replicas) {
     auto svr = pair.first;
     auto frame = pair.second;
-    // rep_frame_ is already set in constructor, no need to set it here
     RaftTestConfig::commit_callbacks[svr] =
         [svr](int slot, janus::Command md) -> int {
           verify(md.kind_ == TpcCommitCommand::static_kind());
@@ -171,16 +171,16 @@ bool RaftTestConfig::Start(siteid_t svr, int cmd, uint64_t *index, uint64_t *ter
     return false;
   }
 
-  // Construct an empty TpcCommitCommand containing cmd as its tx_id_
+  // Construct a TpcCommitCommand containing cmd as its tx_id_. Use the same
+  // replication-native inner payload as the production Raft worker.
   auto cmdptr = rusty::Arc<TpcCommitCommand>::make();
-  auto vpd_p = rusty::Arc<VecPieceData>::make();
-  // @unsafe - unique-owner mutation window (factory-fresh Arcs).
-  vpd_p.get_mut().unwrap().sp_vec_piece_data_ =
-      std::make_shared<vector<shared_ptr<SimpleCommand>>>();
+  LogEntry raw_log;
+  verify(raft::EncodeApplicationLog(nullptr, 0, 0, &raw_log.log_entry));
+  raw_log.length = static_cast<int>(raw_log.log_entry.size());
   {
     auto& mut_cmd = cmdptr.get_mut().unwrap();
     mut_cmd.tx_id_ = cmd;
-    mut_cmd.cmd_ = std::move(vpd_p);
+    mut_cmd.cmd_ = rusty::Arc<LogEntry>::make(std::move(raw_log));
   }
   // call Start()
   // Log_info("Start: Calling Start() on server {} for command {}", svr, cmd);
@@ -641,15 +641,14 @@ void RaftTestConfig::Restart(siteid_t svr) {
   }
 
   // Create new RaftFrame
-  RaftFrame* frame = new RaftFrame(MODE_RAFT);
+  RaftFrame* frame = new RaftFrame();
   frame->site_info_ = site_info;
 
   // Create new RaftServer (persistence will be loaded when EnsureSetup is called)
-  frame->svr_ = std::make_unique<RaftServer>(frame);
+  frame->svr_ = std::make_unique<RaftServer>();
   frame->svr_->site_id_ = svr;
   frame->svr_->partition_id_ = site_info->partition_id_;
   frame->svr_->loc_id_ = site_info->locale_id;
-  frame->svr_->rep_frame_ = frame;
 
   // Fix 2: Get the ORIGINAL poll thread from RaftServiceImpl (survives Kill)
   // This ensures inbound RPCs (via RPC server) and outbound RPCs (via Commo)
@@ -661,8 +660,6 @@ void RaftTestConfig::Restart(siteid_t svr) {
     Log_warn("[RAFT-RESTART] site {}: poll thread not found, creating new one", svr);
     frame->commo_ = std::make_unique<RaftCommo>(rusty::None);
   }
-  frame->commo_->loc_id_ = site_info->locale_id;
-
   // Set commo_ in server before initializing
   frame->svr_->commo_ = frame->commo_.get();
 
@@ -725,8 +722,9 @@ void RaftTestConfig::Restart(siteid_t svr) {
   // Using Fiber::create_run would schedule on the current reactor (site 0's test thread),
   // not on this server's poll thread. We must use poll_thread->add() instead.
 #ifdef RAFT_TEST_CORO
-  if (frame->svr_->heartbeat_ && frame->commo_->rpc_poll_.is_some()) {
-    auto& poll_thread = frame->commo_->rpc_poll_.as_ref().unwrap();
+  auto restart_poll_thread = frame->commo_->PollThread();
+  if (frame->svr_->heartbeat_ && restart_poll_thread.is_some()) {
+    auto& poll_thread = restart_poll_thread.as_ref().unwrap();
 
     // Add HeartbeatLoop as a job to the correct poll thread
     auto hb_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([frame]() {
@@ -769,7 +767,7 @@ void RaftTestConfig::Restart(siteid_t svr) {
   // Add back to replicas map - EnsureSetup() will be called lazily on first RPC to start coroutines
   replicas[svr] = frame;
 
-  // Mark as connected in test config (don't call Reconnect, proxies will be restored on demand)
+  // The fresh communicator owns fresh peers; no stale proxy cache is restored.
   disconnected_[svr] = false;
 
   // Reset RPC count

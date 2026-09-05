@@ -11,7 +11,7 @@ path=$(pwd)/src/mako
 
 # Build the command with Raft config instead of Paxos
 # --replication raft ensures the dispatcher routes to raft_impl even if auto-detection fails
-CMD="./${BUILD_DIR:-build}/dbtest --num-threads $trd --shard-index $shard --shard-config $path/config/local-shards$nshard-warehouses$trd.yml -F config/1leader_2followers/raft$trd\_shardidx$shard.yml -F config/occ_raft.yml -P $cluster --replication raft"
+CMD="./${BUILD_DIR:-build}/dbtest --num-threads $trd --shard-index $shard --shard-config $path/config/local-shards$nshard-warehouses$trd.yml -F config/1leader_2followers/raft$trd\_shardidx$shard.yml -F config/raft.yml -P $cluster --replication raft"
 
 # Add --is-micro flag if enabled (value is 1)
 if [ "$is_micro" == "1" ]; then

@@ -98,7 +98,7 @@ Mako has a layered architecture:
 +------------------------------+-------------------------------+
                                |
 +------------------------------v-------------------------------+
-|            RPC Communication Layer (RRR)                       |
+|            RPC Communication Layer (SRPC)                       |
 |  +----------+----------+----------+----------+               |
 |  | TCP/IP   | Fibers    | Reactor  | Event    |               |
 |  | Sockets  |           | Pattern  | Loop     |               |
@@ -138,7 +138,7 @@ Mako has a layered architecture:
 - Participates in consensus (Paxos or Raft)
 - Key classes: `Scheduler`, `TxnRegistry`, `MultiPaxos`
 
-**RRR Communication Layer** (`src/rrr/`):
+**SRPC Communication Layer** (`src/srpc/`):
 - Custom RPC framework with asynchronous, fiber-based I/O
 - Reactor pattern for event-driven networking
 - Supports TCP/IP, DPDK, RDMA
@@ -155,16 +155,13 @@ mako/
     deptran/          # Transaction protocol implementations
       paxos/          # Paxos consensus
       raft/           # Raft consensus
-      2pl/            # Two-phase locking
       occ/            # Optimistic concurrency control
-      rcc/            # Rococo protocol
     mako/             # Mako core
       masstree/       # Masstree storage engine
       lib/            # Transport backends, configuration
       benchmarks/     # Benchmark harness (TPC-C, TPC-A, RW)
-    rrr/              # RPC framework and fibers
+    srpc/              # RPC framework and fibers
     bench/            # Benchmark workload implementations
-    memdb/            # In-memory datastore
   config/             # YAML configuration files
   ci/                 # CI test scripts
   examples/           # Example scripts and tests
@@ -789,8 +786,8 @@ t->put(lcdf::Str("k"), "value");   // same code either way
 - `masstree_ordered_index` — plain Masstree (L1), no transactions;
   owns value memory with RCU-deferred frees; the transactional
   virtuals abort loudly.
-- `mbta_ordered_index` — Silo's table; each non-txn op is an internal
-  one-op OCC transaction (Encode/strip handled internally).
+- `mbta_ordered_index` — STO/MassTrans transactional table; each non-txn op
+  is an internal one-op OCC transaction (Encode/strip handled internally).
 - `mbta_sharded_ordered_index` — per-key routing; remote keys travel
   self-contained non-txn RPCs, and writes on a replicated leader
   reach the replication log through the normal commit path.
@@ -805,7 +802,7 @@ Design and semantics: [`storage-interface.md`](storage-interface.md).
 
 Mako has a single RPC backend:
 
-| Feature | rrr/rpc |
+| Feature | srpc/rpc |
 |---------|---------|
 | Latency | ~10-50 us (TCP/IP) |
 | Hardware | Standard Ethernet |
@@ -817,7 +814,7 @@ Mako has a single RPC backend:
 ```
 
 Worker threads never see the transport: they reach requests through the
-`TransportRequestHandle` interface, implemented by `RrrRequestHandle`.
+`TransportRequestHandle` interface, implemented by `SrpcRequestHandle`.
 
 ```cpp
 class TransportRequestHandle {
@@ -828,9 +825,9 @@ class TransportRequestHandle {
 };
 ```
 
-### rrr/rpc Reliability Features
+### srpc/rpc Reliability Features
 
-The rrr/rpc backend includes production-grade reliability:
+The srpc/rpc backend includes production-grade reliability:
 - **Connection state machine**: NEW -> CONNECTING -> CONNECTED -> DISCONNECTING -> DISCONNECTED -> FAILED
 - **Automatic reconnection** with exponential backoff and jitter
 - **Circuit breaker** for fail-fast cascade prevention
@@ -1037,7 +1034,7 @@ Port assignment: Shard N uses base_port + N*100 (e.g., 31000, 31100, 31200).
 | Binary | Description |
 |--------|-------------|
 | `build/dbtest` | Main Mako binary (Paxos or Raft) |
-| `build/deptran_server` | Standalone Raft server |
+| `build/deptran_server` | Raft lab harness (`make raft-test` only) |
 | `build/simpleRaft` | Simple Raft replication test |
 | `build/test_rocksdb_persistence` | RocksDB persistence test |
 
@@ -1067,7 +1064,7 @@ make -j$(nproc)
 
 | Test | Description |
 |------|-------------|
-| `rrrTests` | RRR framework unit tests |
+| `srpcTests` | SRPC framework unit tests |
 | `simpleTransaction` | Basic transaction execution |
 | `simplePaxos` | Paxos replication |
 | `shardNoReplication` | 2 shards, no replication |
@@ -1270,7 +1267,7 @@ jemalloc for optimized allocation; per-CPU memory allocators for reduced content
 | Submodule not found | `git submodule update --init --recursive` |
 | Out of memory during build | `make -j2` (reduce parallelism) |
 | Borrow checker parse errors | Ensure LIBCLANG_PATH matches system clang version |
-| Raft leader churn | Increase heartbeat interval in `config/none_raft.yml` |
+| Raft leader churn | Increase `MAKO_RAFT_HEARTBEAT_INTERVAL_US` |
 | Hanging test processes | `./ci/ci_mako_raft.sh cleanup` |
 
 ### Debugging
@@ -1317,7 +1314,7 @@ perf report
 | **Quorum** | Minimum replicas for progress: floor(N/2) + 1 |
 | **Reactor** | Event loop managing fibers in a thread |
 | **RocksDB** | LSM-tree persistent storage backend |
-| **RRR** | "Repeatable Research Runtime" - Mako's custom RPC/fiber framework |
+| **SRPC** | "Simple RPC" - Mako's custom RPC/fiber framework |
 | **RustyCpp** | Library providing Rust-like smart pointers and borrow checking for C++ |
 | **Safety Check** | Validation comparing transaction timestamp to watermark for follower replay |
 | **Scheduler** | Component managing transaction execution on a shard |

@@ -76,8 +76,8 @@ guard->push_back(event);
 
 ### Task 6: Remove @unsafe blocks, add to borrow checking (~20 LOC)
 - Remove @unsafe annotations from refactored methods
-- Add reactor.cc to RRR_BORROW_SRC
-- **COMPLETED**: Added reactor.cc to borrow checking (now 15 RRR files pass). Fixed Rc::clone() false positive with @unsafe annotation.
+- Add reactor.cc to SRPC_BORROW_SRC
+- **COMPLETED**: Added reactor.cc to borrow checking (now 15 SRPC files pass). Fixed Rc::clone() false positive with @unsafe annotation.
 
 ## Estimated Total: ~300 LOC changes
 

@@ -4,7 +4,7 @@
 
 #include "replicated_db.h"
 #include "server.h"
-#include "rrr/misc/serializable.hpp"
+#include "srpc/misc/serializable.hpp"
 #include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -16,7 +16,7 @@ using namespace janus;
 // ReplicatedDBCommand's registry key comes from its explicit MakoCommands
 // membership. Wire format remains byte-for-byte identical.
 static int volatile x_replicated_db =
-    rrr::SerializableRegistry::reg<ReplicatedDBCommand>(ReplicatedDBCommand::static_kind());
+    srpc::SerializableRegistry::reg<ReplicatedDBCommand>(ReplicatedDBCommand::static_kind());
 
 // ===========================================================================
 // ReplicatedDBCommand factory methods and serialization
@@ -65,36 +65,36 @@ rusty::Arc<ReplicatedDBCommand> ReplicatedDBCommand::CreateBatch(
 // the BinaryWriteArchive/BinaryReadArchive `<<`/`>>` overloads for
 // uint8_t / uint32_t / std::string match the legacy Marshal encoding.
 void ReplicatedDBCommand::save(BinaryWriteArchive& ar) const {
-  rrr::Serialize_::serialize(static_cast<uint8_t>(op_), ar);
-  rrr::Serialize_::serialize(key_, ar);
-  rrr::Serialize_::serialize(value_, ar);
+  srpc::Serialize_::serialize(static_cast<uint8_t>(op_), ar);
+  srpc::Serialize_::serialize(key_, ar);
+  srpc::Serialize_::serialize(value_, ar);
   if (op_ == ReplicatedDBOp::BATCH) {
     uint32_t count = static_cast<uint32_t>(batch_ops_.size());
-    rrr::Serialize_::serialize(count, ar);
+    srpc::Serialize_::serialize(count, ar);
     for (const auto& op : batch_ops_) {
-      rrr::Serialize_::serialize(static_cast<uint8_t>(op.op), ar);
-      rrr::Serialize_::serialize(op.key, ar);
-      rrr::Serialize_::serialize(op.value, ar);
+      srpc::Serialize_::serialize(static_cast<uint8_t>(op.op), ar);
+      srpc::Serialize_::serialize(op.key, ar);
+      srpc::Serialize_::serialize(op.value, ar);
     }
   }
 }
 
 void ReplicatedDBCommand::load(BinaryReadArchive& ar) {
   uint8_t op_val;
-  rrr::Deserialize_::deserialize(op_val, ar);
+  srpc::Deserialize_::deserialize(op_val, ar);
   op_ = static_cast<ReplicatedDBOp>(op_val);
-  rrr::Deserialize_::deserialize(key_, ar);
-  rrr::Deserialize_::deserialize(value_, ar);
+  srpc::Deserialize_::deserialize(key_, ar);
+  srpc::Deserialize_::deserialize(value_, ar);
   if (op_ == ReplicatedDBOp::BATCH) {
     uint32_t count;
-    rrr::Deserialize_::deserialize(count, ar);
+    srpc::Deserialize_::deserialize(count, ar);
     batch_ops_.resize(count);
     for (uint32_t i = 0; i < count; i++) {
       uint8_t sub_op_val;
-      rrr::Deserialize_::deserialize(sub_op_val, ar);
+      srpc::Deserialize_::deserialize(sub_op_val, ar);
       batch_ops_[i].op = static_cast<ReplicatedDBOp>(sub_op_val);
-      rrr::Deserialize_::deserialize(batch_ops_[i].key, ar);
-      rrr::Deserialize_::deserialize(batch_ops_[i].value, ar);
+      srpc::Deserialize_::deserialize(batch_ops_[i].key, ar);
+      srpc::Deserialize_::deserialize(batch_ops_[i].value, ar);
     }
   }
 }

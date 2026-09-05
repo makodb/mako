@@ -131,6 +131,28 @@ if(DEFINED MAKO_STO_TPCC_NATIVE_TEST
         message(FATAL_ERROR
             "Configured sto-tpcc-ffi native test does not exist: ${MAKO_STO_TPCC_NATIVE_TEST}")
     endif()
+
+    # The FFI crate's unit-test binary retains references from its exported
+    # entry points into the native Masstree adapter. Link and run it here with
+    # the authoritative CMake archives. Serial execution also keeps the
+    # process-wide native runtime deterministic across unit cases.
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" -E env ${_native_environment}
+            "${MAKO_CARGO_EXECUTABLE}" test
+            --manifest-path "${MAKO_RUST_MANIFEST}"
+            --locked
+            -p sto-tpcc-ffi
+            --lib
+            --
+            --test-threads=1
+        COMMAND_ECHO STDOUT
+        RESULT_VARIABLE _sto_tpcc_unit_result
+    )
+    if(NOT _sto_tpcc_unit_result EQUAL 0)
+        message(FATAL_ERROR
+            "Rust STO TPC-C FFI unit tests failed with exit code ${_sto_tpcc_unit_result}")
+    endif()
+
     execute_process(
         COMMAND "${CMAKE_COMMAND}" -E env ${_native_environment}
             "${MAKO_CARGO_EXECUTABLE}" test

@@ -151,7 +151,7 @@ int main(int argc, char **argv) {
             + "-warehouses" + to_string(nthreads) + ".yml";
     vector<string> paxos_config_file{
         get_current_absolute_path() + "../config/1leader_2followers/paxos" + to_string(nthreads) + "_shardidx" + to_string(shardIdx) + ".yml",
-        get_current_absolute_path() + "../config/occ_paxos.yml"
+        get_current_absolute_path() + "../config/paxos.yml"
     };
 
     auto& benchConfig = BenchmarkConfig::getInstance();

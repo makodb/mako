@@ -1060,7 +1060,10 @@ void rust_sto_tpcc_wrapper::on_load_complete() {
 
 void rust_sto_tpcc_wrapper::preallocate_open_index() {}
 ssize_t rust_sto_tpcc_wrapper::txn_max_batch_size() const { return 100; }
-size_t rust_sto_tpcc_wrapper::sizeof_txn_object(uint64_t) const { return 1; }
+size_t rust_sto_tpcc_wrapper::sizeof_txn_object(uint64_t txn_flags) const {
+  ALWAYS_ASSERT(txn_flags == 0);
+  return 1;
+}
 
 void rust_sto_tpcc_wrapper::thread_init(bool loader, int source) {
   if (tls_thread_)
@@ -1084,8 +1087,9 @@ void rust_sto_tpcc_wrapper::thread_end() {
   }
 }
 
-void *rust_sto_tpcc_wrapper::new_txn(uint64_t, str_arena &, void *,
+void *rust_sto_tpcc_wrapper::new_txn(uint64_t txn_flags, str_arena &, void *,
                                      TxnProfileHint) {
+  ALWAYS_ASSERT(txn_flags == 0);
   begin_current_transaction();
   return tls_thread_;
 }

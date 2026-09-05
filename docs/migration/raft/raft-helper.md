@@ -391,10 +391,11 @@ This generates `raft{N}_shardidx{S}.yml` for N=1..32, S=0..9. Port ranges: Raft 
 
 Raft-specific configuration files in `config/`:
 
-- `none_raft.yml` - Base Raft configuration
-- `occ_raft.yml` - OCC with Raft replication
-- `rule_raft.yml` - Rule-based with Raft
+- `raft.yml` - Production Mako Raft replication mode
 - `config/1leader_2followers/raft*_shardidx*.yml` - Per-shard Raft configs
+
+The former Rule configuration is retired. Generic Jetpack recovery code is a
+separate legacy subsystem under audit and is not a supported Raft mode.
 
 ### Preferred Replica System
 
@@ -515,8 +516,7 @@ ci/
 └── ci_mako_raft.sh                  # Raft CI script
 
 config/
-├── none_raft.yml                    # Base Raft config
-├── occ_raft.yml                     # OCC with Raft
+├── raft.yml                         # Mako Raft replication mode
 └── 1leader_2followers/raft*_shardidx*.yml  # Per-shard configs
 ```
 

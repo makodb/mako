@@ -617,7 +617,9 @@ def run_configuration(
       '--db-type', dbtype,
       '--num-threads', str(nthreads),
       '--scale-factor', str(scale_factor),
-      '--txn-flags', '1',
+      # The original Silo/NDB transaction flags are retired. STO/MassTrans
+      # callers must leave the backend-neutral transaction flags at zero.
+      '--txn-flags', '0',
       '--runtime', '60',
   ] + ([] if not bench_opts else ['--bench-opts', bench_opts]) \
     + ([] if not par_load else ['--parallel-loading']) \

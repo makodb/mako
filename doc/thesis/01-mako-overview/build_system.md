@@ -147,7 +147,7 @@ The build reads `env.txt` to determine the network transport backend (`CMakeList
 | `ib` | InfiniBand | RoCE support, real eRPC |
 | `dpdk` | DPDK | Kernel bypass, real eRPC |
 
-In the default `eth` mode, eRPC runs in fake mode (`ERPC_FAKE=true`) and all network I/O goes through the `rrr/rpc` TCP/IP stack.
+In the default `eth` mode, eRPC runs in fake mode (`ERPC_FAKE=true`) and all network I/O goes through the `srpc/rpc` TCP/IP stack.
 
 ---
 
@@ -190,11 +190,9 @@ The **only difference** between Paxos and Raft mode configs is the `ab:` field. 
 **Available `ab:` values**:
 - `multi_paxos` — Multi-Paxos replication
 - `raft` — Raft replication
-- `fpga_raft` — FPGA-optimized Raft variant
 
 **Available `cc:` values**:
 - `occ` — Optimistic Concurrency Control
-- `2pl_ww` — Two-Phase Locking (wound-wait)
 - `none` — No concurrency control
 
 ### 4.2 Shard/Host Configuration
@@ -383,7 +381,7 @@ There are three ways to select Raft replication:
 ```
 
 **2. Auto-detection from config** (implicit):
-The `detect_replication_type_from_config()` function (`src/mako/mako.hh:779-816`) scans the YAML config files for `ab: raft` or `ab: fpga_raft` and sets the replication type automatically. This is called during `init_env()` before the replication layer is initialized.
+The `detect_replication_type_from_config()` function (`src/mako/mako.hh:779-816`) scans the YAML config files for `ab: raft` and sets the replication type automatically. This is called during `init_env()` before the replication layer is initialized.
 
 **3. Programmatic** (in test code):
 ```cpp

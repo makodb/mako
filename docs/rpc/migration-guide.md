@@ -4,7 +4,7 @@ This guide helps you migrate existing code to use the new RPC reliability featur
 
 ## Overview
 
-The RPC reliability enhancement adds robust connection management, automatic reconnection, circuit breaker patterns, request buffering, and comprehensive error handling to the rrr/rpc module. **All changes are backward compatible** - existing code will continue to work without modification.
+The RPC reliability enhancement adds robust connection management, automatic reconnection, circuit breaker patterns, request buffering, and comprehensive error handling to the srpc/rpc module. **All changes are backward compatible** - existing code will continue to work without modification.
 
 ## Breaking Changes
 
@@ -52,7 +52,7 @@ should follow the wire upgrade order above for mixed-version deployments.
 
 All RPC services now use typed request/response structs exclusively. The
 `rpcgen` code generator produces only typed APIs — no legacy pointer-style
-wrappers. Generated service classes do not inherit `rrr::Service`; they
+wrappers. Generated service classes do not inherit `srpc::Service`; they
 register via `ServiceTypedBoxAdapter` / `Server::reg_service(Box<T>)`.
 
 The `--legacy-compat` flag and `SRPC_LEGACY_COMPAT` CMake option have been
@@ -84,10 +84,10 @@ git submodule update --init third-party/rusty-cpp
 | Header or module | Purpose |
 |------------------|---------|
 | `rpc/connection_state.hpp` | Connection state machine |
-| `rrr.reconnect_policy` | Reconnection configuration module |
-| `rrr.circuit_breaker` | Circuit breaker pattern |
+| `srpc.reconnect_policy` | Reconnection configuration module |
+| `srpc.circuit_breaker` | Circuit breaker pattern |
 | `rpc/request_queue.hpp` | Request buffering |
-| `rrr.request_options` | Per-request options C++ module |
+| `srpc.request_options` | Per-request options C++ module |
 | `rpc/heartbeat.hpp` | Keep-alive management |
 | `rpc/connection_metrics.hpp` | Connection statistics |
 | `rpc/errors.hpp` | Structured error types |
@@ -116,7 +116,7 @@ client->close();
 Enable automatic reconnection for resilience:
 
 ```cpp
-import rrr.reconnect_policy;
+import srpc.reconnect_policy;
 
 auto client = Client::create(poll_thread);
 
@@ -160,7 +160,7 @@ client->connect("127.0.0.1:8080");
 Prevent cascading failures:
 
 ```cpp
-import rrr.circuit_breaker;
+import srpc.circuit_breaker;
 
 auto config = CircuitBreakerConfig::defaults();
 config.failure_threshold = 5;   // Open after 5 failures
@@ -188,7 +188,7 @@ if (success) {
 Configure per-request behavior:
 
 ```cpp
-import rrr.request_options;
+import srpc.request_options;
 
 RequestOptions opts = RequestOptions::with_retry(3, 5000);
 

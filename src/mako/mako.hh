@@ -875,7 +875,7 @@ static void detect_replication_type_from_config(const vector<string>& config_fil
         if (end != std::string::npos) {
           value = value.substr(0, end);
         }
-        if (value == "raft" || value == "fpga_raft") {
+        if (value == "raft") {
           Notice("Auto-detected replication type '%s' from config file: %s",
                  value.c_str(), file_path.c_str());
           janus::set_replication_type(janus::ReplicationType::RAFT);
@@ -1023,7 +1023,7 @@ static void send_end_signal() {
     // {
     //     wait_threads.push_back(std::thread([i]() {
     //        std::cout << "starting wait for par_id: " << i << std::endl;
-    //        wait_for_submit(i); 
+    //        wait_for_submit(i);
     //     }));
     // }
     // for (auto &th : wait_threads)

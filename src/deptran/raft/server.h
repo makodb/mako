@@ -3,7 +3,8 @@
 #include "../__dep__.h"
 #include "../constants.h"
 #include "../scheduler.h"
-#include "../classic/tpc_command.h"
+#include "../tpc_command.h"
+#include "../view.h"
 #include "commo.h"
 #include <deque>
 #include <rusty/box.hpp>
@@ -35,13 +36,10 @@
 //   std::min: [safe, (T, T) -> T],
 //   std::stoull: [safe, (const string&) -> uint64_t],
 //   std::stoll: [safe, (const string&) -> int64_t],
-//   std::this_thread::sleep_for: [safe, (duration) -> void],
-//   JetpackRecoveryEntry: [safe, (...) -> void],
-//   RuleWitnessGC: [safe, (...) -> void]
+//   std::this_thread::sleep_for: [safe, (duration) -> void]
 // }
 
 namespace janus {
-class CmdData;
 class ReplicatedDB;
 
 #define INVALID_SITEID  ((siteid_t)-1)
@@ -103,12 +101,6 @@ struct RaftData {
 	ballot_t ballot;
 };
 
-// @safe - simple POD struct
-struct KeyValue {
-	int key;
-	i32 value;
-};
-
 #ifdef RAFT_TEST_CORO
 #define HEARTBEAT_INTERVAL 100000
 #else
@@ -121,6 +113,16 @@ class RaftServer : public TxLogServer {
   friend class RaftTestConfig;  // Allow test config to access private members for kill/restart
   friend class RaftLabTest;     // Allow test cases to access private members for verification
  private:
+  struct AsyncCallbackLifetime {
+    std::mutex mutex;
+    RaftServer* server = nullptr;
+  };
+
+  // RPC futures can outlive the server during test kill/restart. Destruction
+  // nulls this shared gate after waiting for any callback already using it.
+  std::shared_ptr<AsyncCallbackLifetime> async_callback_lifetime_ =
+      std::make_shared<AsyncCallbackLifetime>();
+
   // ============================================================================
   // LOG PERSISTENCE
   // ============================================================================
@@ -187,7 +189,7 @@ class RaftServer : public TxLogServer {
   slotid_t snapidx_ = 0 ;
   ballot_t snapterm_ = 0 ;
   int32_t wait_int_ = 100000 ;
-  bool disconnected_ = false;
+  std::atomic_bool disconnected_{false};
   bool req_voting_ = false ;
   bool in_applying_logs_ = false ;
   std::atomic<bool> apply_pending_{false};  // Tracks if new work arrived while applying logs
@@ -292,6 +294,7 @@ class RaftServer : public TxLogServer {
   std::set<siteid_t> current_config_;          // Active replica set (site IDs)
   bool config_change_pending_ = false;         // True when a config entry is in-flight
   uint64_t pending_config_index_ = 0;          // Log index of pending config entry
+  View current_view_{};                        // Last locally published leader view
 
   // ============================================================================
   // LEARNER / NEW SERVER CATCH-UP TRACKING
@@ -466,17 +469,6 @@ class RaftServer : public TxLogServer {
       counter_.store(0);
     }
   }
-  // @unsafe - raw pointer output params from base class virtual interface
-  void OnJetpackPullCmd(const epoch_t& jepoch,
-                        const epoch_t& oepoch,
-                        const std::vector<key_t>& keys,
-                        bool_t* ok,
-                        epoch_t* reply_jepoch,
-                        epoch_t* reply_oepoch,
-                        janus::Command* reply_old_view,
-                        janus::Command* reply_new_view,
-                        KeyCmdBatchData& batch) override;
-
   // @unsafe - const char* parameter type requires unsafe context
   void resetTimer(const char* reason = "unspecified") {
     // @unsafe
@@ -537,9 +529,11 @@ class RaftServer : public TxLogServer {
   // @safe - election timeout calculation (external calls wrapped in @unsafe blocks)
   uint64_t GetElectionTimeout();
  public:
-  // @unsafe - Returns raw pointer cast
+  // @unsafe - Returns the scheduler's non-owning typed communicator.
   RaftCommo* commo() {
-    return (RaftCommo*) commo_;
+    auto* communicator = dynamic_cast<RaftCommo*>(commo_);
+    verify(communicator != nullptr);
+    return communicator;
   }
 
   slotid_t min_active_slot_ = 1; // anything before (lt) this slot is freed
@@ -572,7 +566,7 @@ class RaftServer : public TxLogServer {
   void EnsureSetup();
 
   // @safe
-  bool IsLeader() override {
+  bool IsLeader() {
     // Defensive check: if we're shutting down (looping_=false),
     // return false to prevent accessing member variables during destruction
     if (!looping_) {
@@ -583,6 +577,8 @@ class RaftServer : public TxLogServer {
   
   // @safe - leadership state transition (callbacks and logging wrapped in @unsafe blocks)
   void setIsLeader(bool isLeader);
+
+  View GetCurrentView() const { return current_view_; }
 
   // @safe - stores callback for later invocation
   void RegisterLeaderChangeCallback(std::function<void(bool)> cb);
@@ -646,49 +642,6 @@ class RaftServer : public TxLogServer {
 
     // @unsafe
     {
-#ifndef RAFT_TEST_CORO
-      if (cmd.kind_ == TpcCommitCommand::static_kind()){
-        const auto p_cmd = marshallable_cast<TpcCommitCommand>(cmd);
-        const auto vec_piece_data = marshallable_cast<VecPieceData>(p_cmd.unwrap()->cmd_);
-        verify(vec_piece_data.is_some());
-        auto sp_vec_piece = vec_piece_data.unwrap()->sp_vec_piece_data_;
-
-        // Check if this is Mako data (STR values) versus legacy I32 data.
-        bool is_mako_data = false;
-        if (sp_vec_piece && !sp_vec_piece->empty()) {
-          auto first_cmd = (*sp_vec_piece)[0];
-          if (first_cmd && first_cmd->input.values_ && !first_cmd->input.values_->empty()) {
-            auto first_val = first_cmd->input.values_->begin()->second;
-            if (first_val.get_kind() == Value::STR) {
-              is_mako_data = true;
-              Log_debug("[RAFT-SETLOCALAPPEND] Skipping vestigial I/O code for Mako data (STR values)");
-            }
-          }
-        }
-
-        if (!is_mako_data) {
-          vector<struct KeyValue> kv_vector;
-          int index = 0;
-          for (auto it = sp_vec_piece->begin(); it != sp_vec_piece->end(); it++){
-            auto cmd_input = (*it)->input.values_;
-            for (auto it2 = cmd_input->begin(); it2 != cmd_input->end(); it2++) {
-              struct KeyValue key_value = {it2->first, it2->second.get_i32()};
-              kv_vector.push_back(key_value);
-            }
-          }
-
-          struct KeyValue key_values[kv_vector.size()];
-          std::copy(kv_vector.begin(), kv_vector.end(), key_values);
-        }
-      } else {
-        int value = -1;
-        int value_;
-      }
-#endif
-    }
-
-    // @unsafe
-    {
       *term = currentTerm ;
     }
   }
@@ -725,8 +678,7 @@ class RaftServer : public TxLogServer {
    }
 
 
-  // @safe - raw pointer parameter is bounded (frame outlives server)
-  RaftServer(Frame *frame) ;
+  RaftServer();
   // @unsafe - thread join and timer cleanup require manual resource management
   ~RaftServer() ;
 
@@ -1068,7 +1020,7 @@ class RaftServer : public TxLogServer {
                       bool_t* success, std::string* error_msg,
                       uint64_t* leader_hint);
 
-  // @unsafe - modifies proxy maps with C-style casts on raw pointers (non-trivial pointer arithmetic)
+  // Gates inbound and outbound test traffic without moving transport state.
   void Disconnect(const bool disconnect = true);
 
   // @safe - calls Disconnect (wrapped in @unsafe block) and resetTimer
@@ -1083,13 +1035,6 @@ class RaftServer : public TxLogServer {
 
   // @safe
   bool IsDisconnected();
-
-  // @safe - verify(0) is always-abort, no actual unsafe operations
-  virtual bool HandleConflicts(Tx& dtxn,
-                               innid_t inn_id,
-                               vector<string>& conflicts) {
-    verify(0);
-  };
 
   // @safe - external calls marked @external
   void removeCmd(slotid_t slot);

@@ -3,6 +3,7 @@
 #include "../__dep__.h"
 #include "../constants.h"
 #include "../communicator.h"
+#include "../replication_quorum.h"
 #include "messages.hpp"
 #include <map>
 #include <mutex>
@@ -23,19 +24,16 @@
 
 namespace janus {
 
-class TxData;
-
 /**
  * NotifyRestartStatus - Status of NotifyRestart RPC for each peer
  *
  * Used to track which peers have acknowledged our restart notification.
  * - ACKNOWLEDGED: Peer received notification and reconnected to us
- * - DOWN: Peer responded with "I'm down" (svr_ == nullptr), no retry needed
- * - PENDING: Should send/retry NotifyRestart (not yet acknowledged or timed out)
+ * - PENDING: Should send/retry NotifyRestart (not yet acknowledged, timed out,
+ *   or the peer's one-shot reconnect attempt failed)
  */
 enum class NotifyRestartStatus {
   ACKNOWLEDGED,  // Peer reconnected to us
-  DOWN,          // Peer told us it's down (no retry needed, will reconnect when it restarts)
   PENDING        // Need to send/retry NotifyRestart
 };
 
@@ -130,11 +128,18 @@ class RaftCommo : public Communicator {
 
 friend class RaftProxy;
  private:
-  // NotifyRestart status tracking for each peer
-  std::map<siteid_t, NotifyRestartStatus> notify_restart_status_;
-  std::mutex notify_restart_mtx_;
-  siteid_t self_site_id_ = 0;  // Our own site ID (set when SendNotifyRestart is called)
-  parid_t self_par_id_ = 0;    // Our partition ID
+  struct NotifyRestartState {
+    std::mutex mutex;
+    std::map<siteid_t, NotifyRestartStatus> status;
+    siteid_t self_site_id = 0;
+    parid_t self_par_id = 0;
+    uint64_t generation = 0;
+  };
+
+  // Futures may finish after a RaftCommo is destroyed during RAFT_TEST Kill.
+  // Callbacks retain only this shared state, never a raw communicator pointer.
+  std::shared_ptr<NotifyRestartState> notify_restart_state_ =
+      std::make_shared<NotifyRestartState>();
 
  public:
 #ifdef RAFT_TEST_CORO
@@ -144,7 +149,8 @@ friend class RaftProxy;
 
   RaftCommo() = delete;
   // @safe
-  RaftCommo(rusty::Option<rusty::Arc<PollThread>> poll = rusty::None);
+  RaftCommo(
+      rusty::Option<rusty::Arc<srpc::PollThread>> poll = rusty::None);
 
   // @safe
   // Returns shared_ptr to response data - callback captures this to ensure memory validity
@@ -264,19 +270,10 @@ friend class RaftProxy;
   /**
    * RetryPendingNotifyRestart - Retry NotifyRestart for peers still in PENDING state
    *
-   * Called periodically to retry notifications to peers that haven't responded.
-   * Peers in DOWN state are skipped (they will reconnect when they restart).
+   * Called periodically to retry notifications that have not yet succeeded.
    * Peers in ACKNOWLEDGED state are skipped (already done).
    */
   void RetryPendingNotifyRestart();
-
-  /**
-   * GetNotifyRestartStatus - Get the current status for a peer
-   *
-   * @param site_id - The site ID to query
-   * @return The NotifyRestartStatus for that peer, or PENDING if not found
-   */
-  NotifyRestartStatus GetNotifyRestartStatus(siteid_t site_id);
 
   /**
    * HasPendingNotifyRestart - Check if any peers still need notification
@@ -316,8 +313,8 @@ friend class RaftProxy;
   // The existing SendAppendEntries / BroadcastVote methods return
   // shared_ptr<QuorumEvent> shapes that fit the fiber-based wait path in
   // RaftServer. The new *Cb variants deliver each peer's reply via a plain
-  // callback, which is the shape RrrTransportAdapter wires into TransportBase. Both
-  // variants share the same underlying rrr async_* call site; the *Cb
+  // callback, which is the shape SrpcTransportAdapter wires into TransportBase. Both
+  // variants share the same underlying srpc async_* call site; the *Cb
   // variants are merely a different projection of the reply.
   // ==========================================================================
 

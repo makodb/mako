@@ -54,7 +54,7 @@ ensure_paxos_replication_configs() {
 
 pick_simple_transaction_port_base() {
     local base_min=20000
-    # Keep RRR dynamic ports out of:
+    # Keep SRPC dynamic ports out of:
     # 1) fixed Paxos/Raft control ports (45001+), and
     # 2) Linux default ephemeral range (32768+), which avoids self-collisions
     #    when worker threads open outbound TCP connections during startup.
@@ -151,7 +151,7 @@ make_simple_txn_rep_config() {
 # free at PICK time; a later outbound connect() can still steal it as its
 # source port. In CI the container reserves these bands from the ephemeral
 # allocator (net.ipv4.ip_local_reserved_ports, see .github/workflows/ci.yml);
-# elsewhere the rrr self-connect guard removes the worst failure mode.
+# elsewhere the srpc self-connect guard removes the worst failure mode.
 pick_paxos_replication_port_base() {
     local nshards="${1:-2}"
     local nthreads="${2:-3}"

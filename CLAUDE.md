@@ -91,14 +91,14 @@ BUILD_DIR=build_docker ./ci/ci.sh shardFaultTolerance
 ## Code Architecture
 
 ### Core Directory Structure
-- `src/deptran/`: Transaction and replication protocol implementations (2PL, OCC, RCC, Paxos, TAPIR, Snow, Raft)
+- `src/deptran/`: Paxos/Raft replication and their shared runtime support
 - `src/mako/`: Mako system with Masstree storage engine and speculative execution
 - `src/bench/`: Benchmark implementations (TPC-C, TPC-A, RW, Micro)
-- `src/rrr/`: Custom RPC framework and networking layer
+- `src/srpc/`: Custom RPC framework and networking layer
 - `config/`: YAML configuration files for experiments and cluster topology
 
-The `rrr` Rust package is rooted at `src/rrr/Cargo.toml`. The seventeen modules
-listed in `src/rrr/rust-modules.toml` are canonical `.rs` sources: rustc
+The `srpc` Rust package is rooted at `src/srpc/Cargo.toml`. The seventeen modules
+listed in `src/srpc/rust-modules.toml` are canonical `.rs` sources: rustc
 compiles them directly and rusty-cpp translates those same sources into the
 complete C++ module providers used in every production build. Edit those Rust
 files directly; their former hand-authored `.cpp` carriers have been deleted.
@@ -108,18 +108,24 @@ Goal 0. Never recreate a top-level `crates/srpc` hand port.
 
 ### Key Protocol Implementations
 The system implements multiple distributed transaction protocols. The former
-standalone Janus and Mencius implementations are retired; the project-wide
-`janus::` C++ namespace remains for compatibility.
-- **2PL** (`src/deptran/2pl/`): Traditional two-phase locking
-- **OCC** (`src/deptran/occ/`): Optimistic concurrency control
-- **RCC/Rococo** (`src/deptran/rcc/`): Distributed consensus protocol
+standalone Janus, Mencius, SNOW/RO6, Extern-C, 2PL, Rule, TAPIR, FPGA-Raft,
+Copilot, RCC/Rococo, Carousel, and Februus implementations are retired. This
+includes the old `deptran` and `deptran_er` RCC aliases. EPaxos, Replicated
+Commit, and Multi-Paxos Plus were unimplemented selector placeholders and are
+unsupported. The former standalone DepTran OCC implementation is also retired;
+Mako's optimistic concurrency control is provided by its MBTA/STO engine. The
+original Silo `txn`/`txn_btree`/`txn_proto2` transaction engine is likewise
+retired, source-guarded, and neither selectable nor runnable. Mako always uses
+STO `Transaction` with MassTrans through `storage/mbta_wrapper.hh`.
+`SiloRuntime` remains live allocator/RCU/Masstree support and is not the retired
+engine. The project-wide `janus::` C++ namespace remains for compatibility.
 - **Paxos** (`src/deptran/paxos/`): Consensus for replication
 
 ### Transport Layer Architecture
 
-**Mako has a single RPC backend: rrr/rpc** — portable TCP/IP-based RPC
-(~10-50 μs latency) from the in-tree rrr library (`src/rrr/`), implemented by
-`RrrRpcBackend` in `src/mako/lib/rrr_rpc_backend.{h,cc}`.
+**Mako has a single RPC backend: srpc/rpc** — portable TCP/IP-based RPC
+(~10-50 μs latency) from the in-tree srpc library (`src/srpc/`), implemented by
+`SrpcRpcBackend` in `src/mako/lib/srpc_rpc_backend.{h,cc}`.
 
 ```bash
 ./build/dbtest config/tpcc.yml
@@ -129,12 +135,12 @@ There is no transport selection. The `TransportBackend` interface, the eRPC/RDMA
 backend, and the `MAKO_TRANSPORT` environment variable have been removed.
 Worker threads still reach requests through the `TransportRequestHandle`
 interface (`src/mako/lib/transport_request_handle.h`), whose only implementation
-is `RrrRequestHandle`.
+is `SrpcRequestHandle`.
 
 **See [docs/developer/transport-backends.md](docs/developer/transport-backends.md) for complete documentation.**
 
 **Legacy Deptran transports:**
-- Standard Ethernet via `src/rrr/` RPC framework
+- Standard Ethernet via `src/srpc/` RPC framework
 - DPDK for kernel bypass (`DPDK_ENABLED` flag)
 - InfiniBand/RDMA support (`src/deptran/rcc_rpc.cpp`)
 
@@ -145,7 +151,7 @@ is `RrrRequestHandle`.
 
 ### Key Classes and Components
 - `Coordinator`: Coordinates distributed transactions across shards (protocol-specific subclasses like `CoordinatorMultiPaxos`)
-- `SchedulerClassic`: Handles transaction scheduling and execution (protocol-specific subclasses like `SchedulerOcc`)
+- `TxLogServer`: Shared base for the Paxos and Raft replication servers
 - `Communicator`: Manages RPC communication between nodes
 - `Frame`: Protocol-specific transaction processing logic
 - `Masstree`: High-performance in-memory index structure (Mako)
@@ -163,18 +169,18 @@ is `RrrRequestHandle`.
 #### Rust first (default for new code)
 
 **New code SHOULD be authored in Rust, not hand-written C++.** In one of the
-seventeen canonical `rrr` modules, edit its `src/rrr/src/*.rs` source directly.
+seventeen canonical `srpc` modules, edit its `src/srpc/src/*.rs` source directly.
 For a module that still uses an inline carrier, the DSL is the
 `#if RUSTYCPP_RUST pub trait/struct ... #endif` source block plus the generated
 `/*RUSTYCPP:GEN-BEGIN ... GEN-END*/` C++ the compiler sees. For a remaining
-`src/rrr` carrier, regenerate with the pinned transpiler:
+`src/srpc` carrier, regenerate with the pinned transpiler:
 `third-party/rusty-cpp/target/release/rusty-cpp-transpiler inline-rust
---rewrite --files <carrier>`, then run `scripts/rrr_dsl_check.sh`. Storage
+--rewrite --files <carrier>`, then run `scripts/srpc_dsl_check.sh`. Storage
 headers use the separate `scripts/regen_storage_dsl.sh` workflow, whose ODR
-post-pass and file census are specific to those headers; do not add `src/rrr`
+post-pass and file census are specific to those headers; do not add `src/srpc`
 module carriers to it. See [docs/storage-interface.md](docs/storage-interface.md)
 for the storage mechanics and [docs/srpc-book.md](docs/srpc-book.md) for the
-`rrr` module workflow.
+`srpc` module workflow.
 
 **Plain C++ is for bridging, not for new logic.** Reach for hand-written
 C++ only when:
@@ -185,7 +191,7 @@ C++ only when:
    owns the shape, C++ owns the surgery" split the storage headers use.
    Legitimate kernels: raw-pointer/iterator surgery, `std::map`/RCU/
    allocator internals, threading, and third-party APIs (rocksdb, lz4,
-   yaml-cpp, the rrr wire types).
+   yaml-cpp, the srpc wire types).
 
 What fits the DSL cleanly: interfaces (`pub trait`), copyable value
 types (`pub struct` + **inherent** `impl` — inherent stays a copyable
@@ -214,7 +220,7 @@ mention each migration in the commit message so bisection stays
 useful.
 
 Exceptions that stay std:
- - rrr framework boundary types (the generated `rcc_rpc.h` still uses
+ - srpc framework boundary types (the generated `rcc_rpc.h` still uses
    `std::string`, `std::shared_ptr<Marshallable>`, etc. on the wire).
    Convert at the edge; isolate the conversion in one spot; annotate
    the boundary `@unsafe`.

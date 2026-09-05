@@ -2,7 +2,7 @@
 
 *Practical field notes for engineers rewriting a C++ codebase into the rusty-cpp / inline-rust DSL. Self-contained; no prior knowledge of any specific codebase assumed.*
 
-> **About the examples.** This guide was distilled from migrating the `rrr` RPC framework. Concrete class names (`TcpConnection`, `RequestQueue`, `Reactor`), the underscore-suffix field convention (`fd_`, `closed_`), and the prefix-based free-function naming (`tcpconn_*`, `future_*`) are **rrr conventions** — adapt them to your codebase's style. Where a transpiler feature or footgun is tied to a specific `rusty-cpp` commit, that commit is noted so you can tell whether *your* checkout has it. Patterns are general; the proper nouns are illustrative.
+> **About the examples.** This guide was distilled from migrating the `srpc` RPC framework. Concrete class names (`TcpConnection`, `RequestQueue`, `Reactor`), the underscore-suffix field convention (`fd_`, `closed_`), and the prefix-based free-function naming (`tcpconn_*`, `future_*`) are **srpc conventions** — adapt them to your codebase's style. Where a transpiler feature or footgun is tied to a specific `rusty-cpp` commit, that commit is noted so you can tell whether *your* checkout has it. Patterns are general; the proper nouns are illustrative.
 
 ---
 
@@ -17,7 +17,7 @@ Every migrated unit has this shape:
 ```cpp
 #if RUSTYCPP_RUST
 // ---- Rust DSL source: the thing you actually edit ----
-struct TcpConnection {            // field naming (fd_, closed_) follows rrr style
+struct TcpConnection {            // field naming (fd_, closed_) follows srpc style
     fd_: rusty::os::fd::OwnedFd,
     closed_: Cell<bool>,
 }
@@ -71,9 +71,9 @@ Mixed codebases are normal — one file is a module, the next is a classic heade
 
 The single highest-ROI decision is **order**. Classify the codebase upfront, then attack in an order that yields quick wins and de-risks the tool itself *before* you reach the heavyweight classes. The phases below are **structural categories**, not a calendar — attack them roughly easiest-first, each unblocking the next.
 
-> **Reality check on timelines.** The budgets below are *idealized*. Real migrations are chaotic. The rrr migration ran over months of recurring sessions and hit 6+ transpiler gaps, several reshape-induced reworks, and a couple of architectural revisions mid-stream (a tracker class blocked on six separate transpiler features; an event hierarchy hit constructor-arity constraints; a Future type needed three overloads reshaped; a request queue needed SFINAE guard-forwarding invented mid-migration). **Expect 1.5×–2× the idealized budget.** If you are co-developing the transpiler, budget transpiler development time separately — those feedback loops are slow.
+> **Reality check on timelines.** The budgets below are *idealized*. Real migrations are chaotic. The srpc migration ran over months of recurring sessions and hit 6+ transpiler gaps, several reshape-induced reworks, and a couple of architectural revisions mid-stream (a tracker class blocked on six separate transpiler features; an event hierarchy hit constructor-arity constraints; a Future type needed three overloads reshaped; a request queue needed SFINAE guard-forwarding invented mid-migration). **Expect 1.5×–2× the idealized budget.** If you are co-developing the transpiler, budget transpiler development time separately — those feedback loops are slow.
 
-> **rrr-specific shortcut.** If you are migrating rrr itself, the inventory is **already done**: a pre-built scanner (`tools/rrr-inventory.py`) and pre-classified buckets (`docs/rrr-inventory.md`) exist. Clone and reuse them instead of re-scanning. The walkthrough below is for a **fresh** codebase.
+> **srpc-specific shortcut.** If you are migrating srpc itself, the inventory is **already done**: a pre-built scanner (`tools/srpc-inventory.py`) and pre-classified buckets (`docs/srpc-inventory.md`) exist. Clone and reuse them instead of re-scanning. The walkthrough below is for a **fresh** codebase.
 
 ### Phase 0: Inventory & Triage (1–2 days)
 
@@ -140,9 +140,9 @@ Tackle them in increasing complexity: small event-driven classes → mid-size co
 - Consolidate type aliases (e.g., generic `Atomic<T>` → concrete `AtomicU64` where possible).
 - Fix bugs surfaced *during* migration (the refcount footgun in §5 was found this way).
 
-### Why this order works (example from rrr)
+### Why this order works (example from srpc)
 
-This ordering succeeded in rrr because of **structural facts about that codebase**: the event base could stay hand-written, the Sink/Source POD layer was thin, and the request queue was well-isolated. A codebase with tightly-coupled core classes or pervasive templates may need a different order. Treat the table as an example, not a prescription — re-derive the dependency order from *your* inventory.
+This ordering succeeded in srpc because of **structural facts about that codebase**: the event base could stay hand-written, the Sink/Source POD layer was thin, and the request queue was well-isolated. A codebase with tightly-coupled core classes or pervasive templates may need a different order. Treat the table as an example, not a prescription — re-derive the dependency order from *your* inventory.
 
 | Phase | Why it goes here |
 |---|---|
@@ -186,7 +186,7 @@ This is the same recipe for any heavyweight class (connections, channels, tracke
 
 ## 3. The Per-Class Translation Recipe
 
-> The `rusty::*` type names below are the ones the rrr/rusty library exposes. A different project may import a different rusty library with different names — check your library's surface.
+> The `rusty::*` type names below are the ones the srpc/rusty library exposes. A different project may import a different rusty library with different names — check your library's surface.
 
 ### Core recipe: keep methods as methods, delegate gnarly bodies to free functions
 
@@ -234,7 +234,7 @@ bool TcpConnection::is_closed() const {
 }
 ```
 
-**Call sites are unchanged** (`conn.send_frame(frame)`, `conn.is_closed()`). The benefits: no churn in adapter or test code; complex bodies (syscalls, marshalling, try/catch, closures) stay in familiar C++ free functions. Forward-declare those free-function signatures *before* the struct so the method bodies can reference them. (rrr names them `tcpconn_*` by class prefix; namespaced helpers work equally well — follow your codebase's convention.)
+**Call sites are unchanged** (`conn.send_frame(frame)`, `conn.is_closed()`). The benefits: no churn in adapter or test code; complex bodies (syscalls, marshalling, try/catch, closures) stay in familiar C++ free functions. Forward-declare those free-function signatures *before* the struct so the method bodies can reference them. (srpc names them `tcpconn_*` by class prefix; namespaced helpers work equally well — follow your codebase's convention.)
 
 ### `#[cpp_ctor]`: multiple initialization paths
 
@@ -409,7 +409,7 @@ Enums become `enum class`, so **every use must be qualified**: `DisconnectBehavi
 
 ## 4. Clearing Blockers: Reshape First, Evolve the Transpiler Second
 
-Most blockers are not transpiler bugs — they're C++ shapes that simply don't fit the DSL yet. The discipline is: **analyze every pattern for DSL-expressibility before requesting a transpiler feature.** (The reshape recipes below reflect rrr's bottlenecks — many statics, `std::list`-based caches. Your codebase's friction points may differ; adapt the recipes to what your inventory actually surfaces.)
+Most blockers are not transpiler bugs — they're C++ shapes that simply don't fit the DSL yet. The discipline is: **analyze every pattern for DSL-expressibility before requesting a transpiler feature.** (The reshape recipes below reflect srpc's bottlenecks — many statics, `std::list`-based caches. Your codebase's friction points may differ; adapt the recipes to what your inventory actually surfaces.)
 
 ### The decision rule
 
@@ -435,7 +435,7 @@ Most blockers are not transpiler bugs — they're C++ shapes that simply don't f
 
 **3. Anonymous enum → named enum.** `enum { CONNECTED, CLOSED } status_;` becomes a top-level `enum ServerConnStatus { ... }`.
 
-> **WARNING — this is the high-churn reshape, not "mechanical cleanup."** A named DSL enum emits as `enum class`, which **auto-qualifies every use**. Each bare `CONNECTED` must become `ServerConnStatus::CONNECTED` — *all of them*, including comments-as-code, macros, and switch arms. **Survey call sites first** (`grep -rn`); if there are >10 uses, budget for it. In rrr, `ServerConnStatus` had ~30 internal uses, every one of which had to be qualified. The qualification is not optional — it's *why* the migrated code reads `ServerConnStatus::CONNECTED` everywhere.
+> **WARNING — this is the high-churn reshape, not "mechanical cleanup."** A named DSL enum emits as `enum class`, which **auto-qualifies every use**. Each bare `CONNECTED` must become `ServerConnStatus::CONNECTED` — *all of them*, including comments-as-code, macros, and switch arms. **Survey call sites first** (`grep -rn`); if there are >10 uses, budget for it. In srpc, `ServerConnStatus` had ~30 internal uses, every one of which had to be qualified. The qualification is not optional — it's *why* the migrated code reads `ServerConnStatus::CONNECTED` everywhere.
 
 **4. Static data member → file-scope global + free fns.** DSL structs can't have `static` fields. Move them to a `static` in the impl namespace, accessed via free functions.
 
@@ -447,7 +447,7 @@ Most blockers are not transpiler bugs — they're C++ shapes that simply don't f
 
 ### (B) Transpiler co-evolution — when reshape isn't enough
 
-These features each unblock a *category* of migration. Whether *your* checkout has them depends on the submodule commit — **check before you build or before you assume a feature is missing.** Status as observed during the rrr migration:
+These features each unblock a *category* of migration. Whether *your* checkout has them depends on the submodule commit — **check before you build or before you assume a feature is missing.** Status as observed during the srpc migration:
 
 - ✓ **`#[cpp_inherit]`** *(landed)* — emits direct C++ inheritance for trait implementors so `Arc<Impl>` upcasts to `Arc<Base>` and all submit/upcast call sites compile unchanged. Strictly opt-in. (Alone it synthesizes only a fieldwise + move ctor.)
 - ✓ **`#[cpp_ctor]` + `#[cpp_inherit]` composition** *(landed)* — for inheriting types that need custom/default/computed ctors. The transpiler suppresses the synthesized fieldwise ctor, emits your factories as the real ctors, prepends `Base()` to each init-list, and synthesizes a move ctor only.
@@ -470,7 +470,7 @@ Be honest: some patterns are genuinely resistant. Don't reshape them into thin s
 
 ### (D) The justified floor — reshapable but not worth it
 
-Some classes *could* be reshaped but the value doesn't justify the cost: dead code (variadic wait-combinators never constructed, unreferenced event subclasses), 10-line marker bases used only as tags, and classes needing syntax the DSL doesn't support (per-field in-class default initializers like `bool x = true;`). The cost of maintaining a declaration-only DSL shell exceeds the value. Leave them, and **document the floor so future workers don't re-litigate it.** (rrr's floor included a deleted-copy marker base and a per-field-default-init policy struct — *yours* will differ; derive your floor by weighing each class's complexity against its migration value, not by copying this list.)
+Some classes *could* be reshaped but the value doesn't justify the cost: dead code (variadic wait-combinators never constructed, unreferenced event subclasses), 10-line marker bases used only as tags, and classes needing syntax the DSL doesn't support (per-field in-class default initializers like `bool x = true;`). The cost of maintaining a declaration-only DSL shell exceeds the value. Leave them, and **document the floor so future workers don't re-litigate it.** (srpc's floor included a deleted-copy marker base and a per-field-default-init policy struct — *yours* will differ; derive your floor by weighing each class's complexity against its migration value, not by copying this list.)
 
 ### Reshape → transpiler → defer, at a glance
 
@@ -501,7 +501,7 @@ Some classes *could* be reshaped but the value doesn't justify the cost: dead co
 
 ## 5. Build, Verify, Commit — The Operational Loop
 
-> Commands below use generic placeholders — `<build>` for your build dir, `mylib` for your library target, `test_<name>` for a class's unit test. The rrr migration used `ninja -C build_clang22 rrr` and ran the `rrr` test suite; substitute your own.
+> Commands below use generic placeholders — `<build>` for your build dir, `mylib` for your library target, `test_<name>` for a class's unit test. The srpc migration used `ninja -C build_clang22 srpc` and ran the `srpc` test suite; substitute your own.
 
 ### Environment (per shell session)
 
@@ -537,7 +537,7 @@ Nearly every DSL migration touches call sites — and tests are call sites too, 
 
 - **Update tests in the migration commit, not before.** The reshape commit keeps the old C++ API intact, so tests still pass there; the migration commit is where the API actually changes, so fix the tests in the *same* commit. This keeps each commit green and bisectable.
 - **Run the migrated class's test in isolation first** to rule out cross-test interaction.
-- **Watch for latent tests that never ran.** A migration can surface a build bug that was silently keeping a test out of the suite (in rrr, an idempotency test only started running once a migration fixed the latent build error). After migrating, confirm the test count went *up*, not just that existing tests pass.
+- **Watch for latent tests that never ran.** A migration can surface a build bug that was silently keeping a test out of the suite (in srpc, an idempotency test only started running once a migration fixed the latent build error). After migrating, confirm the test count went *up*, not just that existing tests pass.
 
 ### The Rc-by-value refcount footgun (LIVE HAZARD — read this twice)
 
@@ -645,7 +645,7 @@ The reusable **PATTERNS** matter more than the **PROCESS** discipline — a patt
 
 ## 7. Advanced Patterns: Dissolving the "Permanent" Floor
 
-*This section was added after the guide's first draft, once the rrr migration reached what looked like its floor and then kept going. Everything here **supersedes the "defer permanent" verdicts in §4(C)** for the patterns it names. The meta-lesson (§6 #13) is the point: a floor verdict is a hypothesis about the current transpiler and the current design — re-test it.*
+*This section was added after the guide's first draft, once the srpc migration reached what looked like its floor and then kept going. Everything here **supersedes the "defer permanent" verdicts in §4(C)** for the patterns it names. The meta-lesson (§6 #13) is the point: a floor verdict is a hypothesis about the current transpiler and the current design — re-test it.*
 
 ### 7.1 Composition over inheritance: flatten a polymorphic hierarchy
 
@@ -659,7 +659,7 @@ The reusable **PATTERNS** matter more than the **PROCESS** discipline — a patt
 4. **Split concrete types by expressibility.** Types the DSL can express (plain fields + control flow) become **flat DSL structs**, each `#[cpp_inherit] impl Trait for X`. Types it can't (templates, variadic ctors, `Function`-typed state) become **hand-bridges** (§7.2) — still deriving the trait, still calling the same kernels.
 5. **Delete the base.** Once nothing inherits the old base, it's just another leaf. If it survives only at a couple of call sites, move those to a sibling type and delete the class outright.
 
-The result: the tangled `Base → Sub → SubSub<T>` hierarchy becomes a flat set of trait-implementing leaves sharing one copy of the logic in the kernels. Call sites and runtime behavior are unchanged. (This is how rrr's `Event → BoxEvent<T> → StatusBox` chain, plus `QuorumEvent` with its own virtuals and ~18 fields, was flattened and the `Event` base then deleted.)
+The result: the tangled `Base → Sub → SubSub<T>` hierarchy becomes a flat set of trait-implementing leaves sharing one copy of the logic in the kernels. Call sites and runtime behavior are unchanged. (This is how srpc's `Event → BoxEvent<T> → StatusBox` chain, plus `QuorumEvent` with its own virtuals and ~18 fields, was flattened and the `Event` base then deleted.)
 
 ### 7.2 The hand-bridge: keep it C++, still derive the DSL trait
 
@@ -683,7 +683,7 @@ Some concrete types genuinely can't be DSL structs — a **template** (`BoxEvent
 
 Before asserting "N lines can't convert," **measure** instead of estimating:
 
-1. **Count hand-written code deterministically.** A ~30-line script that walks each file and subtracts every `/*RUSTYCPP:GEN-BEGIN … GEN-END*/` region and every `#if RUSTYCPP_RUST … #endif` region gives you the exact hand-written-code line count per file — ground truth, not an LLM guess. (Doing this on rrr corrected a "~9,300" estimate to a measured 8,193.)
+1. **Count hand-written code deterministically.** A ~30-line script that walks each file and subtracts every `/*RUSTYCPP:GEN-BEGIN … GEN-END*/` region and every `#if RUSTYCPP_RUST … #endif` region gives you the exact hand-written-code line count per file — ground truth, not an LLM guess. (Doing this on srpc corrected a "~9,300" estimate to a measured 8,193.)
 2. **Classify the remainder by reason, not by file.** Bucket every hand-written region into: asm / mmap / syscalls / raw-pointer (the *true* unsafe substrate); compile-time metaprogramming (templates/operators/CRTP); `Function`-typed state + closures; logging/boilerplate; and — critically — a **"genuinely convertible"** bucket and a **"blocked on one transpiler feature"** bucket. The reason-taxonomy is what tells you which floor is real (a safe-subset boundary) versus merely undone work or a single missing feature. A fan-out (one reviewer per file-group, each reconciling to the measured per-file total) makes this tractable on a large tree, and a single missing feature (e.g. `&str`-literal → `const char*` return lowering) can turn out to gate a whole cluster of near-identical helpers at once — higher ROI than hand-converting them one by one.
 
 ### 7.6 What is *actually* permanent floor
@@ -768,16 +768,16 @@ this particular one does *not* yet compile inside a namespace.
 **⚠ BLOCKER — duck-typed generic kernels don't compile inside a namespace (main
 `9a446dfe`).** The dispatch shim is emitted as
 `namespace rusty { namespace detail { RUSTY_METHOD_DISPATCH(is_ready) } }`
-**inline in the GEN block**. When that block lives inside `namespace rrr` (as
-every reactor/rrr kernel does), it opens **`rrr::rusty`**, which then *shadows*
+**inline in the GEN block**. When that block lives inside `namespace srpc` (as
+every reactor/srpc kernel does), it opens **`srpc::rusty`**, which then *shadows*
 the global `::rusty` for the rest of the function — so every `rusty::deref_call`,
 `rusty::clone`, `rusty::thread`, `rusty::detail::deref_if_pointer_like` resolves
-into `rrr::rusty` and fails to compile:
+into `srpc::rusty` and fails to compile:
 
 ```
-error: no member named 'deref_call' in namespace 'rrr::rusty'; did you mean '::rusty::deref_call'?
-error: no member named 'clone'      in namespace 'rrr::rusty' … missing '#include "rusty/move.hpp"'
-error: no member named 'thread'     in namespace 'rrr::rusty'; did you mean '::rusty::thread'?
+error: no member named 'deref_call' in namespace 'srpc::rusty'; did you mean '::rusty::deref_call'?
+error: no member named 'clone'      in namespace 'srpc::rusty' … missing '#include "rusty/move.hpp"'
+error: no member named 'thread'     in namespace 'srpc::rusty'; did you mean '::rusty::thread'?
 ```
 
 Confirmed the hard way: `event_test_impl<W>` converted in `reactor.cpp` under
@@ -804,7 +804,7 @@ and *do* compile.
 `create_sp_event<Ev, Args...>`, `make_arc<U, Args...>` — plus generic
 *impl-blocks-over-a-type* and CRTP/SFINAE.
 
-**Scope, honestly.** A measured rrr sweep found **345** hand-written
+**Scope, honestly.** A measured srpc sweep found **345** hand-written
 `template<…>` decls: **~119 single-type-param** (only ~18 variadic). But the
 convertible subset splits again: **pure-value** templates should convert and
 compile today; **duck-typed method-call kernels are gated on the namespace-shim
@@ -822,7 +822,7 @@ finally `event_wait_impl`). The fixes, in order landed:
 
 | Issue | Fix | What it unblocks |
 |---|---|---|
-| **#33** namespace-shim | hoist the `RUSTY_METHOD_DISPATCH` functor to **global scope** (after `export module …`), not inline in the GEN block | duck-typed kernels compile inside `namespace rrr` — `::rusty::` no longer shadowed |
+| **#33** namespace-shim | hoist the `RUSTY_METHOD_DISPATCH` functor to **global scope** (after `export module …`), not inline in the GEN block | duck-typed kernels compile inside `namespace srpc` — `::rusty::` no longer shadowed |
 | **#32** borrow-deref | a **generic** receiver's `x.borrow().m()` → `deref_call(borrow(x), __mdisp_m{})` (was a `.` on the `Ref` guard) | `wp_fiber_.borrow().upgrade()` etc. |
 | **#34** deref-assign | `*x.borrow_mut() = v` through a generic guard → `deref_if_pointer_like(x.borrow_mut()) = v` (was dropping the `*`) | the weak-fiber store `*wp_fiber_.borrow_mut() = Rc::downgrade(…)` |
 | **#35** concrete guard-deref | keep the guard deref for a **concrete** receiver too → `rc.q.borrow_mut().push_back(y)` routes through `deref_call(…, __mdisp_push_back{}, y)` | the reactor-queue enqueues (`RefCell<VecDeque<…>>`) |
@@ -870,7 +870,7 @@ kernel, not a transpiler gap.
 
 A `(T* buf, size_t len)` signature *looks* like permanent floor. Usually
 it is not: it is a slice that lost its length at the C boundary. Under
-the rule-2 half of `docs/dev/rrr_migration_policy.md`, rewrite the call
+the rule-2 half of `docs/dev/srpc_migration_policy.md`, rewrite the call
 site rather than teaching the DSL to emit pointer arithmetic.
 
 `frame_codec` is the worked example — both "kernels" dissolved:
@@ -963,7 +963,7 @@ and `i32` is not.
 
 **Why this matters for the burndown:** it blocks a whole shape, not one
 function. Every `Log_debug/info/warn/error/fatal` is uppercase-initial,
-and plenty of rrr functions return `int` status codes — so any such
+and plenty of srpc functions return `int` status codes — so any such
 function that logs cannot be converted until this is fixed. It is why
 `sconn_run_async` (9 lines, otherwise trivial: an emptiness check, a
 call, a status return) is still a C++ kernel.
@@ -1008,7 +1008,7 @@ What breaks is reaching the Box **through a Mutex guard**, where the
 transpiler loses the element type and emits `.close()` on the Box itself:
 
 ```
-error: no member named 'close' in 'rusty::Box<rrr::ChannelConnectionBase>';
+error: no member named 'close' in 'rusty::Box<srpc::ChannelConnectionBase>';
        did you mean to use '->' instead of '.'?
 ```
 
@@ -1131,7 +1131,7 @@ Deleting the cast here just moves the lie; the SIGNATURE has to change.
 Leave it and keep it `// @unsafe`.
 
 **Counting note.** Grep over-reports badly: of 55 `const_cast<` matches in
-`src/rrr` production files, 27 are inside `RUSTYCPP:GEN` blocks — emitted
+`src/srpc` production files, 27 are inside `RUSTYCPP:GEN` blocks — emitted
 by the transpiler as `const_cast<uint8_t*>(reinterpret_cast<const
 uint8_t*>(p))`, a no-op round trip, not something to hand-edit. The real
 hand-written figure is **28**. Always split by GEN-block membership before
@@ -1153,7 +1153,7 @@ Converting `this_fiber::get_id` in `fiber.cpp` surfaced two problems that
 have nothing to do with that function.
 
 **(a) The drift guard does not catch GENERATED-output drift.**
-`scripts/rrr_dsl_check.sh` runs `inline-rust --check`, which compares the
+`scripts/srpc_dsl_check.sh` runs `inline-rust --check`, which compares the
 `rust_sha256` in each GEN marker against the DSL source. It says nothing
 about whether the checked-in C++ still matches what the CURRENT
 transpiler would emit. So a file can sit "0 drift" for months while the
@@ -1169,7 +1169,7 @@ once. Expect it; do not assume your own change caused it.
 fn f(x: u64) { Fiber::sleep(x); Foo::pause(x); Bar::dup(x); }
 ```
 ```cpp
-Fiber::sleep_(std::move(x));   // ✗ no member named 'sleep_' in 'rrr::Fiber'
+Fiber::sleep_(std::move(x));   // ✗ no member named 'sleep_' in 'srpc::Fiber'
 Foo::pause_(std::move(x));     // ✗
 Bar::dup_(std::move(x));       // ✗
 ```
@@ -1204,7 +1204,7 @@ static like `Fiber::current_fiber()`).
 
 §7.17 predicted the drift guard cannot see generated-output drift.
 Measured it: regenerating all 41 DSL files with the current transpiler
-changes **26 of them** (+234/−101), while `rrr_dsl_check.sh` reports
+changes **26 of them** (+234/−101), while `srpc_dsl_check.sh` reports
 "0 drift" throughout — it only hashes the DSL source.
 
 Most of the delta is IMPROVEMENT accumulated from fixes landed since
@@ -1312,7 +1312,7 @@ installing them.
 ### 7.20 A DSL block cannot read a static defined in the impl namespace
 
 `rand.cpp` declares helpers in the EXPORTED namespace and defines them
-further down in a plain `namespace rrr { ... }` impl section, where the
+further down in a plain `namespace srpc { ... }` impl section, where the
 file-scope statics (`randgen_nu_constant`, the seed) live. That split is
 fine for hand-written C++: the declaration is exported, the definition
 sees the statics.
@@ -1323,7 +1323,7 @@ namespace — so the static it reads is a DIFFERENT entity under C++
 modules:
 
 ```
-undefined reference to `rrr::randgen_nu_constant@rrr.rand'
+undefined reference to `srpc::randgen_nu_constant@srpc.rand'
 ```
 
 Adding `extern int randgen_nu_constant;` above the block does not help,
@@ -1446,7 +1446,7 @@ declaration; the kernel it replaced lived ~2500 lines later, after
 Reactor is defined. Converting it gives:
 
 ```
-error: incomplete type 'rrr::Reactor' named in nested name specifier
+error: incomplete type 'srpc::Reactor' named in nested name specifier
    const auto ev = Reactor::create_sp_event<IntEvent>();
 ```
 
@@ -1504,7 +1504,7 @@ tcp_channel.cpp — a pure `switch` mapping `rusty::io::Error::Kind` onto
 **(a) An enum from another MODULE is matched as a data enum.** 78a0d9a7
 taught the transpiler about enums declared in a SIBLING BLOCK of the same
 file. It does not cover enums from elsewhere: `Error::Kind` lives in the
-rusty headers and `ChannelError` in rrr.channel, and the match lowered to
+rusty headers and `ChannelError` in srpc.channel, and the match lowered to
 
 ```cpp
 rusty::detail::variant_holds<rusty::io::Error::Kind_ConnectionRefused>(_m)
@@ -1564,7 +1564,7 @@ Concentrated in `serializable.cpp` (272), `serializable_envelope.cpp`
 a class-template construct, which is a transpiler feature request, not a
 porting task.
 
-`scripts/rrr_handwritten_census.py` now reports this as a separate
+`scripts/srpc_handwritten_census.py` now reports this as a separate
 advisory line. It is deliberately NOT folded into the headline number:
 the classifier is a regex heuristic (it reads the text between
 `template<` and the opening brace), and a metric that is exact should
@@ -1578,7 +1578,7 @@ open it — the count is evidence about size, never about tractability.
 
 ### 7.25 A DSL `impl` requires a DSL-declared struct — reactor.cpp needs whole-class conversions
 
-Every one of the ~60 `impl` blocks across src/rrr targets a type the DSL
+Every one of the ~60 `impl` blocks across src/srpc targets a type the DSL
 itself declares (`pub struct X` in the same block). A scan for an `impl`
 whose target is a hand-written `class`/`struct` in the same file returns
 **zero** hits. There is no precedent for attaching a DSL method to a C++
@@ -1682,7 +1682,7 @@ this section asserted that `idempotency-LRU` was still blocked because
 it "waits on Marshal deprecation, not yet done". That was written from
 memory and is false: `Marshal` has **zero** non-comment references
 anywhere in the repo, and no definition — the type is gone. All 42
-remaining mentions in `src/rrr` are comments describing the historical
+remaining mentions in `src/srpc` are comments describing the historical
 migration, which is exactly what made memory feel confirmed. Marshal
 deprecation is complete, so that deferral is expired too.
 
@@ -1749,7 +1749,7 @@ CLAUDE.md documents that struct **fields** named after Rust keywords
 (`type`, `match`, `ref`, …) must be renamed or the type stays C++. The
 same applies to function **parameters**, and the diagnostic is unhelpful:
 
-    inline-rust error: src/rrr/rpc/request_options.cpp:318: failed to
+    inline-rust error: src/srpc/rpc/request_options.cpp:318: failed to
     transpile inline block id=request_options.3: Parse error: expected
     one of: identifier, `::`, `<`, `_`, literal, `const`, `ref`, `mut`,
     `&`, parentheses, square brackets, `..`, `const`
@@ -1924,7 +1924,7 @@ rather than an opinion.
    confounded variables, nearly the wrong conclusion.
 
 **And grep for the blocker, not for mentions of it.** `Marshal` appeared
-42 times in `src/rrr` and every one was a comment describing the historical
+42 times in `src/srpc` and every one was a comment describing the historical
 migration. The type had been gone for some time.
 
 ### 7.31 `!= nullptr` emits a non-existent `nullptr_`; use `.is_null()`
@@ -2153,7 +2153,7 @@ Found while probing `idem_lookup`, whose `(*guard).push_front(entry)`
 lowers correctly — the contrast between that and the earlier failure is
 what exposed the idiom as the variable. The former request-queue carrier also
 used the same bind-then-deref shape in `for req in &mut (*guard)`. Its canonical
-replacement, `src/rrr/src/request_queue.rs`, now drains the queue explicitly
+replacement, `src/srpc/src/request_queue.rs`, now drains the queue explicitly
 with `while let Some(request) = guard.pop_front()`.
 
 **Correction — the scope is narrower than first stated.** The rule above
@@ -2269,9 +2269,9 @@ is worse in one respect: **the compile is clean and only the link fails.**
 
 `frame_codec.cpp` is laid out as
 
-    export namespace rrr {   // lines 26-524   <- DSL blocks + their GEN
+    export namespace srpc {   // lines 26-524   <- DSL blocks + their GEN
     }
-    namespace rrr {          // after 547      <- hand-written kernels
+    namespace srpc {          // after 547      <- hand-written kernels
         void fsr_compact_if_needed(FrameStreamReader&) { … }   // 654
     }
 
@@ -2284,17 +2284,17 @@ visible.
 Adding a forward declaration inside the export block fixes the compile
 and then fails at link:
 
-    undefined reference to `rrr::fsr_compact_if_needed@rrr.frame_codec(...)'
+    undefined reference to `srpc::fsr_compact_if_needed@srpc.frame_codec(...)'
 
 because an **exported declaration** and a **non-exported definition** are
-not the same entity. Everything inside `export namespace rrr { }` is
+not the same entity. Everything inside `export namespace srpc { }` is
 exported; you cannot write a non-exported declaration there.
 
 The two real fixes are both bigger than the conversion:
  - export the kernel — changes the module's public surface for the sake
    of an internal helper;
  - restructure the namespace blocks so the kernel is declared before the
-   DSL block in a non-exported `namespace rrr`.
+   DSL block in a non-exported `namespace srpc`.
 
 For the old inline-carrier layout, the conversion was initially reverted. The
 later canonical-source promotion removed that declaration-order boundary:
@@ -2323,7 +2323,7 @@ ask ninja for the exact command it would use, and run just that.
 
 ```
 # 1. get the real command (last line = the compile)
-ninja -t commands src/rrr/CMakeFiles/rrr.dir/rpc/server.cpp.o | tail -1
+ninja -t commands src/srpc/CMakeFiles/srpc.dir/rpc/server.cpp.o | tail -1
 
 # 2. rewrite it: drop the depfile flags, redirect the outputs,
 #    add whatever you are testing
@@ -2363,7 +2363,7 @@ but refuting my own guesses about its *cause*. I had assumed the rot was
 in the rusty container APIs (`HashMap::operator[]`, the `Counter`
 methods); those were all fine. The real breakage was unqualified names
 that lost namespace reachability in the module migration: `base::rdtsc`
-(the `base` namespace is gone — it survives as `rrr::rdtsc`),
+(the `base` namespace is gone — it survives as `srpc::rdtsc`),
 `numeric_limits`, and `pair`.
 
 Which is the general lesson: **"does it compile" is cheap to answer
@@ -2374,7 +2374,7 @@ decide it with the compiler.
 
 ### 7.36 `--check` verifies the SOURCE hash, not the generated C++
 
-`scripts/rrr_dsl_check.sh` reporting "checked 41 files, 0 with drift" is
+`scripts/srpc_dsl_check.sh` reporting "checked 41 files, 0 with drift" is
 a weaker statement than it looks, and I over-trusted it for a long time.
 
 `inline-rust --check` compares the recorded `rust_sha256` in each
@@ -2826,7 +2826,7 @@ hold.** Reading the bodies:
 
 ```cpp
 inline void serialize(const rusty::Vec<T>& v, BinaryWriteArchive& ar) {
-  rrr::v64 v_len{static_cast<rrr::i64>(v.size())};    // .size(), not .len()
+  srpc::v64 v_len{static_cast<srpc::i64>(v.size())};    // .size(), not .len()
   for (auto it = v.begin(); it != v.end(); ++it) ...  // C++ iterators
 }
 ```
@@ -2910,14 +2910,14 @@ with a block of forward declarations emitted *before* every definition
 A converted impl cannot participate:
 
 ```
-test_marshal.cc   rrr::Serialize_::serialize(nested_vec, war)   // vector<vector<int>>
+test_marshal.cc   srpc::Serialize_::serialize(nested_vec, war)   // vector<vector<int>>
   -> WireSerialize_::serialize<vector<int>>       (converted impl, via the using) OK
     -> body: Serialize_::serialize(e, ar)         // e is vector<int>
       -> resolves to the CATCH-ALL, not the converted overload
         -> adl_detail_ -> ADL-only -> hard error
 ```
 
-The generated bodies sit *before* the `using ::rrr::WireSerialize_::serialize;`
+The generated bodies sit *before* the `using ::srpc::WireSerialize_::serialize;`
 bridge, and the bridge cannot be hoisted above them because it names
 `WireSerialize_`, which the GEN block itself introduces. Circular.
 
@@ -2988,7 +2988,7 @@ in a codebase whose toolchain is under active development — treat every
 
 ### 7.42 The `Function<..>` alias workarounds are now unnecessary (16 sites)
 
-A sweep for stated DSL limitations across `src/rrr` turned up ~24
+A sweep for stated DSL limitations across `src/srpc` turned up ~24
 "the DSL can't X" comments. One family is already dead as of today's
 gap-1 fix (§7.40 / the `rusty::Function` bare-signature change):
 
@@ -3008,7 +3008,7 @@ Probed — all three positions now work inline:
 | field `ccb_: rusty::Function<dyn Fn(i32)>` | `rusty::Function<void(int32_t) const> ccb_;` |
 | param `fn f(c: rusty::Function<dyn FnMut()>)` | `int32_t take_cb(rusty::Function<void()> f)` |
 
-`grep -c 'using \w*Callback\w* = rusty::Function'` over `src/rrr`
+`grep -c 'using \w*Callback\w* = rusty::Function'` over `src/srpc`
 reports **16 such aliases**. Each exists only to give the type a name
 the DSL could parse; each can now be spelled inline at its use.
 
@@ -3149,7 +3149,7 @@ language of language limits.
 
 ### 7.46 Sweep complete — and two ways the grep lies
 
-All ~24 "the DSL can't X" comments in `src/rrr` are now accounted for.
+All ~24 "the DSL can't X" comments in `src/srpc` are now accounted for.
 The last two resolved without a probe, and both were **false positives
 of the search itself**:
 
@@ -3225,7 +3225,7 @@ that was the point of the transpiler work.
 
 ### 7.48 The drift guard is blind to transpiler changes
 
-`scripts/rrr_dsl_check.sh` compares each block's `rust_sha256` against a
+`scripts/srpc_dsl_check.sh` compares each block's `rust_sha256` against a
 hash of the Rust source. That catches the failure it was built for --
 Rust edited without regenerating -- and nothing else. In particular it
 **cannot see a GEN region that is stale with respect to the transpiler
@@ -3275,11 +3275,11 @@ believing any probe result. This is the same family as the stale test
 binaries in §7.31 -- a green or red reading from a binary that is not
 the thing you think you are measuring.
 
-### 7.49 Sweep of the remaining "stated causes" in src/rrr
+### 7.49 Sweep of the remaining "stated causes" in src/srpc
 
 §7.45 predicts that comments claiming "the DSL can't do X" go stale
 faster than anyone updates them, and that re-reading them is the
-highest-yield move available. Grepping src/rrr for the phrasings
+highest-yield move available. Grepping src/srpc for the phrasings
 (`DSL can't`, `cannot spell`, `no spelling`, `wouldn't parse`, ...)
 returns ~24 sites. Three probed this round; **all three stale**:
 
@@ -3294,10 +3294,10 @@ function template like `rusty::Function<void() const>`". Both false.
 **2. `QuorumFinalizeFn`** (reactor.cpp) -- "the DSL cannot parse a bare
 fn-type template argument as a field/param signature". False:
 
-    rusty::Function<dyn FnMut(&mut rusty::Vec<std::pair<u16, rrr::i64>>) -> bool>
+    rusty::Function<dyn FnMut(&mut rusty::Vec<std::pair<u16, srpc::i64>>) -> bool>
 
 lowers to exactly the alias's expansion,
-`rusty::Function<bool(rusty::Vec<std::pair<uint16_t, rrr::i64>>&)>`,
+`rusty::Function<bool(rusty::Vec<std::pair<uint16_t, srpc::i64>>&)>`,
 including the `&mut` -> trailing-`&` and the nested `std::pair`.
 
 **3. `null_reply_bytes()`** (client.cpp) -- "The DSL cannot emit
@@ -3347,7 +3347,7 @@ That legitimises the remaining `#[cpp_ctor]` default-init family
 and matches CLAUDE.md, which already documents it as a known limit to
 design around via `fn new`/factory functions.
 
-`rrr.reconnect_policy` has since taken that design-around: canonical Rust owns
+`srpc.reconnect_policy` has since taken that design-around: canonical Rust owns
 an explicit `ReconnectPolicy::new()` factory, and its former carrier is gone.
 
 So the scoreboard is 8 stale / 1 confirmed-real, and the split falls
@@ -3533,7 +3533,7 @@ Applied, rebuilt, and measured:
    `deref_if_pointer_like(((*guard)).as_ref().unwrap())`.
  - the transpiler suite: **428 passed / 16 failed, a failing set
    byte-identical to baseline.** No signal at all.
- - regenerating src/rrr and compiling it: **broken.**
+ - regenerating src/srpc and compiling it: **broken.**
 
        server.cpp:1164:9: error: no matching function for call to
                                  'server_invoke_shutdown_hook_safely'
@@ -3557,7 +3557,7 @@ transpiler exists to serve. A green suite means "no known case changed",
 not "no case changed". Regenerating a real consumer and compiling it is a
 *different* check, and it is the one that found this.
 
-Concretely, for any transpiler change: regenerate src/rrr and build it,
+Concretely, for any transpiler change: regenerate src/srpc and build it,
 and separate the two populations first, because they are easily confused:
 
  - **backlog** — files whose checked-in GEN predates the current pin, which
@@ -3588,7 +3588,7 @@ narrower, and is a rule already on the books:
 That is the module-partition reachability rule: **a GMF must include what
 its own GEN names.** The historical fix was a one-line
 `#include <rusty/slice.hpp>`. Today canonical
-`src/rrr/src/utils.rs` owns the module, and its remaining GMF dependency is
+`src/srpc/src/utils.rs` owns the module, and its remaining GMF dependency is
 declared through structured preamble metadata.
 
 Check whether a missing symbol is *absent* or merely *unreachable* before
@@ -3628,7 +3628,7 @@ independent and must not be committed separately.**
 
 Verification for the pair cannot be the transpiler suite -- §7.50.3
 showed it reports an identical failing set while the tree is broken.
-It has to be: regenerate src/rrr, build `rrr`, and run a full gate,
+It has to be: regenerate src/srpc, build `srpc`, and run a full gate,
 with backlog separated from the change's own effect (§7.48).
 
 ### 7.51 Where the remaining kernels are, and which claims to re-check
@@ -3712,7 +3712,7 @@ The transpiler emits both names:
 
 So `Default::default()` in an expression position emits a call to a
 function that was never defined. It is latent only because no current DSL
-in src/rrr takes that path -- the moment one does, it is a compile error
+in src/srpc takes that path -- the moment one does, it is a compile error
 with no DSL-level warning. Same family as `std::ptr::null()` (§7.49):
 plausible output, no such symbol.
 
@@ -3773,7 +3773,7 @@ Not converted: `frame_of` is two lines and needs an `unsafe` raw-pointer
 deref in the DSL, so the win does not pay for a full gate cycle on its
 own. Worth folding into the next tcp_channel change.
 
-### 7.52 Where the src/rrr sweep stands
+### 7.52 Where the src/srpc sweep stands
 
 After this pass, the four files worked are at or near their floor, and
 the remaining kernels are genuine rather than stale:
@@ -3908,7 +3908,7 @@ The default-construction sweep finished at **16 kernels across five
 files**. Every one traced to `Default::default()` emitting
 `rusty::default_value<T>()`, a function that never existed (§7.51.1).
 
-Two "cannot spell" comments remain in src/rrr, and neither is this
+Two "cannot spell" comments remain in src/srpc, and neither is this
 family. Checked on their own terms rather than assumed to follow the
 pattern:
 
@@ -3970,7 +3970,7 @@ within a TU — it needs the module graph, not a line scan.
 
 Measured, not recalled. Goal 0 has two halves:
 
-  (a) reduce hand-written C++ in src/rrr to zero via the DSL;
+  (a) reduce hand-written C++ in src/srpc to zero via the DSL;
   (b) compile that DSL with **both** rustc and the C++ compiler.
 
 **(a) — ~234 hand-written kernels remain** in the DSL files:
@@ -3991,8 +3991,8 @@ Plus four non-test files with no DSL at all (`base/callback_wrapper.cpp`,
 assembly, and 79 test files. `serializable.cpp` alone is 44% of the
 remainder.
 
-**(b) — not wired yet.** The `#if RUSTYCPP_RUST` blocks in src/rrr name
-cross-file and foreign types (`CallbackWrapper`, `ChannelFrame`, rrr module
+**(b) — not wired yet.** The `#if RUSTYCPP_RUST` blocks in src/srpc name
+cross-file and foreign types (`CallbackWrapper`, `ChannelFrame`, srpc module
 types), so they need a crate-level extraction and explicit boundary modules
 before rustc can compile them. No parallel hand-written port counts as dual
 compilation.
@@ -4041,7 +4041,7 @@ What this does and does not invalidate:
 
  - **Does not** invalidate the three landed transpiler fixes. Each was
    verified by compiling its emitted output and by regenerating all of
-   src/rrr — checks that never touched the suite (and §7.50.3's point was
+   src/srpc — checks that never touched the suite (and §7.50.3's point was
    precisely that the suite cannot see consumer breakage anyway).
  - **Does** invalidate the suite half of those write-ups. "Failing set
    identical to baseline" compared two differently-degraded samples.

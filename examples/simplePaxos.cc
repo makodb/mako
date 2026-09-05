@@ -63,7 +63,7 @@ int main(int argc, char **argv) {
     int leader_config = 0;
     vector<string> paxos_config{
         get_current_absolute_path() + "../config/1leader_2followers/paxos3_shardidx0.yml",
-        get_current_absolute_path() + "../config/occ_paxos.yml"
+        get_current_absolute_path() + "../config/paxos.yml"
     };
 
     paxos_proc_name = std::string(argv[1]);

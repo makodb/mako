@@ -8,14 +8,14 @@
 
 ```
 make
-python3 scripts/paxos-microbench.py -d 60 -f 'config/1c1s3r3p.yml' -f 'config/occ_paxos.yml' -t 30 -T 100000 -n 32 -P p3 -P p2 -P localhost
+python3 scripts/paxos-microbench.py -d 60 -f 'config/1c1s3r3p.yml' -f 'config/paxos.yml' -t 30 -T 100000 -n 32 -P p3 -P p2 -P localhost
 ```
 
 #### Multi-thread paxos
 
 ```
 make
-python3 scripts/paxos-microbench.py -d 60 -f 'config/1c1s3r1p.yml' -f 'config/occ_paxos.yml' -t 30 -T 100000 -n 32 -P localhost
+python3 scripts/paxos-microbench.py -d 60 -f 'config/1c1s3r1p.yml' -f 'config/paxos.yml' -t 30 -T 100000 -n 32 -P localhost
 ```
 
 #### Others
@@ -31,7 +31,7 @@ PS: There are 32 outstanding requests.
 
 ```
 ./waf configure -p build
-./build/microbench -d 60 -f 'config/1c1s3r1p.yml' -f 'config/occ_paxos.yml' -t 10 -T 5000 -n 32 -P localhost > ./log/proc-localhost.log
+./build/microbench -d 60 -f 'config/1c1s3r1p.yml' -f 'config/paxos.yml' -t 10 -T 5000 -n 32 -P localhost > ./log/proc-localhost.log
 # if pprof is not installed in the system, try use scripts/pprof
 pprof --pdf ./build/deptran_server process-localhost.prof > cpu.pdf
 ```

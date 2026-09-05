@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.30)
 
-# `import std;` is enabled via `src/rrr/std_compat.hpp`. The header
+# `import std;` is enabled via `src/srpc/std_compat.hpp`. The header
 # textually includes every C++ standard header AND then `import std;`s.
 # Clang's libc++ rejects `import std; ... #include <vector>` but
 # accepts the reverse order, so the include block comes first; that
@@ -33,10 +33,10 @@ endif()
 
 # Mako pins its compiler to Clang 22 (or newer). Clang 21 and earlier
 # frontend-crash compiling reactor.cpp's C++20-module codegen (the
-# `rrr.reactor` named module); Clang 22 fixes it — see the explicit
+# `srpc.reactor` named module); Clang 22 fixes it — see the explicit
 # version check after project() below.
 # The reasons for requiring >= 22:
-#   * Clang 21 SIGSEGVs in the frontend on rrr.reactor's module codegen.
+#   * Clang 21 SIGSEGVs in the frontend on srpc.reactor's module codegen.
 #   * Clang 20 and earlier lack alias-template CTAD support that
 #     rusty-cpp's platform::threading aliases depend on.
 #   * CI standardizes on clang-22 (apt.llvm.org noble repo).
@@ -157,7 +157,7 @@ endif()
 # Use libc++ with clang. libc++'s header units share a single submodule for
 # their common sub-headers (bits/align.h, <compare>, etc.), which avoids the
 # ODR false positives that plague libstdc++ + clang header units when a TU
-# imports multiple std header units via `import rrr;`.
+# imports multiple std header units via `import srpc;`.
 if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-stdlib=libc++>)
     add_link_options(-stdlib=libc++ -lc++abi)
@@ -237,7 +237,7 @@ endif()
 # no-op when the cache already has a value, so a `-DENABLE_BORROW_CHECKING=ON`
 # on the command line still wins.
 # TEMPORARY: disabled during CMake 3.28+ native-module migration — the
-# rusty-cpp checker cannot resolve `import rrr;` without being handed the
+# rusty-cpp checker cannot resolve `import srpc;` without being handed the
 # BMI paths. Re-enable once the checker integrates with CMake module info.
 set(ENABLE_BORROW_CHECKING OFF CACHE BOOL "Enable RustyCpp borrow checking")
 
@@ -257,7 +257,7 @@ endif()
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(DPDK REQUIRED libdpdk)
 
-# Find Python for txlog_core/txlog_bench build surfaces.
+# Find Python for the txlog_core build surface.
 find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
 
 # Define paths
@@ -268,10 +268,10 @@ set(W "src/mako")
 set(MASSTREE_DIR "src/masstree")
 set(TOP "${CMAKE_SOURCE_DIR}")
 
-# Global include roots for `import rrr;` and rrr header-unit/module prebuild.
+# Global include roots for `import srpc;` and srpc header-unit/module prebuild.
 include_directories(
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/rrr"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/srpc"
     "${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include"
 )
 
@@ -285,7 +285,7 @@ add_subdirectory(third-party/yaml-cpp)
 # headers in favor of transpiled C++20 modules (vec_port.vec, btree_port.btree.*,
 # rc_port, std_port/std_port_hashbrown, plus the umbrella rusty.cppm). Pull in
 # those targets
-# via add_subdirectory so rrr can `import rusty;`. EXCLUDE_FROM_ALL keeps
+# via add_subdirectory so srpc can `import rusty;`. EXCLUDE_FROM_ALL keeps
 # rusty-cpp's test/bench targets out of the default build — they only build
 # if explicitly requested via `cmake --build build --target <name>.out`.
 #
@@ -296,10 +296,10 @@ add_subdirectory(third-party/yaml-cpp)
 # these flags strictly: rusty.cppm + the port PCMs (built strict) can't
 # be imported from gnu++23 TUs ("GNU extensions was disabled in
 # precompiled file"). Force the port modules onto gnu++23 just for
-# this subdirectory so rrr can consume them.
+# this subdirectory so srpc can consume them.
 add_subdirectory(third-party/rusty-cpp EXCLUDE_FROM_ALL)
 # rusty-cpp's CMakeLists.txt locally sets CMAKE_CXX_EXTENSIONS=OFF.
-# Override on each port target so rrr (gnu++23) can `import` them
+# Override on each port target so srpc (gnu++23) can `import` them
 # without the "GNU extensions was disabled" PCM-config mismatch.
 # `std_port` and `std_port_hashbrown` replaced the deleted `hashbrown_port`
 # target (rusty-cpp #177): rusty.cppm now `import std_port;` for
@@ -341,18 +341,19 @@ add_custom_command(
 # Create a custom target that depends on the output
 add_custom_target(rust_build ALL DEPENDS ${RUST_LIB_PATH})
 
-# rrr module files and the `rrr` target are defined in src/rrr/CMakeLists.txt.
+# srpc module files and the `srpc` target are defined in
+# src/srpc-cmake/CMakeLists.txt.
 
 if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     # Mako targets Clang 22.x (see the rationale at CMakeLists.txt:19 and the
     # >= 22.0 gate after project()). Accept any 22.x minor version; reject
-    # everything else. Clang 21 and earlier frontend-crash on rrr.reactor's
+    # everything else. Clang 21 and earlier frontend-crash on srpc.reactor's
     # C++20-module codegen; Clang 23+ is untested.
     if (NOT CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "22.0"
         OR CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "23.0")
         message(FATAL_ERROR
             "Mako requires Clang 22.x (found ${CMAKE_CXX_COMPILER_VERSION} at ${CMAKE_CXX_COMPILER}). "
-            "Clang 21 and earlier SIGSEGV in the frontend on rrr.reactor's C++20-module "
+            "Clang 21 and earlier SIGSEGV in the frontend on srpc.reactor's C++20-module "
             "codegen; Clang 23+ is untested. "
             "Install clang-22 via apt.llvm.org (Ubuntu) or use the CI image.")
     endif()
@@ -392,7 +393,7 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 
     # rusty-cpp's HashMap (SwissTable) and mpsc_lockfree's CPU_RELAX
     # default to including `<immintrin.h>` for SSE2 intrinsics. That
-    # header reaches the rrr module's global module fragment via
+    # header reaches the srpc module's global module fragment via
     # `#include <rusty/rusty.hpp>` in module-interface units, and
     # under clang21+ collides with the consumer's own
     # `<immintrin.h>` (e.g. via masstree headers in deptran code) —
@@ -405,7 +406,7 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     add_compile_definitions(RUSTY_PORTABLE_INTRINSICS=1)
 elseif (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     message(FATAL_ERROR
-        "GCC named-module build for `import rrr;` currently hits a compiler ICE on this codebase. "
+        "GCC named-module build for `import srpc;` currently hits a compiler ICE on this codebase. "
         "Use clang++ for this branch.")
 endif()
 
@@ -416,7 +417,7 @@ set_target_properties(rust_lib PROPERTIES
 )
 add_dependencies(rust_lib rust_build)
 
-# rrr was previously a C++23 named-modules library with a per-build
+# srpc was previously a C++23 named-modules library with a per-build
 # PCM cache; de-modularized in 2026-04 (replaced module declarations
 # with plain headers). The PCM-cache compile options are no longer
 # needed.
@@ -536,7 +537,7 @@ set(BORROW_CHECKER_INCLUDE_PATHS
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/mako
     ${CMAKE_CURRENT_SOURCE_DIR}/${MASSTREE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/rrr
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/srpc
     ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4
     ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
 )
@@ -747,7 +748,7 @@ list(APPEND CXXFLAGS
 # The `-include <masstree/config.h>` forced-include injects tokens at the start
 # of every TU. It must NOT be applied to C++20 named module files, which
 # require `module;` to be the first token. Kept as a separate flag and added
-# only to targets that actually use Masstree, skipping rrr module files.
+# only to targets that actually use Masstree, skipping srpc module files.
 set(MASSTREE_FORCE_INCLUDE_FLAG -include ${MASSTREE_GENERATED_CONFIG_H})
 
 # Attach Masstree's generated config to real translation units, never to a
@@ -857,10 +858,99 @@ list(APPEND CFLAGS ${LIBEVENT_CFLAGS})
 list(APPEND LDFLAGS ${LIBEVENT_LDFLAGS})
 list(APPEND CXXFLAGS -fno-omit-frame-pointer)
 
+# The original Silo transaction engine is retained as source-only history.
+# Production Mako uses STO/MassTrans through storage/mbta_wrapper.hh. Keep the
+# explicit manifest and configure-time assertion so an archived source cannot
+# silently drift back into libmako. The headers also fail closed through
+# src/mako/retired_silo_engine.h.
+set(RETIRED_SILO_ENGINE_SOURCES
+  "${CMAKE_CURRENT_SOURCE_DIR}/${W}/btree.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/${W}/tuple.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/${W}/txn_btree.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/${W}/txn.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/${W}/txn_proto2_impl.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/${W}/test.cc"
+)
+set(RETIRED_SILO_ENGINE_REALPATHS "")
+foreach(RETIRED_SILO_ENGINE_SOURCE IN LISTS RETIRED_SILO_ENGINE_SOURCES)
+  file(REAL_PATH "${RETIRED_SILO_ENGINE_SOURCE}"
+    RETIRED_SILO_ENGINE_REALPATH)
+  list(APPEND RETIRED_SILO_ENGINE_REALPATHS
+    "${RETIRED_SILO_ENGINE_REALPATH}")
+endforeach()
+
+function(COLLECT_BUILDSYSTEM_TARGETS DIRECTORY_PATH OUTPUT_VARIABLE)
+  get_property(LOCAL_TARGETS DIRECTORY "${DIRECTORY_PATH}"
+    PROPERTY BUILDSYSTEM_TARGETS)
+  set(ALL_TARGETS ${LOCAL_TARGETS})
+
+  get_property(CHILD_DIRECTORIES DIRECTORY "${DIRECTORY_PATH}"
+    PROPERTY SUBDIRECTORIES)
+  foreach(CHILD_DIRECTORY IN LISTS CHILD_DIRECTORIES)
+    COLLECT_BUILDSYSTEM_TARGETS("${CHILD_DIRECTORY}" CHILD_TARGETS)
+    list(APPEND ALL_TARGETS ${CHILD_TARGETS})
+  endforeach()
+
+  set(${OUTPUT_VARIABLE} "${ALL_TARGETS}" PARENT_SCOPE)
+endfunction()
+
+function(ASSERT_NO_RETIRED_SILO_SOURCES)
+  COLLECT_BUILDSYSTEM_TARGETS("${CMAKE_SOURCE_DIR}" ALL_BUILD_TARGETS)
+  foreach(BUILD_TARGET IN LISTS ALL_BUILD_TARGETS)
+    get_target_property(TARGET_SOURCE_DIR "${BUILD_TARGET}" SOURCE_DIR)
+    get_target_property(TARGET_SOURCES "${BUILD_TARGET}" SOURCES)
+    if(NOT TARGET_SOURCES OR TARGET_SOURCES STREQUAL "TARGET_SOURCES-NOTFOUND")
+      continue()
+    endif()
+
+    foreach(TARGET_SOURCE IN LISTS TARGET_SOURCES)
+      # Generator expressions cannot be canonicalized at configure time, so
+      # reject any expression containing an absolute, source-root-relative,
+      # or target-source-relative spelling of an archived file before the
+      # normal real-path comparison below.
+      foreach(RETIRED_SILO_ENGINE_SOURCE IN LISTS RETIRED_SILO_ENGINE_SOURCES)
+        file(RELATIVE_PATH RETIRED_SILO_SOURCE_FROM_ROOT
+          "${CMAKE_SOURCE_DIR}" "${RETIRED_SILO_ENGINE_SOURCE}")
+        file(RELATIVE_PATH RETIRED_SILO_SOURCE_FROM_TARGET
+          "${TARGET_SOURCE_DIR}" "${RETIRED_SILO_ENGINE_SOURCE}")
+        foreach(RETIRED_SILO_SOURCE_SPELLING
+            "${RETIRED_SILO_ENGINE_SOURCE}"
+            "${RETIRED_SILO_SOURCE_FROM_ROOT}"
+            "${RETIRED_SILO_SOURCE_FROM_TARGET}")
+          string(FIND "${TARGET_SOURCE}" "${RETIRED_SILO_SOURCE_SPELLING}"
+            RETIRED_SILO_SOURCE_TEXT_INDEX)
+          if(NOT RETIRED_SILO_SOURCE_TEXT_INDEX EQUAL -1)
+            message(FATAL_ERROR
+              "Target ${BUILD_TARGET} attempts to compile the retired "
+              "original Silo engine source through '${TARGET_SOURCE}': "
+              "${RETIRED_SILO_ENGINE_SOURCE}")
+          endif()
+        endforeach()
+      endforeach()
+
+      if(TARGET_SOURCE MATCHES "\\$<" OR TARGET_SOURCE MATCHES ">")
+        continue()
+      endif()
+      cmake_path(ABSOLUTE_PATH TARGET_SOURCE
+        BASE_DIRECTORY "${TARGET_SOURCE_DIR}" NORMALIZE
+        OUTPUT_VARIABLE CANONICAL_TARGET_SOURCE)
+      if(EXISTS "${CANONICAL_TARGET_SOURCE}")
+        file(REAL_PATH "${CANONICAL_TARGET_SOURCE}" CANONICAL_TARGET_SOURCE)
+      endif()
+      list(FIND RETIRED_SILO_ENGINE_REALPATHS
+        "${CANONICAL_TARGET_SOURCE}" RETIRED_SILO_SOURCE_INDEX)
+      if(NOT RETIRED_SILO_SOURCE_INDEX EQUAL -1)
+        message(FATAL_ERROR
+          "Target ${BUILD_TARGET} attempts to compile the retired original "
+          "Silo engine source: ${CANONICAL_TARGET_SOURCE}")
+      endif()
+    endforeach()
+  endforeach()
+endfunction()
+
 # Source files
 set(MAKO_SRCFILES
   "${W}/allocator.cc"
-  "${W}/btree.cc"
   "${W}/core.cc"
   "${W}/counter.cc"
   "${W}/memory.cc"
@@ -869,10 +959,6 @@ set(MAKO_SRCFILES
   "${W}/stats_server.cc"
   "${W}/thread.cc"
   "${W}/ticker.cc"
-  "${W}/tuple.cc"
-  "${W}/txn_btree.cc"
-  "${W}/txn.cc"
-  "${W}/txn_proto2_impl.cc"
   "${W}/varint.cc"
   # Masstree's .cc files have been lifted into the standalone
   # `masstree` static library (see src/masstree/CMakeLists.txt). They
@@ -890,20 +976,18 @@ set(MAKO_SRCFILES
   "${W}/benchmarks/sync_util_init.cc"
   "${W}/sto/Transaction.cc"
   "${W}/sto/MassTrans.cc"
-  "${W}/sto/common.cc"
   "${W}/sto/TRcu.cc"
   "${W}/sto/Packer.cc"
   "${W}/sto/ReplayDB.cc"
   "${W}/sto/ThreadPool.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/lookup3.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/kv_store.cc"
-  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/rust_wrapper.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/message.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/memory.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/helper_queue.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/transport.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/fasttransport.cc"
-  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/rrr_rpc_backend.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/srpc_rpc_backend.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/multi_transport_manager.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/configuration.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/timestamp.cc"
@@ -913,7 +997,6 @@ set(MAKO_SRCFILES
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/server.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/storage/abstract_db.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/storage/mtree_abi.cc"
-  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/db.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/cluster_bootstrap.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/rocks_interface/client_service.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/rocks_interface/client_proxy.cc"
@@ -948,16 +1031,14 @@ set(BENCH_LDFLAGS
 # Generate deptran RPC bindings.
 add_custom_command(
   OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/rcc_rpc.h
-         ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/rcc_rpc.py
-  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/bin/rpcgen --cpp --python src/deptran/rcc_rpc.rpc
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/bin/rpcgen --cpp src/deptran/rcc_rpc.rpc
   DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/rcc_rpc.rpc
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-# Create a target for the generated RPC files
+# Create a target for the generated RPC header.
 add_custom_target(rcc_rpc_gen DEPENDS
   ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/rcc_rpc.h
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/rcc_rpc.py
 )
 
 # Custom command for lz4 library - build only if missing
@@ -974,50 +1055,60 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so")
   message(STATUS "LZ4 library built successfully")
 endif()
 
-# Build and export rrr target wiring from a dedicated CMakeLists.
-add_subdirectory(src/rrr)
+# Build and export srpc target wiring from a dedicated CMakeLists.
+# The glue lives in src/srpc-cmake so that src/srpc itself holds only the
+# vendored srpc tree; the explicit binary directory keeps every generated
+# artifact under <build>/src/srpc exactly where it has always been.
+add_subdirectory(src/srpc-cmake src/srpc)
 # Build and export masstree-specific test wiring from a dedicated CMakeLists.
 add_subdirectory(src/masstree)
 
 # Build libtxlog.so natively with CMake instead of WAF
-# Collect RRR source files (de-modularized: plain .cpp/.cc impl units).
-file(GLOB RRR_SRC
-    "src/rrr/base/*.cpp"
-    "src/rrr/misc/*.cpp"
-    "src/rrr/reactor/*.cc"
-    "src/rrr/reactor/*.S"
-    "src/rrr/rpc/*.cpp"
+# Collect SRPC source files (de-modularized: plain .cpp/.cc impl units).
+file(GLOB SRPC_SRC
+    "src/srpc/base/*.cpp"
+    "src/srpc/misc/*.cpp"
+    "src/srpc/reactor/*.cc"
+    "src/srpc/reactor/*.S"
+    "src/srpc/rpc/*.cpp"
 )
 
-# Collect MEMDB source files
-file(GLOB MEMDB_SRC
-    "src/memdb/*.h"
-    "src/memdb/*.cc"
+# Keep the replication core manifest explicit. Recursive globs silently pulled
+# retired transaction engines and test harnesses into every Mako binary, and a
+# newly added compatibility source required a manual CMake reconfigure before
+# it could be linked from an existing build tree.
+set(DEPTRAN_CORE_SRC
+    src/deptran/benchmark_control_rpc.cc
+    src/deptran/communicator.cc
+    src/deptran/config.cc
+    src/deptran/frame.cc
+    src/deptran/legacy_raft_log_payload.cc
+    src/deptran/paxos/commo.cc
+    src/deptran/paxos/coordinator.cc
+    src/deptran/paxos/frame.cc
+    src/deptran/paxos/server.cc
+    src/deptran/paxos/service.cc
+    src/deptran/paxos_worker.cc
+    src/deptran/raft/application_log.cc
+    src/deptran/raft/commo.cc
+    src/deptran/raft/frame.cc
+    src/deptran/raft/raft_worker.cc
+    src/deptran/raft/replicated_db.cc
+    src/deptran/raft/server.cc
+    src/deptran/raft/service.cc
+    src/deptran/replication_log_entry.cc
+    src/deptran/scheduler.cc
+    src/deptran/tpc_command.cc
+    src/deptran/tpcc_sharding.cc
+    src/deptran/view_data.cc
 )
 
-# Collect deptran core source files
-file(GLOB_RECURSE DEPTRAN_CORE_SRC
-    "src/deptran/*.cc"
-    "src/deptran/*/*.cc"
-)
-# NOTE: src/cluster/*.cc are C++23 module units of the `cluster` module (owned
-# by the `cluster` target's FILE_SET below), NOT plain deptran sources.
-# Compiling them here would re-emit module units outside their fileset (same
-# reason rrr's .cpp are kept out of txlog_core). Downstream code reaches the
-# cluster component by `import cluster;` and linking the `cluster` target.
-# Exclude specific deptran files (standalone binaries / optional backends)
-list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/s_main.cc")
-list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/paxos_main_helper.cc")
-list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/raft_main_helper.cc")
-list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/raft/read_raft_disk.cc")
-list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/raft/test_raft_persistence.cc")
-list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/raft/raft_lab_standalone.cc")
-
-# Collect benchmark source files (compiled separately from deptran core)
-file(GLOB_RECURSE TXLOG_BENCH_SRC
-    "src/bench/*/*.cc"
-)
-list(FILTER TXLOG_BENCH_SRC EXCLUDE REGEX "src/bench/paxos_lib/.*")
+if(RAFT_TEST)
+    list(APPEND DEPTRAN_CORE_SRC
+        src/deptran/raft/test.cc
+        src/deptran/raft/testconf.cc
+    )
+endif()
 
 # Runtime replication switching: compile BOTH Paxos and Raft helpers
 # The replication_helper.cc dispatcher routes calls based on runtime configuration
@@ -1032,7 +1123,7 @@ set(TXLOG_HELPER_SRC
 # authored as a C++23 named module. src/cluster/*.h are module partition
 # interface units (NOT headers — never #included); src/cluster/cluster.ccm is
 # the primary interface unit re-exporting them; the two .cc are module
-# implementation units. Mirrors the `rrr` module library: consumers write
+# implementation units. Mirrors the `srpc` module library: consumers write
 # `import cluster;` and link this target. See src/cluster/cluster.ccm.
 set(CLUSTER_MODULE_INTERFACES
     ${CMAKE_SOURCE_DIR}/src/cluster/kv_store.h
@@ -1064,7 +1155,7 @@ target_sources(cluster PUBLIC
 # cluster's module units include STL textually in their global module fragment
 # (not `import std;`), so opt out of the global CXX_MODULE_STD (std.pcm) default.
 set_target_properties(cluster PROPERTIES POSITION_INDEPENDENT_CODE ON CXX_MODULE_STD OFF)
-# src/compat rusty shims must win over third-party/rusty-cpp (see rrr's note).
+# src/compat rusty shims must win over third-party/rusty-cpp (see srpc's note).
 target_include_directories(cluster BEFORE PUBLIC ${CMAKE_SOURCE_DIR}/src/compat)
 target_include_directories(cluster PUBLIC
     ${CMAKE_SOURCE_DIR}/src
@@ -1074,35 +1165,30 @@ target_include_directories(cluster PUBLIC
 target_compile_options(cluster PUBLIC ${BENCH_CXXFLAGS})
 # std_port supersedes the deleted hashbrown_port target; it PUBLIC-links
 # std_port_hashbrown, so naming std_port pulls in both archives/BMIs.
-target_link_libraries(cluster PUBLIC rrr pthread btree_port vec_port rc_port std_port)
+target_link_libraries(cluster PUBLIC srpc pthread btree_port vec_port rc_port std_port)
 
-# Build txlog in layers:
-#   - txlog_core: deptran/rrr/memdb core (no src/bench/* compilation unit)
-#   - txlog_bench: benchmark implementations from src/bench/*
+# Build the replication core from the explicit manifest above.
 add_library(txlog_core_obj OBJECT
     ${TXLOG_HELPER_SRC}
     ${DEPTRAN_CORE_SRC}
-    # ${RRR_SRC} removed — rrr is built as a separate library via the
-    # `rrr` target (which owns the FILE_SET CXX_MODULES). Compiling
+    # ${SRPC_SRC} removed — srpc is built as a separate library via the
+    # `srpc` target (which owns the FILE_SET CXX_MODULES). Compiling
     # these .cpp/.cc files here would re-emit module interface units
-    # outside a FILE_SET. Downstream binaries pick rrr up via
-    # `txlog_core`'s PUBLIC link to the `rrr` target.
-    ${MEMDB_SRC}
+    # outside a FILE_SET. Downstream binaries pick srpc up via
+    # `txlog_core`'s PUBLIC link to the `srpc` target.
 )
 add_dependencies(txlog_core_obj rcc_rpc_gen)
-# Pull in rrr's PUBLIC include dirs + module BMI paths so deptran/
-# memdb .cc files that `#include "rrr/rrr.hpp"` find both the
+# Pull in srpc's PUBLIC include dirs + module BMI paths so deptran .cc files
+# that `#include "srpc/srpc.hpp"` find both the
 # umbrella header and the imports it references.
-target_link_libraries(txlog_core_obj PUBLIC rrr cluster)
+target_link_libraries(txlog_core_obj PUBLIC srpc cluster)
 set_target_properties(txlog_core_obj PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
 target_include_directories(txlog_core_obj PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/rrr
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/memdb
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/srpc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/bench
     ${CMAKE_CURRENT_SOURCE_DIR}/src/mako
     ${CMAKE_CURRENT_SOURCE_DIR}/src/mako/benchmarks
     ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
@@ -1112,37 +1198,16 @@ target_include_directories(txlog_core_obj PUBLIC
 target_compile_options(txlog_core_obj PRIVATE ${BENCH_CXXFLAGS})
 # Apply the masstree forced-include only to non-module sources (module files
 # must have `module;` as the first token).
-foreach(_SRC IN LISTS TXLOG_HELPER_SRC DEPTRAN_CORE_SRC RRR_SRC MEMDB_SRC)
+foreach(_SRC IN LISTS TXLOG_HELPER_SRC DEPTRAN_CORE_SRC SRPC_SRC)
     get_filename_component(_SRC_ABS "${_SRC}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
     set_property(SOURCE "${_SRC_ABS}" APPEND PROPERTY COMPILE_OPTIONS ${MASSTREE_FORCE_INCLUDE_FLAG})
 endforeach()
 target_compile_definitions(txlog_core_obj PRIVATE CONFIG_H=\"${CONFIG_H}\")
 
-add_library(txlog_bench_obj OBJECT ${TXLOG_BENCH_SRC})
-add_dependencies(txlog_bench_obj rcc_rpc_gen)
-set_target_properties(txlog_bench_obj PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_include_directories(txlog_bench_obj PRIVATE
-    src
-    src/rrr
-    src/memdb
-    src/deptran
-    src/bench
-    src/mako
-    src/mako/benchmarks
-    ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
-    third-party/yaml-cpp/include
-    ${Python3_INCLUDE_DIRS}
-)
-target_compile_options(txlog_bench_obj PRIVATE ${BENCH_CXXFLAGS})
-mako_force_include_masstree_config(${TXLOG_BENCH_SRC})
-target_compile_definitions(txlog_bench_obj PRIVATE CONFIG_H=\"${CONFIG_H}\")
-# Inherit rrr module BMI paths from txlog_core_obj (which owns the FILE_SET).
-target_link_libraries(txlog_bench_obj PUBLIC txlog_core_obj)
-
 add_library(txlog_core STATIC $<TARGET_OBJECTS:txlog_core_obj>)
 target_link_libraries(txlog_core
     PUBLIC
-    rrr
+    srpc
     cluster
     yaml-cpp
     pthread
@@ -1153,39 +1218,15 @@ target_link_libraries(txlog_core
 )
 target_include_directories(txlog_core PUBLIC
     src
-    src/rrr
-    src/memdb
+    src/srpc
     src/deptran
 )
 
-add_library(txlog_bench STATIC $<TARGET_OBJECTS:txlog_bench_obj>)
-target_link_libraries(txlog_bench PUBLIC txlog_core)
-target_include_directories(txlog_bench PUBLIC
-    src
-    src/bench
-)
-
-# Canonical link set for targets that previously linked the monolithic txlog.
-# Keep txlog_core before/after txlog_bench to satisfy cross-archive refs on ld.
-add_library(txlog_full INTERFACE)
-target_link_libraries(txlog_full INTERFACE
-    txlog_core
-    txlog_bench
-    txlog_core
-)
-# Ensure bench registry object is linked from static txlog_bench.
-# macOS ld64 requires the C symbol underscore prefix in -u; GNU ld does not.
-if(APPLE)
-    target_link_options(txlog_full INTERFACE "LINKER:-u,_janus_register_bench_factories")
-else()
-    target_link_options(txlog_full INTERFACE "LINKER:-u,janus_register_bench_factories")
-endif()
 set(TXLOG_LINK_LIBS
-    txlog_full
+    txlog_core
 )
 set(TXLOG_BUILD_DEPS
     txlog_core
-    txlog_bench
 )
 
 # Temporary Raft-only target for borrow checking
@@ -1211,7 +1252,7 @@ if(RAFT_BORROW_SRC)
 
     target_include_directories(raft_borrow PUBLIC
         src
-        src/rrr
+        src/srpc
         src/deptran
         ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
     )
@@ -1274,19 +1315,14 @@ endif()
 # - Cell/Condvar const propagation fixed (skips @safe callees with internal @unsafe)
 # - Unannotated third-party headers skipped (yaml-cpp, STL, etc.)
 #
-# NOTE: server_worker.cc and client_worker.cc excluded - rusty-cpp flags rrr header functions
+# NOTE: server_worker.cc is excluded - rusty-cpp flags srpc header functions
 #       (RefCell::borrow, Option::unwrap, etc.) as violations when they appear in return
 #       statements from headers included by these files. This is a false positive (the files
 #       themselves are safe). TODO: Report to rusty-cpp - header functions shouldn't be checked.
 set(DEPTRAN_BORROW_SRC
     src/deptran/communicator.cc
-    src/deptran/workload.cc
-    # src/deptran/server_worker.cc  # Excluded: false positives from rrr header functions
-    # src/deptran/client_worker.cc  # Excluded: false positives from rrr header functions
+    # src/deptran/server_worker.cc  # Excluded: false positives from srpc header functions
     src/deptran/paxos_worker.cc
-    src/deptran/stats_registry.cc
-    src/deptran/executor.cc
-    src/deptran/empty.cc
     src/deptran/replication_helper.cc
     src/deptran/scheduler.cc
     # Files below excluded due to violations from included headers (not the .cc files themselves):
@@ -1301,10 +1337,8 @@ if(DEPTRAN_BORROW_SRC)
 
     target_include_directories(deptran_borrow PUBLIC
         src
-        src/rrr
-        src/memdb
+        src/srpc
         src/deptran
-        src/bench
         ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
         third-party/yaml-cpp/include
     )
@@ -1312,7 +1346,7 @@ if(DEPTRAN_BORROW_SRC)
     mako_force_include_masstree_config(${DEPTRAN_BORROW_SRC})
     target_compile_definitions(deptran_borrow PUBLIC CONFIG_H="${CONFIG_H}")
 
-    # Add borrow checking for deptran files (same style as RRR library)
+    # Add borrow checking for deptran files (same style as SRPC library)
     if(ENABLE_BORROW_CHECKING)
         add_borrow_check_target(deptran_borrow)
 
@@ -1353,6 +1387,9 @@ endif()
 
 # Add the mako library
 add_library(mako STATIC ${MAKO_SRCFILES})
+# Run after every subdirectory has been configured so no current or future
+# target can hide a retired source behind target_sources() or a helper library.
+cmake_language(DEFER CALL ASSERT_NO_RETIRED_SILO_SOURCES)
 # masstree/compiler.hh does a bare `#include "config.h"`. Put the masstree
 # generated-config dir at the FRONT of this target's include path so it
 # resolves to masstree's own config.h and not src/deptran/config.h (also on
@@ -1370,14 +1407,14 @@ target_include_directories(mako PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4"
     "${CMAKE_CURRENT_SOURCE_DIR}/third-party/yaml-cpp/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/rrr"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/srpc"
     "${HOME}"
     "${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include"
 )
 target_compile_options(mako PUBLIC ${BENCH_CXXFLAGS})
 mako_force_include_masstree_config(${MAKO_SRCFILES})
 target_compile_definitions(mako PUBLIC CONFIG_H=\"${CONFIG_H}\")
-# Inherit rrr module BMI paths from txlog_core_obj.
+# Inherit srpc module BMI paths from txlog_core_obj.
 target_link_libraries(mako PUBLIC txlog_core_obj masstree)
 target_include_directories(mako PUBLIC ${LIBEVENT_INCLUDE_DIRS})
 set_target_properties(mako PROPERTIES OUTPUT_NAME "mako")
@@ -1543,7 +1580,7 @@ function(add_apps exec_name exec_path)
       ${CMAKE_CURRENT_SOURCE_DIR}/${MASSTREE_DIR}
       ${CMAKE_CURRENT_SOURCE_DIR}/src
       ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran
-      ${CMAKE_CURRENT_SOURCE_DIR}/src/rrr
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/srpc
       ${CMAKE_CURRENT_SOURCE_DIR}
   )
 
@@ -1597,7 +1634,10 @@ add_apps(makoConMultiTrd examples/makoConMultiTrd.cc)
 
 # Raft test executables (only when MAKO_USE_RAFT is enabled)
 if(MAKO_USE_RAFT)
-  add_apps(deptran_server src/deptran/s_main.cc)
+  if(RAFT_TEST)
+    add_apps(deptran_server src/deptran/s_main.cc)
+    target_sources(deptran_server PRIVATE src/deptran/server_worker.cc)
+  endif()
   add_apps(simpleRaft examples/mako-raft-tests/simpleRaft.cc)
   add_apps(simpleTransactionRepRaft examples/mako-raft-tests/simpleTransactionRepRaft.cc)
   add_apps(testPreferredReplicaStartup examples/mako-raft-tests/testPreferredReplicaStartup.cc)
@@ -1617,7 +1657,7 @@ endif()
 # Enable deptran borrow checking by default for dbtest and related apps
 if(ENABLE_BORROW_CHECKING AND TARGET borrow_check_deptran)
     add_dependencies(dbtest borrow_check_deptran)
-    if(MAKO_USE_RAFT)
+    if(TARGET deptran_server)
         add_dependencies(deptran_server borrow_check_deptran)
     endif()
 endif()
@@ -1625,20 +1665,6 @@ endif()
 add_apps(paxos_async_commit_test src/mako/benchmarks/paxos_async_commit_test.cc)
 add_apps(basic src/mako/benchmarks/ut/basic.cc)
 add_apps(rocksdbInterfaceTest examples/rocksdbInterfaceTest.cc)
-
-# Add memdb library if not already built
-if(NOT TARGET memdb)
-    file(GLOB MEMDB_BENCH_SRC "src/memdb/*.cc")
-    add_library(memdb STATIC ${MEMDB_BENCH_SRC})
-    target_include_directories(memdb PUBLIC
-        src
-        src/rrr
-        src/memdb
-    )
-    target_compile_options(memdb PUBLIC ${BENCH_CXXFLAGS})
-    mako_force_include_masstree_config(${MEMDB_BENCH_SRC})
-    target_link_libraries(memdb rrr pthread)
-endif()
 
 # Matched native STO/Masstree half of the Rust comparison benchmark. Keep it
 # opt-in and avoid the Rust application target. The existing mako target still
@@ -1651,8 +1677,7 @@ target_include_directories(sto_masstree_cpp_bench PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/mako
     ${CMAKE_CURRENT_SOURCE_DIR}/${MASSTREE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/rrr
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/memdb
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/srpc
     ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
 )
 target_compile_options(sto_masstree_cpp_bench PRIVATE
@@ -1664,8 +1689,7 @@ target_compile_definitions(sto_masstree_cpp_bench PRIVATE
 )
 target_link_libraries(sto_masstree_cpp_bench PRIVATE
     mako
-    rrr
-    memdb
+    srpc
     yaml-cpp
     rocksdb
     lz4
@@ -1746,7 +1770,7 @@ if(MAKO_CARGO_EXECUTABLE)
         ${CMAKE_CURRENT_SOURCE_DIR}/${MASSTREE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/rrr
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/srpc
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-tpcc-ffi/include)
     target_compile_options(sto_tpcc_bench PRIVATE
@@ -1783,7 +1807,7 @@ if(MAKO_CARGO_EXECUTABLE)
         ${CMAKE_CURRENT_SOURCE_DIR}/${MASSTREE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/rrr
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/srpc
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-tpcc-ffi/include)
     target_compile_options(sto_tpcc_cpp_wrapper_smoke PRIVATE
@@ -1821,7 +1845,7 @@ if(MAKO_CARGO_EXECUTABLE)
         ${CMAKE_CURRENT_SOURCE_DIR}/${MASSTREE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/rrr
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/srpc
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-tpcc-ffi/include)
     target_compile_options(sto_tpcc_cpp_wrapper_scan_smoke PRIVATE
@@ -1923,7 +1947,10 @@ set_tests_properties(test_sto_tpcc_ffi_c11_header PROPERTIES
 # This target is the build half of the Rust STO/Masstree CI gate. Its
 # dependencies compile every opt-in C/C++ consumer and run Rust against the
 # native archives. The final command covers the rest of the Rust workspace,
-# whose ordinary tests deliberately run without native link settings.
+# whose ordinary tests deliberately run without native link settings. The
+# sto-tpcc-ffi unit-test binary is the exception: its exported entry points
+# retain native Masstree calls, so the native runner executes that binary with
+# the CMake archive closure instead of relying on linker dead-code grouping.
 if(MAKO_CARGO_EXECUTABLE)
     add_custom_target(rust_sto_integration
         COMMAND "${CMAKE_COMMAND}" -E env
@@ -1945,6 +1972,7 @@ if(MAKO_CARGO_EXECUTABLE)
             "${MAKO_CARGO_EXECUTABLE}" test
             --manifest-path "${CMAKE_CURRENT_SOURCE_DIR}/crates/Cargo.toml"
             --workspace
+            --exclude sto-tpcc-ffi
             --all-targets
             --all-features
             --locked
@@ -2039,9 +2067,8 @@ if(BUILD_TESTS)
     # Common test include directories
     set(TEST_INCLUDE_DIRS
         src
-        src/rrr
-        src/rrr/tests
-        src/memdb
+        src/srpc
+        src/srpc/tests
         src/mako
         test
         ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
@@ -2052,14 +2079,13 @@ if(BUILD_TESTS)
 
     # Common test link libraries
     set(TEST_LINK_LIBS
-        rrr
-        memdb
+        srpc
         pthread
         ${BENCH_LDFLAGS}
         ${LIBEVENT_LDFLAGS}
     )
     set(RPC_TEST_LINK_LIBS
-        rrr
+        srpc
         pthread
         ${BENCH_LDFLAGS}
         ${LIBEVENT_LDFLAGS}
@@ -2080,10 +2106,10 @@ if(BUILD_TESTS)
 
     # Sharding Policy Tests
     #
-    # The policy value types now serialize via their rrr Serializable
+    # The policy value types now serialize via their srpc Serializable
     # save()/load() DSL methods (BinaryWriteArchive), so the old free-function
-    # rrr::Marshal operators (sharding_policy_marshal.{h,cc}) are gone.
-    # sharding_policy.h pulls in the rrr.serializable module directly, so this
+    # srpc::Marshal operators (sharding_policy_marshal.{h,cc}) are gone.
+    # sharding_policy.h pulls in the srpc.serializable module directly, so this
     # test just compiles the one source file.
     add_executable(test_sharding_policy
         tests/sharding_policy_test.cc
@@ -2117,7 +2143,7 @@ if(BUILD_TESTS)
 
     # ConfigKvService server-handler read-logic tests (Stage 3d). The
     # ConfigKvServiceImpl handler is generated from rcc_rpc.rpc, so this
-    # links the txlog stack (rrr); it exercises DoReadConfigKey over an
+    # links the txlog stack (srpc); it exercises DoReadConfigKey over an
     # InMemoryKvStore (no socket). The wire transport is CI-verified.
     add_executable(test_config_kv_service tests/config_kv_service_test.cc)
     target_include_directories(test_config_kv_service PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS} src/deptran)
@@ -2130,7 +2156,7 @@ if(BUILD_TESTS)
     # Truly standalone: links ONLY the three cluster .cc sources + gtest.
     # ConfigManager talks to the cluster-owned KvStore port (get/put/
     # remove, stdlib only), so this binary needs no storage engine, no
-    # masstree config, no CONFIG_H, no txlog_core / rrr / memdb / RocksDB.
+    # masstree config, no CONFIG_H, no txlog_core / srpc / RocksDB.
     # The mako binding (OrderedIndexKvStore) is verified separately by
     # test_ordered_index_kv_store below.
     add_executable(test_config_manager
@@ -2151,7 +2177,7 @@ if(BUILD_TESTS)
         "-Wl,-rpath,${_CXX_COMPILER_ROOT}/lib"
     )
     target_link_libraries(test_config_manager
-        cluster rrr ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} c++ pthread
+        cluster srpc ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} c++ pthread
     )
     add_test(NAME test_config_manager COMMAND test_config_manager)
 
@@ -2171,7 +2197,7 @@ if(BUILD_TESTS)
         "-Wl,-rpath,${_CXX_COMPILER_ROOT}/lib"
     )
     target_link_libraries(test_shard_manager
-        cluster rrr ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} c++ pthread
+        cluster srpc ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} c++ pthread
     )
     add_test(NAME test_shard_manager COMMAND test_shard_manager)
 
@@ -2203,9 +2229,8 @@ if(BUILD_TESTS)
     add_test(NAME test_ordered_index_kv_store COMMAND test_ordered_index_kv_store)
 
     # RPC Tests
-    # test_rpc only exercises RRR RPC paths and does not require memdb.
-    # Keep linkage minimal to avoid pulling unrelated memdb compile surfaces.
-    if(ENABLE_BORROW_CHECKING AND TARGET borrow_check_rrr)
+    # test_rpc only exercises SRPC RPC paths, so keep its linkage minimal.
+    if(ENABLE_BORROW_CHECKING AND TARGET borrow_check_srpc)
         # Ensure regular test builds also gate on SRPC borrow-check status.
     endif()
 
@@ -2235,7 +2260,7 @@ if(BUILD_TESTS)
     # together with the TransportBackend abstraction. Both exercised only a
     # MockTransportBackend defined inside the test file itself (against a local
     # copy of the TransportType enum), i.e. the interface's own dispatch and no
-    # rrr code at all. Real rrr/rpc coverage lives in test_transport_integration
+    # srpc code at all. Real srpc/rpc coverage lives in test_transport_integration
 
 
     # ============================================================================
@@ -2275,62 +2300,77 @@ if(BUILD_TESTS)
     add_executable(test_raft_messages tests/raft_messages_test.cc)
     target_include_directories(test_raft_messages PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_raft_messages PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_raft_messages ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
+    target_link_libraries(test_raft_messages ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread srpc)
     add_test(NAME test_raft_messages COMMAND test_raft_messages)
+
+    add_executable(test_raft_application_log tests/raft_application_log_test.cc)
+    target_include_directories(test_raft_application_log PRIVATE
+        ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_raft_application_log PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_raft_application_log
+        ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core)
+    add_test(NAME test_raft_application_log COMMAND test_raft_application_log)
+
+    add_executable(test_legacy_raft_log tests/legacy_raft_log_test.cc)
+    target_include_directories(test_legacy_raft_log PRIVATE
+        ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_legacy_raft_log PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_legacy_raft_log
+        ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core)
+    add_test(NAME test_legacy_raft_log COMMAND test_legacy_raft_log)
 
     add_executable(test_raft_transport_facade tests/raft_transport_facade_test.cc)
     target_include_directories(test_raft_transport_facade PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_raft_transport_facade PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_raft_transport_facade ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
+    target_link_libraries(test_raft_transport_facade ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread srpc)
     add_test(NAME test_raft_transport_facade COMMAND test_raft_transport_facade)
 
-    add_executable(test_raft_rrr_transport_compile tests/raft_rrr_transport_compile_test.cc)
-    target_include_directories(test_raft_rrr_transport_compile PRIVATE
+    add_executable(test_raft_srpc_transport_compile tests/raft_srpc_transport_compile_test.cc)
+    target_include_directories(test_raft_srpc_transport_compile PRIVATE
         ${TEST_INCLUDE_DIRS}
         ${GTEST_INCLUDE_DIRS}
-        # raft_rrr_transport_compile_test.cc transitively pulls in
-        # `src/deptran/raft/rrr_transport.hpp` → ... →
-        # `src/deptran/rcc/graph.h` → `__dep__.h` (lives in
-        # `src/deptran/`), which includes `yaml-cpp/yaml.h`.  Neither
-        # path is propagated through `rrr`, so add both explicitly
-        # here (same pattern as `txlog_core_obj`'s PUBLIC include set).
+        # raft_srpc_transport_compile_test.cc transitively pulls in
+        # deptran headers and `__dep__.h`, which includes
+        # `yaml-cpp/yaml.h`. Neither path is propagated through `srpc`,
+        # so add both explicitly here (same pattern as
+        # `txlog_core_obj`'s PUBLIC include set).
         ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran
         ${CMAKE_CURRENT_SOURCE_DIR}/third-party/yaml-cpp/include)
-    target_compile_options(test_raft_rrr_transport_compile PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_raft_rrr_transport_compile ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
-    add_test(NAME test_raft_rrr_transport_compile COMMAND test_raft_rrr_transport_compile)
+    target_compile_options(test_raft_srpc_transport_compile PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_raft_srpc_transport_compile ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread srpc)
+    add_test(NAME test_raft_srpc_transport_compile COMMAND test_raft_srpc_transport_compile)
 
     # Phase 8.1a — RaftQuorum<Reply> primitive (header-only template).
-    # Bootstraps an rrr::Reactor on the test thread to exercise the
+    # Bootstraps an srpc::Reactor on the test thread to exercise the
     # IntEvent-backed wait_until_quorum path; no heavy raft state needed.
     add_executable(test_raft_quorum tests/raft_quorum_test.cc)
     target_include_directories(test_raft_quorum PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_raft_quorum PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_raft_quorum ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
+    target_link_libraries(test_raft_quorum ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread srpc)
     add_test(NAME test_raft_quorum COMMAND test_raft_quorum)
 
     add_executable(test_raft_dispatcher_facade tests/raft_dispatcher_facade_test.cc)
     target_include_directories(test_raft_dispatcher_facade PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_raft_dispatcher_facade PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_raft_dispatcher_facade ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
+    target_link_libraries(test_raft_dispatcher_facade ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread srpc)
     add_test(NAME test_raft_dispatcher_facade COMMAND test_raft_dispatcher_facade)
 
     add_executable(test_raft_channel_transport tests/raft_channel_transport_test.cc)
     target_include_directories(test_raft_channel_transport PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_raft_channel_transport PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_raft_channel_transport ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
+    target_link_libraries(test_raft_channel_transport ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread srpc)
     add_test(NAME test_raft_channel_transport COMMAND test_raft_channel_transport)
 
     add_executable(test_raft_memory_snapshot_manager tests/raft_memory_snapshot_manager_test.cc)
     target_include_directories(test_raft_memory_snapshot_manager PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_raft_memory_snapshot_manager PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_raft_memory_snapshot_manager ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
+    target_link_libraries(test_raft_memory_snapshot_manager ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread srpc)
     add_test(NAME test_raft_memory_snapshot_manager COMMAND test_raft_memory_snapshot_manager)
 
     add_executable(test_raft_test_cluster tests/raft_test_cluster_test.cc)
     target_include_directories(test_raft_test_cluster PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_raft_test_cluster PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_raft_test_cluster ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
+    target_link_libraries(test_raft_test_cluster ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread srpc)
     add_test(NAME test_raft_test_cluster COMMAND test_raft_test_cluster)
 
     add_executable(raft_lab_standalone src/deptran/raft/raft_lab_standalone.cc)
@@ -2402,25 +2442,25 @@ if(BUILD_TESTS)
     # # Use RESOURCE_LOCK to prevent port conflicts with other Paxos tests (ports 17001-17xxx)
 
     # Add a convenience target to run all tests
-    # The src/rrr/tests corpus belongs to srpc and is built and run there;
+    # The src/srpc/tests corpus belongs to srpc and is built and run there;
     # mako no longer builds any of it, so this convenience target names only
     # mako's own tests.
     add_custom_target(run_tests
         COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
         DEPENDS test_masstree
-                test_silo_varint test_silo_rcu_thread test_silo_allocator_tuple
+                test_silo_varint test_silo_rcu_thread test_silo_allocator
                 test_sto_transaction test_sto_transaction_real
                 simpleTransaction simplePaxos shard1ReplicationSimple
-        COMMENT "Running all tests (masstree + Silo/STO)"
+        COMMENT "Running all tests (Masstree + live Silo support/STO)"
     )
-    if(ENABLE_BORROW_CHECKING AND TARGET borrow_check_rrr)
-        add_dependencies(run_tests borrow_check_rrr)
+    if(ENABLE_BORROW_CHECKING AND TARGET borrow_check_srpc)
+        add_dependencies(run_tests borrow_check_srpc)
     endif()
-    add_dependencies(run_tests rrr_goal0_dual_compile)
+    add_dependencies(run_tests srpc_goal0_dual_compile)
 
     # Add borrow checking for test files if enabled
     # NOTE: Test borrow checking is currently disabled due to false positives
-    # from recent rusty-cpp updates. The same issues affecting RRR files also
+    # from recent rusty-cpp updates. The same issues affecting SRPC files also
     # affect test files:
     #   - "Cannot return 'value' because it has been moved"
     #   - "Cannot borrow from 'this': variable is not alive in current scope"
@@ -2439,13 +2479,16 @@ if(BUILD_TESTS)
     endif()
 
     # ============================================================================
-    # SILO/STO TESTS (merged from tests/ directory)
+    # LIVE SILO SUPPORT + STO TESTS (merged from tests/ directory)
+    #
+    # "Silo" here names shared support such as allocator, RCU, and
+    # SiloRuntime. The original Silo transaction engine is quarantined above.
 
     # Test: Silo Varint (Utility)
     add_executable(test_silo_varint tests/test_silo_varint.cc)
     target_link_libraries(test_silo_varint
         mako
-        rrr
+        srpc
         ${TXLOG_LINK_LIBS}
         ${GTEST_LIBRARIES}
         ${GTEST_MAIN_LIBRARIES}
@@ -2467,7 +2510,7 @@ if(BUILD_TESTS)
     add_executable(test_silo_rcu_thread tests/test_silo_rcu_thread.cc)
     target_link_libraries(test_silo_rcu_thread
         mako
-        rrr
+        srpc
         ${TXLOG_LINK_LIBS}
         ${GTEST_LIBRARIES}
         ${GTEST_MAIN_LIBRARIES}
@@ -2485,11 +2528,11 @@ if(BUILD_TESTS)
     )
     add_test(NAME SiloRCUThreadTests COMMAND test_silo_rcu_thread)
 
-    # Test: Silo Allocator + Tuple Integration (Real System)
-    add_executable(test_silo_allocator_tuple tests/test_silo_allocator_tuple.cc)
-    target_link_libraries(test_silo_allocator_tuple
+    # Test: allocator support retained by the STO/MassTrans runtime
+    add_executable(test_silo_allocator tests/test_silo_allocator.cc)
+    target_link_libraries(test_silo_allocator
         mako
-        rrr
+        srpc
         ${TXLOG_LINK_LIBS}
         ${GTEST_LIBRARIES}
         ${GTEST_MAIN_LIBRARIES}
@@ -2500,12 +2543,12 @@ if(BUILD_TESTS)
         rocksdb
         ${LIBEVENT_LDFLAGS}
     )
-    target_include_directories(test_silo_allocator_tuple PRIVATE
+    target_include_directories(test_silo_allocator PRIVATE
         ${CMAKE_SOURCE_DIR}/src
         ${CMAKE_SOURCE_DIR}/src/mako
         ${GTEST_INCLUDE_DIRS}
     )
-    add_test(NAME SiloAllocatorTupleTests COMMAND test_silo_allocator_tuple)
+    add_test(NAME SiloAllocatorTests COMMAND test_silo_allocator)
 
     # Test: SiloRuntime per-site isolation (moved out of src/masstree/tests
     # because its subject matter is the SiloRuntime, not Masstree).
@@ -2656,7 +2699,7 @@ if(BUILD_TESTS)
     add_executable(test_sto_transaction tests/test_sto_transaction.cc)
     target_link_libraries(test_sto_transaction
         mako
-        rrr
+        srpc
         ${TXLOG_LINK_LIBS}
         ${GTEST_LIBRARIES}
         ${GTEST_MAIN_LIBRARIES}
@@ -2678,7 +2721,7 @@ if(BUILD_TESTS)
     add_executable(test_sto_transaction_real tests/test_sto_transaction_real.cc)
     target_link_libraries(test_sto_transaction_real
         mako
-        rrr
+        srpc
         ${TXLOG_LINK_LIBS}
         ${GTEST_LIBRARIES}
         ${GTEST_MAIN_LIBRARIES}
@@ -2696,33 +2739,33 @@ if(BUILD_TESTS)
     )
     add_test(NAME STOTransactionRealTests COMMAND test_sto_transaction_real)
 
-    # Custom target to run all SILO/STO tests
+    # Custom target to run live Silo-support and STO tests
     add_custom_target(run_silo_sto_tests
         COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure -R "Silo|STO"
-        DEPENDS test_silo_varint test_silo_rcu_thread test_silo_allocator_tuple 
+        DEPENDS test_silo_varint test_silo_rcu_thread test_silo_allocator
                 test_sto_transaction test_sto_transaction_real
-        COMMENT "Running all Silo/STO tests"
+        COMMENT "Running live Silo-support and STO tests"
     )
 
     # Keep this summary honest: it must name only targets this file actually
     # defines. It went stale in 4a06ef0e (which stopped building srpc's
-    # `src/rrr/tests/` corpus) and then told CI logs that `test_timer`,
+    # `src/srpc/tests/` corpus) and then told CI logs that `test_timer`,
     # `test_marshal`, `test_rpc`, `test_rpc_extended`, `test_future`,
     # `test_reactor`, `test_reactor_extended` and `rpcbench` were configured
     # when ninja had no such targets.
     message(STATUS "Test targets configured:")
     message(STATUS "  Masstree Tests:")
     message(STATUS "    - test_masstree: Core Masstree b-tree regression tests")
-    message(STATUS "  Silo/STO Tests:")
+    message(STATUS "  Live Silo-support/STO Tests:")
     message(STATUS "    - test_silo_varint: Varint encoding/decoding (22 tests)")
     message(STATUS "    - test_silo_rcu_thread: RCU memory management (9 tests)")
-    message(STATUS "    - test_silo_allocator_tuple: Allocator + Tuple integration (18 tests)")
+    message(STATUS "    - test_silo_allocator: allocator support (9 tests)")
     message(STATUS "    - test_sto_transaction: STO Transaction RCU (13 tests)")
     message(STATUS "    - test_sto_transaction_real: STO Transaction integration tests")
     message(STATUS "Additional perf binaries:")
     message(STATUS "  - masstree_perf: On-demand Masstree throughput benchmark (JSON output)")
     message(STATUS "")
     message(STATUS "Run all tests with: make run_tests")
-    message(STATUS "Run Silo/STO tests: make run_silo_sto_tests")
+    message(STATUS "Run live Silo-support/STO tests: make run_silo_sto_tests")
     message(STATUS "Or individually: make test && ctest")
 endif()

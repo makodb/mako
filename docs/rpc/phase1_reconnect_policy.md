@@ -73,7 +73,7 @@ public:
 
 ## File Structure
 
-New file: `src/rrr/rpc/reconnect_policy.hpp`
+New file: `src/srpc/rpc/reconnect_policy.hpp`
 
 ## Estimated LOC
 

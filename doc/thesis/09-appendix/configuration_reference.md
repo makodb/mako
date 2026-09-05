@@ -32,16 +32,20 @@ ongoing: 1
 | File | `cc` | `ab` | Use Case |
 |------|------|------|----------|
 | `none_raft.yml` | `none` | `raft` | Testing without CC |
-| `rule_raft.yml` | `rule` | `raft` | Rule-based CC |
-| `tpl_ww_raft.yml` | `tpl_ww` | `fpga_raft` | FPGA-accelerated Raft |
-| `notx_raft.yml` | `notx` | `fpga_raft` | No transactions |
+| `notx_raft.yml` | `notx` | `raft` | No transactions |
+
+The former Rule mode, FPGA-Raft variant, Copilot protocol and its
+`none_copilot` adapter, and RCC/Rococo protocol are retired. The deprecated
+`deptran` and `deptran_er` names were RCC aliases and are also unsupported. The
+generic Jetpack recovery subsystem remains legacy code pending a separate audit
+and is not a supported configuration.
 
 ### 1.4 Mode Config Fields
 
 | Field | Type | Values | Description |
 |-------|------|--------|-------------|
-| `cc` | string | `occ`, `none`, `rule`, `tpl_ww`, `notx` | Concurrency control protocol |
-| `ab` | string | `paxos`, `raft`, `fpga_raft` | Atomic broadcast protocol |
+| `cc` | string | `occ`, `none`, `notx` | Concurrency control protocol |
+| `ab` | string | `multi_paxos`, `raft` | Atomic broadcast protocol |
 | `read_only` | bool | `true`/`false` | Enable read-only optimisation |
 | `batch` | bool | `true`/`false` | Enable transaction batching |
 | `retry` | bool | `true`/`false` | Auto-retry aborted transactions |

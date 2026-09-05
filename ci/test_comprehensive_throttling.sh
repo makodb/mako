@@ -161,7 +161,7 @@ run_test_with_replication() {
         --num-threads $threads \
         --shard-config "$config" \
         $paxos_flags \
-        -F config/occ_paxos.yml \
+        -F config/paxos.yml \
         -P localhost \
         -L "$local_shards" \
         --cpu-limit $CPU_LIMIT \
