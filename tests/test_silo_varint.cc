@@ -22,6 +22,7 @@ protected:
 template <typename T>
 void ExpectUnalignedFixedWidthRoundTrip(T original) {
     alignas(T) uint8_t storage[sizeof(T) + alignof(T)] = {};
+    alignas(T) uint8_t destination[sizeof(T) + alignof(T)] = {};
     uint8_t expected[sizeof(T)] = {};
     NDB_MEMCPY(expected, &original, sizeof(T));
 
@@ -34,6 +35,13 @@ void ExpectUnalignedFixedWidthRoundTrip(T original) {
         T decoded{};
         EXPECT_EQ((serializer<T, false>::read(begin, &decoded)),
                   begin + sizeof(T));
+        EXPECT_EQ(decoded, original);
+
+        auto* const unaligned_destination =
+          reinterpret_cast<T*>(destination + offset);
+        EXPECT_EQ((serializer<T, false>::read(begin, unaligned_destination)),
+                  begin + sizeof(T));
+        NDB_MEMCPY(&decoded, destination + offset, sizeof(decoded));
         EXPECT_EQ(decoded, original);
     }
 }
@@ -92,6 +100,69 @@ TEST(SerializerTest, GenericAdapterAcceptsUnalignedObjectFields) {
     int32_t decoded = 0;
     NDB_MEMCPY(&decoded, destination + 1, sizeof(decoded));
     EXPECT_EQ(decoded, original);
+}
+
+TEST(SerializerTest, CompressedNbytesAcceptsUnalignedObjects) {
+    alignas(uint32_t) uint8_t signed_storage[sizeof(int32_t) + 1] = {};
+    alignas(uint32_t) uint8_t unsigned_storage[sizeof(uint32_t) + 1] = {};
+    const int32_t signed_value = -123456789;
+    const uint32_t unsigned_value = 0xfedcba98U;
+    NDB_MEMCPY(signed_storage + 1, &signed_value, sizeof(signed_value));
+    NDB_MEMCPY(unsigned_storage + 1, &unsigned_value, sizeof(unsigned_value));
+
+    const auto * const unaligned_signed =
+      reinterpret_cast<const int32_t *>(signed_storage + 1);
+    const auto * const unaligned_unsigned =
+      reinterpret_cast<const uint32_t *>(unsigned_storage + 1);
+    EXPECT_EQ((serializer<int32_t, true>::nbytes(unaligned_signed)),
+              (serializer<int32_t, true>::nbytes(&signed_value)));
+    EXPECT_EQ((serializer<uint32_t, true>::nbytes(unaligned_unsigned)),
+              (serializer<uint32_t, true>::nbytes(&unsigned_value)));
+}
+
+TEST(SerializerTest, CompressedReadAcceptsUnalignedDestinations) {
+    alignas(uint32_t) uint8_t signed_destination[sizeof(int32_t) + 1] = {};
+    alignas(uint32_t) uint8_t unsigned_destination[sizeof(uint32_t) + 1] = {};
+    uint8_t signed_encoded[serializer<int32_t, true>::max_nbytes()] = {};
+    uint8_t unsigned_encoded[serializer<uint32_t, true>::max_nbytes()] = {};
+    const int32_t signed_value = -123456789;
+    const uint32_t unsigned_value = 0xfedcba98U;
+    const uint8_t* const signed_end =
+      serializer<int32_t, true>::write(signed_encoded, signed_value);
+    const uint8_t* const unsigned_end =
+      serializer<uint32_t, true>::write(unsigned_encoded, unsigned_value);
+    auto* const unaligned_signed =
+      reinterpret_cast<int32_t*>(signed_destination + 1);
+    auto* const unaligned_unsigned =
+      reinterpret_cast<uint32_t*>(unsigned_destination + 1);
+
+    EXPECT_EQ((serializer<int32_t, true>::read(
+                signed_encoded, unaligned_signed)), signed_end);
+    EXPECT_EQ((serializer<uint32_t, true>::read(
+                unsigned_encoded, unaligned_unsigned)), unsigned_end);
+    int32_t signed_decoded = 0;
+    uint32_t unsigned_decoded = 0;
+    NDB_MEMCPY(&signed_decoded, signed_destination + 1,
+               sizeof(signed_decoded));
+    NDB_MEMCPY(&unsigned_decoded, unsigned_destination + 1,
+               sizeof(unsigned_decoded));
+    EXPECT_EQ(signed_decoded, signed_value);
+    EXPECT_EQ(unsigned_decoded, unsigned_value);
+
+    memset(signed_destination, 0, sizeof(signed_destination));
+    memset(unsigned_destination, 0, sizeof(unsigned_destination));
+    EXPECT_EQ((serializer<int32_t, true>::failsafe_read(
+                signed_encoded, signed_end - signed_encoded,
+                unaligned_signed)), signed_end);
+    EXPECT_EQ((serializer<uint32_t, true>::failsafe_read(
+                unsigned_encoded, unsigned_end - unsigned_encoded,
+                unaligned_unsigned)), unsigned_end);
+    NDB_MEMCPY(&signed_decoded, signed_destination + 1,
+               sizeof(signed_decoded));
+    NDB_MEMCPY(&unsigned_decoded, unsigned_destination + 1,
+               sizeof(unsigned_decoded));
+    EXPECT_EQ(signed_decoded, signed_value);
+    EXPECT_EQ(unsigned_decoded, unsigned_value);
 }
 
 TEST(SerializerTest, NontrivialInlineStringRetainsClampingAssignment) {

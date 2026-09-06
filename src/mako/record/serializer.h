@@ -18,6 +18,9 @@ typedef size_t (*generic_failsafe_skip_fn)(const uint8_t *, size_t, uint8_t *);
 template <typename Serializer>
 struct generic_serializer {
   typedef typename Serializer::obj_type obj_type;
+  static_assert(std::is_trivially_copyable_v<obj_type> ||
+                  alignof(obj_type) == 1,
+                "nontrivial generic serializers require byte alignment");
 
   static inline const obj_type *
   aligned_object(const uint8_t *source, uint8_t *storage)
@@ -126,7 +129,7 @@ struct serializer {
   static inline const uint8_t *
   read(const uint8_t *buf, T *obj)
   {
-    NDB_MEMCPY(obj, buf, sizeof(T));
+    NDB_MEMCPY(reinterpret_cast<uint8_t *>(obj), buf, sizeof(T));
     return buf + sizeof(T);
   }
 
@@ -141,7 +144,8 @@ struct serializer {
   static inline size_t
   nbytes(const T *obj)
   {
-    return sizeof(*obj);
+    (void)obj;
+    return sizeof(T);
   }
 
   static inline size_t
@@ -185,7 +189,8 @@ struct serializer<uint32_t, true> {
   {
     uint32_t aligned_obj;
     const uint8_t * const next = read_uvint32(buf, &aligned_obj);
-    NDB_MEMCPY(obj, &aligned_obj, sizeof(aligned_obj));
+    NDB_MEMCPY(reinterpret_cast<uint8_t *>(obj), &aligned_obj,
+               sizeof(aligned_obj));
     return next;
   }
 
@@ -196,7 +201,8 @@ struct serializer<uint32_t, true> {
     const uint8_t * const next =
       failsafe_read_uvint32(buf, nbytes, &aligned_obj);
     if (next)
-      NDB_MEMCPY(obj, &aligned_obj, sizeof(aligned_obj));
+      NDB_MEMCPY(reinterpret_cast<uint8_t *>(obj), &aligned_obj,
+                 sizeof(aligned_obj));
     return next;
   }
 
@@ -204,7 +210,8 @@ struct serializer<uint32_t, true> {
   nbytes(const uint32_t *obj)
   {
     uint32_t aligned_obj;
-    NDB_MEMCPY(&aligned_obj, obj, sizeof(aligned_obj));
+    NDB_MEMCPY(&aligned_obj, reinterpret_cast<const uint8_t *>(obj),
+               sizeof(aligned_obj));
     return size_uvint32(aligned_obj);
   }
 
@@ -244,7 +251,7 @@ struct serializer<int32_t, true> {
     uint32_t v;
     buf = serializer<uint32_t, true>::read(buf, &v);
     const int32_t decoded = decode(v);
-    NDB_MEMCPY(obj, &decoded, sizeof(decoded));
+    NDB_MEMCPY(reinterpret_cast<uint8_t *>(obj), &decoded, sizeof(decoded));
     return buf;
   }
 
@@ -256,7 +263,7 @@ struct serializer<int32_t, true> {
     if (unlikely(!buf))
       return 0;
     const int32_t decoded = decode(v);
-    NDB_MEMCPY(obj, &decoded, sizeof(decoded));
+    NDB_MEMCPY(reinterpret_cast<uint8_t *>(obj), &decoded, sizeof(decoded));
     return buf;
   }
 
@@ -264,7 +271,8 @@ struct serializer<int32_t, true> {
   nbytes(const int32_t *obj)
   {
     int32_t aligned_obj;
-    NDB_MEMCPY(&aligned_obj, obj, sizeof(aligned_obj));
+    NDB_MEMCPY(&aligned_obj, reinterpret_cast<const uint8_t *>(obj),
+               sizeof(aligned_obj));
     const uint32_t v = encode(aligned_obj);
     return serializer<uint32_t, true>::nbytes(&v);
   }
