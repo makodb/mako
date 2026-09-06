@@ -2172,6 +2172,7 @@ if(TARGET sto_tpcc_bench)
             "$<TARGET_FILE:sto_tpcc_bench>"
             --num-threads 1
             --shard-config "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/config/local-shards2-warehouses1.yml"
+            --paxos-proc-name localhost
             --local-shards 0,1
             --runtime 1
             --storage-engine cpp
