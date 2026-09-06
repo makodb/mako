@@ -10,6 +10,7 @@
 #include <fstream>
 #include <filesystem>
 #include <chrono>
+#include <memory>
 #include <unistd.h>
 #include "lib/configuration.h"
 #include "lib/common.h"
@@ -90,6 +91,7 @@ class BenchmarkConfig {
       size_t shardIndex_;
       std::string cluster_;
       int clusterRole_;
+      std::unique_ptr<transport::Configuration> owned_config_;
       transport::Configuration* config_;
       volatile bool running_;
       volatile int control_mode_;
@@ -229,7 +231,14 @@ class BenchmarkConfig {
       static void clearThreadLocalShardIndex() { tl_shard_index_ = -1; }
       void setCluster(const std::string& c) { cluster_ = c; }
       void setClusterRole(int role) { clusterRole_ = role; }
-      void setConfig(transport::Configuration* cfg) { config_ = cfg; }
+      void setConfig(transport::Configuration* cfg) {
+        owned_config_.reset();
+        config_ = cfg;
+      }
+      void setOwnedConfig(std::unique_ptr<transport::Configuration> cfg) {
+        owned_config_ = std::move(cfg);
+        config_ = owned_config_.get();
+      }
       void setRunning(bool r) { running_ = r; }
       void setControlMode(int mode) { control_mode_ = mode; }
       void setVerbose(int v) { verbose_ = v; }

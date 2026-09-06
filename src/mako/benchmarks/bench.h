@@ -256,6 +256,9 @@ public:
   virtual ~bench_runner() {}
   void run();
   void stop();
+  // Multi-shard slow exit calls this only after every shard runner has
+  // stopped and destroyed its workers, which may hold cross-shard pointers.
+  void clear_and_close_open_tables();
   int f_mode;  // failure mode: default 0, 1 => without load phase(failover)
 
   // Get shard index for this runner

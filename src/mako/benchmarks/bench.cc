@@ -44,8 +44,37 @@ using namespace util;
 
 // par_id ==> shardClient
 std::unordered_map<int, mako::ShardClient*> shardClientAll;
+std::mutex shardClientAllMutex;
 // par_id ==> txn
 std::unordered_map<int, Transaction*> shardTxnAll;
+
+namespace {
+
+class scoped_shard_client_registration {
+public:
+  scoped_shard_client_registration(int partition_id,
+                                    mako::ShardClient *client)
+      : partition_id_(partition_id), client_(client) {
+    ALWAYS_ASSERT(client_ != nullptr);
+    std::lock_guard<std::mutex> lock(shardClientAllMutex);
+    const auto [entry, inserted] =
+        shardClientAll.emplace(partition_id_, client_);
+    ALWAYS_ASSERT(inserted || entry->second == client_);
+  }
+
+  ~scoped_shard_client_registration() {
+    std::lock_guard<std::mutex> lock(shardClientAllMutex);
+    const auto entry = shardClientAll.find(partition_id_);
+    if (entry != shardClientAll.end() && entry->second == client_)
+      shardClientAll.erase(entry);
+  }
+
+private:
+  int partition_id_;
+  mako::ShardClient *client_;
+};
+
+} // namespace
 
 
 static void arr2str(vector<uint64_t> arr) {
@@ -83,6 +112,40 @@ map_agg(map<K, V> &agg, const map<K, V> &m)
   for (typename map<K, V>::const_iterator it = m.begin();
        it != m.end(); ++it)
     agg[it->first] += it->second;
+}
+
+static map<string, uint64_t>
+clear_and_close_benchmark_indexes(
+    abstract_db *db,
+    map<string, abstract_ordered_index *> &open_tables)
+{
+  // The database decides whether open_index transfers ownership or returns a
+  // borrowed facade. close_index is the common release operation.
+  ALWAYS_ASSERT(db != nullptr);
+  map<string, uint64_t> agg_stats;
+  for (auto &entry : open_tables) {
+    ALWAYS_ASSERT(entry.second != nullptr);
+    try {
+      map_agg(agg_stats, entry.second->clear());
+    } catch (const oi_clear_unsupported &) {
+      // Closing the facade is still required and is the only teardown
+      // operation implemented by the legacy MassTrans adapter.
+    }
+    db->close_index(entry.second);
+  }
+  open_tables.clear();
+  return agg_stats;
+}
+
+void
+bench_runner::clear_and_close_open_tables()
+{
+  const map<string, uint64_t> agg_stats =
+      clear_and_close_benchmark_indexes(db, open_tables);
+  if (BenchmarkConfig::getInstance().getVerbose()) {
+    for (auto &p : agg_stats)
+      cerr << p.first << " : " << p.second << endl;
+  }
 }
 
 // returns <free_bytes, total_bytes>
@@ -145,7 +208,8 @@ bench_worker::run()
   // this is only reserved for leader cluster
   // on other alive leader servers
   auto& benchConfig = BenchmarkConfig::getInstance();
-  register_fasttransport_for_bench([&](int control, int value) {
+  register_fasttransport_for_bench([](int control, int value) {
+    auto& benchConfig = BenchmarkConfig::getInstance();
     Warning("receive a control in register_fasttransport_for_bench: %d, EpochInms: %llu", control, getEpochInms());
     switch (control) {
 #if defined(FAIL_NEW_VERSION)
@@ -165,13 +229,14 @@ bench_worker::run()
         benchConfig.setRuntimePlus(benchConfig.getRuntime()); // another runtime
 
         // Unpaused previous blocked threads if any
-        for (int par_id=0;par_id<benchConfig.getNthreads();par_id++){
-           auto it = shardClientAll.find(par_id);
-           if (it != shardClientAll.end() && it->second != nullptr) {
-             it->second->setBlocking(false);
-           } else {
-             Warning("ShardClient for par_id=%d is nullptr in setBlocking, skipping", par_id);
-           }
+        {
+          std::lock_guard<std::mutex> lock(shardClientAllMutex);
+          for (auto &[par_id, client] : shardClientAll) {
+            if (client != nullptr)
+              client->setBlocking(false);
+            else
+              Warning("ShardClient for par_id=%d is nullptr in setBlocking, skipping", par_id);
+          }
         }
         break;
       }
@@ -279,7 +344,8 @@ bench_worker::run()
   }
   scoped_db_thread_ctx ctx(db, false);
   on_run_setup();
-  shardClientAll[TThread::getGlobalPartitionID()]=TThread::sclient;
+  scoped_shard_client_registration client_registration(
+      TThread::getGlobalPartitionID(), TThread::sclient);
 
   const workload_desc_vec workload = get_workload();
   //    i (0-5): local commits: A
@@ -390,14 +456,12 @@ bench_runner::get_open_tables() {
 void
 bench_runner::stop() { // invoke inside run function; stop all ShardClient instances
   Warning("stop all rpc clients. set stop=false");
-  auto& benchConfig = BenchmarkConfig::getInstance();
-  for (int par_id=0;par_id<benchConfig.getNthreads();par_id++){
-   auto it = shardClientAll.find(par_id);
-   if (it != shardClientAll.end() && it->second != nullptr) {
-     it->second->stop();
-   } else {
-     Warning("ShardClient for par_id=%d is nullptr, skipping stop()", par_id);
-   }
+  std::lock_guard<std::mutex> lock(shardClientAllMutex);
+  for (auto &[par_id, client] : shardClientAll) {
+    if (client != nullptr)
+      client->stop();
+    else
+      Warning("ShardClient for par_id=%d is nullptr, skipping stop()", par_id);
   }
 }
 
@@ -878,18 +942,9 @@ bench_runner::run()
   if (!BenchmarkConfig::getInstance().getSlowExit())
     return;
 
-  map<string, uint64_t> agg_stats;
-  for (map<string, abstract_ordered_index *>::iterator it = open_tables.begin();
-       it != open_tables.end(); ++it) {
-    map_agg(agg_stats, it->second->clear());
-    delete it->second;
-  }
-  if (BenchmarkConfig::getInstance().getVerbose()) {
-    for (auto &p : agg_stats)
-      cerr << p.first << " : " << p.second << endl;
-
-  }
-  open_tables.clear();
+  const auto &config = BenchmarkConfig::getInstance().getConfig();
+  if (!config || !config->multi_shard_mode)
+    clear_and_close_open_tables();
 
   delete_pointers(loaders);
   delete_pointers(workers);

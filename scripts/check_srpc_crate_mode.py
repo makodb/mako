@@ -23,7 +23,7 @@ DEFAULT_TRANSPILER = (
     "third-party/rusty-cpp/target/release/rusty-cpp-transpiler"
 )
 RUSTY_CPP_SUBMODULE = "third-party/rusty-cpp"
-REQUIRED_RUSTY_CPP_COMMIT = "a1f8fef85e8d43bb00f85f8ef32e5ecc69408642"
+REQUIRED_RUSTY_CPP_COMMIT = "20707e98a371fee772729ae0a6b516e2d360ddd7"
 EXTRACTION_DRIVER = "scripts/extract_srpc_rust.py"
 # Crate-relative, like every other label the extraction driver owns: it
 # resolves against `extraction.crate_root(root)` (the vendored srpc tree at

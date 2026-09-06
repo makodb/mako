@@ -50,7 +50,15 @@ namespace mako
         int_received.resize(TThread::get_nshards());
         stopped = false;
         isBreakTimeout = false;
-        isBlocking = true; // If there is a timeout, we can't abort it, we should retry it util it is successful.
+        isBlocking.store(true, std::memory_order_relaxed); // If there is a timeout, we can't abort it, we should retry it util it is successful.
+    }
+
+    ShardClient::~ShardClient() {
+        stop();
+        delete client;
+        client = nullptr;
+        delete static_cast<FastTransport *>(transport);
+        transport = nullptr;
     }
 
     void ShardClient::stop() {
@@ -69,7 +77,7 @@ namespace mako
     }
 
     void ShardClient::setBlocking(bool pd=false) {
-        isBlocking=pd;
+        isBlocking.store(pd, std::memory_order_relaxed);
     }
 
     bool ShardClient::getBreakTimeout() {

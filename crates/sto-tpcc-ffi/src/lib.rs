@@ -24,8 +24,8 @@ use std::{
     },
 };
 use sto_core::{
-    AbortReason, AccessError, Active, CommitFailure, CommitOutcome, DefiniteOutcome, InvalidUse,
-    Runtime, RuntimeConfig, RuntimeId, Transaction, WorkerContext,
+    AbortReason, AccessError, Active, CommitFailure, CommitHook, CommitHookError, CommitOutcome,
+    InvalidUse, Runtime, RuntimeConfig, RuntimeId, Transaction, WorkerContext,
 };
 use sto_masstree::{
     DenseResolvedCache, PointMutation, PointReadBatch, ResolvedRecord, ScanBound, ScanBytesRef,
@@ -130,7 +130,7 @@ fn allocate_current_thread_cookie() -> FfiResult<u64> {
             return Ok(current);
         }
         let allocated = NEXT_THREAD_COOKIE
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
                 next.checked_add(1)
             })
             .map_err(|_| fatal(format_args!("thread-affinity cookie space exhausted")))?;
@@ -566,6 +566,38 @@ struct PendingSizeDelta {
     delta: i64,
 }
 
+struct SizeDeltaCommitHook<'a> {
+    pending: &'a [PendingSizeDelta],
+}
+
+impl<'a> SizeDeltaCommitHook<'a> {
+    fn new(pending: &'a [PendingSizeDelta]) -> Self {
+        Self { pending }
+    }
+}
+
+impl CommitHook for SizeDeltaCommitHook<'_> {
+    fn reserve_upper_metadata(&mut self) -> Result<(), CommitHookError> {
+        Ok(())
+    }
+
+    fn pre_install(&mut self) -> Result<(), CommitHookError> {
+        Ok(())
+    }
+
+    fn post_install(&mut self) {
+        for pending in self.pending {
+            if adjust_logical_rows(&pending.table.logical_rows, pending.delta).is_err() {
+                // Installation has completed, so an accounting invariant
+                // failure cannot be returned as an ordinary FFI error. Make
+                // core's post-install panic containment quarantine the
+                // transaction and mark its outcome indeterminate.
+                panic!("committed logical table-size publication failed");
+            }
+        }
+    }
+}
+
 const RESOLVED_CACHE_KEY_BYTES: usize = 32;
 // One TPC-C warehouse has 30,000 base customer rows and 100,000 sealed stock
 // rows. A 4,096-slot cache is a bounded 256 KiB compromise. Besides recurring
@@ -743,14 +775,14 @@ impl ResolvedCache {
     #[inline(always)]
     fn hash(table_hint: u64, key: &[u8]) -> u64 {
         let mut hash = (key.len() as u64) ^ table_hint.rotate_left(17) ^ 0x517c_c1b7_2722_0a95;
-        let mut chunks = key.chunks_exact(std::mem::size_of::<u64>());
-        for chunk in &mut chunks {
-            let word = u64::from_ne_bytes(chunk.try_into().expect("eight-byte cache key chunk"));
+        let (chunks, remainder) = key.as_chunks::<8>();
+        for chunk in chunks {
+            let word = u64::from_ne_bytes(*chunk);
             hash = (hash.rotate_left(5) ^ word).wrapping_mul(0x517c_c1b7_2722_0a95);
         }
-        if !chunks.remainder().is_empty() {
+        if !remainder.is_empty() {
             let mut tail = [0_u8; std::mem::size_of::<u64>()];
-            tail[..chunks.remainder().len()].copy_from_slice(chunks.remainder());
+            tail[..remainder.len()].copy_from_slice(remainder);
             hash = (hash.rotate_left(5) ^ u64::from_ne_bytes(tail))
                 .wrapping_mul(0x517c_c1b7_2722_0a95);
         }
@@ -957,13 +989,6 @@ impl StoTpccThread {
         });
         Ok(())
     }
-
-    fn apply_size_deltas(&self) -> FfiResult<()> {
-        for pending in &self.pending_size {
-            adjust_logical_rows(&pending.table.logical_rows, pending.delta)?;
-        }
-        Ok(())
-    }
 }
 
 fn active_transaction(active: &mut Option<ActiveAttempt>) -> FfiResult<&mut ActiveTransaction> {
@@ -1024,23 +1049,20 @@ fn adjust_logical_rows(rows: &AtomicU64, delta: i64) -> FfiResult<()> {
     if delta == 0 {
         return Ok(());
     }
-    let mut current = rows.load(Ordering::Relaxed);
-    loop {
-        let next = if delta > 0 {
-            current.checked_add(delta as u64)
+    let magnitude = delta.unsigned_abs();
+    rows.try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+        if delta > 0 {
+            current.checked_add(magnitude)
         } else {
-            current.checked_sub(delta.unsigned_abs())
+            current.checked_sub(magnitude)
         }
-        .ok_or_else(|| {
-            fatal(format_args!(
-                "committed logical table-size invariant failed"
-            ))
-        })?;
-        match rows.compare_exchange_weak(current, next, Ordering::Relaxed, Ordering::Relaxed) {
-            Ok(_) => return Ok(()),
-            Err(observed) => current = observed,
-        }
-    }
+    })
+    .map(|_| ())
+    .map_err(|_| {
+        fatal(format_args!(
+            "committed logical table-size invariant failed"
+        ))
+    })
 }
 
 fn status_from_access(operation: &str, error: AccessError) -> Status {
@@ -1067,41 +1089,122 @@ fn status_from_abort(reason: AbortReason) -> Status {
 }
 
 unsafe fn required_ref<'a, T>(pointer: *const T, name: &str) -> FfiResult<&'a T> {
-    if pointer.is_null() {
-        return Err(fatal(format_args!("{name} must not be null")));
-    }
+    checked_raw_pointer_range(pointer, 1, name)?;
     // SAFETY: The public C contract requires a live, aligned handle/config
-    // pointer of the corresponding type for the duration of the call.
+    // pointer of the corresponding type for the duration of the call. The
+    // preceding check also proves that its machine-address span cannot wrap.
     Ok(unsafe { &*pointer })
 }
 
 unsafe fn required_mut<'a, T>(pointer: *mut T, name: &str) -> FfiResult<&'a mut T> {
-    if pointer.is_null() {
-        return Err(fatal(format_args!("{name} must not be null")));
-    }
+    checked_raw_pointer_range(pointer.cast_const(), 1, name)?;
     // SAFETY: The public C contract requires exclusive access to the live,
-    // aligned handle/output pointer for the duration of the call.
+    // aligned handle/output pointer for the duration of the call. The
+    // preceding check also proves that its machine-address span cannot wrap.
     Ok(unsafe { &mut *pointer })
 }
 
-unsafe fn bytes<'a>(pointer: *const u8, length: usize, name: &str) -> FfiResult<&'a [u8]> {
-    if length == 0 {
+#[derive(Clone, Copy)]
+struct RawPointerRange {
+    start: usize,
+    end: usize,
+}
+
+impl RawPointerRange {
+    #[inline(always)]
+    fn overlaps(self, other: Self) -> bool {
+        self.start < other.end && other.start < self.end
+    }
+}
+
+/// Validates every machine-address condition that Rust imposes before a raw
+/// pointer and element count may become a slice. Allocation liveness and
+/// aliasing remain part of the calling ABI's safety contract.
+#[inline(always)]
+fn checked_raw_pointer_range<T>(
+    pointer: *const T,
+    count: usize,
+    name: &str,
+) -> FfiResult<RawPointerRange> {
+    if pointer.is_null() {
+        return Err(fatal(format_args!("{name} must not be null")));
+    }
+    let start = pointer.addr();
+    if !start.is_multiple_of(mem::align_of::<T>()) {
+        return Err(fatal(format_args!("{name} must be aligned")));
+    }
+    let byte_length = count
+        .checked_mul(mem::size_of::<T>())
+        .filter(|length| *length <= isize::MAX as usize)
+        .ok_or_else(|| {
+            fatal(format_args!(
+                "{name} byte length exceeds the Rust slice limit"
+            ))
+        })?;
+    let end = start
+        .checked_add(byte_length)
+        .ok_or_else(|| fatal(format_args!("{name} address range overflows")))?;
+    Ok(RawPointerRange { start, end })
+}
+
+/// Constructs a slice after [`checked_raw_pointer_range`] validated these
+/// exact parts. A separate helper keeps the unchecked operation easy to audit.
+#[inline(always)]
+unsafe fn slice_from_checked_parts<'a, T>(pointer: *const T, count: usize) -> &'a [T] {
+    debug_assert!(!pointer.is_null());
+    // SAFETY: The caller has validated nullness, alignment, byte length, and
+    // address arithmetic. The enclosing ABI contract supplies liveness and
+    // immutability for the returned lifetime.
+    unsafe { slice::from_raw_parts(pointer, count) }
+}
+
+/// Mutable counterpart of [`slice_from_checked_parts`].
+#[inline(always)]
+unsafe fn slice_from_checked_parts_mut<'a, T>(pointer: *mut T, count: usize) -> &'a mut [T] {
+    debug_assert!(!pointer.is_null());
+    // SAFETY: The caller has validated the address conditions and the
+    // enclosing ABI contract supplies unique writable access.
+    unsafe { slice::from_raw_parts_mut(pointer, count) }
+}
+
+#[inline(always)]
+unsafe fn checked_slice<'a, T>(pointer: *const T, count: usize, name: &str) -> FfiResult<&'a [T]> {
+    if count == 0 {
         return Ok(&[]);
     }
-    if pointer.is_null() {
-        return Err(fatal(format_args!(
-            "{name} must not be null when its length is nonzero"
-        )));
+    checked_raw_pointer_range(pointer, count, name)?;
+    // SAFETY: The preceding check validated these exact parts. The caller of
+    // this unsafe helper supplies allocation liveness and immutability.
+    Ok(unsafe { slice_from_checked_parts(pointer, count) })
+}
+
+#[inline(always)]
+unsafe fn checked_slice_mut<'a, T>(
+    pointer: *mut T,
+    count: usize,
+    name: &str,
+) -> FfiResult<&'a mut [T]> {
+    if count == 0 {
+        return Ok(&mut []);
     }
-    // SAFETY: The C caller guarantees `length` readable bytes and no mutation
-    // for the duration of the operation.
-    Ok(unsafe { slice::from_raw_parts(pointer, length) })
+    checked_raw_pointer_range(pointer.cast_const(), count, name)?;
+    // SAFETY: The preceding check validated these exact parts. The caller of
+    // this unsafe helper supplies allocation liveness and exclusive access.
+    Ok(unsafe { slice_from_checked_parts_mut(pointer, count) })
+}
+
+unsafe fn bytes<'a>(pointer: *const u8, length: usize, name: &str) -> FfiResult<&'a [u8]> {
+    // SAFETY: Forwarded from this helper's C ABI contract.
+    unsafe { checked_slice(pointer, length, name) }
 }
 
 unsafe fn fixed_keys<'a, const KEY_LENGTH: usize>(
     pointer: *const u8,
     count: usize,
 ) -> FfiResult<&'a [[u8; KEY_LENGTH]]> {
+    if count == 0 {
+        return Ok(&[]);
+    }
     let length = count
         .checked_mul(KEY_LENGTH)
         .filter(|length| *length <= isize::MAX as usize)
@@ -1110,7 +1213,7 @@ unsafe fn fixed_keys<'a, const KEY_LENGTH: usize>(
     // SAFETY: `[u8; KEY_LENGTH]` has byte alignment, `packed` contains exactly
     // `count * KEY_LENGTH` bytes, and the public contract keeps the input live
     // and immutable for the synchronous call.
-    Ok(unsafe { slice::from_raw_parts(packed.as_ptr().cast::<[u8; KEY_LENGTH]>(), count) })
+    Ok(unsafe { slice_from_checked_parts(packed.as_ptr().cast::<[u8; KEY_LENGTH]>(), count) })
 }
 
 unsafe fn fixed_values<'a>(
@@ -1121,32 +1224,12 @@ unsafe fn fixed_values<'a>(
         return Ok(&[]);
     }
 
-    let byte_length = key_count
-        .checked_mul(mem::size_of::<StoTpccFixedValue>())
-        .filter(|length| *length <= isize::MAX as usize)
-        .ok_or_else(|| fatal(format_args!("fixed value descriptor byte length overflows")))?;
-    if pointer.is_null() {
-        return Err(fatal(format_args!(
-            "values must not be null for a nonempty fixed put batch"
-        )));
-    }
-    if !pointer
-        .addr()
-        .is_multiple_of(mem::align_of::<StoTpccFixedValue>())
-        || pointer.addr().checked_add(byte_length).is_none()
-    {
-        return Err(fatal(format_args!(
-            "values must name one aligned, non-overflowing descriptor range"
-        )));
-    }
-    // SAFETY: Nullness, alignment, length, and address overflow were checked;
-    // the public ABI requires all `key_count` elements to remain readable for the
-    // synchronous call.
-    let values = unsafe { slice::from_raw_parts(pointer, key_count) };
+    // SAFETY: The public ABI requires the complete descriptor allocation to
+    // remain live and immutable for the synchronous call.
+    let values = unsafe { checked_slice(pointer, key_count, "values")? };
     for (index, value) in values.iter().enumerate() {
-        if value.length > isize::MAX as usize
-            || (value.length != 0
-                && (value.data.is_null() || value.data.addr().checked_add(value.length).is_none()))
+        if value.length != 0
+            && checked_raw_pointer_range(value.data, value.length, "fixed value").is_err()
         {
             return Err(fatal(format_args!(
                 "fixed value {index} must name one non-overflowing readable range"
@@ -1163,31 +1246,13 @@ unsafe fn insert_operations<'a>(
     if count == 0 {
         return Ok(&[]);
     }
-    let byte_length = count
-        .checked_mul(mem::size_of::<StoTpccInsertOperation>())
-        .filter(|length| *length <= isize::MAX as usize)
-        .ok_or_else(|| {
-            fatal(format_args!(
-                "insert operation descriptor byte length overflows"
-            ))
-        })?;
-    if pointer.is_null()
-        || !pointer
-            .addr()
-            .is_multiple_of(mem::align_of::<StoTpccInsertOperation>())
-        || pointer.addr().checked_add(byte_length).is_none()
-    {
-        return Err(fatal(format_args!(
-            "insert operations must name one aligned, non-overflowing descriptor range"
-        )));
-    }
-    // SAFETY: Nullness, alignment, length, and address overflow were checked;
-    // the public ABI keeps the complete descriptor range live for the call.
-    let operations = unsafe { slice::from_raw_parts(pointer, count) };
+    // SAFETY: The public ABI keeps the complete descriptor range live and
+    // immutable for the synchronous call.
+    let operations = unsafe { checked_slice(pointer, count, "insert operations")? };
     for (index, operation) in operations.iter().enumerate() {
-        if operation.table.is_null() {
+        if checked_raw_pointer_range(operation.table, 1, "insert operation table").is_err() {
             return Err(fatal(format_args!(
-                "insert operation {index} table must not be null"
+                "insert operation {index} table must name one aligned, non-overflowing handle"
             )));
         }
         // Validate every byte descriptor before staging the first mutation.
@@ -1198,9 +1263,8 @@ unsafe fn insert_operations<'a>(
             (operation.key, operation.key_length, "key"),
             (operation.value, operation.value_length, "value"),
         ] {
-            if length > isize::MAX as usize
-                || (length != 0
-                    && (pointer.is_null() || pointer.addr().checked_add(length).is_none()))
+            if length != 0
+                && checked_raw_pointer_range(pointer, length, "insert operation bytes").is_err()
             {
                 return Err(fatal(format_args!(
                     "insert operation {index} {kind} must name one non-overflowing readable range"
@@ -1216,17 +1280,8 @@ unsafe fn output_bytes<'a>(
     capacity: usize,
     name: &str,
 ) -> FfiResult<&'a mut [u8]> {
-    if capacity == 0 {
-        return Ok(&mut []);
-    }
-    if pointer.is_null() {
-        return Err(fatal(format_args!(
-            "{name} must not be null when its capacity is nonzero"
-        )));
-    }
-    // SAFETY: The C caller guarantees `capacity` uniquely writable bytes for
-    // the duration of the operation.
-    Ok(unsafe { slice::from_raw_parts_mut(pointer, capacity) })
+    // SAFETY: Forwarded from this helper's C ABI contract.
+    unsafe { checked_slice_mut(pointer, capacity, name) }
 }
 
 fn db_config(raw: StoTpccDbConfig) -> (RuntimeConfig, MasstreeRuntimeConfig) {
@@ -1288,13 +1343,13 @@ fn table_config(raw: StoTpccTableConfig) -> TableConfig {
     config
 }
 
-unsafe fn optional_copy<T: Copy + Default>(pointer: *const T) -> T {
+unsafe fn optional_copy<T: Copy + Default>(pointer: *const T, name: &str) -> FfiResult<T> {
     if pointer.is_null() {
-        T::default()
+        Ok(T::default())
     } else {
-        // SAFETY: A non-null optional config obeys the same validity contract
-        // as required config pointers.
-        unsafe { *pointer }
+        // SAFETY: A non-null optional config obeys the same liveness contract
+        // as required config pointers; required_ref also rejects misalignment.
+        Ok(*unsafe { required_ref(pointer, name)? })
     }
 }
 
@@ -1308,7 +1363,7 @@ pub unsafe extern "C" fn sto_tpcc_db_create(
     boundary("sto_tpcc_db_create", || {
         let output = unsafe { required_mut(out_db, "out_db")? };
         *output = ptr::null_mut();
-        let raw = unsafe { optional_copy(config) };
+        let raw = unsafe { optional_copy(config, "config")? };
         let (sto_config, masstree_config) = db_config(raw);
         let max_pending_size_deltas = sto_config.max_items_per_transaction();
         let masstree = MasstreeRuntime::new(masstree_config)
@@ -1331,6 +1386,7 @@ pub unsafe extern "C" fn sto_tpcc_db_create(
 pub unsafe extern "C" fn sto_tpcc_db_destroy(db: *mut StoTpccDb) -> i32 {
     boundary("sto_tpcc_db_destroy", || {
         if !db.is_null() {
+            checked_raw_pointer_range(db.cast_const(), 1, "db")?;
             // SAFETY: Ownership of this allocation is returned exactly once by
             // the caller under the destruction contract.
             drop(unsafe { Box::from_raw(db) });
@@ -1349,7 +1405,7 @@ unsafe fn create_table(
     let output = unsafe { required_mut(out_table, "out_table")? };
     *output = ptr::null_mut();
     let (cache_policy, dense_policy) = ResolvedCachePolicy::from_raw(cache_policy)?;
-    let raw = unsafe { optional_copy(config) };
+    let raw = unsafe { optional_copy(config, "config")? };
     let worker = db.masstree.attach().map_err(|error| {
         fatal(format_args!(
             "unable to attach Masstree table creator: {error}"
@@ -1440,6 +1496,7 @@ pub unsafe extern "C" fn sto_tpcc_table_seal_directory_structure(table: *mut Sto
 pub unsafe extern "C" fn sto_tpcc_table_destroy(table: *mut StoTpccTable) -> i32 {
     boundary("sto_tpcc_table_destroy", || {
         if !table.is_null() {
+            checked_raw_pointer_range(table.cast_const(), 1, "table")?;
             // SAFETY: Ownership is returned exactly once by contract.
             drop(unsafe { Box::from_raw(table) });
         }
@@ -1586,6 +1643,14 @@ pub unsafe extern "C" fn mako_sto_tpcc_txn_begin_trusted(thread_handle: *mut Sto
 /// `thread_handle` must be a live, exclusively accessed, same-thread handle.
 #[inline(always)]
 fn txn_commit_impl(handle: &mut StoTpccThread) -> FfiResult<Status> {
+    txn_commit_impl_with_observer(handle, || {})
+}
+
+#[inline(always)]
+fn txn_commit_impl_with_observer(
+    handle: &mut StoTpccThread,
+    after_core_commit: impl FnOnce(),
+) -> FfiResult<Status> {
     let ActiveAttempt {
         transaction,
         rcu_scope,
@@ -1593,15 +1658,22 @@ fn txn_commit_impl(handle: &mut StoTpccThread) -> FfiResult<Status> {
         .active
         .take()
         .ok_or_else(|| fatal(format_args!("no transaction is active")))?;
-    let outcome = transaction.commit();
+    let outcome = if handle.pending_size.is_empty() {
+        transaction.commit()
+    } else {
+        let mut hook = SizeDeltaCommitHook::new(&handle.pending_size);
+        transaction.commit_with_hook(&mut hook)
+    };
+    // Tests pause here to force the interleaving that used to separate row
+    // publication from logical-size publication. The production instantiation
+    // inlines an empty observer.
+    after_core_commit();
     let scope_result = rcu_scope
         .close()
         .map_err(|error| fatal(format_args!("unable to end native RCU scope: {error}")));
     match outcome {
         Ok(CommitOutcome::Committed(_)) => {
-            let size_result = handle.apply_size_deltas();
             handle.pending_size.clear();
-            size_result?;
             scope_result?;
             Ok(Status::Ok)
         }
@@ -1610,10 +1682,7 @@ fn txn_commit_impl(handle: &mut StoTpccThread) -> FfiResult<Status> {
             scope_result?;
             Ok(status_from_abort(reason))
         }
-        Err(error @ CommitFailure::Poisoned { outcome, .. }) => {
-            if matches!(outcome, DefiniteOutcome::Committed(_)) {
-                let _ = handle.apply_size_deltas();
-            }
+        Err(error @ CommitFailure::Poisoned { .. }) => {
             handle.pending_size.clear();
             scope_result?;
             Err(fatal(format_args!("transaction commit failed: {error}")))
@@ -1762,7 +1831,10 @@ fn get_impl(
 
 /// # Safety
 /// Handles and byte ranges must be valid for the call. `out_actual` is
-/// required; `out_value` must cover `value_capacity` writable bytes.
+/// required; `out_value` must cover `value_capacity` writable bytes. As the
+/// public header specifies, the key range, output range, scalar output, and
+/// mutable handle must not overlap. The output locations must have exclusive
+/// access for the complete call.
 #[no_mangle]
 pub unsafe extern "C" fn sto_tpcc_get(
     thread_handle: *mut StoTpccThread,
@@ -1793,7 +1865,8 @@ pub unsafe extern "C" fn sto_tpcc_get(
 /// This symbol is intentionally absent from the public C header. It retains
 /// the Rust panic boundary but relies on `rust_sto_tpcc_wrapper` to provide a
 /// live same-thread handle with an active transaction, one of its live table
-/// handles, valid byte ranges, and a uniquely writable result.
+/// handles, valid byte ranges, and uniquely writable results. The key,
+/// `out_value`, `out_actual`, and mutable handle ranges must be disjoint.
 ///
 /// # Safety
 /// Every handle, range, affinity, activity, and exclusivity condition in the
@@ -1810,21 +1883,13 @@ pub unsafe extern "C" fn mako_sto_tpcc_get_trusted(
     out_actual: *mut usize,
 ) -> i32 {
     boundary("mako_sto_tpcc_get_trusted", || {
-        // SAFETY: Every reference and slice precondition is part of the
-        // wrapper-private contract above. Empty ranges avoid imposing Rust's
-        // non-null requirement on a C++ zero-length buffer.
+        // SAFETY: Handle liveness and byte-range allocation validity are part
+        // of the wrapper-private contract. The checked slice helpers reject
+        // impossible pointer/length pairs before constructing Rust slices.
         let handle = unsafe { &mut *thread_handle };
         let table = unsafe { &*table };
-        let key = if key_length == 0 {
-            &[][..]
-        } else {
-            unsafe { slice::from_raw_parts(key, key_length) }
-        };
-        let output = if value_capacity == 0 {
-            &mut [][..]
-        } else {
-            unsafe { slice::from_raw_parts_mut(out_value, value_capacity) }
-        };
+        let key = unsafe { bytes(key, key_length, "trusted key")? };
+        let output = unsafe { output_bytes(out_value, value_capacity, "trusted out_value")? };
         let actual = unsafe { &mut *out_actual };
         get_impl(handle, table, key, output, actual)
     })
@@ -2013,26 +2078,19 @@ fn modify_fixed_width<const KEY_LENGTH: usize>(
 
         match action {
             STO_TPCC_FIXED_MODIFY_PUT => {
-                let valid_length = replacement_length <= isize::MAX as usize;
-                let valid_pointer = replacement_length == 0 || !replacement_pointer.is_null();
-                let valid_range = replacement_pointer
-                    .addr()
-                    .checked_add(replacement_length)
-                    .is_some();
-                if !valid_length || !valid_pointer || !valid_range {
+                let replacement = unsafe {
+                    bytes(
+                        replacement_pointer,
+                        replacement_length,
+                        "fixed-mutation replacement",
+                    )
+                };
+                let Ok(replacement) = replacement else {
                     callback_failed = true;
                     set_last_error(format_args!(
                         "fixed-mutation callback returned an invalid replacement at input index {index}"
                     ));
                     return PointMutation::Keep;
-                }
-                let replacement = if replacement_length == 0 {
-                    &[][..]
-                } else {
-                    // SAFETY: The callback contract keeps this byte range
-                    // readable until it is copied here. Length, nullness, and
-                    // address overflow were checked above.
-                    unsafe { slice::from_raw_parts(replacement_pointer, replacement_length) }
                 };
                 size_delta = next_delta;
                 PointMutation::Put(Value::from(replacement))
@@ -2162,7 +2220,7 @@ fn put_fixed_width<const KEY_LENGTH: usize>(
             // transaction began, and the C contract keeps every range live
             // and immutable for this synchronous call. `Value::from` copies
             // the bytes before this closure returns.
-            unsafe { slice::from_raw_parts(value.data, value.length) }
+            unsafe { slice_from_checked_parts(value.data, value.length) }
         };
         PointMutation::Put(Value::from(bytes))
     };
@@ -2394,21 +2452,12 @@ pub unsafe extern "C" fn mako_sto_tpcc_put_trusted(
     value_length: usize,
 ) -> i32 {
     boundary("mako_sto_tpcc_put_trusted", || {
-        // SAFETY: Guaranteed by the private C++ wrapper. Its supported TPC-C
-        // values and keys are nonempty, but retain empty-slice support for the
-        // general abstract index surface.
+        // SAFETY: The private C++ wrapper guarantees allocation liveness. The
+        // checked helpers reject impossible pointer/length pairs here.
         let handle = unsafe { &mut *thread_handle };
         let table = unsafe { &*table };
-        let key = if key_length == 0 {
-            &[][..]
-        } else {
-            unsafe { slice::from_raw_parts(key, key_length) }
-        };
-        let value = if value_length == 0 {
-            &[][..]
-        } else {
-            unsafe { slice::from_raw_parts(value, value_length) }
-        };
+        let key = unsafe { bytes(key, key_length, "trusted key")? };
+        let value = unsafe { bytes(value, value_length, "trusted value")? };
         put_impl(handle, table, key, value)
     })
 }
@@ -2430,19 +2479,12 @@ pub unsafe extern "C" fn mako_sto_tpcc_put_borrowed_trusted(
     value_length: usize,
 ) -> i32 {
     boundary("mako_sto_tpcc_put_borrowed_trusted", || {
-        // SAFETY: The private C++ wrapper guarantees live handles and ranges.
+        // SAFETY: The private C++ wrapper guarantees live handles and backing
+        // allocations. The checked helpers validate each pointer/length pair.
         let handle = unsafe { &mut *thread_handle };
         let table = unsafe { &*table };
-        let key = if key_length == 0 {
-            &[][..]
-        } else {
-            unsafe { slice::from_raw_parts(key, key_length) }
-        };
-        let value = if value_length == 0 {
-            &[][..]
-        } else {
-            unsafe { slice::from_raw_parts(value, value_length) }
-        };
+        let key = unsafe { bytes(key, key_length, "trusted key")? };
+        let value = unsafe { bytes(value, value_length, "trusted value")? };
         // SAFETY: The wrapper's transactional value contract keeps this range
         // readable and immutable until the active attempt resolves.
         unsafe { put_borrowed_impl(handle, table, key, value) }
@@ -2544,19 +2586,12 @@ pub unsafe extern "C" fn mako_sto_tpcc_insert_trusted(
     value_length: usize,
 ) -> i32 {
     boundary("mako_sto_tpcc_insert_trusted", || {
-        // SAFETY: Guaranteed by the private C++ wrapper.
+        // SAFETY: The private C++ wrapper guarantees allocation liveness. The
+        // checked helpers validate each pointer/length pair.
         let handle = unsafe { &mut *thread_handle };
         let table = unsafe { &*table };
-        let key = if key_length == 0 {
-            &[][..]
-        } else {
-            unsafe { slice::from_raw_parts(key, key_length) }
-        };
-        let value = if value_length == 0 {
-            &[][..]
-        } else {
-            unsafe { slice::from_raw_parts(value, value_length) }
-        };
+        let key = unsafe { bytes(key, key_length, "trusted key")? };
+        let value = unsafe { bytes(value, value_length, "trusted value")? };
         insert_impl(handle, table, key, value)
     })
 }
@@ -2578,19 +2613,12 @@ pub unsafe extern "C" fn mako_sto_tpcc_insert_borrowed_trusted(
     value_length: usize,
 ) -> i32 {
     boundary("mako_sto_tpcc_insert_borrowed_trusted", || {
-        // SAFETY: The private C++ wrapper guarantees live handles and ranges.
+        // SAFETY: The private C++ wrapper guarantees live handles and backing
+        // allocations. The checked helpers validate each pointer/length pair.
         let handle = unsafe { &mut *thread_handle };
         let table = unsafe { &*table };
-        let key = if key_length == 0 {
-            &[][..]
-        } else {
-            unsafe { slice::from_raw_parts(key, key_length) }
-        };
-        let value = if value_length == 0 {
-            &[][..]
-        } else {
-            unsafe { slice::from_raw_parts(value, value_length) }
-        };
+        let key = unsafe { bytes(key, key_length, "trusted key")? };
+        let value = unsafe { bytes(value, value_length, "trusted value")? };
         // SAFETY: The wrapper's transactional value contract keeps this range
         // readable and immutable until the active attempt resolves.
         unsafe { insert_borrowed_impl(handle, table, key, value) }
@@ -2631,13 +2659,13 @@ pub unsafe extern "C" fn sto_tpcc_insert_many(
             } else {
                 // SAFETY: The complete descriptor set was validated before
                 // entering this loop and remains immutable for the call.
-                unsafe { slice::from_raw_parts(operation.key, operation.key_length) }
+                unsafe { slice_from_checked_parts(operation.key, operation.key_length) }
             };
             let value = if operation.value_length == 0 {
                 &[][..]
             } else {
                 // SAFETY: The same prevalidation covers this value range.
-                unsafe { slice::from_raw_parts(operation.value, operation.value_length) }
+                unsafe { slice_from_checked_parts(operation.value, operation.value_length) }
             };
             let access = {
                 let native_worker = &handle.native_worker;
@@ -2904,15 +2932,15 @@ pub unsafe extern "C" fn mako_sto_tpcc_scan_trusted(
         // by rust_sto_tpcc_wrapper immediately before this private call.
         let handle = unsafe { &mut *thread_handle };
         let table = unsafe { &*table };
-        let lower_key = if lower_kind == 0 || lower_key_length == 0 {
+        let lower_key = if lower_kind == 0 {
             &[][..]
         } else {
-            unsafe { slice::from_raw_parts(lower_key, lower_key_length) }
+            unsafe { bytes(lower_key, lower_key_length, "trusted lower_key")? }
         };
-        let upper_key = if upper_kind == 0 || upper_key_length == 0 {
+        let upper_key = if upper_kind == 0 {
             &[][..]
         } else {
-            unsafe { slice::from_raw_parts(upper_key, upper_key_length) }
+            unsafe { bytes(upper_key, upper_key_length, "trusted upper_key")? }
         };
         let lower = match lower_kind {
             0 => ScanBound::Unbounded,
@@ -3458,46 +3486,19 @@ fn payment_patch_customer_data(
     Ok(PAYMENT_CUSTOMER_DATA_VALUE_LENGTH)
 }
 
-#[derive(Clone, Copy)]
-struct PaymentByteRange {
-    start: usize,
-    end: usize,
-}
-
-impl PaymentByteRange {
-    #[inline]
-    fn overlaps(self, other: Self) -> bool {
-        self.start < other.end && other.start < self.end
-    }
-}
-
 fn payment_pointer_range<T>(
     pointer: *const T,
     length: usize,
     name: &str,
-) -> FfiResult<PaymentByteRange> {
-    if pointer.is_null() {
-        return Err(fatal(format_args!("{name} must not be null")));
-    }
-    if !pointer.addr().is_multiple_of(mem::align_of::<T>()) {
-        return Err(fatal(format_args!("{name} must be aligned")));
-    }
-    let byte_length = length
-        .checked_mul(mem::size_of::<T>())
-        .filter(|length| *length <= isize::MAX as usize)
-        .ok_or_else(|| fatal(format_args!("{name} byte length overflows")))?;
-    let start = pointer.addr();
-    let end = start
-        .checked_add(byte_length)
-        .ok_or_else(|| fatal(format_args!("{name} address range overflows")))?;
-    Ok(PaymentByteRange { start, end })
+) -> FfiResult<RawPointerRange> {
+    checked_raw_pointer_range(pointer, length, name)
 }
 
 fn payment_output_range(
     pointer: *mut u8,
     capacity: usize,
     name: &str,
-) -> FfiResult<PaymentByteRange> {
+) -> FfiResult<RawPointerRange> {
     payment_pointer_range(pointer.cast_const(), capacity, name)
 }
 
@@ -3882,11 +3883,11 @@ unsafe fn payment_prefix_body(
     // SAFETY: The three checked ranges are nonempty, non-overflowing, and
     // pairwise disjoint. The private wrapper keeps them alive through finish.
     let warehouse_output =
-        unsafe { slice::from_raw_parts_mut(request.warehouse_output, request.output_capacity) };
+        unsafe { slice_from_checked_parts_mut(request.warehouse_output, request.output_capacity) };
     let district_output =
-        unsafe { slice::from_raw_parts_mut(request.district_output, request.output_capacity) };
+        unsafe { slice_from_checked_parts_mut(request.district_output, request.output_capacity) };
     let customer_output =
-        unsafe { slice::from_raw_parts_mut(request.customer_output, request.output_capacity) };
+        unsafe { slice_from_checked_parts_mut(request.customer_output, request.output_capacity) };
 
     let warehouse_length = unsafe {
         payment_modify_full_cached_row(
@@ -4972,7 +4973,7 @@ unsafe fn delivery_full_body(
     // request and result. Cursor writes intentionally outlive transaction
     // rollback, matching the scalar Delivery worker.
     let cursors =
-        unsafe { slice::from_raw_parts_mut(request.last_no_o_ids, DELIVERY_DISTRICT_COUNT) };
+        unsafe { slice_from_checked_parts_mut(request.last_no_o_ids, DELIVERY_DISTRICT_COUNT) };
     let mut delivered_districts = 0_u32;
     let mut updated_order_lines = 0_u32;
     for (district_index, cursor) in cursors.iter_mut().enumerate() {
@@ -6359,7 +6360,8 @@ pub extern "C" fn sto_tpcc_last_error_length() -> usize {
 
 /// # Safety
 /// `out_actual` must be uniquely writable. A nonzero capacity requires that
-/// `out_message` cover that many writable bytes.
+/// `out_message` cover that many writable bytes. The two output ranges must
+/// be disjoint.
 #[no_mangle]
 pub unsafe extern "C" fn sto_tpcc_last_error_copy(
     out_message: *mut std::ffi::c_char,
@@ -6367,9 +6369,7 @@ pub unsafe extern "C" fn sto_tpcc_last_error_copy(
     out_actual: *mut usize,
 ) -> i32 {
     boundary_preserving_error("sto_tpcc_last_error_copy", || {
-        if out_actual.is_null() {
-            return Err(fatal(format_args!("out_actual must not be null")));
-        }
+        let actual_range = checked_raw_pointer_range(out_actual.cast_const(), 1, "out_actual")?;
         let snapshot = LAST_ERROR.with(|slot| {
             let error = slot.try_borrow().map_err(|_| Status::Fatal)?;
             let mut snapshot = ErrorBuffer::new();
@@ -6377,23 +6377,30 @@ pub unsafe extern "C" fn sto_tpcc_last_error_copy(
             snapshot.len = error.len;
             Ok::<_, Status>(snapshot)
         })?;
-        // SAFETY: Validity and exclusivity are required by the C contract.
-        unsafe { *out_actual = snapshot.len };
-        let required = snapshot.len.saturating_add(1);
+        let required = snapshot
+            .len
+            .checked_add(1)
+            .ok_or_else(|| fatal(format_args!("last-error size overflows")))?;
         if message_capacity < required {
+            // SAFETY: The raw range check above established the address
+            // conditions; the public ABI supplies liveness and exclusivity.
+            *unsafe { required_mut(out_actual, "out_actual")? } = snapshot.len;
             return Ok(Status::BufferTooSmall);
         }
-        if out_message.is_null() {
+        let message_range =
+            checked_raw_pointer_range(out_message.cast_const(), message_capacity, "out_message")?;
+        if actual_range.overlaps(message_range) {
             return Err(fatal(format_args!(
-                "out_message must not be null when its capacity is nonzero"
+                "out_message and out_actual must be disjoint"
             )));
         }
-        // SAFETY: Capacity was checked and the caller supplies a uniquely
-        // writable message buffer.
-        unsafe {
-            ptr::copy_nonoverlapping(snapshot.bytes.as_ptr(), out_message.cast(), snapshot.len);
-            *out_message.add(snapshot.len) = 0;
-        }
+        // SAFETY: The raw checks above established address validity and
+        // disjointness; the public ABI supplies live, exclusive storage.
+        *unsafe { required_mut(out_actual, "out_actual")? } = snapshot.len;
+        let output =
+            unsafe { output_bytes(out_message.cast::<u8>(), message_capacity, "out_message")? };
+        output[..snapshot.len].copy_from_slice(snapshot.as_bytes());
+        output[snapshot.len] = 0;
         Ok(Status::Ok)
     })
 }
@@ -6409,6 +6416,21 @@ mod tests {
     const NATIVE_TEST_MAX_THREADS: u32 = 8;
     #[cfg(mtree_native_integration)]
     const NATIVE_TEST_MAX_KEY_LENGTH: u32 = 128;
+
+    #[test]
+    fn logical_row_adjustment_preserves_value_on_overflow_and_underflow() {
+        let rows = AtomicU64::new(u64::MAX);
+        assert_eq!(adjust_logical_rows(&rows, 1), Err(Status::Fatal));
+        assert_eq!(rows.load(Ordering::Relaxed), u64::MAX);
+
+        rows.store(0, Ordering::Relaxed);
+        assert_eq!(adjust_logical_rows(&rows, -1), Err(Status::Fatal));
+        assert_eq!(rows.load(Ordering::Relaxed), 0);
+
+        assert_eq!(adjust_logical_rows(&rows, 2), Ok(()));
+        assert_eq!(adjust_logical_rows(&rows, -1), Ok(()));
+        assert_eq!(rows.load(Ordering::Relaxed), 1);
+    }
 
     fn test_encode_u32(mut value: u32) -> Vec<u8> {
         let mut bytes = Vec::new();
@@ -6538,7 +6560,7 @@ mod tests {
             &[][..]
         } else {
             // SAFETY: The scan callback contract supplies this live row slice.
-            unsafe { slice::from_raw_parts(key, key_length) }
+            unsafe { slice_from_checked_parts(key, key_length) }
         };
         delivered.push(key.to_vec());
         1
@@ -6566,7 +6588,7 @@ mod tests {
         } else {
             // SAFETY: The fixed-read callback contract supplies this live
             // value slice for the duration of the invocation.
-            Some(unsafe { slice::from_raw_parts(value, value_length) }.to_vec())
+            Some(unsafe { slice_from_checked_parts(value, value_length) }.to_vec())
         };
         context.observed.push((index, value));
         i32::from(context.fail_at == Some(index))
@@ -6617,7 +6639,7 @@ mod tests {
         } else {
             // SAFETY: The fixed-mutation contract leases this current value
             // for the callback invocation.
-            Some(unsafe { slice::from_raw_parts(value, value_length) }.to_vec())
+            Some(unsafe { slice_from_checked_parts(value, value_length) }.to_vec())
         };
         context.observed.push((index, value));
         // SAFETY: Both output pointers are supplied by the endpoint.
@@ -7160,6 +7182,146 @@ mod tests {
     }
 
     #[test]
+    fn raw_slice_views_reject_impossible_ranges_before_dereference() {
+        let non_null_but_invalid = ptr::dangling::<u8>();
+        let too_long = isize::MAX as usize + 1;
+        assert!(matches!(
+            unsafe { bytes(non_null_but_invalid, too_long, "oversized input") },
+            Err(Status::Fatal)
+        ));
+        assert!(matches!(
+            unsafe {
+                output_bytes(
+                    non_null_but_invalid.cast_mut(),
+                    too_long,
+                    "oversized output",
+                )
+            },
+            Err(Status::Fatal)
+        ));
+
+        // Both pointers are deliberately outside any allocation. The checked
+        // end-address addition must reject them before from_raw_parts or
+        // from_raw_parts_mut can inspect the claimed byte range.
+        let wrapping_input = ptr::without_provenance::<u8>(usize::MAX);
+        let wrapping_output = ptr::without_provenance_mut::<u8>(usize::MAX);
+        assert!(matches!(
+            unsafe { bytes(wrapping_input, 1, "wrapping input") },
+            Err(Status::Fatal)
+        ));
+        assert!(matches!(
+            unsafe { output_bytes(wrapping_output, 1, "wrapping output") },
+            Err(Status::Fatal)
+        ));
+
+        let mut scalar_storage = [0_u64; 2];
+        let misaligned = unsafe { scalar_storage.as_mut_ptr().cast::<u8>().add(1) };
+        assert!(matches!(
+            unsafe { required_ref(misaligned.cast::<u64>(), "misaligned input") },
+            Err(Status::Fatal)
+        ));
+        assert!(matches!(
+            unsafe { required_mut(misaligned.cast::<u64>(), "misaligned output") },
+            Err(Status::Fatal)
+        ));
+        let wrapping_scalar_address = usize::MAX & !(mem::align_of::<u64>() - 1);
+        let wrapping_scalar = ptr::without_provenance::<u64>(wrapping_scalar_address);
+        assert!(matches!(
+            unsafe { required_ref(wrapping_scalar, "wrapping scalar input") },
+            Err(Status::Fatal)
+        ));
+        assert!(matches!(
+            unsafe { required_mut(wrapping_scalar.cast_mut(), "wrapping scalar output",) },
+            Err(Status::Fatal)
+        ));
+
+        let invalid_table = ptr::without_provenance::<StoTpccTable>(1);
+        let operation = StoTpccInsertOperation {
+            table: invalid_table,
+            key: ptr::null(),
+            key_length: 0,
+            value: ptr::null(),
+            value_length: 0,
+        };
+        assert!(matches!(
+            unsafe { insert_operations(&operation, 1) },
+            Err(Status::Fatal)
+        ));
+        assert_eq!(
+            unsafe { sto_tpcc_db_destroy(ptr::without_provenance_mut::<StoTpccDb>(1)) },
+            Status::Fatal.code()
+        );
+        assert_eq!(
+            unsafe { sto_tpcc_table_destroy(ptr::without_provenance_mut::<StoTpccTable>(1)) },
+            Status::Fatal.code()
+        );
+    }
+
+    #[cfg(mtree_native_integration)]
+    #[test]
+    fn public_and_trusted_byte_endpoints_reject_impossible_ranges() {
+        unsafe {
+            let config = StoTpccDbConfig {
+                max_threads: NATIVE_TEST_MAX_THREADS,
+                max_key_length: NATIVE_TEST_MAX_KEY_LENGTH,
+                max_items_per_txn: 8,
+                max_locks_per_txn: 16,
+            };
+            let mut db = ptr::null_mut();
+            let mut table = ptr::null_mut();
+            let mut worker = ptr::null_mut();
+            assert_eq!(sto_tpcc_db_create(&config, &mut db), Status::Ok.code());
+            assert_eq!(
+                sto_tpcc_table_create(db, ptr::null(), &mut table),
+                Status::Ok.code()
+            );
+            assert_eq!(sto_tpcc_thread_create(db, &mut worker), Status::Ok.code());
+
+            let too_long = isize::MAX as usize + 1;
+            let invalid = ptr::dangling::<u8>();
+            let mut actual = usize::MAX;
+            assert_eq!(
+                sto_tpcc_get(
+                    worker,
+                    table,
+                    invalid,
+                    too_long,
+                    ptr::null_mut(),
+                    0,
+                    &mut actual,
+                ),
+                Status::Fatal.code()
+            );
+            assert_eq!(actual, 0);
+
+            let key = b"checked-before-output-dereference";
+            let wrapping_output = ptr::without_provenance_mut::<u8>(usize::MAX);
+            actual = usize::MAX;
+            assert_eq!(sto_tpcc_txn_begin(worker), Status::Ok.code());
+            assert_eq!(
+                mako_sto_tpcc_get_trusted(
+                    worker,
+                    table,
+                    key.as_ptr(),
+                    key.len(),
+                    wrapping_output,
+                    1,
+                    &mut actual,
+                ),
+                Status::Fatal.code()
+            );
+            // The trusted fast path reaches its scalar output only after both
+            // byte ranges pass validation.
+            assert_eq!(actual, usize::MAX);
+            assert_eq!(sto_tpcc_txn_abort(worker), Status::Ok.code());
+
+            assert_eq!(sto_tpcc_thread_destroy(worker), Status::Ok.code());
+            assert_eq!(sto_tpcc_table_destroy(table), Status::Ok.code());
+            assert_eq!(sto_tpcc_db_destroy(db), Status::Ok.code());
+        }
+    }
+
+    #[test]
     fn fixed_key_views_require_exact_nonoverflowing_storage() {
         let packed = [[1_u8, 2, 3, 4], [5, 6, 7, 8]];
         let keys = unsafe { fixed_keys::<4>(packed.as_ptr().cast(), packed.len()) }.unwrap();
@@ -7229,6 +7391,146 @@ mod tests {
             assert_eq!(rows, 0);
 
             assert_eq!(sto_tpcc_thread_destroy(thread), Status::Ok.code());
+            assert_eq!(sto_tpcc_table_destroy(table), Status::Ok.code());
+            assert_eq!(sto_tpcc_db_destroy(db), Status::Ok.code());
+        }
+    }
+
+    #[cfg(mtree_native_integration)]
+    #[test]
+    fn post_install_row_count_failure_marks_runtime_indeterminate() {
+        unsafe {
+            let config = StoTpccDbConfig {
+                max_threads: NATIVE_TEST_MAX_THREADS,
+                max_key_length: NATIVE_TEST_MAX_KEY_LENGTH,
+                max_items_per_txn: 16,
+                max_locks_per_txn: 32,
+            };
+            let mut db = ptr::null_mut();
+            let mut table = ptr::null_mut();
+            let mut worker = ptr::null_mut();
+            assert_eq!(sto_tpcc_db_create(&config, &mut db), Status::Ok.code());
+            assert_eq!(
+                sto_tpcc_table_create(db, ptr::null(), &mut table),
+                Status::Ok.code()
+            );
+            assert_eq!(sto_tpcc_thread_create(db, &mut worker), Status::Ok.code());
+
+            // Inject an impossible pre-commit count so the installed +1
+            // cannot be published. Since the row is already installed at
+            // that boundary, core must quarantine instead of reporting an
+            // ordinary committed transaction followed by an FFI error.
+            (&*table)
+                .state
+                .logical_rows
+                .store(u64::MAX, Ordering::Relaxed);
+            let key = b"post-install-accounting-failure";
+            assert_eq!(sto_tpcc_txn_begin(worker), Status::Ok.code());
+            assert_eq!(
+                sto_tpcc_insert(
+                    worker,
+                    table,
+                    key.as_ptr(),
+                    key.len(),
+                    b"value".as_ptr(),
+                    b"value".len(),
+                ),
+                Status::Ok.code()
+            );
+            assert_eq!(sto_tpcc_txn_commit(worker), Status::Fatal.code());
+            assert_eq!((*db).sto.health(), sto_core::RuntimeHealth::Indeterminate);
+            assert!((*worker).active.is_none());
+            assert!((*worker).pending_size.is_empty());
+            let mut rows = 0;
+            assert_eq!(sto_tpcc_table_size(table, &mut rows), Status::Ok.code());
+            assert_eq!(rows, u64::MAX);
+
+            assert_eq!(sto_tpcc_thread_destroy(worker), Status::Ok.code());
+            assert_eq!(sto_tpcc_table_destroy(table), Status::Ok.code());
+            assert_eq!(sto_tpcc_db_destroy(db), Status::Ok.code());
+        }
+    }
+
+    #[cfg(mtree_native_integration)]
+    #[test]
+    fn row_count_is_published_before_conflicting_writer_can_commit() {
+        unsafe {
+            let config = StoTpccDbConfig {
+                max_threads: NATIVE_TEST_MAX_THREADS,
+                max_key_length: NATIVE_TEST_MAX_KEY_LENGTH,
+                max_items_per_txn: 16,
+                max_locks_per_txn: 32,
+            };
+            let mut db = ptr::null_mut();
+            let mut table = ptr::null_mut();
+            assert_eq!(sto_tpcc_db_create(&config, &mut db), Status::Ok.code());
+            assert_eq!(
+                sto_tpcc_table_create(db, ptr::null(), &mut table),
+                Status::Ok.code()
+            );
+
+            // Pass exposed addresses because raw pointers are not Send. The
+            // reconstruction below explicitly recovers the exposed
+            // provenance instead of relying on an integer `as` cast.
+            let db_address = db.expose_provenance();
+            let table_address = table.expose_provenance();
+            let (insert_committed_tx, insert_committed_rx) = std::sync::mpsc::sync_channel(0);
+            let (allow_insert_return_tx, allow_insert_return_rx) = std::sync::mpsc::sync_channel(0);
+
+            let inserter = thread::spawn(move || {
+                let db = ptr::with_exposed_provenance_mut::<StoTpccDb>(db_address);
+                let table = ptr::with_exposed_provenance_mut::<StoTpccTable>(table_address);
+                let mut worker = ptr::null_mut();
+                assert_eq!(sto_tpcc_thread_create(db, &mut worker), Status::Ok.code());
+                let key = b"size-publication-race";
+
+                assert_eq!(sto_tpcc_txn_begin(worker), Status::Ok.code());
+                assert_eq!(
+                    sto_tpcc_insert(
+                        worker,
+                        table,
+                        key.as_ptr(),
+                        key.len(),
+                        b"present".as_ptr(),
+                        b"present".len(),
+                    ),
+                    Status::Ok.code()
+                );
+                assert_eq!(
+                    txn_commit_impl_with_observer(&mut *worker, || {
+                        insert_committed_tx.send(()).unwrap();
+                        allow_insert_return_rx.recv().unwrap();
+                    }),
+                    Ok(Status::Ok)
+                );
+                assert_eq!(sto_tpcc_thread_destroy(worker), Status::Ok.code());
+            });
+
+            // The observer pauses the insert at the exact point where the old
+            // commit path had published the row but had not applied its +1.
+            insert_committed_rx.recv().unwrap();
+            let remover = thread::spawn(move || {
+                let db = ptr::with_exposed_provenance_mut::<StoTpccDb>(db_address);
+                let table = ptr::with_exposed_provenance_mut::<StoTpccTable>(table_address);
+                let mut worker = ptr::null_mut();
+                assert_eq!(sto_tpcc_thread_create(db, &mut worker), Status::Ok.code());
+                let key = b"size-publication-race";
+
+                assert_eq!(sto_tpcc_txn_begin(worker), Status::Ok.code());
+                assert_eq!(
+                    sto_tpcc_remove(worker, table, key.as_ptr(), key.len()),
+                    Status::Ok.code()
+                );
+                assert_eq!(sto_tpcc_txn_commit(worker), Status::Ok.code());
+                assert_eq!(sto_tpcc_thread_destroy(worker), Status::Ok.code());
+            });
+            remover.join().unwrap();
+            allow_insert_return_tx.send(()).unwrap();
+            inserter.join().unwrap();
+
+            let mut rows = u64::MAX;
+            assert_eq!(sto_tpcc_table_size(table, &mut rows), Status::Ok.code());
+            assert_eq!(rows, 0);
             assert_eq!(sto_tpcc_table_destroy(table), Status::Ok.code());
             assert_eq!(sto_tpcc_db_destroy(db), Status::Ok.code());
         }
@@ -8099,7 +8401,7 @@ mod tests {
                 length: isize::MAX as usize + 1,
             }];
             let overflowing = [StoTpccFixedValue {
-                data: usize::MAX as *const u8,
+                data: ptr::without_provenance::<u8>(usize::MAX),
                 length: 2,
             }];
             let descriptor_words = [StoTpccFixedValue {
@@ -8835,6 +9137,69 @@ mod tests {
             assert!(error.len <= ERROR_CAPACITY);
             assert!(std::str::from_utf8(error.as_bytes()).is_ok());
         });
+    }
+
+    #[test]
+    fn last_error_copy_validates_scalar_and_output_ranges() {
+        clear_last_error();
+        set_last_error(format_args!("xy"));
+
+        let mut actual = usize::MAX;
+        // A sizing call does not require an output buffer and must still
+        // publish the exact non-NUL byte length.
+        assert_eq!(
+            unsafe { sto_tpcc_last_error_copy(ptr::null_mut(), 2, &mut actual) },
+            Status::BufferTooSmall.code()
+        );
+        assert_eq!(actual, 2);
+
+        let mut scalar_storage = [0_usize; 2];
+        let misaligned_actual = unsafe {
+            scalar_storage
+                .as_mut_ptr()
+                .cast::<u8>()
+                .add(1)
+                .cast::<usize>()
+        };
+        assert_eq!(
+            unsafe { sto_tpcc_last_error_copy(ptr::null_mut(), 0, misaligned_actual) },
+            Status::Fatal.code()
+        );
+
+        let wrapping_scalar_address = usize::MAX & !(mem::align_of::<usize>() - 1);
+        let wrapping_actual = ptr::without_provenance_mut::<usize>(wrapping_scalar_address);
+        assert_eq!(
+            unsafe { sto_tpcc_last_error_copy(ptr::null_mut(), 0, wrapping_actual) },
+            Status::Fatal.code()
+        );
+
+        set_last_error(format_args!("x"));
+        actual = usize::MAX;
+        let wrapping_message = ptr::without_provenance_mut::<std::ffi::c_char>(usize::MAX);
+        assert_eq!(
+            unsafe { sto_tpcc_last_error_copy(wrapping_message, 2, &mut actual) },
+            Status::Fatal.code()
+        );
+        assert_eq!(actual, usize::MAX);
+    }
+
+    #[test]
+    fn last_error_copy_rejects_overlapping_outputs_before_writing() {
+        clear_last_error();
+        set_last_error(format_args!("x"));
+        let mut shared = [usize::MAX; 2];
+        let out_actual = shared.as_mut_ptr();
+        assert_eq!(
+            unsafe {
+                sto_tpcc_last_error_copy(
+                    out_actual.cast::<std::ffi::c_char>(),
+                    mem::size_of::<usize>(),
+                    out_actual,
+                )
+            },
+            Status::Fatal.code()
+        );
+        assert_eq!(shared[0], usize::MAX);
     }
 
     #[test]

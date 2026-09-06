@@ -7,6 +7,7 @@ use sto_core::{
 enum Event {
     Reserve,
     PreInstall,
+    PostInstall,
 }
 
 #[derive(Clone, Copy)]
@@ -22,6 +23,8 @@ struct TraceHook {
     pre_install: Behavior,
     events: Vec<Event>,
 }
+
+struct PanickingPostInstallHook;
 
 impl TraceHook {
     fn new(reserve: Behavior, pre_install: Behavior) -> Self {
@@ -52,10 +55,28 @@ impl CommitHook for TraceHook {
         self.events.push(Event::PreInstall);
         Self::apply(self.pre_install)
     }
+
+    fn post_install(&mut self) {
+        self.events.push(Event::PostInstall);
+    }
+}
+
+impl CommitHook for PanickingPostInstallHook {
+    fn reserve_upper_metadata(&mut self) -> Result<(), CommitHookError> {
+        Ok(())
+    }
+
+    fn pre_install(&mut self) -> Result<(), CommitHookError> {
+        Ok(())
+    }
+
+    fn post_install(&mut self) {
+        panic!("injected post-install hook panic");
+    }
 }
 
 #[test]
-fn writing_commit_invokes_both_hook_phases_once_before_install() {
+fn writing_commit_invokes_all_hook_phases_once() {
     let runtime = Runtime::new(RuntimeConfig::default()).unwrap();
     let cell = TxnCell::new(&runtime, 1_u64).unwrap();
     let mut worker = runtime.attach().unwrap();
@@ -67,7 +88,10 @@ fn writing_commit_invokes_both_hook_phases_once_before_install() {
         transaction.commit_with_hook(&mut hook).unwrap(),
         CommitOutcome::Committed(_)
     ));
-    assert_eq!(hook.events, [Event::Reserve, Event::PreInstall]);
+    assert_eq!(
+        hook.events,
+        [Event::Reserve, Event::PreInstall, Event::PostInstall]
+    );
 
     let mut transaction = worker.begin().unwrap();
     assert_eq!(cell.get(&mut transaction).unwrap(), 2);
@@ -175,4 +199,20 @@ fn hook_panics_are_contained_as_poisoned_definite_aborts() {
         assert_eq!(hook.events, expected_events);
         assert_eq!(runtime.health(), RuntimeHealth::Poisoned);
     }
+}
+
+#[test]
+fn post_install_hook_panic_is_indeterminate() {
+    let runtime = Runtime::new(RuntimeConfig::default()).unwrap();
+    let cell = TxnCell::new(&runtime, 1_u64).unwrap();
+    let mut worker = runtime.attach().unwrap();
+    let mut transaction = worker.begin().unwrap();
+    cell.set(&mut transaction, 2).unwrap();
+    let mut hook = PanickingPostInstallHook;
+
+    let Err(CommitFailure::Indeterminate(info)) = transaction.commit_with_hook(&mut hook) else {
+        panic!("a post-install hook panic must be indeterminate");
+    };
+    assert_eq!(info.phase(), FailurePhase::PostInstallHook);
+    assert_eq!(runtime.health(), RuntimeHealth::Indeterminate);
 }

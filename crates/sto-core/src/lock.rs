@@ -27,7 +27,7 @@ static NEXT_TEST_PLAN_NONCE: AtomicU64 = AtomicU64::new(1);
 #[cfg(test)]
 fn next_test_plan_nonce() -> u64 {
     NEXT_TEST_PLAN_NONCE
-        .fetch_update(
+        .try_update(
             AtomicOrdering::Relaxed,
             AtomicOrdering::Relaxed,
             |current| current.checked_add(1).filter(|next| *next != 0),

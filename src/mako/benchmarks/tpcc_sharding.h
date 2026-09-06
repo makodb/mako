@@ -35,6 +35,15 @@ namespace mako {
 // Implementation in src/deptran/tpcc_sharding.cc
 bool initialize_tpcc_sharding_policy(int num_warehouses_total, int num_shards);
 
+/**
+ * @brief Release the cached TPC-C sharding policy after all benchmark users
+ * have stopped.
+ *
+ * The cache is process-global, so callers must not clear it while workers or
+ * RPC helpers can still route requests through it.
+ */
+void clear_tpcc_sharding_policy();
+
 // Note: initialize_tpcc_sharding_policy_from_config() is not provided
 // due to header conflicts between deptran and mako libraries.
 // Call initialize_tpcc_sharding_policy() directly with parameters.

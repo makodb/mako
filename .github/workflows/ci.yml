@@ -36,6 +36,24 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Install Rust workspace toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v rustc >/dev/null 2>&1 &&
+             command -v cargo >/dev/null 2>&1 &&
+             command -v rustfmt >/dev/null 2>&1; then
+            if rust_version="$(rustc --version 2>/dev/null | awk '{print $2}')" &&
+               rust_sysroot="$(rustc --print sysroot 2>/dev/null)" &&
+               [ "${rust_version}" = "1.95.0" ] &&
+               [ -r "${rust_sysroot}/lib/rustlib/src/rust/library/core/src/marker.rs" ] &&
+               cargo clippy --version >/dev/null 2>&1; then
+              exit 0
+            fi
+          fi
+          bash ./install_rustc.sh
+          echo "${HOME}/.local-rust/bin" >> "${GITHUB_PATH}"
+
       - name: Configure canonical Rust providers
         run: >-
           cmake -S . -B "${GOAL0_BUILD_DIR}" -G "${CMAKE_GENERATOR}"
@@ -207,10 +225,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if command -v rustc >/dev/null 2>&1; then
-            rust_sysroot="$(rustc --print sysroot)"
-            if [ "$(rustc --version | awk '{print $2}')" = "1.95.0" ] &&
-               [ -r "${rust_sysroot}/lib/rustlib/src/rust/library/core/src/marker.rs" ]; then
+          if command -v rustc >/dev/null 2>&1 &&
+             command -v cargo >/dev/null 2>&1 &&
+             command -v rustfmt >/dev/null 2>&1; then
+            if rust_version="$(rustc --version 2>/dev/null | awk '{print $2}')" &&
+               rust_sysroot="$(rustc --print sysroot 2>/dev/null)" &&
+               [ "${rust_version}" = "1.95.0" ] &&
+               [ -r "${rust_sysroot}/lib/rustlib/src/rust/library/core/src/marker.rs" ] &&
+               cargo clippy --version >/dev/null 2>&1; then
               exit 0
             fi
           fi
@@ -259,7 +281,7 @@ jobs:
           ctest --test-dir build
           --output-on-failure
           --no-tests=error
-          -R '^(test_mtree_abi_c11_header|test_sto_tpcc_ffi_c11_header|test_sto_tpcc_cpp_wrapper_smoke|test_sto_tpcc_cpp_wrapper_scan_smoke)$'
+          -R '^(test_mtree_abi|test_mtree_abi_c11_header|test_sto_tpcc_ffi_c11_header|test_sto_tpcc_cpp_wrapper_smoke|test_sto_tpcc_cpp_wrapper_scan_smoke|test_sto_tpcc_cpp_slow_exit|test_sto_tpcc_cpp_multishard_slow_exit|test_sto_tpcc_rust_slow_exit|test_sto_tpcc_rust_concurrent|test_sto_tpcc_rejects_duplicate_local_shards|test_sto_tpcc_rejects_partial_local_shards|test_sto_tpcc_rejects_rust_distributed_shard)$'
 
       - name: Run tests - SRPC unit tests
         run: ./ci/ci.sh srpcTests
@@ -321,3 +343,36 @@ jobs:
       - name: Cleanup
         if: always()
         run: ./ci/ci.sh cleanup
+
+  rust-sto-miri:
+    name: Rust STO Miri ownership gate
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/makodb/mako-ci-ubuntu24:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    timeout-minutes: 360
+    env:
+      CARGO_HOME: /tmp/rust-sto-miri-cargo
+      CARGO_TARGET_DIR: /tmp/rust-sto-miri-target
+      RUSTUP_HOME: /tmp/rust-sto-miri-rustup
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install pinned Miri toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          toolchain=$(bash ./scripts/run_rust_sto_miri.sh --print-toolchain)
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain none
+          "${CARGO_HOME}/bin/rustup" toolchain install "${toolchain}" \
+            --profile minimal --component miri --component rust-src
+          echo "${CARGO_HOME}/bin" >> "${GITHUB_PATH}"
+
+      - name: Run Rust STO ownership tests under Miri
+        run: bash ./scripts/run_rust_sto_miri.sh

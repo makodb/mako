@@ -8,19 +8,24 @@
 > directory tokens, bounded atomic values, trusted scan-generation validation,
 > bounded registries, the terminal-read typestate, the optional fixed-`u64`
 > Masstree specialization, pure Rust reference map/vector/queue adapters, and
-> the upper commit-hook seam exist on this branch.
+> the upper commit-hook seam, including post-install publication while write
+> locks remain held, exist on this branch.
 > The closed TPC-C bridge also implements fused full Payment, exact-home
 > NewOrder, local Delivery, and the local StockLevel scan-and-join tail.
-> A reproducible zoo-2 point-workload comparison is complete; the optional
-> opacity profile, graceful native shutdown, production upper-layer
-> facade/cutover, and production-wide performance acceptance remain deferred.
+> Graceful benchmark and facade teardown is implemented for the supported
+> single-shard Rust TPC-C bridge, and a reproducible zoo-2 point-workload
+> comparison is complete. Native Masstree allocations and registrations remain
+> process-lifetime because ABI v1 does not advertise graceful shutdown. The
+> optional opacity profile, distributed and multi-shard Rust execution,
+> production upper-layer facade/cutover, and production-wide performance
+> acceptance remain deferred.
 >
 > **Audience:** STO core, transactional-datatype, Masstree ABI, and Mako integration developers
 >
-> **Baseline:** Mako `mako-dev` at `abfb6ea96739`; compatibility oracle
-> `worktree-masstree-rocks` at `1daec550f`
+> **Baseline:** Mako `mako-dev` at `378fc281d2c6`; compatibility oracle
+> pull request 86, `worktree-masstree-rocks` at `a3ede48859a4`
 >
-> **Last updated:** 2026-09-04
+> **Last updated:** 2026-09-05
 
 This document defines the intended semantics and architecture of Mako's native
 Rust implementation of STO. It is a living design contract: implementation
@@ -228,7 +233,8 @@ The initial production profile includes:
 - private direct-directory tokens and opt-in bounded atomic values for the
   Masstree adapter;
 - an opt-in trusted scan-generation profile for closed direct tables; and
-- an optional, nonblocking pre-install hook with an upper-layer watchdog budget.
+- an optional bounded commit hook with metadata reservation, fallible
+  pre-install acceptance, and infallible post-install publication phases.
 
 The `sto-masstree/fixed-u64` feature additionally provides an optional,
 specialized all-present point-workload profile. It is not a replacement for the
@@ -319,7 +325,10 @@ the transaction body. Code intended for retry SHOULD restrict such effects to
 transactional objects or immutable/thread-local computation. A pre-install hook
 may be used only when its upper contract supplies preallocated staging whose
 rejection or panic path has no externally visible effect; it is not a general
-rollback mechanism.
+rollback mechanism. A post-install hook runs after the irreversible boundary.
+It may publish only infallible, preallocated metadata whose visibility must
+precede lock release. A panic there makes the outcome indeterminate and
+quarantines the runtime.
 
 ### 4.4 Error classes
 
@@ -664,7 +673,7 @@ defined in Section 10.2.
 borrow is the primary guard against reentrant use.
 
 Beginning a nested transaction on an occupied worker is an `InvalidUse` error
-in v1. Adapters and pre-install hooks cannot begin one indirectly.
+in v1. Adapters and commit hooks cannot begin one indirectly.
 
 Dropping an active transaction aborts it. This is the Rust equivalent of the
 paper's hidden transaction guard. Drop cleanup MUST be bounded and MUST NOT
@@ -2172,6 +2181,9 @@ Active
        v
   -> Irrevocable
   -> Installing
+  -> OptionalPostInstallPublication
+       | contained panic -> Indeterminate
+       v
   -> PublishingAndUnlocking
   -> Committed
   -> Finished
@@ -2237,8 +2249,8 @@ irreversibility, publication, and failure boundaries.
    The hook contract, not `sto-core`, MUST guarantee that rejection or panic
    leaves no externally visible effect. The hook MUST use only its documented
    preallocated bookkeeping; it MUST NOT perform blocking I/O, await, or reenter
-   STO, and SHOULD complete within the configured hook-watchdog budget. Disjoint
-   workers may run hooks concurrently.
+   STO. The embedding integration SHOULD enforce its own bounded-latency budget.
+   Disjoint workers may run hooks concurrently.
 8. **Cross the irreversible boundary.** From this point, the transaction cannot
    report conflict or abort.
 9. **Install.** Call `TransactionalResource::install` for every item with an
@@ -2247,7 +2259,15 @@ irreversibility, publication, and failure boundaries.
    correctness MUST NOT depend on their relative position. The Masstree
    directory-generation observation has no intent and therefore has no install
    callback.
-10. **Unlock and finish.** Call `TransactionLock::release` with
+10. **Publish optional post-install metadata.** For a writing transaction with
+    a hook, invoke `CommitHook::post_install` exactly once after every install
+    and before any write lock is released. This callback is infallible by
+    contract and may only publish preallocated, nonblocking metadata that must
+    become visible with the installed writes. It cannot reject or roll back the
+    commit. A contained panic produces `CommitFailure::Indeterminate`, marks the
+    runtime indeterminate, and releases retained locks only with
+    `LockDisposition::Indeterminate`.
+11. **Unlock and finish.** Call `TransactionLock::release` with
     `LockDisposition::Committed` in reverse acquisition order, publishing new
     generations. The canonical Masstree plan releases its record locks in
     reverse canonical order; a proven unique-request plan releases them in
@@ -2263,10 +2283,10 @@ irreversibility, publication, and failure boundaries.
 
 The paper's basic protocol uses lock → predicate → validate → version →
 install → cleanup. **[RUST/OPAQUE]** This design reserves an opacity-ordering
-ID immediately before the final validating pass, matching the standard clock-
-then-validate proof even if a worker is preempted. Upper metadata reservation
-and the pre-install hook are Mako compatibility seams; they are not part of the
-original paper.
+ID immediately before the final validating pass, matching the standard
+clock-then-validate proof even if a worker is preempted. Upper metadata
+reservation and both hook publication phases are Mako compatibility seams;
+they are not part of the original paper.
 
 #### Prepared-free ordinary reads
 
@@ -2466,8 +2486,9 @@ than being implicitly dropped.
 
 If an accepted hook staged upper metadata and installation later becomes
 poisoned or indeterminate, recovery of that staged metadata belongs to the upper
-layer and MUST use the same indeterminate disposition. `sto-core` does not
-attempt an external rollback.
+layer and MUST use the same indeterminate disposition. A completed post-install
+callback has crossed the same irreversible boundary as datatype installation.
+`sto-core` does not attempt an external rollback.
 
 No Rust panic or C++ exception may cross the C ABI.
 
@@ -3542,6 +3563,13 @@ feature, native runtime and tree allocations live for the process lifetime;
 facade `Drop` removes safe reachability but never calls native destruction, and
 an explicit shutdown request returns `UNSUPPORTED`.
 
+A deployment without `GRACEFUL_SHUTDOWN` MUST create a bounded, fixed set of
+long-lived worker threads and reuse one worker facade per OS thread. It MUST NOT
+cycle worker creation and destruction as a pooling strategy because native core
+IDs are not recyclable. Reclaiming the native runtime, trees, or registrations
+requires replacing the process. Exhaustion must remain a reported capacity
+error and is an operational restart signal, never an assertion path.
+
 With `GRACEFUL_SHUTDOWN`, shutdown requires a matching attached shutdown worker.
 It atomically marks the runtime closing and rejects new work, then requires no
 live transactions, tree facades, guards, operations, or other workers. If any
@@ -3707,7 +3735,8 @@ path bypasses the Rust record/directory-generation protocol.
 
 ### 17.1 Reference backend
 
-The upper branch at `1daec550f` remains the behavioral oracle:
+Pull request 86, `worktree-masstree-rocks` at `a3ede48859a4`, remains the
+upper behavioral oracle:
 
 ```text
 safe Rust mako-local -> mako_local_* C ABI -> C++ STO/MassTrans/Masstree
@@ -3730,11 +3759,21 @@ C++ abstract_db / rust_sto_tpcc_wrapper
 `sto-tpcc-ffi` owns Rust runtime, worker, table, transaction, status, and panic
 containment for this closed integration. It is not a stable generic ABI for
 `sto-core` and does not expose the adapter trait hierarchy to arbitrary C
-callers. Its checked public calls require live handles and readable/writable,
-properly aligned, non-aliasing ranges for the full call. Within those caller
-safety preconditions they validate nullness, lengths and address overflow,
+callers. It is a lockstep static boundary: its Rust library, private C++
+wrapper, and header MUST be rebuilt and deployed from one source revision. It
+does not negotiate version or feature compatibility independently of the
+versioned `mt_*` Masstree ABI below it. Its checked public calls require live
+handles and readable/writable, properly aligned, non-aliasing ranges for the
+full call. Within those caller safety preconditions they validate nullness,
+alignment, lengths, the Rust `isize` slice bound, address overflow,
 owner-thread affinity, active transaction state, table ownership, enum values,
 callback presence, and output capacities.
+
+The current Rust TPC-C wrapper accepts exactly one non-replicated shard. It
+rejects remote indexes and has no distributed commit protocol. The C++
+`dbtest` coordinator now validates local shard lists and orders multi-runner
+shutdown safely, but that lifecycle work does not make the Rust backend
+multi-shard-capable.
 
 The paired C++ wrapper may use wrapper-private trusted transaction-lifecycle,
 scalar point-operation, and scan calls that are absent from the installed
@@ -3743,10 +3782,11 @@ affinity invariants; request construction supplies the documented range,
 enum, callback, and unique-output preconditions. Capability and table
 ownership are construction invariants with debug assertions, not release-mode
 dynamic validation, and raw pointer liveness/readability remains an unsafe C++
-caller obligation. Direct application or foreign use violates the contract
-and may be undefined behavior. The private functions retain the Rust panic
-boundary and preserve semantic outcomes plus conflict, capacity, and fatal
-status classification; they remove only checks covered by those invariants.
+caller obligation. The private functions retain cheap raw-range shape checks,
+the Rust panic boundary, and semantic outcome plus conflict, capacity, and fatal
+status classification. They omit dynamic handle and ownership checks already
+proved by the wrapper. Direct application or foreign use violates the contract
+and may be undefined behavior.
 
 #### Private fixed-layout TPC-C capabilities
 
@@ -3888,8 +3928,9 @@ clears its borrowed intents.
 
 **[COMPAT]** For a non-read-only transaction, the existing upper contract places
 Mako timestamp reservation after the full write set is locked and before local
-read validation. It places the hook after validation but before the first
-install. Rust STO preserves that sequence and the hook's exactly-once behavior.
+read validation. It places acceptance after validation but before the first
+install. Rust STO preserves that sequence and adds one post-install publication
+callback while the complete write lock set remains held.
 
 The implemented seam keeps typed upper metadata in the hook object; `sto-core`
 never erases or interprets it:
@@ -3903,6 +3944,7 @@ pub enum CommitHookError {
 pub trait CommitHook {
     fn reserve_upper_metadata(&mut self) -> Result<(), CommitHookError>;
     fn pre_install(&mut self) -> Result<(), CommitHookError>;
+    fn post_install(&mut self) {}
 }
 
 impl<'worker> Transaction<'worker, Active> {
@@ -3913,20 +3955,25 @@ impl<'worker> Transaction<'worker, Active> {
 }
 ```
 
-A later conflict may leave a harmless timestamp gap. Hook rejection or a
-contained panic is a definite abort only because the upper hook contract
-guarantees that its preallocated staging has no externally visible rejection
-path. Hooks for disjoint workers may run concurrently. Blocking I/O, await, and
-reentrant STO use are forbidden; a configured watchdog observes hook latency.
-The watchdog is diagnostic and does not forcibly interrupt a hook. Exceeding
-its budget is an abort only if the upper contract can still reject with no
-externally visible effect; otherwise it is reported to integration health
-policy without changing the local commit protocol.
+A later conflict may leave a harmless timestamp gap. Pre-install rejection or a
+contained pre-install panic is a definite abort only because the upper hook
+contract guarantees that its preallocated staging has no externally visible
+rejection path. `post_install` cannot reject. It runs after every datatype
+install and before the first lock release so logically coupled metadata, such
+as the closed TPC-C bridge's table-size deltas, cannot lag a conflicting writer.
+A post-install panic is indeterminate and quarantines the runtime.
+
+Hooks for disjoint workers may run concurrently. Blocking I/O, await, and
+reentrant STO use are forbidden in every callback. The core does not currently
+measure or enforce hook latency. A production integration must monitor that
+latency outside the commit driver and treat a post-install overrun as a health
+event without attempting to interrupt or roll back the irrevocable commit.
 
 The hook receives typed upper metadata. It MUST NOT cause `sto-core` to interpret
-Mako timestamps as OCC versions or inspect erased adapter payloads. If a
-post-hook install is poisoned or indeterminate, upper-layer recovery owns the
-staged metadata and consumes that disposition; the core cannot roll it back.
+Mako timestamps as OCC versions or inspect erased adapter payloads. If an
+accepted commit is poisoned or indeterminate during installation, publication,
+or release, upper-layer recovery owns the staged metadata and consumes that
+disposition; the core cannot roll it back.
 
 ### 17.3 Distributed prepare is not a core v1 feature
 
@@ -4215,12 +4262,13 @@ follows:
 | Native C boundary | [`mtree_abi.h`](../../src/mako/storage/mtree_abi.h) and [`mtree_abi.cc`](../../src/mako/storage/mtree_abi.cc) | Implemented for scalar/scoped/strided point operations, worker-wide RCU retention, and copied bounded scans. |
 | Safe runtime, worker, tree, point, and scan facade | [`crates/masstree`](../../crates/masstree) | Implemented; native cursors, pointers, and RCU guards remain private. |
 | Transactional records, tiered atomic/shared values, tombstones, quotas, physical-directory generation, and scan overlay | [`crates/sto-masstree`](../../crates/sto-masstree) | Implemented with exact-token write acquisition, final read/generation validation, scan-only directory validation, per-record coverage of existing liveness changes, and seeded history checks in both registry-ID and direct-token modes. |
-| Closed C++ TPC-C bridge, resolved-token cache policies, and fused workload capabilities | [`crates/sto-tpcc-ffi`](../../crates/sto-tpcc-ffi), [`rust_sto_tpcc_wrapper.cc`](../../src/mako/storage/rust_sto_tpcc_wrapper.cc), and [`tpcc_fixed_batch.h`](../../src/mako/benchmarks/tpcc_fixed_batch.h) | Implemented with checked public scalar operations plus wrapper-private fixed-layout Payment prefix, full Payment, exact-home NewOrder, local Delivery, and the local StockLevel tail. Commit-owning calls resolve their active attempt; ineligible modes retain the scalar path. |
+| Closed C++ TPC-C bridge, resolved-token cache policies, and fused workload capabilities | [`crates/sto-tpcc-ffi`](../../crates/sto-tpcc-ffi), [`rust_sto_tpcc_wrapper.cc`](../../src/mako/storage/rust_sto_tpcc_wrapper.cc), and [`tpcc_fixed_batch.h`](../../src/mako/benchmarks/tpcc_fixed_batch.h) | Implemented for exactly one non-replicated shard, with checked public scalar operations plus wrapper-private fixed-layout Payment prefix, full Payment, exact-home NewOrder, local Delivery, and the local StockLevel tail. Remote indexes, distributed commit, and multi-shard Rust execution are unsupported. Commit-owning calls resolve their active attempt; ineligible workload modes retain the scalar path. |
 | Optional all-present fixed-`u64` point specialization | [`fixed_u64.rs`](../../crates/sto-masstree/src/fixed_u64.rs) | Implemented behind `fixed-u64`: private fresh directory, permanent loader seal, 16-byte atomic record, terminal reads, and exact-unique point updates; liveness changes, scans, and miss fallback are intentionally unsupported. |
-| Upper metadata reservation and pre-install coordination | [`hook.rs`](../../crates/sto-core/src/hook.rs) | Implemented as an optional caller-owned `CommitHook`. |
+| Upper metadata reservation, pre-install acceptance, and post-install publication | [`hook.rs`](../../crates/sto-core/src/hook.rs) | Implemented as an optional caller-owned `CommitHook`; post-install publication runs before lock release and a panic is indeterminate. |
 | Pure-Rust reference adapters and bounded isolation checks | [`crates/sto-test-datatypes`](../../crates/sto-test-datatypes) | Implemented for map, vector, and queue composition, deterministic isolation litmus tests, and model-checked strict-serializability histories. |
 | Independent binary-safe transaction-history oracle | [`crates/mako-history`](../../crates/mako-history) | Implemented with exact interval and result validation, bounded strict-serializability and opacity search, final-state checking, negative fixtures, and hexadecimal replay diagnostics. |
-| Opacity, graceful native shutdown, and upper backend cutover | Sections 12, 15.5, 17, and 19.2 | Deferred; callers receive explicit unsupported/capability outcomes rather than silent downgrade. |
+| Graceful benchmark and facade teardown | [`bench.cc`](../../src/mako/benchmarks/bench.cc), [`dbtest.cc`](../../src/mako/benchmarks/dbtest.cc), and [`rust_sto_tpcc_wrapper.cc`](../../src/mako/storage/rust_sto_tpcc_wrapper.cc) | Implemented for the supported single-shard Rust backend. Worker threads are joined with no active transaction or table use, table facades close before the database, and invalid duplicate local-shard topologies fail before construction. The deferred multi-runner path destroys workers before closing any cross-shard facade. ABI v1 still keeps native Masstree allocations and registrations for process lifetime. |
+| Opacity, distributed or multi-shard Rust execution, and upper backend cutover | Sections 12, 15.5, 17, and 19.2 | Deferred; callers receive explicit unsupported/capability outcomes rather than silent downgrade. |
 | Bounded point-workload performance characterization | [`sto-rust-zoo2-optimized-2026-08-28`](../performance/sto-rust-zoo2-optimized-2026-08-28/README.md) | Complete on `zoo-002`; production-wide budget acceptance remains deferred. |
 
 The branch-level validation record for this implementation includes the full
@@ -4239,14 +4287,22 @@ behavior, and native full Payment, NewOrder, Delivery, and StockLevel semantic
 fixtures. The StockLevel fixture covers empty and clamped ranges, strict
 threshold comparison, duplicate item IDs, the 300-row bound, missing-stock
 retry, result immutability on failure, and post-failure handle reuse.
-Earlier branch baselines included ASan, UBSan, and unsuppressed TSan stress, but
-those sanitizer suites were not rerun against the exact scoped/strided ABI
-performance commit and therefore are not a current cutover claim. The
-production cutover record still needs explicit native fault injection for
-allocation failure, ordinary C++ exceptions, and publication-unknown insertion,
-plus the upper-backend differential histories, accepted production-wide
-throughput, latency, and false-conflict budgets, the exact sanitizer reruns, and
-the deferred capabilities in the table above.
+The checked-in gates pin Miri and provide separate ASan, native C/C++ UBSan,
+and TSan jobs. A result applies only to the exact committed revision recorded
+in its workflow artifact. ASan is deliberately qualified rather than described
+as globally leak-clean: 30 exact core failure-injection cases retain transaction
+frames after ownership becomes uncertain, and the exact native
+`tests::post_install_row_count_failure_marks_runtime_indeterminate` case does
+the same after publication starts. Leak checking remains enabled everywhere
+else and is disabled only for those exact reruns. The shared allowlist is
+audited against the test harness before use. The pinned Miri gate applies the
+same exact dispositions; its full exact-revision result and the native
+sanitizer workflow artifacts remain required before cutover.
+
+The production cutover record also still needs explicit native fault injection
+for allocation failure and ordinary C++ exceptions, the upper-backend
+differential histories, accepted production-wide throughput, latency, and
+false-conflict budgets, and the deferred capabilities in the table above.
 
 This table records implementation presence, not authorization to make the Rust
 backend the production default. That decision still requires the cutover gates
@@ -4283,7 +4339,8 @@ in Section 19.2.
 Native Rust becomes the default only when:
 
 - every semantic and ABI correctness gate passes;
-- sanitizer and fixed-worker stress are clean;
+- sanitizer and fixed-worker stress pass on the exact revision under reviewed,
+  exact, documented suppressions and quarantine dispositions;
 - differential histories agree or have documented intentional differences;
 - failure dispositions and worker quarantine are tested;
 - supported isolation capabilities are accurately negotiated;
@@ -4314,7 +4371,7 @@ satisfy, the performance and false-conflict gate.
 | D10 | STO/COMPAT | Serializable nonopaque OCC lands first; opacity is explicit. | Matches controlled Silo usage without claiming silent opacity. |
 | D11 | RUST | Installation and mandatory cleanup are infallible; finish is exact-once except for explicitly authorized core-owned drop-only paths. | Prevents reporting partial publication as abort while documenting terminal and committed-direct cleanup. |
 | D12 | RUST | Native RCU remains behind ABI-owned one-shot regions, a tree-bound point-read scope, or a tree-independent worker RCU scope that safe Rust owns through RAII. | Generation-tagged owner cookies are opaque and scope-family checked, no dereferenceable native object escapes, structural admission remains operation-local for transaction-wide retention, and all retained state stays worker-affine under a synchronous caller contract. |
-| D13 | COMPAT | The pre-install hook runs once after lock+validation and before install. | Preserves the upper branch's commit seam. |
+| D13 | COMPAT | Hook acceptance runs once after lock and validation, before install. Optional infallible publication runs once after all installs and before any lock release. | Preserves the upper branch's commit seam and lets coupled metadata become visible before a conflicting writer can commit. |
 | D14 | RUST | Distributed prepared state is outside core v1. | Network waiting while locks are held needs a separate liveness design. |
 | D15 | RUST | Native version encoding is private; the C++ layout is a parity oracle. | Rust records do not exchange atomic objects with C++. |
 | D16 | RUST/COMPAT | Native teardown requires negotiated `GRACEFUL_SHUTDOWN`; otherwise native allocations are process-lifetime. | Makes RCU/thread-affine destruction an explicit capability rather than a `Drop` guess. |

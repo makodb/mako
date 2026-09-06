@@ -56,6 +56,92 @@ set(_native_environment
     "CARGO_TARGET_DIR=${MAKO_CARGO_TARGET_DIR}"
     "${MAKO_LOADER_PATH_VARIABLE}=${_loader_path_list}"
 )
+if(DEFINED MAKO_RUSTFLAGS AND NOT "${MAKO_RUSTFLAGS}" STREQUAL "")
+    list(APPEND _native_environment "RUSTFLAGS=${MAKO_RUSTFLAGS}")
+endif()
+if(DEFINED MAKO_RUSTDOCFLAGS AND NOT "${MAKO_RUSTDOCFLAGS}" STREQUAL "")
+    list(APPEND _native_environment "RUSTDOCFLAGS=${MAKO_RUSTDOCFLAGS}")
+endif()
+if(DEFINED MAKO_RUSTUP_TOOLCHAIN
+        AND NOT "${MAKO_RUSTUP_TOOLCHAIN}" STREQUAL "")
+    list(APPEND _native_environment
+        "RUSTUP_TOOLCHAIN=${MAKO_RUSTUP_TOOLCHAIN}")
+endif()
+if(DEFINED MAKO_RUST_LINKER_ENV_NAME
+        AND NOT "${MAKO_RUST_LINKER_ENV_NAME}" STREQUAL "")
+    if(NOT MAKO_RUST_LINKER_ENV_NAME MATCHES
+            "^CARGO_TARGET_[A-Z0-9_]+_LINKER$")
+        message(FATAL_ERROR
+            "Invalid Cargo target-linker environment name: "
+            "${MAKO_RUST_LINKER_ENV_NAME}")
+    endif()
+    if(NOT DEFINED MAKO_RUST_LINKER OR "${MAKO_RUST_LINKER}" STREQUAL ""
+            OR NOT EXISTS "${MAKO_RUST_LINKER}")
+        message(FATAL_ERROR
+            "Rust native integration requires the configured Rust linker")
+    endif()
+    list(APPEND _native_environment
+        "${MAKO_RUST_LINKER_ENV_NAME}=${MAKO_RUST_LINKER}")
+endif()
+if(DEFINED MAKO_ASAN_OPTIONS AND NOT "${MAKO_ASAN_OPTIONS}" STREQUAL "")
+    list(APPEND _native_environment "ASAN_OPTIONS=${MAKO_ASAN_OPTIONS}")
+endif()
+
+set(_asan_native_quarantine_tests "")
+set(_asan_native_quarantine_environment "")
+if(DEFINED MAKO_ASAN_NATIVE_QUARANTINE_TESTS
+        AND NOT "${MAKO_ASAN_NATIVE_QUARANTINE_TESTS}" STREQUAL "")
+    if(NOT DEFINED MAKO_RUSTFLAGS
+            OR NOT MAKO_RUSTFLAGS MATCHES
+                "(^|[ \t])-Zsanitizer=address($|[ \t])")
+        message(FATAL_ERROR
+            "Native ASan quarantine tests require Rust address-sanitizer instrumentation")
+    endif()
+    if(NOT DEFINED MAKO_ASAN_OPTIONS
+            OR NOT MAKO_ASAN_OPTIONS MATCHES
+                "(^|:)detect_leaks=1(:|$)")
+        message(FATAL_ERROR
+            "Native ASan quarantine tests require ASAN_OPTIONS with detect_leaks=1")
+    endif()
+    foreach(_asan_native_quarantine_test IN LISTS
+            MAKO_ASAN_NATIVE_QUARANTINE_TESTS)
+        if(NOT _asan_native_quarantine_test MATCHES "^[A-Za-z0-9_.:-]+$")
+            message(FATAL_ERROR
+                "Invalid native ASan quarantine test name: "
+                "${_asan_native_quarantine_test}")
+        endif()
+        list(FIND _asan_native_quarantine_tests
+            "${_asan_native_quarantine_test}" _asan_duplicate_index)
+        if(NOT _asan_duplicate_index EQUAL -1)
+            message(FATAL_ERROR
+                "Duplicate native ASan quarantine test: "
+                "${_asan_native_quarantine_test}")
+        endif()
+        list(APPEND _asan_native_quarantine_tests
+            "${_asan_native_quarantine_test}")
+    endforeach()
+    string(REPLACE "detect_leaks=1" "detect_leaks=0"
+        _asan_native_quarantine_options "${MAKO_ASAN_OPTIONS}")
+    set(_asan_native_quarantine_environment ${_native_environment})
+    list(FILTER _asan_native_quarantine_environment EXCLUDE
+        REGEX "^ASAN_OPTIONS=")
+    list(APPEND _asan_native_quarantine_environment
+        "ASAN_OPTIONS=${_asan_native_quarantine_options}")
+endif()
+
+set(_cargo_platform_args "")
+if(DEFINED MAKO_RUST_TARGET_TRIPLE
+        AND NOT "${MAKO_RUST_TARGET_TRIPLE}" STREQUAL "")
+    list(APPEND _cargo_platform_args --target "${MAKO_RUST_TARGET_TRIPLE}")
+endif()
+if(DEFINED MAKO_RUST_BUILD_STD AND MAKO_RUST_BUILD_STD)
+    if(NOT DEFINED MAKO_RUST_TARGET_TRIPLE
+            OR "${MAKO_RUST_TARGET_TRIPLE}" STREQUAL "")
+        message(FATAL_ERROR
+            "MAKO_RUST_BUILD_STD requires MAKO_RUST_TARGET_TRIPLE")
+    endif()
+    list(APPEND _cargo_platform_args -Zbuild-std)
+endif()
 
 message(STATUS "Mako archive: ${MAKO_ARCHIVE}")
 message(STATUS "Masstree archive: ${MASSTREE_ARCHIVE}")
@@ -66,6 +152,7 @@ execute_process(
         "${MAKO_CARGO_EXECUTABLE}" test
         --manifest-path "${MAKO_RUST_MANIFEST}"
         --locked
+        ${_cargo_platform_args}
         -p masstree
         --test native_integration
     COMMAND_ECHO STDOUT
@@ -90,6 +177,7 @@ if(DEFINED MAKO_STO_NATIVE_TEST
             "${MAKO_CARGO_EXECUTABLE}" test
             --manifest-path "${MAKO_RUST_MANIFEST}"
             --locked
+            ${_cargo_platform_args}
             -p sto-masstree
             --all-features
             --test native_integration
@@ -113,6 +201,7 @@ if(DEFINED MAKO_STO_HISTORY_TEST
             "${MAKO_CARGO_EXECUTABLE}" test
             --manifest-path "${MAKO_RUST_MANIFEST}"
             --locked
+            ${_cargo_platform_args}
             -p sto-masstree
             --all-features
             --test history_oracle
@@ -142,6 +231,7 @@ if(DEFINED MAKO_STO_TPCC_NATIVE_TEST
             "${MAKO_CARGO_EXECUTABLE}" test
             --manifest-path "${MAKO_RUST_MANIFEST}"
             --locked
+            ${_cargo_platform_args}
             -p sto-tpcc-ffi
             --lib
             --
@@ -176,12 +266,34 @@ if(DEFINED MAKO_STO_TPCC_NATIVE_TEST
             "${_sto_tpcc_unit_list_output}")
     endif()
 
+    foreach(_asan_native_quarantine_test IN LISTS
+            _asan_native_quarantine_tests)
+        list(FIND _sto_tpcc_unit_tests "${_asan_native_quarantine_test}"
+            _asan_native_quarantine_index)
+        if(_asan_native_quarantine_index EQUAL -1)
+            message(FATAL_ERROR
+                "Native ASan quarantine test was not listed by Cargo: "
+                "${_asan_native_quarantine_test}")
+        endif()
+    endforeach()
+
     foreach(_sto_tpcc_unit_test IN LISTS _sto_tpcc_unit_tests)
+        set(_sto_tpcc_unit_environment ${_native_environment})
+        list(FIND _asan_native_quarantine_tests "${_sto_tpcc_unit_test}"
+            _asan_native_quarantine_index)
+        if(NOT _asan_native_quarantine_index EQUAL -1)
+            set(_sto_tpcc_unit_environment
+                ${_asan_native_quarantine_environment})
+            message(STATUS
+                "Running intentional-quarantine native ASan test with leak "
+                "reporting disabled: ${_sto_tpcc_unit_test}")
+        endif()
         execute_process(
-            COMMAND "${CMAKE_COMMAND}" -E env ${_native_environment}
+            COMMAND "${CMAKE_COMMAND}" -E env ${_sto_tpcc_unit_environment}
                 "${MAKO_CARGO_EXECUTABLE}" test
                 --manifest-path "${MAKO_RUST_MANIFEST}"
                 --locked
+                ${_cargo_platform_args}
                 -p sto-tpcc-ffi
                 --lib
                 "${_sto_tpcc_unit_test}"
@@ -203,6 +315,7 @@ if(DEFINED MAKO_STO_TPCC_NATIVE_TEST
             "${MAKO_CARGO_EXECUTABLE}" test
             --manifest-path "${MAKO_RUST_MANIFEST}"
             --locked
+            ${_cargo_platform_args}
             -p sto-tpcc-ffi
             --test native_ffi
         COMMAND_ECHO STDOUT
@@ -225,6 +338,7 @@ if(DEFINED MAKO_STO_TPCC_NATIVE_TEST
             "${MAKO_CARGO_EXECUTABLE}" test
             --manifest-path "${MAKO_RUST_MANIFEST}"
             --locked
+            ${_cargo_platform_args}
             -p sto-tpcc-ffi
             --test trusted_ffi
         COMMAND_ECHO STDOUT
@@ -250,6 +364,7 @@ if(DEFINED MAKO_STO_TPCC_NATIVE_TEST
                 "${MAKO_CARGO_EXECUTABLE}" test
                 --manifest-path "${MAKO_RUST_MANIFEST}"
                 --locked
+                ${_cargo_platform_args}
                 -p sto-tpcc-ffi
                 --test "${_sto_tpcc_payment_test_name}"
             COMMAND_ECHO STDOUT

@@ -14,6 +14,7 @@
 #include "srpc_rpc_backend.h"
 #include "lib/assert.h"
 #include "lib/common.h"
+#include "lib/fasttransport.h"
 #include "lib/message.h"
 #include "lib/helper_queue.h"
 #include "thread.h"
@@ -31,10 +32,6 @@ void TransportBackendService::__dispatch__(srpc::i32 rpc_id, rusty::Box<srpc::Re
                                            srpc::WeakServerConnection weak_sconn) {
     SrpcRpcBackend::RequestHandler(static_cast<uint8_t>(rpc_id), std::move(req), weak_sconn, backend_);
 }
-
-// External callbacks registered by bench.cc and dbtest.cc
-extern std::function<int(int,int)> bench_callback_;
-extern std::function<int(int,int)> dbtest_callback_;
 
 // Constructor
 SrpcRpcBackend::SrpcRpcBackend(const transport::Configuration& config,
@@ -769,11 +766,9 @@ void SrpcRpcBackend::RequestHandler(uint8_t req_type, rusty::Box<srpc::Request> 
         bool is_datacenter_failure = ctrl_req.targert_server_id == 10000;
 
         if (is_datacenter_failure) {
-            if (dbtest_callback_)
-                dbtest_callback_(ctrl_req.control, ctrl_req.value);
+            invoke_fasttransport_for_dbtest(ctrl_req.control, ctrl_req.value);
         } else {
-            if (bench_callback_)
-                bench_callback_(ctrl_req.control, ctrl_req.value);
+            invoke_fasttransport_for_bench(ctrl_req.control, ctrl_req.value);
         }
 
         get_int_response_t resp;

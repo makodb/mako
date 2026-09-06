@@ -140,6 +140,7 @@ pub enum FailurePhase {
     Validation,
     PreinstallHook,
     Install,
+    PostInstallHook,
     Release,
     Finish,
     WorkerReset,

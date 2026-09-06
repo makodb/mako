@@ -85,6 +85,10 @@ using c_char = char;
 // Opaque spelling for clear()'s stats-map return.
 using oi_stats_map = std::map<std::string, uint64_t>;
 
+// Legacy adapters that cannot empty a live index report this typed condition
+// so teardown can still close the facade without swallowing unrelated errors.
+struct oi_clear_unsupported {};
+
 #if RUSTYCPP_RUST
 // The non-transactional KV surface (Masstree-shape) + bookkeeping.
 //
@@ -154,7 +158,7 @@ pub trait ShardParticipant {
 pub trait FullOrderedIndex: TxnOrderedIndex + ShardParticipant {
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=abstract_ordered_index.1 version=1 rust_sha256=c36262c7476b8b6a434a69826a128d044b17539ff63a8ad9ca5ff900b854ab47*/
+/*RUSTYCPP:GEN-BEGIN id=abstract_ordered_index.1 version=1 rust_sha256=a9835a8033a867bcb98045fc26fe329629a0f751b4b8b2884862c6482f23f221*/
 class ShardParticipant {
 public:
     virtual ~ShardParticipant() noexcept(false) {}

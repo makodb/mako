@@ -6,6 +6,8 @@
 #include <unistd.h>
 #include <mako.hh>
 
+#include "tpcc_sharding.h"
+
 import std;
 
 using namespace std;
@@ -40,12 +42,13 @@ static void parse_command_line_args(int argc,
       {"startup-timeout-sec"        , required_argument , 0                          , 'T'} ,
       {"runtime"                    , required_argument , 0                          , 'u'} ,
       {"storage-engine"             , required_argument , 0                          , 'E'} ,
+      {"slow-exit"                  , no_argument       , 0                          , 'x'} ,
       {"is-micro"                   , no_argument       , &is_micro                  ,   1} ,
       {"is-replicated"              , no_argument       , &is_replicated             ,   1} ,
       {0, 0, 0, 0}
     };
     int option_index = 0;
-    int c = getopt_long(argc, argv, "t:g:q:F:P:N:L:C:Y:S:R:T:u:E:", long_options, &option_index);
+    int c = getopt_long(argc, argv, "t:g:q:F:P:N:L:C:Y:S:R:T:u:E:x", long_options, &option_index);
     if (c == -1)
       break;
 
@@ -86,9 +89,9 @@ static void parse_command_line_args(int argc,
 
     case 'q': {
       auto& benchConfig = BenchmarkConfig::getInstance();
-      transport::Configuration* transportConfig = new transport::Configuration(optarg);
-      benchConfig.setConfig(transportConfig);
+      auto transportConfig = std::make_unique<transport::Configuration>(optarg);
       benchConfig.setNshards(transportConfig->nshards);
+      benchConfig.setOwnedConfig(std::move(transportConfig));
       }
       break;
 
@@ -146,6 +149,10 @@ static void parse_command_line_args(int argc,
       }
       break;
 
+    case 'x':
+      BenchmarkConfig::getInstance().setSlowExit(1);
+      break;
+
     case '?':
       exit(1);
 
@@ -155,21 +162,55 @@ static void parse_command_line_args(int argc,
   }
 }
 
-static vector<int> parse_local_shards(const string& local_shards_str) {
-  vector<int> shard_indices;
+static bool parse_local_shards(const string& local_shards_str,
+                               int shard_count,
+                               vector<int>& shard_indices,
+                               string& error) {
+  shard_indices.clear();
   if (local_shards_str.empty()) {
-    return shard_indices;
+    error = "the shard list is empty";
+    return false;
+  }
+  if (shard_count <= 0) {
+    error = "the shard configuration contains no shards";
+    return false;
   }
 
-  // Parse comma-separated list: "0,1,2"
-  stringstream ss(local_shards_str);
-  string token;
-  while (getline(ss, token, ',')) {
-    int shard_idx = stoi(token);
+  set<int> seen;
+  size_t begin = 0;
+  while (begin <= local_shards_str.size()) {
+    const size_t end = local_shards_str.find(',', begin);
+    const size_t token_end = end == string::npos ? local_shards_str.size() : end;
+    const string_view token(local_shards_str.data() + begin, token_end - begin);
+    if (token.empty()) {
+      error = "the shard list contains an empty entry";
+      return false;
+    }
+
+    int shard_idx = -1;
+    const auto parsed = from_chars(token.data(), token.data() + token.size(), shard_idx);
+    if (parsed.ec != errc() || parsed.ptr != token.data() + token.size()) {
+      error = "invalid shard index '" + string(token) + "'";
+      return false;
+    }
+    if (shard_idx < 0 || shard_idx >= shard_count) {
+      error = "shard index " + to_string(shard_idx) + " is outside [0, " +
+              to_string(shard_count) + ")";
+      return false;
+    }
+    if (!seen.insert(shard_idx).second) {
+      error = "duplicate shard index " + to_string(shard_idx);
+      return false;
+    }
     shard_indices.push_back(shard_idx);
+
+    if (end == string::npos) {
+      break;
+    }
+    begin = end + 1;
   }
 
-  return shard_indices;
+  return true;
 }
 
 static void warn_if_replicated_role_may_block() {
@@ -228,33 +269,67 @@ static int resolve_startup_timeout_sec(int startup_timeout_sec, bool startup_tim
   return resolved_timeout_sec;
 }
 
-static void start_replicated_startup_watchdog(int startup_timeout_sec, std::atomic<bool>* startup_complete)
-{
-  if (startup_timeout_sec <= 0 ||
-      startup_complete == nullptr ||
-      !should_enable_replicated_startup_watchdog()) {
-    return;
-  }
-
-  Notice("Enabling replicated startup watchdog (timeout=%ds)", startup_timeout_sec);
-  std::thread([startup_timeout_sec, startup_complete]() {
-    for (int i = 0; i < startup_timeout_sec; ++i) {
-      if (startup_complete->load(std::memory_order_acquire)) {
-        return;
-      }
-      std::this_thread::sleep_for(std::chrono::seconds(1));
+class replicated_startup_watchdog {
+public:
+  explicit replicated_startup_watchdog(int startup_timeout_sec)
+  {
+    if (startup_timeout_sec <= 0 ||
+        !should_enable_replicated_startup_watchdog()) {
+      return;
     }
 
-    if (!startup_complete->load(std::memory_order_acquire)) {
+    Notice("Enabling replicated startup watchdog (timeout=%ds)", startup_timeout_sec);
+    state_ = std::make_shared<state>();
+    thread_ = std::thread([startup_timeout_sec, state = state_]() {
+      std::unique_lock<std::mutex> lock(state->mutex);
+      if (state->condition.wait_for(
+              lock,
+              std::chrono::seconds(startup_timeout_sec),
+              [&state]() { return state->complete; })) {
+        return;
+      }
       fprintf(stderr,
               "[ERROR] dbtest startup timed out after %d seconds in replicated localhost mode.\n"
               "        Start peer roles (p1, p2, learner) or use examples/test_1shard_replication.sh / examples/test_2shard_replication.sh.\n",
               startup_timeout_sec);
       std::fflush(stderr);
       std::_Exit(2);
+    });
+  }
+
+  replicated_startup_watchdog(const replicated_startup_watchdog &) = delete;
+  replicated_startup_watchdog &operator=(
+      const replicated_startup_watchdog &) = delete;
+
+  ~replicated_startup_watchdog()
+  {
+    complete();
+  }
+
+  void complete()
+  {
+    if (!state_)
+      return;
+    {
+      std::lock_guard<std::mutex> lock(state_->mutex);
+      state_->complete = true;
     }
-  }).detach();
-}
+    state_->condition.notify_all();
+    if (thread_.joinable())
+      thread_.join();
+    state_.reset();
+  }
+
+private:
+  struct state {
+    std::mutex mutex;
+    std::condition_variable condition;
+    bool complete = false;
+  };
+
+  std::shared_ptr<state> state_;
+  std::thread thread_;
+};
 
 static void restore_default_termination_signals()
 {
@@ -297,14 +372,28 @@ static void run_workers(abstract_db* db)
   auto& benchConfig = BenchmarkConfig::getInstance();
   bench_runner *r = start_workers_tpcc(benchConfig.getLeaderConfig(), db, benchConfig.getNthreads());
   start_workers_tpcc(benchConfig.getLeaderConfig(), db, benchConfig.getNthreads(), false, 1, r);
+  if (benchConfig.getSlowExit())
+    delete r;
   delete db;
+  mako::clear_tpcc_sharding_policy();
 }
 
-static void run_workers_multi_shard(const vector<int>& shard_indices)
+static bool run_workers_multi_shard(const vector<int>& shard_indices)
 {
   auto& benchConfig = BenchmarkConfig::getInstance();
 
   Notice("Starting multi-shard workers for %zu shards", shard_indices.size());
+
+  // A partial topology cannot complete the configured shard barrier or
+  // cross-shard table wiring. Reject it before constructing any runner instead
+  // of stalling the smaller worker set until the barrier timeout.
+  for (int shard_idx : shard_indices) {
+    ShardContext* ctx = benchConfig.getShardContext(shard_idx);
+    if (!ctx || !ctx->runtime.get() || !ctx->db) {
+      cerr << "[ERROR] Incomplete ShardContext for shard " << shard_idx << endl;
+      return false;
+    }
+  }
 
   // Initialize multi-shard barrier for thread synchronization
   // This ensures all shard workers complete thread_init() before any start transactions
@@ -312,12 +401,10 @@ static void run_workers_multi_shard(const vector<int>& shard_indices)
 
   // Create and initialize bench_runners for all shards
   vector<bench_runner*> runners;
+  vector<int> runner_shard_indices;
   for (int shard_idx : shard_indices) {
     ShardContext* ctx = benchConfig.getShardContext(shard_idx);
-    if (!ctx) {
-      cerr << "[ERROR] ShardContext not found for shard " << shard_idx << endl;
-      continue;
-    }
+    ALWAYS_ASSERT(ctx != nullptr);
 
     Notice("Creating bench_runner for shard %d", shard_idx);
 
@@ -325,10 +412,7 @@ static void run_workers_multi_shard(const vector<int>& shard_indices)
     // Note: Use operator->() or get() instead of get_mut() because get_mut()
     // returns null when there are multiple Arc references (which is expected
     // when using a shared runtime across shards)
-    if (!ctx->runtime.get()) {
-      cerr << "[ERROR] Runtime is null for shard " << shard_idx << endl;
-      continue;
-    }
+    ALWAYS_ASSERT(ctx->runtime.get() != nullptr);
     // Cast away const since BindToCurrentThread modifies thread-local state, not the runtime itself
     const_cast<SiloRuntime*>(ctx->runtime.get())->BindToCurrentThread();
 
@@ -349,6 +433,7 @@ static void run_workers_multi_shard(const vector<int>& shard_indices)
     BenchmarkConfig::clearThreadLocalShardIndex();
 
     runners.push_back(r);
+    runner_shard_indices.push_back(shard_idx);
     Notice("Created bench_runner for shard %d", shard_idx);
   }
 
@@ -359,7 +444,7 @@ static void run_workers_multi_shard(const vector<int>& shard_indices)
     // Wire up tables from all other shards
     for (size_t j = 0; j < runners.size(); j++) {
       if (i == j) continue;  // Skip self
-      int source_shard = shard_indices[j];
+      int source_shard = runner_shard_indices[j];
 
       // Wire up tables from source_shard into target_runner's remote_partitions
       wireup_cross_shard_tables_tpcc(runners[i], source_shard, runners[j]);
@@ -372,7 +457,7 @@ static void run_workers_multi_shard(const vector<int>& shard_indices)
   vector<thread> shard_threads;
 
   for (size_t i = 0; i < runners.size(); i++) {
-    int shard_idx = shard_indices[i];
+    int shard_idx = runner_shard_indices[i];
     bench_runner* runner = runners[i];
 
     shard_threads.emplace_back([shard_idx, runner, &benchConfig]() {
@@ -411,16 +496,26 @@ static void run_workers_multi_shard(const vector<int>& shard_indices)
   }
 
   // Cleanup
-  for (size_t i = 0; i < runners.size(); i++) {
-    int shard_idx = shard_indices[i];
+  if (benchConfig.getSlowExit()) {
+    // Every runner's workers, including their cross-shard table pointers, were
+    // destroyed before run() returned. Only now is it safe to close the table
+    // facades owned by any shard.
+    for (bench_runner* runner : runners)
+      runner->clear_and_close_open_tables();
+    for (bench_runner* runner : runners)
+      delete runner;
+  }
+  for (int shard_idx : shard_indices) {
     ShardContext* ctx = benchConfig.getShardContext(shard_idx);
     if (ctx && ctx->db) {
       delete ctx->db;
       ctx->db = nullptr;
     }
   }
+  mako::clear_tpcc_sharding_policy();
 
   Notice("Multi-shard workers completed");
+  return true;
 }
 
 int
@@ -469,14 +564,33 @@ main(int argc, char **argv)
   benchConfig.setIsMicro(is_micro);
   benchConfig.setIsReplicated(is_replicated);
   benchConfig.setPaxosConfigFile(paxos_config_file);
-  warn_if_replicated_role_may_block();
-  startup_timeout_sec = resolve_startup_timeout_sec(startup_timeout_sec, startup_timeout_explicit);
-  std::atomic<bool> startup_complete(false);
-  start_replicated_startup_watchdog(startup_timeout_sec, &startup_complete);
 
-  // Parse local shards if specified
-  if (!local_shards_str.empty() && benchConfig.getConfig() != nullptr) {
-    auto local_shards = parse_local_shards(local_shards_str);
+  // Validate the complete local-shard topology before starting a watchdog or
+  // constructing any database, runner, or table facade. Duplicate entries
+  // would otherwise create multiple runners sharing one ShardContext and make
+  // slow-exit teardown close the same table pointers more than once.
+  if (!local_shards_str.empty()) {
+    if (benchConfig.getConfig() == nullptr) {
+      cerr << "[ERROR] --local-shards requires --shard-config" << endl;
+      return 2;
+    }
+    vector<int> local_shards;
+    string parse_error;
+    if (!parse_local_shards(local_shards_str,
+                            benchConfig.getConfig()->nshards,
+                            local_shards,
+                            parse_error)) {
+      cerr << "[ERROR] Invalid --local-shards: " << parse_error << endl;
+      return 2;
+    }
+    const size_t configured_shards =
+        static_cast<size_t>(benchConfig.getConfig()->nshards);
+    if (local_shards.size() > 1 && local_shards.size() != configured_shards) {
+      cerr << "[ERROR] --local-shards cannot select multiple but not all "
+              "configured shards; hybrid local/remote multi-shard topology is "
+              "unsupported" << endl;
+      return 2;
+    }
     benchConfig.getConfig()->local_shard_indices = local_shards;
     benchConfig.getConfig()->multi_shard_mode = (local_shards.size() > 1);
 
@@ -485,11 +599,25 @@ main(int argc, char **argv)
       Notice("  - Shard %d", shard_idx);
     }
 
-    // If multi-shard mode, use first shard as default
-    if (!local_shards.empty()) {
-      benchConfig.setShardIndex(local_shards[0]);
-    }
+    benchConfig.setShardIndex(local_shards.front());
   }
+
+#if defined(MAKO_RUST_STO_TPCC)
+  // Keep this capability check ahead of init_env(): the Rust comparison
+  // adapter deliberately implements one non-replicated shard and no remote
+  // indexes or distributed commit. The wrapper repeats the check as defense
+  // in depth, but CLI misuse must fail cleanly before allocating a database.
+  if (benchConfig.getStorageEngine() == "rust" &&
+      (benchConfig.getNshards() != 1 || benchConfig.getIsReplicated())) {
+    cerr << "[ERROR] Rust STO TPC-C comparison supports one non-replicated shard"
+         << endl;
+    return 2;
+  }
+#endif
+
+  warn_if_replicated_role_may_block();
+  startup_timeout_sec = resolve_startup_timeout_sec(startup_timeout_sec, startup_timeout_explicit);
+  replicated_startup_watchdog startup_watchdog(startup_timeout_sec);
 
   init_env();
 
@@ -539,19 +667,20 @@ main(int argc, char **argv)
       return 1;
     }
     restore_default_termination_signals();
-    startup_complete.store(true, std::memory_order_release);
+    startup_watchdog.complete();
 
     // Run workers on all local shards
     if (benchConfig.getLeaderConfig()) {
       Notice("Running workers on all %zu local shards",
              benchConfig.getConfig()->local_shard_indices.size());
-      run_workers_multi_shard(benchConfig.getConfig()->local_shard_indices);
+      if (!run_workers_multi_shard(benchConfig.getConfig()->local_shard_indices))
+        return 1;
     }
   } else {
     // Single-shard mode: keep existing behavior
     abstract_db * db = initWithDB(); // Some init is required for followers/learners
     restore_default_termination_signals();
-    startup_complete.store(true, std::memory_order_release);
+    startup_watchdog.complete();
     // Run worker threads on the leader
     if (benchConfig.getLeaderConfig()) {
       run_workers(db);

@@ -158,13 +158,12 @@ template <typename T> struct string_slice {
 
         Always returns the same result as "memcmp(@a a, @a b, @a len) == 0",
         but can be faster on some machines. */
-    // @unsafe - performs raw unaligned reads from caller buffers
+    // @unsafe - caller guarantees the documented readable padding
     static bool equals_sloppy(const char *a, const char *b, int len) {
 #if HAVE_UNALIGNED_ACCESS
         if (len <= size) {
             typename mass::make_unsigned<T>::type delta
-                = *reinterpret_cast<const T *>(a)
-                ^ *reinterpret_cast<const T *>(b);
+                = load_unaligned(a) ^ load_unaligned(b);
             if (unlikely(len <= 0))
                 return true;
 # if WORDS_BIGENDIAN

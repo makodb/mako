@@ -57,6 +57,10 @@ bool initialize_tpcc_sharding_policy(int num_warehouses_total, int num_shards) {
     return true;
 }
 
+void clear_tpcc_sharding_policy() {
+    janus::get_sharding_policy_cache().clear();
+}
+
 // @safe - Read-only check
 bool is_tpcc_sharding_initialized() {
     auto& cache = janus::get_sharding_policy_cache();

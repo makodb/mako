@@ -332,15 +332,6 @@ const bool kDisableDeliveryFull =
 const bool kDisableStockLevelFull =
     std::getenv("MAKO_STO_TPCC_DISABLE_STOCK_LEVEL_FULL") != nullptr;
 
-mbta_wrapper &legacy_thread_support() {
-  // TPC-C contains a few direct TThread reads outside abstract_db. Reuse the
-  // native wrapper's established thread bring-up so those application-level
-  // fields and its one-shard ShardClient retain identical values. No native
-  // C++ table is allocated through this support object.
-  static mbta_wrapper support;
-  return support;
-}
-
 constexpr std::string_view
 tpcc_tablespace_name(std::string_view index_name) {
   // TPC-C's separate-tree mode names a partition `<tablespace>_<warehouse>`.
@@ -694,7 +685,7 @@ bool rust_sto_tpcc_detail::table_has_static_directory(
 
 thread_local sto_tpcc_thread *rust_sto_tpcc_wrapper::tls_thread_ = nullptr;
 thread_local bool rust_sto_tpcc_wrapper::tls_transaction_active_ = false;
-thread_local bool rust_sto_tpcc_wrapper::tls_legacy_thread_initialized_ =
+thread_local bool rust_sto_tpcc_wrapper::tls_benchmark_thread_initialized_ =
     false;
 thread_local std::vector<sto_tpcc_fixed_value>
     rust_sto_tpcc_wrapper::tls_fixed_values_;
@@ -1068,23 +1059,30 @@ size_t rust_sto_tpcc_wrapper::sizeof_txn_object(uint64_t txn_flags) const {
 void rust_sto_tpcc_wrapper::thread_init(bool loader, int source) {
   if (tls_thread_)
     throw std::runtime_error("Rust STO thread was initialized twice");
-  legacy_thread_support().thread_init(loader, source);
-  tls_legacy_thread_initialized_ = true;
-  require_ok("thread_create", sto_tpcc_thread_create(db_, &tls_thread_));
+  (void)source;
+  mbta_wrapper::benchmark_thread_init(loader);
+  tls_benchmark_thread_initialized_ = true;
+  const sto_tpcc_status status = sto_tpcc_thread_create(db_, &tls_thread_);
+  if (status != STO_TPCC_OK) {
+    mbta_wrapper::benchmark_thread_end();
+    tls_benchmark_thread_initialized_ = false;
+    require_ok("thread_create", status);
+  }
 }
 
 void rust_sto_tpcc_wrapper::thread_end() {
   if (tls_transaction_active_)
     abort_current_transaction_noexcept();
+  sto_tpcc_status destroy_status = STO_TPCC_OK;
   if (tls_thread_) {
-    const sto_tpcc_status status = sto_tpcc_thread_destroy(tls_thread_);
+    destroy_status = sto_tpcc_thread_destroy(tls_thread_);
     tls_thread_ = nullptr;
-    require_ok("thread_destroy", status);
   }
-  if (tls_legacy_thread_initialized_) {
-    legacy_thread_support().thread_end();
-    tls_legacy_thread_initialized_ = false;
+  if (tls_benchmark_thread_initialized_) {
+    mbta_wrapper::benchmark_thread_end();
+    tls_benchmark_thread_initialized_ = false;
   }
+  require_ok("thread_destroy", destroy_status);
 }
 
 void *rust_sto_tpcc_wrapper::new_txn(uint64_t txn_flags, str_arena &, void *,
@@ -1664,9 +1662,28 @@ abstract_ordered_index *rust_sto_tpcc_wrapper::open_index(
   return raw;
 }
 
-void rust_sto_tpcc_wrapper::close_index(abstract_ordered_index *) {
-  // The benchmark opens its complete schema up front and retains borrowed
-  // index pointers until the database is destroyed.
+void rust_sto_tpcc_wrapper::close_index(abstract_ordered_index *idx) {
+  if (idx == nullptr)
+    return;
+
+  const auto owned = std::find_if(
+      tables_.begin(), tables_.end(), [&](const auto &candidate) {
+        return candidate.get() == idx;
+      });
+  if (owned == tables_.end())
+    throw std::invalid_argument(
+        "Rust STO close_index received an index from another database");
+
+  auto *table = owned->get();
+  tables_by_id_.erase(table->table_id_);
+  for (auto by_name = tables_by_name_.begin();
+       by_name != tables_by_name_.end();) {
+    if (by_name->second == table)
+      by_name = tables_by_name_.erase(by_name);
+    else
+      ++by_name;
+  }
+  tables_.erase(owned);
 }
 
 void rust_sto_tpcc_wrapper::shard_abort_txn(void *txn) { abort_txn(txn); }

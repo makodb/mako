@@ -163,6 +163,11 @@ namespace mako
     {
     public:
         ShardServer(std::string file, int clientShardIndex, int shardIndex, int par_id);
+        ~ShardServer();
+        ShardServer(const ShardServer &) = delete;
+        ShardServer &operator=(const ShardServer &) = delete;
+        ShardServer(ShardServer &&) = delete;
+        ShardServer &operator=(ShardServer &&) = delete;
         void Register(abstract_db *db,
                  mako::HelperQueue *queue,
                  mako::HelperQueue *queue_res,

@@ -190,7 +190,7 @@ impl Runtime {
         }
 
         let raw_id = NEXT_RUNTIME_ID
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
                 current.checked_add(1).filter(|next| *next != 0)
             })
             .map_err(|_| CapacityError::RuntimeIdExhausted)?;
@@ -282,7 +282,7 @@ impl Runtime {
         self.ensure_healthy(FailurePhase::Registration)?;
         let raw_id = self
             .next_object_id
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
                 current.checked_add(1).filter(|next| *next != 0)
             })
             .map_err(|_| CapacityError::ObjectIdExhausted)?;
@@ -305,11 +305,11 @@ impl Runtime {
 
     pub(crate) fn reserve_commit_id(&self) -> Result<OccCommitId, CapacityError> {
         // A writing commit needs only a unique, monotonically increasing
-        // ticket.  `fetch_update` implements that with a contended CAS loop;
+        // ticket. `try_update` would implement that with a contended CAS loop;
         // under many writers its retries serialize progress much more than
-        // the single hardware xadd used by native STO.  Exhaustion is
-        // terminal, so it is safe to consume one value past the representable
-        // range and quarantine the runtime.  At most the already attached,
+        // the single hardware xadd used by native STO. Exhaustion is terminal,
+        // so it is safe to consume one value past the representable range and
+        // quarantine the runtime. At most the already attached,
         // bounded worker set can reach this point after the transition.
         let previous = self.next_commit_id.fetch_add(1, Ordering::AcqRel);
         if previous >= OccCommitId::MAX_VALUE {

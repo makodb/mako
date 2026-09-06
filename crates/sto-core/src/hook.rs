@@ -31,11 +31,13 @@ impl From<CapacityError> for CommitHookError {
 /// call and can retain typed metadata in its own fields. `sto-core` never
 /// interprets that metadata.
 ///
-/// Both callbacks must be bounded, nonblocking, non-reentrant, and leave no
-/// externally visible effect when they return an error or panic. They must use
-/// preallocated bookkeeping: the core invokes them after transaction locks have
-/// been acquired. A panic is contained, poisons the runtime, and still reports
-/// a definite aborted outcome because of this stronger hook contract.
+/// All callbacks must be bounded, nonblocking, and non-reentrant. The two
+/// fallible callbacks must leave no externally visible effect when they return
+/// an error or panic. Every callback must use preallocated bookkeeping because
+/// the core invokes it after transaction locks have been acquired. A panic in a
+/// fallible callback is contained, poisons the runtime, and still reports a
+/// definite aborted outcome because installation has not begun. A panic from
+/// [`Self::post_install`] is indeterminate because installation is complete.
 pub trait CommitHook {
     /// Reserves upper-layer metadata after the complete write lock set is held
     /// and before predicate upgrade and final read validation.
@@ -44,4 +46,12 @@ pub trait CommitHook {
     /// Accepts or rejects the commit after final validation and immediately
     /// before the core crosses its irreversible boundary.
     fn pre_install(&mut self) -> Result<(), CommitHookError>;
+
+    /// Publishes infallible upper-layer metadata after every staged write has
+    /// been installed and before any transaction lock is released.
+    ///
+    /// Implementations must not panic. At this point the transaction is
+    /// irrevocable, so this callback cannot reject the commit or roll back its
+    /// effects. The default performs no work.
+    fn post_install(&mut self) {}
 }

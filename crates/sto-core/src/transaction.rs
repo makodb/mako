@@ -344,13 +344,10 @@ impl Hasher for ItemHasher {
 
     #[inline]
     fn write(&mut self, bytes: &[u8]) {
-        let mut chunks = bytes.chunks_exact(8);
-        for chunk in &mut chunks {
-            self.mix(u64::from_le_bytes(
-                chunk.try_into().expect("eight-byte hash chunk"),
-            ));
+        let (chunks, remainder) = bytes.as_chunks::<8>();
+        for chunk in chunks {
+            self.mix(u64::from_le_bytes(*chunk));
         }
-        let remainder = chunks.remainder();
         if !remainder.is_empty() {
             let mut tail = [0_u8; 8];
             tail[..remainder.len()].copy_from_slice(remainder);
@@ -1530,12 +1527,12 @@ impl<'worker> Transaction<'worker, Active> {
         self.commit_with_optional_hook(None)
     }
 
-    /// Commits with an upper-layer metadata and pre-install coordination hook.
+    /// Commits with an upper-layer metadata coordination and publication hook.
     ///
     /// The hook is skipped for a read-only transaction. For a writing
     /// transaction its reservation callback runs after all planned locks are
-    /// acquired, and its pre-install callback runs after final validation but
-    /// before installation can begin.
+    /// acquired, its pre-install callback runs after final validation, and its
+    /// post-install callback runs after installation but before lock release.
     pub fn commit_with_hook<H: CommitHook>(
         mut self,
         hook: &mut H,
@@ -3748,6 +3745,19 @@ impl<'worker, 'hook> CommitDriver<'worker, 'hook> {
             }
         }
 
+        if commit_shape.has_writes && self.hook.is_some() {
+            self.phase = FailurePhase::PostInstallHook;
+            let publication = catch_unwind(AssertUnwindSafe(|| {
+                if let Some(hook) = self.hook.as_deref_mut() {
+                    hook.post_install();
+                }
+            }));
+            if publication.is_err() {
+                return self
+                    .indeterminate(FailurePhase::PostInstallHook, "post-install hook panicked");
+            }
+        }
+
         self.phase = FailurePhase::Release;
         let disposition = LockDisposition::Committed {
             occ_commit_id: self.commit_id,
@@ -3921,6 +3931,19 @@ impl<'worker, 'hook> CommitDriver<'worker, 'hook> {
         }));
         if installation.is_err() {
             return self.indeterminate(FailurePhase::Install, "direct install callback panicked");
+        }
+
+        if self.hook.is_some() {
+            self.phase = FailurePhase::PostInstallHook;
+            let publication = catch_unwind(AssertUnwindSafe(|| {
+                if let Some(hook) = self.hook.as_deref_mut() {
+                    hook.post_install();
+                }
+            }));
+            if publication.is_err() {
+                return self
+                    .indeterminate(FailurePhase::PostInstallHook, "post-install hook panicked");
+            }
         }
 
         self.phase = FailurePhase::Release;

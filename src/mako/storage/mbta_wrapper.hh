@@ -527,7 +527,7 @@ inline void oi_mbta_nontxn_rscan(mbta_table *t, const std::string &start_key,
 inline oi_stats_map oi_mbta_clear_unsupported() {
   // TODO: unclear if we need to implement; apparently this should
   // clear the tree and possibly return some stats
-  throw 2;
+  throw oi_clear_unsupported{};
 }
 
 #if RUSTYCPP_RUST
@@ -1624,9 +1624,13 @@ public:
     //txn_epoch_sync<Transaction>::finish();
   }
 
-  // for the helper thread, loader == true, source == 1
-  void
-  thread_init(bool loader, int source)
+  // Initialize the application-level TThread fields shared by the native and
+  // Rust TPC-C backends. This deliberately does not initialize MassTrans or
+  // start its epoch advancer, so a backend that does not use native STO can
+  // reuse the benchmark context without acquiring process-lifetime Masstree
+  // state.
+  static void
+  benchmark_thread_init(bool loader)
   {
     static int tidcounter = 0;
     // Per-SHARD worker sequence. A single process can run several
@@ -1677,6 +1681,7 @@ public:
       size_t local_pid = old % BenchmarkConfig::getInstance().getConfig()->warehouses;
       TThread::set_pid(local_pid);
 
+      ALWAYS_ASSERT(TThread::sclient == nullptr);
       TThread::sclient = new mako::ShardClient(BenchmarkConfig::getInstance().getConfig()->configFile,
                                                  BenchmarkConfig::getInstance().getCluster(),
                                                  BenchmarkConfig::getInstance().getShardIndex(),
@@ -1708,7 +1713,25 @@ public:
       TThread::set_pid(TThread::id()%BenchmarkConfig::getInstance().getConfig()->warehouses);
       //Notice("ParID[load-id] pid:%d,id:%d,config:%s,loader:%d, ismultiversion:%d,helper_thread?:%d",TThread::getGlobalPartitionID(),TThread::id(),BenchmarkConfig::getInstance().getConfig()->configFile.c_str(),loader,TThread::is_multiversion(),source==1);
     }
-    
+  }
+
+  static void
+  benchmark_thread_end()
+  {
+    if (TThread::sclient != nullptr) {
+      mako::ShardClient *client = TThread::sclient;
+      TThread::sclient = nullptr;
+      delete client;
+    }
+  }
+
+  // for the helper thread, loader == true, source == 1
+  void
+  thread_init(bool loader, int source)
+  {
+    (void)source;
+    benchmark_thread_init(loader);
+
     if (TThread::id() == 0) {
       // someone has to do this (they don't provide us with a general init callback)
       mbta_table::static_init();
@@ -1723,7 +1746,7 @@ public:
   void
   thread_end()
   {
-
+    benchmark_thread_end();
   }
 
   size_t

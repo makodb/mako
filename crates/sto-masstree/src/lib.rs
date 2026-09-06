@@ -111,11 +111,36 @@ const RECORD_STATE_TAIL_MASK: u64 = (1_u64 << RECORD_STATE_DESCRIPTOR_SHIFT) - 1
 // Physical storage segmentation is deliberately independent of the smaller
 // shared lock targets: lock reference counts are distributed across the
 // keyspace without fragmenting the read-hot record arena.
+#[cfg(not(miri))]
 const REGISTRY_SEGMENT_SLOTS: usize = 1_024;
+// Miri interprets every access and otherwise spends hours allocating and
+// dropping production-sized segments. Two smaller lock segments preserve the
+// same pointer-stability and cross-segment ownership checks at a practical gate
+// cost. Native tests and sanitizers always exercise the production values.
+#[cfg(miri)]
+const REGISTRY_SEGMENT_SLOTS: usize = 8;
+#[cfg(not(miri))]
+const _: () = assert!(REGISTRY_SEGMENT_SLOTS == 1_024);
+#[cfg(not(miri))]
 const RECORD_LOCK_SEGMENT_SLOTS: usize = 16;
+#[cfg(miri)]
+const RECORD_LOCK_SEGMENT_SLOTS: usize = 4;
+#[cfg(not(miri))]
+const _: () = assert!(RECORD_LOCK_SEGMENT_SLOTS == 16);
 const RECORD_LOCK_SEGMENTS_PER_REGISTRY_SEGMENT: usize =
     REGISTRY_SEGMENT_SLOTS / RECORD_LOCK_SEGMENT_SLOTS;
 const REGISTRY_ENTRY_SLOT_BYTES: usize = 64;
+
+// The native default is part of the production capacity contract. Miri uses a
+// smaller bound because it interprets destruction of every outer segment slot,
+// including slots that were never initialized. Tests that need larger bounds
+// continue to request them explicitly.
+#[cfg(not(miri))]
+const DEFAULT_MAX_CONSUMED_RECORD_IDS: u64 = 4_000_000;
+#[cfg(miri)]
+const DEFAULT_MAX_CONSUMED_RECORD_IDS: u64 = 1_024;
+#[cfg(not(miri))]
+const _: () = assert!(DEFAULT_MAX_CONSUMED_RECORD_IDS == 4_000_000);
 
 #[cfg(not(test))]
 type DirectoryScanStorage = NativePackedScanScratch;
@@ -734,7 +759,7 @@ impl TableConfig {
         Self {
             max_retained_records: 1_000_000,
             max_retained_key_bytes: 1 << 30,
-            max_consumed_record_ids: 4_000_000,
+            max_consumed_record_ids: DEFAULT_MAX_CONSUMED_RECORD_IDS,
             registry_layout: RegistryLayout::LazySegmented,
             unique_lock_requests: false,
             scan_chunk_records: 128,
@@ -6905,7 +6930,7 @@ impl Registry {
         let raw_id =
             match self
                 .consumed
-                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                .try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
                     (current < self.effective_id_limit && current < u64::MAX).then_some(current + 1)
                 }) {
                 Ok(previous) => previous + 1,
@@ -7657,7 +7682,7 @@ impl RegistrySegment {
 
 struct RecordLockSegment {
     // Many exact LockIdentities multiplex this target, but acquisition checks
-    // the complete domain and the target's 16-record range before selecting
+    // the complete domain and the target's bounded record range before selecting
     // one inline version. Core deduplication therefore remains per identity,
     // never per shared target pointer.
     arena: RegistryArena,
@@ -8057,7 +8082,7 @@ impl DirectRecordLockToken {
 
 fn reserve_atomic(counter: &AtomicU64, amount: u64, limit: u64) -> Result<(), ()> {
     counter
-        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+        .try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
             current.checked_add(amount).filter(|next| *next <= limit)
         })
         .map(|_| ())
@@ -8109,16 +8134,11 @@ impl StableAtomicValueCell {
         debug_assert!(bytes.len() > INLINE_VALUE_CAPACITY);
         debug_assert!(bytes.len() <= STABLE_ATOMIC_VALUE_CAPACITY);
         let suffix = &bytes[INLINE_VALUE_CAPACITY..];
-        let mut full_chunks = suffix.chunks_exact(std::mem::size_of::<u64>());
-        for (index, chunk) in full_chunks.by_ref().enumerate() {
-            let word = u64::from_ne_bytes(
-                chunk
-                    .try_into()
-                    .expect("an exact eight-byte suffix chunk must form one word"),
-            );
+        let (full_chunks, tail) = suffix.as_chunks::<8>();
+        for (index, chunk) in full_chunks.iter().enumerate() {
+            let word = u64::from_ne_bytes(*chunk);
             self.suffix[index].store(word, Ordering::Relaxed);
         }
-        let tail = full_chunks.remainder();
         if !tail.is_empty() {
             let mut word = [0_u8; std::mem::size_of::<u64>()];
             word[..tail.len()].copy_from_slice(tail);
@@ -8134,14 +8154,10 @@ impl StableAtomicValueCell {
         debug_assert!(output.len() >= length);
         let suffix_length = length - INLINE_VALUE_CAPACITY;
         let suffix_output = &mut output[INLINE_VALUE_CAPACITY..length];
-        let mut full_chunks = suffix_output.chunks_exact_mut(std::mem::size_of::<u64>());
-        for (index, chunk) in full_chunks.by_ref().enumerate() {
-            let chunk: &mut [u8; std::mem::size_of::<u64>()] = chunk
-                .try_into()
-                .expect("an exact eight-byte suffix output must form one word");
+        let (full_chunks, tail) = suffix_output.as_chunks_mut::<8>();
+        for (index, chunk) in full_chunks.iter_mut().enumerate() {
             *chunk = self.suffix[index].load(Ordering::Acquire).to_ne_bytes();
         }
-        let tail = full_chunks.into_remainder();
         if !tail.is_empty() {
             let word = self.suffix[suffix_length / std::mem::size_of::<u64>()]
                 .load(Ordering::Acquire)
@@ -11281,12 +11297,15 @@ mod tests {
         assert!(table
             .put_resolved_with_previous_presence(&mut reuse, first_token, b"updated")
             .unwrap());
+        let final_index = REGISTRY_SEGMENT_SLOTS - 1;
+        let final_key = format!("direct/grow/{final_index:04}");
+        let final_value = (final_index as u64).to_le_bytes();
         assert_eq!(
             table
-                .get_inner(&mut reuse, None, b"direct/grow/1023")
+                .get_inner(&mut reuse, None, final_key.as_bytes())
                 .unwrap()
                 .as_deref(),
-            Some(&(1023_u64).to_le_bytes()[..])
+            Some(&final_value[..])
         );
         committed(reuse.commit());
         assert_eq!(table.health(), TableHealth::Healthy);
@@ -11915,7 +11934,10 @@ mod tests {
                 max_bytes: 8 * 1024 * 1024
             }
         );
-        assert_eq!(eager.max_consumed_record_ids(), 4_000_000);
+        assert_eq!(
+            eager.max_consumed_record_ids(),
+            DEFAULT_MAX_CONSUMED_RECORD_IDS
+        );
         assert!(eager.with_unique_lock_requests(true).unique_lock_requests());
     }
 
@@ -12307,10 +12329,12 @@ mod tests {
             eager_registry_accounted_bytes(slots.len(), false).unwrap(),
             required_bytes
         );
+        #[cfg(not(miri))]
         assert_eq!(
             eager_registry_accounted_bytes(100_000, false).unwrap(),
             6_900_040
         );
+        #[cfg(not(miri))]
         assert!(eager_registry_accounted_bytes(100_000, false).unwrap() <= 8 * 1024 * 1024);
         assert!(slots
             .iter()
@@ -12462,7 +12486,10 @@ mod tests {
         let RegistryStorage::EagerContiguous(storage) = &registry.storage else {
             panic!("explicit eager configuration must remain contiguous");
         };
-        assert!(Arc::ptr_eq(last_target, &storage.lock_segments[1]));
+        assert!(Arc::ptr_eq(
+            last_target,
+            &storage.lock_segments[(SLOTS - 1) / RECORD_LOCK_SEGMENT_SLOTS]
+        ));
         let identity = LockIdentity::new(
             last_target.lock_domain.runtime_id,
             last_target.lock_domain.namespace,
@@ -13142,15 +13169,26 @@ mod tests {
         let RegistryStorage::LazySegmented(storage) = &registry.storage else {
             panic!("the default registry layout must remain lazy segmented");
         };
-        let segment = storage.segments[0].get().unwrap();
-        let slots = segment.arena.standard_slots();
-        assert!(slots[..THREADS]
-            .iter()
-            .all(|entry| entry.state.load(Ordering::Acquire) == SLOT_READY));
-        assert_eq!(
-            slots[THREADS].state.load(Ordering::Acquire),
-            SLOT_UNALLOCATED
-        );
+        for index in 0..THREADS {
+            let segment = storage.segments[index / REGISTRY_SEGMENT_SLOTS]
+                .get()
+                .unwrap();
+            assert_eq!(
+                segment.arena.standard_slots()[index % REGISTRY_SEGMENT_SLOTS]
+                    .state
+                    .load(Ordering::Acquire),
+                SLOT_READY
+            );
+        }
+        match storage.segments[THREADS / REGISTRY_SEGMENT_SLOTS].get() {
+            Some(segment) => assert_eq!(
+                segment.arena.standard_slots()[THREADS % REGISTRY_SEGMENT_SLOTS]
+                    .state
+                    .load(Ordering::Acquire),
+                SLOT_UNALLOCATED
+            ),
+            None => assert_eq!(THREADS % REGISTRY_SEGMENT_SLOTS, 0),
+        }
     }
 
     #[test]

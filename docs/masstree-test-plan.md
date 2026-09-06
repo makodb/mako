@@ -139,11 +139,14 @@ Runnable after every op:
 **Why third:** without Tiers 1 & 2 it's hard to tell whether a
 concurrency failure is a race or a single-threaded bug.
 
-### 3.1 Sanitizer matrix — wired
+### 3.1 Sanitizer matrix — Rust boundary wired
 
-Each test binary builds and runs cleanly under ASan, UBSan, and TSan.
+The checked-in CI matrix builds the Rust STO boundary and runs every CTest
+labeled `rust` under ASan, UBSan, and TSan. The broader Masstree test binaries
+below were also exercised manually while developing the sanitizer fixes, but
+they are not all selected by the Rust-boundary CI gate.
 
-**Workflow** — one build dir per sanitizer:
+**Manual Masstree workflow** — one build dir per sanitizer:
 
 ```bash
 # AddressSanitizer
@@ -173,24 +176,45 @@ deadlocks at startup. `MAKO_UBSAN` is compatible with jemalloc.
 
 **Suppressions files**:
 
-- `src/masstree/ubsan_suppressions.txt` — three classes of pre-existing
-  upstream UB:
-  1. `kpermuter.hh:128` shift exponent equals 64 (UB per the C++ memory
-     model; tolerated on x86). Fix is a one-line clamp.
-  2. `string_slice.hh` unaligned 8-byte loads. Fix is `memcpy` into a
-     local `uint64_t`.
-  3. `internode::ikey` array-index-from-stale-position inside the
-     stable_last_key_compare retry loop — the value is rejected by the
-     surrounding version check, but UBSan sees the intermediate access.
-- `src/masstree/tsan_suppressions.txt` — Masstree's optimistic
-  version-counter machinery does intentional racy reads validated by
-  retry. Suppressed at the source-file granularity. Also suppresses
-  the pre-existing `src/mako/spinlock.h` plain-int spinlock (real bug
-  in the surrounding mako code, separate fix).
+- `src/masstree/ubsan_suppressions.txt` retains only the
+  `internode::ikey` array-index-from-stale-position finding inside the
+  `stable_last_key_compare` optimistic retry. The value is rejected by the
+  surrounding version check, but the intermediate out-of-bounds C++ access is
+  still known UB.
+  The former `kpermuter` shift-width and `string_slice` unaligned-load defects
+  are fixed, and their suppressions are removed so regressions fail the gate.
+- `src/masstree/tsan_suppressions.txt` covers Masstree's optimistic
+  version-counter machinery. Its intended x86 algorithm rejects inconsistent
+  observations by retry, but those plain C++ races remain known UB and the
+  filename-wide suppressions can hide another race in the same frames. A pass
+  therefore means no unsuppressed finding under the reviewed list. The Mako
+  spinlock race is fixed and no longer suppressed.
 
-**Status**: ASan clean (0 findings). UBSan and TSan clean after the
-suppressions above are applied. CI integration (separate jobs per
-sanitizer) is the remaining piece.
+**Status**: the checked-in Rust STO native sanitizer workflow provides
+separate ASan, UBSan, and TSan jobs. It records the exact build configuration,
+audits compiler and linker instrumentation, and runs every CTest labeled
+`rust`. See `docs/masstree-sanitizer-findings.md` for finding dispositions and
+the workflow artifacts for results from a particular revision.
+
+The UBSan lane compiler-instruments the native C and C++ boundary and links its
+Clang runtime into the stable Rust-owned processes; Rust itself has no UBSan
+compiler mode. The ASan workspace sweep keeps leak detection enabled except for
+the shared list of 30 exact intentional transaction-frame quarantine cases,
+which it audits and reruns individually with leak reporting disabled. The
+native FFI runner leak-checks 31 of 32 unit cases and applies the same narrow
+exception only to
+`tests::post_install_row_count_failure_marks_runtime_indeterminate` (162,856
+bytes in 80 retained allocations in the qualifying run). Current pass/fail
+claims belong to the exact-revision workflow artifacts, not to this inventory.
+
+The pinned Miri ownership gate rejects ambient `MIRIFLAGS`, audits the same
+quarantine list, and keeps leak checking enabled outside exact reruns. Miri uses
+an 8-slot physical registry segment and 4-slot lock segments so the ownership
+tests still cross two lock targets and a registry boundary without interpreting
+1,024 allocations per segment. Native and sanitizer builds always use the
+production 1,024-slot registry and 16-slot lock layout. High-iteration
+concurrency and history sweeps stay in the native and TSan gates; the Miri
+command documents each exclusion.
 
 ### 3.2 Linearizability check
 
@@ -230,16 +254,22 @@ double as ASan/LSan detectors:
 | `RepeatedFillEmptyCyclesAreStable` | 1,000 fill-empty cycles, size == 0 each | LSan catches RCU-deferred frees that never run |
 | `ReadersSurviveAggressiveWriterChurn` | 2-second 4-writer/2-reader churn; stable keys keep returning correct values | ASan catches a UAF where RCU reclaims a node a reader is mid-traversal of |
 
-All three pass clean in both regular and ASan builds (3 tests, ~2.2 s
-total). Combined with Tier 3.1's ASan run of `test_masstree_concurrent`,
-the existing coverage answers most of the original Tier 4 checklist:
+All three passed clean in regular and ASan builds during the original manual
+validation (3 tests, about 2.2 s total). They are not currently part of the
+checked-in Rust-boundary sanitizer workflow. Combined with the manual Tier 3.1
+ASan run of `test_masstree_concurrent`, this coverage answers most of the
+original Tier 4 checklist, but it is not yet a CI regression gate:
 
-- ASan & LSan jobs: wired in Tier 3.1 (`MAKO_ASAN=1`); LSan default-on
-  catches process-exit leaks.
+- ASan and LSan: manually validated with `MAKO_ASAN=1`; LSan default-on catches
+  process-exit leaks. The CI matrix also leak-checks the Rust workspace,
+  native boundary runner, and every `rust`-labeled CTest, subject only to the
+  exact intentional-quarantine dispositions documented in Tier 3.1.
 - Deferred-free → reader → epoch-advance test:
   `ReadersSurviveAggressiveWriterChurn` plus
   `LongRunningReadersAcrossEpochs` from `test_masstree_concurrent`.
-- Leak gate: ASan's LSan at process exit.
+- Leak check: ASan's LSan at process exit in the manual test run; the native
+  Rust-boundary CI run uses the shared audited 30-case list and one exact native
+  FFI disposition described in Tier 3.1.
 
 Open items left for later (not implemented in this iteration):
 
@@ -444,12 +474,13 @@ after setup. Readers continually verify these keys; any mismatch
 or missing key bumps an atomic failure counter that the test
 asserts is zero at the end.
 
-**Not wired**: thread join/leave churn (workers that spawn briefly,
-do a batch, then exit, repeated continuously). The earlier version
-of the soak test included that and reliably reproduced a SIGABRT
-inside `concurrent_btree` — see Finding 6 in
-`docs/masstree-sanitizer-findings.md`. Until that's investigated
-the soak runs with long-lived workers only.
+**Not wired**: thread join/leave churn (workers that spawn briefly, do a batch,
+then exit, repeated continuously). Finding 6 in
+`docs/masstree-sanitizer-findings.md` established that Mako worker IDs are
+monotonic and not recycled. An opted-in registration API now reports exhaustion
+without aborting, but the legacy path still aborts after 512 unique
+registrations and neither path recycles slots. The soak therefore retains
+long-lived workers until full slot recycling lands.
 
 ---
 

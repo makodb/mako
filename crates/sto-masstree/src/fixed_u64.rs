@@ -870,7 +870,7 @@ impl FixedRegistry {
         let raw_id =
             match self
                 .consumed
-                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                .try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
                     (current < self.effective_id_limit && current < u64::MAX).then_some(current + 1)
                 }) {
                 Ok(previous) => previous + 1,
@@ -1025,7 +1025,7 @@ fn fixed_registry_accounted_bytes(slot_count: usize) -> Result<usize, CapacityEr
 
 fn reserve_fixed_atomic(counter: &AtomicU64, amount: u64, limit: u64) -> Result<(), ()> {
     counter
-        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+        .try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
             current.checked_add(amount).filter(|next| *next <= limit)
         })
         .map(|_| ())

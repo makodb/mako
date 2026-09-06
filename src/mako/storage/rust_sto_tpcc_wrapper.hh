@@ -169,6 +169,8 @@ public:
 private:
   sto_tpcc_db *db_;
   int32_t next_table_id_;
+  // open_index returns borrowed pointers. This wrapper owns every facade until
+  // close_index removes it or the wrapper itself is destroyed.
   std::vector<std::unique_ptr<rust_sto_tpcc_ordered_index>> tables_;
   std::unordered_map<int32_t, rust_sto_tpcc_ordered_index *> tables_by_id_;
   std::map<std::tuple<std::string, int>, rust_sto_tpcc_ordered_index *>
@@ -176,7 +178,7 @@ private:
 
   static thread_local sto_tpcc_thread *tls_thread_;
   static thread_local bool tls_transaction_active_;
-  static thread_local bool tls_legacy_thread_initialized_;
+  static thread_local bool tls_benchmark_thread_initialized_;
   static thread_local std::vector<sto_tpcc_fixed_value> tls_fixed_values_;
   static thread_local std::vector<sto_tpcc_insert_operation>
       tls_insert_operations_;

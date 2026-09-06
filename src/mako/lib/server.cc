@@ -1037,6 +1037,12 @@ namespace mako
         shardReceiver = new mako::ShardReceiver(file);
     }
 
+    ShardServer::~ShardServer()
+    {
+        delete shardReceiver;
+        shardReceiver = nullptr;
+    }
+
     void ShardServer::Register(abstract_db *dbX,
                                mako::HelperQueue *queueX,
                                mako::HelperQueue *queueY,

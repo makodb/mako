@@ -617,7 +617,7 @@ bool Transaction::try_commit(bool no_paxos) {
                         // There is a timeout on partial INSTALL, we retry instead of abort for correctness.
                         // Mako can't solve "blocking" issue in 2PC.
                         //std::cout<<"timeout in remoteInstall; retry attempts: " << retry_c <<std::endl;
-                        if (!TThread::sclient->isBlocking) {
+                        if (!TThread::sclient->isBlocking.load(std::memory_order_relaxed)) {
                             break;
                         }
                     }

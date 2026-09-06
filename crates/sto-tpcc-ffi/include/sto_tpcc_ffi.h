@@ -214,6 +214,9 @@ sto_tpcc_table_seal_directory_structure(sto_tpcc_table *table)
     STO_TPCC_NOEXCEPT;
 sto_tpcc_status sto_tpcc_table_destroy(sto_tpcc_table *table)
     STO_TPCC_NOEXCEPT;
+/* Returns the committed logical row count. A transaction publishes its
+ * aggregate delta after all row installs and before releasing any write lock,
+ * so a conflicting writer cannot commit against a stale count. */
 sto_tpcc_status sto_tpcc_table_size(const sto_tpcc_table *table,
                                      uint64_t *out_rows) STO_TPCC_NOEXCEPT;
 
@@ -361,7 +364,11 @@ sto_tpcc_status sto_tpcc_scan(sto_tpcc_thread *thread,
                                size_t *out_visited) STO_TPCC_NOEXCEPT;
 
 /* The most recent diagnostic persists until another diagnostic on this
- * thread. It is thread-local UTF-8 and excludes its trailing NUL byte. */
+ * thread. It is thread-local UTF-8 and excludes its trailing NUL byte.
+ * out_actual is required and receives that excluded-NUL length. A short or
+ * NULL output buffer is accepted when message_capacity is too small and
+ * returns STO_TPCC_BUFFER_TOO_SMALL. When capacity is sufficient, out_message
+ * and out_actual must be disjoint writable ranges. */
 size_t sto_tpcc_last_error_length(void) STO_TPCC_NOEXCEPT;
 sto_tpcc_status sto_tpcc_last_error_copy(char *out_message,
                                           size_t message_capacity,

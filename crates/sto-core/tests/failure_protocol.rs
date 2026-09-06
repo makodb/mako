@@ -1474,6 +1474,42 @@ fn assert_poisoned_aborted(
 
 struct ReadOnlyHookMustNotRun;
 
+struct PostInstallOrderHook {
+    harness: Arc<Harness>,
+    expected_installs: Vec<u64>,
+    calls: usize,
+}
+
+impl PostInstallOrderHook {
+    fn new(harness: &Arc<Harness>, expected_installs: impl Into<Vec<u64>>) -> Self {
+        Self {
+            harness: Arc::clone(harness),
+            expected_installs: expected_installs.into(),
+            calls: 0,
+        }
+    }
+}
+
+impl CommitHook for PostInstallOrderHook {
+    fn reserve_upper_metadata(&mut self) -> Result<(), CommitHookError> {
+        Ok(())
+    }
+
+    fn pre_install(&mut self) -> Result<(), CommitHookError> {
+        Ok(())
+    }
+
+    fn post_install(&mut self) {
+        let events = self.harness.events();
+        assert_eq!(
+            callback_keys(&events, Callback::Install),
+            self.expected_installs
+        );
+        assert!(release_events(&events).is_empty());
+        self.calls += 1;
+    }
+}
+
 impl CommitHook for ReadOnlyHookMustNotRun {
     fn reserve_upper_metadata(&mut self) -> Result<(), CommitHookError> {
         panic!("read-only fast path invoked upper metadata hook")
@@ -1482,6 +1518,37 @@ impl CommitHook for ReadOnlyHookMustNotRun {
     fn pre_install(&mut self) -> Result<(), CommitHookError> {
         panic!("read-only fast path invoked pre-install hook")
     }
+}
+
+#[test]
+fn post_install_hook_runs_after_install_and_before_release_in_both_write_lanes() {
+    let fixture = fixture(Vec::new());
+    let mut worker = fixture.runtime.attach().unwrap();
+    let mut transaction = worker.begin().unwrap();
+    for key in [2, 3, 1] {
+        stage_write(&mut transaction, &fixture.resource, key);
+    }
+    let mut hook = PostInstallOrderHook::new(&fixture.harness, vec![2, 3, 1]);
+    assert!(matches!(
+        transaction.commit_with_hook(&mut hook).unwrap(),
+        CommitOutcome::Committed(_)
+    ));
+    assert_eq!(hook.calls, 1);
+    assert_eq!(release_events(&fixture.harness.events()).len(), 3);
+
+    let direct = direct_fixture(Vec::new());
+    let mut worker = direct.runtime.attach().unwrap();
+    let mut transaction = worker.begin().unwrap();
+    for key in [2, 3, 1] {
+        stage_direct_write(&mut transaction, &direct.resource, key);
+    }
+    let mut hook = PostInstallOrderHook::new(&direct.harness, vec![2, 3, 1]);
+    assert!(matches!(
+        transaction.commit_with_hook(&mut hook).unwrap(),
+        CommitOutcome::Committed(_)
+    ));
+    assert_eq!(hook.calls, 1);
+    assert_eq!(release_events(&direct.harness.events()).len(), 3);
 }
 
 #[test]
@@ -2668,12 +2735,14 @@ fn direct_install_release_and_finish_panics_preserve_commit_boundaries() {
     for key in [1, 2, 3] {
         stage_direct_write(&mut transaction, &finish.resource, key);
     }
-    let result = transaction.commit();
+    let mut hook = PostInstallOrderHook::new(&finish.harness, vec![1, 2, 3]);
+    let result = transaction.commit_with_hook(&mut hook);
     let Err(CommitFailure::Poisoned { outcome, info }) = result else {
         panic!("expected poisoned committed direct finish failure, got {result:?}");
     };
     assert!(matches!(outcome, DefiniteOutcome::Committed(_)));
     assert_eq!(info.phase(), FailurePhase::Finish);
+    assert_eq!(hook.calls, 1);
     assert_eq!(
         finish_events(&finish.harness.events()),
         [

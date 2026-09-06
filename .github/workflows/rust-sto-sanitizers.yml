@@ -1,0 +1,108 @@
+name: Rust STO native sanitizers
+
+on:
+  push:
+    branches: [mako-dev, mako-weihai]
+    paths:
+      - ".gitmodules"
+      - ".github/workflows/rust-sto-sanitizers.yml"
+      - "CMakeLists.txt"
+      - "cmake/**"
+      - "config/**"
+      - "crates/**"
+      - "install_rustc.sh"
+      - "rust-toolchain.toml"
+      - "scripts/**"
+      - "src/**"
+      - "tests/**"
+      - "third-party/**"
+  pull_request:
+    branches: [mako-dev, mako-weihai]
+    paths:
+      - ".gitmodules"
+      - ".github/workflows/rust-sto-sanitizers.yml"
+      - "CMakeLists.txt"
+      - "cmake/**"
+      - "config/**"
+      - "crates/**"
+      - "install_rustc.sh"
+      - "rust-toolchain.toml"
+      - "scripts/**"
+      - "src/**"
+      - "tests/**"
+      - "third-party/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  native-sanitizer:
+    name: ${{ matrix.sanitizer }} Rust/native boundary
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/makodb/mako-ci-ubuntu24:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer: [address, undefined, thread]
+    env:
+      CMAKE_GENERATOR: Ninja
+      MAKO_SANITIZER_JOBS: "4"
+      CARGO_HOME: /tmp/rust-sto-sanitizer-cargo
+      RUSTUP_HOME: /tmp/rust-sto-sanitizer-rustup
+    steps:
+      - name: Checkout exact workflow commit
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust workspace toolchain
+        if: matrix.sanitizer == 'undefined'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v rustc >/dev/null 2>&1 &&
+             command -v cargo >/dev/null 2>&1; then
+            if rust_version="$(rustc --version 2>/dev/null | awk '{print $2}')" &&
+               rust_sysroot="$(rustc --print sysroot 2>/dev/null)" &&
+               [ "${rust_version}" = "1.95.0" ] &&
+               [ -r "${rust_sysroot}/lib/rustlib/src/rust/library/core/src/marker.rs" ] &&
+               cargo clippy --version >/dev/null 2>&1; then
+              exit 0
+            fi
+          fi
+          bash ./install_rustc.sh
+          echo "${HOME}/.local-rust/bin" >>"${GITHUB_PATH}"
+
+      - name: Install pinned Rust sanitizer toolchain
+        if: matrix.sanitizer != 'undefined'
+        shell: bash
+        run: |
+          set -euo pipefail
+          toolchain="$(bash scripts/ci/run_rust_sto_sanitizer.sh --print-nightly-toolchain)"
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain none
+          "${CARGO_HOME}/bin/rustup" toolchain install "${toolchain}" \
+            --profile minimal --component clippy --component rust-src
+          echo "${CARGO_HOME}/bin" >>"${GITHUB_PATH}"
+
+      - name: Run ${{ matrix.sanitizer }} gate
+        shell: bash
+        run: bash scripts/ci/run_rust_sto_sanitizer.sh "${{ matrix.sanitizer }}"
+
+      - name: Upload sanitizer evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-sto-${{ matrix.sanitizer }}-${{ github.sha }}
+          if-no-files-found: ignore
+          retention-days: 14
+          path: |
+            build-rust-sto-*/rust-sto-sanitizer-manifest.txt
+            build-rust-sto-*/sanitizer-logs/**

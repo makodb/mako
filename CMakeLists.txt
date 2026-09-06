@@ -606,13 +606,35 @@ set(CXXFLAGS
 list(APPEND CXXFLAGS -DREUSE_FIBER)
 message(STATUS "Reuse fiber enabled")
 
-# AddressSanitizer (MAKO_ASAN=1 in env). Diagnostic toggle used to localize
+# Preserve sanitizer selection across CMake's automatic regeneration. Legacy
+# MAKO_*=0/1 environment toggles override the cached choice when explicitly
+# supplied; otherwise the cache is authoritative for the build directory.
+function(mako_resolve_build_toggle toggle description)
+    option(${toggle} "${description}" OFF)
+    if(DEFINED ENV{${toggle}})
+        if("$ENV{${toggle}}" STREQUAL "1")
+            set(${toggle} ON CACHE BOOL "${description}" FORCE)
+        elseif("$ENV{${toggle}}" STREQUAL "0")
+            set(${toggle} OFF CACHE BOOL "${description}" FORCE)
+        else()
+            message(FATAL_ERROR
+                "${toggle} environment value must be 0 or 1, got: "
+                "$ENV{${toggle}}")
+        endif()
+    endif()
+endfunction()
+
+mako_resolve_build_toggle(MAKO_ASAN "Build native targets with AddressSanitizer")
+mako_resolve_build_toggle(MAKO_UBSAN "Build native targets with UndefinedBehaviorSanitizer")
+mako_resolve_build_toggle(MAKO_TSAN "Build native targets with ThreadSanitizer")
+mako_resolve_build_toggle(MAKO_FUZZER "Build the Masstree libFuzzer target")
+
+# AddressSanitizer (MAKO_ASAN=1 in env or -DMAKO_ASAN=ON). Diagnostic toggle used to localize
 # the shard2ReplicationRaft stack-corruption crash. Forces libc malloc — ASan
 # replaces malloc/free, so we cannot also link jemalloc/tcmalloc. Adds
 # `-fno-omit-frame-pointer` so backtraces are accurate.
-set(MAKO_ASAN_ENABLED OFF)
-if(DEFINED ENV{MAKO_ASAN} AND "$ENV{MAKO_ASAN}" STREQUAL "1")
-    set(MAKO_ASAN_ENABLED ON)
+set(MAKO_ASAN_ENABLED ${MAKO_ASAN})
+if(MAKO_ASAN_ENABLED)
     message(STATUS "MAKO_ASAN=1: building with -fsanitize=address; forcing USE_MALLOC_MODE=0 (libc malloc), stripping -ljemalloc.")
     set(USE_MALLOC_MODE 0 CACHE STRING "Malloc mode forced to libc by MAKO_ASAN" FORCE)
     list(APPEND CXXFLAGS -fsanitize=address -fno-omit-frame-pointer)
@@ -624,9 +646,8 @@ endif()
 # UndefinedBehaviorSanitizer (MAKO_UBSAN=1 in env). Compatible with jemalloc
 # and with the other sanitizers in principle; we still keep them
 # independently configurable so the matrix runs cleanly.
-set(MAKO_UBSAN_ENABLED OFF)
-if(DEFINED ENV{MAKO_UBSAN} AND "$ENV{MAKO_UBSAN}" STREQUAL "1")
-    set(MAKO_UBSAN_ENABLED ON)
+set(MAKO_UBSAN_ENABLED ${MAKO_UBSAN})
+if(MAKO_UBSAN_ENABLED)
     message(STATUS "MAKO_UBSAN=1: building with -fsanitize=undefined.")
     list(APPEND CXXFLAGS -fsanitize=undefined -fno-omit-frame-pointer)
     list(APPEND LDFLAGS  -fsanitize=undefined)
@@ -636,12 +657,11 @@ endif()
 
 # ThreadSanitizer (MAKO_TSAN=1 in env). Like ASan, TSan replaces malloc and is
 # incompatible with jemalloc; force libc malloc. Mutually exclusive with ASan.
-set(MAKO_TSAN_ENABLED OFF)
-if(DEFINED ENV{MAKO_TSAN} AND "$ENV{MAKO_TSAN}" STREQUAL "1")
+set(MAKO_TSAN_ENABLED ${MAKO_TSAN})
+if(MAKO_TSAN_ENABLED)
     if(MAKO_ASAN_ENABLED)
         message(FATAL_ERROR "MAKO_TSAN=1 cannot be combined with MAKO_ASAN=1.")
     endif()
-    set(MAKO_TSAN_ENABLED ON)
     message(STATUS "MAKO_TSAN=1: building with -fsanitize=thread; forcing USE_MALLOC_MODE=0 (libc malloc), stripping -ljemalloc.")
     set(USE_MALLOC_MODE 0 CACHE STRING "Malloc mode forced to libc by MAKO_TSAN" FORCE)
     list(APPEND CXXFLAGS -fsanitize=thread -fno-omit-frame-pointer)
@@ -657,12 +677,12 @@ endif()
 # Implies MAKO_ASAN since the libFuzzer + ASan combo is the standard
 # pairing — incompatible with TSan because both instrumentations use
 # the same coverage hooks.
-set(MAKO_FUZZER_ENABLED OFF CACHE INTERNAL "Tier 6 libFuzzer build")
-if(DEFINED ENV{MAKO_FUZZER} AND "$ENV{MAKO_FUZZER}" STREQUAL "1")
+set(MAKO_FUZZER_ENABLED ${MAKO_FUZZER} CACHE INTERNAL
+    "Tier 6 libFuzzer build" FORCE)
+if(MAKO_FUZZER_ENABLED)
     if(MAKO_TSAN_ENABLED)
         message(FATAL_ERROR "MAKO_FUZZER=1 cannot be combined with MAKO_TSAN=1.")
     endif()
-    set(MAKO_FUZZER_ENABLED ON CACHE INTERNAL "Tier 6 libFuzzer build" FORCE)
     if(NOT MAKO_ASAN_ENABLED)
         set(MAKO_ASAN_ENABLED ON)
         message(STATUS "MAKO_FUZZER=1 implies MAKO_ASAN=1; enabling -fsanitize=address.")
@@ -1444,6 +1464,111 @@ set(MAKO_MTREE_RUST_NATIVE_LIBS
     CACHE STRING
     "Comma-separated rustc native libraries for the Masstree ABI integration test"
 )
+set(MAKO_RUST_STO_TARGET_TRIPLE "" CACHE STRING
+    "Explicit Cargo target for Rust STO integration builds")
+option(MAKO_RUST_STO_BUILD_STD
+    "Rebuild the Rust standard library for Rust STO integration builds" OFF)
+option(MAKO_RUST_STO_WORKSPACE_NATIVE_LINK
+    "Link sanitizer-instrumented Rust workspace checks to native Masstree" OFF)
+set(MAKO_RUST_STO_SANITIZER_RUSTFLAGS "" CACHE STRING
+    "Rust flags confined to sanitizer-instrumented Rust STO test targets")
+set(MAKO_RUST_STO_SANITIZER_RUSTDOCFLAGS "" CACHE STRING
+    "Rustdoc flags confined to sanitizer-instrumented Rust STO test targets")
+set(MAKO_RUST_STO_RUSTUP_TOOLCHAIN "" CACHE STRING
+    "Rustup toolchain confined to sanitizer-instrumented Rust STO test targets")
+set(MAKO_RUST_STO_CARGO_LINKER_ENV "" CACHE STRING
+    "Cargo target-linker environment name for Rust STO sanitizer targets")
+set(MAKO_RUST_STO_ASAN_NATIVE_QUARANTINE_TESTS "" CACHE STRING
+    "Exact native FFI tests run with ASan leak reporting disabled")
+set(MAKO_RUST_STO_ASAN_OPTIONS "" CACHE STRING
+    "ASan runtime options confined to Rust STO sanitizer targets")
+if(MAKO_RUST_STO_BUILD_STD AND MAKO_RUST_STO_TARGET_TRIPLE STREQUAL "")
+    message(FATAL_ERROR
+        "MAKO_RUST_STO_BUILD_STD requires MAKO_RUST_STO_TARGET_TRIPLE")
+endif()
+if(MAKO_RUST_STO_WORKSPACE_NATIVE_LINK
+        AND (MAKO_RUST_STO_TARGET_TRIPLE STREQUAL ""
+             OR NOT MAKO_RUST_STO_BUILD_STD))
+    message(FATAL_ERROR
+        "MAKO_RUST_STO_WORKSPACE_NATIVE_LINK is sanitizer-only and requires "
+        "MAKO_RUST_STO_TARGET_TRIPLE plus MAKO_RUST_STO_BUILD_STD=ON")
+endif()
+if(MAKO_RUST_STO_WORKSPACE_NATIVE_LINK
+        AND (MAKO_RUST_STO_SANITIZER_RUSTFLAGS STREQUAL ""
+             OR MAKO_RUST_STO_SANITIZER_RUSTDOCFLAGS STREQUAL ""))
+    message(FATAL_ERROR
+        "MAKO_RUST_STO_WORKSPACE_NATIVE_LINK requires explicit sanitizer "
+        "Rust and rustdoc flags")
+endif()
+if((MAKO_RUST_STO_SANITIZER_RUSTFLAGS STREQUAL ""
+        AND NOT MAKO_RUST_STO_SANITIZER_RUSTDOCFLAGS STREQUAL "")
+        OR (NOT MAKO_RUST_STO_SANITIZER_RUSTFLAGS STREQUAL ""
+            AND MAKO_RUST_STO_SANITIZER_RUSTDOCFLAGS STREQUAL ""))
+    message(FATAL_ERROR
+        "Rust STO sanitizer Rust and rustdoc flags must be set together")
+endif()
+set(_MAKO_RUST_STO_SCOPED_TOOLCHAIN_LINK_ENV "")
+set(_MAKO_RUST_STO_SCOPED_SANITIZER_ENV "")
+if(NOT MAKO_RUST_STO_SANITIZER_RUSTFLAGS STREQUAL "")
+    if(NOT MAKO_RUST_STO_CARGO_LINKER_ENV MATCHES
+            "^CARGO_TARGET_[A-Z0-9_]+_LINKER$")
+        message(FATAL_ERROR
+            "Rust STO sanitizer flags require an exact Cargo target-linker "
+            "environment name")
+    endif()
+    if(NOT CMAKE_C_COMPILER_ID MATCHES "^(AppleClang|Clang)$")
+        message(FATAL_ERROR
+            "Rust STO sanitizer targets require CMake's Clang C compiler "
+            "as their linker")
+    endif()
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "^(AppleClang|Clang)$")
+        message(FATAL_ERROR
+            "Rust STO sanitizer targets require CMake's Clang C++ compiler")
+    endif()
+    if(NOT CMAKE_C_COMPILER_ID STREQUAL CMAKE_CXX_COMPILER_ID)
+        message(FATAL_ERROR
+            "Rust STO sanitizer targets require C and C++ compilers from "
+            "the same Clang family; found ${CMAKE_C_COMPILER_ID} and "
+            "${CMAKE_CXX_COMPILER_ID}")
+    endif()
+    string(REGEX MATCH "^[0-9]+" _MAKO_RUST_STO_C_COMPILER_MAJOR
+        "${CMAKE_C_COMPILER_VERSION}")
+    string(REGEX MATCH "^[0-9]+" _MAKO_RUST_STO_CXX_COMPILER_MAJOR
+        "${CMAKE_CXX_COMPILER_VERSION}")
+    if(_MAKO_RUST_STO_C_COMPILER_MAJOR STREQUAL ""
+            OR _MAKO_RUST_STO_CXX_COMPILER_MAJOR STREQUAL ""
+            OR NOT _MAKO_RUST_STO_C_COMPILER_MAJOR STREQUAL
+                _MAKO_RUST_STO_CXX_COMPILER_MAJOR)
+        message(FATAL_ERROR
+            "Rust STO sanitizer targets require matching Clang C/C++ major "
+            "versions; found ${CMAKE_C_COMPILER_VERSION} and "
+            "${CMAKE_CXX_COMPILER_VERSION}")
+    endif()
+    if(MAKO_RUST_STO_BUILD_STD
+            AND MAKO_RUST_STO_RUSTUP_TOOLCHAIN STREQUAL "")
+        message(FATAL_ERROR
+            "Instrumented Rust standard-library builds require an explicit "
+            "MAKO_RUST_STO_RUSTUP_TOOLCHAIN")
+    endif()
+    list(APPEND _MAKO_RUST_STO_SCOPED_TOOLCHAIN_LINK_ENV
+        "${MAKO_RUST_STO_CARGO_LINKER_ENV}=${CMAKE_C_COMPILER}")
+    if(NOT MAKO_RUST_STO_RUSTUP_TOOLCHAIN STREQUAL "")
+        list(APPEND _MAKO_RUST_STO_SCOPED_TOOLCHAIN_LINK_ENV
+            "RUSTUP_TOOLCHAIN=${MAKO_RUST_STO_RUSTUP_TOOLCHAIN}")
+    endif()
+    set(_MAKO_RUST_STO_SCOPED_SANITIZER_ENV
+        ${_MAKO_RUST_STO_SCOPED_TOOLCHAIN_LINK_ENV}
+        "RUSTFLAGS=${MAKO_RUST_STO_SANITIZER_RUSTFLAGS}"
+        "RUSTDOCFLAGS=${MAKO_RUST_STO_SANITIZER_RUSTDOCFLAGS}")
+endif()
+set(_MAKO_RUST_STO_CARGO_PLATFORM_ARGS "")
+if(NOT MAKO_RUST_STO_TARGET_TRIPLE STREQUAL "")
+    list(APPEND _MAKO_RUST_STO_CARGO_PLATFORM_ARGS
+        --target "${MAKO_RUST_STO_TARGET_TRIPLE}")
+endif()
+if(MAKO_RUST_STO_BUILD_STD)
+    list(APPEND _MAKO_RUST_STO_CARGO_PLATFORM_ARGS -Zbuild-std)
+endif()
 find_program(MAKO_CARGO_EXECUTABLE NAMES cargo)
 if(MAKO_CARGO_EXECUTABLE)
     get_filename_component(_MAKO_CXX_COMPILER_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
@@ -1473,6 +1598,33 @@ if(MAKO_CARGO_EXECUTABLE)
             "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-tpcc-ffi/tests/native_ffi.rs")
     endif()
 
+    set(_MAKO_RUST_STO_NATIVE_SANITIZER_ARGS "")
+    if(NOT MAKO_RUST_STO_SANITIZER_RUSTFLAGS STREQUAL "")
+        list(APPEND _MAKO_RUST_STO_NATIVE_SANITIZER_ARGS
+            "-DMAKO_RUSTFLAGS=${MAKO_RUST_STO_SANITIZER_RUSTFLAGS}"
+            "-DMAKO_RUSTDOCFLAGS=${MAKO_RUST_STO_SANITIZER_RUSTDOCFLAGS}"
+            "-DMAKO_RUSTUP_TOOLCHAIN=${MAKO_RUST_STO_RUSTUP_TOOLCHAIN}"
+            "-DMAKO_RUST_LINKER_ENV_NAME=${MAKO_RUST_STO_CARGO_LINKER_ENV}"
+            "-DMAKO_RUST_LINKER=${CMAKE_C_COMPILER}")
+    endif()
+    if(NOT MAKO_RUST_STO_ASAN_NATIVE_QUARANTINE_TESTS STREQUAL "")
+        list(APPEND _MAKO_RUST_STO_NATIVE_SANITIZER_ARGS
+            "-DMAKO_ASAN_NATIVE_QUARANTINE_TESTS=${MAKO_RUST_STO_ASAN_NATIVE_QUARANTINE_TESTS}")
+    endif()
+    if(NOT MAKO_RUST_STO_ASAN_OPTIONS STREQUAL "")
+        list(APPEND _MAKO_RUST_STO_NATIVE_SANITIZER_ARGS
+            "-DMAKO_ASAN_OPTIONS=${MAKO_RUST_STO_ASAN_OPTIONS}")
+    endif()
+    set(_MAKO_RUST_STO_NATIVE_PLATFORM_ARGS "")
+    if(NOT MAKO_RUST_STO_TARGET_TRIPLE STREQUAL "")
+        list(APPEND _MAKO_RUST_STO_NATIVE_PLATFORM_ARGS
+            "-DMAKO_RUST_TARGET_TRIPLE=${MAKO_RUST_STO_TARGET_TRIPLE}")
+    endif()
+    if(MAKO_RUST_STO_BUILD_STD)
+        list(APPEND _MAKO_RUST_STO_NATIVE_PLATFORM_ARGS
+            "-DMAKO_RUST_BUILD_STD=ON")
+    endif()
+
     add_custom_target(rust_masstree_native_integration
         COMMAND "${CMAKE_COMMAND}"
             "-DMAKO_CARGO_EXECUTABLE=${MAKO_CARGO_EXECUTABLE}"
@@ -1483,6 +1635,8 @@ if(MAKO_CARGO_EXECUTABLE)
             "-DMAKO_CXX_RUNTIME_DIR=${_MAKO_CXX_COMPILER_ROOT}/lib"
             "-DMAKO_LOADER_PATH_VARIABLE=${_MAKO_MTREE_LOADER_PATH_VARIABLE}"
             "-DMAKO_NATIVE_LIBS=${MAKO_MTREE_RUST_NATIVE_LIBS}"
+            ${_MAKO_RUST_STO_NATIVE_PLATFORM_ARGS}
+            ${_MAKO_RUST_STO_NATIVE_SANITIZER_ARGS}
             "-DMAKO_STO_NATIVE_TEST=${_MAKO_STO_MASSTREE_NATIVE_TEST}"
             "-DMAKO_STO_HISTORY_TEST=${_MAKO_STO_MASSTREE_HISTORY_TEST}"
             "-DMAKO_STO_TPCC_NATIVE_TEST=${_MAKO_STO_TPCC_NATIVE_TEST}"
@@ -1601,7 +1755,7 @@ function(add_apps exec_name exec_path)
       ${LIBEVENT_LDFLAGS}
       ${GFLAGS_LDFLAGS}
       ${PROTOBUF_LDFLAGS}
-      $<$<NOT:$<BOOL:${MAKO_ASAN_ENABLED}>>:${JEMALLOC_LDFLAGS}>
+      $<$<AND:$<NOT:$<BOOL:${MAKO_ASAN_ENABLED}>>,$<NOT:$<BOOL:${MAKO_TSAN_ENABLED}>>>:${JEMALLOC_LDFLAGS}>
   )
 
   # Add dependencies
@@ -1707,15 +1861,98 @@ if(MAKO_CARGO_EXECUTABLE)
         CACHE PATH "Cargo target directory for the Rust STO TPC-C static library")
     set(STO_TPCC_RUST_EXTRA_RUSTFLAGS "" CACHE STRING
         "Extra rustc flags appended when building the Rust STO TPC-C static library")
+    set(MAKO_RUST_STO_ASAN_QUARANTINE_TESTS "" CACHE STRING
+        "Exact intentional-quarantine tests skipped by the ASan workspace sweep")
+    set(_MAKO_RUST_STO_CONFIGURED_SANITIZER "")
+    if(STO_TPCC_RUST_EXTRA_RUSTFLAGS MATCHES
+            "(^|[ \t])-Zsanitizer=([^ \t]+)($|[ \t])")
+        set(_MAKO_RUST_STO_CONFIGURED_SANITIZER "${CMAKE_MATCH_2}")
+    endif()
+    if(NOT _MAKO_RUST_STO_CONFIGURED_SANITIZER STREQUAL ""
+            AND NOT MAKO_RUST_STO_WORKSPACE_NATIVE_LINK)
+        message(FATAL_ERROR
+            "Rust compiler sanitizer instrumentation requires "
+            "MAKO_RUST_STO_WORKSPACE_NATIVE_LINK=ON so workspace tests "
+            "cannot omit the native Masstree link closure")
+    endif()
+    if(MAKO_RUST_STO_WORKSPACE_NATIVE_LINK)
+        if(NOT _MAKO_RUST_STO_CONFIGURED_SANITIZER MATCHES
+                "^(address|thread)$")
+            message(FATAL_ERROR
+                "MAKO_RUST_STO_WORKSPACE_NATIVE_LINK requires address or "
+                "thread in STO_TPCC_RUST_EXTRA_RUSTFLAGS")
+        endif()
+        if(NOT MAKO_RUST_STO_SANITIZER_RUSTFLAGS MATCHES
+                "(^|[ \t])-Zsanitizer=${_MAKO_RUST_STO_CONFIGURED_SANITIZER}($|[ \t])"
+                OR NOT MAKO_RUST_STO_SANITIZER_RUSTFLAGS MATCHES
+                "(^|[ \t])-Zexternal-clangrt($|[ \t])")
+            message(FATAL_ERROR
+                "MAKO_RUST_STO_WORKSPACE_NATIVE_LINK requires matching "
+                "-Zsanitizer and -Zexternal-clangrt in RUSTFLAGS")
+        endif()
+    endif()
+    set(_MAKO_RUST_STO_WORKSPACE_TEST_ARGS "")
+    if(_MAKO_RUST_STO_CONFIGURED_SANITIZER STREQUAL "address")
+        if(MAKO_RUST_STO_ASAN_QUARANTINE_TESTS STREQUAL "")
+            message(FATAL_ERROR
+                "ASan requires an explicit "
+                "MAKO_RUST_STO_ASAN_QUARANTINE_TESTS allowlist")
+        endif()
+        if(MAKO_RUST_STO_ASAN_NATIVE_QUARANTINE_TESTS STREQUAL "")
+            message(FATAL_ERROR
+                "ASan requires an explicit "
+                "MAKO_RUST_STO_ASAN_NATIVE_QUARANTINE_TESTS allowlist")
+        endif()
+        if(NOT MAKO_RUST_STO_ASAN_OPTIONS MATCHES
+                "(^|:)detect_leaks=1(:|$)")
+            message(FATAL_ERROR
+                "ASan requires MAKO_RUST_STO_ASAN_OPTIONS with "
+                "detect_leaks=1")
+        endif()
+        list(APPEND _MAKO_RUST_STO_WORKSPACE_TEST_ARGS --)
+        foreach(_MAKO_RUST_STO_ASAN_QUARANTINE_TEST IN LISTS
+                MAKO_RUST_STO_ASAN_QUARANTINE_TESTS)
+            if(NOT _MAKO_RUST_STO_ASAN_QUARANTINE_TEST MATCHES
+                    "^[A-Za-z0-9_.:-]+$")
+                message(FATAL_ERROR
+                    "Invalid ASan quarantine test name: "
+                    "${_MAKO_RUST_STO_ASAN_QUARANTINE_TEST}")
+            endif()
+            list(APPEND _MAKO_RUST_STO_WORKSPACE_TEST_ARGS
+                --skip "${_MAKO_RUST_STO_ASAN_QUARANTINE_TEST}")
+        endforeach()
+        foreach(_MAKO_RUST_STO_ASAN_NATIVE_QUARANTINE_TEST IN LISTS
+                MAKO_RUST_STO_ASAN_NATIVE_QUARANTINE_TESTS)
+            if(NOT _MAKO_RUST_STO_ASAN_NATIVE_QUARANTINE_TEST MATCHES
+                    "^[A-Za-z0-9_.:-]+$")
+                message(FATAL_ERROR
+                    "Invalid native ASan quarantine test name: "
+                    "${_MAKO_RUST_STO_ASAN_NATIVE_QUARANTINE_TEST}")
+            endif()
+        endforeach()
+    elseif(NOT MAKO_RUST_STO_ASAN_QUARANTINE_TESTS STREQUAL ""
+            OR NOT MAKO_RUST_STO_ASAN_NATIVE_QUARANTINE_TESTS STREQUAL ""
+            OR NOT MAKO_RUST_STO_ASAN_OPTIONS STREQUAL "")
+        message(FATAL_ERROR
+            "Rust STO ASan quarantine allowlists are valid only for ASan")
+    endif()
     set(_STO_TPCC_RUSTFLAGS
         "-C target-cpu=native -C force-frame-pointers=yes")
     if(NOT STO_TPCC_RUST_EXTRA_RUSTFLAGS STREQUAL "")
         string(APPEND _STO_TPCC_RUSTFLAGS
             " ${STO_TPCC_RUST_EXTRA_RUSTFLAGS}")
     endif()
+    if(MAKO_RUST_STO_TARGET_TRIPLE STREQUAL "")
+        set(_STO_TPCC_RUST_PROFILE_DIR
+            "${STO_TPCC_RUST_TARGET_DIR}/release")
+    else()
+        set(_STO_TPCC_RUST_PROFILE_DIR
+            "${STO_TPCC_RUST_TARGET_DIR}/${MAKO_RUST_STO_TARGET_TRIPLE}/release")
+    endif()
     set(STO_TPCC_RUST_ARCHIVE
-        "${STO_TPCC_RUST_TARGET_DIR}/release/libsto_tpcc_ffi.a")
+        "${_STO_TPCC_RUST_PROFILE_DIR}/libsto_tpcc_ffi.a")
     set(STO_TPCC_RUST_MANIFESTS
+        "${CMAKE_CURRENT_SOURCE_DIR}/rust-toolchain.toml"
         "${CMAKE_CURRENT_SOURCE_DIR}/crates/Cargo.toml"
         "${CMAKE_CURRENT_SOURCE_DIR}/crates/masstree/Cargo.toml"
         "${CMAKE_CURRENT_SOURCE_DIR}/crates/masstree/build.rs"
@@ -1736,6 +1973,7 @@ if(MAKO_CARGO_EXECUTABLE)
         COMMAND "${CMAKE_COMMAND}" -E env
             --unset=CARGO_BUILD_TARGET
             --unset=CARGO_ENCODED_RUSTFLAGS
+            ${_MAKO_RUST_STO_SCOPED_TOOLCHAIN_LINK_ENV}
             "CARGO_TARGET_DIR=${STO_TPCC_RUST_TARGET_DIR}"
             "CARGO_INCREMENTAL=0"
             "CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1"
@@ -1745,6 +1983,7 @@ if(MAKO_CARGO_EXECUTABLE)
             "CARGO_PROFILE_RELEASE_PANIC=unwind"
             "RUSTFLAGS=${_STO_TPCC_RUSTFLAGS}"
             "${MAKO_CARGO_EXECUTABLE}" build --release --locked
+            ${_MAKO_RUST_STO_CARGO_PLATFORM_ARGS}
             --manifest-path "${CMAKE_CURRENT_SOURCE_DIR}/crates/Cargo.toml"
             --package sto-tpcc-ffi
         DEPENDS
@@ -1795,7 +2034,7 @@ if(MAKO_CARGO_EXECUTABLE)
         ${LIBEVENT_LDFLAGS}
         ${GFLAGS_LDFLAGS}
         ${PROTOBUF_LDFLAGS}
-        $<$<NOT:$<BOOL:${MAKO_ASAN_ENABLED}>>:${JEMALLOC_LDFLAGS}>)
+        $<$<AND:$<NOT:$<BOOL:${MAKO_ASAN_ENABLED}>>,$<NOT:$<BOOL:${MAKO_TSAN_ENABLED}>>>:${JEMALLOC_LDFLAGS}>)
     add_dependencies(sto_tpcc_bench mako sto_tpcc_rust_build ${TXLOG_BUILD_DEPS})
 
     add_executable(sto_tpcc_cpp_wrapper_smoke EXCLUDE_FROM_ALL
@@ -1832,7 +2071,7 @@ if(MAKO_CARGO_EXECUTABLE)
         ${LIBEVENT_LDFLAGS}
         ${GFLAGS_LDFLAGS}
         ${PROTOBUF_LDFLAGS}
-        $<$<NOT:$<BOOL:${MAKO_ASAN_ENABLED}>>:${JEMALLOC_LDFLAGS}>)
+        $<$<AND:$<NOT:$<BOOL:${MAKO_ASAN_ENABLED}>>,$<NOT:$<BOOL:${MAKO_TSAN_ENABLED}>>>:${JEMALLOC_LDFLAGS}>)
     add_dependencies(sto_tpcc_cpp_wrapper_smoke
         mako sto_tpcc_rust_build ${TXLOG_BUILD_DEPS})
 
@@ -1870,7 +2109,7 @@ if(MAKO_CARGO_EXECUTABLE)
         ${LIBEVENT_LDFLAGS}
         ${GFLAGS_LDFLAGS}
         ${PROTOBUF_LDFLAGS}
-        $<$<NOT:$<BOOL:${MAKO_ASAN_ENABLED}>>:${JEMALLOC_LDFLAGS}>)
+        $<$<AND:$<NOT:$<BOOL:${MAKO_ASAN_ENABLED}>>,$<NOT:$<BOOL:${MAKO_TSAN_ENABLED}>>>:${JEMALLOC_LDFLAGS}>)
     add_dependencies(sto_tpcc_cpp_wrapper_scan_smoke
         mako sto_tpcc_rust_build ${TXLOG_BUILD_DEPS})
 else()
@@ -1898,6 +2137,140 @@ if(TARGET sto_tpcc_cpp_wrapper_scan_smoke)
             "${CMAKE_CURRENT_SOURCE_DIR}/config/mako_sto_tpcc_local.yml")
     set_tests_properties(test_sto_tpcc_cpp_wrapper_scan_smoke PROPERTIES
         LABELS "sto;masstree;rust;ffi")
+endif()
+
+if(TARGET sto_tpcc_bench)
+    add_test(NAME test_sto_tpcc_cpp_slow_exit
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/ci/run_sto_tpcc_ctest.py"
+            --expected-engine cpp
+            --expected-threads 1
+            --expected-warehouses 1
+            --expected-seconds 1
+            --
+            "$<TARGET_FILE:sto_tpcc_bench>"
+            --num-threads 1
+            --shard-config "${CMAKE_CURRENT_SOURCE_DIR}/config/mako_sto_tpcc_local.yml"
+            --site-name local_s0
+            --runtime 1
+            --storage-engine cpp
+            --slow-exit)
+    set_tests_properties(test_sto_tpcc_cpp_slow_exit PROPERTIES
+        LABELS "sto;masstree;ffi;lifecycle;tpcc;cpp"
+        RUN_SERIAL TRUE
+        TIMEOUT 180)
+
+    add_test(NAME test_sto_tpcc_cpp_multishard_slow_exit
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/ci/run_sto_tpcc_ctest.py"
+            --expected-engine cpp
+            --expected-threads 1
+            --expected-warehouses 1
+            --expected-seconds 1
+            --expected-result-count 2
+            --
+            "$<TARGET_FILE:sto_tpcc_bench>"
+            --num-threads 1
+            --shard-config "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/config/local-shards2-warehouses1.yml"
+            --local-shards 0,1
+            --runtime 1
+            --storage-engine cpp
+            --slow-exit)
+    set_tests_properties(test_sto_tpcc_cpp_multishard_slow_exit PROPERTIES
+        LABELS "sto;masstree;ffi;lifecycle;tpcc;cpp;multishard"
+        RUN_SERIAL TRUE
+        TIMEOUT 240)
+
+    add_test(NAME test_sto_tpcc_rust_slow_exit
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/ci/run_sto_tpcc_ctest.py"
+            --expected-engine rust
+            --expected-threads 1
+            --expected-warehouses 1
+            --expected-seconds 1
+            --
+            "$<TARGET_FILE:sto_tpcc_bench>"
+            --num-threads 1
+            --shard-config "${CMAKE_CURRENT_SOURCE_DIR}/config/mako_sto_tpcc_local.yml"
+            --site-name local_s0
+            --runtime 1
+            --storage-engine rust
+            --slow-exit)
+    set_tests_properties(test_sto_tpcc_rust_slow_exit PROPERTIES
+        LABELS "sto;masstree;rust;ffi;lifecycle;tpcc"
+        RUN_SERIAL TRUE
+        TIMEOUT 180)
+
+    add_test(NAME test_sto_tpcc_rust_concurrent
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/ci/run_sto_tpcc_ctest.py"
+            --expected-engine rust
+            --expected-threads 4
+            --expected-warehouses 4
+            --expected-seconds 1
+            --
+            "$<TARGET_FILE:sto_tpcc_bench>"
+            --num-threads 4
+            --shard-config "${CMAKE_CURRENT_SOURCE_DIR}/config/mako_sto_tpcc_local.yml"
+            --site-name local_s0
+            --runtime 1
+            --storage-engine rust
+            --slow-exit)
+    set_tests_properties(test_sto_tpcc_rust_concurrent PROPERTIES
+        LABELS "sto;masstree;rust;ffi;lifecycle;tpcc;concurrency"
+        RUN_SERIAL TRUE
+        TIMEOUT 180)
+
+    add_test(NAME test_sto_tpcc_rejects_duplicate_local_shards
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/ci/run_sto_tpcc_ctest.py"
+            --expected-failure-text "duplicate shard index 0"
+            --expected-exit-code 2
+            --
+            "$<TARGET_FILE:sto_tpcc_bench>"
+            --num-threads 1
+            --shard-config "${CMAKE_CURRENT_SOURCE_DIR}/config/mako_sto_tpcc_local.yml"
+            --local-shards 0,0
+            --storage-engine rust
+            --slow-exit)
+    set_tests_properties(test_sto_tpcc_rejects_duplicate_local_shards PROPERTIES
+        LABELS "sto;masstree;rust;ffi;lifecycle;tpcc;configuration"
+        RUN_SERIAL TRUE
+        TIMEOUT 30)
+
+    add_test(NAME test_sto_tpcc_rejects_partial_local_shards
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/ci/run_sto_tpcc_ctest.py"
+            --expected-failure-text "hybrid local/remote multi-shard topology is unsupported"
+            --expected-exit-code 2
+            --
+            "$<TARGET_FILE:sto_tpcc_bench>"
+            --num-threads 1
+            --shard-config "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/config/local-shards3-warehouses1.yml"
+            --local-shards 0,1
+            --storage-engine rust
+            --slow-exit)
+    set_tests_properties(test_sto_tpcc_rejects_partial_local_shards PROPERTIES
+        LABELS "sto;masstree;rust;ffi;lifecycle;tpcc;configuration"
+        RUN_SERIAL TRUE
+        TIMEOUT 30)
+
+    add_test(NAME test_sto_tpcc_rejects_rust_distributed_shard
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/ci/run_sto_tpcc_ctest.py"
+            --expected-failure-text "Rust STO TPC-C comparison supports one non-replicated shard"
+            --expected-exit-code 2
+            --
+            "$<TARGET_FILE:sto_tpcc_bench>"
+            --num-threads 1
+            --shard-config "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/config/local-shards2-warehouses1.yml"
+            --local-shards 0
+            --storage-engine rust
+            --slow-exit)
+    set_tests_properties(test_sto_tpcc_rejects_rust_distributed_shard PROPERTIES
+        LABELS "sto;masstree;rust;ffi;lifecycle;tpcc;configuration"
+        RUN_SERIAL TRUE
+        TIMEOUT 30)
 endif()
 
 # C consumers must be able to include the public ABI without any C++
@@ -1946,29 +2319,59 @@ set_tests_properties(test_sto_tpcc_ffi_c11_header PROPERTIES
 
 # This target is the build half of the Rust STO/Masstree CI gate. Its
 # dependencies compile every opt-in C/C++ consumer and run Rust against the
-# native archives. The final command covers the rest of the Rust workspace,
-# whose ordinary tests deliberately run without native link settings. The
-# sto-tpcc-ffi unit-test binary is the exception: its exported entry points
-# retain native Masstree calls, so the native runner executes that binary with
-# the CMake archive closure instead of relying on linker dead-code grouping.
+# native archives. The final command covers the rest of the Rust workspace.
+# Ordinary builds leave its native environment empty. Sanitizer builds opt in
+# to the CMake archive closure because sanitizer module constructors retain
+# otherwise dead native references; this also intentionally enables every
+# native-gated target in the all-target Clippy and test sweeps. The
+# sto-tpcc-ffi unit-test binary still runs case-by-case in the native runner
+# because native registries have process-wide lifetimes.
 if(MAKO_CARGO_EXECUTABLE)
+    set(_MAKO_RUST_STO_WORKSPACE_NATIVE_ENV
+        ${_MAKO_RUST_STO_SCOPED_SANITIZER_ENV})
+    if(MAKO_RUST_STO_WORKSPACE_NATIVE_LINK)
+        set(_MAKO_RUST_STO_WORKSPACE_NATIVE_DIRS
+            "$<TARGET_FILE_DIR:mako>:$<TARGET_FILE_DIR:masstree>:${_MAKO_CXX_COMPILER_ROOT}/lib")
+        set(_MAKO_RUST_STO_WORKSPACE_LOADER_PATH
+            "${_MAKO_CXX_COMPILER_ROOT}/lib")
+        if(DEFINED ENV{${_MAKO_MTREE_LOADER_PATH_VARIABLE}}
+                AND NOT "$ENV{${_MAKO_MTREE_LOADER_PATH_VARIABLE}}" STREQUAL "")
+            string(APPEND _MAKO_RUST_STO_WORKSPACE_LOADER_PATH
+                ":$ENV{${_MAKO_MTREE_LOADER_PATH_VARIABLE}}")
+        endif()
+        list(APPEND _MAKO_RUST_STO_WORKSPACE_NATIVE_ENV
+            "MAKO_MTREE_NATIVE_INTEGRATION=1"
+            "MAKO_MTREE_NATIVE_LIB_DIRS=${_MAKO_RUST_STO_WORKSPACE_NATIVE_DIRS}"
+            "MAKO_MTREE_NATIVE_LIBS=${MAKO_MTREE_RUST_NATIVE_LIBS}"
+            "${_MAKO_MTREE_LOADER_PATH_VARIABLE}=${_MAKO_RUST_STO_WORKSPACE_LOADER_PATH}")
+        if(_MAKO_RUST_STO_CONFIGURED_SANITIZER STREQUAL "address")
+            list(APPEND _MAKO_RUST_STO_WORKSPACE_NATIVE_ENV
+                "ASAN_OPTIONS=${MAKO_RUST_STO_ASAN_OPTIONS}")
+        elseif(_MAKO_RUST_STO_CONFIGURED_SANITIZER STREQUAL "thread")
+            list(APPEND _MAKO_RUST_STO_WORKSPACE_NATIVE_ENV
+                "TSAN_OPTIONS=$ENV{TSAN_OPTIONS}")
+        endif()
+    endif()
     add_custom_target(rust_sto_integration
         COMMAND "${CMAKE_COMMAND}" -E env
             --unset=CARGO_BUILD_TARGET
             --unset=CARGO_ENCODED_RUSTFLAGS
             "CARGO_TARGET_DIR=${CMAKE_CURRENT_BINARY_DIR}/rust-workspace-target"
+            ${_MAKO_RUST_STO_WORKSPACE_NATIVE_ENV}
             "${MAKO_CARGO_EXECUTABLE}" clippy
             --manifest-path "${CMAKE_CURRENT_SOURCE_DIR}/crates/Cargo.toml"
             --workspace
             --all-targets
             --all-features
             --locked
+            ${_MAKO_RUST_STO_CARGO_PLATFORM_ARGS}
             --
             -D warnings
         COMMAND "${CMAKE_COMMAND}" -E env
             --unset=CARGO_BUILD_TARGET
             --unset=CARGO_ENCODED_RUSTFLAGS
             "CARGO_TARGET_DIR=${CMAKE_CURRENT_BINARY_DIR}/rust-workspace-target"
+            ${_MAKO_RUST_STO_WORKSPACE_NATIVE_ENV}
             "${MAKO_CARGO_EXECUTABLE}" test
             --manifest-path "${CMAKE_CURRENT_SOURCE_DIR}/crates/Cargo.toml"
             --workspace
@@ -1976,6 +2379,8 @@ if(MAKO_CARGO_EXECUTABLE)
             --all-targets
             --all-features
             --locked
+            ${_MAKO_RUST_STO_CARGO_PLATFORM_ARGS}
+            ${_MAKO_RUST_STO_WORKSPACE_TEST_ARGS}
         DEPENDS
             check_mtree_abi_exports
             rust_masstree_native_integration
@@ -2579,7 +2984,11 @@ if(BUILD_TESTS)
         ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES}
         pthread)
     add_test(NAME test_mtree_abi COMMAND test_mtree_abi)
-    set_tests_properties(test_mtree_abi PROPERTIES LABELS "masstree;silo;abi")
+    set_tests_properties(test_mtree_abi PROPERTIES
+        LABELS "masstree;silo;abi;rust;ffi")
+    if(TARGET rust_sto_integration)
+        add_dependencies(rust_sto_integration test_mtree_abi)
+    endif()
 
     add_test(NAME test_mtree_abi_exports
         COMMAND "${CMAKE_COMMAND}"

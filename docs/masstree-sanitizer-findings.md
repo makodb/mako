@@ -1,28 +1,48 @@
 # Masstree — Sanitizer Findings Report
 
-Surfaced by Tier 3.1 of `docs/masstree-test-plan.md`. Each finding is
-documented in enough detail that the user can decide whether it is an
-actual bug or an intentional pattern. No fixes have been applied; the
-items below are all currently silenced by the suppressions files in
-`src/masstree/{ubsan,tsan}_suppressions.txt`.
+Surfaced by Tier 3.1 of `docs/masstree-test-plan.md`. This report retains the
+original evidence and records each finding's current disposition. The
+`kpermuter`, `string_slice`, and Mako spinlock defects are fixed in-tree and are
+not suppressed. Only Masstree's documented optimistic-read findings remain in
+the UBSan and TSan suppression files.
 
 ## TL;DR
 
 | # | Sanitizer | Location | Class | My read |
 |---|---|---|---|---|
-| 1 | UBSan | `src/masstree/kpermuter.hh:128` | shift-exponent ≥ width | **likely benign** on x86 — value is consumed by a mask whose unused-bit branch is never taken, but the UB is real per the C++ memory model |
-| 2 | UBSan | `src/masstree/string_slice.hh:52,83,87,158,159` | unaligned 8-byte load | **intentional perf trick**, gated by `HAVE_UNALIGNED_ACCESS`; UB per spec, safe on x86_64 |
-| 3 | UBSan | `src/masstree/masstree_struct.hh:156` (via line 661) | array index from stale read inside optimistic retry | **intentional lock-free pattern**; value is discarded by the surrounding version-check retry |
-| 4 | TSan | `src/masstree/*` (~1,500 distinct call sites) | racy reads of node fields under optimistic concurrency | **intentional lock-free pattern**; safety is via Masstree's version-counter retry, not via `std::atomic` ordering |
-| 5 | TSan | `src/mako/spinlock.h:23,40` | race on `volatile uint32_t value` | **the only finding that looks like a real bug** — plain `volatile` is not a substitute for `std::atomic<uint32_t>` under the C++11+ memory model |
+| 1 | UBSan | `src/masstree/kpermuter.hh:128` | shift-exponent ≥ width | **fixed** by returning zero before a shift at or beyond the word width; suppression removed |
+| 2 | UBSan | `src/masstree/string_slice.hh` | unaligned typed load | **fixed** with a `memcpy`-based load helper that preserves optimized x86 code generation; suppression removed |
+| 3 | UBSan | `src/masstree/masstree_struct.hh:156` (via line 661) | array index from stale read inside optimistic retry | **accepted known UB debt**; the retry discards the value but cannot make the prior access language-defined |
+| 4 | TSan | `src/masstree/*` (~1,500 distinct call sites) | racy reads of node fields under optimistic concurrency | **accepted known UB debt** in the inherited x86 implementation; the later version retry does not legalize plain C++ data races |
+| 5 | TSan | `src/mako/spinlock.h:23,40` | race on `volatile uint32_t value` | **fixed** with `std::atomic<uint32_t>` and explicit memory ordering; suppressions removed |
+| 6 | Native stress | Mako `SiloRuntime` thread registration | monotonically exhausted 512-slot worker ID space | **graceful rejection added** for opted-in callers; recycling and the legacy aborting path remain deferred |
+| 7 | ASan | `src/masstree/masstree_struct.hh` external key suffix comparisons | fixed-width read beyond an exact-length 11/12-byte caller buffer | **fixed** by using bounded `memcmp` for the external operand; no suppression added |
 
-ASan: zero findings across all three test binaries.
+The historical ASan run reported zero findings across its three Masstree test
+binaries. The Rust STO native sanitizer workflow now reruns the expanded
+boundary and TPC-C gate on every relevant pull request.
+
+The Rust boundary ASan result has an explicit leak qualification. The ordinary
+workspace sweep leak-checks every case except the 30 exact intentional
+transaction-frame quarantine cases in
+`scripts/ci/rust_sto_quarantine_tests.txt`; those cases are rerun individually
+with leak reporting disabled. The native FFI runner leak-checks 31 of 32 unit
+cases and disables leak reporting only for
+`tests::post_install_row_count_failure_marks_runtime_indeterminate`, which
+deliberately retains an indeterminate frame after publication begins. The gate
+audits every substring skip against the test inventory before applying it.
 
 ---
 
 ## Finding 1 — `kpermuter::value_from` shift-exponent
 
+**Resolution**: fixed. `value_from` computes the requested shift and returns
+zero when it reaches the `value_type` width. The obsolete `shift-base` and
+`shift-exponent` suppressions were removed, so UBSan will detect a recurrence.
+
 **Where**: `src/masstree/kpermuter.hh:128`
+
+Original code:
 
 ```cpp
 value_type value_from(int i) const {
@@ -61,23 +81,21 @@ x86 in this specific case (shifting `x_` by 0 mod 64 returns `x_`, but
 the caller masks the result to zero downstream — I have not verified
 the masking, so this is the part that warrants a second look).
 
-**What to check before deciding**
-
-- Walk the call site at `masstree_split.hh:97` and confirm the
-  downstream consumer either masks the high bits away or never enters
-  this code path with `i + 1 == 64`.
-- If the caller does mask, the fix is a one-line clamp:
-  `int s = (i + 1) << 2; return s >= 64 ? 0 : (x_ >> s);` — well-defined
-  on all platforms.
-- If the caller depends on the x86-specific "shift by 64 returns x_"
-  semantics, that's a real bug on any non-x86 target.
+The implemented guard makes the intended all-zero result explicit and
+well-defined on every target.
 
 ---
 
 ## Finding 2 — `string_slice` unaligned 8-byte loads
 
+**Resolution**: fixed. All affected typed dereferences now use a local
+`memcpy` helper. The obsolete `alignment:string_slice` suppression was removed,
+so UBSan will detect any new unaligned typed load in this code.
+
 **Where**: `src/masstree/string_slice.hh:52, 83, 87, 158, 159` (and
 likely more under richer workloads).
+
+Original code:
 
 ```cpp
 #if HAVE_UNALIGNED_ACCESS
@@ -106,15 +124,8 @@ Per the C++ memory model this is UB regardless of platform: a
 `p` is not 8-byte aligned. The fact that x86 tolerates it doesn't
 remove the UB.
 
-**Is it a bug?**
-
-If the codebase is x86_64-only, no — the generated code is correct
-and identical to the safe alternative.
-
-If the codebase ever targets older ARM or any strict-alignment
-architecture, yes — and the fix is `memcpy` into a local `uint64_t`,
-which modern compilers fold to a single unaligned load on x86 (so the
-perf trick is preserved).
+The `memcpy` implementation removes the C++ alignment violation and lets the
+compiler select the appropriate efficient load for each architecture.
 
 ---
 
@@ -305,7 +316,7 @@ the compiler from optimizing away or coalescing the access, but it
 does not impose any memory ordering and does not establish a
 happens-before edge with concurrent accesses on the same object.
 
-The current implementation relies on:
+The original implementation relied on:
 - `__sync_bool_compare_and_swap` for the actual mutual exclusion
   (this is fine — it's an atomic builtin).
 - `COMPILER_MEMORY_FENCE` for ordering around the critical section
@@ -314,15 +325,15 @@ The current implementation relies on:
   this would not establish the necessary release/acquire edge).
 - Plain `volatile` reads in the spin loop.
 
-On x86 the code works by accident. On ARM / POWER it would be a real
+On x86 the old code worked by accident. On ARM / POWER it would be a real
 correctness bug — the load of `value = 0` in `unlock()` could be
 reordered with respect to writes inside the critical section, and
 the spinning load in `lock()` could observe stale values for an
 unbounded period.
 
-**This is the finding I'd recommend looking at most carefully** — it
-is the only one of the five that I would call an outright bug rather
-than "intentional but UB-per-spec." The replacement is mechanical:
+This was the only one of the first five findings classified as an outright bug
+rather than an intentional optimistic-read pattern. Its replacement was
+mechanical:
 
 ```cpp
 std::atomic<uint32_t> value{0};
@@ -330,24 +341,22 @@ std::atomic<uint32_t> value{0};
 // unlock:  value.store(0, memory_order_release);
 ```
 
-It is suppressed in `src/masstree/tsan_suppressions.txt` by
-`race:spinlock::lock` / `race:spinlock::unlock` because chasing it
-inside Tier 3.1 was out of scope.
+It was initially suppressed by `race:spinlock::lock` and
+`race:spinlock::unlock`. Both entries were removed after the atomic rewrite.
 
 ---
 
 ## Cross-cutting recommendations
 
-- **Findings 1–4 are all "UB per the C++ memory model that happens to
-  work on x86."** Whether to fix any of them is a portability and
-  hygiene call, not a correctness call on current hardware.
-- **Finding 5 is a real concurrency bug** on any non-TSO architecture
-  and a "works by accident" pattern on x86. Worth investigating
-  whether `spinlock` is on a hot enough path that the relaxed-atomic
-  rewrite needs benchmarking before/after.
-- **None of the five findings affected the test suite's pass rate**
-  (113/113 passed under each sanitizer once the suppressions were in
-  place). They were all surfaced as out-of-band warnings.
+- Findings 1, 2, 5, and 7 are fixed and unsuppressed. The sanitizer gate now
+  treats a recurrence as a failure.
+- Findings 3 and 4 remain accepted, explicitly qualified C++ UB debt in the
+  inherited Masstree implementation. The filename-wide TSan suppressions can
+  hide a new race in the same frames, so a passing TSan job means no
+  unsuppressed finding under that reviewed list, not an absence of all races.
+- In the original investigation, all 113 tests passed once the then-current
+  suppressions were active. Current results are tied to workflow artifacts for
+  the exact tested revision rather than this historical report.
 
 ---
 
@@ -469,7 +478,7 @@ creations, but the counter eventually still hits 512.
 once. The fixed test pool (4 writers + 2 readers + N scanners) is
 nowhere near 512 IDs.
 
-**Fix sketch (not landed here)**:
+**Full slot-recycling fix (not landed)**:
 
 The cleanest fix is a `thread_local` sentinel that releases the
 allocated `core_id` on thread exit and a freelist in `SiloRuntime`
@@ -513,3 +522,23 @@ The minimum-effort interim mitigation is to bump `NMAXCORES`
 but that just kicks the can — any consumer with >512 unique
 thread lifetimes still hits it. The freelist fix is roughly 20
 lines and should be the actual landing.
+
+---
+
+## Finding 7: exact-length external key over-read in `equals_sloppy` (fixed)
+
+**Where**: the external-key suffix comparisons in
+`src/masstree/masstree_struct.hh`, reached by the Rust fixed-read and resolved-
+cache native tests with exact-length 11-byte and 12-byte key allocations.
+
+Masstree's internal stringbag storage is padded and may safely use
+`string_slice<uintptr_t>::equals_sloppy`. The compared `key_type` suffix can,
+however, point to caller-owned storage ending exactly at the logical key
+length. `equals_sloppy` rounds its final comparison up to a machine word, so it
+read four bytes beyond those exact allocations. ASan reported the out-of-bounds
+read at the native Rust/Masstree boundary.
+
+Both comparisons now use `memcmp(s.s, ka.suffix().s, s.len)`. The internal
+padded comparisons retain `equals_sloppy`, so the fix is limited to the operand
+whose padding is not guaranteed. No suppression or leak exception applies to
+this finding; the fixed-read and resolved-cache tests run under ordinary ASan.
