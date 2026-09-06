@@ -622,9 +622,8 @@ public:
   #define RESET_NODE_BY_E(e) \
     char *oldval_str=(char*)e->data();\
     int oldval_len=e->length();\
-    mako::Node* header = reinterpret_cast<mako::Node*>(oldval_str+oldval_len-mako::BITS_OF_NODE);\
-    header->timestamp = 0; \
-    header->data_size = 0; 
+    mako::store_value_node_timestamp(oldval_str, oldval_len, 0); \
+    mako::store_value_node_data_size(oldval_str, oldval_len, 0);
 
   void install(TransItem& item, Transaction& t) override {
     ensure_supported_runtime_mode();

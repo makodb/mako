@@ -2497,6 +2497,32 @@ if(BUILD_TESTS)
         ${LIBEVENT_LDFLAGS}
     )
 
+    # Linux epoll_event is packed on x86-64. Keep ADD and MOD coverage in a
+    # root-owned target because src/srpc's optional nested test dependencies
+    # are intentionally not initialized by the main repository checkout.
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_executable(test_srpc_epoll_platform
+            tests/srpc_epoll_platform_test.cc)
+        target_include_directories(test_srpc_epoll_platform PRIVATE
+            ${TEST_INCLUDE_DIRS}
+            ${GTEST_INCLUDE_DIRS})
+        target_compile_options(test_srpc_epoll_platform PRIVATE
+            ${TEST_COMPILE_OPTIONS})
+        target_link_libraries(test_srpc_epoll_platform PRIVATE
+            ${TEST_LINK_LIBS}
+            ${GTEST_LIBRARIES}
+            ${GTEST_MAIN_LIBRARIES})
+        add_test(NAME test_srpc_epoll_platform
+            COMMAND test_srpc_epoll_platform)
+        set_tests_properties(test_srpc_epoll_platform PROPERTIES
+            LABELS "rust;srpc;epoll;ffi"
+            RUN_SERIAL TRUE
+            TIMEOUT 30)
+        if(TARGET rust_sto_integration)
+            add_dependencies(rust_sto_integration test_srpc_epoll_platform)
+        endif()
+    endif()
+
 
 
     # Marshal Microbenchmark (no gtest — standalone main; prints ns/op).
@@ -2911,6 +2937,11 @@ if(BUILD_TESTS)
         ${GTEST_INCLUDE_DIRS}
     )
     add_test(NAME SiloVarintTests COMMAND test_silo_varint)
+    set_tests_properties(SiloVarintTests PROPERTIES
+        LABELS "silo;sto;rust;serializer")
+    if(TARGET rust_sto_integration)
+        add_dependencies(rust_sto_integration test_silo_varint)
+    endif()
 
     # Test: Silo RCU + Thread
     add_executable(test_silo_rcu_thread tests/test_silo_rcu_thread.cc)
@@ -2989,6 +3020,29 @@ if(BUILD_TESTS)
         LABELS "masstree;silo;abi;rust;ffi")
     if(TARGET rust_sto_integration)
         add_dependencies(rust_sto_integration test_mtree_abi)
+    endif()
+
+    # The Mako value suffix is a packed byte-stream contract shared by the
+    # native STO/Masstree path and the Rust bridge. Exercise every possible
+    # trailer alignment plus the production replay parser/materializer under
+    # sanitizers, including odd scalar offsets and thread-local value reuse.
+    add_executable(test_mako_value_metadata
+        tests/test_mako_value_metadata.cc)
+    target_include_directories(test_mako_value_metadata PRIVATE
+        ${TEST_INCLUDE_DIRS}
+        ${GTEST_INCLUDE_DIRS}
+    )
+    target_compile_options(test_mako_value_metadata PRIVATE
+        ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_mako_value_metadata
+        mako ${TEST_LINK_LIBS}
+        ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES}
+        pthread)
+    add_test(NAME test_mako_value_metadata COMMAND test_mako_value_metadata)
+    set_tests_properties(test_mako_value_metadata PROPERTIES
+        LABELS "sto;masstree;rust;metadata;replay")
+    if(TARGET rust_sto_integration)
+        add_dependencies(rust_sto_integration test_mako_value_metadata)
     endif()
 
     add_test(NAME test_mtree_abi_exports
@@ -3168,7 +3222,7 @@ if(BUILD_TESTS)
     message(STATUS "  Masstree Tests:")
     message(STATUS "    - test_masstree: Core Masstree b-tree regression tests")
     message(STATUS "  Live Silo-support/STO Tests:")
-    message(STATUS "    - test_silo_varint: Varint encoding/decoding (22 tests)")
+    message(STATUS "    - test_silo_varint: Varint/serializer encoding (27 tests)")
     message(STATUS "    - test_silo_rcu_thread: RCU memory management (9 tests)")
     message(STATUS "    - test_silo_allocator: allocator support (9 tests)")
     message(STATUS "    - test_sto_transaction: STO Transaction RCU (13 tests)")

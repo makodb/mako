@@ -4,7 +4,7 @@
 #include "function_pool.h"
 
 // @unsafe
-size_t getFileContentNew_OneLogOptimized_mbta_v2(char *buffer, /* K-V pairs */
+size_t getFileContentNew_OneLogOptimized_mbta_v2(const char *buffer, /* K-V pairs */
                                                  uint32_t cid,  /* timestamp on current shard */
                                                  unsigned short int count,
                                                  unsigned int len,

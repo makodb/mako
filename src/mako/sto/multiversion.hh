@@ -1,6 +1,7 @@
 #pragma once
 #include <map>
 #include "lib/common.h"
+#include "sto/version_chain.h"
 #include <vector>
 #include "sto/sync_util.hh"
 #include "sto/common.hh"
@@ -19,32 +20,32 @@ public:
     template <typename ValueType>
     static std::vector<string> getAllVersion(string val) {
         std::vector<string> ret;
-        int vt = 1;
-        uint32_t *time_term = 0;
-        time_term = reinterpret_cast<uint32_t*>((char*)(val.data()+val.length()-mako::EXTRA_BITS_FOR_VALUE));
-        
+
         std::string tmp;
         tmp.assign(val.data(),val.length());
         ret.push_back(isDeleted(val)? "DEL": (tmp));
-        
-        // fast peek
-        mako::Node *header = reinterpret_cast<mako::Node *>((char*)(val.data()+val.length()-mako::BITS_OF_NODE));
-        while (header->data_size > 0) {
-            vt ++;
-            time_term = reinterpret_cast<uint32_t*>((char*)(val.data()+val.length()-mako::EXTRA_BITS_FOR_VALUE));
 
-            val.assign(header->data, (int)header->data_size); // rewrite with next block value
+        // fast peek
+        const char *header = mako::value_node_address(
+            val.data(), val.length());
+        int16_t data_size = mako::load_node_data_size(header);
+        while (data_size > 0) {
+            char *data = mako::load_node_data(header);
+            val.assign(data, static_cast<int>(data_size)); // rewrite with next block value
             std::string tmp;
             tmp.assign(val.data(),val.length());
             ret.push_back(isDeleted(val)? "DEL": (tmp));
-            header = reinterpret_cast<mako::Node *>((char*)(val.data()+val.length()-mako::BITS_OF_NODE));
+            header = mako::value_node_address(val.data(), val.length());
+            data_size = mako::load_node_data_size(header);
         }
         return ret;
     }
 
     // Lazy reclamation with optimized watermark checking
     // Reclaims old versions that are safe to delete (below watermark)
-    static void lazyReclaim(uint32_t time_term, uint32_t current_term, mako::Node *root) {
+    static void lazyReclaim(uint32_t time_term, uint32_t current_term,
+                            char *root,
+                            versioned_str_struct *root_owner) {
         // Use TThread counter for thread-local reclamation frequency
         TThread::incr_counter();
         if (TThread::counter() % 50 != 0) return;
@@ -54,111 +55,100 @@ public:
         if (watermark == 0) return;  // Skip if watermark not initialized
         
         // Phase 1: Find the safe reclamation point
-        mako::Node *safe_point = nullptr;
-        mako::Node *current = root;
-        std::vector<mako::Node*> to_free;  // Batch freeing for efficiency
+        char *safe_point = nullptr;
+        char *current = root;
         
         // Navigate to first version below watermark
-        while (current && current->data_size > 0) {
-            uint32_t *tt = reinterpret_cast<uint32_t*>(
-                current->data + current->data_size - mako::EXTRA_BITS_FOR_VALUE);
+        while (current && mako::load_node_data_size(current) > 0) {
+            const int16_t data_size = mako::load_node_data_size(current);
+            char *data = mako::load_node_data(current);
+            const uint32_t tt = mako::load_value_time_term(data, data_size);
             
-            if ((*tt) / 10 < watermark) {
+            if (tt / 10 < watermark) {
                 safe_point = current;
                 break;
             }
             
-            current = reinterpret_cast<mako::Node*>(
-                current->data + current->data_size - mako::BITS_OF_NODE);
+            current = mako::value_node_address(data, data_size);
         }
         
         if (!safe_point) return;  // No safe versions to reclaim
         
-        // Phase 2: Collect nodes to free (after safe point)
-        current = safe_point;
-        while (current && current->data_size > 0) {
-            mako::Node *next = reinterpret_cast<mako::Node*>(
-                current->data + current->data_size - mako::BITS_OF_NODE);
-            
-            if (next->data_size > 0) {
-                to_free.push_back(current);
-            }
-            current = next;
-        }
-        
-        // Phase 3: Update chain and batch free
-        if (!to_free.empty()) {
-            // Update the chain - no other thread accesses this
-            safe_point->data_size = 0;  // Mark end of chain
-            
-            // Batch free old nodes
-            for (auto* node : to_free) {
-                ::free(node->data);
-            }
-        }
+        // No other thread accesses this chain while it is reclaimed.
+        mako::reclaim_value_chain_after(safe_point, root_owner->embedded_data());
     }
 
     static bool mvGET(string& val,
                       char *oldval_str, // oldval_str == val, but it's the reference to the actual value
                       uint8_t current_term,
                       std::unordered_map<int, uint32_t> hist_timestamp) {
-        uint32_t *time_term = 0;
-        time_term = reinterpret_cast<uint32_t*>((char*)(val.data()+val.length()-mako::EXTRA_BITS_FOR_VALUE));
+        uint32_t time_term = mako::load_value_time_term(
+            val.data(), val.length());
 
-        if (likely(*time_term % 10 == current_term)) { // current term: get the latest value but reclaim the all version below the watermark within the current term
+        if (likely(time_term % 10 == current_term)) { // current term: get the latest value but reclaim the all version below the watermark within the current term
             return !isDeleted(val);
         } else { // past term e
-            mako::Node *header = reinterpret_cast<mako::Node *>((char*)(val.data()+val.length()-mako::BITS_OF_NODE));
+            char *header = mako::value_node_address(val.data(), val.length());
             
 #if defined(FAIL_NEW_VERSION)
             // It's possible that hist_timestamp is not updated yet, and return it directly; and the remote server would do a check
-            if  (hist_timestamp.find(*time_term % 10)==hist_timestamp.end()) {
+            if  (hist_timestamp.find(time_term % 10)==hist_timestamp.end()) {
                 return !isDeleted(val);
             }
             // check if the stored value is below the cached watermark
-            if (sync_util::sync_logger::safety_check(header->timestamp, hist_timestamp[*time_term % 10])) { // Single timestamp check
+            if (sync_util::sync_logger::safety_check(
+                    mako::load_node_timestamp(header),
+                    hist_timestamp[time_term % 10])) { // Single timestamp check
                 bool ret = !isDeleted(val);
                 if (!ret) {
-                    //Warning("XXXX par_id:%d,time_term:%d,cur_term:%d, watermark:%lld,len of v:%d",TThread::getGlobalPartitionID(),*time_term%10,current_term, hist_timestamp[*time_term % 10],val.length());
+                    //Warning("XXXX par_id:%d,time_term:%d,cur_term:%d, watermark:%lld,len of v:%d",TThread::getGlobalPartitionID(),time_term%10,current_term, hist_timestamp[time_term % 10],val.length());
                     //mako::printStringAsBit(val);
                 }
                 return ret;
             }
             // find the latest stable timestamp below the watermark within the past term e
-            while (header->data_size > 0) {
-                time_term = reinterpret_cast<uint32_t*>((char*)(header->data+header->data_size-mako::EXTRA_BITS_FOR_VALUE));
-                if (sync_util::sync_logger::safety_check(header->timestamp, hist_timestamp[*time_term % 10])) { // Single timestamp check
-                    val.assign(header->data, (int)header->data_size); // rewrite val with next block value
-                    header = reinterpret_cast<mako::Node *>((char*)(val.data()+val.length()-mako::BITS_OF_NODE));
+            while (mako::load_node_data_size(header) > 0) {
+                const int16_t data_size = mako::load_node_data_size(header);
+                char *data = mako::load_node_data(header);
+                time_term = mako::load_value_time_term(data, data_size);
+                if (sync_util::sync_logger::safety_check(
+                        mako::load_node_timestamp(header),
+                        hist_timestamp[time_term % 10])) { // Single timestamp check
+                    val.assign(data, static_cast<int>(data_size)); // rewrite val with next block value
+                    header = mako::value_node_address(val.data(), val.length());
                     if (isDeleted(val)) {
                         return false;
                     }
                     break;
                 }
-                header = reinterpret_cast<mako::Node *>((char*)(header->data+header->data_size-mako::BITS_OF_NODE));
+                header = mako::value_node_address(data, data_size);
             }
         }
 #else
-            if (header->timestamp / 10 <= hist_timestamp[*time_term % 10]) { // Single timestamp check
+            if (mako::load_node_timestamp(header) / 10 <=
+                hist_timestamp[time_term % 10]) { // Single timestamp check
                 bool ret = !isDeleted(val);
                 if (!ret) {
-                    //Warning("XXXX par_id:%d,time_term:%d,cur_term:%d, watermark:%lld,len of v:%d",TThread::getGlobalPartitionID(),*time_term%10,current_term, hist_timestamp[*time_term % 10],val.length());
+                    //Warning("XXXX par_id:%d,time_term:%d,cur_term:%d, watermark:%lld,len of v:%d",TThread::getGlobalPartitionID(),time_term%10,current_term, hist_timestamp[time_term % 10],val.length());
                     //mako::printStringAsBit(val);
                 }
                 return ret;
             }
             // find the latest stable timestamp below the watermark within the past term e
-            while (header->data_size > 0) {
-                time_term = reinterpret_cast<uint32_t*>((char*)(header->data+header->data_size-mako::EXTRA_BITS_FOR_VALUE));
-                if (header->timestamp / 10 <= hist_timestamp[*time_term % 10]) { // Single timestamp check
-                    val.assign(header->data, (int)header->data_size); // rewrite val with next block value
-                    header = reinterpret_cast<mako::Node *>((char*)(val.data()+val.length()-mako::BITS_OF_NODE));
+            while (mako::load_node_data_size(header) > 0) {
+                const int16_t data_size = mako::load_node_data_size(header);
+                char *data = mako::load_node_data(header);
+                time_term = mako::load_value_time_term(data, data_size);
+                if (mako::load_node_timestamp(header) / 10 <=
+                    hist_timestamp[time_term % 10]) { // Single timestamp check
+                    val.assign(data, static_cast<int>(data_size)); // rewrite val with next block value
+                    header = mako::value_node_address(val.data(), val.length());
                     if (isDeleted(val)) {
                         return false;
                     }
                     break;
                 }
-                header = reinterpret_cast<mako::Node *>((char*)(header->data+header->data_size-mako::BITS_OF_NODE));
+                header = mako::value_node_address(data, data_size);
             }
         }
 #endif
@@ -177,23 +167,28 @@ public:
         int oldval_len=e->length();
         uint32_t time_term = TThread::txn->tid_unique_ * 10 + TThread::txn->current_term_;
         if (isInsert) { // insert
-            mako::Node* header = reinterpret_cast<mako::Node*>(oldval_str+oldval_len-mako::BITS_OF_NODE);
             // Set single timestamp
-            header->timestamp = TThread::txn->tid_unique_;
-            header->data_size = 0;  // indicate no next block
-            memcpy(oldval_str+oldval_len-mako::EXTRA_BITS_FOR_VALUE, &time_term, mako::BITS_OF_TT);
+            mako::store_value_node_timestamp(
+                oldval_str, oldval_len, TThread::txn->tid_unique_);
+            mako::store_value_node_data_size(
+                oldval_str, oldval_len, 0);  // indicate no next block
+            mako::store_value_time_term(oldval_str, oldval_len, time_term);
         } else {  // update or delete
             char* new_vv = (char*)malloc(newval.length());
+            if (new_vv == nullptr) {
+                Panic("failed to allocate a multi-version value");
+            }
             memcpy(new_vv, newval.data(), newval.length()-mako::EXTRA_BITS_FOR_VALUE);
-            memcpy(new_vv+newval.length()-mako::EXTRA_BITS_FOR_VALUE, 
-                                &time_term, mako::BITS_OF_TT);
-            mako::Node* header = reinterpret_cast<mako::Node*>(new_vv+newval.length()-mako::BITS_OF_NODE);
+            mako::initialize_value_metadata(new_vv, newval.length());
+            mako::store_value_time_term(new_vv, newval.length(), time_term);
+            char *header = mako::value_node_address(new_vv, newval.length());
             // Set single timestamp
-            header->timestamp = TThread::txn->tid_unique_;
-            header->data_size = oldval_len;
-            header->data = e->data();
+            mako::store_node_timestamp(header, TThread::txn->tid_unique_);
+            mako::store_node_data_size(
+                header, static_cast<int16_t>(oldval_len));
+            mako::store_node_data(header, oldval_str);
             e->modifyData(new_vv);
-            lazyReclaim(time_term, current_term, header);
+            lazyReclaim(time_term, current_term, header, e);
         }
         return ;
     }

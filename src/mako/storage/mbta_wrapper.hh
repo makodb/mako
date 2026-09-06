@@ -23,34 +23,42 @@
 #include "mbta_sharded_ordered_index.hh"
 
 // We have to do it on the coordinator instead of transaction.cc, because it only has a local copy of the readSet;
-#define GET_NODE_POINTER(val,len) reinterpret_cast<mako::Node *>((char*)(val+len-mako::BITS_OF_NODE));
-#define GET_NODE_EXTRA_POINTER(val,len) reinterpret_cast<uint32_t *>((char*)(val+len-mako::EXTRA_BITS_FOR_VALUE));
 #define MAX(a,b) ((a)>(b)?(a):(b))
 
 #if defined(FAIL_NEW_VERSION)
 // control_mode==4, If a value is in the old epoch while this transaction is from the new epoch,  if not stable, we put it in the queue.
 // If control_mode==4
 #define UPDATE_VS(val,len) \
-  mako::Node *header = GET_NODE_POINTER(val,len); \
-  uint32_t *shardtimestamp = GET_NODE_EXTRA_POINTER(val,len); \
-  /* Update single max timestamp in readset */ \
-  TThread::txn->maxTimestampReadSet = MAX(TThread::txn->maxTimestampReadSet, header->timestamp); \
-  if (BenchmarkConfig::getInstance().getControlMode()==4) { \
-    if (*shardtimestamp % 10 < TThread::txn->current_term_ && sync_util::sync_logger::safety_check(header->timestamp)){ \
-      TThread::transget_without_stable = true; \
-      TThread::transget_without_throw = true; \
+  do { \
+    const uint32_t node_timestamp = \
+      mako::load_value_node_timestamp((val), (len)); \
+    const uint32_t shard_timestamp = \
+      mako::load_value_time_term((val), (len)); \
+    /* Update single max timestamp in readset */ \
+    TThread::txn->maxTimestampReadSet = \
+      MAX(TThread::txn->maxTimestampReadSet, node_timestamp); \
+    if (BenchmarkConfig::getInstance().getControlMode()==4) { \
+      if (shard_timestamp % 10 < TThread::txn->current_term_ && \
+          sync_util::sync_logger::safety_check(node_timestamp)){ \
+        TThread::transget_without_stable = true; \
+        TThread::transget_without_throw = true; \
+      } \
     } \
-  }
+  } while (0)
 #else
 #define UPDATE_VS(val,len) \
-  mako::Node *header = GET_NODE_POINTER(val,len); \
-  /* Update single max timestamp in readset */ \
-  TThread::txn->maxTimestampReadSet = MAX(TThread::txn->maxTimestampReadSet, header->timestamp); \
-  if (BenchmarkConfig::getInstance().getControlMode()==1){ \
-    if (TThread::txn->maxTimestampReadSet>sync_util::sync_logger::failed_shard_ts){ \
-      TThread::transget_without_throw = true;\
+  do { \
+    const uint32_t node_timestamp = \
+      mako::load_value_node_timestamp((val), (len)); \
+    /* Update single max timestamp in readset */ \
+    TThread::txn->maxTimestampReadSet = \
+      MAX(TThread::txn->maxTimestampReadSet, node_timestamp); \
+    if (BenchmarkConfig::getInstance().getControlMode()==1){ \
+      if (TThread::txn->maxTimestampReadSet>sync_util::sync_logger::failed_shard_ts){ \
+        TThread::transget_without_throw = true;\
+      } \
     } \
-  }
+  } while (0)
 #endif
 // It may cause too many aborts and slow down the system if using throw abstract_db::abstract_abort_exception()
 // Instead, we use TThread::transget_without_throw = true.
@@ -155,7 +163,7 @@ inline bool oi_mbta_tx_get_local(mbta_table *t, lcdf::Str key,
       throw Transaction::Abort();
     }
     if (ret) {
-      UPDATE_VS(value.data(), value.length())
+      UPDATE_VS(value.data(), value.length());
       if (value.length() >= mako::EXTRA_BITS_FOR_VALUE)
         value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
     }
@@ -171,7 +179,7 @@ inline bool oi_mbta_tx_get_remote(mbta_table *t, lcdf::Str key,
     throw abstract_db::abstract_abort_exception();
   }
   if (value.length() >= mako::EXTRA_BITS_FOR_VALUE) {
-    UPDATE_VS(value.data(), value.length())
+    UPDATE_VS(value.data(), value.length());
     value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
   }
   return true;
@@ -251,7 +259,7 @@ inline void oi_mbta_tx_scan_one_local(mbta_table *t,
     if (!found) {
       value = v;
       if (value.length() >= mako::EXTRA_BITS_FOR_VALUE) {
-        UPDATE_VS(value.data(), value.length())
+        UPDATE_VS(value.data(), value.length());
         value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
       }
       found = true;
@@ -279,7 +287,7 @@ inline void oi_mbta_tx_scan_one_remote(mbta_table *t,
     throw abstract_db::abstract_abort_exception();
   }
   if (value.length() >= mako::EXTRA_BITS_FOR_VALUE) {
-    UPDATE_VS(value.data(), value.length())
+    UPDATE_VS(value.data(), value.length());
     value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
   }
 }
@@ -401,7 +409,7 @@ inline bool oi_mbta_get_local(mbta_table *t, lcdf::Str key,
         continue;  // silent abort — retry
       }
       if (ret) {
-        UPDATE_VS(value.data(), value.length())
+        UPDATE_VS(value.data(), value.length());
         if (value.length() >= mako::EXTRA_BITS_FOR_VALUE)
           value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
       }
@@ -1905,6 +1913,8 @@ public:
   // replay will use this function, otherwise NO; get table back;
   abstract_ordered_index *
   get_index_by_table_id(unsigned short table_id) {
+    if (static_cast<size_t>(table_id) >= global_table_instances.size())
+      return nullptr;
     return global_table_instances[table_id];
   }
 

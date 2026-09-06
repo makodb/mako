@@ -266,14 +266,7 @@ Size(const T &t)
     a=(a==1)?2:a; \
     buf.resize(a+mako::EXTRA_BITS_FOR_VALUE, '\0'); \
     write((uint8_t *) buf.data(), obj); \
-    /* Initialize the padding: set timestamp/term to 0 */ \
-    uint32_t* time_term = reinterpret_cast<uint32_t*>(buf.data() + buf.size() - mako::EXTRA_BITS_FOR_VALUE); \
-    *time_term = 0; \
-    /* Initialize Node structure: set timestamp and data_size to 0 */ \
-    mako::Node* node = reinterpret_cast<mako::Node*>(buf.data() + buf.size() - mako::BITS_OF_NODE); \
-    node->timestamp = 0; \
-    node->data_size = 0; \
-    node->data = nullptr; \
+    mako::initialize_value_metadata(buf.data(), buf.size()); \
     return buf; \
   } \
   inline std::string \

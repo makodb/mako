@@ -3,6 +3,8 @@
 #include <string.h>
 
 #include <gtest/gtest.h>
+#include "mako/record/inline_str.h"
+#include "mako/record/serializer.h"
 #include "mako/varint.h"
 
 import std;
@@ -16,6 +18,198 @@ protected:
         memset(buffer, 0, sizeof(buffer));
     }
 };
+
+template <typename T>
+void ExpectUnalignedFixedWidthRoundTrip(T original) {
+    alignas(T) uint8_t storage[sizeof(T) + alignof(T)] = {};
+    uint8_t expected[sizeof(T)] = {};
+    NDB_MEMCPY(expected, &original, sizeof(T));
+
+    for (size_t offset = 1; offset < alignof(T); ++offset) {
+        uint8_t* const begin = storage + offset;
+        EXPECT_EQ((serializer<T, false>::write(begin, original)),
+                  begin + sizeof(T));
+        EXPECT_EQ(memcmp(begin, expected, sizeof(T)), 0);
+
+        T decoded{};
+        EXPECT_EQ((serializer<T, false>::read(begin, &decoded)),
+                  begin + sizeof(T));
+        EXPECT_EQ(decoded, original);
+    }
+}
+
+TEST(SerializerTest, FixedWidthRoundTripsAtUnalignedAddress) {
+    ExpectUnalignedFixedWidthRoundTrip<int16_t>(-12345);
+    ExpectUnalignedFixedWidthRoundTrip<int32_t>(-123456789);
+    ExpectUnalignedFixedWidthRoundTrip<uint32_t>(0xfedcba98U);
+    ExpectUnalignedFixedWidthRoundTrip<uint64_t>(0xfedcba9876543210ULL);
+    ExpectUnalignedFixedWidthRoundTrip<float>(123.25F);
+}
+
+TEST(SerializerTest, FixedWidthWritePreservesDeletedCopySupport) {
+    struct DeletedCopy {
+        uint32_t value;
+        DeletedCopy() = default;
+        DeletedCopy(const DeletedCopy&) = delete;
+    };
+    static_assert(std::is_trivially_copyable_v<DeletedCopy>);
+    static_assert(!std::is_copy_constructible_v<DeletedCopy>);
+
+    DeletedCopy original;
+    original.value = 0x12345678U;
+    uint8_t encoded[sizeof(original)] = {};
+    EXPECT_EQ((serializer<DeletedCopy, false>::write(encoded, original)),
+              encoded + sizeof(original));
+    EXPECT_EQ(memcmp(encoded, &original, sizeof(original)), 0);
+
+    using Adapter = generic_serializer<serializer<DeletedCopy, false>>;
+    alignas(DeletedCopy) uint8_t source[sizeof(DeletedCopy) + 1] = {};
+    alignas(DeletedCopy) uint8_t destination[sizeof(DeletedCopy) + 1] = {};
+    NDB_MEMCPY(source + 1, &original, sizeof(original));
+    EXPECT_EQ(Adapter::write(encoded, source + 1), encoded + sizeof(original));
+    EXPECT_EQ(Adapter::read(encoded, destination + 1),
+              encoded + sizeof(original));
+    EXPECT_EQ(memcmp(destination + 1, &original, sizeof(original)), 0);
+}
+
+TEST(SerializerTest, GenericAdapterAcceptsUnalignedObjectFields) {
+    using Adapter = generic_serializer<serializer<int32_t, true>>;
+    alignas(int32_t) uint8_t source[sizeof(int32_t) + 1] = {};
+    alignas(int32_t) uint8_t destination[sizeof(int32_t) + 1] = {};
+    uint8_t encoded[serializer<int32_t, true>::max_nbytes()] = {};
+    const int32_t original = -123456789;
+    NDB_MEMCPY(source + 1, &original, sizeof(original));
+
+    EXPECT_EQ(Adapter::nbytes(source + 1),
+              (serializer<int32_t, true>::nbytes(&original)));
+    EXPECT_EQ(Adapter::max_nbytes(),
+              (serializer<int32_t, true>::max_nbytes()));
+    uint8_t * const encoded_end = Adapter::write(encoded, source + 1);
+    const uint8_t * const decoded_end =
+      Adapter::failsafe_read(encoded, encoded_end - encoded, destination + 1);
+
+    ASSERT_EQ(decoded_end, encoded_end);
+    int32_t decoded = 0;
+    NDB_MEMCPY(&decoded, destination + 1, sizeof(decoded));
+    EXPECT_EQ(decoded, original);
+}
+
+TEST(SerializerTest, NontrivialInlineStringRetainsClampingAssignment) {
+    using Text = inline_str_8<8>;
+    static_assert(!std::is_trivially_copyable_v<Text>);
+    static_assert(alignof(Text) == 1);
+
+    Text original("abc");
+    uint8_t encoded[sizeof(Text)];
+    memset(encoded, 0xa5, sizeof(encoded));
+    EXPECT_EQ((serializer<Text, false>::write(encoded, original)),
+              encoded + sizeof(Text));
+    EXPECT_EQ(encoded[0], 3U);
+    EXPECT_EQ(memcmp(encoded + 1, "abc", 3), 0);
+    for (size_t i = 4; i < sizeof(encoded); ++i)
+        EXPECT_EQ(encoded[i], 0xa5U);
+
+    Text decoded;
+    EXPECT_EQ((serializer<Text, false>::read(encoded, &decoded)),
+              encoded + sizeof(Text));
+    EXPECT_EQ(decoded.str(), "abc");
+
+    Text unchanged("safe");
+    EXPECT_EQ((serializer<Text, false>::failsafe_read(
+                  encoded, sizeof(encoded) - 1, &unchanged)),
+              nullptr);
+    EXPECT_EQ(unchanged.str(), "safe");
+
+    encoded[0] = 0xff;
+    serializer<Text, false>::read(encoded, &decoded);
+    EXPECT_EQ(decoded.size(), decoded.max_size());
+
+    EXPECT_EQ((serializer<Text, false>::failsafe_read(
+                  encoded, sizeof(encoded), &unchanged)),
+              nullptr);
+    EXPECT_EQ(unchanged.str(), "safe");
+
+    using WideText = inline_str_16<300>;
+    WideText wide("wide");
+    uint8_t wide_encoded[sizeof(WideText)] = {};
+    EXPECT_EQ((serializer<WideText, true>::write(wide_encoded, wide)),
+              wide_encoded + sizeof(WideText));
+    const uint16_t wide_size = 4;
+    EXPECT_EQ(memcmp(wide_encoded, &wide_size, sizeof(wide_size)), 0);
+    EXPECT_EQ(memcmp(wide_encoded + sizeof(wide_size), "wide", 4), 0);
+    WideText wide_decoded;
+    EXPECT_EQ((serializer<WideText, true>::read(wide_encoded, &wide_decoded)),
+              wide_encoded + sizeof(WideText));
+    EXPECT_EQ(wide_decoded.str(), "wide");
+
+    using FixedText = inline_str_fixed<5>;
+    FixedText fixed("xy");
+    uint8_t fixed_encoded[sizeof(FixedText)] = {};
+    EXPECT_EQ((serializer<FixedText, true>::write(fixed_encoded, fixed)),
+              fixed_encoded + sizeof(FixedText));
+    EXPECT_EQ(memcmp(fixed_encoded, "xy   ", sizeof(FixedText)), 0);
+    FixedText fixed_decoded;
+    EXPECT_EQ((serializer<FixedText, true>::read(
+                  fixed_encoded, &fixed_decoded)),
+              fixed_encoded + sizeof(FixedText));
+    EXPECT_EQ(fixed_decoded.str(), fixed.str());
+
+    using BaseText = inline_str_base<uint8_t, 8>;
+    BaseText base("abc");
+    uint8_t base_encoded[serializer<BaseText, true>::max_nbytes()] = {};
+    uint8_t * const base_end =
+        serializer<BaseText, true>::write(base_encoded, base);
+    BaseText base_decoded;
+    EXPECT_EQ((serializer<BaseText, true>::failsafe_read(
+                  base_encoded, base_end - base_encoded, &base_decoded)),
+              base_end);
+    EXPECT_EQ(base_decoded.str(), "abc");
+
+    uint8_t malformed[256] = {};
+    malformed[0] = 0xff;
+    EXPECT_EQ((serializer<BaseText, true>::failsafe_read(
+                  malformed, sizeof(malformed), &base_decoded)),
+              nullptr);
+    EXPECT_EQ((serializer<BaseText, true>::failsafe_skip(
+                  malformed, sizeof(malformed), nullptr)),
+              0U);
+}
+
+TEST(SerializerTest, ZigZagBoundariesRoundTripWithCanonicalBytes) {
+    struct Case {
+        int32_t value;
+        uint8_t bytes[5];
+        size_t size;
+    };
+    const Case cases[] = {
+        {INT32_MIN, {0xff, 0xff, 0xff, 0xff, 0x0f}, 5},
+        {-1, {0x01, 0, 0, 0, 0}, 1},
+        {0, {0x00, 0, 0, 0, 0}, 1},
+        {1, {0x02, 0, 0, 0, 0}, 1},
+        {INT32_MAX, {0xfe, 0xff, 0xff, 0xff, 0x0f}, 5},
+    };
+
+    for (const Case &test_case : cases) {
+        SCOPED_TRACE(test_case.value);
+        uint8_t encoded[serializer<int32_t, true>::max_nbytes()] = {};
+        uint8_t * const end =
+            serializer<int32_t, true>::write(encoded, test_case.value);
+        ASSERT_EQ(static_cast<size_t>(end - encoded), test_case.size);
+        EXPECT_EQ(memcmp(encoded, test_case.bytes, test_case.size), 0);
+
+        int32_t decoded = 123;
+        EXPECT_EQ((serializer<int32_t, true>::failsafe_read(
+                      encoded, test_case.size, &decoded)),
+                  end);
+        EXPECT_EQ(decoded, test_case.value);
+
+        decoded = 123;
+        EXPECT_EQ((serializer<int32_t, true>::failsafe_read(
+                      encoded, test_case.size - 1, &decoded)),
+                  nullptr);
+        EXPECT_EQ(decoded, 123);
+    }
+}
 
 // Unit Tests for write_uvint32
 TEST_F(VarintTest, WriteUvint32_SingleByte) {

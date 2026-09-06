@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstddef>
+#include <cstring>
 #include <functional>
 #include <sys/file.h>
 #include <mutex>
@@ -20,6 +21,7 @@
 #include <random>
 #include <functional>
 #include <thread>
+#include <type_traits>
 
 #if defined(__APPLE__)
 #include <mach/mach_time.h>
@@ -134,6 +136,136 @@ namespace mako
     const int BITS_OF_NODE = sizeof(struct Node);
     const int BITS_OF_TT = sizeof(uint32_t);
 
+    static_assert(std::is_standard_layout<Node>::value,
+                  "value metadata Node must retain a stable member layout");
+    static_assert(std::is_trivially_copyable<Node>::value,
+                  "value metadata Node members must be byte-copyable");
+    static_assert(sizeof(Node) == 16,
+                  "changing Node size changes the stored-value wire layout");
+    static_assert(offsetof(Node, timestamp) == 0,
+                  "changing timestamp offset changes the value wire layout");
+    static_assert(offsetof(Node, data_size) == 4,
+                  "changing data_size offset changes the value wire layout");
+    static_assert(offsetof(Node, data) == 8,
+                  "changing data offset changes the value wire layout");
+    static_assert(EXTRA_BITS_FOR_VALUE == 20,
+                  "changing metadata size changes the stored-value wire layout");
+
+    // Stored values are byte strings, so their metadata trailer can begin at
+    // any alignment. Access each scalar/member through memcpy rather than
+    // forming a typed pointer into the trailer. Keeping these operations
+    // member-sized also preserves the existing independently updated fields.
+    template <typename T>
+    inline T load_unaligned(const void* address) noexcept {
+        static_assert(std::is_trivially_copyable<T>::value,
+                      "unaligned loads require a trivially copyable type");
+        T value{};
+        std::memcpy(&value, address, sizeof(value));
+        return value;
+    }
+
+    template <typename T>
+    inline void store_unaligned(void* address, T value) noexcept {
+        static_assert(std::is_trivially_copyable<T>::value,
+                      "unaligned stores require a trivially copyable type");
+        std::memcpy(address, &value, sizeof(value));
+    }
+
+    inline char* value_time_term_address(char* value,
+                                         size_t value_size) noexcept {
+        return value + value_size - EXTRA_BITS_FOR_VALUE;
+    }
+
+    inline const char* value_time_term_address(const char* value,
+                                               size_t value_size) noexcept {
+        return value + value_size - EXTRA_BITS_FOR_VALUE;
+    }
+
+    inline char* value_node_address(char* value, size_t value_size) noexcept {
+        return value + value_size - BITS_OF_NODE;
+    }
+
+    inline const char* value_node_address(const char* value,
+                                          size_t value_size) noexcept {
+        return value + value_size - BITS_OF_NODE;
+    }
+
+    inline uint32_t load_value_time_term(const char* value,
+                                         size_t value_size) noexcept {
+        return load_unaligned<uint32_t>(
+            value_time_term_address(value, value_size));
+    }
+
+    inline void store_value_time_term(char* value, size_t value_size,
+                                      uint32_t time_term) noexcept {
+        store_unaligned<uint32_t>(
+            value_time_term_address(value, value_size), time_term);
+    }
+
+    inline uint32_t load_node_timestamp(const char* node) noexcept {
+        return load_unaligned<uint32_t>(node + offsetof(Node, timestamp));
+    }
+
+    inline void store_node_timestamp(char* node, uint32_t timestamp) noexcept {
+        store_unaligned<uint32_t>(node + offsetof(Node, timestamp), timestamp);
+    }
+
+    inline int16_t load_node_data_size(const char* node) noexcept {
+        return load_unaligned<int16_t>(node + offsetof(Node, data_size));
+    }
+
+    inline void store_node_data_size(char* node, int16_t data_size) noexcept {
+        store_unaligned<int16_t>(node + offsetof(Node, data_size), data_size);
+    }
+
+    inline char* load_node_data(const char* node) noexcept {
+        return load_unaligned<char*>(node + offsetof(Node, data));
+    }
+
+    inline void store_node_data(char* node, char* data) noexcept {
+        store_unaligned<char*>(node + offsetof(Node, data), data);
+    }
+
+    inline uint32_t load_value_node_timestamp(const char* value,
+                                              size_t value_size) noexcept {
+        return load_node_timestamp(value_node_address(value, value_size));
+    }
+
+    inline void store_value_node_timestamp(char* value, size_t value_size,
+                                           uint32_t timestamp) noexcept {
+        store_node_timestamp(value_node_address(value, value_size), timestamp);
+    }
+
+    inline int16_t load_value_node_data_size(const char* value,
+                                             size_t value_size) noexcept {
+        return load_node_data_size(value_node_address(value, value_size));
+    }
+
+    inline void store_value_node_data_size(char* value, size_t value_size,
+                                           int16_t data_size) noexcept {
+        store_node_data_size(value_node_address(value, value_size), data_size);
+    }
+
+    inline char* load_value_node_data(const char* value,
+                                      size_t value_size) noexcept {
+        return load_node_data(value_node_address(value, value_size));
+    }
+
+    inline void store_value_node_data(char* value, size_t value_size,
+                                      char* data) noexcept {
+        store_node_data(value_node_address(value, value_size), data);
+    }
+
+    inline void initialize_value_metadata(char* value,
+                                          size_t value_size) noexcept {
+        std::memset(value_time_term_address(value, value_size), 0,
+                    EXTRA_BITS_FOR_VALUE);
+        store_value_time_term(value, value_size, 0);
+        store_value_node_timestamp(value, value_size, 0);
+        store_value_node_data_size(value, value_size, 0);
+        store_value_node_data(value, value_size, nullptr);
+    }
+
     // Helper function to encode values with required metadata padding
     inline std::string Encode(const std::string& value) {
         // Create string with exact size needed - single allocation
@@ -143,17 +275,7 @@ namespace mako
         // Copy the value to the beginning - single memory copy
         std::memcpy(encoded_value.data(), value.data(), value.size());
 
-        // Initialize timestamp/term to 0 (already zeroed by resize)
-        uint32_t* time_term = reinterpret_cast<uint32_t*>(
-            encoded_value.data() + encoded_value.size() - EXTRA_BITS_FOR_VALUE);
-        *time_term = 0;  // Redundant but explicit
-
-        // Initialize Node structure
-        Node* node = reinterpret_cast<Node*>(
-            encoded_value.data() + encoded_value.size() - BITS_OF_NODE);
-        node->timestamp = 0;
-        node->data_size = 0;
-        node->data = nullptr;
+        initialize_value_metadata(encoded_value.data(), encoded_value.size());
 
         return encoded_value;
     }

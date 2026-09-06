@@ -903,8 +903,11 @@ boundary_executables = (
     "sto_tpcc_bench",
     "sto_tpcc_cpp_wrapper_smoke",
     "sto_tpcc_cpp_wrapper_scan_smoke",
+    "test_mako_value_metadata",
     "test_mtree_abi",
     "test_mtree_abi_c11_header",
+    "test_silo_varint",
+    "test_srpc_epoll_platform",
     "test_sto_tpcc_ffi_c11_header",
 )
 for executable in boundary_executables:
@@ -968,8 +971,8 @@ if [[ "${rust_compiler_instrumented}" == "1" ]]; then
     echo "verified Rust ${sanitizer} hooks and external runtime ownership"
 fi
 
-# Do not trust the toggle alone. Confirm that the two boundary translation
-# units actually received the sanitizer flag in this generated build.
+# Do not trust the toggle alone. Confirm that every boundary translation unit
+# actually received the sanitizer flag in this generated build.
 python3 - "${build_dir}/compile_commands.json" "-fsanitize=${sanitizer}" <<'PY'
 import json
 import pathlib
@@ -981,11 +984,17 @@ required_sources = {
     "crates/sto-tpcc-ffi/tests/cpp_wrapper_fixed_read_smoke.cc",
     "crates/sto-tpcc-ffi/tests/cpp_wrapper_scan_smoke.cc",
     "src/mako/benchmarks/dbtest.cc",
+    "src/mako/sto/ReplayDB.cc",
+    "src/mako/sto/ThreadPool.cc",
     "src/mako/storage/mtree_abi.cc",
     "src/mako/storage/rust_sto_tpcc_wrapper.cc",
+    "src/srpc/reactor/epoll_platform_linux.cc",
     "tests/mtree_abi_c11_header.c",
+    "tests/srpc_epoll_platform_test.cc",
     "tests/sto_tpcc_ffi_c11_header.c",
+    "tests/test_mako_value_metadata.cc",
     "tests/test_mtree_abi.cc",
+    "tests/test_silo_varint.cc",
 }
 
 database = json.loads(database_path.read_text(encoding="utf-8"))
@@ -1023,8 +1032,11 @@ import sys
 tests = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")).get("tests", [])
 names = {test["name"] for test in tests}
 required = {
+    "SiloVarintTests",
+    "test_mako_value_metadata",
     "test_mtree_abi",
     "test_mtree_abi_c11_header",
+    "test_srpc_epoll_platform",
     "test_sto_tpcc_ffi_c11_header",
     "test_sto_tpcc_cpp_wrapper_scan_smoke",
     "test_sto_tpcc_cpp_wrapper_smoke",

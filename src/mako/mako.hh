@@ -311,7 +311,13 @@ static void register_paxos_follower_callback(TSharedThreadPoolMbta& replicated_d
           sync_util::sync_logger::update_stable_timestamp(get_epoch()-1, sync_util::sync_logger::retrieveShardW()/10);
         }
       }else{
-        CommitInfo commit_info = get_latest_commit_info((char *) log, len);
+        static thread_local mako::ReplayLogView decoded_replay_log;
+        if (!mako::parse_replay_log(log, len, decoded_replay_log)) {
+          Panic("malformed follower replay log: len=%d", len);
+        }
+        CommitInfo commit_info{
+          decoded_replay_log.latest_time_term,
+          decoded_replay_log.latency_tracker};
         timestamp = commit_info.timestamp;  // Store for return value encoding
         sync_util::sync_logger::local_timestamp_[par_id].store(commit_info.timestamp, memory_order_release) ;
 #ifndef DISABLE_DISK
@@ -328,7 +334,7 @@ static void register_paxos_follower_callback(TSharedThreadPoolMbta& replicated_d
         bool loading_phase = sync_util::sync_logger::noops_cnt.load(memory_order_acquire) == 0;
         if (loading_phase || sync_util::sync_logger::safety_check(commit_info.timestamp, w)) {
           benchConfig.incrementReplayBatch();
-          treplay_in_same_thread_opt_mbta_v2(par_id, (char*)log, len, db, benchConfig.getNthreads());
+          replay_validated_mbta_v2(decoded_replay_log, db);
           status = mako::PaxosStatus::STATUS_REPLAY_DONE;
         } else {
           status = mako::PaxosStatus::STATUS_SAFETY_FAIL;
@@ -468,7 +474,13 @@ static void register_paxos_leader_callback(vector<pair<uint32_t, uint32_t>>& adv
           sync_util::sync_logger::reset(); 
         }
       }else {
-        CommitInfo commit_info = get_latest_commit_info((char *) log, len);
+        static thread_local mako::ReplayLogView decoded_replay_log;
+        if (!mako::parse_replay_log(log, len, decoded_replay_log)) {
+          Panic("malformed leader replay log: len=%d", len);
+        }
+        CommitInfo commit_info{
+          decoded_replay_log.latest_time_term,
+          decoded_replay_log.latency_tracker};
         timestamp = commit_info.timestamp;  // Store for return value encoding
         
         uint32_t end_time = mako::getCurrentTimeMillis();

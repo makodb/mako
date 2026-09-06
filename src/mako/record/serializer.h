@@ -1,7 +1,9 @@
 #ifndef _NDB_BENCH_SERIALIZER_H_
 #define _NDB_BENCH_SERIALIZER_H_
 
+#include <new>
 #include <stdint.h>
+#include <type_traits>
 #include "../macros.h"
 #include "../varint.h"
 
@@ -17,30 +19,72 @@ template <typename Serializer>
 struct generic_serializer {
   typedef typename Serializer::obj_type obj_type;
 
+  static inline const obj_type *
+  aligned_object(const uint8_t *source, uint8_t *storage)
+  {
+    NDB_MEMCPY(storage, source, sizeof(obj_type));
+    return std::launder(reinterpret_cast<const obj_type *>(storage));
+  }
+
+  static inline obj_type *
+  aligned_object(uint8_t *source, uint8_t *storage)
+  {
+    NDB_MEMCPY(storage, source, sizeof(obj_type));
+    return std::launder(reinterpret_cast<obj_type *>(storage));
+  }
+
   static inline uint8_t *
   write(uint8_t *buf, const uint8_t *obj)
   {
-    return Serializer::write(buf, *reinterpret_cast<const obj_type *>(obj));
+    if constexpr (std::is_trivially_copyable_v<obj_type>) {
+      alignas(obj_type) uint8_t storage[sizeof(obj_type)];
+      return Serializer::write(buf, *aligned_object(obj, storage));
+    } else {
+      return Serializer::write(buf, *reinterpret_cast<const obj_type *>(obj));
+    }
   }
 
   static inline const uint8_t *
   read(const uint8_t *buf, uint8_t *obj)
   {
-    return Serializer::read(buf, reinterpret_cast<obj_type *>(obj));
+    if constexpr (std::is_trivially_copyable_v<obj_type>) {
+      alignas(obj_type) uint8_t storage[sizeof(obj_type)];
+      obj_type * const aligned_obj = aligned_object(obj, storage);
+      const uint8_t * const next = Serializer::read(buf, aligned_obj);
+      NDB_MEMCPY(obj, aligned_obj, sizeof(obj_type));
+      return next;
+    } else {
+      return Serializer::read(buf, reinterpret_cast<obj_type *>(obj));
+    }
   }
 
   // returns nullptr on failure
   static inline const uint8_t *
   failsafe_read(const uint8_t *buf, size_t nbytes, uint8_t *obj)
   {
-    return Serializer::failsafe_read(
-        buf, nbytes, reinterpret_cast<obj_type *>(obj));
+    if constexpr (std::is_trivially_copyable_v<obj_type>) {
+      alignas(obj_type) uint8_t storage[sizeof(obj_type)];
+      obj_type * const aligned_obj = aligned_object(obj, storage);
+      const uint8_t * const next =
+        Serializer::failsafe_read(buf, nbytes, aligned_obj);
+      if (next)
+        NDB_MEMCPY(obj, aligned_obj, sizeof(obj_type));
+      return next;
+    } else {
+      return Serializer::failsafe_read(
+          buf, nbytes, reinterpret_cast<obj_type *>(obj));
+    }
   }
 
   static inline size_t
   nbytes(const uint8_t *obj)
   {
-    return Serializer::nbytes(reinterpret_cast<const obj_type *>(obj));
+    if constexpr (std::is_trivially_copyable_v<obj_type>) {
+      alignas(obj_type) uint8_t storage[sizeof(obj_type)];
+      return Serializer::nbytes(aligned_object(obj, storage));
+    } else {
+      return Serializer::nbytes(reinterpret_cast<const obj_type *>(obj));
+    }
   }
 
   static inline size_t
@@ -59,28 +103,31 @@ struct generic_serializer {
   static inline constexpr size_t
   max_nbytes()
   {
-    return Serializer::max_bytes();
+    return Serializer::max_nbytes();
   }
 };
 
 template <typename T, bool Compress>
 struct serializer {
+  static_assert(std::is_trivially_copyable_v<T>,
+                "nontrivial types require an explicit serializer");
+
   typedef T obj_type;
+  typedef std::conditional_t<std::is_copy_constructible_v<T>, T,
+                             const T &> write_arg_type;
 
   static inline uint8_t *
-  write(uint8_t *buf, const T &obj)
+  write(uint8_t *buf, write_arg_type obj)
   {
-    T *p = (T *) buf;
-    *p = obj;
-    return (uint8_t *) (p + 1);
+    NDB_MEMCPY(buf, &obj, sizeof(T));
+    return buf + sizeof(T);
   }
 
   static inline const uint8_t *
   read(const uint8_t *buf, T *obj)
   {
-    const T *p = (const T *) buf;
-    *obj = *p;
-    return (const uint8_t *) (p + 1);
+    NDB_MEMCPY(obj, buf, sizeof(T));
+    return buf + sizeof(T);
   }
 
   static inline const uint8_t *
@@ -136,19 +183,29 @@ struct serializer<uint32_t, true> {
   static inline const uint8_t *
   read(const uint8_t *buf, uint32_t *obj)
   {
-    return read_uvint32(buf, obj);
+    uint32_t aligned_obj;
+    const uint8_t * const next = read_uvint32(buf, &aligned_obj);
+    NDB_MEMCPY(obj, &aligned_obj, sizeof(aligned_obj));
+    return next;
   }
 
   static inline const uint8_t *
   failsafe_read(const uint8_t *buf, size_t nbytes, uint32_t *obj)
   {
-    return failsafe_read_uvint32(buf, nbytes, obj);
+    uint32_t aligned_obj;
+    const uint8_t * const next =
+      failsafe_read_uvint32(buf, nbytes, &aligned_obj);
+    if (next)
+      NDB_MEMCPY(obj, &aligned_obj, sizeof(aligned_obj));
+    return next;
   }
 
   static inline size_t
   nbytes(const uint32_t *obj)
   {
-    return size_uvint32(*obj);
+    uint32_t aligned_obj;
+    NDB_MEMCPY(&aligned_obj, obj, sizeof(aligned_obj));
+    return size_uvint32(aligned_obj);
   }
 
   static inline size_t
@@ -186,7 +243,8 @@ struct serializer<int32_t, true> {
   {
     uint32_t v;
     buf = serializer<uint32_t, true>::read(buf, &v);
-    *obj = decode(v);
+    const int32_t decoded = decode(v);
+    NDB_MEMCPY(obj, &decoded, sizeof(decoded));
     return buf;
   }
 
@@ -197,14 +255,17 @@ struct serializer<int32_t, true> {
     buf = serializer<uint32_t, true>::failsafe_read(buf, nbytes, &v);
     if (unlikely(!buf))
       return 0;
-    *obj = decode(v);
+    const int32_t decoded = decode(v);
+    NDB_MEMCPY(obj, &decoded, sizeof(decoded));
     return buf;
   }
 
   static inline size_t
   nbytes(const int32_t *obj)
   {
-    const uint32_t v = encode(*obj);
+    int32_t aligned_obj;
+    NDB_MEMCPY(&aligned_obj, obj, sizeof(aligned_obj));
+    const uint32_t v = encode(aligned_obj);
     return serializer<uint32_t, true>::nbytes(&v);
   }
 
@@ -233,7 +294,8 @@ private:
   static inline ALWAYS_INLINE constexpr uint32_t
   encode(int32_t value)
   {
-    return (value << 1) ^ (value >> 31);
+    return (static_cast<uint32_t>(value) << 1) ^
+      static_cast<uint32_t>(-(value < 0));
   }
 
   static inline ALWAYS_INLINE constexpr int32_t

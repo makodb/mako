@@ -90,7 +90,18 @@ public:
 
   char *data() {
     return flex_buf_;
-    // return buf_;
+  }
+
+  // The flexible-array storage belongs to this stuffed_str allocation even
+  // when multiversion mode redirects data() to a heap-backed newer value.
+  // Reclamation needs this stable ownership boundary to avoid freeing buf_
+  // or leaking a heap node that was truncated by an earlier reclaim cycle.
+  char *embedded_data() {
+    return buf_;
+  }
+
+  const char *embedded_data() const {
+    return buf_;
   }
   
   int length() {

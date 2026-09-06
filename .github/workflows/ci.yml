@@ -274,14 +274,52 @@ jobs:
           --target rust_sto_integration
           -- -k 0
 
-      # The aggregate target above builds these EXCLUDE_FROM_ALL executables.
-      # Name them explicitly here so a renamed or unregistered test fails CI.
+      - name: Verify Rust STO boundary test inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          ctest --test-dir build --show-only=json-v1 \
+            > build/rust-sto-ctest-inventory.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          required = {
+              "SiloVarintTests",
+              "test_mako_value_metadata",
+              "test_mtree_abi",
+              "test_mtree_abi_c11_header",
+              "test_srpc_epoll_platform",
+              "test_sto_tpcc_ffi_c11_header",
+              "test_sto_tpcc_cpp_wrapper_smoke",
+              "test_sto_tpcc_cpp_wrapper_scan_smoke",
+              "test_sto_tpcc_cpp_slow_exit",
+              "test_sto_tpcc_cpp_multishard_slow_exit",
+              "test_sto_tpcc_rust_slow_exit",
+              "test_sto_tpcc_rust_concurrent",
+              "test_sto_tpcc_rejects_duplicate_local_shards",
+              "test_sto_tpcc_rejects_partial_local_shards",
+              "test_sto_tpcc_rejects_rust_distributed_shard",
+          }
+          inventory = json.loads(
+              Path("build/rust-sto-ctest-inventory.json").read_text())
+          present = {test["name"] for test in inventory.get("tests", [])}
+          missing = sorted(required - present)
+          if missing:
+              raise SystemExit(
+                  "missing Rust STO boundary CTests: " + ", ".join(missing))
+          print(f"verified {len(required)} Rust STO boundary CTests")
+          PY
+
+      # The aggregate target above builds every boundary regression named
+      # here. Keep the selector explicit so a rename or lost registration
+      # fails CI rather than silently reducing coverage.
       - name: Run Rust STO C and C++ boundary tests
         run: >-
           ctest --test-dir build
           --output-on-failure
           --no-tests=error
-          -R '^(test_mtree_abi|test_mtree_abi_c11_header|test_sto_tpcc_ffi_c11_header|test_sto_tpcc_cpp_wrapper_smoke|test_sto_tpcc_cpp_wrapper_scan_smoke|test_sto_tpcc_cpp_slow_exit|test_sto_tpcc_cpp_multishard_slow_exit|test_sto_tpcc_rust_slow_exit|test_sto_tpcc_rust_concurrent|test_sto_tpcc_rejects_duplicate_local_shards|test_sto_tpcc_rejects_partial_local_shards|test_sto_tpcc_rejects_rust_distributed_shard)$'
+          -R '^(SiloVarintTests|test_mako_value_metadata|test_mtree_abi|test_mtree_abi_c11_header|test_srpc_epoll_platform|test_sto_tpcc_ffi_c11_header|test_sto_tpcc_cpp_wrapper_smoke|test_sto_tpcc_cpp_wrapper_scan_smoke|test_sto_tpcc_cpp_slow_exit|test_sto_tpcc_cpp_multishard_slow_exit|test_sto_tpcc_rust_slow_exit|test_sto_tpcc_rust_concurrent|test_sto_tpcc_rejects_duplicate_local_shards|test_sto_tpcc_rejects_partial_local_shards|test_sto_tpcc_rejects_rust_distributed_shard)$'
 
       - name: Run tests - SRPC unit tests
         run: ./ci/ci.sh srpcTests
