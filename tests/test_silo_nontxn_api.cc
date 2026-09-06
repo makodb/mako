@@ -1,8 +1,8 @@
 // Gating tests for docs/storage-interface.md — the
 // non-transactional (Masstree-shape) API added to Silo's layers:
 //
-//   1. MassTrans level:   insert / scan / rscan (Phase 1) plus the
-//                          pre-existing put / get / remove.
+//   1. MassTrans level:   insert / erase / scan / rscan (Phase 1) plus the
+//                          pre-existing put / get.
 //   2. L3 level:          abstract_ordered_index's six non-txn virtual
 //                          methods, dispatched through a base pointer
 //                          into mbta_ordered_index (Phase 2).
@@ -30,6 +30,21 @@ namespace {
 using mbta_type = mbta_table;
 
 std::atomic<int> g_tid_counter{0};
+
+class ScopedMultiversionMode {
+public:
+    ScopedMultiversionMode() : was_enabled_(TThread::is_multiversion()) {
+        TThread::enable_multiverison();
+    }
+    ~ScopedMultiversionMode() {
+        if (was_enabled_)
+            TThread::enable_multiverison();
+        else
+            TThread::disable_multiversion();
+    }
+private:
+    bool was_enabled_;
+};
 
 // Per-thread Silo/STO initialization. Every thread that touches
 // MassTrans (directly or via the wrappers) must call this once.
@@ -126,19 +141,18 @@ TEST_F(SiloNonTxnApi, MassTransInsertIsPutIfAbsent) {
     EXPECT_EQ(out.substr(0, 5), "first");  // second insert must not overwrite
 }
 
-TEST_F(SiloNonTxnApi, MassTransRemovePresentAndAbsent) {
+TEST_F(SiloNonTxnApi, MassTransErasePresentAndAbsent) {
     mbta_type& mt = make_masstrans(9003, "mt_remove");
 
     const std::string val = mako::Encode("gone-soon");
     ASSERT_TRUE(mt.put(lcdf::Str("victim"), val));
 
-    EXPECT_TRUE(mt.remove(lcdf::Str("victim")));
+    EXPECT_TRUE(mt.erase(lcdf::Str("victim")));
     std::string out;
     EXPECT_FALSE(mt.get(lcdf::Str("victim"), out));
 
-    // Absent-key remove returns false and must not crash (guarded
-    // deallocate in MassTrans::remove).
-    EXPECT_FALSE(mt.remove(lcdf::Str("never-existed")));
+    // An absent-key erase returns false and must not stage a decrement.
+    EXPECT_FALSE(mt.erase(lcdf::Str("never-existed")));
 }
 
 TEST_F(SiloNonTxnApi, MassTransScanInOrderAndRScanReverse) {
@@ -167,6 +181,336 @@ TEST_F(SiloNonTxnApi, MassTransScanInOrderAndRScanReverse) {
     ASSERT_GE(rkeys.size(), 1u);
     EXPECT_TRUE(std::is_sorted(rkeys.rbegin(), rkeys.rend()));
 }
+
+TEST_F(SiloNonTxnApi, MassTransScanExceptionAbortsOwnedTransaction) {
+    mbta_type& mt = make_masstrans(9005, "mt_scan_exception");
+    ASSERT_TRUE(mt.put(lcdf::Str("a"), mako::Encode("value")));
+
+    EXPECT_THROW(
+        mt.scan(lcdf::Str("a"), lcdf::Str("z"),
+                [](lcdf::Str, std::string&) -> bool {
+                    throw std::runtime_error("callback failure");
+                }),
+        std::runtime_error);
+    ASSERT_NE(TThread::txn, nullptr);
+    EXPECT_FALSE(TThread::txn->has_active_state());
+
+    // A throwing callback must not poison the ambient worker transaction.
+    EXPECT_TRUE(mt.put(lcdf::Str("b"), mako::Encode("after")));
+    std::string out;
+    EXPECT_TRUE(mt.get(lcdf::Str("b"), out));
+    EXPECT_EQ(out.substr(0, 5), "after");
+}
+
+TEST_F(SiloNonTxnApi, MassTransDeleteThenPutResurrectsInMvMode) {
+    ScopedMultiversionMode multiversion;
+    mbta_type& mt = make_masstrans(9006, "mt_mv_put_resurrection");
+
+    ASSERT_TRUE(mt.put(lcdf::Str("key"), mako::Encode("old")));
+    EXPECT_EQ(mt.approx_size(), 1U);
+    ASSERT_TRUE(mt.erase(lcdf::Str("key")));
+    EXPECT_EQ(mt.approx_size(), 0U);
+
+    std::string out;
+    EXPECT_FALSE(mt.get(lcdf::Str("key"), out));
+    EXPECT_TRUE(mt.put(lcdf::Str("key"), mako::Encode("new")));
+    EXPECT_EQ(mt.approx_size(), 1U);
+    ASSERT_TRUE(mt.get(lcdf::Str("key"), out));
+    EXPECT_EQ(out.substr(0, 3), "new");
+
+    EXPECT_TRUE(mt.erase(lcdf::Str("key")));
+    EXPECT_EQ(mt.approx_size(), 0U);
+    EXPECT_FALSE(mt.get(lcdf::Str("key"), out));
+    EXPECT_FALSE(mt.erase(lcdf::Str("key")));
+    EXPECT_EQ(mt.approx_size(), 0U);
+}
+
+TEST_F(SiloNonTxnApi, MassTransDeleteThenInsertResurrectsInMvMode) {
+    ScopedMultiversionMode multiversion;
+    mbta_type& mt = make_masstrans(9007, "mt_mv_insert_resurrection");
+
+    ASSERT_TRUE(mt.put(lcdf::Str("key"), mako::Encode("old")));
+    ASSERT_TRUE(mt.erase(lcdf::Str("key")));
+    EXPECT_TRUE(mt.insert(lcdf::Str("key"), mako::Encode("first")));
+    EXPECT_EQ(mt.approx_size(), 1U);
+    EXPECT_FALSE(mt.insert(lcdf::Str("key"), mako::Encode("second")));
+
+    std::string out;
+    ASSERT_TRUE(mt.get(lcdf::Str("key"), out));
+    EXPECT_EQ(out.substr(0, 5), "first");
+}
+
+TEST_F(SiloNonTxnApi, AbortedMvResurrectionPreservesCommittedTombstone) {
+    ScopedMultiversionMode multiversion;
+    mbta_type& mt = make_masstrans(9008, "mt_mv_abort_resurrection");
+
+    ASSERT_TRUE(mt.put(lcdf::Str("key"), mako::Encode("old")));
+    ASSERT_TRUE(mt.erase(lcdf::Str("key")));
+    ASSERT_EQ(mt.approx_size(), 0U);
+
+    const std::string staged = mako::Encode("aborted");
+    Sto::start_transaction();
+    EXPECT_FALSE(mt.transPut(lcdf::Str("key"), staged));
+    Sto::silent_abort();
+    EXPECT_FALSE(TThread::txn->has_active_state());
+    EXPECT_EQ(mt.approx_size(), 0U);
+
+    std::string out;
+    EXPECT_FALSE(mt.get(lcdf::Str("key"), out));
+    EXPECT_TRUE(mt.insert(lcdf::Str("key"), mako::Encode("after")));
+    ASSERT_TRUE(mt.get(lcdf::Str("key"), out));
+    EXPECT_EQ(out.substr(0, 5), "after");
+}
+
+TEST_F(SiloNonTxnApi, AbortedMvDeletePreservesValueAndCount) {
+    ScopedMultiversionMode multiversion;
+    mbta_type& mt = make_masstrans(9011, "mt_mv_abort_delete");
+    ASSERT_TRUE(mt.put(lcdf::Str("key"), mako::Encode("present")));
+    ASSERT_EQ(mt.approx_size(), 1U);
+
+    Sto::start_transaction();
+    EXPECT_TRUE(mt.transDelete(lcdf::Str("key")));
+    Sto::silent_abort();
+    EXPECT_FALSE(TThread::txn->has_active_state());
+    EXPECT_EQ(mt.approx_size(), 1U);
+
+    std::string out;
+    ASSERT_TRUE(mt.get(lcdf::Str("key"), out));
+    EXPECT_EQ(out.substr(0, 7), "present");
+}
+
+TEST_F(SiloNonTxnApi, ConcurrentMvDeleteAndResurrectionHaveSerialOutcome) {
+    ScopedMultiversionMode multiversion;
+    mbta_type& mt = make_masstrans(9012, "mt_mv_delete_resurrection_race");
+    ASSERT_TRUE(mt.put(lcdf::Str("key"), mako::Encode("old")));
+    ASSERT_TRUE(mt.erase(lcdf::Str("key")));
+    ASSERT_EQ(mt.approx_size(), 0U);
+
+    std::atomic<unsigned> ready{0};
+    std::atomic<bool> start{false};
+    std::atomic<bool> resurrected{false};
+    std::atomic<bool> deleted{false};
+    std::atomic<unsigned> failures{0};
+
+    // MassTrans exposes a single OCC attempt. The storage facade above it
+    // supplies the retry loop; mirror that contract here so a normal lock or
+    // validation conflict does not masquerade as a resurrection failure.
+    auto retry_abort = [](auto&& operation) {
+        while (true) {
+            try {
+                return operation();
+            } catch (Transaction::Abort&) {
+            }
+        }
+    };
+    auto finish_worker = [] {
+        if (TThread::txn != nullptr) {
+            delete TThread::txn;
+            TThread::txn = nullptr;
+        }
+        Transaction::rcu_quiesce();
+    };
+    std::thread resurrection_worker([&] {
+        silo_thread_init();
+        TThread::enable_multiverison();
+        ready.fetch_add(1, std::memory_order_release);
+        while (!start.load(std::memory_order_acquire))
+            std::this_thread::yield();
+        try {
+            resurrected.store(
+                retry_abort([&] {
+                    return mt.put(lcdf::Str("key"), mako::Encode("new"));
+                }),
+                std::memory_order_release);
+        } catch (...) {
+            failures.fetch_add(1, std::memory_order_relaxed);
+        }
+        finish_worker();
+    });
+    std::thread delete_worker([&] {
+        silo_thread_init();
+        TThread::enable_multiverison();
+        ready.fetch_add(1, std::memory_order_release);
+        while (!start.load(std::memory_order_acquire))
+            std::this_thread::yield();
+        try {
+            deleted.store(retry_abort([&] {
+                              return mt.erase(lcdf::Str("key"));
+                          }),
+                          std::memory_order_release);
+        } catch (...) {
+            failures.fetch_add(1, std::memory_order_relaxed);
+        }
+        finish_worker();
+    });
+
+    while (ready.load(std::memory_order_acquire) != 2)
+        std::this_thread::yield();
+    start.store(true, std::memory_order_release);
+    resurrection_worker.join();
+    delete_worker.join();
+
+    ASSERT_EQ(failures.load(std::memory_order_relaxed), 0U);
+    EXPECT_TRUE(resurrected.load(std::memory_order_acquire));
+    std::string out;
+    if (deleted.load(std::memory_order_acquire)) {
+        EXPECT_EQ(mt.approx_size(), 0U);
+        EXPECT_FALSE(mt.get(lcdf::Str("key"), out));
+    } else {
+        EXPECT_EQ(mt.approx_size(), 1U);
+        ASSERT_TRUE(mt.get(lcdf::Str("key"), out));
+        EXPECT_EQ(out.substr(0, 3), "new");
+    }
+}
+
+enum class PresentRowSecondOperation {
+    Delete,
+    Update,
+};
+
+void expect_present_row_delete_conflict(PresentRowSecondOperation second_op,
+                                        long table_id,
+                                        const char* table_name) {
+    ScopedMultiversionMode multiversion;
+    mbta_type& mt = make_masstrans(table_id, table_name);
+    ASSERT_TRUE(mt.put(lcdf::Str("key"), mako::Encode("old")));
+    ASSERT_EQ(mt.approx_size(), 1U);
+
+    std::atomic<unsigned> staged_count{0};
+    std::atomic<bool> release_first{false};
+    std::atomic<bool> first_done{false};
+    std::atomic<bool> first_staged{false};
+    std::atomic<bool> second_staged{false};
+    std::atomic<bool> first_committed{false};
+    std::atomic<bool> second_committed{false};
+    std::atomic<unsigned> failures{0};
+    const std::string updated_value = mako::Encode("updated");
+
+    auto finish_worker = [] {
+        if (TThread::txn != nullptr) {
+            if (TThread::txn->has_active_state())
+                TThread::txn->silent_abort();
+            delete TThread::txn;
+            TThread::txn = nullptr;
+        }
+        Transaction::rcu_quiesce();
+    };
+
+    std::thread first([&] {
+        silo_thread_init();
+        TThread::enable_multiverison();
+        try {
+            Sto::start_transaction();
+            first_staged.store(mt.transDelete(lcdf::Str("key")),
+                               std::memory_order_release);
+        } catch (...) {
+            failures.fetch_add(1, std::memory_order_relaxed);
+        }
+        staged_count.fetch_add(1, std::memory_order_release);
+        while (!release_first.load(std::memory_order_acquire))
+            std::this_thread::yield();
+        try {
+            if (first_staged.load(std::memory_order_acquire))
+                first_committed.store(Sto::try_commit(),
+                                      std::memory_order_release);
+        } catch (...) {
+            failures.fetch_add(1, std::memory_order_relaxed);
+        }
+        first_done.store(true, std::memory_order_release);
+        finish_worker();
+    });
+
+    std::thread second([&] {
+        silo_thread_init();
+        TThread::enable_multiverison();
+        try {
+            Sto::start_transaction();
+            const bool staged = second_op == PresentRowSecondOperation::Delete
+                ? mt.transDelete(lcdf::Str("key"))
+                : mt.transPut(lcdf::Str("key"), updated_value);
+            second_staged.store(staged, std::memory_order_release);
+        } catch (...) {
+            failures.fetch_add(1, std::memory_order_relaxed);
+        }
+        staged_count.fetch_add(1, std::memory_order_release);
+        while (!first_done.load(std::memory_order_acquire))
+            std::this_thread::yield();
+        try {
+            if (second_staged.load(std::memory_order_acquire))
+                second_committed.store(Sto::try_commit(),
+                                       std::memory_order_release);
+        } catch (...) {
+            failures.fetch_add(1, std::memory_order_relaxed);
+        }
+        finish_worker();
+    });
+
+    while (staged_count.load(std::memory_order_acquire) != 2)
+        std::this_thread::yield();
+    release_first.store(true, std::memory_order_release);
+    first.join();
+    second.join();
+
+    EXPECT_EQ(failures.load(std::memory_order_relaxed), 0U);
+    EXPECT_TRUE(first_staged.load(std::memory_order_acquire));
+    EXPECT_TRUE(second_staged.load(std::memory_order_acquire));
+    EXPECT_TRUE(first_committed.load(std::memory_order_acquire));
+    EXPECT_FALSE(second_committed.load(std::memory_order_acquire));
+    EXPECT_EQ(mt.approx_size(), 0U);
+    std::string out;
+    EXPECT_FALSE(mt.get(lcdf::Str("key"), out));
+}
+
+TEST_F(SiloNonTxnApi, ConcurrentMvDeletesOfPresentRowConflict) {
+    expect_present_row_delete_conflict(PresentRowSecondOperation::Delete,
+                                       9013,
+                                       "mt_mv_present_delete_delete");
+}
+
+TEST_F(SiloNonTxnApi, ConcurrentMvDeleteInvalidatesStagedUpdate) {
+    expect_present_row_delete_conflict(PresentRowSecondOperation::Update,
+                                       9014,
+                                       "mt_mv_present_delete_update");
+}
+
+#if READ_MY_WRITES
+TEST_F(SiloNonTxnApi, MassTransInsertThenDeleteCancelsInMvMode) {
+    ScopedMultiversionMode multiversion;
+    mbta_type& mt = make_masstrans(9009, "mt_mv_insert_delete");
+    const std::string value = mako::Encode("value");
+
+    Sto::start_transaction();
+    EXPECT_FALSE(mt.transInsert(lcdf::Str("key"), value));
+    EXPECT_TRUE(mt.transDelete(lcdf::Str("key")));
+    EXPECT_TRUE(Sto::try_commit());
+    EXPECT_EQ(mt.approx_size(), 0U);
+    std::string out;
+    EXPECT_FALSE(mt.get(lcdf::Str("key"), out));
+
+    Sto::start_transaction();
+    EXPECT_FALSE(mt.transInsert(lcdf::Str("aborted"), value));
+    EXPECT_TRUE(mt.transDelete(lcdf::Str("aborted")));
+    Sto::silent_abort();
+    EXPECT_EQ(mt.approx_size(), 0U);
+    EXPECT_FALSE(mt.get(lcdf::Str("aborted"), out));
+}
+
+TEST_F(SiloNonTxnApi, MassTransResurrectionThenDeleteIsNetZeroInMvMode) {
+    ScopedMultiversionMode multiversion;
+    mbta_type& mt = make_masstrans(9010, "mt_mv_resurrection_delete");
+    ASSERT_TRUE(mt.put(lcdf::Str("key"), mako::Encode("old")));
+    ASSERT_TRUE(mt.erase(lcdf::Str("key")));
+    const std::string value = mako::Encode("new");
+
+    Sto::start_transaction();
+    EXPECT_FALSE(mt.transPut(lcdf::Str("key"), value));
+    EXPECT_TRUE(mt.transDelete(lcdf::Str("key")));
+    EXPECT_TRUE(Sto::try_commit());
+    EXPECT_EQ(mt.approx_size(), 0U);
+    std::string out;
+    EXPECT_FALSE(mt.get(lcdf::Str("key"), out));
+}
+#endif
 
 // ===========================================================================
 // 2. L3 level — through abstract_ordered_index* (virtual dispatch)

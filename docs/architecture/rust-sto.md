@@ -1,6 +1,6 @@
 # Rust STO: Type-Aware Transactions for Safe, Extensible Data Structures
 
-> **Status:** Implemented experimental non-opaque v1; pre-cutover
+> **Status:** Implemented bounded local non-opaque v1; pre-default-cutover
 >
 > **Implementation status:** `sto-core`, the raw and safe Masstree boundary,
 > transactional Masstree point operations, copied scans, physical-directory
@@ -12,20 +12,34 @@
 > locks remain held, exist on this branch.
 > The closed TPC-C bridge also implements fused full Payment, exact-home
 > NewOrder, local Delivery, and the local StockLevel scan-and-join tail.
-> Graceful benchmark and facade teardown is implemented for the supported
-> single-shard Rust TPC-C bridge, and a reproducible zoo-2 point-workload
-> comparison is complete. Native Masstree allocations and registrations remain
-> process-lifetime because ABI v1 does not advertise graceful shutdown. The
+> Orderly benchmark teardown is implemented for the supported single-shard
+> Rust TPC-C bridge. The separate C++ Rocks-compatible facade has an explicit
+> thread-attachment and close contract. A reproducible `zoo-002`
+> point-workload comparison is complete. Close and worker join do not reclaim native
+> Masstree allocations or registrations: those remain process-lifetime because
+> ABI v1 does not advertise graceful shutdown. The
 > optional opacity profile, distributed and multi-shard Rust execution,
 > production upper-layer facade/cutover, and production-wide performance
 > acceptance remain deferred.
+>
+> **Supported end-to-end profile:** the closed `sto_tpcc_bench` /
+> `sto-tpcc-ffi` integration with exactly one local, non-replicated shard;
+> `Serializable` non-opaque isolation; synchronous same-thread transactions;
+> and a bounded, fixed set of long-lived OS worker threads. C++ STO remains
+> the default. The generic Rocks-compatible `mako::DB` facade accepts only
+> `storage_engine = "cpp"`; it does not expose this Rust backend.
+>
+> **Unsupported or deferred:** Rust remote indexes, cross-shard or distributed
+> commit, multi-shard Rust execution, Paxos/Raft replication, the `Opaque`
+> runtime, durability and MVCC, upper `mako-local`/cache cutover, native runtime,
+> tree, or registration reclamation, and native worker/core-ID recycling.
 >
 > **Audience:** STO core, transactional-datatype, Masstree ABI, and Mako integration developers
 >
 > **Baseline:** Mako `mako-dev` at `378fc281d2c6`; compatibility oracle
 > pull request 86, `worktree-masstree-rocks` at `a3ede48859a4`
 >
-> **Last updated:** 2026-09-05
+> **Last updated:** 2026-09-06
 
 This document defines the intended semantics and architecture of Mako's native
 Rust implementation of STO. It is a living design contract: implementation
@@ -215,9 +229,9 @@ The original STO library included `TGeneric`, an untyped word-tracking fallback.
 **[RUST]** Omitting that fallback from v1 is a scope decision; it is not a claim
 that the EuroSys system supported only purpose-built datatypes.
 
-### 3.3 First-release feature boundary
+### 3.3 Implemented v1 feature boundary
 
-The initial production profile includes:
+The implemented v1 core and adapter capability set includes:
 
 - non-opaque OCC with final read and predicate validation;
 - `TxnCell` and at least one independently implemented generic adapter;
@@ -456,10 +470,14 @@ protocol unsafe.
 - runtime health and statistics; and
 - registered object/resource type bindings.
 
-`WorkerContext` represents one attached, long-lived OS worker. It has a stable
-`OwnerId`, belongs to exactly one runtime, and is `!Send + !Sync`. Creating more
-workers than the version encoding or native Masstree runtime supports returns a
-capacity error; it never aborts the process.
+`WorkerContext` is a thread-affine attachment facade for one long-lived OS
+worker thread. It has a stable `OwnerId`, belongs to exactly one runtime, and is
+`!Send + !Sync`. Dropping and recreating the facade on the same OS thread does
+not create a new native registration; replacing the OS thread does. Creating
+more native worker registrations than the version encoding or Masstree runtime
+supports returns a capacity error through the checked Rust/ABI attachment path.
+This guarantee does not cover legacy direct C++ registration paths. Section
+15.5 defines the corresponding process-lifetime rule.
 
 The core API uses explicit context borrowing:
 
@@ -3118,6 +3136,8 @@ not correctness:
 | `LastOnly` | Probe and replace one exact most-recent point resolution. | Do not populate the cache. |
 | `ReadThenWrite` | A get always traverses Masstree, then retains its resolution for the next matching put or remove. | Do not populate the cache. |
 | `None` | Always resolve through Masstree and retain no point resolution. | Do not populate the cache. |
+| `DenseItem` | Fused NewOrder item batches share a table-wide, direct-index cache keyed by item ID. Scalar operations behave as `None`. | Do not populate the cache. |
+| `DenseStock` | Fused NewOrder and StockLevel stock batches share a table-wide, direct-index cache keyed by item ID while the table is bound to one positive warehouse ID. Scalar operations behave as `ReadThenWrite`; a warehouse mismatch permanently disables dense lookup for that table. | Do not populate the cache. |
 
 Entries store at most 32 key bytes and confirm both the full key and the
 never-reused table identity. A hash collision can only evict or miss. It cannot
@@ -3128,12 +3148,17 @@ policies by table role:
 | Current TPC-C tables | Policy | Reason |
 | --- | --- | --- |
 | `customer`, `warehouse`, `district`, `new_order`, `oorder` | `Full` | Reuse hot point resolutions, Delivery's scan-to-remove handoff, and its order get-to-put handoff. |
-| `stock` | `ReadThenWrite` | Preserve the immediate get-to-put handoff without keeping a large cross-transaction cache. |
-| `item`, `customer_name_idx`, `oorder_c_id_idx`, `history`, `stock_data`, `order_line` | `None` | Their current access pattern is point-read-only, insert-only, or scan/batch based, so retained point entries do not remove a later traversal. |
+| `item` | `DenseItem` | Share item resolutions across workers in the fused NewOrder item batch; ordinary scalar item reads retain no resolution. |
+| `stock` | `DenseStock` | Share stock resolutions across workers in fused NewOrder and StockLevel batches while retaining the scalar get-to-put handoff. |
+| `customer_name_idx`, `oorder_c_id_idx`, `history`, `stock_data`, `order_line` | `None` | Their current access pattern is point-read-only, insert-only, or scan/batch based, so retained point entries do not remove a later traversal. |
 
 `LastOnly` remains available to other bridge users but the current TPC-C table
-classifier does not select it. Fused Delivery also retains tokens directly from
-its value-only scans for the same transaction. That path does not depend on the
+classifier does not select it. Each dense policy eagerly allocates exactly
+100,000 eight-byte atomic identity slots (800,000 bytes, plus the retained table
+handle and allocation metadata) when its table is created. Slots hold no value
+or OCC state, and every hit still performs normal transactional observation and
+validation. Fused Delivery also retains tokens directly from its value-only
+scans for the same transaction. That path does not depend on the
 cross-transaction cache and is why `order_line` can use `None` while Delivery
 still updates each scanned row without a second tree lookup.
 
@@ -3430,11 +3455,11 @@ The safe ownership shape is:
 ```text
 Runtime: shared native-runtime ownership
 Worker:  !Send + !Sync, bound to one OS thread and Runtime
-Tree:    shareable facade; every operation also requires &Worker
+Tree:    shareable facade; every data-path operation also requires &Worker
 ```
 
-V1 MAY support only one process-wide native Masstree runtime if the inherited
-RCU/core-ID implementation cannot prove multiple independent instances. The
+V1 currently uses one process-wide native Masstree runtime because the inherited
+RCU/core-ID implementation does not support independent runtime instances. The
 runtime handle remains explicit, and a second incompatible acquisition is
 rejected rather than silently sharing global state.
 
@@ -3529,11 +3554,12 @@ current native core-ID and threadinfo registrations are capped and not truly
 recycled. The ABI MUST report exhaustion rather than reaching an assertion or
 `abort()`.
 
-Every public `mt_*` tree operation dynamically validates the worker's current
-OS thread, the worker's runtime, and the tree's runtime before traversal. The
-safe Rust facade uses `!Send + !Sync` ownership for the first property on its
-hidden fast lane, retains a debug-only thread-ID assertion, and dynamically
-checks runtime pairing.
+Every public `mt_*` tree data-path operation dynamically validates the worker's
+current OS thread, the worker's runtime, and the tree's runtime before
+traversal. Seal and facade-release operations instead enforce their documented
+lifecycle state and ownership requirements. The safe Rust facade uses
+`!Send + !Sync` ownership for worker affinity on its hidden fast lane, retains a
+debug-only thread-ID assertion, and dynamically checks runtime pairing.
 
 Structural readers publish into cacheline-private native-core slots. A writer
 sets its per-tree exclusion flag and drains only slots named by the append-only
@@ -3564,11 +3590,12 @@ facade `Drop` removes safe reachability but never calls native destruction, and
 an explicit shutdown request returns `UNSUPPORTED`.
 
 A deployment without `GRACEFUL_SHUTDOWN` MUST create a bounded, fixed set of
-long-lived worker threads and reuse one worker facade per OS thread. It MUST NOT
-cycle worker creation and destruction as a pooling strategy because native core
-IDs are not recyclable. Reclaiming the native runtime, trees, or registrations
-requires replacing the process. Exhaustion must remain a reported capacity
-error and is an operational restart signal, never an assertion path.
+long-lived OS worker threads. A thread may drop and later recreate its worker
+facade, but replacing the OS threads as a pooling strategy consumes additional
+native core IDs because registrations are not recyclable. Reclaiming the native
+runtime, trees, or registrations requires replacing the process. Exhaustion
+must remain a reported capacity error and is an operational restart signal,
+never an assertion path.
 
 With `GRACEFUL_SHUTDOWN`, shutdown requires a matching attached shutdown worker.
 It atomically marks the runtime closing and rejects new work, then requires no
@@ -3577,8 +3604,10 @@ remain, it returns `BUSY` without partial destruction. Otherwise it destroys
 runtime-owned trees on that worker and drains the required native grace periods.
 Worker-facade destruction never implies that its native core ID can be recycled.
 Dropping a runtime that has not completed explicit shutdown never guesses at
-thread-affine destruction; it retains the native allocations and reports the
-leak through diagnostics.
+thread-affine destruction. Dropping the final facade releases Rust-side
+bookkeeping only; the native runtime, trees, and worker registrations remain
+process-lived. ABI v1 exposes no graceful native shutdown diagnostic or
+reclamation.
 
 ### 15.6 Errors and unwinding
 
@@ -3774,6 +3803,21 @@ rejects remote indexes and has no distributed commit protocol. The C++
 `dbtest` coordinator now validates local shard lists and orders multi-runner
 shutdown safely, but that lifecycle work does not make the Rust backend
 multi-shard-capable.
+
+The closed profile constructs its complete table set during startup, before
+long-lived transaction workers attach or any concurrent table use begins.
+Creating tables after worker startup is outside this profile. The generic
+Rocks-compatible `mako::DB` facade is a separate C++-only surface and cannot be
+used to select Rust STO.
+
+The closed wrapper MUST accept between 1 and 111 configured TPC-C workers and
+MUST reject any larger count before database creation. It reserves
+`max(32, 4 * workers + 16)` attachment slots for the benchmark process. The
+calculation MUST reject before multiplication unless the result fits both the
+native Masstree limit reported by `mt_max_threads()` and C++ STO's
+`MAX_THREADS`. Those limits are currently 512 and 460, so 111 workers request
+460 slots while 112 would request 464. The bound covers fixed, long-lived
+workers only; it does not permit thread churn or slot recycling.
 
 The paired C++ wrapper may use wrapper-private trusted transaction-lifecycle,
 scalar point-operation, and scan calls that are absent from the installed
@@ -4267,14 +4311,18 @@ follows:
 | Upper metadata reservation, pre-install acceptance, and post-install publication | [`hook.rs`](../../crates/sto-core/src/hook.rs) | Implemented as an optional caller-owned `CommitHook`; post-install publication runs before lock release and a panic is indeterminate. |
 | Pure-Rust reference adapters and bounded isolation checks | [`crates/sto-test-datatypes`](../../crates/sto-test-datatypes) | Implemented for map, vector, and queue composition, deterministic isolation litmus tests, and model-checked strict-serializability histories. |
 | Independent binary-safe transaction-history oracle | [`crates/mako-history`](../../crates/mako-history) | Implemented with exact interval and result validation, bounded strict-serializability and opacity search, final-state checking, negative fixtures, and hexadecimal replay diagnostics. |
-| Graceful benchmark and facade teardown | [`bench.cc`](../../src/mako/benchmarks/bench.cc), [`dbtest.cc`](../../src/mako/benchmarks/dbtest.cc), and [`rust_sto_tpcc_wrapper.cc`](../../src/mako/storage/rust_sto_tpcc_wrapper.cc) | Implemented for the supported single-shard Rust backend. Worker threads are joined with no active transaction or table use, table facades close before the database, and invalid duplicate local-shard topologies fail before construction. The deferred multi-runner path destroys workers before closing any cross-shard facade. ABI v1 still keeps native Masstree allocations and registrations for process lifetime. |
-| Opacity, distributed or multi-shard Rust execution, and upper backend cutover | Sections 12, 15.5, 17, and 19.2 | Deferred; callers receive explicit unsupported/capability outcomes rather than silent downgrade. |
+| Orderly Rust benchmark teardown | [`bench.cc`](../../src/mako/benchmarks/bench.cc), [`dbtest.cc`](../../src/mako/benchmarks/dbtest.cc), and [`rust_sto_tpcc_wrapper.cc`](../../src/mako/storage/rust_sto_tpcc_wrapper.cc) | Implemented for the supported single-shard Rust backend. Worker threads are joined with no active transaction or table use, Rust table facades close before the Rust database, and invalid duplicate local-shard topologies fail before construction. The deferred multi-runner path destroys workers before closing any cross-shard facade. Close and join do not reclaim native state; ABI v1 keeps native Masstree allocations and registrations for process lifetime. |
+| C++ Rocks-compatible facade lifecycle | [`db.hh`](../../src/rocks_interface/db.hh), [`local_table.hh`](../../src/rocks_interface/local_table.hh), and [`rocksdbInterfaceTest.cc`](../../examples/rocksdbInterfaceTest.cc) | Implemented for native C++ MassTrans only. It enforces paired fixed-worker attachment, active-attempt tokens, no nested transaction, graceful table-capacity failure, and external quiescence before close. `GetDB()` is a non-owning borrow, tokens may reuse an address, native state is process-lived, and replicated schemas must be static and deterministically created at startup. This facade does not select Rust STO. |
+| Opacity, distributed or multi-shard Rust execution, replication, native shutdown/reclamation, worker-ID recycling, durability/MVCC, and upper backend cutover | Sections 12, 15.5, 17, and 19.2 | Unsupported or deferred; callers receive explicit unsupported/capability outcomes rather than silent downgrade. |
 | Bounded point-workload performance characterization | [`sto-rust-zoo2-optimized-2026-08-28`](../performance/sto-rust-zoo2-optimized-2026-08-28/README.md) | Complete on `zoo-002`; production-wide budget acceptance remains deferred. |
 
-The branch-level validation record for this implementation includes the full
-workspace suite in debug and release modes on Rust 1.95, strict Clippy and
-rustdoc builds, C11 header compilation, the exact 44-symbol native allowlist,
-required feature mask `0x3f7f`, export-manifest FNV-1a fingerprint
+The checked-in validation gate inventory for this implementation includes
+workspace-wide formatting, strict Clippy, and rustdoc checks on Rust 1.95;
+debug and release workspace tests excluding the separately driven
+`sto-tpcc-ffi` test binary; and an optimized `sto-tpcc-ffi` static library
+exercised through the C++ boundary tests. It also includes C11 header
+compilation, the exact 44-symbol native allowlist, required feature mask
+`0x3f7f`, export-manifest FNV-1a fingerprint
 `0x8275e6faa88a4fe0`, the raw ABI suite, native safe-wrapper and
 transactional-adapter integration. It also includes independent-oracle
 self-tests and seeded in-memory and real-C-ABI Masstree histories in both
@@ -4289,15 +4337,34 @@ threshold comparison, duplicate item IDs, the 300-row bound, missing-stock
 retry, result immutability on failure, and post-failure handle reuse.
 The checked-in gates pin Miri and provide separate ASan, native C/C++ UBSan,
 and TSan jobs. A result applies only to the exact committed revision recorded
-in its workflow artifact. ASan is deliberately qualified rather than described
+in its workflow artifact. This inventory is not itself a release-candidate
+result: the candidate SHA, clean source-state digest, CI run and jobs, artifact
+hashes, and per-gate outcomes are recorded only after the candidate is sealed.
+ASan is deliberately qualified rather than described
 as globally leak-clean: 30 exact core failure-injection cases retain transaction
 frames after ownership becomes uncertain, and the exact native
 `tests::post_install_row_count_failure_marks_runtime_indeterminate` case does
 the same after publication starts. Leak checking remains enabled everywhere
-else and is disabled only for those exact reruns. The shared allowlist is
-audited against the test harness before use. The pinned Miri gate applies the
-same exact dispositions; its full exact-revision result and the native
-sanitizer workflow artifacts remain required before cutover.
+else in the Rust-labelled suite and is disabled only for those exact reruns.
+ASan also runs six exact native process-lifetime CTests: the local facade, the
+full MassTrans non-transactional suite, two MV delete conflict regressions, and
+the two C++ slow-exit cases. Leak reporting is disabled for those processes
+while address errors remain fatal because ABI v1 retains their native roots
+until exit. Four exact transaction lifetime and failure regressions retain leak
+checking, including the reused-`TransItem` ownership case. The shared allowlist
+is audited against the test harness before use. The address lane then rebuilds the MassTrans library and test with
+`STO_RMW=ON` and runs two independently selected MV regressions under the same
+process-lifetime leak qualification. The pinned Miri gate applies the same exact Rust dispositions; its full
+exact-revision result and the native sanitizer workflow artifacts remain
+required before cutover.
+
+The two-runner C++ lifecycle case in the sanitizer gate uses a local-only timed
+transaction mix. It covers concurrent loader and runner setup, RCU publication,
+output, join, and teardown, but does not certify the inherited C++ MassTrans
+cross-partition payload path. That distributed path has unsuppressed C++
+data-race debt recorded as Finding 13 in
+[`masstree-sanitizer-findings.md`](../masstree-sanitizer-findings.md) and is
+outside the supported Rust profile above.
 
 The production cutover record also still needs explicit native fault injection
 for allocation failure and ordinary C++ exceptions, the upper-backend

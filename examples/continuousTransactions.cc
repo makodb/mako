@@ -202,7 +202,7 @@ int main(int argc, char **argv) {
     for (int i = 0; i < nthreads; i++) {
         workers.emplace_back(make_unique<ContinuousWorker>(db, i, &worker_commits[i]));
         worker_threads.emplace_back([&workers, i]() {
-            mako::initialize_per_thread(workers[i]->db_) ;
+            scoped_db_thread_ctx thread_context(workers[i]->db_, false);
             workers[i]->executeTransactions();
         });
     }

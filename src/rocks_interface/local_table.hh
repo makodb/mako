@@ -72,13 +72,20 @@ inline mako::Status mbta_sharded_Delete(mbta_sharded_ordered_index *t,
 // @safe - Wrapper class delegating to underlying index
 class LocalTable : public ITable {
 public:
-    // @safe - Constructor takes borrowed pointer to underlying index
+    // Compatibility constructor for low-level callers that already manage the
+    // abstract_db thread precondition themselves.
     LocalTable(mbta_sharded_ordered_index* index, const std::string& name)
-        : index_(index), name_(name) {}
+        : index_(index), name_(name), database_(nullptr) {}
+
+    // Facade constructor also enforces the owning database's thread context.
+    LocalTable(mbta_sharded_ordered_index* index, const std::string& name,
+               IDatabase& database)
+        : index_(index), name_(name), database_(&database) {}
 
     // @safe - Delegates to underlying index
-    // Note: txn can be NULL for mbta_wrapper which uses thread-local transaction state
     Status Put(void* txn, const std::string& key, const std::string& value) override {
+        Status validation = validate_transaction(txn);
+        if (!validation.ok()) return validation;
         if (!index_) {
             return Status::InvalidArgument("Invalid table");
         }
@@ -93,8 +100,9 @@ public:
     }
 
     // @safe - Delegates to underlying index
-    // Note: txn can be NULL for mbta_wrapper which uses thread-local transaction state
     Status Get(void* txn, const std::string& key, std::string& value) override {
+        Status validation = validate_transaction(txn);
+        if (!validation.ok()) return validation;
         if (!index_) {
             return Status::InvalidArgument("Invalid table");
         }
@@ -109,8 +117,9 @@ public:
     }
 
     // @safe - Delegates to underlying index
-    // Note: txn can be NULL for mbta_wrapper which uses thread-local transaction state
     Status Delete(void* txn, const std::string& key) override {
+        Status validation = validate_transaction(txn);
+        if (!validation.ok()) return validation;
         if (!index_) {
             return Status::InvalidArgument("Invalid table");
         }
@@ -143,12 +152,14 @@ public:
     };
 
     // @safe - Scans local shard only via mbta_sharded_ordered_index::scan().
-    // In multi-shard deployments, returns NotImplemented — full cross-shard scan
-    // is pending and will be built on top of Shuai's upcoming changes.
+    // In multi-shard deployments, returns NotSupported because a local-only
+    // result would be incomplete.
     Status Scan(void* txn,
                 const std::string& start_key,
                 const std::string* end_key,
                 std::function<bool(const std::string& key, const std::string& value)> callback) override {
+        Status validation = validate_transaction(txn);
+        if (!validation.ok()) return validation;
         if (!index_) {
             return Status::InvalidArgument("Scan: invalid table");
         }
@@ -180,11 +191,13 @@ public:
     }
 
     // @safe - Delegates to underlying index rscan.
-    // In multi-shard deployments, returns NotImplemented for the same reason as Scan.
+    // In multi-shard deployments, returns NotSupported for the same reason as Scan.
     Status ReverseScan(void* txn,
                        const std::string& start_key,
                        const std::string* end_key,
                        std::function<bool(const std::string& key, const std::string& value)> callback) override {
+        Status validation = validate_transaction(txn);
+        if (!validation.ok()) return validation;
         if (!index_) {
             return Status::InvalidArgument("ReverseScan: invalid table");
         }
@@ -213,6 +226,8 @@ public:
 
     // @safe - Check key existence without returning value
     Status Exists(void* txn, const std::string& key, bool* exists) override {
+        Status validation = validate_transaction(txn);
+        if (!validation.ok()) return validation;
         if (!index_ || !exists) {
             return Status::InvalidArgument("Invalid argument");
         }
@@ -231,6 +246,8 @@ public:
 
     // @safe - Insert only if key does not exist (uses native transInsert path)
     Status Insert(void* txn, const std::string& key, const std::string& value) override {
+        Status validation = validate_transaction(txn);
+        if (!validation.ok()) return validation;
         if (!index_) {
             return Status::InvalidArgument("Invalid table");
         }
@@ -250,6 +267,9 @@ public:
     // Note: index_->size() sums over all local shard_tables_, but only one shard
     // holds actual data (the local shard). See GetApproximateSize doc in idb.hh.
     Status GetApproximateSize(size_t* size) override {
+        if (!has_thread_context()) {
+            return missing_thread_context();
+        }
         if (!index_ || !size) {
             return Status::InvalidArgument("Invalid argument");
         }
@@ -265,39 +285,80 @@ public:
 
     // @unsafe - L3 non-txn op runs an internal one-op OCC txn
     Status Put(const std::string& key, const std::string& value) override {
+        Status validation = validate_nontxn();
+        if (!validation.ok()) return validation;
         if (!index_) return Status::InvalidArgument("Invalid table");
-        index_->put(lcdf::Str(key), value);  // returns "newly inserted"
-        return Status::OK();
+        try {
+            index_->put(lcdf::Str(key), value);  // returns "newly inserted"
+            return Status::OK();
+        } catch (const Transaction::TimestampExhausted& ex) {
+            return Status::IOError(ex.what());
+        } catch (...) {
+            return Status::IOError("Unknown error in non-transactional Put");
+        }
     }
 
     // @unsafe - L3 non-txn op runs an internal one-op OCC txn
     Status Insert(const std::string& key, const std::string& value) override {
+        Status validation = validate_nontxn();
+        if (!validation.ok()) return validation;
         if (!index_) return Status::InvalidArgument("Invalid table");
-        return index_->insert(lcdf::Str(key), value)
-                   ? Status::OK()
-                   : Status::InvalidArgument("key already exists");
+        try {
+            return index_->insert(lcdf::Str(key), value)
+                       ? Status::OK()
+                       : Status::InvalidArgument("key already exists");
+        } catch (const Transaction::TimestampExhausted& ex) {
+            return Status::IOError(ex.what());
+        } catch (...) {
+            return Status::IOError("Unknown error in non-transactional Insert");
+        }
     }
 
     // @unsafe - L3 non-txn op runs an internal one-op OCC txn
     Status Get(const std::string& key, std::string& value) override {
+        Status validation = validate_nontxn();
+        if (!validation.ok()) return validation;
         if (!index_) return Status::InvalidArgument("Invalid table");
-        return index_->get(lcdf::Str(key), value, std::string::npos) ? Status::OK()
-                                                  : Status::NotFound();
+        try {
+            return index_->get(lcdf::Str(key), value, std::string::npos)
+                       ? Status::OK()
+                       : Status::NotFound();
+        } catch (const Transaction::TimestampExhausted& ex) {
+            return Status::IOError(ex.what());
+        } catch (...) {
+            return Status::IOError("Unknown error in non-transactional Get");
+        }
     }
 
-    // @unsafe - direct raw write through the MassTrans cursor
+    // @unsafe - L3 non-txn op runs an internal one-op OCC txn
     Status Delete(const std::string& key) override {
+        Status validation = validate_nontxn();
+        if (!validation.ok()) return validation;
         if (!index_) return Status::InvalidArgument("Invalid table");
-        return index_->remove(lcdf::Str(key)) ? Status::OK()
-                                              : Status::NotFound();
+        try {
+            return index_->remove(lcdf::Str(key)) ? Status::OK()
+                                                   : Status::NotFound();
+        } catch (const Transaction::TimestampExhausted& ex) {
+            return Status::IOError(ex.what());
+        } catch (...) {
+            return Status::IOError("Unknown error in non-transactional Delete");
+        }
     }
 
     // @unsafe - L3 non-txn op runs an internal one-op OCC txn
     Status Exists(const std::string& key, bool* exists) override {
+        Status validation = validate_nontxn();
+        if (!validation.ok()) return validation;
         if (!index_ || !exists) return Status::InvalidArgument("Invalid argument");
-        std::string unused;
-        *exists = index_->get(lcdf::Str(key), unused, std::string::npos);
-        return Status::OK();
+        try {
+            std::string unused;
+            *exists = index_->get(lcdf::Str(key), unused, std::string::npos);
+            return Status::OK();
+        } catch (const Transaction::TimestampExhausted& ex) {
+            return Status::IOError(ex.what());
+        } catch (...) {
+            return Status::IOError("Unknown error in non-transactional Exists");
+        }
     }
 
     // @safe - Access underlying index (for advanced operations)
@@ -305,8 +366,44 @@ public:
     const mbta_sharded_ordered_index* GetIndex() const { return index_; }
 
 private:
+    bool has_thread_context() const {
+        return database_ == nullptr || database_->HasThreadContext();
+    }
+
+    static Status missing_thread_context() {
+        return Status::InvalidArgument(
+            "local table operation requires an active database thread context");
+    }
+
+    Status validate_transaction(void* txn) const {
+        if (!has_thread_context()) return missing_thread_context();
+        // The compatibility constructor preserves the original low-level
+        // ambient-transaction contract. Facade-created tables require the
+        // current DB token and an active attempt instead of silently ignoring
+        // null, foreign, or already-resolved handles.
+        if (database_ != nullptr &&
+            (txn == nullptr || TThread::txn == nullptr ||
+             txn != static_cast<void*>(TThread::txn) ||
+             !TThread::txn->has_active_state())) {
+            return Status::InvalidArgument(
+                "operation requires the current active transaction token");
+        }
+        return Status::OK();
+    }
+
+    Status validate_nontxn() const {
+        if (!has_thread_context()) return missing_thread_context();
+        if (database_ != nullptr && TThread::txn != nullptr &&
+            TThread::txn->has_active_state()) {
+            return Status::InvalidArgument(
+                "non-transactional operation cannot run inside a transaction");
+        }
+        return Status::OK();
+    }
+
     mbta_sharded_ordered_index* index_;  // Borrowed pointer (not owned)
     std::string name_;
+    IDatabase* database_;  // Borrowed when constructed by a DB facade
 };
 
 }  // namespace mako

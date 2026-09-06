@@ -6,6 +6,7 @@
 #include <cstring>
 #include <exception>
 #include <limits>
+#include <new>
 #include <stdexcept>
 #include <string_view>
 #include <utility>
@@ -15,6 +16,7 @@
 #include "lib/common.h"
 #include "rcu.h"
 #include "mbta_wrapper.hh"
+#include "mtree_abi.h"
 
 // Wrapper-private fast lane implemented by sto-tpcc-ffi. These symbols stay
 // out of the installed C header: this wrapper establishes their live-handle,
@@ -316,6 +318,44 @@ extern "C" sto_tpcc_status mako_sto_tpcc_stock_level_full_trusted(
     mako_sto_tpcc_stock_level_full_result *result) noexcept;
 
 namespace {
+
+#ifdef MAKO_RUST_STO_TEST_HOOKS
+thread_local rust_sto_tpcc_detail::open_index_fault_stage
+    pending_open_index_fault =
+        rust_sto_tpcc_detail::open_index_fault_stage::none;
+thread_local size_t destroyed_table_count = 0;
+
+void inject_open_index_fault_if_requested(
+    rust_sto_tpcc_detail::open_index_fault_stage stage) {
+  if (pending_open_index_fault != stage)
+    return;
+  pending_open_index_fault =
+      rust_sto_tpcc_detail::open_index_fault_stage::none;
+  throw std::bad_alloc();
+}
+#endif
+
+void destroy_ffi_table_noexcept(sto_tpcc_table *table) noexcept {
+  if (table == nullptr)
+    return;
+  (void)sto_tpcc_table_destroy(table);
+#ifdef MAKO_RUST_STO_TEST_HOOKS
+  ++destroyed_table_count;
+#endif
+}
+
+struct ffi_table_deleter {
+  void operator()(sto_tpcc_table *table) const noexcept {
+    destroy_ffi_table_noexcept(table);
+  }
+};
+
+constexpr size_t kTpccMinimumAttachmentSlots = 32;
+constexpr size_t kTpccAttachmentSlotsPerWorker = 4;
+constexpr size_t kTpccReservedAttachmentSlots = 16;
+static_assert(MAX_THREADS > 0);
+static_assert(std::numeric_limits<size_t>::max() >=
+              std::numeric_limits<uint32_t>::max());
 
 // A process-start diagnostic switch permits same-binary scalar/fused A/B
 // measurements without adding a getenv call to the transaction hot path.
@@ -673,6 +713,45 @@ int32_t invoke_fixed_modify_bridge(
 
 } // namespace
 
+sto_tpcc_db_config rust_sto_tpcc_detail::db_config_for_worker_count(
+    size_t configured_workers) {
+  // A Rust worker also initializes the legacy C++ TThread state. Size the
+  // process-wide budget to the smaller registry, not just Masstree's larger
+  // native-core pool.
+  const size_t attachment_limit =
+      std::min<size_t>(mt_max_threads(), static_cast<size_t>(MAX_THREADS));
+  size_t max_supported_workers = 0;
+  if (attachment_limit >= kTpccMinimumAttachmentSlots &&
+      attachment_limit >= kTpccReservedAttachmentSlots) {
+    // Division is intentional: admission is proved before the multiply/add
+    // below, so even SIZE_MAX input follows the rejection path without
+    // wrapping.
+    max_supported_workers =
+        (attachment_limit - kTpccReservedAttachmentSlots) /
+        kTpccAttachmentSlotsPerWorker;
+  }
+  if (configured_workers == 0 ||
+      configured_workers > max_supported_workers) {
+    throw std::invalid_argument(
+        "Rust STO TPC-C worker count must be in [1, " +
+        std::to_string(max_supported_workers) +
+        "]; max(32, 4 * workers + 16) must fit " +
+        std::to_string(attachment_limit) +
+        " shared C++/native attachment slots");
+  }
+
+  const size_t requested_slots =
+      configured_workers * kTpccAttachmentSlotsPerWorker +
+      kTpccReservedAttachmentSlots;
+  sto_tpcc_db_config config{};
+  config.max_threads = static_cast<uint32_t>(
+      std::max(kTpccMinimumAttachmentSlots, requested_slots));
+  config.max_key_length = 1024;
+  config.max_items_per_txn = 1024;
+  config.max_locks_per_txn = 2048;
+  return config;
+}
+
 sto_tpcc_table_config
 rust_sto_tpcc_detail::table_config_for(std::string_view index_name) {
   return tpcc_table_config_for(index_name);
@@ -682,6 +761,17 @@ bool rust_sto_tpcc_detail::table_has_static_directory(
     std::string_view index_name) {
   return tpcc_table_has_static_directory(index_name);
 }
+
+#ifdef MAKO_RUST_STO_TEST_HOOKS
+void rust_sto_tpcc_detail::fail_next_open_index_at(
+    open_index_fault_stage stage) noexcept {
+  pending_open_index_fault = stage;
+}
+
+size_t rust_sto_tpcc_detail::destroyed_table_count_for_testing() noexcept {
+  return destroyed_table_count;
+}
+#endif
 
 thread_local sto_tpcc_thread *rust_sto_tpcc_wrapper::tls_thread_ = nullptr;
 thread_local bool rust_sto_tpcc_wrapper::tls_transaction_active_ = false;
@@ -700,7 +790,7 @@ rust_sto_tpcc_ordered_index::rust_sto_tpcc_ordered_index(
 
 rust_sto_tpcc_ordered_index::~rust_sto_tpcc_ordered_index() noexcept {
   if (table_) {
-    (void)sto_tpcc_table_destroy(table_);
+    destroy_ffi_table_noexcept(table_);
     table_ = nullptr;
   }
 }
@@ -1031,12 +1121,8 @@ void rust_sto_tpcc_wrapper::init() {
     throw std::runtime_error(
         "Rust STO TPC-C comparison supports one non-replicated shard");
 
-  sto_tpcc_db_config ffi_config{};
-  ffi_config.max_threads = static_cast<uint32_t>(
-      std::max<size_t>(32, config.getNthreads() * 4 + 16));
-  ffi_config.max_key_length = 1024;
-  ffi_config.max_items_per_txn = 1024;
-  ffi_config.max_locks_per_txn = 2048;
+  const sto_tpcc_db_config ffi_config =
+      rust_sto_tpcc_detail::db_config_for_worker_count(config.getNthreads());
   require_ok("db_create", sto_tpcc_db_create(&ffi_config, &db_));
 }
 
@@ -1643,6 +1729,35 @@ abstract_ordered_index *rust_sto_tpcc_wrapper::open_index(
       found != tables_by_name_.end())
     return found->second;
 
+  if (next_table_id_ == std::numeric_limits<int32_t>::max())
+    throw std::length_error("Rust STO table ID capacity exhausted");
+  const int32_t table_id = next_table_id_;
+  if (tables_by_id_.find(table_id) != tables_by_id_.end())
+    throw std::logic_error("Rust STO table ID is already present");
+  if (tables_.size() == tables_.max_size() ||
+      tables_by_id_.size() == tables_by_id_.max_size() ||
+      tables_by_name_.size() == tables_by_name_.max_size())
+    throw std::length_error("Rust STO table catalog capacity exhausted");
+
+  // Allocate every container slot before asking Rust for a table. Once the
+  // FFI handle exists, publication uses reserved vector capacity and detached
+  // map nodes. The catch block can restore the exact catalog contents without
+  // allocating.
+  tables_.reserve(tables_.size() + 1);
+  tables_by_id_.reserve(tables_by_id_.size() + 1);
+
+  decltype(tables_by_id_) staged_by_id;
+  const auto staged_id_position = staged_by_id.emplace(table_id, nullptr);
+  if (!staged_id_position.second)
+    throw std::logic_error("could not stage Rust STO table ID");
+  auto staged_id = staged_by_id.extract(staged_id_position.first);
+
+  decltype(tables_by_name_) staged_by_name;
+  const auto staged_name_position = staged_by_name.emplace(key, nullptr);
+  if (!staged_name_position.second)
+    throw std::logic_error("could not stage Rust STO table name");
+  auto staged_name = staged_by_name.extract(staged_name_position.first);
+
   const sto_tpcc_table_config table_config =
       rust_sto_tpcc_detail::table_config_for(name);
   const sto_tpcc_resolved_cache_policy cache_policy =
@@ -1652,13 +1767,69 @@ abstract_ordered_index *rust_sto_tpcc_wrapper::open_index(
              sto_tpcc_table_create_with_cache_policy(
                  db_, &table_config, cache_policy, &table));
 
-  const int32_t table_id = next_table_id_++;
+  std::unique_ptr<sto_tpcc_table, ffi_table_deleter> table_owner(table);
+#ifdef MAKO_RUST_STO_TEST_HOOKS
+  inject_open_index_fault_if_requested(
+      rust_sto_tpcc_detail::open_index_fault_stage::after_table_create);
+#endif
+
   auto index = std::make_unique<rust_sto_tpcc_ordered_index>(
       this, table, table_id, name, false);
+  table_owner.release();
+#ifdef MAKO_RUST_STO_TEST_HOOKS
+  inject_open_index_fault_if_requested(
+      rust_sto_tpcc_detail::open_index_fault_stage::after_facade_create);
+#endif
+
   auto *raw = index.get();
-  tables_.push_back(std::move(index));
-  tables_by_id_.emplace(table_id, raw);
-  tables_by_name_.emplace(key, raw);
+  staged_id.mapped() = raw;
+  staged_name.mapped() = raw;
+
+  bool table_inserted = false;
+  bool id_inserted = false;
+  bool name_inserted = false;
+  decltype(tables_by_id_)::iterator id_position = tables_by_id_.end();
+  decltype(tables_by_name_)::iterator name_position = tables_by_name_.end();
+  try {
+    tables_.push_back(std::move(index));
+    table_inserted = true;
+#ifdef MAKO_RUST_STO_TEST_HOOKS
+    inject_open_index_fault_if_requested(
+        rust_sto_tpcc_detail::open_index_fault_stage::after_tables_insert);
+#endif
+
+    auto id_result = tables_by_id_.insert(std::move(staged_id));
+    if (!id_result.inserted)
+      throw std::logic_error("Rust STO table ID insertion conflicted");
+    id_position = id_result.position;
+    id_inserted = true;
+#ifdef MAKO_RUST_STO_TEST_HOOKS
+    inject_open_index_fault_if_requested(
+        rust_sto_tpcc_detail::open_index_fault_stage::after_id_insert);
+#endif
+
+    auto name_result = tables_by_name_.insert(std::move(staged_name));
+    if (!name_result.inserted)
+      throw std::logic_error("Rust STO table name insertion conflicted");
+    name_position = name_result.position;
+    name_inserted = true;
+#ifdef MAKO_RUST_STO_TEST_HOOKS
+    inject_open_index_fault_if_requested(
+        rust_sto_tpcc_detail::open_index_fault_stage::after_name_insert);
+#endif
+  } catch (...) {
+    if (name_inserted)
+      tables_by_name_.erase(name_position);
+    if (id_inserted)
+      tables_by_id_.erase(id_position);
+    if (table_inserted) {
+      assert(tables_.back().get() == raw);
+      tables_.pop_back();
+    }
+    throw;
+  }
+
+  ++next_table_id_;
   return raw;
 }
 

@@ -165,7 +165,8 @@ for QUARANTINE_SUITE_KEY in "${QUARANTINE_SUITE_KEYS[@]}"; do
     for SUITE_CASE in "${SUITE_CASES[@]}"; do
         IFS='|' read -r _ _ SUITE_TEST <<<"${SUITE_CASE}"
         run_miri_with_quarantine_leaks -p "${QUARANTINE_PACKAGE}" \
-            --test "${QUARANTINE_SUITE}" "${SUITE_TEST}" -- --exact
+            --test "${QUARANTINE_SUITE}" "${SUITE_TEST}" -- \
+                --exact --include-ignored
     done
 done
 

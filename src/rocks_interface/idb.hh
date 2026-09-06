@@ -4,23 +4,24 @@
  * mako/idb.hh - Abstract Database Interface
  *
  * This header defines abstract interfaces that both local (mako::DB) and
- * remote (mako::RemoteDB) database implementations share. This enables
- * writing code that works with either implementation without branching.
+ * remote (mako::RemoteDB) database implementations share. The common virtual
+ * shape does not imply equal capabilities: RemoteDB transactions remain
+ * non-atomic scaffolding.
  *
- * Usage:
- *   // Factory creates appropriate implementation
- *   mako::IDatabase* db = create_database(is_client_mode, options);
- *
- *   // Same code for both local and remote
- *   ITable* table = db->GetTable("customer_0");
- *   void* txn = db->BeginTransaction();
- *   table->Put(txn, "key", "value");
- *   db->Commit(txn);
+ * Usage with an IDatabase supplied by the caller:
+ *   mako::ITable* table = db.GetTable("customer_0");
+ *   if (table == nullptr) return;
+ *   mako::ScopedDatabaseThreadContext thread_context(db);
+ *   void* txn = db.BeginTransaction();
+ *   table->Put(txn, "key", encoded_value);
+ *   db.Commit(txn);
  */
 
 #include "status.hh"
+#include <exception>
 #include <functional>
 #include <string>
+#include <thread>
 
 namespace mako {
 
@@ -74,7 +75,8 @@ public:
                         const std::string* end_key,
                         std::function<bool(const std::string& key, const std::string& value)> callback) = 0;
 
-    // Reverse scan (start_key, end_key] descending. end_key=nullptr means start of table.
+    // Reverse scan from start_key (inclusive) down to end_key (exclusive).
+    // end_key=nullptr means the beginning of the table.
     // Local shard only. Callback returns false to stop early.
     virtual Status ReverseScan(void* txn,
                                const std::string& start_key,
@@ -85,21 +87,25 @@ public:
     // Implemented via Get internally; does not expose the value.
     virtual Status Exists(void* txn, const std::string& key, bool* exists) = 0;
 
-    // Insert only if key does not exist (OCC transInsert semantics, unlike Put which overwrites).
-    // Aborts the transaction if the key is already present.
+    // Insert only if key does not exist (OCC transInsert semantics, unlike Put
+    // which overwrites). A duplicate returns InvalidArgument and leaves the
+    // transaction active; the caller must still Commit or Rollback it.
     virtual Status Insert(void* txn, const std::string& key, const std::string& value) = 0;
 
-    // Approximate key count for the LOCAL shard only; no transaction needed.
-    // Value may be stale. For cluster-wide count, RPC to other shards is required (not yet implemented).
+    // Approximate key count for the LOCAL shard only; no transaction handle is
+    // needed, but a facade-backed local table still requires its DB thread
+    // context. Value may be stale. Cluster-wide count requires RPC (not yet
+    // implemented).
     virtual Status GetApproximateSize(size_t* size) = 0;
 
     // =========================================================================
     // Non-transactional API (Masstree-shape; docs/storage-interface.md)
     // =========================================================================
-    // Each op is self-contained and immediately visible: internally a
-    // one-op OCC transaction on the owning shard, so writes replicate
-    // through the normal commit path. No BeginTransaction handle is
-    // involved, and these must NOT be called from a thread with an
+    // On STO/MassTrans, each op is self-contained and immediately visible:
+    // internally it is a one-op OCC transaction on the owning shard, so it uses
+    // that backend's normal commit machinery. This interface alone does not
+    // certify distributed or replicated publication. No BeginTransaction
+    // handle is involved, and these must NOT be called from a thread with an
     // open transaction.
     //
     // Semantics:
@@ -145,8 +151,8 @@ public:
 /**
  * IDatabase - Abstract interface for database operations
  *
- * Both mako::DB (local) and mako::RemoteDB implement this interface,
- * enabling unified test code that works with either implementation.
+ * Both mako::DB (local) and mako::RemoteDB implement this interface. Callers
+ * must still respect their different capability sets.
  */
 // @safe - Pure abstract interface
 class IDatabase {
@@ -159,7 +165,12 @@ public:
 
     /**
      * Begin a new transaction
-     * @return Transaction handle (opaque pointer), nullptr on failure
+     * @return Backend-defined opaque token. Local DB returns a non-null,
+     *         thread-affine, single-attempt token and reports errors by
+     *         exception. It must not be retained after Commit or Rollback;
+     *         local storage may reuse the same address for a later attempt.
+     *         RemoteDB's experimental transactional scaffold may return
+     *         nullptr.
      */
     virtual void* BeginTransaction() = 0;
 
@@ -182,16 +193,27 @@ public:
     /**
      * Get a table by name
      * @param name - Table name
-     * @return Pointer to ITable interface (owned by database)
+     * @return Borrowed pointer owned by the database, or nullptr on failure
      *
      * For local DB: Creates wrapper around mbta_sharded_ordered_index
      * For remote DB: Creates RemoteTable proxy
+     *
+     * Local lookup/creation is metadata-only and does not require a database
+     * thread context. The pointer must not be retained across database close
+     * or destruction. The current local catalog admits at most
+     * NUM_TABLES_PER_SHARD (currently 200) logical names and returns nullptr on
+     * capacity or native failure. Distributed implementations require identical
+     * deterministic startup schemas; live table creation is not a portable
+     * IDatabase capability.
      */
     virtual ITable* GetTable(const std::string& name) = 0;
 
     /**
-     * List all tables currently known to the database.
-     * Default implementation returns empty vector; concrete backends should override.
+     * List table names tracked by this interface, in backend-defined order.
+     * This need not enumerate the underlying native catalog. The default
+     * implementation returns an empty vector. Local implementations may treat
+     * this as metadata-only, but callers must still quiesce it before closing
+     * or destroying the database.
      */
     virtual std::vector<std::string> ListTables() { return {}; }
 
@@ -201,7 +223,7 @@ public:
 
     /**
      * Connect to the database
-     * For local DB: No-op (always connected)
+     * For local DB: Does no transport work; succeeds only while the facade is open
      * For remote DB: Establishes connection to server
      *
      * @return Status::OK() on success
@@ -217,21 +239,78 @@ public:
 
     /**
      * Check if connected
-     * For local DB: Always returns true
+     * For local DB: Mirrors whether the facade is open
      * For remote DB: Returns actual connection state
      */
     virtual bool IsConnected() const { return true; }
 
     // =========================================================================
-    // Thread Initialization (optional for remote DB)
+    // Thread Lifecycle (optional for remote DB)
     // =========================================================================
 
     /**
-     * Initialize thread context for database operations
-     * For local DB: Sets up scoped_db_thread_ctx
+     * Initialize the current thread for database operations.
+     * A successful call must be paired with EndThread() after the thread's
+     * last database operation.
+     *
+     * For a transaction-capable local DB: Initializes the underlying database
+     * thread context. A replay-only follower/learner may reject attachment.
      * For remote DB: No-op (server handles thread context)
+     *
+     * A local implementation may reject nested or cross-database attachment.
      */
     virtual void InitThread() {}
+
+    /**
+     * Release the current thread's database context.
+     * For local DB: Releases the underlying database thread context
+     * For remote DB: No-op (server handles thread context)
+     *
+     * Local implementations require same-thread, same-database pairing.
+     */
+    virtual void EndThread() {}
+
+    /**
+     * Return whether this database's thread-attachment prerequisite is
+     * satisfied on the current thread. A true result does not imply that a
+     * remote implementation is connected or otherwise ready for operations.
+     */
+    virtual bool HasThreadContext() const { return true; }
+};
+
+/**
+ * Pairs IDatabase thread initialization and teardown for a lexical scope. The
+ * borrowed database must outlive the guard, and the guard must be destroyed on
+ * the OS thread that constructed it.
+ */
+class [[nodiscard("keep the database thread-context guard alive")]]
+    ScopedDatabaseThreadContext {
+public:
+    explicit ScopedDatabaseThreadContext(IDatabase& db)
+        : db_(db), owner_thread_(std::this_thread::get_id()) {
+        db_.InitThread();
+    }
+
+    ~ScopedDatabaseThreadContext() noexcept {
+        // Database thread state includes C++ thread_local pointers. Destroying
+        // a heap-owned guard on another thread would otherwise detach the wrong
+        // thread and leave the original context live.
+        if (std::this_thread::get_id() != owner_thread_) {
+            std::terminate();
+        }
+        try {
+            db_.EndThread();
+        } catch (...) {
+            std::terminate();
+        }
+    }
+
+    ScopedDatabaseThreadContext(const ScopedDatabaseThreadContext&) = delete;
+    ScopedDatabaseThreadContext& operator=(const ScopedDatabaseThreadContext&) = delete;
+
+private:
+    IDatabase& db_;
+    std::thread::id owner_thread_;
 };
 
 }  // namespace mako

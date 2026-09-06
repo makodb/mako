@@ -21,7 +21,7 @@ jobs:
     name: Goal-0 SRPC canonical Rust dual compile
     runs-on: ubuntu-24.04
     container:
-      image: ghcr.io/makodb/mako-ci-ubuntu24:latest
+      image: ghcr.io/makodb/mako-ci-ubuntu24@sha256:3bf4d101ad119672560a28c0c7eb5fbf5e36c1695437382f8393aa5e26644628
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -32,7 +32,7 @@ jobs:
       GOAL0_BUILD_DIR: build-goal0
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           submodules: recursive
 
@@ -176,7 +176,7 @@ jobs:
   build-and-test:
     runs-on: ubuntu-24.04
     container:
-      image: ghcr.io/makodb/mako-ci-ubuntu24:latest
+      image: ghcr.io/makodb/mako-ci-ubuntu24@sha256:3bf4d101ad119672560a28c0c7eb5fbf5e36c1695437382f8393aa5e26644628
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -214,7 +214,7 @@ jobs:
       MAKO_CI_TRD: "3"                        # warehouses/threads per shard — shrunk from 6 to fit the GitHub-hosted 7GB runner under 8-process Raft replication
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           submodules: recursive  # if you use submodules (e.g., third-party libs)
 
@@ -264,6 +264,9 @@ jobs:
           cmake --version
           clang --version
 
+      - name: Check Rust workspace formatting
+        run: cargo fmt --manifest-path crates/Cargo.toml --all -- --check
+
       - name: Compile
         run: ./ci/ci.sh compile
 
@@ -282,6 +285,7 @@ jobs:
             > build/rust-sto-ctest-inventory.json
           python3 - <<'PY'
           import json
+          import shlex
           from pathlib import Path
 
           required = {
@@ -289,7 +293,15 @@ jobs:
               "test_mako_value_metadata",
               "test_mtree_abi",
               "test_mtree_abi_c11_header",
+              "test_rocksdb_interface_lifecycle",
+              "test_silo_nontxn_api",
+              "test_silo_nontxn_api_mv_delete_delete_conflict",
+              "test_silo_nontxn_api_mv_delete_update_conflict",
               "test_silo_runtime_concurrency_lifecycle",
+              "test_silo_transaction_install_exception_fail_stop",
+              "test_silo_transaction_set_capacity_exhaustion",
+              "test_silo_transaction_set_exact_chunk_boundary",
+              "test_silo_transitem_lifetime",
               "test_srpc_epoll_platform",
               "test_sto_tpcc_ffi_c11_header",
               "test_sto_tpcc_cpp_wrapper_smoke",
@@ -302,15 +314,153 @@ jobs:
               "test_sto_tpcc_rejects_partial_local_shards",
               "test_sto_tpcc_rejects_rust_distributed_shard",
               "test_sto_tpcc_rejects_rust_replication",
+              "test_sto_tpcc_rejects_rust_worker_limit",
           }
           inventory = json.loads(
               Path("build/rust-sto-ctest-inventory.json").read_text())
-          present = {test["name"] for test in inventory.get("tests", [])}
-          missing = sorted(required - present)
+          tests = inventory.get("tests", [])
+          counts = {}
+          by_name = {}
+          rust_names = set()
+          for test in tests:
+              name = test.get("name")
+              counts[name] = counts.get(name, 0) + 1
+              by_name[name] = test
+              for prop in test.get("properties", []):
+                  if (prop.get("name") == "LABELS"
+                          and "rust" in prop.get("value", [])):
+                      rust_names.add(name)
+
+          missing = sorted(required - set(by_name))
           if missing:
               raise SystemExit(
                   "missing Rust STO boundary CTests: " + ", ".join(missing))
-          print(f"verified {len(required)} Rust STO boundary CTests")
+          unexpected_rust = sorted(rust_names - required)
+          if unexpected_rust:
+              raise SystemExit(
+                  "Rust-labeled CTests are not in the explicit hosted gate: "
+                  + ", ".join(unexpected_rust))
+          duplicates = sorted(
+              name for name in required if counts.get(name) != 1)
+          if duplicates:
+              raise SystemExit(
+                  "Rust STO boundary CTests are not registered exactly once: "
+                  + ", ".join(duplicates))
+
+          forbidden_properties = {
+              "DISABLED",
+              "PASS_REGULAR_EXPRESSION",
+              "SKIP_REGULAR_EXPRESSION",
+              "SKIP_RETURN_CODE",
+              "WILL_FAIL",
+          }
+          allowed_environment = {
+              "test_sto_tpcc_cpp_multishard_slow_exit": [
+                  "MAKO_TPCC_WORKLOAD_MIX=0,0,34,33,33"
+              ],
+          }
+          exact_filters = {
+              "test_silo_runtime_concurrency_lifecycle": (
+                  "--gtest_filter=SiloRuntimeTest.ConcurrentGlobalDefaultInitialization:"
+                  "SiloRuntimeLifetimeTest.LazyServicesHaveBoundedTeardown:"
+                  "CoreStorageTest.*:SpinBarrierTest.*:MasstreeContextEpochTest.*:"
+                  "MassTransEpochIntegrationTest.*:StoThreadIdLifecycleTest.*:"
+                  "StoEpochAdvancerLifecycleTest.*:MakoTimestampTest.*"
+              ),
+              "test_silo_transitem_lifetime": (
+                  "--gtest_filter=TransItemLifetimeTest."
+                  "ReusedSlotRetainsExactlyOneOwnedExtraString"
+              ),
+              "test_silo_transaction_set_exact_chunk_boundary": (
+                  "--gtest_filter=TransactionSetBoundaryTest."
+                  "ParticipantAbortCleansExactChunkBoundaries"
+              ),
+              "test_silo_transaction_set_capacity_exhaustion": (
+                  "--gtest_filter=TransactionSetBoundaryTest."
+                  "CapacityExhaustionFailsClosedInRelease"
+              ),
+              "test_silo_transaction_install_exception_fail_stop": (
+                  "--gtest_filter=TransactionCommitFailureTest."
+                  "InstallExceptionIsFailStop"
+              ),
+              "test_silo_nontxn_api_mv_delete_delete_conflict": (
+                  "--gtest_filter=SiloNonTxnApi."
+                  "ConcurrentMvDeletesOfPresentRowConflict"
+              ),
+              "test_silo_nontxn_api_mv_delete_update_conflict": (
+                  "--gtest_filter=SiloNonTxnApi."
+                  "ConcurrentMvDeleteInvalidatesStagedUpdate"
+              ),
+          }
+          fail_if_empty_gtests = set(exact_filters) | {
+              "SiloVarintTests",
+              "test_mako_value_metadata",
+              "test_mtree_abi",
+              "test_silo_nontxn_api",
+              "test_srpc_epoll_platform",
+          }
+          for name in sorted(required):
+              test = by_name[name]
+              command = test.get("command", [])
+              if not command:
+                  raise SystemExit(
+                      f"Rust STO boundary CTest has no command: {name}")
+              properties = {
+                  prop.get("name"): prop.get("value")
+                  for prop in test.get("properties", [])
+              }
+              forbidden = sorted(forbidden_properties & set(properties))
+              if forbidden:
+                  raise SystemExit(
+                      f"Rust STO boundary CTest {name} has coverage-altering "
+                      "properties: " + ", ".join(forbidden))
+              if "ENVIRONMENT_MODIFICATION" in properties:
+                  raise SystemExit(
+                      f"Rust STO boundary CTest {name} modifies its environment")
+              environment = properties.get("ENVIRONMENT", [])
+              if environment != allowed_environment.get(name, []):
+                  raise SystemExit(
+                      f"Rust STO boundary CTest {name} has unexpected "
+                      f"environment: {environment!r}")
+              expected_filter = exact_filters.get(name)
+              if expected_filter is not None:
+                  if command.count(expected_filter) != 1:
+                      raise SystemExit(
+                          f"Rust STO boundary CTest {name} lost its exact "
+                          f"GTest selector: {command!r}")
+              if name in fail_if_empty_gtests:
+                  if command.count("--gtest_fail_if_no_test_selected") != 1:
+                      raise SystemExit(
+                          f"Rust STO boundary CTest {name} lost its "
+                          f"fail-if-empty guard: {command!r}")
+          database = json.loads(Path("build/compile_commands.json").read_text())
+          root = Path.cwd().resolve()
+          for relative in (
+              "src/mako/sto/MassTrans.cc",
+              "tests/test_silo_nontxn_api.cc",
+          ):
+              source = (root / relative).resolve()
+              matches = [
+                  entry for entry in database
+                  if Path(entry["file"]).resolve() == source
+              ]
+              if len(matches) != 1:
+                  raise SystemExit(
+                      f"expected one compile command for {relative}, "
+                      f"found {len(matches)}")
+              entry = matches[0]
+              tokens = entry.get("arguments") or shlex.split(entry["command"])
+              definitions = [
+                  token for token in tokens
+                  if token.startswith("-DREAD_MY_WRITES=")
+              ]
+              if definitions != ["-DREAD_MY_WRITES=0"]:
+                  raise SystemExit(
+                      f"{relative} has inconsistent default READ_MY_WRITES "
+                      f"definitions: {definitions!r}")
+          print(
+              f"verified {len(required)} exact Rust STO boundary CTests "
+              "with READ_MY_WRITES=0")
           PY
 
       # The aggregate target above builds every boundary regression named
@@ -321,7 +471,32 @@ jobs:
           ctest --test-dir build
           --output-on-failure
           --no-tests=error
-          -R '^(SiloVarintTests|test_mako_value_metadata|test_mtree_abi|test_mtree_abi_c11_header|test_silo_runtime_concurrency_lifecycle|test_srpc_epoll_platform|test_sto_tpcc_ffi_c11_header|test_sto_tpcc_cpp_wrapper_smoke|test_sto_tpcc_cpp_wrapper_scan_smoke|test_sto_tpcc_cpp_slow_exit|test_sto_tpcc_cpp_multishard_slow_exit|test_sto_tpcc_rust_slow_exit|test_sto_tpcc_rust_concurrent|test_sto_tpcc_rejects_duplicate_local_shards|test_sto_tpcc_rejects_partial_local_shards|test_sto_tpcc_rejects_rust_distributed_shard|test_sto_tpcc_rejects_rust_replication)$'
+          -R '^(SiloVarintTests|test_mako_value_metadata|test_mtree_abi|test_mtree_abi_c11_header|test_rocksdb_interface_lifecycle|test_silo_nontxn_api|test_silo_nontxn_api_mv_delete_delete_conflict|test_silo_nontxn_api_mv_delete_update_conflict|test_silo_runtime_concurrency_lifecycle|test_silo_transaction_install_exception_fail_stop|test_silo_transaction_set_capacity_exhaustion|test_silo_transaction_set_exact_chunk_boundary|test_silo_transitem_lifetime|test_srpc_epoll_platform|test_sto_tpcc_ffi_c11_header|test_sto_tpcc_cpp_wrapper_smoke|test_sto_tpcc_cpp_wrapper_scan_smoke|test_sto_tpcc_cpp_slow_exit|test_sto_tpcc_cpp_multishard_slow_exit|test_sto_tpcc_rust_slow_exit|test_sto_tpcc_rust_concurrent|test_sto_tpcc_rejects_duplicate_local_shards|test_sto_tpcc_rejects_partial_local_shards|test_sto_tpcc_rejects_rust_distributed_shard|test_sto_tpcc_rejects_rust_replication|test_sto_tpcc_rejects_rust_worker_limit)$'
+
+      - name: Run Rust STO workspace tests in release mode
+        run: >-
+          cargo test
+          --manifest-path crates/Cargo.toml
+          --workspace
+          --exclude sto-tpcc-ffi
+          --all-targets
+          --all-features
+          --release
+          --locked
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/build/rust-workspace-target
+
+      - name: Build Rust STO workspace documentation
+        run: >-
+          cargo doc
+          --manifest-path crates/Cargo.toml
+          --workspace
+          --all-features
+          --locked
+          --no-deps
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/build/rust-workspace-target
+          RUSTDOCFLAGS: -D warnings
 
       - name: Run tests - SRPC unit tests
         run: ./ci/ci.sh srpcTests
@@ -380,6 +555,122 @@ jobs:
       - name: Run tests - 2 shard single process with replication
         run: ./ci/ci.sh shard2SingleProcessReplication
 
+      # Run this profile last: changing READ_MY_WRITES requires a consistent
+      # rebuild of libmako and its test consumer, and must not alter the
+      # default-profile binaries used by the broader suite above.
+      - name: Run STO read-my-writes MV regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S . -B build -G "${CMAKE_GENERATOR}" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DSTO_RMW=ON
+          grep -Fxq 'CMAKE_BUILD_TYPE:STRING=Release' build/CMakeCache.txt
+          grep -Fxq 'STO_RMW:BOOL=ON' build/CMakeCache.txt
+          cmake --build build \
+            --parallel "${CI_MAKE_JOBS}" \
+            --target test_silo_nontxn_api -- -k 0
+          python3 - <<'PY'
+          import json
+          import shlex
+          from pathlib import Path
+
+          database = json.loads(Path("build/compile_commands.json").read_text())
+          required = (
+              "src/mako/sto/MassTrans.cc",
+              "tests/test_silo_nontxn_api.cc",
+          )
+          root = Path.cwd().resolve()
+          for relative in required:
+              source = (root / relative).resolve()
+              matches = [
+                  entry for entry in database
+                  if Path(entry["file"]).resolve() == source
+              ]
+              if len(matches) != 1:
+                  raise SystemExit(
+                      f"expected one compile command for {relative}, found {len(matches)}")
+              entry = matches[0]
+              tokens = entry.get("arguments") or shlex.split(entry["command"])
+              definitions = [
+                  token for token in tokens
+                  if token.startswith("-DREAD_MY_WRITES=")
+              ]
+              if definitions != ["-DREAD_MY_WRITES=1"]:
+                  raise SystemExit(
+                      f"{relative} has inconsistent READ_MY_WRITES definitions: "
+                      f"{definitions!r}")
+          print("verified Release STO_RMW profile: READ_MY_WRITES=1")
+          PY
+          ctest --test-dir build --show-only=json-v1 \
+            > build/rust-sto-rmw-ctest-inventory.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          tests = json.loads(
+              Path("build/rust-sto-rmw-ctest-inventory.json").read_text()
+          ).get("tests", [])
+          expected = {
+              "test_silo_nontxn_api_sto_rmw_insert_delete": (
+                  "--gtest_filter=SiloNonTxnApi."
+                  "MassTransInsertThenDeleteCancelsInMvMode"
+              ),
+              "test_silo_nontxn_api_sto_rmw_resurrection_delete": (
+                  "--gtest_filter=SiloNonTxnApi."
+                  "MassTransResurrectionThenDeleteIsNetZeroInMvMode"
+              ),
+          }
+          forbidden_properties = {
+              "DISABLED",
+              "ENVIRONMENT",
+              "ENVIRONMENT_MODIFICATION",
+              "PASS_REGULAR_EXPRESSION",
+              "SKIP_REGULAR_EXPRESSION",
+              "SKIP_RETURN_CODE",
+              "WILL_FAIL",
+          }
+          for name, expected_filter in expected.items():
+              matches = [test for test in tests if test.get("name") == name]
+              if len(matches) != 1:
+                  raise SystemExit(
+                      f"STO_RMW CTest {name} must be registered exactly once; "
+                      f"found {len(matches)}")
+              test = matches[0]
+              command = test.get("command", [])
+              if not command:
+                  raise SystemExit(f"STO_RMW CTest has no command: {name}")
+              if command.count(expected_filter) != 1:
+                  raise SystemExit(
+                      f"STO_RMW CTest {name} lost its exact GTest selector: "
+                      f"{command!r}")
+              if command.count("--gtest_fail_if_no_test_selected") != 1:
+                  raise SystemExit(
+                      f"STO_RMW CTest {name} lost its fail-if-empty guard")
+              properties = {
+                  prop.get("name"): prop.get("value")
+                  for prop in test.get("properties", [])
+              }
+              forbidden = sorted(forbidden_properties & set(properties))
+              if forbidden:
+                  raise SystemExit(
+                      f"STO_RMW CTest {name} has coverage-altering "
+                      "properties: " + ", ".join(forbidden))
+              if "sto-rmw" not in properties.get("LABELS", []):
+                  raise SystemExit(
+                      f"STO_RMW CTest {name} lost its exact sto-rmw label")
+          print("verified exact STO_RMW CTest inventory and commands")
+          PY
+          for test_name in \
+            test_silo_nontxn_api_sto_rmw_insert_delete \
+            test_silo_nontxn_api_sto_rmw_resurrection_delete; do
+            ctest --test-dir build \
+              --output-on-failure \
+              --no-tests=error \
+              -R "^${test_name}$"
+          done
+
       - name: Cleanup
         if: always()
         run: ./ci/ci.sh cleanup
@@ -388,7 +679,7 @@ jobs:
     name: Rust STO Miri ownership gate
     runs-on: ubuntu-24.04
     container:
-      image: ghcr.io/makodb/mako-ci-ubuntu24:latest
+      image: ghcr.io/makodb/mako-ci-ubuntu24@sha256:3bf4d101ad119672560a28c0c7eb5fbf5e36c1695437382f8393aa5e26644628
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -399,7 +690,7 @@ jobs:
       RUSTUP_HOME: /tmp/rust-sto-miri-rustup
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           submodules: recursive
 
@@ -408,8 +699,7 @@ jobs:
         run: |
           set -euo pipefail
           toolchain=$(bash ./scripts/run_rust_sto_miri.sh --print-toolchain)
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-            | sh -s -- -y --profile minimal --default-toolchain none
+          bash ./scripts/ci/install_pinned_rustup.sh
           "${CARGO_HOME}/bin/rustup" toolchain install "${toolchain}" \
             --profile minimal --component miri --component rust-src
           echo "${CARGO_HOME}/bin" >> "${GITHUB_PATH}"

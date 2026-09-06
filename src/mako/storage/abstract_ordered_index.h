@@ -94,9 +94,8 @@ struct oi_clear_unsupported {};
 //
 // Non-txn ops do NOT participate in a caller's transaction; each is
 // per-key atomic on its own (see docs/storage-interface.md):
-// get/put/insert/scan/rscan run inside an internal one-op OCC
-// transaction on backends that have one; remove is a direct raw write
-// (documented asymmetry). VALUES ARE RAW BYTES in both directions:
+// get/put/insert/remove/scan/rscan run inside an internal one-op OCC
+// transaction on backends that have one. VALUES ARE RAW BYTES in both directions:
 // backends needing a storage encoding apply it internally (mbta
 // Encodes on writes; reads/scans come back stripped). Must NOT be
 // called from a thread with an open transaction.
@@ -158,7 +157,7 @@ pub trait ShardParticipant {
 pub trait FullOrderedIndex: TxnOrderedIndex + ShardParticipant {
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=abstract_ordered_index.1 version=1 rust_sha256=a9835a8033a867bcb98045fc26fe329629a0f751b4b8b2884862c6482f23f221*/
+/*RUSTYCPP:GEN-BEGIN id=abstract_ordered_index.1 version=1 rust_sha256=52613193c4b7f2f73ba593c9163401c699b33c9137699363d61e3cc59b7fba1f*/
 class ShardParticipant {
 public:
     virtual ~ShardParticipant() noexcept(false) {}

@@ -56,8 +56,8 @@ public:
   typedef typename std::conditional<Opacity, TVersion, TNonopaqueVersion>::type tversion_type;
 
   static __thread threadinfo_type mythreadinfo;
-  unsigned long long int table_id;
-  bool is_remote;
+  unsigned long long int table_id{0};
+  bool is_remote{false};
   std::string table_name_;
 
 protected:
@@ -228,8 +228,36 @@ public:
       if (has_delete(item)) {
         return false;
       }
+      // A resurrection owns a committed physical tombstone, not a freshly
+      // allocated row. Deleting it in the same transaction is a logical
+      // cancellation that must preserve the tombstone and its history.
+      if (has_resurrection(item)) {
+        item.template add_write<key_write_value_type>(key)
+            .add_flags(delete_bit);
+        return true;
+      }
 #endif
-      item.observe(tversion_type(v));
+      if constexpr (supports_packed_multiversion) {
+        if (TThread::is_multiversion()) {
+          // A multi-version delete leaves a physical tombstone in Masstree.
+          // Determine logical visibility before staging another delete; the
+          // cursor's `found` bit alone only describes physical presence.
+          value_type visible_value;
+          Version observed_version;
+          if (!atomicRead(e, observed_version, visible_value))
+            return false;
+          item.observe(tversion_type(observed_version));
+          if (!MultiVersionValue::mvGET(
+                  visible_value, reinterpret_cast<char*>(e->data()),
+                  TThread::txn->get_current_term(),
+                  sync_util::sync_logger::hist_timestamp))
+            return false;
+        } else {
+          item.observe(tversion_type(v));
+        }
+      } else {
+        item.observe(tversion_type(v));
+      }
       // same as inserts we need to Store (copy) key so we can lookup to remove later
       item.template add_write<key_write_value_type>(key).add_flags(delete_bit);
       return found;
@@ -345,10 +373,10 @@ public:
 
 
   // Returns an approximate count of keys in the table (local shard only).
-  // Updated at commit time under lock; may be stale for recently aborted transactions.
+  // Independent record locks can publish inserts and deletes concurrently, so
+  // the aggregate counter is atomic even though each record change is locked.
   size_t approx_size() const {
-    // @safe - returns count updated at commit time (under lock); no atomics needed.
-    return size_count_;
+    return size_count_.load(std::memory_order_relaxed);
   }
 
   using RangeCallback = rusty::Function<bool(Str, value_type&)>;
@@ -534,15 +562,44 @@ protected:
     Valuecallback valuecallback_;
   };
 
+  // Every public one-operation helper owns the ambient STO attempt it starts.
+  // If staging or a user scan callback throws, abort before unwinding so the
+  // next operation cannot inherit locks or an active transaction. Commit-time
+  // publication failures are fail-stop in Transaction::try_commit().
+  class one_op_transaction {
+  public:
+    one_op_transaction() {
+      Sto::start_transaction();
+      active_ = true;
+    }
+
+    one_op_transaction(const one_op_transaction&) = delete;
+    one_op_transaction& operator=(const one_op_transaction&) = delete;
+
+    ~one_op_transaction() noexcept {
+      if (active_ && TThread::txn != nullptr &&
+          TThread::txn->has_active_state()) {
+        TThread::txn->silent_abort();
+      }
+    }
+
+    void commit() {
+      TThread::txn->commit();
+      active_ = false;
+    }
+
+  private:
+    bool active_ = false;
+  };
+
 public:
 
   // Non-transactional API (Masstree-shape; see
   // docs/storage-interface.md). Each op below is per-key
   // atomic: it does NOT participate in a caller's transaction.
-  // put/get/insert/scan/rscan wrap a one-op OCC transaction (safe
-  // under concurrent OCC readers/writers); remove (further down) is
-  // a direct raw write — the asymmetry is accepted and documented in
-  // the plan doc.
+  // put/get/insert/erase/scan/rscan wrap a one-op OCC transaction and
+  // are safe under concurrent OCC readers and writers. The physical removal
+  // primitive is private and used only after the transaction decision.
   // VT is templated (like transPut) so callers can pass StringWrapper
   // for zero-copy packing as well as plain value_type.
   // Returns true iff the key was newly inserted (Masstree's insert
@@ -551,17 +608,20 @@ public:
   template <typename VT = value_type>
   bool put(Str key, const VT& value, threadinfo_type& ti = mythreadinfo) {
     // @unsafe: Sto uses thread-local global transaction state.
-    Sto::start_transaction();
+    one_op_transaction transaction;
     auto existed = transPut(key, value, ti);
-    Sto::commit();
+    // start_transaction() established the non-null active transaction. Calling
+    // it directly avoids Sto::commit()'s shutdown-only conditional path, which
+    // must not turn a self-contained operation into a silent no-op.
+    transaction.commit();
     return !existed;
   }
 
   bool get(Str key, value_type& value, threadinfo_type& ti = mythreadinfo) {
     // @unsafe: Sto uses thread-local global transaction state.
-    Sto::start_transaction();
+    one_op_transaction transaction;
     auto ret = transGet(key, value, ti);
-    Sto::commit();
+    transaction.commit();
     return ret;
   }
 
@@ -570,10 +630,22 @@ public:
   template <typename VT = value_type>
   bool insert(Str key, const VT& value, threadinfo_type& ti = mythreadinfo) {
     // @unsafe: Sto uses thread-local global transaction state.
-    Sto::start_transaction();
+    one_op_transaction transaction;
     auto existed = transInsert(key, value, ti);
-    Sto::commit();
+    transaction.commit();
     return !existed;
+  }
+
+  // Delete one key in a self-contained OCC transaction. Returns true iff the
+  // key existed. The commit path performs size accounting and replication;
+  // the private physical primitive remains uncounted and is used only after a
+  // transaction decision has already been made.
+  bool erase(Str key, threadinfo_type& ti = mythreadinfo) {
+    // @unsafe: Sto uses thread-local global transaction state.
+    one_op_transaction transaction;
+    auto found = transDelete(key, ti);
+    transaction.commit();
+    return found;
   }
 
   // Forward range scan over [begin, end). Callback is invoked per
@@ -581,18 +653,18 @@ public:
   void scan(Str begin, Str end, RangeCallback callback, ValueAllocator *va = nullptr,
             threadinfo_type& ti = mythreadinfo) {
     // @unsafe: Sto uses thread-local global transaction state.
-    Sto::start_transaction();
+    one_op_transaction transaction;
     transQuery(begin, end, std::move(callback), va, ti);
-    Sto::commit();
+    transaction.commit();
   }
 
   // Reverse range scan; same contract as scan but descending order.
   void rscan(Str begin, Str end, RangeCallback callback, ValueAllocator *va = nullptr,
              threadinfo_type& ti = mythreadinfo) {
     // @unsafe: Sto uses thread-local global transaction state.
-    Sto::start_transaction();
+    one_op_transaction transaction;
     transRQuery(begin, end, std::move(callback), va, ti);
-    Sto::commit();
+    transaction.commit();
   }
 
   // implementation of TObject methods
@@ -636,14 +708,16 @@ public:
     versioned_value* e = item.key<versioned_value*>();
     assert(is_locked(e->version()));
     bool isInsert = has_insert(item), isDelete = has_delete(item);
+    bool isResurrection = has_resurrection(item);
 
     if (isDelete) { // delete
-      // Update count at commit time (under lock), so no atomics needed.
+      // Update the aggregate count at commit time. The record is locked, but
+      // transactions changing other records can reach this counter in parallel.
       // insert-then-delete cancels out (net change = 0); plain delete decrements.
-      if (!isInsert) {
-        size_count_--;
+      if (!isInsert && !isResurrection) {
+        size_count_.fetch_sub(1, std::memory_order_relaxed);
       }
-      if (!TThread::is_multiversion()) {
+      if (!TThread::is_multiversion() || isInsert) {
         if (!isInsert) { // update
           assert(!(e->version() & invalid_bit));
           e->version() |= invalid_bit;
@@ -651,7 +725,7 @@ public:
         }
 
         key_write_value_type& s = item.template write_value<key_write_value_type>();
-        bool success = remove(Str(s));
+        bool success = remove_physical(Str(s));
         // no one should be able to remove since we hold the lock
         (void)success;
         assert(success);
@@ -666,6 +740,15 @@ public:
                                      TThread::txn->get_current_term());
         e->set_length(v.length());
       }
+      // A physical MV tombstone remains addressable, so invalid_bit cannot
+      // publish the deletion as it does in single-version mode. Advance the
+      // OCC version while the row lock is held: transactions that observed
+      // the formerly present row must fail validation before they can apply a
+      // second size decrement or resurrect it as an ordinary update.
+      if (Opacity)
+        TransactionTid::set_version(e->version(), t.commit_tid());
+      else
+        TransactionTid::inc_nonopaque_version(e->version());
       return;
     }  // end of deletion
 
@@ -686,10 +769,12 @@ public:
           }
         }
     }
-    if (Opacity)  // false
+    if (isInsert || isResurrection)
+      size_count_.fetch_add(1, std::memory_order_relaxed);
+
+    if (Opacity)  // false in the supported production profile
       TransactionTid::set_version(e->version(), t.commit_tid());
     else if (isInsert) {  // insert
-      size_count_++;
       Version v = e->version() & ~invalid_bit;
       fence();
       e->version() = v;
@@ -715,13 +800,17 @@ public:
         key_write_value_type& stdstr = item.template write_value<key_write_value_type>();
         // does not copy
         Str s(stdstr);
-        bool success = remove(s);
+        bool success = remove_physical(s);
         (void)success;
         assert(success);
     }
   }
 
-  bool remove(const Str& key, threadinfo_type& ti = mythreadinfo) {
+private:
+  // Physical tree cleanup after an OCC decision. This bypasses validation,
+  // version publication, replication, and size accounting, so it must never
+  // be exposed as a public data operation.
+  bool remove_physical(const Str& key, threadinfo_type& ti = mythreadinfo) {
     ensure_supported_runtime_mode();
     auto lp = cursor_type::from_mutable_str(table_, key);
     bool found = lp.find_locked(*ti.ti);
@@ -817,7 +906,39 @@ protected:
       }
       return false;
     }
+    if (has_resurrection(item)) {
+      // The staged resurrection is logically present to later operations in
+      // this transaction. Put overwrites it; Insert preserves it.
+      if (SET)
+        reallyHandlePutFound(item, e, key, value);
+      return true;
+    }
 #endif
+    if constexpr (supports_packed_multiversion) {
+      if (TThread::is_multiversion()) {
+        value_type visible_value;
+        Version observed_version;
+        if (!atomicRead(e, observed_version, visible_value))
+          return false;
+        item.observe(tversion_type(observed_version));
+        const bool logically_present = MultiVersionValue::mvGET(
+            visible_value, reinterpret_cast<char*>(e->data()),
+            TThread::txn->get_current_term(),
+            sync_util::sync_logger::hist_timestamp);
+        if (!logically_present) {
+          if constexpr (!INSERT) {
+            return false;
+          } else {
+            // Treat this as an update for serialization and abort cleanup: the
+            // committed tombstone remains owned by the table. The dedicated
+            // flag supplies logical-insert size accounting at install.
+            reallyHandlePutFound(item, e, key, value);
+            item.add_flags(resurrection_bit);
+            return false;
+          }
+        }
+      }
+    }
     if (SET) {
       reallyHandlePutFound(item, e, key, value);
     }
@@ -886,6 +1007,9 @@ protected:
   static bool has_delete(const TransItem& item) {
       return item.flags() & delete_bit;
   }
+  static bool has_resurrection(const TransItem& item) {
+      return item.flags() & resurrection_bit;
+  }
   static bool has_invalidate(const TransItem& item) {
       return item.flags() & delete_bit;
   }
@@ -903,6 +1027,8 @@ protected:
 
   static constexpr TransItem::flags_type insert_bit = TransItem::user0_bit;
   static constexpr TransItem::flags_type delete_bit = TransItem::user0_bit<<1;
+  static constexpr TransItem::flags_type resurrection_bit =
+      TransItem::user0_bit<<2;
 
 private:
   // @unsafe - pointer tagging stores the internode marker in the low alignment bit.
@@ -994,8 +1120,8 @@ protected:
   }
 
   table_type table_;
-  // @safe - approximate key count; updated at commit time (under lock), so no atomics needed.
-  size_t size_count_{0};
+  // @safe - relaxed atomic aggregate; not a transactionally consistent snapshot.
+  std::atomic<size_t> size_count_{0};
 };
 
 template <typename V, typename Box, bool Opacity>

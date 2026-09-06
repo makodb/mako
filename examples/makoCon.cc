@@ -32,17 +32,29 @@ thread_local std::string tl_txn_buf;
 thread_local std::string tl_key_buf;
 thread_local std::string tl_val_buf;
 thread_local bool tl_initialized = false;
+thread_local bool tl_db_attached = false;
 
 // Initialize thread-local state for database operations
 void ensure_thread_info() {
     if (!tl_initialized && g_mako_db != nullptr) {
         // Initialize thread for mako::DB operations
         g_mako_db->InitThread();
+        tl_db_attached = true;
 
-        // Allocate thread-local buffers
-        tl_arena = new str_arena();
-        tl_txn_buf.resize(g_mako_db->GetDB()->sizeof_txn_object(0));
-        tl_initialized = true;
+        try {
+            // Allocate thread-local buffers. If allocation fails, roll back
+            // the database reservation before the exception crosses the FFI
+            // worker boundary.
+            tl_arena = new str_arena();
+            tl_txn_buf.resize(g_mako_db->GetDB()->sizeof_txn_object(0));
+            tl_initialized = true;
+        } catch (...) {
+            delete tl_arena;
+            tl_arena = nullptr;
+            g_mako_db->EndThread();
+            tl_db_attached = false;
+            throw;
+        }
 
         std::cout << "[cpp] Thread " << std::this_thread::get_id()
                   << " initialized for mako::DB" << std::endl;
@@ -51,6 +63,10 @@ void ensure_thread_info() {
 
 // Cleanup thread-local state
 void cleanup_thread_info() {
+    if (tl_db_attached && g_mako_db != nullptr) {
+        g_mako_db->EndThread();
+        tl_db_attached = false;
+    }
     if (tl_arena) {
         delete tl_arena;
         tl_arena = nullptr;
@@ -111,9 +127,8 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
     }
 
     // Begin a single database transaction for all operations
-    // NOTE: mbta_wrapper::new_txn() always returns NULL - it uses thread-local TThread::txn state
-    // The actual transaction is started via Sto::start_transaction() internally
-    // DO NOT check for NULL - that's expected behavior!
+    // The local facade translates mbta_wrapper's ambient thread-local state
+    // into a non-null, thread-affine opaque token.
     void* txn = g_mako_db->BeginTransaction();
 
     bool all_success = true;
@@ -162,7 +177,8 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
             } else if (op.op == TXN_OP_DEL) {
                 // DEL operation
                 // @unsafe { g_table->Delete calls non-borrow-checked Masstree code }
-                // Note: Delete always returns OK (remove is fire-and-forget).
+                // Transactional Delete reports whether staging succeeded, not
+                // whether the key existed, so an OK result is expected here.
                 // We avoid Get+Delete in same txn to prevent OCC read-write conflict.
                 // data_len=1 signals success to Rust; actual key existence can be
                 // verified by a separate GET after the DEL transaction commits.

@@ -35,12 +35,13 @@ The supplied directory must be a Ninja CMake build of `sto_tpcc_bench` from
 the same physical checkout. It must contain `CMakeCache.txt`, `build.ninja`,
 and the already-built object/archive graph referenced by the benchmark link
 edge. Validate the native build before starting PGO, for example by building
-and smoke-testing its ordinary benchmark once:
+and inspecting its ordinary benchmark executable:
 
 ```sh
 cmake --build /absolute/path/to/validated-native-build \
   --target sto_tpcc_bench --parallel 8
-/absolute/path/to/validated-native-build/sto_tpcc_bench --help
+test -x /absolute/path/to/validated-native-build/sto_tpcc_bench
+readelf -h /absolute/path/to/validated-native-build/sto_tpcc_bench >/dev/null
 ```
 
 Reuse-native mode does not invoke that build or change any file in it. It:
@@ -177,7 +178,7 @@ readable and mutable. New physical keys are rejected, and scans no longer take
 the Rust structural read gate because later directory publication is
 impossible. Tables that grow during TPC-C execution remain open.
 
-The final sweep measures this combined implementation, including the earlier
+The 2026-09-04 historical sweep measures this combined implementation, including the earlier
 fused transaction and fixed-batch work. It is not an isolated dense-cache or
 directory-seal ablation, so the results below must not be attributed to one
 change alone.
@@ -191,14 +192,17 @@ node. This was a capacity failure, not a throughput result.
 
 The comparison runner now accepts `--allocator-memory` and passes the selected
 `MAKO_TPCC_ALLOCATOR_MEMORY` value to both engines. It records the value in
-every raw sample and as `allocator_memory` in `run.json`. The final sweep uses
+every raw sample and as `allocator_memory` in `run.json`. The 2026-09-04 historical sweep uses
 `2G`, which gives 128 MiB per worker at 16 workers before huge-page rounding.
 The benchmark default remains `1G` for callers that do not select a value.
 
-## Current final results
+## Historical exact-source result (2026-09-04)
 
-> Measurement status: complete. The values below come from the recorded PGO
-> and guarded comparison artifacts named in the evidence section.
+> Measurement status: complete for Git head
+> `105351016a8d2ae89d560857c32f85f6111df6f3`. The values below come from the
+> recorded PGO and guarded comparison artifacts named in the evidence section.
+> They do not qualify a later release candidate; that requires a new sweep of
+> the eventual clean, immutable candidate commit.
 
 ### PGO training
 
@@ -315,12 +319,15 @@ The guarded comparison directory is
 `STATUS`, `training-result.json`, `provenance.txt`,
 `artifacts-sha256.txt`, `run.json`, `raw.jsonl`, timeout records, and
 `summary.csv` retain the commands and controls. Paths under `/var/tmp` are
-host-local evidence. The hashes identify the exact files after those paths are
-removed.
+host-local evidence. The hashes identify the exact files but do not make the
+bundle durable after those paths are removed. A release qualification must
+publish its evidence in repository or CI artifact storage and record the
+published-file hashes.
 
 The source-state digest covers the measured implementation and the placeholder
-version of this result section. Replacing those placeholders with the sealed
-artifact values above is the only post-measurement source-tree edit.
+version of this result section. At result-sealing time, replacing those
+placeholders with the sealed artifact values above was the only
+post-measurement source-tree edit. Later commits are outside this measurement.
 
 ## Historical baseline
 

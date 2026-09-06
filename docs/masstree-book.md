@@ -643,7 +643,10 @@ struct MultiVersionValue {
 
 **Handle abort exceptions.** `transGet`/`transPut` may throw `abstract_abort_exception` if a conflict is detected during the operation. Callers must catch and retry.
 
-**Initialize threads.** Each thread must call `InitThread()` before accessing Masstree to set up thread-local state (memory pools, epoch tracking).
+**Initialize and release threads.** Each thread must call `InitThread()` before
+data-path access and pair it with `EndThread()` on the same OS thread after its
+last operation. Facade users should prefer `ScopedDatabaseThreadContext` so
+unwinding cannot skip the release.
 
 **Don't hold transaction state across yields.** In Mako's fiber model, yielding to another fiber while holding transaction state can cause the read set to become stale. Keep transactions short.
 
@@ -651,7 +654,13 @@ struct MultiVersionValue {
 
 ## 13. RocksDB API Compatibility Analysis
 
-Mako exposes a RocksDB-shaped API — `mako::IDatabase` / `mako::ITable` — as a facade over the transactional layer described in §8 ("Mako Integration: Transactions"). Two backends implement the interface: `mako::DB` (in-process, wraps a `SiloRuntime` directly) and `mako::RemoteDB` (RPC client to a remote Mako server).
+Mako exposes a RocksDB-shaped API — `mako::IDatabase` / `mako::ITable` — as a
+facade over the transactional layer described in §8 ("Mako Integration:
+Transactions"). `mako::DB` is an in-process, process-global C++
+STO/MassTrans facade that uses `SiloRuntime` for allocator, RCU, and Masstree
+support; it is not an independently owned runtime. `mako::RemoteDB` supplies the
+same virtual shape for RPC clients, but its transaction-shaped path is
+non-atomic scaffolding.
 
 For the current method-level mapping (RocksDB C++ API → `IDatabase`/`ITable`), the conceptual analysis of where STO/MassTrans/Masstree aligns with and diverges from RocksDB (persistence, snapshots, epochs, iteration model, secondary indexes, extension points), the compatibility feasibility matrix, and the roadmap for further extensions, see the standalone reference:
 
@@ -682,7 +691,11 @@ batch.Put(cf2, "k2", "v2");
 db->Write(write_options, &batch);
 ```
 
-**Masstree mapping**: Each column family maps to a **separate Masstree instance** (a separate `MassTrans` / `open_index()` call). This is a natural fit:
+**Masstree mapping**: Each column family maps to a **separate Masstree instance**
+(a separate `MassTrans` / `open_index()` call). Through `mako::DB`, one logical
+name opens one instance on every configured shard. The fixed catalog admits at
+most `NUM_TABLES_PER_SHARD` (currently 200) logical names, and allocated IDs are
+not reclaimed:
 
 ```
 RocksDB DB with 3 column families:
@@ -693,6 +706,12 @@ RocksDB DB with 3 column families:
 
 **Cross-CF atomicity**: RocksDB's `WriteBatch` can write to multiple CFs atomically. In Masstree, this maps to a **single OCC transaction spanning multiple indexes**. Mako's STO framework supports multi-index transactions — the read/write set can include entries from different Masstree instances, and `commit()` validates and installs all of them atomically.
 
+Sharded or replicated deployments must create the complete identical table set
+in deterministic order on every process before helper, serving, or worker
+threads start. Live schema mutation is unsupported because the legacy update
+hook does not synchronize concurrent map readers or establish cross-process ID
+agreement.
+
 ```cpp
 // Masstree equivalent of cross-CF atomic write
 auto txn = Sto::start_transaction();
@@ -701,7 +720,9 @@ index_metadata->transPut("k2", "v2");  // CF "metadata"
 Sto::commit();                          // Atomic across both indexes
 ```
 
-**What doesn't map**: Per-CF options (compression, compaction style) are RocksDB-specific and have no Masstree equivalent. `mako::DB` accepts these options at the interface boundary but ignores them — all Masstree instances use the same in-memory configuration.
+**What doesn't map**: Per-CF options (compression, compaction style) are
+RocksDB-specific and have no Masstree equivalent. `GetTable` exposes no
+per-table options; all Masstree instances use the same in-memory configuration.
 
 ---
 

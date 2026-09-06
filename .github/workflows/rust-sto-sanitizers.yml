@@ -42,7 +42,7 @@ jobs:
     name: ${{ matrix.sanitizer }} Rust/native boundary
     runs-on: ubuntu-24.04
     container:
-      image: ghcr.io/makodb/mako-ci-ubuntu24:latest
+      image: ghcr.io/makodb/mako-ci-ubuntu24@sha256:3bf4d101ad119672560a28c0c7eb5fbf5e36c1695437382f8393aa5e26644628
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -58,7 +58,7 @@ jobs:
       RUSTUP_HOME: /tmp/rust-sto-sanitizer-rustup
     steps:
       - name: Checkout exact workflow commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           submodules: recursive
 
@@ -86,8 +86,7 @@ jobs:
         run: |
           set -euo pipefail
           toolchain="$(bash scripts/ci/run_rust_sto_sanitizer.sh --print-nightly-toolchain)"
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-            | sh -s -- -y --profile minimal --default-toolchain none
+          bash ./scripts/ci/install_pinned_rustup.sh
           "${CARGO_HOME}/bin/rustup" toolchain install "${toolchain}" \
             --profile minimal --component clippy --component rust-src
           echo "${CARGO_HOME}/bin" >>"${GITHUB_PATH}"
@@ -98,11 +97,11 @@ jobs:
 
       - name: Upload sanitizer evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: rust-sto-${{ matrix.sanitizer }}-${{ github.sha }}
-          if-no-files-found: ignore
-          retention-days: 14
+          if-no-files-found: error
+          retention-days: 90
           path: |
             build-rust-sto-*/rust-sto-sanitizer-manifest.txt
             build-rust-sto-*/sanitizer-logs/**

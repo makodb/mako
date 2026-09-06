@@ -27,10 +27,12 @@ namespace mako
     {
     public:
         ShardReceiver(std::string file);
+        // Register the complete immutable table map before request handling.
         void Register(abstract_db *db,
                  const map<int, abstract_ordered_index *> &open_tables_table_id /*,
                  const map<string, vector<abstract_ordered_index *>> &partitions,
                  const map<string, vector<abstract_ordered_index *>> &remote_partitions*/);
+        // Quiescence-only legacy hook; never call while requests can execute.
         void UpdateTableEntry(int table_id, abstract_ordered_index *table);
 
         // Message handlers.
@@ -52,10 +54,11 @@ namespace mako
 
         // Shared core of the self-contained non-txn ops (types 14-17):
         // runs one op on the CALLING thread via the L3 non-txn API (an
-        // internal one-op OCC transaction; writes replicate through
-        // the normal commit path). The calling thread must be
-        // Silo-registered (helper threads and ClientTcpServer workers
-        // are). Returns ErrorCode::SUCCESS / SERVER_BUSY (this
+        // internal one-op OCC transaction using the backend's normal commit
+        // machinery; this helper alone does not certify replication). The
+        // calling thread must be Silo-registered (helper threads and
+        // ClientTcpServer workers are). Returns ErrorCode::SUCCESS /
+        // SERVER_BUSY (this
         // thread's participant txn holds staged 2PC state; retry) /
         // ABORT (get: key not found) / ERROR (non-leader write or
         // unknown table). op_result: put="newly inserted",
@@ -88,7 +91,9 @@ namespace mako
         void HandleClientGetRequest(char *reqBuf, char *respBuf, size_t &respLen);
         void HandleClientDeleteRequest(char *reqBuf, char *respBuf, size_t &respLen);
 
-        // @safe - Get open tables mapping for client service
+        // Borrowed immutable view for client service. It is valid only while
+        // this receiver lives and after startup registration is complete. No
+        // UpdateTableEntry call may race with this view or request handling.
         const map<int, abstract_ordered_index *>& GetOpenTables() const {
             return open_tables_table_id;
         }
@@ -168,12 +173,14 @@ namespace mako
         ShardServer &operator=(const ShardServer &) = delete;
         ShardServer(ShardServer &&) = delete;
         ShardServer &operator=(ShardServer &&) = delete;
+        // Register the complete immutable table map before Run() starts.
         void Register(abstract_db *db,
                  mako::HelperQueue *queue,
                  mako::HelperQueue *queue_res,
                  const map<int, abstract_ordered_index *> &open_tables /*,
                  const map<string, vector<abstract_ordered_index *>> &partitions,
                  const map<string, vector<abstract_ordered_index *>> &remote_partitions*/);
+        // Quiescence-only legacy hook; never call while Run() can read maps.
         void UpdateTable(int table_id, abstract_ordered_index *table);
         void Run();
 

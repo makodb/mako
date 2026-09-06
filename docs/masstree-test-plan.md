@@ -142,11 +142,28 @@ concurrency failure is a race or a single-threaded bug.
 ### 3.1 Sanitizer matrix — Rust boundary wired
 
 The checked-in CI matrix builds the Rust STO boundary and runs every CTest
-labeled `rust` under ASan, UBSan, and TSan. It also runs the exact C11 Masstree
-header test, the Silo runtime concurrency/lifecycle test, and both the
-single-shard and local-multishard C++ TPC-C slow-exit tests. The broader
-Masstree test binaries below were also exercised manually while developing the
-sanitizer fixes, but they are not all selected by the Rust-boundary CI gate.
+labeled `rust` under ASan, UBSan, and TSan. It also runs 12 exact CTests that
+do not carry that label: the C11 Masstree header test, the Silo runtime
+concurrency/lifecycle suite, four default-profile transaction lifetime and
+failure regressions, and six native process-lifetime cases. The last group
+covers the Rocks-compatible facade, the full MassTrans non-transactional API,
+two exact MV delete conflicts, and the single-shard and local-multishard C++
+TPC-C slow-exit paths. The broader Masstree test binaries below were also
+exercised manually while developing the sanitizer fixes, but the Rust-boundary
+CI gate does not select all of them.
+
+The wrapper smoke test checks the pure worker-budget helper at 111 and 112
+workers without starting either worker set. A separate Rust-labeled CTest runs
+the TPC-C command with 112 workers and requires a clean exit-code-2 rejection
+before database or worker creation.
+
+The hosted Release job also finishes with a targeted `STO_RMW=ON` rebuild of
+`test_silo_nontxn_api` and runs the exact insert-then-delete and
+resurrection-then-delete MV regressions. The ASan job repeats that focused
+profile after its default-profile gate, verifies `READ_MY_WRITES=1` and
+`-fsanitize=address` in the library and test compile commands, and then runs the
+same exact CTests. Reusing the configured build tree avoids repeating the Rust
+workspace and TPC-C portions of either job.
 
 **Manual Masstree workflow** — one build dir per sanitizer:
 
@@ -196,22 +213,28 @@ deadlocks at startup. `MAKO_UBSAN` is compatible with jemalloc.
 
 **Status**: the checked-in Rust STO native sanitizer workflow provides
 separate ASan, UBSan, and TSan jobs. It records the exact build configuration,
-audits compiler and linker instrumentation, and runs every CTest labeled
-`rust`. See `docs/masstree-sanitizer-findings.md` for finding dispositions and
-the workflow artifacts for results from a particular revision.
+audits compiler and linker instrumentation, runs every CTest labeled `rust`,
+and runs the 12 default-profile native boundary and lifecycle CTests described
+above. ASan additionally runs the two focused `STO_RMW=ON` CTests.
+See `docs/masstree-sanitizer-findings.md` for finding dispositions and the
+workflow artifacts for results from a particular revision.
 
 The UBSan lane compiler-instruments the native C and C++ boundary and links its
 Clang runtime into the stable Rust-owned processes; Rust itself has no UBSan
 compiler mode. The ASan workspace sweep keeps leak detection enabled except for
 the shared list of 30 exact intentional transaction-frame quarantine cases,
 which it audits and reruns individually with leak reporting disabled. The
-native FFI runner leak-checks 31 of 32 unit cases and applies the same narrow
+native FFI runner leak-checks 34 of 35 unit cases and applies the same narrow
 exception only to
 `tests::post_install_row_count_failure_marks_runtime_indeterminate`. The two
 Rust TPC-C lifecycle tests retain leak checking with one exact native
 Masstree-root suppression; the gate audits a combined 20 allocations and 6,400
-bytes for those roots. Current pass/fail
-claims belong to the exact-revision workflow artifacts, not to this inventory.
+bytes for those roots. ASan disables leak reporting for the six default-profile
+process-lifetime native CTests and the two focused `STO_RMW=ON` aliases of the
+MassTrans suite. The four critical default-profile transaction regressions,
+including the reused-`TransItem` ownership case, retain leak checking. Address
+checking remains active for all eight process-lifetime invocations. Current pass/fail claims belong to the
+exact-revision workflow artifacts, not to this inventory.
 
 The runtime lifecycle target includes explicit regressions for over-aligned
 lazy per-core storage and for release/acquire publication through the spin
@@ -219,7 +242,11 @@ barrier. The local-multishard TPC-C target concurrently starts both loader sets,
 covering shared output and NUMA-affinity initialization before exercising
 joined teardown. It also forces concurrent MassTrans participant entry, exit,
 and reclamation scans, which is the strict TSan regression for atomic
-Masstree RCU epoch publication.
+Masstree RCU epoch publication. Its timed phase deliberately uses only
+Delivery, OrderStatus, and StockLevel, whose local execution does not follow a
+remote table pointer. The inherited C++ MassTrans cross-partition payload path
+has separate, unsuppressed data-race debt recorded as Finding 13; this lifecycle
+gate is not evidence that distributed record access is TSan-clean.
 
 The pinned Miri ownership gate rejects ambient `MIRIFLAGS`, audits the same
 quarantine list, and keeps leak checking enabled outside exact reruns. Miri uses

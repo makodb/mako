@@ -21,12 +21,18 @@
 #include "mako/varkey.h"
 #include "sto/MassTrans.hh"
 #include "sto/TBox.hh"
+#include "sto/ThreadPool.h"
 #include "sto/Transaction.hh"
+#include "storage/mbta_wrapper.hh"
 
 import std;
 
 // Provide globalepoch definition for this test file
 volatile mrcu_epoch_type globalepoch = 1;
+
+// Production benchmark binaries provide this once from common2.h. This
+// focused unit-test binary does not link that benchmark-only definition.
+abstract_db* ThreadDBWrapperMbta::replay_thread_wrapper_db = nullptr;
 
 using TestTree = single_threaded_btree;
 
@@ -36,6 +42,129 @@ public:
 
     bool get_is_remote() const override { return false; }
 };
+
+// Models MassTrans insert ownership: staging creates an invalid physical row,
+// install makes it visible while retaining the item lock, abort cleanup removes
+// it, and committed cleanup preserves it.
+class ParticipantInsertObject final : public TObject {
+public:
+    void stage_insert() {
+        present_ = true;
+        Sto::item(this, 0).add_write<uint8_t>(1);
+    }
+
+    void stage_fresh_inserts(size_t count) {
+        present_ = count != 0;
+        for (size_t index = 0; index != count; ++index)
+            Sto::fresh_item(this, index).add_write<uint8_t>(1);
+    }
+
+    bool lock(TransItem& item, Transaction& transaction) override {
+        return transaction.try_lock(item, version_);
+    }
+    bool check(TransItem&, Transaction&) override { return true; }
+    void install(TransItem&, Transaction&) override {
+        installed_ = true;
+        ++install_count_;
+    }
+    void unlock(TransItem&) override {
+        version_.unlock();
+        ++unlock_count_;
+    }
+    void cleanup(TransItem&, bool committed) override {
+        if (committed) {
+            ++committed_cleanup_count_;
+        } else {
+            present_ = false;
+            ++abort_cleanup_count_;
+        }
+    }
+    bool get_is_remote() const override { return false; }
+
+    bool present() const { return present_; }
+    bool installed() const { return installed_; }
+    size_t install_count() const { return install_count_; }
+    size_t unlock_count() const { return unlock_count_; }
+    size_t committed_cleanup_count() const {
+        return committed_cleanup_count_;
+    }
+    size_t abort_cleanup_count() const { return abort_cleanup_count_; }
+
+private:
+    TVersion version_;
+    bool present_ = false;
+    bool installed_ = false;
+    size_t install_count_ = 0;
+    size_t unlock_count_ = 0;
+    size_t committed_cleanup_count_ = 0;
+    size_t abort_cleanup_count_ = 0;
+};
+
+class ThrowingInstallObject final : public TObject {
+public:
+    void stage_write() {
+        Sto::item(this, 0).add_write<uint8_t>(1);
+    }
+
+    bool lock(TransItem& item, Transaction& transaction) override {
+        return transaction.try_lock(item, version_);
+    }
+    bool check(TransItem&, Transaction&) override { return true; }
+    void install(TransItem&, Transaction&) override {
+        throw std::runtime_error("synthetic install failure");
+    }
+    void unlock(TransItem&) override { version_.unlock(); }
+    void cleanup(TransItem&, bool) override {}
+    bool get_is_remote() const override { return false; }
+
+private:
+    TVersion version_;
+};
+
+// Exercises transaction-set slot reuse without involving Masstree's
+// process-lifetime allocations. The exact ASan CTest keeps leak detection on,
+// so replacing a live TransItem and orphaning its non-SSO extra string is a
+// test failure rather than a bounded-retention qualification.
+class TransItemExtraObject final : public TObject {
+public:
+    void stage_with_extra(std::string extra) {
+        Sto::item(this, 0)
+            .add_extra(std::move(extra))
+            .add_write<uint8_t>(1);
+    }
+
+    void stage_without_extra() {
+        Sto::item(this, 0).add_write<uint8_t>(1);
+    }
+
+    bool lock(TransItem& item, Transaction& transaction) override {
+        return transaction.try_lock(item, version_);
+    }
+    bool check(TransItem&, Transaction&) override { return true; }
+    void install(TransItem& item, Transaction&) override {
+        installed_extra_ = item.get_extra();
+        version_.inc_nonopaque_version();
+    }
+    void unlock(TransItem&) override { version_.unlock(); }
+    void cleanup(TransItem&, bool) override {}
+    bool get_is_remote() const override { return false; }
+
+    const std::string& installed_extra() const { return installed_extra_; }
+
+private:
+    TVersion version_;
+    std::string installed_extra_;
+};
+
+static void configure_standalone_mbta_thread_test() {
+    auto& config = BenchmarkConfig::getInstance();
+    config.setConfig(nullptr);
+    config.setNthreads(1);
+    config.setNshards(1);
+    config.setShardIndex(0);
+    config.setIsReplicated(0);
+    config.setPaxosProcName(mako::LOCALHOST_CENTER);
+}
 
 class SiloRuntimeTest : public ::testing::Test {
 protected:
@@ -459,6 +588,100 @@ TEST(MassTransEpochIntegrationTest, TransactionStartAdvancesOwningContext) {
     SiloRuntime::BindCurrentThread(nullptr);
 }
 
+TEST(MassTransEpochIntegrationTest,
+     FreshReplayThreadUsesGlobalRuntimeEpochDomain) {
+    SiloRuntime* const runtime = SiloRuntime::GlobalDefault();
+    runtime->BindToCurrentThread();
+
+    // DB::Open constructs replay tables while bound to GlobalDefault. Model
+    // that ownership here, then access the table from a fresh replay OS thread.
+    actual_directs table;
+    ASSERT_NE(actual_directs::mythreadinfo.ti, nullptr);
+    ASSERT_EQ(actual_directs::mythreadinfo.ti->context(),
+              runtime->masstree_context());
+
+    const std::string key = "replay-epoch-domain-key";
+    const std::string encoded_value = mako::Encode("replay-value");
+    SiloRuntime* observed_runtime = nullptr;
+    MasstreeContext* observed_context = nullptr;
+    std::string observed_value;
+    std::string failure;
+    bool inserted = false;
+    bool found = false;
+    bool removed = false;
+    std::atomic<bool> reclaimed{false};
+
+    struct reclaim_probe final : public threadinfo::mrcu_callback {
+        explicit reclaim_probe(std::atomic<bool>& reclaimed)
+            : reclaimed_(reclaimed) {}
+
+        void operator()(threadinfo&) override {
+            reclaimed_.store(true, std::memory_order_release);
+            delete this;
+        }
+
+        std::atomic<bool>& reclaimed_;
+    };
+
+    std::thread replay_thread([&] {
+        try {
+            // Explicitly clear inherited assumptions: std::thread begins with
+            // fresh TLS, and getDB() itself must establish both bindings.
+            SiloRuntime::BindCurrentThread(nullptr);
+            ThreadDBWrapperMbta wrapper(0);
+            (void)wrapper.getDB();
+
+            observed_runtime = SiloRuntime::Current();
+            threadinfo* const ti = actual_directs::mythreadinfo.ti;
+            if (ti == nullptr) {
+                throw std::logic_error(
+                    "replay initialization did not create threadinfo");
+            }
+            observed_context = ti->context();
+
+            inserted = table.put(actual_directs::Str(key), encoded_value);
+            found = table.get(actual_directs::Str(key), observed_value);
+
+            // erase() runs a one-operation OCC transaction and queues the
+            // actual row allocation for RCU. The probe makes successful
+            // progress through that same limbo queue observable without
+            // exposing Masstree allocator internals.
+            removed = table.erase(actual_directs::Str(key));
+            ti->rcu_register(new reclaim_probe(reclaimed));
+            for (int attempt = 0;
+                 attempt != 5 &&
+                 !reclaimed.load(std::memory_order_acquire);
+                 ++attempt) {
+                runtime->masstree_context()->increment_epoch(2);
+                ti->rcu_quiesce();
+            }
+            ti->rcu_stop();
+            Transaction::rcu_quiesce();
+
+            delete TThread::txn;
+            TThread::txn = nullptr;
+            SiloRuntime::BindCurrentThread(nullptr);
+        } catch (const std::exception& error) {
+            failure = error.what();
+        } catch (...) {
+            failure = "unknown replay-thread exception";
+        }
+    });
+    replay_thread.join();
+
+    EXPECT_TRUE(failure.empty()) << failure;
+    EXPECT_EQ(observed_runtime, runtime);
+    EXPECT_EQ(observed_context, runtime->masstree_context());
+    EXPECT_TRUE(inserted);
+    EXPECT_TRUE(found);
+    EXPECT_EQ(observed_value, encoded_value);
+    EXPECT_TRUE(removed);
+    EXPECT_TRUE(reclaimed.load(std::memory_order_acquire));
+    EXPECT_EQ(table.approx_size(), 0U);
+
+    SiloRuntime::BindCurrentThread(nullptr);
+}
+
 TEST(StoEpochAdvancerLifecycleTest, ConcurrentStartIsIdempotentAndAdvances) {
     const Transaction::epoch_type initial_epoch =
         Transaction::global_epochs.global_epoch.load(std::memory_order_acquire);
@@ -488,6 +711,346 @@ TEST(StoEpochAdvancerLifecycleTest, ConcurrentStartIsIdempotentAndAdvances) {
     EXPECT_GT(Transaction::global_epochs.global_epoch.load(
                   std::memory_order_acquire),
               initial_epoch);
+}
+
+TEST(StoThreadIdLifecycleTest,
+     StableAllocatorIsUniqueAndRestoresOneIdPerOsThread) {
+    constexpr size_t thread_count = 32;
+    std::array<int, thread_count> assigned{};
+    std::array<int, thread_count> restored{};
+    std::vector<std::thread> threads;
+    threads.reserve(thread_count);
+
+    for (size_t index = 0; index < thread_count; ++index) {
+        threads.emplace_back([&, index] {
+            assigned[index] = TThread::assign_stable_id();
+            TThread::set_id(MAX_THREADS - 1);
+            restored[index] = TThread::assign_stable_id();
+        });
+    }
+    for (auto& thread : threads)
+        thread.join();
+
+    auto sorted = assigned;
+    std::sort(sorted.begin(), sorted.end());
+    EXPECT_EQ(std::adjacent_find(sorted.begin(), sorted.end()), sorted.end());
+    for (size_t index = 0; index < thread_count; ++index) {
+        EXPECT_GE(assigned[index], 0);
+        EXPECT_LT(assigned[index], MAX_THREADS);
+        EXPECT_EQ(restored[index], assigned[index]);
+    }
+}
+
+TEST(StoEpochAdvancerLifecycleTest, ThreadEndAbortsActiveTransaction) {
+    // This test needs no BenchmarkConfig or ShardClient: a local TBox write is
+    // enough to prove that thread teardown resolves an open transaction before
+    // retiring its RCU state.
+    TThread::set_mode(0);
+    if (TThread::txn != nullptr) {
+        if (TThread::txn->has_active_state()) {
+            TThread::txn->silent_abort();
+        }
+        delete TThread::txn;
+        TThread::txn = nullptr;
+    }
+    configure_standalone_mbta_thread_test();
+    ASSERT_EQ(TThread::sclient, nullptr);
+    mbta_wrapper db;
+    db.thread_init(false, 0);
+
+    LocalTimestampBox box(0);
+    Sto::start_transaction();
+    box.write(7);
+    EXPECT_TRUE(Sto::in_progress());
+
+    db.thread_end();
+
+    EXPECT_FALSE(Sto::in_progress());
+    EXPECT_EQ(box.nontrans_read(), 0U);
+    EXPECT_EQ(TThread::sclient, nullptr);
+
+    delete TThread::txn;
+    TThread::txn = nullptr;
+}
+
+TEST(StoEpochAdvancerLifecycleTest, ThreadEndStopsIdleModeOneMasstreeRcu) {
+    // shard_reset() leaves an empty mode-1 participant transaction ready for
+    // the next RPC, but start() has still entered the Masstree RCU region.
+    SiloRuntime* const runtime = SiloRuntime::GlobalDefault();
+    runtime->BindToCurrentThread();
+    TThread::set_mode(0);
+    if (TThread::txn != nullptr) {
+        if (TThread::txn->has_active_state()) {
+            TThread::txn->silent_abort();
+        }
+        delete TThread::txn;
+        TThread::txn = nullptr;
+    }
+
+    configure_standalone_mbta_thread_test();
+    ASSERT_EQ(TThread::sclient, nullptr);
+    mbta_wrapper db;
+    db.thread_init(false, 0);
+    TThread::set_mode(1);
+
+    auto& end_callback =
+        Transaction::tinfo[TThread::id()].trans_end_callback;
+    struct callback_restore {
+        std::function<void(void)>& slot;
+        std::function<void(void)> original;
+        ~callback_restore() { slot = std::move(original); }
+    } restore{end_callback, std::move(end_callback)};
+    size_t end_callback_count = 0;
+    end_callback = [&] {
+        if (restore.original)
+            restore.original();
+        ++end_callback_count;
+    };
+
+    db.shard_reset();
+    EXPECT_NE(TThread::txn, nullptr);
+    if (TThread::txn != nullptr) {
+        EXPECT_TRUE(TThread::txn->has_active_state());
+        EXPECT_FALSE(TThread::txn->has_staged_items());
+    }
+    EXPECT_NE(mbta_table::mythreadinfo.ti, nullptr);
+    if (mbta_table::mythreadinfo.ti != nullptr) {
+        EXPECT_TRUE(mbta_table::mythreadinfo.ti->rcu_active());
+    }
+
+    db.thread_end();
+
+    EXPECT_EQ(end_callback_count, 1U);
+    if (TThread::txn != nullptr) {
+        EXPECT_FALSE(TThread::txn->has_active_state());
+    }
+    if (mbta_table::mythreadinfo.ti != nullptr) {
+        EXPECT_FALSE(mbta_table::mythreadinfo.ti->rcu_active());
+    }
+    EXPECT_EQ(Transaction::tinfo[TThread::id()].epoch.load(
+                  std::memory_order_acquire),
+              0U);
+
+    TThread::set_mode(0);
+    delete TThread::txn;
+    TThread::txn = nullptr;
+    EXPECT_EQ(end_callback_count, 1U);
+    SiloRuntime::BindCurrentThread(nullptr);
+}
+
+TEST(StoEpochAdvancerLifecycleTest, ThreadEndUnlocksStagedModeOneWrite) {
+    TThread::set_mode(0);
+    if (TThread::txn != nullptr) {
+        if (TThread::txn->has_active_state()) {
+            TThread::txn->silent_abort();
+        }
+        delete TThread::txn;
+        TThread::txn = nullptr;
+    }
+
+    configure_standalone_mbta_thread_test();
+    mbta_wrapper db;
+    db.thread_init(false, 0);
+    TThread::set_mode(1);
+    EXPECT_EQ(TThread::sclient, nullptr);
+
+    LocalTimestampBox box(0);
+    Sto::start_transaction();
+    box.write(7);
+    EXPECT_TRUE(TThread::txn->has_staged_items());
+    EXPECT_TRUE(Sto::shard_try_lock_last_writeset());
+
+    db.thread_end();
+
+    EXPECT_FALSE(TThread::txn->has_active_state());
+    EXPECT_EQ(box.nontrans_read(), 0U);
+    TThread::set_mode(0);
+    delete TThread::txn;
+    TThread::txn = nullptr;
+
+    std::atomic<bool> committed{false};
+    std::thread contender([&] {
+        TThread::set_id(MAX_THREADS - 5);
+        TThread::set_mode(0);
+        Sto::start_transaction();
+        box.write(9);
+        committed.store(Sto::try_commit(), std::memory_order_release);
+        TThread::set_mode(0);
+        delete TThread::txn;
+        TThread::txn = nullptr;
+        Transaction::rcu_quiesce();
+    });
+    contender.join();
+
+    EXPECT_TRUE(committed.load(std::memory_order_acquire));
+    EXPECT_EQ(box.nontrans_read(), 9U);
+}
+
+TEST(StoEpochAdvancerLifecycleTest,
+     ThreadEndCommitsInstalledModeOneWriteAndUnlocksIt) {
+    TThread::set_mode(0);
+    if (TThread::txn != nullptr) {
+        if (TThread::txn->has_active_state()) {
+            TThread::txn->silent_abort();
+        }
+        delete TThread::txn;
+        TThread::txn = nullptr;
+    }
+
+    configure_standalone_mbta_thread_test();
+    ASSERT_EQ(TThread::sclient, nullptr);
+    mbta_wrapper db;
+    db.thread_init(false, 0);
+    TThread::set_mode(1);
+
+    LocalTimestampBox box(0);
+    Sto::start_transaction();
+    box.write(7);
+    const bool locked = Sto::shard_try_lock_last_writeset();
+    EXPECT_TRUE(locked);
+    if (!locked) {
+        db.thread_end();
+        TThread::set_mode(0);
+        delete TThread::txn;
+        TThread::txn = nullptr;
+        return;
+    }
+    Sto::shard_install(101);
+    EXPECT_TRUE(TThread::txn->has_active_state());
+    EXPECT_EQ(box.nontrans_read(), 7U);
+
+    // INSTALL is an irreversible 2PC decision. Teardown must finish committed
+    // cleanup, not run abort cleanup over the published value.
+    db.thread_end();
+
+    EXPECT_FALSE(TThread::txn->has_active_state());
+    EXPECT_EQ(box.nontrans_read(), 7U);
+    TThread::set_mode(0);
+    delete TThread::txn;
+    TThread::txn = nullptr;
+
+    std::atomic<bool> committed{false};
+    std::thread contender([&] {
+        TThread::set_id(MAX_THREADS - 6);
+        TThread::set_mode(0);
+        Sto::start_transaction();
+        box.write(9);
+        committed.store(Sto::try_commit(), std::memory_order_release);
+        delete TThread::txn;
+        TThread::txn = nullptr;
+        Transaction::rcu_quiesce();
+    });
+    contender.join();
+
+    EXPECT_TRUE(committed.load(std::memory_order_acquire));
+    EXPECT_EQ(box.nontrans_read(), 9U);
+}
+
+TEST(StoEpochAdvancerLifecycleTest,
+     ThreadEndPreservesAnInstalledParticipantInsert) {
+    TThread::set_mode(0);
+    if (TThread::txn != nullptr) {
+        if (TThread::txn->has_active_state()) {
+            TThread::txn->silent_abort();
+        }
+        delete TThread::txn;
+        TThread::txn = nullptr;
+    }
+
+    configure_standalone_mbta_thread_test();
+    mbta_wrapper db;
+    db.thread_init(false, 0);
+    TThread::set_mode(1);
+
+    ParticipantInsertObject object;
+    Sto::start_transaction();
+    object.stage_insert();
+    const bool locked = Sto::shard_try_lock_last_writeset();
+    EXPECT_TRUE(locked);
+    if (!locked) {
+        db.thread_end();
+        TThread::set_mode(0);
+        delete TThread::txn;
+        TThread::txn = nullptr;
+        return;
+    }
+    EXPECT_EQ(Sto::shard_validate(), 0);
+    Sto::shard_install(102);
+
+    // MassTrans has the same cleanup contract: abort removes its staged row,
+    // whereas teardown after INSTALL must preserve the row and release its
+    // item lock exactly once.
+    db.thread_end();
+    EXPECT_TRUE(object.present());
+    EXPECT_TRUE(object.installed());
+    EXPECT_EQ(object.install_count(), 1U);
+    EXPECT_EQ(object.unlock_count(), 1U);
+    EXPECT_EQ(object.committed_cleanup_count(), 1U);
+    EXPECT_EQ(object.abort_cleanup_count(), 0U);
+
+    TThread::set_mode(0);
+    delete TThread::txn;
+    TThread::txn = nullptr;
+}
+
+TEST(StoEpochAdvancerLifecycleTest,
+     ThreadEndAfterShardUnlockDoesNotCleanUpTwice) {
+    TThread::set_mode(0);
+    if (TThread::txn != nullptr) {
+        if (TThread::txn->has_active_state()) {
+            TThread::txn->silent_abort();
+        }
+        delete TThread::txn;
+        TThread::txn = nullptr;
+    }
+
+    configure_standalone_mbta_thread_test();
+    ASSERT_EQ(TThread::sclient, nullptr);
+    mbta_wrapper db;
+    db.thread_init(false, 0);
+    TThread::set_mode(1);
+
+    auto& end_callback =
+        Transaction::tinfo[TThread::id()].trans_end_callback;
+    struct callback_restore {
+        std::function<void(void)>& slot;
+        std::function<void(void)> original;
+        ~callback_restore() { slot = std::move(original); }
+    } restore{end_callback, std::move(end_callback)};
+    size_t end_callback_count = 0;
+    end_callback = [&] {
+        if (restore.original)
+            restore.original();
+        ++end_callback_count;
+    };
+
+    LocalTimestampBox box(0);
+    Sto::start_transaction();
+    box.write(7);
+    const bool locked = Sto::shard_try_lock_last_writeset();
+    EXPECT_TRUE(locked);
+    if (!locked) {
+        db.thread_end();
+        TThread::set_mode(0);
+        delete TThread::txn;
+        TThread::txn = nullptr;
+        return;
+    }
+    Sto::shard_install(103);
+    Sto::shard_unlock(true);
+
+    EXPECT_FALSE(TThread::txn->has_active_state());
+    EXPECT_FALSE(TThread::txn->has_staged_items());
+    EXPECT_EQ(end_callback_count, 1U);
+    EXPECT_EQ(box.nontrans_read(), 7U);
+
+    db.thread_end();
+
+    EXPECT_EQ(end_callback_count, 1U);
+    EXPECT_EQ(box.nontrans_read(), 7U);
+    TThread::set_mode(0);
+    delete TThread::txn;
+    TThread::txn = nullptr;
 }
 
 TEST(StoEpochAdvancerLifecycleTest, ConcurrentCallbackReplacementIsSafe) {
@@ -713,6 +1276,202 @@ TEST(MakoTimestampTest, CommitIsStrictlyNewerThanReadDependency) {
     ASSERT_TRUE(committed);
     EXPECT_GT(commit_timestamp, dependency_timestamp);
     EXPECT_EQ(box.nontrans_read(), 1U);
+}
+
+TEST(MakoTimestampTest, CommitExhaustionIsTerminalAndCleansUp) {
+    auto& clock = sync_util::sync_logger::local_replica_id;
+    const uint32_t saved = clock.exchange(
+        Transaction::max_mako_timestamp + 1, std::memory_order_acq_rel);
+    struct restore_clock {
+        std::atomic<uint32_t>& clock;
+        uint32_t value;
+        ~restore_clock() { clock.store(value, std::memory_order_release); }
+    } restore{clock, saved};
+
+    LocalTimestampBox box(0);
+    std::thread worker([&] {
+        TThread::set_id(MAX_THREADS - 3);
+        TThread::set_mode(0);
+        Sto::start_transaction();
+        box.write(1);
+        TThread::txn->maxTimestampReadSet = 1;
+        EXPECT_THROW(Sto::try_commit(), Transaction::TimestampExhausted);
+        ASSERT_NE(TThread::txn, nullptr);
+        EXPECT_FALSE(TThread::txn->has_active_state());
+        EXPECT_EQ(box.nontrans_read(), 0U);
+        delete TThread::txn;
+        TThread::txn = nullptr;
+        Transaction::rcu_quiesce();
+    });
+    worker.join();
+}
+
+TEST(MakoTimestampTest, DependencyExhaustionPermanentlySaturatesClock) {
+    auto& clock = sync_util::sync_logger::local_replica_id;
+    const uint32_t saved = clock.exchange(1, std::memory_order_acq_rel);
+    struct restore_clock {
+        std::atomic<uint32_t>& clock;
+        uint32_t value;
+        ~restore_clock() { clock.store(value, std::memory_order_release); }
+    } restore{clock, saved};
+
+    LocalTimestampBox box(0);
+    std::thread worker([&] {
+        TThread::set_id(MAX_THREADS - 7);
+        TThread::set_mode(0);
+
+        Sto::start_transaction();
+        box.write(1);
+        TThread::txn->maxTimestampReadSet =
+            Transaction::max_mako_timestamp;
+        EXPECT_THROW(Sto::try_commit(), Transaction::TimestampExhausted);
+        EXPECT_EQ(clock.load(std::memory_order_acquire),
+                  Transaction::max_mako_timestamp + 1);
+        EXPECT_EQ(box.nontrans_read(), 0U);
+
+        Sto::start_transaction();
+        box.write(2);
+        TThread::txn->maxTimestampReadSet = 1;
+        EXPECT_THROW(Sto::try_commit(), Transaction::TimestampExhausted);
+        EXPECT_FALSE(TThread::txn->has_active_state());
+        EXPECT_EQ(box.nontrans_read(), 0U);
+
+        delete TThread::txn;
+        TThread::txn = nullptr;
+        Transaction::rcu_quiesce();
+    });
+    worker.join();
+}
+
+TEST(TransactionSetBoundaryTest, ParticipantAbortCleansExactChunkBoundaries) {
+    std::thread worker([] {
+        TThread::set_id(MAX_THREADS - 4);
+        TThread::set_mode(1);
+
+        for (const size_t count : {size_t{512}, size_t{32768}}) {
+            ParticipantInsertObject object;
+            size_t end_callback_count = 0;
+            Transaction::tinfo[TThread::id()].trans_end_callback =
+                [&] { ++end_callback_count; };
+
+            Sto::start_transaction();
+            object.stage_fresh_inserts(count);
+            Sto::silent_abort();
+
+            ASSERT_NE(TThread::txn, nullptr);
+            EXPECT_FALSE(TThread::txn->has_active_state());
+            EXPECT_EQ(object.abort_cleanup_count(), count);
+            EXPECT_EQ(object.install_count(), 0U);
+            EXPECT_EQ(object.unlock_count(), 0U);
+            EXPECT_EQ(object.committed_cleanup_count(), 0U);
+            EXPECT_EQ(end_callback_count, 1U);
+        }
+
+        Transaction::tinfo[TThread::id()].trans_end_callback = {};
+        TThread::set_mode(0);
+        delete TThread::txn;
+        TThread::txn = nullptr;
+        Transaction::rcu_quiesce();
+    });
+    worker.join();
+}
+
+TEST(TransactionSetBoundaryTest, CapacityExhaustionFailsClosedInRelease) {
+    std::thread worker([] {
+        TThread::set_id(MAX_THREADS - 9);
+        TThread::set_mode(0);
+
+        ParticipantInsertObject overflowing;
+        size_t end_callback_count = 0;
+        Transaction::tinfo[TThread::id()].trans_end_callback =
+            [&] { ++end_callback_count; };
+
+        Sto::start_transaction();
+        EXPECT_THROW(overflowing.stage_fresh_inserts(32769),
+                     Transaction::CapacityExhausted);
+        ASSERT_NE(TThread::txn, nullptr);
+        EXPECT_FALSE(TThread::txn->has_active_state());
+        EXPECT_EQ(overflowing.abort_cleanup_count(), 32768U);
+        EXPECT_EQ(overflowing.install_count(), 0U);
+        EXPECT_EQ(overflowing.unlock_count(), 0U);
+        EXPECT_EQ(end_callback_count, 1U);
+
+        ParticipantInsertObject recovery;
+        Sto::start_transaction();
+        recovery.stage_fresh_inserts(1);
+        EXPECT_TRUE(Sto::try_commit());
+        EXPECT_EQ(recovery.install_count(), 1U);
+        EXPECT_EQ(recovery.committed_cleanup_count(), 1U);
+        EXPECT_EQ(end_callback_count, 2U);
+
+        Transaction::tinfo[TThread::id()].trans_end_callback = {};
+        delete TThread::txn;
+        TThread::txn = nullptr;
+        Transaction::rcu_quiesce();
+    });
+    worker.join();
+}
+
+TEST(TransactionCommitFailureTest, InstallExceptionIsFailStop) {
+    ::testing::FLAGS_gtest_death_test_style = "threadsafe";
+    EXPECT_EXIT(
+        {
+            std::set_terminate([] { _Exit(86); });
+            std::thread worker([] {
+                TThread::set_id(MAX_THREADS - 8);
+                TThread::set_mode(0);
+                ThrowingInstallObject object;
+                Sto::start_transaction();
+                object.stage_write();
+                try {
+                    (void)Sto::try_commit();
+                } catch (...) {
+                    _Exit(42);
+                }
+                _Exit(0);
+            });
+            worker.join();
+            _Exit(0);
+        },
+        ::testing::ExitedWithCode(86), "");
+}
+
+TEST(TransItemLifetimeTest, ReusedSlotRetainsExactlyOneOwnedExtraString) {
+    bool succeeded = true;
+    std::thread worker([&] {
+        TThread::set_id(MAX_THREADS - 10);
+        TThread::set_mode(0);
+        TransItemExtraObject object;
+
+        for (size_t index = 0; index != 1024; ++index) {
+            const std::string expected =
+                "non-sso-transaction-extra-" + std::to_string(index) +
+                std::string(96, static_cast<char>('a' + index % 26));
+            Sto::start_transaction();
+            object.stage_with_extra(expected);
+            if (!Sto::try_commit() || object.installed_extra() != expected) {
+                succeeded = false;
+                break;
+            }
+        }
+
+        if (succeeded) {
+            Sto::start_transaction();
+            object.stage_without_extra();
+            succeeded = Sto::try_commit() && object.installed_extra().empty();
+        }
+
+        if (TThread::txn != nullptr) {
+            if (TThread::txn->has_active_state())
+                TThread::txn->silent_abort();
+            delete TThread::txn;
+            TThread::txn = nullptr;
+        }
+        Transaction::rcu_quiesce();
+    });
+    worker.join();
+
+    EXPECT_TRUE(succeeded);
 }
 
 // Test 6: Global default runtime for backward compatibility

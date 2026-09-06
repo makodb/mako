@@ -2,6 +2,7 @@
 #include <array>
 #include <cstring>
 #include <limits>
+#include <new>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -260,8 +261,79 @@ int main(int argc, char **argv) {
     require(!rust_sto_tpcc_detail::table_has_static_directory(name));
   }
 
+  // This is a pure configuration check. It exercises both admission edges
+  // without creating or attaching 111 worker threads.
+  const sto_tpcc_db_config one_worker =
+      rust_sto_tpcc_detail::db_config_for_worker_count(1);
+  require(one_worker.max_threads == 32);
+  require(one_worker.max_key_length == 1024);
+  require(one_worker.max_items_per_txn == 1024);
+  require(one_worker.max_locks_per_txn == 2048);
+  const sto_tpcc_db_config last_supported_worker =
+      rust_sto_tpcc_detail::db_config_for_worker_count(111);
+  require(last_supported_worker.max_threads == 460);
+
+  const auto rejects_worker_count = [](size_t worker_count) {
+    try {
+      (void)rust_sto_tpcc_detail::db_config_for_worker_count(worker_count);
+    } catch (const std::invalid_argument &error) {
+      return std::string(error.what()).find("worker count must be in [1, 111]") !=
+             std::string::npos;
+    }
+    return false;
+  };
+  require(rejects_worker_count(0));
+  require(rejects_worker_count(112));
+  require(rejects_worker_count(std::numeric_limits<size_t>::max()));
+
   rust_sto_tpcc_wrapper db;
   db.init();
+
+#ifdef MAKO_RUST_STO_TEST_HOOKS
+  using rust_sto_tpcc_detail::open_index_fault_stage;
+  const std::array<open_index_fault_stage, 5> catalog_faults{
+      open_index_fault_stage::after_table_create,
+      open_index_fault_stage::after_facade_create,
+      open_index_fault_stage::after_tables_insert,
+      open_index_fault_stage::after_id_insert,
+      open_index_fault_stage::after_name_insert,
+  };
+  abstract_ordered_index *catalog_sentinel =
+      db.open_index("catalog_sentinel", -1);
+  require(catalog_sentinel != nullptr);
+  require(catalog_sentinel->get_table_id() == 1);
+  int32_t expected_table_id = 2;
+  for (size_t index = 0; index < catalog_faults.size(); ++index) {
+    const std::string name = "catalog_fault_" + std::to_string(index);
+    const size_t destroys_before =
+        rust_sto_tpcc_detail::destroyed_table_count_for_testing();
+    rust_sto_tpcc_detail::fail_next_open_index_at(catalog_faults[index]);
+    bool allocation_failed = false;
+    try {
+      (void)db.open_index(name, -1);
+    } catch (const std::bad_alloc &) {
+      allocation_failed = true;
+    }
+    require(allocation_failed);
+    require(db.get_index_by_table_id(1) == catalog_sentinel);
+    require(db.open_index("catalog_sentinel", -1) == catalog_sentinel);
+    require(db.get_index_by_table_id(expected_table_id) == nullptr);
+    require(rust_sto_tpcc_detail::destroyed_table_count_for_testing() ==
+            destroys_before + 1);
+
+    abstract_ordered_index *recovered = db.open_index(name, -1);
+    require(recovered != nullptr);
+    require(recovered->get_table_id() == expected_table_id);
+    require(db.get_index_by_table_id(expected_table_id) == recovered);
+    require(db.open_index(name, -1) == recovered);
+    db.close_index(recovered);
+    require(db.get_index_by_table_id(expected_table_id) == nullptr);
+    require(rust_sto_tpcc_detail::destroyed_table_count_for_testing() ==
+            destroys_before + 2);
+    ++expected_table_id;
+  }
+#endif
+
   abstract_ordered_index *table = db.open_index("stock_1", -1);
   require(table != nullptr);
   abstract_ordered_index *second_table = db.open_index("order_line_1", -1);

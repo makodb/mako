@@ -29,6 +29,8 @@ void register_sync_util(std::function<int()> cb) {
 Transaction::testing_type Transaction::testing;
 threadinfo_t Transaction::tinfo[MAX_THREADS];
 __thread int TThread::the_id;
+__thread int TThread::assigned_stable_id = -1;
+std::atomic<int> TThread::next_stable_id{0};
 __thread int TThread::nshards;
 __thread int TThread::shard_index;
 __thread int TThread::pid;
@@ -134,6 +136,7 @@ void Transaction::initialize() {
     hash_base_ = 32768;
     tset_size_ = 0;
     lrng_state_ = 12897;
+    participant_phase_ = p_none;
     for (unsigned i = 0; i != tset_initial_capacity / tset_chunk; ++i)
         tset_[i] = &tset0_[i * tset_chunk];
     for (unsigned i = tset_initial_capacity / tset_chunk; i != arraysize(tset_); ++i)
@@ -143,10 +146,12 @@ void Transaction::initialize() {
 Transaction::~Transaction() {
     if (in_progress())
         silent_abort();
-    TransItem* live = tset0_;
-    for (unsigned i = 0; i != arraysize(tset_); ++i, live += tset_chunk)
-        if (live != tset_[i])
-            delete[] tset_[i];
+    // The initial chunks alias tset0_. Every later non-null chunk was
+    // allocated by refresh_tset_chunk(). Indexing avoids pointer arithmetic
+    // beyond the end of tset0_, which is undefined even without dereference.
+    for (unsigned i = tset_initial_capacity / tset_chunk;
+         i != arraysize(tset_); ++i)
+        delete[] tset_[i];
 }
 
 // @safe
@@ -304,7 +309,8 @@ void Transaction::hard_check_opacity(TransItem* item, TransactionTid::type t) {
 }
 
 // @unsafe: manipulates transaction items with unlock and cleanup operations
-void Transaction::stop(bool committed, unsigned* writeset, unsigned nwriteset) {
+void Transaction::stop(bool committed, unsigned* writeset,
+                       unsigned nwriteset) noexcept {
     if (!committed) {
         TXP_INCREMENT(txp_total_aborts);
 #if STO_DEBUG_ABORTS
@@ -351,32 +357,42 @@ void Transaction::stop(bool committed, unsigned* writeset, unsigned nwriteset) {
                 it->owner()->cleanup(*it, committed);
         }
     } else {
-        // in participant, we never invoke try_commit,
-        // and no good way to set state_ = s_committing_locked; as try_commit do
-        // so, we skip it blindly for participant
-        if ((TThread::mode() == 1 && nwriteset>0) || state_ == s_committing_locked) {
-            it = &tset_[tset_size_ / tset_chunk][tset_size_ % tset_chunk];
+        // Participants do not run try_commit(), so they do not retain the
+        // coordinator's writeset array/count. On abort, inspect every staged
+        // item and release whichever locks the participant acquired.
+        if ((TThread::mode() == 1 && !committed) ||
+            state_ == s_committing_locked) {
             for (unsigned tidx = tset_size_; tidx != first_write_; --tidx) {
-                it = (tidx % tset_chunk ? it - 1 : &tset_[(tidx - 1) / tset_chunk][tset_chunk - 1]);
+                const unsigned index = tidx - 1;
+                it = &tset_[index / tset_chunk][index % tset_chunk];
                 if (it->needs_unlock())
                     it->owner()->unlock(*it);
             }
         }
-        it = &tset_[tset_size_ / tset_chunk][tset_size_ % tset_chunk];
         for (unsigned tidx = tset_size_; tidx != first_write_; --tidx) {
-            it = (tidx % tset_chunk ? it - 1 : &tset_[(tidx - 1) / tset_chunk][tset_chunk - 1]);
+            const unsigned index = tidx - 1;
+            it = &tset_[index / tset_chunk][index % tset_chunk];
             if (it->has_write())
                 it->owner()->cleanup(*it, committed);
         }
     }
 
 after_unlock:
+    finish(committed);
+}
+
+// Finish a transaction whose item-specific unlock and cleanup work is done.
+// Participant shard_unlock() uses this directly because it owns that cleanup
+// loop rather than the coordinator writeset layout consumed by stop().
+void Transaction::finish(bool committed) noexcept {
+    assert(state_ < s_aborted);
     // TODO: this will probably mess up with nested transactions
     threadinfo_t& thr = tinfo[TThread::id()];
     if (thr.trans_end_callback)
         thr.trans_end_callback();
     // XXX should reset trans_end_callback after calling it...
     state_ = s_aborted + committed;
+    participant_phase_ = p_none;
 }
 
 // @safe
@@ -394,6 +410,7 @@ bool Transaction::shard_try_lock_last_writeset() {
                 return false;
             }
             it->__or_flags(TransItem::lock_bit);
+            state_ = s_committing_locked;
             break;
         }
         if (tidx == 0) break;
@@ -445,8 +462,18 @@ uint8_t Transaction::get_current_term() const {
 }
 
 // @unsafe: uses __sync_fetch_and_add and TObject::install
-void Transaction::shard_install(uint32_t timestamp) {
+void Transaction::shard_install(uint32_t timestamp) noexcept {
     assert(TThread::id() == threadid_);
+    assert(state_ < s_aborted);
+
+    // Receipt of INSTALL is the participant's irreversible 2PC commit
+    // decision. Record it before publishing any item so teardown cannot run
+    // abort cleanup over an already-installed MassTrans row.
+    if (participant_phase_ != p_collecting)
+        std::terminate();
+    if (any_writes_ && state_ != s_committing_locked)
+        std::terminate();
+    participant_phase_ = p_installing;
 
     // Update max timestamp from readset
     TThread::txn->maxTimestampReadSet = MAX(TThread::txn->maxTimestampReadSet, timestamp);
@@ -456,39 +483,63 @@ void Transaction::shard_install(uint32_t timestamp) {
     observe_mako_timestamp(tid_unique_);
 
     TransItem* it = nullptr;
-    if (tset_size_ == 0) return;
-    for (unsigned tidx = tset_size_-1; tidx >= 0; --tidx) {
-        auto base = tset_[tidx / tset_chunk];
-        it = base + tidx % tset_chunk;
-        if (it->has_write()) {
-            it->owner()->install(*it, *this);
+    try {
+        if (tset_size_ != 0) {
+            for (unsigned tidx = tset_size_-1; tidx >= 0; --tidx) {
+                auto base = tset_[tidx / tset_chunk];
+                it = base + tidx % tset_chunk;
+                if (it->has_write()) {
+                    it->owner()->install(*it, *this);
+                }
+                if (tidx == 0) break;
+            }
         }
-        if (tidx == 0) break;
+    } catch (...) {
+        // INSTALL is the irreversible 2PC decision. There is no sound local
+        // rollback after a prefix has been published, and the generic TObject
+        // interface does not provide a resumable install operation. Fail-stop
+        // with locks retained rather than expose a partial commit as success.
+        std::terminate();
     }
+    participant_phase_ = p_installed;
 }
 
 // @unsafe: calls TObject::unlock and TObject::cleanup
-void Transaction::shard_unlock(bool committed) {
+void Transaction::shard_unlock(bool committed) noexcept {
     assert(TThread::id() == threadid_);
+    assert(state_ < s_aborted);
+    if (participant_phase_ == p_installing)
+        std::terminate();
+
+    // An install decision cannot subsequently be downgraded to abort, and a
+    // caller cannot claim commit before INSTALL. Keep both protocol checks in
+    // optimized builds, where assert() is absent.
+    if (participant_phase_ == p_installed)
+        committed = true;
+    else if (committed)
+        std::terminate();
 
     TransItem* it = nullptr;
-    if (tset_size_ == 0) return;
-    for (unsigned tidx = tset_size_-1; tidx >= 0; --tidx) {
-        auto base = tset_[tidx / tset_chunk];
-        it = base + tidx % tset_chunk;
-        if (it->needs_unlock()) {
-            it->owner()->unlock(*it);
+    if (tset_size_ != 0) {
+        for (unsigned tidx = tset_size_-1; tidx >= 0; --tidx) {
+            auto base = tset_[tidx / tset_chunk];
+            it = base + tidx % tset_chunk;
+            if (it->needs_unlock()) {
+                it->owner()->unlock(*it);
+                it->clear_needs_unlock();
+            }
+            if (tidx == 0) break;
         }
-        if (tidx == 0) break;
-    }
-    for (unsigned tidx = tset_size_-1; tidx >= 0; --tidx) {
-        auto base = tset_[tidx / tset_chunk];
-        it = base + tidx % tset_chunk;
-        if (it->has_write()) {
-            it->owner()->cleanup(*it, committed);
+        for (unsigned tidx = tset_size_-1; tidx >= 0; --tidx) {
+            auto base = tset_[tidx / tset_chunk];
+            it = base + tidx % tset_chunk;
+            if (it->has_write()) {
+                it->owner()->cleanup(*it, committed);
+            }
+            if (tidx == 0) break;
         }
-        if (tidx == 0) break;
     }
+    finish(committed);
 }
 
 // @unsafe: complex commit protocol with remote operations, locking, and validation
@@ -520,8 +571,11 @@ bool Transaction::try_commit(bool no_paxos) {
 
     state_ = s_committing;
 
-    unsigned writeset[tset_size_];
+    unsigned writeset[tset_size_ ? tset_size_ : 1];
     unsigned nwriteset = 0;
+    bool timestamp_exhausted = false;
+    bool irreversible_decision = false;
+    bool needs_mako_timestamp = false;
     // Single watermark timestamp instead of vector
     uint32_t watermarkTimestamp = 0;
     writeset[0] = tset_size_;
@@ -629,17 +683,26 @@ bool Transaction::try_commit(bool no_paxos) {
     fence();
 #endif
 
-    if (!no_paxos){
+    needs_mako_timestamp =
+        BenchmarkConfig::getInstance().getIsReplicated() ||
+        TThread::writeset_shard_bits != 0 ||
+        TThread::readset_shard_bits != 0 || maxTimestampReadSet != 0;
+    if (!no_paxos && needs_mako_timestamp) {
         // Update single timestamp system
-        if (!updateSingleTimestamp())
+        if (!updateSingleTimestamp(timestamp_exhausted))
             goto abort;
         // A dependent commit must be strictly newer than every version it
         // observed. Reserving through the shared clock also prevents two
         // local coordinators from independently selecting read_max + 1.
         if (maxTimestampReadSet >= tid_unique_ &&
             !try_allocate_mako_timestamp_after(maxTimestampReadSet,
-                                               tid_unique_))
+                                               tid_unique_)) {
+            // Persist the exhausted sentinel even when the dependency itself,
+            // rather than the old clock value, reached the wire-format limit.
+            Transaction::observe_mako_timestamp(maxTimestampReadSet);
+            timestamp_exhausted = true;
             goto abort;
+        }
 
 #if defined(TRACKING_ROLLBACK)
         if (get_current_term()==0) {
@@ -688,13 +751,24 @@ bool Transaction::try_commit(bool no_paxos) {
     if (nwriteset)
         observe_mako_timestamp(tid_unique_);
 
+    // Phase 3 begins the irreversible commit decision. No exception or
+    // ordinary abort may run rollback cleanup after any item can be visible.
+    try {
+    irreversible_decision = nwriteset != 0;
+
     //phase3
 #if STO_SORT_WRITESET
     for (unsigned tidx = first_write_; tidx != tset_size_; ++tidx) {
         it = &tset_[tidx / tset_chunk][tidx % tset_chunk];
         if (it->has_write()) {
             TXP_INCREMENT(txp_total_w);
-            it->owner()->install(*it, *this);
+            try {
+                it->owner()->install(*it, *this);
+            } catch (...) {
+                // Publishing any prefix makes rollback unsound. Match the
+                // participant INSTALL policy and fail-stop with locks held.
+                std::terminate();
+            }
         }
     }
 #else
@@ -708,37 +782,27 @@ bool Transaction::try_commit(bool no_paxos) {
                 it = &tset_[*idxit / tset_chunk][*idxit % tset_chunk];
             TXP_INCREMENT(txp_total_w);
             // to ensure invalid-bit to be reset in transPut for remote tables on the coordinator shard
-            it->owner()->install(*it, *this);
+            try {
+                it->owner()->install(*it, *this);
+            } catch (...) {
+                // Publishing any prefix makes rollback unsound. Match the
+                // participant INSTALL policy and fail-stop with locks held.
+                std::terminate();
+            }
         }
         if (TThread::writeset_shard_bits > 0||TThread::readset_shard_bits>0) {
             if (TThread::sclient == nullptr) {
                 if (!no_paxos) {
-                    Warning("Missing ShardClient for remoteInstall in paxos path; aborting transaction");
+                    Warning("Missing ShardClient after commit decision; failing stop");
                     goto abort;
                 }
             } else {
-#if defined(FAIL_NEW_VERSION)
-            int retry_c = 0;
-            while (1) {
-                try {
-                    retry_c += 1;
-                    TThread::sclient->remoteInstall(tid_unique_);
-                    break;
-                } catch (int n) {
-			break;
-                    if (n==1002) { 
-                        // There is a timeout on partial INSTALL, we retry instead of abort for correctness.
-                        // Mako can't solve "blocking" issue in 2PC.
-                        //std::cout<<"timeout in remoteInstall; retry attempts: " << retry_c <<std::endl;
-                        if (!TThread::sclient->isBlocking.load(std::memory_order_relaxed)) {
-                            break;
-                        }
-                    }
-                }
-            }
-#else
-            TThread::sclient->remoteInstall(tid_unique_);
-#endif
+            // Any non-success after INSTALL is indeterminate: some remote
+            // participants may already have committed. Fail-stop instead of
+            // returning a false abort and inviting an unsafe retry.
+            if (TThread::sclient->remoteInstall(tid_unique_) !=
+                mako::ErrorCode::SUCCESS)
+                std::terminate();
             }
         }
     }
@@ -767,18 +831,29 @@ bool Transaction::try_commit(bool no_paxos) {
         }
     }
 
+    } catch (...) {
+        if (irreversible_decision)
+            std::terminate();
+        throw;
+    }
+
     stop(true, writeset, nwriteset);
+    irreversible_decision = false;
     // if (TThread::writeset_shard_bits > 0) {
     //     TThread::sclient->remoteUnLock();
     // }
     return true;
 
 abort:
+    if (irreversible_decision)
+        std::terminate();
     TXP_INCREMENT(txp_commit_time_aborts);
     stop(false, nullptr, 0);
     if ((TThread::writeset_shard_bits > 0 || TThread::readset_shard_bits > 0) && TThread::sclient != nullptr) {
         TThread::sclient->remoteAbort();
     }
+    if (timestamp_exhausted)
+        throw TimestampExhausted();
     return false;
 }
 

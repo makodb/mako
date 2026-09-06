@@ -78,6 +78,7 @@ class BenchmarkConfig {
           backoff_aborted_transaction_(0),
           use_hashtable_(0),
           is_micro_(0), // if run micro-based workload
+          is_replicated_(0),
           end_received_(0),
           end_received_leader_(0),
           replay_batch_(0),

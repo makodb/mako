@@ -219,10 +219,6 @@ void mako::stop_helper()
   }
 }
 
-void mako::initialize_per_thread(abstract_db *db_) {
-  scoped_db_thread_ctx ctx(db_, false);
-}
-
 void mako::setup_rpc_server()
 {
   std::lock_guard<std::mutex> lifecycle_lock(g_rpc_server_mu);

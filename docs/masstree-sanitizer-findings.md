@@ -21,6 +21,7 @@ findings remain in the UBSan and TSan suppression files.
 | 10 | TSan | guarded C++ TPC-C `std::cout`/`std::cerr` path | concurrent mutation of shared stream formatting state | **fixed on the tested TPC-C path** with one output lock shared by formatted and machine records; no suppression added |
 | 11 | TSan | libnuma `numa_node_to_cpus` cache reached by `rcu::pin_current_thread` | unsynchronized lazy topology-cache construction in libnuma 2.0.19 | **fixed at the call boundary** by serializing topology queries during thread setup; no suppression added |
 | 12 | TSan | Masstree `threadinfo::gc_epoch_` | reclaimer reads racing with participant entry and exit; publication also lacked a portable entry barrier | **fixed** with layout-preserving atomic references and an ordered snapshot/publish/recheck protocol; no suppression added |
+| 13 | TSan | legacy C++ MassTrans `stuffed_str` payloads during cross-partition TPC-C | plain payload reads racing with replacement under a version-sandwich retry | **accepted known UB debt outside the supported Rust profile**; the bounded lifecycle gate uses a local-only transaction mix and no suppression was added |
 
 The historical ASan run reported zero findings across its three Masstree test
 binaries. The Rust STO native sanitizer workflow now reruns the expanded
@@ -30,11 +31,18 @@ The Rust boundary ASan result has an explicit leak qualification. The ordinary
 workspace sweep leak-checks every case except the 30 exact intentional
 transaction-frame quarantine cases in
 `scripts/ci/rust_sto_quarantine_tests.txt`; those cases are rerun individually
-with leak reporting disabled. The native FFI runner leak-checks 31 of 32 unit
+with leak reporting disabled. The native FFI runner leak-checks 34 of 35 unit
 cases and disables leak reporting only for
 `tests::post_install_row_count_failure_marks_runtime_indeterminate`, which
 deliberately retains an indeterminate frame after publication begins. The gate
 audits every substring skip against the test inventory before applying it.
+
+The ASan job also ends with a targeted `STO_RMW=ON` rebuild of the MassTrans
+non-transactional test. It verifies that both the library and test compile with
+`READ_MY_WRITES=1` and `-fsanitize=address`, then runs the exact
+insert-then-delete and resurrection-then-delete MV regressions. Leak reporting
+is disabled for those process-lifetime MassTrans invocations; address errors
+remain fatal.
 
 ---
 
@@ -603,7 +611,9 @@ that record.
 that holds one process-wide mutex for the complete insertion expression. The
 tested TPC-C path's human output and raw machine-record writes use the same
 mutex. The lock protects diagnostic and result publication; it is not acquired
-for transaction bookkeeping. Other benchmark drivers still contain direct
+for transaction bookkeeping. The data-loading timer in this path also publishes
+through that proxy after the loader threads join instead of letting the generic
+`scoped_timer` destructor write directly to `std::cerr`. Other benchmark drivers still contain direct
 stream writes and require their own audit before they are run concurrently in
 one process. No suppression applies to the TPC-C finding.
 
@@ -665,3 +675,35 @@ The same audit found a plain function-static flag in `threadinfo::make()` that
 could race between concurrent attachers. A function-static `std::once_flag`
 now publishes that assertion-only allocator initialization. The multishard
 slow-exit CTest exercises both repairs under TSan. No suppression applies.
+
+---
+
+## Finding 13: legacy MassTrans variable-length payload race (accepted outside scope)
+
+**Where**: `stuffed_str<unsigned long>::replace()` and
+`versioned_str_struct::read_value()`, reached when one C++ TPC-C shard updates a
+remotely owned record while another shard reads the same record.
+
+The multi-runner harness intentionally wires every runner's remote partition
+entry to the exact table owned by the corresponding source runner. A remote
+NewOrder stock update can therefore overlap a local StockLevel read of the same
+MassTrans record. The writer changes the plain `size_` member and byte buffer;
+the reader obtains both through plain accesses. `MassTrans::atomicRead()` reads
+the version before and after copying the payload and retries when it detects a
+change, but that seqlock-style validation does not make the intervening C++
+accesses data-race-free.
+
+Making the distributed legacy path language-defined would require a reviewed
+atomic payload/publication design, including every reader and writer, rather
+than a narrow annotation or TSan suppression. That work is separate from this
+branch's supported Rust profile, which is exactly one local, non-replicated
+shard and has no remote indexes or cross-shard commit.
+
+The multishard slow-exit CTest exists to exercise concurrent runner and loader
+construction, topology setup, RCU participation, output, worker join, and
+teardown. Its timed phase uses Delivery, OrderStatus, and StockLevel, which do
+not follow remote table pointers, so those lifecycle properties remain under
+TSan without treating the known legacy distributed payload path as part of the
+Rust release claim. No suppression was added. A separate distributed C++
+sanitizer and correctness effort is required before that profile can be
+described as race-free.

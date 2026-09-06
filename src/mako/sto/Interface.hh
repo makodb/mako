@@ -1,7 +1,9 @@
 #pragma once
 #include <stdint.h>
 #include <assert.h>
+#include <atomic>
 #include <iostream>
+#include <stdexcept>
 
 #include "config.h"
 #include "compiler.hh"
@@ -23,6 +25,8 @@ class TThread {
     static __thread int warehouses;  // warehouses per shard
     static __thread int shard_index;  // current shard_index
     static __thread int the_id; // thread-id
+    static __thread int assigned_stable_id;
+    static std::atomic<int> next_stable_id;
     static __thread int pid; // partition-id
     // MODE: 0 => default, 1 => no checking in_process
     static __thread int the_mode;
@@ -138,6 +142,23 @@ public:
 
     static int id() {
         return the_id;
+    }
+
+    // Assign one process-unique STO/RCU slot to this OS thread and retain it
+    // across detach/reattach. Slots are deliberately not recycled across
+    // threads because their deferred-RCU lists are process-lived.
+    static int assign_stable_id() {
+        if (assigned_stable_id < 0) {
+            const int candidate =
+                next_stable_id.fetch_add(1, std::memory_order_relaxed);
+            if (candidate < 0 || candidate >= MAX_THREADS) {
+                throw std::runtime_error(
+                    "native STO thread-ID budget exhausted");
+            }
+            assigned_stable_id = candidate;
+        }
+        set_id(assigned_stable_id);
+        return assigned_stable_id;
     }
 
     // Returns absolute partition ID for Paxos routing

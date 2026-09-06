@@ -19,17 +19,38 @@ class rust_sto_tpcc_wrapper;
 
 namespace rust_sto_tpcc_detail {
 
-// Exposed for the focused wrapper smoke test so table-name classification,
-// registry bounds, and post-load sealing remain directly testable production
-// decisions.
+// Exposed for the focused wrapper smoke test so worker admission, table-name
+// classification, registry bounds, and post-load sealing remain directly
+// testable closed-integration decisions. The config helper throws
+// std::invalid_argument before doing unchecked arithmetic when the configured
+// worker count cannot fit the shared C++/native attachment limit.
+sto_tpcc_db_config db_config_for_worker_count(size_t configured_workers);
 sto_tpcc_table_config table_config_for(std::string_view index_name);
 bool table_has_static_directory(std::string_view index_name);
+
+#ifdef MAKO_RUST_STO_TEST_HOOKS
+enum class open_index_fault_stage : uint8_t {
+  none,
+  after_table_create,
+  after_facade_create,
+  after_tables_insert,
+  after_id_insert,
+  after_name_insert,
+};
+
+// The wrapper smoke target uses these hooks to inject one std::bad_alloc at a
+// catalog publication boundary. They do not exist in production builds.
+void fail_next_open_index_at(open_index_fault_stage stage) noexcept;
+size_t destroyed_table_count_for_testing() noexcept;
+#endif
 
 } // namespace rust_sto_tpcc_detail
 
 // FullOrderedIndex bridge used only by the matched TPC-C comparison target.
-// The application and record encoders remain the existing C++ TPC-C code;
-// all transactional storage operations below cross the narrow Rust C ABI.
+// The supported topology is exactly one local, non-replicated shard: remote
+// indexes, replication, and distributed commit are unsupported. The
+// application and record encoders remain the existing C++ TPC-C code; all
+// transactional storage operations below cross the narrow Rust C ABI.
 class rust_sto_tpcc_ordered_index final : public FullOrderedIndex,
                                           public TxnFixedReadCapability,
                                           public TxnFixedModifyCapability,
@@ -97,6 +118,9 @@ private:
   friend class rust_sto_tpcc_wrapper;
 };
 
+// Closed benchmark wrapper. Construct all tables during startup before its
+// bounded, long-lived transaction workers attach; live schema mutation is
+// outside the supported profile.
 class rust_sto_tpcc_wrapper final : public abstract_db,
                                     public TxnInsertBatchCapability,
                                     public TxnTpccPaymentCapability,
@@ -170,7 +194,9 @@ private:
   sto_tpcc_db *db_;
   int32_t next_table_id_;
   // open_index returns borrowed pointers. This wrapper owns every facade until
-  // close_index removes it or the wrapper itself is destroyed.
+  // close_index removes it or the wrapper itself is destroyed. Publication is
+  // all-or-nothing: a C++ exception after FFI creation destroys that table and
+  // does not consume its ID or leave a partial catalog entry.
   std::vector<std::unique_ptr<rust_sto_tpcc_ordered_index>> tables_;
   std::unordered_map<int32_t, rust_sto_tpcc_ordered_index *> tables_by_id_;
   std::map<std::tuple<std::string, int>, rust_sto_tpcc_ordered_index *>

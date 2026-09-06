@@ -1580,23 +1580,26 @@ if(MAKO_CARGO_EXECUTABLE)
         set(_MAKO_MTREE_LOADER_PATH_VARIABLE "LD_LIBRARY_PATH")
     endif()
 
-    set(_MAKO_STO_MASSTREE_NATIVE_TEST "")
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-masstree/tests/native_integration.rs")
-        set(_MAKO_STO_MASSTREE_NATIVE_TEST
-            "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-masstree/tests/native_integration.rs")
-    endif()
-
-    set(_MAKO_STO_MASSTREE_HISTORY_TEST "")
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-masstree/tests/history_oracle.rs")
-        set(_MAKO_STO_MASSTREE_HISTORY_TEST
-            "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-masstree/tests/history_oracle.rs")
-    endif()
-
-    set(_MAKO_STO_TPCC_NATIVE_TEST "")
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-tpcc-ffi/tests/native_ffi.rs")
-        set(_MAKO_STO_TPCC_NATIVE_TEST
-            "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-tpcc-ffi/tests/native_ffi.rs")
-    endif()
+    set(_MAKO_MASSTREE_NATIVE_TEST
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/masstree/tests/native_integration.rs")
+    set(_MAKO_STO_MASSTREE_NATIVE_TEST
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-masstree/tests/native_integration.rs")
+    set(_MAKO_STO_MASSTREE_HISTORY_TEST
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-masstree/tests/history_oracle.rs")
+    set(_MAKO_STO_TPCC_NATIVE_TEST
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-tpcc-ffi/tests/native_ffi.rs")
+    foreach(_MAKO_REQUIRED_NATIVE_TEST IN ITEMS
+            "${_MAKO_MASSTREE_NATIVE_TEST}"
+            "${_MAKO_STO_MASSTREE_NATIVE_TEST}"
+            "${_MAKO_STO_MASSTREE_HISTORY_TEST}"
+            "${_MAKO_STO_TPCC_NATIVE_TEST}")
+        if(NOT EXISTS "${_MAKO_REQUIRED_NATIVE_TEST}")
+            message(FATAL_ERROR
+                "Required Rust STO native integration suite is missing: "
+                "${_MAKO_REQUIRED_NATIVE_TEST}")
+        endif()
+    endforeach()
+    unset(_MAKO_REQUIRED_NATIVE_TEST)
 
     set(_MAKO_RUST_STO_NATIVE_SANITIZER_ARGS "")
     if(NOT MAKO_RUST_STO_SANITIZER_RUSTFLAGS STREQUAL "")
@@ -1637,6 +1640,7 @@ if(MAKO_CARGO_EXECUTABLE)
             "-DMAKO_NATIVE_LIBS=${MAKO_MTREE_RUST_NATIVE_LIBS}"
             ${_MAKO_RUST_STO_NATIVE_PLATFORM_ARGS}
             ${_MAKO_RUST_STO_NATIVE_SANITIZER_ARGS}
+            "-DMAKO_MASSTREE_NATIVE_TEST=${_MAKO_MASSTREE_NATIVE_TEST}"
             "-DMAKO_STO_NATIVE_TEST=${_MAKO_STO_MASSTREE_NATIVE_TEST}"
             "-DMAKO_STO_HISTORY_TEST=${_MAKO_STO_MASSTREE_HISTORY_TEST}"
             "-DMAKO_STO_TPCC_NATIVE_TEST=${_MAKO_STO_TPCC_NATIVE_TEST}"
@@ -2056,7 +2060,8 @@ if(MAKO_CARGO_EXECUTABLE)
         src/mako/storage/rust_sto_tpcc_wrapper.cc)
     target_compile_definitions(sto_tpcc_cpp_wrapper_smoke PRIVATE
         CONFIG_H="${CONFIG_H}"
-        MAKO_RUST_STO_TPCC=1)
+        MAKO_RUST_STO_TPCC=1
+        MAKO_RUST_STO_TEST_HOOKS=1)
     target_link_libraries(sto_tpcc_cpp_wrapper_smoke PRIVATE
         sto_tpcc_rust_ffi
         mako
@@ -2123,6 +2128,13 @@ endif()
 # Enable testing
 enable_testing()
 
+add_test(NAME test_rocksdb_interface_lifecycle
+    COMMAND rocksdbInterfaceTest)
+set_tests_properties(test_rocksdb_interface_lifecycle PROPERTIES
+    LABELS "rocks;sto;masstree;lifecycle"
+    RUN_SERIAL TRUE
+    TIMEOUT 120)
+
 if(TARGET sto_tpcc_cpp_wrapper_smoke)
     add_test(NAME test_sto_tpcc_cpp_wrapper_smoke
         COMMAND sto_tpcc_cpp_wrapper_smoke
@@ -2179,6 +2191,10 @@ if(TARGET sto_tpcc_bench)
             --slow-exit)
     set_tests_properties(test_sto_tpcc_cpp_multishard_slow_exit PROPERTIES
         LABELS "sto;masstree;ffi;lifecycle;tpcc;cpp;multishard"
+        # Keep the timed phase on transaction classes that never follow remote
+        # table pointers. The inherited C++ MassTrans cross-partition payload
+        # race is documented separately in masstree-sanitizer-findings.md.
+        ENVIRONMENT "MAKO_TPCC_WORKLOAD_MIX=0,0,34,33,33"
         RUN_SERIAL TRUE
         TIMEOUT 240)
 
@@ -2287,6 +2303,23 @@ if(TARGET sto_tpcc_bench)
             --storage-engine rust
             --slow-exit)
     set_tests_properties(test_sto_tpcc_rejects_rust_replication PROPERTIES
+        LABELS "sto;masstree;rust;ffi;lifecycle;tpcc;configuration"
+        RUN_SERIAL TRUE
+        TIMEOUT 30)
+
+    add_test(NAME test_sto_tpcc_rejects_rust_worker_limit
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/ci/run_sto_tpcc_ctest.py"
+            --expected-failure-text "worker count must be in [1, 111]"
+            --expected-exit-code 2
+            --
+            "$<TARGET_FILE:sto_tpcc_bench>"
+            --num-threads 112
+            --shard-config "${CMAKE_CURRENT_SOURCE_DIR}/config/mako_sto_tpcc_local.yml"
+            --site-name local_s0
+            --storage-engine rust
+            --slow-exit)
+    set_tests_properties(test_sto_tpcc_rejects_rust_worker_limit PROPERTIES
         LABELS "sto;masstree;rust;ffi;lifecycle;tpcc;configuration"
         RUN_SERIAL TRUE
         TIMEOUT 30)
@@ -2406,6 +2439,7 @@ if(MAKO_CARGO_EXECUTABLE)
             sto_tpcc_bench
             sto_tpcc_cpp_wrapper_smoke
             sto_tpcc_cpp_wrapper_scan_smoke
+            rocksdbInterfaceTest
             test_mtree_abi_c11_header
             test_sto_tpcc_ffi_c11_header
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -2531,7 +2565,7 @@ if(BUILD_TESTS)
             ${GTEST_LIBRARIES}
             ${GTEST_MAIN_LIBRARIES})
         add_test(NAME test_srpc_epoll_platform
-            COMMAND test_srpc_epoll_platform)
+            COMMAND test_srpc_epoll_platform --gtest_fail_if_no_test_selected)
         set_tests_properties(test_srpc_epoll_platform PROPERTIES
             LABELS "rust;srpc;epoll;ffi"
             RUN_SERIAL TRUE
@@ -2954,7 +2988,8 @@ if(BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/src/mako
         ${GTEST_INCLUDE_DIRS}
     )
-    add_test(NAME SiloVarintTests COMMAND test_silo_varint)
+    add_test(NAME SiloVarintTests
+        COMMAND test_silo_varint --gtest_fail_if_no_test_selected)
     set_tests_properties(SiloVarintTests PROPERTIES
         LABELS "silo;sto;rust;serializer")
     if(TARGET rust_sto_integration)
@@ -3029,11 +3064,37 @@ if(BUILD_TESTS)
     add_test(NAME test_silo_runtime COMMAND test_silo_runtime)
     add_test(NAME test_silo_runtime_concurrency_lifecycle
         COMMAND test_silo_runtime
-            --gtest_filter=SiloRuntimeTest.ConcurrentGlobalDefaultInitialization:SiloRuntimeLifetimeTest.LazyServicesHaveBoundedTeardown:CoreStorageTest.*:SpinBarrierTest.*:MasstreeContextEpochTest.*:MassTransEpochIntegrationTest.*:StoEpochAdvancerLifecycleTest.*:MakoTimestampTest.*)
+            --gtest_filter=SiloRuntimeTest.ConcurrentGlobalDefaultInitialization:SiloRuntimeLifetimeTest.LazyServicesHaveBoundedTeardown:CoreStorageTest.*:SpinBarrierTest.*:MasstreeContextEpochTest.*:MassTransEpochIntegrationTest.*:StoThreadIdLifecycleTest.*:StoEpochAdvancerLifecycleTest.*:MakoTimestampTest.*
+            --gtest_fail_if_no_test_selected)
     set_tests_properties(test_silo_runtime_concurrency_lifecycle PROPERTIES
         LABELS "silo;masstree;concurrency"
         RUN_SERIAL TRUE
         TIMEOUT 60)
+    add_test(NAME test_silo_transitem_lifetime
+        COMMAND test_silo_runtime
+            --gtest_filter=TransItemLifetimeTest.ReusedSlotRetainsExactlyOneOwnedExtraString
+            --gtest_fail_if_no_test_selected)
+    add_test(NAME test_silo_transaction_set_exact_chunk_boundary
+        COMMAND test_silo_runtime
+            --gtest_filter=TransactionSetBoundaryTest.ParticipantAbortCleansExactChunkBoundaries
+            --gtest_fail_if_no_test_selected)
+    add_test(NAME test_silo_transaction_set_capacity_exhaustion
+        COMMAND test_silo_runtime
+            --gtest_filter=TransactionSetBoundaryTest.CapacityExhaustionFailsClosedInRelease
+            --gtest_fail_if_no_test_selected)
+    add_test(NAME test_silo_transaction_install_exception_fail_stop
+        COMMAND test_silo_runtime
+            --gtest_filter=TransactionCommitFailureTest.InstallExceptionIsFailStop
+            --gtest_fail_if_no_test_selected)
+    set_tests_properties(
+        test_silo_transitem_lifetime
+        test_silo_transaction_set_exact_chunk_boundary
+        test_silo_transaction_set_capacity_exhaustion
+        test_silo_transaction_install_exception_fail_stop
+        PROPERTIES
+        LABELS "silo;transaction;lifecycle"
+        RUN_SERIAL TRUE
+        TIMEOUT 120)
 
     # Test: stable C ABI over the native SiloRuntime/Masstree configuration.
     # Linking through mako ensures the ABI implementation is compiled with the
@@ -3049,7 +3110,8 @@ if(BUILD_TESTS)
         mako ${TEST_LINK_LIBS}
         ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES}
         pthread)
-    add_test(NAME test_mtree_abi COMMAND test_mtree_abi)
+    add_test(NAME test_mtree_abi
+        COMMAND test_mtree_abi --gtest_fail_if_no_test_selected)
     set_tests_properties(test_mtree_abi PROPERTIES
         LABELS "masstree;silo;abi;rust;ffi")
     if(TARGET rust_sto_integration)
@@ -3072,7 +3134,8 @@ if(BUILD_TESTS)
         mako ${TEST_LINK_LIBS}
         ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES}
         pthread)
-    add_test(NAME test_mako_value_metadata COMMAND test_mako_value_metadata)
+    add_test(NAME test_mako_value_metadata
+        COMMAND test_mako_value_metadata --gtest_fail_if_no_test_selected)
     set_tests_properties(test_mako_value_metadata PROPERTIES
         LABELS "sto;masstree;rust;metadata;replay")
     if(TARGET rust_sto_integration)
@@ -3120,7 +3183,50 @@ if(BUILD_TESTS)
         ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES}
         yaml-cpp rocksdb lz4 numa event_pthreads
         pthread)
-    add_test(NAME test_silo_nontxn_api COMMAND test_silo_nontxn_api)
+    add_test(NAME test_silo_nontxn_api
+        COMMAND test_silo_nontxn_api --gtest_fail_if_no_test_selected)
+    set_tests_properties(test_silo_nontxn_api PROPERTIES
+        LABELS "silo;masstree;nontransactional"
+        RUN_SERIAL TRUE
+        TIMEOUT 60)
+    add_test(NAME test_silo_nontxn_api_mv_delete_delete_conflict
+        COMMAND test_silo_nontxn_api
+            --gtest_filter=SiloNonTxnApi.ConcurrentMvDeletesOfPresentRowConflict
+            --gtest_fail_if_no_test_selected)
+    add_test(NAME test_silo_nontxn_api_mv_delete_update_conflict
+        COMMAND test_silo_nontxn_api
+            --gtest_filter=SiloNonTxnApi.ConcurrentMvDeleteInvalidatesStagedUpdate
+            --gtest_fail_if_no_test_selected)
+    set_tests_properties(
+        test_silo_nontxn_api_mv_delete_delete_conflict
+        test_silo_nontxn_api_mv_delete_update_conflict
+        PROPERTIES
+        LABELS "silo;masstree;nontransactional;mv;concurrency"
+        RUN_SERIAL TRUE
+        TIMEOUT 60)
+    if(STO_RMW)
+        # Keep the read-my-writes-only state transitions visible as their own
+        # CTests. One exact filter per case plus fail-if-empty prevents either
+        # preprocessor/test-name regression from becoming a partial false pass.
+        add_test(NAME test_silo_nontxn_api_sto_rmw_insert_delete
+            COMMAND test_silo_nontxn_api
+                "--gtest_filter=SiloNonTxnApi.MassTransInsertThenDeleteCancelsInMvMode"
+                --gtest_fail_if_no_test_selected)
+        add_test(NAME test_silo_nontxn_api_sto_rmw_resurrection_delete
+            COMMAND test_silo_nontxn_api
+                "--gtest_filter=SiloNonTxnApi.MassTransResurrectionThenDeleteIsNetZeroInMvMode"
+                --gtest_fail_if_no_test_selected)
+        set_tests_properties(
+            test_silo_nontxn_api_sto_rmw_insert_delete
+            test_silo_nontxn_api_sto_rmw_resurrection_delete
+            PROPERTIES
+            LABELS "silo;masstree;nontransactional;mv;sto-rmw"
+            RUN_SERIAL TRUE
+            TIMEOUT 60)
+    endif()
+    if(TARGET rust_sto_integration)
+        add_dependencies(rust_sto_integration test_silo_nontxn_api)
+    endif()
 
     # Test: ConfigManager over a REAL mbta index (integration).
     # Unlike test_config_manager (pure cluster, std::map fake), this

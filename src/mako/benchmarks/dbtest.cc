@@ -613,14 +613,24 @@ main(int argc, char **argv)
 #if defined(MAKO_RUST_STO_TPCC)
   // Keep this capability check ahead of init_env(): the Rust comparison
   // adapter deliberately implements one non-replicated shard and no remote
-  // indexes or distributed commit. The wrapper repeats the check as defense
-  // in depth, but CLI misuse must fail cleanly before allocating a database.
+  // indexes or distributed commit. It also has a finite shared native/C++
+  // attachment budget. The wrapper repeats both checks as defense in depth,
+  // but CLI misuse must fail cleanly before allocating a database.
   if (benchConfig.getStorageEngine() == "rust" &&
       (benchConfig.getNshards() != 1 || benchConfig.getIsReplicated())) {
     mako::benchmark_cerr()
         << "[ERROR] Rust STO TPC-C comparison supports one non-replicated shard"
         << endl;
     return 2;
+  }
+  if (benchConfig.getStorageEngine() == "rust") {
+    try {
+      (void)rust_sto_tpcc_detail::db_config_for_worker_count(
+          benchConfig.getNthreads());
+    } catch (const std::invalid_argument &error) {
+      mako::benchmark_cerr() << "[ERROR] " << error.what() << endl;
+      return 2;
+    }
   }
 #endif
 

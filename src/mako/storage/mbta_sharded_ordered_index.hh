@@ -439,7 +439,9 @@ const char *mbta_sharded_put_mbta(
     bool (*compar)(const std::string &newValue, const std::string &oldValue),
     const std::string &value);
 
-// Find-or-create factory over a per-shard opener (historical build()).
+// Find-or-create factory over a per-shard opener (historical build()). Returns
+// nullptr if any opener fails. The factory neither owns nor rolls back pointers
+// returned before that failure.
 inline mbta_sharded_ordered_index *mbta_sharded_build(
     const std::string &name, size_t shard_count,
     const std::function<abstract_ordered_index *(size_t)> &open_fn) {
@@ -447,7 +449,10 @@ inline mbta_sharded_ordered_index *mbta_sharded_build(
   shard_table_vec tables;
   tables.reserve(shard_count);
   for (size_t i = 0; i < shard_count; i++) {
-    tables.push_back(open_fn(i));
+    abstract_ordered_index *table = open_fn(i);
+    if (table == nullptr)
+      return nullptr;
+    tables.push_back(table);
   }
   return new mbta_sharded_ordered_index(std::string(name),
                                         std::move(tables));

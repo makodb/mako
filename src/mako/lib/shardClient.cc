@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdlib.h>
+#include <memory>
 
 #include "lib/fasttransport.h"
 #include "lib/promise.h"
@@ -32,25 +33,29 @@ namespace mako
         std::string local_uri = config.shard(shardIndex, clusterRole).host;
         int id=par_id;
         // 0. initialize transport
-        transport = new FastTransport(file,
-                                      local_uri, // local_uri
-                                      cluster,
-                                      1, 0,       // nr_req_types (for client, setup to 0)
-                                      0,       // physPort
-                                      0, // shardIndex % 2 // numa node
-                                      shardIndex,
-                                      id);
+        auto transport_owner = std::make_unique<FastTransport>(
+            file,
+            local_uri, // local_uri
+            cluster,
+            1, 0,      // nr_req_types (for client, setup to 0)
+            0,         // physPort
+            0,         // shardIndex % 2 // numa node
+            shardIndex,
+            id);
 
         // 1. initialize Client
-        client = new mako::Client(config.configFile,
-                                    transport,
-                                    0); // 0 => generate a random client-id
+        auto client_owner = std::make_unique<mako::Client>(
+            config.configFile,
+            transport_owner.get(),
+            0); // 0 => generate a random client-id
 
         tid=0;
         int_received.resize(TThread::get_nshards());
         stopped = false;
         isBreakTimeout = false;
         isBlocking.store(true, std::memory_order_relaxed); // If there is a timeout, we can't abort it, we should retry it util it is successful.
+        transport = transport_owner.release();
+        client = client_owner.release();
     }
 
     ShardClient::~ShardClient() {

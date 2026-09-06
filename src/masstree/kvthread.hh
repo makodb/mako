@@ -309,6 +309,11 @@ class threadinfo {
         // reclaimer that observes zero may therefore ignore this participant.
         store_gc_epoch(0, std::memory_order_release);
     }
+    // @safe - Reports whether this participant currently protects Masstree
+    // reads without exposing the epoch representation.
+    bool rcu_active() const noexcept {
+        return load_gc_epoch(std::memory_order_acquire) != 0;
+    }
     // @unsafe { May call hard_rcu_quiesce which frees memory }
     void rcu_quiesce() {
         rcu_start();

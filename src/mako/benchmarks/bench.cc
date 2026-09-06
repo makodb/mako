@@ -514,7 +514,7 @@ bench_runner::run()
     // spin_barrier b(loaders.size());
     const pair<uint64_t, uint64_t> mem_info_before = get_system_memory_info();
     {
-      scoped_timer t("dataloading", BenchmarkConfig::getInstance().getVerbose());
+      timer dataload_timer;
       size_t N=loaders.size();
       Warning("# of loaders size:%d",N);
       auto& benchConfig = BenchmarkConfig::getInstance();
@@ -531,8 +531,13 @@ bench_runner::run()
           if (i<N){
             loaders.at(i)->join();
             //Warning("start thread-(DONE):%d",i);
-          } 
+          }
         }
+      }
+      if (BenchmarkConfig::getInstance().getVerbose()) {
+        const double elapsed_ms = dataload_timer.lap() / 1000.0;
+        mako::benchmark_cerr() << "timed region dataloading took "
+                               << elapsed_ms << " ms" << endl;
       }
     }
     

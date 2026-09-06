@@ -4,6 +4,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* Closed, lockstep C bridge for the sto_tpcc_bench comparison target. Its
+ * supported profile is exactly one local, non-replicated shard with a bounded
+ * fixed set of long-lived OS workers. It is not a stable generic STO ABI and
+ * does not provide remote indexes, distributed commit, or replication. Create
+ * the database and complete table set during startup, before worker attachment
+ * or concurrent table use. */
+
 #ifdef __cplusplus
 #define STO_TPCC_NOEXCEPT noexcept
 extern "C" {
@@ -195,8 +202,9 @@ sto_tpcc_status sto_tpcc_db_create(const sto_tpcc_db_config *config,
                                     sto_tpcc_db **out_db) STO_TPCC_NOEXCEPT;
 sto_tpcc_status sto_tpcc_db_destroy(sto_tpcc_db *db) STO_TPCC_NOEXCEPT;
 
-/* Create every table before attaching a transaction thread on this OS thread.
- * The compatibility creator selects STO_TPCC_RESOLVED_CACHE_FULL. */
+/* Create every table during startup, before any long-lived transaction worker
+ * attaches or concurrent table use begins. The compatibility creator selects
+ * STO_TPCC_RESOLVED_CACHE_FULL. */
 sto_tpcc_status sto_tpcc_table_create(sto_tpcc_db *db,
                                        const sto_tpcc_table_config *config,
                                        sto_tpcc_table **out_table)
@@ -220,7 +228,8 @@ sto_tpcc_status sto_tpcc_table_destroy(sto_tpcc_table *table)
 sto_tpcc_status sto_tpcc_table_size(const sto_tpcc_table *table,
                                      uint64_t *out_rows) STO_TPCC_NOEXCEPT;
 
-/* Create, use, and destroy a thread handle on one OS thread. */
+/* Create, use, and destroy a thread handle on one OS thread. Keep the worker
+ * set bounded and long-lived; destroy every handle before database teardown. */
 sto_tpcc_status sto_tpcc_thread_create(sto_tpcc_db *db,
                                         sto_tpcc_thread **out_thread)
     STO_TPCC_NOEXCEPT;
