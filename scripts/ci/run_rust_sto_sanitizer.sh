@@ -148,7 +148,10 @@ for environment_name in "${rejected_environment_names[@]}"; do
 done
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-repo_root="$(git -C "${script_dir}/../.." rev-parse --show-toplevel)"
+repo_root="$(cd "${script_dir}/../.." && pwd -P)"
+readonly -a repository_git=(
+    git -c "safe.directory=${repo_root}" -C "${repo_root}"
+)
 cd "${repo_root}"
 
 quarantine_allowlist="${repo_root}/scripts/ci/rust_sto_quarantine_tests.txt"
@@ -185,8 +188,8 @@ if [[ "${#asan_quarantine_cases[@]}" -eq 0 ]]; then
 fi
 readonly -a asan_quarantine_cases
 
-head_sha="$(git rev-parse --verify HEAD)"
-tree_status="$(git status --porcelain=v1 --untracked-files=normal --ignore-submodules=none)"
+head_sha="$("${repository_git[@]}" rev-parse --verify HEAD)"
+tree_status="$("${repository_git[@]}" status --porcelain=v1 --untracked-files=normal --ignore-submodules=none)"
 if [[ -n "${tree_status}" && "${MAKO_SANITIZER_ALLOW_DIRTY:-0}" != "1" ]]; then
     echo "refusing to attribute sanitizer results to ${head_sha}: the worktree is dirty" >&2
     printf '%s\n' "${tree_status}" >&2
