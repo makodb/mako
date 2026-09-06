@@ -3029,7 +3029,7 @@ if(BUILD_TESTS)
     add_test(NAME test_silo_runtime COMMAND test_silo_runtime)
     add_test(NAME test_silo_runtime_concurrency_lifecycle
         COMMAND test_silo_runtime
-            --gtest_filter=SiloRuntimeTest.ConcurrentGlobalDefaultInitialization:SiloRuntimeLifetimeTest.LazyServicesHaveBoundedTeardown:MasstreeContextEpochTest.*:MassTransEpochIntegrationTest.*:StoEpochAdvancerLifecycleTest.*:MakoTimestampTest.*)
+            --gtest_filter=SiloRuntimeTest.ConcurrentGlobalDefaultInitialization:SiloRuntimeLifetimeTest.LazyServicesHaveBoundedTeardown:CoreStorageTest.*:SpinBarrierTest.*:MasstreeContextEpochTest.*:MassTransEpochIntegrationTest.*:StoEpochAdvancerLifecycleTest.*:MakoTimestampTest.*)
     set_tests_properties(test_silo_runtime_concurrency_lifecycle PROPERTIES
         LABELS "silo;masstree;concurrency"
         RUN_SERIAL TRUE

@@ -142,9 +142,11 @@ concurrency failure is a race or a single-threaded bug.
 ### 3.1 Sanitizer matrix — Rust boundary wired
 
 The checked-in CI matrix builds the Rust STO boundary and runs every CTest
-labeled `rust` under ASan, UBSan, and TSan. The broader Masstree test binaries
-below were also exercised manually while developing the sanitizer fixes, but
-they are not all selected by the Rust-boundary CI gate.
+labeled `rust` under ASan, UBSan, and TSan. It also runs the exact C11 Masstree
+header test, the Silo runtime concurrency/lifecycle test, and both the
+single-shard and local-multishard C++ TPC-C slow-exit tests. The broader
+Masstree test binaries below were also exercised manually while developing the
+sanitizer fixes, but they are not all selected by the Rust-boundary CI gate.
 
 **Manual Masstree workflow** — one build dir per sanitizer:
 
@@ -188,7 +190,9 @@ deadlocks at startup. `MAKO_UBSAN` is compatible with jemalloc.
   observations by retry, but those plain C++ races remain known UB and the
   filename-wide suppressions can hide another race in the same frames. A pass
   therefore means no unsuppressed finding under the reviewed list. The Mako
-  spinlock race is fixed and no longer suppressed.
+  spinlock race is fixed and no longer suppressed. The spin barrier, guarded
+  TPC-C output path, libnuma topology-cache boundary, and Masstree RCU
+  participant-publication races are also fixed without suppression.
 
 **Status**: the checked-in Rust STO native sanitizer workflow provides
 separate ASan, UBSan, and TSan jobs. It records the exact build configuration,
@@ -203,9 +207,19 @@ the shared list of 30 exact intentional transaction-frame quarantine cases,
 which it audits and reruns individually with leak reporting disabled. The
 native FFI runner leak-checks 31 of 32 unit cases and applies the same narrow
 exception only to
-`tests::post_install_row_count_failure_marks_runtime_indeterminate` (162,856
-bytes in 80 retained allocations in the qualifying run). Current pass/fail
+`tests::post_install_row_count_failure_marks_runtime_indeterminate`. The two
+Rust TPC-C lifecycle tests retain leak checking with one exact native
+Masstree-root suppression; the gate audits a combined 20 allocations and 6,400
+bytes for those roots. Current pass/fail
 claims belong to the exact-revision workflow artifacts, not to this inventory.
+
+The runtime lifecycle target includes explicit regressions for over-aligned
+lazy per-core storage and for release/acquire publication through the spin
+barrier. The local-multishard TPC-C target concurrently starts both loader sets,
+covering shared output and NUMA-affinity initialization before exercising
+joined teardown. It also forces concurrent MassTrans participant entry, exit,
+and reclamation scans, which is the strict TSan regression for atomic
+Masstree RCU epoch publication.
 
 The pinned Miri ownership gate rejects ambient `MIRIFLAGS`, audits the same
 quarantine list, and keeps leak checking enabled outside exact reruns. Miri uses

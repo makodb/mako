@@ -29,6 +29,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <mutex>
 #include <sys/mman.h>
 #if HAVE_SUPERPAGE && !NOSUPERPAGE
 #include <sys/types.h>
@@ -56,7 +57,7 @@ inline threadinfo::threadinfo(int purpose, int index) {
 
 // @unsafe { Uses placement new on raw malloc(8192) buffer }
 rusty::MutPtr<threadinfo> threadinfo::make(int purpose, int index) {
-    static int threads_initialized;
+    static std::once_flag threads_initialized;
 
     rusty::MutPtr<MasstreeContext> ctx = MasstreeContext::Current();
     rusty::MutPtr<threadinfo> ti = new(malloc(8192)) threadinfo(purpose, index);
@@ -66,13 +67,12 @@ rusty::MutPtr<threadinfo> threadinfo::make(int purpose, int index) {
     // while holding the lock to avoid race conditions)
     ctx->register_threadinfo(ti);
 
-    if (!threads_initialized) {
+    std::call_once(threads_initialized, [] {
 #if ENABLE_ASSERTIONS
         const char* s = getenv("_");
         no_pool_value = s && strstr(s, "valgrind") != 0;
 #endif
-        threads_initialized = 1;
-    }
+    });
 
     return ti;
 }
@@ -93,10 +93,11 @@ void threadinfo::refill_rcu() {
 
 // @unsafe - frees raw void* pointers from limbo queue without ownership tracking
 void threadinfo::hard_rcu_quiesce() {
-    mrcu_epoch_type min_epoch = gc_epoch_;
+    mrcu_epoch_type min_epoch = load_gc_epoch(std::memory_order_relaxed);
     for (rusty::MutPtr<threadinfo> ti = context_->get_allthreads(); ti; ti = ti->next()) {
         prefetch((const void *) ti->next());
-        mrcu_epoch_type epoch = ti->gc_epoch_;
+        mrcu_epoch_type epoch =
+            ti->load_gc_epoch(std::memory_order_seq_cst);
         if (epoch && mrcu_signed_epoch_type(epoch - min_epoch) < 0)
             min_epoch = epoch;
     }

@@ -1,10 +1,9 @@
 # Masstree — Sanitizer Findings Report
 
 Surfaced by Tier 3.1 of `docs/masstree-test-plan.md`. This report retains the
-original evidence and records each finding's current disposition. The
-`kpermuter`, `string_slice`, and Mako spinlock defects are fixed in-tree and are
-not suppressed. Only Masstree's documented optimistic-read findings remain in
-the UBSan and TSan suppression files.
+original evidence and records each finding's current disposition. The fixed
+defects are not suppressed. Only Masstree's documented optimistic-read
+findings remain in the UBSan and TSan suppression files.
 
 ## TL;DR
 
@@ -17,6 +16,11 @@ the UBSan and TSan suppression files.
 | 5 | TSan | `src/mako/spinlock.h:23,40` | race on `volatile uint32_t value` | **fixed** with `std::atomic<uint32_t>` and explicit memory ordering; suppressions removed |
 | 6 | Native stress | Mako `SiloRuntime` thread registration | monotonically exhausted 512-slot worker ID space | **graceful rejection added** for opted-in callers; recycling and the legacy aborting path remain deferred |
 | 7 | ASan | `src/masstree/masstree_struct.hh` external key suffix comparisons | fixed-width read beyond an exact-length 11/12-byte caller buffer | **fixed** by using bounded `memcmp` for the external operand; no suppression added |
+| 8 | UBSan | `src/mako/core.h` per-core raw storage | placement construction at an address less aligned than the stored type | **fixed** with type-derived storage alignment and lifetime-aware pointer recovery; no suppression added |
+| 9 | TSan | `src/mako/spinbarrier.h` | plain polling read racing with an atomic builtin decrement; no publication edge | **fixed** with a C++ atomic release sequence and acquire wait; no suppression added |
+| 10 | TSan | guarded C++ TPC-C `std::cout`/`std::cerr` path | concurrent mutation of shared stream formatting state | **fixed on the tested TPC-C path** with one output lock shared by formatted and machine records; no suppression added |
+| 11 | TSan | libnuma `numa_node_to_cpus` cache reached by `rcu::pin_current_thread` | unsynchronized lazy topology-cache construction in libnuma 2.0.19 | **fixed at the call boundary** by serializing topology queries during thread setup; no suppression added |
+| 12 | TSan | Masstree `threadinfo::gc_epoch_` | reclaimer reads racing with participant entry and exit; publication also lacked a portable entry barrier | **fixed** with layout-preserving atomic references and an ordered snapshot/publish/recheck protocol; no suppression added |
 
 The historical ASan run reported zero findings across its three Masstree test
 binaries. The Rust STO native sanitizer workflow now reruns the expanded
@@ -348,8 +352,8 @@ It was initially suppressed by `race:spinlock::lock` and
 
 ## Cross-cutting recommendations
 
-- Findings 1, 2, 5, and 7 are fixed and unsuppressed. The sanitizer gate now
-  treats a recurrence as a failure.
+- Findings 1, 2, 5, and 7–12 are fixed and unsuppressed. The sanitizer gate
+  now treats a recurrence as a failure.
 - Findings 3 and 4 remain accepted, explicitly qualified C++ UB debt in the
   inherited Masstree implementation. The filename-wide TSan suppressions can
   hide a new race in the same frames, so a passing TSan job means no
@@ -542,3 +546,122 @@ Both comparisons now use `memcmp(s.s, ka.suffix().s, s.len)`. The internal
 padded comparisons retain `equals_sloppy`, so the fix is limited to the operand
 whose padding is not guaranteed. No suppression or leak exception applies to
 this finding; the fixed-read and resolved-cache tests run under ordinary ASan.
+
+---
+
+## Finding 8: under-aligned per-core storage (fixed)
+
+**Where**: the byte arrays backing `percore<T>` and `percore_lazy<T>` in
+`src/mako/core.h`.
+
+The arrays had element-sized capacity but only byte alignment. Placement-new
+therefore constructed cache-line-aligned values, including `ticker::tickinfo`,
+at addresses that did not satisfy the value type's alignment. UBSan reported a
+constructor call on an address that was not 64-byte aligned.
+
+The storage now has `alignas` derived from its actual element type. The lazy
+slot wrapper is itself aligned as `T` and uses `std::launder` when recovering a
+pointer to a constructed object. The
+`CoreStorageTest.LazyPerCoreStorageHonorsOverAlignment` regression uses a
+128-byte-aligned value so the contract remains visible even on platforms where
+ordinary allocations happen to satisfy cache-line alignment. No suppression
+applies.
+
+---
+
+## Finding 9: spin-barrier race and missing publication edge (fixed)
+
+**Where**: `src/mako/spinbarrier.h`.
+
+`count_down()` used a legacy atomic builtin, while `wait_for()` polled the same
+word through a plain `volatile` read. Those accesses race in the C++ memory
+model. More importantly, a waiter that observed zero had no defined happens-
+before edge from setup writes made by every participant.
+
+The count is now `std::atomic<size_t>`. Each decrement is a release RMW, which
+forms one release sequence, and the waiter uses an acquire load. Observing zero
+therefore publishes the setup performed before every decrement. The
+`SpinBarrierTest.WaitingThreadObservesEveryParticipantWrite` regression checks
+that consequence directly. No suppression applies.
+
+---
+
+## Finding 10: shared benchmark stream state (fixed)
+
+**Where**: concurrent loader, worker, RPC, and result output in the active C++
+TPC-C/`dbtest` path used by `sto_tpcc_bench`, principally `bench.cc`,
+`bench.h`, `dbtest.cc`, `rpc_setup.cc`, and `tpcc.cc` under
+`src/mako/benchmarks`.
+
+Two local-shard loader sets can write to `std::cerr` concurrently. libc++'s
+stream operations mutate formatting state, so TSan reported a race even when
+the individual messages appeared intact. Independent locks around only the
+machine-readable result would also allow formatted output to split or corrupt
+that record.
+
+`src/mako/benchmarks/benchmark_output.h` now provides a scoped stream proxy
+that holds one process-wide mutex for the complete insertion expression. The
+tested TPC-C path's human output and raw machine-record writes use the same
+mutex. The lock protects diagnostic and result publication; it is not acquired
+for transaction bookkeeping. Other benchmark drivers still contain direct
+stream writes and require their own audit before they are run concurrently in
+one process. No suppression applies to the TPC-C finding.
+
+---
+
+## Finding 11: libnuma topology-cache initialization race (fixed at boundary)
+
+**Where**: `rcu::pin_current_thread()` in `src/mako/rcu.cc`, reached
+concurrently by the two local-shard TPC-C loader sets.
+
+libnuma 2.0.19 lazily fills its process-wide `node_cpu_mask_v2` cache from
+`numa_node_to_cpus()`. Its own source describes this cache as slightly racy and
+notes that locking would be preferable. TSan observed one loader copying from a
+cached mask while another loader initialized that mask.
+
+Mako now serializes `numa_node_of_cpu()`, `numa_node_to_cpus()`, and the related
+affinity-mask setup within `rcu::pin_current_thread()`. Every concurrent Mako
+caller that reached the reported cache does so through this boundary. The lock
+is taken only while a thread establishes affinity, before measured transaction
+execution, and no sanitizer suppression was added. The multishard slow-exit
+CTest is the regression workload for this path. This repair does not wrap
+arbitrary direct libnuma calls in other benchmark or dormant runtime paths;
+those paths remain outside this finding's tested boundary.
+
+---
+
+## Finding 12: Masstree RCU participant publication (fixed)
+
+**Where**: `threadinfo::rcu_start()`, `threadinfo::rcu_stop()`, and
+`threadinfo::hard_rcu_quiesce()` in `src/masstree/kvthread.hh` and
+`src/masstree/kvthread.cc`. The strict TSan multishard C++ TPC-C lifecycle test
+reported a reclaimer reading one loader's `gc_epoch_` while that loader wrote
+the same word.
+
+`gc_epoch_` advertises a nonzero RCU read-side epoch, or zero while its worker
+is quiescent. A reclaimer scans every registered participant and frees limbo
+entries older than the oldest advertised epoch. Plain concurrent reads and
+writes were therefore both a C++ data race and a possible premature-free path.
+A release-only entry store would remove neither the formal publication gap nor
+the weak-memory Store-to-Load reordering that matters here.
+
+Changing the member type would disturb the anonymous-union cache-line layout
+and would make `threadinfo`'s construction-time raw initialization invalid for
+a nontrivial atomic member. Instead, short-lived
+`std::atomic_ref<mrcu_epoch_type>` operations cover every executable access to
+the naturally aligned raw word. Compile-time checks require the reference to
+be aligned and lock-free.
+
+Entry takes a sequentially consistent context-epoch snapshot, publishes it
+with a sequentially consistent store, and rechecks the context epoch. It
+repeats if an advancer overlapped publication, preventing a paused worker from
+entering under an epoch that reclamation has already passed. Peer scans and context
+epoch operations join the same total order. Exit clears the participant with a
+release store after its protected accesses; owner-only arithmetic uses relaxed
+loads. The constructor's plain zeroing remains before registration and
+publication, and `threadinfo` allocations remain process-lifetime.
+
+The same audit found a plain function-static flag in `threadinfo::make()` that
+could race between concurrent attachers. A function-static `std::once_flag`
+now publishes that assertion-only allocator initialization. The multishard
+slow-exit CTest exercises both repairs under TSan. No suppression applies.
