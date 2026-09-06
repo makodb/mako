@@ -175,12 +175,15 @@ rusty::Option<rusty::Arc<srpc::Client>> SrpcRpcBackend::GetOrCreateClient(uint8_
     // Handle shard failure scenarios
     auto session_key = std::make_tuple(LOCALHOST_CENTER_INT, shard_idx, server_id);
 
-    if (sync_util::sync_logger::failed_shard_index >= 0) {
+    const int failed_shard_index =
+        sync_util::sync_logger::failed_shard_index.load(
+            std::memory_order_relaxed);
+    if (failed_shard_index >= 0) {
         if (cluster_role_ == LEARNER_CENTER_INT)
             clusterRoleSentTo = LOCALHOST_CENTER_INT;
 
         if (cluster_role_ == LOCALHOST_CENTER_INT) {
-            if (shard_idx == sync_util::sync_logger::failed_shard_index) {
+            if (shard_idx == failed_shard_index) {
                 session_key = std::make_tuple(LEARNER_CENTER_INT, shard_idx, server_id);
                 clusterRoleSentTo = LEARNER_CENTER_INT;
             }

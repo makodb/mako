@@ -2413,14 +2413,18 @@ tpcc_worker::txn_new_order()
 
 #if defined(FAIL_NEW_VERSION)
       if (BenchmarkConfig::getInstance().getControlMode()==4){ // distributed transaction without failed shard
-        if (ShardIndexFromGlobalWarehouse(supplierWarehouseIDs[i])==sync_util::sync_logger::failed_shard_index){
+        if (ShardIndexFromGlobalWarehouse(supplierWarehouseIDs[i]) ==
+            sync_util::sync_logger::failed_shard_index.load(
+                std::memory_order_relaxed)) {
           counter_new_order_failed+=1;
           return txn_result(false, 0 + (isRemote?1:0));
         }
       }
 #else
       if (BenchmarkConfig::getInstance().getControlMode()==1){ // distributed transaction without failed shard
-        if (ShardIndexFromGlobalWarehouse(supplierWarehouseIDs[i])==sync_util::sync_logger::failed_shard_index){
+        if (ShardIndexFromGlobalWarehouse(supplierWarehouseIDs[i]) ==
+            sync_util::sync_logger::failed_shard_index.load(
+                std::memory_order_relaxed)) {
           counter_new_order_failed+=1;
           return txn_result(false, 0 + (isRemote?1:0));
         }
@@ -3323,14 +3327,18 @@ if (TThread::get_is_micro()) {
 
 #if defined(FAIL_NEW_VERSION)
   if (BenchmarkConfig::getInstance().getControlMode()==4) {
-    if (ShardIndexFromGlobalWarehouse(customerWarehouseID)==sync_util::sync_logger::failed_shard_index){
+    if (ShardIndexFromGlobalWarehouse(customerWarehouseID) ==
+        sync_util::sync_logger::failed_shard_index.load(
+            std::memory_order_relaxed)) {
       counter_payment_failed+=1;
       return txn_result(false, 0 + (isRemote?1:0));
     }
   }
 #else
   if (BenchmarkConfig::getInstance().getControlMode()==1){ // distributed transactions without failed shard
-    if (ShardIndexFromGlobalWarehouse(customerWarehouseID)==sync_util::sync_logger::failed_shard_index){
+    if (ShardIndexFromGlobalWarehouse(customerWarehouseID) ==
+        sync_util::sync_logger::failed_shard_index.load(
+            std::memory_order_relaxed)) {
       counter_payment_failed+=1;
       return txn_result(false, 0 + (isRemote?1:0));
     }

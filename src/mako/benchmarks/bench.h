@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 
+#include <atomic>
 #include <map>
 #include <vector>
 #include <utility>
@@ -171,7 +172,13 @@ public:
 
   virtual void run();
 
-  inline size_t get_ntxn_commits() const { return ntxn_commits; }
+  inline size_t get_ntxn_commits() const {
+#if defined(COCO)
+    return ntxn_commits.load(std::memory_order_relaxed);
+#else
+    return ntxn_commits;
+#endif
+  }
   inline size_t get_ntxn_aborts() const { return ntxn_aborts; }
 
   inline uint64_t get_latency_numer_us() const { return latency_numer_us; }
@@ -180,7 +187,7 @@ public:
   inline double
   get_avg_latency_us() const
   {
-    return double(latency_numer_us) / double(ntxn_commits);
+    return double(latency_numer_us) / double(get_ntxn_commits());
   }
 
   std::map<std::string, size_t> get_txn_counts() const;
@@ -216,7 +223,13 @@ protected:
   int shard_index_;  // Shard index for multi-shard mode (-1 = use default)
 
 private:
+#if defined(COCO)
+  // COCO samples this counter before workers join; ordinary benchmark builds
+  // keep the hot counter non-atomic and perform only post-join reads.
+  std::atomic<size_t> ntxn_commits;
+#else
   size_t ntxn_commits;
+#endif
   size_t ntxn_aborts;
   uint64_t latency_numer_us;  // for all transactions
   uint64_t latency_numer_us_remote; // only for remote

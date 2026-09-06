@@ -2272,6 +2272,24 @@ if(TARGET sto_tpcc_bench)
         LABELS "sto;masstree;rust;ffi;lifecycle;tpcc;configuration"
         RUN_SERIAL TRUE
         TIMEOUT 30)
+
+    add_test(NAME test_sto_tpcc_rejects_rust_replication
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/ci/run_sto_tpcc_ctest.py"
+            --expected-failure-text "Rust STO TPC-C comparison supports one non-replicated shard"
+            --expected-exit-code 2
+            --
+            "$<TARGET_FILE:sto_tpcc_bench>"
+            --num-threads 1
+            --shard-config "${CMAKE_CURRENT_SOURCE_DIR}/config/mako_sto_tpcc_local.yml"
+            --site-name local_s0
+            --is-replicated
+            --storage-engine rust
+            --slow-exit)
+    set_tests_properties(test_sto_tpcc_rejects_rust_replication PROPERTIES
+        LABELS "sto;masstree;rust;ffi;lifecycle;tpcc;configuration"
+        RUN_SERIAL TRUE
+        TIMEOUT 30)
 endif()
 
 # C consumers must be able to include the public ABI without any C++
@@ -2996,10 +3014,26 @@ if(BUILD_TESTS)
     )
     target_compile_options(test_silo_runtime PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_silo_runtime
-        mako ${TEST_LINK_LIBS}
-        ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES}
-        pthread)
+        mako
+        srpc
+        ${TXLOG_LINK_LIBS}
+        ${GTEST_LIBRARIES}
+        ${GTEST_MAIN_LIBRARIES}
+        pthread
+        yaml-cpp
+        numa
+        event_pthreads
+        rocksdb
+        ${LIBEVENT_LDFLAGS}
+    )
     add_test(NAME test_silo_runtime COMMAND test_silo_runtime)
+    add_test(NAME test_silo_runtime_concurrency_lifecycle
+        COMMAND test_silo_runtime
+            --gtest_filter=SiloRuntimeTest.ConcurrentGlobalDefaultInitialization:SiloRuntimeLifetimeTest.LazyServicesHaveBoundedTeardown:MasstreeContextEpochTest.*:MassTransEpochIntegrationTest.*:StoEpochAdvancerLifecycleTest.*:MakoTimestampTest.*)
+    set_tests_properties(test_silo_runtime_concurrency_lifecycle PROPERTIES
+        LABELS "silo;masstree;concurrency"
+        RUN_SERIAL TRUE
+        TIMEOUT 60)
 
     # Test: stable C ABI over the native SiloRuntime/Masstree configuration.
     # Linking through mako ensures the ABI implementation is compiled with the

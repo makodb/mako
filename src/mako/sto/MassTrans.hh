@@ -92,10 +92,10 @@ public:
   }
 
   static void static_init() {
-    Transaction::epoch_advance_callback = [] (unsigned) {
+    Transaction::set_epoch_advance_callback([] (unsigned) {
       // just advance blindly because of the way Masstree uses epochs
       globalepoch++;
-    };
+    });
   }
 
   const std::string& get_table_name() const { return table_name_; }
@@ -132,6 +132,11 @@ public:
       Panic("the id is so large, %d-%d", MAX_THREADS, TThread::id());
     }
     Transaction::tinfo[TThread::id()].trans_start_callback = [] () {
+      const auto transaction_epoch =
+          Transaction::global_epochs.global_epoch.load(
+              std::memory_order_acquire);
+      mythreadinfo.ti->context()->advance_epoch_to_at_least(
+          transaction_epoch);
       mythreadinfo.ti->rcu_start();
     };
     Transaction::tinfo[TThread::id()].trans_end_callback = [] () {

@@ -215,14 +215,16 @@ namespace mako
     void ShardReceiver::HandleGetTimestampRequest(char *reqBuf, char *respBuf, size_t &respLen)
     {
         int status = ErrorCode::SUCCESS;
-        uint32_t result = 0;
         auto *req = reinterpret_cast<basic_request_t*>(reqBuf);
         auto *resp = reinterpret_cast<get_int_response_t *>(respBuf);
         resp->shard_index = TThread::get_shard_index();
         resp->req_nr = req->req_nr;
         respLen = sizeof(get_int_response_t);
+        uint32_t timestamp = 0;
+        if (!Transaction::try_allocate_mako_timestamp(timestamp))
+            status = ErrorCode::ABORT;
         resp->status = (current_term > req->req_nr % 10)? ErrorCode::ABORT: status; // If a reqest comes from old epoch, reject it.;
-        resp->result = __sync_fetch_and_add(&sync_util::sync_logger::local_replica_id, 1);;
+        resp->result = timestamp;
     }
 
     void ShardReceiver::HandleSerializeUtilRequest(char *reqBuf, char *respBuf, size_t &respLen) {

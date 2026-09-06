@@ -93,13 +93,13 @@ class BenchmarkConfig {
       int clusterRole_;
       std::unique_ptr<transport::Configuration> owned_config_;
       transport::Configuration* config_;
-      volatile bool running_;
-      volatile int control_mode_;
+      std::atomic<bool> running_;
+      std::atomic<int> control_mode_;
       int verbose_;
       uint64_t txn_flags_;
       double scale_factor_;
       uint64_t runtime_;
-      volatile int runtime_plus_;
+      std::atomic<int> runtime_plus_;
       uint64_t ops_per_worker_;
       int run_mode_;
       int enable_parallel_loading_;
@@ -174,13 +174,19 @@ class BenchmarkConfig {
       const std::string& getCluster() const { return cluster_; }
       int getClusterRole() const { return clusterRole_; }
       transport::Configuration* getConfig() const { return config_; }
-      bool isRunning() const { return running_; }
-      int getControlMode() const { return control_mode_; }
+      bool isRunning() const {
+        return running_.load(std::memory_order_acquire);
+      }
+      int getControlMode() const {
+        return control_mode_.load(std::memory_order_acquire);
+      }
       int getVerbose() const { return verbose_; }
       uint64_t getTxnFlags() const { return txn_flags_; }
       double getScaleFactor() const { return scale_factor_; }
       uint64_t getRuntime() const { return runtime_; }
-      int getRuntimePlus() const { return runtime_plus_; }
+      int getRuntimePlus() const {
+        return runtime_plus_.load(std::memory_order_acquire);
+      }
       uint64_t getOpsPerWorker() const { return ops_per_worker_; }
       int getRunMode() const { return run_mode_; }
       int getEnableParallelLoading() const { return enable_parallel_loading_; }
@@ -239,13 +245,17 @@ class BenchmarkConfig {
         owned_config_ = std::move(cfg);
         config_ = owned_config_.get();
       }
-      void setRunning(bool r) { running_ = r; }
-      void setControlMode(int mode) { control_mode_ = mode; }
+      void setRunning(bool r) { running_.store(r, std::memory_order_release); }
+      void setControlMode(int mode) {
+        control_mode_.store(mode, std::memory_order_release);
+      }
       void setVerbose(int v) { verbose_ = v; }
       void setTxnFlags(uint64_t flags) { txn_flags_ = flags; }
       void setScaleFactor(double sf) { scale_factor_ = sf; }
       void setRuntime(uint64_t rt) { runtime_ = rt; }
-      void setRuntimePlus(int rtp) { runtime_plus_ = rtp; }
+      void setRuntimePlus(int rtp) {
+        runtime_plus_.store(rtp, std::memory_order_release);
+      }
       void setOpsPerWorker(uint64_t ops) { ops_per_worker_ = ops; }
       void setRunMode(int mode) { run_mode_ = mode; }
       void setEnableParallelLoading(int enable) { enable_parallel_loading_ = enable; }

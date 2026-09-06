@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdlib.h>
+#include <errno.h>
 #include <sched.h>
 #include <unistd.h>
 
@@ -49,6 +50,31 @@ std::mutex shardClientAllMutex;
 std::unordered_map<int, Transaction*> shardTxnAll;
 
 namespace {
+
+// Multi-shard runs execute one bench_runner per shard concurrently.  Build the
+// machine record off-stream, then publish the complete, short line with one
+// write(2).  POSIX guarantees that writes no larger than 512 bytes cannot
+// interleave on a pipe, which is the CTest and comparison-runner capture path.
+// A chained iostream insertion is only synchronized per insertion and allowed
+// two shard records (and stderr diagnostics) to corrupt each other.
+void emit_tpcc_result_line(std::string line) {
+  // The human-readable statistics immediately before this record do not all
+  // end in a newline.  Delimit the machine record in the same atomic write so
+  // a concurrent shard cannot leave the prefix attached to diagnostic text.
+  line.insert(line.begin(), '\n');
+  line.push_back('\n');
+  ALWAYS_ASSERT(line.size() <= 512);
+
+  static std::mutex result_output_mutex;
+  std::lock_guard<std::mutex> lock(result_output_mutex);
+  std::cout.flush();
+
+  ssize_t written;
+  do {
+    written = write(STDOUT_FILENO, line.data(), line.size());
+  } while (written < 0 && errno == EINTR);
+  ALWAYS_ASSERT(written == static_cast<ssize_t>(line.size()));
+}
 
 class scoped_shard_client_registration {
 public:
@@ -214,11 +240,13 @@ bench_worker::run()
     switch (control) {
 #if defined(FAIL_NEW_VERSION)
       case 0: {
-        benchConfig.setControlMode(4);
         // If a transaction sent to a failed shard, we put it into the queue
-        sync_util::sync_logger::failed_shard_index = value%10;
-        sync_util::sync_logger::failed_shard_ts = value/10;
+        sync_util::sync_logger::failed_shard_index.store(
+            value % 10, std::memory_order_relaxed);
+        sync_util::sync_logger::failed_shard_ts.store(
+            value / 10, std::memory_order_relaxed);
         sync_util::sync_logger::setShardWBlind(value/10, value%10);
+        benchConfig.setControlMode(4);
 
         string log = "no-ops:" + to_string(get_epoch());
         for(int i = 0; i < benchConfig.getNthreads(); i++){
@@ -262,13 +290,15 @@ bench_worker::run()
 #else
       case 0: {
         // 1. pause database worker threads and abort all current transactions if any
-        control_mode = 1;
         // for (int par_id=0;par_id<nthreads;par_id++){
         //   shardClientAll[par_id]->setBreakTimeout(true);
         // }
         // 3. config update
-        sync_util::sync_logger::failed_shard_index = value%10;
-        sync_util::sync_logger::failed_shard_ts = value/10;
+        sync_util::sync_logger::failed_shard_index.store(
+            value % 10, std::memory_order_relaxed);
+        sync_util::sync_logger::failed_shard_ts.store(
+            value / 10, std::memory_order_relaxed);
+        benchConfig.setControlMode(1);
         break;
       }
       case 1: { // receive a PREPARE
@@ -335,9 +365,8 @@ bench_worker::run()
   // XXX(stephentu): so many nasty hacks here. should actually
   // fix some of this stuff one day
   // In multi-shard mode, use local worker ID for core assignment
-  unsigned local_worker_id = worker_id % benchConfig.getNthreads();
   if (set_core_id)
-    coreid::set_core_id(local_worker_id);
+    coreid::set_core_id(worker_id);
 
   {
     scoped_rcu_region r; // register this thread in rcu region
@@ -371,7 +400,9 @@ bench_worker::run()
               << throttler.get_cycle_ms() << "ms cycle" << std::endl;
   }
 
-  while (benchConfig.isRunning() && (benchConfig.getRunMode() != RUNMODE_OPS || ntxn_commits < benchConfig.getOpsPerWorker())) {
+  while (benchConfig.isRunning() &&
+         (benchConfig.getRunMode() != RUNMODE_OPS ||
+          get_ntxn_commits() < benchConfig.getOpsPerWorker())) {
     throttler.begin_work();  // Start work timing
     double d = r.next_uniform();
     for (size_t i = 0; i < workload.size(); i++) {
@@ -385,7 +416,11 @@ bench_worker::run()
         // }
         auto tl = t.lap_nano();
         if (likely(ret.first)) {
+#if defined(COCO)
+          ntxn_commits.fetch_add(1, std::memory_order_relaxed);
+#else
           ++ntxn_commits;
+#endif
           if (ret.second % 10 == 1)
             latency_numer_us_remote += tl/1000.0;
           else
@@ -595,7 +630,9 @@ bench_runner::run()
   Warning("TPCC_BENCH_MEASURE_START");
   util::timer t, t_nosync;  // timing starts
   barrier_b.count_down(); // bombs away!
+#if defined(COCO)
   std::vector<std::pair<uint64_t, uint32_t>> samplingTPUT;
+#endif
   auto& benchConfig = BenchmarkConfig::getInstance();
   if (benchConfig.getRunMode() == RUNMODE_TIME) {
     Warning("start the running time, runTime:%d", benchConfig.getRuntime());
@@ -615,9 +652,12 @@ bench_runner::run()
         std::cout<<std::flush;
       runtime_loop--;
       std::this_thread::sleep_for(std::chrono::milliseconds(interval));
-      uint32_t n_commits = 0 ;
-      for (size_t j = 0; j < BenchmarkConfig::getInstance().getNthreads(); j++) { n_commits += workers[j]->get_ntxn_commits(); }
+#if defined(COCO)
+      uint32_t n_commits = 0;
+      for (size_t j = 0; j < benchConfig.getNthreads(); ++j)
+        n_commits += workers[j]->get_ntxn_commits();
       samplingTPUT.push_back({getEpochInms(), n_commits});
+#endif
       //cerr << "Time: " << getEpochInms() << ", n_commits: " << n_commits << endl;
     }
     Warning("runtime_plus:%d",benchConfig.getRuntimePlus());
@@ -627,9 +667,12 @@ bench_runner::run()
       if (runtime_loop % repeats == 0) 
         Warning("runtime time left:%d ms, bool:%d",runtime_loop * interval, runtime_loop>0);
       runtime_loop--;
-      uint32_t n_commits = 0 ;
-      for (size_t j = 0; j < BenchmarkConfig::getInstance().getNthreads(); j++) { n_commits += workers[j]->get_ntxn_commits(); }
+#if defined(COCO)
+      uint32_t n_commits = 0;
+      for (size_t j = 0; j < benchConfig.getNthreads(); ++j)
+        n_commits += workers[j]->get_ntxn_commits();
       samplingTPUT.push_back({getEpochInms(), n_commits});
+#endif
       //cerr << "Time: " << getEpochInms() << ", n_commits: " << n_commits << endl;
     }
   }
@@ -893,8 +936,8 @@ bench_runner::run()
     // Stable machine-readable record consumed by the paired TPC-C runner.
     // The no-sync interval excludes the deliberate one-second worker shutdown
     // sleep and is the actual workload measurement interval.
-    std::cout
-        << std::setprecision(17) << "TPCC_BENCH_RESULT {"
+    std::ostringstream result;
+    result << std::setprecision(17) << "TPCC_BENCH_RESULT {"
         << "\"schema_version\":1,"
         << "\"engine\":\"" << BenchmarkConfig::getInstance().getStorageEngine()
         << "\","
@@ -929,7 +972,8 @@ bench_runner::run()
         << "\"StockLevel\":"
         << (agg_txn_counts["StockLevel_Local"] +
             agg_txn_counts["StockLevel_Remote"])
-        << "}}" << std::endl;
+        << "}}";
+    emit_tpcc_result_line(std::move(result).str());
   }
 
   cout.flush();

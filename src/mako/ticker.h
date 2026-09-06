@@ -31,10 +31,15 @@ public:
 #endif
 
   ticker()
-    : current_tick_(1), last_tick_inclusive_(0)
+    : current_tick_(1), last_tick_inclusive_(0), running_(true),
+      worker_(&ticker::tickerloop, this)
+  {}
+
+  ~ticker()
   {
-    std::thread thd(&ticker::tickerloop, this);
-    thd.detach();
+    running_.store(false, std::memory_order_release);
+    if (worker_.joinable())
+      worker_.join();
   }
 
   inline uint64_t
@@ -197,7 +202,7 @@ private:
     // runs as daemon
     util::timer loop_timer;
     struct timespec t;
-    for (;;) {
+    while (running_.load(std::memory_order_acquire)) {
 
       const uint64_t last_loop_usec = loop_timer.lap();
       const uint64_t delay_time_usec = tick_us;
@@ -262,4 +267,6 @@ private:
   std::atomic<uint64_t> last_tick_inclusive_;
     // all threads have *completed* ticks <= last_tick_inclusive_
     // (< current_tick_)
+  std::atomic<bool> running_;
+  std::thread worker_;
 };

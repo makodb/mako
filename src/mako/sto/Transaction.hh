@@ -7,6 +7,7 @@
 #include "TRcu.hh"
 #include <algorithm>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <type_traits>
 #include <unistd.h>
@@ -346,7 +347,7 @@ void reportPerf();
 
 struct __attribute__((aligned(128))) threadinfo_t {
     using epoch_type = TRcuSet::epoch_type;
-    epoch_type epoch;
+    std::atomic<epoch_type> epoch;
     TRcuSet rcu_set;
     // XXX(NH): these should be vectors so multiple data structures can register
     // callbacks for these
@@ -370,17 +371,20 @@ public:
 
     static threadinfo_t tinfo[MAX_THREADS];
     static struct epoch_state {
-        epoch_type global_epoch; // != 0
-        epoch_type active_epoch; // no thread is before this epoch
-        TransactionTid::type recent_tid;
-        bool run;
+        std::atomic<epoch_type> global_epoch; // != 0
+        std::atomic<epoch_type> active_epoch; // no thread is before this epoch
+        std::atomic<TransactionTid::type> recent_tid;
+        std::atomic<bool> run;
     } global_epochs;
     typedef TransactionTid::type tid_type;
 private:
-    static TransactionTid::type _TID;
+    static std::atomic<TransactionTid::type> _TID;
 public:
 
-    static std::function<void(threadinfo_t::epoch_type)> epoch_advance_callback;
+    using epoch_advance_callback_type =
+        std::function<void(threadinfo_t::epoch_type)>;
+    static void set_epoch_advance_callback(
+        epoch_advance_callback_type callback);
 
     static txp_counters txp_counters_combined() {
         txp_counters out;
@@ -403,27 +407,33 @@ public:
             tinfo[i].p_.reset();
     }
 
-    static void* epoch_advancer(void*);
+    // Start the process-wide epoch advancer. Function-local static ownership
+    // makes concurrent calls idempotent and joins the worker during process
+    // teardown; callers cannot create an unmanaged second worker.
+    static void start_epoch_advancer();
     template <typename T>
     static void rcu_delete(T* x) {
         auto& thr = tinfo[TThread::id()];
-        thr.rcu_set.add(thr.epoch, ObjectDestroyer<T>::destroy_and_free, x);
+        thr.rcu_set.add(thr.epoch.load(std::memory_order_relaxed),
+                        ObjectDestroyer<T>::destroy_and_free, x);
     }
     template <typename T>
     static void rcu_delete_array(T* x) {
         auto& thr = tinfo[TThread::id()];
-        thr.rcu_set.add(thr.epoch, ObjectDestroyer<T>::destroy_and_free_array, x);
+        thr.rcu_set.add(thr.epoch.load(std::memory_order_relaxed),
+                        ObjectDestroyer<T>::destroy_and_free_array, x);
     }
     static void rcu_free(void* ptr) {
         auto& thr = tinfo[TThread::id()];
-        thr.rcu_set.add(thr.epoch, ::free, ptr);
+        thr.rcu_set.add(thr.epoch.load(std::memory_order_relaxed), ::free, ptr);
     }
     static void rcu_call(void (*function)(void*), void* argument) {
         auto& thr = tinfo[TThread::id()];
-        thr.rcu_set.add(thr.epoch, function, argument);
+        thr.rcu_set.add(thr.epoch.load(std::memory_order_relaxed), function,
+                        argument);
     }
     static void rcu_quiesce() {
-        tinfo[TThread::id()].epoch = 0;
+        tinfo[TThread::id()].epoch.store(0, std::memory_order_release);
     }
 
 #if STO_PROFILE_COUNTERS
@@ -440,6 +450,9 @@ public:
 
 
 private:
+    static void epoch_advancer_loop();
+    static epoch_advance_callback_type epoch_advance_callback;
+
     static constexpr unsigned tset_chunk = 512;
     static constexpr unsigned tset_max_capacity = 32768;
 
@@ -488,8 +501,10 @@ private:
         TThread::trans_nosend_abort = 0;
         //TThread::in_loading_phase = true;
         TThread::increment_id += 1;
-        thr.epoch = global_epochs.global_epoch;
-        thr.rcu_set.clean_until(global_epochs.active_epoch);
+        thr.epoch.store(global_epochs.global_epoch.load(std::memory_order_acquire),
+                        std::memory_order_release);
+        thr.rcu_set.clean_until(
+            global_epochs.active_epoch.load(std::memory_order_acquire));
         if (thr.trans_start_callback)
             thr.trans_start_callback();
         hash_base_ += tset_size_ + 1;
@@ -752,7 +767,7 @@ public:
     void check_opacity(TransItem& item, TransactionTid::type v) {
         assert(state_ <= s_committing_locked);
         if (!start_tid_)
-            start_tid_ = _TID;
+            start_tid_ = _TID.load(std::memory_order_relaxed);
         if (!TransactionTid::try_check_opacity(start_tid_, v)
             && state_ < s_committing)
             hard_check_opacity(&item, v);
@@ -766,38 +781,60 @@ public:
     void check_opacity(TransactionTid::type v) {
         assert(state_ <= s_committing_locked);
         if (!start_tid_)
-            start_tid_ = _TID;
+            start_tid_ = _TID.load(std::memory_order_relaxed);
         if (!TransactionTid::try_check_opacity(start_tid_, v)
             && state_ < s_committing)
             hard_check_opacity(nullptr, v);
     }
 
     void check_opacity() {
-        check_opacity(_TID);
+        check_opacity(_TID.load(std::memory_order_relaxed));
     }
 
     // committing
     tid_type commit_tid() const {
         assert(state_ == s_committing_locked || state_ == s_committing);
         if (!commit_tid_)
-            commit_tid_ = fetch_and_add(&_TID, TransactionTid::increment_value);
+            commit_tid_ = _TID.fetch_add(TransactionTid::increment_value,
+                                         std::memory_order_relaxed);
         return commit_tid_;
     }
 
-    void updateSingleTimestamp() const {
+    // Mako encodes this base timestamp as base * 10 + term in a u32.
+    static constexpr uint32_t max_mako_timestamp =
+        (std::numeric_limits<uint32_t>::max() - 9) / 10;
+
+    // Allocate one nonzero timestamp from the process-wide next-to-return
+    // clock.  max_mako_timestamp + 1 is its permanent exhausted state.
+    static bool try_allocate_mako_timestamp(uint32_t& result) noexcept;
+
+    // Atomically reserve a timestamp strictly greater than lower_bound.
+    // Concurrent callers receive distinct values.
+    static bool try_allocate_mako_timestamp_after(
+        uint32_t lower_bound, uint32_t& result) noexcept;
+
+    // Ensure every timestamp allocated after this observation is greater.
+    static void observe_mako_timestamp(uint32_t observed) noexcept;
+
+    bool updateSingleTimestamp() const {
         assert(state_ == s_committing_locked || state_ == s_committing);
-	    if(!tid_unique_)
-            tid_unique_ = __sync_fetch_and_add(&sync_util::sync_logger::local_replica_id, 1);
+	    if (!tid_unique_ && !try_allocate_mako_timestamp(tid_unique_))
+            return false;
 
         if (TThread::writeset_shard_bits>0/*||TThread::readset_shard_bits>0*/) {
             // Get single timestamp from remote shards
             uint32_t remote_timestamp = 0;
-            TThread::sclient->remoteGetTimestamp(remote_timestamp);
+            if (TThread::sclient == nullptr ||
+                TThread::sclient->remoteGetTimestamp(remote_timestamp) != 0 ||
+                remote_timestamp == 0 ||
+                remote_timestamp > max_mako_timestamp)
+                return false;
             // Use the max timestamp
             if (remote_timestamp > tid_unique_) {
                 tid_unique_ = remote_timestamp;
             }
         }
+        return true;
     }
 
     void set_version(TVersion& vers, TVersion::type flags = 0) const {
@@ -1048,7 +1085,8 @@ public:
     }
 
     static TransactionTid::type recent_tid() {
-        return Transaction::global_epochs.recent_tid;
+        return Transaction::global_epochs.recent_tid.load(
+            std::memory_order_relaxed);
     }
 
     static TransactionTid::type initialized_tid() {

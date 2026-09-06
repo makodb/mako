@@ -74,6 +74,17 @@ public:
         epoch_.fetch_add(delta, rusty::sync::atomic::Ordering::AcqRel);
     }
 
+    // Raise this context to at least the process transaction epoch. A
+    // compare/exchange-based maximum prevents a delayed worker from moving a
+    // context backwards after another worker has observed a newer epoch.
+    // @safe - Rusty atomic fetch_max wrapper
+    void advance_epoch_to_at_least(mrcu_epoch_type epoch) {
+        // This is a numeric reclamation clock, not a publication barrier.
+        // Relaxed is also required because Atomic::fetch_max uses the supplied
+        // ordering for its initial load, where release orderings are invalid.
+        epoch_.fetch_max(epoch, rusty::sync::atomic::Ordering::Relaxed);
+    }
+
     // @unsafe { Returns volatile reference for legacy code patterns, bypasses safety }
     volatile mrcu_epoch_type& epoch_ref() {
         return reinterpret_cast<volatile mrcu_epoch_type&>(epoch_);

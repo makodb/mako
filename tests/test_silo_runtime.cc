@@ -18,6 +18,9 @@
 #include "masstree/kvthread.hh"
 #include "mako/masstree_btree.h"
 #include "mako/varkey.h"
+#include "sto/MassTrans.hh"
+#include "sto/TBox.hh"
+#include "sto/Transaction.hh"
 
 import std;
 
@@ -25,6 +28,13 @@ import std;
 volatile mrcu_epoch_type globalepoch = 1;
 
 using TestTree = single_threaded_btree;
+
+class LocalTimestampBox final : public TBox<uint64_t> {
+public:
+    using TBox<uint64_t>::TBox;
+
+    bool get_is_remote() const override { return false; }
+};
 
 class SiloRuntimeTest : public ::testing::Test {
 protected:
@@ -41,6 +51,7 @@ protected:
     }
 
     void TearDown() override {
+        SiloRuntime::BindCurrentThread(nullptr);
         // Reset to None, Arc handles cleanup automatically
         site1_ = rusty::None;
         site2_ = rusty::None;
@@ -274,7 +285,400 @@ TEST_F(SiloRuntimeTest, IndependentMasstreeInstances) {
     }
 }
 
-// Test 5: Global default runtime for backward compatibility
+// Test 5: Concurrent global-default initialization publishes one stable owner
+
+TEST_F(SiloRuntimeTest, ConcurrentGlobalDefaultInitialization) {
+    constexpr size_t thread_count = 32;
+    std::array<SiloRuntime*, thread_count> global_runtimes{};
+    std::array<SiloRuntime*, thread_count> current_runtimes{};
+    std::array<rcu*, thread_count> rcus{};
+    std::array<ticker*, thread_count> tickers{};
+    std::atomic<bool> start{false};
+    std::vector<std::thread> threads;
+    threads.reserve(thread_count);
+
+    for (size_t index = 0; index < thread_count; ++index) {
+        threads.emplace_back([&, index] {
+            tl_silo_runtime = nullptr;
+            while (!start.load(std::memory_order_acquire))
+                std::this_thread::yield();
+            global_runtimes[index] = SiloRuntime::GlobalDefault();
+            current_runtimes[index] = SiloRuntime::Current();
+            rcus[index] = &global_runtimes[index]->get_rcu();
+            tickers[index] = &global_runtimes[index]->get_ticker();
+        });
+    }
+    start.store(true, std::memory_order_release);
+    for (auto& thread : threads)
+        thread.join();
+
+    ASSERT_NE(global_runtimes.front(), nullptr);
+    for (size_t index = 0; index < thread_count; ++index) {
+        EXPECT_EQ(global_runtimes[index], global_runtimes.front());
+        EXPECT_EQ(current_runtimes[index], global_runtimes.front());
+        EXPECT_EQ(rcus[index], rcus.front());
+        EXPECT_EQ(tickers[index], tickers.front());
+    }
+
+    SiloRuntime* late_global = nullptr;
+    SiloRuntime* late_current = nullptr;
+    std::thread late_reader([&] {
+        late_global = SiloRuntime::GlobalDefault();
+        late_current = SiloRuntime::Current();
+    });
+    late_reader.join();
+    EXPECT_EQ(late_global, global_runtimes.front());
+    EXPECT_EQ(late_current, global_runtimes.front());
+}
+
+TEST(SiloRuntimeLifetimeTest, LazyServicesHaveBoundedTeardown) {
+    {
+        auto runtime = SiloRuntime::Create();
+        ASSERT_NE(runtime.as_ptr(), nullptr);
+        (void)runtime.as_ptr()->get_rcu();
+        (void)runtime.as_ptr()->get_ticker();
+    }
+}
+
+TEST(MasstreeContextEpochTest, ConcurrentAdvanceIsMonotonicAndIndependent) {
+    MasstreeContext context1;
+    MasstreeContext context2;
+    std::array<MasstreeContext*, 2> contexts{&context1, &context2};
+    constexpr size_t thread_count = 8;
+    constexpr Transaction::epoch_type epoch_step = 1024;
+    const Transaction::epoch_type target_epoch =
+        Transaction::global_epochs.global_epoch.fetch_add(
+            epoch_step, std::memory_order_acq_rel) + epoch_step;
+    std::array<Transaction::epoch_type, 2> requested_maxima{
+        target_epoch, target_epoch};
+    std::atomic<bool> start{false};
+    std::vector<std::thread> workers;
+    workers.reserve(thread_count);
+
+    for (size_t index = 0; index < thread_count; ++index) {
+        const size_t context_index = index % contexts.size();
+        const Transaction::epoch_type requested_epoch =
+            target_epoch + static_cast<Transaction::epoch_type>(index + 1);
+        requested_maxima[context_index] =
+            std::max(requested_maxima[context_index], requested_epoch);
+        workers.emplace_back([&, context_index, requested_epoch] {
+            while (!start.load(std::memory_order_acquire))
+                std::this_thread::yield();
+            // This is the same monotonic operation used by the MassTrans
+            // transaction-start callback before entering Masstree RCU.
+            contexts[context_index]->advance_epoch_to_at_least(target_epoch);
+            contexts[context_index]->advance_epoch_to_at_least(requested_epoch);
+        });
+    }
+
+    start.store(true, std::memory_order_release);
+    for (auto& worker : workers)
+        worker.join();
+
+    for (size_t index = 0; index < contexts.size(); ++index)
+        EXPECT_GE(contexts[index]->get_epoch(), requested_maxima[index]);
+
+    // Concurrent delayed observations must not undo either context's maximum.
+    std::array<Transaction::epoch_type, 2> before_stale{
+        contexts[0]->get_epoch(), contexts[1]->get_epoch()};
+    workers.clear();
+    for (size_t index = 0; index < thread_count; ++index) {
+        workers.emplace_back([&, index] {
+            const size_t context_index = index % contexts.size();
+            contexts[context_index]->advance_epoch_to_at_least(
+                before_stale[context_index] - 1);
+        });
+    }
+    for (auto& worker : workers)
+        worker.join();
+    EXPECT_EQ(contexts[0]->get_epoch(), before_stale[0]);
+    EXPECT_EQ(contexts[1]->get_epoch(), before_stale[1]);
+}
+
+TEST(MassTransEpochIntegrationTest, TransactionStartAdvancesOwningContext) {
+    using TestMassTrans =
+        MassTrans<std::string, versioned_str_struct, false>;
+
+    // MassTrans threadinfo records intentionally live for process lifetime.
+    // Attach this one to the process-rooted default runtime so the registry
+    // and its context cannot dangle when the test returns.
+    SiloRuntime* const runtime = SiloRuntime::GlobalDefault();
+    runtime->BindToCurrentThread();
+    MasstreeContext* const context = runtime->masstree_context();
+
+    constexpr Transaction::epoch_type epoch_step = 1024;
+    const Transaction::epoch_type target_epoch =
+        Transaction::global_epochs.global_epoch.fetch_add(
+            epoch_step, std::memory_order_acq_rel) + epoch_step;
+    ASSERT_LT(context->get_epoch(), target_epoch);
+
+    TThread::set_id(MAX_THREADS - 1);
+    TThread::set_mode(0);
+    TestMassTrans::thread_init();
+    Sto::start_transaction();
+    EXPECT_GE(context->get_epoch(), target_epoch);
+    Sto::silent_abort();
+    Transaction::rcu_quiesce();
+    SiloRuntime::BindCurrentThread(nullptr);
+}
+
+TEST(StoEpochAdvancerLifecycleTest, ConcurrentStartIsIdempotentAndAdvances) {
+    const Transaction::epoch_type initial_epoch =
+        Transaction::global_epochs.global_epoch.load(std::memory_order_acquire);
+    constexpr size_t thread_count = 32;
+    std::atomic<bool> start{false};
+    std::vector<std::thread> starters;
+    starters.reserve(thread_count);
+    for (size_t index = 0; index < thread_count; ++index) {
+        starters.emplace_back([&] {
+            while (!start.load(std::memory_order_acquire))
+                std::this_thread::yield();
+            Transaction::start_epoch_advancer();
+        });
+    }
+    start.store(true, std::memory_order_release);
+    for (auto& thread : starters)
+        thread.join();
+
+    EXPECT_TRUE(Transaction::global_epochs.run.load(std::memory_order_acquire));
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (Transaction::global_epochs.global_epoch.load(
+               std::memory_order_acquire) <= initial_epoch &&
+           std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    EXPECT_GT(Transaction::global_epochs.global_epoch.load(
+                  std::memory_order_acquire),
+              initial_epoch);
+}
+
+TEST(StoEpochAdvancerLifecycleTest, ConcurrentCallbackReplacementIsSafe) {
+    Transaction::start_epoch_advancer();
+    auto callback_count = std::make_shared<std::atomic<uint32_t>>(0);
+    constexpr size_t thread_count = 8;
+    constexpr size_t replacements_per_thread = 128;
+    std::atomic<bool> start{false};
+    std::vector<std::thread> setters;
+    setters.reserve(thread_count);
+
+    for (size_t index = 0; index < thread_count; ++index) {
+        setters.emplace_back([&, callback_count] {
+            while (!start.load(std::memory_order_acquire))
+                std::this_thread::yield();
+            for (size_t replacement = 0;
+                 replacement < replacements_per_thread; ++replacement) {
+                Transaction::set_epoch_advance_callback(
+                    [callback_count](Transaction::epoch_type) {
+                        callback_count->fetch_add(1,
+                                                  std::memory_order_relaxed);
+                    });
+            }
+        });
+    }
+    start.store(true, std::memory_order_release);
+    for (auto& setter : setters)
+        setter.join();
+
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (callback_count->load(std::memory_order_relaxed) == 0 &&
+           std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    EXPECT_GT(callback_count->load(std::memory_order_relaxed), 0U);
+    Transaction::set_epoch_advance_callback({});
+}
+
+TEST(MakoTimestampTest, AllocationObservationAndExhaustionAreMonotonic) {
+    auto& clock = sync_util::sync_logger::local_replica_id;
+    const uint32_t saved = clock.exchange(1, std::memory_order_acq_rel);
+    struct restore_clock {
+        std::atomic<uint32_t>& clock;
+        uint32_t value;
+        ~restore_clock() { clock.store(value, std::memory_order_release); }
+    } restore{clock, saved};
+
+    uint32_t timestamp = 0;
+    ASSERT_TRUE(Transaction::try_allocate_mako_timestamp(timestamp));
+    EXPECT_EQ(timestamp, 1U);
+    ASSERT_TRUE(Transaction::try_allocate_mako_timestamp(timestamp));
+    EXPECT_EQ(timestamp, 2U);
+
+    Transaction::observe_mako_timestamp(9);
+    ASSERT_TRUE(Transaction::try_allocate_mako_timestamp(timestamp));
+    EXPECT_EQ(timestamp, 10U);
+    Transaction::observe_mako_timestamp(4);
+    ASSERT_TRUE(Transaction::try_allocate_mako_timestamp(timestamp));
+    EXPECT_EQ(timestamp, 11U);
+
+    clock.store(5, std::memory_order_relaxed);
+    ASSERT_TRUE(Transaction::try_allocate_mako_timestamp_after(4, timestamp));
+    EXPECT_EQ(timestamp, 5U);
+    clock.store(5, std::memory_order_relaxed);
+    ASSERT_TRUE(Transaction::try_allocate_mako_timestamp_after(5, timestamp));
+    EXPECT_EQ(timestamp, 6U);
+    clock.store(5, std::memory_order_relaxed);
+    ASSERT_TRUE(Transaction::try_allocate_mako_timestamp_after(9, timestamp));
+    EXPECT_EQ(timestamp, 10U);
+
+    clock.store(1, std::memory_order_relaxed);
+    EXPECT_FALSE(Transaction::try_allocate_mako_timestamp_after(
+        Transaction::max_mako_timestamp, timestamp));
+    EXPECT_EQ(timestamp, 0U);
+
+    clock.store(Transaction::max_mako_timestamp, std::memory_order_release);
+    ASSERT_TRUE(Transaction::try_allocate_mako_timestamp(timestamp));
+    EXPECT_EQ(timestamp, Transaction::max_mako_timestamp);
+    EXPECT_FALSE(Transaction::try_allocate_mako_timestamp(timestamp));
+    EXPECT_EQ(timestamp, 0U);
+}
+
+TEST(MakoTimestampTest, ConcurrentAllocationsStayUniqueAboveCompletedFloor) {
+    auto& clock = sync_util::sync_logger::local_replica_id;
+    const uint32_t saved = clock.exchange(1, std::memory_order_acq_rel);
+    struct restore_clock {
+        std::atomic<uint32_t>& clock;
+        uint32_t value;
+        ~restore_clock() { clock.store(value, std::memory_order_release); }
+    } restore{clock, saved};
+
+    constexpr size_t thread_count = 16;
+    constexpr size_t allocations_per_thread = 256;
+    constexpr uint32_t floor = 10000;
+
+    std::array<std::array<uint32_t, allocations_per_thread>, thread_count>
+        timestamps{};
+    std::atomic<bool> start{false};
+    std::atomic<bool> failed{false};
+    std::vector<std::thread> threads;
+    threads.reserve(thread_count);
+    for (size_t thread = 0; thread < thread_count; ++thread) {
+        threads.emplace_back([&, thread] {
+            while (!start.load(std::memory_order_acquire))
+                std::this_thread::yield();
+            for (uint32_t& timestamp : timestamps[thread]) {
+                if (!Transaction::try_allocate_mako_timestamp_after(
+                        floor, timestamp)) {
+                    failed.store(true, std::memory_order_relaxed);
+                    return;
+                }
+            }
+        });
+    }
+    start.store(true, std::memory_order_release);
+    for (auto& thread : threads)
+        thread.join();
+
+    ASSERT_FALSE(failed.load(std::memory_order_relaxed));
+    std::vector<uint32_t> ordered;
+    ordered.reserve(thread_count * allocations_per_thread);
+    for (const auto& per_thread : timestamps)
+        ordered.insert(ordered.end(), per_thread.begin(), per_thread.end());
+    std::sort(ordered.begin(), ordered.end());
+    ASSERT_EQ(ordered.size(), thread_count * allocations_per_thread);
+    for (size_t index = 0; index < ordered.size(); ++index)
+        EXPECT_EQ(ordered[index], floor + 1 + index);
+}
+
+TEST(MakoTimestampTest, ConcurrentObservationAndAllocationPreserveFloor) {
+    auto& clock = sync_util::sync_logger::local_replica_id;
+    const uint32_t saved = clock.exchange(1, std::memory_order_acq_rel);
+    struct restore_clock {
+        std::atomic<uint32_t>& clock;
+        uint32_t value;
+        ~restore_clock() { clock.store(value, std::memory_order_release); }
+    } restore{clock, saved};
+
+    constexpr size_t allocator_count = 8;
+    constexpr size_t allocations_per_thread = 1024;
+    constexpr uint32_t first_floor = 1000;
+    constexpr uint32_t floor_count = 512;
+    std::atomic<bool> start{false};
+    std::atomic<bool> failed{false};
+    std::atomic<uint32_t> completed_floor{0};
+    std::vector<std::thread> allocators;
+    allocators.reserve(allocator_count);
+
+    for (size_t index = 0; index < allocator_count; ++index) {
+        allocators.emplace_back([&] {
+            while (!start.load(std::memory_order_acquire))
+                std::this_thread::yield();
+            for (size_t allocation = 0;
+                 allocation < allocations_per_thread; ++allocation) {
+                const uint32_t floor_before =
+                    completed_floor.load(std::memory_order_acquire);
+                uint32_t timestamp = 0;
+                if (!Transaction::try_allocate_mako_timestamp(timestamp)) {
+                    failed.store(true, std::memory_order_relaxed);
+                    return;
+                }
+                const uint32_t floor_after =
+                    completed_floor.load(std::memory_order_acquire);
+                if (floor_before != 0 && floor_before == floor_after &&
+                    timestamp <= floor_before) {
+                    failed.store(true, std::memory_order_relaxed);
+                    return;
+                }
+            }
+        });
+    }
+
+    std::thread observer([&] {
+        while (!start.load(std::memory_order_acquire))
+            std::this_thread::yield();
+        for (uint32_t offset = 0; offset < floor_count; ++offset) {
+            const uint32_t floor = first_floor + offset;
+            Transaction::observe_mako_timestamp(floor);
+            completed_floor.store(floor, std::memory_order_release);
+            std::this_thread::yield();
+        }
+    });
+
+    start.store(true, std::memory_order_release);
+    observer.join();
+    for (auto& allocator : allocators)
+        allocator.join();
+
+    EXPECT_FALSE(failed.load(std::memory_order_relaxed));
+    EXPECT_GT(clock.load(std::memory_order_relaxed),
+              completed_floor.load(std::memory_order_relaxed));
+}
+
+TEST(MakoTimestampTest, CommitIsStrictlyNewerThanReadDependency) {
+    auto& clock = sync_util::sync_logger::local_replica_id;
+    const uint32_t saved = clock.exchange(1, std::memory_order_acq_rel);
+    struct restore_clock {
+        std::atomic<uint32_t>& clock;
+        uint32_t value;
+        ~restore_clock() { clock.store(value, std::memory_order_release); }
+    } restore{clock, saved};
+
+    constexpr uint32_t dependency_timestamp = 1000;
+    LocalTimestampBox box(0);
+    uint32_t commit_timestamp = 0;
+    bool committed = false;
+    std::thread worker([&] {
+        TThread::set_id(MAX_THREADS - 2);
+        TThread::set_mode(0);
+        Sto::start_transaction();
+        box.write(1);
+        Transaction* const transaction = Sto::transaction();
+        transaction->maxTimestampReadSet = dependency_timestamp;
+        committed = Sto::try_commit();
+        commit_timestamp = transaction->tid_unique_;
+        delete transaction;
+        TThread::txn = nullptr;
+        Transaction::rcu_quiesce();
+    });
+    worker.join();
+
+    ASSERT_TRUE(committed);
+    EXPECT_GT(commit_timestamp, dependency_timestamp);
+    EXPECT_EQ(box.nontrans_read(), 1U);
+}
+
+// Test 6: Global default runtime for backward compatibility
 
 TEST_F(SiloRuntimeTest, GlobalDefaultRuntime) {
     // Without binding, Current() should return the global default
@@ -290,7 +694,7 @@ TEST_F(SiloRuntimeTest, GlobalDefaultRuntime) {
     EXPECT_EQ(SiloRuntime::Current(), global);
 }
 
-// Test 6: BindToCurrentThread convenience method
+// Test 7: BindToCurrentThread convenience method
 
 TEST_F(SiloRuntimeTest, BindToCurrentThreadConvenience) {
     // Use convenience method
@@ -307,7 +711,7 @@ TEST_F(SiloRuntimeTest, BindToCurrentThreadConvenience) {
     EXPECT_EQ(MasstreeContext::Current(), site2()->masstree_context());
 }
 
-// Test 7: Per-runtime core ID allocation
+// Test 8: Per-runtime core ID allocation
 
 TEST_F(SiloRuntimeTest, PerRuntimeCoreIdAllocation) {
     // Each runtime should have its own core ID counter starting at 0

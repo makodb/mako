@@ -271,7 +271,7 @@ jobs:
         run: >-
           cmake --build build
           --parallel "${CI_MAKE_JOBS}"
-          --target rust_sto_integration
+          --target rust_sto_integration test_silo_runtime
           -- -k 0
 
       - name: Verify Rust STO boundary test inventory
@@ -289,6 +289,7 @@ jobs:
               "test_mako_value_metadata",
               "test_mtree_abi",
               "test_mtree_abi_c11_header",
+              "test_silo_runtime_concurrency_lifecycle",
               "test_srpc_epoll_platform",
               "test_sto_tpcc_ffi_c11_header",
               "test_sto_tpcc_cpp_wrapper_smoke",
@@ -300,6 +301,7 @@ jobs:
               "test_sto_tpcc_rejects_duplicate_local_shards",
               "test_sto_tpcc_rejects_partial_local_shards",
               "test_sto_tpcc_rejects_rust_distributed_shard",
+              "test_sto_tpcc_rejects_rust_replication",
           }
           inventory = json.loads(
               Path("build/rust-sto-ctest-inventory.json").read_text())
@@ -319,7 +321,7 @@ jobs:
           ctest --test-dir build
           --output-on-failure
           --no-tests=error
-          -R '^(SiloVarintTests|test_mako_value_metadata|test_mtree_abi|test_mtree_abi_c11_header|test_srpc_epoll_platform|test_sto_tpcc_ffi_c11_header|test_sto_tpcc_cpp_wrapper_smoke|test_sto_tpcc_cpp_wrapper_scan_smoke|test_sto_tpcc_cpp_slow_exit|test_sto_tpcc_cpp_multishard_slow_exit|test_sto_tpcc_rust_slow_exit|test_sto_tpcc_rust_concurrent|test_sto_tpcc_rejects_duplicate_local_shards|test_sto_tpcc_rejects_partial_local_shards|test_sto_tpcc_rejects_rust_distributed_shard)$'
+          -R '^(SiloVarintTests|test_mako_value_metadata|test_mtree_abi|test_mtree_abi_c11_header|test_silo_runtime_concurrency_lifecycle|test_srpc_epoll_platform|test_sto_tpcc_ffi_c11_header|test_sto_tpcc_cpp_wrapper_smoke|test_sto_tpcc_cpp_wrapper_scan_smoke|test_sto_tpcc_cpp_slow_exit|test_sto_tpcc_cpp_multishard_slow_exit|test_sto_tpcc_rust_slow_exit|test_sto_tpcc_rust_concurrent|test_sto_tpcc_rejects_duplicate_local_shards|test_sto_tpcc_rejects_partial_local_shards|test_sto_tpcc_rejects_rust_distributed_shard|test_sto_tpcc_rejects_rust_replication)$'
 
       - name: Run tests - SRPC unit tests
         run: ./ci/ci.sh srpcTests

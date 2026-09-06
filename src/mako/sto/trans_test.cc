@@ -98,9 +98,7 @@ void startAndWait(T* ds) {
         testers[i].me = i;
         pthread_create(&tids[i], NULL, runFunc<T>, &testers[i]);
     }
-    pthread_t advancer;
-    pthread_create(&advancer, NULL, Transaction::epoch_advancer, NULL);
-    pthread_detach(advancer);
+    Transaction::start_epoch_advancer();
     
     for (int i = 0; i < N_THREADS; ++i) {
         pthread_join(tids[i], NULL);

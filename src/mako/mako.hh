@@ -737,7 +737,9 @@ static void setup_leader_election_callbacks()
         std::cout<<"Implement a new fail recovery!"<<std::endl;
         sync_util::sync_logger::exchange_running = false;
         auto& benchConfig = BenchmarkConfig::getInstance();
-        sync_util::sync_logger::failed_shard_index = benchConfig.getShardIndex();
+        sync_util::sync_logger::failed_shard_index.store(
+            static_cast<int>(benchConfig.getShardIndex()),
+            std::memory_order_relaxed);
         sync_util::sync_logger::client_control(0, benchConfig.getShardIndex()); // in bench.cc register_fasttransport_for_bench
         break;
       }
@@ -792,7 +794,9 @@ static void setup_leader_election_callbacks()
         //    1.3 issue no-ops within the old epoch
         //    1.4 start the controller
         auto& benchConfig = BenchmarkConfig::getInstance();
-        sync_util::sync_logger::failed_shard_index = benchConfig.getShardIndex();
+        sync_util::sync_logger::failed_shard_index.store(
+            static_cast<int>(benchConfig.getShardIndex()),
+            std::memory_order_relaxed);
 
         auto x0 = std::chrono::high_resolution_clock::now() ;
         sync_util::sync_logger::client_control(0, benchConfig.getShardIndex()); // in bench.cc register_fasttransport_for_bench

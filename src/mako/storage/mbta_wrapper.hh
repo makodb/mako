@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdlib>
+#include <mutex>
 #include "abstract_db.h"
 #include "abstract_ordered_index.h"
 #include "sto/Transaction.hh"
@@ -54,7 +55,8 @@
     TThread::txn->maxTimestampReadSet = \
       MAX(TThread::txn->maxTimestampReadSet, node_timestamp); \
     if (BenchmarkConfig::getInstance().getControlMode()==1){ \
-      if (TThread::txn->maxTimestampReadSet>sync_util::sync_logger::failed_shard_ts){ \
+      if (TThread::txn->maxTimestampReadSet > \
+          sync_util::sync_logger::failed_shard_ts.load(std::memory_order_relaxed)){ \
         TThread::transget_without_throw = true;\
       } \
     } \
@@ -1596,6 +1598,15 @@ public:
   mbta_wrapper() { /* Avoid doing something here! */}
 
   void init() {
+    // Initialize the process-wide MassTrans callback before the epoch worker
+    // can observe it. Multiple database instances share the same Transaction
+    // epoch domain, so both operations must be idempotent.
+    static std::once_flag mass_trans_init_once;
+    std::call_once(mass_trans_init_once, [] {
+      mbta_table::static_init();
+    });
+    Transaction::start_epoch_advancer();
+
     preallocate_open_index() ;
 
     auto& benchConfig = BenchmarkConfig::getInstance();
@@ -1726,6 +1737,10 @@ public:
   static void
   benchmark_thread_end()
   {
+    // A loader, worker, or helper that exits with its last transaction epoch
+    // published would pin active_epoch forever. It has no further STO reads,
+    // so remove its slot from the process-wide minimum before returning.
+    Transaction::rcu_quiesce();
     if (TThread::sclient != nullptr) {
       mako::ShardClient *client = TThread::sclient;
       TThread::sclient = nullptr;
@@ -1740,14 +1755,6 @@ public:
     (void)source;
     benchmark_thread_init(loader);
 
-    if (TThread::id() == 0) {
-      // someone has to do this (they don't provide us with a general init callback)
-      mbta_table::static_init();
-      // need this too
-      pthread_t advancer;
-      pthread_create(&advancer, NULL, Transaction::epoch_advancer, NULL);
-      pthread_detach(advancer);
-    }
     mbta_table::thread_init();
   }
 

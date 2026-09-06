@@ -28,6 +28,19 @@ bool cmpFunc2_v2(const std::string& newValue,
 
 namespace {
 
+class transaction_epoch_quiesce_guard {
+public:
+    transaction_epoch_quiesce_guard() = default;
+    transaction_epoch_quiesce_guard(
+        const transaction_epoch_quiesce_guard&) = delete;
+    transaction_epoch_quiesce_guard& operator=(
+        const transaction_epoch_quiesce_guard&) = delete;
+
+    ~transaction_epoch_quiesce_guard() {
+        Transaction::rcu_quiesce();
+    }
+};
+
 void resolve_replay_tables(const std::vector<mako::ReplayRecordView>& records,
                            abstract_db* db) {
     if (db == nullptr) {
@@ -113,6 +126,7 @@ size_t getFileContentNew_OneLogOptimized_mbta_v2(const char *buffer, /* K-V pair
               static_cast<unsigned>(count), len);
     }
     resolve_replay_tables(replay_records, db);
+    transaction_epoch_quiesce_guard quiesce_on_exit;
     return apply_replay_records(
         replay_records, 0, replay_records.size(), cid, db);
 }
@@ -133,6 +147,7 @@ size_t replay_validated_mbta_v2(const mako::ReplayLogView& log,
     }
 
     resolve_replay_tables(log.records, db);
+    transaction_epoch_quiesce_guard quiesce_on_exit;
     size_t put_ops = 0;
     for (const auto& transaction : log.transactions) {
         put_ops += apply_replay_records(

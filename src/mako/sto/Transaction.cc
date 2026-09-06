@@ -4,6 +4,8 @@
 #include <assert.h>
 #include <string.h>
 #include <stdlib.h>
+#include <mutex>
+#include <thread>
 
 #include "Transaction.hh"
 #include "MassTrans.hh"
@@ -50,21 +52,80 @@ __thread int TThread::skipBeforeRemotePayment;
 __thread unsigned int TThread::readset_shard_bits;
 __thread unsigned int TThread::writeset_shard_bits;
 Transaction::epoch_state __attribute__((aligned(128))) Transaction::global_epochs = {
-    1, 0, TransactionTid::increment_value, true
+    1, 0, TransactionTid::increment_value, false
 };
 __thread Transaction *TThread::txn = nullptr;
 __thread mako::ShardClient *TThread::sclient = nullptr;
 __thread HashWrapper *TThread::tprops = nullptr;
-std::function<void(threadinfo_t::epoch_type)> Transaction::epoch_advance_callback;
+Transaction::epoch_advance_callback_type Transaction::epoch_advance_callback;
 #if defined(SIMPLE_WORKLOAD)
-TransactionTid::type __attribute__((aligned(128))) Transaction::_TID = 1;
+std::atomic<TransactionTid::type> __attribute__((aligned(128)))
+Transaction::_TID{1};
 #else
-TransactionTid::type __attribute__((aligned(128))) Transaction::_TID = 2 * TransactionTid::increment_value;
+std::atomic<TransactionTid::type> __attribute__((aligned(128)))
+Transaction::_TID{2 * TransactionTid::increment_value};
 #endif
    // reserve TransactionTid::increment_value for prepopulated
 
 static void __attribute__((used)) check_static_assertions() {
     static_assert(sizeof(threadinfo_t) % 128 == 0, "threadinfo is 2-cache-line aligned");
+    static_assert(std::atomic<threadinfo_t::epoch_type>::is_always_lock_free,
+                  "Transaction epochs must be lock-free");
+    static_assert(std::atomic<TransactionTid::type>::is_always_lock_free,
+                  "Transaction TIDs must be lock-free");
+}
+
+// @safe: atomically allocates from Mako's process-wide logical clock
+bool Transaction::try_allocate_mako_timestamp(uint32_t& result) noexcept {
+    auto& clock = sync_util::sync_logger::local_replica_id;
+    uint32_t current = clock.load(std::memory_order_relaxed);
+    while (current != 0 && current <= max_mako_timestamp) {
+        const uint32_t next = current + 1;
+        if (clock.compare_exchange_weak(current, next,
+                                        std::memory_order_relaxed,
+                                        std::memory_order_relaxed)) {
+            result = current;
+            return true;
+        }
+    }
+    result = 0;
+    return false;
+}
+
+// @safe: atomically allocates after a transaction's read dependency
+bool Transaction::try_allocate_mako_timestamp_after(
+    uint32_t lower_bound, uint32_t& result) noexcept {
+    result = 0;
+    if (lower_bound >= max_mako_timestamp)
+        return false;
+
+    const uint32_t minimum = lower_bound + 1;
+    auto& clock = sync_util::sync_logger::local_replica_id;
+    uint32_t current = clock.load(std::memory_order_relaxed);
+    while (current != 0 && current <= max_mako_timestamp) {
+        const uint32_t candidate = std::max(current, minimum);
+        if (clock.compare_exchange_weak(current, candidate + 1,
+                                        std::memory_order_relaxed,
+                                        std::memory_order_relaxed)) {
+            result = candidate;
+            return true;
+        }
+    }
+    return false;
+}
+
+// @safe: atomically catches the logical clock up past an observation
+void Transaction::observe_mako_timestamp(uint32_t observed) noexcept {
+    const uint32_t desired = observed < max_mako_timestamp
+        ? observed + 1
+        : max_mako_timestamp + 1;
+    auto& clock = sync_util::sync_logger::local_replica_id;
+    uint32_t current = clock.load(std::memory_order_relaxed);
+    while (current != 0 && current < desired &&
+           !clock.compare_exchange_weak(current, desired,
+                                        std::memory_order_relaxed,
+                                        std::memory_order_relaxed)) {
+    }
 }
 
 // @safe
@@ -97,32 +158,83 @@ void Transaction::refresh_tset_chunk() {
     tset_next_ = tset_[tset_size_ / tset_chunk];
 }
 
-// @unsafe: uses fetch_and_add, usleep, and global epoch manipulation
-void* Transaction::epoch_advancer(void*) {
-    static int num_epoch_advancers = 0;
-    if (fetch_and_add(&num_epoch_advancers, 1) != 0)
-        std::cerr << "WARNING: more than one epoch_advancer thread\n";
+namespace {
+
+std::mutex epoch_advance_callback_mutex;
+
+class epoch_advancer_owner {
+public:
+    using entry_type = void (*)();
+
+    explicit epoch_advancer_owner(entry_type entry) {
+        Transaction::global_epochs.run.store(true, std::memory_order_release);
+        try {
+            worker_ = std::thread(entry);
+        } catch (...) {
+            Transaction::global_epochs.run.store(false,
+                                                  std::memory_order_release);
+            throw;
+        }
+    }
+
+    epoch_advancer_owner(const epoch_advancer_owner&) = delete;
+    epoch_advancer_owner& operator=(const epoch_advancer_owner&) = delete;
+
+    ~epoch_advancer_owner() {
+        Transaction::global_epochs.run.store(false, std::memory_order_release);
+        if (worker_.joinable())
+            worker_.join();
+    }
+
+private:
+    std::thread worker_;
+};
+
+} // namespace
+
+void Transaction::set_epoch_advance_callback(
+    epoch_advance_callback_type callback) {
+    std::lock_guard<std::mutex> lock(epoch_advance_callback_mutex);
+    epoch_advance_callback = std::move(callback);
+}
+
+// @safe: C++ guarantees thread-safe, one-shot initialization of local statics
+void Transaction::start_epoch_advancer() {
+    static epoch_advancer_owner owner(&Transaction::epoch_advancer_loop);
+    (void)owner;
+}
+
+// @unsafe: uses usleep and global epoch manipulation
+void Transaction::epoch_advancer_loop() {
 
     // don't bother epoch'ing til things have picked up
     usleep(100000);
-    while (global_epochs.run) {
-        epoch_type g = global_epochs.global_epoch;
+    while (global_epochs.run.load(std::memory_order_acquire)) {
+        epoch_type g = global_epochs.global_epoch.load(std::memory_order_relaxed);
         epoch_type e = g;
         for (auto& t : tinfo) {
-            if (t.epoch != 0 && signed_epoch_type(t.epoch - e) < 0)
-                e = t.epoch;
+            const epoch_type thread_epoch =
+                t.epoch.load(std::memory_order_acquire);
+            if (thread_epoch != 0 && signed_epoch_type(thread_epoch - e) < 0)
+                e = thread_epoch;
         }
-        global_epochs.global_epoch = std::max(g + 1, epoch_type(1));
-        global_epochs.active_epoch = e;
-        global_epochs.recent_tid = Transaction::_TID;
+        const epoch_type next_epoch = std::max(g + 1, epoch_type(1));
+        global_epochs.global_epoch.store(next_epoch, std::memory_order_release);
+        global_epochs.active_epoch.store(e, std::memory_order_release);
+        global_epochs.recent_tid.store(
+            Transaction::_TID.load(std::memory_order_relaxed),
+            std::memory_order_relaxed);
 
-        if (epoch_advance_callback)
-            epoch_advance_callback(global_epochs.global_epoch);
+        epoch_advance_callback_type callback;
+        {
+            std::lock_guard<std::mutex> lock(epoch_advance_callback_mutex);
+            callback = epoch_advance_callback;
+        }
+        if (callback)
+            callback(next_epoch);
 
         usleep(100000);
     }
-    fetch_and_add(&num_epoch_advancers, -1);
-    return NULL;
 }
 
 // @safe
@@ -168,7 +280,7 @@ void Transaction::hard_check_opacity(TransItem* item, TransactionTid::type t) {
         TXP_INCREMENT(txp_hco_invalid);
 
     state_ = s_opacity_check;
-    start_tid_ = _TID;
+    start_tid_ = _TID.load(std::memory_order_relaxed);
     release_fence();
     TransItem* it = nullptr;
     for (unsigned tidx = 0; tidx != tset_size_; ++tidx) {
@@ -340,11 +452,8 @@ void Transaction::shard_install(uint32_t timestamp) {
     TThread::txn->maxTimestampReadSet = MAX(TThread::txn->maxTimestampReadSet, timestamp);
     tid_unique_ = timestamp;
 
-    // Update local_id to catch up with single timestamp
-    int delta = tid_unique_ - sync_util::sync_logger::local_replica_id;
-    if (delta > 0) {
-        __sync_fetch_and_add(&sync_util::sync_logger::local_replica_id, delta);
-    }
+    // Floor the process-wide clock past the installed timestamp.
+    observe_mako_timestamp(tid_unique_);
 
     TransItem* it = nullptr;
     if (tset_size_ == 0) return;
@@ -522,11 +631,15 @@ bool Transaction::try_commit(bool no_paxos) {
 
     if (!no_paxos){
         // Update single timestamp system
-        updateSingleTimestamp(); // Updates tid_unique_ internally
-        // Merge with max timestamp from read set
-        if (maxTimestampReadSet > tid_unique_) {
-            tid_unique_ = maxTimestampReadSet;
-        }
+        if (!updateSingleTimestamp())
+            goto abort;
+        // A dependent commit must be strictly newer than every version it
+        // observed. Reserving through the shared clock also prevents two
+        // local coordinators from independently selecting read_max + 1.
+        if (maxTimestampReadSet >= tid_unique_ &&
+            !try_allocate_mako_timestamp_after(maxTimestampReadSet,
+                                               tid_unique_))
+            goto abort;
 
 #if defined(TRACKING_ROLLBACK)
         if (get_current_term()==0) {
@@ -569,6 +682,12 @@ bool Transaction::try_commit(bool no_paxos) {
         }
     }
 
+    // A remote/read-set maximum may have raised the selected timestamp above
+    // this coordinator's ticket.  Floor the next-to-return clock before either
+    // phase-3 write-set layout installs data.
+    if (nwriteset)
+        observe_mako_timestamp(tid_unique_);
+
     //phase3
 #if STO_SORT_WRITESET
     for (unsigned tidx = first_write_; tidx != tset_size_; ++tidx) {
@@ -581,12 +700,6 @@ bool Transaction::try_commit(bool no_paxos) {
 #else
     if (nwriteset) {
         auto writeset_end = writeset + nwriteset;
-
-        // Update local_id to catch up with single timestamp
-        int delta = tid_unique_ - sync_util::sync_logger::local_replica_id;
-        if (delta > 0) {
-            __sync_fetch_and_add(&sync_util::sync_logger::local_replica_id, delta);
-        }
 
         for (auto idxit = writeset; idxit != writeset_end; ++idxit) {
             if (likely(*idxit < tset_initial_capacity))

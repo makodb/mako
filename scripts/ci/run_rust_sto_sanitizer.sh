@@ -682,7 +682,7 @@ manifest="${build_dir}/rust-sto-sanitizer-manifest.txt"
     echo "rustflags=${rustflags}"
     echo "rustdocflags=${rustdocflags}"
     echo "sto_tpcc_rust_extra_rustflags=${sto_tpcc_rustflags}"
-    echo "ctest_selection=exact-masstree-c11-header;exact-cpp-slow-exit-lifecycle;exact-label-rust"
+    echo "ctest_selection=exact-masstree-c11-header;exact-silo-runtime-concurrency-lifecycle;exact-cpp-slow-exit-lifecycle;exact-label-rust"
     if [[ "${sanitizer}" == "undefined" ]]; then
         echo "result_qualification=checked-in-ubsan-suppressions-active"
         echo "suppression_file=${ubsan_suppressions}"
@@ -719,7 +719,7 @@ manifest="${build_dir}/rust-sto-sanitizer-manifest.txt"
 
 run_logged build \
     cmake --build "${build_dir}" --parallel "${jobs}" \
-        --target rust_sto_integration dbtest -- -k 0
+        --target rust_sto_integration dbtest test_silo_runtime -- -k 0
 
 ninja -C "${build_dir}" -t commands rust_sto_integration \
     >"${build_dir}/sanitizer-logs/rust-sto-integration-build-commands.txt"
@@ -986,9 +986,14 @@ required_flag = sys.argv[2]
 required_sources = {
     "crates/sto-tpcc-ffi/tests/cpp_wrapper_fixed_read_smoke.cc",
     "crates/sto-tpcc-ffi/tests/cpp_wrapper_scan_smoke.cc",
+    "src/mako/benchmarks/bench.cc",
     "src/mako/benchmarks/dbtest.cc",
+    "src/mako/benchmarks/sync_util_init.cc",
+    "src/mako/lib/server.cc",
+    "src/mako/silo_runtime.cc",
     "src/mako/sto/ReplayDB.cc",
     "src/mako/sto/ThreadPool.cc",
+    "src/mako/sto/Transaction.cc",
     "src/mako/storage/mtree_abi.cc",
     "src/mako/storage/rust_sto_tpcc_wrapper.cc",
     "src/srpc/reactor/epoll_platform_linux.cc",
@@ -997,6 +1002,7 @@ required_sources = {
     "tests/sto_tpcc_ffi_c11_header.c",
     "tests/test_mako_value_metadata.cc",
     "tests/test_mtree_abi.cc",
+    "tests/test_silo_runtime.cc",
     "tests/test_silo_varint.cc",
 }
 
@@ -1039,6 +1045,7 @@ required = {
     "test_mako_value_metadata",
     "test_mtree_abi",
     "test_mtree_abi_c11_header",
+    "test_silo_runtime_concurrency_lifecycle",
     "test_srpc_epoll_platform",
     "test_sto_tpcc_ffi_c11_header",
     "test_sto_tpcc_cpp_wrapper_scan_smoke",
@@ -1050,6 +1057,7 @@ required = {
     "test_sto_tpcc_rejects_duplicate_local_shards",
     "test_sto_tpcc_rejects_partial_local_shards",
     "test_sto_tpcc_rejects_rust_distributed_shard",
+    "test_sto_tpcc_rejects_rust_replication",
 }
 missing = sorted(required - names)
 if missing:
@@ -1066,6 +1074,7 @@ if not rust_names:
 
 explicit_non_rust_runs = {
     "test_mtree_abi_c11_header",
+    "test_silo_runtime_concurrency_lifecycle",
     "test_sto_tpcc_cpp_slow_exit",
     "test_sto_tpcc_cpp_multishard_slow_exit",
 }
@@ -1094,6 +1103,13 @@ PY
 run_logged ctest-masstree-c11-header \
     ctest --test-dir "${build_dir}" --output-on-failure \
         --no-tests=error -R '^test_mtree_abi_c11_header$'
+
+# The default runtime is first acquired concurrently in a fresh process.  This
+# directly guards its process-lifetime publication contract under each native
+# sanitizer, independent of the longer TPC-C lifecycle tests below.
+run_logged ctest-silo-runtime-concurrency-lifecycle \
+    ctest --test-dir "${build_dir}" --output-on-failure \
+        --no-tests=error -R '^test_silo_runtime_concurrency_lifecycle$'
 
 # The C++ reference backend deliberately retains native STO/Masstree state for
 # process lifetime, but both its single- and multi-shard graceful teardown must
