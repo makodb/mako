@@ -18,6 +18,7 @@
 // Runtime replication switching - unified interface
 #include "deptran/replication_helper.h"
 #include "lib/configuration.h"
+#include "benchmark_output.h"
 #include "benchmark_config.h"
 
 class bench_runner;

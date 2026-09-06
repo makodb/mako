@@ -1,0 +1,81 @@
+#ifndef MAKO_BENCHMARKS_BENCHMARK_OUTPUT_H
+#define MAKO_BENCHMARKS_BENCHMARK_OUTPUT_H
+
+#include <iostream>
+#include <mutex>
+#include <ostream>
+#include <utility>
+
+namespace mako {
+
+// C++ stream formatting state is mutable and is not safe to share between the
+// benchmark threads. Keep both human-readable streams and raw machine-record
+// writes behind the same process-wide lock.
+inline std::mutex &benchmark_output_mutex()
+{
+  static std::mutex output_mutex;
+  return output_mutex;
+}
+
+class locked_benchmark_ostream {
+public:
+  explicit locked_benchmark_ostream(std::ostream &stream)
+    : lock_(benchmark_output_mutex()), stream_(stream)
+  {
+  }
+
+  locked_benchmark_ostream(const locked_benchmark_ostream &) = delete;
+  locked_benchmark_ostream(locked_benchmark_ostream &&) = delete;
+  locked_benchmark_ostream &operator=(const locked_benchmark_ostream &) = delete;
+  locked_benchmark_ostream &operator=(locked_benchmark_ostream &&) = delete;
+
+  template <typename T>
+  locked_benchmark_ostream &operator<<(T &&value)
+  {
+    stream_ << std::forward<T>(value);
+    return *this;
+  }
+
+  locked_benchmark_ostream &operator<<(
+      std::ostream &(*manipulator)(std::ostream &))
+  {
+    manipulator(stream_);
+    return *this;
+  }
+
+  locked_benchmark_ostream &operator<<(std::ios &(*manipulator)(std::ios &))
+  {
+    manipulator(stream_);
+    return *this;
+  }
+
+  locked_benchmark_ostream &operator<<(
+      std::ios_base &(*manipulator)(std::ios_base &))
+  {
+    manipulator(stream_);
+    return *this;
+  }
+
+  void flush()
+  {
+    stream_.flush();
+  }
+
+private:
+  std::lock_guard<std::mutex> lock_;
+  std::ostream &stream_;
+};
+
+inline locked_benchmark_ostream benchmark_cerr()
+{
+  return locked_benchmark_ostream(std::cerr);
+}
+
+inline locked_benchmark_ostream benchmark_cout()
+{
+  return locked_benchmark_ostream(std::cout);
+}
+
+} // namespace mako
+
+#endif // MAKO_BENCHMARKS_BENCHMARK_OUTPUT_H

@@ -180,7 +180,7 @@ public:
 #ifdef CHECK_INVARIANTS
     if (set<T *>(locks.begin(), locks.end()).size() != locks.size()) {
       for (auto &t : locks)
-        cerr << "lock: " << hexify(t) << endl;
+        mako::benchmark_cerr() << "lock: " << hexify(t) << endl;
       INVARIANT(false && "duplicate locks found");
     }
 #endif
@@ -541,7 +541,7 @@ protected: \
     ALWAYS_ERROR(partid < BenchmarkConfig::getInstance().getNthreads());
     const unsigned int pinid  = partid;
     if (BenchmarkConfig::getInstance().getVerbose())
-      cerr << "PinToWarehouseId(): coreid=" << coreid::core_id()
+      mako::benchmark_cerr() << "PinToWarehouseId(): coreid=" << coreid::core_id()
            << " pinned to whse=" << wid << " (partid=" << partid << ")"
            << endl;
     rcu::s_instance.pin_current_thread(pinid);
@@ -753,42 +753,42 @@ public:
   size_t max_records_hint() const override { return 11; }
 
   inline void print_warehouse_info() {
-    std::cout << "# of records in the warehouse table: " << values.size() << std::endl;
+    mako::benchmark_cout() << "# of records in the warehouse table: " << values.size() << std::endl;
     for (int i=0; i<values.size(); i++) {
-      std::cout << "  " << "id: " << ((warehouse::key)(values[i].first)).w_id << std::endl;
+      mako::benchmark_cout() << "  " << "id: " << ((warehouse::key)(values[i].first)).w_id << std::endl;
     }
-    std::cout << std::endl;
+    mako::benchmark_cout() << std::endl;
   }
 
   inline int64_t print_customer_info() {
-    std::cout << "# of records in the customer table: " << values.size() << std::endl;
+    mako::benchmark_cout() << "# of records in the customer table: " << values.size() << std::endl;
     int64_t total_balance = 0;
     int total_remote_udpate = 0;
     for (int i=0; i<values.size(); i++) {
-        std::cout << "  " << "key: " << ((customer::key)(values[i].first))
+        mako::benchmark_cout() << "  " << "key: " << ((customer::key)(values[i].first))
                   << ", balance: " <<((customer::value)(values[i].second)).c_payment_cnt << std::endl;
       total_balance += ((customer::value)(values[i].second)).c_payment_cnt;
       total_remote_udpate += ((customer::value)(values[i].second)).c_delivery_cnt;
     }
-    std::cout << "  " << "total balance is " << total_balance;
-    std::cout << "  " << "total remote update is " << total_remote_udpate;
-    std::cout << std::endl;
+    mako::benchmark_cout() << "  " << "total balance is " << total_balance;
+    mako::benchmark_cout() << "  " << "total remote update is " << total_remote_udpate;
+    mako::benchmark_cout() << std::endl;
     return total_balance;
   }
 
   inline int64_t print_oorder_info() {
-    std::cout << "# of records in the oorder table: " << values.size() << std::endl;
+    mako::benchmark_cout() << "# of records in the oorder table: " << values.size() << std::endl;
     int64_t total_cost = 0;
     for (int i=0; i<values.size(); i++) {
-      std::cout << "  " << "key: " << ((oorder::key)(values[i].first))
+      mako::benchmark_cout() << "  " << "key: " << ((oorder::key)(values[i].first))
                 << ", item-id: " <<((oorder::value)(values[i].second)).o_c_id 
                 << ", customer-id: " <<((oorder::value)(values[i].second)).o_carrier_id 
                 << ", value: " << (oorder::value)(values[i].second)
                 << std::endl;
       total_cost += ((oorder::value)(values[i].second)).o_c_id;
     }
-    std:: cout << "  " << "total cost is " << total_cost;
-    std::cout << std::endl;
+    mako::benchmark_cout() << "  " << "total cost is " << total_cost;
+    mako::benchmark_cout() << std::endl;
     return total_cost;
   }
 
@@ -824,7 +824,7 @@ public:
     INVARIANT(warehouse_id_end > warehouse_id_start);
     INVARIANT(warehouse_id_end <= (NumWarehouses() + 1));
     NDB_MEMSET(&last_no_o_ids[0], 0, sizeof(last_no_o_ids));
-    cerr << "tpcc: worker id " << worker_id
+    mako::benchmark_cerr() << "tpcc: worker id " << worker_id
         << " => warehouses [" << warehouse_id_start
         << ", " << warehouse_id_end << ")"
         << endl;
@@ -1138,8 +1138,8 @@ protected:
       ALWAYS_ERROR(false);
     }
     if (BenchmarkConfig::getInstance().getVerbose()) {
-      cerr << "[INFO] finished loading warehouse" << endl;
-      cerr << "[INFO]   * average warehouse record length: "
+      mako::benchmark_cerr() << "[INFO] finished loading warehouse" << endl;
+      mako::benchmark_cerr() << "[INFO]   * average warehouse record length: "
            << (double(warehouse_total_sz)/double(n_warehouses)) << " bytes" << endl;
     }
 #endif
@@ -1203,8 +1203,8 @@ protected:
       ALWAYS_ERROR(false);
     }
     if (BenchmarkConfig::getInstance().getVerbose()) {
-      cerr << "[INFO] finished loading item" << endl;
-      cerr << "[INFO]   * average item record length: "
+      mako::benchmark_cerr() << "[INFO] finished loading item" << endl;
+      mako::benchmark_cerr() << "[INFO]   * average item record length: "
            << (double(total_sz)/double(NumItems())) << " bytes" << endl;
     }
   }
@@ -1296,24 +1296,24 @@ protected:
           } else {
             db->abort_txn(txn);
             if (BenchmarkConfig::getInstance().getVerbose())
-              cerr << "[WARNING] stock loader loading abort" << endl;
+              mako::benchmark_cerr() << "[WARNING] stock loader loading abort" << endl;
           }
         } catch (abstract_db::abstract_abort_exception &ex) {
           db->abort_txn(txn);
           ALWAYS_ERROR(warehouse_id != -1);
           if (BenchmarkConfig::getInstance().getVerbose())
-            cerr << "[WARNING] stock loader loading abort" << endl;
+            mako::benchmark_cerr() << "[WARNING] stock loader loading abort" << endl;
         }
       }
     }
 
     if (BenchmarkConfig::getInstance().getVerbose()) {
       if (warehouse_id == -1) {
-        cerr << "[INFO] finished loading stock" << endl;
-        cerr << "[INFO]   * average stock record length: "
+        mako::benchmark_cerr() << "[INFO] finished loading stock" << endl;
+        mako::benchmark_cerr() << "[INFO]   * average stock record length: "
              << (double(stock_total_sz)/double(n_stocks)) << " bytes" << endl;
       } else {
-        cerr << "[INFO] finished loading stock (w=" << warehouse_id << ")" << endl;
+        mako::benchmark_cerr() << "[INFO] finished loading stock (w=" << warehouse_id << ")" << endl;
       }
     }
   }
@@ -1381,8 +1381,8 @@ protected:
       ALWAYS_ERROR(false);
     }
     if (BenchmarkConfig::getInstance().getVerbose()) {
-      cerr << "[INFO] finished loading district" << endl;
-      cerr << "[INFO]   * average district record length: "
+      mako::benchmark_cerr() << "[INFO] finished loading district" << endl;
+      mako::benchmark_cerr() << "[INFO]   * average district record length: "
            << (double(district_total_sz)/double(n_districts)) << " bytes" << endl;
     }
   }
@@ -1422,7 +1422,7 @@ protected:
     const size_t nbatches =
       (batchsize > NumCustomersPerDistrict()) ?
         1 : (NumCustomersPerDistrict() / batchsize);
-    cerr << "num batches: " << nbatches << endl;
+    mako::benchmark_cerr() << "num batches: " << nbatches << endl;
 
     uint64_t total_sz = 0;
 
@@ -1510,12 +1510,12 @@ protected:
             } else {
               db->abort_txn(txn);
               if (BenchmarkConfig::getInstance().getVerbose())
-                cerr << "[WARNING] customer loader loading abort" << endl;
+                mako::benchmark_cerr() << "[WARNING] customer loader loading abort" << endl;
             }
           } catch (abstract_db::abstract_abort_exception &ex) {
             db->abort_txn(txn);
             if (BenchmarkConfig::getInstance().getVerbose())
-              cerr << "[WARNING] customer loader loading abort" << endl;
+              mako::benchmark_cerr() << "[WARNING] customer loader loading abort" << endl;
           }
         }
       }
@@ -1523,12 +1523,12 @@ protected:
 
     if (BenchmarkConfig::getInstance().getVerbose()) {
       if (warehouse_id == -1) {
-        cerr << "[INFO] finished loading customer" << endl;
-        cerr << "[INFO]   * average customer record length: "
+        mako::benchmark_cerr() << "[INFO] finished loading customer" << endl;
+        mako::benchmark_cerr() << "[INFO]   * average customer record length: "
              << (double(total_sz)/double(NumWarehouses()*NumDistrictsPerWarehouse()*NumCustomersPerDistrict()))
              << " bytes " << endl;
       } else {
-        cerr << "[INFO] finished loading customer (w=" << warehouse_id << ")" << endl;
+        mako::benchmark_cerr() << "[INFO] finished loading customer (w=" << warehouse_id << ")" << endl;
       }
     }
   }
@@ -1652,13 +1652,13 @@ protected:
               db->abort_txn(txn);
               ALWAYS_ERROR(warehouse_id != -1);
               if (BenchmarkConfig::getInstance().getVerbose())
-                cerr << "[WARNING] order loader loading abort" << endl;
+                mako::benchmark_cerr() << "[WARNING] order loader loading abort" << endl;
             }
           } catch (abstract_db::abstract_abort_exception &ex) {
             db->abort_txn(txn);
             ALWAYS_ERROR(warehouse_id != -1);
             if (BenchmarkConfig::getInstance().getVerbose())
-              cerr << "[WARNING] order loader loading abort" << endl;
+              mako::benchmark_cerr() << "[WARNING] order loader loading abort" << endl;
           }
         }
       }
@@ -1666,15 +1666,15 @@ protected:
 
     if (BenchmarkConfig::getInstance().getVerbose()) {
       if (warehouse_id == -1) {
-        cerr << "[INFO] finished loading order" << endl;
-        cerr << "[INFO]   * average order_line record length: "
+        mako::benchmark_cerr() << "[INFO] finished loading order" << endl;
+        mako::benchmark_cerr() << "[INFO]   * average order_line record length: "
              << (double(order_line_total_sz)/double(n_order_lines)) << " bytes" << endl;
-        cerr << "[INFO]   * average oorder record length: "
+        mako::benchmark_cerr() << "[INFO]   * average oorder record length: "
              << (double(oorder_total_sz)/double(n_oorders)) << " bytes" << endl;
-        cerr << "[INFO]   * average new_order record length: "
+        mako::benchmark_cerr() << "[INFO]   * average new_order record length: "
              << (double(new_order_total_sz)/double(n_new_orders)) << " bytes" << endl;
       } else {
-        cerr << "[INFO] finished loading order (w=" << warehouse_id << ")" << endl;
+        mako::benchmark_cerr() << "[INFO] finished loading order (w=" << warehouse_id << ")" << endl;
       }
     }
   }
@@ -1721,7 +1721,7 @@ void tpcc_worker::scan_entire_warehouses(int w_id) {
     ALWAYS_ERROR(db->commit_txn(txn_1));
     int64_t b = calloc_2.print_oorder_info();
 
-    std::cout << "  balance + cost: " << a + b << std::endl;
+    mako::benchmark_cout() << "  balance + cost: " << a + b << std::endl;
     if ((a+b)!=1000000000) {
       Warning("it is not equal, %d!=%d", (a+b), 1000000000);
     }*/
@@ -4565,21 +4565,21 @@ tpcc_do_test(abstract_db *db, int argc, char **argv, int run = 0, bench_runner *
   }
 
   if (did_spec_remote_pct && g_disable_xpartition_txn) {
-    cerr << "WARNING: --new-order-remote-item-pct given with --disable-cross-partition-transactions" << endl;
-    cerr << "  --new-order-remote-item-pct will have no effect" << endl;
+    mako::benchmark_cerr() << "WARNING: --new-order-remote-item-pct given with --disable-cross-partition-transactions" << endl;
+    mako::benchmark_cerr() << "  --new-order-remote-item-pct will have no effect" << endl;
   }
 
   if (BenchmarkConfig::getInstance().getVerbose()) {
-    cerr << "tpcc settings:" << endl;
-    cerr << "  cross_partition_transactions : " << !g_disable_xpartition_txn << endl;
-    cerr << "  read_only_snapshots          : " << !g_disable_read_only_scans << endl;
-    cerr << "  partition_locks              : " << g_enable_partition_locks << endl;
-    cerr << "  separate_tree_per_partition  : " << g_enable_separate_tree_per_partition << endl;
-    cerr << "  new_order_remote_item_pct    : " << g_new_order_remote_item_pct << endl;
-    cerr << "  new_order_fast_id_gen        : " << g_new_order_fast_id_gen << endl;
-    cerr << "  uniform_item_dist            : " << g_uniform_item_dist << endl;
-    cerr << "  order_status_scan_hack       : " << g_order_status_scan_hack << endl;
-    cerr << "  workload_mix                 : " <<
+    mako::benchmark_cerr() << "tpcc settings:" << endl;
+    mako::benchmark_cerr() << "  cross_partition_transactions : " << !g_disable_xpartition_txn << endl;
+    mako::benchmark_cerr() << "  read_only_snapshots          : " << !g_disable_read_only_scans << endl;
+    mako::benchmark_cerr() << "  partition_locks              : " << g_enable_partition_locks << endl;
+    mako::benchmark_cerr() << "  separate_tree_per_partition  : " << g_enable_separate_tree_per_partition << endl;
+    mako::benchmark_cerr() << "  new_order_remote_item_pct    : " << g_new_order_remote_item_pct << endl;
+    mako::benchmark_cerr() << "  new_order_fast_id_gen        : " << g_new_order_fast_id_gen << endl;
+    mako::benchmark_cerr() << "  uniform_item_dist            : " << g_uniform_item_dist << endl;
+    mako::benchmark_cerr() << "  order_status_scan_hack       : " << g_order_status_scan_hack << endl;
+    mako::benchmark_cerr() << "  workload_mix                 : " <<
       format_list(g_txn_workload_mix,
                   g_txn_workload_mix + ARRAY_NELEMS(g_txn_workload_mix)) << endl;
   }
@@ -4688,8 +4688,8 @@ tpcc_do_test(abstract_db *db, int argc, char **argv, int run, bench_runner *rc, 
   }
 
   if (did_spec_remote_pct && g_disable_xpartition_txn) {
-    cerr << "WARNING: --new-order-remote-item-pct given with --disable-cross-partition-transactions" << endl;
-    cerr << "  --new-order-remote-item-pct will have no effect" << endl;
+    mako::benchmark_cerr() << "WARNING: --new-order-remote-item-pct given with --disable-cross-partition-transactions" << endl;
+    mako::benchmark_cerr() << "  --new-order-remote-item-pct will have no effect" << endl;
   }
 
   // Create bench_runner with shard_index for multi-shard mode

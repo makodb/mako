@@ -65,8 +65,7 @@ void emit_tpcc_result_line(std::string line) {
   line.push_back('\n');
   ALWAYS_ASSERT(line.size() <= 512);
 
-  static std::mutex result_output_mutex;
-  std::lock_guard<std::mutex> lock(result_output_mutex);
+  std::lock_guard<std::mutex> lock(mako::benchmark_output_mutex());
   std::cout.flush();
 
   ssize_t written;
@@ -104,12 +103,12 @@ private:
 
 
 static void arr2str(vector<uint64_t> arr) {
-  cerr << "[";
+  mako::benchmark_cerr() << "[";
   for (size_t i = 0; i < arr.size(); i++) {
-    cerr << arr[i] << " ";
+    mako::benchmark_cerr() << arr[i] << " ";
   }
-  cerr << "]";
-  cerr << endl;
+  mako::benchmark_cerr() << "]";
+  mako::benchmark_cerr() << endl;
 }
 
 template <typename T>
@@ -170,7 +169,7 @@ bench_runner::clear_and_close_open_tables()
       clear_and_close_benchmark_indexes(db, open_tables);
   if (BenchmarkConfig::getInstance().getVerbose()) {
     for (auto &p : agg_stats)
-      cerr << p.first << " : " << p.second << endl;
+      mako::benchmark_cerr() << p.first << " : " << p.second << endl;
   }
 }
 
@@ -279,7 +278,9 @@ bench_worker::run()
           std::string w_i = mako::NFSSync::get_key("fvw_"+std::to_string(i), 
                                                       benchConfig.getConfig()->shard(0, clusterRoleLocal).host.c_str(), 
                                                       benchConfig.getConfig()->mports[clusterRoleLocal]);
-          std::cout<<"get fvw, " << clusterRoleLocal << ", fvw_"+std::to_string(i)<<":"<<w_i<<std::endl;
+          mako::benchmark_cout() << "get fvw, " << clusterRoleLocal
+                                 << ", fvw_" + std::to_string(i) << ":"
+                                 << w_i << std::endl;
           fvw[i] = std::stoi(w_i);
         }
 
@@ -337,7 +338,7 @@ bench_worker::run()
   // std::cout << "we are using jemalloc? " << (mallctl != nullptr) << std::endl;
   #endif
   #ifndef JEMALLOC_NO_RENAME
-  std::cout << "No JEMALLOC_NO_RENAME" << std::endl;
+  mako::benchmark_cout() << "No JEMALLOC_NO_RENAME" << std::endl;
   #endif
 
   // Bind this worker thread to the appropriate SiloRuntime FIRST
@@ -395,9 +396,11 @@ bench_worker::run()
       benchConfig.getThrottleCycleMs()
   );
   if (throttler.is_enabled()) {
-    std::cout << "Worker " << worker_id << " CPU throttling enabled: "
-              << throttler.get_cpu_percent() << "% with "
-              << throttler.get_cycle_ms() << "ms cycle" << std::endl;
+    mako::benchmark_cout() << "Worker " << worker_id
+                           << " CPU throttling enabled: "
+                           << throttler.get_cpu_percent() << "% with "
+                           << throttler.get_cycle_ms() << "ms cycle"
+                           << std::endl;
   }
 
   while (benchConfig.isRunning() &&
@@ -537,17 +540,18 @@ bench_runner::run()
     const int64_t delta = int64_t(mem_info_before.first) - int64_t(mem_info_after.first); // free mem
     const double delta_mb = double(delta)/1048576.0;
     if (BenchmarkConfig::getInstance().getVerbose())
-      cerr << "DB size: " << delta_mb << " MB" << endl;
+      mako::benchmark_cerr() << "DB size: " << delta_mb << " MB" << endl;
   }
 
   db->do_txn_epoch_sync(); // also waits for worker threads to be persisted
   {
     const auto persisted_info = db->get_ntxn_persisted();
     if (get<0>(persisted_info) != get<1>(persisted_info))
-      cerr << "ERROR: " << persisted_info << endl;
+      mako::benchmark_cerr() << "ERROR: " << persisted_info << endl;
     //ALWAYS_ASSERT(get<0>(persisted_info) == get<1>(persisted_info));
     if (BenchmarkConfig::getInstance().getVerbose())
-      cerr << persisted_info << " txns persisted in loading phase" << endl;
+      mako::benchmark_cerr() << persisted_info
+                             << " txns persisted in loading phase" << endl;
   }
   db->reset_ntxn_persisted();
 
@@ -560,7 +564,7 @@ bench_runner::run()
     if (get<0>(persisted_info) != 0 ||
         get<1>(persisted_info) != 0 ||
         get<2>(persisted_info) != 0.0) {
-      cerr << persisted_info << endl;
+      mako::benchmark_cerr() << persisted_info << endl;
       ALWAYS_ASSERT(false);
     }
   }
@@ -576,13 +580,15 @@ bench_runner::run()
       //cerr << "table " << it->first << " size " << s << endl;
       table_sizes_before[it->first] = s;
     }
-    cerr << "starting benchmark..." << endl;
+    mako::benchmark_cerr() << "starting benchmark..." << endl;
   }
 
   const pair<uint64_t, uint64_t> mem_info_before = get_system_memory_info();
 
   if (f_mode == 0) {
-    std::cout << "--------------Finish loading data and wait for others completing load phase ------------" << std::endl;
+    mako::benchmark_cout()
+        << "--------------Finish loading data and wait for others completing load phase ------------"
+        << std::endl;
     auto& cfg = BenchmarkConfig::getInstance();
     mako::NFSSync::set_key("load_phase_"+std::to_string(cfg.getShardIndex()), "DONE", cfg.getConfig()->shard(0, cfg.getClusterRole()).host.c_str(), cfg.getConfig()->mports[cfg.getClusterRole()]);
 
@@ -595,11 +601,15 @@ bench_runner::run()
 
     if (cfg.getIsReplicated()) {
       std::string log(mako::ADVANCER_MARKER_NUM, 'a');
-      std::cout << "[ADVANCER-SEND] Leader sending ADVANCER_MARKER to "
-                << BenchmarkConfig::getInstance().getNthreads() << " partitions" << std::endl;
+      mako::benchmark_cout()
+          << "[ADVANCER-SEND] Leader sending ADVANCER_MARKER to "
+          << BenchmarkConfig::getInstance().getNthreads() << " partitions"
+          << std::endl;
       for(int i=0;i<BenchmarkConfig::getInstance().getNthreads();i++) {
         add_log_to_nc(log.c_str(), log.size(), i); // notify others start a advancer
-        std::cout << "[ADVANCER-SEND] Sent ADVANCER_MARKER to partition " << i << std::endl;
+        mako::benchmark_cout()
+            << "[ADVANCER-SEND] Sent ADVANCER_MARKER to partition " << i
+            << std::endl;
       }
     }
 
@@ -649,7 +659,7 @@ bench_runner::run()
       if (runtime_loop % repeats == 0) 
         Warning("runtime time left:%d ms, bool:%d",runtime_loop * interval, runtime_loop>0);
       if (runtime_loop % repeats == 0) 
-        std::cout<<std::flush;
+        mako::benchmark_cout() << std::flush;
       runtime_loop--;
       std::this_thread::sleep_for(std::chrono::milliseconds(interval));
 #if defined(COCO)
@@ -683,44 +693,50 @@ bench_runner::run()
    sync_util::sync_logger::client_control2(3, benchConfig.getShardIndex());
   }
   if (benchConfig.getRunMode() == RUNMODE_TIME) {
-    cerr << "[SHUTDOWN] Setting running=false to stop database worker threads" << endl;
+    mako::benchmark_cerr()
+        << "[SHUTDOWN] Setting running=false to stop database worker threads"
+        << endl;
     benchConfig.setRunning(false);  // stop database worker threads
   }
-  cerr << "[SHUTDOWN] Calling first stop() to stop client transports" << endl;
+  mako::benchmark_cerr()
+      << "[SHUTDOWN] Calling first stop() to stop client transports" << endl;
   stop(); // stop rpc clients (unblocks outstanding RPCs)
-  cerr << "[SHUTDOWN] First stop() completed" << endl;
+  mako::benchmark_cerr() << "[SHUTDOWN] First stop() completed" << endl;
   __sync_synchronize();
 
-  cerr << "[SHUTDOWN] Joining " << BenchmarkConfig::getInstance().getNthreads() << " worker threads" << endl;
+  mako::benchmark_cerr() << "[SHUTDOWN] Joining "
+                         << BenchmarkConfig::getInstance().getNthreads()
+                         << " worker threads" << endl;
   for (size_t i = 0; i < BenchmarkConfig::getInstance().getNthreads(); i++) {
-     cerr << "[SHUTDOWN] Joining worker " << i << endl;
+     mako::benchmark_cerr() << "[SHUTDOWN] Joining worker " << i << endl;
      workers[i]->join();
-     cerr << "[SHUTDOWN] Worker " << i << " joined" << endl;
+     mako::benchmark_cerr() << "[SHUTDOWN] Worker " << i << " joined" << endl;
   }
-  cerr << "[SHUTDOWN] All workers joined" << endl;
+  mako::benchmark_cerr() << "[SHUTDOWN] All workers joined" << endl;
 
   // Stop server transports AFTER workers exit to ensure they can finish processing
-  cerr << "[SHUTDOWN] Calling stop_rpc_server()" << endl;
+  mako::benchmark_cerr() << "[SHUTDOWN] Calling stop_rpc_server()" << endl;
   mako::stop_rpc_server();
-  cerr << "[SHUTDOWN] stop_rpc_server() completed" << endl;
+  mako::benchmark_cerr() << "[SHUTDOWN] stop_rpc_server() completed" << endl;
 
-  cerr << "[SHUTDOWN] Calling second stop()" << endl;
+  mako::benchmark_cerr() << "[SHUTDOWN] Calling second stop()" << endl;
   stop(); // ensure transports are torn down after workers exit
-  cerr << "[SHUTDOWN] Second stop() completed" << endl;
+  mako::benchmark_cerr() << "[SHUTDOWN] Second stop() completed" << endl;
   const unsigned long elapsed_nosync = t_nosync.lap()-1e6; // take 1 second off due to sleep(1) within bench_worker::run()
   Warning("TPCC_BENCH_MEASURE_END");
-  cerr << "[SHUTDOWN] Calling do_txn_finish()" << endl;
+  mako::benchmark_cerr() << "[SHUTDOWN] Calling do_txn_finish()" << endl;
   db->do_txn_finish(); // waits for all worker txns to persist
-  cerr << "[SHUTDOWN] do_txn_finish() completed" << endl;
+  mako::benchmark_cerr() << "[SHUTDOWN] do_txn_finish() completed" << endl;
   //  usleep(100000);
   size_t n_commits = 0;
   size_t n_aborts = 0;
   uint64_t latency_numer_us = 0;
   uint64_t latency_numer_us_remote = 0;
-  cerr << "--- n_commits per partition ---" << endl;
+  mako::benchmark_cerr() << "--- n_commits per partition ---" << endl;
   for (size_t i = 0; i < BenchmarkConfig::getInstance().getNthreads(); i++) {
     n_commits += workers[i]->get_ntxn_commits();
-    cerr << " par_id: " << i << ", n_commits: " << workers[i]->get_ntxn_commits() << endl;
+    mako::benchmark_cerr() << " par_id: " << i << ", n_commits: "
+                           << workers[i]->get_ntxn_commits() << endl;
     n_aborts += workers[i]->get_ntxn_aborts();
     latency_numer_us += workers[i]->get_latency_numer_us();
     latency_numer_us_remote += workers[i]->get_latency_numer_us_remote();
@@ -732,7 +748,7 @@ bench_runner::run()
   if (sync_util::sync_logger::hist_timestamp_vec.find(0) != sync_util::sync_logger::hist_timestamp_vec.end()) { 
     auto w = sync_util::sync_logger::hist_timestamp_vec[0][0];
     // w -> timestamp * 10 + epoch
-    cerr << "--- failed shard: " << w << endl;
+    mako::benchmark_cerr() << "--- failed shard: " << w << endl;
     // time in ms; <tput; good tput>; we do this analysis only up to the failure dection point
     unordered_map<uint64_t, std::pair<uint64_t, uint64_t>> merged_rollback_tracker;
     for (size_t i = 0; i < BenchmarkConfig::getInstance().getNthreads(); i++) {
@@ -756,8 +772,9 @@ bench_runner::run()
     });
 
     for (const auto& entry : vec) {
-        std::cout << "Key: " << entry.first
-                  << ", Value: (" << entry.second.first << ", " << entry.second.second << ")\n";
+        mako::benchmark_cout()
+            << "Key: " << entry.first << ", Value: (" << entry.second.first
+            << ", " << entry.second.second << ")\n";
     }
   }
 #endif
@@ -818,6 +835,7 @@ bench_runner::run()
     const double delta_mb = double(delta)/1048576.0;
     const double size_delta_mb = double(size_delta)/1048576.0;
     map<string, counter_data> ctrs = event_counter::get_all_counters();
+    auto diagnostics = mako::benchmark_cerr();
 
     // cerr << "--- table statistics ---" << endl;
     // for (map<string, abstract_ordered_index *>::iterator it = open_tables.begin();
@@ -832,36 +850,36 @@ bench_runner::run()
     //     cerr << " (+" << delta << " records)" << endl;
     // }
 #ifdef ENABLE_BENCH_TXN_COUNTERS
-    cerr << "--- txn counter statistics ---" << endl;
+    diagnostics << "--- txn counter statistics ---" << endl;
     {
       // take from thread 0 for now
       abstract_db::txn_counter_map agg = workers[0]->get_local_txn_counters();
       for (auto &p : agg) {
-        cerr << p.first << ":" << endl;
+        diagnostics << p.first << ":" << endl;
         for (auto &q : p.second)
-          cerr << "  " << q.first << " : " << q.second << endl;
+          diagnostics << "  " << q.first << " : " << q.second << endl;
       }
     }
 #endif
-    cerr << "--- benchmark statistics ---" << endl;
-    cerr << "runtime: " << elapsed_sec << " sec" << endl;
-    cerr << "memory delta: " << delta_mb  << " MB" << endl;
-    cerr << "n_commits: " << n_commits << endl;
-    cerr << "latency_numer_us: " << latency_numer_us << endl;
-    cerr << "latency_numer_us_remote: " << latency_numer_us_remote << endl;
-    cerr << "memory delta rate: " << (delta_mb / elapsed_sec)  << " MB/sec" << endl;
-    cerr << "logical memory delta: " << size_delta_mb << " MB" << endl;
-    cerr << "logical memory delta rate: " << (size_delta_mb / elapsed_sec) << " MB/sec" << endl;
-    cerr << "agg_nosync_throughput: " << agg_nosync_throughput << " ops/sec" << endl;
-    cerr << "avg_nosync_per_core_throughput: " << avg_nosync_per_core_throughput << " ops/sec/core" << endl;
-    cerr << "agg_throughput: " << agg_throughput << " ops/sec" << endl;
-    cerr << "avg_per_core_throughput: " << avg_per_core_throughput << " ops/sec/core" << endl;
-    cerr << "agg_persist_throughput: " << agg_persist_throughput << " ops/sec" << endl;
-    cerr << "avg_per_core_persist_throughput: " << avg_per_core_persist_throughput << " ops/sec/core" << endl;
-    cerr << "avg_latency: " << avg_latency_ms << " ms" << endl;
-    cerr << "avg_persist_latency: " << avg_persist_latency_ms << " ms" << endl;
-    cerr << "agg_abort_rate: " << agg_abort_rate << " aborts/sec" << endl;
-    cerr << "avg_per_core_abort_rate: " << avg_per_core_abort_rate << " aborts/sec/core" << endl;
+    diagnostics << "--- benchmark statistics ---" << endl;
+    diagnostics << "runtime: " << elapsed_sec << " sec" << endl;
+    diagnostics << "memory delta: " << delta_mb  << " MB" << endl;
+    diagnostics << "n_commits: " << n_commits << endl;
+    diagnostics << "latency_numer_us: " << latency_numer_us << endl;
+    diagnostics << "latency_numer_us_remote: " << latency_numer_us_remote << endl;
+    diagnostics << "memory delta rate: " << (delta_mb / elapsed_sec)  << " MB/sec" << endl;
+    diagnostics << "logical memory delta: " << size_delta_mb << " MB" << endl;
+    diagnostics << "logical memory delta rate: " << (size_delta_mb / elapsed_sec) << " MB/sec" << endl;
+    diagnostics << "agg_nosync_throughput: " << agg_nosync_throughput << " ops/sec" << endl;
+    diagnostics << "avg_nosync_per_core_throughput: " << avg_nosync_per_core_throughput << " ops/sec/core" << endl;
+    diagnostics << "agg_throughput: " << agg_throughput << " ops/sec" << endl;
+    diagnostics << "avg_per_core_throughput: " << avg_per_core_throughput << " ops/sec/core" << endl;
+    diagnostics << "agg_persist_throughput: " << agg_persist_throughput << " ops/sec" << endl;
+    diagnostics << "avg_per_core_persist_throughput: " << avg_per_core_persist_throughput << " ops/sec/core" << endl;
+    diagnostics << "avg_latency: " << avg_latency_ms << " ms" << endl;
+    diagnostics << "avg_persist_latency: " << avg_persist_latency_ms << " ms" << endl;
+    diagnostics << "agg_abort_rate: " << agg_abort_rate << " aborts/sec" << endl;
+    diagnostics << "avg_per_core_abort_rate: " << avg_per_core_abort_rate << " aborts/sec/core" << endl;
     //cerr << "txn breakdown: " << format_list(agg_txn_counts.begin(), agg_txn_counts.end()) << endl;
 
     string txn_w1[] = {"NewOrder", "Payment", "Delivery", "OrderStatus", "StockLevel"};
@@ -872,12 +890,15 @@ bench_runner::run()
         const double local_aborts = double(agg_txn_counts[txn_w1[i]+"_Local_abort"]);
         const double local_commit_nano = double(agg_txn_counts[txn_w1[i]+"_Local_NANO"]);
         const double local_abort_nano = double(agg_txn_counts[txn_w1[i]+"_Local_NANO_abort"]);
-        cerr << "  " << txn_w1[i] << "_local_commit_latency: "
-             << safe_div(local_commit_nano, local_commits) / 1000000.0 << " ms" << endl;
-        cerr << "  " << txn_w1[i] << "_local_abort_latency: "
-             << safe_div(local_abort_nano, local_aborts) / 1000000.0 << " ms" << endl;
-        cerr << "  " << txn_w1[i] << "_local_abort_ratio: "
-             << safe_div(local_aborts, local_commits + local_aborts) << endl;
+        diagnostics << "  " << txn_w1[i] << "_local_commit_latency: "
+                    << safe_div(local_commit_nano, local_commits) / 1000000.0
+                    << " ms" << endl;
+        diagnostics << "  " << txn_w1[i] << "_local_abort_latency: "
+                    << safe_div(local_abort_nano, local_aborts) / 1000000.0
+                    << " ms" << endl;
+        diagnostics << "  " << txn_w1[i] << "_local_abort_ratio: "
+                    << safe_div(local_aborts, local_commits + local_aborts)
+                    << endl;
       }
     }
 
@@ -892,26 +913,29 @@ bench_runner::run()
         const double remote_abort_nano = double(agg_txn_counts[txn_w1[i]+"_Remote_NANO_abort"]);
         const double remote_total = remote_commits + remote_aborts;
         const double txn_total = local_commits + local_aborts + remote_total;
-        cerr << "  " << txn_ratio[i] << "_remote_ratio: "
-             << 100 * safe_div(remote_total, txn_total) << " %"<< endl;
-        cerr << "  " << txn_ratio[i] << "_remote_abort_ratio: "
-             << 100 * safe_div(remote_aborts, remote_total) << " %" << endl;
-        cerr << "  " << txn_w1[i] << "_remote_commit_latency: "
-             << safe_div(remote_commit_nano, remote_commits) / 1000000.0 << " ms" << endl;
-        cerr << "  " << txn_w1[i] << "_remote_abort_latency: "
-             << safe_div(remote_abort_nano, remote_aborts) / 1000000.0 << " ms" << endl;
+        diagnostics << "  " << txn_ratio[i] << "_remote_ratio: "
+                    << 100 * safe_div(remote_total, txn_total) << " %" << endl;
+        diagnostics << "  " << txn_ratio[i] << "_remote_abort_ratio: "
+                    << 100 * safe_div(remote_aborts, remote_total) << " %"
+                    << endl;
+        diagnostics << "  " << txn_w1[i] << "_remote_commit_latency: "
+                    << safe_div(remote_commit_nano, remote_commits) / 1000000.0
+                    << " ms" << endl;
+        diagnostics << "  " << txn_w1[i] << "_remote_abort_latency: "
+                    << safe_div(remote_abort_nano, remote_aborts) / 1000000.0
+                    << " ms" << endl;
       }
     }
 
-    cerr << "--- system counters (for benchmark) ---" << endl;
+    diagnostics << "--- system counters (for benchmark) ---" << endl;
     for (map<string, counter_data>::iterator it = ctrs.begin();
          it != ctrs.end(); ++it)
-      cerr << it->first << ": " << it->second << endl;
-    cerr << "--- perf counters (if enabled, for benchmark) ---" << endl;
+      diagnostics << it->first << ": " << it->second << endl;
+    diagnostics << "--- perf counters (if enabled, for benchmark) ---" << endl;
     PERF_EXPR(scopedperf::perfsum_base::printall());
-    cerr << "--- allocator stats ---" << endl;
+    diagnostics << "--- allocator stats ---" << endl;
     ::allocator::DumpStats();
-    cerr << "---------------------------------------" << endl;
+    diagnostics << "---------------------------------------" << endl;
 
 #ifdef USE_JEMALLOC
     // cerr << "dumping heap profile..." << endl;
@@ -924,12 +948,14 @@ bench_runner::run()
 #endif
   }
 
-  cerr << "--- system counters for n_commits ---" << endl;
+  mako::benchmark_cerr() << "--- system counters for n_commits ---" << endl;
 #if defined(COCO)
   for (int i = 0; i < samplingTPUT.size(); i++) {
-    cerr << "Time: " << samplingTPUT[i].first << ", n_commits: " << samplingTPUT[i].second << endl;
+    mako::benchmark_cerr() << "Time: " << samplingTPUT[i].first
+                           << ", n_commits: " << samplingTPUT[i].second
+                           << endl;
   }
-  std::cout<<"DONE"<<std::endl;
+  mako::benchmark_cout() << "DONE" << std::endl;
 #endif
 
   if (BenchmarkConfig::getInstance().getEmitTpccResult()) {
@@ -976,7 +1002,7 @@ bench_runner::run()
     emit_tpcc_result_line(std::move(result).str());
   }
 
-  cout.flush();
+  mako::benchmark_cout().flush();
 
   for (map<string, abstract_ordered_index *>::iterator it = open_tables.begin();
        it != open_tables.end(); ++it) {
@@ -1043,5 +1069,6 @@ void
 bench_worker::print_stats() const
 {
   for (int i=0; i<sampling_remote_calls.size(); i++)
-    std::cout << "[work_id:" << worker_id << "]:" << sampling_remote_calls[i] << std::endl;
+    mako::benchmark_cout() << "[work_id:" << worker_id << "]:"
+                           << sampling_remote_calls[i] << std::endl;
 }

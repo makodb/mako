@@ -14,6 +14,7 @@
 #include "silo_runtime.h"
 #include "core.h"
 #include "macros.h"
+#include "spinbarrier.h"
 #include "masstree/masstree_context.h"
 #include "masstree/kvthread.hh"
 #include "mako/masstree_btree.h"
@@ -338,6 +339,42 @@ TEST(SiloRuntimeLifetimeTest, LazyServicesHaveBoundedTeardown) {
         (void)runtime.as_ptr()->get_rcu();
         (void)runtime.as_ptr()->get_ticker();
     }
+}
+
+TEST(CoreStorageTest, LazyPerCoreStorageHonorsOverAlignment) {
+    struct alignas(128) OverAlignedValue {
+        uint64_t value;
+    };
+
+    percore_lazy<OverAlignedValue> values;
+    OverAlignedValue& value = values.get(0, OverAlignedValue{42});
+
+    EXPECT_EQ(reinterpret_cast<uintptr_t>(&value) % alignof(OverAlignedValue),
+              0u);
+    EXPECT_EQ(value.value, 42u);
+    EXPECT_EQ(values.view(0), &value);
+}
+
+TEST(SpinBarrierTest, WaitingThreadObservesEveryParticipantWrite) {
+    constexpr size_t thread_count = 8;
+    spin_barrier barrier(thread_count);
+    std::array<uint64_t, thread_count> published{};
+    std::vector<std::thread> workers;
+    workers.reserve(thread_count);
+
+    for (size_t index = 0; index < thread_count; ++index) {
+        workers.emplace_back([&, index] {
+            published[index] = index + 1;
+            barrier.count_down();
+        });
+    }
+
+    barrier.wait_for();
+    for (size_t index = 0; index < thread_count; ++index)
+        EXPECT_EQ(published[index], index + 1);
+
+    for (auto& worker : workers)
+        worker.join();
 }
 
 TEST(MasstreeContextEpochTest, ConcurrentAdvanceIsMonotonicAndIndependent) {

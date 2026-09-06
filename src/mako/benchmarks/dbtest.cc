@@ -345,7 +345,8 @@ static void handle_new_config_format(const string& site_name)
   auto& benchConfig = BenchmarkConfig::getInstance();
   auto site = benchConfig.getConfig()->GetSiteByName(site_name);
   if (!site) {
-    cerr << "[ERROR] Site " << site_name << " not found in configuration" << endl;
+    mako::benchmark_cerr() << "[ERROR] Site " << site_name
+                           << " not found in configuration" << endl;
     exit(1);
   }
 
@@ -390,7 +391,8 @@ static bool run_workers_multi_shard(const vector<int>& shard_indices)
   for (int shard_idx : shard_indices) {
     ShardContext* ctx = benchConfig.getShardContext(shard_idx);
     if (!ctx || !ctx->runtime.get() || !ctx->db) {
-      cerr << "[ERROR] Incomplete ShardContext for shard " << shard_idx << endl;
+      mako::benchmark_cerr() << "[ERROR] Incomplete ShardContext for shard "
+                             << shard_idx << endl;
       return false;
     }
   }
@@ -540,8 +542,10 @@ main(int argc, char **argv)
   benchConfig.setEmitTpccResult(true);
 #else
   if (benchConfig.getStorageEngine() != "cpp") {
-    cerr << "[ERROR] This dbtest binary has no Rust STO TPC-C adapter; "
-            "use the sto_tpcc_bench target." << endl;
+    mako::benchmark_cerr()
+        << "[ERROR] This dbtest binary has no Rust STO TPC-C adapter; "
+           "use the sto_tpcc_bench target."
+        << endl;
     return 2;
   }
 #endif
@@ -571,7 +575,8 @@ main(int argc, char **argv)
   // slow-exit teardown close the same table pointers more than once.
   if (!local_shards_str.empty()) {
     if (benchConfig.getConfig() == nullptr) {
-      cerr << "[ERROR] --local-shards requires --shard-config" << endl;
+      mako::benchmark_cerr()
+          << "[ERROR] --local-shards requires --shard-config" << endl;
       return 2;
     }
     vector<int> local_shards;
@@ -580,15 +585,18 @@ main(int argc, char **argv)
                             benchConfig.getConfig()->nshards,
                             local_shards,
                             parse_error)) {
-      cerr << "[ERROR] Invalid --local-shards: " << parse_error << endl;
+      mako::benchmark_cerr() << "[ERROR] Invalid --local-shards: "
+                             << parse_error << endl;
       return 2;
     }
     const size_t configured_shards =
         static_cast<size_t>(benchConfig.getConfig()->nshards);
     if (local_shards.size() > 1 && local_shards.size() != configured_shards) {
-      cerr << "[ERROR] --local-shards cannot select multiple but not all "
-              "configured shards; hybrid local/remote multi-shard topology is "
-              "unsupported" << endl;
+      mako::benchmark_cerr()
+          << "[ERROR] --local-shards cannot select multiple but not all "
+             "configured shards; hybrid local/remote multi-shard topology is "
+             "unsupported"
+          << endl;
       return 2;
     }
     benchConfig.getConfig()->local_shard_indices = local_shards;
@@ -609,8 +617,9 @@ main(int argc, char **argv)
   // in depth, but CLI misuse must fail cleanly before allocating a database.
   if (benchConfig.getStorageEngine() == "rust" &&
       (benchConfig.getNshards() != 1 || benchConfig.getIsReplicated())) {
-    cerr << "[ERROR] Rust STO TPC-C comparison supports one non-replicated shard"
-         << endl;
+    mako::benchmark_cerr()
+        << "[ERROR] Rust STO TPC-C comparison supports one non-replicated shard"
+        << endl;
     return 2;
   }
 #endif
@@ -663,7 +672,8 @@ main(int argc, char **argv)
 
     // Initialize and start transports for all local shards
     if (!initMultiShardTransports(benchConfig.getConfig()->local_shard_indices)) {
-      cerr << "[ERROR] Failed to initialize multi-shard transports" << endl;
+      mako::benchmark_cerr()
+          << "[ERROR] Failed to initialize multi-shard transports" << endl;
       return 1;
     }
     restore_default_termination_signals();

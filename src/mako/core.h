@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <new>
 #include <sys/types.h>
 #include "macros.h"
 #include "util.h"
@@ -185,15 +186,23 @@ protected:
     return (const util::aligned_padded_elem<T, Pedantic> *) &bytes_[0];
   }
 
-  char bytes_[sizeof(util::aligned_padded_elem<T, Pedantic>) * NMAXCORES];
+  alignas(util::aligned_padded_elem<T, Pedantic>)
+      unsigned char bytes_[sizeof(util::aligned_padded_elem<T, Pedantic>) *
+                           NMAXCORES];
 };
 
 namespace private_ {
   template <typename T>
-  struct buf {
-    char bytes_[sizeof(T)];
-    inline T * cast() { return (T *) &bytes_[0]; }
-    inline const T * cast() const { return (T *) &bytes_[0]; }
+  struct alignas(T) buf {
+    unsigned char bytes_[sizeof(T)];
+    inline T * cast()
+    {
+      return std::launder(reinterpret_cast<T *>(&bytes_[0]));
+    }
+    inline const T * cast() const
+    {
+      return std::launder(reinterpret_cast<const T *>(&bytes_[0]));
+    }
   };
 }
 
