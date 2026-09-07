@@ -1,43 +1,102 @@
 # Mako cache Milestone 1 acceptance
 
-Status: **REVISION-1 PERFORMANCE GATE FAILED; FINAL ACCEPTANCE BLOCKED**.
-Functional and mutation verification passed, but the current HLC revision
-exceeded both predeclared cycle-regression limits. The canonical all-in-one
-hook CI gate also remains pending. This record does not claim final Milestone 1
-acceptance.
+Status: **MILESTONE 1 SINGLE-MACHINE LIBRARY ACCEPTED WITH A PERFORMANCE
+WAIVER**.
 
-The current implementation reports C ABI revision 1 and uses v5 and v6 cache
-records with the 16-byte HLC timestamp. Its completed functional verification
-is recorded below. Later sections preserve production, hook-enabled, mutation,
-and comparative results for frozen pre-HLC candidates. Their counts,
-fingerprints, reports, and measurements remain historical evidence and do not
-accept the current source.
+Release candidate `e282a44b2f638c5e3521fa75f1e203d6411b5cfb` closes the
+revision-1 correctness, hook, mutation, conformance, sanitizer, Miri, health,
+lifecycle, and incremental-performance gates. Its health and retry hardening
+landed in `85495f8ddf9c0c6a8672eefb43b9f584d8527607`; the release follow-up
+finalizes ABI capability negotiation and public contract wording without
+changing the production write path measured below. The earlier HLC-introduction
+comparison still fails its predeclared performance limits; that result is
+preserved below and accepted only through the explicit, scoped waiver in this
+record.
+
+This is acceptance of the embeddable single-machine cache library under its
+volatile-ACK, asynchronous RocksDB contract. It is not acceptance of a
+production network service, durable acknowledgements, bounded resident data or
+log history, multiple cache namespaces, or distributed transactions.
+
+The accepted implementation reports C ABI revision 1 and uses v5 and v6 cache
+records with the 16-byte HLC timestamp. The
+[revision-1 ABI contract](reference/mako-local-abi-v1.md) is normative. Later
+sections preserve production, hook-enabled, mutation, and comparative results
+for frozen pre-HLC candidates. Their counts, fingerprints, reports, and
+measurements remain historical evidence and do not substitute for the
+current-candidate evidence here.
 
 ## Current revision-1 verification
 
-The revision-1 functional run completed with these results:
+The frozen revision-1 implementation completed these gates:
 
-- The native suite passed 123 of 123 tests.
-- `mako-cache` passed 159 unit tests, 23 integration tests, and three doctests.
+- The hook-enabled native suite passed 123 of 123 tests. The production-default
+  profile passed 93 of 94 tests and intentionally skipped the one test that
+  requires the commit-observer hook.
+- `mako-cache` passed 165 unit tests, 23 integration tests, and three doctests.
 - The native-backed `mako-local` library, integration, and documentation suites
   passed. The fake-ABI suites also passed.
 - `mako-history` passed 25 application tests and 12 base transaction-oracle
   tests.
 - The release Cargo check passed.
 - The strict native fingerprint, symbol, C11, and C++ conformance gates passed.
+  The production fingerprint is
+  `d43a6c238ba7c621705de0716f0f007da7d10f170a82c3ff28237019980effba`.
+- The canonical `./ci/ci.sh makoLocalHookGates` entry point passed, including
+  all 12 mutation cases with zero survivors or harness errors. The hook-enabled
+  fingerprint is
+  `f0c964a3c475562ec7247f3f9a537e8e80e5fd3cbbd81f10bb66324b117d7b47`.
+- ASan/LSan, strict TSan with the reviewed STO/MassTrans suppressions, and
+  UBSan each passed their native boundary suites with no unsuppressed
+  diagnostic. These gates exercise the native boundary and wrapper; they are
+  not a claim that sanitizer instrumentation covered the Rust cache health
+  implementation.
+- Pinned Miri passed all 18 fake-ABI ownership tests without undefined
+  behavior.
 
-The combined timestamp mutation campaign killed all 12 mutants, with zero
-survivors and zero harness errors. Its first full run killed 11 mutants and
-exposed a weak recovery-floor oracle. The test
+All current gate transcripts were produced from a clean detached checkout of
+`e282a44b2f638c5e3521fa75f1e203d6411b5cfb`, which remained clean after the
+runs. Their SHA-256 identities are:
+
+- production ABI/conformance:
+  `6e75cdad4d1424775fbd38435aa8157366a7903819b5df25373cd7c08ecac972`.
+- canonical hook gate:
+  `fc8e5fe9c524e536f1b5e206928a4aa3615b6f9432e55d0e09f9c246acda3b73`.
+- ASan/LSan:
+  `8e59551b5df6296b8c953f6b0fb80e4d329502146474bcfcca8922e410cff8ea`.
+- UBSan:
+  `492eb0b68a1610bd2a6c1e57715c8dd1f268d8e1e1087a2047dd4338198fe0ff`.
+- strict TSan:
+  `6648d1f9e302aa24565eda8f4751a14af425957eb6592323df16968f8ebba886`.
+- pinned Miri:
+  `5698fd63752095167a0ab60c618046bfb0efa4c2cccca3d1a8d9bd88cb229826`.
+- mutation report:
+  `10f23a955d9ed312d92ad5a339f3f59265a38270d0f3fb521a2d1385e40ea065`.
+
+The exact release rerun killed all 12 timestamp mutants, with zero survivors
+and zero harness errors. Its before-and-after source tree remained unchanged at
+`d86522d90b110b931ae6f5f915c2cb4bab75d5452d34fbfa294d4e502c83e603`.
+During development, the first full run killed 11 mutants and exposed a weak
+recovery-floor oracle. The test
 `recovery_advances_mako_timestamp_past_the_recovered_maximum` was strengthened
 with a future but representable HLC. A focused rerun then killed
-`missing-recovery-clock-floor`. The campaign's before-and-after source-integrity
-check matched.
+`missing-recovery-clock-floor`.
 
-These results close functional and mutation verification. Phase 1G eviction
-and all distributed work remain deferred.
+The health-hardening suite additionally verifies coherent coordinator
+retry/failure telemetry within each status snapshot, exact full-batch retry
+after ambiguous RocksDB errors and unwind-build backend panics, cross-lane
+exclusion until that retry resolves, active failure-sequence accounting,
+backend-stall visibility while status remains responsive, and successful
+drain/join behavior. Runtime liveness and queue progress are sampled separately
+and may conservatively disagree while a composite status value is assembled.
+In the workspace release profile, `panic = "abort"`: ordinary RocksDB errors
+still use exact retry, while a panic terminates the process for
+supervisor-driven recovery.
 
-### Current HLC performance result
+These results close the scoped functional, safety, mutation, and lifecycle
+verification. Phase 1G eviction and all distributed work remain deferred.
+
+### Historical HLC-introduction performance result and waiver
 
 The controlled `zoo-002` comparison used the concurrent cache write-ACK path,
 disabled CPU boost, pinned workers, asynchronous RocksDB writeback with WAL
@@ -56,8 +115,8 @@ paired repetitions covered 1, 4, 8, 16, 24, and 32 workers:
 
 The maximum cell regression is 8.68%, above the 5% limit. The geometric mean
 of paired cycle ratios regresses 3.57%, above the 3% limit. The result is
-therefore a failure. The HLC arm also executes about 128 to 130 more
-instructions per commit at every worker count.
+therefore a failed measurement, not a pass. The HLC arm also executes about
+128 to 130 more instructions per commit at every worker count.
 
 The planned five-repetition acceptance sweep could not be completed because
 the host's snap LXD daemon entered a persistent restart loop. A lifecycle-aware
@@ -65,10 +124,49 @@ probe subsequently observed about 1.8 aggregate CPU cores and more than 80
 short-lived `lxd` processes in one 45-second interval, work that the original
 two-snapshot screen could not account for. Consequently these three complete
 repetitions are decisive rejection evidence, but they cannot establish
-acceptance for a future optimized candidate. Full arrays, build hashes,
+acceptance for a future optimized candidate. Recorded arrays, build hashes,
 protocol details, and qualifications are in the
 [machine-readable HLC comparison](benchmarks/mako-cache-hlc-ab-zoo002-20260907.json),
 SHA-256 `924574abf93fbcdc3430301a440835ff9a768fdf012c76433a374acbc96794d5`.
+
+The failed result is waived for Milestone 1 by owner **Shuai Mu** on
+**2026-09-07**. The rationale is that the HLC is required for stable replay and
+the planned distributed timestamp protocol; the measured cost was explicitly
+accepted for this first single-machine library. The waiver applies only to the
+incremental HLC cost in the volatile write-ACK benchmark. It does not waive a
+correctness, safety, durability, or service-integration gate. Before a
+distributed or network-service production cutover, repeat this A/B protocol on
+a clean dedicated host and either meet the original limits or record a new
+release decision after profiling the physical-time sampling/conversion path.
+
+### Final health-hardening performance result
+
+The final five-repetition `zoo-002` sweep compared health-hardening candidate
+`85495f8dd` with the HLC baseline `a71dba682` at 1, 4, 8, 16, 24, and 32
+workers. It used the same concurrent cache write-ACK path, WAL enabled with
+`sync=false`, disabled boost, exact affinity, per-thread PMU counters, a
+lifecycle-aware LXD interference screen, and rotated arm order. The
+predeclared limits were at most 5% paired cycle regression in any cell and at
+most 3% geometric-mean regression across cells. Release follow-up `e282a44b2`
+adds test-clock feature negotiation and revises diagnostics and documentation;
+it does not alter this production write path.
+
+| Workers | Candidate throughput vs HLC | Candidate cycles/txn |
+| ---: | ---: | ---: |
+| 1 | 99.22% | +0.88% |
+| 4 | 99.07% | +0.85% |
+| 8 | 96.70% | +3.10% |
+| 16 | 97.82% | +2.44% |
+| 24 | 98.57% | +1.70% |
+| 32 | 98.49% | +1.82% |
+
+The maximum cell regression was 3.10% and the geometric-mean regression was
+1.80%, so this incremental gate passed. Instructions per transaction were
+effectively unchanged. The complete accepted arrays, protocol, binary and
+runner identities, rejection accounting, and artifact hashes are in the
+[machine-readable health comparison](benchmarks/mako-cache-health-ab-zoo002-20260907.json).
+Its SHA-256 is
+`d405824c2bab58cbdd7ffa228496920c7ebacde1f27cb419d0b5195f3decc1da`.
 
 ## Current per-worker lane design
 
@@ -87,13 +185,13 @@ coordinator's recorded winner for that key. Batches from different lanes may
 therefore reach RocksDB out of timestamp order without letting a stale value or
 delete win.
 
-`wait_applied()` snapshots each initialized lane and drains every captured
-frontier. The public acknowledged and applied sequence values are aggregate
-record counts. `AppliedWatermark::mako_timestamp()` is the greatest applied
-timestamp. These values do not describe a contiguous global serialization
-prefix and do not claim disk sync. A post-bind unknown outcome or permanent
-record failure latches cache-wide fail-stop state, retains the affected lane's
-obligation, and rejects work in every lane.
+A successful `wait_applied()` snapshots each initialized lane and drains every
+captured frontier. The public acknowledged and applied sequence values are
+aggregate record counts. `AppliedWatermark::mako_timestamp()` is the greatest
+applied timestamp. These values do not describe a contiguous global
+serialization prefix and do not claim disk sync. A post-bind unknown outcome
+or permanent record failure latches cache-wide fail-stop state, retains the
+affected lane's obligation, and rejects work in every lane.
 
 The current recovery contract depends on retaining all commit logs, including
 deletes, so reopen can reconstruct the per-key timestamp index. Log pruning is
@@ -105,11 +203,16 @@ The release surface is a library component. A service host must recover the
 database before reporting ready, use a fixed pool of long-lived STO workers,
 and poll `Db::status()` while serving. `Degraded` identifies active retry or a
 backend call older than its stall threshold; `Unhealthy` identifies a stopped
-writer or latched fail-stop state. The host must stop admission before clean
-shutdown, join request workers, release all shared database owners, and call
-`Db::close()`. That call drains and joins the writer but does not fsync the WAL.
-If a RocksDB call never returns, status remains available, but an external
-supervisor must enforce the shutdown deadline. `Drop` is not the production
+writer or latched fail-stop state. Readiness must also include
+`pool.metrics().healthy_workers > 0`: `quarantined_workers`
+is process-wide, informational, and does not affect cache health. The host must
+stop admission before shutdown, join request workers, release all shared
+database owners, and call `Db::close()`. A successful close drains and joins
+the writer but does not fsync the WAL. An error after the synchronous retry
+budget, or a supervisor timeout around a hung RocksDB call, is a failed
+shutdown and requires restart/recovery; the consuming close cannot be retried
+on that instance. Status remains available while a RocksDB call is hung, so an
+external supervisor can enforce that deadline. `Drop` is not the production
 shutdown protocol. No current network server embeds this component; a
 standalone local Rust host and the legacy distributed-server cutover remain
 later integration work.
@@ -747,21 +850,22 @@ form: Mako preserves all 163,840 increments through OCC retries, while both
 weaker baselines lose updates. Their throughput numbers are therefore context,
 not measurements of an equivalent transaction implementation.
 
-## Historical acceptance conclusion and deferred scope
+## Acceptance conclusion and deferred scope
 
 The pre-HLC per-worker lane revision passed its production, hook-enabled, Rust,
 mutation, and comparative gates for the single-machine asynchronous scope. The
-result remains useful evidence for the lane design, but it does not accept the
-current revision-1 HLC implementation. Revision-1 functional verification has
-now passed with the results recorded at the top of this document. The combined
-timestamp mutation campaign also killed all 12 mutants after strengthening one
-weak recovery-floor oracle, with zero survivors and zero harness errors. The
-revision-1 HLC performance gate failed, and the canonical all-in-one hook CI
-gate remains pending.
+result remains useful evidence for the lane design but does not substitute for
+the current revision-1 run. Release candidate `e282a44b2` subsequently passed
+the functional, canonical hook, mutation, safety, and health/lifecycle gates;
+its `85495f8dd` ancestor passed the final incremental-performance gate recorded
+at the top of this document. The HLC introduction still has a failed
+performance measurement and an explicit scoped waiver; it has not been
+relabeled as a passing gate.
 
-The historical acceptance deliberately does not claim:
+Milestone 1 acceptance deliberately does not claim:
 
-- cross-host reproducibility beyond this seven-repetition `zoo-002` run;
+- cross-host reproducibility beyond the documented host-local `zoo-002` runs
+  (including the historical 1,260-sample seven-repetition matrix);
 - recovery of an acknowledged but unapplied memory tail or an applied but
   unsynced RocksDB tail;
 - durable ACK or durable applied state (`sync=false` remains intentional);

@@ -209,9 +209,11 @@ Current implementation status:
 - [x] Explicit 1 KiB table/key and 1 MiB value limits, plus a key-weighted
       512-item transaction budget that returns terminal `TXN_TOO_LARGE` before
       STO can allocate beyond its embedded transaction set or hit its assert.
-- [x] Publish the revision-0 operation/status and ownership contract at
-      [Mako local C ABI revision 0](../reference/mako-local-abi-v0.md), including
-      the active/finished/quarantined/destroyed state model and the conservative
+- [x] Publish the initial revision-0 operation/status and ownership contract.
+      Revision 0 is now a [historical marker](../reference/mako-local-abi-v0.md);
+      its inherited rules and the HLC additions are normative in the current
+      [revision-1 contract](../reference/mako-local-abi-v1.md), including the
+      active/finished/quarantined/destroyed state model and conservative
       one-shot destroy rule for `WORKER_POISONED` and terminal uncertainty.
 - [x] Record a green from-scratch run of the executable contract gates below.
       Candidate `5a3dd3eaf` passed every row on 2026-08-25; the implementation,
@@ -285,12 +287,13 @@ non-opaque native engine.
       two names racing for one numeric ID. Closing the in-memory facade is not
       persistence: a later `db_open` starts a new logical database even though
       old native table allocations remain process-lifetime.
-- [x] Publish a normative revision-0 operation/status state table. The
-      [reference contract](../reference/mako-local-abi-v0.md) covers every
-      export and status, output initialization and ownership, transaction
-      disposition, worker health, and destroy requirements. It records the
-      current conditional all-output-pointer rule and requires both scan
-      feature bits before a raw scan call.
+- [x] Publish a normative operation/status state table. The current
+      [revision-1 reference contract](../reference/mako-local-abi-v1.md) covers
+      every export and status, output initialization and ownership,
+      transaction disposition, worker health, timestamp handoff, recovery
+      flooring, and destroy requirements. It retains the conditional
+      all-output-pointer rule and requires both scan feature bits before a raw
+      scan call.
 - [x] Generate Rust status identity from the header's canonical manifest and
       exhaustively classify every generated status for ordinary operations and
       commit disposition. Required-native open also checks every linked status
@@ -371,8 +374,8 @@ non-opaque native engine.
       errors and pool metrics. `LocalDb::open()` has already consumed one of
       the 460 process-lifetime slots, so a pool pre-rejects more than 459
       workers even in a fresh process; earlier attachments can reduce the
-      actual available count further. Clean shutdown drains accepted work and
-      joins every healthy worker.
+      actual available count further. A successful clean shutdown drains
+      accepted work and joins every healthy worker.
 - [x] Provide explicit conflict retry above the transaction API.
       `RetryPolicy` bounds whole-closure reruns, only `Conflict` is retried,
       attempt/conflict counts are returned, and external side effects remain
@@ -420,11 +423,14 @@ The implementation, reproducible commands, exact concurrency/benchmark
 methodology, retained artifacts, and execution status are maintained in
 [Mako local boundary gates](../mako-local-boundary-gates.md). The executable
 Phase 1A-1D evidence there predates the timestamp cutover and remains historical.
-The current source reports ABI revision 1. Its functional verification has
-passed. The combined timestamp mutation campaign also passed with all 12
-mutants killed, zero survivors, and zero harness errors. The revision-1
-performance sweep and canonical all-in-one hook CI gate remain pending. The
-linked records keep these current results separate from pre-HLC evidence.
+Release candidate `e282a44b2` reports ABI revision 1. Its functional
+verification, combined 12-mutant timestamp campaign, canonical all-in-one hook
+gate, sanitizer/Miri checks, and health/lifecycle suite passed. Its
+`85495f8dd` ancestor passed the incremental hardening performance sweep; the
+release follow-up changes capability negotiation and contract wording without
+changing the measured production write path. The linked records keep these
+results separate from pre-HLC evidence and preserve the failed
+HLC-introduction measurement plus its explicit Milestone 1 waiver.
 
 This intermediate boundary gate excludes RocksDB durability and eviction. By
 itself it is not completion of Milestone 1; distributed routing, 2PC,
@@ -437,7 +443,7 @@ RocksDB, **durable** under a future disk-sync rule, and **final** after the
 configured replication rule. The current milestone implements only the first
 three. No API may use the single word “committed” when those states differ.
 
-### 1E. Correct unbounded asynchronous write-back cache
+### 1E. Asynchronous write-back cache with unbounded resident state
 
 Phases 1A-1D establish an in-memory engine binding. This phase adds
 asynchronous application to a black-box RocksDB backend. It preserves logical
@@ -595,8 +601,10 @@ densely within its own lane. No ordering relationship exists between physical
 IDs in different lanes. `MakoTimestamp` remains separate from the current
 nonopaque row version.
 
-- This slice is unbounded and local: it has no value eviction, distributed
-  routing, 2PC, replication, or distributed-finality semantics.
+- This slice is local and keeps resident values and commit-log history
+  unbounded. Its writeback queues are capacity-bounded. It has no value
+  eviction, distributed routing, 2PC, replication, or distributed-finality
+  semantics.
 - The timestamp filter is currently an in-memory index over raw RocksDB values.
   Correct reopen therefore depends on retaining every commit log, including
   deletes, so recovery can rebuild the index. Milestone 1 never prunes those
@@ -666,12 +674,12 @@ WAL simulation, and interruption inside RocksDB are deferred to the later
 durability milestone. No private RocksDB C++ shim is required here.
 
 The historical Phase 1F correctness gate is complete for its named pre-HLC
-candidate. Current revision-1 functional verification has passed. The
-combined timestamp mutation campaign also killed all 12 mutants, with zero
-survivors and zero harness errors. The performance sweep and canonical
-all-in-one hook CI gate remain pending. The
+candidate. Release candidate `e282a44b2` completed the revision-1 functional,
+12-mutant, canonical hook, safety, and health/lifecycle gates; its `85495f8dd`
+ancestor completed the incremental performance gate. The
 [acceptance record](../mako-cache-milestone1-acceptance.md) keeps the old
-evidence separate from current status. Required revision-1 coverage includes:
+evidence and failed HLC-introduction measurement separate from current status.
+Required revision-1 coverage includes:
 
 - Pre-preparation plus every reachable cache abort or commit-cleanup path must
   have a fresh-worker quarantine assertion. The raw ABI must independently
@@ -727,10 +735,11 @@ old-versus-rewrite zoo-2 scaling run on 2026-08-29. The retained
 both evidence sets and their concurrent-write scaling limitations. The
 per-worker-lane implementation supersedes that rewrite's global publication
 queue. Its retained full-suite and W1/W4 evidence also predates the HLC
-cutover. Revision-1 functional verification has passed. Its performance sweep
-and canonical all-in-one hook CI gate remain pending. The combined timestamp
-mutation campaign has passed with all 12 mutants killed, zero survivors, and
-zero harness errors.
+cutover. Release candidate `e282a44b2` has passed revision-1 functional, hook,
+mutation, safety, and health/lifecycle verification; its `85495f8dd` ancestor
+passed incremental-performance verification without a production write-path
+change in the follow-up. The HLC-introduction comparison still fails its
+original limits and is accepted only by the scoped waiver in the linked record.
 
 - [x] **Historical foundation:** every Phase 1A-1D boundary gate is green,
       including the resolved
@@ -755,11 +764,12 @@ zero harness errors.
       low 48 bits. Reopen also accepts upper-zero untagged records, validates
       each lane, rejects duplicate timestamps, and replays whole transactions
       in Mako timestamp order.
-- [x] **Per-worker lane revision:** clean cache/process shutdown drains all
-      accepted transactions to RocksDB. A forced cache/process stop may discard
-      the acknowledged but unapplied in-memory tail. A machine or power failure
-      may additionally lose an applied RocksDB WAL tail that was accepted with
-      `sync=false`; `AppliedWatermark` never claims otherwise.
+- [x] **Per-worker lane revision:** a successful clean cache/process shutdown
+      drains all accepted transactions to RocksDB. A close error or supervisor
+      timeout requires restart/recovery. A forced cache/process stop may
+      discard the acknowledged but unapplied in-memory tail. A machine or power
+      failure may additionally lose an applied RocksDB WAL tail that was
+      accepted with `sync=false`; `AppliedWatermark` never claims otherwise.
 - [x] **Historical foundation:** on zoo-2, measure throughput, abort rate,
       retry-inclusive p50/p99,
       acknowledgement-to-application drain, recovery time, and log/backend
@@ -775,9 +785,11 @@ zero harness errors.
       hook-enabled native/cache suites passed, and the frozen zoo-2 W1/W4
       comparison confirmed near-constant scaling efficiency. The linked
       acceptance record retains exact commands, identities, logs, and samples.
-- [x] **Revision-1 functional validation:** the native suite passed 123 of 123
-      tests. `mako-cache` passed 159 unit tests, 23 integration tests, and three
-      doctests. The native-backed `mako-local` library, integration, and
+- [x] **Revision-1 functional validation:** the hook-enabled native suite
+      passed 123 of 123 tests. The production-default profile passed 93 of 94
+      and intentionally skipped its one hook-only test. `mako-cache` passed 165
+      unit tests, 23 integration tests, and three doctests. The native-backed
+      `mako-local` library, integration, and
       documentation suites passed, as did the fake-ABI suites. `mako-history`
       passed 25 application tests and 12 base transaction-oracle tests. The
       release Cargo check and strict fingerprint, symbol, C11, and C++ gates
@@ -789,8 +801,12 @@ zero harness errors.
       test was strengthened with a future but representable HLC, the focused
       rerun killed `missing-recovery-clock-floor`. The source-integrity check
       matched before and after the campaign.
-- [ ] **Revision-1 performance and hook acceptance:** run the performance sweep
-      and canonical all-in-one hook CI gate. Both remain pending.
+- [x] **Revision-1 hook and incremental-performance acceptance:** the canonical
+      all-in-one hook CI gate passed. The final five-repetition 1/4/8/16/24/32
+      worker sweep kept the health-hardening delta below both predeclared cycle
+      limits (3.10% maximum cell and 1.80% geometric mean). The separately
+      failed HLC-introduction result is preserved with an owner/date/scope
+      waiver and a clean-host follow-up requirement.
 
 ## Milestone 2: distributed Mako with C++ Silo participants
 
@@ -896,14 +912,16 @@ This section separates current implementation status from historical
 acceptance. Transactional scan chunks, scan read-your-writes, the explicit
 applied watermark, per-worker lanes, and HLC timestamp arbitration are
 implemented. Revision-1 functional verification has passed with 123 of 123
-native tests, 159 `mako-cache` unit tests, 23 integration tests, three doctests,
-25 `mako-history` application tests, and 12 base transaction-oracle tests. The
-native-backed and fake-ABI `mako-local` suites, release Cargo check, and strict
-fingerprint, symbol, C11, and C++ gates also passed. The performance sweep and
-canonical all-in-one hook CI gate remain pending. The combined timestamp
-mutation campaign killed all 12 mutants, with zero survivors and zero harness
-errors. Its first full run exposed one weak recovery-floor oracle after killing
-11. The strengthened future-HLC oracle killed the remaining
+hook-enabled native tests, 93 of 94 production-default native tests with one
+intentional hook-only skip, 165 `mako-cache` unit tests, 23 integration tests,
+three doctests, 25 `mako-history` application tests, and 12 base
+transaction-oracle tests. The
+native-backed and fake-ABI `mako-local` suites, release Cargo check, strict
+fingerprint, symbol, C11, and C++ gates, canonical hook gate, sanitizer/Miri
+runs, health/lifecycle suite, and final incremental performance sweep also
+passed. The combined timestamp mutation campaign killed all 12 mutants, with
+zero survivors and zero harness errors. Its first full run exposed one weak
+recovery-floor oracle after killing 11. The strengthened future-HLC oracle killed the remaining
 `missing-recovery-clock-floor` mutant on a focused rerun. Source integrity
 matched before and after the campaign. Phase 1G eviction remains deferred.
 
@@ -981,7 +999,8 @@ milestone.
    2026-08-26. Its machine-readable evidence and independently checked medians
    are retained in the linked acceptance record. That historical revision was
    accepted within its single-machine, asynchronous scope. The later pre-HLC
-   per-worker-lane evidence is also historical. The revision-1 performance
-   sweep and canonical all-in-one hook CI gate remain pending. Functional and
-   mutation verification have passed, but revision 1 has no final acceptance
-   result until those two remaining gates complete.
+   per-worker-lane evidence is also historical. Release candidate `e282a44b2`
+   completed the revision-1 gates and is accepted for the same scoped library
+   contract. Its `85495f8dd` ancestor supplies the incremental-performance
+   evidence. The failed HLC-introduction measurement remains explicit and is
+   covered only by its recorded waiver.

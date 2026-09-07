@@ -380,7 +380,7 @@ The command surface (✅ implemented today · 🟡 partial · ⬜ not yet built)
 | `get_version()` | Current config version — clients poll it to invalidate their routing cache. | ✅ |
 | `get_shard_count()` · `get_shard_replicas(id)` · `get_shard_leader(id)` · `get_shard_status(id)` · `get_shard_replacement(id)` | Per-shard topology reads. | ✅ |
 
-Any command that mutates the shard map advances `__version__` in the same atomic batch — the single knob that drives cache invalidation across the cluster. `kill_shard` is the *brutal* verb (a shard died, reassign its range, don't move data); `remove_shard` is the *gentle* one (drain data out, then remove) — see [Resharding](#resharding-2pc-style) for how the migration runs.
+Any command that mutates the shard map advances `__version__` in the same atomic batch — the single knob that drives cache invalidation across the cluster. `kill_shard` is the *brutal* verb (a shard died, reassign its range, don't move data); `remove_shard` is the *gentle* one (drain data out, then remove) — see [Resharding](#data-migration-protocol-online-resharding) for how the migration runs.
 
 #### Routing implementation
 
@@ -792,7 +792,9 @@ distributed path.
 
 The current single-machine stage implements:
 
-- The 16-byte timestamp in the public local C ABI and the safe Rust API.
+- The 16-byte timestamp in the public local C ABI and the safe Rust API, with
+  the complete operation and ownership rules in the
+  [revision-1 ABI contract](reference/mako-local-abi-v1.md).
 - A process-wide 63-bit HLC stamp, with the validation gate in the remaining
   bit of the same atomic word.
 - Post-validation timestamp allocation and cache-record binding while Silo's
@@ -804,18 +806,27 @@ The current single-machine stage implements:
 - A fixed origin of 1. That is valid only because this stage admits one local
   timestamp allocator and one recovered cache namespace per process.
 
-Revision-1 functional verification has passed. The native suite passed 123 of
-123 tests; `mako-cache` passed 159 unit tests, 23 integration tests, and three
-doctests; and `mako-history` passed 25 application tests plus 12 base
-transaction-oracle tests. The native-backed and fake-ABI `mako-local` suites,
-release Cargo check, and strict fingerprint, symbol, C11, and C++ conformance
-gates also passed. The performance sweep and canonical all-in-one hook CI gate
-remain pending. The combined timestamp mutation campaign killed all 12 mutants,
-with zero survivors and zero harness errors. Its first run killed 11 before a
-weak recovery-floor oracle was strengthened with a future but representable
-HLC; the focused rerun then killed `missing-recovery-clock-floor`. Source
-integrity matched before and after the campaign. This is not yet final Milestone
-1 acceptance because the performance and hook gates remain open.
+Release candidate `e282a44b2` completed revision-1 verification. The
+hook-enabled native suite passed 123 of 123 tests; the production-default
+profile passed 93 of 94 and intentionally skipped its one hook-only test.
+`mako-cache` passed 165 unit tests, 23 integration tests, and three doctests;
+and `mako-history` passed 25 application tests plus 12 base transaction-oracle
+tests. The native-backed and fake-ABI
+`mako-local` suites, release Cargo check, strict fingerprint, symbol, C11, and
+C++ conformance gates, canonical hook gate, ASan/LSan, strict TSan, UBSan, and
+pinned Miri also passed. The combined timestamp mutation campaign killed all
+12 mutants with zero survivors and zero harness errors. Its `85495f8dd`
+ancestor passed the final health-hardening sweep's incremental cycle limits;
+the release follow-up finalizes capability negotiation and contract wording
+without changing the measured production write path. The separately failed
+HLC-introduction performance result is preserved under an explicit
+owner/date/scope waiver in the
+[Milestone 1 acceptance record](mako-cache-milestone1-acceptance.md).
+
+That record accepts the single-machine library, not a complete production
+service. Volatile acknowledgement, `sync=false`, resident-value and retained-log
+limits, one cache namespace per process, and the missing distributed and
+network-service integrations remain explicit boundaries.
 
 The current stage does not change distributed Mako's `uint32_t tid_unique_`,
 its timestamp-allocation RPC, its replicated value and log trailers, or its
@@ -1199,6 +1210,17 @@ it validates the raw materialized values. Retrying the exact same physical
 RocksDB batch and log key is idempotent. Recovery rejects a copied record under
 a different `CacheSeq` when it reuses the same timestamp.
 
+A returned RocksDB error cannot prove whether the atomic batch took effect.
+The coordinator therefore treats every `write_batch` error as an ambiguous
+outcome: it retains the complete lane-tagged physical sequence vector and
+requires that exact batch to retry before any other lane may apply. Only a
+successful return updates the in-memory winner index, retires queue records,
+or advances the applied watermark. Repeating the same log keys and
+timestamp-filtered row operations makes both the “not applied” and “already
+applied” outcomes safe. In panic-unwind builds the same rule covers a caught
+backend panic; the workspace release profile uses `panic = "abort"` and relies
+on process recovery instead.
+
 The current materialized RocksDB user value or tombstone does not embed its
 timestamp. This makes log retention and exclusive ownership of the backend
 mandatory. Log pruning, a second writer, or direct external writes would make
@@ -1245,26 +1267,44 @@ fixed set of long-lived STO workers. A standalone Rust host is the next
 integration step. Connecting this cache to distributed routing, 2PC, and
 replication remains a later milestone.
 
-While serving, the host polls `Db::status()` and interprets it as follows:
+While serving, the host polls `Db::status()`. A returned error is itself an
+unhealthy host condition; the host must not treat a failed status read as
+`Healthy`. Cache status is only one readiness input. The host must combine it
+with `pool.metrics()` and require `healthy_workers > 0`:
+`quarantined_workers` is a process-wide informational count, may include
+workers outside this cache, and does not affect `CacheHealth`. A successful
+snapshot is interpreted as follows:
 
-- `Healthy` permits normal admission.
+- `Healthy` is a necessary cache-local admission signal, not proof that the
+  surrounding service, network, dependencies, or durability policy is ready.
 - `Degraded` means that the writer is retrying a record or backend batch, or
-  that a backend call exceeded `backend_stall_threshold`. The host should
-  alert with `last_failure` and shed or stop admission before the bounded
-  writeback queue fills.
+  that a backend call exceeded `backend_stall_threshold` (30 seconds by
+  default). The host should
+  alert and shed or stop admission before the bounded writeback queue fills.
 - `Unhealthy` means that the writer stopped or the cache latched a fail-stop
   error. The host must stop write admission immediately.
 
 The status counters are cumulative diagnostics. An active retry or stalled
-backend call determines current degradation; `last_failure` intentionally
-remains populated after recovery. Operators should also track the difference
-between `acknowledged_transactions` and `applied_watermark.sequence()` together
-with `queued_transactions`. Those values show volatile writeback backlog, not
+backend call determines current degradation. Operators should inspect
+`pending_backend_retry`, `active_retryable_failures`, and
+`backend_write_in_progress`; a pure backend stall may have no `last_failure`,
+while `last_failure` intentionally remains populated after recovery and may be
+historical. Operators should also track the difference between
+`acknowledged_transactions` and `applied_watermark.sequence()` together with
+`queued_transactions`. Those values show volatile writeback backlog, not
 disk-sync progress. A live RocksDB `write_batch` call cannot safely be
 cancelled in process. If it hangs, status remains readable and exposes its
 monotonic age, but an external supervisor must enforce a shutdown deadline and
 terminate the process if the call never returns. Such termination can lose the
 acknowledged, unapplied tail under this milestone's durability contract.
+
+In panic-unwind builds, the cache converts a backend panic into an ambiguous
+batch failure and retains the exact batch for retry; it also records a caught
+outer runtime panic. The workspace release profile deliberately uses
+`panic = "abort"` for the Rust/static-library boundary. A production panic
+therefore terminates the process before those counters can update, and the
+same supervisor/recovery policy applies. Normal RocksDB error returns retain
+and retry the exact batch in every profile.
 
 Clean shutdown has a strict order:
 
@@ -1272,13 +1312,16 @@ Clean shutdown has a strict order:
 2. Join all request workers and release every shared `Arc<Db>` clone.
 3. Call the owning `Db::close()` and treat an error as a failed shutdown.
 
-`close()` drains every acknowledged lane snapshot and joins the writer. It
-does not add a RocksDB flush or WAL sync. The default `Wal` mode still uses
-`sync=false`. `Drop` is best-effort cleanup and is not the service lifecycle
-protocol. Deployments must use a bounded pool of long-lived workers because
-native worker registrations are process-lifetime and capped. They must also
-keep exactly one cache namespace and one exclusive backend/keyspace in each
-process.
+A successful `close()` drains every acknowledged lane snapshot and joins the
+writer. It does not add a RocksDB flush or WAL sync. The default `Wal` mode
+still uses `sync=false`. If the synchronous retry budget is exhausted, close
+returns an error after consuming the instance; a RocksDB call that never
+returns can block close. An error or supervisor timeout is a failed shutdown
+and requires restart/recovery under the volatile-tail contract. `Drop` is
+best-effort cleanup and is not the service lifecycle protocol. Deployments
+must use a bounded pool of long-lived workers because native worker
+registrations are process-lifetime and capped. They must also keep exactly one
+cache namespace and one exclusive backend/keyspace in each process.
 
 #### Required invariants
 
@@ -1327,9 +1370,11 @@ single-machine implementation keeps these correctness requirements:
 - Application-history checks that compare Silo's accepted serialization order
   with timestamp-sorted cache replay, including histories whose physical lane
   order is the reverse of their HLC order.
-- RDTSCP capability selection and fixed-point-overflow tests. Runtime code has
-  fail-closed handling for `TSC_AUX` changes, backward or discontinuous TSC
-  input, excessive drift, and permanent fallback to `clock_gettime`.
+- RDTSCP capability selection and fixed-point-overflow tests. Runtime code
+  resamples a changed `TSC_AUX` and accepts a stable migration only after a
+  realtime drift check. Any repeated `TSC_AUX` instability, backward or
+  discontinuous TSC input, or failed drift validation causes permanent
+  fallback to `clock_gettime`.
 - Replay tests that permute log-lane order, retry the same physical batch and
   log key, reject a duplicate timestamp under another `CacheSeq`, and mix puts
   with tombstones while producing the same final RocksDB contents.
@@ -1337,9 +1382,9 @@ single-machine implementation keeps these correctness requirements:
   log publication, after publication, during Masstree install, and during
   asynchronous RocksDB application.
 
-Production-readiness work additionally includes a worker-count benchmark sweep
-with CPU boost disabled. Deterministic fault injection for raw TSC changes,
-`TSC_AUX` migration, and drift remains clock hardening work. Distributed
+The completed worker-count benchmark sweep used CPU boost disabled.
+Deterministic fault injection for raw TSC changes, `TSC_AUX` migration, and
+drift remains clock hardening work for a later service release. Distributed
 clock-skew tests belong to the later cutover. Neither is a claim made by the
 single-machine landing gate.
 
@@ -1351,8 +1396,8 @@ future but representable HLC, the focused rerun killed
 `missing-recovery-clock-floor`. The source-integrity check matched before and
 after the campaign.
 
-The revision-1 HLC performance gate failed. On `zoo-002`, three complete paired
-repetitions of the concurrent cache write-ACK path compared `a71dba682` with
+The revision-1 HLC-introduction performance gate failed. On `zoo-002`, three
+complete paired repetitions of the concurrent cache write-ACK path compared `a71dba682` with
 its immediate parent `e22d937a1` at 1, 4, 8, 16, 24, and 32 workers. CPU boost
 was disabled, RocksDB WAL remained enabled with `sync=false`, and the primary
 metric was per-thread phase cycles per commit. The paired cycle regressions
@@ -1365,12 +1410,27 @@ The planned five repetitions could not finish because the host's snap LXD
 daemon entered a persistent restart loop. A lifecycle-aware follow-up probe
 showed that the original two-snapshot interference screen missed substantial
 short-lived LXD work. The three complete repetitions are therefore sufficient
-to reject this candidate, but not to accept a future one. Full arrays, build
+to reject this candidate, but not to accept a future one. Recorded arrays, build
 hashes, protocol details, and qualifications are in the
 [machine-readable HLC comparison](benchmarks/mako-cache-hlc-ab-zoo002-20260907.json),
 SHA-256 `924574abf93fbcdc3430301a440835ff9a768fdf012c76433a374acbc96794d5`.
-The canonical all-in-one hook CI gate also remains pending. Do not promote the
-functional and mutation results above to final Milestone 1 acceptance.
+This remains a failed measurement. Shuai Mu waived only that incremental HLC
+cost for the Milestone 1 single-machine library on 2026-09-07 because the HLC
+is required for stable replay and the planned distributed timestamp protocol.
+The waiver requires a clean-host repeat before distributed or network-service
+production cutover and does not cover correctness, safety, or durability.
+
+The final hardening comparison then ran five accepted repetitions of candidate
+`85495f8dd` against HLC baseline `a71dba682` at 1, 4, 8, 16, 24, and 32
+workers. Its maximum paired cycle regression was 3.10% and its geometric mean
+was 1.80%, within the predeclared 5% and 3% limits; instructions per transaction
+were effectively unchanged. Release follow-up `e282a44b2` does not alter that
+production write path. Full arrays and validation metadata are in the
+[machine-readable health comparison](benchmarks/mako-cache-health-ab-zoo002-20260907.json).
+Its SHA-256 is
+`d405824c2bab58cbdd7ffa228496920c7ebacde1f27cb419d0b5195f3decc1da`.
+The canonical all-in-one hook gate also passed. These results accept the scoped
+single-machine library and do not widen the boundaries above.
 
 The later distributed cutover adds these required tests before the global HLC
 contract is complete:

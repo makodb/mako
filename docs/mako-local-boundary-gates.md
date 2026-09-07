@@ -8,28 +8,32 @@ volatile ordered cache and asynchronous RocksDB application contract. Neither
 record tests disk-sync durability, distributed transactions, or the future
 Rust OCC engine.
 
-The all-green records below are historical evidence for the exact candidates
-they name. Subsequent closure work and the native-record/bounded-batching
-rewrite changed the implementation and therefore require a fresh validation
-record; the old PASS rows must not be read as results for the current source.
-Those historical candidates reported ABI revision 0. The current timestamp
-cutover reports revision 1. Its functional verification and combined timestamp
-mutation campaign have passed. The performance sweep and canonical all-in-one
-hook CI gate remain pending. Nothing in the old PASS rows is evidence for the
-revision-1 binary or record layouts.
+The dated records below remain historical evidence only for the candidates they
+name. Release candidate `e282a44b2` is the accepted revision-1 implementation;
+its health/retry hardening landed in `85495f8dd`. Current evidence is summarized
+first so the historical ABI-revision-0 rows are not mistaken for results
+covering the revision-1 binary or record layouts.
 
 ## Current revision-1 verification status
 
-The completed revision-1 functional verification recorded these results:
+The completed revision-1 verification recorded these results:
 
-- The native suite passed 123 of 123 tests.
-- `mako-cache` passed 159 unit tests, 23 integration tests, and three doctests.
+- The hook-enabled native suite passed 123 of 123 tests. The production-default
+  profile passed 93 of 94 tests and intentionally skipped the one test that
+  requires the commit-observer hook.
+- `mako-cache` passed 165 unit tests, 23 integration tests, and three doctests.
 - The native-backed `mako-local` library, integration, and documentation suites
   passed. The fake-ABI suites also passed.
 - `mako-history` passed 25 application tests and 12 base transaction-oracle
   tests.
 - The release Cargo check passed.
 - The strict native fingerprint, symbol, C11, and C++ conformance gates passed.
+- The canonical all-in-one hook CI gate passed, including all 12 timestamp
+  mutation cases with zero survivors or harness errors.
+- ASan/LSan, strict TSan with reviewed native-engine suppressions, and UBSan
+  passed with no unsuppressed diagnostics. These instrument the native
+  boundary and wrapper, not the Rust cache health code.
+- Pinned Miri passed 18 fake-ABI ownership tests without undefined behavior.
 
 The combined timestamp mutation campaign killed all 12 mutants, with zero
 survivors and zero harness errors. The first full run killed 11 and exposed a
@@ -39,8 +43,13 @@ strengthened with a future but representable HLC, and the focused rerun killed
 `missing-recovery-clock-floor`. The source-integrity check matched before and
 after the campaign.
 
-This is functional and mutation verification, not final acceptance. The
-performance sweep and canonical all-in-one hook CI gate remain pending.
+The final health-hardening A/B sweep also passed its predeclared incremental
+cycle limits: the largest worker-count regression was 3.10% and the geometric
+mean was 1.80%, versus limits of 5% and 3%. The earlier HLC-introduction sweep
+remains a failed measurement under its original limits and is covered only by
+the explicit Milestone 1 waiver in the acceptance record. Therefore the
+single-machine library is accepted for the stated volatile-ACK scope; no
+network service or distributed path is accepted here.
 
 ## Historical Milestone 1 closure status
 
@@ -92,12 +101,17 @@ service host must finish open and recovery before readiness, use a bounded pool
 of long-lived workers, and stop admission before calling the owning
 `Db::close()`. Runtime health is reported by `Db::status()`: active replay
 retries or an over-threshold backend call are degraded, while a stopped writer
-or a latched fail-stop error is unhealthy. `close()` drains acknowledged work
-but does not add a WAL sync; `Drop` is only best-effort cleanup. RocksDB calls
-cannot be safely cancelled in process, so the supervisor must impose a bounded
-shutdown deadline. A standalone local Rust host is a follow-up. Integrating the
-existing distributed C++ server belongs to Milestone 2 because that server has
-different native-table and worker-lifetime ownership.
+or a latched fail-stop error is unhealthy. Readiness must also require
+`pool.metrics().healthy_workers > 0`; the process-wide
+`quarantined_workers` count is informational and does not affect cache health.
+A successful close drains acknowledged work but does not add a WAL sync. A
+retry-budget error consumes that instance, and a hung RocksDB call can block
+close, so either an error or supervisor timeout requires restart/recovery.
+`Drop` is only best-effort cleanup. RocksDB calls cannot be safely cancelled in
+process, so the supervisor must impose a bounded shutdown deadline. A
+standalone local Rust host is a follow-up. Integrating the existing distributed
+C++ server belongs to Milestone 2 because that server has different
+native-table and worker-lifetime ownership.
 
 The historical Milestone 1 acceptance row is complete for its named candidate.
 The linked record retains the
@@ -338,10 +352,11 @@ only.
 
 ## Current Phase 1F cache correctness gate
 
-This section defines the revision-1 gate. It is not a completed acceptance
-record. Functional and mutation verification have passed, while the performance
-sweep and canonical all-in-one hook CI gate remain pending. The dated results
-later in this document belong only to their named pre-HLC candidates.
+This section defines the revision-1 gate completed by release candidate
+`e282a44b2`. The exact production and hook entry points, all 12 mutations,
+health/lifecycle tests, sanitizer and Miri runs passed; its `85495f8dd` ancestor
+passed the final incremental performance sweep. The dated results later in this
+document still belong only to their named pre-HLC candidates.
 
 The cache cleanup matrix keeps the native and safe-wrapper surfaces distinct.
 The raw native ABI exercises all five injected cleanup boundaries: begin,
@@ -400,13 +415,14 @@ returned successfully and the process-local watermark then advanced. It does
 not mean the RocksDB WAL was synchronized. The cache never adds a WAL flush,
 memtable flush, or `fsync` to this contract.
 
-The loss wording follows that distinction. A clean cache/process shutdown
-drains every acknowledged transaction. A forced cache/process stop can lose
-the acknowledged but unapplied in-memory tail while preserving the already
-applied backend prefix. A machine or power failure is stronger: with the
-production `Wal` mode's `sync=false`, it may also lose an applied but unsynced
-RocksDB WAL tail. Neither the applied watermark nor the Phase 1F crash matrix
-claims that such a tail is durable.
+The loss wording follows that distinction. A successful clean cache/process
+shutdown drains every acknowledged transaction. A shutdown that returns an
+error or exceeds its supervisor deadline requires restart/recovery. A forced
+cache/process stop can lose the acknowledged but unapplied in-memory tail while
+preserving the already applied backend prefix. A machine or power failure is
+stronger: with the production `Wal` mode's `sync=false`, it may also lose an
+applied but unsynced RocksDB WAL tail. Neither the applied watermark nor the
+Phase 1F crash matrix claims that such a tail is durable.
 
 ## Validation record
 
