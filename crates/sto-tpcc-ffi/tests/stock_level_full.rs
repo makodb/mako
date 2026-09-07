@@ -87,6 +87,78 @@ unsafe fn insert(thread: *mut StoTpccThread, table: *mut StoTpccTable, key: &[u8
 }
 
 #[test]
+fn foreign_runtime_table_aborts_fused_attempt_and_worker_reuses() {
+    unsafe {
+        let db_config = StoTpccDbConfig {
+            max_threads: 4,
+            max_key_length: 64,
+            max_items_per_txn: 64,
+            max_locks_per_txn: 64,
+        };
+        let mut owner_db = ptr::null_mut();
+        let mut foreign_db = ptr::null_mut();
+        expect(sto_tpcc_db_create(&db_config, &mut owner_db), OK);
+        expect(sto_tpcc_db_create(&db_config, &mut foreign_db), OK);
+
+        let mut foreign_order_line = ptr::null_mut();
+        let mut foreign_stock = ptr::null_mut();
+        expect(
+            sto_tpcc_table_create(foreign_db, ptr::null(), &mut foreign_order_line),
+            OK,
+        );
+        expect(
+            sto_tpcc_table_create(foreign_db, ptr::null(), &mut foreign_stock),
+            OK,
+        );
+
+        let mut thread = ptr::null_mut();
+        expect(sto_tpcc_thread_create(owner_db, &mut thread), OK);
+        let request = MakoStoTpccStockLevelFullRequest {
+            order_line_table: foreign_order_line,
+            stock_table: foreign_stock,
+            current_next_order_id: 1,
+            warehouse_id: 1,
+            district_id: 1,
+            threshold: 10,
+        };
+        let mut result = MakoStoTpccStockLevelFullResult {
+            reported_value_bytes: 11,
+            scanned_order_line_rows: 12,
+            distinct_item_ids: 13,
+            low_stock_count: 14,
+        };
+
+        expect(sto_tpcc_txn_begin(thread), OK);
+        assert_eq!(
+            mako_sto_tpcc_stock_level_full_trusted(thread, &request, &mut result),
+            FATAL
+        );
+        assert!(last_error().contains("belongs to a different STO runtime"));
+        assert_eq!(
+            result,
+            MakoStoTpccStockLevelFullResult {
+                reported_value_bytes: 11,
+                scanned_order_line_rows: 12,
+                distinct_item_ids: 13,
+                low_stock_count: 14,
+            }
+        );
+        assert_eq!(sto_tpcc_txn_commit(thread), FATAL);
+
+        // Fatal fused-call cleanup consumed the attempt without poisoning this
+        // healthy worker, so the next transaction can start and abort normally.
+        expect(sto_tpcc_txn_begin(thread), OK);
+        expect(sto_tpcc_txn_abort(thread), OK);
+
+        expect(sto_tpcc_thread_destroy(thread), OK);
+        expect(sto_tpcc_table_destroy(foreign_stock), OK);
+        expect(sto_tpcc_table_destroy(foreign_order_line), OK);
+        expect(sto_tpcc_db_destroy(foreign_db), OK);
+        expect(sto_tpcc_db_destroy(owner_db), OK);
+    }
+}
+
+#[test]
 fn full_stock_level_matches_scalar_scan_dedup_threshold_and_failure_semantics() {
     unsafe {
         let db_config = StoTpccDbConfig {

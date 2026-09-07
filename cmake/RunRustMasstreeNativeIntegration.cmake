@@ -383,7 +383,8 @@ if(DEFINED MAKO_STO_TPCC_NATIVE_TEST
         tests::stable_status_numbers_match_header
         tests::thread_affinity_cookie_is_stable_and_distinct
         tests::tpcc_table_config_c_layout_appends_the_bounded_value_flag
-        tests::tpcc_table_configuration_always_selects_unique_lock_requests)
+        tests::tpcc_table_configuration_always_selects_unique_lock_requests
+        tests::worker_owner_runtime_id_remains_accessible_during_transaction)
     execute_process(
         COMMAND "${CMAKE_COMMAND}" -E env ${_native_environment}
             "${MAKO_CARGO_EXECUTABLE}" test
@@ -511,6 +512,7 @@ if(DEFINED MAKO_STO_TPCC_NATIVE_TEST
     set(_sto_tpcc_delivery_full_expected_tests
         full_delivery_preserves_scalar_empty_zero_line_and_rollback_semantics)
     set(_sto_tpcc_stock_level_full_expected_tests
+        foreign_runtime_table_aborts_fused_attempt_and_worker_reuses
         full_stock_level_matches_scalar_scan_dedup_threshold_and_failure_semantics)
     foreach(_sto_tpcc_payment_test_name IN ITEMS
             payment_prefix payment_full new_order_full delivery_full stock_level_full)

@@ -39,7 +39,7 @@
 > **Baseline:** Mako `mako-dev` at `378fc281d2c6`; compatibility oracle
 > pull request 86, `worktree-masstree-rocks` at `a3ede48859a4`
 >
-> **Last updated:** 2026-09-06
+> **Last updated:** 2026-09-07
 
 This document defines the intended semantics and architecture of Mako's native
 Rust implementation of STO. It is a living design contract: implementation
@@ -3797,6 +3797,22 @@ full call. Within those caller safety preconditions they validate nullness,
 alignment, lengths, the Rust `isize` slice bound, address overflow,
 owner-thread affinity, active transaction state, table ownership, enum values,
 callback presence, and output capacities.
+
+The thread handle uses a private owner with a raw pointer to its stable
+`WorkerContext` allocation and an inline lifetime-erased active transaction
+slot. Only the borrowed worker is address-sensitive; keeping the movable
+transaction inline avoids a pointer chase on every operation. An outer handle
+borrow cannot recursively retag the transaction's exclusive worker reference.
+The owner caches its `RuntimeId` before transaction begin and exposes the cached
+identity, but no worker reference, allocation pointer, or transaction reference.
+Transactional operations run inside a forced-inline higher-ranked closure that
+gives each borrow a fresh lifetime; safe parent-module code cannot retain that
+borrow or exchange transactions between owners. Commit, abort, fatal cleanup,
+and handle destruction use a second higher-ranked closure that consumes the
+transaction before reclaiming the worker. A native-free Miri test moves an
+active owner, reads its cached identity, reuses its transaction, and exercises
+active-owner destruction. A native integration test also rejects a
+foreign-runtime table, checks automatic abort, and reuses the worker.
 
 The current Rust TPC-C wrapper accepts exactly one non-replicated shard. It
 rejects remote indexes and has no distributed commit protocol. The C++

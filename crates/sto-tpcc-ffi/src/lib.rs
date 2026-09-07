@@ -3,9 +3,10 @@
 //!
 //! The surface deliberately exposes only opaque owning handles and byte
 //! slices. `StoTpccThread` is thread-affine and contains a lifetime-erased STO
-//! transaction and native RCU scope whose actual borrows are tied to boxed
-//! workers; their invariant and lifetime-erasing operations are documented
-//! below.
+//! transaction and native RCU scope whose actual borrows are tied to stable
+//! worker allocations. A private owner prevents access to the exclusively
+//! borrowed STO worker while a transaction is active; the remaining lifetime
+//! and destruction invariants are documented below.
 
 use masstree::{
     RcuScope, Runtime as MasstreeRuntime, RuntimeConfig as MasstreeRuntimeConfig, Worker,
@@ -25,13 +26,163 @@ use std::{
 };
 use sto_core::{
     AbortReason, AccessError, Active, CommitFailure, CommitHook, CommitHookError, CommitOutcome,
-    InvalidUse, Runtime, RuntimeConfig, RuntimeId, Transaction, WorkerContext,
+    InvalidUse, Runtime, RuntimeConfig, RuntimeId, Transaction,
 };
 use sto_masstree::{
     DenseResolvedCache, PointMutation, PointReadBatch, ResolvedRecord, ScanBound, ScanBytesRef,
     ScanControl, ScanDirection, ScanRequest, ScanScratch, Table, TableConfig, Value,
     ValueCopyOutcome,
 };
+
+mod sto_worker_owner {
+    use std::{marker::PhantomData, mem, mem::MaybeUninit, ptr::NonNull};
+
+    use sto_core::{Active, BeginError, InvalidUse, RuntimeId, Transaction, WorkerContext};
+
+    type ActiveTransaction = Transaction<'static, Active>;
+
+    /// Stable ownership for a worker and its lifetime-erased active transaction.
+    ///
+    /// Only the borrowed worker needs a stable address. The transaction itself
+    /// is an ordinary movable value, so keeping its slot inline avoids a pointer
+    /// chase on every operation. The worker pointer and transaction slot remain
+    /// private to this child module: outer handle borrows cannot recursively
+    /// retag the exclusive worker reference, and callers cannot reach the worker.
+    pub(super) struct StoWorkerOwner {
+        transaction: MaybeUninit<ActiveTransaction>,
+        worker: NonNull<WorkerContext>,
+        runtime_id: RuntimeId,
+        active: bool,
+        owns_worker: PhantomData<Box<WorkerContext>>,
+    }
+
+    impl StoWorkerOwner {
+        pub(super) fn new(worker: WorkerContext) -> Self {
+            fn assert_unpin<T: Unpin>() {}
+
+            // Moving the private owner while active moves the transaction slot.
+            // Keep that assumption compile-time checked if Transaction changes.
+            assert_unpin::<ActiveTransaction>();
+            let runtime_id = worker.runtime().id();
+            let worker = NonNull::new(Box::into_raw(Box::new(worker)))
+                .expect("Box::into_raw never returns null");
+            Self {
+                transaction: MaybeUninit::uninit(),
+                worker,
+                runtime_id,
+                active: false,
+                owns_worker: PhantomData,
+            }
+        }
+
+        /// Returns metadata copied before any transaction borrows the worker.
+        pub(super) const fn runtime_id(&self) -> RuntimeId {
+            self.runtime_id
+        }
+
+        pub(super) const fn is_active(&self) -> bool {
+            self.active
+        }
+
+        /// Begins and stores a transaction whose worker borrow stays private.
+        pub(super) fn begin_erased(&mut self) -> Result<(), BeginError> {
+            if self.active {
+                return Err(InvalidUse::WorkerBusy.into());
+            }
+            // SAFETY: The inactive state proves that no stored transaction
+            // borrows the worker. Its private allocation is stable and owned by
+            // `self`; no outer code can dereference the pointer while active.
+            let transaction = unsafe { (*self.worker.as_ptr()).begin()? };
+            // SAFETY: The worker allocation remains stable until Drop, and this
+            // module consumes the transaction before reclaiming that worker.
+            let transaction = unsafe {
+                mem::transmute::<Transaction<'_, Active>, ActiveTransaction>(transaction)
+            };
+            // SAFETY: `active == false` means the slot is uninitialized.
+            self.transaction.write(transaction);
+            self.active = true;
+            Ok(())
+        }
+
+        /// Runs one operation with a lifetime-branded borrow of the transaction.
+        ///
+        /// The higher-ranked closure prevents the transaction or its borrow
+        /// from escaping, and prevents exchanging transactions borrowed from
+        /// different finite-lived owners through safe parent-module code.
+        #[inline(always)]
+        pub(super) fn with_active_transaction<R>(
+            &mut self,
+            operation: impl for<'transaction> FnOnce(
+                &'transaction mut Transaction<'transaction, Active>,
+            ) -> R,
+        ) -> Option<R> {
+            if !self.active {
+                return None;
+            }
+            // SAFETY: `active == true` means begin initialized the slot. The
+            // private helper brands both lifetimes with this exclusive borrow.
+            let transaction = unsafe { self.borrow_active() };
+            Some(operation(transaction))
+        }
+
+        /// Consumes the active transaction inside a lifetime-branded closure.
+        #[inline(always)]
+        pub(super) fn finish_active<R>(
+            &mut self,
+            operation: impl for<'transaction> FnOnce(Transaction<'transaction, Active>) -> R,
+        ) -> Option<R> {
+            if !self.active {
+                return None;
+            }
+            self.active = false;
+            // SAFETY: The slot is initialized exactly while `active` is true.
+            let transaction = unsafe { self.take_active() };
+            Some(operation(transaction))
+        }
+
+        /// Borrows the initialized slot while tying both transaction lifetimes
+        /// to the exclusive owner borrow.
+        unsafe fn borrow_active<'transaction>(
+            &'transaction mut self,
+        ) -> &'transaction mut Transaction<'transaction, Active> {
+            // SAFETY: The caller proved the inline slot initialized, and no
+            // reference to the stored value is live.
+            let transaction: &'transaction mut ActiveTransaction =
+                unsafe { self.transaction.assume_init_mut() };
+            // SAFETY: Lifetimes do not affect layout. The exclusive owner borrow
+            // bounds both shortened lifetimes and prevents the value from moving.
+            unsafe {
+                mem::transmute::<
+                    &'transaction mut ActiveTransaction,
+                    &'transaction mut Transaction<'transaction, Active>,
+                >(transaction)
+            }
+        }
+
+        /// Moves the initialized slot out with its worker lifetime shortened to
+        /// the exclusive owner borrow retained across the consuming closure.
+        unsafe fn take_active<'transaction>(
+            &'transaction mut self,
+        ) -> Transaction<'transaction, Active> {
+            // SAFETY: The caller changed `active` from true to false immediately
+            // before this call, so the slot contains exactly one live value.
+            unsafe { self.transaction.assume_init_read() }
+        }
+    }
+
+    impl Drop for StoWorkerOwner {
+        fn drop(&mut self) {
+            let _ = self.finish_active(|transaction| {
+                let _ = transaction.abort();
+            });
+            // SAFETY: `new` obtained this pointer from exactly one Box. The
+            // transaction slot is uninitialized and no worker borrow remains.
+            drop(unsafe { Box::from_raw(self.worker.as_ptr()) });
+        }
+    }
+}
+
+use sto_worker_owner::StoWorkerOwner;
 
 const ERROR_CAPACITY: usize = 1_024;
 const PAYMENT_VALUE_CAPACITY: usize = 164;
@@ -919,20 +1070,21 @@ impl ResolvedCache {
     }
 }
 
-type ActiveTransaction = Transaction<'static, Active>;
 type ActiveRcuScope = RcuScope<'static>;
 
 struct ActiveAttempt {
-    // Drop the logical transaction before releasing its native lifetime guard.
-    transaction: ActiveTransaction,
+    // The matching logical transaction lives inside `sto_worker` so outer
+    // handle references cannot retag its exclusive worker borrow.
     rcu_scope: ActiveRcuScope,
 }
 
 pub struct StoTpccThread {
-    // This field must be destroyed before either boxed worker. The explicit
+    // This field must be destroyed before either worker owner. The explicit
     // Drop implementation also takes and resolves it before field destruction.
     active: Option<ActiveAttempt>,
-    sto_worker: Box<WorkerContext>,
+    // The worker and logical transaction are hidden behind a private raw owner.
+    // Outer code can reach the transaction and cached identity, never the worker.
+    sto_worker: StoWorkerOwner,
     native_worker: Box<Worker>,
     owner_cookie: u64,
     // A small linear vector avoids allocating a hash table in every TPC-C
@@ -991,26 +1143,56 @@ impl StoTpccThread {
     }
 }
 
-fn active_transaction(active: &mut Option<ActiveAttempt>) -> FfiResult<&mut ActiveTransaction> {
-    active
-        .as_mut()
-        .map(|attempt| &mut attempt.transaction)
+#[inline(always)]
+fn with_active_transaction_inner<R>(
+    active: &Option<ActiveAttempt>,
+    sto_worker: &mut StoWorkerOwner,
+    operation: impl for<'transaction> FnOnce(&'transaction mut Transaction<'transaction, Active>) -> R,
+) -> FfiResult<R> {
+    if active.is_none() {
+        return Err(fatal(format_args!(
+            "transactional operation requires an active transaction"
+        )));
+    }
+    sto_worker
+        .with_active_transaction(operation)
         .ok_or_else(|| {
             fatal(format_args!(
-                "transactional operation requires an active transaction"
+                "native and logical transaction active states disagree"
             ))
         })
 }
 
+// The HRTB is the safe generativity boundary: it prevents a transaction from
+// escaping or being exchanged between owners. Large TPC-C operation closures
+// otherwise remain outlined in optimized builds, so apply the attribute to the
+// closure expression itself rather than relying on the wrapper to inline.
+macro_rules! with_active_transaction {
+    ($active:expr, $sto_worker:expr, |$transaction:pat_param| $operation:expr $(,)?) => {
+        with_active_transaction_inner(
+            $active,
+            $sto_worker,
+            #[inline(always)]
+            |$transaction| $operation,
+        )
+    };
+}
+
 fn abort_active_attempt_after_fatal(handle: &mut StoTpccThread) -> FfiResult<()> {
-    let ActiveAttempt {
-        transaction,
-        rcu_scope,
-    } = handle
+    let ActiveAttempt { rcu_scope } = handle
         .active
         .take()
         .ok_or_else(|| fatal(format_args!("fatal operation found no active transaction")))?;
-    let _ = transaction.abort();
+    handle
+        .sto_worker
+        .finish_active(|transaction| {
+            let _ = transaction.abort();
+        })
+        .ok_or_else(|| {
+            fatal(format_args!(
+                "fatal cleanup found no stored logical transaction"
+            ))
+        })?;
     handle.pending_size.clear();
     rcu_scope
         .close()
@@ -1033,12 +1215,10 @@ fn record_size_delta_after_staging(
 
 impl Drop for StoTpccThread {
     fn drop(&mut self) {
-        if let Some(ActiveAttempt {
-            transaction,
-            rcu_scope,
-        }) = self.active.take()
-        {
-            let _ = transaction.abort();
+        if let Some(ActiveAttempt { rcu_scope }) = self.active.take() {
+            let _ = self.sto_worker.finish_active(|transaction| {
+                let _ = transaction.abort();
+            });
             drop(rcu_scope);
         }
         self.pending_size.clear();
@@ -1552,7 +1732,7 @@ pub unsafe extern "C" fn sto_tpcc_thread_create(
             .map_err(|error| fatal(format_args!("unable to attach STO worker: {error}")))?;
         *output = Box::into_raw(Box::new(StoTpccThread {
             active: None,
-            sto_worker: Box::new(sto_worker),
+            sto_worker: StoWorkerOwner::new(sto_worker),
             native_worker: Box::new(native_worker),
             owner_cookie: allocate_current_thread_cookie()?,
             pending_size,
@@ -1588,7 +1768,7 @@ pub unsafe extern "C" fn sto_tpcc_thread_destroy(thread_handle: *mut StoTpccThre
 /// `thread_handle` must be a live, exclusively accessed, same-thread handle.
 #[inline(always)]
 fn txn_begin_impl(handle: &mut StoTpccThread) -> FfiResult<Status> {
-    if handle.active.is_some() {
+    if handle.active.is_some() || handle.sto_worker.is_active() {
         return Err(fatal(format_args!("a transaction is already active")));
     }
     handle.pending_size.clear();
@@ -1596,20 +1776,15 @@ fn txn_begin_impl(handle: &mut StoTpccThread) -> FfiResult<Status> {
         .native_worker
         .rcu_scope()
         .map_err(|error| fatal(format_args!("unable to begin native RCU scope: {error}")))?;
-    let transaction = handle
+    handle
         .sto_worker
-        .begin()
+        .begin_erased()
         .map_err(|error| fatal(format_args!("unable to begin transaction: {error}")))?;
-    // SAFETY: Both workers are boxed, so moving the outer handle never moves
-    // either borrowed pointee. `active` is consumed or dropped before those
-    // boxes in every path. Both guards are same-thread capabilities.
-    let transaction =
-        unsafe { mem::transmute::<Transaction<'_, Active>, ActiveTransaction>(transaction) };
+    // SAFETY: The native worker is boxed, so moving the outer handle never moves
+    // the borrowed pointee. `active` is consumed or dropped before that box in
+    // every path, and the guard is a same-thread capability.
     let rcu_scope = unsafe { mem::transmute::<RcuScope<'_>, ActiveRcuScope>(rcu_scope) };
-    handle.active = Some(ActiveAttempt {
-        transaction,
-        rcu_scope,
-    });
+    handle.active = Some(ActiveAttempt { rcu_scope });
     Ok(Status::Ok)
 }
 
@@ -1651,19 +1826,25 @@ fn txn_commit_impl_with_observer(
     handle: &mut StoTpccThread,
     after_core_commit: impl FnOnce(),
 ) -> FfiResult<Status> {
-    let ActiveAttempt {
-        transaction,
-        rcu_scope,
-    } = handle
+    let ActiveAttempt { rcu_scope } = handle
         .active
         .take()
         .ok_or_else(|| fatal(format_args!("no transaction is active")))?;
-    let outcome = if handle.pending_size.is_empty() {
-        transaction.commit()
-    } else {
-        let mut hook = SizeDeltaCommitHook::new(&handle.pending_size);
-        transaction.commit_with_hook(&mut hook)
-    };
+    let outcome = handle
+        .sto_worker
+        .finish_active(|transaction| {
+            if handle.pending_size.is_empty() {
+                transaction.commit()
+            } else {
+                let mut hook = SizeDeltaCommitHook::new(&handle.pending_size);
+                transaction.commit_with_hook(&mut hook)
+            }
+        })
+        .ok_or_else(|| {
+            fatal(format_args!(
+                "active native guard has no stored logical transaction"
+            ))
+        })?;
     // Tests pause here to force the interleaving that used to separate row
     // publication from logical-size publication. The production instantiation
     // inlines an empty observer.
@@ -1731,12 +1912,17 @@ pub unsafe extern "C" fn sto_tpcc_txn_abort(thread_handle: *mut StoTpccThread) -
     boundary("sto_tpcc_txn_abort", || {
         let handle = unsafe { required_mut(thread_handle, "thread")? };
         handle.ensure_owner()?;
-        if let Some(ActiveAttempt {
-            transaction,
-            rcu_scope,
-        }) = handle.active.take()
-        {
-            let _ = transaction.abort();
+        if let Some(ActiveAttempt { rcu_scope }) = handle.active.take() {
+            handle
+                .sto_worker
+                .finish_active(|transaction| {
+                    let _ = transaction.abort();
+                })
+                .ok_or_else(|| {
+                    fatal(format_args!(
+                        "active native guard has no stored logical transaction"
+                    ))
+                })?;
             rcu_scope
                 .close()
                 .map_err(|error| fatal(format_args!("unable to end native RCU scope: {error}")))?;
@@ -1769,19 +1955,23 @@ fn get_impl(
         ResolvedCachePolicy::ReadThenWrite | ResolvedCachePolicy::None => (None, None),
     };
     let native_worker = &handle.native_worker;
-    let transaction = active_transaction(&mut handle.active)?;
-    let access = match cached {
-        Some(resolved) => table
-            .state
-            .table
-            .copy_get_resolved(transaction, resolved, output)
-            .map(|outcome| (outcome, None)),
-        None => table
-            .state
-            .table
-            .copy_get_resolving(transaction, native_worker, key, output)
-            .map(|(outcome, resolved)| (outcome, Some(resolved))),
-    };
+    let access =
+        with_active_transaction!(
+            &handle.active,
+            &mut handle.sto_worker,
+            |transaction| match cached {
+                Some(resolved) => table
+                    .state
+                    .table
+                    .copy_get_resolved(transaction, resolved, output)
+                    .map(|outcome| (outcome, None)),
+                None => table
+                    .state
+                    .table
+                    .copy_get_resolving(transaction, native_worker, key, output)
+                    .map(|(outcome, resolved)| (outcome, Some(resolved))),
+            },
+        )?;
     match access {
         Ok((outcome, resolved)) => {
             let status = match outcome {
@@ -1925,10 +2115,12 @@ fn visit_fixed_width<const KEY_LENGTH: usize>(
 
     let native_worker = &handle.native_worker;
     let point_batch = &mut handle.point_batch;
-    let transaction = active_transaction(&mut handle.active)?;
-    let mut session = table.state.table.point_session(transaction, native_worker);
-    let access = session.visit_fixed_bytes(keys, point_batch, &mut visit);
-    drop(session);
+    let access = with_active_transaction!(&handle.active, &mut handle.sto_worker, |transaction| {
+        let mut session = table.state.table.point_session(transaction, native_worker);
+        let access = session.visit_fixed_bytes(keys, point_batch, &mut visit);
+        drop(session);
+        access
+    })?;
 
     if callback_failed {
         abort_active_attempt_after_fatal(handle)?;
@@ -2105,10 +2297,12 @@ fn modify_fixed_width<const KEY_LENGTH: usize>(
 
     let native_worker = &handle.native_worker;
     let point_batch = &mut handle.point_batch;
-    let transaction = active_transaction(&mut handle.active)?;
-    let mut session = table.state.table.point_session(transaction, native_worker);
-    let access = session.modify_fixed_visit(keys, point_batch, &mut modify);
-    drop(session);
+    let access = with_active_transaction!(&handle.active, &mut handle.sto_worker, |transaction| {
+        let mut session = table.state.table.point_session(transaction, native_worker);
+        let access = session.modify_fixed_visit(keys, point_batch, &mut modify);
+        drop(session);
+        access
+    })?;
     *visited = visited_count;
 
     if callback_failed {
@@ -2227,15 +2421,17 @@ fn put_fixed_width<const KEY_LENGTH: usize>(
 
     let native_worker = &handle.native_worker;
     let point_batch = &mut handle.point_batch;
-    let transaction = active_transaction(&mut handle.active)?;
-    let mut session = table.state.table.point_session(transaction, native_worker);
-    let access = match mode {
-        FixedPutMode::Upsert => session.modify_fixed_visit(keys, point_batch, &mut put),
-        FixedPutMode::Insert => {
-            session.modify_fixed_expected_absent_visit(keys, point_batch, &mut put)
-        }
-    };
-    drop(session);
+    let access = with_active_transaction!(&handle.active, &mut handle.sto_worker, |transaction| {
+        let mut session = table.state.table.point_session(transaction, native_worker);
+        let access = match mode {
+            FixedPutMode::Upsert => session.modify_fixed_visit(keys, point_batch, &mut put),
+            FixedPutMode::Insert => {
+                session.modify_fixed_expected_absent_visit(keys, point_batch, &mut put)
+            }
+        };
+        drop(session);
+        access
+    })?;
 
     if accounting_failed {
         abort_active_attempt_after_fatal(handle)?;
@@ -2330,21 +2526,24 @@ fn put_impl(
         ResolvedCachePolicy::None => None,
     };
     let native_worker = &handle.native_worker;
-    let transaction = active_transaction(&mut handle.active)?;
-    let access = match cached {
-        Some(resolved) => {
-            table
-                .state
-                .table
-                .put_resolved_with_previous_presence(transaction, resolved, value)
-        }
-        None => {
-            table
-                .state
-                .table
-                .put_with_previous_presence(transaction, native_worker, key, value)
-        }
-    };
+    let access =
+        with_active_transaction!(
+            &handle.active,
+            &mut handle.sto_worker,
+            |transaction| match cached {
+                Some(resolved) => table.state.table.put_resolved_with_previous_presence(
+                    transaction,
+                    resolved,
+                    value,
+                ),
+                None => table.state.table.put_with_previous_presence(
+                    transaction,
+                    native_worker,
+                    key,
+                    value,
+                ),
+            },
+        )?;
     match access {
         Ok(previous_present) => {
             if !previous_present {
@@ -2382,29 +2581,37 @@ unsafe fn put_borrowed_impl(
         ResolvedCachePolicy::None => None,
     };
     let native_worker = &handle.native_worker;
-    let transaction = active_transaction(&mut handle.active)?;
-    let access = match cached {
-        Some(resolved) => {
-            // SAFETY: Forwarded from this function's value-lifetime contract.
-            unsafe {
-                table
-                    .state
-                    .table
-                    .put_resolved_borrowed_with_previous_presence(transaction, resolved, value)
-            }
-        }
-        None => {
-            // SAFETY: Forwarded from this function's value-lifetime contract.
-            unsafe {
-                table.state.table.put_borrowed_with_previous_presence(
-                    transaction,
-                    native_worker,
-                    key,
-                    value,
-                )
-            }
-        }
-    };
+    let access =
+        with_active_transaction!(
+            &handle.active,
+            &mut handle.sto_worker,
+            |transaction| match cached {
+                Some(resolved) => {
+                    // SAFETY: Forwarded from this function's value-lifetime contract.
+                    unsafe {
+                        table
+                            .state
+                            .table
+                            .put_resolved_borrowed_with_previous_presence(
+                                transaction,
+                                resolved,
+                                value,
+                            )
+                    }
+                }
+                None => {
+                    // SAFETY: Forwarded from this function's value-lifetime contract.
+                    unsafe {
+                        table.state.table.put_borrowed_with_previous_presence(
+                            transaction,
+                            native_worker,
+                            key,
+                            value,
+                        )
+                    }
+                }
+            },
+        )?;
     match access {
         Ok(previous_present) => {
             if !previous_present {
@@ -2501,12 +2708,13 @@ fn insert_impl(
     value: &[u8],
 ) -> FfiResult<Status> {
     let native_worker = &handle.native_worker;
-    let transaction = active_transaction(&mut handle.active)?;
-    match table
-        .state
-        .table
-        .insert_expected_absent(transaction, native_worker, key, value)
-    {
+    let access = with_active_transaction!(&handle.active, &mut handle.sto_worker, |transaction| {
+        table
+            .state
+            .table
+            .insert_expected_absent(transaction, native_worker, key, value)
+    })?;
+    match access {
         Ok(true) => {
             record_size_delta_after_staging(handle, &table.state, 1)?;
             Ok(Status::Ok)
@@ -2535,14 +2743,20 @@ unsafe fn insert_borrowed_impl(
     value: &[u8],
 ) -> FfiResult<Status> {
     let native_worker = &handle.native_worker;
-    let transaction = active_transaction(&mut handle.active)?;
     // SAFETY: Forwarded from this function's value-lifetime contract.
-    match unsafe {
-        table
-            .state
-            .table
-            .insert_expected_absent_borrowed(transaction, native_worker, key, value)
-    } {
+    let access = with_active_transaction!(
+        &handle.active,
+        &mut handle.sto_worker,
+        |transaction| unsafe {
+            table.state.table.insert_expected_absent_borrowed(
+                transaction,
+                native_worker,
+                key,
+                value,
+            )
+        },
+    )?;
+    match access {
         Ok(true) => {
             record_size_delta_after_staging(handle, &table.state, 1)?;
             Ok(Status::Ok)
@@ -2646,7 +2860,7 @@ pub unsafe extern "C" fn sto_tpcc_insert_many(
         *output = StoTpccFixedPutResult::default();
         // Empty batches remain transactional operations and reject an inactive
         // handle exactly like every other mutation surface.
-        let _ = active_transaction(&mut handle.active)?;
+        with_active_transaction!(&handle.active, &mut handle.sto_worker, |_| ())?;
 
         for (index, operation) in operations.iter().enumerate() {
             // SAFETY: insert_operations validated a non-null live table handle;
@@ -2669,11 +2883,12 @@ pub unsafe extern "C" fn sto_tpcc_insert_many(
             };
             let access = {
                 let native_worker = &handle.native_worker;
-                let transaction = active_transaction(&mut handle.active)?;
-                table
-                    .state
-                    .table
-                    .insert_expected_absent(transaction, native_worker, key, value)
+                with_active_transaction!(&handle.active, &mut handle.sto_worker, |transaction| {
+                    table
+                        .state
+                        .table
+                        .insert_expected_absent(transaction, native_worker, key, value)
+                })?
             };
             match access {
                 Ok(true) => {
@@ -2724,19 +2939,20 @@ pub unsafe extern "C" fn sto_tpcc_remove(
             ResolvedCachePolicy::None => None,
         };
         let native_worker = &handle.native_worker;
-        let transaction = active_transaction(&mut handle.active)?;
-        let access = match cached {
-            Some(resolved) => table
-                .state
-                .table
-                .remove_resolved_with_previous_presence(transaction, resolved),
-            None => {
-                table
-                    .state
-                    .table
-                    .remove_with_previous_presence(transaction, native_worker, key)
-            }
-        };
+        let access =
+            with_active_transaction!(&handle.active, &mut handle.sto_worker, |transaction| {
+                match cached {
+                    Some(resolved) => table
+                        .state
+                        .table
+                        .remove_resolved_with_previous_presence(transaction, resolved),
+                    None => table.state.table.remove_with_previous_presence(
+                        transaction,
+                        native_worker,
+                        key,
+                    ),
+                }
+            })?;
         match access {
             Ok(true) => {
                 record_size_delta_after_staging(handle, &table.state, -1)?;
@@ -2787,53 +3003,54 @@ fn scan_impl(
     let native_worker = &handle.native_worker;
     let scratch = &mut handle.scan_scratch;
     let resolved_cache = &mut handle.resolved_cache;
-    let result = match active_transaction(&mut handle.active) {
-        Ok(transaction) => {
-            let visit = |record: ScanBytesRef<'_>| {
-                // SAFETY: The callback is a valid function pointer by the
-                // ABI. Row slices remain alive for this invocation and
-                // the contract forbids retaining them or unwinding through
-                // Rust.
-                let stop = unsafe {
-                    callback(
-                        callback_context,
-                        record.key().as_ptr(),
-                        record.key().len(),
-                        record.value().as_ptr(),
-                        record.value().len(),
-                    )
-                };
-                visited_count += 1;
-                if cache_scan_rows {
-                    // Only callback-visible rows from small scans enter the
-                    // cache. Exact key and table identity remain part of
-                    // every later cache hit.
-                    resolved_cache.remember(&table.state.table, record.key(), record.resolved());
-                }
-                if stop != 0 {
-                    ScanControl::Stop
-                } else {
-                    ScanControl::Continue
-                }
-            };
-            // SAFETY: Both the checked and wrapper-private scan ABIs require a
-            // synchronous callback that neither retains row pointers nor
-            // re-enters this thread handle. Every FFI table owns the private
-            // direct-token directory created in `create_table`.
-            let status = match unsafe {
-                table.state.table.visit_scan_bytes_trusted_with_scratch(
-                    transaction,
-                    native_worker,
-                    request,
-                    scratch,
-                    visit,
+    let result = with_active_transaction!(&handle.active, &mut handle.sto_worker, |transaction| {
+        let visit = |record: ScanBytesRef<'_>| {
+            // SAFETY: The callback is a valid function pointer by the
+            // ABI. Row slices remain alive for this invocation and
+            // the contract forbids retaining them or unwinding through
+            // Rust.
+            let stop = unsafe {
+                callback(
+                    callback_context,
+                    record.key().as_ptr(),
+                    record.key().len(),
+                    record.value().as_ptr(),
+                    record.value().len(),
                 )
-            } {
-                Ok(_) => Status::Ok,
-                Err(error) => status_from_access("scan", error),
             };
-            Ok(status)
-        }
+            visited_count += 1;
+            if cache_scan_rows {
+                // Only callback-visible rows from small scans enter the
+                // cache. Exact key and table identity remain part of
+                // every later cache hit.
+                resolved_cache.remember(&table.state.table, record.key(), record.resolved());
+            }
+            if stop != 0 {
+                ScanControl::Stop
+            } else {
+                ScanControl::Continue
+            }
+        };
+        // SAFETY: Both the checked and wrapper-private scan ABIs require a
+        // synchronous callback that neither retains row pointers nor
+        // re-enters this thread handle. Every FFI table owns the private
+        // direct-token directory created in `create_table`.
+        let status = match unsafe {
+            table.state.table.visit_scan_bytes_trusted_with_scratch(
+                transaction,
+                native_worker,
+                request,
+                scratch,
+                visit,
+            )
+        } {
+            Ok(_) => Status::Ok,
+            Err(error) => status_from_access("scan", error),
+        };
+        Ok(status)
+    });
+    let result = match result {
+        Ok(result) => result,
         Err(error) => Err(error),
     };
     *visited = visited_count;
@@ -3515,7 +3732,7 @@ unsafe fn payment_copy_key<const LENGTH: usize>(
 }
 
 unsafe fn payment_table_owned<'a>(
-    handle: &StoTpccThread,
+    runtime_id: RuntimeId,
     pointer: *const StoTpccTable,
     name: &str,
 ) -> FfiResult<&'a StoTpccTable> {
@@ -3523,7 +3740,7 @@ unsafe fn payment_table_owned<'a>(
     // SAFETY: The private ABI requires a live table allocation. Nullness,
     // alignment, and address arithmetic were checked above.
     let table = unsafe { &*pointer };
-    if table.state.runtime_id != handle.sto_worker.runtime().id() {
+    if table.state.runtime_id != runtime_id {
         return Err(fatal(format_args!(
             "{name} belongs to a different STO runtime"
         )));
@@ -3648,36 +3865,37 @@ unsafe fn payment_modify_full_cached_row<const KEY_LENGTH: usize>(
     };
     let access = {
         let native_worker = &handle.native_worker;
-        let transaction = active_transaction(&mut handle.active)?;
-        match probe.record {
-            Some(resolved) => {
-                // SAFETY: The Payment request keeps this caller-owned output
-                // allocation readable and immutable through transaction finish.
-                unsafe {
-                    table.state.table.try_modify_resolved_borrowed(
-                        transaction,
-                        resolved,
-                        output,
-                        modify,
-                    )
+        with_active_transaction!(&handle.active, &mut handle.sto_worker, |transaction| {
+            match probe.record {
+                Some(resolved) => {
+                    // SAFETY: The Payment request keeps this caller-owned output
+                    // allocation readable and immutable through transaction finish.
+                    unsafe {
+                        table.state.table.try_modify_resolved_borrowed(
+                            transaction,
+                            resolved,
+                            output,
+                            modify,
+                        )
+                    }
+                    .map(|length| (length, None))
                 }
-                .map(|length| (length, None))
-            }
-            None => {
-                // SAFETY: The Payment request keeps this caller-owned output
-                // allocation readable and immutable through transaction finish.
-                unsafe {
-                    table.state.table.try_modify_resolving_borrowed(
-                        transaction,
-                        native_worker,
-                        key,
-                        output,
-                        modify,
-                    )
+                None => {
+                    // SAFETY: The Payment request keeps this caller-owned output
+                    // allocation readable and immutable through transaction finish.
+                    unsafe {
+                        table.state.table.try_modify_resolving_borrowed(
+                            transaction,
+                            native_worker,
+                            key,
+                            output,
+                            modify,
+                        )
+                    }
+                    .map(|(length, resolved)| (length, Some(resolved)))
                 }
-                .map(|(length, resolved)| (length, Some(resolved)))
             }
-        }
+        })?
     };
     match access {
         Ok((length, resolved)) => {
@@ -3715,34 +3933,35 @@ fn payment_select_customer_by_name(
     let access = {
         let native_worker = &handle.native_worker;
         let scratch = &mut handle.scan_scratch;
-        let transaction = active_transaction(&mut handle.active)?;
-        // SAFETY: This table came from the closed direct-token FFI creator.
-        // The callback copies each compressed ID and retains no row pointer.
-        unsafe {
-            table
-                .state
-                .table
-                .visit_bounded_forward_values_trusted_with_scratch(
-                    transaction,
-                    native_worker,
-                    lower,
-                    upper,
-                    PAYMENT_NAME_SCAN_LIMIT,
-                    scratch,
-                    |value, _resolved| match payment_decode_customer_id(value) {
-                        Ok(customer_id) => {
-                            debug_assert!(count < PAYMENT_NAME_SCAN_LIMIT);
-                            customer_ids[count] = customer_id;
-                            count += 1;
-                            ScanControl::Continue
-                        }
-                        Err(error) => {
-                            codec_error = Some(error);
-                            ScanControl::Stop
-                        }
-                    },
-                )
-        }
+        with_active_transaction!(&handle.active, &mut handle.sto_worker, |transaction| {
+            // SAFETY: This table came from the closed direct-token FFI creator.
+            // The callback copies each compressed ID and retains no row pointer.
+            unsafe {
+                table
+                    .state
+                    .table
+                    .visit_bounded_forward_values_trusted_with_scratch(
+                        transaction,
+                        native_worker,
+                        lower,
+                        upper,
+                        PAYMENT_NAME_SCAN_LIMIT,
+                        scratch,
+                        |value, _resolved| match payment_decode_customer_id(value) {
+                            Ok(customer_id) => {
+                                debug_assert!(count < PAYMENT_NAME_SCAN_LIMIT);
+                                customer_ids[count] = customer_id;
+                                count += 1;
+                                ScanControl::Continue
+                            }
+                            Err(error) => {
+                                codec_error = Some(error);
+                                ScanControl::Stop
+                            }
+                        },
+                    )
+            }
+        })?
     };
     if let Some(error) = codec_error {
         return Err(fatal(format_args!("customer-name scan: {error}")));
@@ -3845,15 +4064,20 @@ unsafe fn payment_prefix_body(
     }
 
     let handle = &mut *guard.handle;
+    let runtime_id = handle.sto_worker.runtime_id();
     let warehouse_table =
-        unsafe { payment_table_owned(handle, request.warehouse_table, "warehouse table")? };
+        unsafe { payment_table_owned(runtime_id, request.warehouse_table, "warehouse table")? };
     let district_table =
-        unsafe { payment_table_owned(handle, request.district_table, "district table")? };
+        unsafe { payment_table_owned(runtime_id, request.district_table, "district table")? };
     let customer_table =
-        unsafe { payment_table_owned(handle, request.customer_table, "customer table")? };
+        unsafe { payment_table_owned(runtime_id, request.customer_table, "customer table")? };
     let customer_name_table = if request.customer_by_name == 1 {
         Some(unsafe {
-            payment_table_owned(handle, request.customer_name_table, "customer-name table")?
+            payment_table_owned(
+                runtime_id,
+                request.customer_name_table,
+                "customer-name table",
+            )?
         })
     } else {
         None
@@ -4011,17 +4235,22 @@ unsafe fn payment_full_body(
     }
 
     let handle = &mut *guard.handle;
+    let runtime_id = handle.sto_worker.runtime_id();
     let warehouse_table =
-        unsafe { payment_table_owned(handle, request.warehouse_table, "warehouse table")? };
+        unsafe { payment_table_owned(runtime_id, request.warehouse_table, "warehouse table")? };
     let district_table =
-        unsafe { payment_table_owned(handle, request.district_table, "district table")? };
+        unsafe { payment_table_owned(runtime_id, request.district_table, "district table")? };
     let customer_table =
-        unsafe { payment_table_owned(handle, request.customer_table, "customer table")? };
+        unsafe { payment_table_owned(runtime_id, request.customer_table, "customer table")? };
     let history_table =
-        unsafe { payment_table_owned(handle, request.history_table, "history table")? };
+        unsafe { payment_table_owned(runtime_id, request.history_table, "history table")? };
     let customer_name_table = if request.customer_by_name == 1 {
         Some(unsafe {
-            payment_table_owned(handle, request.customer_name_table, "customer-name table")?
+            payment_table_owned(
+                runtime_id,
+                request.customer_name_table,
+                "customer-name table",
+            )?
         })
     } else {
         None
@@ -4644,37 +4873,38 @@ fn delivery_select_new_order(
     let access = {
         let native_worker = &handle.native_worker;
         let scratch = &mut handle.scan_scratch;
-        let transaction = active_transaction(&mut handle.active)?;
-        // SAFETY: Delivery retains no row bytes or pointers beyond the
-        // callback, and every FFI table uses the private direct-token mode.
-        unsafe {
-            table.state.table.visit_scan_bytes_trusted_with_scratch(
-                transaction,
-                native_worker,
-                request,
-                scratch,
-                |row| {
-                    let key = row.key();
-                    if key.len() != 12
-                        || key[..4] != warehouse_id.to_be_bytes()
-                        || key[4..8] != district_id.to_be_bytes()
-                    {
-                        malformed_key = true;
-                    } else {
-                        let order_id = i32::from_be_bytes(
-                            key[8..]
-                                .try_into()
-                                .expect("the checked new-order key suffix has four bytes"),
-                        );
-                        selected = Some(DeliverySelectedNewOrder {
-                            order_id,
-                            resolved: row.resolved(),
-                        });
-                    }
-                    ScanControl::Stop
-                },
-            )
-        }
+        with_active_transaction!(&handle.active, &mut handle.sto_worker, |transaction| {
+            // SAFETY: Delivery retains no row bytes or pointers beyond the
+            // callback, and every FFI table uses the private direct-token mode.
+            unsafe {
+                table.state.table.visit_scan_bytes_trusted_with_scratch(
+                    transaction,
+                    native_worker,
+                    request,
+                    scratch,
+                    |row| {
+                        let key = row.key();
+                        if key.len() != 12
+                            || key[..4] != warehouse_id.to_be_bytes()
+                            || key[4..8] != district_id.to_be_bytes()
+                        {
+                            malformed_key = true;
+                        } else {
+                            let order_id = i32::from_be_bytes(
+                                key[8..]
+                                    .try_into()
+                                    .expect("the checked new-order key suffix has four bytes"),
+                            );
+                            selected = Some(DeliverySelectedNewOrder {
+                                order_id,
+                                resolved: row.resolved(),
+                            });
+                        }
+                        ScanControl::Stop
+                    },
+                )
+            }
+        })?
     };
     if let Err(error) = access {
         return Err(status_from_access("Delivery new-order scan", error));
@@ -4702,22 +4932,23 @@ fn delivery_read_oorder(
     let mut decoded = None;
     let mut codec_error = None;
     let access = {
-        let transaction = active_transaction(&mut handle.active)?;
-        table.state.table.visit_get_resolving_bytes(
-            transaction,
-            &handle.native_worker,
-            key,
-            |current| {
-                if let Some(bytes) = current {
-                    match delivery_oorder_replacement(bytes, carrier_id, &mut replacement) {
-                        Ok((replacement_length, customer_id)) => {
-                            decoded = Some((replacement_length, customer_id));
+        with_active_transaction!(&handle.active, &mut handle.sto_worker, |transaction| {
+            table.state.table.visit_get_resolving_bytes(
+                transaction,
+                &handle.native_worker,
+                key,
+                |current| {
+                    if let Some(bytes) = current {
+                        match delivery_oorder_replacement(bytes, carrier_id, &mut replacement) {
+                            Ok((replacement_length, customer_id)) => {
+                                decoded = Some((replacement_length, customer_id));
+                            }
+                            Err(error) => codec_error = Some(error),
                         }
-                        Err(error) => codec_error = Some(error),
                     }
-                }
-            },
-        )
+                },
+            )
+        })?
     };
     let (_, resolved) = match access {
         Ok(value) => value,
@@ -4754,43 +4985,44 @@ fn delivery_read_order_lines(
     let access = {
         let native_worker = &handle.native_worker;
         let scratch = &mut handle.scan_scratch;
-        let transaction = active_transaction(&mut handle.active)?;
-        // SAFETY: Values are parsed synchronously and copied to fixed stack
-        // storage. ResolvedRecord is an owned, table-bound stable token.
-        unsafe {
-            table
-                .state
-                .table
-                .visit_bounded_forward_values_trusted_with_scratch(
-                    transaction,
-                    native_worker,
-                    lower,
-                    upper,
-                    DELIVERY_MAX_LINES_PER_DISTRICT,
-                    scratch,
-                    |value, resolved| {
-                        let index = lines.count;
-                        debug_assert!(index < DELIVERY_MAX_LINES_PER_DISTRICT);
-                        match delivery_order_line_replacement(
-                            value,
-                            timestamp,
-                            &mut lines.replacements[index],
-                        ) {
-                            Ok((length, amount)) => {
-                                lines.resolved[index] = Some(resolved);
-                                lines.replacement_lengths[index] = length;
-                                lines.count += 1;
-                                lines.total += amount;
-                                ScanControl::Continue
+        with_active_transaction!(&handle.active, &mut handle.sto_worker, |transaction| {
+            // SAFETY: Values are parsed synchronously and copied to fixed stack
+            // storage. ResolvedRecord is an owned, table-bound stable token.
+            unsafe {
+                table
+                    .state
+                    .table
+                    .visit_bounded_forward_values_trusted_with_scratch(
+                        transaction,
+                        native_worker,
+                        lower,
+                        upper,
+                        DELIVERY_MAX_LINES_PER_DISTRICT,
+                        scratch,
+                        |value, resolved| {
+                            let index = lines.count;
+                            debug_assert!(index < DELIVERY_MAX_LINES_PER_DISTRICT);
+                            match delivery_order_line_replacement(
+                                value,
+                                timestamp,
+                                &mut lines.replacements[index],
+                            ) {
+                                Ok((length, amount)) => {
+                                    lines.resolved[index] = Some(resolved);
+                                    lines.replacement_lengths[index] = length;
+                                    lines.count += 1;
+                                    lines.total += amount;
+                                    ScanControl::Continue
+                                }
+                                Err(error) => {
+                                    codec_error = Some((index, error));
+                                    ScanControl::Stop
+                                }
                             }
-                            Err(error) => {
-                                codec_error = Some((index, error));
-                                ScanControl::Stop
-                            }
-                        }
-                    },
-                )
-        }
+                        },
+                    )
+            }
+        })?
     };
     if let Err(error) = access {
         return Err(status_from_access("Delivery order-line scan", error));
@@ -4810,13 +5042,12 @@ fn delivery_put_required_resolved(
     value: &[u8],
     operation: &'static str,
 ) -> FfiResult<()> {
-    let access = {
-        let transaction = active_transaction(&mut handle.active)?;
+    let access = with_active_transaction!(&handle.active, &mut handle.sto_worker, |transaction| {
         table
             .state
             .table
             .put_resolved_with_previous_presence(transaction, resolved, value)
-    };
+    })?;
     match access {
         Ok(true) => Ok(()),
         Ok(false) => {
@@ -4834,13 +5065,12 @@ fn delivery_remove_required_resolved(
     table: &StoTpccTable,
     resolved: ResolvedRecord,
 ) -> FfiResult<()> {
-    let access = {
-        let transaction = active_transaction(&mut handle.active)?;
+    let access = with_active_transaction!(&handle.active, &mut handle.sto_worker, |transaction| {
         table
             .state
             .table
             .remove_resolved_with_previous_presence(transaction, resolved)
-    };
+    })?;
     match access {
         Ok(true) => {
             record_size_delta_after_staging(handle, &table.state, -1)?;
@@ -4865,27 +5095,28 @@ fn delivery_update_customer_balance(
     let mut replacement = [0_u8; mem::size_of::<f32>()];
     let mut found = false;
     let access = {
-        let transaction = active_transaction(&mut handle.active)?;
-        table.state.table.visit_get_resolving_bytes(
-            transaction,
-            &handle.native_worker,
-            key,
-            |current| {
-                let Some(bytes) = current else {
-                    return;
-                };
-                if bytes.len() != mem::size_of::<f32>() {
-                    return;
-                }
-                let balance = f32::from_ne_bytes(
-                    bytes
-                        .try_into()
-                        .expect("the checked customer balance has four bytes"),
-                );
-                replacement.copy_from_slice(&(balance + order_line_total).to_ne_bytes());
-                found = true;
-            },
-        )
+        with_active_transaction!(&handle.active, &mut handle.sto_worker, |transaction| {
+            table.state.table.visit_get_resolving_bytes(
+                transaction,
+                &handle.native_worker,
+                key,
+                |current| {
+                    let Some(bytes) = current else {
+                        return;
+                    };
+                    if bytes.len() != mem::size_of::<f32>() {
+                        return;
+                    }
+                    let balance = f32::from_ne_bytes(
+                        bytes
+                            .try_into()
+                            .expect("the checked customer balance has four bytes"),
+                    );
+                    replacement.copy_from_slice(&(balance + order_line_total).to_ne_bytes());
+                    found = true;
+                },
+            )
+        })?
     };
     let (_, resolved) = match access {
         Ok(value) => value,
@@ -4948,21 +5179,26 @@ unsafe fn delivery_full_body(
     }
 
     let handle = &mut *guard.handle;
+    let runtime_id = handle.sto_worker.runtime_id();
     let new_order = unsafe {
-        payment_table_owned(handle, request.new_order_table, "Delivery new-order table")?
+        payment_table_owned(
+            runtime_id,
+            request.new_order_table,
+            "Delivery new-order table",
+        )?
     };
     let oorder =
-        unsafe { payment_table_owned(handle, request.oorder_table, "Delivery order table")? };
+        unsafe { payment_table_owned(runtime_id, request.oorder_table, "Delivery order table")? };
     let order_line = unsafe {
         payment_table_owned(
-            handle,
+            runtime_id,
             request.order_line_table,
             "Delivery order-line table",
         )?
     };
     let customer = unsafe {
         payment_table_owned(
-            handle,
+            runtime_id,
             request.customer_table,
             "Delivery customer-balance table",
         )?
@@ -5132,49 +5368,50 @@ fn stock_level_scan_item_ids(
     let access = {
         let native_worker = &handle.native_worker;
         let scratch = &mut handle.scan_scratch;
-        let transaction = active_transaction(&mut handle.active)?;
-        // SAFETY: The callback retains only a decoded integer in fixed Rust
-        // storage. It neither retains value bytes nor re-enters the table.
-        unsafe {
-            table
-                .state
-                .table
-                .visit_bounded_forward_values_trusted_with_scratch(
-                    transaction,
-                    native_worker,
-                    lower,
-                    upper,
-                    STOCK_LEVEL_MAX_ORDER_LINE_ROWS,
-                    scratch,
-                    |value, _resolved| {
-                        let mut cursor = 0;
-                        match new_order_decode_i32(
-                            value,
-                            &mut cursor,
-                            "StockLevel order-line item ID",
-                        ) {
-                            Ok(item_id) if (1..=100_000).contains(&item_id) => {
-                                if items.insert(item_id as u32).is_err() {
-                                    set_exhausted = true;
-                                    return ScanControl::Stop;
+        with_active_transaction!(&handle.active, &mut handle.sto_worker, |transaction| {
+            // SAFETY: The callback retains only a decoded integer in fixed Rust
+            // storage. It neither retains value bytes nor re-enters the table.
+            unsafe {
+                table
+                    .state
+                    .table
+                    .visit_bounded_forward_values_trusted_with_scratch(
+                        transaction,
+                        native_worker,
+                        lower,
+                        upper,
+                        STOCK_LEVEL_MAX_ORDER_LINE_ROWS,
+                        scratch,
+                        |value, _resolved| {
+                            let mut cursor = 0;
+                            match new_order_decode_i32(
+                                value,
+                                &mut cursor,
+                                "StockLevel order-line item ID",
+                            ) {
+                                Ok(item_id) if (1..=100_000).contains(&item_id) => {
+                                    if items.insert(item_id as u32).is_err() {
+                                        set_exhausted = true;
+                                        return ScanControl::Stop;
+                                    }
+                                    scanned_rows += 1;
+                                    ScanControl::Continue
                                 }
-                                scanned_rows += 1;
-                                ScanControl::Continue
+                                Ok(_) => {
+                                    codec_error = Some(NewOrderCodecError::OutOfRange(
+                                        "StockLevel order-line item ID",
+                                    ));
+                                    ScanControl::Stop
+                                }
+                                Err(error) => {
+                                    codec_error = Some(error);
+                                    ScanControl::Stop
+                                }
                             }
-                            Ok(_) => {
-                                codec_error = Some(NewOrderCodecError::OutOfRange(
-                                    "StockLevel order-line item ID",
-                                ));
-                                ScanControl::Stop
-                            }
-                            Err(error) => {
-                                codec_error = Some(error);
-                                ScanControl::Stop
-                            }
-                        }
-                    },
-                )
-        }
+                        },
+                    )
+            }
+        })?
     };
     if let Err(error) = access {
         return Err(status_from_access("StockLevel order-line scan", error));
@@ -5341,39 +5578,40 @@ fn stock_level_count_low_stock_worker_cache(
     let native_worker = &handle.native_worker;
     let point_batch = &mut handle.point_batch;
     let resolved_cache = &mut handle.resolved_cache;
-    let transaction = active_transaction(&mut handle.active)?;
-    let access: Result<(), AccessError> = (|| {
-        if miss_count != 0 {
-            let mut session = table.state.table.point_session(transaction, native_worker);
-            session.visit_fixed_resolving_bytes(
-                &miss_keys[..miss_count],
-                point_batch,
-                |miss_index, current, resolved| {
-                    let original_index = miss_indices[miss_index];
-                    resolved_cache.remember_after_probe(
-                        &table.state.table,
-                        &miss_keys[miss_index],
-                        resolved,
-                        miss_probes[miss_index],
-                    );
-                    observations[original_index] = stock_level_observe_quantity(current, threshold);
-                },
-            )?;
-        }
+    let access: Result<(), AccessError> =
+        with_active_transaction!(&handle.active, &mut handle.sto_worker, |transaction| {
+            if miss_count != 0 {
+                let mut session = table.state.table.point_session(transaction, native_worker);
+                session.visit_fixed_resolving_bytes(
+                    &miss_keys[..miss_count],
+                    point_batch,
+                    |miss_index, current, resolved| {
+                        let original_index = miss_indices[miss_index];
+                        resolved_cache.remember_after_probe(
+                            &table.state.table,
+                            &miss_keys[miss_index],
+                            resolved,
+                            miss_probes[miss_index],
+                        );
+                        observations[original_index] =
+                            stock_level_observe_quantity(current, threshold);
+                    },
+                )?;
+            }
 
-        for (index, resolved) in cached[..item_ids.len()].iter().copied().enumerate() {
-            let Some(resolved) = resolved else {
-                continue;
-            };
-            table
-                .state
-                .table
-                .visit_get_resolved_bytes(transaction, resolved, |current| {
-                    observations[index] = stock_level_observe_quantity(current, threshold);
-                })?;
-        }
-        Ok(())
-    })();
+            for (index, resolved) in cached[..item_ids.len()].iter().copied().enumerate() {
+                let Some(resolved) = resolved else {
+                    continue;
+                };
+                table
+                    .state
+                    .table
+                    .visit_get_resolved_bytes(transaction, resolved, |current| {
+                        observations[index] = stock_level_observe_quantity(current, threshold);
+                    })?;
+            }
+            Ok(())
+        })?;
     if let Err(error) = access {
         return Err(status_from_access("StockLevel stock batch", error));
     }
@@ -5453,28 +5691,29 @@ fn stock_level_count_low_stock_dense(
     let mut observations =
         [StockLevelQuantityObservation::Unvisited; STOCK_LEVEL_MAX_ORDER_LINE_ROWS];
     let mut cache_error = None;
-    let transaction = active_transaction(&mut handle.active)?;
-    let mut session = table
-        .state
-        .table
-        .point_session(transaction, &handle.native_worker);
-    let access = session.visit_fixed_hinted_bytes(
-        &keys[..item_ids.len()],
-        &hints[..item_ids.len()],
-        &missing_keys[..miss_count],
-        &missing_positions[..miss_count],
-        &mut handle.point_batch,
-        |index, current, resolved| {
-            if hints[index].is_none() {
-                if let Some(cache) = cache {
-                    if let Err(error) = cache.remember(dense_slots[index], resolved) {
-                        cache_error.get_or_insert(error);
+    let access = with_active_transaction!(&handle.active, &mut handle.sto_worker, |transaction| {
+        let mut session = table
+            .state
+            .table
+            .point_session(transaction, &handle.native_worker);
+        session.visit_fixed_hinted_bytes(
+            &keys[..item_ids.len()],
+            &hints[..item_ids.len()],
+            &missing_keys[..miss_count],
+            &missing_positions[..miss_count],
+            &mut handle.point_batch,
+            |index, current, resolved| {
+                if hints[index].is_none() {
+                    if let Some(cache) = cache {
+                        if let Err(error) = cache.remember(dense_slots[index], resolved) {
+                            cache_error.get_or_insert(error);
+                        }
                     }
                 }
-            }
-            observations[index] = stock_level_observe_quantity(current, threshold);
-        },
-    );
+                observations[index] = stock_level_observe_quantity(current, threshold);
+            },
+        )
+    })?;
     if let Err(error) = access {
         return Err(status_from_access("StockLevel stock batch", error));
     }
@@ -5563,15 +5802,16 @@ unsafe fn stock_level_full_body(
         .map_err(|_| fatal(format_args!("StockLevel threshold exceeds i32")))?;
 
     let handle = &mut *guard.handle;
+    let runtime_id = handle.sto_worker.runtime_id();
     let order_line = unsafe {
         payment_table_owned(
-            handle,
+            runtime_id,
             request.order_line_table,
             "StockLevel order-line table",
         )?
     };
     let stock =
-        unsafe { payment_table_owned(handle, request.stock_table, "StockLevel stock table")? };
+        unsafe { payment_table_owned(runtime_id, request.stock_table, "StockLevel stock table")? };
 
     // Match the scalar C++ conditional subtraction and narrowing into the
     // signed order-line key fields. Valid TPC-C order IDs fit i32.
@@ -5619,21 +5859,23 @@ fn new_order_require_cached_present(
         )));
     }
     let probe = handle.resolved_cache.probe(&table.state.table, key);
-    let access = {
-        let transaction = active_transaction(&mut handle.active)?;
-        match probe.record {
-            Some(resolved) => table
-                .state
-                .table
-                .contains_resolved(transaction, resolved)
-                .map(|present| (present, None)),
-            None => table
-                .state
-                .table
-                .contains_resolving(transaction, &handle.native_worker, key)
-                .map(|(present, resolved)| (present, Some(resolved))),
-        }
-    };
+    let access =
+        with_active_transaction!(
+            &handle.active,
+            &mut handle.sto_worker,
+            |transaction| match probe.record {
+                Some(resolved) => table
+                    .state
+                    .table
+                    .contains_resolved(transaction, resolved)
+                    .map(|present| (present, None)),
+                None => table
+                    .state
+                    .table
+                    .contains_resolving(transaction, &handle.native_worker, key)
+                    .map(|(present, resolved)| (present, Some(resolved))),
+            },
+        )?;
     let present = match access {
         Ok((present, Some(resolved))) => {
             handle
@@ -5681,8 +5923,7 @@ fn new_order_read_items(
     let mut missing = None;
     let mut codec_error = None;
     let mut cache_error = None;
-    let access = {
-        let transaction = active_transaction(&mut handle.active)?;
+    let access = with_active_transaction!(&handle.active, &mut handle.sto_worker, |transaction| {
         let mut session = table
             .state
             .table
@@ -5714,7 +5955,7 @@ fn new_order_read_items(
                 }
             },
         )
-    };
+    })?;
     if let Err(error) = access {
         return Err(status_from_access("new-order item batch", error));
     }
@@ -5759,37 +6000,38 @@ fn new_order_modify_stocks_worker_cache(
     let mut codec_error = None;
     let access = {
         let resolved_cache = &mut handle.resolved_cache;
-        let transaction = active_transaction(&mut handle.active)?;
-        let mut session = table
-            .state
-            .table
-            .point_session(transaction, &handle.native_worker);
-        session.modify_fixed_resolving_visit(
-            &keys[..item_ids.len()],
-            &mut handle.point_batch,
-            |index, current, resolved| {
-                resolved_cache.remember(&table.state.table, &keys[index], resolved);
-                if missing.is_some() || codec_error.is_some() {
-                    return PointMutation::Keep;
-                }
-                let Some(current) = current else {
-                    missing = Some(index);
-                    return PointMutation::Keep;
-                };
-                let mut replacement = [0_u8; NEW_ORDER_STOCK_VALUE_MAX];
-                match new_order_stock_replacement(
-                    current.as_ref(),
-                    quantities[index],
-                    &mut replacement,
-                ) {
-                    Ok(length) => PointMutation::Put(Value::from(&replacement[..length])),
-                    Err(error) => {
-                        codec_error = Some((index, error));
-                        PointMutation::Keep
+        with_active_transaction!(&handle.active, &mut handle.sto_worker, |transaction| {
+            let mut session = table
+                .state
+                .table
+                .point_session(transaction, &handle.native_worker);
+            session.modify_fixed_resolving_visit(
+                &keys[..item_ids.len()],
+                &mut handle.point_batch,
+                |index, current, resolved| {
+                    resolved_cache.remember(&table.state.table, &keys[index], resolved);
+                    if missing.is_some() || codec_error.is_some() {
+                        return PointMutation::Keep;
                     }
-                }
-            },
-        )
+                    let Some(current) = current else {
+                        missing = Some(index);
+                        return PointMutation::Keep;
+                    };
+                    let mut replacement = [0_u8; NEW_ORDER_STOCK_VALUE_MAX];
+                    match new_order_stock_replacement(
+                        current.as_ref(),
+                        quantities[index],
+                        &mut replacement,
+                    ) {
+                        Ok(length) => PointMutation::Put(Value::from(&replacement[..length])),
+                        Err(error) => {
+                            codec_error = Some((index, error));
+                            PointMutation::Keep
+                        }
+                    }
+                },
+            )
+        })?
     };
     if let Err(error) = access {
         return Err(status_from_access("new-order stock batch", error));
@@ -5841,43 +6083,47 @@ fn new_order_modify_stocks_dense(
     let mut missing = None;
     let mut codec_error = None;
     let mut cache_error = None;
-    let transaction = active_transaction(&mut handle.active)?;
-    let mut session = table
-        .state
-        .table
-        .point_session(transaction, &handle.native_worker);
-    let access = session.modify_fixed_hinted_visit(
-        &keys[..item_ids.len()],
-        &hints[..item_ids.len()],
-        &missing_keys[..miss_count],
-        &missing_positions[..miss_count],
-        &mut handle.point_batch,
-        |index, current, resolved| {
-            if hints[index].is_none() {
-                if let Some(cache) = dense_cache {
-                    if let Err(error) = cache.remember(dense_slots[index], resolved) {
-                        cache_error.get_or_insert(error);
+    let access = with_active_transaction!(&handle.active, &mut handle.sto_worker, |transaction| {
+        let mut session = table
+            .state
+            .table
+            .point_session(transaction, &handle.native_worker);
+        session.modify_fixed_hinted_visit(
+            &keys[..item_ids.len()],
+            &hints[..item_ids.len()],
+            &missing_keys[..miss_count],
+            &missing_positions[..miss_count],
+            &mut handle.point_batch,
+            |index, current, resolved| {
+                if hints[index].is_none() {
+                    if let Some(cache) = dense_cache {
+                        if let Err(error) = cache.remember(dense_slots[index], resolved) {
+                            cache_error.get_or_insert(error);
+                        }
                     }
                 }
-            }
-            if missing.is_some() || codec_error.is_some() {
-                return PointMutation::Keep;
-            }
-            let Some(current) = current else {
-                missing = Some(index);
-                return PointMutation::Keep;
-            };
-            let mut replacement = [0_u8; NEW_ORDER_STOCK_VALUE_MAX];
-            match new_order_stock_replacement(current.as_ref(), quantities[index], &mut replacement)
-            {
-                Ok(length) => PointMutation::Put(Value::from(&replacement[..length])),
-                Err(error) => {
-                    codec_error = Some((index, error));
-                    PointMutation::Keep
+                if missing.is_some() || codec_error.is_some() {
+                    return PointMutation::Keep;
                 }
-            }
-        },
-    );
+                let Some(current) = current else {
+                    missing = Some(index);
+                    return PointMutation::Keep;
+                };
+                let mut replacement = [0_u8; NEW_ORDER_STOCK_VALUE_MAX];
+                match new_order_stock_replacement(
+                    current.as_ref(),
+                    quantities[index],
+                    &mut replacement,
+                ) {
+                    Ok(length) => PointMutation::Put(Value::from(&replacement[..length])),
+                    Err(error) => {
+                        codec_error = Some((index, error));
+                        PointMutation::Keep
+                    }
+                }
+            },
+        )
+    })?;
     if let Err(error) = access {
         return Err(status_from_access("new-order stock batch", error));
     }
@@ -5975,8 +6221,7 @@ fn new_order_insert_order_lines(
 
     let mut inserted = 0_i64;
     let mut duplicate = None;
-    let access = {
-        let transaction = active_transaction(&mut handle.active)?;
+    let access = with_active_transaction!(&handle.active, &mut handle.sto_worker, |transaction| {
         let mut session = table
             .state
             .table
@@ -5994,7 +6239,7 @@ fn new_order_insert_order_lines(
                 }
             },
         )
-    };
+    })?;
     if let Err(error) = access {
         return Err(status_from_access("new-order order-line batch", error));
     }
@@ -6079,31 +6324,51 @@ unsafe fn new_order_full_body(
     }
 
     let handle = &mut *guard.handle;
+    let runtime_id = handle.sto_worker.runtime_id();
     let warehouse = unsafe {
-        payment_table_owned(handle, request.warehouse_table, "NewOrder warehouse table")?
+        payment_table_owned(
+            runtime_id,
+            request.warehouse_table,
+            "NewOrder warehouse table",
+        )?
     };
-    let district =
-        unsafe { payment_table_owned(handle, request.district_table, "NewOrder district table")? };
-    let customer =
-        unsafe { payment_table_owned(handle, request.customer_table, "NewOrder customer table")? };
-    let item = unsafe { payment_table_owned(handle, request.item_table, "NewOrder item table")? };
+    let district = unsafe {
+        payment_table_owned(
+            runtime_id,
+            request.district_table,
+            "NewOrder district table",
+        )?
+    };
+    let customer = unsafe {
+        payment_table_owned(
+            runtime_id,
+            request.customer_table,
+            "NewOrder customer table",
+        )?
+    };
+    let item =
+        unsafe { payment_table_owned(runtime_id, request.item_table, "NewOrder item table")? };
     let stock =
-        unsafe { payment_table_owned(handle, request.stock_table, "NewOrder stock table")? };
+        unsafe { payment_table_owned(runtime_id, request.stock_table, "NewOrder stock table")? };
     let new_order = unsafe {
-        payment_table_owned(handle, request.new_order_table, "NewOrder new-order table")?
+        payment_table_owned(
+            runtime_id,
+            request.new_order_table,
+            "NewOrder new-order table",
+        )?
     };
     let oorder =
-        unsafe { payment_table_owned(handle, request.oorder_table, "NewOrder order table")? };
+        unsafe { payment_table_owned(runtime_id, request.oorder_table, "NewOrder order table")? };
     let oorder_c_id_idx = unsafe {
         payment_table_owned(
-            handle,
+            runtime_id,
             request.oorder_c_id_idx_table,
             "NewOrder customer-order index table",
         )?
     };
     let order_line = unsafe {
         payment_table_owned(
-            handle,
+            runtime_id,
             request.order_line_table,
             "NewOrder order-line table",
         )?
@@ -6430,6 +6695,48 @@ mod tests {
         assert_eq!(adjust_logical_rows(&rows, 2), Ok(()));
         assert_eq!(adjust_logical_rows(&rows, -1), Ok(()));
         assert_eq!(rows.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn worker_owner_runtime_id_remains_accessible_during_transaction() {
+        let runtime = Runtime::new(RuntimeConfig::new().with_max_workers(1)).unwrap();
+        let worker = runtime.attach().unwrap();
+        let expected_runtime_id = worker.runtime().id();
+        let mut owner = StoWorkerOwner::new(worker);
+
+        owner.begin_erased().unwrap();
+        // Only the worker allocation is address-sensitive. Moving the owner
+        // while active also moves the inline transaction value and must keep
+        // its hidden worker borrow valid.
+        let mut owner = std::hint::black_box(owner);
+        assert_eq!(
+            owner.begin_erased().unwrap_err(),
+            InvalidUse::WorkerBusy.into()
+        );
+        assert_eq!(owner.runtime_id(), expected_runtime_id);
+        assert!(!owner
+            .with_active_transaction(|transaction| transaction.is_doomed())
+            .unwrap());
+        let first_reason = owner
+            .finish_active(|transaction| *transaction.abort().reason())
+            .unwrap();
+        assert_eq!(first_reason, AbortReason::Explicit);
+
+        // The first transaction was consumed above. Reading cached metadata and
+        // then using the stored transaction is the Miri regression for the former
+        // aliased Box dereference. Drop must abort the second transaction before
+        // reclaiming the worker allocation.
+        owner.begin_erased().unwrap();
+        assert_eq!(owner.runtime_id(), expected_runtime_id);
+        assert!(!owner
+            .with_active_transaction(|transaction| transaction.is_doomed())
+            .unwrap());
+        drop(owner);
+
+        // Dropping the active owner aborts its transaction and releases the
+        // only worker slot back to the runtime.
+        let replacement = runtime.attach().unwrap();
+        drop(replacement);
     }
 
     fn test_encode_u32(mut value: u32) -> Vec<u8> {
@@ -8152,7 +8459,10 @@ mod tests {
             // even when an earlier key was already present.
             assert_eq!(visited, 0);
             assert!(context.observed.is_empty());
-            assert!((*thread).active.as_ref().unwrap().transaction.is_doomed());
+            assert!((*thread)
+                .sto_worker
+                .with_active_transaction(|transaction| transaction.is_doomed())
+                .unwrap());
             assert!((*thread).pending_size.is_empty());
             assert_eq!(sto_tpcc_txn_abort(thread), Status::Ok.code());
 
@@ -8365,7 +8675,10 @@ mod tests {
                 Status::Fatal.code()
             );
             assert_eq!(result, StoTpccFixedPutResult::default());
-            assert!((*thread).active.as_ref().unwrap().transaction.is_doomed());
+            assert!((*thread)
+                .sto_worker
+                .with_active_transaction(|transaction| transaction.is_doomed())
+                .unwrap());
             assert!((*thread).pending_size.is_empty());
             assert_eq!((*thread).point_batch.capacity(), retained_capacity);
             assert_eq!(sto_tpcc_txn_abort(thread), Status::Ok.code());
@@ -8435,7 +8748,10 @@ mod tests {
                         }
                     );
                     assert!((*thread).active.is_some());
-                    assert!(!(*thread).active.as_ref().unwrap().transaction.is_doomed());
+                    assert!(!(*thread)
+                        .sto_worker
+                        .with_active_transaction(|transaction| transaction.is_doomed())
+                        .unwrap());
                 }};
             }
 
@@ -8812,18 +9128,23 @@ mod tests {
                     .unwrap()
                     .unwrap();
                 let mut observed = None;
-                stock_handle
-                    .state
-                    .table
-                    .visit_get_resolved_bytes(
-                        active_transaction(&mut (*thread).active).unwrap(),
-                        resolved,
-                        |current| {
-                            observed = current
-                                .map(|bytes| i16::from_ne_bytes(bytes[..2].try_into().unwrap()));
-                        },
-                    )
-                    .unwrap();
+                with_active_transaction!(
+                    &(*thread).active,
+                    &mut (*thread).sto_worker,
+                    |transaction| {
+                        stock_handle.state.table.visit_get_resolved_bytes(
+                            transaction,
+                            resolved,
+                            |current| {
+                                observed = current.map(|bytes| {
+                                    i16::from_ne_bytes(bytes[..2].try_into().unwrap())
+                                });
+                            },
+                        )
+                    },
+                )
+                .unwrap()
+                .unwrap();
                 assert_eq!(observed, Some(expected_quantity));
             }
             assert_eq!(sto_tpcc_txn_commit(thread), Status::Ok.code());
@@ -9597,11 +9918,9 @@ mod tests {
             assert_eq!(actual, b"second-table-value".len());
             assert_eq!(&output[..actual], b"second-table-value");
             assert!(!(*thread)
-                .active
-                .as_ref()
-                .expect("transaction remains active")
-                .transaction
-                .is_doomed());
+                .sto_worker
+                .with_active_transaction(|transaction| transaction.is_doomed())
+                .expect("transaction remains active"));
             assert_eq!(sto_tpcc_txn_commit(thread), Status::Ok.code());
 
             // A point miss still resolves a stable tombstone token. The
