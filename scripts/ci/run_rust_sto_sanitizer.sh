@@ -627,6 +627,113 @@ rust_command_environment=(
 if [[ -n "${selected_rustup_toolchain}" ]]; then
     rust_command_environment+=("RUSTUP_TOOLCHAIN=${selected_rustup_toolchain}")
 fi
+
+# The legacy rust-lib archive is a dependency of dbtest. Audit its generated
+# command before starting the expensive build: every Cargo invocation must use
+# the already-selected executable, and nightly sanitizer jobs must pin the same
+# rustup toolchain. This prevents parallel build edges from racing to install
+# the workspace-default toolchain in the shared RUSTUP_HOME.
+rust_lib_command_log="${build_dir}/sanitizer-logs/rust-lib-build-command.txt"
+rust_lib_target_base="${repo_root}/rust-lib/target"
+if [[ -v CARGO_TARGET_DIR ]]; then
+    rust_lib_target_base="${CARGO_TARGET_DIR}"
+    if [[ "${rust_lib_target_base}" != /* ]]; then
+        rust_lib_target_base="${repo_root}/rust-lib/${rust_lib_target_base}"
+    fi
+fi
+ninja -C "${build_dir}" -t commands rust_build >"${rust_lib_command_log}"
+python3 - "${rust_lib_command_log}" "${repo_root}/rust-lib" \
+    "${selected_cargo}" "${selected_rustup_toolchain}" \
+    "${rust_lib_target_base}" <<'PY'
+import pathlib
+import shlex
+import sys
+
+command_path = pathlib.Path(sys.argv[1])
+expected_working_directory = pathlib.Path(sys.argv[2]).resolve()
+expected_cargo = pathlib.Path(sys.argv[3]).resolve()
+expected_toolchain = sys.argv[4]
+expected_target_directory = pathlib.Path(sys.argv[5]).resolve()
+commands = [
+    line for line in command_path.read_text(encoding="utf-8").splitlines() if line
+]
+if len(commands) != 1:
+    raise SystemExit(
+        f"expected one rust-lib build command, found {len(commands)}"
+    )
+
+tokens = shlex.split(commands[0])
+try:
+    separator = tokens.index("&&")
+except ValueError as error:
+    raise SystemExit("rust-lib build command lacks an exact working directory") from error
+working_directory_tokens = tokens[:separator]
+if (
+    len(working_directory_tokens) != 2
+    or working_directory_tokens[0] != "cd"
+    or pathlib.Path(working_directory_tokens[1]).resolve()
+    != expected_working_directory
+):
+    raise SystemExit(
+        f"rust-lib build directory is {working_directory_tokens!r}, "
+        f"expected {str(expected_working_directory)!r}"
+    )
+
+command = tokens[separator + 1 :]
+if len(command) < 7 or command[1:3] != ["-E", "env"]:
+    raise SystemExit("rust-lib build does not use a scoped CMake environment")
+
+cargo_indexes = [
+    index
+    for index, token in enumerate(command)
+    if "=" not in token and pathlib.Path(token).name == "cargo"
+]
+if len(cargo_indexes) != 1:
+    raise SystemExit(
+        f"rust-lib build must contain one Cargo executable, found {len(cargo_indexes)}"
+    )
+cargo_index = cargo_indexes[0]
+actual_cargo = pathlib.Path(command[cargo_index]).resolve()
+if actual_cargo != expected_cargo:
+    raise SystemExit(
+        f"rust-lib build selects {actual_cargo}, expected {expected_cargo}"
+    )
+if command[cargo_index + 1 :] != ["build", "--release", "--locked"]:
+    raise SystemExit("rust-lib build must be an exact locked release build")
+
+environment = command[3:cargo_index]
+target_directory_entries = [
+    entry for entry in environment if entry.startswith("CARGO_TARGET_DIR=")
+]
+toolchain_entries = [
+    entry for entry in environment if entry.startswith("RUSTUP_TOOLCHAIN=")
+]
+if len(target_directory_entries) != 1:
+    raise SystemExit(
+        "rust-lib build must select exactly one CARGO_TARGET_DIR; "
+        f"found {target_directory_entries!r}"
+    )
+actual_target_directory = pathlib.Path(
+    target_directory_entries[0].split("=", 1)[1]
+).resolve()
+if actual_target_directory != expected_target_directory:
+    raise SystemExit(
+        f"rust-lib target directory is {actual_target_directory}, "
+        f"expected {expected_target_directory}"
+    )
+expected_entries = (
+    [f"RUSTUP_TOOLCHAIN={expected_toolchain}"] if expected_toolchain else []
+)
+if toolchain_entries != expected_entries:
+    raise SystemExit(
+        f"rust-lib toolchain selection is {toolchain_entries!r}, "
+        f"expected {expected_entries!r}"
+    )
+if len(environment) != 1 + len(expected_entries):
+    raise SystemExit(f"rust-lib build has unexpected environment: {environment!r}")
+print("verified pinned rust-lib Cargo command")
+PY
+
 workspace_native_environment=()
 workspace_native_lib_dirs=""
 workspace_native_libs=""

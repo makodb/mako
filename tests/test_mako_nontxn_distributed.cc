@@ -71,6 +71,14 @@ std::string config_path() {
     return candidates[0];
 }
 
+void set_server_table_multiversion_mode() {
+#if defined(DISABLE_MULTI_VERSION)
+    TThread::disable_multiversion();
+#else
+    TThread::enable_multiverison();
+#endif
+}
+
 // Binds the fake (UDP) transport to shard 1's URI, wires the helper
 // queues for client warehouse 0, and runs the event loop. Mirrors the
 // production rpc_server in benchmarks/rpc_setup.cc (handler range
@@ -107,7 +115,7 @@ void helper_server_thread(transport::Configuration* config,
                           std::map<int, abstract_ordered_index*> open_tables) {
     scoped_db_thread_ctx ctx(db, true, 1);
     TThread::set_mode(1);
-    TThread::enable_multiverison();
+    set_server_table_multiversion_mode();
     TThread::set_shard_index(kServerShard);
     TThread::set_pid(kParId);
     TThread::set_nshards(config->nshards);
@@ -143,6 +151,9 @@ protected:
             // thread_init).
             scoped_db_thread_ctx ctx(g_db, /*loader=*/true);
         }
+        // MV deletes leave physical tombstones. Direct verification through
+        // g_server_tbl must interpret them in the same mode as the helper.
+        set_server_table_multiversion_mode();
 
         // The same logical table from the two role perspectives.
         g_client_tbl = mbta_index_build("nontxn_dist", kRemoteTableId,

@@ -325,7 +325,7 @@ class threadinfo {
     typedef ::mrcu_callback mrcu_callback;
     // @unsafe { record_rcu is not borrow-checked }
     void rcu_register(rusty::MutPtr<mrcu_callback> cb) {
-        record_rcu(cb, memtag(-1));
+        record_rcu(cb, memtag_mrcu_callback);
     }
 
     // thread management
@@ -372,6 +372,8 @@ class threadinfo {
     };
 
     enum { pool_max_nlines = 20 };
+    static_assert((memtag_mrcu_callback & memtag_pool_mask) > pool_max_nlines,
+                  "RCU callback tag must not overlap a pooled allocation tag");
     void* pool_[pool_max_nlines];
 
     limbo_group* limbo_head_;
@@ -390,7 +392,7 @@ class threadinfo {
         if ((tag & memtag_pool_mask) == 0) {
             p = memdebug::check_free_after_rcu(p, tag);
             ::free(p);
-        } else if (tag == memtag(-1))
+        } else if (tag == memtag_mrcu_callback)
             (*static_cast<mrcu_callback*>(p))(*this);
         else {
             p = memdebug::check_free_after_rcu(p, tag);

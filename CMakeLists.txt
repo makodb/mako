@@ -317,9 +317,25 @@ foreach(_rusty_port_target IN ITEMS
 endforeach()
 
 # RUST
+find_program(MAKO_CARGO_EXECUTABLE NAMES cargo)
+if(MAKO_CARGO_EXECUTABLE)
+    set(_MAKO_RUST_LIB_CARGO_EXECUTABLE "${MAKO_CARGO_EXECUTABLE}")
+else()
+    # Preserve configure-only and non-Rust target support on hosts without
+    # Cargo. The pre-existing rust_build target will fail at build time if it
+    # is selected without Cargo on PATH.
+    set(_MAKO_RUST_LIB_CARGO_EXECUTABLE cargo)
+endif()
+set(MAKO_RUST_STO_RUSTUP_TOOLCHAIN "" CACHE STRING
+    "Rustup toolchain for Cargo targets selected by Rust STO sanitizer builds")
+
 # Respect CARGO_TARGET_DIR environment variable if set (for Docker builds)
 if(DEFINED ENV{CARGO_TARGET_DIR})
-    set(RUST_LIB_TARGET_BASE "$ENV{CARGO_TARGET_DIR}")
+    if("$ENV{CARGO_TARGET_DIR}" STREQUAL "")
+        message(FATAL_ERROR "CARGO_TARGET_DIR must not be empty")
+    endif()
+    get_filename_component(RUST_LIB_TARGET_BASE "$ENV{CARGO_TARGET_DIR}"
+        ABSOLUTE BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/rust-lib")
     message(STATUS "Using CARGO_TARGET_DIR for rust-lib: ${RUST_LIB_TARGET_BASE}")
 else()
     set(RUST_LIB_TARGET_BASE "${CMAKE_CURRENT_SOURCE_DIR}/rust-lib/target")
@@ -327,15 +343,28 @@ endif()
 set(RUST_LIB_DIR "${RUST_LIB_TARGET_BASE}/release")
 set(RUST_LIB_NAME "rust_redis")
 set(RUST_LIB_PATH "${RUST_LIB_DIR}/lib${RUST_LIB_NAME}.a")
+set(_MAKO_RUST_LIB_TOOLCHAIN_ENV "")
+if(NOT "${MAKO_RUST_STO_RUSTUP_TOOLCHAIN}" STREQUAL "")
+    list(APPEND _MAKO_RUST_LIB_TOOLCHAIN_ENV
+        "RUSTUP_TOOLCHAIN=${MAKO_RUST_STO_RUSTUP_TOOLCHAIN}")
+endif()
+file(GLOB_RECURSE RUST_LIB_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/rust-lib/src/*.rs")
 
 # Use add_custom_command instead of add_custom_target to avoid rebuilding every time
 add_custom_command(
     OUTPUT ${RUST_LIB_PATH}
-    COMMAND cargo build --release
+    COMMAND "${CMAKE_COMMAND}" -E env
+        "CARGO_TARGET_DIR=${RUST_LIB_TARGET_BASE}"
+        ${_MAKO_RUST_LIB_TOOLCHAIN_ENV}
+        "${_MAKO_RUST_LIB_CARGO_EXECUTABLE}" build --release --locked
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/rust-lib
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/rust-lib/Cargo.toml
-            ${CMAKE_CURRENT_SOURCE_DIR}/rust-lib/src/lib.rs
+            ${CMAKE_CURRENT_SOURCE_DIR}/rust-lib/Cargo.lock
+            ${CMAKE_CURRENT_SOURCE_DIR}/rust-lib/build.rs
+            ${RUST_LIB_SOURCES}
     COMMENT "Building Rust library if needed"
+    VERBATIM
 )
 
 # Create a custom target that depends on the output
@@ -1474,8 +1503,6 @@ set(MAKO_RUST_STO_SANITIZER_RUSTFLAGS "" CACHE STRING
     "Rust flags confined to sanitizer-instrumented Rust STO test targets")
 set(MAKO_RUST_STO_SANITIZER_RUSTDOCFLAGS "" CACHE STRING
     "Rustdoc flags confined to sanitizer-instrumented Rust STO test targets")
-set(MAKO_RUST_STO_RUSTUP_TOOLCHAIN "" CACHE STRING
-    "Rustup toolchain confined to sanitizer-instrumented Rust STO test targets")
 set(MAKO_RUST_STO_CARGO_LINKER_ENV "" CACHE STRING
     "Cargo target-linker environment name for Rust STO sanitizer targets")
 set(MAKO_RUST_STO_ASAN_NATIVE_QUARANTINE_TESTS "" CACHE STRING
@@ -1569,7 +1596,6 @@ endif()
 if(MAKO_RUST_STO_BUILD_STD)
     list(APPEND _MAKO_RUST_STO_CARGO_PLATFORM_ARGS -Zbuild-std)
 endif()
-find_program(MAKO_CARGO_EXECUTABLE NAMES cargo)
 if(MAKO_CARGO_EXECUTABLE)
     get_filename_component(_MAKO_CXX_COMPILER_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
     get_filename_component(_MAKO_CXX_COMPILER_ROOT "${_MAKO_CXX_COMPILER_DIR}" DIRECTORY)
