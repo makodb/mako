@@ -23,18 +23,14 @@
 #include <rusty/slice.hpp>
 
 #include "rrr/rrr.hpp"
+#include "../constants.h"   // slotid_t / ballot_t -- the single definition
 
 namespace janus {
 namespace raft {
 
-// Type aliases matching existing codebase
-// Use preprocessor guards to avoid conflict with macro definitions in constants.h
-#ifndef slotid_t
-using slotid_t = uint64_t;
-#endif
-#ifndef ballot_t
-using ballot_t = uint64_t;
-#endif
+// slotid_t / ballot_t come from ../constants.h above; see the note in
+// log_storage.hpp. The former #ifndef-guarded unsigned redeclarations made
+// the type depend on include order.
 
 /**
  * Metadata about a snapshot.

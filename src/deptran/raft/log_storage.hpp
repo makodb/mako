@@ -22,6 +22,7 @@
 #include <rusty/slice.hpp>
 
 #include "rrr/rrr.hpp"
+#include "../constants.h"      // slotid_t / ballot_t -- the single definition
 #include "../mako_commands.h"  // janus::Command (SerializableEnvelope<MakoCommands>)
 
 namespace janus {
@@ -33,14 +34,13 @@ using ::rrr::BinaryReadArchive;
 using ::rrr::i8;
 using ::janus::Command;
 
-// Type aliases matching existing codebase
-// Use preprocessor guards to avoid conflict with macro definitions in constants.h
-#ifndef slotid_t
-using slotid_t = uint64_t;
-#endif
-#ifndef ballot_t
-using ballot_t = uint64_t;
-#endif
+// slotid_t / ballot_t come from ../constants.h above. They used to be
+// redeclared here behind `#ifndef` guards as *unsigned*, while constants.h
+// spells ballot_t as SIGNED int64_t -- so the type this header declared
+// depended on include order, and two TUs really did get the unsigned form.
+// That produced an ODR violation: LogEntry::load/save were emitted as the
+// same weak comdat symbol from objects compiled against different field
+// types. Including constants.h directly gives one definition everywhere.
 
 /**
  * Unified log entry structure for Raft and Paxos consensus protocols.
