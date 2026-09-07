@@ -50,6 +50,7 @@ EXPECTED_BLOCKS=(
   "src/deptran/raft/server.h|raft_server.commit_status"
   "src/deptran/raft/server.h|raft_server.scalar_decisions"
   "src/deptran/raft/server.h|raft_server.step_down_reason"
+  "src/deptran/raft/server.h|raft_server.submission_progress"
   "src/deptran/raft/service.cc|raft_service.scalar_decisions"
   "src/deptran/raft/snapshot_manager.hpp|raft_snapshot.metadata_decisions"
   "src/deptran/raft/snapshot_format.hpp|raft_snapshot.crc32_scalar_step"
@@ -61,6 +62,11 @@ EXPECTED_BLOCKS=(
   "src/deptran/raft_main_helper.cc|raft_main.group_mode"
   "src/deptran/raft_main_helper.cc|raft_main.group_mode_argument_predicate"
 )
+# Distinct carrier paths named by EXPECTED_BLOCKS -- used to decide whether a
+# run covers the whole graph (and therefore whether to verify the crate).
+mapfile -t EXPECTED_INVENTORY_FILES < <(
+  printf '%s\n' "${EXPECTED_BLOCKS[@]}" | cut -d'|' -f1 | LC_ALL=C sort -u)
+
 
 usage() {
   echo "Usage: bash scripts/raft_dsl.sh --check [--transpiler PATH] [FILE ...]" >&2
@@ -230,6 +236,18 @@ fi
 if [[ "${MODE}" == "rewrite" ]]; then
   "${TRANSPILER}" inline-rust --rewrite --files "${FILES[@]}"
   echo "rewrote ${#FILES[@]} Raft DSL carrier(s)"
+  # Regenerate the Stage 2 crate from the blocks we just rewrote, so a
+  # --rewrite leaves the tree consistent and a following --check passes.
+  # Only when this run covered the whole graph; a single-file rewrite leaves
+  # the crate to the next full one.
+  RAFT_CRATE_MANIFEST="${REPOSITORY_ROOT}/src/deptran/raft/rust-modules.toml"
+  if [[ -f "${RAFT_CRATE_MANIFEST}" &&
+        ${#FILES[@]} -eq ${#EXPECTED_INVENTORY_FILES[@]} ]]; then
+    "${PYTHON_BIN:-python3}" "${SCRIPT_DIR}/raft_crate_extract.py" \
+      --mode rewrite --transpiler "${TRANSPILER}" \
+      --manifest "${RAFT_CRATE_MANIFEST}" \
+      --scratch "$(mktemp -d)" || exit 1
+  fi
   exit 0
 fi
 
@@ -263,11 +281,6 @@ trap cleanup EXIT
 # A carrier with no manifest must also have no manifest in its regeneration
 # context. Refuse a TMPDIR nested inside an unrelated Cargo workspace only
 # when this carrier set needs that manifest-free context.
-# Distinct carrier paths named by EXPECTED_BLOCKS -- used to decide whether a
-# run covers the whole graph (and therefore whether to verify the crate).
-mapfile -t EXPECTED_INVENTORY_FILES < <(
-  printf '%s\n' "${EXPECTED_BLOCKS[@]}" | cut -d'|' -f1 | LC_ALL=C sort -u)
-
 NEEDS_MANIFESTLESS_CONTEXT=0
 for file in "${FILES[@]}"; do
   if ! nearest_cargo_manifest "${file}" >/dev/null; then

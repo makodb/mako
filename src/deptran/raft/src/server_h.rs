@@ -844,3 +844,16 @@ pub const fn raft_server_term_advance_is_durable(
 ) -> bool {
     !has_configured_storage || persistence_succeeded
 }
+
+#[cfg_attr(any(), cpp_no_auto_traits)]
+#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Default, Eq, PartialEq))]
+#[repr(C)]
+pub struct RaftSubmissionProgress {
+    #[cfg_attr(any(), cpp_value_init)]
+    pub committed: bool,
+    #[cfg_attr(any(), cpp_value_init)]
+    pub superseded: bool,
+    // terminal commit-outcome ambiguity; see the note above the block
+    #[cfg_attr(any(), cpp_value_init)]
+    pub indeterminate: bool,
+}

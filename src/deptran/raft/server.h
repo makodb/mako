@@ -1919,15 +1919,58 @@ struct RaftData {
 // entry can still be retained and committed by a later leader. Resolution is
 // known only after the committed prefix crosses the submitted slot, at which
 // point the slot either still has the submitted term or has been superseded.
+// FIELD ORDER IS LOAD-BEARING: every construction site uses positional
+// brace aggregate init (server.cc:2815, :2867, :5226), so this must stay an
+// aggregate with no user-provided constructor and the order below must not
+// change. `indeterminate` means a divergent installed snapshot covered the
+// slot without carrying enough per-entry identity to distinguish committed
+// from superseded -- a terminal commit-outcome ambiguity that must never be
+// reported as success or as a safe-to-retry rejection.
+//
+// Comments inside a RUSTYCPP_RUST block are dropped from the generated C++,
+// so that explanation is kept here where a C++ reader will see it.
+#if RUSTYCPP_RUST
+#[cfg_attr(any(), cpp_no_auto_traits)]
+#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Default, Eq, PartialEq))]
+#[repr(C)]
+pub struct RaftSubmissionProgress {
+    #[cfg_attr(any(), cpp_value_init)]
+    pub committed: bool,
+    #[cfg_attr(any(), cpp_value_init)]
+    pub superseded: bool,
+    // terminal commit-outcome ambiguity; see the note above the block
+    #[cfg_attr(any(), cpp_value_init)]
+    pub indeterminate: bool,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_server.submission_progress version=1 rust_sha256=a192f53a3d9a40c3a72ee11bdabd96757cfeee70699d2302a010b68415e9bcf0*/
+struct RaftSubmissionProgress;
+
 struct RaftSubmissionProgress {
-  bool committed = false;
-  bool superseded = false;
-  // A divergent installed snapshot covered the slot without carrying enough
-  // per-entry identity to distinguish committed from superseded. This is a
-  // terminal commit-outcome ambiguity; it must never be reported as success
-  // or as a safe-to-retry rejection.
-  bool indeterminate = false;
+    bool committed{};
+    bool superseded{};
+    bool indeterminate{};
 };
+/*RUSTYCPP:GEN-END id=raft_server.submission_progress*/
+
+// The construction sites use POSITIONAL brace aggregate init, so all of the
+// following are load-bearing, not decoration.
+static_assert(std::is_aggregate_v<RaftSubmissionProgress>);
+static_assert(std::is_standard_layout_v<RaftSubmissionProgress>);
+static_assert(std::is_trivially_copyable_v<RaftSubmissionProgress>);
+static_assert(sizeof(RaftSubmissionProgress) == 3);
+static_assert(offsetof(RaftSubmissionProgress, committed) == 0);
+static_assert(offsetof(RaftSubmissionProgress, superseded) == 1);
+static_assert(offsetof(RaftSubmissionProgress, indeterminate) == 2);
+// Default construction must still zero every field: the incumbent spelled
+// `= false` and the DSL spells cpp_value_init `{}`; both must mean false.
+static_assert(!RaftSubmissionProgress{}.committed);
+static_assert(!RaftSubmissionProgress{}.superseded);
+static_assert(!RaftSubmissionProgress{}.indeterminate);
+// Positional init must still bind in declaration order.
+static_assert(RaftSubmissionProgress{true, false, false}.committed);
+static_assert(RaftSubmissionProgress{false, true, false}.superseded);
+static_assert(RaftSubmissionProgress{false, false, true}.indeterminate);
 
 // One-shot terminal results whose identifying log slots were consumed by an
 // installed snapshot. This container is deliberately not synchronized: its
