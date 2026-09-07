@@ -1100,11 +1100,8 @@ namespace mako
                     break;
                 }
                 if (!handle) {
-                    Panic("the pointer is invalid, p:%s, rIdx:%d, wIdx:%d, count:%d",
-                            (void*)handle,
-                                queue->req_buffer_reader_idx,queue->req_buffer_writer_idx,
-                                queue->req_cnt);
-
+                    Panic("the helper queue returned an invalid pointer: %p",
+                          handle);
                 }
 
                 // Cast to transport-agnostic interface: the backend enqueued

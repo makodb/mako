@@ -2614,6 +2614,23 @@ if(BUILD_TESTS)
     target_link_libraries(test_client_service ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_client_service COMMAND test_client_service)
 
+    # HelperQueue carries opaque request tokens between the SRPC event loop
+    # and one helper thread. Keep its snapshots, FIFO operations, and wakeup
+    # paths under a focused concurrency test that can also run under TSan.
+    add_executable(test_helper_queue tests/test_helper_queue.cc)
+    target_include_directories(test_helper_queue PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_helper_queue PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_helper_queue
+        mako ${TEST_LINK_LIBS}
+        ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES}
+        yaml-cpp rocksdb lz4 numa event_pthreads
+        pthread)
+    add_test(NAME test_helper_queue
+        COMMAND test_helper_queue --gtest_fail_if_no_test_selected)
+    set_tests_properties(test_helper_queue PROPERTIES
+        LABELS "concurrency;srpc;lifecycle"
+        TIMEOUT 30)
+
     # Sharding Policy Tests
     #
     # The policy value types now serialize via their srpc Serializable

@@ -531,14 +531,11 @@ void SrpcRpcBackend::RunEventLoop() {
             void* req_handle_ptr;
             size_t msg_size = 0;
 
-            // Fetch responses from helper thread queue
-            while (!server_queue->is_req_buffer_empty()) {
-                // Check stop flag before processing each response
-                if (stop_) {
-                    break;
-                }
-
-                server_queue->fetch_one_req(&req_handle_ptr, msg_size);
+            // Fetch and test under HelperQueue's mutex. Reading the count and
+            // then fetching in separate critical sections races the producer
+            // and does twice the synchronization work.
+            while (!stop_ &&
+                   server_queue->fetch_one_req(&req_handle_ptr, msg_size)) {
 
                 // Cast back to void* key and lookup SrpcRequestHandle
                 void* key = reinterpret_cast<void*>(req_handle_ptr);
@@ -664,15 +661,11 @@ void SrpcRpcBackend::Stop() {
     }
     Notice("SrpcRpcBackend::Stop: Closed %zu client connections", clients_to_close.size());
 
-    // Clean up any remaining pending requests in the map
-    {
-        std::lock_guard<std::mutex> guard(srpc_request_map_lock_);
-        size_t remaining = srpc_request_map_.size();
-        if (remaining > 0) {
-            Notice("SrpcRpcBackend::Stop: Cleaning up %zu remaining pending requests", remaining);
-            srpc_request_map_.clear();
-        }
-    }
+    // A helper may already have fetched an opaque SrpcRequestHandle pointer.
+    // Signaling its queue does not join that helper, so deleting pending map
+    // entries here would invalidate a handle still being processed. The
+    // owner joins helpers before destroying this backend; retain the entries
+    // until then.
 
     // @unsafe { std::atomic load for statistics - not borrow-checked }
     auto resp_size = msg_size_resp_sent_.load(std::memory_order_relaxed);
