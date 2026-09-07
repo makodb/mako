@@ -618,8 +618,13 @@ add_custom_target(rrr_goal0_dual_compile ALL
         # Canonical rrr.logging / rrr.serializable / rrr.reactor / rrr.future
         # `import std;`, so the gate's standalone module compiles need CMake's
         # own std BMI, not just the rusty runtime ones.
+        # CMake renamed the `import std;` BMI directory between releases
+        # (4.2 emits __cmake_cxx23.dir; earlier ones __cmake_cxx_std_23.dir).
+        # Pass both; the gate skips whichever this CMake did not create.
         --runtime-module-root
             "${CMAKE_BINARY_DIR}/CMakeFiles/__cmake_cxx_std_23.dir"
+        --runtime-module-root
+            "${CMAKE_BINARY_DIR}/CMakeFiles/__cmake_cxx23.dir"
         ${RRR_GOAL0_RUNTIME_LIBRARY_ARGS}
         ${RRR_GOAL0_DIRECT_TOOLCHAIN_ARGS}
         --clang "${CMAKE_CXX_COMPILER}"

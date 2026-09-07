@@ -13335,19 +13335,32 @@ def resolve_generated_dir(root: Path, raw: str) -> Path:
 def resolve_prebuilt_module_dirs(root: Path, raw_roots: list[str]) -> list[Path]:
     directories: set[Path] = set()
     found_rusty = False
+    seen_any_root = False
     for raw in raw_roots:
         module_root = Path(raw)
         if not module_root.is_absolute():
             module_root = root / module_root
         module_root = module_root.resolve()
         if not module_root.is_dir():
-            raise GateError(
-                f"runtime prebuilt-module root is unavailable: {module_root}"
-            )
+            # CMake renamed its `import std;` BMI directory between releases
+            # (__cmake_cxx_std_23.dir -> __cmake_cxx23.dir), so the caller
+            # passes every candidate spelling and only the one this CMake
+            # actually created exists. A root that is absent is skipped; the
+            # `found_rusty` check below still fails the gate if NO root
+            # supplied the runtime modules.
+            continue
+        seen_any_root = True
         for pcm in module_root.rglob("*.pcm"):
             if pcm.is_file():
                 directories.add(pcm.parent.resolve())
                 found_rusty = found_rusty or pcm.name == "rusty.pcm"
+    if raw_roots and not seen_any_root:
+        # Keep the "unavailable" wording: scripts/tests/test_extract_rrr_rust.py
+        # pins it as the contract for a root that does not exist.
+        raise GateError(
+            "runtime prebuilt-module root is unavailable: "
+            + ", ".join(raw_roots)
+        )
     if raw_roots and not found_rusty:
         raise GateError(
             "runtime prebuilt-module roots do not contain rusty.pcm"

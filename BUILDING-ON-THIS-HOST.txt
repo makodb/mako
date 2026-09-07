@@ -1,0 +1,265 @@
+================================================================================
+ BUILDING MAKO ON THIS HOST (no sudo)
+================================================================================
+ Written 2026-09-06 after bringing up a from-scratch build on
+ Ubuntu 26.04 "resolute" (glibc 2.43) with no root access and no Docker.
+ Every command below was actually run; the resulting build produced 67
+ executables including a working `dbtest`.
+
+ This file documents a USER-PREFIX toolchain. Nothing is installed system
+ wide. Everything lands under $HOME/.local and can be deleted with
+ `rm -rf ~/.local/llvm-22 ~/.local/mako-deps ~/.local/opt/llvm`.
+
+--------------------------------------------------------------------------------
+ 0. WHY THIS FILE EXISTS
+--------------------------------------------------------------------------------
+
+ CLAUDE.md tells you to build with `make clean && make -j32` and to run
+ tests through `./docker_build.sh`. Neither works here:
+
+   * there is no top-level Makefile in the repository;
+   * Docker is not installed and cannot be installed without root;
+   * a bare `cmake -S . -B build` fails immediately at CMakeLists.txt:58,
+     because Mako pins Clang >= 22 and this host ships no clang at all
+     (only /usr/lib/llvm-21 libraries).
+
+ What follows is the path that does work.
+
+--------------------------------------------------------------------------------
+ 1. PREREQUISITES ALREADY PRESENT
+--------------------------------------------------------------------------------
+
+   /usr/bin/cmake        4.2.3     (NOTE: ~/.local/bin/cmake AND
+                                    ~/.local/bin/ctest are BROKEN pip shims
+                                    -- both die with "ModuleNotFoundError:
+                                    No module named 'cmake'" -- and they
+                                    shadow the working /usr/bin ones. Always
+                                    call /usr/bin/cmake and /usr/bin/ctest
+                                    explicitly, or delete both shims:
+                                      rm ~/.local/bin/cmake ~/.local/bin/ctest)
+   ~/.local/bin/ninja    1.13.0    required: C++20 modules need Ninja
+   rustc / cargo         1.97.1
+   python3               3.14.4
+   g++                   15.2.0    (not used for Mako; needed by nothing here)
+
+--------------------------------------------------------------------------------
+ 2. STEP ONE -- CLANG 22 INTO $HOME
+--------------------------------------------------------------------------------
+
+ Mako requires Clang >= 22. CMakeLists.txt:19-26 explains why: Clang 21
+ SIGSEGVs in the frontend compiling rrr.reactor's C++20-module codegen, and
+ Clang <= 20 lacks the alias-template CTAD that rusty-cpp's
+ platform::threading aliases need. LLVM 21 -- the only version on this box --
+ is precisely the one that crashes.
+
+   mkdir -p ~/.local/src && cd ~/.local/src
+   curl -L -O https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/LLVM-22.1.8-Linux-X64.tar.xz
+   mkdir -p ~/.local/llvm-22
+   tar -xJf LLVM-22.1.8-Linux-X64.tar.xz -C ~/.local/llvm-22 --strip-components=1
+
+ 1.81 GB download, 9.1 GB extracted.
+
+ THE TARBALL SHIPS libc++ HEADERS BUT NO libc++ RUNTIME. You must supply
+ libc++.so / libc++abi.so yourself or every link fails with
+ `cannot find -lc++`. Step 3 does that.
+
+ Then create the symlink that makes CMake's own libc++ workaround fire:
+
+   mkdir -p ~/.local/opt
+   ln -sfn ~/.local/llvm-22 ~/.local/opt/llvm
+
+ This matters. CMakeLists.txt:101-107 adds `-L<root>/lib -Wl,-rpath,<root>/lib`
+ only when the clang root path matches `(Cellar|opt)/llvm`. Pointing the
+ compiler at ~/.local/opt/llvm/bin/clang++ therefore gets libc++ onto the
+ link line and into the RPATH automatically, with no extra flags.
+
+--------------------------------------------------------------------------------
+ 3. STEP TWO -- THE C/C++ DEPENDENCIES, WITHOUT ROOT
+--------------------------------------------------------------------------------
+
+ `apt-get download` needs no privileges; `dpkg-deb -x` unpacks into any
+ directory. That is the whole trick.
+
+ Mako's unconditional pkg-config requirements are libdpdk (CMakeLists.txt:247
+ -- NOT gated behind DPDK_ENABLED), libevent, gflags, protobuf and jemalloc,
+ plus rocksdb, libaio and libc++ 22.
+
+   # resolve the closure and skip anything already installed
+   cd /tmp
+   apt-cache depends --recurse --no-recommends --no-suggests \
+       --no-conflicts --no-breaks --no-replaces --no-enhances \
+       libevent-dev libgflags-dev libprotobuf-dev libjemalloc-dev \
+       librocksdb-dev dpdk-dev \
+     | grep -v '^ ' | grep -v '^<' | sort -u > /tmp/all.txt
+   # (filter out already-installed names, then:)
+
+   mkdir -p ~/.local/src/debs && cd ~/.local/src/debs
+   apt-get download $(cat /tmp/need.txt)          # 274 packages, 42 MB
+   apt-get download libaio-dev libaio1t64
+   apt-get download libc++-22-dev libc++abi-22-dev libc++1 libc++abi1 libunwind-dev
+
+   P=$HOME/.local/mako-deps
+   mkdir -p $P
+   for d in *.deb; do dpkg-deb -x "$d" "$P"; done
+
+ The closure is dominated by DPDK poll-mode drivers (~200 librte-* packages);
+ they are individually tiny.
+
+ REWRITE THE .pc PREFIXES, or pkg-config resolves to /usr and finds nothing:
+
+   find $P -name '*.pc' -print0 | xargs -0 sed -i \
+     "s|^prefix=/usr\$|prefix=$P/usr|; s|=/usr/include|=$P/usr/include|g; s|=/usr/lib|=$P/usr/lib|g"
+
+ STAGE libc++ INTO THE CLANG ROOT so the step-2 symlink pays off:
+
+   L=$HOME/.local/llvm-22
+   mkdir -p $L/lib
+   cp $P/usr/lib/x86_64-linux-gnu/libc++.so.1.0    $L/lib/
+   cp $P/usr/lib/x86_64-linux-gnu/libc++abi.so.1.0 $L/lib/
+   cd $L/lib
+   ln -sf libc++.so.1.0    libc++.so.1    && ln -sf libc++.so.1    libc++.so
+   ln -sf libc++abi.so.1.0 libc++abi.so.1 && ln -sf libc++abi.so.1 libc++abi.so
+
+ Note the minor skew: the clang tarball is 22.1.8, Ubuntu's libc++ is 22.1.2.
+ Same major, and it links and runs. CMakeLists.txt:85-90 warns about
+ header/library skew across MAJOR versions; a patch-level gap is fine.
+
+--------------------------------------------------------------------------------
+ 4. STEP THREE -- CONFIGURE AND BUILD
+--------------------------------------------------------------------------------
+
+ Put this in a file (e.g. ~/.local/bin/mako-env.sh) and source it:
+
+   export P=$HOME/.local/mako-deps
+   export L=$HOME/.local/opt/llvm
+   export PATH=$HOME/.local/bin:$PATH
+   export PKG_CONFIG_PATH=$P/usr/lib/x86_64-linux-gnu/pkgconfig:$P/usr/share/pkgconfig
+   export CPATH=$P/usr/include
+   export LIBRARY_PATH=$P/usr/lib/x86_64-linux-gnu
+   export LD_LIBRARY_PATH=$P/usr/lib/x86_64-linux-gnu:$HOME/.local/llvm-22/lib:$LD_LIBRARY_PATH
+
+ CPATH and LIBRARY_PATH are load-bearing. -DCMAKE_INCLUDE_PATH only feeds
+ find_path(); it does NOT add -I to the compile line, so rocksdb/c.h is not
+ found without CPATH. Setting CMAKE_CXX_FLAGS instead would clobber the
+ project's own CMAKE_CXX_FLAGS_INIT="-stdlib=libc++" and break the build in a
+ more confusing way.
+
+ Then:
+
+   cd /path/to/mako
+   /usr/bin/cmake -S . -B build -G Ninja \
+       -DCMAKE_BUILD_TYPE=Release \
+       -DCMAKE_C_COMPILER=$L/bin/clang \
+       -DCMAKE_CXX_COMPILER=$L/bin/clang++ \
+       -DCMAKE_PREFIX_PATH=$P/usr \
+       -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+   /usr/bin/cmake --build build -j 32
+
+ -G Ninja is REQUIRED. Unix Makefiles cannot do C++20 modules and CMake
+ refuses at the generate step.
+
+--------------------------------------------------------------------------------
+ 5. SOURCE CHANGES THIS REQUIRED
+--------------------------------------------------------------------------------
+
+ Three edits, all the same defect class: values that vary between CMake
+ releases were hardcoded for one release. Without them the build cannot
+ configure on CMake 4.x at all.
+
+ (a) CMakeLists.txt:11 -- the token unlocking CMake's experimental
+     `import std;` rotates per CMake generation. The repo hardcoded
+     451f2fe2-a8a2-47c3-bc32-94786d8fc91b (the 3.30/3.31 token). Inspecting
+     the release binaries shows CMake 4.0.3, 4.1.2 and 4.2.3 ALL use
+     d0edc3af-4c50-42ea-a356-e2862fe7a444, and none of them accept 451f2fe2.
+     Now selected by `if(CMAKE_VERSION VERSION_LESS "4.0")`.
+
+ (b) src/rrr/CMakeLists.txt:622 -- CMake renamed its `import std;` BMI
+     directory: 4.2 emits CMakeFiles/__cmake_cxx23.dir, earlier releases
+     emitted __cmake_cxx_std_23.dir. Both are now passed as
+     --runtime-module-root.
+
+ (c) scripts/check_rrr_crate_mode.py -- resolve_prebuilt_module_dirs() now
+     skips a module root that this CMake did not create, and fails only when
+     NONE of the supplied roots exist. The "unavailable" wording is retained
+     deliberately: scripts/tests/test_extract_rrr_rust.py pins that string.
+
+ All 79 extractor contract tests pass after (c).
+
+--------------------------------------------------------------------------------
+ 6. WHAT YOU GET
+--------------------------------------------------------------------------------
+
+ 67 executables in build/, including:
+
+   dbtest (68 MB)          the main benchmark driver
+   simplePaxos, simpleTransaction, simpleTransactionRep
+   raft_lab_standalone
+   makoCon, makoConDBBench, makoConMultiTrd
+   rocksdb_replay_app, rocksdbInterfaceTest
+   ~50 gtest binaries (test_raft_*, test_masstree_*, test_silo_*, test_sto_*)
+
+ Smoke test:
+
+   source ~/.local/bin/mako-env.sh
+   ./build/dbtest                # prints SiloRuntime allocator + settings
+   ldd build/dbtest | grep -i 'not found'   # should print nothing
+
+ Run the ctest suite (the same one ci/ci.sh rrrTests drives):
+
+   cd build && /usr/bin/ctest --output-on-failure \
+     -E '_port|rusty_|async_module_test|dispatch_test|test_channel|test_mutex|test_thread|test_traits|test_external_annotations|test_simplified_external|test_stl_lifetimes|test_unified_annotations|hashset_set_algebra_test'
+
+ The -E denylist excludes rusty-cpp's OWN tests, which mako registers but
+ never builds. It is copied from ci/ci.sh.
+
+ Verified working, e.g.:
+
+   cd build && /usr/bin/ctest --output-on-failure \
+       -R 'test_raft_(quorum|messages|application_log)'
+   -> 100% tests passed, 0 tests failed out of 3
+
+--------------------------------------------------------------------------------
+ 7. WHAT STILL DOES NOT WORK HERE
+--------------------------------------------------------------------------------
+
+   * ./docker_build.sh <anything> -- Docker is not installed. Every CI suite
+     named in CLAUDE.md goes through it, so none of them run on this host.
+     The ctest command in section 6 is the closest substitute.
+   * `make -j32` from the repo root -- there is no top-level Makefile.
+   * The RaftLabTest cluster suite (src/deptran/raft/test.cc, 10,567 lines)
+     is NOT built: it needs -DRAFT_TEST=ON plus -DMAKO_USE_RAFT=ON, both
+     default OFF (CMakeLists.txt:417-418), and no script in the repo sets
+     them.
+
+--------------------------------------------------------------------------------
+ 8. THE DSL TOOLCHAIN (independent of the above)
+--------------------------------------------------------------------------------
+
+ The Rust-DSL provenance gates do not need any of the C++ dependencies --
+ only the transpiler and rustc:
+
+   cd third-party/rusty-cpp
+   LIBCLANG_PATH=<dir containing libclang.so> cargo build --release -p rusty-cpp-transpiler
+
+ TWO NON-OBVIOUS POINTS, both of which cost time to discover:
+   * a plain `cargo build --release` FAILS on z3-sys (z3.h not found). Z3 is
+     a dependency of the ROOT rusty-cpp borrow-checker crate
+     (Cargo.toml:50), not of the transpiler. Use `-p rusty-cpp-transpiler`.
+   * clang-sys needs an UNVERSIONED libclang.so. This host has only
+     libclang-21.so.21, so make one:
+       mkdir -p ~/.local/lib/libclang-shim
+       ln -sf /usr/lib/x86_64-linux-gnu/libclang-21.so.21 \
+              ~/.local/lib/libclang-shim/libclang.so
+       export LIBCLANG_PATH=~/.local/lib/libclang-shim
+
+ Then both gates run green:
+
+   bash scripts/raft_dsl.sh --check     # 21 carriers, 0 failures
+   bash scripts/rrr_dsl_check.sh        # 5 files, 0 drift
+
+ After editing any `#if RUSTYCPP_RUST` block you MUST regenerate rather than
+ hand-edit the adjacent generated C++:
+
+   bash scripts/raft_dsl.sh --rewrite
+
+================================================================================
