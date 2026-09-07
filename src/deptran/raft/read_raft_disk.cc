@@ -55,24 +55,29 @@ bool ReadUInt32(const string& value, uint32_t& result) {
 #[cfg_attr(not(any()), derive(Clone, Copy, Debug, Default, Eq, PartialEq))]
 #[repr(C)]
 pub struct RaftData {
-    pub max_ballot_seen_: u64,
-    pub max_ballot_accepted_: u64,
-    pub term: u64,
-    pub prevTerm: u64,
+    // ballot_t is SIGNED int64_t (constants.h:6). These five fields decode
+    // ballots/terms written by RaftServer, so they must be read back with the
+    // same signedness the writer used -- otherwise a ballot >= 2^63 prints as
+    // a huge positive here and as negative in the server. slot_id is
+    // genuinely unsigned: slotid_t is uint64_t (constants.h:19).
+    pub max_ballot_seen_: i64,
+    pub max_ballot_accepted_: i64,
+    pub term: i64,
+    pub prevTerm: i64,
     pub slot_id: u64,
-    pub ballot: u64,
+    pub ballot: i64,
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_disk.data_record version=1 rust_sha256=30b59f182e9a0c2897442cc0084000f4feafb143f81389e78e33ce7eb430d26b*/
+/*RUSTYCPP:GEN-BEGIN id=raft_disk.data_record version=1 rust_sha256=f9c0914a4a2dee1539a44fec40db98b483e0b3566c0607996fca53da2ae176f9*/
 struct RaftData;
 
 struct RaftData {
-    uint64_t max_ballot_seen_;
-    uint64_t max_ballot_accepted_;
-    uint64_t term;
-    uint64_t prevTerm;
+    int64_t max_ballot_seen_;
+    int64_t max_ballot_accepted_;
+    int64_t term;
+    int64_t prevTerm;
     uint64_t slot_id;
-    uint64_t ballot;
+    int64_t ballot;
 };
 /*RUSTYCPP:GEN-END id=raft_disk.data_record*/
 
@@ -90,6 +95,17 @@ static_assert(offsetof(RaftData, slot_id) == 4 * sizeof(uint64_t));
 static_assert(offsetof(RaftData, ballot) == 5 * sizeof(uint64_t));
 static_assert(RaftData{}.max_ballot_seen_ == 0);
 static_assert(RaftData{}.ballot == 0);
+// Pin the signedness against the production spellings. ballot_t is signed
+// int64_t and slotid_t unsigned uint64_t (constants.h:6, :19); this decoder
+// reads bytes those types wrote, so a drift here silently misreports.
+static_assert(std::is_same_v<decltype(RaftData{}.max_ballot_seen_), int64_t>);
+static_assert(std::is_same_v<decltype(RaftData{}.max_ballot_accepted_), int64_t>);
+static_assert(std::is_same_v<decltype(RaftData{}.term), int64_t>);
+static_assert(std::is_same_v<decltype(RaftData{}.prevTerm), int64_t>);
+static_assert(std::is_same_v<decltype(RaftData{}.ballot), int64_t>);
+static_assert(std::is_same_v<decltype(RaftData{}.slot_id), uint64_t>);
+static_assert(std::is_signed_v<decltype(RaftData{}.ballot)>);
+static_assert(!std::is_signed_v<decltype(RaftData{}.slot_id)>);
 
 bool DecodeRaftData(const string& value, RaftData& entry) {
     size_t expected_size = sizeof(entry.max_ballot_seen_) +
