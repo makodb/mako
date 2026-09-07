@@ -1,0 +1,121 @@
+# Extraction manifest for the Raft inline Rust DSL (schema 1).
+#
+# schema_version = 1 means EXTRACTION: each `source` carrier's inline
+# `#if RUSTYCPP_RUST` blocks are concatenated into `output`, and the
+# inline blocks remain the single source of truth. Production continues
+# to compile the committed generated C++.
+#
+# Contrast src/rrr/rust-modules.toml, which is schema_version = 2:
+# canonical `.rs` sources compiled directly, with C++ generated into the
+# build tree and the inline carriers deleted. Raft is not there yet --
+# see docs/migration/rustycpp/raft-rust-migration.md stages 3 and 4.
+schema_version = 1
+
+# One module per carrier. Module name is the carrier basename with '.'
+# replaced by '_' -- mechanical, and collision-free: a census of the 250
+# top-level DSL items found zero duplicate names across carriers.
+
+[[module]]
+cpp_module = "raft.channel_transport_hpp"
+source = "src/deptran/raft/channel_transport.hpp"
+output = "src/deptran/raft/src/channel_transport_hpp.rs"
+
+[[module]]
+cpp_module = "raft.commo_h"
+source = "src/deptran/raft/commo.h"
+output = "src/deptran/raft/src/commo_h.rs"
+
+[[module]]
+cpp_module = "raft.file_snapshot_manager_hpp"
+source = "src/deptran/raft/file_snapshot_manager.hpp"
+output = "src/deptran/raft/src/file_snapshot_manager_hpp.rs"
+
+[[module]]
+cpp_module = "raft.frame_cc"
+source = "src/deptran/raft/frame.cc"
+output = "src/deptran/raft/src/frame_cc.rs"
+
+[[module]]
+cpp_module = "raft.log_storage_hpp"
+source = "src/deptran/raft/log_storage.hpp"
+output = "src/deptran/raft/src/log_storage_hpp.rs"
+
+[[module]]
+cpp_module = "raft.memory_log_storage_hpp"
+source = "src/deptran/raft/memory_log_storage.hpp"
+output = "src/deptran/raft/src/memory_log_storage_hpp.rs"
+
+[[module]]
+cpp_module = "raft.memory_snapshot_manager_hpp"
+source = "src/deptran/raft/memory_snapshot_manager.hpp"
+output = "src/deptran/raft/src/memory_snapshot_manager_hpp.rs"
+
+[[module]]
+cpp_module = "raft.messages_hpp"
+source = "src/deptran/raft/messages.hpp"
+output = "src/deptran/raft/src/messages_hpp.rs"
+
+[[module]]
+cpp_module = "raft.quorum_hpp"
+source = "src/deptran/raft/quorum.hpp"
+output = "src/deptran/raft/src/quorum_hpp.rs"
+
+[[module]]
+cpp_module = "raft.raft_worker_cc"
+source = "src/deptran/raft/raft_worker.cc"
+output = "src/deptran/raft/src/raft_worker_cc.rs"
+
+[[module]]
+cpp_module = "raft.read_raft_disk_cc"
+source = "src/deptran/raft/read_raft_disk.cc"
+output = "src/deptran/raft/src/read_raft_disk_cc.rs"
+
+[[module]]
+cpp_module = "raft.recovery_manager_hpp"
+source = "src/deptran/raft/recovery_manager.hpp"
+output = "src/deptran/raft/src/recovery_manager_hpp.rs"
+
+[[module]]
+cpp_module = "raft.replicated_db_h"
+source = "src/deptran/raft/replicated_db.h"
+output = "src/deptran/raft/src/replicated_db_h.rs"
+
+[[module]]
+cpp_module = "raft.rocksdb_log_storage_hpp"
+source = "src/deptran/raft/rocksdb_log_storage.hpp"
+output = "src/deptran/raft/src/rocksdb_log_storage_hpp.rs"
+
+[[module]]
+cpp_module = "raft.server_cc"
+source = "src/deptran/raft/server.cc"
+output = "src/deptran/raft/src/server_cc.rs"
+
+[[module]]
+cpp_module = "raft.server_h"
+source = "src/deptran/raft/server.h"
+output = "src/deptran/raft/src/server_h.rs"
+
+[[module]]
+cpp_module = "raft.service_cc"
+source = "src/deptran/raft/service.cc"
+output = "src/deptran/raft/src/service_cc.rs"
+
+[[module]]
+cpp_module = "raft.snapshot_format_hpp"
+source = "src/deptran/raft/snapshot_format.hpp"
+output = "src/deptran/raft/src/snapshot_format_hpp.rs"
+
+[[module]]
+cpp_module = "raft.snapshot_manager_hpp"
+source = "src/deptran/raft/snapshot_manager.hpp"
+output = "src/deptran/raft/src/snapshot_manager_hpp.rs"
+
+[[module]]
+cpp_module = "raft.testconf_cc"
+source = "src/deptran/raft/testconf.cc"
+output = "src/deptran/raft/src/testconf_cc.rs"
+
+[[module]]
+cpp_module = "raft.raft_main_helper_cc"
+source = "src/deptran/raft_main_helper.cc"
+output = "src/deptran/raft/src/raft_main_helper_cc.rs"

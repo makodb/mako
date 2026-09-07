@@ -263,6 +263,11 @@ trap cleanup EXIT
 # A carrier with no manifest must also have no manifest in its regeneration
 # context. Refuse a TMPDIR nested inside an unrelated Cargo workspace only
 # when this carrier set needs that manifest-free context.
+# Distinct carrier paths named by EXPECTED_BLOCKS -- used to decide whether a
+# run covers the whole graph (and therefore whether to verify the crate).
+mapfile -t EXPECTED_INVENTORY_FILES < <(
+  printf '%s\n' "${EXPECTED_BLOCKS[@]}" | cut -d'|' -f1 | LC_ALL=C sort -u)
+
 NEEDS_MANIFESTLESS_CONTEXT=0
 for file in "${FILES[@]}"; do
   if ! nearest_cargo_manifest "${file}" >/dev/null; then
@@ -334,6 +339,57 @@ for index in "${!FILES[@]}"; do
     failures=$((failures + 1))
   fi
 done
+
+# ---------------------------------------------------------------------------
+# STAGE 2: crate-level verification.
+#
+# The per-carrier rustc stage above proves each carrier is self-contained
+# Rust. This stage proves the same Rust compiles as a MODULE GRAPH, which is
+# what src/rrr does and what makes impl/containers/type-mapped C++ types
+# expressible at all. Both run for now; the per-carrier stage is removed in a
+# following commit once they have agreed.
+#
+# The .rs files under the crate are GENERATED from the inline blocks. In
+# --rewrite mode they are regenerated; in --check mode a mismatch between a
+# committed .rs and a fresh extraction is a drift failure, so the crate can
+# never silently diverge from the blocks it came from.
+# ---------------------------------------------------------------------------
+RAFT_CRATE_DIR="${REPOSITORY_ROOT}/src/deptran/raft"
+RAFT_CRATE_MANIFEST="${RAFT_CRATE_DIR}/rust-modules.toml"
+
+# The crate is the whole module graph, so only verify it when this run covers
+# every carrier. A single-file invocation (raft_dsl.sh --check <one file>)
+# still does the per-carrier work and skips this stage.
+if [[ -f "${RAFT_CRATE_MANIFEST}" && ${#FILES[@]} -eq ${#EXPECTED_INVENTORY_FILES[@]} ]]; then
+  crate_out="${RAFT_DSL_TMPDIR}/crate"
+  mkdir -p "${crate_out}"
+  if ! "${PYTHON_BIN:-python3}" "${SCRIPT_DIR}/raft_crate_extract.py" \
+      --mode "${MODE}" --transpiler "${TRANSPILER}" \
+      --manifest "${RAFT_CRATE_MANIFEST}" --scratch "${crate_out}" 2>&1; then
+    echo "FAILED Raft crate extraction/drift check" >&2
+    failures=$((failures + 1))
+  else
+    # Compile the whole crate. -D warnings matches the per-carrier stage.
+    if ! output=$("${RUSTC_BIN}" --edition=2021 --crate-type=lib \
+        --crate-name raft -D warnings \
+        "${RAFT_CRATE_DIR}/src/lib.rs" \
+        -o "${crate_out}/libraft.rlib" 2>&1); then
+      echo "FAILED Raft crate does not compile" >&2
+      sed 's/^/    /' <<<"${output}" | head -30 >&2
+      failures=$((failures + 1))
+    fi
+    # clippy, as src/rrr's gate does. Absent clippy is a hard failure: the
+    # crate regime rests on matching rrr's verification, not a subset of it.
+    if ! command -v cargo-clippy >/dev/null 2>&1 && ! cargo clippy --version >/dev/null 2>&1; then
+      echo "FAILED clippy unavailable (required for crate-level verification)" >&2
+      failures=$((failures + 1))
+    elif ! output=$(cd "${RAFT_CRATE_DIR}" && cargo clippy --quiet -- -D warnings 2>&1); then
+      echo "FAILED Raft crate clippy" >&2
+      sed 's/^/    /' <<<"${output}" | head -30 >&2
+      failures=$((failures + 1))
+    fi
+  fi
+fi
 
 echo "checked ${#FILES[@]} Raft DSL carrier(s), generated C++ and extracted Rust; ${failures} failure(s)"
 exit $((failures > 0 ? 1 : 0))

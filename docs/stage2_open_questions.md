@@ -71,6 +71,68 @@ rather than an optimisation, it deserves a static_assert or a comment saying
 so, because a future conversion could drop the `!already_secured` guard
 without any test noticing. **Is "secured" monotonic for the life of a term?**
 
+## Q1b. Should `raft_dsl.sh` get its own ODR post-pass? *(this gates almost all object conversion)*
+
+**This is the finding that most changes the plan, and it corrects something I
+told you earlier.** I said the bare-`rustc` gate was what forced
+free-functions-over-scalars. That is only half true. There is a **second,
+independent** cause, and the crate does **not** fix it.
+
+`scripts/raft_dsl.sh:4-5`, verbatim:
+
+> Unlike scripts/regen_storage_dsl.sh, Raft carriers do not receive an ODR or
+> textual post-pass: the pinned transpiler's output is committed byte-for-byte.
+
+`scripts/regen_storage_dsl.sh:89-96` is the pass raft lacks — a regex that
+prefixes `inline ` onto column-0 out-of-line definitions inside GEN regions.
+
+**Consequence, proven by link test:** a header-resident type with methods emits
+its constructor and methods out-of-line, so two TUs including that header both
+define them and the link fails:
+
+```
+/usr/bin/ld: odr_b.o: multiple definition of
+  'janus::raft::RaftSubmissionProgress::RaftSubmissionProgress()';
+  odr_a.o: first defined here
+```
+
+### ODR-exempt shapes (safe today, no pass needed)
+
+| shape | why |
+|---|---|
+| `pub trait` | destructor emitted in-class; nothing out-of-line |
+| struct with **no** `impl` | declaration only |
+| `pub const fn` free function | `constexpr` ⇒ implicitly inline (current raft practice) |
+
+### So the options are
+
+**(a) Give `raft_dsl.sh` a raft-local ODR pass.** Unlocks methods on
+header-resident structs — i.e. most of what Stage 2 was supposed to buy.
+CLAUDE.md says `regen_storage_dsl.sh`'s pass is "specific to those headers",
+so this must be a separate raft-local implementation, not reuse.
+
+**(b) Restrict conversions to ODR-exempt shapes.** Traits, no-impl structs,
+`const fn`. Real progress is still possible — see below — but methods on
+structs in headers stay impossible.
+
+**(c) Only convert types defined in `.cc` files.** Single TU, so no ODR
+problem. Very few raft types qualify.
+
+**What I am doing overnight: (b).** It needs no decision from you and carries
+no production risk. But **(a) is the thing to decide in the morning**, because
+without it the "objects and methods" goal stalls at trait interfaces.
+
+### A related mechanical note, already solved
+
+`#[cpp_ctor]` does not compile under the crate gate (`error: cannot find
+attribute cpp_ctor`). The working spelling is `#[cfg_attr(any(), cpp_ctor)]`,
+the same inert-marker idiom already live at `messages.hpp` and `commo.h:226`.
+Also, clippy rejects a bare `fn new()` via `clippy::new_without_default`, so
+the crate needs the same per-module allow line that generated
+`src/rrr/src/lib.rs` already carries.
+
+---
+
 ## Q2. `ReplicatedDBOp` — what should decoding do with an invalid byte?
 
 `replicated_db.h:28` is a `#[repr(u8)]` enum with `PUT = 1, DELETE = 2,

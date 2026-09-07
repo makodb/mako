@@ -111,3 +111,7 @@ cmake-build/*
 
 # Local assistant workspace
 /.claude/
+
+# Stage 2 raft verification crate build output (the .rs sources ARE committed;
+# the compiled artifacts are not).
+/src/deptran/raft/target/
