@@ -1,0 +1,188 @@
+{
+  "artifacts": {
+    "host_path": "/var/tmp/thread-sweep-20260907T024441Z-wsizq4xc",
+    "status": "three complete repetitions plus four rep-4 cells; no summary.json",
+    "validated_canonical_cells": 40
+  },
+  "builds": {
+    "hlc": {
+      "commit": "a71dba6820ea2c03435b13abdb2674bc1550d114",
+      "harness_sha256": "3f8f83dfd8141d0fa6a05058c51f97944fcecc39dd12238c0763ac43ef3573fc",
+      "native_library_sha256": "3ccc0f8d1d5ac9992e468324374ef65335dbeeb8271cbccf8106a6b66f5dd45a"
+    },
+    "old": {
+      "commit": "e22d937a131729056388306e57a4d99f8ccb156d",
+      "harness_sha256": "caa6525e9f0d3c10c178fff18ae182a687a5180dd305b57fa6c2bf8783ec01de",
+      "native_library_sha256": "e127d444b3d6352874210975743da8fa82744f8008dafb351a917a34c73f8888"
+    },
+    "shared": {
+      "allocator": "jemalloc via LD_PRELOAD",
+      "cmake": "4.3.3",
+      "effective_optimization": "-O2 -g -march=native",
+      "harness_source_sha256": "e31fed7c411c1010ea050c8e5a9a64d15840aada594de11fa3355966e6aadb06",
+      "rust": "1.98",
+      "sto_rmw": true
+    }
+  },
+  "date_utc": "2026-09-07",
+  "host": {
+    "boost": "disabled",
+    "cpu": "AMD EPYC 7702P",
+    "governor_during_samples": "performance",
+    "hostname": "zoo-002",
+    "physical_cores": 64,
+    "smt_threads": 128
+  },
+  "interpretation": {
+    "acceptance_claim": false,
+    "qualification": "decisive rejection evidence from the three complete paired repetitions",
+    "reason_full_sweep_stopped": "The snap LXD daemon was in a persistent restart loop. A replacement lifecycle-aware probe measured about 1.8 aggregate CPU cores and more than 80 short-lived lxd processes in one 45-second interval, proving that the original two-snapshot screen could not safely finish the planned five-repetition acceptance run.",
+    "usable_claim": "The HLC candidate fails the predeclared cycle gate; these data cannot establish a later candidate's acceptance.",
+    "w24_note": "The first old W24 sample ran at a materially lower average frequency. Paired median ratios, rather than ratios of unpaired medians, limit its effect."
+  },
+  "predeclared_acceptance": {
+    "maximum_cell_cycle_regression_pct": 5.0,
+    "maximum_geomean_cycle_regression_pct": 3.0,
+    "primary_metric": "paired phase cycles per committed transaction",
+    "result": "fail"
+  },
+  "protocol": {
+    "arm": "concurrent cache write ACK",
+    "cache_record_checksum": "none",
+    "cache_queue_capacity_per_worker": 4194304,
+    "helper_affinity": "33-63",
+    "key_bytes": 8,
+    "measured_per_worker": 2097152,
+    "pmu_running_ratio_min": 0.995,
+    "pmu_scope": "per-thread measured region only",
+    "recorded_repetitions": 3,
+    "rocks_sync": false,
+    "rocks_wal_enabled": true,
+    "screening_teardown": "abort_without_flush after invariant checks",
+    "transaction_ramp_per_worker": 1048576,
+    "value_bytes": 128,
+    "warmup_per_worker": 65536,
+    "window_keys_per_worker": 256,
+    "worker_counts": [1, 4, 8, 16, 24, 32],
+    "worker_cpus": "0..workers-1",
+    "writeback_batch_records": 64,
+    "writeback_cpu": 32
+  },
+  "result": {
+    "geomean_paired_cycle_regression_pct": 3.571775053150872,
+    "maximum_cell_cycle_regression_pct": 8.683196452185626,
+    "stable_instruction_observation": "The HLC arm adds about 128-130 instructions per commit at every worker count.",
+    "workers": {
+      "1": {
+        "hlc": {
+          "ack_tx_per_s": [1200253.096, 1196840.316, 1188966.36],
+          "average_ghz": [1.650007283, 1.636736846, 1.63846319],
+          "cycles_per_commit": [1374.196457, 1367.134082, 1377.198201],
+          "instructions_per_commit": [3186.918289, 3186.92049, 3186.9178]
+        },
+        "old": {
+          "ack_tx_per_s": [1263077.417, 1262218.968, 1268497.744],
+          "average_ghz": [1.633845722, 1.618624229, 1.61815682],
+          "cycles_per_commit": [1293.014165, 1281.835902, 1275.248241],
+          "instructions_per_commit": [3058.920352, 3058.921687, 3058.91681]
+        },
+        "paired_cycle_regression_pct": 6.6543759514702705,
+        "paired_instruction_regression_pct": 4.184441973260622,
+        "paired_throughput_delta_pct": -5.179660079391235
+      },
+      "4": {
+        "hlc": {
+          "ack_tx_per_s": [4636326.844, 4586839.894, 4566357.369],
+          "average_ghz": [1.651013669, 1.642745167, 1.641801609],
+          "cycles_per_commit": [1417.162848, 1425.456113, 1422.656776],
+          "instructions_per_commit": [3204.413172, 3204.29015, 3204.352713]
+        },
+        "old": {
+          "ack_tx_per_s": [4972162.166, 4938559.864, 4938679.857],
+          "average_ghz": [1.631143079, 1.616414161, 1.629936189],
+          "cycles_per_commit": [1303.939242, 1305.203802, 1314.243778],
+          "instructions_per_commit": [3074.672973, 3074.675538, 3074.674195]
+        },
+        "paired_cycle_regression_pct": 8.683196452185626,
+        "paired_instruction_regression_pct": 4.217634447606899,
+        "paired_throughput_delta_pct": -7.121913668879232
+      },
+      "8": {
+        "hlc": {
+          "ack_tx_per_s": [8685684.763, 8548733.241, 8401418.853],
+          "average_ghz": [1.669742703, 1.653563031, 1.657413335],
+          "cycles_per_commit": [1529.084322, 1537.276426, 1561.272712],
+          "instructions_per_commit": [3211.874829, 3211.842588, 3211.893431]
+        },
+        "old": {
+          "ack_tx_per_s": [8875349.913, 8754662.876, 8616723.904],
+          "average_ghz": [1.663240852, 1.645896377, 1.652767242],
+          "cycles_per_commit": [1487.484997, 1496.341158, 1518.708558],
+          "instructions_per_commit": [3083.155914, 3083.159889, 3083.155839]
+        },
+        "paired_cycle_regression_pct": 2.7966214841762094,
+        "paired_instruction_regression_pct": 4.17490774357252,
+        "paired_throughput_delta_pct": -2.352228040265658
+      },
+      "16": {
+        "hlc": {
+          "ack_tx_per_s": [15077092.097, 14707019.131, 14678491.778],
+          "average_ghz": [1.690167353, 1.681628419, 1.677716658],
+          "cycles_per_commit": [1753.164913, 1765.607915, 1755.837768],
+          "instructions_per_commit": [3271.361906, 3271.408834, 3271.379676]
+        },
+        "old": {
+          "ack_tx_per_s": [15850307.747, 15591732.326, 15575310.378],
+          "average_ghz": [1.678851208, 1.672437909, 1.6698052],
+          "cycles_per_commit": [1683.50473, 1694.925159, 1692.15149],
+          "instructions_per_commit": [3142.952744, 3142.952387, 3142.954009]
+        },
+        "paired_cycle_regression_pct": 4.137807382340997,
+        "paired_instruction_regression_pct": 4.086145283457765,
+        "paired_throughput_delta_pct": -5.674245661110389
+      },
+      "24": {
+        "hlc": {
+          "ack_tx_per_s": [19064530.52, 19083198.412, 19077561.997],
+          "average_ghz": [1.728031504, 1.725732966, 1.725683847],
+          "cycles_per_commit": [2149.809373, 2152.58434, 2156.28265],
+          "instructions_per_commit": [3271.218579, 3271.245113, 3271.250223]
+        },
+        "old": {
+          "ack_tx_per_s": [13993604.44, 19258701.535, 19335930.959],
+          "average_ghz": [1.435541131, 1.724004427, 1.723867219],
+          "cycles_per_commit": [2272.775912, 2134.899056, 2129.403994],
+          "instructions_per_commit": [3143.102565, 3143.10754, 3143.105447]
+        },
+        "paired_cycle_regression_pct": 0.8283897053725564,
+        "paired_instruction_regression_pct": 4.076779790996277,
+        "paired_throughput_delta_pct": -0.9112926054804182
+      },
+      "32": {
+        "hlc": {
+          "ack_tx_per_s": [19931379.485, 19977840.803, 19938923.971],
+          "average_ghz": [1.78211624, 1.77668427, 1.780684007],
+          "cycles_per_commit": [2853.250188, 2838.869992, 2851.712412],
+          "instructions_per_commit": [3281.034181, 3281.031293, 3281.029496]
+        },
+        "old": {
+          "ack_tx_per_s": [19536229.797, 19657124.363, 19709057.574],
+          "average_ghz": [1.785149378, 1.779677073, 1.784081845],
+          "cycles_per_commit": [2906.833617, 2877.452555, 2886.170247],
+          "instructions_per_commit": [3152.999746, 3153.000345, 3152.999628]
+        },
+        "paired_cycle_regression_pct": -1.3408583551779873,
+        "paired_instruction_regression_pct": 4.060606850330051,
+        "paired_throughput_delta_pct": 1.6315531920003234
+      }
+    }
+  },
+  "validity": {
+    "all_conflicts_zero": true,
+    "all_phase_pmu_running_ratios": 1.0,
+    "accepted_phase_lxd_cpu_pct_max_under_original_screen": 0.455019,
+    "accepted_preflight_lxd_cpu_pct_max_under_original_screen": 0.934486,
+    "minimum_preflight_idle_pct": 95.48,
+    "note": "The original screen rejects a sample when the set of live lxd PIDs changes, but cannot account for short-lived LXD work. This limitation is why the result is rejection-only evidence."
+  }
+}

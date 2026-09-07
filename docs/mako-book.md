@@ -1291,13 +1291,11 @@ single-machine implementation keeps these correctness requirements:
   log publication, after publication, during Masstree install, and during
   asynchronous RocksDB application.
 
-Production-readiness work additionally includes a 1, 4, 8, 16, and 32 worker
-benchmark sweep with CPU boost disabled. That benchmark should record clock
-source, fallback count, CAS retries, gate wait time, and synthetic-millisecond
-carries. Deterministic fault injection for raw TSC changes, `TSC_AUX`
-migration, and drift remains clock hardening work. Distributed clock-skew tests
-belong to the later cutover. Neither is a claim made by the single-machine
-landing gate.
+Production-readiness work additionally includes a worker-count benchmark sweep
+with CPU boost disabled. Deterministic fault injection for raw TSC changes,
+`TSC_AUX` migration, and drift remains clock hardening work. Distributed
+clock-skew tests belong to the later cutover. Neither is a claim made by the
+single-machine landing gate.
 
 The combined timestamp mutation campaign killed all 12 mutants, with zero
 survivors and zero harness errors. The first run killed 11 and exposed a weak
@@ -1307,9 +1305,26 @@ future but representable HLC, the focused rerun killed
 `missing-recovery-clock-floor`. The source-integrity check matched before and
 after the campaign.
 
-The performance sweep and canonical all-in-one hook CI gate have not completed
-for revision 1. Do not promote the functional and mutation results above to
-final Milestone 1 acceptance until both gates have recorded outcomes.
+The revision-1 HLC performance gate failed. On `zoo-002`, three complete paired
+repetitions of the concurrent cache write-ACK path compared `a71dba682` with
+its immediate parent `e22d937a1` at 1, 4, 8, 16, 24, and 32 workers. CPU boost
+was disabled, RocksDB WAL remained enabled with `sync=false`, and the primary
+metric was per-thread phase cycles per commit. The paired cycle regressions
+were respectively 6.65%, 8.68%, 2.80%, 4.14%, 0.83%, and -1.34%. The maximum
+regression exceeded the 5% cell limit, and the 3.57% geometric-mean regression
+exceeded the 3% aggregate limit. The new path consistently added about 128 to
+130 instructions per commit.
+
+The planned five repetitions could not finish because the host's snap LXD
+daemon entered a persistent restart loop. A lifecycle-aware follow-up probe
+showed that the original two-snapshot interference screen missed substantial
+short-lived LXD work. The three complete repetitions are therefore sufficient
+to reject this candidate, but not to accept a future one. Full arrays, build
+hashes, protocol details, and qualifications are in the
+[machine-readable HLC comparison](benchmarks/mako-cache-hlc-ab-zoo002-20260907.json),
+SHA-256 `924574abf93fbcdc3430301a440835ff9a768fdf012c76433a374acbc96794d5`.
+The canonical all-in-one hook CI gate also remains pending. Do not promote the
+functional and mutation results above to final Milestone 1 acceptance.
 
 The later distributed cutover adds these required tests before the global HLC
 contract is complete:

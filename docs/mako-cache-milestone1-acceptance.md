@@ -1,8 +1,9 @@
 # Mako cache Milestone 1 acceptance
 
-Status: **REVISION-1 FUNCTIONAL AND MUTATION VERIFICATION PASSED; FINAL
-ACCEPTANCE PENDING**. The performance sweep and canonical all-in-one hook CI
-gate remain pending, so this record does not yet claim final Milestone 1
+Status: **REVISION-1 PERFORMANCE GATE FAILED; FINAL ACCEPTANCE BLOCKED**.
+Functional and mutation verification passed, but the current HLC revision
+exceeded both predeclared cycle-regression limits. The canonical all-in-one
+hook CI gate also remains pending. This record does not claim final Milestone 1
 acceptance.
 
 The current implementation reports C ABI revision 1 and uses v5 and v6 cache
@@ -33,9 +34,41 @@ with a future but representable HLC. A focused rerun then killed
 `missing-recovery-clock-floor`. The campaign's before-and-after source-integrity
 check matched.
 
-These results close functional and mutation verification. The performance
-sweep and canonical all-in-one hook CI gate remain pending. Phase 1G eviction
+These results close functional and mutation verification. Phase 1G eviction
 and all distributed work remain deferred.
+
+### Current HLC performance result
+
+The controlled `zoo-002` comparison used the concurrent cache write-ACK path,
+disabled CPU boost, pinned workers, asynchronous RocksDB writeback with WAL
+enabled and `sync=false`, and per-thread PMU counters. It compared the HLC
+revision `a71dba682` with its immediate parent `e22d937a1`. Three complete
+paired repetitions covered 1, 4, 8, 16, 24, and 32 workers:
+
+| Workers | Old Mtxn/s | HLC Mtxn/s | Paired throughput | Paired cycles/txn |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 1.263 | 1.197 | -5.18% | +6.65% |
+| 4 | 4.939 | 4.587 | -7.12% | +8.68% |
+| 8 | 8.755 | 8.549 | -2.35% | +2.80% |
+| 16 | 15.592 | 14.707 | -5.67% | +4.14% |
+| 24 | 19.259 | 19.078 | -0.91% | +0.83% |
+| 32 | 19.657 | 19.939 | +1.63% | -1.34% |
+
+The maximum cell regression is 8.68%, above the 5% limit. The geometric mean
+of paired cycle ratios regresses 3.57%, above the 3% limit. The result is
+therefore a failure. The HLC arm also executes about 128 to 130 more
+instructions per commit at every worker count.
+
+The planned five-repetition acceptance sweep could not be completed because
+the host's snap LXD daemon entered a persistent restart loop. A lifecycle-aware
+probe subsequently observed about 1.8 aggregate CPU cores and more than 80
+short-lived `lxd` processes in one 45-second interval, work that the original
+two-snapshot screen could not account for. Consequently these three complete
+repetitions are decisive rejection evidence, but they cannot establish
+acceptance for a future optimized candidate. Full arrays, build hashes,
+protocol details, and qualifications are in the
+[machine-readable HLC comparison](benchmarks/mako-cache-hlc-ab-zoo002-20260907.json),
+SHA-256 `924574abf93fbcdc3430301a440835ff9a768fdf012c76433a374acbc96794d5`.
 
 ## Current per-worker lane design
 
@@ -710,7 +743,8 @@ current revision-1 HLC implementation. Revision-1 functional verification has
 now passed with the results recorded at the top of this document. The combined
 timestamp mutation campaign also killed all 12 mutants after strengthening one
 weak recovery-floor oracle, with zero survivors and zero harness errors. The
-performance sweep and canonical all-in-one hook CI gate remain pending.
+revision-1 HLC performance gate failed, and the canonical all-in-one hook CI
+gate remains pending.
 
 The historical acceptance deliberately does not claim:
 
