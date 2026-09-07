@@ -469,10 +469,22 @@ void Transaction::shard_install(uint32_t timestamp) noexcept {
     // Receipt of INSTALL is the participant's irreversible 2PC commit
     // decision. Record it before publishing any item so teardown cannot run
     // abort cleanup over an already-installed MassTrans row.
-    if (participant_phase_ != p_collecting)
+    if (participant_phase_ != p_collecting) {
+        Warning("STO participant INSTALL phase violation: phase=%u state=%u "
+                "writes=%d items=%u thread=%d",
+                static_cast<unsigned>(participant_phase_),
+                static_cast<unsigned>(state_), any_writes_, tset_size_,
+                TThread::id());
         std::terminate();
-    if (any_writes_ && state_ != s_committing_locked)
+    }
+    if (any_writes_ && state_ != s_committing_locked) {
+        Warning("STO participant INSTALL lock violation: phase=%u state=%u "
+                "writes=%d items=%u thread=%d",
+                static_cast<unsigned>(participant_phase_),
+                static_cast<unsigned>(state_), any_writes_, tset_size_,
+                TThread::id());
         std::terminate();
+    }
     participant_phase_ = p_installing;
 
     // Update max timestamp from readset
@@ -499,6 +511,11 @@ void Transaction::shard_install(uint32_t timestamp) noexcept {
         // rollback after a prefix has been published, and the generic TObject
         // interface does not provide a resumable install operation. Fail-stop
         // with locks retained rather than expose a partial commit as success.
+        Warning("STO participant INSTALL publication failed: phase=%u "
+                "state=%u writes=%d items=%u thread=%d",
+                static_cast<unsigned>(participant_phase_),
+                static_cast<unsigned>(state_), any_writes_, tset_size_,
+                TThread::id());
         std::terminate();
     }
     participant_phase_ = p_installed;
@@ -508,16 +525,27 @@ void Transaction::shard_install(uint32_t timestamp) noexcept {
 void Transaction::shard_unlock(bool committed) noexcept {
     assert(TThread::id() == threadid_);
     assert(state_ < s_aborted);
-    if (participant_phase_ == p_installing)
+    if (participant_phase_ == p_installing) {
+        Warning("STO participant cleanup entered during INSTALL: state=%u "
+                "writes=%d items=%u thread=%d",
+                static_cast<unsigned>(state_), any_writes_, tset_size_,
+                TThread::id());
         std::terminate();
+    }
 
     // An install decision cannot subsequently be downgraded to abort, and a
     // caller cannot claim commit before INSTALL. Keep both protocol checks in
     // optimized builds, where assert() is absent.
     if (participant_phase_ == p_installed)
         committed = true;
-    else if (committed)
+    else if (committed) {
+        Warning("STO participant committed cleanup without INSTALL: phase=%u "
+                "state=%u writes=%d items=%u thread=%d",
+                static_cast<unsigned>(participant_phase_),
+                static_cast<unsigned>(state_), any_writes_, tset_size_,
+                TThread::id());
         std::terminate();
+    }
 
     TransItem* it = nullptr;
     if (tset_size_ != 0) {

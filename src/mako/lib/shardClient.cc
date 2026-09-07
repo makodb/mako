@@ -211,7 +211,10 @@ namespace mako
                 timeout);
         value = promise.GetValue();
         int ret = promise.GetReply();
-        if (ret>0){
+        // Only an explicit participant ABORT proves that the remote helper
+        // already discarded its transaction. A timeout or transport error is
+        // ambiguous and still requires the coordinator's ABORT broadcast.
+        if (ret == ErrorCode::ABORT) {
             TThread::trans_nosend_abort |= (1 << dstShardIndex);
         }
         return ret;
@@ -249,7 +252,9 @@ namespace mako
         //Warning("remoteGET: key:%s,table_id:%d,key_len:%d",mako::printStringAsBit(key).c_str(),table_id,key.length());
         value = promise.GetValue();
         int ret = promise.GetReply();
-        if (ret>0){
+        // Match remoteScan: suppress a later ABORT RPC only when the server
+        // confirms that it already aborted this participant.
+        if (ret == ErrorCode::ABORT) {
             TThread::trans_nosend_abort |= (1 << dstShardIndex);
         }
         return ret;

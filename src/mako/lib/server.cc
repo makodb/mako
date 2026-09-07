@@ -1108,6 +1108,17 @@ namespace mako
                 // a TransportRequestHandle* as an opaque token.
                 mako::TransportRequestHandle* req_handle = reinterpret_cast<mako::TransportRequestHandle*>(handle);
 
+                // A failed GET or SCAN aborts the participant locally. The
+                // coordinator records that fact and omits the redundant ABORT
+                // RPC, so the next request can arrive while this helper's STO
+                // transaction is inactive. This check must run for every
+                // dequeued request, not only after suspend(): a new request can
+                // enter the queue while the helper is draining it.
+                if (TThread::mode() == 1 && TThread::txn != nullptr &&
+                    !TThread::txn->has_active_state()) {
+                    db->shard_reset();
+                }
+
                 size_t msgLen = shardReceiver->ReceiveRequest(
                     req_handle->GetRequestType(),
                     req_handle->GetRequestBuffer(),

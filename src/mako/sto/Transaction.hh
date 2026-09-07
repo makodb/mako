@@ -699,9 +699,13 @@ public:
             // Once a participant has received the install decision, 2PC can
             // no longer roll it back. Complete its committed cleanup even if
             // the worker unwinds before the normal shard_unlock() call.
-            if (participant_phase_ == p_installing)
+            if (participant_phase_ == p_installing) {
+                Warning("STO participant abort entered during INSTALL: "
+                        "state=%u writes=%d items=%u thread=%d",
+                        static_cast<unsigned>(state_), any_writes_,
+                        tset_size_, TThread::id());
                 std::terminate();
-            else if (participant_phase_ == p_installed)
+            } else if (participant_phase_ == p_installed)
                 shard_unlock(true);
             else
                 stop(false, nullptr, 0);
