@@ -6,6 +6,13 @@
 # Check mode validates both the source hash and a fresh rewrite, so edits to
 # either side of a DSL/GEN pair are detected.
 #
+# NOTE (Stage 2): the Rust is compiled AS A CRATE, not per carrier. The old
+# per-carrier `rustc` stage was removed -- see the comment where it used to be,
+# in the check loop below. Because there is still no ODR post-pass, a
+# header-resident type with out-of-line methods will not link; conversions are
+# limited to ODR-exempt shapes (pub trait, struct with no impl, const fn) until
+# that is addressed. See docs/stage2_open_questions.md Q1b.
+#
 # Usage:
 #   bash scripts/raft_dsl.sh --check [--transpiler PATH] [FILE ...]
 #   bash scripts/raft_dsl.sh --rewrite [--transpiler PATH] [FILE ...]
@@ -335,22 +342,27 @@ for index in "${!FILES[@]}"; do
     failures=$((failures + 1))
   fi
 
-  rust_payload="$(dirname -- "${regenerated}")/raft_dsl.rs"
-  rust_library="$(dirname -- "${regenerated}")/libraft_dsl.rlib"
-  if ! output=$("${TRANSPILER}" inline-rust --emit-rust "${rust_payload}" \
-      --files "${file}" 2>&1); then
-    echo "FAILED ${file} (Rust extraction)" >&2
-    sed 's/^/    /' <<<"${output}" | head -20 >&2
-    failures=$((failures + 1))
-    continue
-  fi
-  if ! output=$("${RUSTC_BIN}" --edition=2021 \
-      --crate-name "raft_dsl_carrier_${index}" --crate-type=lib -D warnings \
-      "${rust_payload}" -o "${rust_library}" 2>&1); then
-    echo "FAILED ${file} (extracted Rust does not compile)" >&2
-    sed 's/^/    /' <<<"${output}" | head -20 >&2
-    failures=$((failures + 1))
-  fi
+  # The per-carrier `rustc` compile that used to sit here has been REMOVED.
+  #
+  # It compiled each carrier's extracted Rust as its own standalone crate
+  # (--crate-name raft_dsl_carrier_N) with no --extern and no --type-map.
+  # That proved each block was self-contained Rust -- and, because a
+  # dependency-free fragment cannot name rusty::Mutex, ::janus::Command, a
+  # container, or a type from a sibling carrier, it was also the reason every
+  # block had to be a free function over scalars. src/rrr never operated
+  # under that constraint: scripts/rrr_dsl_check.sh invokes rustc zero times
+  # and rrr verifies at crate level.
+  #
+  # Verification now happens over the whole module graph in the crate stage
+  # below: rustc + clippy over src/deptran/raft, plus a drift check that a
+  # committed .rs must equal a fresh extraction. That is strictly more code
+  # compiled, at coarser granularity -- the trade recorded in
+  # docs/stage2_current_progress.txt.
+  #
+  # WHAT WAS GIVEN UP, explicitly: a block may now compile only because a
+  # sibling module or a crate dependency supplies something. Per-carrier
+  # self-containment is no longer proven.
+  :
 done
 
 # ---------------------------------------------------------------------------
@@ -404,5 +416,5 @@ if [[ -f "${RAFT_CRATE_MANIFEST}" && ${#FILES[@]} -eq ${#EXPECTED_INVENTORY_FILE
   fi
 fi
 
-echo "checked ${#FILES[@]} Raft DSL carrier(s), generated C++ and extracted Rust; ${failures} failure(s)"
+echo "checked ${#FILES[@]} Raft DSL carrier(s): pin, inventory, generated C++; ${failures} failure(s)"
 exit $((failures > 0 ? 1 : 0))

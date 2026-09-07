@@ -17,9 +17,62 @@
  4e427f74  raft: give slotid_t/ballot_t one definition, fixing an ODR violation
  7ad823f8  docs: record raft Stage 2 prep plan, DSL examples, fiber/RPC arch
  84f1dea6  raft: let the DSL own INVALID_SITEID, dropping 5 injected parameters
+ 1f17d332  docs: replace the Stage 2 TODO with a progress record
+ 207ff1fb  raft: decode persisted ballots as signed, matching the writer
+ 9dee92ee  raft: make the DSL clippy-clean for crate-level verification
+ 292a9bed  raft: stand up the Stage 2 verification crate
+ 63249730  raft: commit the Stage 2 crate lock file
+ a33d88d2  raft: bring RaftSubmissionProgress under DSL ownership
+ (+ the per-carrier gate removal)
 
- Diff vs base: 13 files, +3009 / -95. Code-only (excluding docs): 6 files,
- +376 / -95.
+--------------------------------------------------------------------------------
+ STAGE 2 STATUS: INFRASTRUCTURE DONE, CONVERSION BARELY STARTED
+--------------------------------------------------------------------------------
+
+ DONE -- the regime change (owner's Option B)
+   * src/deptran/raft/Cargo.toml, rust-modules.toml (schema 1, 21 modules),
+     src/*.rs (21 generated modules + lib.rs), scripts/raft_crate_extract.py.
+   * raft_dsl.sh: per-carrier `rustc` stage REMOVED; crate-level rustc +
+     clippy + drift + orphan checks added. --rewrite regenerates the crate.
+   * All negative-tested rather than assumed:
+       injected Rust error   -> "FAILED Raft crate does not compile", exit 1
+       edited a committed .rs -> "drift: .../quorum_hpp.rs", exit 1
+       unlisted .rs added     -> "orphan module not in manifest", exit 1
+
+ DONE -- decisions settled
+   * ballot_t is SIGNED. read_raft_disk.cc's RaftData now decodes the five
+     ballot fields as i64; slot_id stays u64 (slotid_t is genuinely unsigned).
+     Eight static_asserts pin each type and signedness.
+
+ CONVERTED -- one struct
+   * RaftSubmissionProgress (server.h) -> DSL block, no impl, no cpp_ctor,
+     12 static_asserts including the positional-init contract.
+
+ NOT DONE -- and this is the honest headline
+   The conversion half is ONE struct. Not because the crate failed, but
+   because of Q1b: raft still has no ODR post-pass, so a header-resident
+   type with methods does not link. The crate removed the bare-rustc
+   constraint; it did NOT remove that one. Until an ODR pass exists, only
+   ODR-exempt shapes are reachable -- pub trait, struct with no impl,
+   const fn.
+
+   Best targets, all blocked or deferred:
+     LogStorage      log_storage.hpp  18 methods  ODR-exempt as a trait,
+                                                  but PRODUCTION storage
+                                                  interface, vtable, 78 refs.
+                                                  Not landed unattended.
+     SnapshotManager snapshot_manager.hpp 10      same, plus needs a
+                                                  unique_ptr type-map entry.
+     TransportBase   transport.hpp     9 methods  test-only AND carries
+                                                  send_*_durable in its
+                                                  shape -> boundary-adjacent.
+     DispatcherBase  dispatcher.hpp    8 methods  test-only, stranded.
+
+ Diff vs base: code-only files touched -- CMakeLists.txt, src/rrr/CMakeLists.txt,
+ scripts/{check_rrr_crate_mode.py,raft_dsl.sh,raft_crate_extract.py},
+ src/deptran/raft/{log_storage.hpp,snapshot_manager.hpp,server.h,server.cc,
+ read_raft_disk.cc,snapshot_format.hpp}, tests/raft_durability_accounting_test.cc,
+ plus the crate under src/deptran/raft/.
 
 --------------------------------------------------------------------------------
  1. WHAT WAS DONE, AND WHY
