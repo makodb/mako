@@ -259,11 +259,23 @@ public:
     bool HasThreadContext() const override;
 
     /**
+     * True while the current thread owns an active or rollback-pending
+     * transaction attempt from this facade.
+     */
+    bool HasUnresolvedTransaction() const override;
+
+    /**
+     * True only for this facade's current active transaction token.
+     */
+    bool OwnsActiveTransaction(void* txn) const override;
+
+    /**
      * Begin a new transaction. The local facade returns its non-null,
      * thread-affine compatibility token; mbta_wrapper::new_txn() itself
      * initializes ambient state and always returns null by design. A token is
-     * valid only for that active attempt. Its address may be reused, so
-     * retaining or reusing a resolved token is an unchecked caller error.
+     * valid only for that unresolved attempt. A backend abort leaves it valid
+     * for one cleanup Rollback. Its address may be reused, so retaining or
+     * reusing a resolved token is an unchecked caller error.
      */
     void* BeginTransaction() override;
 
@@ -340,6 +352,18 @@ private:
     // TThread, and STO transaction state are process-wide thread_locals, so a
     // per-object flag cannot detect attachment through another DB instance.
     inline static thread_local DB* tls_thread_context_owner_ = nullptr;
+
+    // STO can abort and clean up internally before a table operation or
+    // Commit reports the abort to this facade. Keep API-attempt ownership
+    // separate from the native state so the caller may consume exactly one
+    // cleanup Rollback without making duplicate resolved-token use legal.
+    enum class FacadeTxnState : unsigned char {
+        kResolved,
+        kActive,
+        kRollbackPending,
+    };
+    inline static thread_local FacadeTxnState tls_txn_state_ =
+        FacadeTxnState::kResolved;
 
     // BenchmarkConfig, init_env(), initWithDB(), sync_logger, and native
     // background services are process-global and are not reset by Close().
@@ -649,6 +673,7 @@ inline void DB::InitThread() {
         // before allocating its permanent threadinfo.
         runtime_->BindToCurrentThread();
         tls_thread_context_owner_ = this;
+        tls_txn_state_ = FacadeTxnState::kResolved;
         active_thread_contexts_.fetch_add(1, std::memory_order_release);
     }
 
@@ -657,6 +682,7 @@ inline void DB::InitThread() {
     } catch (...) {
         std::lock_guard<std::mutex> lock(lifecycle_mutex_);
         tls_thread_context_owner_ = nullptr;
+        tls_txn_state_ = FacadeTxnState::kResolved;
         active_thread_contexts_.fetch_sub(1, std::memory_order_release);
         throw;
     }
@@ -676,6 +702,7 @@ inline void DB::EndThread() {
     // A direct caller may correct the underlying failure and retry EndThread.
     db_->thread_end();
     std::lock_guard<std::mutex> lock(lifecycle_mutex_);
+    tls_txn_state_ = FacadeTxnState::kResolved;
     tls_thread_context_owner_ = nullptr;
     active_thread_contexts_.fetch_sub(1, std::memory_order_release);
 }
@@ -686,6 +713,17 @@ inline bool DB::HasThreadContext() const {
     // been released. Checking only the thread-local owner therefore avoids a
     // data race with a concurrent Close() attempted by another thread.
     return tls_thread_context_owner_ == this;
+}
+
+inline bool DB::HasUnresolvedTransaction() const {
+    return tls_thread_context_owner_ == this &&
+        tls_txn_state_ != FacadeTxnState::kResolved;
+}
+
+inline bool DB::OwnsActiveTransaction(void* txn) const {
+    return tls_thread_context_owner_ == this &&
+        tls_txn_state_ == FacadeTxnState::kActive &&
+        txn != nullptr && txn == static_cast<void*>(TThread::txn);
 }
 
 inline str_arena& DB::get_arena() {
@@ -710,7 +748,8 @@ inline void* DB::BeginTransaction() {
         throw std::logic_error(
             "BeginTransaction requires an active database thread context");
     }
-    if (TThread::txn != nullptr && TThread::txn->has_active_state()) {
+    if (tls_txn_state_ != FacadeTxnState::kResolved ||
+        (TThread::txn != nullptr && TThread::txn->has_active_state())) {
         throw std::logic_error(
             "BeginTransaction cannot nest inside an active transaction");
     }
@@ -729,6 +768,7 @@ inline void* DB::BeginTransaction() {
         throw std::runtime_error(
             "native database did not start a transaction");
     }
+    tls_txn_state_ = FacadeTxnState::kActive;
     return static_cast<void*>(TThread::txn);
 }
 
@@ -740,10 +780,30 @@ inline void DB::Commit(void* txn) {
     if (txn == nullptr || txn != static_cast<void*>(TThread::txn)) {
         throw std::logic_error("Commit received a foreign transaction token");
     }
-    if (!TThread::txn->has_active_state()) {
+    if (tls_txn_state_ != FacadeTxnState::kActive) {
         throw std::logic_error("Commit received an inactive transaction token");
     }
-    db_->commit_txn(txn);
+    if (!TThread::txn->has_active_state()) {
+        tls_txn_state_ = FacadeTxnState::kRollbackPending;
+        throw abstract_db::abstract_abort_exception();
+    }
+    try {
+        db_->commit_txn(txn);
+        tls_txn_state_ = FacadeTxnState::kResolved;
+    } catch (const abstract_db::abstract_abort_exception&) {
+        if (!TThread::txn->has_active_state()) {
+            tls_txn_state_ = FacadeTxnState::kRollbackPending;
+        }
+        throw;
+    } catch (...) {
+        // Some native aborts report a typed failure after stop(false) has
+        // already resolved the STO attempt, for example timestamp exhaustion.
+        // Preserve facade ownership until one cleanup Rollback consumes it.
+        if (!TThread::txn->has_active_state()) {
+            tls_txn_state_ = FacadeTxnState::kRollbackPending;
+        }
+        throw;
+    }
 }
 
 inline void DB::Rollback(void* txn) {
@@ -754,10 +814,13 @@ inline void DB::Rollback(void* txn) {
     if (txn == nullptr || txn != static_cast<void*>(TThread::txn)) {
         throw std::logic_error("Rollback received a foreign transaction token");
     }
-    if (!TThread::txn->has_active_state()) {
+    if (tls_txn_state_ == FacadeTxnState::kResolved) {
         throw std::logic_error("Rollback received an inactive transaction token");
     }
-    db_->abort_txn(txn);
+    if (TThread::txn->has_active_state()) {
+        db_->abort_txn(txn);
+    }
+    tls_txn_state_ = FacadeTxnState::kResolved;
 }
 
 inline ITable* DB::GetTable(const std::string& name) {

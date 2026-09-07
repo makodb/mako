@@ -32,8 +32,8 @@ class TThread {
     static __thread int the_mode;
     // ROLE: 1 => disable multi-version, 0 => enable multi-version
     static __thread int the_role;
-    // counter for reclaim 
-    static __thread int the_counter;
+    // Bounded cadence counter for multi-version reclamation.
+    static __thread uint32_t the_counter;
     // number of rpc servers
     static __thread int the_num_rpc_server;
     // if run micro-based benchmark
@@ -96,12 +96,13 @@ public:
         return the_mode;
     }
 
-    static void incr_counter() {
-        the_counter += 1;
-    }
-
-    static int counter() {
-        return the_counter;
+    static bool should_reclaim() {
+        if (the_counter == 49) {
+            the_counter = 0;
+            return true;
+        }
+        ++the_counter;
+        return false;
     }
 
     static void enable_multiverison(){
@@ -216,6 +217,63 @@ public:
     static constexpr type user_bit = type(0x800);
     //100 000  000  000  000
     static constexpr type increment_value = type(0x4000);
+
+    // MassTrans stores its version directly in stuffed_str rather than in a
+    // TVersion wrapper. These helpers let that one storage type use atomic
+    // access throughout without changing the legacy version wrappers used by
+    // the other STO data structures.
+    static_assert(std::atomic_ref<type>::is_always_lock_free,
+                  "MassTrans versions must be lock-free");
+    static type load_atomic(
+            const type& v,
+            std::memory_order order = std::memory_order_acquire) {
+        assert(reinterpret_cast<uintptr_t>(&v) %
+                   std::atomic_ref<type>::required_alignment == 0);
+        return std::atomic_ref<type>(const_cast<type&>(v)).load(order);
+    }
+
+    static void store_atomic(
+            type& v, type value,
+            std::memory_order order = std::memory_order_release) {
+        assert(reinterpret_cast<uintptr_t>(&v) %
+                   std::atomic_ref<type>::required_alignment == 0);
+        std::atomic_ref<type>(v).store(value, order);
+    }
+
+    static bool try_lock_atomic(type& v, int here) {
+        type expected = load_atomic(v, std::memory_order_relaxed);
+        if (expected & lock_bit) {
+            return false;
+        }
+        return std::atomic_ref<type>(v).compare_exchange_strong(
+            expected, expected | lock_bit | static_cast<type>(here),
+            std::memory_order_acquire, std::memory_order_relaxed);
+    }
+
+    static void lock_atomic(type& v, int here) {
+        while (!try_lock_atomic(v, here)) {
+            relax_fence();
+        }
+    }
+
+    static void unlock_atomic(type& v, int here) {
+        const type current = load_atomic(v, std::memory_order_relaxed);
+        assert(is_locked_here(current, here));
+        store_atomic(v, current & ~(lock_bit | threadid_mask));
+    }
+
+    static void set_version_atomic(type& v, type new_v, int here) {
+        assert(is_locked_here(
+            load_atomic(v, std::memory_order_relaxed), here));
+        assert(!(new_v & (lock_bit | threadid_mask)));
+        store_atomic(v, new_v | lock_bit | static_cast<type>(here));
+    }
+
+    static void inc_nonopaque_version_atomic(type& v, int here) {
+        const type current = load_atomic(v, std::memory_order_relaxed);
+        assert(is_locked_here(current, here));
+        store_atomic(v, (current + increment_value) | nonopaque_bit);
+    }
 
     // TODO: probably remove these once RBTree stops referencing them.
     static void lock_read(type& v) {

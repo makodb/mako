@@ -773,6 +773,47 @@ TEST(StoEpochAdvancerLifecycleTest, ThreadEndAbortsActiveTransaction) {
     TThread::txn = nullptr;
 }
 
+TEST(StoEpochAdvancerLifecycleTest, ThreadEndDrainsOwnedMasstreeCallbacks) {
+    TThread::set_mode(0);
+    if (TThread::txn != nullptr) {
+        if (TThread::txn->has_active_state())
+            TThread::txn->silent_abort();
+        delete TThread::txn;
+        TThread::txn = nullptr;
+    }
+
+    configure_standalone_mbta_thread_test();
+    mbta_wrapper db;
+    db.thread_init(false, 0);
+    ASSERT_NE(mbta_table::mythreadinfo.ti, nullptr);
+
+    std::atomic<bool> callback_ran{false};
+    struct drain_probe final : public threadinfo::mrcu_callback {
+        explicit drain_probe(std::atomic<bool>& callback_ran)
+            : callback_ran_(callback_ran) {}
+
+        void operator()(threadinfo&) override {
+            callback_ran_.store(true, std::memory_order_release);
+            delete this;
+        }
+
+        std::atomic<bool>& callback_ran_;
+    };
+
+    mbta_table::mythreadinfo.ti->rcu_start();
+    mbta_table::mythreadinfo.ti->rcu_register(
+        new drain_probe(callback_ran));
+    EXPECT_FALSE(callback_ran.load(std::memory_order_acquire));
+
+    db.thread_end();
+
+    EXPECT_TRUE(callback_ran.load(std::memory_order_acquire));
+    EXPECT_FALSE(mbta_table::mythreadinfo.ti->rcu_active());
+    EXPECT_EQ(TThread::sclient, nullptr);
+    delete TThread::txn;
+    TThread::txn = nullptr;
+}
+
 TEST(StoEpochAdvancerLifecycleTest, ThreadEndStopsIdleModeOneMasstreeRcu) {
     // shard_reset() leaves an empty mode-1 participant transaction ready for
     // the next RPC, but start() has still entered the Masstree RCU region.

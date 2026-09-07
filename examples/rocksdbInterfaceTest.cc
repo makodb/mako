@@ -18,6 +18,7 @@
 #include <stdio.h>
 
 #include <atomic>
+#include <barrier>
 #include <thread>
 
 #include <mako.hh>
@@ -376,18 +377,166 @@ void test_approx_size_stress(mako::IDatabase* db) {
     VERIFY_PASS("Stress Test: GetApproximateSize PASSED");
 }
 
+// STO may finish native abort cleanup inside an operation. The facade must
+// still own that API attempt until one Rollback consumes it, while rejecting
+// every other use after resolution.
+void test_aborted_attempt_lifecycle(mako::IDatabase* db) {
+    printf("\n--- Transaction Test: Backend-Aborted Attempt Lifecycle ---\n");
+
+    mako::ITable* table = db->GetTable("aborted_attempt_table");
+    VERIFY(table != nullptr, "backend-abort lifecycle table opens");
+
+    // Inject the same adapter flag that MassTrans::atomicRead sets on a hot
+    // MV conflict. Put must not report success with an unconsumed abort flag.
+    void* flagged_txn = db->BeginTransaction();
+    TThread::transget_without_throw = true;
+    const mako::Status flagged_status =
+        table->Put(flagged_txn, "flagged", mako::Encode("value"));
+    VERIFY(flagged_status.IsIOError(),
+           "transactional Put surfaces the silent-abort flag");
+    VERIFY(!TThread::transget_without_throw,
+           "transactional Put consumes the silent-abort flag");
+    VERIFY(TThread::txn != nullptr && !TThread::txn->has_active_state(),
+           "silent-abort propagation resolves the native attempt");
+    VERIFY(table->Put("flagged_nontxn", "blocked").IsInvalidArgument(),
+           "an unresolved aborted attempt blocks non-transactional work");
+    bool flagged_commit_reported_abort = false;
+    try {
+        db->Commit(flagged_txn);
+    } catch (const abstract_db::abstract_abort_exception&) {
+        flagged_commit_reported_abort = true;
+    }
+    VERIFY(flagged_commit_reported_abort,
+           "Commit cannot publish after an operation reports silent abort");
+    db->Rollback(flagged_txn);
+
+    // Model the state after a real atomicRead conflict: native cleanup has
+    // completed, but the public attempt still needs one caller resolution.
+    void* aborted_txn = db->BeginTransaction();
+    Sto::abort_without_throw();
+    VERIFY(TThread::txn != nullptr && !TThread::txn->has_active_state(),
+           "injected backend abort resolves native transaction state");
+
+    bool commit_reported_abort = false;
+    try {
+        db->Commit(aborted_txn);
+    } catch (const abstract_db::abstract_abort_exception&) {
+        commit_reported_abort = true;
+    }
+    VERIFY(commit_reported_abort,
+           "Commit reports a backend-aborted active attempt as an abort");
+
+    bool duplicate_commit_rejected = false;
+    try {
+        db->Commit(aborted_txn);
+    } catch (const std::logic_error&) {
+        duplicate_commit_rejected = true;
+    }
+    VERIFY(duplicate_commit_rejected,
+           "a backend-aborted attempt cannot be committed twice");
+
+    bool nested_begin_rejected = false;
+    try {
+        db->BeginTransaction();
+    } catch (const std::logic_error&) {
+        nested_begin_rejected = true;
+    }
+    VERIFY(nested_begin_rejected,
+           "a backend-aborted attempt remains owned until Rollback");
+    VERIFY(table->Put("pending_nontxn", "blocked").IsInvalidArgument(),
+           "a rollback-pending attempt blocks non-transactional work");
+
+    db->Rollback(aborted_txn);
+    bool duplicate_rollback_rejected = false;
+    try {
+        db->Rollback(aborted_txn);
+    } catch (const std::logic_error&) {
+        duplicate_rollback_rejected = true;
+    }
+    VERIFY(duplicate_rollback_rejected,
+           "cleanup Rollback does not make duplicate Rollback legal");
+    VERIFY(table->Put("resolved_nontxn", "allowed").ok(),
+           "non-transactional work resumes after cleanup Rollback");
+
+    void* rollback_txn = db->BeginTransaction();
+    Sto::abort_without_throw();
+    db->Rollback(rollback_txn);
+    bool resolved_rollback_rejected = false;
+    try {
+        db->Rollback(rollback_txn);
+    } catch (const std::logic_error&) {
+        resolved_rollback_rejected = true;
+    }
+    VERIFY(resolved_rollback_rejected,
+           "direct cleanup of a backend-aborted attempt is single-use");
+
+    void* exhausted_txn = db->BeginTransaction();
+    VERIFY(table->Put(exhausted_txn, "exhausted",
+                      mako::Encode("value")).ok(),
+           "timestamp-exhaustion transaction stages a write");
+    TThread::txn->maxTimestampReadSet = 1;
+    bool exhaustion_reported = false;
+    {
+        auto& clock = sync_util::sync_logger::local_replica_id;
+        const uint32_t saved = clock.exchange(
+            Transaction::max_mako_timestamp + 1,
+            std::memory_order_acq_rel);
+        struct restore_timestamp_clock {
+            std::atomic<uint32_t>& clock;
+            uint32_t saved;
+            ~restore_timestamp_clock() {
+                clock.store(saved, std::memory_order_release);
+            }
+        } restore{clock, saved};
+        try {
+            db->Commit(exhausted_txn);
+        } catch (const Transaction::TimestampExhausted&) {
+            exhaustion_reported = true;
+        }
+    }
+    VERIFY(exhaustion_reported,
+           "Commit preserves the native timestamp-exhaustion error");
+    VERIFY(db->HasUnresolvedTransaction(),
+           "typed native abort remains rollback-pending in the facade");
+    bool exhausted_recommit_rejected = false;
+    try {
+        db->Commit(exhausted_txn);
+    } catch (const std::logic_error&) {
+        exhausted_recommit_rejected = true;
+    }
+    VERIFY(exhausted_recommit_rejected,
+           "rollback-pending timestamp failure cannot commit again");
+    db->Rollback(exhausted_txn);
+    VERIFY(!db->HasUnresolvedTransaction(),
+           "Rollback resolves the timestamp-exhausted facade attempt");
+    std::string absent;
+    VERIFY(table->Get("exhausted", absent).IsNotFound(),
+           "timestamp-exhausted write remains absent");
+
+    VERIFY_PASS("Backend-aborted attempt lifecycle PASSED");
+}
+
 // Exercise the table-wide size aggregate while independent record locks
 // publish inserts and deletes in parallel. This test is part of the exact TSan
-// lifecycle lane.
+// lifecycle lane. The same fixed worker contexts then force same-version
+// commit contention and verify that every aborted attempt accepts one cleanup
+// Rollback without weakening duplicate-token checks.
 void test_approx_size_concurrent(mako::IDatabase* db) {
     printf("\n--- Concurrent Test: GetApproximateSize ---\n");
 
     mako::ITable* table = db->GetTable("concurrent_size_table");
     VERIFY(table != nullptr,
            "GetTable returns valid table for concurrent size test");
+    mako::ITable* contention_table =
+        db->GetTable("transaction_contention_table");
+    VERIFY(contention_table != nullptr,
+           "GetTable returns valid table for transaction contention test");
+    VERIFY(contention_table->Put("shared", "seed").ok(),
+           "transaction contention key is seeded");
 
     constexpr int worker_count = 3;
     constexpr int keys_per_worker = 128;
+    constexpr int contention_rounds = 32;
     static std::atomic<unsigned> invocation{0};
     const std::string shared_key =
         "concurrent_shared_" +
@@ -398,8 +547,11 @@ void test_approx_size_concurrent(mako::IDatabase* db) {
     std::atomic<int> finished{0};
     std::atomic<int> shared_delete_successes{0};
     std::atomic<int> shared_delete_misses{0};
+    std::atomic<int> contention_commits{0};
+    std::atomic<int> contention_aborts{0};
     std::atomic<bool> start{false};
     std::atomic<bool> workers_ok{true};
+    std::barrier contention_barrier(worker_count);
     std::vector<std::thread> workers;
     workers.reserve(worker_count);
 
@@ -435,10 +587,61 @@ void test_approx_size_concurrent(mako::IDatabase* db) {
                         workers_ok.store(false, std::memory_order_release);
                     }
                 }
+
+#if defined(DISABLE_MULTI_VERSION)
+                TThread::disable_multiversion();
+#else
+                TThread::enable_multiverison();
+#endif
+                for (int round = 0; round < contention_rounds; ++round) {
+                    void* txn = db->BeginTransaction();
+                    const std::string value = mako::Encode(
+                        "worker_" + std::to_string(worker) + "_round_" +
+                        std::to_string(round));
+                    const mako::Status put_status =
+                        contention_table->Put(txn, "shared", value);
+
+                    // Every worker observed the same committed version before
+                    // any of them may enter Commit. At most one can publish it;
+                    // the other native transactions finish as aborted.
+                    contention_barrier.arrive_and_wait();
+                    if (!put_status.ok()) {
+                        try {
+                            db->Rollback(txn);
+                            contention_aborts.fetch_add(
+                                1, std::memory_order_relaxed);
+                        } catch (...) {
+                            workers_ok.store(false, std::memory_order_release);
+                        }
+                    } else {
+                        try {
+                            db->Commit(txn);
+                            contention_commits.fetch_add(
+                                1, std::memory_order_relaxed);
+                        } catch (const abstract_db::abstract_abort_exception&) {
+                            try {
+                                db->Rollback(txn);
+                                contention_aborts.fetch_add(
+                                    1, std::memory_order_relaxed);
+                            } catch (...) {
+                                workers_ok.store(false,
+                                                 std::memory_order_release);
+                            }
+                        } catch (...) {
+                            workers_ok.store(false, std::memory_order_release);
+                            try {
+                                db->Rollback(txn);
+                            } catch (...) {
+                            }
+                        }
+                    }
+                    contention_barrier.arrive_and_wait();
+                }
             } catch (...) {
                 if (!announced_ready) {
                     ready.fetch_add(1, std::memory_order_release);
                 }
+                contention_barrier.arrive_and_drop();
                 workers_ok.store(false, std::memory_order_release);
             }
             finished.fetch_add(1, std::memory_order_release);
@@ -473,6 +676,12 @@ void test_approx_size_concurrent(mako::IDatabase* db) {
     VERIFY_EQ(static_cast<int>(final_size),
               worker_count * (keys_per_worker / 2),
               "concurrent size aggregate retains every committed delta");
+    VERIFY(contention_aborts.load(std::memory_order_relaxed) > 0,
+           "same-version transaction contention produces an abort");
+    VERIFY_EQ(contention_commits.load(std::memory_order_relaxed) +
+                  contention_aborts.load(std::memory_order_relaxed),
+              worker_count * contention_rounds,
+              "every contending facade attempt resolves exactly once");
     VERIFY_PASS("Concurrent Test: GetApproximateSize PASSED");
 }
 
@@ -872,6 +1081,7 @@ int main(int argc, char* argv[]) {
                "Rollback rejects an already-resolved transaction token");
 
         // Run individual feature tests
+        test_aborted_attempt_lifecycle(db);
         test_scan(db);
         test_rscan(db);
         test_exists(db);

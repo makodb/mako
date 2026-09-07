@@ -5,13 +5,70 @@
 #include <vector>
 #include "sto/sync_util.hh"
 #include "sto/common.hh"
+#include <cstdint>
+#include <limits>
+#include <new>
 #ifdef USE_JEMALLOC
 #include <jemalloc/jemalloc.h>
 #endif
 
+class retired_value_chain_rcu_callback final : public threadinfo::mrcu_callback {
+public:
+    static retired_value_chain_rcu_callback* make(
+            char* head, size_t head_size, const char* embedded_data,
+            threadinfo& ti) {
+        if (head == nullptr || head == embedded_data) {
+            return nullptr;
+        }
+        void* const storage = ti.allocate(
+            sizeof(retired_value_chain_rcu_callback), memtag_masstree_gc);
+        if (storage == nullptr) {
+            Panic("failed to allocate a retired value-chain callback");
+        }
+        return new (storage) retired_value_chain_rcu_callback(
+            head, head_size, reinterpret_cast<uintptr_t>(embedded_data));
+    }
+
+    void retire(threadinfo& ti) {
+        ti.rcu_register(this);
+    }
+
+    void operator()(threadinfo& ti) noexcept override {
+        mako::free_retired_value_chain(
+            head_, head_size_, embedded_address_);
+        this->~retired_value_chain_rcu_callback();
+        ti.deallocate(this, sizeof(*this), memtag_masstree_gc);
+    }
+
+private:
+    retired_value_chain_rcu_callback(
+            char* head, size_t head_size, uintptr_t embedded_address)
+        : head_(head), head_size_(head_size),
+          embedded_address_(embedded_address) {
+    }
+
+    char* head_;
+    size_t head_size_;
+    uintptr_t embedded_address_;
+};
+
 // value field composition: data + mako::BITS_OF_TT (timestamp + term) + mako::BITS_OF_NODE
 class MultiVersionValue {
 public:
+    static bool validPackedSize(size_t size, bool multiversion) {
+        if (size < static_cast<size_t>(mako::EXTRA_BITS_FOR_VALUE)) {
+            return false;
+        }
+        if (size > static_cast<size_t>(std::numeric_limits<int>::max())) {
+            return false;
+        }
+        if (!versioned_str::valid_initial_value_size(size)) {
+            return false;
+        }
+        return !multiversion ||
+            size <= static_cast<size_t>(std::numeric_limits<int16_t>::max());
+    }
+
     static bool isDeleted(std::string& v) {
         // for non-deleted value, the length of value at least 2+mako::EXTRA_BITS_FOR_VALUE
         return v.length() == 1+mako::EXTRA_BITS_FOR_VALUE && v[0] == 'B';
@@ -41,45 +98,68 @@ public:
         return ret;
     }
 
-    // Lazy reclamation with optimized watermark checking
-    // Reclaims old versions that are safe to delete (below watermark)
-    static void lazyReclaim(uint32_t time_term, uint32_t current_term,
-                            char *root,
-                            versioned_str_struct *root_owner) {
-        // Use TThread counter for thread-local reclamation frequency
-        TThread::incr_counter();
-        if (TThread::counter() % 50 != 0) return;
+    // Copy the retained prefix before publishing a new head. The old chain is
+    // left byte-for-byte unchanged, so readers that sampled it can finish
+    // under Masstree RCU while the replacement becomes visible.
+    static mako::value_chain_prune_result pruneBeforePublication(
+            char* head, size_t head_size) {
+        if (!TThread::should_reclaim()) return {false, 0};
         
-        // Cache watermark with proper memory ordering
-        uint32_t watermark = sync_util::sync_logger::retrieveShardW_relaxed() / 10;
-        if (watermark == 0) return;  // Skip if watermark not initialized
-        
-        // Phase 1: Find the safe reclamation point
-        char *safe_point = nullptr;
-        char *current = root;
-        
-        // Navigate to first version below watermark
-        while (current && mako::load_node_data_size(current) > 0) {
-            const int16_t data_size = mako::load_node_data_size(current);
-            char *data = mako::load_node_data(current);
-            const uint32_t tt = mako::load_value_time_term(data, data_size);
-            
-            if (tt / 10 < watermark) {
-                safe_point = current;
-                break;
-            }
-            
-            current = mako::value_node_address(data, data_size);
+        const uint32_t watermark =
+            sync_util::sync_logger::retrieveShardW() / 10;
+        if (watermark == 0) return {false, 0};
+
+        return mako::cow_prune_value_chain(head, head_size, watermark);
+    }
+
+    static void retirePublishedValue(versioned_str_struct* owner,
+                                     threadinfo& ti) {
+        const auto old_value = owner->snapshot();
+        retired_value_chain_rcu_callback* retired =
+            retired_value_chain_rcu_callback::make(
+                old_value.data, old_value.size, owner->embedded_data(), ti);
+        if (retired != nullptr) {
+            retired->retire(ti);
         }
-        
-        if (!safe_point) return;  // No safe versions to reclaim
-        
-        // No other thread accesses this chain while it is reclaimed.
-        mako::reclaim_value_chain_after(safe_point, root_owner->embedded_data());
+    }
+
+    // Replace a value without mutating bytes visible through the previously
+    // published pointer. This is used for single-version commits and for
+    // repeated writes to a newly inserted row. Both cases still have
+    // concurrent Masstree readers, even though OCC will reject their attempt.
+    static void publishImmutableValue(const string& newval,
+                                      versioned_str_struct* owner,
+                                      threadinfo& ti,
+                                      bool reset_single_version_metadata) {
+        if (!validPackedSize(newval.size(), false)) {
+            Panic("invalid packed value size");
+        }
+
+        char* replacement = static_cast<char*>(std::malloc(newval.size()));
+        if (replacement == nullptr) {
+            Panic("failed to allocate an immutable value");
+        }
+        std::memcpy(replacement, newval.data(), newval.size());
+        if (reset_single_version_metadata) {
+            mako::store_value_node_timestamp(
+                replacement, newval.size(), 0);
+            mako::store_value_node_data_size(
+                replacement, newval.size(), 0);
+            mako::store_value_node_data(
+                replacement, newval.size(), nullptr);
+        }
+
+        const auto old_value = owner->snapshot();
+        retired_value_chain_rcu_callback* retired =
+            retired_value_chain_rcu_callback::make(
+                old_value.data, old_value.size, owner->embedded_data(), ti);
+        owner->publish_value(replacement, static_cast<int>(newval.size()));
+        if (retired != nullptr) {
+            retired->retire(ti);
+        }
     }
 
     static bool mvGET(string& val,
-                      char *oldval_str, // oldval_str == val, but it's the reference to the actual value
                       uint8_t current_term,
                       std::unordered_map<int, uint32_t> hist_timestamp) {
         uint32_t time_term = mako::load_value_time_term(
@@ -161,10 +241,17 @@ public:
                           bool isDelete,
                           const string newval,  // the new value to be updated
                           versioned_str_struct* e, /* versioned_value */
-                          uint8_t current_term) {
+                          uint8_t current_term,
+                          threadinfo& ti) {
+        (void)isDelete;
+        (void)current_term;
         // Single timestamp system
-        char *oldval_str=(char*)e->data();
-        int oldval_len=e->length();
+        const auto old_value = e->snapshot();
+        char* const oldval_str = old_value.data;
+        if (!validPackedSize(old_value.size, true)) {
+            Panic("multi-version value exceeds the packed chain limit");
+        }
+        const int oldval_len = static_cast<int>(old_value.size);
         uint32_t time_term = TThread::txn->tid_unique_ * 10 + TThread::txn->current_term_;
         if (isInsert) { // insert
             // Set single timestamp
@@ -174,6 +261,9 @@ public:
                 oldval_str, oldval_len, 0);  // indicate no next block
             mako::store_value_time_term(oldval_str, oldval_len, time_term);
         } else {  // update or delete
+            if (!validPackedSize(newval.length(), true)) {
+                Panic("multi-version value exceeds the packed chain limit");
+            }
             char* new_vv = (char*)malloc(newval.length());
             if (new_vv == nullptr) {
                 Panic("failed to allocate a multi-version value");
@@ -187,8 +277,17 @@ public:
             mako::store_node_data_size(
                 header, static_cast<int16_t>(oldval_len));
             mako::store_node_data(header, oldval_str);
-            e->modifyData(new_vv);
-            lazyReclaim(time_term, current_term, header, e);
+            const auto prune =
+                pruneBeforePublication(new_vv, newval.length());
+            retired_value_chain_rcu_callback* retired = nullptr;
+            if (prune.pruned) {
+                retired = retired_value_chain_rcu_callback::make(
+                    oldval_str, old_value.size, e->embedded_data(), ti);
+            }
+            e->publish_value(new_vv, static_cast<int>(newval.length()));
+            if (retired != nullptr) {
+                retired->retire(ti);
+            }
         }
         return ;
     }

@@ -318,6 +318,94 @@ char* allocate_version(std::string_view payload) {
     return value;
 }
 
+void set_version_time_term(char* value, size_t size, uint32_t time_term) {
+    mako::store_value_time_term(value, size, time_term);
+}
+
+TEST(MakoValueVersions, CowPruneLeavesPublishedChainUntouched) {
+    std::string embedded = mako::Encode("embedded");
+    char* const newest_retained = allocate_version("newest-retained");
+    char* const oldest_retained = allocate_version("oldest-retained");
+    ASSERT_NE(newest_retained, nullptr);
+    ASSERT_NE(oldest_retained, nullptr);
+
+    const size_t newest_size =
+        std::string_view("newest-retained").size() +
+        mako::EXTRA_BITS_FOR_VALUE;
+    const size_t oldest_size =
+        std::string_view("oldest-retained").size() +
+        mako::EXTRA_BITS_FOR_VALUE;
+    set_version_time_term(newest_retained, newest_size, 500);
+    set_version_time_term(oldest_retained, oldest_size, 300);
+    set_version_time_term(embedded.data(), embedded.size(), 100);
+    mako::store_value_node_data_size(
+        newest_retained, newest_size, static_cast<int16_t>(oldest_size));
+    mako::store_value_node_data(
+        newest_retained, newest_size, oldest_retained);
+    mako::store_value_node_data_size(
+        oldest_retained, oldest_size,
+        static_cast<int16_t>(embedded.size()));
+    mako::store_value_node_data(
+        oldest_retained, oldest_size, embedded.data());
+
+    const std::string newest_before(newest_retained, newest_size);
+    const std::string oldest_before(oldest_retained, oldest_size);
+    std::string candidate = mako::Encode("candidate");
+    mako::store_value_node_data_size(
+        candidate.data(), candidate.size(),
+        static_cast<int16_t>(newest_size));
+    mako::store_value_node_data(
+        candidate.data(), candidate.size(), newest_retained);
+
+    const auto result = mako::cow_prune_value_chain(
+        candidate.data(), candidate.size(), 25);
+    ASSERT_TRUE(result.pruned);
+    EXPECT_EQ(result.cloned_values, 2U);
+
+    char* const cloned_newest = mako::load_value_node_data(
+        candidate.data(), candidate.size());
+    ASSERT_NE(cloned_newest, nullptr);
+    EXPECT_NE(cloned_newest, newest_retained);
+    EXPECT_EQ(mako::load_value_node_data_size(
+                  candidate.data(), candidate.size()),
+              static_cast<int16_t>(newest_size));
+    EXPECT_EQ(std::string_view(
+                  cloned_newest, std::string_view("newest-retained").size()),
+              "newest-retained");
+    EXPECT_EQ(mako::load_value_time_term(cloned_newest, newest_size), 500U);
+
+    char* const cloned_oldest =
+        mako::load_value_node_data(cloned_newest, newest_size);
+    ASSERT_NE(cloned_oldest, nullptr);
+    EXPECT_NE(cloned_oldest, oldest_retained);
+    EXPECT_EQ(mako::load_value_node_data_size(cloned_newest, newest_size),
+              static_cast<int16_t>(oldest_size));
+    EXPECT_EQ(std::string_view(
+                  cloned_oldest, std::string_view("oldest-retained").size()),
+              "oldest-retained");
+    EXPECT_EQ(mako::load_value_time_term(cloned_oldest, oldest_size), 300U);
+    EXPECT_EQ(mako::load_value_node_data_size(cloned_oldest, oldest_size), 0);
+    EXPECT_EQ(mako::load_value_node_data(cloned_oldest, oldest_size), nullptr);
+
+    EXPECT_EQ(std::string_view(newest_retained, newest_size),
+              std::string_view(newest_before));
+    EXPECT_EQ(std::string_view(oldest_retained, oldest_size),
+              std::string_view(oldest_before));
+    EXPECT_EQ(mako::load_value_node_data(newest_retained, newest_size),
+              oldest_retained);
+    EXPECT_EQ(mako::load_value_node_data(oldest_retained, oldest_size),
+              embedded.data());
+
+    EXPECT_EQ(mako::free_retired_value_chain(
+                  cloned_newest, newest_size,
+                  reinterpret_cast<uintptr_t>(embedded.data())),
+              2U);
+    EXPECT_EQ(mako::free_retired_value_chain(
+                  newest_retained, newest_size,
+                  reinterpret_cast<uintptr_t>(embedded.data())),
+              2U);
+}
+
 TEST(MakoValueVersions, ReclamationUsesExplicitEmbeddedOwnershipBoundary) {
     constexpr std::string_view first_payload = "first";
     constexpr std::string_view second_payload = "second";

@@ -322,6 +322,11 @@ class threadinfo {
         if (limbo_epoch_ && (current - limbo_epoch_) > 2)
             hard_rcu_quiesce();
     }
+    // Drain this participant's complete callback queue during owner-thread
+    // teardown. The caller must have finished all protected reads and must not
+    // register another callback concurrently. This waits for a full grace
+    // period and returns with the participant inactive.
+    void rcu_drain();
     typedef ::mrcu_callback mrcu_callback;
     // @unsafe { record_rcu is not borrow-checked }
     void rcu_register(rusty::MutPtr<mrcu_callback> cb) {

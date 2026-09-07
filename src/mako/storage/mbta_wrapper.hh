@@ -73,6 +73,30 @@
     throw abstract_db::abstract_abort_exception(); \
   }
 
+// MassTrans uses this TLS flag when it has already aborted locally and cannot
+// throw through a hot-path read. UPDATE_VS also uses it to reject a value after
+// it was copied. Consume the flag at every adapter boundary before exposing the
+// value or reporting success.
+inline bool oi_mbta_consume_silent_abort() {
+  if (!TThread::transget_without_throw)
+    return false;
+
+  TThread::transget_without_throw = false;
+  if (TThread::txn != nullptr && TThread::txn->has_active_state())
+    Sto::abort_without_throw();
+  return true;
+}
+
+inline void oi_mbta_throw_if_silent_abort() {
+  if (oi_mbta_consume_silent_abort())
+    throw abstract_db::abstract_abort_exception();
+}
+
+inline void oi_mbta_retry_if_silent_abort() {
+  if (oi_mbta_consume_silent_abort())
+    throw Transaction::Abort();
+}
+
 #define OP_LOGGING 0
 #if OP_LOGGING
 std::atomic<long> mt_get(0);
@@ -158,15 +182,10 @@ inline bool oi_mbta_tx_get_local(mbta_table *t, lcdf::Str key,
                                  std::string &value) {
   STD_OP({
     bool ret = t->transGet(key, value);
-    // Check for silent abort (transGet uses abort_without_throw for
-    // certain failures). Throw to match RPC path behavior and allow
-    // caller to handle properly.
-    if (TThread::transget_without_throw) {
-      TThread::transget_without_throw = false;
-      throw Transaction::Abort();
-    }
+    oi_mbta_throw_if_silent_abort();
     if (ret) {
       UPDATE_VS(value.data(), value.length());
+      oi_mbta_throw_if_silent_abort();
       if (value.length() >= mako::EXTRA_BITS_FOR_VALUE)
         value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
     }
@@ -179,10 +198,15 @@ inline bool oi_mbta_tx_get_remote(mbta_table *t, lcdf::Str key,
                                   std::string &value) {
   int ret = TThread::sclient->remoteGet(t->get_table_id(), key, value);
   if (ret > 0) {
+    // remoteGet has already marked this participant in the coordinator's
+    // read-set bits. Resolve the local attempt and abort every staged remote
+    // participant before the facade observes the failure.
+    Sto::abort_without_throw();
     throw abstract_db::abstract_abort_exception();
   }
   if (value.length() >= mako::EXTRA_BITS_FOR_VALUE) {
     UPDATE_VS(value.data(), value.length());
+    oi_mbta_throw_if_silent_abort();
     value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
   }
   return true;
@@ -194,13 +218,19 @@ inline void oi_mbta_tx_put(mbta_table *t, lcdf::Str key,
 #if OP_LOGGING
   mt_put++;
 #endif
-  STD_OP({ t->transPut(key, StringWrapper(value)); });
+  STD_OP({
+    t->transPut(key, StringWrapper(value));
+    oi_mbta_throw_if_silent_abort();
+  });
 }
 
 // @unsafe - Sto txn insert
 inline void oi_mbta_tx_insert(mbta_table *t, lcdf::Str key,
                               const std::string &value) {
-  STD_OP(t->transInsert(key, StringWrapper(value));)
+  STD_OP({
+    t->transInsert(key, StringWrapper(value));
+    oi_mbta_throw_if_silent_abort();
+  });
 }
 
 // @unsafe - Sto txn delete
@@ -208,7 +238,10 @@ inline void oi_mbta_tx_remove(mbta_table *t, lcdf::Str key) {
 #if OP_LOGGING
   mt_del++;
 #endif
-  STD_OP(t->transDelete(key));
+  STD_OP({
+    t->transDelete(key);
+    oi_mbta_throw_if_silent_abort();
+  });
 }
 
 // @unsafe - Sto txn range read; strips EXTRA_BITS from delivered values
@@ -225,10 +258,14 @@ inline void oi_mbta_tx_scan(mbta_table *t, const std::string &start_key,
       arena ? &value_allocator : nullptr;
   STD_OP(t->transQuery(start_key, end,
                        [&](mbta_table::Str key, std::string &value) {
-    if (value.length() >= mako::EXTRA_BITS_FOR_VALUE)
+    if (value.length() >= mako::EXTRA_BITS_FOR_VALUE) {
+      UPDATE_VS(value.data(), value.length());
+      oi_mbta_throw_if_silent_abort();
       value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
+    }
     return callback.invoke(key.data(), key.length(), value);
   }, value_allocator_ptr));
+  oi_mbta_throw_if_silent_abort();
 }
 
 // @unsafe - Sto txn reverse range read
@@ -245,10 +282,14 @@ inline void oi_mbta_tx_rscan(mbta_table *t, const std::string &start_key,
       arena ? &value_allocator : nullptr;
   STD_OP(t->transRQuery(start_key, end,
                         [&](mbta_table::Str key, std::string &value) {
-    if (value.length() >= mako::EXTRA_BITS_FOR_VALUE)
+    if (value.length() >= mako::EXTRA_BITS_FOR_VALUE) {
+      UPDATE_VS(value.data(), value.length());
+      oi_mbta_throw_if_silent_abort();
       value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
+    }
     return callback.invoke(key.data(), key.length(), value);
   }, value_allocator_ptr));
+  oi_mbta_throw_if_silent_abort();
 }
 
 // @unsafe - local single-match range read on the caller's txn
@@ -263,18 +304,14 @@ inline void oi_mbta_tx_scan_one_local(mbta_table *t,
       value = v;
       if (value.length() >= mako::EXTRA_BITS_FOR_VALUE) {
         UPDATE_VS(value.data(), value.length());
+        oi_mbta_throw_if_silent_abort();
         value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
       }
       found = true;
     }
     return false;  // Stop after first result
   }));
-  // Check for silent abort after transQuery (may have used
-  // abort_without_throw). Throw to match RPC path behavior.
-  if (TThread::transget_without_throw) {
-    TThread::transget_without_throw = false;
-    throw abstract_db::abstract_abort_exception();
-  }
+  oi_mbta_throw_if_silent_abort();
   // Note: If no result found, value remains empty (same as remote scan
   // behavior)
 }
@@ -287,10 +324,14 @@ inline void oi_mbta_tx_scan_one_remote(mbta_table *t,
   int ret =
       TThread::sclient->remoteScan(t->get_table_id(), start_key, end_key, value);
   if (ret > 0) {
+    // Match remote get failure semantics. Do not leave a live native attempt
+    // for Commit to publish after this operation has reported an abort.
+    Sto::abort_without_throw();
     throw abstract_db::abstract_abort_exception();
   }
   if (value.length() >= mako::EXTRA_BITS_FOR_VALUE) {
     UPDATE_VS(value.data(), value.length());
+    oi_mbta_throw_if_silent_abort();
     value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
   }
 }
@@ -301,6 +342,7 @@ inline const char *oi_mbta_put_cmp(mbta_table *t, lcdf::Str key,
                                    const std::string &value) {
   STD_OP({
     t->transPutMbta(key, StringWrapper(value), compar);
+    oi_mbta_throw_if_silent_abort();
     return 0;
   });
 }
@@ -312,6 +354,7 @@ inline bool oi_mbta_shard_get(mbta_table *t, lcdf::Str key,
                               std::string &value) {
   STD_OP({
     bool ret = t->transGet(key, value);
+    oi_mbta_throw_if_silent_abort();
     return ret;
   });
 }
@@ -321,6 +364,7 @@ inline const char *oi_mbta_shard_put(mbta_table *t, lcdf::Str key,
                                      const std::string &value) {
   STD_OP({
     t->transPut(key, StringWrapper(value));
+    oi_mbta_throw_if_silent_abort();
     if (!Sto::shard_try_lock_last_writeset()) {
       throw Transaction::Abort();
     }
@@ -341,6 +385,7 @@ inline bool oi_mbta_shard_scan(mbta_table *t, const std::string &start_key,
                        [&](mbta_table::Str key, std::string &value) {
     return callback.invoke(key.data(), key.length(), value);
   }, value_allocator_ptr));
+  oi_mbta_throw_if_silent_abort();
   return true;
 }
 
@@ -406,12 +451,12 @@ inline bool oi_mbta_get_local(mbta_table *t, lcdf::Str key,
   while (true) {
     try {
       bool ret = t->get(key, value);
-      if (TThread::transget_without_throw) {
-        TThread::transget_without_throw = false;
+      if (oi_mbta_consume_silent_abort())
         continue;  // silent abort — retry
-      }
       if (ret) {
         UPDATE_VS(value.data(), value.length());
+        if (oi_mbta_consume_silent_abort())
+          continue;  // UPDATE_VS rejected the copied value
         if (value.length() >= mako::EXTRA_BITS_FOR_VALUE)
           value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
       }
@@ -441,7 +486,10 @@ inline bool oi_mbta_put_local(mbta_table *t, lcdf::Str key,
   const std::string enc = mako::Encode(value);
   while (true) {
     try {
-      return t->put(key, StringWrapper(enc));
+      bool inserted = t->put(key, StringWrapper(enc));
+      if (oi_mbta_consume_silent_abort())
+        continue;
+      return inserted;
     } catch (Transaction::Abort &) { /* conflict — retry */ }
   }
 }
@@ -462,7 +510,10 @@ inline bool oi_mbta_insert_local(mbta_table *t, lcdf::Str key,
   const std::string enc = mako::Encode(value);
   while (true) {
     try {
-      return t->insert(key, StringWrapper(enc));
+      bool inserted = t->insert(key, StringWrapper(enc));
+      if (oi_mbta_consume_silent_abort())
+        continue;
+      return inserted;
     } catch (Transaction::Abort &) { /* conflict — retry */ }
   }
 }
@@ -479,7 +530,10 @@ inline bool oi_mbta_remove_remote(mbta_table *t, lcdf::Str key) {
 inline bool oi_mbta_remove_local(mbta_table *t, lcdf::Str key) {
   while (true) {
     try {
-      return t->erase(key);
+      bool removed = t->erase(key);
+      if (oi_mbta_consume_silent_abort())
+        continue;
+      return removed;
     } catch (Transaction::Abort &) { /* conflict — retry */ }
   }
 }
@@ -504,10 +558,15 @@ inline void oi_mbta_nontxn_scan(mbta_table *t, const std::string &start_key,
       mbta_table::ValueAllocator *value_allocator_ptr =
           arena ? &value_allocator : nullptr;
       t->scan(start_key, end, [&](mbta_table::Str key, std::string &value) {
-        if (value.length() >= mako::EXTRA_BITS_FOR_VALUE)
+        if (value.length() >= mako::EXTRA_BITS_FOR_VALUE) {
+          UPDATE_VS(value.data(), value.length());
+          oi_mbta_retry_if_silent_abort();
           value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
+        }
         return callback.invoke(key.data(), key.length(), value);
       }, value_allocator_ptr);
+      if (oi_mbta_consume_silent_abort())
+        continue;
       return;
     } catch (Transaction::Abort &) { /* conflict — retry whole scan */ }
   }
@@ -528,10 +587,15 @@ inline void oi_mbta_nontxn_rscan(mbta_table *t, const std::string &start_key,
       mbta_table::ValueAllocator *value_allocator_ptr =
           arena ? &value_allocator : nullptr;
       t->rscan(start_key, end, [&](mbta_table::Str key, std::string &value) {
-        if (value.length() >= mako::EXTRA_BITS_FOR_VALUE)
+        if (value.length() >= mako::EXTRA_BITS_FOR_VALUE) {
+          UPDATE_VS(value.data(), value.length());
+          oi_mbta_retry_if_silent_abort();
           value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
+        }
         return callback.invoke(key.data(), key.length(), value);
       }, value_allocator_ptr);
+      if (oi_mbta_consume_silent_abort())
+        continue;
       return;
     } catch (Transaction::Abort &) { /* conflict — retry whole scan */ }
   }
@@ -1875,6 +1939,12 @@ public:
     // instead completes committed unlock/cleanup before ending the context.
     if (TThread::txn != nullptr && TThread::txn->has_active_state()) {
       abort_txn(nullptr);
+    }
+    // This worker owns every callback in its Masstree limbo queue. Complete a
+    // full grace period before ending the database-thread attachment so
+    // retired value chains cannot accumulate across detach and reattach.
+    if (mbta_table::mythreadinfo.ti != nullptr) {
+      mbta_table::mythreadinfo.ti->rcu_drain();
     }
     benchmark_thread_end();
   }

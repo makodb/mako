@@ -37,7 +37,7 @@ __thread int TThread::pid;
 __thread int TThread::the_mode;
 __thread int TThread::the_num_rpc_server;
 __thread int TThread::the_is_micro;
-__thread int TThread::the_counter;
+__thread uint32_t TThread::the_counter;
 __thread int TThread::the_role;
 __thread int TThread::warehouses;
 __thread int TThread::the_debug_bit;
@@ -595,7 +595,8 @@ bool Transaction::try_commit(bool no_paxos) {
             if (hasInsertOp(it)) {  // key_write_value_type
                 key = (*it).write_value<std::string>();
                 versioned_str_struct *vvx = (*it).key<versioned_str_struct *>();
-                val = std::string(vvx->data(), vvx->length());
+                const auto snapshot = vvx->read_value();
+                val.assign(snapshot.data(), snapshot.length());
             } else {
                 key = it->extra;
                 val = (*it).template write_value<std::string>();
@@ -937,12 +938,13 @@ inline void Transaction::serialize_util(unsigned nwriteset, bool on_remote, int 
         // 5. copy the length of value and content of value
         if (hasInsertOp(it)) {
             versioned_str_struct *vvx = (*it).key<versioned_str_struct *>();
-            assert(vvx->length() > mako::EXTRA_BITS_FOR_VALUE);
-            len_of_V = vvx->length() - mako::EXTRA_BITS_FOR_VALUE;
+            const auto snapshot = vvx->read_value();
+            assert(snapshot.length() >= mako::EXTRA_BITS_FOR_VALUE);
+            len_of_V = snapshot.length() - mako::EXTRA_BITS_FOR_VALUE;
             memcpy(array + w, (char *) &len_of_V, sizeof(unsigned short));
             w += sizeof(unsigned short);
 
-            memcpy(array + w, (char *) vvx->data(), len_of_V);
+            memcpy(array + w, (char *) snapshot.data(), len_of_V);
             w += len_of_V;
         } else {
             std::string vvx = "";
@@ -1069,7 +1071,8 @@ void Transaction::print_stats() {
         auto base = tset_[tidx / tset_chunk];
         it = base + tidx % tset_chunk;
         versioned_str_struct *value = (*it).key<versioned_str_struct *>();
-        std::string val = std::string(value->data(), value->length());
+        const auto snapshot = value->read_value();
+        std::string val(snapshot.data(), snapshot.length());
         std::string key = "";
         if (hasInsertOp(it)) {  // key_write_value_type
             key = (*it).write_value<std::string>();

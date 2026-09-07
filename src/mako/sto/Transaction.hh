@@ -798,6 +798,43 @@ public:
 #endif
     }
 
+    // Dedicated lock path for MassTrans's raw version cell. Every access to
+    // that cell uses TransactionTid's atomic helpers, while the legacy STO
+    // wrappers keep their existing representation and lock path.
+    bool try_lock_atomic(TransItem& item, TransactionTid::type& vers) {
+#if STO_SORT_WRITESET
+        (void) item;
+        TransactionTid::lock_atomic(vers, threadid_);
+        return true;
+#else
+        unsigned n = 0;
+        while (1) {
+            if (TransactionTid::try_lock_atomic(vers, threadid_))
+                return true;
+            ++n;
+# if STO_SPIN_EXPBACKOFF
+            if (item.has_read() || n == STO_SPIN_BOUND_WRITE) {
+#  if STO_DEBUG_ABORTS
+                abort_version_ = TransactionTid::load_atomic(vers);
+#  endif
+                return false;
+            }
+            if (n > 3)
+                for (unsigned x = 1 << std::min(15U, n - 2); x; --x)
+                    relax_fence();
+# else
+            if (item.has_read() || n == (1 << STO_SPIN_BOUND_WRITE)) {
+#  if STO_DEBUG_ABORTS
+                abort_version_ = TransactionTid::load_atomic(vers);
+#  endif
+                return false;
+            }
+# endif
+            relax_fence();
+        }
+#endif
+    }
+
     void check_opacity(TransItem& item, TransactionTid::type v) {
         assert(state_ <= s_committing_locked);
         if (!start_tid_)

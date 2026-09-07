@@ -382,7 +382,8 @@ private:
         // current DB token and an active attempt instead of silently ignoring
         // null, foreign, or already-resolved handles.
         if (database_ != nullptr &&
-            (txn == nullptr || TThread::txn == nullptr ||
+            (!database_->OwnsActiveTransaction(txn) ||
+             TThread::txn == nullptr ||
              txn != static_cast<void*>(TThread::txn) ||
              !TThread::txn->has_active_state())) {
             return Status::InvalidArgument(
@@ -393,8 +394,10 @@ private:
 
     Status validate_nontxn() const {
         if (!has_thread_context()) return missing_thread_context();
-        if (database_ != nullptr && TThread::txn != nullptr &&
-            TThread::txn->has_active_state()) {
+        if (database_ != nullptr &&
+            (database_->HasUnresolvedTransaction() ||
+             (TThread::txn != nullptr &&
+              TThread::txn->has_active_state()))) {
             return Status::InvalidArgument(
                 "non-transactional operation cannot run inside a transaction");
         }

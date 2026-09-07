@@ -21,7 +21,10 @@
 #include "storage/mbta_sharded_ordered_index.hh"
 #include "lib/common.h"
 
+#include <barrier>
 #include <gtest/gtest.h>
+#include <limits>
+#include <memory>
 
 import std;
 
@@ -30,6 +33,58 @@ namespace {
 using mbta_type = mbta_table;
 
 std::atomic<int> g_tid_counter{0};
+
+class ComparatorInterleave {
+public:
+    void worker_wait() {
+        worker_entered_.store(true, std::memory_order_release);
+        barrier_.arrive_and_wait();
+        barrier_.arrive_and_wait();
+    }
+
+    void coordinator_wait() {
+        barrier_.arrive_and_wait();
+    }
+
+    void drop_worker_if_not_entered() {
+        if (!worker_entered_.load(std::memory_order_acquire))
+            barrier_.arrive_and_drop();
+    }
+
+private:
+    std::barrier<> barrier_{2};
+    std::atomic<bool> worker_entered_{false};
+};
+
+class ComparatorWorkerBarrierGuard {
+public:
+    explicit ComparatorWorkerBarrierGuard(ComparatorInterleave& interleave)
+        : interleave_(interleave) {}
+
+    ~ComparatorWorkerBarrierGuard() {
+        interleave_.drop_worker_if_not_entered();
+    }
+
+private:
+    ComparatorInterleave& interleave_;
+};
+
+ComparatorInterleave* g_compare_interleave = nullptr;
+std::atomic<bool>* g_reject_compare_saw_base = nullptr;
+
+bool compare_only_base(const std::string&, const std::string& old_value) {
+    const bool matches = old_value.starts_with("base");
+    g_compare_interleave->worker_wait();
+    return matches;
+}
+
+bool reject_after_reading_base(const std::string&,
+                               const std::string& old_value) {
+    g_reject_compare_saw_base->store(
+        old_value.starts_with("base"), std::memory_order_release);
+    g_compare_interleave->worker_wait();
+    return false;
+}
 
 class ScopedMultiversionMode {
 public:
@@ -44,6 +99,51 @@ public:
     }
 private:
     bool was_enabled_;
+};
+
+class ScopedSingleVersionMode {
+public:
+    ScopedSingleVersionMode() : was_enabled_(TThread::is_multiversion()) {
+        TThread::disable_multiversion();
+    }
+    ~ScopedSingleVersionMode() {
+        if (was_enabled_)
+            TThread::enable_multiverison();
+        else
+            TThread::disable_multiversion();
+    }
+private:
+    bool was_enabled_;
+};
+
+class ScopedSingleWatermark {
+public:
+    explicit ScopedSingleWatermark(uint32_t watermark)
+        : previous_(sync_util::sync_logger::retrieveShardW()) {
+        sync_util::sync_logger::setSingleWatermark(watermark);
+    }
+
+    ~ScopedSingleWatermark() {
+        sync_util::sync_logger::setSingleWatermark(previous_);
+    }
+
+private:
+    uint32_t previous_;
+};
+
+class RcuCompletionProbe final : public threadinfo::mrcu_callback {
+public:
+    explicit RcuCompletionProbe(
+            std::shared_ptr<std::atomic<bool>> completed)
+        : completed_(std::move(completed)) {}
+
+    void operator()(threadinfo&) override {
+        completed_->store(true, std::memory_order_release);
+        delete this;
+    }
+
+private:
+    std::shared_ptr<std::atomic<bool>> completed_;
 };
 
 // Per-thread Silo/STO initialization. Every thread that touches
@@ -109,6 +209,20 @@ static mbta_type& make_masstrans(long id, const char* name) {
     mt->set_table_id(id);
     mt->set_table_name(name);
     return *mt;
+}
+
+TEST_F(SiloNonTxnApi, PackedAllocationSizeRejectsPaddingOverflow) {
+    const size_t maximum = versioned_str::max_initial_value_size();
+    ASSERT_LE(maximum,
+              static_cast<size_t>(std::numeric_limits<int>::max()));
+    EXPECT_TRUE(MultiVersionValue::validPackedSize(maximum, false));
+    EXPECT_GT(versioned_str::size_for(static_cast<int>(maximum)), 0);
+
+    const size_t first_invalid = maximum + 1;
+    EXPECT_FALSE(MultiVersionValue::validPackedSize(first_invalid, false));
+    EXPECT_THROW(
+        versioned_str::size_for(static_cast<int>(first_invalid)),
+        std::length_error);
 }
 
 TEST_F(SiloNonTxnApi, MassTransPutGetRoundTrip) {
@@ -279,6 +393,147 @@ TEST_F(SiloNonTxnApi, AbortedMvDeletePreservesValueAndCount) {
     EXPECT_EQ(out.substr(0, 7), "present");
 }
 
+TEST_F(SiloNonTxnApi, MvInsertedValueCanGrowBeforeCommitOrCleanup) {
+    ScopedMultiversionMode multiversion;
+    mbta_type& mt = make_masstrans(9016, "mt_mv_insert_growth");
+    const std::string small = mako::Encode("s");
+    const std::string large = mako::Encode(std::string(8192, 'L'));
+
+    Sto::start_transaction();
+    EXPECT_FALSE(mt.transInsert(lcdf::Str("commit"), small));
+    EXPECT_TRUE(mt.transPut(lcdf::Str("commit"), large));
+    ASSERT_TRUE(Sto::try_commit());
+
+    std::string out;
+    ASSERT_TRUE(mt.get(lcdf::Str("commit"), out));
+    ASSERT_EQ(out.size(), large.size());
+    EXPECT_EQ(out.substr(0, 8192), std::string(8192, 'L'));
+
+    Sto::start_transaction();
+    EXPECT_FALSE(mt.transInsert(lcdf::Str("abort"), small));
+    EXPECT_TRUE(mt.transPut(lcdf::Str("abort"), large));
+    Sto::silent_abort();
+    EXPECT_FALSE(mt.get(lcdf::Str("abort"), out));
+
+#if READ_MY_WRITES
+    Sto::start_transaction();
+    EXPECT_FALSE(mt.transInsert(lcdf::Str("delete"), small));
+    EXPECT_TRUE(mt.transPut(lcdf::Str("delete"), large));
+    EXPECT_TRUE(mt.transDelete(lcdf::Str("delete")));
+    ASSERT_TRUE(Sto::try_commit());
+    EXPECT_FALSE(mt.get(lcdf::Str("delete"), out));
+#endif
+}
+
+TEST_F(SiloNonTxnApi, MvOversizedValueIsRejectedBeforeStaging) {
+    ScopedMultiversionMode multiversion;
+    mbta_type& mt = make_masstrans(9017, "mt_mv_oversized_value");
+    const std::string oversized = mako::Encode(std::string(
+        static_cast<size_t>(std::numeric_limits<int16_t>::max()), 'x'));
+
+    Sto::start_transaction();
+    EXPECT_THROW(mt.transInsert(lcdf::Str("key"), oversized),
+                 std::length_error);
+    ASSERT_NE(TThread::txn, nullptr);
+    EXPECT_FALSE(TThread::txn->has_active_state());
+
+    std::string out;
+    EXPECT_FALSE(mt.get(lcdf::Str("key"), out));
+}
+
+TEST_F(SiloNonTxnApi, ConcurrentSingleVersionReadersObserveWholeValues) {
+    ScopedSingleVersionMode single_version;
+    Transaction::start_epoch_advancer();
+    mbta_type& mt = make_masstrans(9018, "mt_sv_publication_stress");
+    const std::string first_payload(8192, 'A');
+    const std::string second_payload(8192, 'B');
+    const std::string first_value = mako::Encode(first_payload);
+    const std::string second_value = mako::Encode(second_payload);
+    ASSERT_TRUE(mt.put(lcdf::Str("key"), first_value));
+
+    std::atomic<unsigned> ready{0};
+    std::atomic<bool> start{false};
+    std::atomic<bool> done{false};
+    std::atomic<bool> reader_quiesced{false};
+    std::atomic<unsigned> observations{0};
+    std::atomic<unsigned> failures{0};
+
+    auto finish_worker = [] {
+        if (TThread::txn != nullptr) {
+            if (TThread::txn->has_active_state())
+                TThread::txn->silent_abort();
+            delete TThread::txn;
+            TThread::txn = nullptr;
+        }
+        Transaction::rcu_quiesce();
+    };
+    std::thread writer([&] {
+        silo_thread_init();
+        TThread::disable_multiversion();
+        ready.fetch_add(1, std::memory_order_release);
+        while (!start.load(std::memory_order_acquire))
+            std::this_thread::yield();
+        try {
+            while (observations.load(std::memory_order_acquire) == 0 &&
+                   !reader_quiesced.load(std::memory_order_acquire))
+                std::this_thread::yield();
+            for (unsigned iteration = 0; iteration != 500; ++iteration) {
+                mt.put(lcdf::Str("key"),
+                       iteration % 2 == 0 ? first_value : second_value);
+            }
+        } catch (...) {
+            failures.fetch_add(1, std::memory_order_relaxed);
+        }
+        done.store(true, std::memory_order_release);
+        finish_worker();
+    });
+    std::thread reader([&] {
+        silo_thread_init();
+        TThread::disable_multiversion();
+        ready.fetch_add(1, std::memory_order_release);
+        while (!start.load(std::memory_order_acquire))
+            std::this_thread::yield();
+        try {
+            do {
+                std::string value;
+                try {
+                    if (!mt.get(lcdf::Str("key"), value))
+                        continue;
+                } catch (Transaction::Abort&) {
+                    continue;
+                }
+                if (value.size() != first_value.size()) {
+                    failures.fetch_add(1, std::memory_order_relaxed);
+                    break;
+                }
+                value.resize(first_payload.size());
+                if (value != first_payload && value != second_payload) {
+                    failures.fetch_add(1, std::memory_order_relaxed);
+                    break;
+                }
+                observations.fetch_add(1, std::memory_order_relaxed);
+            } while (!done.load(std::memory_order_acquire));
+        } catch (...) {
+            failures.fetch_add(1, std::memory_order_relaxed);
+        }
+        finish_worker();
+        reader_quiesced.store(true, std::memory_order_release);
+    });
+
+    while (ready.load(std::memory_order_acquire) != 2)
+        std::this_thread::yield();
+    start.store(true, std::memory_order_release);
+    writer.join();
+    reader.join();
+
+    EXPECT_EQ(failures.load(std::memory_order_relaxed), 0U);
+    EXPECT_GT(observations.load(std::memory_order_relaxed), 0U);
+    std::string final_value;
+    ASSERT_TRUE(mt.get(lcdf::Str("key"), final_value));
+    final_value.resize(second_payload.size());
+    EXPECT_EQ(final_value, second_payload);
+}
+
 TEST_F(SiloNonTxnApi, ConcurrentMvDeleteAndResurrectionHaveSerialOutcome) {
     ScopedMultiversionMode multiversion;
     mbta_type& mt = make_masstrans(9012, "mt_mv_delete_resurrection_race");
@@ -361,6 +616,258 @@ TEST_F(SiloNonTxnApi, ConcurrentMvDeleteAndResurrectionHaveSerialOutcome) {
         ASSERT_TRUE(mt.get(lcdf::Str("key"), out));
         EXPECT_EQ(out.substr(0, 3), "new");
     }
+}
+
+TEST_F(SiloNonTxnApi, ConcurrentMvReadersObserveWholePublishedValues) {
+    ScopedMultiversionMode multiversion;
+    ScopedSingleWatermark watermark(
+        std::numeric_limits<uint32_t>::max());
+    Transaction::start_epoch_advancer();
+    mbta_type& mt = make_masstrans(9013, "mt_mv_publication_stress");
+    const std::string short_payload = "s";
+    const std::string long_payload(8192, 'L');
+    const std::string short_value = mako::Encode(short_payload);
+    const std::string long_value = mako::Encode(long_payload);
+    ASSERT_TRUE(mt.put(lcdf::Str("key"), short_value));
+
+    std::atomic<unsigned> ready{0};
+    std::atomic<bool> start{false};
+    std::atomic<bool> done{false};
+    std::atomic<bool> reader_quiesced{false};
+    auto retirements_drained =
+        std::make_shared<std::atomic<bool>>(false);
+    std::atomic<unsigned> observations{0};
+    std::atomic<unsigned> failures{0};
+
+    auto finish_worker = [] {
+        if (TThread::txn != nullptr) {
+            delete TThread::txn;
+            TThread::txn = nullptr;
+        }
+        Transaction::rcu_quiesce();
+    };
+    std::thread writer([&] {
+        silo_thread_init();
+        TThread::enable_multiverison();
+        ready.fetch_add(1, std::memory_order_release);
+        while (!start.load(std::memory_order_acquire))
+            std::this_thread::yield();
+        try {
+            while (observations.load(std::memory_order_acquire) == 0 &&
+                   !reader_quiesced.load(std::memory_order_acquire))
+                std::this_thread::yield();
+            for (unsigned iteration = 0; iteration != 500; ++iteration) {
+                if (iteration % 7 == 0)
+                    mt.erase(lcdf::Str("key"));
+                mt.put(lcdf::Str("key"),
+                       iteration % 2 == 0 ? short_value : long_value);
+            }
+            // Masstree's limbo queue is FIFO. This probe is queued after all
+            // value-chain callbacks, so observing it proves the earlier
+            // retirements ran after every reader became quiescent.
+            mbta_type::mythreadinfo.ti->rcu_register(
+                new RcuCompletionProbe(retirements_drained));
+            done.store(true, std::memory_order_release);
+            while (!reader_quiesced.load(std::memory_order_acquire))
+                std::this_thread::yield();
+            for (int attempt = 0;
+                 attempt != 5 &&
+                 !retirements_drained->load(std::memory_order_acquire);
+                 ++attempt) {
+                mbta_type::mythreadinfo.ti->context()->increment_epoch(2);
+                mbta_type::mythreadinfo.ti->rcu_quiesce();
+            }
+            if (mbta_type::mythreadinfo.ti->rcu_active())
+                mbta_type::mythreadinfo.ti->rcu_stop();
+        } catch (...) {
+            failures.fetch_add(1, std::memory_order_relaxed);
+            done.store(true, std::memory_order_release);
+        }
+        finish_worker();
+    });
+    std::thread reader([&] {
+        silo_thread_init();
+        TThread::enable_multiverison();
+        ready.fetch_add(1, std::memory_order_release);
+        while (!start.load(std::memory_order_acquire))
+            std::this_thread::yield();
+        try {
+            do {
+                std::string value;
+                bool found = false;
+                try {
+                    found = mt.get(lcdf::Str("key"), value);
+                } catch (Transaction::Abort&) {
+                    continue;
+                }
+                if (!found)
+                    continue;
+                if (value.size() <
+                    static_cast<size_t>(mako::EXTRA_BITS_FOR_VALUE)) {
+                    failures.fetch_add(1, std::memory_order_relaxed);
+                    break;
+                }
+                value.resize(
+                    value.size() - mako::EXTRA_BITS_FOR_VALUE);
+                if (value != short_payload && value != long_payload) {
+                    failures.fetch_add(1, std::memory_order_relaxed);
+                    break;
+                }
+                observations.fetch_add(1, std::memory_order_relaxed);
+            } while (!done.load(std::memory_order_acquire));
+        } catch (...) {
+            failures.fetch_add(1, std::memory_order_relaxed);
+        }
+        finish_worker();
+        reader_quiesced.store(true, std::memory_order_release);
+    });
+
+    while (ready.load(std::memory_order_acquire) != 2)
+        std::this_thread::yield();
+    start.store(true, std::memory_order_release);
+    writer.join();
+    reader.join();
+
+    EXPECT_EQ(failures.load(std::memory_order_relaxed), 0U);
+    EXPECT_GT(observations.load(std::memory_order_relaxed), 0U);
+    EXPECT_TRUE(retirements_drained->load(std::memory_order_acquire));
+    std::string final_value;
+    ASSERT_TRUE(mt.get(lcdf::Str("key"), final_value));
+    ASSERT_EQ(final_value.size(),
+              long_payload.size() + mako::EXTRA_BITS_FOR_VALUE);
+    final_value.resize(long_payload.size());
+    EXPECT_EQ(final_value, long_payload);
+}
+
+TEST_F(SiloNonTxnApi, ConditionalPutValidatesComparatorInputVersion) {
+    ScopedMultiversionMode multiversion;
+    mbta_type& mt = make_masstrans(9015, "mt_mv_conditional_put_race");
+    ASSERT_TRUE(mt.put(lcdf::Str("key"), mako::Encode("base")));
+
+    ComparatorInterleave interleave;
+    g_compare_interleave = &interleave;
+    std::atomic<bool> staged{false};
+    std::atomic<bool> committed{false};
+    std::atomic<unsigned> failures{0};
+
+    std::thread conditional_writer([&] {
+        {
+            ComparatorWorkerBarrierGuard barrier_guard(interleave);
+            try {
+                silo_thread_init();
+                TThread::enable_multiverison();
+                Sto::start_transaction();
+                staged.store(
+                    mt.transPutMbta(lcdf::Str("key"),
+                                    mako::Encode("candidate"),
+                                    compare_only_base),
+                    std::memory_order_release);
+                committed.store(Sto::try_commit(), std::memory_order_release);
+            } catch (Transaction::Abort&) {
+                committed.store(false, std::memory_order_release);
+            } catch (...) {
+                failures.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        if (TThread::txn != nullptr) {
+            if (TThread::txn->has_active_state())
+                TThread::txn->silent_abort();
+            delete TThread::txn;
+            TThread::txn = nullptr;
+        }
+        Transaction::rcu_quiesce();
+    });
+
+    // The comparator copied "base" but has not returned. Commit a newer
+    // value before allowing the conditional transaction to continue.
+    interleave.coordinator_wait();
+    bool intervening_existed = false;
+    try {
+        intervening_existed =
+            !mt.put(lcdf::Str("key"), mako::Encode("intervening"));
+    } catch (...) {
+        failures.fetch_add(1, std::memory_order_relaxed);
+    }
+    interleave.coordinator_wait();
+    conditional_writer.join();
+    g_compare_interleave = nullptr;
+
+    EXPECT_EQ(failures.load(std::memory_order_relaxed), 0U);
+    EXPECT_TRUE(intervening_existed);
+    EXPECT_TRUE(staged.load(std::memory_order_acquire));
+    EXPECT_FALSE(committed.load(std::memory_order_acquire));
+    std::string final_value;
+    ASSERT_TRUE(mt.get(lcdf::Str("key"), final_value));
+    EXPECT_TRUE(final_value.starts_with("intervening"));
+}
+
+TEST_F(SiloNonTxnApi, RejectedConditionalStillValidatesComparatorInputVersion) {
+    ScopedMultiversionMode multiversion;
+    mbta_type& mt = make_masstrans(9019, "mt_mv_rejected_condition_race");
+    ASSERT_TRUE(mt.put(lcdf::Str("key"), mako::Encode("base")));
+    ASSERT_TRUE(mt.put(lcdf::Str("side"), mako::Encode("seed")));
+
+    ComparatorInterleave interleave;
+    std::atomic<bool> saw_base{false};
+    g_compare_interleave = &interleave;
+    g_reject_compare_saw_base = &saw_base;
+    std::atomic<bool> condition_accepted{true};
+    std::atomic<bool> side_staged{false};
+    std::atomic<bool> committed{false};
+    std::atomic<unsigned> failures{0};
+
+    std::thread conditional_writer([&] {
+        {
+            ComparatorWorkerBarrierGuard barrier_guard(interleave);
+            try {
+                silo_thread_init();
+                TThread::enable_multiverison();
+                Sto::start_transaction();
+                condition_accepted.store(
+                    mt.transPutMbta(lcdf::Str("key"),
+                                    mako::Encode("ignored"),
+                                    reject_after_reading_base),
+                    std::memory_order_release);
+                side_staged.store(
+                    mt.transPut(lcdf::Str("side"), mako::Encode("changed")),
+                    std::memory_order_release);
+                committed.store(Sto::try_commit(), std::memory_order_release);
+            } catch (Transaction::Abort&) {
+                committed.store(false, std::memory_order_release);
+            } catch (...) {
+                failures.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        if (TThread::txn != nullptr) {
+            if (TThread::txn->has_active_state())
+                TThread::txn->silent_abort();
+            delete TThread::txn;
+            TThread::txn = nullptr;
+        }
+        Transaction::rcu_quiesce();
+    });
+
+    interleave.coordinator_wait();
+    try {
+        mt.put(lcdf::Str("key"), mako::Encode("intervening"));
+    } catch (...) {
+        failures.fetch_add(1, std::memory_order_relaxed);
+    }
+    interleave.coordinator_wait();
+    conditional_writer.join();
+    g_compare_interleave = nullptr;
+    g_reject_compare_saw_base = nullptr;
+
+    EXPECT_EQ(failures.load(std::memory_order_relaxed), 0U);
+    EXPECT_TRUE(saw_base.load(std::memory_order_acquire));
+    EXPECT_FALSE(condition_accepted.load(std::memory_order_acquire));
+    EXPECT_TRUE(side_staged.load(std::memory_order_acquire));
+    EXPECT_FALSE(committed.load(std::memory_order_acquire));
+    std::string final_value;
+    ASSERT_TRUE(mt.get(lcdf::Str("key"), final_value));
+    EXPECT_TRUE(final_value.starts_with("intervening"));
+    ASSERT_TRUE(mt.get(lcdf::Str("side"), final_value));
+    EXPECT_TRUE(final_value.starts_with("seed"));
 }
 
 enum class PresentRowSecondOperation {
@@ -516,6 +1023,74 @@ TEST_F(SiloNonTxnApi, MassTransResurrectionThenDeleteIsNetZeroInMvMode) {
 // 2. L3 level — through abstract_ordered_index* (virtual dispatch)
 // ===========================================================================
 
+// UPDATE_VS runs outside MassTrans, after the value has been copied. These
+// tests store a term-0 value with a nonzero node timestamp, then make the first
+// read attempt use a rejecting epoch and every later attempt use epoch 0.
+class ScopedUpdateVsRejectOnce {
+public:
+    ScopedUpdateVsRejectOnce()
+        : previous_control_mode_(
+              BenchmarkConfig::getInstance().getControlMode()),
+          previous_failed_timestamp_(
+              sync_util::sync_logger::failed_shard_ts.load(
+                  std::memory_order_relaxed)),
+          previous_watermark_(sync_util::sync_logger::retrieveShardW()) {
+#if defined(FAIL_NEW_VERSION)
+        BenchmarkConfig::getInstance().setControlMode(4);
+        sync_util::sync_logger::setSingleWatermark(
+            std::numeric_limits<uint32_t>::max());
+#else
+        BenchmarkConfig::getInstance().setControlMode(1);
+#endif
+        register_sync_util([this] {
+            const unsigned call =
+                callback_calls_.fetch_add(1, std::memory_order_relaxed);
+#if defined(FAIL_NEW_VERSION)
+            return call == 0 ? 1 : 0;
+#else
+            sync_util::sync_logger::failed_shard_ts.store(
+                call == 0 ? 0 : std::numeric_limits<uint32_t>::max(),
+                std::memory_order_relaxed);
+            return 0;
+#endif
+        });
+    }
+
+    ~ScopedUpdateVsRejectOnce() {
+        register_sync_util(std::function<int()>{});
+        BenchmarkConfig::getInstance().setControlMode(previous_control_mode_);
+        sync_util::sync_logger::failed_shard_ts.store(
+            previous_failed_timestamp_, std::memory_order_relaxed);
+        sync_util::sync_logger::setSingleWatermark(previous_watermark_);
+    }
+
+    void arm() {
+        callback_calls_.store(0, std::memory_order_relaxed);
+    }
+
+    unsigned callback_calls() const {
+        return callback_calls_.load(std::memory_order_relaxed);
+    }
+
+private:
+    int previous_control_mode_;
+    uint32_t previous_failed_timestamp_;
+    uint32_t previous_watermark_;
+    std::atomic<unsigned> callback_calls_{0};
+};
+
+void put_timestamped_l3_value(abstract_ordered_index* table,
+                              const std::string& key,
+                              const std::string& payload) {
+    const std::string encoded = mako::Encode(payload);
+    Sto::start_transaction();
+    // A read dependency makes the local commit allocate a Mako timestamp.
+    // The inserted value therefore has a nonzero node timestamp for UPDATE_VS.
+    TThread::txn->maxTimestampReadSet = 1;
+    table->tx_put(nullptr, lcdf::Str(key), encoded);
+    ASSERT_TRUE(Sto::try_commit());
+}
+
 TEST_F(SiloNonTxnApi, L3PutGetRoundTripThroughBasePointer) {
     abstract_ordered_index* tbl = make_table("l3_roundtrip");
 
@@ -602,6 +1177,86 @@ TEST_F(SiloNonTxnApi, L3ScanOrderAndEarlyStop) {
             EXPECT_GT(cb.pairs[i - 1].first, cb.pairs[i].first);
         }
     }
+}
+
+TEST_F(SiloNonTxnApi, L3NonTxnGetRetriesUpdateVsRejection) {
+    ScopedMultiversionMode multiversion;
+    abstract_ordered_index* table = make_table("l3_update_vs_get");
+    put_timestamped_l3_value(table, "key", "value");
+
+    ScopedUpdateVsRejectOnce reject_once;
+    std::string value;
+    EXPECT_TRUE(table->get(lcdf::Str("key"), value, std::string::npos));
+    EXPECT_EQ(value, "value");
+    EXPECT_GE(reject_once.callback_calls(), 2U);
+    EXPECT_FALSE(TThread::transget_without_throw);
+    EXPECT_FALSE(TThread::transget_without_stable);
+}
+
+TEST_F(SiloNonTxnApi, L3NonTxnScansRejectUpdateVsBeforeCallback) {
+    ScopedMultiversionMode multiversion;
+    abstract_ordered_index* table = make_table("l3_update_vs_nontxn_scan");
+    put_timestamped_l3_value(table, "key", "value");
+    std::string start = "key";
+    std::string end = "kez";
+
+    ScopedUpdateVsRejectOnce reject_once;
+    CollectCallback forward;
+    table->scan(start, &end, forward, nullptr);
+    ASSERT_EQ(forward.pairs.size(), 1U);
+    EXPECT_EQ(forward.pairs.front().second, "value");
+    EXPECT_GE(reject_once.callback_calls(), 2U);
+    EXPECT_FALSE(TThread::transget_without_throw);
+    EXPECT_FALSE(TThread::transget_without_stable);
+
+    reject_once.arm();
+    CollectCallback reverse;
+    std::string reverse_start = "kez";
+    std::string reverse_end = "kea";
+    table->rscan(reverse_start, &reverse_end, reverse, nullptr);
+    ASSERT_EQ(reverse.pairs.size(), 1U);
+    EXPECT_EQ(reverse.pairs.front().second, "value");
+    EXPECT_GE(reject_once.callback_calls(), 2U);
+    EXPECT_FALSE(TThread::transget_without_throw);
+    EXPECT_FALSE(TThread::transget_without_stable);
+}
+
+TEST_F(SiloNonTxnApi, L3TxnScansAbortBeforeRejectedValueCallback) {
+    ScopedMultiversionMode multiversion;
+    abstract_ordered_index* table = make_table("l3_update_vs_txn_scan");
+    put_timestamped_l3_value(table, "key", "value");
+    std::string start = "key";
+    std::string end = "kez";
+
+    {
+        ScopedUpdateVsRejectOnce reject_once;
+        CollectCallback forward;
+        Sto::start_transaction();
+        EXPECT_THROW(table->tx_scan(nullptr, start, &end, forward, nullptr),
+                     abstract_db::abstract_abort_exception);
+        EXPECT_TRUE(forward.pairs.empty());
+        EXPECT_FALSE(TThread::txn->has_active_state());
+
+        reject_once.arm();
+        CollectCallback reverse;
+        std::string reverse_start = "kez";
+        std::string reverse_end = "kea";
+        Sto::start_transaction();
+        EXPECT_THROW(table->tx_rscan(nullptr, reverse_start, &reverse_end,
+                                    reverse, nullptr),
+                     abstract_db::abstract_abort_exception);
+        EXPECT_TRUE(reverse.pairs.empty());
+        EXPECT_FALSE(TThread::txn->has_active_state());
+    }
+
+    // Both rejected transactions completed native cleanup. A later scan can
+    // reuse the same worker transaction and commit normally.
+    CollectCallback recovered;
+    Sto::start_transaction();
+    table->tx_scan(nullptr, start, &end, recovered, nullptr);
+    EXPECT_TRUE(Sto::try_commit());
+    ASSERT_EQ(recovered.pairs.size(), 1U);
+    EXPECT_EQ(recovered.pairs.front().second, "value");
 }
 
 // ===========================================================================

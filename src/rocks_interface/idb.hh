@@ -276,6 +276,21 @@ public:
      * remote implementation is connected or otherwise ready for operations.
      */
     virtual bool HasThreadContext() const { return true; }
+
+    /**
+     * Return whether the current thread still owns an unresolved transaction
+     * attempt. This remains true after a backend abort until the caller
+     * consumes that attempt with Rollback.
+     */
+    virtual bool HasUnresolvedTransaction() const { return false; }
+
+    /**
+     * Return whether txn is the current thread's active transaction attempt.
+     * Backends without thread-affine tokens retain the non-null fallback.
+     */
+    virtual bool OwnsActiveTransaction(void* txn) const {
+        return txn != nullptr;
+    }
 };
 
 /**

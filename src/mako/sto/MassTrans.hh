@@ -184,7 +184,9 @@ public:
       item.observe(tversion_type(elem_vers));
       if constexpr (supports_packed_multiversion) {
         if (TThread::is_multiversion())
-          return MultiVersionValue::mvGET(retval, (char*)e->data(), TThread::txn->get_current_term(), sync_util::sync_logger::hist_timestamp);
+          return MultiVersionValue::mvGET(
+              retval, TThread::txn->get_current_term(),
+              sync_util::sync_logger::hist_timestamp);
       }
     } else {
       //Warning("Not found a value");
@@ -200,7 +202,7 @@ public:
     bool found = lp.find_unlocked(*ti.ti);
     if (found) {
       versioned_value *e = lp.value();
-      Version v = e->version();
+      Version v = load_version(e->version());
       fence();
       auto item = t_item(e);
       item.add_extra(key) ;
@@ -248,8 +250,7 @@ public:
             return false;
           item.observe(tversion_type(observed_version));
           if (!MultiVersionValue::mvGET(
-                  visible_value, reinterpret_cast<char*>(e->data()),
-                  TThread::txn->get_current_term(),
+                  visible_value, TThread::txn->get_current_term(),
                   sync_util::sync_logger::hist_timestamp))
             return false;
         } else {
@@ -268,9 +269,27 @@ public:
   }
 
 private:
+  template <typename ValueType>
+  static size_t packed_value_size(const ValueType& value) {
+    if constexpr (requires { value.value()->size(); }) {
+      return value.value()->size();
+    } else if constexpr (requires { value.size(); }) {
+      return value.size();
+    } else {
+      return static_cast<size_t>(value.length());
+    }
+  }
+
   template <bool INSERT, bool SET, typename StringType, typename ValueType>
   bool trans_write(const StringType& key, const ValueType& value, bool(*compar)(const std::string& newValue,const std::string& oldValue), threadinfo_type& ti = mythreadinfo) {
     ensure_supported_runtime_mode();
+    if constexpr (supports_packed_multiversion) {
+      if (!MultiVersionValue::validPackedSize(
+              packed_value_size(value), TThread::is_multiversion())) {
+        Sto::abort_without_throw();
+        throw std::length_error("invalid packed MassTrans value size");
+      }
+    }
     // optimization to do an unlocked lookup first
     if (SET) {
       auto lp = unlocked_cursor_type::from_mutable_str(table_, key);
@@ -278,8 +297,22 @@ private:
       if (found) {
         if (compar != nullptr) {
           versioned_value *e = lp.value ();
-          if constexpr (requires { compar(value, e->read_value()); }) {
-            if(!compar(value, e->read_value())){
+          auto existing_item = t_item(e);
+          if (!validityCheck(existing_item, e)) {
+            Sto::abort();
+            return false;
+          }
+          value_type old_value;
+          Version observed_version;
+          if (!atomicRead(e, observed_version, old_value)) {
+            return false;
+          }
+          // A rejected condition is still a transactional read. Record the
+          // version before invoking user code so either comparator outcome
+          // validates the value that drove it.
+          existing_item.observe(tversion_type(observed_version));
+          if constexpr (requires { compar(value, old_value); }) {
+            if(!compar(value, old_value)){
               return false;
             }
           } else
@@ -298,16 +331,31 @@ private:
     bool found = lp.find_insert(*ti.ti);
     if (found) {
       versioned_value *e = lp.value();
+      // The transaction's Masstree RCU region keeps e alive after releasing
+      // the structural cursor. Do not retain a leaf lock across OCC reads,
+      // abort cleanup, or user comparator code.
+      lp.finish(0, *ti.ti);
       if (compar != nullptr) {
-        if constexpr (requires { compar(value, e->read_value()); }) {
-          if(!compar(value, e->read_value())){
-            lp.finish (0, *ti.ti);
+        auto existing_item = t_item(e);
+        if (!validityCheck(existing_item, e)) {
+          Sto::abort();
+          return false;
+        }
+        value_type old_value;
+        Version observed_version;
+        if (!atomicRead(e, observed_version, old_value)) {
+          return false;
+        }
+        // Preserve the version whose value drives the condition even when
+        // the comparator rejects the write.
+        existing_item.observe(tversion_type(observed_version));
+        if constexpr (requires { compar(value, old_value); }) {
+          if(!compar(value, old_value)){
             return false;
           }
         } else
           always_assert(false && "comparator is incompatible with MassTrans value type");
       }
-      lp.finish(0, *ti.ti);
       return handlePutFound<INSERT, SET>(e, key, value);
     } else {
       //      auto p = ti.ti->allocate(sizeof(versioned_value), memtag_value);
@@ -396,6 +444,11 @@ public:
     auto value_callback = [&] (Str key, versioned_value* e) {
       // TODO: this needs to read my writes
       auto item = this->t_read_only_item(e);
+      if (!validityCheck(item, e)) {
+        Sto::abort_without_throw();
+        TThread::transget_without_throw = true;
+        return false;
+      }
 // #if READ_MY_WRITES
 //       if (has_delete(item)) {
 //         return true;
@@ -415,7 +468,7 @@ public:
       value_type& val = va ? *allocate_value(va) : stack_val;
       Version v;
       if(!atomicRead(e, v, val)){
-        Sto::abort();
+        return false;
       }
       item.observe(tversion_type(v));
 
@@ -425,7 +478,6 @@ public:
 
         // key and val are both only guaranteed until callback returns
         bool ret = MultiVersionValue::mvGET(val,
-                                            (char*)e->data(),
                                             TThread::txn->get_current_term(),
                                             sync_util::sync_logger::hist_timestamp);
         if (ret){
@@ -454,6 +506,11 @@ public:
     int deleted_cnt=0;
     auto value_callback = [&] (Str key, versioned_value* e) {
       auto item = this->t_read_only_item(e);
+      if (!validityCheck(item, e)) {
+        Sto::abort_without_throw();
+        TThread::transget_without_throw = true;
+        return false;
+      }
       // not sure of a better way to do this
       value_type stack_val;
       value_type& val = va ? *allocate_value(va) : stack_val;
@@ -472,7 +529,7 @@ public:
 // #endif
       Version v;
       if(!atomicRead(e, v, val)){
-        Sto::abort();
+        return false;
       }
       item.observe(tversion_type(v));
 
@@ -481,7 +538,6 @@ public:
           return callback(key, val);
 
         bool ret = MultiVersionValue::mvGET(val,
-                                            (char*)e->data(),
                                             TThread::txn->get_current_term(),
                                             sync_util::sync_logger::hist_timestamp);
         if (ret)
@@ -678,7 +734,7 @@ public:
 
     bool lock(TransItem& item, Transaction& txn) override {
         versioned_value* vv = item.key<versioned_value*>();
-        return txn.try_lock(item, vv->version());
+        return txn.try_lock_atomic(item, vv->version());
     }
   bool check(TransItem& item, Transaction&) override {
     if (has_internode_key(item)) {
@@ -693,20 +749,15 @@ public:
     if (!valid) {
       return false;
     }
-    return TransactionTid::check_version(e->version(), read_version);
+    return TransactionTid::check_version(
+        load_version(e->version()), read_version);
   }
-
-  #define RESET_NODE_BY_E(e) \
-    char *oldval_str=(char*)e->data();\
-    int oldval_len=e->length();\
-    mako::store_value_node_timestamp(oldval_str, oldval_len, 0); \
-    mako::store_value_node_data_size(oldval_str, oldval_len, 0);
 
   void install(TransItem& item, Transaction& t) override {
     ensure_supported_runtime_mode();
     assert(!has_internode_key(item));
     versioned_value* e = item.key<versioned_value*>();
-    assert(is_locked(e->version()));
+    assert(is_locked(load_version(e->version())));
     bool isInsert = has_insert(item), isDelete = has_delete(item);
     bool isResurrection = has_resurrection(item);
 
@@ -719,8 +770,9 @@ public:
       }
       if (!TThread::is_multiversion() || isInsert) {
         if (!isInsert) { // update
-          assert(!(e->version() & invalid_bit));
-          e->version() |= invalid_bit;
+          const Version current = load_version(e->version());
+          assert(!(current & invalid_bit));
+          store_version(e->version(), current | invalid_bit);
           fence();
         }
 
@@ -737,8 +789,8 @@ public:
         MultiVersionValue::mvInstall(isInsert, isDelete,
                                      v,
                                      e,
-                                     TThread::txn->get_current_term());
-        e->set_length(v.length());
+                                     TThread::txn->get_current_term(),
+                                     *mythreadinfo.ti);
       }
       // A physical MV tombstone remains addressable, so invalid_bit cannot
       // publish the deletion as it does in single-version mode. Advance the
@@ -746,9 +798,11 @@ public:
       // the formerly present row must fail validation before they can apply a
       // second size decrement or resurrect it as an ordinary update.
       if (Opacity)
-        TransactionTid::set_version(e->version(), t.commit_tid());
+        TransactionTid::set_version_atomic(
+            e->version(), t.commit_tid(), TThread::id());
       else
-        TransactionTid::inc_nonopaque_version(e->version());
+        TransactionTid::inc_nonopaque_version_atomic(
+            e->version(), TThread::id());
       return;
     }  // end of deletion
 
@@ -758,36 +812,41 @@ public:
           e->set_value(v);
         } else {
           if (!TThread::is_multiversion()) {
-            e->set_value(v);
-            RESET_NODE_BY_E(e)
+            MultiVersionValue::publishImmutableValue(
+                v, e, *mythreadinfo.ti, true);
           } else {
             MultiVersionValue::mvInstall(isInsert, isDelete,
                                        v,
                                        e,
-                                       TThread::txn->get_current_term());
-            e->set_length(v.length());
+                                       TThread::txn->get_current_term(),
+                                       *mythreadinfo.ti);
           }
         }
     }
     if (isInsert || isResurrection)
       size_count_.fetch_add(1, std::memory_order_relaxed);
 
+    // MV metadata belongs to the inserted packed value regardless of whether
+    // the OCC version uses opaque or nonopaque publication.
+    if constexpr (supports_packed_multiversion) {
+      if (isInsert && TThread::is_multiversion())
+        MultiVersionValue::mvInstall(isInsert, isDelete,
+                                    "",
+                                    e,
+                                    TThread::txn->get_current_term(),
+                                    *mythreadinfo.ti);
+    }
+
     if (Opacity)  // false in the supported production profile
-      TransactionTid::set_version(e->version(), t.commit_tid());
+      TransactionTid::set_version_atomic(
+          e->version(), t.commit_tid(), TThread::id());
     else if (isInsert) {  // insert
-      Version v = e->version() & ~invalid_bit;
+      Version v = load_version(e->version()) & ~invalid_bit;
       fence();
-      e->version() = v;
-      if constexpr (supports_packed_multiversion) {
-        if (TThread::is_multiversion())
-          MultiVersionValue::mvInstall(isInsert, isDelete,
-                                      "",
-                                      e,
-                                      TThread::txn->get_current_term());
-      }
+      store_version(e->version(), v);
     } else // update
-      TransactionTid::inc_nonopaque_version(e->version());
-      //RESET_NODE_BY_E(e)
+      TransactionTid::inc_nonopaque_version_atomic(
+          e->version(), TThread::id());
   }
 
   void unlock(TransItem& item) override {
@@ -816,8 +875,12 @@ private:
     bool found = lp.find_locked(*ti.ti);
     // Only deallocate when the key exists: on a miss the cursor's
     // value slot is uninitialized and dereferencing it is UB.
-    if (found)
+    if (found) {
+      if constexpr (supports_packed_multiversion) {
+        MultiVersionValue::retirePublishedValue(lp.value(), *ti.ti);
+      }
       lp.value()->deallocate_rcu(*ti.ti);
+    }
     lp.finish(found ? -1 : 0, *ti.ti);
     return found;
   }
@@ -835,17 +898,23 @@ protected:
     // (values never shrink in size, so if we don't need to resize, we'll never need to)
     auto *new_location = e;
     bool needsResize = e->needsResize(value);
+    if constexpr (supports_packed_multiversion) {
+      // Packed values publish immutable external replacements. Their owner
+      // object never needs relocation after it enters Masstree.
+      needsResize = false;
+    }
     if (needsResize) {
       if (!has_insert(item)) {  // update
         // TODO: might be faster to do this part at commit time but easiest to just do it now
         lock(e);
         // we had a weird race condition and now this element is gone. just abort at this point
-        if (e->version() & invalid_bit) {
+        if (load_version(e->version()) & invalid_bit) {
           unlock(e);
           Sto::abort();
           return;
         }
-        e->version() |= invalid_bit;
+        store_version(
+            e->version(), load_version(e->version()) | invalid_bit);
         // should be ok to unlock now because any attempted writes will be forced to abort
         unlock(e);
       }
@@ -857,7 +926,9 @@ protected:
       assert(new_location != e);
       if (!has_insert(item)) {
         // copied version is going to be invalid because we just had to mark e invalid
-        new_location->version() &= ~invalid_bit;
+        store_version(
+            new_location->version(),
+            load_version(new_location->version()) & ~invalid_bit);
       }
       auto lp = cursor_type::from_mutable_str(table_, key);
       // TODO: not even trying to pass around threadinfo here
@@ -869,11 +940,14 @@ protected:
       // now rcu free "e"
       e->deallocate_rcu(*mythreadinfo.ti);
     }
-#if READ_MY_WRITES
     if (has_insert(item)) {
-      new_location->set_value(value_type(value));
+      if constexpr (supports_packed_multiversion) {
+        MultiVersionValue::publishImmutableValue(
+            value_type(value), new_location, *mythreadinfo.ti, false);
+      } else {
+        new_location->set_value(value_type(value));
+      }
     } else
-#endif
     {
       if (new_location != e)
         item = Sto::new_item(this, new_location);
@@ -922,8 +996,7 @@ protected:
           return false;
         item.observe(tversion_type(observed_version));
         const bool logically_present = MultiVersionValue::mvGET(
-            visible_value, reinterpret_cast<char*>(e->data()),
-            TThread::txn->get_current_term(),
+            visible_value, TThread::txn->get_current_term(),
             sync_util::sync_logger::hist_timestamp);
         if (!logically_present) {
           if constexpr (!INSERT) {
@@ -957,7 +1030,7 @@ protected:
 #endif
     {
       auto current_e = item.item().template key<versioned_value*>();
-      Version v = current_e->version();
+      Version v = load_version(current_e->version());
       fence();
       item.observe(tversion_type(v));
     }
@@ -1016,7 +1089,7 @@ protected:
 
   static bool validityCheck(const TransItem& item, versioned_value *e) {
     bool v =  //likely(has_insert(item)) || !(e->version & invalid_bit);
-      likely(!(e->version() & invalid_bit)) || has_insert(item);
+      likely(!(load_version(e->version()) & invalid_bit)) || has_insert(item);
     //Warning("validityCheck:%d,%d",!(e->version() & invalid_bit), has_insert(item));
     return v;
   }
@@ -1061,8 +1134,20 @@ protected:
     return is_inter(item.key<versioned_value*>());
   }
 
+  static Version load_version(
+      const Version& version,
+      std::memory_order order = std::memory_order_acquire) {
+    return TransactionTid::load_atomic(version, order);
+  }
+
+  static void store_version(
+      Version& version, Version value,
+      std::memory_order order = std::memory_order_release) {
+    TransactionTid::store_atomic(version, value, order);
+  }
+
   static void check_opacity(Version& v) {
-    Version v2 = v;
+    Version v2 = load_version(v);
     fence();
     Sto::check_opacity(v2);
   }
@@ -1071,7 +1156,7 @@ protected:
     return TransactionTid::is_locked(v);
   }
   static void lock(Version *v) {
-    TransactionTid::lock(*v);
+    TransactionTid::lock_atomic(*v, TThread::id());
 #if 0
     while (1) {
       Version cur = *v;
@@ -1083,7 +1168,7 @@ protected:
 #endif
   }
   static void unlock(Version *v) {
-    TransactionTid::unlock(*v);
+    TransactionTid::unlock_atomic(*v, TThread::id());
 #if 0
     assert(is_locked(*v));
     Version cur = *v;
@@ -1093,21 +1178,57 @@ protected:
   }
 
   static bool atomicRead(versioned_value *e, Version& vers, value_type& val) {
-    Version v2;
-    do {
-      v2 = e->version();
-      if (is_locked(v2)){
-        Sto::abort_without_throw(); //Sto::abort();
-        TThread::transget_without_throw=true;
-        return false;
+    if constexpr (supports_packed_multiversion) {
+      while (true) {
+        const Version before = load_version(e->version());
+        if (is_locked(before)) {
+          Sto::abort_without_throw();
+          TThread::transget_without_throw = true;
+          return false;
+        }
+
+        fence();
+        // read_value only samples the atomically published pointer and
+        // length. It does not dereference the pair.
+        const auto snapshot = e->read_value();
+        fence();
+        const Version sampled = load_version(e->version());
+        if (sampled != before) {
+          continue;
+        }
+
+        // The sampled buffer is immutable. Masstree RCU keeps an old head
+        // alive if a writer publishes and retires a replacement here.
+        assign_val(val, snapshot);
+        fence();
+        const Version after_copy = load_version(e->version());
+        if (after_copy == sampled) {
+          vers = after_copy;
+          return true;
+        }
       }
-	
-      fence();
+    }
+
+    // Generic boxes do not have immutable pointer publication. Take their
+    // row lock for the copy so C++ readers and writers never overlap on a
+    // non-atomic payload object.
+    if (!TransactionTid::try_lock_atomic(e->version(), TThread::id())) {
+      Sto::abort_without_throw();
+      TThread::transget_without_throw = true;
+      return false;
+    }
+    const Version locked =
+        load_version(e->version(), std::memory_order_relaxed);
+    const Version observed =
+        locked & ~(TransactionTid::lock_bit | TransactionTid::threadid_mask);
+    try {
       assign_val(val, e->read_value());
-      fence();
-      vers = e->version();
-      fence();
-    } while (vers != v2);
+    } catch (...) {
+      unlock(&e->version());
+      throw;
+    }
+    unlock(&e->version());
+    vers = observed;
     return true;
   }
 

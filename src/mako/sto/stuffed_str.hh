@@ -1,12 +1,40 @@
 #pragma once
 #include "string_base.hh"
 
+#include <atomic>
+#include <cstdint>
+#include <limits>
+#include <new>
+#include <stdexcept>
+#include <type_traits>
+
 template <typename Stuff> 
 // Stuff -> uint64_t
 // versioned_value
 class stuffed_str {
 public:
   typedef Stuff stuff_type;
+
+  struct value_snapshot {
+    char* data;
+    uint32_t size;
+  };
+
+  static_assert(std::atomic_ref<char*>::is_always_lock_free,
+                "published value pointers must be lock-free");
+  static_assert(std::atomic_ref<uint32_t>::is_always_lock_free,
+                "published value lengths must be lock-free");
+  static_assert(std::is_trivially_copyable_v<Stuff>,
+                "published stuffed values must be trivially copyable");
+  static_assert(std::atomic_ref<Stuff>::is_always_lock_free,
+                "published stuffed values must be lock-free");
+  static_assert(alignof(char*) >= std::atomic_ref<char*>::required_alignment,
+                "published value pointer has insufficient alignment");
+  static_assert(
+      alignof(uint32_t) >= std::atomic_ref<uint32_t>::required_alignment,
+      "published value length has insufficient alignment");
+  static_assert(alignof(Stuff) >= std::atomic_ref<Stuff>::required_alignment,
+                "published stuffed value has insufficient alignment");
 
   struct StandardMalloc {
     void *operator()(size_t s) {
@@ -16,22 +44,50 @@ public:
 
   template <typename Malloc = StandardMalloc>
   static stuffed_str* make(const char *str, int len, int capacity, const Stuff& val, Malloc m = Malloc()) {
-    // TODO: it might be better if we just take the max of size_for() and capacity
-    assert(size_for(len) <= capacity);
+    if (len < 0 || capacity < 0 ||
+        !valid_initial_value_size(static_cast<size_t>(len)) ||
+        size_for(len) > capacity) {
+      throw std::length_error("stuffed_str allocation size is out of range");
+    }
     //    printf("%d from %lu\n", alloc_size, len + sizeof(stuffed_str));
     auto vs = (stuffed_str*)m(capacity);
+    if (vs == nullptr) {
+      throw std::bad_alloc();
+    }
     new (vs) stuffed_str(val, len, capacity - sizeof(stuffed_str), str);
     return vs;
   }
 
   template <typename Malloc = StandardMalloc>
   static stuffed_str* make(const std::string& s, const Stuff& val, Malloc m = Malloc()) {
-    return make(s.data(), s.length(), size_for(s.length()), val, m);
+    if (!valid_initial_value_size(s.size())) {
+      throw std::length_error("stuffed_str value size is out of range");
+    }
+    const int len = static_cast<int>(s.size());
+    return make(s.data(), len, size_for(len), val, m);
   }
 
   template <typename Str, typename Malloc = StandardMalloc>
   static stuffed_str* make(const lcdf::String_base<Str>& s, const Stuff& val, Malloc m = Malloc()) {
+    if (s.length() < 0 ||
+        !valid_initial_value_size(static_cast<size_t>(s.length()))) {
+      throw std::length_error("stuffed_str value size is out of range");
+    }
     return make(s.data(), s.length(), size_for(s.length()), val, m);
+  }
+
+  static constexpr size_t max_initial_value_size() noexcept {
+    // pad() rounds large allocations to a power of two and size_for() returns
+    // int. Keep the padded capacity at the largest positive power of two that
+    // int can represent.
+    constexpr size_t max_capacity =
+        size_t{1} << (std::numeric_limits<int>::digits - 1);
+    static_assert(sizeof(stuffed_str) < max_capacity);
+    return max_capacity - sizeof(stuffed_str);
+  }
+
+  static constexpr bool valid_initial_value_size(size_t len) noexcept {
+    return len <= max_initial_value_size();
   }
 
   static unsigned pad(unsigned v)
@@ -53,7 +109,13 @@ public:
   }
 
   static inline int size_for(int len) {
-    return pad(len + sizeof(stuffed_str));
+    if (len < 0 ||
+        !valid_initial_value_size(static_cast<size_t>(len))) {
+      throw std::length_error("stuffed_str value size is out of range");
+    }
+    const unsigned total = static_cast<unsigned>(len) +
+        static_cast<unsigned>(sizeof(stuffed_str));
+    return static_cast<int>(pad(total));
   }
 
   bool needs_resize(int len) {
@@ -68,7 +130,10 @@ public:
     if (likely(!needs_resize(len))) {
       return this;
     }
-    return stuffed_str::make(buf_, size_, len, stuff_, m);
+    const auto current = snapshot();
+    const Stuff current_stuff = load_stuff();
+    return stuffed_str::make(
+        current.data, current.size, len, current_stuff, m);
   }
 
   // returns NULL if replacement could happen without a new malloc, otherwise returns new stuffed_str*
@@ -76,20 +141,38 @@ public:
   template <typename Malloc = StandardMalloc>
   stuffed_str* replace(const char *str, int len, Malloc m = Malloc()) {
     if (likely(!needs_resize(len))) {
-      size_ = len;
       memcpy(buf_, str, len);
+      size_ref().store(static_cast<uint32_t>(len), std::memory_order_release);
       return this;
     }
     //std::cerr << "this should never happen, since we do it resizeIfNeeded func" << std::endl;
-    return stuffed_str::make(str, len, size_for(len), stuff_, m);
+    const Stuff current_stuff = load_stuff();
+    return stuffed_str::make(
+        str, len, size_for(len), current_stuff, m);
   }
 
-  void modifyData(char* p){
-    flex_buf_ = p;
+  // Publish a fully initialized immutable packed-value buffer. Store the
+  // length first and the pointer last so an acquire load of the new pointer
+  // also observes its matching length. A reader that sampled the old pointer
+  // while this runs validates the enclosing OCC version before dereferencing
+  // the pair.
+  void publish_value(char* p, int len) {
+    assert(p != nullptr);
+    assert(len >= 0);
+    size_ref().store(static_cast<uint32_t>(len), std::memory_order_release);
+    data_ref().store(p, std::memory_order_release);
   }
 
-  char *data() {
-    return flex_buf_;
+  value_snapshot snapshot() const {
+    // Pointer first pairs with publish_value's pointer-last publication. The
+    // enclosing OCC version check rejects an old-pointer/new-length sample.
+    char* const p = data_ref().load(std::memory_order_acquire);
+    const uint32_t size = size_ref().load(std::memory_order_acquire);
+    return {p, size};
+  }
+
+  char *data() const {
+    return data_ref().load(std::memory_order_acquire);
   }
 
   // The flexible-array storage belongs to this stuffed_str allocation even
@@ -104,14 +187,11 @@ public:
     return buf_;
   }
   
-  int length() {
-    return size_;
+  int length() const {
+    return static_cast<int>(
+        size_ref().load(std::memory_order_acquire));
   }
 
-  void set_length(int ss) {
-    size_ = ss;
-  }
-  
   int capacity() {
     return capacity_;
   }
@@ -121,7 +201,7 @@ public:
   }
 
   Stuff stuff() const {
-    return stuff_;
+    return load_stuff();
   }
 
 private:
@@ -129,6 +209,28 @@ private:
     stuff_(stuff), size_(size), capacity_(capacity) {
     memcpy(buf_, buf, size);
     flex_buf_ = buf_; // initialize the dynamic pointer, initialize once
+  }
+
+  std::atomic_ref<char*> data_ref() const {
+    assert(reinterpret_cast<uintptr_t>(&flex_buf_) %
+               std::atomic_ref<char*>::required_alignment == 0);
+    return std::atomic_ref<char*>(const_cast<char*&>(flex_buf_));
+  }
+
+  std::atomic_ref<uint32_t> size_ref() const {
+    assert(reinterpret_cast<uintptr_t>(&size_) %
+               std::atomic_ref<uint32_t>::required_alignment == 0);
+    return std::atomic_ref<uint32_t>(const_cast<uint32_t&>(size_));
+  }
+
+  std::atomic_ref<Stuff> stuff_ref() const {
+    assert(reinterpret_cast<uintptr_t>(&stuff_) %
+               std::atomic_ref<Stuff>::required_alignment == 0);
+    return std::atomic_ref<Stuff>(const_cast<Stuff&>(stuff_));
+  }
+
+  Stuff load_stuff() const {
+    return stuff_ref().load(std::memory_order_acquire);
   }
 
   Stuff stuff_;

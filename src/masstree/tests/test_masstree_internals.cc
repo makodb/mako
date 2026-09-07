@@ -53,6 +53,59 @@ protected:
     threadinfo* initial_allthreads_;
 };
 
+class RecordingRcuCallback final : public threadinfo::mrcu_callback {
+public:
+    RecordingRcuCallback(
+            std::shared_ptr<std::vector<int>> calls, int id)
+        : calls_(std::move(calls)), id_(id) {
+    }
+
+    void operator()(threadinfo&) override {
+        calls_->push_back(id_);
+        delete this;
+    }
+
+private:
+    std::shared_ptr<std::vector<int>> calls_;
+    int id_;
+};
+
+class CountingRcuCallback : public threadinfo::mrcu_callback {
+public:
+    explicit CountingRcuCallback(
+            std::shared_ptr<std::atomic<unsigned>> calls)
+        : calls_(std::move(calls)) {
+    }
+
+    void operator()(threadinfo&) override {
+        calls_->fetch_add(1, std::memory_order_relaxed);
+        delete this;
+    }
+
+protected:
+    std::shared_ptr<std::atomic<unsigned>> calls_;
+};
+
+class RequeueOnceRcuCallback final : public CountingRcuCallback {
+public:
+    explicit RequeueOnceRcuCallback(
+            std::shared_ptr<std::atomic<unsigned>> calls)
+        : CountingRcuCallback(std::move(calls)) {
+    }
+
+    void operator()(threadinfo& ti) override {
+        calls_->fetch_add(1, std::memory_order_relaxed);
+        ++invocations_;
+        if (invocations_ == 1)
+            ti.rcu_register(this);
+        else
+            delete this;
+    }
+
+private:
+    unsigned invocations_ = 0;
+};
+
 // Test 1: ThreadInfo Creation
 TEST_F(MasstreeInternalsTest, ThreadInfoCreation) {
     // Create a threadinfo
@@ -220,6 +273,98 @@ TEST_F(MasstreeInternalsTest, RcuDeferredDeallocation) {
     }
 
     ti->rcu_stop();
+}
+
+TEST_F(MasstreeInternalsTest, RcuDrainsSafePrefixAndDefersPinnedEpoch) {
+    threadinfo* reclaimer =
+        threadinfo::make(threadinfo::TI_PROCESS, 5001);
+    threadinfo* blocker =
+        threadinfo::make(threadinfo::TI_PROCESS, 5002);
+    ASSERT_NE(reclaimer, nullptr);
+    ASSERT_NE(blocker, nullptr);
+
+    auto calls = std::make_shared<std::vector<int>>();
+    std::vector<int> expected;
+
+    reclaimer->rcu_start();
+    // Fill one complete limbo group. Reaching the pinned callback therefore
+    // also exercises the transition to the next group and empty-group
+    // rotation after reclamation.
+    for (int id = 0; id != limbo_group::capacity; ++id) {
+        reclaimer->rcu_register(new RecordingRcuCallback(calls, id));
+        expected.push_back(id);
+    }
+
+    // Pin a reader in the next epoch, then enqueue a callback in that same
+    // epoch. The first group is now reclaimable, but this callback is not.
+    ctx_->increment_epoch(2);
+    blocker->rcu_start();
+    reclaimer->rcu_register(
+        new RecordingRcuCallback(calls, limbo_group::capacity));
+    ctx_->increment_epoch(2);
+    reclaimer->rcu_quiesce();
+
+    EXPECT_EQ(*calls, expected);
+
+    // Once the blocker leaves and the epoch advances, the remaining callback
+    // becomes reclaimable. Each queued callback owns the shared result state,
+    // so even a failing implementation cannot leave a dangling test pointer.
+    blocker->rcu_stop();
+    ctx_->increment_epoch(2);
+    reclaimer->rcu_quiesce();
+    expected.push_back(limbo_group::capacity);
+    EXPECT_EQ(*calls, expected);
+    reclaimer->rcu_stop();
+}
+
+TEST_F(MasstreeInternalsTest, RcuDrainWaitsAndEmptiesCrossGroupQueue) {
+    threadinfo* reclaimer =
+        threadinfo::make(threadinfo::TI_PROCESS, 5003);
+    threadinfo* blocker =
+        threadinfo::make(threadinfo::TI_PROCESS, 5004);
+    ASSERT_NE(reclaimer, nullptr);
+    ASSERT_NE(blocker, nullptr);
+
+    auto calls = std::make_shared<std::atomic<unsigned>>(0);
+    reclaimer->rcu_start();
+    blocker->rcu_start();
+
+    // More than one group's worth proves shutdown drains across group
+    // boundaries. The final callback queues itself once, which requires a
+    // second grace-period round rather than being lost during the first.
+    constexpr unsigned simple_callbacks = limbo_group::capacity + 1;
+    for (unsigned i = 0; i != simple_callbacks; ++i)
+        reclaimer->rcu_register(new CountingRcuCallback(calls));
+    reclaimer->rcu_register(new RequeueOnceRcuCallback(calls));
+
+    const mrcu_epoch_type before = ctx_->get_epoch();
+    std::atomic<bool> drain_finished{false};
+    auto drainer = rusty::thread::spawn([&] {
+        reclaimer->rcu_drain();
+        drain_finished.store(true, std::memory_order_release);
+    });
+
+    bool saw_epoch_advance = false;
+    for (unsigned spin = 0; spin != 100000; ++spin) {
+        if (ctx_->get_epoch() != before) {
+            saw_epoch_advance = true;
+            break;
+        }
+        rusty::thread::yield_now();
+    }
+    EXPECT_TRUE(saw_epoch_advance);
+    EXPECT_EQ(calls->load(std::memory_order_acquire), 0U);
+    EXPECT_FALSE(drain_finished.load(std::memory_order_acquire));
+    EXPECT_FALSE(reclaimer->rcu_active());
+
+    blocker->rcu_stop();
+    auto joined = drainer.join();
+    ASSERT_TRUE(joined.is_ok());
+
+    EXPECT_EQ(calls->load(std::memory_order_acquire),
+              simple_callbacks + 2);
+    EXPECT_TRUE(drain_finished.load(std::memory_order_acquire));
+    EXPECT_FALSE(reclaimer->rcu_active());
 }
 
 // Test 9: Thread Purposes
