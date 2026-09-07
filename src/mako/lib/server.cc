@@ -1068,7 +1068,30 @@ namespace mako
     void ShardServer::Run()
     {
         while (true) {
+            // shard_reset() leaves a mode-1 helper with an empty transaction
+            // ready for its next request. Keeping that transaction active
+            // while suspend() waits publishes an RCU reader indefinitely and
+            // can prevent a departing worker from completing its grace
+            // period. Park only the empty participant. A transaction with
+            // staged items may own reads or locks across later 2PC messages
+            // and must remain active.
+            bool parked_idle_participant = false;
+            if (TThread::mode() == 1 && TThread::txn != nullptr &&
+                TThread::txn->has_active_state() &&
+                !TThread::txn->has_staged_items()) {
+                db->abort_txn_local(nullptr);
+                parked_idle_participant = true;
+            }
+
             queue->suspend();
+
+            // Restore the mode-1 idle-participant invariant before dispatching
+            // queued work. This also preserves the existing stop behavior:
+            // requests already queued when stop is requested are drained
+            // before the helper exits.
+            if (parked_idle_participant) {
+                db->shard_reset();
+            }
 
             while (true) {
                 void *handle;

@@ -3314,6 +3314,21 @@ if(BUILD_TESTS)
         yaml-cpp rocksdb lz4 numa event_pthreads
         pthread)
     add_test(NAME test_mako_nontxn_distributed COMMAND test_mako_nontxn_distributed)
+    set_tests_properties(test_mako_nontxn_distributed PROPERTIES
+        LABELS "silo;distributed"
+        RUN_SERIAL TRUE
+        TIMEOUT 60)
+
+    # Focused regression for an idle mode-1 helper pinning Masstree RCU while
+    # a short-lived ClientTcpServer worker drains its callback queue at exit.
+    add_test(NAME test_mako_nontxn_distributed_rcu_shutdown
+        COMMAND test_mako_nontxn_distributed
+            --gtest_filter=MakoNontxnDistributed.L7RemoteTableNontxn
+            --gtest_fail_if_no_test_selected)
+    set_tests_properties(test_mako_nontxn_distributed_rcu_shutdown PROPERTIES
+        LABELS "silo;distributed;rcu;lifecycle"
+        RUN_SERIAL TRUE
+        TIMEOUT 30)
 
     # Reproducer for sanitizer-findings.md Finding 6 (Mako allocator
     # cap). Aborts by design — gated on MAKO_REPRO_FINDING6=1 so it
