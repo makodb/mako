@@ -11,7 +11,7 @@ extern "C" {
 #endif
 
 /* Private trusted Rust fast path. These mako_rust_fast_* entry points are not
- * part of revision 0, are not covered by its compatibility promise, and must
+ * part of the public ABI, are not covered by its compatibility promise, and must
  * not be called by general C clients. The safe Rust wrapper proves the
  * thread, lifetime, slice, active-transaction, and bound-table invariants that
  * the hot put and consuming commit entries deliberately do not recheck in a
@@ -27,7 +27,7 @@ extern "C" {
  *
  * put has no output pointer. Its low 32 bits are the status bit pattern and
  * bit 32 is one exactly when an OK put created the key. Bits 33..63 carry the
- * exact unchecked-v4 record size when this is the transaction's one direct
+ * exact unchecked-v6 record size when this is the transaction's one direct
  * canonical Put and zero otherwise. A later operation may retire that
  * candidate; callers must use the fused terminal below, which revalidates it
  * natively before acquiring write locks.
@@ -43,10 +43,10 @@ extern "C" {
  * The thin-record extension is likewise private. After all operations,
  * record_preflight walks STO's final normalized MassTrans write set directly,
  * computes the exact cache-record size, and seals the transaction against
- * later operations. The original spelling always selects the checksummed v3
+ * later operations. The original spelling always selects the checksummed v5
  * format. The with_checksum spelling additionally accepts one of the explicit
- * MAKO_RUST_FAST_RECORD_CHECKSUM_* modes below: CRC32C produces v3, while NONE
- * produces self-describing v4 without a checksum trailer. It performs no
+ * MAKO_RUST_FAST_RECORD_CHECKSUM_* modes below: CRC32C produces v5, while NONE
+ * produces self-describing v6 without a checksum trailer. It performs no
  * allocation and reports an op count of zero for a read-only or net-empty
  * write set; the exact diagnostic size is the selected format's empty framing,
  * but that no-record case succeeds regardless of the cap.
@@ -55,20 +55,25 @@ extern "C" {
  *
  * On an unclaimed legacy facade, or in a claimed SINGLE_PRODUCER general
  * fallback, commit_record_and_destroy requires a successful, nonempty
- * preflight. After STO has locked the complete write set, a per-database
- * ticket gate orders Mako timestamp assignment, repeated/final predicate validation,
- * point-read validation and bind_hook. The gate prevents a later
+ * preflight. After STO has locked the complete write set, the legacy path
+ * acquires a per-database ticket before the process-wide HLC gate; the
+ * single-producer path relies on caller exclusion and acquires the HLC gate
+ * directly. Together these rules order repeated/final predicate validation,
+ * point-read validation, Mako timestamp assignment, and bind_hook across every
+ * timestamp-bearing terminal.
+ * The gates prevent a later
  * anti-dependent commit from binding an earlier dense sequence. It is retired
  * after an accepted binding; native then serializes the record while retaining
  * all write locks but allowing the next validation turn to proceed. On an
  * abort before binding, the turn is retired only after cleanup has released
- * native locks. General public hooks do not use this gate.
+ * native locks. Public hooks share the HLC gate but do not need this
+ * terminal-specific FIFO ticket.
  *
  * Native code verifies the sealed scalar plan before invoking bind_hook. The
  * hook may bind one externally serialized dense sequence and returns stable
  * caller-owned storage. A true return must supply a nonzero sequence,
  * non-null buffer, and capacity at least exact_record_bytes. Native then fills
- * exactly the sealed byte count, including the Mako timestamp and, for v3,
+ * exactly the sealed byte count, including the Mako timestamp and, for v5,
  * CRC-32C, without allocation or I/O, before any write is installed. The
  * buffer is borrowed only for the synchronous fill and is never retained.
  *
@@ -84,11 +89,11 @@ extern "C" {
  * low/high result halves are disposition/cleanup and the txn pointer is
  * consumed on every valid owner-thread call.
  *
- * commit_unchecked_one_put_record_and_destroy fuses NONE/v4 preflight with
+ * commit_unchecked_one_put_record_and_destroy fuses NONE/v6 preflight with
  * the record terminal. The caller obtains expected_record_bytes from the
  * immediately preceding fast-put result and must reserve stable output
  * storage before this call. Native requires the direct one-Put witness to
- * still be current, derives its exact v4 shape again before taking write
+ * still be current, derives its exact v6 shape again before taking write
  * locks, and requires an exact size match. A stale/malformed candidate, a
  * later read or mutation, or an already sealed plan definitely aborts without
  * invoking bind_hook. On a valid candidate it retains the same ordered
@@ -96,21 +101,23 @@ extern "C" {
  * protocol as commit_record_and_destroy.
  *
  * commit_native_ordered_record_and_destroy is the claimed-cache general
- * terminal. A process-wide packed u64 is the sole authority for both the
- * next-to-return Mako base timestamp and dense cache sequence. Native sets its
- * general-certification bit after locking the complete write set and before
- * timestamp allocation, repeated predicate validation, and final point-read
- * validation. Only after validation succeeds does the accepted hook advance
- * the packed dense field. Native clears the bit before bind_hook and record
- * serialization, while retaining every STO write lock until installation.
- * Restricted pair allocators cannot pass the bit, so a general transaction's
- * anti-dependencies are ordered consistently with its durable record.
+ * terminal. Native uses one process-wide HLC word for the private 63-bit
+ * timestamp stamp plus its general-certification gate, and a separate atomic
+ * for the dense cache sequence. It sets the gate after locking the complete
+ * write set and before repeated predicate validation and final point-read
+ * validation. Only after validation succeeds does it allocate the timestamp
+ * first and then the dense sequence. Native clears the gate before bind_hook
+ * and record serialization, while retaining every STO write lock until
+ * installation. Restricted timestamp allocators cannot pass the gate, so a
+ * general transaction's anti-dependencies are ordered consistently with its
+ * durable record. A failed sequence allocation may leave a harmless timestamp
+ * gap; it can never strand a dense queue slot.
  *
  * commit_native_ordered_unchecked_one_put_record_and_destroy narrows the
  * concurrent ordering operation further. After final validation, a restricted
- * one-local-update transaction Acquire-checks queue health and performs one
- * packed AcqRel CAS which increments timestamp and dense sequence together,
- * provided the general bit is clear. It publishes that pair through the
+ * one-local-update transaction Acquire-checks queue health, allocates a stamp
+ * without passing the general gate, and then allocates a dense sequence. It
+ * publishes that pair through the
  * scalar outputs before calling bind_hook. For this spelling sequence_out is
  * initialized to the exact assigned sequence and the hook must return that
  * same value together with its stable target. `next_bound` remains a live
@@ -124,31 +131,32 @@ extern "C" {
  * uncertainty. Rust must acquire that exact publication generation and pin it
  * when no complete known-success record can be published. The caller must
  * ensure that all concurrent cache-record terminals for this LocalDb use the
- * same claimed packed namespace and queue. This is a same-build unsafe seam;
+ * same claimed cache-order namespace and queue. This is a same-build unsafe seam;
  * any independent dense allocator can duplicate or reorder cache positions.
  *
  * commit_native_ordered_unchecked_one_put_arena_and_destroy removes that
  * terminal's post-assignment Rust callback. Its synchronous control describes the
  * queue's stable publication-cell and record-arena layouts. Native validates
  * the complete layout and one-Put extent before commit can assign a sequence.
- * After final validation, a write-covered update uses the restricted pair CAS.
- * Insert/predicate fallback instead assigns under the packed general bit.
+ * After final validation, a write-covered update assigns the HLC timestamp and
+ * independent cache sequence on the restricted path. Insert/predicate fallback
+ * performs those assignments while holding the process HLC validation gate.
  * Native then acquires the exact FREE cell generation, Release-publishes
  * BOUND, and serializes directly into that sequence's arena block before STO
  * may install the write. Consumers discover it by probing the next exact turn.
  *
- * A nonzero ordered_sequence in the three-word result is an unconditional
- * dense-slot obligation and guarantees that the matching publication cell is
- * at least BOUND. record_state bits 0..31 carry the paired Mako timestamp and
- * bit 32 witnesses complete record initialization. The arena terminal requires
- * bits 33..63 to be zero. The holder terminal may additionally set bit 33 only
- * on exact ordinary success, after it has written the holder-tagged extent and
- * Release-published the matching cell READY; its bits 34..63 remain zero. A
+ * A nonzero ordered_sequence in either native-ordered result is an
+ * unconditional dense-slot obligation and guarantees that the matching
+ * publication cell is at least BOUND. record_state is
+ * `(timestamp_stamp << 1) | complete`: the arena's low bit means WRITTEN and
+ * the holder's low bit means SEALED. The holder result has a separate
+ * holder_ready word, exactly zero or one, which becomes one only after native
+ * Release-publishes the matching cell READY. A
  * preaccept failure returns both ordering words as zero. Layout mismatch,
- * queue illness, packed timestamp/sequence exhaustion, or ordinary OCC abort
+ * queue illness, timestamp or cache-sequence exhaustion, or ordinary OCC abort
  * detected before assignment consumes the transaction without a dense slot.
- * Once the packed sequence advances, an impossible cell generation or layout
- * state terminates the process instead of returning an unbound hole.
+ * Once the independent cache sequence advances, an impossible cell generation
+ * or layout state terminates the process instead of returning an unbound hole.
  *
  * commit_unchecked_one_put_record_single_producer_and_destroy is a still more
  * restricted opt-in spelling of that fused terminal. It preserves write-set
@@ -157,6 +165,8 @@ extern "C" {
  * serialization before install. It bypasses only the per-database validation
  * ticket fetch/add and wait: the non-null gate callbacks retain Transaction's
  * validation and after-leave control flow without touching the ticket words.
+ * They still acquire the process-wide HLC gate so public hooks and other
+ * timestamp-bearing terminals cannot cross its serialization order.
  *
  * This entry point does not provide mutual exclusion. From before invocation
  * until it returns, the caller must guarantee that no other cache-record
@@ -164,8 +174,8 @@ extern "C" {
  * cache-order namespace claim makes that choice immutable for the facade's
  * lifetime: CONCURRENT admits only the packed native-ordered terminals;
  * SINGLE_PRODUCER admits the exclusive Rust-sequence terminals; and
- * PER_WORKER admits Rust lane sequences while retaining the packed general
- * certification bit and process timestamp clock. Sequential alternation is
+ * PER_WORKER admits Rust lane sequences while retaining the process HLC
+ * validation gate and timestamp clock. Sequential alternation is
  * not permitted until the facade closes and a new claim recovers/reseeds its
  * own namespace. Consequently cache_order_snapshot's dense field is not a
  * queue-tail diagnostic in SINGLE_PRODUCER or PER_WORKER mode. Unclaimed
@@ -181,15 +191,15 @@ extern "C" {
  * sequence and its FREE arena generation without publishing either one.
  * sequence, record, and record_capacity must describe that stable exclusive
  * target for the whole call. Native revalidates and seals the one-Put shape,
- * retains a non-null no-ticket validation gate, and serializes the canonical
- * v4 record in an internal post-validation hook while still holding the
- * complete write set. Only after serialization succeeds can phase 3 install
- * a write.
+ * takes the process HLC validation gate without a per-database ticket, and
+ * serializes the canonical v6 record in an internal post-validation hook
+ * while still holding the complete write set. Only after serialization
+ * succeeds can phase 3 install a write.
  *
  * The two-word result keeps the ordinary packed terminal status in terminal.
- * record_state bits 0..31 contain the Mako timestamp exactly when the internal
- * hook accepted the record; bit 32 is one exactly when every record byte was
- * initialized; bits 33..63 are zero. A nonzero timestamp transfers an
+ * record_state is `(timestamp_stamp << 1) | written`; it contains a nonzero
+ * stamp exactly when the internal hook accepted the record, and its low bit is
+ * one exactly when every record byte was initialized. A nonzero stamp transfers an
  * unconditional obligation to Rust: it must publish the already-retained
  * sequence after this call even if terminal reports uncertainty or write-back
  * health changed concurrently. A zero timestamp leaves the invisible
@@ -216,10 +226,11 @@ extern "C" {
  * likewise staged before validation because their allocation can fail. The
  * post-validation hook therefore only captures the accepted timestamp. In
  * PER_WORKER mode an update fully covered by its write lock allocates that
- * timestamp after final validation with a timestamp-only packed CAS which
- * cannot pass the general bit. Insert/predicate fallback takes the real
- * packed general gate before timestamp allocation. SINGLE_PRODUCER retains
- * its existing no-ticket path.
+ * timestamp after final validation with an HLC CAS which
+ * cannot pass the validation gate. Insert/predicate fallback takes the same
+ * process HLC gate before timestamp allocation. SINGLE_PRODUCER retains
+ * caller-provided whole-call exclusion, but still takes the same process HLC
+ * gate without a per-database ticket.
  *
  * This symbol is a same-build unsafe terminal, not a checked holder API. The
  * immediately preceding fast Put's exact nonzero record-size witness, the
@@ -236,7 +247,7 @@ extern "C" {
  * the ownership proof.
  *
  * The result uses the same two-word representation as the record terminal,
- * but bit 32 means that the holder is sealed. A nonzero timestamp always has
+ * but the low state bit means that the holder is sealed. A nonzero stamp always has
  * a sealed witness, including cleanup uncertainty, and unconditionally
  * transfers the sequence-publication obligation to Rust. A zero timestamp
  * leaves the slot reusable without pool_release. Background write-back may
@@ -313,7 +324,7 @@ typedef struct mako_rust_fast_preselected_record_result {
 
 /* Synchronous queue layout for the callback-free concurrent arena terminal.
  * Rust owns every target. Native Acquire-checks unhealthy; dense allocation
- * belongs exclusively to Transaction's packed process word. next_bound is a
+ * belongs exclusively to Transaction's process-wide sequence atomic. next_bound is a
  * retained ABI/layout field which concurrent terminals validate but do not
  * read or update. publication_base is a ring of publication_stride-byte cells
  * and arena_base is the matching ring of arena_stride-byte blocks. The
@@ -337,6 +348,16 @@ typedef struct mako_rust_fast_native_ordered_arena_result {
   uint64_t record_state;
 } mako_rust_fast_native_ordered_arena_result;
 
+/* Holder sealing and queue READY publication are distinct completion points.
+ * record_state is (timestamp_stamp << 1) | sealed; holder_ready is exactly
+ * zero or one. */
+typedef struct mako_rust_fast_native_ordered_holder_result {
+  uint64_t terminal;
+  uint64_t ordered_sequence;
+  uint64_t record_state;
+  uint64_t holder_ready;
+} mako_rust_fast_native_ordered_holder_result;
+
 typedef struct mako_rust_fast_one_put_holder_pool
     mako_rust_fast_one_put_holder_pool;
 
@@ -345,7 +366,7 @@ typedef struct mako_rust_fast_one_put_holder_pool
  * Acquire-checks FREE before touching the holder selected by the same dense
  * sequence, then Release-publishes BOUND. Exact ordinary success writes the
  * timestamp and high-bit-tagged record extent, then Release-publishes READY
- * before returning its bit-33 witness. Failure or uncertainty leaves BOUND for
+ * before returning its separate holder_ready witness. Failure or uncertainty leaves BOUND for
  * Rust's fail-closed pinning path. The pool and every pointed-to allocation
  * must remain stable for the complete synchronous call. */
 typedef struct mako_rust_fast_native_ordered_holder_control {
@@ -384,7 +405,7 @@ typedef struct mako_rust_fast_spsc_holder_control {
 
 /* Snapshot of one sealed pool-owned holder. key and value remain valid and
  * immutable until the matching pool_release. value excludes STO's private
- * encoded-value trailer. reserved is always zero. */
+ * encoded-value trailer. timestamp_stamp is the private 63-bit HLC stamp. */
 typedef struct mako_rust_fast_one_put_holder_view {
   uint64_t sequence;
   uint64_t table_id;
@@ -392,36 +413,32 @@ typedef struct mako_rust_fast_one_put_holder_view {
   const uint8_t *value;
   uint32_t key_len;
   uint32_t value_len;
-  uint32_t mako_timestamp;
-  uint32_t reserved;
+  uint64_t timestamp_stamp;
 } mako_rust_fast_one_put_holder_view;
 
-#define MAKO_RUST_FAST_PRESELECTED_RECORD_TIMESTAMP(result)                    \
-  ((uint32_t)((result).record_state))
+#define MAKO_RUST_FAST_PRESELECTED_RECORD_STAMP(result)                        \
+  ((uint64_t)((result).record_state >> 1))
 #define MAKO_RUST_FAST_PRESELECTED_RECORD_WRITTEN(result)                      \
-  ((uint8_t)((((result).record_state) >> 32) & UINT64_C(1)))
+  ((uint8_t)((result).record_state & UINT64_C(1)))
 #define MAKO_RUST_FAST_PRESELECTED_HOLDER_SEALED(result)                       \
   MAKO_RUST_FAST_PRESELECTED_RECORD_WRITTEN(result)
-#define MAKO_RUST_FAST_PRESELECTED_RECORD_RESERVED(result)                     \
-  ((uint64_t)((result).record_state >> 33))
-#define MAKO_RUST_FAST_NATIVE_ORDERED_ARENA_TIMESTAMP(result)                  \
-  ((uint32_t)((result).record_state))
+#define MAKO_RUST_FAST_NATIVE_ORDERED_ARENA_STAMP(result)                      \
+  ((uint64_t)((result).record_state >> 1))
 #define MAKO_RUST_FAST_NATIVE_ORDERED_ARENA_WRITTEN(result)                    \
-  ((uint8_t)((((result).record_state) >> 32) & UINT64_C(1)))
-#define MAKO_RUST_FAST_NATIVE_ORDERED_ARENA_RESERVED(result)                   \
-  ((uint64_t)((result).record_state >> 33))
+  ((uint8_t)((result).record_state & UINT64_C(1)))
+#define MAKO_RUST_FAST_NATIVE_ORDERED_HOLDER_STAMP(result)                     \
+  ((uint64_t)((result).record_state >> 1))
+#define MAKO_RUST_FAST_NATIVE_ORDERED_HOLDER_SEALED(result)                    \
+  ((uint8_t)((result).record_state & UINT64_C(1)))
 #define MAKO_RUST_FAST_NATIVE_ORDERED_HOLDER_READY(result)                     \
-  ((uint8_t)((((result).record_state) >> 33) & UINT64_C(1)))
-#define MAKO_RUST_FAST_NATIVE_ORDERED_HOLDER_RESERVED(result)                  \
-  ((uint64_t)((result).record_state >> 34))
+  ((uint8_t)((result).holder_ready))
 
 /* Register-sized fused-terminal control word. Low 32 bits select one explicit
- * lifecycle state. The high 32 bits are zero except for NEED_SLOW's exact
- * unchecked-v4 record extent and COMMITTED_UNPUBLISHED's accepted Mako
- * timestamp. Both consumed cold codes initialize cold_out. Its record_state
- * bits 33..63 carry native's exact extent; bits 0..32 retain the ordinary
- * timestamp/sealed state. Rust masks the extent before decoding the ordinary
- * holder outcome. No untouched or published code initializes cold_out. */
+ * lifecycle state. The high 32 bits hold the exact unchecked-v6 record extent
+ * for NEED_SLOW and the two consumed cold codes; they are zero for NEED_GENERAL
+ * and published success. Consumed cold codes initialize cold_out, whose
+ * record_state retains the accepted stamp/sealed state. No untouched or
+ * published code initializes cold_out. */
 #define MAKO_RUST_FAST_FUSED_HOLDER_CONSUMED_PUBLISHED UINT32_C(0)
 #define MAKO_RUST_FAST_FUSED_HOLDER_UNTOUCHED_NEED_GENERAL UINT32_C(1)
 #define MAKO_RUST_FAST_FUSED_HOLDER_UNTOUCHED_NEED_SLOW UINT32_C(2)
@@ -432,7 +449,7 @@ typedef struct mako_rust_fast_one_put_holder_view {
   ((uint32_t)(((uint64_t)(result)) >> 32))
 
 /* The default and legacy record-preflight spelling use CRC32C. NONE is an
- * explicitly unsafe durability/performance choice: v4 remains structurally
+ * explicitly unsafe durability/performance choice: v6 remains structurally
  * validated on replay but cannot detect arbitrary payload corruption. */
 #define MAKO_RUST_FAST_RECORD_CHECKSUM_NONE UINT32_C(0)
 #define MAKO_RUST_FAST_RECORD_CHECKSUM_CRC32C UINT32_C(1)
@@ -454,7 +471,7 @@ MAKO_RUST_FAST_HIDDEN uint64_t mako_rust_fast_txn_put(
     const uint8_t *value, uint32_t value_len) MAKO_RUST_FAST_NOEXCEPT;
 
 typedef int (*mako_rust_fast_record_bind_hook)(void *context,
-                                               uint32_t mako_timestamp,
+                                               uint64_t timestamp_stamp,
                                                size_t exact_record_bytes,
                                                uint64_t *sequence_out,
                                                uint8_t **record_bytes_out,
@@ -475,7 +492,7 @@ MAKO_RUST_FAST_HIDDEN uint64_t
 mako_rust_fast_txn_commit_native_ordered_record_and_destroy(
     mako_local_txn *txn, const uint8_t *unhealthy,
     mako_rust_fast_record_bind_hook bind_hook, void *context,
-    uint64_t *ordered_sequence_out, uint32_t *ordered_timestamp_out,
+    uint64_t *ordered_sequence_out, uint64_t *ordered_timestamp_stamp_out,
     uint8_t *record_written_out) MAKO_RUST_FAST_NOEXCEPT;
 MAKO_RUST_FAST_HIDDEN uint64_t
 mako_rust_fast_txn_commit_unchecked_one_put_record_and_destroy(
@@ -487,21 +504,21 @@ mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_record_and_destroy(
     mako_local_txn *txn, uint32_t expected_record_bytes,
     uint64_t *next_bound, const uint8_t *unhealthy,
     mako_rust_fast_record_bind_hook bind_hook, void *context,
-    uint64_t *ordered_sequence_out, uint32_t *ordered_timestamp_out,
+    uint64_t *ordered_sequence_out, uint64_t *ordered_timestamp_stamp_out,
     uint8_t *record_written_out) MAKO_RUST_FAST_NOEXCEPT;
 MAKO_RUST_FAST_HIDDEN mako_rust_fast_native_ordered_arena_result
 mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_arena_and_destroy(
     mako_local_txn *txn, uint32_t expected_record_bytes,
     const mako_rust_fast_native_ordered_arena_control *control)
     MAKO_RUST_FAST_NOEXCEPT;
-MAKO_RUST_FAST_HIDDEN mako_rust_fast_native_ordered_arena_result
+MAKO_RUST_FAST_HIDDEN mako_rust_fast_native_ordered_holder_result
 mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_holder_and_destroy(
     mako_local_txn *txn, uint32_t expected_record_bytes,
     const mako_rust_fast_native_ordered_holder_control *control)
     MAKO_RUST_FAST_NOEXCEPT;
 /* Same-build cache-only terminal. Unlike the checked sibling above, release
  * builds trust the immediate fast-Put witness and queue-owned descriptor. */
-MAKO_RUST_FAST_HIDDEN mako_rust_fast_native_ordered_arena_result
+MAKO_RUST_FAST_HIDDEN mako_rust_fast_native_ordered_holder_result
 mako_rust_fast_txn_commit_trusted_native_ordered_unchecked_one_put_holder_and_destroy(
     mako_local_txn *txn, uint32_t expected_record_bytes,
     const mako_rust_fast_native_ordered_holder_control *control)

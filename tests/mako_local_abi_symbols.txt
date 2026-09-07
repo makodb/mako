@@ -1,4 +1,4 @@
-# Strong C text symbols exported by the revision-0 mako-local facade.
+# Strong C text symbols exported by the ABI-v1 mako-local facade.
 # Keep this list sorted. The build-fingerprint anchor is checked separately.
 mako_local_abi_version
 mako_local_advance_mako_timestamp_past
@@ -20,8 +20,11 @@ mako_local_table_open
 mako_local_test_arm_cleanup_failure
 mako_local_test_clear_cleanup_failure
 mako_local_test_clear_commit_observer
+mako_local_test_clear_timestamp_physical_ms
 mako_local_test_set_commit_observer
+mako_local_test_set_timestamp_physical_ms
 mako_local_thread_attach
+mako_local_timestamp_origin
 mako_local_txn_abort
 mako_local_txn_begin
 mako_local_txn_commit

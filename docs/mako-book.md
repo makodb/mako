@@ -769,6 +769,568 @@ persistence.persistAsync(log_data, size, shard_id, partition_id,
 
 RocksDB databases are created at `/tmp/mako_rocksdb_{shard_id}`.
 
+### Transaction timestamp design
+
+The single-machine transaction cache uses a hybrid logical clock, or HLC, to
+name the serialization point of each committed write transaction represented
+by a cache record. The target distributed design will use the same timestamp.
+The clock combines approximate Unix time with a logical counter. Unix time
+makes versions useful across processes and future machines. The logical counter
+preserves order when the physical clock repeats, moves backward, or trails an
+observed timestamp.
+
+The physical part is a hint about when a commit happened. Correctness comes
+from the HLC update rules and the transaction protocol, not from assuming that
+two machine clocks agree perfectly.
+
+#### Contract status and rollout boundary
+
+This section specifies the target timestamp contract for all of Mako. The
+implementation is landing in two stages. The current stage covers only the
+single-machine transaction cache. The later stage converts the existing C++
+distributed path.
+
+The current single-machine stage implements:
+
+- The 16-byte timestamp in the public local C ABI and the safe Rust API.
+- A process-wide 63-bit HLC stamp, with the validation gate in the remaining
+  bit of the same atomic word.
+- Post-validation timestamp allocation and cache-record binding while Silo's
+  write locks remain held.
+- Cache record formats v5 and v6, Rust replay comparison, last-writer-wins
+  filtering, and recovery flooring with the full timestamp.
+- RDTSCP-based physical-time sampling when runtime checks accept the TSC, with
+  a permanent `clock_gettime` fallback when they do not.
+- A fixed origin of 1. That is valid only because this stage admits one local
+  timestamp allocator and one recovered cache namespace per process.
+
+Revision-1 functional verification has passed. The native suite passed 123 of
+123 tests; `mako-cache` passed 159 unit tests, 23 integration tests, and three
+doctests; and `mako-history` passed 25 application tests plus 12 base
+transaction-oracle tests. The native-backed and fake-ABI `mako-local` suites,
+release Cargo check, and strict fingerprint, symbol, C11, and C++ conformance
+gates also passed. The performance sweep and canonical all-in-one hook CI gate
+remain pending. The combined timestamp mutation campaign killed all 12 mutants,
+with zero survivors and zero harness errors. Its first run killed 11 before a
+weak recovery-floor oracle was strengthened with a future but representable
+HLC; the focused rerun then killed `missing-recovery-clock-floor`. Source
+integrity matched before and after the campaign. This is not yet final Milestone
+1 acceptance because the performance and hook gates remain open.
+
+The current stage does not change distributed Mako's `uint32_t tid_unique_`,
+its timestamp-allocation RPC, its replicated value and log trailers, or its
+watermarks. That code still uses the legacy `timestamp * 10 + term` encoding.
+Those values must not enter a v5 or v6 cache record, and a new HLC timestamp
+must not be truncated for a legacy distributed call.
+
+The distributed cutover is a later milestone with one coordinated format and
+protocol break:
+
+1. Each participant validates its local transaction and returns its greatest
+   full HLC bound. The reply reports a bound; it does not allocate a commit
+   timestamp.
+2. After all validations succeed, the coordinator allocates exactly one
+   timestamp strictly greater than every returned and locally observed bound.
+   It sends that exact timestamp to every participant.
+3. Distributed value metadata, replication records, replay records, failure
+   history, and transaction watermarks move to the 16-byte timestamp. Failure
+   epochs remain separate fields.
+4. The replication callback returns status separately. Raft and Paxos stop
+   decoding `timestamp * 10 + status`, and Mako removes every remaining
+   `timestamp * 10 + term` commit representation.
+
+Until that milestone lands, the global HLC rules below are the required target
+for distributed work, not a claim about the old C++ wire format.
+
+#### Keep the order domains separate
+
+Several counters appear on the commit path. They have different jobs and must
+not be converted into one another.
+
+| Name | Scope | Purpose | Mako serialization order? |
+|------|-------|---------|---------------------------|
+| Silo/STO TID | In-memory record | OCC validation, lock state, and record-version checks | No |
+| Mako commit timestamp | Cache commit record | Commit serialization, replay ordering, cache last-writer-wins filtering, and greatest-applied timestamp | Yes |
+| `CacheSeq` | Cache log lane | Physical record identity, ingestion progress, and hole detection | No |
+| Raft term and log index | Consensus group | Leader generation and replicated-log position | No |
+
+A transaction ID is separate too. The future distributed format will use it to
+identify retries and support message deduplication. It is not a commit
+timestamp. Current local v5 and v6 cache records do not persist a transaction
+ID; their retry rule is tied to the same physical log key and batch.
+
+In particular:
+
+- The Silo TID can contain lock and OCC flag bits. It never leaves the
+  concurrency-control implementation.
+- A `CacheSeq` increases densely within one lane. Across lanes, its numeric
+  order has no commit meaning and can differ from Mako timestamp order because
+  workers publish and replay asynchronously.
+- RocksDB's internal sequence number describes RocksDB apply order. It does not
+  describe Mako serialization order.
+- Raft metadata remains in explicit `uint64_t term` and `uint64_t index`
+  fields. Mako must not encode a term as `timestamp * 10 + term`.
+
+#### Durable and C ABI representation
+
+The target public C ABI, Rust type, cache log, replication record, and
+persisted value metadata use the same 16-byte logical representation:
+
+```c
+typedef struct mako_timestamp_v1 {
+    uint64_t physical_us;
+    uint32_t logical;
+    uint32_t origin;
+} mako_timestamp_v1;
+```
+
+The fields have these meanings:
+
+- `physical_us` is approximate Unix time in microseconds. The first allocator
+  emits millisecond readings, so this value is initially a multiple of 1,000.
+  Keeping microseconds in the format allows a finer synchronized clock later
+  without another ABI or disk-format change.
+- `logical` orders commits that share a physical reading or need to advance
+  beyond an observed timestamp.
+- `origin` is the nonzero ID of the timestamp allocator. The cluster manager
+  leases origins. No two active allocators may hold the same origin, and an
+  origin may not be reused while records bearing that origin remain live.
+
+Compare timestamps as unsigned tuples in this exact order:
+
+```text
+(physical_us, logical, origin)
+```
+
+The wire and disk encoding is 16 bytes in big-endian field order. That makes a
+bytewise comparison agree with the tuple comparison. Code must encode each
+field explicitly. It must not copy the native C structure directly because
+native padding and byte order are platform properties.
+
+`{0, 0, 0}` is invalid, and a live timestamp must have a nonzero `origin`.
+Every operation in one cache commit record carries the same timestamp. A
+timestamp is immutable once its commit record becomes visible.
+
+This format deliberately has no backward-compatibility path. The local cutover
+uses cache record versions v5 and v6 and rejects v3, v4, and other legacy cache
+records. An upgrade must discard and rebuild old cache state. The later
+distributed cutover will likewise bump its replication-record and persisted
+value formats and reject their old 32-bit timestamp layouts. There is no
+legacy sentinel, decoder, or mixed-version comparison rule inside either new
+format.
+
+#### Hot clock representation
+
+The first implementation keeps the local HLC and the general validation gate
+in one 64-bit atomic word:
+
+```text
+63                         20 19                       1 0
++----------------------------+--------------------------+-+
+| Unix milliseconds, 44 bits | logical counter, 19 bits |G|
++----------------------------+--------------------------+-+
+```
+
+The packed value is:
+
+```text
+(unix_ms << 20) | (logical << 1) | validation_gate
+```
+
+The bit budget provides:
+
+- Unix-millisecond coverage until approximately year 2527.
+- 524,288 logical values in one millisecond.
+- A nominal capacity of 524 million timestamps per second before synthetic
+  clock advancement.
+
+The 19-bit counter is ample for the measured peak of about 35.8 million local
+transactions per second. If it fills, the allocator increments the physical
+millisecond and resets the counter. The HLC can therefore move ahead of wall
+time, but it never wraps or waits for the wall clock to catch up.
+
+`G` is not part of a timestamp. It is a short process-local certification lock
+used by general transactions during final validation and timestamp binding.
+Code masks it before unpacking or comparing clock values. No other status or
+format flags belong in this word.
+
+A general transaction sets `G` with compare-and-exchange and clears it with a
+release `fetch_and` on the same atomic word. It advances the physical and
+logical fields while preserving the set gate bit. Restricted allocators that
+observe `G` wait or retry instead of allocating around the general transaction.
+The release operation lets a later allocator observe the completed timestamp
+and log binding. The gate is never serialized to a cache record.
+
+The 16-byte timestamp does not need a 128-bit atomic operation. `origin` is
+constant for the allocator's lifetime, and the hot physical and logical state
+fits in the 63 timestamp bits of the existing 64-bit atomic.
+
+#### Clock update rule
+
+Each allocation starts with two inputs:
+
+1. A physical candidate from the fast Unix clock.
+2. The greatest timestamp that the transaction must follow, called its
+   observed bound.
+
+The observed bound includes commit timestamps attached to relevant data and
+predicate observations, participant bounds for a distributed transaction, and
+the allocator's last published timestamp. Silo TIDs are validated separately
+and never compared with this bound. The allocator chooses the least
+representable timestamp that is greater than the bound and no earlier than
+physical time.
+
+In the current local implementation, the allocator's prior HLC value is the
+runtime bound. Recovery sets the allocator floor so the next timestamp is
+strictly greater than the greatest surviving cache record before it admits
+workers. The validation gate orders local dependencies. The local path does not
+fetch a Mako timestamp from every Masstree row. Explicit participant and row
+bounds belong to the later distributed protocol.
+
+Conceptually, allocation performs this loop:
+
+```text
+wall_ms = fast_unix_time_ms()
+
+repeat:
+    old = atomic_clock.load()
+    local = unpack_timestamp_bits(old)
+    floor = max(local_timestamp(local, origin), observed_bound)
+
+    next = first_local_tuple_at_or_after(wall_ms, floor)
+    if next <= floor:
+        next = next_representable_local_tuple_after(floor)
+
+until atomic_clock.compare_exchange(old, pack(next, old.G)) succeeds
+```
+
+`next_representable_local_tuple_after` compares the full
+`(physical_us, logical, origin)` tuple. It increments the logical field when
+possible, carries to the next millisecond when the logical field cannot
+represent the bound, and accounts for origin when the other fields are equal.
+The real implementation checks arithmetic before every addition and
+conversion. If the 44-bit physical field overflows, it stops admitting writes
+instead of wrapping. CAS failure only means another transaction advanced the
+clock. The allocator reloads and tries again.
+
+Timestamp sequences are strictly increasing, but they need not be contiguous.
+A reservation or bind rejection after allocation may leave an HLC gap.
+Recovery and replay must never interpret that gap as a missing transaction.
+
+#### Commit protocol
+
+Timestamp order must agree with the order established by Silo locks and STO
+validation. Some hot paths reserve capacity and preselect a reusable lane
+generation or `CacheSeq` candidate before native commit. That candidate remains
+invisible and reusable until native code accepts it into the commit order. A
+local commit then follows this sequence:
+
+1. Acquire the complete write set in STO's configured order. A failed try-lock
+   aborts the transaction.
+2. Enter the general validation gate if the transaction class requires it.
+3. Validate the read set and all range predicates while the write locks remain
+   held.
+4. Use the process HLC as the current local bound. The future distributed path
+   also collects participant and row timestamp bounds.
+5. Allocate one HLC timestamp after validation succeeds.
+6. Irrevocably bind or advance the physical `CacheSeq` only after timestamp
+   allocation, then attach the timestamp and sequence to an exact cache-log
+   obligation. General paths still hold the gate. A restricted path instead
+   uses an atomic timestamp operation that refuses to cross a held gate.
+   Depending on the hot path, binding transfers ownership of a reserved lane
+   slot, arena extent, or holder whose final record bytes are fixed by the
+   native write set.
+7. Release the validation gate and finish the remaining preinstall ownership
+   checks. Keep every record lock held.
+8. Cross the native commit seam. From here, failure to finish the bound log
+   obligation is a fail-stop condition, not an ordinary transaction abort.
+9. Install every write in Masstree and release the record locks.
+10. After native commit returns, seal any deferred record fields and publish
+    the bound slot as ready before acknowledging the transaction.
+
+Validation failure happens before allocation and does not create a log
+obligation. The gate covers certification, timestamp allocation, and ordered
+binding. It does not cover record-byte serialization, Masstree installation,
+or ready publication. This keeps the serial section short. A rejection before
+irrevocable `CacheSeq` binding can unwind and leave only an unused HLC gap. Once
+a nonzero sequence is accepted or advanced, any ownership, installation, or
+publication uncertainty pins that exact obligation and makes the cache
+unhealthy. The sequence must not be cancelled or reused. Out-of-order ready
+publication is safe because replay compares Mako timestamps.
+
+The validation gate closes a race that record locks alone cannot close. For
+example, one transaction can read `A` and write `B` while another writes `A`.
+Final validation and timestamp binding must act as one certification step or
+the timestamp-ordered replay history can disagree with the accepted Silo
+history. Restricted transactions may avoid owning the gate only when their
+record locks and validation rules establish the same ordering guarantee. They
+must still observe the gate according to the STO fast-path protocol.
+
+The cache log owns the transaction's normalized write set. C++ code that owns
+the Silo locks also constructs this write set, including same-key overwrite and
+delete semantics. Rust accepts and replays that record. It must not reconstruct
+transaction semantics by making another round of C ABI calls after commit.
+
+#### Multi-shard allocation
+
+A multi-shard transaction uses one commit timestamp on every participant. Each
+participant locks and validates its local work, then returns the greatest
+timestamp it observed. The coordinator computes:
+
+```text
+commit_timestamp = next_after(max(participant_bounds))
+```
+
+`next_after` applies the same HLC carry rule as the local allocator. It always
+returns a timestamp strictly greater than the maximum, even when the
+coordinator's physical clock is behind it. The coordinator sends that exact
+timestamp to every participant.
+
+Participants keep conflicting locks until the outcome is fixed. Before making
+the commit visible, each participant merges the chosen timestamp into its
+local HLC. Later local commits therefore sort after the distributed commit.
+An abort publishes no commit record. Coordinator identity, Raft term, prepare
+position, and retry identity remain separate fields.
+
+#### RDTSCP as the physical clock source
+
+RDTSCP makes the physical read cheap. It is an input to the HLC, not the source
+of uniqueness or serialization correctness.
+
+At startup, the clock code brackets a Unix-time anchor with `CLOCK_REALTIME`
+samples and measures TSC progress against `CLOCK_MONOTONIC_RAW` for 5
+milliseconds. It records the Unix-time base, TSC base, and a fixed-point
+conversion from cycles to nanoseconds. The fast path then computes:
+
+```text
+unix_ns = base_unix_ns + scale(rdtscp() - base_tsc)
+```
+
+It rounds this result down to milliseconds for the initial allocator. Each
+thread periodically compares the estimate with `CLOCK_REALTIME`. If any worker
+measures drift beyond the accepted limit, it atomically disables RDTSCP for
+the process. Every subsequent read uses the fallback clock. The current
+implementation does not promise live recalibration. NTP or PTP can improve
+the Unix-time base in a future distributed deployment.
+
+The RDTSCP path is enabled only when CPUID reports RDTSCP and an invariant TSC,
+and does not report that the process is running under a hypervisor. A worker
+tracks `TSC_AUX`. When it changes, the worker takes an immediate second RDTSCP
+sample. Another change during that retry disables RDTSCP. A stable new value is
+accepted only after the estimated time passes a realtime drift check.
+`TSC_AUX` is an opaque migration indicator, not a portable CPU ID. It is never
+encoded into a Mako timestamp. Unsupported hardware, excessive measured drift,
+TSC discontinuity, or an untrusted virtual-machine clock switches the process
+permanently to `clock_gettime(CLOCK_REALTIME)`.
+
+Neither RDTSCP nor `CLOCK_REALTIME` has to be monotonic. The HLC CAS clamps a
+backward reading to the last published value and advances `logical`. Locks and
+atomics provide memory ordering for the commit protocol, so correctness does
+not depend on treating RDTSCP as a full memory fence.
+
+Clock synchronization alone does not provide external consistency. If Mako
+later promises that timestamp order follows real-time order across machines,
+the clock service must also publish a maximum error bound, reject excessive
+skew, and perform a commit wait when necessary. The timestamp format already
+has enough physical precision for that protocol.
+
+#### Failure rules
+
+The allocator fails closed. These cases have explicit outcomes:
+
+| Condition | Required response |
+|-----------|-------------------|
+| Wall clock moves backward | Keep the current physical field and increment `logical` |
+| Logical counter fills | Advance one synthetic millisecond and reset `logical` |
+| TSC is unavailable or untrusted | Read Unix time with `clock_gettime` |
+| TSC calibration or drift check fails | Reject the sample, retain the HLC floor, and permanently fall back |
+| CAS loses to another allocator | Reload the word and retry |
+| Origin lease is lost | Stop admitting new writes |
+| Physical field is exhausted | Return a clock-exhausted error and stop admitting writes |
+| Reservation or hook rejection before irrevocable `CacheSeq` binding | Abort and allow a harmless HLC gap |
+| Failure after a nonzero `CacheSeq` is accepted or advanced | Pin that exact obligation and mark the cache unhealthy |
+| Timestamp or record encoding is malformed | Stop recovery with a corruption error |
+
+No fallback may reset the clock, reuse zero, truncate a field, or silently
+reuse an origin.
+
+#### Recovery and origin management
+
+The current local stage scans every commit record present in RocksDB after
+reopen, validates its timestamp, finds the maximum tuple, and sets the process
+clock floor before accepting writes. The next timestamp minted is strictly
+greater than that maximum. The local stage uses fixed origin 1 and has no
+origin lease service.
+
+The target distributed recovery protocol first obtains a nonzero origin lease,
+then initializes the hot HLC so its first result is greater than both the
+recovered maximum and the current physical candidate. It must not reset the
+HLC to wall time when the wall clock is behind recovered data.
+
+An origin lease is an exclusive writer credential. Losing it stops new
+timestamp allocation. Startup also refuses to write if another live process
+holds the same origin or if the lease service cannot prove exclusivity. A new
+process incarnation normally receives a new origin, but recovery still floors
+the HLC because physical clocks can move backward.
+
+Only records covered by the configured durability contract take part in
+recovery. The timestamp scheme does not make an asynchronous, unflushed record
+durable. If the current mode acknowledges before disk synchronization, a crash
+can lose those acknowledged records until a stronger durability mode is added.
+
+Recovery treats these conditions as corruption or configuration errors:
+
+- A timestamp whose `origin` is zero. The physical and logical fields may
+  independently be zero.
+- A malformed 16-byte encoding.
+- Two distinct commit records with the same full timestamp.
+- A non-increasing timestamp within one tagged, single-producer worker lane.
+- A legacy record format.
+
+#### RocksDB replay rules
+
+The asynchronous replay path may receive records in a different order from
+their Mako timestamps. In the current single-machine cache, every commit-log
+record present in RocksDB carries the full timestamp. A process-wide apply
+coordinator keeps an in-memory per-key winner index and writes a materialized
+mutation only when the incoming timestamp is newer than the indexed winner.
+Recovery retains and scans all commit-log records to rebuild that index before
+it validates the raw materialized values. Retrying the exact same physical
+RocksDB batch and log key is idempotent. Recovery rejects a copied record under
+a different `CacheSeq` when it reuses the same timestamp.
+
+The current materialized RocksDB user value or tombstone does not embed its
+timestamp. This makes log retention and exclusive ownership of the backend
+mandatory. Log pruning, a second writer, or direct external writes would make
+the in-memory winner index incomplete. Before any of those modes are allowed,
+the materialized value and tombstone format must store the winning timestamp,
+and the backend update must compare and replace the value atomically.
+
+One transaction's operations enter RocksDB in one atomic write batch. A higher
+`CacheSeq` or RocksDB sequence number does not make a value newer. Those
+sequences only report physical ingestion and backend application progress.
+
+RocksDB user-defined timestamps are not a drop-in replacement for this check.
+They impose ordering constraints between an application timestamp and
+RocksDB's sequence order for each key. Mako intentionally permits out-of-order
+background application. It therefore keeps explicit timestamp metadata in the
+retained commit log today and will need it in the materialized value envelope
+before removing the retained-log restriction, unless the replay scheduler
+first proves RocksDB's ordering constraints.
+
+The system also keeps its ordering and progress values distinct:
+
+- Each cache lane uses `CacheSeq` and explicit hole tracking for ingestion.
+  In concurrent mode the public acknowledged and applied sequence values are
+  aggregate record counts, not physical `CacheSeq` values.
+- `AppliedWatermark` also carries the greatest applied Mako timestamp. Mako
+  timestamps order commit records and resolve asynchronous cache
+  materialization winners.
+- Current live Masstree visibility and conflicts still use Silo row versions.
+  The later distributed design will use Mako timestamps for its transaction
+  watermarks.
+
+Code must never cast one watermark into the other. A historical snapshot at a
+Mako timestamp requires retained versions or a proven materialization
+watermark. RocksDB's latest internal sequence number alone is insufficient.
+
+#### Required invariants
+
+The implementation and review checklist uses these invariants:
+
+1. Every committed cache write represented by a commit-log record has exactly
+   one nonzero timestamp.
+2. Tuple comparison defines the same total order in C++, Rust, log decoding,
+   recovery, and RocksDB replay.
+3. One allocator never emits a timestamp less than or equal to its previous
+   timestamp.
+4. When the protocol supplies dependency or remote bounds, the transaction
+   receives a timestamp greater than every bound it observed.
+5. If Silo serializes two conflicting commits as `A` before `B`, then
+   `timestamp(A) < timestamp(B)`.
+6. No transaction installs writes without first binding its timestamp to an
+   exact cache-log obligation. A committed transaction is not acknowledged
+   until that obligation is published as ready.
+7. All operations in one local cache record use one timestamp. The future
+   distributed record also carries one separate transaction ID for the whole
+   transaction.
+8. Physical log order and RocksDB sequence order never decide logical
+   last-writer-wins behavior.
+9. Recovery sets the HLC floor so the next allocation is greater than every
+   record that it can restore.
+10. Clock regression, counter carry, restart, and CPU migration cannot cause a
+    duplicate or decreasing timestamp.
+
+#### Verification status and plan
+
+The revision-1 functional run passed the native, Rust cache, native-backed and
+fake-ABI local-wrapper, history-oracle, release-check, fingerprint, symbol, and
+C/C++ conformance suites listed in the rollout status above. The
+single-machine implementation keeps these correctness requirements:
+
+- C++ and Rust golden-vector tests for exact 16-byte big-endian encoding,
+  tuple comparison, zero-origin rejection, and all field boundaries.
+- A mock-clock test that holds one millisecond constant for more than 524,288
+  allocations and verifies carry into the next synthetic millisecond.
+- Tests for backward wall-clock jumps, physical-field overflow, CAS retries,
+  logical overflow, and a recovered timestamp far ahead of wall time.
+- A multithreaded uniqueness test that exercises the validation gate and checks
+  strict per-allocator monotonicity under contention.
+- Conflict tests for write/write, read/write, range-predicate, insert/delete,
+  and repeated modification of one key in a transaction.
+- Application-history checks that compare Silo's accepted serialization order
+  with timestamp-sorted cache replay, including histories whose physical lane
+  order is the reverse of their HLC order.
+- RDTSCP capability selection and fixed-point-overflow tests. Runtime code has
+  fail-closed handling for `TSC_AUX` changes, backward or discontinuous TSC
+  input, excessive drift, and permanent fallback to `clock_gettime`.
+- Replay tests that permute log-lane order, retry the same physical batch and
+  log key, reject a duplicate timestamp under another `CacheSeq`, and mix puts
+  with tombstones while producing the same final RocksDB contents.
+- Crash-injection tests before timestamp allocation, after allocation, before
+  log publication, after publication, during Masstree install, and during
+  asynchronous RocksDB application.
+
+Production-readiness work additionally includes a 1, 4, 8, 16, and 32 worker
+benchmark sweep with CPU boost disabled. That benchmark should record clock
+source, fallback count, CAS retries, gate wait time, and synthetic-millisecond
+carries. Deterministic fault injection for raw TSC changes, `TSC_AUX`
+migration, and drift remains clock hardening work. Distributed clock-skew tests
+belong to the later cutover. Neither is a claim made by the single-machine
+landing gate.
+
+The combined timestamp mutation campaign killed all 12 mutants, with zero
+survivors and zero harness errors. The first run killed 11 and exposed a weak
+oracle. After
+`recovery_advances_mako_timestamp_past_the_recovered_maximum` began using a
+future but representable HLC, the focused rerun killed
+`missing-recovery-clock-floor`. The source-integrity check matched before and
+after the campaign.
+
+The performance sweep and canonical all-in-one hook CI gate have not completed
+for revision 1. Do not promote the functional and mutation results above to
+final Milestone 1 acceptance until both gates have recorded outcomes.
+
+The later distributed cutover adds these required tests before the global HLC
+contract is complete:
+
+- Multi-shard tests that shuffle participant replies and prove the coordinator
+  always chooses `next_after(max(bounds))` and every participant merges it.
+- Origin-lease tests for restart, lease loss, duplicate active origins, and
+  exhausted or unavailable origin allocation.
+- Wire-format, replication, replay, failure-history, and watermark tests that
+  reject legacy 32-bit or `timestamp * 10 + term` data rather than mixing it
+  with HLC records.
+
+[CockroachDB's HLC](https://github.com/cockroachdb/cockroach/blob/master/pkg/util/hlc/hlc.go),
+[MongoDB's seconds-plus-ordinal timestamp](https://www.mongodb.com/docs/manual/reference/bson-types/#timestamps),
+and [TiDB's physical-plus-logical TSO](https://docs.pingcap.com/tidb/stable/tso/)
+use the same broad separation between physical time and logical order.
+[RocksDB](https://github.com/facebook/rocksdb/wiki/User-defined-Timestamp)
+likewise keeps application timestamps separate from its internal sequence
+number. Mako follows those ideas but keeps its Silo version, cache position,
+and consensus position as explicit independent types.
+
 ### The three-backend KV surface (non-transactional)
 
 There is ONE non-transactional KV interface — the non-txn ops on

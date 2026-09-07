@@ -42,6 +42,8 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr::NonNull;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, Ordering};
+#[cfg(not(test))]
+use std::sync::OnceLock;
 
 use mako_local_sys as sys;
 
@@ -77,6 +79,28 @@ const _: () = {
     assert!(std::mem::offset_of!(FastNativeOrderedArenaResult, terminal) == 0);
     assert!(std::mem::offset_of!(FastNativeOrderedArenaResult, ordered_sequence) == 8);
     assert!(std::mem::offset_of!(FastNativeOrderedArenaResult, record_state) == 16);
+};
+
+/// Return value of the cache-private callback-free concurrent holder terminal.
+///
+/// The holder-ready witness needs its own word because `record_state` uses all
+/// 64 bits for the 63-bit hot timestamp stamp and the sealed witness.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+struct FastNativeOrderedHolderResult {
+    terminal: u64,
+    ordered_sequence: u64,
+    record_state: u64,
+    holder_ready: u64,
+}
+
+const _: [(); 32] = [(); std::mem::size_of::<FastNativeOrderedHolderResult>()];
+const _: [(); 8] = [(); std::mem::align_of::<FastNativeOrderedHolderResult>()];
+const _: () = {
+    assert!(std::mem::offset_of!(FastNativeOrderedHolderResult, terminal) == 0);
+    assert!(std::mem::offset_of!(FastNativeOrderedHolderResult, ordered_sequence) == 8);
+    assert!(std::mem::offset_of!(FastNativeOrderedHolderResult, record_state) == 16);
+    assert!(std::mem::offset_of!(FastNativeOrderedHolderResult, holder_ready) == 24);
 };
 
 /// Stable Rust queue layout lent to the callback-free native arena terminal.
@@ -162,7 +186,7 @@ impl TrustedNativeOrderedArenaControl {
     /// equal its base-two logarithm. Each prior generation must be retired
     /// before native can reuse its cell or arena block. Every concurrent
     /// cache-record terminal for the associated `LocalDb` must use the same
-    /// packed namespace, compatibility control, and health word.
+    /// claimed cache-order namespace, compatibility control, and health word.
     #[allow(clippy::too_many_arguments)]
     pub const unsafe fn from_raw_parts(
         next_bound: *mut u64,
@@ -267,8 +291,7 @@ struct FastOnePutHolderView {
     value: *const u8,
     key_len: u32,
     value_len: u32,
-    mako_timestamp: u32,
-    reserved: u32,
+    timestamp_stamp: u64,
 }
 
 const _: [(); 48] = [(); std::mem::size_of::<FastOnePutHolderView>()];
@@ -282,7 +305,7 @@ mod fake_abi;
 use fake_abi as abi;
 
 // This build-private ABI is deliberately absent from mako-local-sys and the
-// stable v0 export manifest. It is a trusted optimization seam for the Rust
+// stable v1 export manifest. It is a trusted optimization seam for the Rust
 // cache wrapper built from the exact same source fingerprint as the C++
 // engine. The public methods below continue to enforce Rust ownership and
 // thread affinity before reaching these unchecked native entries.
@@ -291,15 +314,15 @@ mod fast_abi {
     use std::ffi::c_void;
 
     use super::{
-        sys, FastNativeOrderedArenaResult, FastOnePutHolderPool, FastOnePutHolderView,
-        FastPreselectedRecordResult, FastSpscHolderControl, TrustedNativeOrderedArenaControl,
-        TrustedNativeOrderedHolderControl,
+        sys, FastNativeOrderedArenaResult, FastNativeOrderedHolderResult, FastOnePutHolderPool,
+        FastOnePutHolderView, FastPreselectedRecordResult, FastSpscHolderControl,
+        TrustedNativeOrderedArenaControl, TrustedNativeOrderedHolderControl,
     };
 
     pub(super) type RecordBindHook = Option<
         unsafe extern "C" fn(
             context: *mut c_void,
-            mako_timestamp: u32,
+            timestamp_stamp: u64,
             exact_record_bytes: usize,
             sequence_out: *mut u64,
             record_bytes_out: *mut *mut u8,
@@ -351,7 +374,7 @@ mod fast_abi {
             hook: RecordBindHook,
             context: *mut c_void,
             ordered_sequence_out: *mut u64,
-            ordered_timestamp_out: *mut u32,
+            ordered_timestamp_stamp_out: *mut u64,
             record_written_out: *mut u8,
         ) -> u64;
 
@@ -371,7 +394,7 @@ mod fast_abi {
             hook: RecordBindHook,
             context: *mut c_void,
             ordered_sequence_out: *mut u64,
-            ordered_timestamp_out: *mut u32,
+            ordered_timestamp_stamp_out: *mut u64,
             record_written_out: *mut u8,
         ) -> u64;
 
@@ -386,13 +409,13 @@ mod fast_abi {
             txn: *mut sys::mako_local_txn,
             expected_record_bytes: u32,
             control: *const TrustedNativeOrderedHolderControl,
-        ) -> FastNativeOrderedArenaResult;
+        ) -> FastNativeOrderedHolderResult;
 
         pub(super) fn mako_rust_fast_txn_commit_trusted_native_ordered_unchecked_one_put_holder_and_destroy(
             txn: *mut sys::mako_local_txn,
             expected_record_bytes: u32,
             control: *const TrustedNativeOrderedHolderControl,
-        ) -> FastNativeOrderedArenaResult;
+        ) -> FastNativeOrderedHolderResult;
 
         pub(super) fn mako_rust_fast_txn_commit_unchecked_one_put_record_single_producer_and_destroy(
             txn: *mut sys::mako_local_txn,
@@ -627,7 +650,7 @@ impl fmt::Display for Error {
             Self::CommitHookRejected => {
                 write!(f, "post-validation commit hook rejected the transaction")
             }
-            Self::TimestampExhausted => write!(f, "Mako logical timestamp exhausted"),
+            Self::TimestampExhausted => write!(f, "Mako hybrid logical clock exhausted"),
             Self::FeatureUnavailable => {
                 write!(f, "the requested native feature is unavailable")
             }
@@ -676,47 +699,152 @@ impl std::error::Error for Error {}
 /// This crate's result type.
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// Largest Mako base timestamp representable by its `timestamp * 10 + term`
-/// encoding when `term` is a decimal digit.
-pub const MAX_MAKO_TIMESTAMP: u32 = sys::MAKO_LOCAL_MAX_MAKO_TIMESTAMP;
-
 /// Immutable dense-order authority selected for one claimed cache namespace.
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 pub enum CacheOrderMode {
-    /// Native's packed process word allocates every concurrent dense sequence.
+    /// Native allocates every concurrent dense cache sequence.
     Concurrent = 1,
     /// The exclusive Rust producer owns dense allocation for the claim.
     SingleProducer = 2,
-    /// Independent Rust worker lanes own their local sequences while native's
-    /// packed word coordinates the process timestamp and general-commit gate.
+    /// Independent Rust worker lanes own their local sequences while native
+    /// coordinates HLC allocation with general-commit certification.
     PerWorker = 3,
 }
 
-/// A nonzero 32-bit Mako logical transaction timestamp.
+/// Mako's 16-byte hybrid logical transaction timestamp.
 ///
-/// This is the exact `Transaction::tid_unique_` value used by Mako's
-/// distributed transaction and replication paths. It is distinct from both
-/// the cache commit sequence and Silo's internal record-version clock.
+/// Timestamp order is the unsigned tuple `(physical_us, logical, origin)`.
+/// It is distinct from the cache commit sequence, consensus position, and
+/// Silo's internal record-version clock. The native allocator currently emits
+/// millisecond-aligned physical values, while the durable representation keeps
+/// microsecond precision for a future clock source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[repr(transparent)]
-pub struct MakoTimestamp(NonZeroU32);
+pub struct MakoTimestamp {
+    physical_us: u64,
+    logical: u32,
+    origin: NonZeroU32,
+}
 
 impl MakoTimestamp {
-    /// Construct a timestamp, rejecting Mako's zero sentinel and values outside
-    /// the legacy one-digit-term encoding's base range.
-    pub const fn new(raw: u32) -> Option<Self> {
-        match NonZeroU32::new(raw) {
-            Some(raw) if raw.get() <= MAX_MAKO_TIMESTAMP => Some(Self(raw)),
+    const HOT_LOGICAL_BITS: u32 = 19;
+    const HOT_LOGICAL_MASK: u64 = (1u64 << Self::HOT_LOGICAL_BITS) - 1;
+    const HOT_PHYSICAL_MS_MAX: u64 = (1u64 << 44) - 1;
+
+    /// Construct a timestamp. A live timestamp always has a nonzero allocator
+    /// origin; physical time and the logical counter may independently be zero.
+    pub const fn new(physical_us: u64, logical: u32, origin: u32) -> Option<Self> {
+        match NonZeroU32::new(origin) {
+            Some(origin) => Some(Self {
+                physical_us,
+                logical,
+                origin,
+            }),
             None => None,
-            Some(_) => None,
         }
     }
 
-    /// Return the exact raw native logical timestamp.
-    pub const fn get(self) -> u32 {
-        self.0.get()
+    /// Approximate Unix commit time in microseconds.
+    pub const fn physical_us(self) -> u64 {
+        self.physical_us
+    }
+
+    /// Logical order within the physical clock reading.
+    pub const fn logical(self) -> u32 {
+        self.logical
+    }
+
+    /// Nonzero identity of the allocator which minted this timestamp.
+    pub const fn origin(self) -> u32 {
+        self.origin.get()
+    }
+
+    /// Encode the canonical 16-byte wire and disk representation.
+    pub fn to_be_bytes(self) -> [u8; 16] {
+        let mut encoded = [0u8; 16];
+        encoded[..8].copy_from_slice(&self.physical_us.to_be_bytes());
+        encoded[8..12].copy_from_slice(&self.logical.to_be_bytes());
+        encoded[12..].copy_from_slice(&self.origin.get().to_be_bytes());
+        encoded
+    }
+
+    /// Decode the canonical 16-byte wire and disk representation.
+    pub fn from_be_bytes(encoded: [u8; 16]) -> Option<Self> {
+        let physical_us = u64::from_be_bytes(encoded[..8].try_into().ok()?);
+        let logical = u32::from_be_bytes(encoded[8..12].try_into().ok()?);
+        let origin = u32::from_be_bytes(encoded[12..].try_into().ok()?);
+        Self::new(physical_us, logical, origin)
+    }
+
+    #[inline]
+    fn from_raw(raw: sys::mako_timestamp_v1) -> Option<Self> {
+        Self::new(raw.physical_us, raw.logical, raw.origin)
+    }
+
+    #[inline]
+    const fn into_raw(self) -> sys::mako_timestamp_v1 {
+        sys::mako_timestamp_v1 {
+            physical_us: self.physical_us,
+            logical: self.logical,
+            origin: self.origin.get(),
+        }
+    }
+
+    #[inline(always)]
+    const fn from_hot_stamp(stamp: u64, origin: NonZeroU32) -> Option<Self> {
+        if stamp == 0 || stamp > (u64::MAX >> 1) {
+            return None;
+        }
+        let physical_ms = stamp >> Self::HOT_LOGICAL_BITS;
+        let logical = (stamp & Self::HOT_LOGICAL_MASK) as u32;
+        let Some(physical_us) = physical_ms.checked_mul(1_000) else {
+            return None;
+        };
+        Some(Self {
+            physical_us,
+            logical,
+            origin,
+        })
+    }
+
+    #[inline]
+    const fn hot_stamp(self) -> Option<u64> {
+        if self.physical_us % 1_000 != 0 || self.logical as u64 > Self::HOT_LOGICAL_MASK {
+            return None;
+        }
+        let physical_ms = self.physical_us / 1_000;
+        if physical_ms > Self::HOT_PHYSICAL_MS_MAX {
+            return None;
+        }
+        let stamp = (physical_ms << Self::HOT_LOGICAL_BITS) | self.logical as u64;
+        if stamp == 0 {
+            None
+        } else {
+            Some(stamp)
+        }
+    }
+
+    /// Reconstruct a public timestamp from the private local allocator stamp.
+    #[doc(hidden)]
+    pub const fn from_local_stamp(stamp: u64, origin: u32) -> Option<Self> {
+        let Some(origin) = NonZeroU32::new(origin) else {
+            return None;
+        };
+        Self::from_hot_stamp(stamp, origin)
+    }
+
+    /// Return the private local allocator stamp when this timestamp is exactly
+    /// representable by the current millisecond clock.
+    #[doc(hidden)]
+    pub const fn local_stamp(self) -> Option<u64> {
+        self.hot_stamp()
+    }
+}
+
+impl fmt::Display for MakoTimestamp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}:{}", self.physical_us, self.logical, self.origin)
     }
 }
 
@@ -731,9 +859,9 @@ impl MakoTimestamp {
 pub enum TestCommitPhase {
     /// The complete write set is locked; no Mako timestamp exists yet.
     WritesetLocked = sys::MAKO_LOCAL_TEST_COMMIT_WRITESET_LOCKED,
-    /// The checked nonzero Mako timestamp has been assigned.
+    /// The checked nonzero Mako timestamp has been assigned after validation.
     MakoTimestampAllocated = sys::MAKO_LOCAL_TEST_COMMIT_MAKO_TIMESTAMP_ALLOCATED,
-    /// Every local validation has succeeded, before the preinstall hook.
+    /// Every local validation has succeeded; no Mako timestamp exists yet.
     LocalValidationComplete = sys::MAKO_LOCAL_TEST_COMMIT_LOCAL_VALIDATION_COMPLETE,
     /// The preinstall hook accepted, before the first write installation.
     PreinstallAccepted = sys::MAKO_LOCAL_TEST_COMMIT_PREINSTALL_ACCEPTED,
@@ -762,9 +890,11 @@ impl TestCommitPhase {
 }
 
 /// Test-only plain function pointer invoked synchronously at native commit
-/// seams. Timestamp zero occurs only at [`TestCommitPhase::WritesetLocked`].
+/// seams. The timestamp is absent at [`TestCommitPhase::WritesetLocked`] and
+/// [`TestCommitPhase::LocalValidationComplete`], then present at allocation
+/// and every later seam.
 #[doc(hidden)]
-pub type TestCommitObserver = fn(TestCommitPhase, u32);
+pub type TestCommitObserver = fn(TestCommitPhase, Option<MakoTimestamp>);
 
 thread_local! {
     static TEST_COMMIT_OBSERVER: Cell<Option<TestCommitObserver>> = const { Cell::new(None) };
@@ -807,17 +937,17 @@ pub struct CommitReport {
 
 /// Integrity mode for a native cache commit record.
 ///
-/// CRC32C is the default and produces the backwards-compatible v3 format.
-/// `None` produces a self-describing v4 record without a checksum trailer. It
+/// CRC32C is the default and produces the v5 format. `None` produces a
+/// self-describing v6 record without a checksum trailer. It
 /// avoids checksum work on the foreground commit path, but replay can then
 /// validate only the record's structure, not arbitrary payload corruption.
 #[doc(hidden)]
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 pub enum CommitRecordChecksum {
-    /// Emit v4 without an integrity checksum.
+    /// Emit v6 without an integrity checksum.
     None = 0,
-    /// Emit v3 with a CRC-32C trailer.
+    /// Emit v5 with a CRC-32C trailer.
     #[default]
     Crc32c = 1,
 }
@@ -826,7 +956,7 @@ pub enum CommitRecordChecksum {
 ///
 /// This build-private type is returned only for a trusted transaction whose
 /// native write plan has been sealed. The byte count includes the selected
-/// format's complete header and, for CRC32C/v3, its checksum trailer;
+/// format's complete header and, for CRC32C/v5, its checksum trailer;
 /// `op_count == 0` identifies a logical read-only transaction that must use the
 /// ordinary no-record commit terminal.
 #[doc(hidden)]
@@ -1062,38 +1192,36 @@ impl TrustedUncheckedOnePutRecordOutcome {
 
 /// Compact outcome for native-assigned concurrent cache ordering.
 ///
-/// Native writes the accepted Mako timestamp and dense cache sequence while
-/// certifying against the same packed process word, then invokes the target
-/// callback after retiring the short ordering operation. A nonzero pair must
-/// be adopted and published or pinned even when the callback was not reached.
+/// Native returns the accepted Mako timestamp and physical cache sequence after
+/// final validation, then invokes the target callback after retiring its short
+/// ordering operation. Timestamp order and physical cache-sequence order are
+/// intentionally independent. A nonzero pair must be adopted and published or
+/// pinned even when the callback was not reached.
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy)]
 #[must_use = "an accepted native order must be adopted before acknowledgement"]
 pub struct TrustedNativeOrderedOnePutRecordOutcome {
     inner: TrustedUncheckedOnePutRecordOutcome,
     ordered_sequence: u64,
-    ordered_timestamp: u32,
+    timestamp_stamp: u64,
+    timestamp_origin: NonZeroU32,
     target_bound: bool,
-    native_holder_ready: bool,
+    native_holder_ready: u64,
 }
 
 impl TrustedNativeOrderedOnePutRecordOutcome {
-    /// Whether native returned either no order or one complete timestamp/sequence pair.
+    /// Whether native returned either no order or both accepted ordering fields.
     ///
-    /// Both members of a packed cache order fit the native 29-bit domain,
-    /// whose largest representable value is [`MAX_MAKO_TIMESTAMP`].
     #[inline(always)]
     pub const fn order_witness_valid(self) -> bool {
         if self.ordered_sequence == 0 {
-            self.ordered_timestamp == 0
+            self.timestamp_stamp == 0
         } else {
-            self.ordered_sequence <= MAX_MAKO_TIMESTAMP as u64
-                && self.ordered_timestamp != 0
-                && self.ordered_timestamp <= MAX_MAKO_TIMESTAMP
+            MakoTimestamp::from_hot_stamp(self.timestamp_stamp, self.timestamp_origin).is_some()
         }
     }
 
-    /// Return the accepted timestamp/sequence pair, if native assigned one.
+    /// Return the accepted timestamp and cache sequence, if native assigned both.
     ///
     /// A one-zero/one-nonzero pair is malformed same-build ABI state. It is
     /// omitted here and makes [`Self::into_report`] fail its completion
@@ -1104,7 +1232,7 @@ impl TrustedNativeOrderedOnePutRecordOutcome {
             return None;
         }
         Some((
-            MakoTimestamp::new(self.ordered_timestamp)?,
+            MakoTimestamp::from_hot_stamp(self.timestamp_stamp, self.timestamp_origin)?,
             NonZeroU64::new(self.ordered_sequence)?,
         ))
     }
@@ -1127,7 +1255,7 @@ impl TrustedNativeOrderedOnePutRecordOutcome {
     /// accepted occupancy right.
     #[inline(always)]
     pub const fn native_holder_ready(self) -> bool {
-        self.native_holder_ready
+        self.native_holder_ready == 1
     }
 
     /// Decode the cold fail-closed completion report.
@@ -1138,7 +1266,8 @@ impl TrustedNativeOrderedOnePutRecordOutcome {
         let mut report = self.inner.into_report();
         if !order_pair_valid
             || (self.inner.record_written == 1 && !self.target_bound)
-            || (self.native_holder_ready && !self.is_committed())
+            || self.native_holder_ready > 1
+            || (self.native_holder_ready == 1 && !self.is_committed())
         {
             report.completion_contract_valid = false;
             report.record_written = false;
@@ -1150,10 +1279,9 @@ impl TrustedNativeOrderedOnePutRecordOutcome {
 /// Compact result from the cache-private callback-free one-Put terminal.
 ///
 /// The target and its dense sequence are selected before native validation.
-/// Native's `record_state` then says whether that target was accepted into the
-/// commit order: its low 32 bits carry the accepted Mako timestamp and bit 32
-/// is the complete-record witness. Bits 33 through 63 are reserved and must be
-/// zero. This representation lets the common committed path avoid callback
+/// Native's `record_state` then says whether that target was accepted: bits 1
+/// through 63 carry the private local timestamp stamp and bit 0 is the
+/// complete-record witness. This representation lets the common committed path avoid callback
 /// setup and output-pointer traffic while retaining a strict fail-stop decode
 /// for every anomalous native result.
 #[doc(hidden)]
@@ -1162,44 +1290,42 @@ impl TrustedNativeOrderedOnePutRecordOutcome {
 pub struct TrustedPreselectedUncheckedOnePutRecordOutcome {
     terminal: u64,
     record_state: u64,
+    timestamp_origin: NonZeroU32,
 }
 
 impl TrustedPreselectedUncheckedOnePutRecordOutcome {
     /// Return the Mako timestamp with which native accepted the preselected
-    /// target, if its low 32-bit timestamp field is valid and nonzero.
+    /// target, if its packed 63-bit timestamp stamp is valid and nonzero.
     ///
-    /// This intentionally ignores the completion bit and reserved high bits.
+    /// This intentionally ignores the completion bit.
     /// A cache must bind/pin the preselected slot whenever this returns `Some`,
     /// then separately use [`Self::is_committed`] or [`Self::into_report`] to
     /// validate the complete result. That ordering remains conservative when a
     /// same-build ABI defect corrupts another `record_state` bit.
     #[inline(always)]
     pub const fn accepted_timestamp(self) -> Option<MakoTimestamp> {
-        MakoTimestamp::new(self.record_state as u32)
+        MakoTimestamp::from_hot_stamp(self.record_state >> 1, self.timestamp_origin)
     }
 
     /// Whether native claims to have initialized every byte of the target.
     ///
-    /// This is only the raw bit-32 witness. Bytes may be read only after the
+    /// This is only the raw low-bit witness. Bytes may be read only after the
     /// whole completion contract has also been validated by
     /// [`Self::is_committed`] or [`Self::into_report`].
     #[inline(always)]
     pub const fn record_written(self) -> bool {
-        self.record_state & (1u64 << 32) != 0
+        self.record_state & 1 != 0
     }
 
     /// Whether native returned the exact valid ordinary committed outcome.
     ///
     /// A true result proves successful visibility and cleanup, a valid accepted
-    /// Mako timestamp, the complete-record witness, and zero reserved bits.
+    /// Mako timestamp and the complete-record witness.
     #[inline(always)]
     pub const fn is_committed(self) -> bool {
         const PACKED_OK: u64 =
             (sys::MAKO_LOCAL_OK as u32 as u64) | ((sys::MAKO_LOCAL_OK as u32 as u64) << 32);
-        self.terminal == PACKED_OK
-            && self.record_state >> 33 == 0
-            && self.record_written()
-            && self.accepted_timestamp().is_some()
+        self.terminal == PACKED_OK && self.record_written() && self.accepted_timestamp().is_some()
     }
 
     /// Perform the general fail-closed terminal and completion-contract decode.
@@ -1213,18 +1339,15 @@ impl TrustedPreselectedUncheckedOnePutRecordOutcome {
     #[cold]
     #[inline(never)]
     pub fn into_report(self) -> CommitRecordReport {
-        let raw_timestamp = self.record_state as u32;
+        let timestamp_stamp = self.record_state >> 1;
         let accepted_timestamp = self.accepted_timestamp();
         let record_bound = accepted_timestamp.is_some();
         let witness_claimed = self.record_written();
-        let reserved_bits_valid = self.record_state >> 33 == 0;
-        let timestamp_valid = raw_timestamp == 0 || record_bound;
+        let timestamp_valid = timestamp_stamp == 0 || record_bound;
         let decoded = decode_fast_unchecked_record_commit(self.terminal);
 
-        let mut contract_valid = reserved_bits_valid
-            && timestamp_valid
-            && (!witness_claimed || record_bound)
-            && decoded.is_some();
+        let mut contract_valid =
+            timestamp_valid && (!witness_claimed || record_bound) && decoded.is_some();
         if let Some((commit, _)) = decoded {
             if record_bound {
                 // The callback-free native terminal publishes its timestamp
@@ -1296,8 +1419,8 @@ pub struct CommitHolderReport {
 
 /// Compact result from the cache-private callback-free holder terminal.
 ///
-/// The low 32 bits of `holder_state` carry the accepted Mako timestamp, bit 32
-/// is the sealed-payload witness, and every higher bit is reserved. The cache
+/// Bits 1 through 63 of `holder_state` carry the private local timestamp stamp,
+/// and bit 0 is the sealed-payload witness. The cache
 /// inspects the compact ordinary-success predicate before paying for the full
 /// fail-closed decode.
 #[doc(hidden)]
@@ -1306,20 +1429,21 @@ pub struct CommitHolderReport {
 pub struct TrustedPreselectedUncheckedOnePutHolderOutcome {
     terminal: u64,
     holder_state: u64,
+    timestamp_origin: NonZeroU32,
 }
 
 impl TrustedPreselectedUncheckedOnePutHolderOutcome {
     /// Return the timestamp only for the exact ordinary success word.
     ///
-    /// This fuses terminal, sealed-bit, reserved-bit, and nonzero-timestamp
+    /// This fuses terminal, sealed-bit, and nonzero-timestamp
     /// validation so the cache's common path decodes the two-word ABI result
     /// once. Every non-success result must use the fail-closed accessors below.
     #[inline(always)]
     pub const fn committed_timestamp(self) -> Option<MakoTimestamp> {
         const PACKED_OK: u64 =
             (sys::MAKO_LOCAL_OK as u32 as u64) | ((sys::MAKO_LOCAL_OK as u32 as u64) << 32);
-        if self.terminal == PACKED_OK && self.holder_state >> 32 == 1 {
-            MakoTimestamp::new(self.holder_state as u32)
+        if self.terminal == PACKED_OK && self.holder_sealed() {
+            MakoTimestamp::from_hot_stamp(self.holder_state >> 1, self.timestamp_origin)
         } else {
             None
         }
@@ -1331,13 +1455,13 @@ impl TrustedPreselectedUncheckedOnePutHolderOutcome {
     /// whenever this returns `Some`, before performing any fallible decode.
     #[inline(always)]
     pub const fn accepted_timestamp(self) -> Option<MakoTimestamp> {
-        MakoTimestamp::new(self.holder_state as u32)
+        MakoTimestamp::from_hot_stamp(self.holder_state >> 1, self.timestamp_origin)
     }
 
     /// Whether native claims the complete one-Put payload is sealed.
     #[inline(always)]
     pub const fn holder_sealed(self) -> bool {
-        self.holder_state & (1u64 << 32) != 0
+        self.holder_state & 1 != 0
     }
 
     /// Whether native returned the exact ordinary committed holder outcome.
@@ -1354,18 +1478,15 @@ impl TrustedPreselectedUncheckedOnePutHolderOutcome {
     #[cold]
     #[inline(never)]
     pub fn into_report(self) -> CommitHolderReport {
-        let raw_timestamp = self.holder_state as u32;
+        let timestamp_stamp = self.holder_state >> 1;
         let accepted_timestamp = self.accepted_timestamp();
         let holder_bound = accepted_timestamp.is_some();
         let sealed_claimed = self.holder_sealed();
-        let reserved_bits_valid = self.holder_state >> 33 == 0;
-        let timestamp_valid = raw_timestamp == 0 || holder_bound;
+        let timestamp_valid = timestamp_stamp == 0 || holder_bound;
         let decoded = decode_fast_unchecked_holder_commit(self.terminal);
 
-        let mut contract_valid = reserved_bits_valid
-            && timestamp_valid
-            && (!sealed_claimed || holder_bound)
-            && decoded.is_some();
+        let mut contract_valid =
+            timestamp_valid && (!sealed_claimed || holder_bound) && decoded.is_some();
         if let Some((commit, _)) = decoded {
             if holder_bound {
                 contract_valid &= sealed_claimed
@@ -1415,6 +1536,7 @@ pub struct TrustedOnePutHolderPool {
     holder_base: NonNull<c_void>,
     holder_mask: usize,
     capacity: usize,
+    timestamp_origin: NonZeroU32,
 }
 
 impl fmt::Debug for TrustedOnePutHolderPool {
@@ -1441,6 +1563,7 @@ impl TrustedOnePutHolderPool {
     /// hints; zero leaves payload allocations lazy.
     pub fn new(capacity: usize, key_reserve_bytes: u32, value_reserve_bytes: u32) -> Result<Self> {
         verify_abi()?;
+        let timestamp_origin = timestamp_origin()?;
         if !capacity.is_power_of_two() || capacity == 0 {
             return Err(Error::InvalidArgument);
         }
@@ -1494,12 +1617,19 @@ impl TrustedOnePutHolderPool {
             holder_base,
             holder_mask,
             capacity,
+            timestamp_origin,
         })
     }
 
     /// Number of exact generations addressable before a ring position repeats.
     pub const fn capacity(&self) -> usize {
         self.capacity
+    }
+
+    /// Process allocator origin used to reconstruct private holder stamps.
+    #[doc(hidden)]
+    pub const fn timestamp_origin(&self) -> u32 {
+        self.timestamp_origin.get()
     }
 
     /// Borrow one exact sealed holder generation after queue publication.
@@ -1521,8 +1651,7 @@ impl TrustedOnePutHolderPool {
             value: std::ptr::null(),
             key_len: 0,
             value_len: 0,
-            mako_timestamp: 0,
-            reserved: 0,
+            timestamp_stamp: 0,
         };
         // SAFETY: the caller supplies the required cross-language Acquire and
         // exact-generation ownership. `raw` is a live writable output.
@@ -1535,13 +1664,14 @@ impl TrustedOnePutHolderPool {
         })?;
 
         if raw.sequence != expected_sequence.get()
-            || raw.reserved != 0
             || raw.key_len as usize > MAX_KEY_BYTES
             || raw.value_len as usize > MAX_VALUE_BYTES
         {
             return Err(Error::Internal);
         }
-        let mako_timestamp = MakoTimestamp::new(raw.mako_timestamp).ok_or(Error::Internal)?;
+        let mako_timestamp =
+            MakoTimestamp::from_hot_stamp(raw.timestamp_stamp, self.timestamp_origin)
+                .ok_or(Error::Internal)?;
         let key = checked_holder_span(raw.key, raw.key_len as usize)?;
         let value = checked_holder_span(raw.value, raw.value_len as usize)?;
         Ok(TrustedOnePutHolderView {
@@ -1705,21 +1835,21 @@ pub enum TrustedFusedOnePutHolderAttempt {
     UntouchedGeneral,
     /// The transaction is active, but the queue needs a cold capacity refresh.
     UntouchedSlow {
-        /// Exact unchecked-v4 record extent rederived by native.
+        /// Exact unchecked-v6 record extent rederived by native.
         exact_record_bytes: NonZeroU32,
     },
     /// Native committed behind a fail-stop barrier; Rust advanced the local cursor.
     CommittedUnpublished {
         /// Accepted Mako serialization timestamp.
         timestamp: MakoTimestamp,
-        /// Exact unchecked-v4 record extent retained for cold pinning.
+        /// Exact unchecked-v6 record extent retained for cold pinning.
         exact_record_bytes: NonZeroU32,
     },
     /// Native consumed the transaction with a non-ordinary terminal outcome.
     ConsumedOutcome {
         /// Full compact terminal result for fail-closed cold decoding.
         outcome: TrustedPreselectedUncheckedOnePutHolderOutcome,
-        /// Exact unchecked-v4 record extent retained for possible pinning.
+        /// Exact unchecked-v6 record extent retained for possible pinning.
         exact_record_bytes: NonZeroU32,
     },
     /// An explicit untouched result had malformed metadata; the handle is live.
@@ -1867,7 +1997,7 @@ pub const MAX_VALUE_BYTES: usize = sys::MAKO_LOCAL_MAX_VALUE_BYTES as usize;
 /// Weighted native item budget for one draft transaction.
 pub const TRANSACTION_ITEM_BUDGET: usize = sys::MAKO_LOCAL_TXN_ITEM_BUDGET as usize;
 
-const UNCHECKED_ONE_PUT_RECORD_OVERHEAD_BYTES: usize = 26 + 17;
+const UNCHECKED_ONE_PUT_RECORD_OVERHEAD_BYTES: usize = 38 + 17;
 /// Maximum number of OS workers that may attach to STO in one process.
 ///
 /// Worker identifiers are process-lifetime resources and are not recycled.
@@ -2132,6 +2262,25 @@ pub fn verify_abi() -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(test))]
+static TIMESTAMP_ORIGIN: OnceLock<Result<NonZeroU32>> = OnceLock::new();
+
+/// Read and validate the process allocator identity after the ABI handshake.
+fn timestamp_origin() -> Result<NonZeroU32> {
+    #[cfg(not(test))]
+    return *TIMESTAMP_ORIGIN.get_or_init(|| {
+        // SAFETY: pure process-lifetime allocator identity accessor.
+        NonZeroU32::new(unsafe { abi::mako_local_timestamp_origin() }).ok_or(Error::Internal)
+    });
+
+    #[cfg(test)]
+    {
+        // Unit tests reset their fake ABI state between cases, so avoid a
+        // process-lifetime cache in this configuration.
+        NonZeroU32::new(unsafe { abi::mako_local_timestamp_origin() }).ok_or(Error::Internal)
+    }
+}
+
 fn validate_build_identity(
     engine_id: &[u8],
     fingerprint_size: usize,
@@ -2375,18 +2524,21 @@ fn commit_disposition_error(code: i32) -> CommitDisposition {
     }
 }
 
-/// Advance Mako's process-wide logical clock past a durable timestamp.
+/// Advance Mako's process-wide hybrid logical clock past a durable timestamp.
 ///
 /// This operation is atomic and monotonic and does not require attaching the
-/// calling thread. `observed` must be an exact timestamp previously returned by
-/// a Mako post-validation hook. Calling this before admitting new transactions
-/// prevents timestamp reuse after process recovery. [`Error::TimestampExhausted`]
+/// calling thread. `observed` may be any valid timestamp read from durable
+/// state, including a different origin or sub-millisecond physical value.
+/// Calling this before admitting new transactions prevents timestamp reuse
+/// after process recovery. [`Error::TimestampExhausted`]
 /// means advancing would leave no timestamp that a subsequent checked commit
 /// could mint.
 pub fn advance_mako_timestamp_past(observed: MakoTimestamp) -> Result<()> {
     verify_abi()?;
-    // SAFETY: scalar-only process-global monotonic operation.
-    status(unsafe { abi::mako_local_advance_mako_timestamp_past(observed.get()) })
+    let raw = observed.into_raw();
+    // SAFETY: `raw` remains readable for this synchronous process-global
+    // monotonic operation.
+    status(unsafe { abi::mako_local_advance_mako_timestamp_past(&raw) })
 }
 
 fn attach_current_thread() -> Result<()> {
@@ -2417,6 +2569,7 @@ fn ensure_current_thread_attached() -> Result<()> {
 /// releases the facade handles after all safe Rust borrows have ended.
 pub struct LocalDb {
     raw: NonNull<sys::mako_local_db>,
+    timestamp_origin: NonZeroU32,
     // Cache the single build-private table binding used by mako-cache. Native
     // owns this handle until `raw` is closed, and every load is converted back
     // into a borrow tied to `self`; the atomic keeps ordinary LocalDb sharing
@@ -2428,7 +2581,7 @@ pub struct LocalDb {
 /// Options for opening a local database facade.
 ///
 /// Revision 0 has no behavioral fields yet. The public type and the sized C
-/// representation reserve an append-only negotiation seam before ABI v1.
+/// representation retain an append-only negotiation seam for future revisions.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct DbOptions {}
@@ -2449,6 +2602,7 @@ impl LocalDb {
     /// Open with the revision-0 sized options contract.
     pub fn open_with_options(_options: DbOptions) -> Result<Self> {
         verify_abi()?;
+        let timestamp_origin = timestamp_origin()?;
         attach_current_thread()?;
         let mut raw = std::ptr::null_mut();
         let raw_options = sys::mako_local_db_options {
@@ -2461,6 +2615,7 @@ impl LocalDb {
         let raw = NonNull::new(raw).ok_or(Error::Internal)?;
         Ok(Self {
             raw,
+            timestamp_origin,
             trusted_table: AtomicPtr::new(std::ptr::null_mut()),
         })
     }
@@ -2506,6 +2661,7 @@ impl LocalDb {
         Ok(Transaction {
             raw: Some(raw),
             active: true,
+            timestamp_origin: self.timestamp_origin,
             fast_bound_table: None,
             record_preflight: None,
             unchecked_one_put_record_bytes: None,
@@ -2520,7 +2676,7 @@ impl LocalDb {
     /// exact native build fingerprint and whose safe wrapper supplies the
     /// pointer, length, database, table, and thread-affinity invariants omitted
     /// by the hot native Put and consuming terminal entries. Other operations
-    /// retain the checked v0 ABI. The transaction has exactly the same public
+    /// retain the checked public v1 ABI. The transaction has exactly the same public
     /// ownership and error semantics as one returned by [`Self::transaction`].
     ///
     /// This is intentionally not the long-term compiler optimization story.
@@ -2550,6 +2706,7 @@ impl LocalDb {
         Ok(Transaction {
             raw: Some(raw),
             active: true,
+            timestamp_origin: self.timestamp_origin,
             fast_bound_table: Some(bound_table.raw),
             record_preflight: None,
             unchecked_one_put_record_bytes: None,
@@ -2601,14 +2758,14 @@ impl LocalDb {
     ///
     /// The local cache supports one recovered namespace per process. This
     /// build-private call enforces that contract before recovery admits work,
-    /// records one immutable foreground mode, and resets only the packed
+    /// records one immutable foreground mode, and resets only the dense
     /// compatibility sequence. Per-worker physical lane tails are owned and
     /// recovered by the Rust cache.
     ///
     /// # Safety
     ///
     /// The caller must exclusively own this newly opened facade. No legacy or
-    /// packed record terminal may overlap the claim, and `mode` must remain the
+    /// cache-record terminal may overlap the claim, and `mode` must remain the
     /// cache's foreground mode until the facade closes.
     #[doc(hidden)]
     pub unsafe fn claim_cache_order_namespace(&self, mode: CacheOrderMode) -> Result<()> {
@@ -2619,7 +2776,7 @@ impl LocalDb {
         })
     }
 
-    /// Set the recovered packed compatibility tail for this claimed namespace.
+    /// Set the recovered dense compatibility tail for this claimed namespace.
     ///
     /// # Safety
     ///
@@ -2639,19 +2796,19 @@ impl LocalDb {
         })
     }
 
-    /// Return the packed cache-order state for diagnostics and cold checks.
+    /// Return the dense cache-sequence state for diagnostics and cold checks.
     #[doc(hidden)]
     pub fn cache_order_snapshot(&self) -> u64 {
         // SAFETY: the live claimed facade is borrowed for this load only.
         unsafe { fast_abi::mako_rust_fast_db_cache_order_snapshot(self.raw.as_ptr()) }
     }
 
-    /// Place a packed-state modification-order cut before a following cache
+    /// Place an HLC-state modification-order cut before a following cache
     /// outcome scan.
     ///
     /// This build-private synchronization seam is used only by mako-cache's
     /// read-only commit fence. Concurrent cache writers publish their Rust
-    /// outcome slot before native assigns its packed order, then clear it only
+    /// outcome slot before native assigns accepted ordering metadata, then clear it only
     /// after the native outcome is represented in write-back. It is valid for
     /// both Concurrent and PerWorker claims; SingleProducer supplies its own
     /// exclusion instead.
@@ -2763,6 +2920,7 @@ impl Table<'_> {
 pub struct Transaction<'db> {
     raw: Option<NonNull<sys::mako_local_txn>>,
     active: bool,
+    timestamp_origin: NonZeroU32,
     // Present only for the build-private cache path. Exact pointer equality is
     // required before the unchecked Put can omit table ownership validation.
     fast_bound_table: Option<NonNull<sys::mako_local_table>>,
@@ -2770,7 +2928,7 @@ pub struct Transaction<'db> {
     // is retained so storage sized for another transaction cannot be supplied
     // to the consuming serialization terminal.
     record_preflight: Option<CommitRecordPreflight>,
-    // Exact unchecked-v4 extent advertised by the latest private fast Put.
+    // Exact unchecked-v6 extent advertised by the latest private fast Put.
     // Native returns it only while a direct one-Put canonical witness remains
     // usable; every other operation clears this conservative Rust mirror.
     unchecked_one_put_record_bytes: Option<NonZeroU32>,
@@ -3310,7 +3468,7 @@ impl<'db> Transaction<'db> {
         Ok(existed != 0)
     }
 
-    /// Return the exact direct one-Put unchecked-v4 record candidate.
+    /// Return the exact direct one-Put unchecked-v6 record candidate.
     ///
     /// Unlike [`Self::commit_record_preflight_with_checksum`], this performs
     /// no ABI call and does not seal native state. It is available only when
@@ -3337,7 +3495,7 @@ impl<'db> Transaction<'db> {
             })
     }
 
-    /// Return only the compact unchecked-v4 extent for the cache-private
+    /// Return only the compact unchecked-v6 extent for the cache-private
     /// single-producer fast path.
     ///
     /// This deliberately omits the redundant facade-state checks and
@@ -3372,7 +3530,7 @@ impl<'db> Transaction<'db> {
     /// the transaction's native write plan; call it exactly once, after the
     /// final transaction operation. `max_record_bytes` bounds nonempty plans
     /// and guards the eventual allocation request. A read-only or net-empty
-    /// plan succeeds without allocation even when its diagnostic 30-byte
+    /// plan succeeds without allocation even when its diagnostic 42-byte
     /// framing size exceeds that cap.
     #[doc(hidden)]
     pub fn commit_record_preflight(
@@ -3387,7 +3545,7 @@ impl<'db> Transaction<'db> {
     ///
     /// This has the same one-shot and fail-closed contract as
     /// [`Self::commit_record_preflight`]. CRC32C is the safe default; selecting
-    /// [`CommitRecordChecksum::None`] produces a self-describing unchecked v4
+    /// [`CommitRecordChecksum::None`] produces a self-describing unchecked v6
     /// record and deliberately gives up payload-corruption detection.
     #[doc(hidden)]
     pub fn commit_record_preflight_with_checksum(
@@ -3467,10 +3625,9 @@ impl<'db> Transaction<'db> {
 
     /// Commit with an allocation-free post-validation, pre-install hook.
     ///
-    /// Native Mako assigns its logical timestamp after Silo locks the full write
-    /// set and before the remaining read-set validation. `hook` runs only after
-    /// all validation succeeds, while all write locks remain held and before
-    /// any write becomes visible.
+    /// Native Mako assigns its HLC timestamp after Silo locks the full write
+    /// set and all final read-set validation succeeds. `hook` then runs while
+    /// all write locks remain held and before any write becomes visible.
     /// It should therefore only bind already-owned storage to an
     /// already-reserved queue slot. It may enter a bounded in-memory critical
     /// section, but must not do I/O, wait for capacity, allocate, or unwind.
@@ -3498,9 +3655,9 @@ impl<'db> Transaction<'db> {
     /// The transaction must have a successful nonempty
     /// [`Self::commit_record_preflight`], and `record` must have been allocated
     /// from those exact bounds. For this record-only terminal, native orders
-    /// Mako timestamp assignment, final validation, and `acquire` with a
+    /// final validation, Mako timestamp assignment, and `acquire` with an
     /// ordering gate. Unclaimed/SingleProducer facades use the per-database
-    /// ticket, while PerWorker uses the packed general bit. Thus successful
+    /// ticket, while PerWorker uses the process HLC validation gate. Thus successful
     /// callbacks can bind the next serialization-safe lane slot while
     /// validation losers consume no slot. Native retires that short turn
     /// before walking/copying the canonical record, but retains every write
@@ -3557,6 +3714,7 @@ impl<'db> Transaction<'db> {
             hook: Some(acquire),
             record: NonNull::from(&mut *record),
             preflight,
+            timestamp_origin: self.timestamp_origin,
             bound: false,
         };
         let mut record_written = 0u8;
@@ -3683,6 +3841,7 @@ impl<'db> Transaction<'db> {
         let mut state = RecordTargetBindHook {
             hook: Some(acquire),
             preflight,
+            timestamp_origin: self.timestamp_origin,
             bound: false,
         };
         let mut record_written = 0u8;
@@ -3743,12 +3902,12 @@ impl<'db> Transaction<'db> {
         }
     }
 
-    /// Commit one preflighted general transaction with a native-assigned
-    /// timestamp/dense-sequence pair.
+    /// Commit one preflighted general transaction with a native-assigned HLC
+    /// timestamp and physical cache sequence.
     ///
-    /// Native owns the packed general-certification bit across timestamp
-    /// allocation and final validation, assigns the dense sequence only after
-    /// validation succeeds, then releases the bit before invoking `acquire`.
+    /// Native holds the HLC validation gate across final validation, then
+    /// assigns the timestamp and independent physical sequence before
+    /// releasing the gate and invoking `acquire`.
     /// The callback must adopt that exact sequence into the cache queue; it
     /// must never allocate or substitute a Rust-side sequence.
     ///
@@ -3783,10 +3942,11 @@ impl<'db> Transaction<'db> {
         let mut state = NativeOrderedRecordTargetBindHook {
             hook: Some(acquire),
             preflight,
+            timestamp_origin: self.timestamp_origin,
             bound: false,
         };
         let mut ordered_sequence = 0u64;
-        let mut ordered_timestamp = 0u32;
+        let mut timestamp_stamp = 0u64;
         let mut record_written = 0u8;
         // SAFETY: the callback state and scalar outputs remain live and pinned
         // until the same-build synchronous terminal has returned.
@@ -3797,7 +3957,7 @@ impl<'db> Transaction<'db> {
                 Some(native_ordered_one_put_record_target_bind_trampoline::<F>),
                 std::ptr::from_mut(&mut state).cast::<c_void>(),
                 &mut ordered_sequence,
-                &mut ordered_timestamp,
+                &mut timestamp_stamp,
                 &mut record_written,
             )
         };
@@ -3809,9 +3969,10 @@ impl<'db> Transaction<'db> {
                 record_written,
             },
             ordered_sequence,
-            ordered_timestamp,
+            timestamp_stamp,
+            timestamp_origin: self.timestamp_origin,
             target_bound: state.bound,
-            native_holder_ready: false,
+            native_holder_ready: 0,
         }
     }
 
@@ -3820,7 +3981,7 @@ impl<'db> Transaction<'db> {
     /// `candidate` must be the value returned by
     /// [`Self::unchecked_one_put_record_candidate`] after the final operation.
     /// Native rederives that exact one-Put shape before acquiring write locks,
-    /// seals it as an unchecked-v4 record, and otherwise uses the same ordered
+    /// seals it as an unchecked-v6 record, and otherwise uses the same ordered
     /// post-validation binding and serialization-before-install protocol as
     /// [`Self::commit_report_with_record_target`]. A stale candidate, later
     /// operation, or native shape mismatch definitely aborts without invoking
@@ -3933,9 +4094,10 @@ impl<'db> Transaction<'db> {
 
     /// Commit one verified one-Put while native assigns the cache sequence.
     ///
-    /// One packed native CAS pairs Mako timestamp allocation with the dense
-    /// sequence after restricted validation. `acquire` receives that exact
-    /// sequence and lends its target for serialization-before-install.
+    /// Native allocates the HLC timestamp first and the physical sequence second
+    /// after restricted validation. The independent atomic allocations may
+    /// appear in opposite orders under concurrency. `acquire` receives the
+    /// exact sequence and lends its target for serialization-before-install.
     ///
     /// # Safety
     ///
@@ -3982,10 +4144,11 @@ impl<'db> Transaction<'db> {
         let mut state = NativeOrderedRecordTargetBindHook {
             hook: Some(acquire),
             preflight: candidate,
+            timestamp_origin: self.timestamp_origin,
             bound: false,
         };
         let mut ordered_sequence = 0u64;
-        let mut ordered_timestamp = 0u32;
+        let mut timestamp_stamp = 0u64;
         let mut record_written = 0u8;
         // SAFETY: all raw addresses point to naturally aligned, live Rust
         // atomic/stack storage, and the callback state remains pinned here
@@ -3999,7 +4162,7 @@ impl<'db> Transaction<'db> {
                 Some(native_ordered_one_put_record_target_bind_trampoline::<F>),
                 std::ptr::from_mut(&mut state).cast::<c_void>(),
                 &mut ordered_sequence,
-                &mut ordered_timestamp,
+                &mut timestamp_stamp,
                 &mut record_written,
             )
         };
@@ -4011,16 +4174,17 @@ impl<'db> Transaction<'db> {
                 record_written,
             },
             ordered_sequence,
-            ordered_timestamp,
+            timestamp_stamp,
+            timestamp_origin: self.timestamp_origin,
             target_bound: state.bound,
-            native_holder_ready: false,
+            native_holder_ready: 0,
         }
     }
 
     /// Commit one verified one-Put directly into the native record arena.
     ///
-    /// Native uses the restricted pair CAS when the write lock covers final
-    /// validation. Insert/predicate fallback instead assigns under the packed
+    /// Native uses restricted timestamp-then-sequence allocation when the write
+    /// lock covers final validation. Insert/predicate fallback assigns under the HLC
     /// general-certification bit. It then binds the exact publication
     /// generation and serializes into the matching arena block without a Rust
     /// callback. A returned nonzero order already owns a BOUND cell.
@@ -4072,14 +4236,8 @@ impl<'db> Transaction<'db> {
                 std::ptr::from_ref(control),
             )
         };
-        let ordered_timestamp = result.record_state as u32;
-        let record_written = if result.record_state >> 33 == 0 {
-            ((result.record_state >> 32) & 1) as u8
-        } else {
-            // Preserve malformed reserved bits for the existing cold decoder.
-            // A value above one can never satisfy its completion contract.
-            u8::MAX
-        };
+        let timestamp_stamp = result.record_state >> 1;
+        let record_written = (result.record_state & 1) as u8;
         let target_bound = result.ordered_sequence != 0;
         TrustedNativeOrderedOnePutRecordOutcome {
             inner: TrustedUncheckedOnePutRecordOutcome {
@@ -4088,14 +4246,15 @@ impl<'db> Transaction<'db> {
                 record_written,
             },
             ordered_sequence: result.ordered_sequence,
-            ordered_timestamp,
+            timestamp_stamp,
+            timestamp_origin: self.timestamp_origin,
             target_bound,
-            native_holder_ready: false,
+            native_holder_ready: 0,
         }
     }
 
-    /// Commit one verified one-Put into a native holder selected after packed
-    /// timestamp/sequence assignment.
+    /// Commit one verified one-Put into a native holder selected after native
+    /// timestamp and sequence assignment.
     ///
     /// This is the concurrent counterpart of the preselected SPSC holder
     /// terminal. Native acquires the exact publication generation before it
@@ -4110,7 +4269,7 @@ impl<'db> Transaction<'db> {
     /// The transaction and candidate requirements match
     /// [`Self::commit_trusted_native_ordered_unchecked_one_put_arena`]. The
     /// control must describe the same concurrent queue and holder pool used by
-    /// all of its packed terminals, and the caller must retain one detached
+    /// all of its concurrent terminals, and the caller must retain one detached
     /// capacity right. Every accepted non-success sequence owns an already-
     /// BOUND turn and must be published or pinned. Exact ordinary success owns
     /// an already-READY turn which must be caller-acknowledged without
@@ -4150,12 +4309,8 @@ impl<'db> Transaction<'db> {
                 std::ptr::from_ref(control),
             )
         };
-        let ordered_timestamp = result.record_state as u32;
-        let holder_sealed = if result.record_state >> 34 == 0 {
-            ((result.record_state >> 32) & 1) as u8
-        } else {
-            u8::MAX
-        };
+        let timestamp_stamp = result.record_state >> 1;
+        let holder_sealed = (result.record_state & 1) as u8;
         let target_bound = result.ordered_sequence != 0;
         TrustedNativeOrderedOnePutRecordOutcome {
             inner: TrustedUncheckedOnePutRecordOutcome {
@@ -4164,9 +4319,10 @@ impl<'db> Transaction<'db> {
                 record_written: holder_sealed,
             },
             ordered_sequence: result.ordered_sequence,
-            ordered_timestamp,
+            timestamp_stamp,
+            timestamp_origin: self.timestamp_origin,
             target_bound,
-            native_holder_ready: result.record_state & (1u64 << 33) != 0,
+            native_holder_ready: result.holder_ready,
         }
     }
 
@@ -4208,7 +4364,7 @@ impl<'db> Transaction<'db> {
     /// This callback-free terminal is the narrowest cache-only spelling. The
     /// caller selects the dense sequence and exact record storage before native
     /// validation. Native independently rederives the candidate, acquires the
-    /// write set, assigns the Mako timestamp, performs final validation,
+    /// write set, performs final validation, assigns the Mako timestamp,
     /// serializes into `target`, and only then installs the write. The returned
     /// [`TrustedPreselectedUncheckedOnePutRecordOutcome::accepted_timestamp`]
     /// is the sole indication that native accepted the preselected target into
@@ -4275,6 +4431,7 @@ impl<'db> Transaction<'db> {
         TrustedPreselectedUncheckedOnePutRecordOutcome {
             terminal: result.terminal,
             record_state: result.record_state,
+            timestamp_origin: self.timestamp_origin,
         }
     }
 
@@ -4531,7 +4688,6 @@ impl<'db> Transaction<'db> {
         const UNTOUCHED_NEED_SLOW: u32 = 2;
         const CONSUMED_COMMITTED_UNPUBLISHED: u32 = 3;
         const CONSUMED_OUTCOME: u32 = 4;
-        const HOLDER_STATE_MASK: u64 = (1u64 << 33) - 1;
         let code = raw_result as u32;
         let payload = (raw_result >> 32) as u32;
         // SAFETY: the fused terminal contract keeps these naturally aligned
@@ -4582,43 +4738,38 @@ impl<'db> Transaction<'db> {
                     return TrustedFusedOnePutHolderAttempt::ConsumedMalformed;
                 };
                 producer_next.store(sequence, Ordering::Relaxed);
-                let Some(timestamp) = MakoTimestamp::new(payload) else {
+                let Some(exact_record_bytes) = NonZeroU32::new(payload) else {
                     return TrustedFusedOnePutHolderAttempt::ConsumedMalformed;
                 };
                 // SAFETY: native initializes cold_out for both consumed cold
                 // codes. Code 3 was established above.
                 let cold_out = unsafe { *control.raw.cold_out.get() };
-                let Some(exact_record_bytes) =
-                    NonZeroU32::new((cold_out.record_state >> 33) as u32)
-                else {
-                    return TrustedFusedOnePutHolderAttempt::ConsumedMalformed;
-                };
                 let outcome = TrustedPreselectedUncheckedOnePutHolderOutcome {
                     terminal: cold_out.terminal,
-                    holder_state: cold_out.record_state & HOLDER_STATE_MASK,
+                    holder_state: cold_out.record_state,
+                    timestamp_origin: self.timestamp_origin,
                 };
-                if !outcome.is_committed() || outcome.accepted_timestamp() != Some(timestamp) {
+                let Some(timestamp) = outcome.committed_timestamp() else {
                     return TrustedFusedOnePutHolderAttempt::ConsumedMalformed;
-                }
+                };
                 TrustedFusedOnePutHolderAttempt::CommittedUnpublished {
                     timestamp,
                     exact_record_bytes,
                 }
             }
-            CONSUMED_OUTCOME if payload == 0 => {
+            CONSUMED_OUTCOME => {
                 producer_next.store(acknowledged.load(Ordering::Relaxed), Ordering::Relaxed);
                 // SAFETY: the frozen ABI initializes `cold_out` for code 4 and
                 // code 3. The exact code was established above.
                 let cold_out = unsafe { *control.raw.cold_out.get() };
-                let Some(exact_record_bytes) =
-                    NonZeroU32::new((cold_out.record_state >> 33) as u32)
-                else {
+                let Some(exact_record_bytes) = NonZeroU32::new(payload) else {
                     return TrustedFusedOnePutHolderAttempt::ConsumedMalformed;
                 };
                 TrustedFusedOnePutHolderAttempt::ConsumedOutcome {
                     outcome: TrustedPreselectedUncheckedOnePutHolderOutcome {
                         terminal: cold_out.terminal,
-                        holder_state: cold_out.record_state & HOLDER_STATE_MASK,
+                        holder_state: cold_out.record_state,
+                        timestamp_origin: self.timestamp_origin,
                     },
                     exact_record_bytes,
                 }
@@ -4677,6 +4828,7 @@ impl<'db> Transaction<'db> {
         TrustedPreselectedUncheckedOnePutHolderOutcome {
             terminal: result.terminal,
             holder_state: result.record_state,
+            timestamp_origin: self.timestamp_origin,
         }
     }
 
@@ -4727,6 +4879,7 @@ impl<'db> Transaction<'db> {
         TrustedPreselectedUncheckedOnePutHolderOutcome {
             terminal: result.terminal,
             holder_state: result.record_state,
+            timestamp_origin: self.timestamp_origin,
         }
     }
 
@@ -4760,6 +4913,7 @@ impl<'db> Transaction<'db> {
         let mut state = RecordTargetBindHook {
             hook: Some(acquire),
             preflight: candidate,
+            timestamp_origin: self.timestamp_origin,
             bound: false,
         };
         let mut record_written = 0u8;
@@ -4944,26 +5098,32 @@ struct RecordBindHook<F> {
     hook: Option<F>,
     record: NonNull<UninitCommitRecord>,
     preflight: CommitRecordPreflight,
+    timestamp_origin: NonZeroU32,
     bound: bool,
 }
 
 struct RecordTargetBindHook<F> {
     hook: Option<F>,
     preflight: CommitRecordPreflight,
+    timestamp_origin: NonZeroU32,
     bound: bool,
 }
 
 struct NativeOrderedRecordTargetBindHook<F> {
     hook: Option<F>,
     preflight: CommitRecordPreflight,
+    timestamp_origin: NonZeroU32,
     bound: bool,
 }
 
-unsafe extern "C" fn post_validate_trampoline<F>(context: *mut c_void, raw_timestamp: u32) -> i32
+unsafe extern "C" fn post_validate_trampoline<F>(
+    context: *mut c_void,
+    raw_timestamp: *const sys::mako_timestamp_v1,
+) -> i32
 where
     F: FnOnce(MakoTimestamp) -> bool,
 {
-    if context.is_null() {
+    if context.is_null() || raw_timestamp.is_null() {
         return 0;
     }
     // SAFETY: commit_report_with_hook passes this exact stack value, and the
@@ -4972,7 +5132,8 @@ where
     let Some(hook) = state.hook.take() else {
         return 0;
     };
-    let Some(timestamp) = MakoTimestamp::new(raw_timestamp) else {
+    // SAFETY: native lends one readable timestamp for the synchronous call.
+    let Some(timestamp) = MakoTimestamp::from_raw(unsafe { raw_timestamp.read() }) else {
         return 0;
     };
     if catch_unwind(AssertUnwindSafe(|| hook(timestamp))).unwrap_or(false) {
@@ -4985,7 +5146,7 @@ where
 #[allow(clippy::too_many_arguments)]
 unsafe extern "C" fn record_bind_trampoline<F>(
     context: *mut c_void,
-    raw_timestamp: u32,
+    timestamp_stamp: u64,
     exact_record_bytes: usize,
     sequence_out: *mut u64,
     record_bytes_out: *mut *mut u8,
@@ -5019,7 +5180,8 @@ where
     // SAFETY: commit_report_with_record passes this exact stack value and the
     // native contract invokes the callback synchronously at most once.
     let state = unsafe { &mut *context.cast::<RecordBindHook<F>>() };
-    let Some(timestamp) = MakoTimestamp::new(raw_timestamp) else {
+    let Some(timestamp) = MakoTimestamp::from_hot_stamp(timestamp_stamp, state.timestamp_origin)
+    else {
         return 0;
     };
     if exact_record_bytes != state.preflight.exact_record_bytes {
@@ -5059,7 +5221,7 @@ where
 #[allow(clippy::too_many_arguments)]
 unsafe extern "C" fn record_target_bind_trampoline<F>(
     context: *mut c_void,
-    raw_timestamp: u32,
+    timestamp_stamp: u64,
     exact_record_bytes: usize,
     sequence_out: *mut u64,
     record_bytes_out: *mut *mut u8,
@@ -5093,7 +5255,8 @@ where
     // SAFETY: commit_report_with_record_target passes this exact stack value;
     // native invokes the callback synchronously at most once.
     let state = unsafe { &mut *context.cast::<RecordTargetBindHook<F>>() };
-    let Some(timestamp) = MakoTimestamp::new(raw_timestamp) else {
+    let Some(timestamp) = MakoTimestamp::from_hot_stamp(timestamp_stamp, state.timestamp_origin)
+    else {
         return 0;
     };
     if exact_record_bytes != state.preflight.exact_record_bytes {
@@ -5135,7 +5298,7 @@ where
 #[allow(clippy::too_many_arguments)]
 unsafe extern "C" fn unchecked_one_put_record_target_bind_trampoline<F>(
     context: *mut c_void,
-    raw_timestamp: u32,
+    timestamp_stamp: u64,
     exact_record_bytes: usize,
     sequence_out: *mut u64,
     record_bytes_out: *mut *mut u8,
@@ -5148,7 +5311,10 @@ where
     debug_assert!(!sequence_out.is_null());
     debug_assert!(!record_bytes_out.is_null());
     debug_assert!(!record_capacity_out.is_null());
-    debug_assert!(MakoTimestamp::new(raw_timestamp).is_some());
+    debug_assert!(MakoTimestamp::from_hot_stamp(timestamp_stamp, unsafe {
+        (*context.cast::<RecordTargetBindHook<F>>()).timestamp_origin
+    })
+    .is_some());
 
     // SAFETY: the hidden native terminal receives this exact live stack state,
     // invokes the callback synchronously at most once, and supplies the
@@ -5156,10 +5322,11 @@ where
     let state = unsafe { &mut *context.cast::<RecordTargetBindHook<F>>() };
     debug_assert_eq!(exact_record_bytes, state.preflight.exact_record_bytes);
 
-    // SAFETY: native allocates a nonzero in-range Mako timestamp before it can
-    // invoke the fused bind hook. The debug assertion retains a diagnostic for
-    // a mismatched development ABI without a production hot-path branch.
-    let timestamp = MakoTimestamp(unsafe { NonZeroU32::new_unchecked(raw_timestamp) });
+    // SAFETY: native allocates a valid nonzero hot stamp before invoking this
+    // trusted hook. The debug assertion above diagnoses a mismatched build.
+    let timestamp = unsafe {
+        MakoTimestamp::from_hot_stamp(timestamp_stamp, state.timestamp_origin).unwrap_unchecked()
+    };
     // SAFETY: native invokes this fused callback at most once for the live
     // state, so the FnOnce value is present on its sole invocation.
     let hook = unsafe { state.hook.take().unwrap_unchecked() };
@@ -5185,13 +5352,13 @@ where
 
 /// Trusted target binder for the native-assigned sequence path.
 ///
-/// Native initializes `sequence_in_out` to the sequence paired with
-/// `raw_timestamp` in packed state. The callback adopts that exact queue
-/// generation and returns its stable arena target after pair assignment.
+/// Native initializes `sequence_in_out` to the dense sequence accepted beside
+/// `timestamp_stamp`. The callback adopts that exact queue generation and
+/// returns its stable arena target after both independent allocations.
 #[allow(clippy::too_many_arguments)]
 unsafe extern "C" fn native_ordered_one_put_record_target_bind_trampoline<F>(
     context: *mut c_void,
-    raw_timestamp: u32,
+    timestamp_stamp: u64,
     exact_record_bytes: usize,
     sequence_in_out: *mut u64,
     record_bytes_out: *mut *mut u8,
@@ -5207,7 +5374,8 @@ where
     // SAFETY: the private terminal passes this exact live stack state and
     // invokes the callback synchronously at most once after retiring its gate.
     let state = unsafe { &mut *context.cast::<NativeOrderedRecordTargetBindHook<F>>() };
-    let Some(timestamp) = MakoTimestamp::new(raw_timestamp) else {
+    let Some(timestamp) = MakoTimestamp::from_hot_stamp(timestamp_stamp, state.timestamp_origin)
+    else {
         return 0;
     };
     // SAFETY: the hidden terminal supplies a readable, non-null in/out word.
@@ -5215,9 +5383,7 @@ where
     let Some(ordered_sequence) = NonZeroU64::new(raw_sequence) else {
         return 0;
     };
-    if raw_sequence > u64::from(MAX_MAKO_TIMESTAMP)
-        || exact_record_bytes != state.preflight.exact_record_bytes
-    {
+    if exact_record_bytes != state.preflight.exact_record_bytes {
         return 0;
     }
     // SAFETY: this private callback is invoked once for the live state.
@@ -5246,7 +5412,7 @@ where
 unsafe extern "C" fn test_commit_observer_trampoline(
     _context: *mut c_void,
     raw_phase: u32,
-    mako_timestamp: u32,
+    raw_timestamp: *const sys::mako_timestamp_v1,
 ) {
     let Some(phase) = TestCommitPhase::from_raw(raw_phase) else {
         return;
@@ -5257,7 +5423,13 @@ unsafe extern "C" fn test_commit_observer_trampoline(
         };
         // A panic must never unwind through the C ABI or the noexcept C++
         // transaction core. A callback panic cannot change commit disposition.
-        let _ = catch_unwind(AssertUnwindSafe(|| observer(phase, mako_timestamp)));
+        let timestamp = if raw_timestamp.is_null() {
+            None
+        } else {
+            // SAFETY: native lends the timestamp for this synchronous callback.
+            MakoTimestamp::from_raw(unsafe { raw_timestamp.read() })
+        };
+        let _ = catch_unwind(AssertUnwindSafe(|| observer(phase, timestamp)));
     });
 }
 
@@ -5297,30 +5469,37 @@ impl Drop for ForeignBytes {
 mod tests {
     use super::*;
 
-    #[test]
-    fn mako_timestamp_reserves_zero_as_unassigned() {
-        assert_eq!(MakoTimestamp::new(0), None);
-        assert_eq!(MakoTimestamp::new(1).map(MakoTimestamp::get), Some(1));
-        assert_eq!(
-            MakoTimestamp::new(MAX_MAKO_TIMESTAMP).map(MakoTimestamp::get),
-            Some(MAX_MAKO_TIMESTAMP)
-        );
-        assert_eq!(MakoTimestamp::new(MAX_MAKO_TIMESTAMP + 1), None);
-        assert_eq!(MakoTimestamp::new(u32::MAX), None);
+    fn test_timestamp(logical: u32) -> MakoTimestamp {
+        MakoTimestamp::new(1_700_000_000_000_000, logical, 1).unwrap()
     }
 
     #[test]
-    fn native_order_witness_rejects_sequence_outside_packed_domain() {
+    fn mako_timestamp_validates_origin_and_canonical_bytes() {
+        assert_eq!(MakoTimestamp::new(0, 0, 0), None);
+        assert_eq!(MakoTimestamp::new(1, 2, 0), None);
+        let timestamp = MakoTimestamp::new(1, u32::MAX, 3).unwrap();
+        assert_eq!(timestamp.physical_us(), 1);
+        assert_eq!(timestamp.logical(), u32::MAX);
+        assert_eq!(timestamp.origin(), 3);
+        assert_eq!(
+            MakoTimestamp::from_be_bytes(timestamp.to_be_bytes()),
+            Some(timestamp)
+        );
+    }
+
+    #[test]
+    fn native_order_witness_requires_a_stamp_for_a_nonzero_sequence() {
         let malformed = TrustedNativeOrderedOnePutRecordOutcome {
             inner: TrustedUncheckedOnePutRecordOutcome {
                 packed: 0,
                 record_bound: false,
                 record_written: 0,
             },
-            ordered_sequence: u64::from(MAX_MAKO_TIMESTAMP) + 1,
-            ordered_timestamp: 1,
+            ordered_sequence: 1,
+            timestamp_stamp: 0,
+            timestamp_origin: NonZeroU32::new(1).unwrap(),
             target_bound: false,
-            native_holder_ready: false,
+            native_holder_ready: 0,
         };
 
         assert!(!malformed.order_witness_valid());
@@ -5339,9 +5518,10 @@ mod tests {
                 record_written: 1,
             },
             ordered_sequence: 11,
-            ordered_timestamp: 17,
+            timestamp_stamp: test_timestamp(17).local_stamp().unwrap(),
+            timestamp_origin: NonZeroU32::new(1).unwrap(),
             target_bound: true,
-            native_holder_ready: true,
+            native_holder_ready: 1,
         };
         assert!(ready.is_committed());
         assert!(ready.native_holder_ready());
@@ -5354,31 +5534,24 @@ mod tests {
                 record_bound: true,
                 record_written: 1,
             },
-            native_holder_ready: true,
+            native_holder_ready: 1,
             ..ready
         };
         assert!(!malformed.is_committed());
         assert!(!malformed.into_report().completion_contract_valid);
 
-        // The native decoder maps any holder bit above READY (bit 33) to this
-        // invalid sealed witness. READY plus one reserved bit must therefore
-        // fail closed even when the terminal statuses and order are otherwise
-        // an exact success.
-        let malformed_reserved = TrustedNativeOrderedOnePutRecordOutcome {
-            inner: TrustedUncheckedOnePutRecordOutcome {
-                packed: packed_ok,
-                record_bound: true,
-                record_written: u8::MAX,
-            },
-            native_holder_ready: true,
+        // A holder-ready word outside the exact zero/one domain fails closed.
+        let malformed_ready_word = TrustedNativeOrderedOnePutRecordOutcome {
+            native_holder_ready: 2,
             ..ready
         };
-        assert!(!malformed_reserved.is_committed());
-        assert!(!malformed_reserved.into_report().completion_contract_valid);
+        assert!(malformed_ready_word.is_committed());
+        assert!(!malformed_ready_word.native_holder_ready());
+        assert!(!malformed_ready_word.into_report().completion_contract_valid);
     }
 
     #[test]
-    fn native_ordered_binder_rejects_overrange_sequence_before_publication() {
+    fn native_ordered_binder_rejects_a_missing_timestamp_stamp() {
         type Hook =
             fn(MakoTimestamp, CommitRecordPreflight, NonZeroU64) -> Option<CommitRecordTarget>;
         static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -5400,9 +5573,10 @@ mod tests {
         let mut state = NativeOrderedRecordTargetBindHook {
             hook: Some(count_call as Hook),
             preflight,
+            timestamp_origin: NonZeroU32::new(1).unwrap(),
             bound: false,
         };
-        let mut sequence = u64::from(MAX_MAKO_TIMESTAMP) + 1;
+        let mut sequence = 1;
         let mut record_bytes = std::ptr::null_mut();
         let mut record_capacity = 0;
 
@@ -5411,7 +5585,7 @@ mod tests {
         let accepted = unsafe {
             native_ordered_one_put_record_target_bind_trampoline::<Hook>(
                 (&mut state as *mut NativeOrderedRecordTargetBindHook<Hook>).cast(),
-                1,
+                0,
                 preflight.exact_record_bytes,
                 &mut sequence,
                 &mut record_bytes,
@@ -5472,12 +5646,12 @@ mod tests {
                 TestCommitPhase::WritesetLocked,
             ),
             (
-                sys::MAKO_LOCAL_TEST_COMMIT_MAKO_TIMESTAMP_ALLOCATED,
-                TestCommitPhase::MakoTimestampAllocated,
-            ),
-            (
                 sys::MAKO_LOCAL_TEST_COMMIT_LOCAL_VALIDATION_COMPLETE,
                 TestCommitPhase::LocalValidationComplete,
+            ),
+            (
+                sys::MAKO_LOCAL_TEST_COMMIT_MAKO_TIMESTAMP_ALLOCATED,
+                TestCommitPhase::MakoTimestampAllocated,
             ),
             (
                 sys::MAKO_LOCAL_TEST_COMMIT_PREINSTALL_ACCEPTED,

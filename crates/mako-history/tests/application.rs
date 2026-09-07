@@ -1,15 +1,19 @@
 use mako_history::{
     check_application, state_insert, ApplicationCheckFailureKind, ApplicationCommit,
     ApplicationCommitOutcome, ApplicationHistory, BackendAttempt, BackendAttemptOutcome, CacheSeq,
-    CheckOptions, FrontierObservation, History, Interval, ModelMutation, Observation, Operation,
-    Semantics, State, TerminalCall, TerminalOutcome, TimedOperation, Transaction,
-    WaitAppliedObservation, WaitAppliedOutcome,
+    CheckOptions, FrontierObservation, History, Interval, MakoTimestamp, ModelMutation,
+    Observation, Operation, Semantics, State, TerminalCall, TerminalOutcome, TimedOperation,
+    Transaction, WaitAppliedObservation, WaitAppliedOutcome,
 };
 
 const TABLE: u64 = 7;
 
 fn seq(value: u64) -> CacheSeq {
     CacheSeq::new(value).unwrap()
+}
+
+fn timestamp(logical: u32) -> MakoTimestamp {
+    MakoTimestamp::new(1_700_000_000_000_000, logical, 1).unwrap()
 }
 
 fn check(
@@ -28,7 +32,7 @@ fn two_ordered_writes() -> ApplicationHistory {
     ));
     // T1 installs while its response is delayed. T2 observes the install and
     // returns from commit before T1, so response order is deliberately not the
-    // serialization/cache order.
+    // serialization/HLC order.
     first.finish(TerminalCall::commit(5, 18, TerminalOutcome::Committed));
 
     let mut second = Transaction::new(2, Interval::completed(6, 7));
@@ -72,12 +76,14 @@ fn two_ordered_writes() -> ApplicationHistory {
             2,
             Interval::completed(14, 17),
             ApplicationCommitOutcome::AcknowledgedWrite { seq: seq(2) },
-        ),
+        )
+        .with_mako_timestamp(timestamp(2)),
         ApplicationCommit::new(
             1,
             Interval::completed(5, 18),
             ApplicationCommitOutcome::AcknowledgedWrite { seq: seq(1) },
-        ),
+        )
+        .with_mako_timestamp(timestamp(1)),
     ]);
     history.backend_attempts.extend([
         BackendAttempt::new(
@@ -125,7 +131,91 @@ fn full_application_history_accepts_response_reordering_retry_and_binary_batches
     )
     .unwrap();
     let witness = check(&history).unwrap();
-    assert_eq!(witness.cache_order.serialization, vec![1, 2]);
+    assert_eq!(witness.mako_timestamp_order.serialization, vec![1, 2]);
+    assert_eq!(witness.successful_backend_prefix, 2);
+}
+
+#[test]
+fn hlc_order_preserves_same_key_history_when_cache_ingestion_is_reversed() {
+    let mut first = Transaction::new(1, Interval::completed(1, 2));
+    first.push(TimedOperation::completed(
+        3,
+        4,
+        Operation::put(TABLE, b"same-key".to_vec(), b"one".to_vec()),
+        Observation::Put { created: true },
+    ));
+    first.finish(TerminalCall::commit(5, 18, TerminalOutcome::Committed));
+
+    let mut second = Transaction::new(2, Interval::completed(6, 7));
+    second
+        .push(TimedOperation::completed(
+            8,
+            9,
+            Operation::get(TABLE, b"same-key".to_vec()),
+            Observation::Get(Some(b"one".to_vec())),
+        ))
+        .push(TimedOperation::completed(
+            10,
+            11,
+            Operation::put(TABLE, b"same-key".to_vec(), b"two".to_vec()),
+            Observation::Put { created: false },
+        ));
+    second.finish(TerminalCall::commit(12, 17, TerminalOutcome::Committed));
+
+    let mut final_state = State::new();
+    state_insert(
+        &mut final_state,
+        TABLE,
+        b"same-key".to_vec(),
+        b"two".to_vec(),
+    );
+    let mut transactions = History::new(State::new());
+    transactions
+        .set_observed_final_state(final_state.clone())
+        .push(second)
+        .push(first);
+
+    let mut history = ApplicationHistory::new(transactions);
+    history.commits.extend([
+        // T2 reaches the physical ingestion stream first even though T1's HLC
+        // precedes it in the Silo serialization order.
+        ApplicationCommit::new(
+            2,
+            Interval::completed(12, 17),
+            ApplicationCommitOutcome::AcknowledgedWrite { seq: seq(1) },
+        )
+        .with_mako_timestamp(timestamp(2)),
+        ApplicationCommit::new(
+            1,
+            Interval::completed(5, 18),
+            ApplicationCommitOutcome::AcknowledgedWrite { seq: seq(2) },
+        )
+        .with_mako_timestamp(timestamp(1)),
+    ]);
+    history.backend_attempts.extend([
+        BackendAttempt::new(
+            seq(1),
+            Interval::completed(19, 20),
+            vec![ModelMutation::put(TABLE, b"same-key", b"two")],
+            BackendAttemptOutcome::Succeeded,
+        ),
+        BackendAttempt::new(
+            seq(2),
+            Interval::completed(21, 22),
+            vec![ModelMutation::put(TABLE, b"same-key", b"one")],
+            BackendAttemptOutcome::Succeeded,
+        ),
+    ]);
+    history.frontiers.push(FrontierObservation {
+        interval: Interval::completed(23, 24),
+        highest_acknowledged: Some(seq(2)),
+        applied: Some(seq(2)),
+        visible_state: Some(final_state.clone()),
+        backend_state: Some(final_state),
+    });
+
+    let witness = check(&history).unwrap();
+    assert_eq!(witness.mako_timestamp_order.serialization, vec![1, 2]);
     assert_eq!(witness.successful_backend_prefix, 2);
 }
 
@@ -230,11 +320,14 @@ fn same_key_operations_collapse_to_the_final_ryw_mutation() {
         .set_observed_final_state(final_state)
         .push(transaction);
     let mut history = ApplicationHistory::new(transactions);
-    history.commits.push(ApplicationCommit::new(
-        1,
-        Interval::completed(11, 12),
-        ApplicationCommitOutcome::AcknowledgedWrite { seq: seq(1) },
-    ));
+    history.commits.push(
+        ApplicationCommit::new(
+            1,
+            Interval::completed(11, 12),
+            ApplicationCommitOutcome::AcknowledgedWrite { seq: seq(1) },
+        )
+        .with_mako_timestamp(timestamp(1)),
+    );
     history.backend_attempts.push(BackendAttempt::new(
         seq(1),
         Interval::completed(13, 14),
@@ -332,7 +425,8 @@ fn sparse_unknown_history() -> ApplicationHistory {
             1,
             Interval::completed(5, 6),
             ApplicationCommitOutcome::AcknowledgedWrite { seq: seq(1) },
-        ),
+        )
+        .with_mako_timestamp(timestamp(1)),
         ApplicationCommit::new(
             2,
             Interval::completed(11, 18),
@@ -342,7 +436,8 @@ fn sparse_unknown_history() -> ApplicationHistory {
             3,
             Interval::completed(16, 17),
             ApplicationCommitOutcome::AcknowledgedWrite { seq: seq(3) },
-        ),
+        )
+        .with_mako_timestamp(timestamp(3)),
     ]);
     history.backend_attempts.push(BackendAttempt::new(
         seq(1),
@@ -443,7 +538,8 @@ fn committed_suffix_blocked_by_a_prior_unknown_is_visible_but_unacknowledged() {
                 seq: seq(2),
                 prior_unknown: seq(1),
             },
-        ),
+        )
+        .with_mako_timestamp(timestamp(2)),
     ]);
     history.waits.push(WaitAppliedObservation {
         interval: Interval::completed(13, 14),
@@ -451,7 +547,7 @@ fn committed_suffix_blocked_by_a_prior_unknown_is_visible_but_unacknowledged() {
     });
 
     let witness = check(&history).unwrap();
-    assert_eq!(witness.cache_order.serialization, vec![1, 2]);
+    assert_eq!(witness.mako_timestamp_order.serialization, vec![1, 2]);
     assert_eq!(witness.successful_backend_prefix, 0);
 
     history.backend_attempts.push(BackendAttempt::new(
@@ -497,16 +593,19 @@ fn application_check_never_hides_a_transaction_oracle_failure() {
 }
 
 #[test]
-fn cache_sequence_order_must_be_a_legal_serialization_not_response_order() {
+fn mako_timestamp_order_must_be_a_legal_serialization_not_response_order() {
     let mut history = two_ordered_writes();
-    history.commits[0].outcome = ApplicationCommitOutcome::AcknowledgedWrite { seq: seq(1) };
-    history.commits[1].outcome = ApplicationCommitOutcome::AcknowledgedWrite { seq: seq(2) };
+    history.commits[0].mako_timestamp = Some(timestamp(1));
+    history.commits[1].mako_timestamp = Some(timestamp(2));
     history.backend_attempts.clear();
     history.frontiers.clear();
     history.waits.clear();
 
     let failure = check(&history).unwrap_err();
-    assert_eq!(failure.kind, ApplicationCheckFailureKind::IllegalCacheOrder);
+    assert_eq!(
+        failure.kind,
+        ApplicationCheckFailureKind::IllegalMakoTimestampOrder
+    );
 }
 
 #[test]
@@ -532,6 +631,34 @@ fn allocated_sequences_must_be_unique_and_dense_even_with_unknowns() {
         ApplicationCheckFailureKind::MalformedApplicationHistory
     );
     assert!(failure.detail.contains("not dense"));
+}
+
+#[test]
+fn committed_writes_require_unique_full_mako_timestamps() {
+    let mut missing = two_ordered_writes();
+    missing.commits[0].mako_timestamp = None;
+    missing.backend_attempts.clear();
+    missing.frontiers.clear();
+    missing.waits.clear();
+    let failure = check(&missing).unwrap_err();
+    assert_eq!(
+        failure.kind,
+        ApplicationCheckFailureKind::MalformedApplicationHistory
+    );
+    assert!(failure.detail.contains("missing its Mako timestamp"));
+
+    let mut duplicate = two_ordered_writes();
+    let repeated_timestamp = duplicate.commits[1].mako_timestamp;
+    duplicate.commits[0].mako_timestamp = repeated_timestamp;
+    duplicate.backend_attempts.clear();
+    duplicate.frontiers.clear();
+    duplicate.waits.clear();
+    let failure = check(&duplicate).unwrap_err();
+    assert_eq!(
+        failure.kind,
+        ApplicationCheckFailureKind::MalformedApplicationHistory
+    );
+    assert!(failure.detail.contains("owned by both"));
 }
 
 #[test]

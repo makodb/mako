@@ -97,7 +97,7 @@ impl<B: Blobs + 'static> WritebackSet<B> {
         config: WritebackConfig,
         concurrent: bool,
     ) -> Result<Self, ConfigError> {
-        Writeback::<Arc<B>>::validate_config(config, 0)?;
+        Writeback::<Arc<B>>::validate_config(config, 0, LOG_LOCAL_MASK)?;
         let set = Self {
             backend: Arc::new(backend),
             config,
@@ -145,9 +145,13 @@ impl<B: Blobs + 'static> WritebackSet<B> {
         let physical_tail = base
             .checked_add(recovered.local_tail)
             .ok_or(ConfigError::SequenceExhausted)?;
+        let maximum_sequence = base
+            .checked_add(LOG_LOCAL_MASK)
+            .ok_or(ConfigError::SequenceExhausted)?;
         let writeback = Arc::new(Writeback::new_with_shared_state(
             Arc::clone(&self.backend),
             AppliedWatermark::recovered(physical_tail, recovered.mako_timestamp),
+            maximum_sequence,
             self.config,
             true,
             self.concurrent,
@@ -457,6 +461,50 @@ mod tests {
         }
     }
 
+    fn timestamp(logical: u32) -> MakoTimestamp {
+        MakoTimestamp::new(1_700_000_000_000_000, logical, 1)
+            .expect("test timestamps have a nonzero origin")
+    }
+
+    #[test]
+    fn worker_lane_stops_before_the_next_tag_and_local_zero() {
+        let mut recovered = RecoveredWriteback::empty();
+        recovered.lanes[0].local_tail = LOG_LOCAL_MASK - 1;
+        let set = WritebackSet::new(
+            MemBlobs::new(),
+            recovered,
+            WritebackConfig {
+                capacity: 8,
+                ..WritebackConfig::default()
+            },
+            true,
+        )
+        .unwrap();
+        let lane = set.lane(0).unwrap();
+
+        let mut final_record = lane
+            .writeback()
+            .reserve_single(lane.producer(), vec![put(b"last", b"value")])
+            .unwrap()
+            .bind(timestamp(1))
+            .unwrap();
+        let final_sequence = final_record.publish().unwrap();
+        let expected = worker_log_base(0).unwrap() + LOG_LOCAL_MASK;
+        assert_eq!(final_sequence.get(), expected);
+        assert_eq!(
+            crate::record::split_log_sequence(final_sequence),
+            Some((Some(0), LOG_LOCAL_MASK))
+        );
+        assert!(matches!(set.process_one_round(), ProcessOutcome::Advanced));
+
+        assert!(matches!(
+            lane.writeback()
+                .reserve_single(lane.producer(), vec![put(b"overflow", b"never")]),
+            Err(ReserveError::SequenceExhausted)
+        ));
+        assert_eq!(lane.writeback().highest_acknowledged(), expected);
+    }
+
     struct ApplyThenPanicOnceBlobs {
         inner: MemBlobs,
         panic_once: AtomicBool,
@@ -536,7 +584,7 @@ mod tests {
             .writeback()
             .reserve_single(newer_lane.producer(), vec![put(b"shared", b"new")])
             .unwrap()
-            .bind(MakoTimestamp::new(20).unwrap())
+            .bind(timestamp(20))
             .unwrap()
             .publish()
             .unwrap();
@@ -544,7 +592,7 @@ mod tests {
             .writeback()
             .reserve_single(older_lane.producer(), vec![put(b"shared", b"old")])
             .unwrap()
-            .bind(MakoTimestamp::new(10).unwrap())
+            .bind(timestamp(10))
             .unwrap()
             .publish()
             .unwrap();
@@ -597,7 +645,7 @@ mod tests {
             .writeback()
             .reserve_single(newer_lane.producer(), vec![put(b"shared", b"new")])
             .unwrap()
-            .bind(MakoTimestamp::new(20).unwrap())
+            .bind(timestamp(20))
             .unwrap()
             .publish()
             .unwrap();
@@ -605,7 +653,7 @@ mod tests {
             .writeback()
             .reserve_single(older_lane.producer(), vec![put(b"shared", b"old")])
             .unwrap()
-            .bind(MakoTimestamp::new(10).unwrap())
+            .bind(timestamp(10))
             .unwrap()
             .publish()
             .unwrap();
@@ -623,7 +671,7 @@ mod tests {
             .writeback()
             .reserve_single(newer_lane.producer(), vec![put(b"suffix", b"value")])
             .unwrap()
-            .bind(MakoTimestamp::new(30).unwrap())
+            .bind(timestamp(30))
             .unwrap()
             .publish()
             .unwrap();
@@ -693,7 +741,7 @@ mod tests {
             .writeback()
             .reserve_single(earlier_lane.producer(), vec![put(b"shared", b"old")])
             .unwrap()
-            .bind(MakoTimestamp::new(10).unwrap())
+            .bind(timestamp(10))
             .unwrap()
             .publish()
             .unwrap();
@@ -701,7 +749,7 @@ mod tests {
             .writeback()
             .reserve_single(retry_lane.producer(), vec![put(b"shared", b"new")])
             .unwrap()
-            .bind(MakoTimestamp::new(20).unwrap())
+            .bind(timestamp(20))
             .unwrap()
             .publish()
             .unwrap();
@@ -747,7 +795,7 @@ mod tests {
             .writeback()
             .reserve_single(lane.producer(), vec![put(b"first", b"one")])
             .unwrap()
-            .bind(MakoTimestamp::new(10).unwrap())
+            .bind(timestamp(10))
             .unwrap()
             .publish()
             .unwrap();
@@ -755,7 +803,7 @@ mod tests {
             .writeback()
             .reserve_single(lane.producer(), vec![put(b"second", b"two")])
             .unwrap()
-            .bind(MakoTimestamp::new(20).unwrap())
+            .bind(timestamp(20))
             .unwrap()
             .publish()
             .unwrap();
@@ -795,7 +843,7 @@ mod tests {
             .writeback()
             .reserve_single(failing.producer(), vec![put(b"uncertain", b"value")])
             .unwrap()
-            .bind(MakoTimestamp::new(30).unwrap())
+            .bind(timestamp(30))
             .unwrap();
         let failed_sequence = bound.pin_unknown().unwrap();
 
@@ -828,13 +876,13 @@ mod tests {
             .writeback()
             .reserve_single(other.producer(), vec![put(b"other", b"known")])
             .unwrap()
-            .bind(MakoTimestamp::new(31).unwrap())
+            .bind(timestamp(31))
             .unwrap();
         let mut uncertain = failing
             .writeback()
             .reserve_single(failing.producer(), vec![put(b"uncertain", b"value")])
             .unwrap()
-            .bind(MakoTimestamp::new(30).unwrap())
+            .bind(timestamp(30))
             .unwrap();
         let failed_sequence = uncertain.pin_unknown().unwrap();
 

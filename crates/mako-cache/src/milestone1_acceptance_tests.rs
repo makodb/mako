@@ -18,6 +18,8 @@ use crate::{Cache, CacheOptions, Error, LocalError, MakoTimestamp, WritebackConf
 
 const WAIT_LIMIT: Duration = Duration::from_secs(5);
 const NEAR_EXHAUSTION_ROLE_ENV: &str = "MAKO_CACHE_NEAR_EXHAUSTION_ROLE";
+const HOT_PHYSICAL_US_MAX: u64 = ((1u64 << 44) - 1) * 1_000;
+const HOT_LOGICAL_MAX: u32 = (1u32 << 19) - 1;
 
 #[derive(Debug, Default)]
 struct BackendGate {
@@ -406,7 +408,10 @@ fn forced_cache_stop_preserves_applied_prefix_and_discards_only_unapplied_tail()
 }
 
 fn near_exhaustion_child_role() {
-    let maximum = mako_local::MAX_MAKO_TIMESTAMP;
+    let maximum = MakoTimestamp::new(HOT_PHYSICAL_US_MAX, HOT_LOGICAL_MAX, 1)
+        .expect("maximum hot timestamp has a nonzero origin");
+    let maximum_minus_one = MakoTimestamp::new(HOT_PHYSICAL_US_MAX, HOT_LOGICAL_MAX - 1, 1)
+        .expect("MAX-1 hot timestamp has a nonzero origin");
     let backend = Arc::new(MemBlobs::new());
     let recovered = PreparedCommitRecord::prepare(
         vec![Mutation::Put {
@@ -419,7 +424,7 @@ fn near_exhaustion_child_role() {
     .expect("prepare near-exhaustion recovery record")
     .bind(
         CommitSeq::new(1).expect("nonzero recovery sequence"),
-        MakoTimestamp::new(maximum - 1).expect("MAX-1 is a valid Mako timestamp"),
+        maximum_minus_one,
     )
     .finalize();
     backend
@@ -465,7 +470,7 @@ fn near_exhaustion_child_role() {
             },
         )
         .expect("find MAX transaction record");
-    assert_eq!(final_timestamp.get(), maximum);
+    assert_eq!(final_timestamp, maximum);
 
     let error = cache
         .put(b"milestone1/exhaustion/rejected", b"must-not-install")

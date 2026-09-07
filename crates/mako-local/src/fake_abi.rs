@@ -14,17 +14,75 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::OnceLock;
 
 use super::{
-    sys, FastNativeOrderedArenaResult, FastOnePutHolderPool, FastOnePutHolderView,
-    FastPreselectedRecordResult, FastSpscHolderControl, TrustedNativeOrderedArenaControl,
-    TrustedNativeOrderedHolderControl,
+    sys, FastNativeOrderedArenaResult, FastNativeOrderedHolderResult, FastOnePutHolderPool,
+    FastOnePutHolderView, FastPreselectedRecordResult, FastSpscHolderControl,
+    TrustedNativeOrderedArenaControl, TrustedNativeOrderedHolderControl,
 };
 
 static ENGINE_ID: &[u8] = b"mako-local/sto-masstrans\0";
+const FAKE_TIMESTAMP_PHYSICAL_MS: u64 = 1_700_000_000_000;
+const FAKE_TIMESTAMP_ORIGIN: u32 = 1;
+const HOT_LOGICAL_MASK: u32 = (1 << 19) - 1;
+const HOT_PHYSICAL_MS_MAX: u64 = (1u64 << 44) - 1;
+const HOT_STAMP_MAX: u64 = u64::MAX >> 1;
+
+fn raw_timestamp_from_stamp(stamp: u64) -> sys::mako_timestamp_v1 {
+    sys::mako_timestamp_v1 {
+        physical_us: (stamp >> 19) * 1_000,
+        logical: (stamp & u64::from(HOT_LOGICAL_MASK)) as u32,
+        origin: FAKE_TIMESTAMP_ORIGIN,
+    }
+}
+
+fn timestamp_stamp(logical: u32) -> Option<u64> {
+    (logical <= HOT_LOGICAL_MASK).then_some((FAKE_TIMESTAMP_PHYSICAL_MS << 19) | u64::from(logical))
+}
+
+fn packed_timestamp_state(logical: u32, complete: bool) -> Option<u64> {
+    timestamp_stamp(logical).map(|stamp| (stamp << 1) | u64::from(complete))
+}
+
+fn allocate_fake_timestamp_stamp(state: &mut State, logical: u32) -> Option<u64> {
+    let candidate = timestamp_stamp(logical)?;
+    let Some(floor) = state.mako_timestamp_floor_stamp else {
+        return Some(candidate);
+    };
+    let next = floor.checked_add(1)?;
+    let selected = candidate.max(next);
+    if selected > HOT_STAMP_MAX {
+        return None;
+    }
+    state.mako_timestamp_floor_stamp = Some(selected);
+    Some(selected)
+}
+
+fn minimum_local_stamp_after(observed: sys::mako_timestamp_v1) -> Option<u64> {
+    let physical_ms = observed.physical_us / 1_000;
+    let submillisecond = observed.physical_us % 1_000 != 0;
+    if physical_ms > HOT_PHYSICAL_MS_MAX {
+        return None;
+    }
+
+    let minimum = if submillisecond || observed.logical > HOT_LOGICAL_MASK {
+        physical_ms.checked_add(1)?.checked_shl(19)?
+    } else {
+        let base = physical_ms << 19;
+        if FAKE_TIMESTAMP_ORIGIN > observed.origin {
+            base | u64::from(observed.logical)
+        } else if observed.logical < HOT_LOGICAL_MASK {
+            base | u64::from(observed.logical + 1)
+        } else {
+            physical_ms.checked_add(1)?.checked_shl(19)?
+        }
+    };
+    let minimum = minimum.max(1);
+    (minimum <= HOT_STAMP_MAX).then_some(minimum)
+}
 
 pub(super) type RecordBindHook = Option<
     unsafe extern "C" fn(
         context: *mut c_void,
-        mako_timestamp: u32,
+        timestamp_stamp: u64,
         exact_record_bytes: usize,
         sequence_out: *mut u64,
         record_bytes_out: *mut *mut u8,
@@ -221,7 +279,7 @@ impl Default for FakeTxn {
 struct FakeOnePutHolder {
     sequence: u64,
     table_id: u64,
-    mako_timestamp: u32,
+    timestamp_stamp: u64,
     key: Vec<u8>,
     value: Vec<u8>,
     sealed: bool,
@@ -250,7 +308,11 @@ struct State {
     fused_latch_unhealthy_after_commit: bool,
     cache_order_claimed: bool,
     cache_order_mode: u32,
-    cache_order_state: u64,
+    cache_sequence_state: u64,
+    // None preserves explicitly scripted timestamps until a recovery test
+    // invokes the public catch-up API. Thereafter this models the native HLC's
+    // next-to-return floor and makes every fake allocation strictly advance it.
+    mako_timestamp_floor_stamp: Option<u64>,
 }
 
 thread_local! {
@@ -286,7 +348,7 @@ fn unexpected(expected: &str, found: Option<Step>) -> ! {
 pub(super) fn reset() {
     STATE.with(|state| {
         let mut reset = State::default();
-        reset.cache_order_state = UINT64_C_ONE << 29;
+        reset.cache_sequence_state = 0;
         *state.borrow_mut() = reset;
     });
 }
@@ -438,25 +500,38 @@ pub(super) unsafe fn mako_local_test_clear_cleanup_failure() -> c_int {
     sys::MAKO_LOCAL_FEATURE_UNAVAILABLE
 }
 
-pub(super) unsafe fn mako_local_advance_mako_timestamp_past(observed: u32) -> c_int {
-    if observed == 0 {
+pub(super) unsafe fn mako_local_timestamp_origin() -> u32 {
+    FAKE_TIMESTAMP_ORIGIN
+}
+
+pub(super) unsafe fn mako_local_test_set_timestamp_physical_ms(_unix_ms: u64) -> c_int {
+    sys::MAKO_LOCAL_FEATURE_UNAVAILABLE
+}
+
+pub(super) unsafe fn mako_local_test_clear_timestamp_physical_ms() -> c_int {
+    sys::MAKO_LOCAL_FEATURE_UNAVAILABLE
+}
+
+pub(super) unsafe fn mako_local_advance_mako_timestamp_past(
+    observed: *const sys::mako_timestamp_v1,
+) -> c_int {
+    if observed.is_null() {
         return sys::MAKO_LOCAL_INVALID_ARGUMENT;
     }
-    if observed >= sys::MAKO_LOCAL_MAX_MAKO_TIMESTAMP {
-        return sys::MAKO_LOCAL_TIMESTAMP_EXHAUSTED;
+    // SAFETY: checked non-null and the wrapper lends one initialized value.
+    let observed = unsafe { observed.read() };
+    if observed.origin == 0 {
+        return sys::MAKO_LOCAL_INVALID_ARGUMENT;
     }
-
-    let desired = observed + 1;
+    let Some(minimum_next) = minimum_local_stamp_after(observed) else {
+        return sys::MAKO_LOCAL_TIMESTAMP_EXHAUSTED;
+    };
     with_state(|state| {
-        let current = ((state.cache_order_state & CACHE_ORDER_TIMESTAMP_MASK)
-            >> CACHE_ORDER_TIMESTAMP_SHIFT) as u32;
-        if current == 0 || current > sys::MAKO_LOCAL_MAX_MAKO_TIMESTAMP {
+        let current = state.mako_timestamp_floor_stamp.unwrap_or(0);
+        if current == HOT_STAMP_MAX {
             return sys::MAKO_LOCAL_TIMESTAMP_EXHAUSTED;
         }
-        if current < desired {
-            state.cache_order_state = (state.cache_order_state & !CACHE_ORDER_TIMESTAMP_MASK)
-                | (u64::from(desired) << CACHE_ORDER_TIMESTAMP_SHIFT);
-        }
+        state.mako_timestamp_floor_stamp = Some(current.max(minimum_next - 1));
         sys::MAKO_LOCAL_OK
     })
 }
@@ -525,29 +600,18 @@ pub(super) unsafe fn mako_rust_fast_db_order_record_validation_prefix(db: *mut s
     });
 }
 
-const UINT64_C_ONE: u64 = 1;
-const CACHE_ORDER_FIELD_MASK: u64 = (UINT64_C_ONE << 29) - 1;
-const CACHE_ORDER_TIMESTAMP_SHIFT: u32 = 29;
-const CACHE_ORDER_TIMESTAMP_MASK: u64 = CACHE_ORDER_FIELD_MASK << CACHE_ORDER_TIMESTAMP_SHIFT;
 const CACHE_ORDER_CONCURRENT: u32 = super::CacheOrderMode::Concurrent as u32;
 const CACHE_ORDER_SINGLE_PRODUCER: u32 = super::CacheOrderMode::SingleProducer as u32;
 const CACHE_ORDER_PER_WORKER: u32 = super::CacheOrderMode::PerWorker as u32;
 
-fn assign_fake_cache_order_pair(state: &mut State, timestamp: Option<u32>) -> Option<(u64, u32)> {
-    let timestamp = timestamp.filter(|raw| *raw != 0 && *raw <= crate::MAX_MAKO_TIMESTAMP)?;
+fn assign_fake_cache_order_pair(state: &mut State, timestamp: Option<u32>) -> Option<(u64, u64)> {
+    let stamp = allocate_fake_timestamp_stamp(state, timestamp?)?;
     if !state.cache_order_claimed || state.cache_order_mode != CACHE_ORDER_CONCURRENT {
         return None;
     }
-    let sequence = (state.cache_order_state & CACHE_ORDER_FIELD_MASK).checked_add(1)?;
-    if sequence > u64::from(crate::MAX_MAKO_TIMESTAMP) {
-        return None;
-    }
-    let next_timestamp = u64::from(timestamp) + 1;
-    state.cache_order_state = (state.cache_order_state
-        & !(CACHE_ORDER_FIELD_MASK | CACHE_ORDER_TIMESTAMP_MASK))
-        | sequence
-        | (next_timestamp << CACHE_ORDER_TIMESTAMP_SHIFT);
-    Some((sequence, timestamp))
+    let sequence = state.cache_sequence_state.checked_add(1)?;
+    state.cache_sequence_state = sequence;
+    Some((sequence, stamp))
 }
 
 fn fake_packed_order_allowed(state: &State) -> bool {
@@ -600,10 +664,7 @@ pub(super) unsafe fn mako_rust_fast_db_claim_cache_order_namespace(
         }
         state.cache_order_claimed = true;
         state.cache_order_mode = foreground_mode;
-        if state.cache_order_state == 0 {
-            state.cache_order_state = UINT64_C_ONE << 29;
-        }
-        state.cache_order_state &= !CACHE_ORDER_FIELD_MASK;
+        state.cache_sequence_state = 0;
         sys::MAKO_LOCAL_OK
     })
 }
@@ -616,11 +677,7 @@ pub(super) unsafe fn mako_rust_fast_db_reseed_cache_order_namespace(
         if db.is_null() || !state.cache_order_claimed {
             return sys::MAKO_LOCAL_INVALID_ARGUMENT;
         }
-        if recovered_sequence > u64::from(sys::MAKO_LOCAL_MAX_MAKO_TIMESTAMP) {
-            return sys::MAKO_LOCAL_INVALID_ARGUMENT;
-        }
-        state.cache_order_state =
-            (state.cache_order_state & !CACHE_ORDER_FIELD_MASK) | recovered_sequence;
+        state.cache_sequence_state = recovered_sequence;
         sys::MAKO_LOCAL_OK
     })
 }
@@ -630,7 +687,7 @@ pub(super) unsafe fn mako_rust_fast_db_cache_order_snapshot(db: *const sys::mako
         if db.is_null() || !state.cache_order_claimed {
             0
         } else {
-            state.cache_order_state
+            state.cache_sequence_state
         }
     })
 }
@@ -1065,9 +1122,12 @@ pub(super) unsafe fn mako_local_txn_commit_with_hook(
             found => unexpected("commit with hook", found),
         };
         if let (Some(hook), Some(timestamp)) = (hook, timestamp) {
-            // SAFETY: the safe wrapper supplied this synchronous callback and
-            // stack context for the duration of the current call.
-            let _ = unsafe { hook(context, timestamp) };
+            if let Some(stamp) = allocate_fake_timestamp_stamp(state, timestamp) {
+                let timestamp = raw_timestamp_from_stamp(stamp);
+                // SAFETY: the safe wrapper supplied this synchronous callback
+                // and stack context for the duration of the current call.
+                let _ = unsafe { hook(context, &timestamp) };
+            }
         }
         observe_status(state, status);
         status
@@ -1107,9 +1167,12 @@ pub(super) unsafe fn mako_rust_fast_txn_commit_with_hook_and_destroy(
         };
         let hook = hook.expect("trusted fast hook commit requires a callback");
         if let Some(timestamp) = timestamp {
-            // SAFETY: safe wrapper keeps its stack callback context live for
-            // this synchronous fake boundary.
-            let _ = unsafe { hook(context, timestamp) };
+            if let Some(stamp) = allocate_fake_timestamp_stamp(state, timestamp) {
+                let timestamp = raw_timestamp_from_stamp(stamp);
+                // SAFETY: safe wrapper keeps its stack callback context live
+                // for this synchronous fake boundary.
+                let _ = unsafe { hook(context, &timestamp) };
+            }
         }
         let cleanup = match state.steps.pop_front() {
             Some(Step::Destroy(status)) => status,
@@ -1223,7 +1286,7 @@ pub(super) unsafe fn mako_rust_fast_txn_commit_record_and_destroy(
                 (unsafe {
                     hook(
                         context,
-                        timestamp,
+                        allocate_fake_timestamp_stamp(state, timestamp).unwrap_or(0),
                         exact_record_bytes,
                         &mut sequence,
                         &mut record_bytes,
@@ -1280,14 +1343,14 @@ pub(super) unsafe fn mako_rust_fast_txn_commit_native_ordered_record_and_destroy
     hook: RecordBindHook,
     context: *mut c_void,
     ordered_sequence_out: *mut u64,
-    ordered_timestamp_out: *mut u32,
+    ordered_timestamp_stamp_out: *mut u64,
     record_written_out: *mut u8,
 ) -> u64 {
     if !ordered_sequence_out.is_null() {
         unsafe { ordered_sequence_out.write(0) };
     }
-    if !ordered_timestamp_out.is_null() {
-        unsafe { ordered_timestamp_out.write(0) };
+    if !ordered_timestamp_stamp_out.is_null() {
+        unsafe { ordered_timestamp_stamp_out.write(0) };
     }
     if !record_written_out.is_null() {
         unsafe { record_written_out.write(0) };
@@ -1323,8 +1386,8 @@ pub(super) unsafe fn mako_rust_fast_txn_commit_native_ordered_record_and_destroy
             if !ordered_sequence_out.is_null() {
                 unsafe { ordered_sequence_out.write(sequence) };
             }
-            if !ordered_timestamp_out.is_null() {
-                unsafe { ordered_timestamp_out.write(timestamp) };
+            if !ordered_timestamp_stamp_out.is_null() {
+                unsafe { ordered_timestamp_stamp_out.write(timestamp) };
             }
         }
 
@@ -1430,7 +1493,7 @@ unsafe fn fast_unchecked_one_put_record_commit_and_destroy(
                 (unsafe {
                     hook(
                         context,
-                        timestamp,
+                        allocate_fake_timestamp_stamp(state, timestamp).unwrap_or(0),
                         exact_record_bytes,
                         &mut sequence,
                         &mut record_bytes,
@@ -1506,16 +1569,16 @@ pub(super) unsafe fn mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_
     hook: RecordBindHook,
     context: *mut c_void,
     ordered_sequence_out: *mut u64,
-    ordered_timestamp_out: *mut u32,
+    ordered_timestamp_stamp_out: *mut u64,
     record_written_out: *mut u8,
 ) -> u64 {
     if !ordered_sequence_out.is_null() {
         // SAFETY: the wrapper supplies a live scalar output.
         unsafe { ordered_sequence_out.write(0) };
     }
-    if !ordered_timestamp_out.is_null() {
+    if !ordered_timestamp_stamp_out.is_null() {
         // SAFETY: the wrapper supplies a live scalar output.
-        unsafe { ordered_timestamp_out.write(0) };
+        unsafe { ordered_timestamp_stamp_out.write(0) };
     }
     if !record_written_out.is_null() {
         // SAFETY: the wrapper supplies a live scalar output.
@@ -1558,8 +1621,8 @@ pub(super) unsafe fn mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_
             if !ordered_sequence_out.is_null() {
                 unsafe { ordered_sequence_out.write(sequence) };
             }
-            if !ordered_timestamp_out.is_null() {
-                unsafe { ordered_timestamp_out.write(timestamp) };
+            if !ordered_timestamp_stamp_out.is_null() {
+                unsafe { ordered_timestamp_stamp_out.write(timestamp) };
             }
         }
 
@@ -1679,6 +1742,7 @@ pub(super) unsafe fn mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_
 
         let exact_candidate = exact_record_bytes == expected_record_bytes as usize;
         let mut sequence = 0u64;
+        let mut assigned_stamp = 0u64;
         let mut assigned = false;
         if layout_valid && exact_candidate {
             let control = control.unwrap();
@@ -1688,8 +1752,9 @@ pub(super) unsafe fn mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_
                 unsafe { AtomicBool::from_ptr(control.unhealthy.cast_mut().cast::<bool>()) };
             let healthy = !health.load(Ordering::Acquire);
             if healthy {
-                if let Some((next, _)) = assign_fake_cache_order_pair(state, timestamp) {
+                if let Some((next, stamp)) = assign_fake_cache_order_pair(state, timestamp) {
                     sequence = next;
+                    assigned_stamp = stamp;
                     assigned = true;
 
                     let index = sequence as usize & control.publication_mask;
@@ -1737,9 +1802,13 @@ pub(super) unsafe fn mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_
         };
         let reported_state = reported_written.unwrap_or(actual_written);
         let record_state = if assigned {
-            u64::from(timestamp.unwrap()) | (u64::from(reported_state) << 32)
+            if reported_state <= 1 {
+                (assigned_stamp << 1) | u64::from(reported_state)
+            } else {
+                1
+            }
         } else {
-            u64::from(reported_state) << 32
+            u64::from(reported_state != 0)
         };
 
         let cleanup = match state.steps.pop_front() {
@@ -1765,16 +1834,17 @@ unsafe fn fake_native_ordered_unchecked_one_put_holder_commit_and_destroy(
     _txn: *mut sys::mako_local_txn,
     expected_record_bytes: u32,
     control: *const TrustedNativeOrderedHolderControl,
-) -> FastNativeOrderedArenaResult {
+) -> FastNativeOrderedHolderResult {
     with_state(|state| {
         state.calls.push(call);
         state.last_unchecked_record_bytes = Some(expected_record_bytes);
         if !fake_packed_order_allowed(state) {
             let terminal = reject_fake_fast_terminal(state);
-            return FastNativeOrderedArenaResult {
+            return FastNativeOrderedHolderResult {
                 terminal,
                 ordered_sequence: 0,
                 record_state: 0,
+                holder_ready: 0,
             };
         }
 
@@ -1869,7 +1939,7 @@ unsafe fn fake_native_ordered_unchecked_one_put_holder_commit_and_destroy(
         // SAFETY: a nonzero sequence above owns the matching fake holder and
         // BOUND publication generation. Zero makes the shared helper consume the
         // scripted rejection without touching a holder.
-        let mut result = unsafe {
+        let result = unsafe {
             fake_preselected_one_put_holder_commit(
                 state,
                 expected_record_bytes,
@@ -1882,9 +1952,8 @@ unsafe fn fake_native_ordered_unchecked_one_put_holder_commit_and_destroy(
             (sys::MAKO_LOCAL_OK as u32 as u64) | ((sys::MAKO_LOCAL_OK as u32 as u64) << 32);
         let exact_ready_witness = result.terminal == PACKED_OK
             && sequence != 0
-            && result.record_state >> 33 == 0
-            && result.record_state & (1u64 << 32) != 0
-            && result.record_state as u32 != 0;
+            && result.record_state & 1 != 0
+            && result.record_state >> 1 != 0;
         if exact_ready_witness {
             let control = control.expect("accepted holder retains its validated control");
             let index = sequence as usize & control.publication_mask;
@@ -1900,21 +1969,21 @@ unsafe fn fake_native_ordered_unchecked_one_put_holder_commit_and_destroy(
             let bound = ((sequence >> control.publication_shift) << 2) | 1;
             let ready = ((sequence >> control.publication_shift) << 2) | 3;
             assert_eq!(turn.load(Ordering::Acquire), bound);
-            let timestamp = result.record_state as u32;
+            let timestamp_stamp = result.record_state >> 1;
             let tagged_extent = (1usize << (usize::BITS - 1)) | expected_record_bytes as usize;
             // SAFETY: exact BOUND ownership grants the scalar words at bytes
             // 8 and 16; READY Release publishes them and the sealed holder.
             unsafe {
-                publication.add(8).cast::<u32>().write(timestamp);
+                publication.add(8).cast::<u64>().write(timestamp_stamp);
                 publication.add(16).cast::<usize>().write(tagged_extent);
             }
             turn.store(ready, Ordering::Release);
-            result.record_state |= 1u64 << 33;
         }
-        FastNativeOrderedArenaResult {
+        FastNativeOrderedHolderResult {
             terminal: result.terminal,
             ordered_sequence: sequence,
             record_state: result.record_state,
+            holder_ready: u64::from(exact_ready_witness),
         }
     })
 }
@@ -1923,7 +1992,7 @@ pub(super) unsafe fn mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_
     txn: *mut sys::mako_local_txn,
     expected_record_bytes: u32,
     control: *const TrustedNativeOrderedHolderControl,
-) -> FastNativeOrderedArenaResult {
+) -> FastNativeOrderedHolderResult {
     // SAFETY: forwarded unchanged to the shared fake terminal, which retains
     // the checked ABI's layout and candidate validation.
     unsafe {
@@ -1941,7 +2010,7 @@ pub(super) unsafe fn mako_rust_fast_txn_commit_trusted_native_ordered_unchecked_
     txn: *mut sys::mako_local_txn,
     expected_record_bytes: u32,
     control: *const TrustedNativeOrderedHolderControl,
-) -> FastNativeOrderedArenaResult {
+) -> FastNativeOrderedHolderResult {
     // SAFETY: the test wrapper provides the same immediate candidate and live
     // private descriptor required by the real trusted terminal.
     unsafe {
@@ -2021,14 +2090,17 @@ pub(super) unsafe fn mako_rust_fast_txn_commit_preselected_unchecked_one_put_rec
             && record_capacity >= exact_record_bytes
             && record.len() == exact_record_bytes;
         let actual_record_state = if exact_candidate && valid_target {
-            timestamp.map_or(0, |timestamp| u64::from(timestamp) | (1u64 << 32))
+            timestamp
+                .and_then(|timestamp| allocate_fake_timestamp_stamp(state, timestamp))
+                .map(|stamp| (stamp << 1) | 1)
+                .unwrap_or(0)
         } else {
             0
         };
         // A direct override lets the contract tests model a corrupt same-build
         // ABI, including reserved bits and impossible timestamp/witness pairs.
         let record_state = reported_record_state.unwrap_or(actual_record_state);
-        if record_state & (1u64 << 32) != 0 && exact_candidate && valid_target {
+        if record_state & 1 != 0 && exact_candidate && valid_target {
             if exact_record_bytes != 0 {
                 // SAFETY: the Rust wrapper supplied a stable target whose
                 // capacity covers this exact scripted source extent.
@@ -2187,13 +2259,20 @@ unsafe fn fake_preselected_one_put_holder_commit(
         let holder = &mut fake.holders[index];
         if !holder.sealed {
             if let Some(timestamp) = timestamp {
+                let Some(timestamp_stamp) = allocate_fake_timestamp_stamp(state, timestamp) else {
+                    return FastPreselectedRecordResult {
+                        terminal: u64::from(sys::MAKO_LOCAL_INVALID_ARGUMENT as u32)
+                            | (u64::from(sys::MAKO_LOCAL_OK as u32) << 32),
+                        record_state: 0,
+                    };
+                };
                 holder.sequence = sequence;
                 holder.table_id = table_id;
-                holder.mako_timestamp = timestamp;
+                holder.timestamp_stamp = timestamp_stamp;
                 holder.key = key;
                 holder.value = value;
                 holder.sealed = true;
-                actual_holder_state = u64::from(timestamp) | (1u64 << 32);
+                actual_holder_state = (timestamp_stamp << 1) | 1;
             }
         }
     }
@@ -2333,10 +2412,10 @@ pub(super) unsafe fn mako_rust_fast_txn_try_commit_fused_one_put_holder_single_p
             control.cold_out.get().write(FastPreselectedRecordResult {
                 terminal: u64::from(sys::MAKO_LOCAL_INVALID_ARGUMENT as u32)
                     | (u64::from(sys::MAKO_LOCAL_OK as u32) << 32),
-                record_state: u64::from(exact_record_bytes) << 33,
+                record_state: 0,
             })
         };
-        return u64::from(CONSUMED_OUTCOME);
+        return u64::from(CONSUMED_OUTCOME) | (u64::from(exact_record_bytes) << 32);
     }
 
     // SAFETY: these are the live inner pointers supplied by the private
@@ -2372,21 +2451,22 @@ pub(super) unsafe fn mako_rust_fast_txn_try_commit_fused_one_put_holder_single_p
     });
     const PACKED_OK: u64 =
         (sys::MAKO_LOCAL_OK as u32 as u64) | ((sys::MAKO_LOCAL_OK as u32 as u64) << 32);
-    let timestamp = outcome.record_state as u32;
-    if outcome.terminal == PACKED_OK && outcome.record_state >> 32 == 1 && timestamp != 0 {
+    let timestamp_stamp = outcome.record_state >> 1;
+    if outcome.terminal == PACKED_OK && outcome.record_state & 1 != 0 && timestamp_stamp != 0 {
         if with_state(|state| std::mem::take(&mut state.fused_latch_unhealthy_after_commit)) {
             unhealthy.store(true, Ordering::Release);
         }
         if unhealthy.load(Ordering::Acquire) {
-            // SAFETY: code 3 initializes this live output. Upper bits carry
-            // native's exact extent and are masked by the cold decoder.
+            // SAFETY: code 3 initializes this live output. The compact return
+            // carries the exact extent; cold_out retains the complete state.
             unsafe {
                 control.cold_out.get().write(FastPreselectedRecordResult {
                     terminal: outcome.terminal,
-                    record_state: outcome.record_state | (u64::from(exact_record_bytes) << 33),
+                    record_state: outcome.record_state,
                 })
             };
-            return u64::from(CONSUMED_COMMITTED_UNPUBLISHED) | (u64::from(timestamp) << 32);
+            return u64::from(CONSUMED_COMMITTED_UNPUBLISHED)
+                | (u64::from(exact_record_bytes) << 32);
         }
         // SAFETY: this is the live inner pointer returned by AtomicU64::as_ptr.
         acknowledged.store(sequence, Ordering::Release);
@@ -2397,10 +2477,10 @@ pub(super) unsafe fn mako_rust_fast_txn_try_commit_fused_one_put_holder_single_p
     unsafe {
         control.cold_out.get().write(FastPreselectedRecordResult {
             terminal: outcome.terminal,
-            record_state: outcome.record_state | (u64::from(exact_record_bytes) << 33),
+            record_state: outcome.record_state,
         })
     };
-    u64::from(CONSUMED_OUTCOME)
+    u64::from(CONSUMED_OUTCOME) | (u64::from(exact_record_bytes) << 32)
 }
 
 pub(super) unsafe fn mako_rust_fast_one_put_holder_pool_get_view(
@@ -2421,8 +2501,7 @@ pub(super) unsafe fn mako_rust_fast_one_put_holder_pool_get_view(
             value: ptr::null(),
             key_len: 0,
             value_len: 0,
-            mako_timestamp: 0,
-            reserved: 0,
+            timestamp_stamp: 0,
         })
     };
     if pool.is_null() || expected_sequence == 0 {
@@ -2452,8 +2531,7 @@ pub(super) unsafe fn mako_rust_fast_one_put_holder_pool_get_view(
             value: holder.value.as_ptr(),
             key_len,
             value_len,
-            mako_timestamp: holder.mako_timestamp,
-            reserved: 0,
+            timestamp_stamp: holder.timestamp_stamp,
         })
     };
     sys::MAKO_LOCAL_OK
@@ -2476,7 +2554,7 @@ pub(super) unsafe fn mako_rust_fast_one_put_holder_pool_release(
     }
     holder.sequence = 0;
     holder.table_id = 0;
-    holder.mako_timestamp = 0;
+    holder.timestamp_stamp = 0;
     holder.key.clear();
     holder.value.clear();
     holder.sealed = false;
@@ -2557,7 +2635,10 @@ mod tests {
         Error, LocalDb, TestCleanupBoundary, TestCommitPhase, WorkerHealth, MAX_VALUE_BYTES,
     };
 
-    fn unavailable_commit_observer(_phase: TestCommitPhase, _timestamp: u32) {
+    fn unavailable_commit_observer(
+        _phase: TestCommitPhase,
+        _timestamp: Option<crate::MakoTimestamp>,
+    ) {
         panic!("unavailable fake commit observer must not be invoked");
     }
 
@@ -2781,7 +2862,7 @@ mod tests {
         let mut callback_count = 0;
         let report = transaction.commit_report_with_hook(|timestamp| {
             callback_count += 1;
-            assert_eq!(timestamp.get(), 41);
+            assert_eq!(timestamp.logical(), 41);
             true
         });
         assert_eq!(callback_count, 1);
@@ -3187,7 +3268,7 @@ mod tests {
             timestamp: Some(47),
         });
         push(Step::Destroy(sys::MAKO_LOCAL_OK));
-        let report = transaction.commit_report_with_hook(|timestamp| timestamp.get() == 47);
+        let report = transaction.commit_report_with_hook(|timestamp| timestamp.logical() == 47);
         assert_eq!(report.disposition, CommitDisposition::Committed);
         assert_eq!(report.cleanup, Ok(()));
         assert_call_count(Call::FastBegin, 1);
@@ -3266,7 +3347,7 @@ mod tests {
         let table = db.open_table("trusted-fast-malformed", 15).unwrap();
         let mut transaction = db.trusted_transaction(&table).unwrap();
         // A non-boolean created field spills into a record-size bit but cannot
-        // match this Put's exact v4 extent. The wrapper must fail closed
+        // match this Put's exact v6 extent. The wrapper must fail closed
         // through the checked abort/destroy lifecycle.
         push(Step::Put(ByteReply {
             status: sys::MAKO_LOCAL_OK,
@@ -3309,7 +3390,7 @@ mod tests {
         assert!(!record.is_written());
         assert_eq!(record.written_bytes(), None);
 
-        let expected = b"v3record".to_vec();
+        let expected = b"record!!".to_vec();
         push(Step::CommitRecord {
             status: sys::MAKO_LOCAL_OK,
             timestamp: Some(53),
@@ -3321,7 +3402,7 @@ mod tests {
         let mut callback_count = 0;
         let report = transaction.commit_report_with_record(&mut record, |timestamp, bounds| {
             callback_count += 1;
-            assert_eq!(timestamp.get(), 53);
+            assert_eq!(timestamp.logical(), 53);
             assert_eq!(bounds, copied);
             NonZeroU64::new(7)
         });
@@ -3346,17 +3427,17 @@ mod tests {
         let mut transaction = db.trusted_transaction(&table).unwrap();
         push(Step::RecordPreflight {
             status: sys::MAKO_LOCAL_OK,
-            exact_record_bytes: 26,
+            exact_record_bytes: 38,
             op_count: 0,
         });
         // Empty plans need no output allocation and therefore remain valid
         // even when the caller's nonempty-record cap is below the selected
-        // 26-byte unchecked-v4 framing size.
+        // 38-byte unchecked-v6 framing size.
         let preflight = transaction
             .commit_record_preflight_with_checksum(1, crate::CommitRecordChecksum::None)
             .unwrap();
         assert!(preflight.is_empty());
-        assert_eq!(preflight.exact_record_bytes(), 26);
+        assert_eq!(preflight.exact_record_bytes(), 38);
         assert_eq!(preflight.checksum(), crate::CommitRecordChecksum::None);
         assert_eq!(last_record_checksum_mode(), Some(0));
         push(Step::Commit(sys::MAKO_LOCAL_OK));
@@ -3398,7 +3479,7 @@ mod tests {
         // synchronous terminal returns, and this callback cannot unwind.
         let report = unsafe {
             transaction.commit_report_with_record_target(|timestamp, bounds| {
-                assert_eq!(timestamp.get(), 54);
+                assert_eq!(timestamp.logical(), 54);
                 assert_eq!(bounds, preflight);
                 let sequence = NonZeroU64::new(8).unwrap();
                 let bytes = std::ptr::NonNull::new(storage.as_mut_ptr().cast::<u8>()).unwrap();
@@ -3424,7 +3505,7 @@ mod tests {
         let db = open_db();
         let table = db.open_table("trusted-fused-record-target", 40).unwrap();
         let mut transaction = db.trusted_transaction(&table).unwrap();
-        const EXACT_BYTES: u32 = 43 + 3 + 5;
+        const EXACT_BYTES: u32 = 55 + 3 + 5;
         push(Step::Put(ByteReply {
             status: sys::MAKO_LOCAL_OK,
             value: 1,
@@ -3433,7 +3514,7 @@ mod tests {
         assert_eq!(transaction.put(&table, b"key", b"value"), Ok(true));
         let candidate = transaction
             .unchecked_one_put_record_candidate()
-            .expect("one trusted fast Put advertises a direct v4 candidate");
+            .expect("one trusted fast Put advertises a direct v6 candidate");
         assert_eq!(candidate.exact_record_bytes(), EXACT_BYTES as usize);
         assert_eq!(candidate.op_count(), 1);
         assert_eq!(candidate.checksum(), crate::CommitRecordChecksum::None);
@@ -3456,7 +3537,7 @@ mod tests {
             transaction.commit_trusted_unchecked_one_put_record_target(
                 candidate,
                 |timestamp, bounds| {
-                    assert_eq!(timestamp.get(), 55);
+                    assert_eq!(timestamp.logical(), 55);
                     assert_eq!(bounds, candidate);
                     let sequence = NonZeroU64::new(9).unwrap();
                     let bytes = std::ptr::NonNull::new(storage.as_mut_ptr().cast::<u8>()).unwrap();
@@ -3582,7 +3663,7 @@ mod tests {
             transaction.commit_report_with_unchecked_one_put_record_target(
                 candidate,
                 |timestamp, plan| {
-                    assert_eq!(timestamp.get(), 56);
+                    assert_eq!(timestamp.logical(), 56);
                     assert_eq!(plan, candidate);
                     None
                 },
@@ -3602,7 +3683,7 @@ mod tests {
     }
 
     fn exercise_native_ordered_one_put_record_terminal() {
-        const EXACT_BYTES: u32 = 43 + 3 + 5;
+        const EXACT_BYTES: u32 = 55 + 3 + 5;
 
         reset();
         let db = open_db();
@@ -3634,7 +3715,7 @@ mod tests {
                 &next_bound,
                 &unhealthy,
                 |timestamp, bounds, sequence| {
-                    assert_eq!(timestamp.get(), 91);
+                    assert_eq!(timestamp.logical(), 91);
                     assert_eq!(bounds, candidate);
                     assert_eq!(sequence.get(), 11);
                     let bytes = std::ptr::NonNull::new(storage.as_mut_ptr().cast::<u8>()).unwrap();
@@ -3650,7 +3731,7 @@ mod tests {
         assert_eq!(
             outcome
                 .accepted_order()
-                .map(|(timestamp, sequence)| (timestamp.get(), sequence.get())),
+                .map(|(timestamp, sequence)| (timestamp.logical(), sequence.get())),
             Some((91, 11))
         );
         assert!(outcome.is_committed());
@@ -3711,7 +3792,7 @@ mod tests {
 
         reset();
         let db = open_db();
-        claim_cache_order(&db, u64::from(crate::MAX_MAKO_TIMESTAMP));
+        claim_cache_order(&db, u64::MAX);
         let table = db
             .open_table("trusted-native-ordered-exhausted", 92)
             .unwrap();
@@ -3731,7 +3812,7 @@ mod tests {
             reported_written: None,
         });
         push(Step::Destroy(sys::MAKO_LOCAL_OK));
-        let next_bound = AtomicU64::new(u64::from(crate::MAX_MAKO_TIMESTAMP));
+        let next_bound = AtomicU64::new(u64::MAX);
         let unhealthy = AtomicBool::new(false);
         let outcome = unsafe {
             transaction.commit_trusted_native_ordered_unchecked_one_put_record_target(
@@ -3747,10 +3828,7 @@ mod tests {
         assert!(report.completion_contract_valid);
         assert!(!report.record_bound);
         assert!(!report.record_written);
-        assert_eq!(
-            next_bound.load(Ordering::Acquire),
-            u64::from(crate::MAX_MAKO_TIMESTAMP)
-        );
+        assert_eq!(next_bound.load(Ordering::Acquire), u64::MAX);
         drop(db);
         assert_drained();
 
@@ -3770,7 +3848,7 @@ mod tests {
         let candidate = transaction.unchecked_one_put_record_candidate().unwrap();
         push(Step::CommitRecord {
             status: sys::MAKO_LOCAL_COMMIT_HOOK_REJECTED,
-            timestamp: Some(crate::MAX_MAKO_TIMESTAMP + 1),
+            timestamp: Some(HOT_LOGICAL_MASK + 1),
             exact_record_bytes: EXACT_BYTES as usize,
             record: vec![0; EXACT_BYTES as usize],
             reported_written: None,
@@ -3800,7 +3878,7 @@ mod tests {
         #[repr(C, align(64))]
         struct TestPublicationCell {
             turn: AtomicU64,
-            mako_timestamp: std::cell::UnsafeCell<u32>,
+            mako_timestamp: std::cell::UnsafeCell<u64>,
             record_bytes: std::cell::UnsafeCell<usize>,
             padding: [u8; 40],
         }
@@ -3820,7 +3898,7 @@ mod tests {
             assert!(std::mem::align_of::<TestArenaBlock>() == 64);
         };
 
-        const EXACT_BYTES: u32 = 43 + 3 + 5;
+        const EXACT_BYTES: u32 = 55 + 3 + 5;
         let mut cells = Box::new(std::array::from_fn::<_, 4, _>(|_| TestPublicationCell {
             turn: AtomicU64::new(u64::MAX),
             mako_timestamp: std::cell::UnsafeCell::new(0),
@@ -3876,7 +3954,7 @@ mod tests {
         assert_eq!(
             outcome
                 .accepted_order()
-                .map(|(timestamp, sequence)| (timestamp.get(), sequence.get())),
+                .map(|(timestamp, sequence)| (timestamp.logical(), sequence.get())),
             Some((95, 11))
         );
         assert!(outcome.is_committed());
@@ -3903,7 +3981,7 @@ mod tests {
     }
 
     fn exercise_unchecked_one_put_outcome_contract() {
-        const EXACT_BYTES: u32 = 43 + 3 + 5;
+        const EXACT_BYTES: u32 = 55 + 3 + 5;
 
         // The compact trusted outcome must preserve the general terminal's
         // fail-closed handling of malformed witness and binding combinations.
@@ -4043,7 +4121,7 @@ mod tests {
         Vec<std::mem::MaybeUninit<u8>>,
         Vec<u8>,
     ) {
-        const EXACT_BYTES: u32 = 43 + 3 + 5;
+        const EXACT_BYTES: u32 = 55 + 3 + 5;
 
         reset();
         let db = open_db();
@@ -4102,7 +4180,9 @@ mod tests {
             sys::MAKO_LOCAL_OK,
         );
         assert_eq!(
-            outcome.accepted_timestamp().map(crate::MakoTimestamp::get),
+            outcome
+                .accepted_timestamp()
+                .map(crate::MakoTimestamp::logical),
             Some(90)
         );
         assert!(outcome.record_written());
@@ -4152,7 +4232,9 @@ mod tests {
             sys::MAKO_LOCAL_WORKER_POISONED,
         );
         assert_eq!(
-            outcome.accepted_timestamp().map(crate::MakoTimestamp::get),
+            outcome
+                .accepted_timestamp()
+                .map(crate::MakoTimestamp::logical),
             Some(91)
         );
         assert!(outcome.record_written());
@@ -4176,33 +4258,27 @@ mod tests {
             // Installed without accepting or writing a durable record.
             (0, sys::MAKO_LOCAL_OK, Some(92), 0, false),
             // Accepted timestamp without the completion witness.
-            (1, sys::MAKO_LOCAL_OK, Some(93), 93, true),
+            (
+                1,
+                sys::MAKO_LOCAL_OK,
+                Some(93),
+                packed_timestamp_state(93, false).unwrap(),
+                true,
+            ),
             // Completion witness without an accepted timestamp.
-            (2, sys::MAKO_LOCAL_OK, None, 1u64 << 32, false),
+            (2, sys::MAKO_LOCAL_OK, None, 1, false),
             // A final conflict after acceptance contradicts the commit gate.
             (
                 3,
                 sys::MAKO_LOCAL_CONFLICT,
                 Some(94),
-                94 | (1u64 << 32),
+                packed_timestamp_state(94, true).unwrap(),
                 true,
             ),
-            // Bits above the written witness are reserved.
-            (
-                4,
-                sys::MAKO_LOCAL_OK,
-                Some(95),
-                95 | (1u64 << 32) | (1u64 << 33),
-                true,
-            ),
-            // A nonzero timestamp outside Mako's representable base range.
-            (
-                5,
-                sys::MAKO_LOCAL_OK,
-                Some(crate::MAX_MAKO_TIMESTAMP + 1),
-                u64::from(crate::MAX_MAKO_TIMESTAMP + 1) | (1u64 << 32),
-                false,
-            ),
+            // A completion witness with a zero stamp is malformed.
+            (4, sys::MAKO_LOCAL_OK, Some(95), 1, false),
+            // A logical value outside the private 19-bit stamp is rejected.
+            (5, sys::MAKO_LOCAL_OK, Some(HOT_LOGICAL_MASK + 1), 0, false),
         ] {
             let (outcome, _, _) = run_preselected_one_put_case(
                 52 + index,
@@ -4241,7 +4317,7 @@ mod tests {
     ) {
         const KEY: &[u8] = b"holder\0key";
         const VALUE: &[u8] = b"holder-value\xff";
-        const EXACT_BYTES: u32 = 43 + KEY.len() as u32 + VALUE.len() as u32;
+        const EXACT_BYTES: u32 = 55 + KEY.len() as u32 + VALUE.len() as u32;
 
         reset();
         let pool = crate::TrustedOnePutHolderPool::new(4, 0, 0).unwrap();
@@ -4323,7 +4399,9 @@ mod tests {
             sys::MAKO_LOCAL_OK,
         );
         assert_eq!(
-            outcome.accepted_timestamp().map(crate::MakoTimestamp::get),
+            outcome
+                .accepted_timestamp()
+                .map(crate::MakoTimestamp::logical),
             Some(120)
         );
         assert!(outcome.holder_sealed());
@@ -4343,7 +4421,7 @@ mod tests {
         let view = unsafe { pool.view(sequence) }.unwrap();
         assert_eq!(view.sequence(), sequence);
         assert_eq!(view.table_id(), 70);
-        assert_eq!(view.mako_timestamp().get(), 120);
+        assert_eq!(view.mako_timestamp().logical(), 120);
         assert_eq!(view.key(), b"holder\0key");
         assert_eq!(view.value(), b"holder-value\xff");
         // Native destruction must reject a sealed holder without invalidating
@@ -4439,7 +4517,9 @@ mod tests {
             sys::MAKO_LOCAL_WORKER_POISONED,
         );
         assert_eq!(
-            outcome.accepted_timestamp().map(crate::MakoTimestamp::get),
+            outcome
+                .accepted_timestamp()
+                .map(crate::MakoTimestamp::logical),
             Some(121)
         );
         assert!(outcome.holder_sealed());
@@ -4463,33 +4543,25 @@ mod tests {
             // Installed without exposing the accepted holder generation.
             (0, sys::MAKO_LOCAL_OK, Some(122), 0, false),
             // Accepted timestamp without the sealed witness.
-            (1, sys::MAKO_LOCAL_OK, Some(123), 123, true),
+            (
+                1,
+                sys::MAKO_LOCAL_OK,
+                Some(123),
+                packed_timestamp_state(123, false).unwrap(),
+                true,
+            ),
             // Sealed witness without an accepted timestamp.
-            (2, sys::MAKO_LOCAL_OK, None, 1u64 << 32, false),
+            (2, sys::MAKO_LOCAL_OK, None, 1, false),
             // A final conflict after holder acceptance is impossible.
             (
                 3,
                 sys::MAKO_LOCAL_CONFLICT,
                 Some(124),
-                124 | (1u64 << 32),
+                packed_timestamp_state(124, true).unwrap(),
                 true,
             ),
-            // Bits above the sealed witness are reserved.
-            (
-                4,
-                sys::MAKO_LOCAL_OK,
-                Some(125),
-                125 | (1u64 << 32) | (1u64 << 33),
-                true,
-            ),
-            // Timestamp exceeds Mako's representable base range.
-            (
-                5,
-                sys::MAKO_LOCAL_OK,
-                Some(crate::MAX_MAKO_TIMESTAMP + 1),
-                u64::from(crate::MAX_MAKO_TIMESTAMP + 1) | (1u64 << 32),
-                false,
-            ),
+            // A completion witness with a zero stamp is malformed.
+            (4, sys::MAKO_LOCAL_OK, Some(125), 1, false),
         ] {
             let (db, pool, outcome, sequence) = run_preselected_one_put_holder_case(
                 74 + index,
@@ -4515,7 +4587,7 @@ mod tests {
             // corrupted reported state. Release it so pool Drop remains a
             // useful sealed-generation diagnostic.
             if let Some(timestamp) = timestamp {
-                if crate::MakoTimestamp::new(timestamp).is_some() {
+                if timestamp_stamp(timestamp).is_some() {
                     release_actual_holder(&pool, sequence);
                 } else {
                     // The safe view correctly rejects this deliberately
@@ -4541,7 +4613,7 @@ mod tests {
     fn exercise_fused_one_put_holder_terminal() {
         const KEY: &[u8] = b"fused-key";
         const VALUE: &[u8] = b"fused-value";
-        const EXACT_BYTES: u32 = 43 + KEY.len() as u32 + VALUE.len() as u32;
+        const EXACT_BYTES: u32 = 55 + KEY.len() as u32 + VALUE.len() as u32;
 
         // Exact healthy success consumes the facade and publishes ACK as the
         // canonical producer tail without returning the cold two-word outcome.
@@ -4739,7 +4811,7 @@ mod tests {
             crate::TrustedFusedOnePutHolderAttempt::CommittedUnpublished {
                 timestamp,
                 exact_record_bytes,
-            } if timestamp.get() == 142 && exact_record_bytes.get() == EXACT_BYTES
+            } if timestamp.logical() == 142 && exact_record_bytes.get() == EXACT_BYTES
         ));
         assert_eq!(next.load(Ordering::Relaxed), 1);
         assert_eq!(acknowledged.load(Ordering::Acquire), 0);
@@ -4983,7 +5055,7 @@ mod tests {
         });
         push(Step::Destroy(sys::MAKO_LOCAL_OK));
         let report = transaction.commit_report_with_record(&mut record, |timestamp, _| {
-            assert_eq!(timestamp.get(), 61);
+            assert_eq!(timestamp.logical(), 61);
             None
         });
         assert_eq!(
@@ -5186,7 +5258,7 @@ mod tests {
     }
 
     fn exercise_cache_order_mode_and_clock_contract() {
-        const EXACT_BYTES: u32 = 43 + 3 + 5;
+        const EXACT_BYTES: u32 = 55 + 3 + 5;
 
         reset();
         let db = open_db();
@@ -5196,25 +5268,67 @@ mod tests {
             Err(Error::Busy)
         );
         db.order_record_validation_prefix();
-        let observed = crate::MakoTimestamp::new(17).unwrap();
+        let observed = crate::MakoTimestamp::new(
+            FAKE_TIMESTAMP_PHYSICAL_MS * 1_000,
+            17,
+            FAKE_TIMESTAMP_ORIGIN,
+        )
+        .unwrap();
         crate::advance_mako_timestamp_past(observed).unwrap();
-        let concurrent_snapshot = db.cache_order_snapshot();
-        assert_eq!(concurrent_snapshot & CACHE_ORDER_FIELD_MASK, 7);
+        let transaction = db.transaction().unwrap();
+        push(Step::CommitWithHook {
+            status: sys::MAKO_LOCAL_OK,
+            timestamp: Some(0),
+        });
+        push(Step::Destroy(sys::MAKO_LOCAL_OK));
+        let mut allocated = None;
+        let report = transaction.commit_report_with_hook(|timestamp| {
+            allocated = Some(timestamp);
+            true
+        });
+        assert_eq!(report.disposition, CommitDisposition::Committed);
+        assert_eq!(report.cleanup, Ok(()));
+        let allocated = allocated.expect("the fake commit hook receives a timestamp");
+        assert!(allocated > observed);
+        assert_eq!(allocated.physical_us(), observed.physical_us());
+        assert_eq!(allocated.logical(), observed.logical() + 1);
+        let maximum_physical_us = ((1u64 << 44) - 1) * 1_000;
+        crate::advance_mako_timestamp_past(
+            crate::MakoTimestamp::new(
+                maximum_physical_us,
+                HOT_LOGICAL_MASK - 1,
+                FAKE_TIMESTAMP_ORIGIN,
+            )
+            .unwrap(),
+        )
+        .unwrap();
         assert_eq!(
-            (concurrent_snapshot & CACHE_ORDER_TIMESTAMP_MASK) >> CACHE_ORDER_TIMESTAMP_SHIFT,
-            18
+            crate::advance_mako_timestamp_past(
+                crate::MakoTimestamp::new(
+                    maximum_physical_us,
+                    HOT_LOGICAL_MASK,
+                    FAKE_TIMESTAMP_ORIGIN,
+                )
+                .unwrap(),
+            ),
+            Err(Error::TimestampExhausted)
         );
+        assert_eq!(
+            crate::advance_mako_timestamp_past(
+                crate::MakoTimestamp::new(maximum_physical_us + 1, 0, FAKE_TIMESTAMP_ORIGIN,)
+                    .unwrap(),
+            ),
+            Err(Error::TimestampExhausted)
+        );
+        let concurrent_snapshot = db.cache_order_snapshot();
+        assert_eq!(concurrent_snapshot, 7);
         db.close().unwrap();
         assert_drained();
 
         let db = open_db();
         claim_cache_order_mode(&db, crate::CacheOrderMode::SingleProducer, 9);
         let single_producer_snapshot = db.cache_order_snapshot();
-        assert_eq!(single_producer_snapshot & CACHE_ORDER_FIELD_MASK, 9);
-        assert_eq!(
-            (single_producer_snapshot & CACHE_ORDER_TIMESTAMP_MASK) >> CACHE_ORDER_TIMESTAMP_SHIFT,
-            18
-        );
+        assert_eq!(single_producer_snapshot, 9);
         let cut = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             db.order_record_validation_prefix();
         }));
@@ -5230,11 +5344,7 @@ mod tests {
         let per_worker_snapshot = db.cache_order_snapshot();
         db.order_record_validation_prefix();
         assert_eq!(db.cache_order_snapshot(), per_worker_snapshot);
-        assert_eq!(per_worker_snapshot & CACHE_ORDER_FIELD_MASK, 11);
-        assert_eq!(
-            (per_worker_snapshot & CACHE_ORDER_TIMESTAMP_MASK) >> CACHE_ORDER_TIMESTAMP_SHIFT,
-            18
-        );
+        assert_eq!(per_worker_snapshot, 11);
         drop(db);
         assert_drained();
 
@@ -5339,7 +5449,7 @@ mod tests {
         #[repr(C, align(64))]
         struct TestPublicationCell {
             turn: AtomicU64,
-            mako_timestamp: std::cell::UnsafeCell<u32>,
+            mako_timestamp: std::cell::UnsafeCell<u64>,
             record_bytes: std::cell::UnsafeCell<usize>,
             padding: [u8; 40],
         }
@@ -5358,7 +5468,7 @@ mod tests {
         const TIMESTAMP: u32 = 151;
         const RECOVERED_SEQUENCE: u64 = 10;
         const EXPECTED_SEQUENCE: u64 = RECOVERED_SEQUENCE + 1;
-        const EXACT_BYTES: u32 = 43 + KEY.len() as u32 + VALUE.len() as u32;
+        const EXACT_BYTES: u32 = 55 + KEY.len() as u32 + VALUE.len() as u32;
 
         reset();
         let db = open_db();
@@ -5422,7 +5532,7 @@ mod tests {
         assert_eq!(
             outcome
                 .accepted_order()
-                .map(|(timestamp, sequence)| (timestamp.get(), sequence.get())),
+                .map(|(timestamp, sequence)| (timestamp.logical(), sequence.get())),
             Some((TIMESTAMP, EXPECTED_SEQUENCE))
         );
         assert!(outcome.is_committed());
@@ -5438,7 +5548,7 @@ mod tests {
         );
         assert_eq!(
             unsafe { cells[publication_index].mako_timestamp.get().read() },
-            TIMESTAMP,
+            timestamp_stamp(TIMESTAMP).unwrap(),
             "READY carries the accepted Mako timestamp"
         );
         assert_eq!(
@@ -5451,11 +5561,7 @@ mod tests {
             RECOVERED_SEQUENCE
         );
         let packed = db.cache_order_snapshot();
-        assert_eq!(packed & CACHE_ORDER_FIELD_MASK, EXPECTED_SEQUENCE);
-        assert_eq!(
-            (packed & CACHE_ORDER_TIMESTAMP_MASK) >> CACHE_ORDER_TIMESTAMP_SHIFT,
-            u64::from(TIMESTAMP + 1)
-        );
+        assert_eq!(packed, EXPECTED_SEQUENCE);
 
         let sequence = NonZeroU64::new(EXPECTED_SEQUENCE).unwrap();
         // SAFETY: the terminal returned an exact sealed-generation witness and
@@ -5463,7 +5569,7 @@ mod tests {
         let view = unsafe { pool.view(sequence) }.expect("sealed holder has an exact view");
         assert_eq!(view.sequence(), sequence);
         assert_eq!(view.table_id(), TABLE_ID);
-        assert_eq!(view.mako_timestamp().get(), TIMESTAMP);
+        assert_eq!(view.mako_timestamp().logical(), TIMESTAMP);
         assert_eq!(view.key(), KEY);
         assert_eq!(view.value(), VALUE);
         // SAFETY: all holder-backed slice borrows ended above.
@@ -5486,13 +5592,13 @@ mod tests {
             Conflict,
             CommitUnknown,
             CleanupStatusMismatch,
-            MalformedReadyReserved,
+            MalformedMissingStamp,
         }
 
         #[repr(C, align(64))]
         struct TestPublicationCell {
             turn: AtomicU64,
-            mako_timestamp: std::cell::UnsafeCell<u32>,
+            mako_timestamp: std::cell::UnsafeCell<u64>,
             record_bytes: std::cell::UnsafeCell<usize>,
             padding: [u8; 40],
         }
@@ -5512,7 +5618,7 @@ mod tests {
             const TIMESTAMP: u32 = 157;
             const RECOVERED_SEQUENCE: u64 = 20;
             const EXPECTED_SEQUENCE: u64 = RECOVERED_SEQUENCE + 1;
-            const EXACT_BYTES: u32 = 43 + KEY.len() as u32 + VALUE.len() as u32;
+            const EXACT_BYTES: u32 = 55 + KEY.len() as u32 + VALUE.len() as u32;
 
             let (commit_status, timestamp, cleanup_status, reported_holder_state) = match case {
                 Case::Conflict => (sys::MAKO_LOCAL_CONFLICT, None, sys::MAKO_LOCAL_OK, None),
@@ -5528,11 +5634,11 @@ mod tests {
                     sys::MAKO_LOCAL_WORKER_POISONED,
                     None,
                 ),
-                Case::MalformedReadyReserved => (
+                Case::MalformedMissingStamp => (
                     sys::MAKO_LOCAL_OK,
                     Some(TIMESTAMP),
                     sys::MAKO_LOCAL_OK,
-                    Some(u64::from(TIMESTAMP) | (1u64 << 32) | (1u64 << 33) | (1u64 << 34)),
+                    Some(1),
                 ),
             };
 
@@ -5594,12 +5700,12 @@ mod tests {
                 transaction
                     .commit_trusted_native_ordered_unchecked_one_put_holder(candidate, &control)
             };
-            assert!(outcome.order_witness_valid(), "{case:?}");
             assert_eq!(
-                outcome.native_holder_ready(),
-                matches!(case, Case::MalformedReadyReserved),
+                outcome.order_witness_valid(),
+                !matches!(case, Case::MalformedMissingStamp),
                 "{case:?}"
             );
+            assert!(!outcome.native_holder_ready(), "{case:?}");
             let report = outcome.into_report();
 
             match case {
@@ -5622,13 +5728,11 @@ mod tests {
                         unsafe { pool.view(NonZeroU64::new(EXPECTED_SEQUENCE).unwrap()) }.is_err()
                     );
                 }
-                Case::CommitUnknown
-                | Case::CleanupStatusMismatch
-                | Case::MalformedReadyReserved => {
+                Case::CommitUnknown | Case::CleanupStatusMismatch => {
                     assert_eq!(
                         outcome
                             .accepted_order()
-                            .map(|(accepted, sequence)| (accepted.get(), sequence.get())),
+                            .map(|(accepted, sequence)| (accepted.logical(), sequence.get())),
                         Some((TIMESTAMP, EXPECTED_SEQUENCE))
                     );
                     match case {
@@ -5640,10 +5744,7 @@ mod tests {
                             report.commit.disposition,
                             CommitDisposition::Unknown(Error::Internal)
                         ),
-                        Case::MalformedReadyReserved => assert_eq!(
-                            report.commit.disposition,
-                            CommitDisposition::Unknown(Error::Internal)
-                        ),
+                        Case::MalformedMissingStamp => unreachable!(),
                         Case::Conflict => unreachable!(),
                     }
                     let valid_quarantined_terminal = matches!(case, Case::CommitUnknown);
@@ -5682,10 +5783,28 @@ mod tests {
                         .expect("accepted uncertainty retains a replayable holder");
                     assert_eq!(view.sequence(), sequence);
                     assert_eq!(view.table_id(), TABLE_ID);
-                    assert_eq!(view.mako_timestamp().get(), TIMESTAMP);
+                    assert_eq!(view.mako_timestamp().logical(), TIMESTAMP);
                     assert_eq!(view.key(), KEY);
                     assert_eq!(view.value(), VALUE);
                     // SAFETY: all borrowed holder slices ended above.
+                    unsafe { pool.release(view) }.unwrap();
+                }
+                Case::MalformedMissingStamp => {
+                    assert_eq!(outcome.accepted_order(), None);
+                    assert_eq!(report.commit.disposition, CommitDisposition::Committed);
+                    assert_eq!(report.commit.cleanup, Ok(()));
+                    assert!(!report.completion_contract_valid);
+                    assert!(report.record_bound);
+                    assert!(!report.record_written);
+                    assert_eq!(
+                        cells[publication_index].turn.load(Ordering::Acquire),
+                        free_turn | 1,
+                        "malformed accepted state must remain BOUND"
+                    );
+                    let sequence = NonZeroU64::new(EXPECTED_SEQUENCE).unwrap();
+                    // SAFETY: the fake retained the actual accepted holder even
+                    // though its reported timestamp stamp was malformed.
+                    let view = unsafe { pool.view(sequence) }.unwrap();
                     unsafe { pool.release(view) }.unwrap();
                 }
             }
@@ -5702,7 +5821,7 @@ mod tests {
         run(Case::Conflict);
         run(Case::CommitUnknown);
         run(Case::CleanupStatusMismatch);
-        run(Case::MalformedReadyReserved);
+        run(Case::MalformedMissingStamp);
     }
 
     #[test]

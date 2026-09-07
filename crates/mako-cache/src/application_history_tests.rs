@@ -8,9 +8,10 @@ use std::time::{Duration, Instant};
 use mako_history::{
     check_application, state_insert, ApplicationCheckFailureKind, ApplicationCommit,
     ApplicationCommitOutcome, ApplicationHistory, BackendAttempt, BackendAttemptOutcome, CacheSeq,
-    CheckOptions, FrontierObservation, History, Interval, LogicalClock, ModelMutation, Observation,
-    Operation, Semantics, State, TerminalCall, TerminalOutcome, TimedOperation,
-    Transaction as HistoryTransaction, WaitAppliedObservation, WaitAppliedOutcome,
+    CheckOptions, FrontierObservation, History, Interval, LogicalClock,
+    MakoTimestamp as HistoryMakoTimestamp, ModelMutation, Observation, Operation, Semantics, State,
+    TerminalCall, TerminalOutcome, TimedOperation, Transaction as HistoryTransaction,
+    WaitAppliedObservation, WaitAppliedOutcome,
 };
 use mrx_core::fakes::MemBlobs;
 use mrx_core::{BlobError, BlobOp, Blobs};
@@ -130,6 +131,7 @@ struct RecordingBlobs {
     inner: MemBlobs,
     clock: Arc<LogicalClock>,
     attempts: Mutex<Vec<BackendAttempt>>,
+    timestamps: Mutex<HashMap<CacheSeq, HistoryMakoTimestamp>>,
     projection: Mutex<AttemptProjection>,
     gate: Mutex<BackendGate>,
     changed: Condvar,
@@ -141,6 +143,7 @@ impl RecordingBlobs {
             inner: MemBlobs::new(),
             clock,
             attempts: Mutex::new(Vec::new()),
+            timestamps: Mutex::new(HashMap::new()),
             projection: Mutex::new(AttemptProjection::default()),
             gate: Mutex::new(BackendGate::default()),
             changed: Condvar::new(),
@@ -178,6 +181,15 @@ impl RecordingBlobs {
             .clone()
     }
 
+    fn timestamp_for(&self, sequence: CacheSeq) -> HistoryMakoTimestamp {
+        *self
+            .timestamps
+            .lock()
+            .expect("backend timestamp transcript poisoned")
+            .get(&sequence)
+            .unwrap_or_else(|| panic!("missing Mako timestamp for sequence {sequence}"))
+    }
+
     fn application_state(&self) -> State {
         let mut state = State::new();
         for (key, value) in self.inner.snapshot() {
@@ -190,7 +202,9 @@ impl RecordingBlobs {
         state
     }
 
-    fn decode_attempt(operations: &[BlobOp<'_>]) -> Vec<(u64, Vec<ModelMutation>)> {
+    fn decode_attempt(
+        operations: &[BlobOp<'_>],
+    ) -> Vec<(u64, mako_local::MakoTimestamp, Vec<ModelMutation>)> {
         let mut decoded = Vec::new();
         let mut offset = 0;
         while offset < operations.len() {
@@ -264,7 +278,7 @@ impl RecordingBlobs {
                     }
                 })
                 .collect();
-            decoded.push((sequence, mutations));
+            decoded.push((sequence, record.mako_timestamp(), mutations));
         }
         assert!(!decoded.is_empty(), "cache backend batch must not be empty");
         for pair in decoded.windows(2) {
@@ -286,7 +300,7 @@ impl RecordingBlobs {
     }
 }
 
-fn transcript_record(sequence: u64, mako_timestamp: u32, mutations: Vec<Mutation>) -> CommitRecord {
+fn transcript_record(sequence: u64, logical: u32, mutations: Vec<Mutation>) -> CommitRecord {
     crate::record::PreparedCommitRecord::prepare(
         mutations,
         CacheOptions::default().writeback.max_record_bytes,
@@ -294,9 +308,23 @@ fn transcript_record(sequence: u64, mako_timestamp: u32, mutations: Vec<Mutation
     .expect("prepare transcript record")
     .bind(
         crate::record::CommitSeq::new(sequence).expect("nonzero transcript sequence"),
-        mako_local::MakoTimestamp::new(mako_timestamp).expect("nonzero transcript timestamp"),
+        transcript_timestamp(logical),
     )
     .finalize()
+}
+
+fn transcript_timestamp(logical: u32) -> mako_local::MakoTimestamp {
+    mako_local::MakoTimestamp::new(1_700_000_000_000_000, logical, 1)
+        .expect("transcript timestamp has a nonzero origin")
+}
+
+fn history_timestamp(timestamp: mako_local::MakoTimestamp) -> HistoryMakoTimestamp {
+    HistoryMakoTimestamp::new(
+        timestamp.physical_us(),
+        timestamp.logical(),
+        timestamp.origin(),
+    )
+    .expect("production Mako timestamp has a nonzero origin")
 }
 
 #[test]
@@ -331,6 +359,7 @@ fn application_transcript_decodes_every_record_in_a_physical_batch() {
         vec![
             (
                 1,
+                transcript_timestamp(11),
                 vec![ModelMutation::put(
                     DEFAULT_TABLE_ID,
                     b"phase1f/transcript/a",
@@ -339,6 +368,7 @@ fn application_transcript_decodes_every_record_in_a_physical_batch() {
             ),
             (
                 2,
+                transcript_timestamp(12),
                 vec![ModelMutation::delete(
                     DEFAULT_TABLE_ID,
                     b"phase1f/transcript/b",
@@ -422,7 +452,7 @@ fn application_transcript_rejects_a_mismatched_materialized_operation() {
     .expect("prepare transcript tripwire")
     .bind(
         crate::record::CommitSeq::new(1).unwrap(),
-        mako_local::MakoTimestamp::new(1).unwrap(),
+        transcript_timestamp(1),
     )
     .finalize();
     let operations = [
@@ -467,11 +497,29 @@ impl Blobs for RecordingBlobs {
                 .expect("backend sequence projection poisoned");
             decoded
                 .into_iter()
-                .map(|(physical_sequence, mutations)| {
-                    (projection.sequence_for(physical_sequence), mutations)
+                .map(|(physical_sequence, timestamp, mutations)| {
+                    (
+                        projection.sequence_for(physical_sequence),
+                        history_timestamp(timestamp),
+                        mutations,
+                    )
                 })
                 .collect::<Vec<_>>()
         };
+        {
+            let mut timestamps = self
+                .timestamps
+                .lock()
+                .expect("backend timestamp transcript poisoned");
+            for (sequence, timestamp, _) in &decoded {
+                if let Some(previous) = timestamps.insert(*sequence, *timestamp) {
+                    assert_eq!(
+                        previous, *timestamp,
+                        "a retried cache sequence changed its Mako timestamp"
+                    );
+                }
+            }
+        }
         let mut gate = self.gate.lock().expect("backend gate poisoned");
         gate.entered = true;
         self.changed.notify_all();
@@ -496,7 +544,7 @@ impl Blobs for RecordingBlobs {
         // represented by its front record only: no later sequence was eligible
         // to advance, and the same physical prefix will be retried from there.
         let logical_records = if result.is_ok() { decoded.len() } else { 1 };
-        for (sequence, mutations) in decoded.into_iter().take(logical_records) {
+        for (sequence, _, mutations) in decoded.into_iter().take(logical_records) {
             let invocation = self.clock.next();
             let response = self.clock.next();
             attempts.push(BackendAttempt::new(
@@ -805,9 +853,11 @@ fn recorded_concurrent_lane_acknowledgement() -> ApplicationHistory {
     first.1.outcome = ApplicationCommitOutcome::AcknowledgedWrite {
         seq: first_sequence,
     };
+    first.1.mako_timestamp = Some(backend.timestamp_for(first_sequence));
     second.1.outcome = ApplicationCommitOutcome::AcknowledgedWrite {
         seq: second_sequence,
     };
+    second.1.mako_timestamp = Some(backend.timestamp_for(second_sequence));
     assert_eq!(cache.close().expect("close concurrent cache"), 2);
 
     let mut transactions = History::new(State::new());
@@ -904,6 +954,14 @@ fn recorded_application_history() -> ApplicationHistory {
     );
     assert_eq!(recovered.close().expect("close recovered cache"), 3);
 
+    for commit in &mut commits {
+        let sequence = match commit.outcome {
+            ApplicationCommitOutcome::AcknowledgedWrite { seq } => seq,
+            outcome => panic!("recorded writer has unexpected outcome {outcome:?}"),
+        };
+        commit.mako_timestamp = Some(backend.timestamp_for(sequence));
+    }
+
     let mut transaction_history = History::new(State::new());
     transaction_history.set_observed_final_state(final_state());
     for transaction in transactions {
@@ -926,7 +984,7 @@ fn real_cache_history_connects_visibility_acknowledgement_and_ordered_applicatio
         CheckOptions::default(),
     )
     .unwrap_or_else(|error| panic!("real application history failed:\n{error}"));
-    assert_eq!(witness.cache_order.serialization, vec![1, 2, 3]);
+    assert_eq!(witness.mako_timestamp_order.serialization, vec![1, 2, 3]);
     assert_eq!(witness.successful_backend_prefix, 3);
 
     // Exercise the exact same checker path with a deliberate decoded-batch
@@ -966,12 +1024,14 @@ fn real_concurrent_cache_history_allows_independent_lane_acknowledgement() {
     let mut expected_order = history
         .commits
         .iter()
-        .map(|commit| match commit.outcome {
-            ApplicationCommitOutcome::AcknowledgedWrite { seq } => (seq, commit.transaction),
+        .map(|commit| match (commit.outcome, commit.mako_timestamp) {
+            (ApplicationCommitOutcome::AcknowledgedWrite { .. }, Some(timestamp)) => {
+                (timestamp, commit.transaction)
+            }
             outcome => panic!("concurrent writer has unexpected outcome {outcome:?}"),
         })
         .collect::<Vec<_>>();
-    expected_order.sort_by_key(|(sequence, _)| *sequence);
+    expected_order.sort_by_key(|(timestamp, _)| *timestamp);
     let expected_order = expected_order
         .into_iter()
         .map(|(_, transaction)| transaction)
@@ -982,7 +1042,7 @@ fn real_concurrent_cache_history_allows_independent_lane_acknowledgement() {
         CheckOptions::default(),
     )
     .unwrap_or_else(|error| panic!("concurrent application history failed:\n{error}"));
-    assert_eq!(witness.cache_order.serialization, expected_order);
+    assert_eq!(witness.mako_timestamp_order.serialization, expected_order);
     assert_eq!(witness.successful_backend_prefix, 2);
 }
 

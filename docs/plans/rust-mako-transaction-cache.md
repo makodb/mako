@@ -27,16 +27,15 @@ The first milestone deliberately does **not** port Silo. It keeps the proven
 C++ STO/MassTrans engine, gives Rust a narrow C ABI and safe ownership layer,
 then uses that engine as the single-machine transactional cache in front of
 RocksDB. In the current slice RocksDB is an asynchronously updated black box;
-disk-sync policy and recovery of an unsynced tail are later work. The C ABI
-continues to report draft revision 0, but the Phase 1C/1D freeze inputs are now
-resolved: database open has a sized options seam, worker attachment remains
-implicit TLS, the conditional all-output rule is retained, native table/epoch
-state is honestly process-lifetime, and async callers use the fixed-worker
-adapter. Promoting the numeric revision to ABI v1 remains a separate release
-action; neither the green executable gate nor these resolved design choices
-silently performs that promotion. Later milestones move Mako's distributed
-orchestration into Rust, then replace the local C++ engine only after its
-behavior is captured by an executable compatibility suite.
+disk-sync policy and recovery of an unsynced tail are later work. The timestamp
+cutover deliberately promotes the local C ABI to revision 1 and rejects the old
+32-bit timestamp and cache-record formats. Database open retains its sized
+options seam, worker attachment remains implicit TLS, the conditional
+all-output rule is retained, native table/epoch state is honestly
+process-lifetime, and async callers use the fixed-worker adapter. Later
+milestones move Mako's distributed orchestration into Rust, then replace the
+local C++ engine only after its behavior is captured by an executable
+compatibility suite.
 
 ## Decisions that should remain stable
 
@@ -64,11 +63,13 @@ behavior is captured by an executable compatibility suite.
    each transaction's commit record and selected materialized mutations atomic.
    Mako timestamps, not physical batch order, decide which value wins.
 6. **MassTrans OCC versions, physical log IDs, and Mako timestamps remain
-   separate types and number spaces.** `MakoTimestamp` wraps the checked,
-   nonzero 32-bit `tid_unique_` and supplies the local logical order. A
-   `CacheSeq` identifies a position in one physical writeback lane. MassTrans
-   row versions remain engine-private validation state. Accidental comparison
-   or conversion between these values should be impossible in Rust.
+   separate types and number spaces.** The single-machine cache uses the
+   16-byte HLC `MakoTimestamp { physical_us, logical, origin }`. A `CacheSeq`
+   identifies a position in one physical writeback lane. MassTrans row
+   versions remain engine-private validation state. The existing distributed
+   C++ path temporarily keeps its legacy 32-bit `tid_unique_`; it cannot be
+   converted to or stored as the new type. Accidental comparison or conversion
+   between these values should be impossible in Rust.
 7. **Process-lifetime native resources are honest in the API.** STO has
    exactly 460 process-lifetime thread slots, and current MassTrans teardown
    lacks a verified global RCU quiescence protocol. The first ABI does not
@@ -110,50 +111,44 @@ transaction scripts, and correctness oracles stay fixed.
 
 The local cache protocol must not call every ordering value a "timestamp":
 
-- **`MakoTimestamp`** is the exact, nonzero, 32-bit base value stored in
-  Mako's `tid_unique_`. Its checked domain ends at
-  `(UINT32_MAX - 9) / 10`, preserving the existing one-decimal-digit term
-  encoding. For a cache-backed write transaction it is allocated from Mako's
-  checked local logical counter after all Silo write locks are held and before
-  read-set validation, then carried verbatim in the backend commit record.
-  Validation may abort after allocation, so gaps are expected. The
-  single-machine path has no remote participant timestamps to merge. The
-  current distributed path also takes maxima from remote participants and the
-  read set, but permits ties and therefore must not yet treat this scalar as a
-  globally unique history key.
+- **`MakoTimestamp`** is the 16-byte tuple `(physical_us, logical, origin)`.
+  The single-machine cache allocates it after final Silo validation succeeds
+  and while the complete write set remains locked. The local C ABI, Rust type,
+  v5 and v6 cache records, replay comparisons, and recovery floor all carry
+  that tuple without truncation. The first implementation uses a fixed origin
+  of 1 because one process owns the local namespace. A distributed deployment
+  requires leased nonzero origins.
 - **`CacheSeq`** is a nonzero physical log ID. Concurrent mode stores the
   one-based worker lane tag in the upper 16 bits and a dense lane-local
   sequence in the low 48 bits. The lane tag is the cache's process-lifetime
   thread slot plus one; it need not equal STO's independent worker ID. An upper
-  16-bit value of zero denotes the legacy dense stream. A `CacheSeq` orders
-  records only within its lane; it is not a global serialization order, an OCC
-  version, or a progress count.
+  16-bit value of zero denotes the untagged dense stream used by current
+  SingleProducer mode and accepted during recovery. A `CacheSeq` orders records
+  only within its lane; it is not a global serialization order, an OCC version,
+  or a progress count.
 - **MassTrans row versions** remain the current nonopaque profile's per-record
-  OCC counters. Carrying `tid_unique_` does not replace them. An opaque STO
+  OCC counters. Carrying the HLC timestamp does not replace them. An opaque STO
   profile may separately use the 64-bit `commit_tid_` clock for row versions,
   but Phase 1E does not persist that value.
-- **Mako's term-stamped commit ID** is `tid_unique_ * 10 + term` in the
-  existing Paxos log and multiversion trailer. Phase 1E is single-machine,
-  term zero, and stores the base `MakoTimestamp`; the distributed record format
-  must model the term explicitly rather than confusing the encoded commit ID
-  with either `MakoTimestamp` or `CacheSeq`. The legacy representation reserves
-  one decimal digit but does not currently reject larger epochs; explicit term
-  validation or a wider tuple is a Milestone 2 requirement.
+- **The legacy distributed commit ID** remains `tid_unique_ * 10 + term` in
+  the current C++ Paxos log, value trailer, and watermark code. Phase 1 does
+  not widen or reinterpret it. Milestone 2 removes this packing, uses the full
+  HLC timestamp for transaction order, and stores the failure epoch in a
+  separate field.
 
 ## Milestone 1: C++ Silo as the single-machine transaction cache
 
 ### 1A. Point-transaction C ABI vertical slice
 
-**Draft revision policy.** The checked-in implementation reports
-`MAKO_LOCAL_ABI_VERSION == 0`. Revision 0 may add symbols, statuses, option
-fields, and capabilities until an explicit ABI-v1 release action. The green
-executable boundary gate and the resolved Phase 1C/1D freeze choices make that
-promotion possible, but do not change the reported revision automatically.
-After promotion, exported symbols and numeric statuses are permanent
-reservations. `DUPLICATE_WRITE` is now a legacy/no-RYW result rather than part
-of the default profile, but its assigned number remains reserved. Semantic
-expansions are advertised by capability bits or a later ABI revision rather
-than silently changing v1.
+**ABI revision policy.** The checked-in implementation reports
+`MAKO_LOCAL_ABI_VERSION == 1`. This is an intentional clean break: revision 1
+uses the 16-byte HLC timestamp, cache-record formats v5/v6, and no compatibility
+reader for revision 0 timestamp records. Existing option-structure revision
+tags remain zero because those layouts did not change. Exported revision-1
+symbols and numeric statuses are permanent reservations. `DUPLICATE_WRITE` is
+now a legacy/no-RYW result rather than part of the default profile, but its
+assigned number remains reserved. Later semantic expansions use capability
+bits or a later ABI revision rather than silently changing revision 1.
 
 The first slice proves the boundary with the smallest useful transaction:
 
@@ -424,10 +419,12 @@ gates are green:
 The implementation, reproducible commands, exact concurrency/benchmark
 methodology, retained artifacts, and execution status are maintained in
 [Mako local boundary gates](../mako-local-boundary-gates.md). The executable
-Phase 1A-1D gate is green, and the Phase 1C/1D design choices above are now
-resolved. ABI revision 0 nevertheless remains the reported revision until an
-explicit release review promotes it; completing internal design work is not an
-implicit ABI-number change.
+Phase 1A-1D evidence there predates the timestamp cutover and remains historical.
+The current source reports ABI revision 1. Its functional verification has
+passed. The combined timestamp mutation campaign also passed with all 12
+mutants killed, zero survivors, and zero harness errors. The revision-1
+performance sweep and canonical all-in-one hook CI gate remain pending. The
+linked records keep these current results separate from pre-HLC evidence.
 
 This intermediate boundary gate excludes RocksDB durability and eviction. By
 itself it is not completion of Milestone 1; distributed routing, 2PC,
@@ -482,17 +479,16 @@ The selected first-slice protocol is below. It supersedes both the early global
 commit gate and the later global dense publication queue. Record validation,
 per-worker publication, timestamp-filtered atomic RocksDB batches,
 retry/fail-stop behavior, native multi-key transactions, and reopen recovery
-are covered both as components and through integrated cache acceptance tests.
-Those tests establish the Phase 1E
-functional contract under bounded sustained overload, clean drain/reopen,
-forced process stop, and near-exhaustion recovery. Transactional scan
-read-your-writes and its C ABI, safe Rust, and cache integration slice are
-complete. The fresh-process SIGKILL gate covers ten outer/Rocks-wrapper
-write-path boundaries in the production-default profile and all sixteen named
-boundaries in a dedicated native-hook profile. Eight recovery/replay boundaries
-are each interrupted on two consecutive fresh-process restarts. The native
-boundary now also has a process-isolated direct-C++/C-ABI/safe-Rust
-differential gate and an independent strict-serializability/opacity oracle.
+passed revision-1 functional verification. That run checked bounded sustained
+overload, clean drain and reopen, forced process stop, and near-exhaustion
+recovery. Transactional scan read-your-writes and its C ABI, safe Rust, and
+cache integration slice remain implemented. The fresh-process SIGKILL suite
+covers ten outer or RocksDB-wrapper write-path boundaries in the
+production-default profile and all sixteen named boundaries in a dedicated
+native-hook profile. It also interrupts eight recovery and replay boundaries
+on two consecutive fresh-process restarts. The native boundary includes a
+process-isolated direct-C++, C ABI, and safe-Rust differential gate plus an
+independent strict-serializability and opacity oracle.
 Item 4's Phase 1A-1D sanitizer/Miri, fixed-worker concurrency, and
 relative-overhead gates passed on historical candidate `5a3dd3eaf` on
 2026-08-25. The
@@ -512,31 +508,32 @@ RocksDB remains a black box.
    No Rust mutation journal or tagged RocksDB keys are constructed on the
    foreground path; the background decoder materializes those keys later.
    Every size check and fallible allocation finishes while Silo holds no commit
-   locks. The detached permit occupies lane capacity but has no physical log ID
-   and is not visible to the consumer.
-2. **Allocate Mako's timestamp under Silo's locks, then validate.** Native
-   commit performs its existing phase-1 predicate checks while collecting and
-   locking the write set. Once the complete write set is locked, it allocates a
-   checked, nonzero base `tid_unique_` from Mako's local logical counter, then
-   performs the remaining read-set and participant validation. The clock stores
-   the next value to return and uses one value beyond the valid base range as
-   its exhausted sentinel. Silo's lock order
-   supplies the serialization constraints; allocating while the locks are held
-   assigns Mako's transaction-history timestamp consistently with them. A lock
-   or validation conflict drops the detached permit. It consumes no lane-local
-   sequence and needs no cancellation marker. Only the already allocated Mako
-   timestamp may contain a harmless gap.
-3. **Bind after validation and before install.** After every validation has
-   succeeded, but before phase 3 can make any write visible, native code calls
-   a narrow preinstall hook with `MakoTimestamp`. The hook checks the cache-wide
-   fail-stop state, assigns the next dense sequence in this worker's lane, and
-   combines it with the lane tag to form the physical `CacheSeq`. Native fills
-   the fixed-width record fields during direct serialization. This bind is
-   allocation-free and performs no RocksDB IO. Rejection is a definite native
-   abort because install has not begun. A Rust panic is converted to rejection
-   in unwind-enabled builds. The workspace release profile uses
-   `panic = "abort"`, so production hook code must remain non-panicking and a
-   violated invariant fail-stops the process before unwinding can cross C.
+   locks. The detached permit occupies lane capacity but is not visible to the
+   consumer. Some fast paths also preselect a reusable lane generation and
+   `CacheSeq` candidate. That candidate is not consumed until native code
+   accepts it into the commit order.
+2. **Validate under Silo's locks, then allocate the HLC timestamp.** Native
+   commit performs its phase-1 predicate checks while collecting and locking
+   the complete write set. General transactions enter the validation gate,
+   perform final point and predicate validation, and only then allocate one
+   HLC timestamp. Restricted transactions may validate before taking the gate
+   only when their locked update proves the same ordering rule. A lock or
+   validation conflict drops the detached permit before timestamp allocation.
+3. **Bind after validation and before install.** Before phase 3 can make a
+   write visible, native code calls a narrow preinstall hook. The public hook
+   receives the full `MakoTimestamp`. Same-build fast hooks carry the private
+   63-bit hot stamp and expand it losslessly with process origin 1. The hook
+   checks the cache-wide fail-stop state and binds the next dense sequence in
+   this worker's lane to the timestamp. The general gate remains held through
+   the ordered bind. Native fills the fixed-width record fields during direct
+   serialization. This bind performs no allocation or RocksDB IO. Rejection
+   before irrevocable sequence binding is a definite native abort and may leave
+   a harmless HLC gap. Once a nonzero sequence is accepted or advanced, any
+   ownership, install, or publication uncertainty pins that exact obligation
+   and latches fail-stop state. A Rust panic is converted to rejection in
+   unwind-enabled builds. The workspace release profile uses `panic = "abort"`,
+   so production hook code must remain non-panicking and a violated invariant
+   fail-stops the process before unwinding can cross C.
 4. **Serialize, install, publish, and acknowledge independently.** Native walks
    the canonical STO write set directly, fills the caller-owned record and the
    optional CRC, then Silo installs the write set. Rust attaches the complete
@@ -548,12 +545,13 @@ RocksDB remains a black box.
    The bounded queue is volatile, so an acknowledged but unapplied tail may be
    lost on process crash. This phase also makes no promise for an applied but
    unsynced RocksDB tail.
-5. **Fail-stop unresolved post-bind obligations.** Once bind succeeds, native
-   install or publication uncertainty cannot become an ordinary conflict. The
-   affected lane retains its exact finalized record when those bytes exist, and
-   the shared unhealthy state rejects new work in every lane. This preserves
-   the obligation without a cross-worker acknowledgement gate. A higher-level
-   recovery protocol must resolve any unknown outcome.
+5. **Fail-stop unresolved irrevocable obligations.** Once the final preinstall
+   ownership handoff succeeds, native install or publication uncertainty
+   cannot become an ordinary conflict. The affected lane retains its exact
+   finalized record when those bytes exist, and the shared unhealthy state
+   rejects new work in every lane. This preserves the obligation without a
+   cross-worker acknowledgement gate. A higher-level recovery protocol must
+   resolve any unknown outcome.
 6. **Poll lanes and apply through one coordinator.** One background runtime
    visits initialized lanes in round-robin order. It takes a bounded contiguous
    Ready prefix from a lane, then enters the shared apply coordinator. The
@@ -569,24 +567,25 @@ RocksDB remains a black box.
 7. **Validate complete backend history on open.** Reopen validates any records
    RocksDB presents by version, optional checksum, physical `CacheSeq`, and
    checked `MakoTimestamp`. It requires a dense local sequence and increasing
-   timestamps within each lane, accepts the upper-zero legacy dense stream, and
-   rejects duplicate Mako timestamps across the cache. Recovery reconstructs
-   the latest timestamp for every data key from the permanent commit logs,
+   timestamps within each tagged lane, accepts the upper-zero untagged dense
+   stream, and rejects duplicate Mako timestamps across the cache. Recovery
+   reconstructs the latest timestamp for every data key from the permanent commit logs,
    including delete records, and checks the raw materialized state against
    those winners. It then sorts whole transactions by Mako timestamp for native
-   replay and floors Mako's process-wide clock past the recovered maximum. The
-   progress sequence is the recovered record count, not the last physical ID.
+   replay and sets Mako's process-wide clock floor so the next allocation is
+   greater than the recovered maximum. The progress sequence is the recovered
+   record count, not the last physical ID.
    This validation does not promise recovery of a RocksDB tail that had not
    been synced before a machine failure. The first slice exposes one default
    logical table and uses a tagged RocksDB key format separating user data,
    commit records, and future internal namespaces. Compatibility or migration
    from `mrx`'s raw-key layout remains a separate task.
 
-The timestamp switch bumps the draft commit-record value format from v2 to v3:
-v2 carried a 64-bit Silo TID, while v3 carries the exact 32-bit base
-`MakoTimestamp`. Recovery rejects v2 rather than guessing or truncating a
-timestamp. This is allowed while both the C ABI and durable format remain
-pre-v1; a production format must ship an explicit migration policy.
+The HLC switch replaces the draft v3 and v4 cache records with v5 and v6. Both
+new formats carry the exact 16-byte `MakoTimestamp`; v5 includes a CRC and v6
+is the explicitly unchecked variant. Recovery rejects older versions rather
+than guessing, synthesizing an origin, or truncating a timestamp. Backward
+compatibility is not part of this cutover, so old cache state must be rebuilt.
 
 The protocol has no global publication ticket. Disjoint transactions may
 validate, bind a lane-local sequence, install, publish, and return concurrently.
@@ -667,27 +666,30 @@ asynchronous milestone. Recovery of an unflushed log tail, forced sync, torn
 WAL simulation, and interruption inside RocksDB are deferred to the later
 durability milestone. No private RocksDB C++ shim is required here.
 
-The historical Phase 1F correctness gate is complete for the asynchronous
-contract. The per-worker-lane revision now passes its
-[fresh production, hook-enabled, Rust, recovery, and comparative gates](../mako-cache-milestone1-acceptance.md#fresh-per-worker-validation).
-The accepted coverage includes:
+The historical Phase 1F correctness gate is complete for its named pre-HLC
+candidate. Current revision-1 functional verification has passed. The
+combined timestamp mutation campaign also killed all 12 mutants, with zero
+survivors and zero harness errors. The performance sweep and canonical
+all-in-one hook CI gate remain pending. The
+[acceptance record](../mako-cache-milestone1-acceptance.md) keeps the old
+evidence separate from current status. Required revision-1 coverage includes:
 
-- Pre-preparation plus every reachable cache abort/commit-cleanup path has a
-  fresh-worker quarantine assertion. The raw ABI independently covers all five
-  native cleanup seams, including destroy.
-- The strict isolated suite mutation-tests corrupted native-record put replay, early detached
-  capacity discharge, hook-time allocation, conflict cancellation slots,
-  missing/premature Ready publication, unpinned unknown outcomes, partial
-  replay, reordered commits, duplicate replay, wrong Mako timestamps, and a
-  recovered native clock not advanced past the recovered maximum. The
-  per-worker-lane revision adds lane-local density, duplicate-timestamp, stale
-  materialization, and shared fail-stop cases.
-- Synthetic and real cache histories run through the transaction oracle first,
-  then add physical lane order, timestamp order, backend batches and retries,
-  aggregate progress, wait barriers, pinned lane suffixes, and one-global-clock
-  validation.
-- Deliberate decoded-batch divergence turns the same full-history checker path
-  red; partial materialization is rejected earlier by transcript decoding.
+- Pre-preparation plus every reachable cache abort or commit-cleanup path must
+  have a fresh-worker quarantine assertion. The raw ABI must independently
+  cover all five native cleanup seams, including destroy.
+- The strict isolated suite must mutation-test corrupted native-record put
+  replay, early detached capacity discharge, hook-time allocation, conflict
+  cancellation slots, missing or premature Ready publication, unpinned unknown
+  outcomes, partial replay, reordered commits, exact-batch retry, wrong Mako
+  timestamps, and a missing recovery clock floor. The per-worker-lane revision
+  adds lane-local density, duplicate-timestamp, stale-materialization, and
+  shared fail-stop cases.
+- Synthetic and real cache histories must run through the transaction oracle
+  first, then add physical lane order, timestamp order, backend batches and
+  retries, aggregate progress, wait barriers, pinned lane suffixes, and one
+  global clock.
+- Deliberate decoded-batch divergence must turn the same full-history checker
+  path red; transcript decoding must reject partial materialization first.
 
 ### 1G. Bounded values and eviction (deferred until after Milestone 1)
 
@@ -716,8 +718,8 @@ separate designs.
 
 ### Milestone 1 final acceptance gate
 
-The checklist below separates the completed historical validation waves from
-the per-worker-lane revision. Historical candidate
+The checklist below separates completed historical validation waves from the
+current revision-1 validation. Historical candidate
 `6574cf47c` passed the original functional/contract gate and complete
 comparative zoo-2 matrix on 2026-08-26. The later
 native-record/bounded-batching rewrite passed its delta correctness gates and
@@ -725,8 +727,11 @@ old-versus-rewrite zoo-2 scaling run on 2026-08-29. The retained
 [Milestone 1 acceptance record](../mako-cache-milestone1-acceptance.md) reports
 both evidence sets and their concurrent-write scaling limitations. The
 per-worker-lane implementation supersedes that rewrite's global publication
-queue; its fresh full-suite and W1/W4 comparative evidence are recorded in the
-linked acceptance record.
+queue. Its retained full-suite and W1/W4 evidence also predates the HLC
+cutover. Revision-1 functional verification has passed. Its performance sweep
+and canonical all-in-one hook CI gate remain pending. The combined timestamp
+mutation campaign has passed with all 12 mutants killed, zero survivors, and
+zero harness errors.
 
 - [x] **Historical foundation:** every Phase 1A-1D boundary gate is green,
       including the resolved
@@ -735,9 +740,9 @@ linked acceptance record.
       with a
       bounded contiguous lane prefix per black-box RocksDB `WriteBatch` and one
       shared timestamp-filtering apply coordinator.
-- [x] **Per-worker lane revision:** reopen advances Mako's native logical
-      counter past every recovered record before admitting work, including
-      near-exhaustion and corrupt-timestamp cases.
+- [x] **Per-worker lane implementation:** reopen sets Mako's HLC floor so the
+      next timestamp is greater than every recovered record before admitting
+      work, including near-exhaustion and corrupt-timestamp cases.
 - [x] **Per-worker lane revision:** an honest in-memory `AppliedWatermark` and
       `wait_applied()` barrier under concurrent writers, write failures, and
       sustained overload. Progress is an aggregate count plus the greatest
@@ -748,7 +753,7 @@ linked acceptance record.
       overwrite a newer timestamp.
 - [x] **Per-worker lane revision:** physical log IDs encode the one-based
       worker lane in the upper 16 bits and a dense lane-local sequence in the
-      low 48 bits. Reopen also accepts upper-zero legacy records, validates
+      low 48 bits. Reopen also accepts upper-zero untagged records, validates
       each lane, rejects duplicate timestamps, and replays whole transactions
       in Mako timestamp order.
 - [x] **Per-worker lane revision:** clean cache/process shutdown drains all
@@ -767,14 +772,57 @@ linked acceptance record.
       1/2/4/8/16/32-worker read/write comparison against the pre-rewrite
       implementation, retain all 84 raw samples, and independently verify their
       accounting, recovery, and report-integrity invariants.
-- [x] **Per-worker lane validation:** the full production and hook-enabled
-      native/cache suites pass, and the frozen zoo-2 W1/W4 comparison confirms
-      near-constant scaling efficiency. The linked acceptance record retains
-      exact commands, identities, logs, and samples.
+- [x] **Historical pre-HLC per-worker validation:** the full production and
+      hook-enabled native/cache suites passed, and the frozen zoo-2 W1/W4
+      comparison confirmed near-constant scaling efficiency. The linked
+      acceptance record retains exact commands, identities, logs, and samples.
+- [x] **Revision-1 functional validation:** the native suite passed 123 of 123
+      tests. `mako-cache` passed 159 unit tests, 23 integration tests, and three
+      doctests. The native-backed `mako-local` library, integration, and
+      documentation suites passed, as did the fake-ABI suites. `mako-history`
+      passed 25 application tests and 12 base transaction-oracle tests. The
+      release Cargo check and strict fingerprint, symbol, C11, and C++ gates
+      also passed.
+- [x] **Revision-1 mutation acceptance:** the combined timestamp campaign
+      killed all 12 mutants, with zero survivors and zero harness errors. The
+      first full run killed 11 and exposed a weak oracle in
+      `recovery_advances_mako_timestamp_past_the_recovered_maximum`. After that
+      test was strengthened with a future but representable HLC, the focused
+      rerun killed `missing-recovery-clock-floor`. The source-integrity check
+      matched before and after the campaign.
+- [ ] **Revision-1 performance and hook acceptance:** run the performance sweep
+      and canonical all-in-one hook CI gate. Both remain pending.
 
 ## Milestone 2: distributed Mako with C++ Silo participants
 
 Port the distributed control plane while retaining the local C++ engine:
+
+### 2A. Cut the distributed path over to HLC
+
+Treat this as one protocol and format change, with no mixed 32-bit and HLC
+mode:
+
+1. Replace the timestamp-allocation RPC with a validation reply carrying the
+   participant's greatest full HLC bound. Validate every read or write
+   participant before choosing a commit timestamp.
+2. After all validations succeed, let the coordinator allocate exactly one
+   timestamp greater than every participant and local bound. Propagate that
+   exact timestamp to every participant, and merge it into each participant's
+   local HLC before exposing the commit.
+3. Move distributed value metadata, replicated transaction logs, replay
+   records, failure-history entries, and visibility watermarks to the 16-byte
+   timestamp. Store the failure epoch, transaction ID, Raft term, and Raft log
+   index in separate fields.
+4. Remove `timestamp * 10 + term` from values and logs. Make replication apply
+   callbacks return status separately instead of returning
+   `timestamp * 10 + status`.
+5. Add shuffled-reply, clock-skew, restart-floor, duplicate-message, and
+   multi-shard differential tests before enabling the new distributed path.
+
+Phase 1 does none of these distributed changes. Its fixed origin of 1 and
+single-process clock are not a distributed origin-allocation scheme.
+
+### 2B. Port coordination to Rust
 
 1. Define a participant ABI for begin/read, batch-lock, validate, install,
    abort, and commit-record production. A participant transaction stays on
@@ -782,24 +830,21 @@ Port the distributed control plane while retaining the local C++ engine:
 2. Port key routing and coordinator state to Rust. Keep Mako's point-key hash
    routing compatible first. Do not promise globally ordered range scans over
    hash shards; either merge explicit per-shard scans or adopt range sharding.
-3. Reproduce the current commit order: lock remote writes, lock local writes,
-   choose/merge a distributed timestamp, validate local predicates, validate
-   participants, install, log/replicate, and release. Encode the state machine
-   so invalid phase transitions are typed errors. Before calling that timestamp
-   a history order, make every read dependency advance strictly rather than
-   merge by equality, define a shard/coordinator tie-break for independent
-   transactions, propagate remote timestamp-allocation failures, and floor
-   every participant's next-to-return clock at the chosen value plus one.
+3. Implement the HLC commit order from 2A: lock remote writes, lock local
+   writes, validate local predicates and every participant, collect full
+   bounds, allocate one strict successor, propagate it exactly, install,
+   log or replicate, and release. Encode the state machine so invalid phase
+   transitions are typed errors.
 4. Give every RPC an idempotence key, deadline, cancellation rule, and
    duplicate-response behavior. Unknown commit outcome is distinct from an
    OCC conflict.
 5. Differential-test a Rust coordinator against the existing C++ coordinator
    using deterministic schedules before switching any default.
 
-Milestone 2 must also replace or validate the legacy one-digit term packing,
-restore every timestamp authority during replay/promotion, and cover remote
-read-only participants during validation. Those are pre-existing distributed
-gaps; Phase 1E's local clock does not claim to repair them.
+Milestone 2 must restore every timestamp authority during replay or promotion
+and cover remote read-only participants during validation. These are
+pre-existing distributed gaps. Phase 1's local clock does not claim to repair
+them.
 
 The gate requires single-node and multi-node agreement, participant crash at
 every 2PC phase, coordinator crash/restart, duplicate/reordered messages,
@@ -808,15 +853,16 @@ is silently abandoned.
 
 ## Milestone 3: distributed durability, replication, and recovery
 
-- Version and checksum the Rust transaction log format; retain a reader for
-  the old C++ format during migration.
+- Version and checksum the Rust transaction log format. Make the HLC cutover a
+  clean break that rejects the old C++ timestamp layout; operators discard and
+  rebuild old state or convert it offline before starting the new version.
 - Port replication adapters without coupling consensus log indexes to Silo
   versions or cache commit sequences.
 - Specify exactly when a client receives success: local install, durable local
   log, or replicated quorum. Expose weaker modes only as explicit options.
 - Port watermark handling and checkpointing, then test follower catch-up,
-  snapshot install, leader changes, truncated/corrupt tails, and mixed-version
-  rolling upgrades.
+  snapshot install, leader changes, truncated or corrupt tails, rejection of
+  legacy records, and coordinated clean-cutover restart.
 - Recovery replays a distributed transaction atomically and idempotently; a
   commit cannot reappear as independent per-key transactions.
 
@@ -847,42 +893,41 @@ recovery.
 
 ## Immediate execution order
 
-This section records the historical execution status and the later per-worker
-lane revision. Transactional scan chunks, scan
-read-your-writes, and their C ABI, safe Rust, and cache exposure were complete
-for the RYW profile. The hook-enabled
-fresh-process suite now exercises sixteen write-path and eight repeated
-recovery boundaries. The in-memory applied watermark is now explicit and
-advances only after successful coordinated backend calls. Item 3's native
-history oracle is complete. Item 4's sanitizer/Miri, fixed-worker concurrency,
-and overhead gate was accepted on historical candidate `5a3dd3eaf`; the linked
-[validation record](../mako-local-boundary-gates.md#validation-record) retains
-the evidence. Item 5's Phase 1F cleanup, mutation, and application-history gate
+This section separates current implementation status from historical
+acceptance. Transactional scan chunks, scan read-your-writes, the explicit
+applied watermark, per-worker lanes, and HLC timestamp arbitration are
+implemented. Revision-1 functional verification has passed with 123 of 123
+native tests, 159 `mako-cache` unit tests, 23 integration tests, three doctests,
+25 `mako-history` application tests, and 12 base transaction-oracle tests. The
+native-backed and fake-ABI `mako-local` suites, release Cargo check, and strict
+fingerprint, symbol, C11, and C++ gates also passed. The performance sweep and
+canonical all-in-one hook CI gate remain pending. The combined timestamp
+mutation campaign killed all 12 mutants, with zero survivors and zero harness
+errors. Its first full run exposed one weak recovery-floor oracle after killing
+11. The strengthened future-HLC oracle killed the remaining
+`missing-recovery-clock-floor` mutant on a focused rerun. Source integrity
+matched before and after the campaign. Phase 1G eviction remains deferred.
+
+Item 4's sanitizer, Miri, fixed-worker concurrency, and overhead gate was
+accepted on historical candidate `5a3dd3eaf`; the linked
+[validation record](../mako-local-boundary-gates.md#validation-record)
+retains the evidence. Item 5's cleanup, mutation, and application-history gate
 was accepted on historical implementation commit `5546062af`; the linked
 [Item 5 validation record](../mako-local-boundary-gates.md#item-5-phase-1f-validation-record)
-retains the evidence. The remaining Phase 1B-1E contract items are now
-implemented: explicit isolation selection, the final options/TLS/output/lifetime
-choices, compile-fail ownership checks, the production fixed-worker/retry
-adapter, and integrated overload/shutdown/exhaustion acceptance tests. Phase
-1G eviction is explicitly deferred. The comparative zoo-2 gate is complete on
+retains that evidence. The comparative zoo-2 gate belongs to historical
 candidate `6574cf47c`; its
-[acceptance record](../mako-cache-milestone1-acceptance.md) retains the raw
-artifact and reports the observed concurrent-write scaling cost.
-Inside-RocksDB instrumentation remains outside this milestone. The per-worker
-lane code, fresh full-suite, canonical hook gate, and comparative performance
-run are complete; the linked acceptance record retains their evidence.
+[acceptance record](../mako-cache-milestone1-acceptance.md) preserves the raw
+artifact and observed concurrent-write scaling cost. None of those records is
+revision-1 acceptance. Inside-RocksDB instrumentation remains outside this
+milestone.
 
-1. The revision-0 operation/status contract and numeric reservations 0 through
-   19 are now published and mechanically checked across the C header, C++
-   diagnostics, raw Rust declarations, and exhaustive safe-Rust lifecycle
-   policy. Typed poison, independent TLS worker health, begin cleanup,
-   one-shot cleanup, a monotonic quarantine counter, five native cleanup
-   failpoints, and fake-ABI/Miri ownership coverage complete this item.
-   The Phase 1C/1D design/freeze review retains implicit TLS, conditional
-   all-output initialization, and process-lifetime native resources. The ABI
-   still reports draft revision `0`; promotion to v1 is an explicit release
-   action. Revisit the conservative transaction budget only with safe
-   pre-reservation.
+1. The current operation and status contract reports ABI revision 1. It adds
+   the 16-byte HLC timestamp and v5/v6 records as a clean break while retaining
+   the published numeric status reservations. The Phase 1C/1D design choices
+   still use implicit TLS, conditional all-output initialization, and
+   process-lifetime native resources. The revision-0 validation rows below are
+   historical. Current strict fingerprint, symbol, C11, and C++ conformance
+   gates passed alongside the revision-1 functional suites.
 2. The C header now generates the raw Rust declarations. Strict C11/C++
    conformance probes, a Rust all-export link probe, an exact native symbol
    allowlist, and the source/configuration-derived fingerprint plus digest link
@@ -936,5 +981,8 @@ run are complete; the linked acceptance record retains their evidence.
 7. The final cache-level comparative benchmark completed on zoo-2 on
    2026-08-26. Its machine-readable evidence and independently checked medians
    are retained in the linked acceptance record. That historical revision was
-   accepted within its single-machine, asynchronous scope. The per-worker-lane
-   revision has now passed fresh validation and is the accepted current design.
+   accepted within its single-machine, asynchronous scope. The later pre-HLC
+   per-worker-lane evidence is also historical. The revision-1 performance
+   sweep and canonical all-in-one hook CI gate remain pending. Functional and
+   mutation verification have passed, but revision 1 has no final acceptance
+   result until those two remaining gates complete.

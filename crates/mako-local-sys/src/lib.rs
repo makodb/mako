@@ -15,11 +15,10 @@ mod tests {
     use core::ffi::c_int;
 
     #[test]
-    fn generated_surface_preserves_revision_zero_rust_types_and_layouts() {
+    fn generated_surface_preserves_revision_one_rust_types_and_layouts() {
         let _: c_int = MAKO_LOCAL_OK;
         let _: u32 = MAKO_LOCAL_ABI_VERSION;
         let _: u32 = MAKO_LOCAL_BUILD_FINGERPRINT_SIZE;
-        let _: u32 = MAKO_LOCAL_MAX_MAKO_TIMESTAMP;
         let _: u64 = MAKO_LOCAL_FEATURE_POINT_TRANSACTIONS;
         let _: u32 = MAKO_LOCAL_MAX_TABLE_NAME_BYTES;
         let _: u32 = MAKO_LOCAL_MAX_KEY_BYTES;
@@ -40,7 +39,12 @@ mod tests {
             core::mem::offset_of!(mako_local_scan_options, resume_len)
                 + core::mem::size_of::<usize>()
         );
-        assert_eq!(MAKO_LOCAL_EXPORT_NAMES.len(), 34);
+        assert_eq!(core::mem::size_of::<mako_timestamp_v1>(), 16);
+        assert_eq!(core::mem::align_of::<mako_timestamp_v1>(), 8);
+        assert_eq!(core::mem::offset_of!(mako_timestamp_v1, physical_us), 0);
+        assert_eq!(core::mem::offset_of!(mako_timestamp_v1, logical), 8);
+        assert_eq!(core::mem::offset_of!(mako_timestamp_v1, origin), 12);
+        assert_eq!(MAKO_LOCAL_EXPORT_NAMES.len(), 37);
     }
 
     #[test]

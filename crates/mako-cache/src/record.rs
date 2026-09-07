@@ -10,19 +10,20 @@
 //! The value format is deliberately small and fixed-width where practical:
 //!
 //! ```text
-//! mode_magic[8] | version:u16 | sequence:u64 | mako_timestamp:u32 | op_count:u32
+//! mode_magic[8] | version:u16 | sequence:u64
+//! | physical_us:u64 | logical:u32 | origin:u32 | op_count:u32
 //! repeated op_count times:
 //!   tag:u8 | table_id:u64 | key_len:u32 | value_len:u32 | key | value
-//! v3 only: crc32c:u32
+//! v5 only: crc32c:u32
 //! ```
 //!
 //! All integers are big-endian. A delete has a zero `value_len`; a put may
-//! have an empty value. The default v3 format's CRC covers every preceding
-//! byte, including the header. The self-describing v4 format deliberately has
+//! have an empty value. The default v5 format's CRC covers every preceding
+//! byte, including the header. The self-describing v6 format deliberately has
 //! no checksum trailer and uses a distinct magic, so accidental damage cannot
-//! turn a v3 record into an unchecked v4 record merely by changing its version
+//! turn a v5 record into an unchecked v6 record merely by changing its version
 //! field. It exists for deployments which explicitly trade payload corruption
-//! detection for foreground commit latency. Decoding accepts mixed v3/v4 logs
+//! detection for foreground commit latency. Decoding accepts mixed v5/v6 logs
 //! and rejects non-canonical input, including unclaimed bytes after the last
 //! declared operation.
 
@@ -40,15 +41,16 @@ pub const DEFAULT_TABLE_ID: u64 = 1;
 
 const CRC32C_MAGIC: &[u8; 8] = b"MAKOCMT\0";
 const UNCHECKED_MAGIC: &[u8; 8] = b"MAKONOC\0";
-const FORMAT_VERSION: u16 = 3;
-const UNCHECKED_FORMAT_VERSION: u16 = 4;
+const FORMAT_VERSION: u16 = 5;
+const UNCHECKED_FORMAT_VERSION: u16 = 6;
 const PUT_TAG: u8 = 1;
 const DELETE_TAG: u8 = 2;
 
 const VERSION_OFFSET: usize = CRC32C_MAGIC.len();
 const SEQUENCE_OFFSET: usize = VERSION_OFFSET + 2;
 const MAKO_TIMESTAMP_OFFSET: usize = SEQUENCE_OFFSET + 8;
-const OP_COUNT_OFFSET: usize = MAKO_TIMESTAMP_OFFSET + 4;
+const MAKO_TIMESTAMP_LEN: usize = 16;
+const OP_COUNT_OFFSET: usize = MAKO_TIMESTAMP_OFFSET + MAKO_TIMESTAMP_LEN;
 const HEADER_LEN: usize = OP_COUNT_OFFSET + 4;
 const OP_HEADER_LEN: usize = 1 + 8 + 4 + 4;
 const CRC_LEN: usize = 4;
@@ -71,9 +73,10 @@ const fn expected_magic(version: u16) -> Option<&'static [u8; 8]> {
 const LOG_KEY_PREFIX: &[u8] = b"\0mako-cache\0\x01L";
 const DATA_KEY_PREFIX: &[u8] = b"\0mako-cache\0\x01D";
 
-/// Upper bits used to distinguish worker-local physical log streams from the
-/// legacy dense stream.  Existing databases cannot have reached this range:
-/// Mako's finite timestamp domain exhausts first.
+/// Upper bits distinguish worker-local physical log streams from the dense
+/// single-producer stream. Tag zero is reserved for the dense stream; tags
+/// one through `u16::MAX` injectively name worker lanes, and the lower 48 bits
+/// hold a nonzero lane-local position.
 pub(crate) const LOG_LANE_SHIFT: u32 = 48;
 pub(crate) const LOG_LOCAL_MASK: u64 = (1u64 << LOG_LANE_SHIFT) - 1;
 
@@ -84,7 +87,7 @@ pub(crate) fn worker_log_base(worker_slot: usize) -> Option<u64> {
 }
 
 /// Split a physical log identifier into its optional worker lane and local
-/// dense position.  Upper-zero identifiers belong to the legacy stream.
+/// dense position. Upper-zero identifiers belong to the dense stream.
 pub(crate) fn split_log_sequence(sequence: CommitSeq) -> Option<(Option<usize>, u64)> {
     let raw = sequence.get();
     let tag = raw >> LOG_LANE_SHIFT;
@@ -269,7 +272,7 @@ impl PreparedCommitRecord {
         self.encoded[SEQUENCE_OFFSET..MAKO_TIMESTAMP_OFFSET]
             .copy_from_slice(&sequence.get().to_be_bytes());
         self.encoded[MAKO_TIMESTAMP_OFFSET..OP_COUNT_OFFSET]
-            .copy_from_slice(&mako_timestamp.get().to_be_bytes());
+            .copy_from_slice(&mako_timestamp.to_be_bytes());
         let suffix = self
             .log_key
             .get_mut(LOG_KEY_PREFIX.len()..)
@@ -353,7 +356,7 @@ impl LegacyCommitRecord {
     }
 }
 
-/// One complete v3 or v4 record produced directly by the trusted native
+/// One complete v5 or v6 record produced directly by the trusted native
 /// transaction adapter.
 ///
 /// Native code fills the encoded bytes after Silo has validated the canonical
@@ -384,7 +387,7 @@ pub(crate) struct DeferredOnePutRecord {
 }
 
 impl DeferredOnePutRecord {
-    /// Exact unchecked-v4 extent represented by one native holder view.
+    /// Exact unchecked-v6 extent represented by one native holder view.
     pub(crate) fn encoded_len_for(key_len: usize, value_len: usize) -> Result<usize, RecordError> {
         HEADER_LEN
             .checked_add(OP_HEADER_LEN)
@@ -421,7 +424,7 @@ impl DeferredOnePutRecord {
         self.exact_record_bytes as usize
     }
 
-    /// Copy one exact holder view into the canonical unchecked-v4 recovery
+    /// Copy one exact holder view into the canonical unchecked-v6 recovery
     /// representation on the background thread.
     pub(crate) fn materialize(
         self,
@@ -467,7 +470,7 @@ impl DeferredOnePutRecord {
         encoded.extend_from_slice(UNCHECKED_MAGIC);
         encoded.extend_from_slice(&UNCHECKED_FORMAT_VERSION.to_be_bytes());
         encoded.extend_from_slice(&self.sequence.get().to_be_bytes());
-        encoded.extend_from_slice(&self.mako_timestamp.get().to_be_bytes());
+        encoded.extend_from_slice(&self.mako_timestamp.to_be_bytes());
         encoded.extend_from_slice(&1_u32.to_be_bytes());
         encoded.push(PUT_TAG);
         encoded.extend_from_slice(&table_id.to_be_bytes());
@@ -639,7 +642,7 @@ impl NativeCommitRecord {
         if version == FORMAT_VERSION {
             assert!(
                 bytes.len() >= MIN_RECORD_LEN,
-                "native v3 commit record has no CRC32C trailer"
+                "native v5 commit record has no CRC32C trailer"
             );
         }
         assert_eq!(
@@ -652,12 +655,8 @@ impl NativeCommitRecord {
             "native commit record has the wrong cache sequence"
         );
         assert_eq!(
-            u32::from_be_bytes(
-                bytes[MAKO_TIMESTAMP_OFFSET..OP_COUNT_OFFSET]
-                    .try_into()
-                    .expect("fixed timestamp field"),
-            ),
-            mako_timestamp.get(),
+            &bytes[MAKO_TIMESTAMP_OFFSET..OP_COUNT_OFFSET],
+            &mako_timestamp.to_be_bytes(),
             "native commit record has the wrong Mako timestamp"
         );
 
@@ -677,8 +676,8 @@ impl NativeCommitRecord {
     }
 
     /// Decode and materialize RocksDB replay state off the acknowledgement
-    /// path. Checksummed v3 records are verified here even though the trusted
-    /// native producer already computed the CRC. Explicitly unchecked v4
+    /// path. Checksummed v5 records are verified here even though the trusted
+    /// native producer already computed the CRC. Explicitly unchecked v6
     /// records receive the same structural validation but cannot detect
     /// arbitrary payload corruption.
     pub(crate) fn materialize(&self, max_bytes: usize) -> Result<CommitRecord, RecordError> {
@@ -686,8 +685,8 @@ impl NativeCommitRecord {
         let record = CommitRecord::decode(&log_key, self.encoded.as_slice(), max_bytes)?;
         if record.mako_timestamp() != self.mako_timestamp {
             return Err(RecordError::WrongMakoTimestamp {
-                expected: self.mako_timestamp.get(),
-                record: record.mako_timestamp().get(),
+                expected: self.mako_timestamp,
+                record: record.mako_timestamp(),
             });
         }
         Ok(record)
@@ -711,7 +710,7 @@ pub(crate) enum QueuedCommitRecord {
     /// variant and moves more than two cache lines on each native commit.
     Materialized(Box<LegacyCommitRecord>),
     Native(NativeCommitRecord),
-    /// A copy-free foreground holder awaiting background v4 encoding.
+    /// A copy-free foreground holder awaiting background v6 encoding.
     Holder(DeferredOnePutRecord),
 }
 
@@ -859,8 +858,13 @@ impl CommitRecord {
             });
         }
 
-        let mako_timestamp =
-            MakoTimestamp::new(cursor.read_u32()?).ok_or(RecordError::InvalidMakoTimestamp)?;
+        let mako_timestamp = MakoTimestamp::from_be_bytes(
+            cursor
+                .take(MAKO_TIMESTAMP_LEN)?
+                .try_into()
+                .expect("fixed timestamp field"),
+        )
+        .ok_or(RecordError::InvalidMakoTimestamp)?;
         let op_count = cursor.read_u32()? as usize;
         // Even an empty-key delete needs a complete operation header. This
         // check prevents a corrupt count from provoking a huge allocation.
@@ -1016,7 +1020,7 @@ impl CommitRecord {
 pub enum RecordError {
     /// A zero commit sequence appeared in encoded input.
     InvalidSequence,
-    /// A Mako timestamp was zero or exceeded its representable base range.
+    /// A Mako timestamp had an invalid zero allocator origin.
     InvalidMakoTimestamp,
     /// The supplied RocksDB key is not an exact private log key.
     ForeignKey,
@@ -1031,9 +1035,9 @@ pub enum RecordError {
     /// reservation.
     WrongMakoTimestamp {
         /// Timestamp assigned at the post-validation bind point.
-        expected: u32,
+        expected: MakoTimestamp,
         /// Timestamp encoded in the native record.
-        record: u32,
+        record: MakoTimestamp,
     },
     /// A trusted native holder's scalar extent disagreed with its view.
     WrongEncodedLength {
@@ -1094,7 +1098,7 @@ impl fmt::Display for RecordError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidSequence => write!(f, "commit sequence zero is reserved"),
-            Self::InvalidMakoTimestamp => write!(f, "invalid Mako base timestamp"),
+            Self::InvalidMakoTimestamp => write!(f, "invalid Mako timestamp"),
             Self::ForeignKey => write!(f, "backend key is not an exact mako-cache log key"),
             Self::WrongSequence { key, record } => write!(
                 f,
@@ -1259,7 +1263,7 @@ fn encode_prepared(mutations: &[Mutation], encoded_len: usize) -> Result<Vec<u8>
     encoded.extend_from_slice(CRC32C_MAGIC);
     encoded.extend_from_slice(&FORMAT_VERSION.to_be_bytes());
     encoded.extend_from_slice(&0_u64.to_be_bytes());
-    encoded.extend_from_slice(&0_u32.to_be_bytes());
+    encoded.extend_from_slice(&[0; MAKO_TIMESTAMP_LEN]);
     encoded.extend_from_slice(&(mutations.len() as u32).to_be_bytes());
 
     for mutation in mutations {
@@ -1422,14 +1426,17 @@ const fn make_crc32c_table() -> [u32; 256] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mako_local::MAX_MAKO_TIMESTAMP;
+
+    const TEST_PHYSICAL_US: u64 = 1_700_000_000_000_000;
+    const TEST_ORIGIN: u32 = 7;
 
     fn seq(raw: u64) -> CommitSeq {
         CommitSeq::new(raw).expect("test sequence must be nonzero")
     }
 
     fn mako_timestamp(raw: u32) -> MakoTimestamp {
-        MakoTimestamp::new(raw).expect("test Mako timestamp must be nonzero")
+        MakoTimestamp::new(TEST_PHYSICAL_US, raw, TEST_ORIGIN)
+            .expect("test Mako timestamp has a nonzero origin")
     }
 
     #[test]
@@ -1522,7 +1529,7 @@ mod tests {
         );
     }
 
-    fn unchecked_v4_bytes(record: &CommitRecord) -> Vec<u8> {
+    fn unchecked_v6_bytes(record: &CommitRecord) -> Vec<u8> {
         let mut encoded = record.encoded()[..record.encoded().len() - CRC_LEN].to_vec();
         encoded[..UNCHECKED_MAGIC.len()].copy_from_slice(UNCHECKED_MAGIC);
         encoded[VERSION_OFFSET..SEQUENCE_OFFSET]
@@ -1534,6 +1541,28 @@ mod tests {
     fn crc32c_matches_standard_check_vector() {
         assert_eq!(crc32c(b"123456789"), 0xe306_9283);
         assert_eq!(crc32c(b""), 0);
+    }
+
+    #[test]
+    fn timestamp_field_has_the_canonical_big_endian_layout() {
+        let timestamp =
+            MakoTimestamp::new(0x0102_0304_0506_0708, 0x1112_1314, 0x2122_2324).unwrap();
+        assert_eq!(
+            timestamp.to_be_bytes(),
+            [
+                0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x11, 0x12, 0x13, 0x14, 0x21, 0x22,
+                0x23, 0x24,
+            ]
+        );
+
+        let record = seal_at(1, 0x1112_1314, Vec::new());
+        assert_eq!(
+            &record.encoded()[MAKO_TIMESTAMP_OFFSET..OP_COUNT_OFFSET],
+            &mako_timestamp(0x1112_1314).to_be_bytes()
+        );
+        assert_eq!(HEADER_LEN, 38);
+        assert_eq!(MIN_RECORD_LEN, 42);
+        assert_eq!(MIN_UNCHECKED_RECORD_LEN, 38);
     }
 
     #[test]
@@ -1611,7 +1640,7 @@ mod tests {
     }
 
     #[test]
-    fn native_record_defers_materialization_without_changing_v3_bytes() {
+    fn native_record_defers_materialization_without_changing_v5_bytes() {
         let mutations = vec![
             Mutation::Put {
                 table_id: DEFAULT_TABLE_ID,
@@ -1643,7 +1672,7 @@ mod tests {
     }
 
     #[test]
-    fn unchecked_v4_is_self_describing_and_replays_beside_v3() {
+    fn unchecked_v6_is_self_describing_and_replays_beside_v5() {
         let expected = seal_at(
             74,
             92,
@@ -1653,7 +1682,7 @@ mod tests {
                 value: b"value".to_vec(),
             }],
         );
-        let unchecked = unchecked_v4_bytes(&expected);
+        let unchecked = unchecked_v6_bytes(&expected);
         assert_eq!(unchecked.len() + CRC_LEN, expected.encoded().len());
 
         let native =
@@ -1663,7 +1692,7 @@ mod tests {
         assert_eq!(replay.encoded(), unchecked);
 
         // This is the intentional tradeoff: a structurally valid payload bit
-        // change cannot be detected when the producer explicitly selected v4.
+        // change cannot be detected when the producer explicitly selected v6.
         let mut corrupted = unchecked;
         *corrupted.last_mut().expect("one-byte value") ^= 1;
         let decoded = CommitRecord::decode(expected.log_key(), &corrupted, 16 * 1024).unwrap();
@@ -1712,8 +1741,9 @@ mod tests {
                 value: b"mismatch".to_vec(),
             }],
         );
-        let mut unchecked = unchecked_v4_bytes(&expected);
-        unchecked[MAKO_TIMESTAMP_OFFSET..OP_COUNT_OFFSET].copy_from_slice(&95_u32.to_be_bytes());
+        let mut unchecked = unchecked_v6_bytes(&expected);
+        unchecked[MAKO_TIMESTAMP_OFFSET..OP_COUNT_OFFSET]
+            .copy_from_slice(&mako_timestamp(95).to_be_bytes());
         let bytes = NonNull::new(unchecked.as_mut_ptr()).unwrap();
         // SAFETY: this deliberately violates only the canonical-timestamp
         // portion of the private producer contract to prove the off-ACK
@@ -1731,9 +1761,10 @@ mod tests {
         assert!(matches!(
             native.materialize(16 * 1024),
             Err(RecordError::WrongMakoTimestamp {
-                expected: 94,
-                record: 95,
+                expected,
+                record,
             })
+            if expected == mako_timestamp(94) && record == mako_timestamp(95)
         ));
     }
 
@@ -1795,7 +1826,8 @@ mod tests {
         let len = encoded_len(&duplicates).unwrap();
         let mut encoded = encode_prepared(&duplicates, len).unwrap();
         encoded[SEQUENCE_OFFSET..MAKO_TIMESTAMP_OFFSET].copy_from_slice(&1_u64.to_be_bytes());
-        encoded[MAKO_TIMESTAMP_OFFSET..OP_COUNT_OFFSET].copy_from_slice(&77_u32.to_be_bytes());
+        encoded[MAKO_TIMESTAMP_OFFSET..OP_COUNT_OFFSET]
+            .copy_from_slice(&mako_timestamp(77).to_be_bytes());
         refresh_checksum(&mut encoded);
         let key = make_log_key(seq(1)).unwrap();
         assert!(matches!(
@@ -1862,37 +1894,30 @@ mod tests {
 
         let mut bad_version = record.encoded().to_vec();
         let version_offset = CRC32C_MAGIC.len();
-        bad_version[version_offset..version_offset + 2].copy_from_slice(&5_u16.to_be_bytes());
+        bad_version[version_offset..version_offset + 2].copy_from_slice(&7_u16.to_be_bytes());
         refresh_checksum(&mut bad_version);
         assert!(matches!(
             CommitRecord::decode(record.log_key(), &bad_version, 4096),
-            Err(RecordError::UnsupportedVersion(5))
+            Err(RecordError::UnsupportedVersion(7))
         ));
 
-        let mut legacy_silo_version = record.encoded().to_vec();
-        legacy_silo_version[version_offset..version_offset + 2]
-            .copy_from_slice(&2_u16.to_be_bytes());
-        refresh_checksum(&mut legacy_silo_version);
-        assert!(matches!(
-            CommitRecord::decode(record.log_key(), &legacy_silo_version, 4096),
-            Err(RecordError::UnsupportedVersion(2))
-        ));
+        for obsolete_version in [3_u16, 4_u16] {
+            let mut obsolete = record.encoded().to_vec();
+            obsolete[version_offset..version_offset + 2]
+                .copy_from_slice(&obsolete_version.to_be_bytes());
+            refresh_checksum(&mut obsolete);
+            assert!(matches!(
+                CommitRecord::decode(record.log_key(), &obsolete, 4096),
+                Err(RecordError::UnsupportedVersion(found)) if found == obsolete_version
+            ));
+        }
 
         let mut zero_mako_timestamp = record.encoded().to_vec();
         zero_mako_timestamp[MAKO_TIMESTAMP_OFFSET..OP_COUNT_OFFSET]
-            .copy_from_slice(&0_u32.to_be_bytes());
+            .copy_from_slice(&[0; MAKO_TIMESTAMP_LEN]);
         refresh_checksum(&mut zero_mako_timestamp);
         assert!(matches!(
             CommitRecord::decode(record.log_key(), &zero_mako_timestamp, 4096),
-            Err(RecordError::InvalidMakoTimestamp)
-        ));
-
-        let mut oversized_mako_timestamp = record.encoded().to_vec();
-        oversized_mako_timestamp[MAKO_TIMESTAMP_OFFSET..OP_COUNT_OFFSET]
-            .copy_from_slice(&(MAX_MAKO_TIMESTAMP + 1).to_be_bytes());
-        refresh_checksum(&mut oversized_mako_timestamp);
-        assert!(matches!(
-            CommitRecord::decode(record.log_key(), &oversized_mako_timestamp, 4096),
             Err(RecordError::InvalidMakoTimestamp)
         ));
 
@@ -2035,10 +2060,10 @@ mod tests {
         );
         assert_eq!(
             &prepared.encoded[MAKO_TIMESTAMP_OFFSET..OP_COUNT_OFFSET],
-            &0_u32.to_be_bytes()
+            &[0; MAKO_TIMESTAMP_LEN]
         );
 
-        let bound = prepared.bind(seq(55), mako_timestamp(MAX_MAKO_TIMESTAMP));
+        let bound = prepared.bind(seq(55), mako_timestamp(u32::MAX));
         assert_eq!(bound.encoded.as_ptr(), encoded_ptr);
         assert_eq!(bound.encoded.capacity(), encoded_capacity);
         assert_eq!(bound.log_key.as_ptr(), log_key_ptr);
@@ -2054,7 +2079,7 @@ mod tests {
         assert_eq!(record.data_keys[0].as_ptr(), data_key_ptr);
         assert_eq!(record.data_keys[0].capacity(), data_key_capacity);
         assert_eq!(record.sequence(), seq(55));
-        assert_eq!(record.mako_timestamp(), mako_timestamp(MAX_MAKO_TIMESTAMP));
+        assert_eq!(record.mako_timestamp(), mako_timestamp(u32::MAX));
         assert_eq!(
             CommitRecord::decode(record.log_key(), record.encoded(), 4096).unwrap(),
             record

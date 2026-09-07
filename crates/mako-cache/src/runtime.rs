@@ -288,7 +288,8 @@ mod tests {
     }
 
     fn timestamp(raw: u32) -> MakoTimestamp {
-        MakoTimestamp::new(raw).expect("test timestamps are nonzero")
+        MakoTimestamp::new(1_700_000_000_000_000, raw, 1)
+            .expect("test timestamps have a nonzero origin")
     }
 
     #[cfg(target_os = "linux")]

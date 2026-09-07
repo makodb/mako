@@ -1,9 +1,10 @@
 //! An independent, binary-safe transaction-history correctness oracle.
 //!
-//! The checker deliberately knows nothing about Silo versions, Mako logical
-//! timestamps, commit response order, or any native implementation detail. It
-//! searches legal serial executions of the operations a caller observed and
-//! constrains them only by transaction real-time precedence.
+//! The base transaction checker deliberately knows nothing about Silo versions,
+//! Mako timestamps, commit response order, or any native implementation detail.
+//! The application checker additionally accepts the full committed-write Mako
+//! HLC as an external serialization witness while keeping cache sequence as
+//! physical ingestion and frontier metadata.
 
 mod application;
 mod checker;
@@ -15,8 +16,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 pub use application::{
     check_application, ApplicationCheckFailure, ApplicationCheckFailureKind, ApplicationCommit,
     ApplicationCommitOutcome, ApplicationHistory, ApplicationWitness, BackendAttempt,
-    BackendAttemptOutcome, CacheSeq, FrontierObservation, ModelMutation, WaitAppliedObservation,
-    WaitAppliedOutcome,
+    BackendAttemptOutcome, CacheSeq, FrontierObservation, MakoTimestamp, ModelMutation,
+    WaitAppliedObservation, WaitAppliedOutcome,
 };
 pub use checker::{
     check, check_opacity, check_strict_serializability, CheckFailure, CheckFailureKind,

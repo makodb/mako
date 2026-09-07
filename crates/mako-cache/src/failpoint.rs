@@ -4,8 +4,8 @@ use std::cell::{Cell, RefCell};
 use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 
 /// Stable names for deterministic process-crash matrices.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -175,9 +175,7 @@ pub(crate) fn post_native_commit_observer_installed() -> bool {
 /// retains the holder terminal. Ownership tests use it to let the background
 /// consumer retire and recycle the exact READY generation while the foreground
 /// permit remains in `ManuallyDrop`.
-pub(crate) fn install_post_native_holder_ready_observer(
-    observer: impl FnOnce() + 'static,
-) {
+pub(crate) fn install_post_native_holder_ready_observer(observer: impl FnOnce() + 'static) {
     POST_NATIVE_HOLDER_READY_OBSERVER.with(|slot| {
         assert!(
             slot.borrow_mut().replace(Box::new(observer)).is_none(),

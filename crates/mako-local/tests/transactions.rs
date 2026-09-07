@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use mako_local::{
     advance_mako_timestamp_past, features, CommitDisposition, Error, LocalDb, MakoTimestamp,
-    MAX_MAKO_TIMESTAMP, TRANSACTION_ITEM_BUDGET,
+    TRANSACTION_ITEM_BUDGET,
 };
 
 #[test]
@@ -309,11 +309,7 @@ fn detailed_commit_reports_visibility_before_cleanup() {
 fn post_validation_hook_carries_mako_timestamp_and_can_reject_safely() {
     let db = LocalDb::open().unwrap();
     let table = db.open_table("rust_commit_hook", 20_011).unwrap();
-    assert_eq!(
-        advance_mako_timestamp_past(MakoTimestamp::new(MAX_MAKO_TIMESTAMP).unwrap()),
-        Err(Error::TimestampExhausted)
-    );
-    let recovered_max = MakoTimestamp::new(1_u32 << 24).unwrap();
+    let recovered_max = MakoTimestamp::new(2_000_000_000_000_000, 0, 1).unwrap();
     advance_mako_timestamp_past(recovered_max).unwrap();
 
     let mut seen = None;
@@ -369,25 +365,15 @@ fn unwinding_post_validation_hook_is_a_definite_abort() {
 }
 
 #[test]
-fn disjoint_post_validation_hooks_can_overlap() {
-    const ENTRY_TIMEOUT: Duration = Duration::from_secs(5);
-    const RELEASE_TIMEOUT: Duration = Duration::from_secs(10);
-
+fn concurrent_disjoint_post_validation_hooks_get_distinct_timestamps() {
     let db = Arc::new(LocalDb::open().unwrap());
     let _ = db.open_table("rust_disjoint_commit_hooks", 20_013).unwrap();
-
-    // The bounded entry channel cannot allocate or wait for capacity in either
-    // hook. Each hook intentionally waits on its own release channel: the test
-    // sends neither release until it has observed both entries (or timed out),
-    // so two entries prove that native commit has no global serialization gate.
-    let (entered_tx, entered_rx) = mpsc::sync_channel(2);
-    let (release_0_tx, release_0_rx) = mpsc::sync_channel(1);
-    let (release_1_tx, release_1_rx) = mpsc::sync_channel(1);
+    let ready = Arc::new(Barrier::new(2));
     let mut workers = Vec::new();
 
-    for (worker_id, release_rx) in [release_0_rx, release_1_rx].into_iter().enumerate() {
+    for worker_id in 0..2 {
         let db = Arc::clone(&db);
-        let entered_tx = entered_tx.clone();
+        let ready = Arc::clone(&ready);
         workers.push(std::thread::spawn(move || {
             let table = db.open_table("rust_disjoint_commit_hooks", 20_013).unwrap();
             let mut tx = db.transaction().unwrap();
@@ -397,35 +383,24 @@ fn disjoint_post_validation_hooks_can_overlap() {
                 b"visible",
             )
             .unwrap();
-            let report = tx.commit_report_with_hook(move |_| {
-                entered_tx.send(worker_id).is_ok()
-                    && release_rx.recv_timeout(RELEASE_TIMEOUT).is_ok()
+            ready.wait();
+            let mut timestamp = None;
+            let report = tx.commit_report_with_hook(|assigned| {
+                timestamp = Some(assigned);
+                true
             });
-            (worker_id, report)
+            (worker_id, report, timestamp)
         }));
     }
-    drop(entered_tx);
 
-    let first_entry = entered_rx.recv_timeout(ENTRY_TIMEOUT);
-    let second_entry = entered_rx.recv_timeout(ENTRY_TIMEOUT);
-
-    // Always release and join before asserting. If a global gate regresses,
-    // this lets the first commit finish and the second hook eventually exit
-    // instead of leaving a test worker hung behind the failed assertion.
-    let _ = release_0_tx.send(());
-    let _ = release_1_tx.send(());
-    let outcomes: Vec<_> = workers.into_iter().map(|worker| worker.join()).collect();
-
-    let first_entry = first_entry.expect("first commit hook did not run before the timeout");
-    let second_entry =
-        second_entry.expect("second disjoint commit was globally serialized behind the first hook");
-    assert_ne!(first_entry, second_entry);
-
-    for outcome in outcomes {
-        let (_, report) = outcome.expect("commit worker panicked");
+    let mut timestamps = Vec::new();
+    for outcome in workers {
+        let (_, report, timestamp) = outcome.join().expect("commit worker panicked");
         assert_eq!(report.disposition, CommitDisposition::Committed);
         assert_eq!(report.cleanup, Ok(()));
+        timestamps.push(timestamp.expect("successful write hook receives a timestamp"));
     }
+    assert_ne!(timestamps[0], timestamps[1]);
 }
 
 #[test]

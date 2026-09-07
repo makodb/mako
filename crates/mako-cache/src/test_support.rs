@@ -8,7 +8,7 @@ use std::time::Duration;
 use mako_local::MakoTimestamp;
 use mrx_core::fakes::MemBlobs;
 
-use crate::record::{BackendKey, CommitRecord, DEFAULT_TABLE_ID, Mutation, classify_backend_key};
+use crate::record::{classify_backend_key, BackendKey, CommitRecord, Mutation, DEFAULT_TABLE_ID};
 use crate::writeback::{AppliedWatermark, Writeback, WritebackConfig};
 
 /// Run the exact detached-permit bind transition between two callbacks.
@@ -36,7 +36,8 @@ pub fn probe_detached_bind(before: fn(), after: fn()) {
         .expect("prepare bind probe");
 
     before();
-    let bound = permit.bind(MakoTimestamp::new(1).expect("nonzero probe timestamp"));
+    let bound =
+        permit.bind(MakoTimestamp::new(1_000, 0, 1).expect("probe timestamp has a nonzero origin"));
     after();
 
     bound
@@ -52,7 +53,7 @@ pub fn probe_detached_bind(before: fn(), after: fn()) {
 /// the production decoder. This keeps the private backend namespace private
 /// while allowing the hook-enabled integration gate to compare the native
 /// timestamp callback with the exact persisted record.
-pub fn decoded_log_timestamps(backend: &MemBlobs) -> Vec<(u64, u32)> {
+pub fn decoded_log_timestamps(backend: &MemBlobs) -> Vec<(u64, MakoTimestamp)> {
     let mut decoded: Vec<_> = backend
         .snapshot()
         .into_iter()
@@ -63,7 +64,7 @@ pub fn decoded_log_timestamps(backend: &MemBlobs) -> Vec<(u64, u32)> {
             ),
             BackendKey::Data { .. } | BackendKey::Foreign => None,
         })
-        .map(|record| (record.sequence().get(), record.mako_timestamp().get()))
+        .map(|record| (record.sequence().get(), record.mako_timestamp()))
         .collect();
     decoded.sort_unstable_by_key(|(sequence, _)| *sequence);
     decoded

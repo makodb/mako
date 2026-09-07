@@ -9,7 +9,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{self, Write};
-use std::num::NonZeroU64;
+use std::num::{NonZeroU32, NonZeroU64};
 
 use crate::checker::check_with_precedence;
 use crate::{
@@ -53,6 +53,58 @@ impl From<CacheSeq> for u64 {
 impl fmt::Display for CacheSeq {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.get().fmt(formatter)
+    }
+}
+
+/// Full Mako hybrid logical timestamp carried by a committed cache write.
+///
+/// Ordering is the unsigned tuple `(physical_us, logical, origin)`.  The
+/// application checker owns this small independent value type instead of
+/// depending on the production wrapper, so the history oracle remains usable
+/// without loading or linking the native engine.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct MakoTimestamp {
+    physical_us: u64,
+    logical: u32,
+    origin: NonZeroU32,
+}
+
+impl MakoTimestamp {
+    /// Construct a timestamp, returning `None` for the reserved zero origin.
+    pub const fn new(physical_us: u64, logical: u32, origin: u32) -> Option<Self> {
+        match NonZeroU32::new(origin) {
+            Some(origin) => Some(Self {
+                physical_us,
+                logical,
+                origin,
+            }),
+            None => None,
+        }
+    }
+
+    /// Approximate Unix commit time in microseconds.
+    pub const fn physical_us(self) -> u64 {
+        self.physical_us
+    }
+
+    /// Logical order within the physical clock reading.
+    pub const fn logical(self) -> u32 {
+        self.logical
+    }
+
+    /// Nonzero identity of the allocator which minted this timestamp.
+    pub const fn origin(self) -> u32 {
+        self.origin.get()
+    }
+}
+
+impl fmt::Display for MakoTimestamp {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "{}:{}:{}",
+            self.physical_us, self.logical, self.origin
+        )
     }
 }
 
@@ -103,6 +155,13 @@ pub struct ApplicationCommit {
     pub interval: Interval,
     /// Wrapper-level result.
     pub outcome: ApplicationCommitOutcome,
+    /// Full HLC assigned to a definitely committed write.
+    ///
+    /// Acknowledged writes and committed-pinned writes must carry this value.
+    /// It is absent for no-op, rejected, aborted, and still-unknown outcomes.
+    /// Cache sequence remains physical ingestion/progress metadata and does
+    /// not determine transaction serialization.
+    pub mako_timestamp: Option<MakoTimestamp>,
 }
 
 impl ApplicationCommit {
@@ -116,7 +175,14 @@ impl ApplicationCommit {
             transaction,
             interval,
             outcome,
+            mako_timestamp: None,
         }
+    }
+
+    /// Attach the exact HLC returned for a definitely committed write.
+    pub const fn with_mako_timestamp(mut self, mako_timestamp: MakoTimestamp) -> Self {
+        self.mako_timestamp = Some(mako_timestamp);
+        self
     }
 }
 
@@ -312,8 +378,8 @@ pub enum ApplicationCheckFailureKind {
     TransactionHistory,
     /// Application records are structurally inconsistent with the transaction history.
     MalformedApplicationHistory,
-    /// Cache sequence order is not a legal serial order.
-    IllegalCacheOrder,
+    /// Mako HLC order is not a legal serial order.
+    IllegalMakoTimestampOrder,
     /// A cache/backend batch differs from the transaction's canonical final writes.
     MutationMismatch,
     /// Backend attempts violate dense, atomic, ordered retry behavior.
@@ -355,13 +421,13 @@ impl std::error::Error for ApplicationCheckFailure {
     }
 }
 
-/// Successful transaction and cache-order witnesses plus accepted backend prefix.
+/// Successful transaction and timestamp-order witnesses plus accepted backend prefix.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ApplicationWitness {
     /// Witness from the requested unconstrained transaction oracle.
     pub transaction: CheckWitness,
-    /// Witness from the same oracle constrained by cache sequence order.
-    pub cache_order: CheckWitness,
+    /// Witness from the same oracle constrained by committed-write HLC order.
+    pub mako_timestamp_order: CheckWitness,
     /// Largest densely successful backend sequence, or zero when none succeeded.
     pub successful_backend_prefix: u64,
 }
@@ -369,6 +435,7 @@ pub struct ApplicationWitness {
 #[derive(Debug)]
 struct Derived<'a> {
     sequence_owners: BTreeMap<CacheSeq, &'a ApplicationCommit>,
+    timestamp_owners: BTreeMap<MakoTimestamp, &'a ApplicationCommit>,
     mutations_by_txn: BTreeMap<TxnId, Vec<ModelMutation>>,
     acknowledged_by_seq: BTreeMap<CacheSeq, &'a ApplicationCommit>,
 }
@@ -392,19 +459,21 @@ pub fn check_application(
 
     let derived = validate_commits(history)?;
     validate_application_ticks(history)?;
-    let precedence = sequence_precedence(&derived.sequence_owners);
-    let cache_order = check_with_precedence(&history.transactions, semantics, options, &precedence)
-        .map_err(|source| {
-            failure_with_source(
-                history,
-                ApplicationCheckFailureKind::IllegalCacheOrder,
-                format!(
-                    "cache sequence order is not a legal {:?} serialization: {}",
-                    semantics, source.detail
-                ),
-                source,
-            )
-        })?;
+    let precedence = timestamp_precedence(&derived.timestamp_owners);
+    let mako_timestamp_order =
+        check_with_precedence(&history.transactions, semantics, options, &precedence).map_err(
+            |source| {
+                failure_with_source(
+                    history,
+                    ApplicationCheckFailureKind::IllegalMakoTimestampOrder,
+                    format!(
+                        "Mako timestamp order is not a legal {:?} serialization: {}",
+                        semantics, source.detail
+                    ),
+                    source,
+                )
+            },
+        )?;
 
     let backend = validate_backend(history, &derived)?;
     validate_waits(history, &derived, &backend)?;
@@ -412,7 +481,7 @@ pub fn check_application(
 
     Ok(ApplicationWitness {
         transaction,
-        cache_order,
+        mako_timestamp_order,
         successful_backend_prefix: backend.successful_prefix,
     })
 }
@@ -524,6 +593,7 @@ fn validate_commits<'a>(
 
     let mut commits_by_txn = BTreeMap::new();
     let mut sequence_owners = BTreeMap::new();
+    let mut timestamp_owners = BTreeMap::new();
     let mut acknowledged_by_seq = BTreeMap::new();
     for commit in &history.commits {
         let Some(transaction) = transactions.get(&commit.transaction).copied() else {
@@ -626,6 +696,47 @@ fn validate_commits<'a>(
                     mutations.len()
                 ),
             ));
+        }
+
+        let definitely_committed_write = matches!(
+            commit.outcome,
+            ApplicationCommitOutcome::AcknowledgedWrite { .. }
+                | ApplicationCommitOutcome::CommittedPinned { .. }
+        );
+        match (definitely_committed_write, commit.mako_timestamp) {
+            (true, None) => {
+                return Err(failure(
+                    history,
+                    ApplicationCheckFailureKind::MalformedApplicationHistory,
+                    format!(
+                        "definitely committed write T{} is missing its Mako timestamp",
+                        commit.transaction
+                    ),
+                ));
+            }
+            (false, Some(timestamp)) => {
+                return Err(failure(
+                    history,
+                    ApplicationCheckFailureKind::MalformedApplicationHistory,
+                    format!(
+                        "non-committed-write outcome {:?} for T{} unexpectedly carries Mako timestamp {timestamp}",
+                        commit.outcome, commit.transaction
+                    ),
+                ));
+            }
+            (true, Some(timestamp)) => {
+                if let Some(previous) = timestamp_owners.insert(timestamp, commit) {
+                    return Err(failure(
+                        history,
+                        ApplicationCheckFailureKind::MalformedApplicationHistory,
+                        format!(
+                            "Mako timestamp {timestamp} is owned by both T{} and T{}",
+                            previous.transaction, commit.transaction
+                        ),
+                    ));
+                }
+            }
+            (false, None) => {}
         }
 
         if let Some(seq) = commit.outcome.sequence() {
@@ -767,6 +878,7 @@ fn validate_commits<'a>(
 
     Ok(Derived {
         sequence_owners,
+        timestamp_owners,
         mutations_by_txn,
         acknowledged_by_seq,
     })
@@ -870,7 +982,9 @@ fn canonical_mutations(transaction: &Transaction) -> Vec<ModelMutation> {
         .collect()
 }
 
-fn sequence_precedence(owners: &BTreeMap<CacheSeq, &ApplicationCommit>) -> Vec<(TxnId, TxnId)> {
+fn timestamp_precedence(
+    owners: &BTreeMap<MakoTimestamp, &ApplicationCommit>,
+) -> Vec<(TxnId, TxnId)> {
     let transactions: Vec<_> = owners.values().map(|commit| commit.transaction).collect();
     let mut precedence = Vec::new();
     for (index, before) in transactions.iter().copied().enumerate() {
@@ -1325,13 +1439,7 @@ fn validate_visible_state(
         match commit.outcome {
             ApplicationCommitOutcome::AcknowledgedWrite { .. }
             | ApplicationCommitOutcome::CommittedPinned { .. }
-                if terminal_response.is_some_and(|tick| tick < frontier.interval.invocation) =>
-            {
-                apply_mutations(
-                    &derived.mutations_by_txn[&commit.transaction],
-                    &mut expected,
-                );
-            }
+                if terminal_response.is_some_and(|tick| tick < frontier.interval.invocation) => {}
             ApplicationCommitOutcome::AcknowledgedWrite { .. }
             | ApplicationCommitOutcome::CommittedPinned { .. }
                 if commit.interval.invocation >= response => {}
@@ -1362,6 +1470,21 @@ fn validate_visible_state(
             _ => {}
         }
     }
+    // Native visibility follows transaction serialization, whose durable
+    // witness is the full HLC. CacheSeq can legitimately run in the opposite
+    // order when independent worker lanes publish at different speeds.
+    for commit in derived.timestamp_owners.values() {
+        if commit
+            .interval
+            .response
+            .is_some_and(|tick| tick < frontier.interval.invocation)
+        {
+            apply_mutations(
+                &derived.mutations_by_txn[&commit.transaction],
+                &mut expected,
+            );
+        }
+    }
     if &expected != observed {
         return Err(state_failure(history, "visible state", &expected, observed));
     }
@@ -1377,6 +1500,7 @@ fn validate_backend_state(
     observed: &State,
 ) -> Result<(), ApplicationCheckFailure> {
     let mut expected = history.transactions.initial_state.clone();
+    let mut applied_by_timestamp = BTreeMap::new();
     for (seq, attempt) in &backend.successful_attempts {
         if intervals_overlap(attempt.interval, frontier.interval) {
             return Err(failure(
@@ -1396,10 +1520,10 @@ fn validate_backend_state(
                 .acknowledged_by_seq
                 .get(seq)
                 .expect("backend validation requires an acknowledged owner");
-            apply_mutations(
-                &derived.mutations_by_txn[&commit.transaction],
-                &mut expected,
-            );
+            let timestamp = commit
+                .mako_timestamp
+                .expect("commit validation requires an acknowledged-write timestamp");
+            applied_by_timestamp.insert(timestamp, *commit);
         } else if attempt.interval.invocation < response {
             return Err(failure(
                 history,
@@ -1407,6 +1531,15 @@ fn validate_backend_state(
                 format!("backend state snapshot is not separated from sequence {seq}"),
             ));
         }
+    }
+    // The backend may ingest an older-HLC record after a newer-HLC record.
+    // Reconstruct its last-write-wins state in HLC order, not physical stream
+    // order, matching the production replay comparator.
+    for commit in applied_by_timestamp.values() {
+        apply_mutations(
+            &derived.mutations_by_txn[&commit.transaction],
+            &mut expected,
+        );
     }
     if &expected != observed {
         return Err(state_failure(history, "backend state", &expected, observed));
@@ -1753,7 +1886,7 @@ fn failure_with_source(
 }
 
 fn render(history: &ApplicationHistory) -> String {
-    let mut output = String::from("mako-application-history-v1\n");
+    let mut output = String::from("mako-application-history-v2\n");
     output.push_str("transaction-history-begin\n");
     output.push_str(&history.transactions.to_replay_text());
     output.push_str("transaction-history-end\n");
@@ -1763,11 +1896,12 @@ fn render(history: &ApplicationHistory) -> String {
     for commit in commits {
         writeln!(
             &mut output,
-            "commit T{} {} {} {}",
+            "commit T{} {} {} {} mako-timestamp={}",
             commit.transaction,
             commit.interval.invocation,
             render_response(commit.interval.response),
-            render_commit_outcome(commit.outcome)
+            render_commit_outcome(commit.outcome),
+            render_mako_timestamp(commit.mako_timestamp)
         )
         .expect("writing to String cannot fail");
     }
@@ -1824,6 +1958,10 @@ fn render(history: &ApplicationHistory) -> String {
 
 fn render_response(response: Option<Tick>) -> String {
     response.map_or_else(|| "pending".to_owned(), |tick| tick.to_string())
+}
+
+fn render_mako_timestamp(timestamp: Option<MakoTimestamp>) -> String {
+    timestamp.map_or_else(|| "none".to_owned(), |timestamp| timestamp.to_string())
 }
 
 fn render_commit_outcome(outcome: ApplicationCommitOutcome) -> String {

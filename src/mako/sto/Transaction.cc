@@ -60,6 +60,16 @@ std::function<void(threadinfo_t::epoch_type)> Transaction::epoch_advance_callbac
 namespace {
 thread_local bool local_transaction_cleanup_in_progress = false;
 
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+void enter_test_observer_timestamp_gate(void*) noexcept {
+    Transaction::enter_cache_order_general();
+}
+
+void leave_test_observer_timestamp_gate(void*) noexcept {
+    Transaction::leave_cache_order_general();
+}
+#endif
+
 class commit_validation_gate_scope {
 public:
     explicit commit_validation_gate_scope(
@@ -101,14 +111,12 @@ private:
     bool held_ = false;
 };
 
-// @safe: issues only a non-binding cache hint for the process-lifetime packed
-// order word. It neither reads nor changes the timestamp, dense sequence, or
-// general-certification bit; the later checked CAS remains the commit point.
+// @safe: issues only a non-binding hint for the process-lifetime HLC/gate word.
 [[gnu::always_inline]] inline void
-prefetch_restricted_cache_order_state_for_write() noexcept {
+prefetch_restricted_hlc_state_for_write() noexcept {
 #if defined(__GNUC__) || defined(__clang__)
     __builtin_prefetch(
-        &sync_util::sync_logger::cache_order_state, 1, 3);
+        &sync_util::sync_logger::mako_hlc_state, 1, 3);
 #endif
 }
 
@@ -150,10 +158,10 @@ bool Transaction::test_commit_observer_registered() noexcept {
 // @unsafe: synchronously calls a non-owning test callback while transaction
 // write locks may be held. The callback is noexcept and must not allocate.
 void Transaction::notify_test_commit_observer(
-    test_commit_phase phase, uint32_t mako_timestamp) noexcept {
+    test_commit_phase phase, uint64_t timestamp_stamp) noexcept {
     const auto observer = local_test_commit_observer;
     if (observer != nullptr)
-        observer(local_test_commit_observer_context, phase, mako_timestamp);
+        observer(local_test_commit_observer_context, phase, timestamp_stamp);
 }
 
 // @safe: arms one thread-local, one-shot branch at Transaction::stop entry.
@@ -179,85 +187,137 @@ std::atomic<TransactionTid::type> __attribute__((aligned(128)))
 
 namespace {
 static_assert(std::atomic<uint64_t>::is_always_lock_free,
-              "packed cache ordering requires a lock-free u64 CAS");
+              "the local HLC requires a lock-free u64 CAS");
 
-// @safe: pure extraction from the immutable packed scalar argument.
-constexpr uint64_t cache_order_timestamp(uint64_t state) noexcept {
-    return (state >> Transaction::cache_order_timestamp_shift) &
-        Transaction::cache_order_field_mask;
+constexpr uint64_t mako_hlc_stamp(uint64_t state) noexcept {
+    return state >> Transaction::mako_hlc_stamp_shift;
 }
 
-// @safe: pure extraction from the immutable packed scalar argument.
-constexpr uint64_t cache_order_sequence(uint64_t state) noexcept {
-    return state & Transaction::cache_order_field_mask;
+constexpr uint64_t with_mako_hlc_stamp(uint64_t state,
+                                       uint64_t stamp) noexcept {
+    return (stamp << Transaction::mako_hlc_stamp_shift) |
+        (state & Transaction::cache_order_general_lock);
 }
 
-// @safe: pure checked-layout replacement; callers validate the 29-bit value.
-constexpr uint64_t with_cache_order_timestamp(
-    uint64_t state, uint64_t timestamp) noexcept {
-    return (state & ~(Transaction::cache_order_field_mask <<
-                      Transaction::cache_order_timestamp_shift)) |
-        (timestamp << Transaction::cache_order_timestamp_shift);
-}
+Transaction::cache_order_timestamp_allocation allocate_mako_hlc_stamp(
+    uint64_t& result, bool reject_general_gate) noexcept {
+    result = 0;
+    uint64_t wall_ms = 0;
+    if (!mako::MakoTimestampPhysicalClock::read_unix_ms(wall_ms) ||
+        wall_ms > mako::kMakoTimestampPhysicalMsMax)
+        return Transaction::cache_order_timestamp_allocation::
+            timestamp_exhausted;
+    const uint64_t physical_candidate =
+        wall_ms << mako::kMakoTimestampLogicalBits;
 
-// @safe: pure checked-layout replacement; callers validate the 29-bit value.
-constexpr uint64_t with_cache_order_sequence(
-    uint64_t state, uint64_t sequence) noexcept {
-    return (state & ~Transaction::cache_order_field_mask) | sequence;
+    auto& state = sync_util::sync_logger::mako_hlc_state;
+    uint64_t current = state.load(std::memory_order_acquire);
+    for (;;) {
+        if (reject_general_gate &&
+            (current & Transaction::cache_order_general_lock) != 0)
+            return Transaction::cache_order_timestamp_allocation::
+                general_locked;
+        const uint64_t previous = mako_hlc_stamp(current);
+        uint64_t next = physical_candidate;
+        if (next <= previous) {
+            if (previous == mako::kMakoTimestampStampMax)
+                return Transaction::cache_order_timestamp_allocation::
+                    timestamp_exhausted;
+            next = previous + 1;
+        }
+        if (!mako::valid_mako_timestamp_stamp(next))
+            return Transaction::cache_order_timestamp_allocation::
+                timestamp_exhausted;
+        const uint64_t desired = with_mako_hlc_stamp(current, next);
+        if (state.compare_exchange_weak(current, desired,
+                                        std::memory_order_acq_rel,
+                                        std::memory_order_acquire)) {
+            result = next;
+            return Transaction::cache_order_timestamp_allocation::accepted;
+        }
+    }
 }
 }  // namespace
 
-// @safe: atomically allocates from the process-wide packed Mako clock while
-// preserving the cache sequence and general-certification state.
-bool Transaction::try_allocate_mako_timestamp(uint32_t& result) noexcept {
-    auto& state = sync_util::sync_logger::cache_order_state;
+bool Transaction::try_allocate_mako_timestamp(uint64_t& result) noexcept {
+    return allocate_mako_hlc_stamp(result, false) ==
+        cache_order_timestamp_allocation::accepted;
+}
+
+Transaction::cache_order_timestamp_allocation
+Transaction::try_allocate_restricted_mako_timestamp(
+    uint64_t& timestamp_stamp) noexcept {
+    return allocate_mako_hlc_stamp(timestamp_stamp, true);
+}
+
+bool Transaction::try_allocate_cache_sequence(uint64_t& sequence) noexcept {
+    sequence = 0;
+    auto& state = sync_util::sync_logger::cache_sequence_state;
     uint64_t current = state.load(std::memory_order_acquire);
     for (;;) {
-        const uint64_t timestamp = cache_order_timestamp(current);
-        if (timestamp == 0 || timestamp > max_mako_timestamp) {
-            result = 0;
+        if (current >= cache_sequence_max)
             return false;
-        }
-        const uint64_t desired =
-            with_cache_order_timestamp(current, timestamp + 1);
+        const uint64_t desired = current + 1;
         if (state.compare_exchange_weak(current, desired,
                                         std::memory_order_acq_rel,
                                         std::memory_order_acquire)) {
-            result = static_cast<uint32_t>(timestamp);
+            sequence = desired;
             return true;
         }
     }
 }
 
-// @safe: the caller owns the packed general lock, so no restricted allocator
-// can change the dense field. Timestamp-only allocators may still update the
-// same word; the CAS loop preserves those independent changes.
+bool Transaction::try_allocate_legacy_distributed_timestamp(
+    uint32_t& result) noexcept {
+    result = 0;
+    auto& state =
+        sync_util::sync_logger::legacy_distributed_timestamp_state;
+    uint32_t current = state.load(std::memory_order_acquire);
+    for (;;) {
+        if (current == 0 || current > max_mako_timestamp)
+            return false;
+        if (state.compare_exchange_weak(current, current + 1,
+                                        std::memory_order_acq_rel,
+                                        std::memory_order_acquire)) {
+            result = current;
+            return true;
+        }
+    }
+}
+
+void Transaction::observe_legacy_distributed_timestamp(
+    uint32_t observed) noexcept {
+    if (observed == 0)
+        return;
+    const uint32_t desired = observed < max_mako_timestamp
+        ? observed + 1
+        : max_mako_timestamp + 1;
+    auto& state =
+        sync_util::sync_logger::legacy_distributed_timestamp_state;
+    uint32_t current = state.load(std::memory_order_acquire);
+    while (current < desired) {
+        if (state.compare_exchange_weak(current, desired,
+                                        std::memory_order_acq_rel,
+                                        std::memory_order_acquire))
+            return;
+    }
+}
+
+// @safe: the caller owns the process HLC gate, so no restricted cache commit
+// can pass final validation and timestamp binding concurrently. The physical
+// cache sequence has its own atomic and is allocated only after validation.
 bool Transaction::try_allocate_locked_cache_sequence(
     uint64_t& sequence) noexcept {
-    sequence = 0;
-    auto& state = sync_util::sync_logger::cache_order_state;
-    uint64_t current = state.load(std::memory_order_acquire);
-    for (;;) {
-        assert((current & cache_order_general_lock) != 0);
-        const uint64_t previous = cache_order_sequence(current);
-        if (previous >= max_mako_timestamp)
-            return false;
-        const uint64_t desired =
-            with_cache_order_sequence(current, previous + 1);
-        if (state.compare_exchange_weak(current, desired,
-                                        std::memory_order_acq_rel,
-                                        std::memory_order_acquire)) {
-            sequence = previous + 1;
-            return true;
-        }
-    }
+    assert((sync_util::sync_logger::mako_hlc_state.load(
+                std::memory_order_relaxed) & cache_order_general_lock) != 0);
+    return try_allocate_cache_sequence(sequence);
 }
 
-// @safe: acquire the cache-only general certification bit. Restricted updates
+// @safe: acquire the process-wide HLC validation gate. Restricted updates
 // perform only a load while it is owned. Every caller already holds its full
 // STO write set, so waiting here cannot create a lock-order cycle.
 void Transaction::enter_cache_order_general() noexcept {
-    auto& state = sync_util::sync_logger::cache_order_state;
+    auto& state = sync_util::sync_logger::mako_hlc_state;
     uint64_t current = state.load(std::memory_order_acquire);
     for (;;) {
         if ((current & cache_order_general_lock) != 0) {
@@ -272,80 +332,62 @@ void Transaction::enter_cache_order_general() noexcept {
     }
 }
 
-// @safe: release general certification while preserving any timestamp-only
-// allocations which raced during validation. The five-bit epoch is diagnostic
-// only; successful cache commits also change the non-wrapping packed fields.
+// @safe: release general certification while preserving the HLC stamp.
 void Transaction::leave_cache_order_general() noexcept {
-    auto& state = sync_util::sync_logger::cache_order_state;
-    uint64_t current = state.load(std::memory_order_acquire);
-    for (;;) {
-        assert((current & cache_order_general_lock) != 0);
-        const uint64_t epoch =
-            ((current & cache_order_epoch_mask) >> cache_order_epoch_shift) + 1;
-        const uint64_t desired =
-            (current & ~(cache_order_general_lock | cache_order_epoch_mask)) |
-            ((epoch & UINT64_C(31)) << cache_order_epoch_shift);
-        if (state.compare_exchange_weak(current, desired,
-                                        std::memory_order_acq_rel,
-                                        std::memory_order_acquire))
-            return;
-    }
+    auto& state = sync_util::sync_logger::mako_hlc_state;
+    const uint64_t previous = state.fetch_and(
+        ~cache_order_general_lock, std::memory_order_release);
+    assert((previous & cache_order_general_lock) != 0);
 }
 
 // @safe: an Acquire RMW reads the immediately preceding modification in the
 // packed word's total order and joins a preceding writer's release sequence.
 uint64_t Transaction::order_cache_validation_prefix() noexcept {
-    return sync_util::sync_logger::cache_order_state.fetch_add(
+    return sync_util::sync_logger::mako_hlc_state.fetch_add(
         UINT64_C(0), std::memory_order_acquire);
 }
 
-// @safe: diagnostic/cold snapshot of the process-wide packed state.
+// @safe: diagnostic/cold snapshot of the physical cache sequence.
 uint64_t Transaction::cache_order_snapshot() noexcept {
-    return sync_util::sync_logger::cache_order_state.load(
+    return sync_util::sync_logger::cache_sequence_state.load(
         std::memory_order_acquire);
 }
 
 // @safe: namespace admission excludes cache terminals while this CAS resets
-// only the dense field. Timestamp-only process users remain concurrent.
+// only the dense sequence. Timestamp-only process users remain concurrent.
 bool Transaction::reseed_cache_order_sequence(uint64_t sequence) noexcept {
-    if (sequence > max_mako_timestamp)
+    if (sequence > cache_sequence_max)
         return false;
-    auto& state = sync_util::sync_logger::cache_order_state;
-    uint64_t current = state.load(std::memory_order_acquire);
-    for (;;) {
-        if ((current & cache_order_general_lock) != 0)
-            return false;
-        const uint64_t desired = with_cache_order_sequence(current, sequence);
-        if (state.compare_exchange_weak(current, desired,
-                                        std::memory_order_acq_rel,
-                                        std::memory_order_acquire))
-            return true;
-    }
+    if ((sync_util::sync_logger::mako_hlc_state.load(
+             std::memory_order_acquire) & cache_order_general_lock) != 0)
+        return false;
+    sync_util::sync_logger::cache_sequence_state.store(
+        sequence, std::memory_order_release);
+    return true;
 }
 
-// @safe: assigns one checked nonzero Mako timestamp to this transaction
-bool Transaction::try_assign_mako_timestamp(uint32_t& result) const noexcept {
+// @safe: assigns one checked nonzero local HLC stamp to this transaction.
+bool Transaction::try_assign_mako_timestamp(uint64_t& result) const noexcept {
     assert(state_ == s_committing_locked || state_ == s_committing);
-    if (tid_unique_) {
-        result = tid_unique_;
+    if (mako_timestamp_stamp_) {
+        result = mako_timestamp_stamp_;
         return true;
     }
     if (!try_allocate_mako_timestamp(result))
         return false;
-    tid_unique_ = result;
+    mako_timestamp_stamp_ = result;
     return true;
 }
 
-// @safe: atomically catches the process-wide Mako clock up to an observation
-void Transaction::observe_mako_timestamp(uint32_t observed) noexcept {
-    const uint32_t desired = observed < max_mako_timestamp
-        ? observed + 1
-        : max_mako_timestamp + 1;
-    auto& state = sync_util::sync_logger::cache_order_state;
+// @safe: atomically catches the process-wide local HLC up to an observation.
+void Transaction::observe_local_mako_timestamp_stamp(
+    uint64_t observed_stamp) noexcept {
+    if (!mako::valid_mako_timestamp_stamp(observed_stamp))
+        return;
+    auto& state = sync_util::sync_logger::mako_hlc_state;
     uint64_t current = state.load(std::memory_order_acquire);
-    while (cache_order_timestamp(current) != 0 &&
-           cache_order_timestamp(current) < desired) {
-        const uint64_t next = with_cache_order_timestamp(current, desired);
+    while (mako_hlc_stamp(current) < observed_stamp) {
+        const uint64_t next = with_mako_hlc_stamp(current, observed_stamp);
         if (state.compare_exchange_weak(current, next,
                                         std::memory_order_acq_rel,
                                         std::memory_order_acquire))
@@ -353,27 +395,59 @@ void Transaction::observe_mako_timestamp(uint32_t observed) noexcept {
     }
 }
 
-// @safe: atomically advances the process-wide Mako logical clock
-bool Transaction::advance_mako_timestamp_past(uint32_t observed) noexcept {
-    // Store observed + 1, then leave room for that value to be minted while
-    // advancing the counter once more. Zero and max_mako_timestamp + 1 are
-    // permanent sentinels, so recovery cannot revive an exhausted clock.
-    if (observed == 0 || observed >= max_mako_timestamp)
+// @safe: raise the local HLC floor so its next allocation compares strictly
+// after the full observed timestamp.
+bool Transaction::advance_local_mako_timestamp_past(
+    const mako_timestamp_v1& observed) noexcept {
+    if (!mako::valid_mako_timestamp_v1(observed))
         return false;
 
-    const uint32_t desired = observed + 1;
-    auto& state = sync_util::sync_logger::cache_order_state;
+    uint64_t physical_ms =
+        observed.physical_us / MAKO_TIMESTAMP_V1_PHYSICAL_UNIT_US;
+    const uint64_t remainder =
+        observed.physical_us % MAKO_TIMESTAMP_V1_PHYSICAL_UNIT_US;
+    uint64_t minimum_next = 0;
+    if (physical_ms > mako::kMakoTimestampPhysicalMsMax)
+        return false;
+    if (remainder != 0 || observed.logical > mako::kMakoTimestampLogicalMask) {
+        if (physical_ms == mako::kMakoTimestampPhysicalMsMax)
+            return false;
+        minimum_next = (physical_ms + 1) << mako::kMakoTimestampLogicalBits;
+    } else {
+        const uint64_t base =
+            physical_ms << mako::kMakoTimestampLogicalBits;
+        const uint64_t logical = observed.logical;
+        const bool same_tuple_is_after =
+            mako::kMakoTimestampOrigin > observed.origin;
+        if (same_tuple_is_after) {
+            minimum_next = base | logical;
+        } else if (logical < mako::kMakoTimestampLogicalMask) {
+            minimum_next = base | (logical + 1);
+        } else {
+            if (physical_ms == mako::kMakoTimestampPhysicalMsMax)
+                return false;
+            minimum_next =
+                (physical_ms + 1) << mako::kMakoTimestampLogicalBits;
+        }
+    }
+    // Public timestamps may validly start at physical_us == logical == 0
+    // when their origin is nonzero. Private stamp zero remains the
+    // unassigned sentinel, so advance to the first representable hot stamp.
+    if (minimum_next == 0)
+        minimum_next = 1;
+    if (!mako::valid_mako_timestamp_stamp(minimum_next))
+        return false;
+    const uint64_t floor = minimum_next - 1;
+    auto& state = sync_util::sync_logger::mako_hlc_state;
     uint64_t current = state.load(std::memory_order_acquire);
-    while (cache_order_timestamp(current) != 0 &&
-           cache_order_timestamp(current) < desired) {
-        const uint64_t next = with_cache_order_timestamp(current, desired);
+    while (mako_hlc_stamp(current) < floor) {
+        const uint64_t next = with_mako_hlc_stamp(current, floor);
         if (state.compare_exchange_weak(current, next,
                                         std::memory_order_acq_rel,
                                         std::memory_order_acquire))
             return true;
     }
-    const uint64_t timestamp = cache_order_timestamp(current);
-    return timestamp != 0 && timestamp <= max_mako_timestamp;
+    return mako_hlc_stamp(current) < mako::kMakoTimestampStampMax;
 }
 
 static void __attribute__((used)) check_static_assertions() {
@@ -387,6 +461,8 @@ static void __attribute__((used)) check_static_assertions() {
 
 // @safe
 void Transaction::initialize() {
+    // Complete RDTSCP calibration before foreground transaction timing.
+    mako::MakoTimestampPhysicalClock::initialize();
     static_assert(tset_initial_capacity % tset_chunk == 0, "tset_initial_capacity not an even multiple of tset_chunk");
     hash_base_ = 32768;
     tset_size_ = 0;
@@ -683,8 +759,9 @@ void Transaction::shard_install(uint32_t timestamp) {
     TThread::txn->maxTimestampReadSet = MAX(TThread::txn->maxTimestampReadSet, timestamp);
     tid_unique_ = timestamp;
 
-    // Floor the process-wide Mako clock past the chosen timestamp.
-    observe_mako_timestamp(tid_unique_);
+    // Transitional distributed u32 clock. Never mix this value into the local
+    // cache HLC stamp domain.
+    observe_legacy_distributed_timestamp(tid_unique_);
 
     TransItem* it = nullptr;
     if (tset_size_ == 0) return;
@@ -845,7 +922,23 @@ bool Transaction::try_commit(bool no_paxos,
                              preinstall_failure* failure,
                              const commit_validation_gate* validation_gate) {
     assert(TThread::id() == threadid_);
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+    const bool has_test_commit_observer =
+        test_commit_observer_registered();
+    const commit_validation_gate test_observer_gate{
+        enter_test_observer_timestamp_gate,
+        leave_test_observer_timestamp_gate,
+        nullptr,
+        nullptr,
+        false,
+        nullptr};
+    if (validation_gate == nullptr && has_test_commit_observer)
+        validation_gate = &test_observer_gate;
+    assert(validation_gate == nullptr || hook != nullptr ||
+           has_test_commit_observer);
+#else
     assert(validation_gate == nullptr || hook != nullptr);
+#endif
     commit_validation_gate_scope validation_gate_scope(validation_gate);
     const bool requested_gate_after_validation =
         validation_gate != nullptr &&
@@ -892,8 +985,6 @@ bool Transaction::try_commit(bool no_paxos,
     uint32_t watermarkTimestamp = 0;
     writeset[0] = tset_size_;
 #if defined(MAKO_LOCAL_TEST_HOOKS)
-    const bool has_test_commit_observer =
-        test_commit_observer_registered();
     unsigned installed_write_count = 0;
 #endif
 
@@ -1004,25 +1095,9 @@ bool Transaction::try_commit(bool no_paxos,
         !acquire_gate_after_validation)
         validation_gate_scope.acquire();
 
-    // The general path allocates the cache record's Mako logical timestamp
-    // after the entire write set is locked but before validating the read set.
-    // A failed transaction may consume a harmless timestamp gap. No cache log
-    // position has been assigned yet, so validation failure needs no
-    // cancellation slot. The restricted update path allocates below, after
-    // validation, so it consumes neither timestamp nor gate turn on conflict.
-    if (!acquire_gate_after_validation && nwriteset != 0 &&
-        (hook != nullptr
-#if defined(MAKO_LOCAL_TEST_HOOKS)
-         || has_test_commit_observer
-#endif
-        )) {
-        uint32_t timestamp = 0;
-        if (!try_assign_mako_timestamp(timestamp)) {
-            if (failure)
-                *failure = preinstall_failure::timestamp_exhausted;
-            goto abort;
-        }
-    }
+    // The local HLC is minted only after every validation below succeeds.
+    // General cache commits retain this gate through timestamp allocation and
+    // log-position binding, so a validation abort consumes no timestamp.
 
 #if CONSISTENCY_CHECK
     // The cache hook now carries Mako's logical timestamp; Silo's independent
@@ -1058,15 +1133,6 @@ bool Transaction::try_commit(bool no_paxos,
 #endif
     }
 
-#if defined(MAKO_LOCAL_TEST_HOOKS)
-    if (!acquire_gate_after_validation && nwriteset != 0 &&
-        has_test_commit_observer) {
-        assert(tid_unique_ != 0);
-        notify_test_commit_observer(
-            test_commit_phase::mako_timestamp_allocated, tid_unique_);
-    }
-#endif
-
     // The same-build caller selects accept_ordered only after proving that
     // this transaction's complete observation is covered by its locked local
     // update. Start the packed word's write-intent acquisition now so phase-2
@@ -1074,7 +1140,7 @@ bool Transaction::try_commit(bool no_paxos,
     // only a hint: no order is allocated until validation succeeds below.
     if (acquire_gate_after_validation && nwriteset != 0 &&
         validation_gate->accept_ordered != nullptr)
-        prefetch_restricted_cache_order_state_for_write();
+        prefetch_restricted_hlc_state_for_write();
 
     //phase2
     for (unsigned tidx = 0; tidx != tset_size_; ++tidx) {
@@ -1122,17 +1188,31 @@ bool Transaction::try_commit(bool no_paxos,
         }
     }
 
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+    if (nwriteset != 0 && has_test_commit_observer) {
+        notify_test_commit_observer(
+            test_commit_phase::local_validation_complete,
+            0 /* timestamp is deliberately allocated next */);
+    }
+#endif
+
     // The restricted one-local-update profile has no observation outside its
     // complete write lock. It can therefore do ordinary validation in
     // parallel and serialize only the timestamp/log-position pair. General
     // transactions retain the early gate above so anti-dependencies and range
     // predicates keep their established order.
-    if (acquire_gate_after_validation && nwriteset != 0) {
-        uint32_t timestamp = 0;
-        if (validation_gate->accept_ordered != nullptr) {
+    if (nwriteset != 0 &&
+        (hook != nullptr
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+         || has_test_commit_observer
+#endif
+        )) {
+        uint64_t timestamp_stamp = 0;
+        if (acquire_gate_after_validation &&
+            validation_gate->accept_ordered != nullptr) {
             const ordered_accept_result accepted =
                 validation_gate->accept_ordered(validation_gate->context,
-                                                 &timestamp);
+                                                 &timestamp_stamp);
             if (accepted != ordered_accept_result::accepted) {
                 if (failure) {
                     *failure = accepted ==
@@ -1142,13 +1222,14 @@ bool Transaction::try_commit(bool no_paxos,
                 }
                 goto abort;
             }
-            assert(timestamp != 0 && timestamp <= max_mako_timestamp);
-            assert(tid_unique_ == 0);
-            tid_unique_ = timestamp;
+            assert(mako::valid_mako_timestamp_stamp(timestamp_stamp));
+            assert(mako_timestamp_stamp_ == 0);
+            mako_timestamp_stamp_ = timestamp_stamp;
             ordered_hook_already_accepted = true;
         } else {
-            validation_gate_scope.acquire();
-            if (!try_assign_mako_timestamp(timestamp)) {
+            if (acquire_gate_after_validation)
+                validation_gate_scope.acquire();
+            if (!try_assign_mako_timestamp(timestamp_stamp)) {
                 if (failure)
                     *failure = preinstall_failure::timestamp_exhausted;
                 goto abort;
@@ -1157,18 +1238,11 @@ bool Transaction::try_commit(bool no_paxos,
     }
 
 #if defined(MAKO_LOCAL_TEST_HOOKS)
-    if (acquire_gate_after_validation && nwriteset != 0 &&
-        has_test_commit_observer) {
-        assert(tid_unique_ != 0);
-        notify_test_commit_observer(
-            test_commit_phase::mako_timestamp_allocated, tid_unique_);
-    }
-#endif
-
-#if defined(MAKO_LOCAL_TEST_HOOKS)
     if (nwriteset != 0 && has_test_commit_observer) {
+        assert(mako::valid_mako_timestamp_stamp(mako_timestamp_stamp_));
         notify_test_commit_observer(
-            test_commit_phase::local_validation_complete, tid_unique_);
+            test_commit_phase::mako_timestamp_allocated,
+            mako_timestamp_stamp_);
     }
 #endif
 
@@ -1176,7 +1250,7 @@ bool Transaction::try_commit(bool no_paxos,
     // attaches preallocated storage to the ordered cache log. Rejection is a
     // definite abort because phase3 has not begun.
     if (!ordered_hook_already_accepted && hook != nullptr && nwriteset != 0 &&
-        !hook(hook_context, tid_unique_)) {
+        !hook(hook_context, mako_timestamp_stamp_)) {
         if (failure)
             *failure = preinstall_failure::hook_rejected;
         goto abort;
@@ -1187,7 +1261,8 @@ bool Transaction::try_commit(bool no_paxos,
     validation_gate_scope.release();
     if (validation_gate != nullptr && nwriteset != 0 &&
         validation_gate->after_leave != nullptr &&
-        !validation_gate->after_leave(validation_gate->context, tid_unique_)) {
+        !validation_gate->after_leave(validation_gate->context,
+                                      mako_timestamp_stamp_)) {
         if (failure)
             *failure = preinstall_failure::hook_rejected;
         goto abort;
@@ -1196,17 +1271,14 @@ bool Transaction::try_commit(bool no_paxos,
 #if defined(MAKO_LOCAL_TEST_HOOKS)
     if (nwriteset != 0 && has_test_commit_observer) {
         notify_test_commit_observer(test_commit_phase::preinstall_accepted,
-                                    tid_unique_);
+                                    mako_timestamp_stamp_);
     }
 #endif
 
-    // @safe: A remote/read-set maximum may have raised the chosen timestamp
-    // above this coordinator's local ticket. Floor the next-to-return clock
-    // before either phase-3 layout installs the write set. A successful
-    // ordered callback replaced timestamp allocation with a packed CAS that
-    // already advanced this same clock past tid_unique_.
+    // @safe: accepted callbacks normally allocate from this HLC directly.
+    // Retain the explicit floor for future recovered/participant assignments.
     if (nwriteset && !ordered_hook_already_accepted)
-        observe_mako_timestamp(tid_unique_);
+        observe_local_mako_timestamp_stamp(mako_timestamp_stamp_);
 
     //phase3
 #if STO_SORT_WRITESET
@@ -1220,7 +1292,8 @@ bool Transaction::try_commit(bool no_paxos,
             if (installed_write_count == 1 && nwriteset > 1 &&
                 has_test_commit_observer) {
                 notify_test_commit_observer(
-                    test_commit_phase::first_write_installed, tid_unique_);
+                    test_commit_phase::first_write_installed,
+                    mako_timestamp_stamp_);
             }
 #endif
         }
@@ -1242,7 +1315,8 @@ bool Transaction::try_commit(bool no_paxos,
             if (installed_write_count == 1 && nwriteset > 1 &&
                 has_test_commit_observer) {
                 notify_test_commit_observer(
-                    test_commit_phase::first_write_installed, tid_unique_);
+                    test_commit_phase::first_write_installed,
+                    mako_timestamp_stamp_);
             }
 #endif
         }
@@ -1283,7 +1357,7 @@ bool Transaction::try_commit(bool no_paxos,
 #if defined(MAKO_LOCAL_TEST_HOOKS)
     if (nwriteset != 0 && has_test_commit_observer) {
         notify_test_commit_observer(test_commit_phase::all_writes_installed,
-                                    tid_unique_);
+                                    mako_timestamp_stamp_);
     }
 #endif
 

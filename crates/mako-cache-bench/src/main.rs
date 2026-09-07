@@ -957,7 +957,7 @@ fn run_phase(
 #[cfg(target_os = "linux")]
 fn current_thread_cpu_ns() -> Option<u64> {
     use nix::sys::time::TimeValLike;
-    use nix::time::{ClockId, clock_gettime};
+    use nix::time::{clock_gettime, ClockId};
 
     // CLOCK_THREAD_CPUTIME_ID belongs only to this workload thread, so the
     // asynchronous Mako/RocksDB threads never enter the diagnostic total.
@@ -2459,8 +2459,8 @@ fn encode_report(
         &mut output,
         "mako_record_integrity",
         match options.record_checksum {
-            RecordChecksum::Crc32c => "self-describing v3 with CRC32C",
-            RecordChecksum::None => "self-describing v4 without corruption checksum",
+            RecordChecksum::Crc32c => "self-describing v5 with CRC32C",
+            RecordChecksum::None => "self-describing v6 without corruption checksum",
         },
         false,
     );

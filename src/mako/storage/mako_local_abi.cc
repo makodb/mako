@@ -85,7 +85,8 @@ struct mako_local_db {
   std::unordered_map<std::string, std::unique_ptr<mako_local_table>> tables;
 };
 
-// One cache-order namespace may own the process-wide dense field at a time.
+// One cache-order namespace may own the process-wide cache-sequence allocator
+// at a time.
 // Ordinary LocalDb facades and non-cache timestamp users do not claim it.
 static std::atomic<mako_local_db *> active_cache_order_db{nullptr};
 static std::mutex active_cache_order_mu;
@@ -97,9 +98,9 @@ bool packed_cache_order_allowed(const mako_local_db *db) noexcept {
       db->cache_order_mode == MAKO_RUST_FAST_CACHE_ORDER_CONCURRENT;
 }
 
-// @safe - Both concurrent cache protocols use the packed general bit and
-// process timestamp clock. Only Concurrent also assigns dense sequences from
-// that word.
+// @safe - Both concurrent cache protocols use the process HLC gate and clock.
+// Only Concurrent also assigns physical sequences from native's independent
+// cache-sequence atomic.
 static bool packed_cache_order_coordination_allowed(
     const mako_local_db *db) noexcept {
   return db != nullptr &&
@@ -108,7 +109,7 @@ static bool packed_cache_order_coordination_allowed(
 }
 
 // @safe - PerWorker uses a Rust-owned sequence within each worker lane while
-// retaining native packed timestamp/general coordination.
+// retaining native process-HLC timestamp and validation-gate coordination.
 static bool per_worker_cache_order_allowed(const mako_local_db *db) noexcept {
   return db != nullptr &&
       db->cache_order_mode == MAKO_RUST_FAST_CACHE_ORDER_PER_WORKER;
@@ -176,7 +177,7 @@ struct mako_local_txn {
   Transaction::canonical_write_view record_fast_write{};
   bool record_fast_path_eligible = true;
   // Nonzero only while the immediately preceding trusted fast Put remains a
-  // valid unchecked-v4 fused-terminal candidate. This consumes existing tail
+  // valid unchecked-v6 fused-terminal candidate. This consumes existing tail
   // padding in the facade and lets the release terminal test one scalar; the
   // richer borrowed witness above remains available to general serialization.
   uint32_t record_fused_candidate_bytes = 0;
@@ -261,7 +262,7 @@ struct mako_rust_fast_one_put_holder_pool {
     std::string encoded_value;
     uint64_t sequence = 0;
     uint64_t table_id = 0;
-    uint32_t mako_timestamp = 0;
+    uint64_t timestamp_stamp = 0;
     uint16_t key_len = 0;
     key_storage key_location = key_storage::hot_inline;
     holder_state state = holder_state::free;
@@ -287,8 +288,6 @@ static_assert(noexcept(std::declval<std::string &>().swap(
 
 namespace {
 
-static_assert(MAKO_LOCAL_MAX_MAKO_TIMESTAMP ==
-              Transaction::max_mako_timestamp);
 static_assert(MAKO_LOCAL_MAX_WORKERS == MAX_THREADS);
 
 thread_local bool local_attached = false;
@@ -411,19 +410,16 @@ constexpr uint64_t pack_fast_terminal_result(int status,
          (static_cast<uint64_t>(static_cast<uint32_t>(cleanup_status)) << 32);
 }
 
-constexpr uint64_t pack_preselected_record_state(uint32_t mako_timestamp,
+constexpr uint64_t pack_preselected_record_state(uint64_t timestamp_stamp,
                                                  bool record_written) noexcept {
-  return static_cast<uint64_t>(mako_timestamp) |
-         (record_written ? UINT64_C(1) << 32 : UINT64_C(0));
+  assert(timestamp_stamp <= mako::kMakoTimestampStampMax);
+  return (timestamp_stamp << 1) |
+         (record_written ? UINT64_C(1) : UINT64_C(0));
 }
 
-// @safe - Pure scalar packing for the same-build concurrent terminal result.
-// Bit 33 is meaningful only after native has Release-published holder READY.
 constexpr uint64_t pack_native_ordered_record_state(
-    uint32_t mako_timestamp, bool record_written,
-    bool holder_ready) noexcept {
-  return pack_preselected_record_state(mako_timestamp, record_written) |
-         (holder_ready ? UINT64_C(1) << 33 : UINT64_C(0));
+    uint64_t timestamp_stamp, bool record_written) noexcept {
+  return pack_preselected_record_state(timestamp_stamp, record_written);
 }
 
 constexpr uint64_t
@@ -437,8 +433,6 @@ pack_fused_holder_cold_result(
     uint32_t exact_record_bytes) noexcept {
   assert(exact_record_bytes != 0);
   assert(exact_record_bytes <= kFastPutRecordBytesMax);
-  assert(MAKO_RUST_FAST_PRESELECTED_RECORD_RESERVED(result) == 0);
-  result.record_state |= static_cast<uint64_t>(exact_record_bytes) << 33;
   return result;
 }
 
@@ -488,13 +482,14 @@ static_assert(offsetof(mako_rust_fast_native_ordered_arena_result,
                        ordered_sequence) == 8);
 static_assert(offsetof(mako_rust_fast_native_ordered_arena_result,
                        record_state) == 16);
-constexpr mako_rust_fast_native_ordered_arena_result
+static_assert(sizeof(mako_rust_fast_native_ordered_holder_result) == 32);
+static_assert(offsetof(mako_rust_fast_native_ordered_holder_result,
+                       holder_ready) == 24);
+constexpr mako_rust_fast_native_ordered_holder_result
     kNativeOrderedHolderReadyLayoutProbe{
-        0, 9, pack_native_ordered_record_state(7, true, true)};
+        0, 9, pack_native_ordered_record_state(7, true), 1};
 static_assert(MAKO_RUST_FAST_NATIVE_ORDERED_HOLDER_READY(
                   kNativeOrderedHolderReadyLayoutProbe) == 1);
-static_assert(MAKO_RUST_FAST_NATIVE_ORDERED_HOLDER_RESERVED(
-                  kNativeOrderedHolderReadyLayoutProbe) == 0);
 static_assert(sizeof(mako_rust_fast_native_ordered_holder_control) == 48);
 static_assert(alignof(mako_rust_fast_native_ordered_holder_control) ==
               alignof(uint64_t));
@@ -534,9 +529,8 @@ static_assert(offsetof(mako_rust_fast_one_put_holder_view, key) == 16);
 static_assert(offsetof(mako_rust_fast_one_put_holder_view, value) == 24);
 static_assert(offsetof(mako_rust_fast_one_put_holder_view, key_len) == 32);
 static_assert(offsetof(mako_rust_fast_one_put_holder_view, value_len) == 36);
-static_assert(offsetof(mako_rust_fast_one_put_holder_view, mako_timestamp) ==
+static_assert(offsetof(mako_rust_fast_one_put_holder_view, timestamp_stamp) ==
               40);
-static_assert(offsetof(mako_rust_fast_one_put_holder_view, reserved) == 44);
 constexpr mako_rust_fast_preselected_record_result
     kPreselectedRecordLayoutProbe{
         pack_fast_terminal_result(MAKO_LOCAL_OK, MAKO_LOCAL_WORKER_POISONED),
@@ -546,12 +540,10 @@ static_assert(MAKO_RUST_FAST_TERMINAL_STATUS(
 static_assert(
     MAKO_RUST_FAST_CLEANUP_STATUS(kPreselectedRecordLayoutProbe.terminal) ==
     MAKO_LOCAL_WORKER_POISONED);
-static_assert(MAKO_RUST_FAST_PRESELECTED_RECORD_TIMESTAMP(
+static_assert(MAKO_RUST_FAST_PRESELECTED_RECORD_STAMP(
                   kPreselectedRecordLayoutProbe) == 12345);
 static_assert(MAKO_RUST_FAST_PRESELECTED_RECORD_WRITTEN(
                   kPreselectedRecordLayoutProbe) == 1);
-static_assert(MAKO_RUST_FAST_PRESELECTED_RECORD_RESERVED(
-                  kPreselectedRecordLayoutProbe) == 0);
 static_assert(MAKO_RUST_FAST_FUSED_HOLDER_CODE(pack_fused_holder_control_word(
                   MAKO_RUST_FAST_FUSED_HOLDER_UNTOUCHED_NEED_SLOW, 12345)) ==
               MAKO_RUST_FAST_FUSED_HOLDER_UNTOUCHED_NEED_SLOW);
@@ -563,8 +555,7 @@ static_assert(
 // these types; their offsets and sizes make every raw access below explicit.
 struct alignas(64) rust_publication_cell_layout {
   uint64_t turn;
-  uint32_t mako_timestamp;
-  uint32_t timestamp_padding;
+  uint64_t timestamp_stamp;
   size_t record_bytes;
   std::array<uint8_t, 40> padding;
 };
@@ -576,7 +567,7 @@ constexpr size_t kRustNativeHolderRecordTag =
 static_assert(sizeof(rust_publication_cell_layout) == 64);
 static_assert(alignof(rust_publication_cell_layout) == 64);
 static_assert(offsetof(rust_publication_cell_layout, turn) == 0);
-static_assert(offsetof(rust_publication_cell_layout, mako_timestamp) == 8);
+static_assert(offsetof(rust_publication_cell_layout, timestamp_stamp) == 8);
 static_assert(offsetof(rust_publication_cell_layout, record_bytes) == 16);
 static_assert(sizeof(rust_record_arena_block_layout) == 256);
 static_assert(alignof(rust_record_arena_block_layout) == 64);
@@ -586,11 +577,11 @@ constexpr std::array<uint8_t, 8> kCacheRecordCrc32cMagic{'M', 'A', 'K', 'O',
                                                          'C', 'M', 'T', '\0'};
 constexpr std::array<uint8_t, 8> kCacheRecordUncheckedMagic{
     'M', 'A', 'K', 'O', 'N', 'O', 'C', '\0'};
-constexpr uint16_t kCacheRecordCrc32cVersion = 3;
-constexpr uint16_t kCacheRecordUncheckedVersion = 4;
+constexpr uint16_t kCacheRecordCrc32cVersion = 5;
+constexpr uint16_t kCacheRecordUncheckedVersion = 6;
 constexpr uint8_t kCacheRecordPutTag = 1;
 constexpr uint8_t kCacheRecordDeleteTag = 2;
-constexpr size_t kCacheRecordHeaderBytes = 8 + 2 + 8 + 4 + 4;
+constexpr size_t kCacheRecordHeaderBytes = 8 + 2 + 8 + 16 + 4;
 constexpr size_t kCacheRecordOperationHeaderBytes = 1 + 8 + 4 + 4;
 constexpr size_t kCacheRecordCrcBytes = 4;
 static_assert(kCacheRecordHeaderBytes + kCacheRecordOperationHeaderBytes +
@@ -794,6 +785,15 @@ void write_u64_be(uint8_t *&cursor, uint64_t value) noexcept {
     *cursor++ = static_cast<uint8_t>(value >> shift);
 }
 
+void write_timestamp_v1_be(uint8_t *&cursor,
+                           uint64_t timestamp_stamp) noexcept {
+  const mako_timestamp_v1 timestamp =
+      mako::expand_mako_timestamp_stamp(timestamp_stamp);
+  write_u64_be(cursor, timestamp.physical_us);
+  write_u32_be(cursor, timestamp.logical);
+  write_u32_be(cursor, timestamp.origin);
+}
+
 // @unsafe - Fixed-width stores intentionally accept unaligned record fields.
 // memcpy gives them defined C++ aliasing/alignment semantics and compilers
 // lower the constant extents to one unaligned store on supported targets.
@@ -822,6 +822,15 @@ void store_u64_be_unaligned(uint8_t *destination, uint64_t value) noexcept {
 #error "unsupported byte order"
 #endif
   std::memcpy(destination, &value, sizeof(value));
+}
+
+void store_timestamp_v1_be_unaligned(uint8_t *destination,
+                                     uint64_t timestamp_stamp) noexcept {
+  const mako_timestamp_v1 timestamp =
+      mako::expand_mako_timestamp_stamp(timestamp_stamp);
+  store_u64_be_unaligned(destination, timestamp.physical_us);
+  store_u32_be_unaligned(destination + 8, timestamp.logical);
+  store_u32_be_unaligned(destination + 12, timestamp.origin);
 }
 
 struct record_shape {
@@ -957,14 +966,14 @@ bool write_record_mutation(
 }
 
 bool serialize_cache_record(const Transaction *native_txn,
-                            uint64_t sequence, uint32_t mako_timestamp,
+                            uint64_t sequence, uint64_t timestamp_stamp,
                             const record_shape &shape,
                             uint8_t *record,
                             const Transaction::canonical_write_view
                                 *direct_write = nullptr) noexcept {
   assert(native_txn != nullptr);
   assert(sequence != 0);
-  assert(mako_timestamp != 0);
+  assert(mako::valid_mako_timestamp_stamp(timestamp_stamp));
   assert(shape.operations != 0);
   assert(valid_record_checksum_mode(shape.checksum_mode));
   assert(shape.bytes >=
@@ -983,7 +992,7 @@ bool serialize_cache_record(const Transaction *native_txn,
                    ? kCacheRecordCrc32cVersion
                    : kCacheRecordUncheckedVersion);
   write_u64_be(cursor, sequence);
-  write_u32_be(cursor, mako_timestamp);
+  write_timestamp_v1_be(cursor, timestamp_stamp);
   write_u32_be(cursor, shape.operations);
 
   record_writer writer{
@@ -1013,11 +1022,11 @@ bool serialize_cache_record(const Transaction *native_txn,
 // least exact_record_bytes stable writable bytes. No visitor, callback, CRC,
 // or cursor-by-cursor integer loop remains on this path.
 bool serialize_unchecked_one_put_cache_record(
-    uint64_t sequence, uint32_t mako_timestamp, size_t exact_record_bytes,
+    uint64_t sequence, uint64_t timestamp_stamp, size_t exact_record_bytes,
     uint8_t *record,
     const Transaction::canonical_write_view &write) noexcept {
   assert(sequence != 0);
-  assert(mako_timestamp != 0);
+  assert(mako::valid_mako_timestamp_stamp(timestamp_stamp));
   assert(record != nullptr);
   assert(write.op == Transaction::canonical_write_view::operation::put);
   assert(write.key_length <= UINT32_MAX);
@@ -1032,13 +1041,13 @@ bool serialize_unchecked_one_put_cache_record(
               kCacheRecordUncheckedMagic.size());
   store_u16_be_unaligned(record + 8, kCacheRecordUncheckedVersion);
   store_u64_be_unaligned(record + 10, sequence);
-  store_u32_be_unaligned(record + 18, mako_timestamp);
-  store_u32_be_unaligned(record + 22, 1);
-  record[26] = kCacheRecordPutTag;
-  store_u64_be_unaligned(record + 27, write.table_id);
-  store_u32_be_unaligned(record + 35,
+  store_timestamp_v1_be_unaligned(record + 18, timestamp_stamp);
+  store_u32_be_unaligned(record + 34, 1);
+  record[38] = kCacheRecordPutTag;
+  store_u64_be_unaligned(record + 39, write.table_id);
+  store_u32_be_unaligned(record + 47,
                          static_cast<uint32_t>(write.key_length));
-  store_u32_be_unaligned(record + 39,
+  store_u32_be_unaligned(record + 51,
                          static_cast<uint32_t>(write.value_length));
   uint8_t *payload = record + kCacheRecordHeaderBytes +
                      kCacheRecordOperationHeaderBytes;
@@ -1272,7 +1281,7 @@ int check_txn_operation(mako_local_txn *txn,
   if (checked != MAKO_LOCAL_OK) return checked;
   // Private record preflight is a seal: its byte count is derived from the
   // current canonical TransItems, so no subsequent read/write-set mutation is
-  // permitted. Stable revision-0 transactions never set this flag.
+  // permitted. Public transactions never set this private fast-path flag.
   return txn->record_plan_sealed ? MAKO_LOCAL_BUSY : MAKO_LOCAL_OK;
 }
 
@@ -1714,11 +1723,25 @@ struct post_validate_bridge {
   void *context;
 };
 
+// Public timestamp-bearing hooks participate in the same process-wide
+// validation order as cache-record terminals. The gate is acquired only after
+// STO owns the complete write set and remains held through final predicate and
+// point-read validation, timestamp allocation, and hook acceptance.
+void enter_mako_timestamp_validation_gate(void *) noexcept {
+  Transaction::enter_cache_order_general();
+}
+
+void leave_mako_timestamp_validation_gate(void *) noexcept {
+  Transaction::leave_cache_order_general();
+}
+
 bool invoke_post_validate_hook(void *opaque,
-                               uint32_t timestamp) noexcept {
+                               uint64_t timestamp_stamp) noexcept {
   auto *bridge = static_cast<post_validate_bridge *>(opaque);
   try {
-    return bridge->hook(bridge->context, timestamp) != 0;
+    const mako_timestamp_v1 timestamp =
+        mako::expand_mako_timestamp_stamp(timestamp_stamp);
+    return bridge->hook(bridge->context, &timestamp) != 0;
   } catch (...) {
     // Raw C++ callers can still supply a throwing function despite the C
     // declaration. Contain it before it can cross either the transaction core
@@ -1741,12 +1764,12 @@ struct record_bind_bridge {
   bool use_direct_write = false;
   bool use_unchecked_one_put_serializer = false;
   // Native-ordered concurrent terminals lend the queue health word. The
-  // packed process state is the sole sequence allocator; the legacy Rust
+  // process-wide cache sequence atomic is the sole sequence allocator; the legacy Rust
   // queue tail remains in the compatibility ABI but is not part of concurrent
   // allocation or descriptor discovery.
   const uint8_t *native_unhealthy = nullptr;
   uint64_t *ordered_sequence_out = nullptr;
-  uint32_t *ordered_timestamp_out = nullptr;
+  uint64_t *ordered_timestamp_stamp_out = nullptr;
   bool assign_sequence_natively = false;
   // The concurrent holder terminal binds an exact publication turn but
   // defers record encoding to writeback. Its staged value remains in txn until
@@ -1768,7 +1791,9 @@ void record_validation_cpu_relax() noexcept {
 }
 
 // @unsafe - Legacy/general record terminals which have not opted into the
-// claimed cache-order namespace retain their allocation-free FIFO gate.
+// claimed cache-order namespace retain their allocation-free FIFO gate. They
+// acquire that gate before the process HLC gate so all timestamp-bearing
+// terminal families share one validation order without creating a lock cycle.
 void enter_record_validation_gate(void *opaque) noexcept {
   auto *bridge = static_cast<record_bind_bridge *>(opaque);
   assert(bridge != nullptr);
@@ -1791,6 +1816,7 @@ void enter_record_validation_gate(void *opaque) noexcept {
     record_validation_cpu_relax();
   }
   bridge->validation_ticket = ticket;
+  Transaction::enter_cache_order_general();
   bridge->validation_gate_held = true;
 }
 
@@ -1799,11 +1825,12 @@ void leave_record_validation_gate(void *opaque) noexcept {
   assert(bridge != nullptr);
   assert(bridge->validation_gate_held);
   bridge->validation_gate_held = false;
+  Transaction::leave_cache_order_general();
   bridge->txn->owner->record_validation_serving.value.store(
       bridge->validation_ticket + UINT64_C(1), std::memory_order_release);
 }
 
-// @unsafe - Claimed cache terminals use the packed general bit after the full
+// @unsafe - Claimed cache terminals use the process HLC validation gate after the full
 // STO write set is held. Restricted one-Put updates never own this bit.
 void enter_packed_cache_order_gate(void *opaque) noexcept {
   auto *bridge = static_cast<record_bind_bridge *>(opaque);
@@ -1824,12 +1851,13 @@ void leave_packed_cache_order_gate(void *opaque) noexcept {
   Transaction::leave_cache_order_general();
 }
 
-// @unsafe - This callback deliberately provides no mutual exclusion. The
-// caller of the single-producer terminal must prove that no other cache-record
-// terminal for this database is running or waiting for the whole call. Keeping
-// a non-null Transaction gate is nevertheless essential: `held()` selects the
-// repeated post-lock predicate validation, and release still separates the
-// bind hook from after-leave serialization.
+// @unsafe - The caller of the single-producer terminal still proves that no
+// other cache-record terminal for this database overlaps the whole call. The
+// process HLC gate composes its timestamp-bearing validation with public hooks
+// and other terminal families; it does not replace lane ownership or queue
+// exclusion. Keeping a non-null Transaction gate also makes `held()` select
+// repeated post-lock predicate validation and separates the bind hook from
+// after-leave serialization.
 void enter_single_producer_record_validation_gate(void *opaque) noexcept {
   auto *bridge = static_cast<record_bind_bridge *>(opaque);
   assert(bridge != nullptr);
@@ -1839,6 +1867,7 @@ void enter_single_producer_record_validation_gate(void *opaque) noexcept {
   assert(db->record_validation_next.value.load(std::memory_order_relaxed) ==
          db->record_validation_serving.value.load(std::memory_order_acquire));
 #endif
+  Transaction::enter_cache_order_general();
   bridge->validation_gate_held = true;
 }
 
@@ -1847,6 +1876,7 @@ void leave_single_producer_record_validation_gate(void *opaque) noexcept {
   assert(bridge != nullptr);
   assert(bridge->validation_gate_held);
   bridge->validation_gate_held = false;
+  Transaction::leave_cache_order_general();
 }
 
 // Build-private state for the callback-free single-producer record terminal.
@@ -1858,9 +1888,28 @@ struct preselected_one_put_bridge {
   uint64_t sequence;
   uint8_t *record;
   size_t exact_record_bytes;
-  uint32_t mako_timestamp = 0;
+  uint64_t timestamp_stamp = 0;
   bool record_written = false;
+  bool validation_gate_held = false;
 };
+
+void enter_preselected_record_hlc_gate(void *opaque) noexcept {
+  auto *bridge = static_cast<preselected_one_put_bridge *>(opaque);
+  assert(bridge != nullptr);
+  assert(bridge->txn != nullptr);
+  assert(!bridge->validation_gate_held);
+  assert(single_producer_cache_order_allowed(bridge->txn->owner));
+  Transaction::enter_cache_order_general();
+  bridge->validation_gate_held = true;
+}
+
+void leave_preselected_record_hlc_gate(void *opaque) noexcept {
+  auto *bridge = static_cast<preselected_one_put_bridge *>(opaque);
+  assert(bridge != nullptr);
+  assert(bridge->validation_gate_held);
+  bridge->validation_gate_held = false;
+  Transaction::leave_cache_order_general();
+}
 
 // Build-private state for the zero-copy holder terminal. Inline key bytes and
 // every potentially allocating overflow-key operation are complete before
@@ -1874,29 +1923,31 @@ struct preselected_one_put_holder_bridge {
   uint64_t table_id;
   uint16_t key_len;
   mako_rust_fast_one_put_holder_pool::key_storage key_location;
-  uint32_t mako_timestamp = 0;
+  uint64_t timestamp_stamp = 0;
   bool holder_sealed = false;
   bool validation_gate_held = false;
   const uint8_t *native_unhealthy = nullptr;
 };
 
-// @unsafe - A first-time one-Put cannot use the restricted timestamp path, so
-// it briefly owns the packed general bit after STO has locked and validated
-// its write set. These callbacks intentionally use the holder bridge's exact
+// @unsafe - A first-time PerWorker one-Put cannot use the restricted timestamp
+// path, and every single-producer holder must compose with other timestamp
+// families. Both therefore own the process HLC gate through final validation
+// and acceptance. These callbacks intentionally use the holder bridge's exact
 // type: record_bind_bridge has a different layout and must never be used for
 // this terminal's opaque context.
-void enter_preselected_holder_packed_cache_order_gate(void *opaque) noexcept {
+void enter_preselected_holder_hlc_gate(void *opaque) noexcept {
   auto *bridge = static_cast<preselected_one_put_holder_bridge *>(opaque);
   assert(bridge != nullptr);
   assert(bridge->txn != nullptr);
   assert(!bridge->validation_gate_held);
-  assert(per_worker_cache_order_allowed(bridge->txn->owner));
+  assert(per_worker_cache_order_allowed(bridge->txn->owner) ||
+         single_producer_cache_order_allowed(bridge->txn->owner));
   Transaction::enter_cache_order_general();
   bridge->validation_gate_held = true;
 }
 
 // @unsafe - Paired only with the holder-specific enter callback above.
-void leave_preselected_holder_packed_cache_order_gate(void *opaque) noexcept {
+void leave_preselected_holder_hlc_gate(void *opaque) noexcept {
   auto *bridge = static_cast<preselected_one_put_holder_bridge *>(opaque);
   assert(bridge != nullptr);
   assert(bridge->validation_gate_held);
@@ -1905,17 +1956,17 @@ void leave_preselected_holder_packed_cache_order_gate(void *opaque) noexcept {
 }
 
 bool accept_preselected_one_put_holder(void *opaque,
-                                       uint32_t timestamp) noexcept {
+                                       uint64_t timestamp_stamp) noexcept {
   auto *bridge = static_cast<preselected_one_put_holder_bridge *>(opaque);
   assert(bridge != nullptr);
   assert(bridge->txn != nullptr);
   assert(bridge->holder != nullptr);
-  assert(timestamp != 0);
-  assert(bridge->mako_timestamp == 0);
+  assert(mako::valid_mako_timestamp_stamp(timestamp_stamp));
+  assert(bridge->timestamp_stamp == 0);
   if (bridge->native_unhealthy != nullptr &&
       __atomic_load_n(bridge->native_unhealthy, __ATOMIC_ACQUIRE) != 0)
     return false;
-  bridge->mako_timestamp = timestamp;
+  bridge->timestamp_stamp = timestamp_stamp;
   return true;
 }
 
@@ -1925,24 +1976,25 @@ bool accept_preselected_one_put_holder(void *opaque,
 // timestamp into the preselected holder obligation.
 Transaction::ordered_accept_result
 accept_per_worker_preselected_one_put_holder(
-    void *opaque, uint32_t *timestamp_out) noexcept {
+    void *opaque, uint64_t *timestamp_stamp_out) noexcept {
   auto *bridge = static_cast<preselected_one_put_holder_bridge *>(opaque);
   assert(bridge != nullptr);
-  assert(timestamp_out != nullptr);
+  assert(timestamp_stamp_out != nullptr);
   assert(per_worker_cache_order_allowed(bridge->txn->owner));
-  *timestamp_out = 0;
+  *timestamp_stamp_out = 0;
 
   if (bridge->native_unhealthy != nullptr &&
       __atomic_load_n(bridge->native_unhealthy, __ATOMIC_ACQUIRE) != 0)
     return Transaction::ordered_accept_result::hook_rejected;
 
   for (;;) {
-    uint32_t timestamp = 0;
-    switch (Transaction::try_allocate_restricted_mako_timestamp(timestamp)) {
+    uint64_t timestamp_stamp = 0;
+    switch (Transaction::try_allocate_restricted_mako_timestamp(
+        timestamp_stamp)) {
     case Transaction::cache_order_timestamp_allocation::accepted:
-      if (!accept_preselected_one_put_holder(opaque, timestamp))
+      if (!accept_preselected_one_put_holder(opaque, timestamp_stamp))
         return Transaction::ordered_accept_result::hook_rejected;
-      *timestamp_out = timestamp;
+      *timestamp_stamp_out = timestamp_stamp;
       return Transaction::ordered_accept_result::accepted;
     case Transaction::cache_order_timestamp_allocation::general_locked:
       record_validation_cpu_relax();
@@ -1983,7 +2035,7 @@ void seal_preselected_one_put_holder(
   one_put_holder &holder = *bridge->holder;
 #ifndef NDEBUG
   const auto &write = txn->record_fast_write;
-  assert(bridge->mako_timestamp != 0);
+  assert(mako::valid_mako_timestamp_stamp(bridge->timestamp_stamp));
   assert(!bridge->holder_sealed);
   assert(holder.state == one_put_holder_state::free);
   assert(holder.sequence == 0);
@@ -2015,7 +2067,7 @@ void seal_preselected_one_put_holder(
   holder.table_id = bridge->table_id;
   holder.key_len = bridge->key_len;
   holder.key_location = bridge->key_location;
-  holder.mako_timestamp = bridge->mako_timestamp;
+  holder.timestamp_stamp = bridge->timestamp_stamp;
   holder.state = one_put_holder_state::sealed;
   bridge->holder_sealed = true;
 }
@@ -2026,16 +2078,16 @@ void seal_preselected_one_put_holder(
 // complete before this hook returns true, hence before Transaction can enter
 // phase 3. Only an accepted hook publishes its timestamp witness.
 bool serialize_preselected_one_put_record(void *opaque,
-                                          uint32_t timestamp) noexcept {
+                                          uint64_t timestamp_stamp) noexcept {
   auto *bridge = static_cast<preselected_one_put_bridge *>(opaque);
   assert(bridge != nullptr);
-  assert(bridge->mako_timestamp == 0);
+  assert(bridge->timestamp_stamp == 0);
   assert(!bridge->record_written);
   const bool serialized = serialize_unchecked_one_put_cache_record(
-      bridge->sequence, timestamp, bridge->exact_record_bytes,
+      bridge->sequence, timestamp_stamp, bridge->exact_record_bytes,
       bridge->record, bridge->txn->record_fast_write);
   if (!serialized) return false;
-  bridge->mako_timestamp = timestamp;
+  bridge->timestamp_stamp = timestamp_stamp;
   bridge->record_written = true;
   return true;
 }
@@ -2043,7 +2095,7 @@ bool serialize_preselected_one_put_record(void *opaque,
 // @unsafe - Binds Rust-owned uninitialized storage while the full native write
 // set is locked and the ordered validation turn is held. Every potentially
 // failing native shape check precedes the external dense-sequence assignment.
-bool invoke_record_bind_hook(void *opaque, uint32_t timestamp) noexcept {
+bool invoke_record_bind_hook(void *opaque, uint64_t timestamp_stamp) noexcept {
   auto *bridge = static_cast<record_bind_bridge *>(opaque);
   assert(bridge->validation_gate_held);
   // Preflight seals the transaction plan, and every subsequent operation is
@@ -2066,7 +2118,7 @@ bool invoke_record_bind_hook(void *opaque, uint32_t timestamp) noexcept {
     return false;
 
   if (bridge->use_unchecked_one_put_serializer) {
-    // The fused terminal rederived this exact direct v4 shape immediately
+    // The fused terminal rederived this exact direct v6 shape immediately
     // before entering commit and sealed the transaction against later API
     // operations. STO validation changes lock/version state, not this view.
     assert(bridge->txn->record_fast_path_eligible);
@@ -2084,9 +2136,10 @@ bool invoke_record_bind_hook(void *opaque, uint32_t timestamp) noexcept {
   if (bridge->assign_sequence_natively) {
     assert(bridge->native_unhealthy != nullptr);
     assert(bridge->ordered_sequence_out != nullptr);
-    assert(bridge->ordered_timestamp_out != nullptr);
+    assert(bridge->ordered_timestamp_stamp_out != nullptr);
     assert(packed_cache_order_allowed(bridge->txn->owner));
-    // The packed general bit is the unique cache-sequence writer here.
+    // The held HLC gate excludes restricted cache commits while this path
+    // advances the independent cache-sequence allocator.
     // Matching compiler atomics preserve the Rust queue's health ordering.
     if (__atomic_load_n(bridge->native_unhealthy, __ATOMIC_ACQUIRE) != 0)
       return false;
@@ -2095,7 +2148,7 @@ bool invoke_record_bind_hook(void *opaque, uint32_t timestamp) noexcept {
       return false;
     bridge->final_shape = final_shape;
     bridge->sequence = sequence;
-    *bridge->ordered_timestamp_out = timestamp;
+    *bridge->ordered_timestamp_stamp_out = timestamp_stamp;
     *bridge->ordered_sequence_out = sequence;
     return true;
   }
@@ -2104,7 +2157,7 @@ bool invoke_record_bind_hook(void *opaque, uint32_t timestamp) noexcept {
   uint8_t *record = nullptr;
   size_t capacity = 0;
   try {
-    if (bridge->hook(bridge->context, timestamp, final_shape.bytes,
+    if (bridge->hook(bridge->context, timestamp_stamp, final_shape.bytes,
                      &sequence, &record, &capacity) == 0)
       return false;
   } catch (...) {
@@ -2121,18 +2174,19 @@ bool invoke_record_bind_hook(void *opaque, uint32_t timestamp) noexcept {
 
 // @unsafe - The direct one-Put shape was rederived before validation and then
 // sealed. This restricted callback runs only after final validation, so its
-// successful packed CAS is both the timestamp and dense-order commit point.
+// Timestamp-first allocation followed by the dense sequence establishes the
+// accepted cache order without risking an unfillable sequence hole.
 Transaction::ordered_accept_result accept_packed_cache_order(
-    void *opaque, uint32_t *timestamp_out) noexcept {
+    void *opaque, uint64_t *timestamp_stamp_out) noexcept {
   auto *bridge = static_cast<record_bind_bridge *>(opaque);
   assert(bridge != nullptr);
-  assert(timestamp_out != nullptr);
+  assert(timestamp_stamp_out != nullptr);
   assert(!bridge->validation_gate_held);
   assert(bridge->assign_sequence_natively);
   assert(bridge->native_unhealthy != nullptr);
   assert(bridge->ordered_sequence_out != nullptr);
-  assert(bridge->ordered_timestamp_out != nullptr);
-  *timestamp_out = 0;
+  assert(bridge->ordered_timestamp_stamp_out != nullptr);
+  *timestamp_stamp_out = 0;
 
   // Both restricted terminals rederive this exact direct shape, seal it, and
   // check the immutable Concurrent namespace mode before entering commit.
@@ -2151,24 +2205,24 @@ Transaction::ordered_accept_result accept_packed_cache_order(
                                  MAKO_RUST_FAST_RECORD_CHECKSUM_NONE};
   if (__atomic_load_n(bridge->native_unhealthy, __ATOMIC_ACQUIRE) != 0) {
     // Preserve scalar timestamp-before-hook precedence on cold rejection.
-    uint32_t rejected_timestamp = 0;
-    if (!Transaction::try_allocate_mako_timestamp(rejected_timestamp))
+    uint64_t rejected_timestamp_stamp = 0;
+    if (!Transaction::try_allocate_mako_timestamp(rejected_timestamp_stamp))
       return Transaction::ordered_accept_result::timestamp_exhausted;
     return Transaction::ordered_accept_result::hook_rejected;
   }
 
   for (;;) {
     uint64_t sequence = 0;
-    uint32_t timestamp = 0;
+    uint64_t timestamp_stamp = 0;
     switch (Transaction::try_allocate_cache_order_pair(sequence,
-                                                        timestamp)) {
+                                                        timestamp_stamp)) {
     case Transaction::cache_order_allocation::accepted:
       bridge->final_shape = final_shape;
       bridge->use_direct_write = true;
       bridge->sequence = sequence;
       *bridge->ordered_sequence_out = sequence;
-      *bridge->ordered_timestamp_out = timestamp;
-      *timestamp_out = timestamp;
+      *bridge->ordered_timestamp_stamp_out = timestamp_stamp;
+      *timestamp_stamp_out = timestamp_stamp;
       return Transaction::ordered_accept_result::accepted;
     case Transaction::cache_order_allocation::general_locked:
       record_validation_cpu_relax();
@@ -2178,9 +2232,8 @@ Transaction::ordered_accept_result accept_packed_cache_order(
     case Transaction::cache_order_allocation::sequence_exhausted: {
       // This cannot precede timestamp exhaustion for a valid recovered
       // history, but retain the old timestamp-before-tail rejection behavior.
-      uint32_t rejected_timestamp = 0;
-      if (!Transaction::try_allocate_mako_timestamp(rejected_timestamp))
-        return Transaction::ordered_accept_result::timestamp_exhausted;
+      // Timestamp allocation already succeeded before the independent dense
+      // sequence exhausted. The consumed timestamp is a harmless gap.
       return Transaction::ordered_accept_result::hook_rejected;
     }
     }
@@ -2210,8 +2263,8 @@ void bind_native_ordered_arena(record_bind_bridge *bridge) noexcept {
   assert(bridge->hook == nullptr);
   assert(bridge->context != nullptr);
   assert(bridge->sequence != 0);
-  assert(bridge->ordered_timestamp_out != nullptr);
-  assert(*bridge->ordered_timestamp_out != 0);
+  assert(bridge->ordered_timestamp_stamp_out != nullptr);
+  assert(*bridge->ordered_timestamp_stamp_out != 0);
   assert(bridge->record == nullptr);
   const auto &control =
       *static_cast<const mako_rust_fast_native_ordered_arena_control *>(
@@ -2279,7 +2332,7 @@ void bind_native_ordered_holder(record_bind_bridge *bridge) noexcept {
 
   one_put_holder &holder = one_put_holder_for(control.pool, bridge->sequence);
   if (holder.state != one_put_holder_state::free || holder.sequence != 0 ||
-      holder.mako_timestamp != 0)
+      holder.timestamp_stamp != 0)
     std::abort();
 
   const auto &write = bridge->txn->record_fast_write;
@@ -2332,15 +2385,16 @@ void bind_native_ordered_holder(record_bind_bridge *bridge) noexcept {
   if (!bridge.assign_sequence_natively || bridge.holder_control == nullptr ||
       bridge.selected_holder == nullptr || bridge.record == nullptr ||
       bridge.sequence == 0 ||
-      bridge.ordered_timestamp_out == nullptr ||
-      *bridge.ordered_timestamp_out == 0 || bridge.final_shape.bytes == 0 ||
+      bridge.ordered_timestamp_stamp_out == nullptr ||
+      *bridge.ordered_timestamp_stamp_out == 0 ||
+      bridge.final_shape.bytes == 0 ||
       bridge.final_shape.bytes >= kRustNativeHolderRecordTag)
     std::abort();
 
   const one_put_holder &holder = *bridge.selected_holder;
   if (holder.state != one_put_holder_state::sealed ||
       holder.sequence != bridge.sequence ||
-      holder.mako_timestamp != *bridge.ordered_timestamp_out)
+      holder.timestamp_stamp != *bridge.ordered_timestamp_stamp_out)
     std::abort();
 
   uint8_t *const publication = bridge.record;
@@ -2361,12 +2415,12 @@ void bind_native_ordered_holder(record_bind_bridge *bridge) noexcept {
   if (__atomic_load_n(turn, __ATOMIC_ACQUIRE) != bound)
     std::abort();
 
-  const uint32_t mako_timestamp = *bridge.ordered_timestamp_out;
+  const uint64_t timestamp_stamp = *bridge.ordered_timestamp_stamp_out;
   const size_t tagged_extent =
       kRustNativeHolderRecordTag | bridge.final_shape.bytes;
   std::memcpy(publication +
-                  offsetof(rust_publication_cell_layout, mako_timestamp),
-              &mako_timestamp, sizeof(mako_timestamp));
+                  offsetof(rust_publication_cell_layout, timestamp_stamp),
+              &timestamp_stamp, sizeof(timestamp_stamp));
   std::memcpy(publication +
                   offsetof(rust_publication_cell_layout, record_bytes),
               &tagged_extent, sizeof(tagged_extent));
@@ -2379,7 +2433,7 @@ void bind_native_ordered_holder(record_bind_bridge *bridge) noexcept {
 // no allocation or I/O; failure leaves Rust's ordered slot bound but unwritten,
 // which pins the queue fail-closed.
 bool serialize_bound_record_after_gate(void *opaque,
-                                       uint32_t timestamp) noexcept {
+                                       uint64_t timestamp_stamp) noexcept {
   auto *bridge = static_cast<record_bind_bridge *>(opaque);
   assert(!bridge->validation_gate_held);
   assert(bridge->sequence != 0);
@@ -2394,7 +2448,7 @@ bool serialize_bound_record_after_gate(void *opaque,
     uint8_t *record = nullptr;
     size_t capacity = 0;
     try {
-      if (bridge->hook(bridge->context, timestamp,
+      if (bridge->hook(bridge->context, timestamp_stamp,
                        bridge->final_shape.bytes, &returned_sequence, &record,
                        &capacity) == 0)
         return false;
@@ -2409,9 +2463,10 @@ bool serialize_bound_record_after_gate(void *opaque,
   assert(bridge->record != nullptr);
   const bool serialized = bridge->use_unchecked_one_put_serializer
       ? serialize_unchecked_one_put_cache_record(
-            bridge->sequence, timestamp, bridge->final_shape.bytes,
+            bridge->sequence, timestamp_stamp, bridge->final_shape.bytes,
             bridge->record, bridge->txn->record_fast_write)
-      : serialize_cache_record(TThread::txn, bridge->sequence, timestamp,
+      : serialize_cache_record(TThread::txn, bridge->sequence,
+                               timestamp_stamp,
                                bridge->final_shape, bridge->record,
                                bridge->use_direct_write
                                    ? &bridge->txn->record_fast_write
@@ -2454,11 +2509,14 @@ static_assert(static_cast<uint32_t>(
 // transaction core; callers must keep the callback context alive until clear.
 void invoke_test_commit_observer(
     void *opaque, Transaction::test_commit_phase phase,
-    uint32_t mako_timestamp) noexcept {
+    uint64_t timestamp_stamp) noexcept {
   auto *bridge = static_cast<test_commit_observer_bridge *>(opaque);
   try {
+    const mako_timestamp_v1 timestamp = timestamp_stamp == 0
+        ? mako_timestamp_v1{}
+        : mako::expand_mako_timestamp_stamp(timestamp_stamp);
     bridge->observer(bridge->context, static_cast<uint32_t>(phase),
-                     mako_timestamp);
+                     &timestamp);
   } catch (...) {
     // A callback exception cannot alter commit semantics. Rust callbacks must
     // likewise contain panics before they cross their extern "C" trampoline.
@@ -2495,6 +2553,10 @@ uint64_t mako_local_feature_bits(void) noexcept {
   return features;
 }
 
+uint32_t mako_local_timestamp_origin(void) noexcept {
+  return mako::kMakoTimestampOrigin;
+}
+
 size_t mako_local_db_options_size(void) noexcept {
   return MAKO_LOCAL_DB_OPTIONS_V0_SIZE;
 }
@@ -2526,11 +2588,33 @@ uint64_t mako_local_quarantined_worker_count(void) noexcept {
   return quarantined_worker_count.load(std::memory_order_relaxed);
 }
 
-int mako_local_advance_mako_timestamp_past(uint32_t observed) noexcept {
-  if (observed == 0) return MAKO_LOCAL_INVALID_ARGUMENT;
-  return Transaction::advance_mako_timestamp_past(observed)
+int mako_local_advance_mako_timestamp_past(
+    const mako_timestamp_v1 *observed) noexcept {
+  if (observed == nullptr || !mako::valid_mako_timestamp_v1(*observed))
+    return MAKO_LOCAL_INVALID_ARGUMENT;
+  return Transaction::advance_local_mako_timestamp_past(*observed)
              ? MAKO_LOCAL_OK
              : MAKO_LOCAL_TIMESTAMP_EXHAUSTED;
+}
+
+int mako_local_test_set_timestamp_physical_ms(uint64_t unix_ms) noexcept {
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+  return mako::MakoTimestampPhysicalClock::set_test_unix_ms(unix_ms)
+             ? MAKO_LOCAL_OK
+             : MAKO_LOCAL_INVALID_ARGUMENT;
+#else
+  (void)unix_ms;
+  return MAKO_LOCAL_FEATURE_UNAVAILABLE;
+#endif
+}
+
+int mako_local_test_clear_timestamp_physical_ms(void) noexcept {
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+  mako::MakoTimestampPhysicalClock::clear_test_unix_ms();
+  return MAKO_LOCAL_OK;
+#else
+  return MAKO_LOCAL_FEATURE_UNAVAILABLE;
+#endif
 }
 
 int mako_local_thread_attach(void) noexcept {
@@ -2996,8 +3080,15 @@ int mako_local_txn_commit_with_hook(
 #if defined(MAKO_LOCAL_TEST_HOOKS)
     arm_native_cleanup_failure_if_requested(cleanup_boundary::commit);
 #endif
+    const Transaction::commit_validation_gate validation_gate{
+        enter_mako_timestamp_validation_gate,
+        leave_mako_timestamp_validation_gate,
+        nullptr,
+        &bridge,
+        false,
+        nullptr};
     const bool committed = Sto::try_commit_no_paxos(
-        invoke_post_validate_hook, &bridge, &failure);
+        invoke_post_validate_hook, &bridge, &failure, &validation_gate);
     finish_txn_known<false>(txn);
     if (committed) return MAKO_LOCAL_OK;
     switch (failure) {
@@ -3090,7 +3181,7 @@ mako_rust_fast_db_claim_cache_order_namespace(
 }
 
 // @unsafe - Recovery owns the claimed namespace exclusively and supplies the
-// dense backend tail validated from records 1..N. The process timestamp field
+// physical backend tail validated from records 1..N. The process timestamp state
 // is deliberately preserved at its current or separately recovered floor.
 MAKO_RUST_FAST_DEFINITION_HIDDEN int
 mako_rust_fast_db_reseed_cache_order_namespace(
@@ -3103,7 +3194,7 @@ mako_rust_fast_db_reseed_cache_order_namespace(
       : MAKO_LOCAL_INVALID_ARGUMENT;
 }
 
-// @safe - Test and cold-wrapper snapshot of the packed process word.
+// @safe - Test and cold-wrapper snapshot of the dense cache sequence.
 MAKO_RUST_FAST_DEFINITION_HIDDEN uint64_t
 mako_rust_fast_db_cache_order_snapshot(const mako_local_db *db) noexcept {
   if (db == nullptr ||
@@ -3197,7 +3288,7 @@ mako_rust_fast_one_put_holder_pool_get_view(
   if (holder.state != one_put_holder_state::sealed ||
       holder.sequence != expected_sequence)
     return MAKO_LOCAL_BUSY;
-  if (holder.mako_timestamp == 0 ||
+  if (holder.timestamp_stamp == 0 ||
       holder.encoded_value.size() <
           static_cast<size_t>(mako::EXTRA_BITS_FOR_VALUE))
     return MAKO_LOCAL_INTERNAL;
@@ -3233,8 +3324,7 @@ mako_rust_fast_one_put_holder_pool_get_view(
       reinterpret_cast<const uint8_t *>(holder.encoded_value.data()),
       holder.key_len,
       static_cast<uint32_t>(value_len),
-      holder.mako_timestamp,
-      0};
+      holder.timestamp_stamp};
   return MAKO_LOCAL_OK;
 }
 
@@ -3254,7 +3344,7 @@ mako_rust_fast_one_put_holder_pool_release(
   // its Release applied-tail publication only after this call returns; the
   // producer's Acquire observation then orders these plain stores before
   // reuse. State becomes FREE last for cold diagnostics.
-  holder.mako_timestamp = 0;
+  holder.timestamp_stamp = 0;
   holder.sequence = 0;
   holder.state = one_put_holder_state::free;
   return MAKO_LOCAL_OK;
@@ -3460,7 +3550,7 @@ pack_preselected_record_result(
     const preselected_one_put_bridge &bridge) noexcept {
   return mako_rust_fast_preselected_record_result{
       terminal,
-      pack_preselected_record_state(bridge.mako_timestamp,
+      pack_preselected_record_state(bridge.timestamp_stamp,
                                     bridge.record_written)};
 }
 
@@ -3481,7 +3571,7 @@ reject_fast_preselected_record_terminal(mako_local_txn *txn) noexcept {
     bool assign_sequence_natively = false,
     const uint8_t *native_unhealthy = nullptr,
     uint64_t *ordered_sequence_out = nullptr,
-    uint32_t *ordered_timestamp_out = nullptr) noexcept {
+    uint64_t *ordered_timestamp_stamp_out = nullptr) noexcept {
   int status = MAKO_LOCAL_INTERNAL;
   try {
 #if defined(MAKO_LOCAL_TEST_HOOKS)
@@ -3493,7 +3583,7 @@ reject_fast_preselected_record_terminal(mako_local_txn *txn) noexcept {
     bridge.use_unchecked_one_put_serializer = unchecked_one_put;
     bridge.native_unhealthy = native_unhealthy;
     bridge.ordered_sequence_out = ordered_sequence_out;
-    bridge.ordered_timestamp_out = ordered_timestamp_out;
+    bridge.ordered_timestamp_stamp_out = ordered_timestamp_stamp_out;
     bridge.assign_sequence_natively = assign_sequence_natively;
     const bool use_restricted_packed_accept =
         bridge.assign_sequence_natively && acquire_gate_after_validation;
@@ -3541,12 +3631,23 @@ reject_fast_preselected_record_terminal(mako_local_txn *txn) noexcept {
 [[gnu::always_inline]] static inline
 mako_rust_fast_native_ordered_arena_result pack_native_ordered_arena_result(
     uint64_t terminal, const record_bind_bridge &bridge,
-    uint32_t accepted_timestamp, uint8_t record_written,
-    bool holder_ready = false) noexcept {
+    uint64_t accepted_timestamp_stamp, uint8_t record_written) noexcept {
   return mako_rust_fast_native_ordered_arena_result{
       terminal, bridge.sequence,
-      pack_native_ordered_record_state(accepted_timestamp,
-                                       record_written == 1, holder_ready)};
+      pack_native_ordered_record_state(accepted_timestamp_stamp,
+                                       record_written == 1)};
+}
+
+[[gnu::always_inline]] static inline
+mako_rust_fast_native_ordered_holder_result pack_native_ordered_holder_result(
+    uint64_t terminal, const record_bind_bridge &bridge,
+    uint64_t accepted_timestamp_stamp, uint8_t holder_sealed,
+    bool holder_ready = false) noexcept {
+  return mako_rust_fast_native_ordered_holder_result{
+      terminal, bridge.sequence,
+      pack_native_ordered_record_state(accepted_timestamp_stamp,
+                                       holder_sealed == 1),
+      holder_ready ? UINT64_C(1) : UINT64_C(0)};
 }
 
 [[gnu::always_inline]] static inline
@@ -3560,13 +3661,13 @@ commit_native_ordered_arena_and_destroy(
   // control block whose fields changed around sequence assignment.
   mako_rust_fast_native_ordered_arena_control control = validated_control;
   uint64_t ordered_sequence = 0;
-  uint32_t accepted_timestamp = 0;
+  uint64_t accepted_timestamp_stamp = 0;
   uint8_t record_written = 0;
   record_bind_bridge bridge{txn, nullptr, &control, &record_written};
   bridge.use_unchecked_one_put_serializer = true;
   bridge.native_unhealthy = control.unhealthy;
   bridge.ordered_sequence_out = &ordered_sequence;
-  bridge.ordered_timestamp_out = &accepted_timestamp;
+  bridge.ordered_timestamp_stamp_out = &accepted_timestamp_stamp;
   bridge.assign_sequence_natively = true;
   const bool can_accept_after_validation =
       TThread::txn->can_order_record_after_validation();
@@ -3609,7 +3710,7 @@ commit_native_ordered_arena_and_destroy(
         return pack_native_ordered_arena_result(
             pack_fast_terminal_result(MAKO_LOCAL_WORKER_POISONED,
                                       MAKO_LOCAL_WORKER_POISONED),
-            bridge, accepted_timestamp, record_written);
+            bridge, accepted_timestamp_stamp, record_written);
       }
     }
   } catch (...) {
@@ -3623,20 +3724,20 @@ commit_native_ordered_arena_and_destroy(
     return pack_native_ordered_arena_result(
         pack_fast_terminal_result(MAKO_LOCAL_WORKER_POISONED,
                                   MAKO_LOCAL_WORKER_POISONED),
-        bridge, accepted_timestamp, record_written);
+        bridge, accepted_timestamp_stamp, record_written);
   }
 
   recycle_txn(txn);
   return pack_native_ordered_arena_result(
       pack_fast_terminal_result(status, MAKO_LOCAL_OK), bridge,
-      accepted_timestamp, record_written);
+      accepted_timestamp_stamp, record_written);
 }
 
 // @unsafe - The validated control, packed-order exclusion, and detached Rust
 // occupancy right jointly guarantee unique access to the selected publication
 // turn and holder generation until the terminal returns its witness.
 [[gnu::always_inline]] static inline
-mako_rust_fast_native_ordered_arena_result
+mako_rust_fast_native_ordered_holder_result
 commit_native_ordered_holder_and_destroy(
     mako_local_txn *txn,
     const mako_rust_fast_native_ordered_holder_control &validated_control)
@@ -3655,22 +3756,22 @@ commit_native_ordered_holder_and_destroy(
     try {
       prepared_overflow_key.assign(write.key, write.key_length);
     } catch (const std::bad_alloc &) {
-      return mako_rust_fast_native_ordered_arena_result{
-          abort_fast_record_terminal(txn, MAKO_LOCAL_OUT_OF_MEMORY), 0, 0};
+      return mako_rust_fast_native_ordered_holder_result{
+          abort_fast_record_terminal(txn, MAKO_LOCAL_OUT_OF_MEMORY), 0, 0, 0};
     } catch (...) {
-      return mako_rust_fast_native_ordered_arena_result{
-          abort_fast_record_terminal(txn, MAKO_LOCAL_INTERNAL), 0, 0};
+      return mako_rust_fast_native_ordered_holder_result{
+          abort_fast_record_terminal(txn, MAKO_LOCAL_INTERNAL), 0, 0, 0};
     }
   }
 
   uint64_t ordered_sequence = 0;
-  uint32_t accepted_timestamp = 0;
+  uint64_t accepted_timestamp_stamp = 0;
   uint8_t holder_sealed = 0;
   record_bind_bridge bridge{txn, nullptr, nullptr, &holder_sealed};
   bridge.use_unchecked_one_put_serializer = true;
   bridge.native_unhealthy = control.unhealthy;
   bridge.ordered_sequence_out = &ordered_sequence;
-  bridge.ordered_timestamp_out = &accepted_timestamp;
+  bridge.ordered_timestamp_stamp_out = &accepted_timestamp_stamp;
   bridge.assign_sequence_natively = true;
   bridge.holder_control = &control;
   bridge.prepared_overflow_key = &prepared_overflow_key;
@@ -3704,7 +3805,7 @@ commit_native_ordered_holder_and_destroy(
           write.table_id,
           static_cast<uint16_t>(write.key_length),
           bridge.holder_key_location,
-          accepted_timestamp,
+          accepted_timestamp_stamp,
           false};
       seal_preselected_one_put_holder(&seal_bridge);
       holder_sealed = seal_bridge.holder_sealed ? 1 : 0;
@@ -3726,10 +3827,10 @@ commit_native_ordered_holder_and_destroy(
         break;
       default:
         poison_transaction(txn);
-        return pack_native_ordered_arena_result(
+        return pack_native_ordered_holder_result(
             pack_fast_terminal_result(MAKO_LOCAL_WORKER_POISONED,
                                       MAKO_LOCAL_WORKER_POISONED),
-            bridge, accepted_timestamp, holder_sealed);
+            bridge, accepted_timestamp_stamp, holder_sealed);
       }
     }
   } catch (...) {
@@ -3745,16 +3846,16 @@ commit_native_ordered_holder_and_destroy(
           write.table_id,
           static_cast<uint16_t>(write.key_length),
           bridge.holder_key_location,
-          accepted_timestamp,
+          accepted_timestamp_stamp,
           false};
       seal_preselected_one_put_holder(&seal_bridge);
       holder_sealed = seal_bridge.holder_sealed ? 1 : 0;
     }
     poison_transaction(txn);
-    return pack_native_ordered_arena_result(
+    return pack_native_ordered_holder_result(
         pack_fast_terminal_result(MAKO_LOCAL_WORKER_POISONED,
                                   MAKO_LOCAL_WORKER_POISONED),
-        bridge, accepted_timestamp, holder_sealed);
+        bridge, accepted_timestamp_stamp, holder_sealed);
   }
 
   recycle_txn(txn);
@@ -3764,9 +3865,9 @@ commit_native_ordered_holder_and_destroy(
       std::abort();
     publish_native_ordered_holder_ready(bridge);
   }
-  return pack_native_ordered_arena_result(
+  return pack_native_ordered_holder_result(
       pack_fast_terminal_result(status, MAKO_LOCAL_OK), bridge,
-      accepted_timestamp, holder_sealed, holder_ready);
+      accepted_timestamp_stamp, holder_sealed, holder_ready);
 }
 
 [[gnu::always_inline]] static inline
@@ -3784,7 +3885,10 @@ commit_preselected_one_put_record_and_destroy(
     Transaction::preinstall_failure failure =
         Transaction::preinstall_failure::none;
     const Transaction::commit_validation_gate validation_gate{
-        nullptr, nullptr, nullptr, &bridge};
+        enter_preselected_record_hlc_gate,
+        leave_preselected_record_hlc_gate,
+        nullptr,
+        &bridge};
     const bool committed = Sto::try_commit_no_paxos(
         serialize_preselected_one_put_record, &bridge, &failure,
         &validation_gate);
@@ -3830,7 +3934,7 @@ pack_preselected_holder_result(
   const bool sealed = holder.state == one_put_holder_state::sealed;
   return mako_rust_fast_preselected_record_result{
       terminal,
-      pack_preselected_record_state(sealed ? holder.mako_timestamp : 0,
+      pack_preselected_record_state(sealed ? holder.timestamp_stamp : 0,
                                     sealed)};
 }
 
@@ -3854,12 +3958,10 @@ commit_preselected_one_put_holder_and_destroy(
     Transaction::preinstall_failure failure =
         Transaction::preinstall_failure::none;
     const Transaction::commit_validation_gate validation_gate{
-        per_worker && !can_accept_after_validation
-            ? enter_preselected_holder_packed_cache_order_gate
-            : nullptr,
-        per_worker && !can_accept_after_validation
-            ? leave_preselected_holder_packed_cache_order_gate
-            : nullptr,
+        can_accept_after_validation ? nullptr
+                                    : enter_preselected_holder_hlc_gate,
+        can_accept_after_validation ? nullptr
+                                    : leave_preselected_holder_hlc_gate,
         nullptr, &bridge, can_accept_after_validation,
         can_accept_after_validation
             ? accept_per_worker_preselected_one_put_holder
@@ -3871,7 +3973,7 @@ commit_preselected_one_put_holder_and_destroy(
     // The accepted hook only captures the assigned timestamp. Moving the
     // staged encoded string sooner would change STO's stable StringWrapper
     // target before install/cleanup. Transfer it only after try_commit returns.
-    if (bridge.mako_timestamp != 0)
+    if (bridge.timestamp_stamp != 0)
       seal_preselected_one_put_holder(&bridge);
 
     // The hook always accepts, and sealing above is noexcept after validation
@@ -3880,8 +3982,8 @@ commit_preselected_one_put_holder_and_destroy(
     // Keep their full diagnostic spelling without charging every ACK.
 #ifndef NDEBUG
     assert(committed ==
-           (bridge.mako_timestamp != 0 && bridge.holder_sealed));
-    assert(bridge.mako_timestamp == 0 || bridge.holder_sealed);
+           (bridge.timestamp_stamp != 0 && bridge.holder_sealed));
+    assert(bridge.timestamp_stamp == 0 || bridge.holder_sealed);
 #endif
 
     finish_txn_known<true>(txn);
@@ -3906,10 +4008,10 @@ commit_preselected_one_put_holder_and_destroy(
     }
   } catch (...) {
     // Stack unwinding has left try_commit_no_paxos before this transfer. An
-    // accepted timestamp owns the dense sequence even though cleanup status is
+    // accepted timestamp owns the physical sequence even though cleanup status is
     // now unknown, so seal it before quarantining. A preaccept exception owns
     // no sequence and returns its invisible holder immediately.
-    if (bridge.mako_timestamp != 0 && !bridge.holder_sealed)
+    if (bridge.timestamp_stamp != 0 && !bridge.holder_sealed)
       seal_preselected_one_put_holder(&bridge);
     poison_transaction(txn);
     return pack_fast_terminal_result(MAKO_LOCAL_WORKER_POISONED,
@@ -3957,7 +4059,7 @@ MAKO_RUST_FAST_DEFINITION_HIDDEN uint64_t
 mako_rust_fast_txn_commit_native_ordered_record_and_destroy(
     mako_local_txn *txn, const uint8_t *unhealthy,
     mako_rust_fast_record_bind_hook bind_hook, void *context,
-    uint64_t *ordered_sequence_out, uint32_t *ordered_timestamp_out,
+    uint64_t *ordered_sequence_out, uint64_t *ordered_timestamp_stamp_out,
     uint8_t *record_written_out) noexcept {
   assert(txn != nullptr);
   assert(on_owner_thread(txn));
@@ -3968,11 +4070,13 @@ mako_rust_fast_txn_commit_native_ordered_record_and_destroy(
   assert(txn->fast_table_impl != nullptr);
 
   if (ordered_sequence_out != nullptr) *ordered_sequence_out = 0;
-  if (ordered_timestamp_out != nullptr) *ordered_timestamp_out = 0;
+  if (ordered_timestamp_stamp_out != nullptr)
+    *ordered_timestamp_stamp_out = 0;
   if (record_written_out != nullptr) *record_written_out = 0;
   if (!packed_cache_order_allowed(txn->owner) ||
       unhealthy == nullptr || bind_hook == nullptr || context == nullptr ||
-      ordered_sequence_out == nullptr || ordered_timestamp_out == nullptr ||
+      ordered_sequence_out == nullptr ||
+      ordered_timestamp_stamp_out == nullptr ||
       record_written_out == nullptr || !txn->record_plan_sealed ||
       !txn->record_plan_ready || txn->record_plan_ops == 0 ||
       txn->record_plan_bytes <
@@ -3981,14 +4085,14 @@ mako_rust_fast_txn_commit_native_ordered_record_and_destroy(
     return reject_fast_record_terminal(txn);
   }
 
-  // General transactions own the packed certification bit from before Mako
-  // timestamp allocation through final read/predicate validation and dense
-  // assignment. The callback adopts that exact sequence only after the bit is
+  // General transactions hold the process HLC gate across final read/predicate
+  // validation, then assign the Mako timestamp and independent physical
+  // sequence. The callback adopts that exact sequence only after the gate is
   // released, while STO still owns every write lock.
   return commit_ready_record_and_destroy(
       txn, bind_hook, context, record_written_out, false, false,
       enter_packed_cache_order_gate, leave_packed_cache_order_gate, true,
-      unhealthy, ordered_sequence_out, ordered_timestamp_out);
+      unhealthy, ordered_sequence_out, ordered_timestamp_stamp_out);
 }
 
 MAKO_RUST_FAST_DEFINITION_HIDDEN uint64_t
@@ -4041,7 +4145,7 @@ mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_record_and_destroy(
     mako_local_txn *txn, uint32_t expected_record_bytes,
     uint64_t *next_bound, const uint8_t *unhealthy,
     mako_rust_fast_record_bind_hook bind_hook, void *context,
-    uint64_t *ordered_sequence_out, uint32_t *ordered_timestamp_out,
+    uint64_t *ordered_sequence_out, uint64_t *ordered_timestamp_stamp_out,
     uint8_t *record_written_out) noexcept {
   assert(txn != nullptr);
   assert(on_owner_thread(txn));
@@ -4052,13 +4156,15 @@ mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_record_and_destroy(
   assert(txn->fast_table_impl != nullptr);
 
   if (ordered_sequence_out != nullptr) *ordered_sequence_out = 0;
-  if (ordered_timestamp_out != nullptr) *ordered_timestamp_out = 0;
+  if (ordered_timestamp_stamp_out != nullptr)
+    *ordered_timestamp_stamp_out = 0;
   if (record_written_out != nullptr) *record_written_out = 0;
   record_shape shape;
   if (!packed_cache_order_allowed(txn->owner) ||
       next_bound == nullptr || unhealthy == nullptr || bind_hook == nullptr ||
       context == nullptr || ordered_sequence_out == nullptr ||
-      ordered_timestamp_out == nullptr || record_written_out == nullptr ||
+      ordered_timestamp_stamp_out == nullptr ||
+      record_written_out == nullptr ||
       reinterpret_cast<uintptr_t>(next_bound) % alignof(uint64_t) != 0 ||
       expected_record_bytes == 0 ||
       expected_record_bytes > kFastPutRecordBytesMax ||
@@ -4079,7 +4185,7 @@ mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_record_and_destroy(
       txn, bind_hook, context, record_written_out, true,
       TThread::txn->can_order_record_after_validation(),
       enter_packed_cache_order_gate, leave_packed_cache_order_gate, true,
-      unhealthy, ordered_sequence_out, ordered_timestamp_out);
+      unhealthy, ordered_sequence_out, ordered_timestamp_stamp_out);
 }
 
 MAKO_RUST_FAST_DEFINITION_HIDDEN mako_rust_fast_native_ordered_arena_result
@@ -4108,7 +4214,7 @@ mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_arena_and_destroy(
         reject_fast_record_terminal(txn), 0, 0};
   }
 
-  // Every fallible shape and layout check precedes packed pair assignment.
+  // Every fallible shape and layout check precedes timestamp and sequence assignment.
   // From the BOUND Release onward, native either returns that generation or
   // terminates on an impossible cell state.
   txn->record_plan_bytes = shape.bytes;
@@ -4122,7 +4228,7 @@ mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_arena_and_destroy(
 // @unsafe - This build-private ABI consumes one live thread-affine facade. Its
 // caller must keep the trusted queue layout and detached capacity claim alive
 // through the synchronous call and resolve every accepted sequence afterward.
-MAKO_RUST_FAST_DEFINITION_HIDDEN mako_rust_fast_native_ordered_arena_result
+MAKO_RUST_FAST_DEFINITION_HIDDEN mako_rust_fast_native_ordered_holder_result
 mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_holder_and_destroy(
     mako_local_txn *txn, uint32_t expected_record_bytes,
     const mako_rust_fast_native_ordered_holder_control *control) noexcept {
@@ -4144,8 +4250,8 @@ mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_holder_and_destroy(
       !derive_fast_record_shape(
           txn, MAKO_RUST_FAST_RECORD_CHECKSUM_NONE, &shape) ||
       shape.operations != 1 || shape.bytes != expected_record_bytes) {
-    return mako_rust_fast_native_ordered_arena_result{
-        reject_fast_record_terminal(txn), 0, 0};
+    return mako_rust_fast_native_ordered_holder_result{
+        reject_fast_record_terminal(txn), 0, 0, 0};
   }
 
   // Seal every fallible shape/layout check before packed assignment. Long-key
@@ -4166,7 +4272,7 @@ mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_holder_and_destroy(
 // through this synchronous call. Violating that contract is undefined; the
 // checked sibling above remains available to callers that need fail-closed
 // validation of arbitrary same-build inputs.
-MAKO_RUST_FAST_DEFINITION_HIDDEN mako_rust_fast_native_ordered_arena_result
+MAKO_RUST_FAST_DEFINITION_HIDDEN mako_rust_fast_native_ordered_holder_result
 mako_rust_fast_txn_commit_trusted_native_ordered_unchecked_one_put_holder_and_destroy(
     mako_local_txn *txn, uint32_t expected_record_bytes,
     const mako_rust_fast_native_ordered_holder_control *control) noexcept {
@@ -4356,7 +4462,7 @@ commit_preselected_unchecked_one_put_holder_single_producer_and_destroy(
   assert(txn->encoded_values[0].size() == write.value_length + encoded_trailer);
   assert(holder.state == one_put_holder_state::free);
   assert(holder.sequence == 0);
-  assert(holder.mako_timestamp == 0);
+  assert(holder.timestamp_stamp == 0);
 #else
   // The private Rust wrapper obtained this exact value from the immediately
   // preceding fast Put and consumes the transaction without another operation.
@@ -4507,7 +4613,8 @@ mako_rust_fast_txn_try_commit_fused_one_put_holder_single_producer_and_destroy(
           pack_fused_holder_cold_result(control->cold_out, exact_record_bytes);
     }
     return pack_fused_holder_control_word(
-        MAKO_RUST_FAST_FUSED_HOLDER_CONSUMED_OUTCOME);
+        MAKO_RUST_FAST_FUSED_HOLDER_CONSUMED_OUTCOME,
+        exact_record_bytes);
   }
   if (exact_record_bytes - UINT32_C(1) >= control->max_record_bytes) [[unlikely]] {
     return pack_fused_holder_control_word(
@@ -4534,10 +4641,10 @@ mako_rust_fast_txn_try_commit_fused_one_put_holder_single_producer_and_destroy(
   constexpr uint64_t kExactOk =
       pack_fast_terminal_result(MAKO_LOCAL_OK, MAKO_LOCAL_OK);
   if (terminal == kExactOk) [[likely]] {
-    const uint32_t timestamp = holder.mako_timestamp;
+    const uint64_t timestamp_stamp = holder.timestamp_stamp;
 #ifndef NDEBUG
     assert(holder.state == one_put_holder_state::sealed);
-    assert(timestamp != 0);
+    assert(timestamp_stamp != 0);
 #endif
     // ACK remains the canonical healthy tail. Rust reconstructs its local
     // cursor only if this post-commit fail-stop diversion is taken.
@@ -4547,7 +4654,7 @@ mako_rust_fast_txn_try_commit_fused_one_put_holder_single_producer_and_destroy(
           exact_record_bytes);
       return pack_fused_holder_control_word(
           MAKO_RUST_FAST_FUSED_HOLDER_CONSUMED_COMMITTED_UNPUBLISHED,
-          timestamp);
+          exact_record_bytes);
     }
 
     __atomic_store_n(acknowledged, sequence, __ATOMIC_RELEASE);
@@ -4560,7 +4667,8 @@ mako_rust_fast_txn_try_commit_fused_one_put_holder_single_producer_and_destroy(
   control->cold_out = pack_fused_holder_cold_result(
       pack_preselected_holder_result(terminal, holder), exact_record_bytes);
   return pack_fused_holder_control_word(
-      MAKO_RUST_FAST_FUSED_HOLDER_CONSUMED_OUTCOME);
+      MAKO_RUST_FAST_FUSED_HOLDER_CONSUMED_OUTCOME,
+      exact_record_bytes);
 }
 
 MAKO_RUST_FAST_DEFINITION_HIDDEN uint64_t
@@ -4629,8 +4737,15 @@ mako_rust_fast_txn_commit_with_hook_and_destroy(
     Transaction::preinstall_failure failure =
         Transaction::preinstall_failure::none;
     post_validate_bridge bridge{hook, context};
+    const Transaction::commit_validation_gate validation_gate{
+        enter_mako_timestamp_validation_gate,
+        leave_mako_timestamp_validation_gate,
+        nullptr,
+        &bridge,
+        false,
+        nullptr};
     const bool committed = Sto::try_commit_no_paxos(
-        invoke_post_validate_hook, &bridge, &failure);
+        invoke_post_validate_hook, &bridge, &failure, &validation_gate);
     finish_txn_known<true>(txn);
 
     if (committed) {

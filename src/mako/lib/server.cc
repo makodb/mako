@@ -221,7 +221,7 @@ namespace mako
         resp->req_nr = req->req_nr;
         respLen = sizeof(get_int_response_t);
         uint32_t timestamp = 0;
-        if (!Transaction::try_allocate_mako_timestamp(timestamp))
+        if (!Transaction::try_allocate_legacy_distributed_timestamp(timestamp))
             status = ErrorCode::ABORT;
         resp->status = (current_term > req->req_nr % 10)? ErrorCode::ABORT: status; // If a reqest comes from old epoch, reject it.;
         resp->result = timestamp;

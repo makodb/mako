@@ -38,10 +38,15 @@ const RECOVERY_EMPTY: &[u8] = b"recovery/empty";
 const RECOVERY_POST_RESTART: &[u8] = b"recovery/post-restart";
 const RECOVERY_TOMBSTONE: &[u8] = b"recovery/tombstone";
 const RECOVERY_RECORDS: u64 = 4;
-const RECOVERY_TIMESTAMP_FLOOR: u32 = 1 << 24;
+const RECOVERY_TIMESTAMP_FLOOR_US: u64 = 2_000_000_000_000_000;
 
 const CHILD_TIMEOUT: Duration = Duration::from_secs(30);
 const CHILD_WATCHDOG: Duration = Duration::from_secs(60);
+
+fn recovery_timestamp_floor() -> mako_local::MakoTimestamp {
+    mako_local::MakoTimestamp::new(RECOVERY_TIMESTAMP_FLOOR_US, 0, 1)
+        .expect("recovery test timestamp floor has a nonzero origin")
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Expected {
@@ -179,7 +184,10 @@ fn open_observed_writer(path: &Path) -> Db {
     Db::from_backend(backend, options.cache).expect("open observed writer cache")
 }
 
-fn observe_native_commit(phase: mako_local::TestCommitPhase, _mako_timestamp: u32) {
+fn observe_native_commit(
+    phase: mako_local::TestCommitPhase,
+    _mako_timestamp: Option<mako_local::MakoTimestamp>,
+) {
     let point = match phase {
         mako_local::TestCommitPhase::WritesetLocked => Point::NativeWritesetLocked,
         mako_local::TestCommitPhase::MakoTimestampAllocated => Point::NativeTimestampAllocated,
@@ -288,11 +296,9 @@ fn verifier_role() {
 fn recovery_seed_role() {
     let db_path = required_path(DB_PATH_ENV);
     let cache = Db::open(&db_path, sync_options()).expect("open recovery seed cache");
-    mako_local::advance_mako_timestamp_past(
-        mako_local::MakoTimestamp::new(RECOVERY_TIMESTAMP_FLOOR)
-            .expect("recovery test timestamp floor is valid"),
-    )
-    .expect("raise seed process Mako timestamp");
+    let recovery_timestamp_floor = recovery_timestamp_floor();
+    mako_local::advance_mako_timestamp_past(recovery_timestamp_floor)
+        .expect("raise seed process Mako timestamp");
 
     let mut first = cache
         .transaction()
@@ -361,6 +367,7 @@ fn recovery_crash_role() {
 
 fn recovery_verifier_role() {
     let db_path = required_path(DB_PATH_ENV);
+    let recovery_timestamp_floor = recovery_timestamp_floor();
     let cache = Db::open(&db_path, sync_options()).expect("reopen interrupted recovery");
     assert_eq!(cache.applied_sequence(), RECOVERY_RECORDS);
     assert_eq!(cache.highest_acknowledged_sequence(), RECOVERY_RECORDS);
@@ -414,7 +421,7 @@ fn recovery_verifier_role() {
         .max()
         .expect("seed history has a timestamp");
     assert!(
-        recovered_max_timestamp.get() > RECOVERY_TIMESTAMP_FLOOR,
+        recovered_max_timestamp > recovery_timestamp_floor,
         "seed history must exercise recovery from a deliberately high Mako timestamp"
     );
 

@@ -3,6 +3,7 @@
 #include "config.h"
 #include "compiler.hh"
 #include "rocksdb_persistence_fwd.h"
+#include "sto/MakoTimestampClock.hh"
 // #include "small_vector.hh"
 #include "TRcu.hh"
 #include <algorithm>
@@ -391,7 +392,7 @@ public:
     // first write is installed. It may enter a bounded in-memory critical
     // section, but must not perform I/O, capacity waits, heap allocation, or
     // unwind because the transaction still holds its complete write set.
-    using post_validation_hook = bool (*)(void*, uint32_t) noexcept;
+    using post_validation_hook = bool (*)(void*, uint64_t) noexcept;
 
     // Optional restricted-path replacement for the ordinary late gate,
     // timestamp allocation, and accepted hook. Storage adapters may use this
@@ -399,14 +400,14 @@ public:
     // local update covers the transaction's complete observation. Returning
     // accepted must allocate the reported timestamp by advancing the same
     // packed process clock past it; phase 3 relies on that stronger contract
-    // instead of repeating observe_mako_timestamp().
+    // instead of repeating observe_local_mako_timestamp_stamp().
     enum class ordered_accept_result : uint8_t {
         accepted,
         hook_rejected,
         timestamp_exhausted,
     };
     using ordered_accept_hook = ordered_accept_result (*)(
-        void*, uint32_t*) noexcept;
+        void*, uint64_t*) noexcept;
 
     // Optional storage-agnostic ordering gate for a durability hook. By
     // default, enter runs after the complete write set is locked and before
@@ -422,7 +423,8 @@ public:
     // unwind. enter may spin waiting for the preceding ordered turn. A caller
     // with stronger whole-call exclusion may set both enter and leave null;
     // the non-null gate object still requests the phase-2 predicate recheck.
-    // Public/general hooks pass no gate.
+    // Every timestamp-bearing general commit must compose with the same
+    // process-wide HLC gate, even when it also uses a narrower queue gate.
     struct commit_validation_gate {
         using callback = void (*)(void*) noexcept;
         callback enter;
@@ -439,8 +441,9 @@ public:
     // deliberately park that thread for an external SIGKILL, but must not
     // allocate or unwind while the transaction holds write-set locks.
     // In this test-only profile, observing a write commit that has no
-    // post-validation hook still allocates a Mako timestamp so every phase
-    // after write-set locking can report the same meaningful value.
+    // post-validation hook still allocates a Mako timestamp. The write-set and
+    // validation-complete phases report zero; timestamp allocation and later
+    // phases report the accepted stamp.
     enum class test_commit_phase : uint32_t {
         writeset_locked = 1,
         mako_timestamp_allocated = 2,
@@ -450,14 +453,14 @@ public:
         all_writes_installed = 6,
     };
     using test_commit_observer =
-        void (*)(void*, test_commit_phase, uint32_t) noexcept;
+        void (*)(void*, test_commit_phase, uint64_t) noexcept;
 
     static void set_test_commit_observer(test_commit_observer observer,
                                          void* context) noexcept;
     static void clear_test_commit_observer() noexcept;
     static bool test_commit_observer_registered() noexcept;
     static void notify_test_commit_observer(test_commit_phase phase,
-                                            uint32_t mako_timestamp) noexcept;
+                                            uint64_t timestamp_stamp) noexcept;
 
     // Make this thread's next stop() fail before its first cleanup action.
     // The flag is consumed at stop entry and exists only in hook-enabled test
@@ -659,6 +662,7 @@ private:
         first_write_ = 0;
         start_tid_ = commit_tid_ = 0;
         tid_unique_ = 0;
+        mako_timestamp_stamp_ = 0;
         current_term_ = 0;
         // Initialize single timestamp system
         maxTimestampReadSet = 0;
@@ -944,30 +948,18 @@ public:
         return commit_tid_;
     }
 
-    // Mako later encodes this base timestamp as base * 10 + term. The legacy
-    // u32 log/MVCC format reserves one decimal digit for term, so larger base
-    // values cannot be represented without wrapping. Enforcing that term
-    // contract belongs to the distributed protocol, not this local allocator.
+    // Transitional bound for the distributed u32 timestamp*10+term protocol.
+    // The local cache HLC never flows through this domain.
     static constexpr uint32_t max_mako_timestamp =
         (std::numeric_limits<uint32_t>::max() - 9) / 10;
 
-    // One process-wide u64 contains the cache's dense sequence and Mako's
-    // next-to-return base timestamp. The timestamp limit is below 2^29. Every
-    // durable cache record consumes a distinct increasing timestamp, so a
-    // valid dense sequence fits the same width before timestamp exhaustion.
-    static constexpr uint32_t cache_order_field_bits = 29;
-    static constexpr uint64_t cache_order_field_mask =
-        (UINT64_C(1) << cache_order_field_bits) - 1;
-    static constexpr uint32_t cache_order_timestamp_shift =
-        cache_order_field_bits;
-    static constexpr uint32_t cache_order_general_lock_shift = 58;
-    static constexpr uint64_t cache_order_general_lock =
-        UINT64_C(1) << cache_order_general_lock_shift;
-    static constexpr uint32_t cache_order_epoch_shift = 59;
-    static constexpr uint64_t cache_order_epoch_mask =
-        UINT64_C(31) << cache_order_epoch_shift;
-    static_assert(max_mako_timestamp <
-                  (UINT32_C(1) << cache_order_field_bits));
+    // The local HLC word stores `(timestamp_stamp << 1) | general_gate`.
+    // Dense cache sequence is a separate u64 because record order may differ
+    // from timestamp serialization order.
+    static constexpr uint32_t mako_hlc_stamp_shift = 1;
+    static constexpr uint64_t cache_order_general_lock = UINT64_C(1);
+    static constexpr uint64_t cache_sequence_max =
+        (UINT64_C(1) << 48) - 1;
 
     enum class cache_order_allocation : uint8_t {
         accepted,
@@ -982,82 +974,37 @@ public:
         timestamp_exhausted,
     };
 
-    // @safe: one lock-free u64 CAS assigns the timestamp and dense sequence
-    // which name a restricted validated cache update. A visible general lock
-    // makes the caller wait outside this helper; no field changes on
-    // exhaustion. Keeping this small allocator inline avoids an extra call in
-    // the post-validation restricted callback.
+    // @safe: assign a local HLC stamp, then a physically independent dense
+    // sequence. Timestamp-first ordering can leave a harmless timestamp gap
+    // if sequence allocation fails; sequence-first ordering could strand an
+    // unfillable queue hole.
     [[gnu::always_inline]] static inline cache_order_allocation
     try_allocate_cache_order_pair(
-        uint64_t& sequence, uint32_t& timestamp) noexcept {
+        uint64_t& sequence, uint64_t& timestamp_stamp) noexcept {
         sequence = 0;
-        timestamp = 0;
-        auto& state = sync_util::sync_logger::cache_order_state;
-        uint64_t current = state.load(std::memory_order_acquire);
-        for (;;) {
-            if ((current & cache_order_general_lock) != 0)
-                return cache_order_allocation::general_locked;
-            const uint64_t next_timestamp =
-                (current >> cache_order_timestamp_shift) &
-                cache_order_field_mask;
-            if (next_timestamp == 0 ||
-                next_timestamp > max_mako_timestamp)
-                return cache_order_allocation::timestamp_exhausted;
-            const uint64_t previous_sequence =
-                current & cache_order_field_mask;
-            if (previous_sequence >= max_mako_timestamp)
-                return cache_order_allocation::sequence_exhausted;
-            const uint64_t fields_mask =
-                cache_order_field_mask |
-                (cache_order_field_mask << cache_order_timestamp_shift);
-            const uint64_t desired =
-                (current & ~fields_mask) | (previous_sequence + 1) |
-                ((next_timestamp + 1) << cache_order_timestamp_shift);
-            if (state.compare_exchange_weak(current, desired,
-                                            std::memory_order_acq_rel,
-                                            std::memory_order_acquire)) {
-                sequence = previous_sequence + 1;
-                timestamp = static_cast<uint32_t>(next_timestamp);
-                return cache_order_allocation::accepted;
-            }
+        timestamp_stamp = 0;
+        switch (try_allocate_restricted_mako_timestamp(timestamp_stamp)) {
+        case cache_order_timestamp_allocation::accepted:
+            break;
+        case cache_order_timestamp_allocation::general_locked:
+            return cache_order_allocation::general_locked;
+        case cache_order_timestamp_allocation::timestamp_exhausted:
+            return cache_order_allocation::timestamp_exhausted;
         }
+        if (!try_allocate_cache_sequence(sequence))
+            return cache_order_allocation::sequence_exhausted;
+        return cache_order_allocation::accepted;
     }
 
-    // @safe: one lock-free u64 CAS assigns only the Mako timestamp for a
-    // restricted update whose lane-local sequence is already owned by Rust.
-    // The packed general bit excludes this allocation while a general
-    // transaction certifies observations spanning more than one write lock.
-    [[gnu::always_inline]] static inline cache_order_timestamp_allocation
-    try_allocate_restricted_mako_timestamp(uint32_t& timestamp) noexcept {
-        timestamp = 0;
-        auto& state = sync_util::sync_logger::cache_order_state;
-        uint64_t current = state.load(std::memory_order_acquire);
-        for (;;) {
-            if ((current & cache_order_general_lock) != 0)
-                return cache_order_timestamp_allocation::general_locked;
-            const uint64_t next_timestamp =
-                (current >> cache_order_timestamp_shift) &
-                cache_order_field_mask;
-            if (next_timestamp == 0 ||
-                next_timestamp > max_mako_timestamp)
-                return cache_order_timestamp_allocation::timestamp_exhausted;
-            const uint64_t timestamp_mask =
-                cache_order_field_mask << cache_order_timestamp_shift;
-            const uint64_t desired =
-                (current & ~timestamp_mask) |
-                ((next_timestamp + 1) << cache_order_timestamp_shift);
-            if (state.compare_exchange_weak(current, desired,
-                                            std::memory_order_acq_rel,
-                                            std::memory_order_acquire)) {
-                timestamp = static_cast<uint32_t>(next_timestamp);
-                return cache_order_timestamp_allocation::accepted;
-            }
-        }
-    }
+    static cache_order_timestamp_allocation
+    try_allocate_restricted_mako_timestamp(
+        uint64_t& timestamp_stamp) noexcept;
 
-    // General cache commits own the packed general lock across final
-    // validation. Timestamp allocation still uses the process-wide clock;
-    // this helper advances only the dense field before the accepted hook.
+    static bool try_allocate_cache_sequence(uint64_t& sequence) noexcept;
+
+    // General cache commits own the process HLC gate across final validation.
+    // Timestamp allocation updates that gated word; the independent physical
+    // cache sequence is allocated only after validation accepts the commit.
     static bool try_allocate_locked_cache_sequence(
         uint64_t& sequence) noexcept;
 
@@ -1073,26 +1020,36 @@ public:
     // the namespace-local dense sequence but never lowers the process clock.
     static bool reseed_cache_order_sequence(uint64_t sequence) noexcept;
 
-    // Allocate from Mako's process-wide logical clock without permitting its
-    // encoded u32 domain to wrap. Zero is the unassigned sentinel and
-    // max_mako_timestamp + 1 is the exhausted next-to-return clock value.
-    static bool try_allocate_mako_timestamp(uint32_t& result) noexcept;
+    // Allocate the local cache's 63-bit 44/19 HLC stamp. Origin is process
+    // constant and is expanded only at public/durable boundaries.
+    static bool try_allocate_mako_timestamp(uint64_t& result) noexcept;
+
+    // Temporary allocator for the old distributed u32 protocol. Local cache
+    // commits never call it.
+    static bool try_allocate_legacy_distributed_timestamp(
+        uint32_t& result) noexcept;
 
     // Advance Mako's next-to-return clock past `observed`. This is the
     // install-side catch-up operation and may exhaust the clock when the
     // observed timestamp is the largest encodable base value.
-    static void observe_mako_timestamp(uint32_t observed) noexcept;
+    static void observe_local_mako_timestamp_stamp(
+        uint64_t observed_stamp) noexcept;
+
+    static void observe_legacy_distributed_timestamp(
+        uint32_t observed) noexcept;
 
     // Ensure every Mako timestamp minted after this call is greater than
     // `observed`. Returns false unless at least one subsequent checked,
     // nonzero timestamp remains representable.
-    static bool advance_mako_timestamp_past(uint32_t observed) noexcept;
+    static bool advance_local_mako_timestamp_past(
+        const mako_timestamp_v1& observed) noexcept;
 
-    bool try_assign_mako_timestamp(uint32_t& result) const noexcept;
+    bool try_assign_mako_timestamp(uint64_t& result) const noexcept;
 
     bool updateSingleTimestamp() const {
         assert(state_ == s_committing_locked || state_ == s_committing);
-	    if(!tid_unique_ && !try_allocate_mako_timestamp(tid_unique_))
+	    if(!tid_unique_ &&
+           !try_allocate_legacy_distributed_timestamp(tid_unique_))
             return false;
 
         if (TThread::writeset_shard_bits>0/*||TThread::readset_shard_bits>0*/) {
@@ -1164,6 +1121,9 @@ public:
 
     // Base value chosen by Mako's single-timestamp protocol.
     mutable uint32_t tid_unique_;
+    // Single-machine cache timestamp. This private stamp is expanded to the
+    // 16-byte public form at the ABI and durable-record boundaries.
+    mutable uint64_t mako_timestamp_stamp_;
     mutable uint8_t current_term_;
     // The maximal timestamp received for this transaction in its readSet
     mutable uint32_t maxTimestampReadSet;

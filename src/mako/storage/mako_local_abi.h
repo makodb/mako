@@ -21,8 +21,8 @@
  *   pretend it can reclaim a live Masstree safely without a process-wide RCU
  *   quiescence protocol.
  *
- * The normative revision-0 operation, ownership, and lifecycle matrix lives
- * in docs/reference/mako-local-abi-v0.md in the Mako source tree.
+ * The normative operation, ownership, and lifecycle matrix lives in the Mako
+ * book. MAKO_LOCAL_ABI_VERSION identifies the exact public contract revision.
  */
 
 #ifndef MAKO_LOCAL_ABI_H
@@ -31,6 +31,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "mako_timestamp.h"
+
 #ifdef __cplusplus
 #define MAKO_LOCAL_NOEXCEPT noexcept
 extern "C" {
@@ -38,7 +40,7 @@ extern "C" {
 #define MAKO_LOCAL_NOEXCEPT
 #endif
 
-#define MAKO_LOCAL_ABI_VERSION 0u
+#define MAKO_LOCAL_ABI_VERSION 1u
 
 /* Stable implementation-family identity and exact native-build identity.
  * ENGINE_ID changes only when this boundary stops using the STO/MassTrans
@@ -48,8 +50,8 @@ extern "C" {
 #define MAKO_LOCAL_ENGINE_ID "mako-local/sto-masstrans"
 #define MAKO_LOCAL_BUILD_FINGERPRINT_SIZE 32u
 
-/* Semantic guarantees of the linked draft engine. Point transactions are the
- * revision-0 baseline. A bit is absent until every exposed path implements the
+/* Semantic guarantees of the linked engine. Point transactions are the
+ * baseline. A bit is absent until every exposed path implements the
  * guarantee; callers must not infer a capability from STO build flags. The
  * READ_MY_WRITES bit deliberately retains its original point-only meaning;
  * SCAN_READ_MY_WRITES separately covers range results. */
@@ -76,12 +78,6 @@ extern "C" {
 #define MAKO_LOCAL_TXN_ITEM_BUDGET 512u
 /* STO keeps one process-lifetime transaction slot per attached OS worker. */
 #define MAKO_LOCAL_MAX_WORKERS 460u
-/* Mako's legacy u32 `timestamp * 10 + term` format reserves one decimal digit
- * for term. This is therefore the largest representable base timestamp when
- * that distributed-format contract is honored. */
-#define MAKO_LOCAL_MAX_MAKO_TIMESTAMP \
-  ((UINT32_MAX - UINT32_C(9)) / UINT32_C(10))
-
 /* Draft status numbers. Assigned numbers are never renumbered within this
  * revision. A missing key is OK with found_out == 0; it is not a conflict. */
 /* MAKO_LOCAL_STATUS_DEFINITIONS_BEGIN */
@@ -143,7 +139,7 @@ extern "C" {
   X(COMMIT_HOOK_REJECTED, MAKO_LOCAL_COMMIT_HOOK_REJECTED,                 \
     "post-validation commit hook rejected transaction")                   \
   X(TIMESTAMP_EXHAUSTED, MAKO_LOCAL_TIMESTAMP_EXHAUSTED,                   \
-    "Mako logical timestamp exhausted")                                   \
+    "Mako HLC timestamp exhausted")                                       \
   X(BUFFER_TOO_SMALL, MAKO_LOCAL_BUFFER_TOO_SMALL,                         \
     "caller scan arena is too small for the next entry")                  \
   X(FEATURE_UNAVAILABLE, MAKO_LOCAL_FEATURE_UNAVAILABLE,                   \
@@ -158,8 +154,8 @@ typedef struct mako_local_txn mako_local_txn;
 
 /* Database-open options are append-only while this ABI is a draft. Callers
  * set struct_size to MAKO_LOCAL_DB_OPTIONS_V0_SIZE and zero every flag. The
- * initially empty flag namespace deliberately reserves a sized negotiation
- * seam before ABI v1 without inventing a durability policy at this layer. */
+ * initially empty flag namespace preserves a sized negotiation seam for
+ * later ABI revisions without inventing a durability policy at this layer. */
 typedef struct mako_local_db_options {
   uint32_t struct_size;
   uint32_t flags;
@@ -203,17 +199,19 @@ typedef struct mako_local_scan_entry {
 } mako_local_scan_entry;
 
 /* Called synchronously after native validation succeeds and before any write
- * is installed. `mako_timestamp` is the nonzero 32-bit Mako logical timestamp
- * (`Transaction::tid_unique_`). Return nonzero to proceed or zero to abort
- * definitely. The callback runs while Silo write locks are held. It may enter
- * a bounded in-memory critical section, but must not perform I/O, wait for
- * capacity, allocate, or unwind. */
+ * is installed. `mako_timestamp` points to the transaction's exact nonzero
+ * 16-byte Mako timestamp for the duration of this call. The callback must copy
+ * it before returning if it needs the value later. Return nonzero to proceed
+ * or zero to abort definitely. The callback runs while Silo write locks are
+ * held. It may enter a bounded in-memory critical section, but must not perform
+ * I/O, wait for capacity, allocate, or unwind. */
 typedef int (*mako_local_post_validate_hook)(void *context,
-                                             uint32_t mako_timestamp);
+                                             const mako_timestamp_v1 *mako_timestamp);
 
-/* Test-only synchronous local-commit observation phases. The first phase is
- * reported with timestamp zero; every later phase carries the transaction's
- * exact nonzero Mako logical timestamp. */
+/* Test-only synchronous local-commit observation phases. WRITESET_LOCKED and
+ * LOCAL_VALIDATION_COMPLETE report an all-zero timestamp. TIMESTAMP_ALLOCATED
+ * and every later phase carry the transaction's exact nonzero Mako timestamp.
+ * Phase constants are identifiers, not a sortable timeline. */
 #define MAKO_LOCAL_TEST_COMMIT_WRITESET_LOCKED UINT32_C(1)
 #define MAKO_LOCAL_TEST_COMMIT_MAKO_TIMESTAMP_ALLOCATED UINT32_C(2)
 #define MAKO_LOCAL_TEST_COMMIT_LOCAL_VALIDATION_COMPLETE UINT32_C(3)
@@ -233,18 +231,21 @@ typedef int (*mako_local_post_validate_hook)(void *context,
 
 typedef void (*mako_local_test_commit_observer)(void *context,
                                                 uint32_t phase,
-                                                uint32_t mako_timestamp);
+                                                const mako_timestamp_v1 *mako_timestamp);
 
 /* Identity and diagnostics. The returned status string is static. */
 uint32_t mako_local_abi_version(void) MAKO_LOCAL_NOEXCEPT;
 uint64_t mako_local_feature_bits(void) MAKO_LOCAL_NOEXCEPT;
+/* Process-wide timestamp-authority identity. The single-machine milestone
+ * uses origin 1. Distributed origin leasing replaces this fixed value later. */
+uint32_t mako_local_timestamp_origin(void) MAKO_LOCAL_NOEXCEPT;
 /* All three build-identity results have process lifetime. The fingerprint
  * accessor returns exactly mako_local_build_fingerprint_size() bytes and never
  * returns NULL in a conforming build. */
 const char *mako_local_engine_id(void) MAKO_LOCAL_NOEXCEPT;
 const uint8_t *mako_local_build_fingerprint(void) MAKO_LOCAL_NOEXCEPT;
 size_t mako_local_build_fingerprint_size(void) MAKO_LOCAL_NOEXCEPT;
-/* Required revision-0 options prefix size. This remains fixed when trailing
+/* Required options prefix size. This remains fixed when trailing
  * fields are appended to either options structure. */
 size_t mako_local_db_options_size(void) MAKO_LOCAL_NOEXCEPT;
 size_t mako_local_scan_options_size(void) MAKO_LOCAL_NOEXCEPT;
@@ -272,8 +273,9 @@ uint64_t mako_local_quarantined_worker_count(void) MAKO_LOCAL_NOEXCEPT;
  * Mako timestamp; exhaustion can therefore make that test-only commit fail.
  *
  * The observer is called only for write transactions. A successful two-write
- * commit reports all six phases in numeric order. FIRST_WRITE_INSTALLED is
- * omitted for a one-write transaction. A lock conflict reports no phase;
+ * commit reports all six phases in semantic order; phase constants are not a
+ * sortable timeline. FIRST_WRITE_INSTALLED is omitted for a one-write
+ * transaction. A lock conflict reports no phase;
  * validation conflict and preinstall rejection report only phases reached
  * before the failure. Both functions return FEATURE_UNAVAILABLE, and the
  * feature bit is absent, when MAKO_LOCAL_TEST_HOOKS was not configured. A
@@ -291,14 +293,21 @@ int mako_local_test_arm_cleanup_failure(uint32_t boundary)
     MAKO_LOCAL_NOEXCEPT;
 int mako_local_test_clear_cleanup_failure(void) MAKO_LOCAL_NOEXCEPT;
 
-/* Atomically ensure every subsequently minted Mako logical timestamp is
- * greater than `observed`. The argument must be a nonzero timestamp previously
- * supplied to a post-validation hook. This is a monotonic recovery operation:
- * smaller calls never move the clock backward. TIMESTAMP_EXHAUSTED means
- * advancing would not leave at least one representable timestamp for a
- * subsequent checked commit. Call during recovery before admitting workers. */
-int mako_local_advance_mako_timestamp_past(uint32_t observed)
+/* Atomically ensure every subsequently minted Mako timestamp is greater than
+ * `observed`. The argument must be a valid nonzero timestamp. This is a
+ * monotonic recovery operation: smaller calls never move the clock backward.
+ * TIMESTAMP_EXHAUSTED means no greater 44/19 timestamp can be represented.
+ * Call during recovery before admitting workers. */
+int mako_local_advance_mako_timestamp_past(
+    const mako_timestamp_v1 *observed)
     MAKO_LOCAL_NOEXCEPT;
+
+/* Test-only physical-clock override. A representable Unix millisecond value,
+ * including zero, freezes the HLC's physical candidate until clear. Both
+ * symbols return FEATURE_UNAVAILABLE when MAKO_LOCAL_TEST_HOOKS is disabled. */
+int mako_local_test_set_timestamp_physical_ms(uint64_t unix_ms)
+    MAKO_LOCAL_NOEXCEPT;
+int mako_local_test_clear_timestamp_physical_ms(void) MAKO_LOCAL_NOEXCEPT;
 
 /* One local in-memory database facade. Multiple facades share the process STO
  * runtime but own disjoint tables. close returns BUSY while a transaction
@@ -415,7 +424,7 @@ int mako_local_txn_rscan_chunk(
  * after its ordinary argument validation. Call destroy exactly once after an
  * operation first reports cleanup uncertainty: WORKER_POISONED confirms
  * quarantine without retrying native cleanup. The caller must not call again
- * or reuse the worker. See the normative revision-0 matrix for the full state
+ * or reuse the worker. See the normative ABI matrix for the full state
  * contract. */
 int mako_local_txn_commit(mako_local_txn *txn) MAKO_LOCAL_NOEXCEPT;
 /* The hook variant preserves the old commit lifecycle but provides the exact

@@ -1,4 +1,4 @@
-/* Pure-C revision-0 conformance and link probe for mako_local_abi.h. */
+/* Pure-C ABI-v1 conformance and link probe for mako_local_abi.h. */
 
 #include "mako/storage/mako_local_abi.h"
 
@@ -10,9 +10,9 @@
 #error "the mako-local C probe must be compiled as C11 or newer"
 #endif
 
-/* These are revision-0 goldens, deliberately independent of the definitions
+/* These are ABI-v1 goldens, deliberately independent of the definitions
  * in the public header. An intentional ABI change must update both sides. */
-_Static_assert(MAKO_LOCAL_ABI_VERSION == UINT32_C(0),
+_Static_assert(MAKO_LOCAL_ABI_VERSION == UINT32_C(1),
                "mako-local ABI revision changed");
 
 #define MAKO_LOCAL_ASSERT_U32_CONSTANT(name, expected)                      \
@@ -24,7 +24,7 @@ _Static_assert(MAKO_LOCAL_ABI_VERSION == UINT32_C(0),
   _Static_assert(_Generic((name), uint64_t: 1, default: 0),                  \
                  #name " changed type")
 
-MAKO_LOCAL_ASSERT_U32_CONSTANT(MAKO_LOCAL_ABI_VERSION, UINT32_C(0));
+MAKO_LOCAL_ASSERT_U32_CONSTANT(MAKO_LOCAL_ABI_VERSION, UINT32_C(1));
 _Static_assert(sizeof(MAKO_LOCAL_ENGINE_ID) ==
                    sizeof("mako-local/sto-masstrans"),
                "MAKO_LOCAL_ENGINE_ID changed");
@@ -53,9 +53,14 @@ MAKO_LOCAL_ASSERT_U32_CONSTANT(MAKO_LOCAL_MAX_VALUE_BYTES,
                                UINT32_C(1048576));
 MAKO_LOCAL_ASSERT_U32_CONSTANT(MAKO_LOCAL_TXN_ITEM_BUDGET, UINT32_C(512));
 MAKO_LOCAL_ASSERT_U32_CONSTANT(MAKO_LOCAL_MAX_WORKERS, UINT32_C(460));
-MAKO_LOCAL_ASSERT_U32_CONSTANT(
-    MAKO_LOCAL_MAX_MAKO_TIMESTAMP,
-    (UINT32_MAX - UINT32_C(9)) / UINT32_C(10));
+MAKO_LOCAL_ASSERT_U64_CONSTANT(MAKO_TIMESTAMP_V1_PHYSICAL_UNIT_US,
+                               UINT64_C(1000));
+MAKO_LOCAL_ASSERT_U32_CONSTANT(MAKO_TIMESTAMP_V1_PHYSICAL_MS_BITS,
+                               UINT32_C(44));
+MAKO_LOCAL_ASSERT_U32_CONSTANT(MAKO_TIMESTAMP_V1_LOGICAL_BITS,
+                               UINT32_C(19));
+MAKO_LOCAL_ASSERT_U32_CONSTANT(MAKO_TIMESTAMP_V1_LOGICAL_MAX,
+                               (UINT32_C(1) << 19) - UINT32_C(1));
 
 MAKO_LOCAL_ASSERT_U32_CONSTANT(MAKO_LOCAL_SCAN_HAS_UPPER, UINT32_C(1) << 0);
 MAKO_LOCAL_ASSERT_U32_CONSTANT(MAKO_LOCAL_SCAN_HAS_RESUME, UINT32_C(1) << 1);
@@ -157,6 +162,12 @@ typedef struct mako_local_expected_scan_entry_v0 {
   uint32_t value_length;
 } mako_local_expected_scan_entry_v0;
 
+typedef struct mako_local_expected_timestamp_v1 {
+  uint64_t physical_us;
+  uint32_t logical;
+  uint32_t origin;
+} mako_local_expected_timestamp_v1;
+
 #define MAKO_LOCAL_ASSERT_MEMBER_LAYOUT(actual, expected, member)           \
   _Static_assert(offsetof(actual, member) == offsetof(expected, member),    \
                  #actual "." #member " changed offset")
@@ -214,6 +225,19 @@ _Static_assert(sizeof(mako_local_scan_entry) ==
 _Static_assert(_Alignof(mako_local_scan_entry) ==
                    _Alignof(mako_local_expected_scan_entry_v0),
                "mako_local_scan_entry changed alignment");
+_Static_assert(sizeof(mako_timestamp_v1) ==
+                   sizeof(mako_local_expected_timestamp_v1),
+               "mako_timestamp_v1 changed size");
+_Static_assert(_Alignof(mako_timestamp_v1) ==
+                   _Alignof(mako_local_expected_timestamp_v1),
+               "mako_timestamp_v1 changed alignment");
+MAKO_LOCAL_ASSERT_MEMBER_LAYOUT(mako_timestamp_v1,
+                                mako_local_expected_timestamp_v1,
+                                physical_us);
+MAKO_LOCAL_ASSERT_MEMBER_LAYOUT(mako_timestamp_v1,
+                                mako_local_expected_timestamp_v1, logical);
+MAKO_LOCAL_ASSERT_MEMBER_LAYOUT(mako_timestamp_v1,
+                                mako_local_expected_timestamp_v1, origin);
 MAKO_LOCAL_ASSERT_MEMBER_LAYOUT(mako_local_scan_entry,
                                 mako_local_expected_scan_entry_v0,
                                 key_offset);
@@ -255,9 +279,10 @@ MAKO_LOCAL_ASSERT_MEMBER_TYPE(mako_local_scan_entry, value_length, uint32_t);
 
 #undef MAKO_LOCAL_ASSERT_MEMBER_TYPE
 
-typedef int (*mako_local_expected_post_validate_hook)(void *, uint32_t);
+typedef int (*mako_local_expected_post_validate_hook)(
+    void *, const mako_timestamp_v1 *);
 typedef void (*mako_local_expected_test_commit_observer)(void *, uint32_t,
-                                                         uint32_t);
+                                                         const mako_timestamp_v1 *);
 _Static_assert(
     _Generic((mako_local_post_validate_hook)0,
              mako_local_expected_post_validate_hook: 1, default: 0),
@@ -283,9 +308,13 @@ typedef size_t (*mako_local_expected_size_query)(void);
 typedef const char *(*mako_local_expected_status_string)(int);
 typedef int (*mako_local_expected_noarg_status)(void);
 typedef uint64_t (*mako_local_expected_noarg_u64)(void);
+typedef uint32_t (*mako_local_expected_noarg_u32)(void);
 typedef int (*mako_local_expected_set_commit_observer)(
     mako_local_test_commit_observer, void *);
 typedef int (*mako_local_expected_u32_status)(uint32_t);
+typedef int (*mako_local_expected_u64_status)(uint64_t);
+typedef int (*mako_local_expected_timestamp_status)(
+    const mako_timestamp_v1 *);
 typedef int (*mako_local_expected_db_open)(mako_local_db **);
 typedef int (*mako_local_expected_db_open_with_options)(
     const mako_local_db_options *, mako_local_db **);
@@ -317,6 +346,8 @@ MAKO_LOCAL_ASSERT_FUNCTION(mako_local_abi_version,
                            mako_local_expected_abi_version);
 MAKO_LOCAL_ASSERT_FUNCTION(mako_local_feature_bits,
                            mako_local_expected_feature_bits);
+MAKO_LOCAL_ASSERT_FUNCTION(mako_local_timestamp_origin,
+                           mako_local_expected_noarg_u32);
 MAKO_LOCAL_ASSERT_FUNCTION(mako_local_engine_id,
                            mako_local_expected_engine_id);
 MAKO_LOCAL_ASSERT_FUNCTION(mako_local_build_fingerprint,
@@ -346,7 +377,11 @@ MAKO_LOCAL_ASSERT_FUNCTION(mako_local_test_arm_cleanup_failure,
 MAKO_LOCAL_ASSERT_FUNCTION(mako_local_test_clear_cleanup_failure,
                            mako_local_expected_noarg_status);
 MAKO_LOCAL_ASSERT_FUNCTION(mako_local_advance_mako_timestamp_past,
-                           mako_local_expected_u32_status);
+                           mako_local_expected_timestamp_status);
+MAKO_LOCAL_ASSERT_FUNCTION(mako_local_test_set_timestamp_physical_ms,
+                           mako_local_expected_u64_status);
+MAKO_LOCAL_ASSERT_FUNCTION(mako_local_test_clear_timestamp_physical_ms,
+                           mako_local_expected_noarg_status);
 MAKO_LOCAL_ASSERT_FUNCTION(mako_local_db_open, mako_local_expected_db_open);
 MAKO_LOCAL_ASSERT_FUNCTION(mako_local_db_open_with_options,
                            mako_local_expected_db_open_with_options);

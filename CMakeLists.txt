@@ -8,7 +8,13 @@ cmake_minimum_required(VERSION 3.30)
 # into no-ops via the header guard. The UUID gates CMake's
 # experimental `import std;` materialization and must be set BEFORE
 # `project()`.
-set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "451f2fe2-a8a2-47c3-bc32-94786d8fc91b")
+if(CMAKE_VERSION VERSION_GREATER_EQUAL 4.4)
+    set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD
+        "f35a9ac6-8463-4d38-8eec-5d6008153e7d")
+else()
+    set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD
+        "451f2fe2-a8a2-47c3-bc32-94786d8fc91b")
+endif()
 
 # Suppress CMake policy warnings for deprecated modules
 # CMP0167: FindBoost module is removed in CMake 3.30+, but we still support older CMake
@@ -943,7 +949,10 @@ add_custom_command(
   DEPENDS
     "${MAKO_LOCAL_FINGERPRINT_SCRIPT}"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/storage/mako_local_abi.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/storage/mako_timestamp.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/storage/mako_local_rust_fast_abi.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/sto/MakoTimestampClock.hh"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/sto/MakoTimestampClock.cc"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/storage/mako_local_abi.cc"
     "${CMAKE_BINARY_DIR}/compile_commands.json"
     "${CMAKE_BINARY_DIR}/CMakeCache.txt"
@@ -1072,6 +1081,7 @@ set(MAKO_SRCFILES
   #"${W}/benchmarks/ycsb.cc"
   "${W}/benchmarks/sync_util_init.cc"
   "${W}/sto/Transaction.cc"
+  "${W}/sto/MakoTimestampClock.cc"
   "${W}/sto/MassTrans.cc"
   "${W}/sto/TRcu.cc"
   "${W}/sto/Packer.cc"

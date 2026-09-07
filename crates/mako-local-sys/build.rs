@@ -11,7 +11,7 @@ const DEFINITIONS_END: &str = "/* MAKO_LOCAL_STATUS_DEFINITIONS_END */";
 const MANIFEST_BEGIN: &str = "/* MAKO_LOCAL_STATUS_MANIFEST_BEGIN */";
 const MANIFEST_END: &str = "/* MAKO_LOCAL_STATUS_MANIFEST_END */";
 
-const ABI_V0_STATUS_NAMES: [&str; 20] = [
+const ABI_V1_STATUS_NAMES: [&str; 20] = [
     "OK",
     "CONFLICT",
     "NOT_ATTACHED",
@@ -34,7 +34,7 @@ const ABI_V0_STATUS_NAMES: [&str; 20] = [
     "WORKER_POISONED",
 ];
 
-const ABI_V0_TYPE_NAMES: [&str; 8] = [
+const ABI_V1_TYPE_NAMES: [&str; 9] = [
     "mako_local_db",
     "mako_local_db_options",
     "mako_local_post_validate_hook",
@@ -42,10 +42,11 @@ const ABI_V0_TYPE_NAMES: [&str; 8] = [
     "mako_local_scan_options",
     "mako_local_table",
     "mako_local_test_commit_observer",
+    "mako_timestamp_v1",
     "mako_local_txn",
 ];
 
-const ABI_V0_EXPORT_NAMES: [&str; 34] = [
+const ABI_V1_EXPORT_NAMES: [&str; 37] = [
     "mako_local_abi_version",
     "mako_local_advance_mako_timestamp_past",
     "mako_local_build_fingerprint",
@@ -63,11 +64,14 @@ const ABI_V0_EXPORT_NAMES: [&str; 34] = [
     "mako_local_status_string",
     "mako_local_table_id",
     "mako_local_table_open",
+    "mako_local_test_clear_timestamp_physical_ms",
     "mako_local_test_arm_cleanup_failure",
     "mako_local_test_clear_cleanup_failure",
     "mako_local_test_clear_commit_observer",
     "mako_local_test_set_commit_observer",
+    "mako_local_test_set_timestamp_physical_ms",
     "mako_local_thread_attach",
+    "mako_local_timestamp_origin",
     "mako_local_txn_abort",
     "mako_local_txn_begin",
     "mako_local_txn_commit",
@@ -182,7 +186,9 @@ fn run() -> Result<(), String> {
             .ok_or_else(|| "Cargo did not set CARGO_MANIFEST_DIR".to_owned())?,
     );
     let header = manifest_dir.join("../../src/mako/storage/mako_local_abi.h");
+    let timestamp_header = manifest_dir.join("../../src/mako/storage/mako_timestamp.h");
     println!("cargo:rerun-if-changed={}", header.display());
+    println!("cargo:rerun-if-changed={}", timestamp_header.display());
     println!("cargo:rerun-if-env-changed=LIBCLANG_PATH");
 
     let source = fs::read_to_string(&header)
@@ -221,9 +227,9 @@ fn verify_abi_version(source: &str) -> Result<(), String> {
         .map(str::trim)
         .filter(|line| line.starts_with("#define MAKO_LOCAL_ABI_VERSION"))
         .collect();
-    if declarations.as_slice() != ["#define MAKO_LOCAL_ABI_VERSION 0u"] {
+    if declarations.as_slice() != ["#define MAKO_LOCAL_ABI_VERSION 1u"] {
         return Err(format!(
-            "expected exactly `#define MAKO_LOCAL_ABI_VERSION 0u`, found {declarations:?}"
+            "expected exactly `#define MAKO_LOCAL_ABI_VERSION 1u`, found {declarations:?}"
         ));
     }
     Ok(())
@@ -409,7 +415,7 @@ fn header_constant_names(source: &str) -> BTreeSet<String> {
 fn verify_generated_types(generated: &str) -> Result<(), String> {
     let mut actual = generated_item_names(generated, "pub struct ");
     actual.extend(generated_item_names(generated, "pub type "));
-    let expected = ABI_V0_TYPE_NAMES.into_iter().map(str::to_owned).collect();
+    let expected = ABI_V1_TYPE_NAMES.into_iter().map(str::to_owned).collect();
     if actual != expected {
         return Err(set_mismatch("public types", &expected, &actual));
     }
@@ -418,7 +424,7 @@ fn verify_generated_types(generated: &str) -> Result<(), String> {
 
 fn verify_generated_exports(generated: &str) -> Result<Vec<String>, String> {
     let actual = generated_item_names(generated, "pub fn ");
-    let expected: BTreeSet<_> = ABI_V0_EXPORT_NAMES.into_iter().map(str::to_owned).collect();
+    let expected: BTreeSet<_> = ABI_V1_EXPORT_NAMES.into_iter().map(str::to_owned).collect();
     if actual != expected {
         return Err(set_mismatch("public functions", &expected, &actual));
     }
@@ -441,12 +447,12 @@ fn generated_item_names(generated: &str, prefix: &str) -> BTreeSet<String> {
 fn set_mismatch(kind: &str, expected: &BTreeSet<String>, actual: &BTreeSet<String>) -> String {
     let missing: Vec<_> = expected.difference(actual).collect();
     let unexpected: Vec<_> = actual.difference(expected).collect();
-    format!("generated {kind} do not match ABI v0; missing {missing:?}, unexpected {unexpected:?}")
+    format!("generated {kind} do not match ABI v1; missing {missing:?}, unexpected {unexpected:?}")
 }
 
 fn append_link_probe(generated: &mut String, exports: &[String]) {
     writeln!(generated).expect("writing to a String cannot fail");
-    writeln!(generated, "/// Every public C export expected by ABI v0.")
+    writeln!(generated, "/// Every public C export expected by ABI v1.")
         .expect("writing to a String cannot fail");
     writeln!(
         generated,
@@ -731,17 +737,17 @@ fn validate_statuses(
     definitions: &BTreeMap<String, i32>,
     rows: Vec<ManifestRow>,
 ) -> Result<Vec<Status>, String> {
-    if definitions.len() != ABI_V0_STATUS_NAMES.len() {
+    if definitions.len() != ABI_V1_STATUS_NAMES.len() {
         return Err(format!(
-            "ABI v0 requires exactly {} marked status definitions, found {}",
-            ABI_V0_STATUS_NAMES.len(),
+            "ABI v1 requires exactly {} marked status definitions, found {}",
+            ABI_V1_STATUS_NAMES.len(),
             definitions.len()
         ));
     }
-    if rows.len() != ABI_V0_STATUS_NAMES.len() {
+    if rows.len() != ABI_V1_STATUS_NAMES.len() {
         return Err(format!(
-            "ABI v0 requires exactly {} manifest rows, found {}",
-            ABI_V0_STATUS_NAMES.len(),
+            "ABI v1 requires exactly {} manifest rows, found {}",
+            ABI_V1_STATUS_NAMES.len(),
             rows.len()
         ));
     }
@@ -754,11 +760,11 @@ fn validate_statuses(
     let mut statuses = Vec::with_capacity(rows.len());
 
     for (expected_code, (row, expected_name)) in
-        rows.into_iter().zip(ABI_V0_STATUS_NAMES).enumerate()
+        rows.into_iter().zip(ABI_V1_STATUS_NAMES).enumerate()
     {
         if row.short_name != expected_name {
             return Err(format!(
-                "ABI v0 status {expected_code} must be `{expected_name}`, found `{}`",
+                "ABI v1 status {expected_code} must be `{expected_name}`, found `{}`",
                 row.short_name
             ));
         }
@@ -782,7 +788,7 @@ fn validate_statuses(
             .map_err(|error| format!("status index is not representable as i32: {error}"))?;
         if code != expected_code {
             return Err(format!(
-                "ABI v0 status `{}` must have code {expected_code}, found {code}",
+                "ABI v1 status `{}` must have code {expected_code}, found {code}",
                 row.c_symbol
             ));
         }
@@ -845,7 +851,7 @@ fn generate_rust(statuses: &[Status]) -> String {
     )
     .expect("writing to a String cannot fail");
     writeln!(output).expect("writing to a String cannot fail");
-    writeln!(output, "/// A recognized revision-0 mako-local status.")
+    writeln!(output, "/// A recognized revision-1 mako-local status.")
         .expect("writing to a String cannot fail");
     writeln!(output, "#[repr(i32)]").expect("writing to a String cannot fail");
     writeln!(
@@ -864,7 +870,7 @@ fn generate_rust(statuses: &[Status]) -> String {
     writeln!(output, "impl KnownStatus {{").expect("writing to a String cannot fail");
     writeln!(
         output,
-        "    /// Converts a raw status code when it is known to ABI v0."
+        "    /// Converts a raw status code when it is known to ABI v1."
     )
     .expect("writing to a String cannot fail");
     writeln!(
@@ -945,7 +951,7 @@ fn generate_rust(statuses: &[Status]) -> String {
 
     writeln!(
         output,
-        "/// Every recognized status, ordered by its ABI v0 integer code."
+        "/// Every recognized status, ordered by its ABI v1 integer code."
     )
     .expect("writing to a String cannot fail");
     writeln!(

@@ -152,7 +152,7 @@ MUTATIONS: tuple[Mutation, ...] = (
         anchor_sha256="3e33505a4c3715689a4a27e13a387d0d4b96bdddf838b4ce5ef53a99882a199e",
         replacement="""        assert!(self.owns_claim, "binding must own a detached claim");
         // MUTANT: allocate while Silo's post-validation hook holds write locks.
-        let hook_allocation = Box::new(mako_timestamp.get());
+        let hook_allocation = Box::new(mako_timestamp.to_be_bytes());
         std::hint::black_box(&hook_allocation);
         drop(hook_allocation);
         // Legacy preparation remains boxed through the ordered hook. Its large
@@ -251,18 +251,16 @@ MUTATIONS: tuple[Mutation, ...] = (
             owner: self.owner,
             token: QueueToken::new(sequence),
             mako_timestamp,
-            legacy_prepared,
-            native_buffer,
+            payload,
             on_drop: DropAction::PinUnknown,
         })
 """,
-        anchor_sha256="572c0fd358b6e53b5aaa7e0d3bb193eaff6925cb3c01c8ca2c501c7c823cf25f",
+        anchor_sha256="293a2c63db4f50c83a596511388767d05dc316a9968b5ae88548e5c6cf4fff15",
         replacement="""        Ok(BoundReservation {
             owner: self.owner,
             token: QueueToken::new(sequence),
             mako_timestamp,
-            legacy_prepared,
-            native_buffer,
+            payload,
             // MUTANT: silently discard an ambiguous post-bind outcome.
             on_drop: DropAction::Done,
         })
@@ -340,9 +338,15 @@ MUTATIONS: tuple[Mutation, ...] = (
         replacement="""            // MUTANT: advance the frontier with a valid but different timestamp.
             let record_timestamp = record.mako_timestamp();
             let wrong_timestamp = MakoTimestamp::new(
-                if record_timestamp.get() == 1 { 2 } else { 1 },
+                record_timestamp.physical_us(),
+                record_timestamp.logical(),
+                if record_timestamp.origin() == u32::MAX {
+                    1
+                } else {
+                    record_timestamp.origin() + 1
+                },
             )
-            .expect("mutant timestamp remains nonzero");
+            .expect("mutant timestamp retains a nonzero origin");
             state.applied.advance(record.sequence(), wrong_timestamp);
 """,
         test=TestTarget(

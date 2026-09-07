@@ -108,11 +108,11 @@ as well as time the foreground is blocked or descheduled. It is diagnostic,
 not a replacement for ACK wall time.
 
 The normal benchmark and production default remains `--record-checksum crc32c`,
-which emits v3 records with corruption detection. The explicit
-`none` diagnostic emits self-describing v4 records without a checksum trailer
-or foreground CRC scan. V4 has a distinct magic, so accidental damage to a v3
+which emits v5 records with corruption detection. The explicit
+`none` diagnostic emits self-describing v6 records without a checksum trailer
+or foreground CRC scan. V6 has a distinct magic, so accidental damage to a v5
 version field cannot silently downgrade that record to unchecked mode.
-Recovery accepts a mixed v3/v4 log, but arbitrary payload corruption in a v4
+Recovery accepts a mixed v5/v6 log, but arbitrary payload corruption in a v6
 record cannot be detected; use this mode only when that tradeoff is intentional.
 
 Use `--keep-data` only when inspecting RocksDB files after a run. By default

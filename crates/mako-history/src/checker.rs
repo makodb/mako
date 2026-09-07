@@ -132,7 +132,7 @@ pub fn check_opacity(
 
 /// Re-run the ordinary oracle while requiring the listed transaction-order
 /// edges.  The application checker uses this after the unconstrained check to
-/// prove that cache sequence order is one of the legal serial executions,
+/// prove that committed-write Mako HLC order is one of the legal serial executions,
 /// rather than accidentally equating commit response order with serialization
 /// order.
 pub(crate) fn check_with_precedence(

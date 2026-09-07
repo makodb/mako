@@ -1356,7 +1356,7 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
             .native
             .take()
             .expect("cache transaction already consumed");
-        // The common unchecked one-Put case carries its exact canonical v4
+        // The common unchecked one-Put case carries its exact canonical v6
         // extent out of the trusted Put itself. Native independently rederives
         // that shape at the consuming terminal, so we can avoid a second ABI
         // call and plan-sealing pass without trusting Rust for write coverage.
@@ -1571,9 +1571,10 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
 
 /// Complete the cache-private concurrent one-Put terminal.
 ///
-/// Native's packed process word pairs the Mako timestamp with the dense queue
-/// sequence. Native acquires the exact publication generation only after it
-/// assigns that pair, then transfers the staged value allocation into a holder
+/// Native returns an accepted Mako timestamp and physical queue sequence after
+/// validation. Their orders may diverge. Native acquires the exact publication
+/// generation only after assigning the sequence, then transfers the staged
+/// value allocation into a holder
 /// that remains owned through backend retirement. The byte arena remains the
 /// compatibility path for an unrepresentable holder tag or crash failpoint.
 #[allow(unsafe_code)]
@@ -1627,14 +1628,14 @@ fn finish_trusted_one_put_concurrent<'cache, 'db, B: Blobs + 'static>(
             native.commit_trusted_native_ordered_unchecked_one_put_holder(preflight, &control)
         }
     } else if !force_callback {
-        // SAFETY: this is the same direct packed terminal and exact generation
+        // SAFETY: this is the same direct native-ordered terminal and exact generation
         // ownership, with bytes stored in the queue arena instead of a holder.
         let control = unsafe { writeback.native_ordered_arena_control() };
         unsafe { native.commit_trusted_native_ordered_unchecked_one_put_arena(preflight, &control) }
     } else {
         let (next_bound, unhealthy) = writeback.native_ordering_words();
-        // SAFETY: this test-only callback runs synchronously after the native
-        // packed CAS assigned its timestamp/sequence pair. Adopting the
+        // SAFETY: this test-only callback runs synchronously after native
+        // assigned its timestamp and physical sequence. Adopting the
         // exact FREE generation before returning its target retains the prior
         // crash seam and the same backend-retirement ownership.
         let acquire_target = |timestamp, native_preflight, ordered_sequence| {
@@ -2288,15 +2289,30 @@ fn recover<B: Blobs>(
             .local_tail
             .checked_add(1)
             .ok_or(Error::BackendStateMismatch)?;
-        if local_sequence != expected
-            || lane_recovery
-                .mako_timestamp
-                .is_some_and(|timestamp| record.mako_timestamp() <= timestamp)
-        {
+        if local_sequence != expected {
             return Err(Error::BackendStateMismatch);
         }
         lane_recovery.local_tail = local_sequence;
-        lane_recovery.mako_timestamp = Some(record.mako_timestamp());
+        if lane.is_some()
+            && lane_recovery
+                .mako_timestamp
+                .is_some_and(|current| record.mako_timestamp() <= current)
+        {
+            // One live worker is the sole producer for its tagged SPSC lane.
+            // Its commits therefore have both increasing local sequences and
+            // increasing process-HLC timestamps. A reversal can only be a
+            // corrupt or impossible history. The upper-zero legacy stream is
+            // intentionally more permissive because older integrations could
+            // bind sequence and timestamp order independently.
+            return Err(Error::BackendStateMismatch);
+        }
+        lane_recovery.mako_timestamp = Some(
+            lane_recovery
+                .mako_timestamp
+                .map_or(record.mako_timestamp(), |current| {
+                    current.max(record.mako_timestamp())
+                }),
+        );
         for mutation in record.mutations() {
             let table_id = match mutation {
                 Mutation::Put { table_id, .. } | Mutation::Delete { table_id, .. } => *table_id,
@@ -2403,9 +2419,12 @@ fn replay_records(local: &LocalDb, records: &[CommitRecord]) -> Result<(), Error
                     transaction.put(&table, key, value)?;
                 }
                 Mutation::Delete { key, .. } => {
-                    if !transaction.remove(&table, key)? {
-                        return Err(Error::RecoveryDiverged);
-                    }
+                    // Replay is deliberately idempotent. The local engine is
+                    // rebuilt from an empty instance, and a predecessor Put
+                    // may be absent from a valid surviving cross-lane history.
+                    // Applying Delete to an already-absent key still reaches
+                    // the record's required post-state.
+                    let _ = transaction.remove(&table, key)?;
                 }
             }
         }
@@ -2470,6 +2489,10 @@ fn finish_replay_audit() -> Vec<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_timestamp(logical: u32) -> MakoTimestamp {
+        MakoTimestamp::new(1_700_000_000_000_000, logical, 1).unwrap()
+    }
 
     #[test]
     fn commit_fence_read_only_closer_drains_an_enrolled_writer() {
@@ -2654,7 +2677,7 @@ mod tests {
         let sequence = writeback
             .reserve_native_holder_single(&producer, NonZeroU32::new(64).unwrap())
             .unwrap();
-        let timestamp = MakoTimestamp::new(17).unwrap();
+        let timestamp = test_timestamp(17);
 
         let error = finish_anomalous_accepted_holder(
             &writeback,
@@ -2714,7 +2737,7 @@ mod tests {
         let sequence = writeback
             .reserve_native_holder_single(&producer, NonZeroU32::new(64).unwrap())
             .unwrap();
-        let timestamp = MakoTimestamp::new(18).unwrap();
+        let timestamp = test_timestamp(18);
 
         let panic = catch_unwind(AssertUnwindSafe(|| {
             let _ = finish_anomalous_accepted_holder(
@@ -2757,7 +2780,7 @@ mod tests {
                     value: b"never-installed".to_vec(),
                 }])
                 .unwrap()
-                .bind(MakoTimestamp::new(1).unwrap())
+                .bind(test_timestamp(1))
                 .unwrap()
         }
 
@@ -2872,7 +2895,7 @@ mod tests {
         .unwrap()
         .bind(
             CommitSeq::new(sequence).expect("test sequence is nonzero"),
-            MakoTimestamp::new(timestamp).expect("test timestamp is nonzero"),
+            test_timestamp(timestamp),
         )
         .finalize()
     }
@@ -3132,14 +3155,14 @@ mod tests {
         .unwrap();
         let (_, local_sequence) = split_log_sequence(record.sequence()).unwrap();
         assert_eq!(local_sequence, sequence);
-        assert_ne!(record.mako_timestamp().get(), 0);
+        assert_ne!(record.mako_timestamp().origin(), 0);
 
         cache.close().unwrap();
     }
 
     #[cfg(have_mako)]
     #[test]
-    fn unchecked_one_put_cache_path_emits_and_recovers_v4() {
+    fn unchecked_one_put_cache_path_emits_and_recovers_v6() {
         use std::sync::Arc;
 
         use mrx_core::fakes::MemBlobs;
@@ -3159,7 +3182,7 @@ mod tests {
             .find(|(key, _)| matches!(classify_backend_key(key), BackendKey::Log(_)))
             .expect("one unchecked backend transaction record");
         assert_eq!(&encoded[..8], b"MAKONOC\0");
-        assert_eq!(u16::from_be_bytes([encoded[8], encoded[9]]), 4);
+        assert_eq!(u16::from_be_bytes([encoded[8], encoded[9]]), 6);
 
         cache.close().unwrap();
         let reopened = Cache::from_backend(Arc::clone(&backend), options).unwrap();
@@ -3284,23 +3307,134 @@ mod tests {
 
     #[cfg(have_mako)]
     #[test]
-    fn recovery_rejects_non_increasing_mako_timestamps() {
+    fn recovery_rejects_timestamp_reversal_within_a_worker_lane() {
         use std::sync::Arc;
 
         use mrx_core::fakes::MemBlobs;
 
-        for (label, second_timestamp) in [("duplicate", 202), ("decreasing", 201)] {
-            let backend = Arc::new(MemBlobs::new());
-            let first = test_record(1, 202, b"first");
-            let second = test_record(2, second_timestamp, label.as_bytes());
-            backend.write_batch(&first.backend_ops()).unwrap();
-            backend.write_batch(&second.backend_ops()).unwrap();
+        let backend = Arc::new(MemBlobs::new());
+        let lane_base = record::worker_log_base(0).unwrap();
+        let first = test_record_with_mutations(
+            lane_base + 1,
+            502,
+            vec![Mutation::Put {
+                table_id: DEFAULT_TABLE_ID,
+                key: b"same-worker-lane".to_vec(),
+                value: b"newer".to_vec(),
+            }],
+        );
+        let second = test_record_with_mutations(
+            lane_base + 2,
+            501,
+            vec![Mutation::Put {
+                table_id: DEFAULT_TABLE_ID,
+                key: b"same-worker-lane".to_vec(),
+                value: b"older".to_vec(),
+            }],
+        );
+        backend.write_batch(&first.backend_ops()).unwrap();
+        backend.write_batch(&second.backend_ops()).unwrap();
 
-            assert!(matches!(
-                Cache::from_backend(backend, CacheOptions::default()),
-                Err(Error::BackendStateMismatch)
-            ));
-        }
+        assert!(matches!(
+            Cache::from_backend(backend, CacheOptions::default()),
+            Err(Error::BackendStateMismatch)
+        ));
+    }
+
+    #[cfg(have_mako)]
+    #[test]
+    fn recovery_replays_delete_against_an_already_absent_local_key() {
+        use std::sync::Arc;
+
+        use mrx_core::fakes::MemBlobs;
+
+        let backend = Arc::new(MemBlobs::new());
+        let lane_sequence = record::worker_log_base(0).unwrap() + 1;
+        let delete = test_record_with_mutations(
+            lane_sequence,
+            601,
+            vec![Mutation::Delete {
+                table_id: DEFAULT_TABLE_ID,
+                key: b"lost-cross-lane-predecessor".to_vec(),
+            }],
+        );
+        backend.write_batch(&delete.backend_ops()).unwrap();
+
+        let cache = Cache::from_backend(Arc::clone(&backend), CacheOptions::default())
+            .expect("Delete replay must be idempotent when the local key is absent");
+        assert_eq!(cache.get(b"lost-cross-lane-predecessor").unwrap(), None);
+        assert_eq!(cache.applied_sequence(), 1);
+        cache.close().unwrap();
+    }
+
+    #[cfg(have_mako)]
+    #[test]
+    fn recovery_accepts_sequence_order_opposite_timestamp_order() {
+        use std::sync::Arc;
+
+        use mrx_core::fakes::MemBlobs;
+
+        let backend = Arc::new(MemBlobs::new());
+        let sequence_one_newer = test_record_with_mutations(
+            1,
+            202,
+            vec![Mutation::Put {
+                table_id: DEFAULT_TABLE_ID,
+                key: b"same-lane-reordered".to_vec(),
+                value: b"newer".to_vec(),
+            }],
+        );
+        let sequence_two_older = test_record_with_mutations(
+            2,
+            201,
+            vec![Mutation::Put {
+                table_id: DEFAULT_TABLE_ID,
+                key: b"same-lane-reordered".to_vec(),
+                value: b"older".to_vec(),
+            }],
+        );
+
+        // Backend application is timestamp-ordered even when the physical log
+        // positions are not. Write the older value first to model that result.
+        backend
+            .write_batch(&sequence_two_older.backend_ops())
+            .unwrap();
+        backend
+            .write_batch(&sequence_one_newer.backend_ops())
+            .unwrap();
+
+        begin_replay_audit();
+        let cache = Cache::from_backend(Arc::clone(&backend), CacheOptions::default()).unwrap();
+        assert_eq!(finish_replay_audit(), vec![2, 1]);
+        assert_eq!(
+            cache.get(b"same-lane-reordered").unwrap().as_deref(),
+            Some(&b"newer"[..])
+        );
+        assert_eq!(cache.applied_watermark().sequence(), 2);
+        assert_eq!(
+            cache.applied_watermark().mako_timestamp(),
+            Some(test_timestamp(202))
+        );
+        cache.close().unwrap();
+    }
+
+    #[cfg(have_mako)]
+    #[test]
+    fn recovery_rejects_duplicate_mako_timestamps() {
+        use std::sync::Arc;
+
+        use mrx_core::fakes::MemBlobs;
+
+        let backend = Arc::new(MemBlobs::new());
+        let first = test_record(1, 202, b"first");
+        let second = test_record(2, 202, b"duplicate");
+        backend.write_batch(&first.backend_ops()).unwrap();
+        backend.write_batch(&second.backend_ops()).unwrap();
+
+        assert!(matches!(
+            Cache::from_backend(backend, CacheOptions::default()),
+            Err(Error::BackendStateMismatch)
+        ));
     }
 
     #[cfg(have_mako)]
@@ -3322,8 +3456,8 @@ mod tests {
         assert_eq!(cache.applied_watermark().sequence(), 2);
         assert_eq!(
             cache.applied_watermark().mako_timestamp(),
-            MakoTimestamp::new(FRONTIER_TIMESTAMP),
-            "the timestamp identifies CacheSeq 2 rather than taking a numeric maximum"
+            Some(test_timestamp(FRONTIER_TIMESTAMP)),
+            "the applied timestamp is the greatest timestamp, independent of CacheSeq"
         );
 
         cache.put(b"after-ordered-recovery", b"new").unwrap();
@@ -3331,7 +3465,7 @@ mod tests {
         let next = cache.applied_watermark();
         assert_eq!(next.sequence(), 3);
         assert!(
-            next.mako_timestamp().unwrap().get() > FRONTIER_TIMESTAMP,
+            next.mako_timestamp().unwrap() > test_timestamp(FRONTIER_TIMESTAMP),
             "clock recovery must continue past the serialized CacheSeq frontier"
         );
         cache.close().unwrap();
@@ -3344,9 +3478,20 @@ mod tests {
 
         use mrx_core::fakes::MemBlobs;
 
-        const RECOVERED_TIMESTAMP: u32 = 1 << 24;
+        const HOT_PHYSICAL_US_MAX: u64 = ((1u64 << 44) - 1) * 1_000;
+        let recovered_timestamp = MakoTimestamp::new(HOT_PHYSICAL_US_MAX, 1_024, 1).unwrap();
         let backend = Arc::new(MemBlobs::new());
-        let recovered = test_record(1, RECOVERED_TIMESTAMP, b"recovered");
+        let recovered = crate::record::PreparedCommitRecord::prepare(
+            vec![Mutation::Put {
+                table_id: DEFAULT_TABLE_ID,
+                key: b"recovered".to_vec(),
+                value: b"value".to_vec(),
+            }],
+            CacheOptions::default().writeback.max_record_bytes,
+        )
+        .unwrap()
+        .bind(CommitSeq::new(1).unwrap(), recovered_timestamp)
+        .finalize();
         backend.write_batch(&recovered.backend_ops()).unwrap();
 
         let cache = Cache::from_backend(Arc::clone(&backend), CacheOptions::default()).unwrap();
@@ -3377,7 +3522,7 @@ mod tests {
             CacheOptions::default().writeback.max_record_bytes,
         )
         .unwrap();
-        assert!(record.mako_timestamp().get() > RECOVERED_TIMESTAMP);
+        assert!(record.mako_timestamp() > recovered_timestamp);
 
         cache.close().unwrap();
     }
@@ -3387,11 +3532,22 @@ mod tests {
     fn recovery_rejects_an_exhausted_recovered_mako_timestamp() {
         use std::sync::Arc;
 
-        use mako_local::MAX_MAKO_TIMESTAMP;
         use mrx_core::fakes::MemBlobs;
 
         let backend = Arc::new(MemBlobs::new());
-        let final_record = test_record(1, MAX_MAKO_TIMESTAMP, b"final-timestamp");
+        let final_timestamp =
+            MakoTimestamp::new(((1u64 << 44) - 1) * 1_000, (1 << 19) - 1, 1).unwrap();
+        let final_record = crate::record::PreparedCommitRecord::prepare(
+            vec![Mutation::Put {
+                table_id: DEFAULT_TABLE_ID,
+                key: b"final-timestamp".to_vec(),
+                value: b"value".to_vec(),
+            }],
+            CacheOptions::default().writeback.max_record_bytes,
+        )
+        .unwrap()
+        .bind(CommitSeq::new(1).unwrap(), final_timestamp)
+        .finalize();
         backend.write_batch(&final_record.backend_ops()).unwrap();
 
         assert!(matches!(
@@ -3426,7 +3582,7 @@ mod tests {
                 }],
             )
             .unwrap()
-            .bind(MakoTimestamp::new(1).unwrap())
+            .bind(test_timestamp(1))
             .unwrap()
             .pin_unknown()
             .unwrap();
@@ -3498,7 +3654,7 @@ mod tests {
                     }],
                 )
                 .unwrap()
-                .bind(MakoTimestamp::new(1).unwrap())
+                .bind(test_timestamp(1))
                 .unwrap()
                 .pin_unknown()
                 .unwrap();

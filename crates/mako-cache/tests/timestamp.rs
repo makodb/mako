@@ -1,21 +1,26 @@
 #![cfg(all(have_mako, feature = "test-support"))]
 
 use std::env;
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use mako_cache::{Cache, CacheOptions};
-use mako_local::{TestCommitPhase, WorkerHealth};
+use mako_local::{MakoTimestamp, TestCommitPhase, WorkerHealth};
 use mrx_core::fakes::MemBlobs;
 
 const REQUIRE_NATIVE_HOOKS_ENV: &str = "MAKO_CACHE_REQUIRE_NATIVE_CRASH_HOOKS";
 
-static OBSERVED_TIMESTAMP: AtomicU32 = AtomicU32::new(0);
+static OBSERVED_PHYSICAL_US: AtomicU64 = AtomicU64::new(0);
+static OBSERVED_LOGICAL: AtomicU32 = AtomicU32::new(0);
+static OBSERVED_ORIGIN: AtomicU32 = AtomicU32::new(0);
 static TIMESTAMP_CALLBACKS: AtomicUsize = AtomicUsize::new(0);
 
-fn observe_timestamp(phase: TestCommitPhase, mako_timestamp: u32) {
+fn observe_timestamp(phase: TestCommitPhase, mako_timestamp: Option<MakoTimestamp>) {
     if phase == TestCommitPhase::MakoTimestampAllocated {
-        OBSERVED_TIMESTAMP.store(mako_timestamp, Ordering::SeqCst);
+        let mako_timestamp = mako_timestamp.expect("allocated phase carries a timestamp");
+        OBSERVED_PHYSICAL_US.store(mako_timestamp.physical_us(), Ordering::SeqCst);
+        OBSERVED_LOGICAL.store(mako_timestamp.logical(), Ordering::SeqCst);
+        OBSERVED_ORIGIN.store(mako_timestamp.origin(), Ordering::SeqCst);
         TIMESTAMP_CALLBACKS.fetch_add(1, Ordering::SeqCst);
     }
 }
@@ -35,7 +40,9 @@ fn native_timestamp_matches_the_persisted_record_and_applied_frontier() {
         WorkerHealth::NotAttached
     );
 
-    OBSERVED_TIMESTAMP.store(0, Ordering::SeqCst);
+    OBSERVED_PHYSICAL_US.store(0, Ordering::SeqCst);
+    OBSERVED_LOGICAL.store(0, Ordering::SeqCst);
+    OBSERVED_ORIGIN.store(0, Ordering::SeqCst);
     TIMESTAMP_CALLBACKS.store(0, Ordering::SeqCst);
     let backend = Arc::new(MemBlobs::new());
     let cache = Cache::from_backend(Arc::clone(&backend), CacheOptions::default())
@@ -48,15 +55,16 @@ fn native_timestamp_matches_the_persisted_record_and_applied_frontier() {
         .expect("commit observed transaction");
     mako_local::clear_test_commit_observer().expect("clear timestamp observer");
     assert_eq!(TIMESTAMP_CALLBACKS.load(Ordering::SeqCst), 1);
-    let native_timestamp = OBSERVED_TIMESTAMP.load(Ordering::SeqCst);
-    assert_ne!(native_timestamp, 0);
+    let native_timestamp = MakoTimestamp::new(
+        OBSERVED_PHYSICAL_US.load(Ordering::SeqCst),
+        OBSERVED_LOGICAL.load(Ordering::SeqCst),
+        OBSERVED_ORIGIN.load(Ordering::SeqCst),
+    )
+    .expect("native observer returned a timestamp with a nonzero origin");
 
     let applied = cache.wait_applied();
     let persisted_timestamps = mako_cache::test_support::decoded_log_timestamps(&backend);
-    let applied_timestamp = cache
-        .applied_watermark()
-        .mako_timestamp()
-        .map(|timestamp| timestamp.get());
+    let applied_timestamp = cache.applied_watermark().mako_timestamp();
     let closed = cache.close();
 
     // Assert only after the cache is closed. Mutation tests deliberately make

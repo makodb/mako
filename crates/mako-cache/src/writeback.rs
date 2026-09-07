@@ -41,7 +41,7 @@ use std::cell::RefCell;
 use crate::record::PreparedCommitRecord;
 use crate::record::{
     CommitSeq, DeferredOnePutRecord, LegacyCommitRecord, Mutation, NativeCommitRecord,
-    QueuedCommitRecord, RecordError, RecycledNativeRecord,
+    QueuedCommitRecord, RecordError, RecycledNativeRecord, LOG_LOCAL_MASK,
 };
 
 #[cfg(test)]
@@ -225,12 +225,12 @@ fn prefetch_write_supported() -> bool {
 
 /// In-memory progress of the RocksDB consumer.
 ///
-/// In single-producer mode, `sequence` is the dense applied prefix and
-/// `mako_timestamp` identifies its final record. In concurrent mode, workers
-/// publish independent dense lanes: `sequence` is the total applied record
-/// count and `mako_timestamp` is the greatest applied Mako timestamp. Neither
-/// concurrent field claims that every smaller timestamp is present, and
-/// neither mode claims that RocksDB has synced data to disk.
+/// In single-producer mode, `sequence` is the dense applied prefix. In
+/// concurrent mode, workers publish independent dense lanes and `sequence` is
+/// the total applied record count. In both modes, `mako_timestamp` is the
+/// greatest applied Mako timestamp. It does not claim that every smaller
+/// timestamp is present, and neither field claims that RocksDB has synced data
+/// to disk.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct AppliedWatermark {
     sequence: u64,
@@ -431,8 +431,7 @@ impl AppliedWatermark {
 
     /// Applied Mako timestamp.
     ///
-    /// This names the dense frontier in single-producer mode and is the
-    /// greatest applied timestamp across worker lanes in concurrent mode.
+    /// This is the greatest applied timestamp in every foreground mode.
     pub const fn mako_timestamp(self) -> Option<MakoTimestamp> {
         self.mako_timestamp
     }
@@ -444,7 +443,10 @@ impl AppliedWatermark {
             "the applied watermark must advance one cache sequence at a time"
         );
         self.sequence = sequence.get();
-        self.mako_timestamp = Some(mako_timestamp);
+        self.mako_timestamp = Some(
+            self.mako_timestamp
+                .map_or(mako_timestamp, |current| current.max(mako_timestamp)),
+        );
     }
 }
 
@@ -776,7 +778,7 @@ fn turn_token(raw_sequence: u64, ring_shift: u32, phase: u64) -> u64 {
 #[repr(C, align(64))]
 struct PublicationCell {
     turn: AtomicU64,
-    arena_mako_timestamp: UnsafeCell<u32>,
+    arena_timestamp_stamp: UnsafeCell<u64>,
     arena_record_bytes: UnsafeCell<usize>,
 }
 
@@ -802,7 +804,7 @@ struct ColdPublicationCell {
 #[repr(C, align(64))]
 struct SpscArenaPublication {
     sequence: UnsafeCell<u64>,
-    mako_timestamp: UnsafeCell<u32>,
+    mako_timestamp: UnsafeCell<MaybeUninit<MakoTimestamp>>,
     exact_record_bytes: UnsafeCell<u32>,
 }
 
@@ -832,7 +834,7 @@ const _: () = {
     assert!(std::mem::size_of::<PublicationCell>() == 64);
     assert!(std::mem::align_of::<PublicationCell>() == 64);
     assert!(std::mem::offset_of!(PublicationCell, turn) == 0);
-    assert!(std::mem::offset_of!(PublicationCell, arena_mako_timestamp) == 8);
+    assert!(std::mem::offset_of!(PublicationCell, arena_timestamp_stamp) == 8);
     assert!(std::mem::offset_of!(PublicationCell, arena_record_bytes) == 16);
     assert!(TURN_FREE == 0);
     assert!(TURN_BOUND == 1);
@@ -853,7 +855,7 @@ impl SpscArenaPublication {
     const fn empty() -> Self {
         Self {
             sequence: UnsafeCell::new(0),
-            mako_timestamp: UnsafeCell::new(0),
+            mako_timestamp: UnsafeCell::new(MaybeUninit::uninit()),
             exact_record_bytes: UnsafeCell::new(0),
         }
     }
@@ -878,7 +880,9 @@ impl SpscArenaPublication {
         // SAFETY: required by this method's exclusive-generation contract.
         unsafe {
             self.sequence.get().write(sequence.get());
-            self.mako_timestamp.get().write(mako_timestamp.get());
+            self.mako_timestamp
+                .get()
+                .write(MaybeUninit::new(mako_timestamp));
             self.exact_record_bytes.get().write(exact_record_bytes);
         }
     }
@@ -902,8 +906,9 @@ impl SpscArenaPublication {
         if unsafe { *self.sequence.get() } != sequence.get() {
             return None;
         }
-        let mako_timestamp = MakoTimestamp::new(unsafe { *self.mako_timestamp.get() })
-            .expect("a published SPSC arena record retains a Mako timestamp");
+        // SAFETY: the matching sequence and acquired publication frontier
+        // prove this timestamp slot was initialized for this generation.
+        let mako_timestamp = unsafe { (*self.mako_timestamp.get()).assume_init() };
         let exact_record_bytes = unsafe { *self.exact_record_bytes.get() } as usize;
         // SAFETY: the same published/applied frontier proof owns this exact
         // block through retirement, and native initialized the advertised
@@ -935,7 +940,7 @@ impl PublicationCell {
     fn free(initial_free_turn: u64) -> Self {
         Self {
             turn: AtomicU64::new(initial_free_turn),
-            arena_mako_timestamp: UnsafeCell::new(0),
+            arena_timestamp_stamp: UnsafeCell::new(0),
             arena_record_bytes: UnsafeCell::new(0),
         }
     }
@@ -1069,7 +1074,11 @@ impl PublicationCell {
         // SAFETY: the method contract grants exclusive access to this exact
         // generation until READY is published below.
         unsafe {
-            self.arena_mako_timestamp.get().write(mako_timestamp.get());
+            self.arena_timestamp_stamp.get().write(
+                mako_timestamp
+                    .local_stamp()
+                    .expect("local timestamp has a hot stamp"),
+            );
             self.arena_record_bytes.get().write(exact_record_bytes);
         }
         self.turn.store(
@@ -1119,7 +1128,11 @@ impl PublicationCell {
         // generation. The following Release store transfers these scalars and
         // native's already-initialized arena bytes to pin/consumer paths.
         unsafe {
-            self.arena_mako_timestamp.get().write(mako_timestamp.get());
+            self.arena_timestamp_stamp.get().write(
+                mako_timestamp
+                    .local_stamp()
+                    .expect("local timestamp has a hot stamp"),
+            );
             self.arena_record_bytes.get().write(exact_record_bytes);
         }
         self.publish_written(sequence, ring_shift);
@@ -1142,7 +1155,11 @@ impl PublicationCell {
         // native's exact completion witness covers the arena bytes. Publishing
         // READY transfers both scalars and bytes directly to helpers/consumer.
         unsafe {
-            self.arena_mako_timestamp.get().write(mako_timestamp.get());
+            self.arena_timestamp_stamp.get().write(
+                mako_timestamp
+                    .local_stamp()
+                    .expect("local timestamp has a hot stamp"),
+            );
             self.arena_record_bytes.get().write(exact_record_bytes);
         }
         self.turn.store(
@@ -1168,7 +1185,11 @@ impl PublicationCell {
         // the pool generation before returning; READY transfers both facts to
         // the sole consumer.
         unsafe {
-            self.arena_mako_timestamp.get().write(mako_timestamp.get());
+            self.arena_timestamp_stamp.get().write(
+                mako_timestamp
+                    .local_stamp()
+                    .expect("local timestamp has a hot stamp"),
+            );
             self.arena_record_bytes
                 .get()
                 .write(tagged_native_holder_extent(exact_record_bytes));
@@ -1192,7 +1213,11 @@ impl PublicationCell {
             turn_token(sequence.get(), ring_shift, TURN_BOUND)
         );
         unsafe {
-            self.arena_mako_timestamp.get().write(mako_timestamp.get());
+            self.arena_timestamp_stamp.get().write(
+                mako_timestamp
+                    .local_stamp()
+                    .expect("local timestamp has a hot stamp"),
+            );
             self.arena_record_bytes
                 .get()
                 .write(tagged_native_holder_extent(exact_record_bytes));
@@ -1246,14 +1271,18 @@ impl PublicationCell {
         ring_shift: u32,
         arena: &NativeRecordArena,
         arena_block: usize,
+        timestamp_origin: u32,
     ) -> Option<QueuedCommitRecord> {
         if !self.is_published(sequence, ring_shift) {
             return None;
         }
         let exact_record_bytes = unsafe { *self.arena_record_bytes.get() };
         if exact_record_bytes & NATIVE_HOLDER_RECORD_TAG != 0 {
-            let mako_timestamp = MakoTimestamp::new(unsafe { *self.arena_mako_timestamp.get() })
-                .expect("a published holder retains a valid Mako timestamp");
+            let mako_timestamp = MakoTimestamp::from_local_stamp(
+                unsafe { *self.arena_timestamp_stamp.get() },
+                timestamp_origin,
+            )
+            .expect("a published holder retains a valid Mako timestamp");
             return Some(QueuedCommitRecord::Holder(DeferredOnePutRecord::new(
                 sequence,
                 mako_timestamp,
@@ -1266,8 +1295,11 @@ impl PublicationCell {
             // occupancy prevents reuse; in single-producer mode the bounded
             // tail/applied window and retained next sequence do. Both modes
             // keep this block owned until the returned record is retired.
-            let mako_timestamp = MakoTimestamp::new(unsafe { *self.arena_mako_timestamp.get() })
-                .expect("a bound arena record retains a valid Mako timestamp");
+            let mako_timestamp = MakoTimestamp::from_local_stamp(
+                unsafe { *self.arena_timestamp_stamp.get() },
+                timestamp_origin,
+            )
+            .expect("a bound arena record retains a valid Mako timestamp");
             let bytes = unsafe { arena.target(arena_block, exact_record_bytes) };
             let record = unsafe {
                 NativeCommitRecord::from_native_arena(
@@ -1307,6 +1339,7 @@ impl PublicationCell {
         ring_shift: u32,
         arena: &NativeRecordArena,
         arena_block: usize,
+        timestamp_origin: u32,
     ) -> Option<QueuedCommitRecord> {
         let turn = self.turn.load(Ordering::Acquire);
         let bound = turn_token(sequence.get(), ring_shift, TURN_BOUND);
@@ -1317,8 +1350,11 @@ impl PublicationCell {
         }
         let exact_record_bytes = unsafe { *self.arena_record_bytes.get() };
         if exact_record_bytes & NATIVE_HOLDER_RECORD_TAG != 0 {
-            let mako_timestamp = MakoTimestamp::new(unsafe { *self.arena_mako_timestamp.get() })
-                .expect("a written holder retains a valid Mako timestamp");
+            let mako_timestamp = MakoTimestamp::from_local_stamp(
+                unsafe { *self.arena_timestamp_stamp.get() },
+                timestamp_origin,
+            )
+            .expect("a written holder retains a valid Mako timestamp");
             return Some(QueuedCommitRecord::Holder(DeferredOnePutRecord::new(
                 sequence,
                 mako_timestamp,
@@ -1326,8 +1362,11 @@ impl PublicationCell {
             )));
         }
         if exact_record_bytes != 0 {
-            let mako_timestamp = MakoTimestamp::new(unsafe { *self.arena_mako_timestamp.get() })
-                .expect("a bound arena record retains a valid Mako timestamp");
+            let mako_timestamp = MakoTimestamp::from_local_stamp(
+                unsafe { *self.arena_timestamp_stamp.get() },
+                timestamp_origin,
+            )
+            .expect("a bound arena record retains a valid Mako timestamp");
             let bytes = unsafe { arena.target(arena_block, exact_record_bytes) };
             // SAFETY: exact written generation is native's completion witness;
             // pinning permanently stops the dense tail in either queue mode,
@@ -1806,10 +1845,11 @@ const _: () = assert!(std::mem::size_of::<CacheLineAtomicUsize>() == 64);
 
 /// Producer-local capacity cursor owned by one thread-affine cache lease.
 ///
-/// The exclusive capacity limit is `applied.saturating_add(capacity)`. A stale
-/// limit only makes the queue appear conservatively fuller. The producer
-/// refreshes it after consuming its local window, so no consumer writes the
-/// producer's hot cache line.
+/// The exclusive capacity limit is
+/// `min(applied.saturating_add(capacity), maximum_sequence)`. A stale limit
+/// only makes the queue appear conservatively fuller. The producer refreshes
+/// it after consuming its local window, so no consumer writes the producer's
+/// hot cache line.
 pub(crate) struct SingleProducerState {
     // These are producer-local despite their atomic representation. Relaxed
     // words keep internal permit types structurally Send for concurrent-path
@@ -1817,6 +1857,7 @@ pub(crate) struct SingleProducerState {
     // the sole accessor in production.
     capacity_limit: AtomicU64,
     next_sequence: AtomicU64,
+    maximum_sequence: u64,
     fused_holder_control: mako_local::TrustedSpscOnePutHolderControl,
 }
 
@@ -1825,11 +1866,15 @@ impl SingleProducerState {
         applied: u64,
         next_sequence: u64,
         capacity: u64,
+        maximum_sequence: u64,
         fused_holder_control: mako_local::TrustedSpscOnePutHolderControl,
     ) -> Self {
+        debug_assert!(applied < maximum_sequence);
+        debug_assert!(next_sequence <= maximum_sequence);
         Self {
-            capacity_limit: AtomicU64::new(applied.saturating_add(capacity)),
+            capacity_limit: AtomicU64::new(applied.saturating_add(capacity).min(maximum_sequence)),
             next_sequence: AtomicU64::new(next_sequence),
+            maximum_sequence,
             fused_holder_control,
         }
     }
@@ -1853,7 +1898,11 @@ impl SingleProducerState {
     #[inline(always)]
     pub(crate) fn retained_sequence(&self) -> NonZeroU64 {
         let next = self.next_sequence.load(Ordering::Relaxed);
-        let Some(retained) = next.checked_add(1).and_then(NonZeroU64::new) else {
+        let Some(retained) = next
+            .checked_add(1)
+            .filter(|candidate| *candidate <= self.maximum_sequence)
+            .and_then(NonZeroU64::new)
+        else {
             // A consumed outcome after native observed a saturated cursor is a
             // same-build lifecycle contradiction. Fail-stop without creating
             // an invalid NonZeroU64 from foreign-controlled state.
@@ -1866,7 +1915,9 @@ impl SingleProducerState {
     #[inline(always)]
     pub(crate) fn accepted_sequence(&self) -> NonZeroU64 {
         let accepted = self.next_sequence.load(Ordering::Relaxed);
-        let Some(accepted) = NonZeroU64::new(accepted) else {
+        let Some(accepted) =
+            NonZeroU64::new(accepted).filter(|sequence| sequence.get() <= self.maximum_sequence)
+        else {
             // A committed-unpublished result promises cursor advancement.
             // Treat a missing generation as protocol corruption, not an
             // unchecked niche construction.
@@ -1883,6 +1934,11 @@ impl SingleProducerState {
 
     #[inline(always)]
     fn accept_raw(&self, sequence: NonZeroU64) {
+        if sequence.get() > self.maximum_sequence {
+            // Native accepted a generation outside this physical lane. It is
+            // no longer safe to unwind and reuse the retained capacity right.
+            std::process::abort();
+        }
         debug_assert_eq!(
             self.next_sequence.load(Ordering::Relaxed).checked_add(1),
             Some(sequence.get()),
@@ -1893,6 +1949,11 @@ impl SingleProducerState {
 
     #[inline(always)]
     fn synchronize_acknowledged(&self, acknowledged: u64) -> u64 {
+        if acknowledged > self.maximum_sequence {
+            // The fused native terminal writes this word directly. Crossing
+            // the lane bound means the same-build pointer contract failed.
+            std::process::abort();
+        }
         let cached = self.next_sequence.load(Ordering::Relaxed);
         if acknowledged > cached {
             // The native fused terminal deliberately updates only the shared
@@ -2075,6 +2136,12 @@ pub struct Writeback<B: Blobs> {
     backend: B,
     apply_coordinator: Arc<ApplyCoordinator>,
     config: WritebackConfig,
+    /// Inclusive physical sequence bound for this one dense stream.
+    ///
+    /// The legacy stream ends at the 48-bit local mask. A worker lane ends at
+    /// its tagged base plus that mask. No allocator may advance into local
+    /// position zero or the adjacent lane's tag.
+    maximum_sequence: u64,
     /// Fixed at construction. A single-producer queue never mixes aggregate
     /// Occupancy accounting with its lease-owned logical capacity credits.
     single_producer: bool,
@@ -2172,6 +2239,7 @@ impl<B: Blobs> Writeback<B> {
     pub(crate) fn validate_config(
         config: WritebackConfig,
         applied_seed: u64,
+        maximum_sequence: u64,
     ) -> Result<(), ConfigError> {
         if config.capacity == 0 {
             return Err(ConfigError::ZeroCapacity);
@@ -2188,7 +2256,7 @@ impl<B: Blobs> Writeback<B> {
         if config.retry_delay.is_zero() {
             return Err(ConfigError::ZeroRetryDelay);
         }
-        if applied_seed == u64::MAX {
+        if applied_seed >= maximum_sequence {
             return Err(ConfigError::SequenceExhausted);
         }
         config
@@ -2251,6 +2319,7 @@ impl<B: Blobs> Writeback<B> {
         Self::new_with_shared_state(
             backend,
             applied_seed,
+            LOG_LOCAL_MASK,
             config,
             single_producer,
             false,
@@ -2265,6 +2334,7 @@ impl<B: Blobs> Writeback<B> {
     pub(crate) fn new_with_shared_state(
         backend: B,
         applied_seed: AppliedWatermark,
+        maximum_sequence: u64,
         config: WritebackConfig,
         single_producer: bool,
         shared_fail_stop: bool,
@@ -2272,7 +2342,7 @@ impl<B: Blobs> Writeback<B> {
         unhealthy_sequence: Arc<AtomicU64>,
         apply_coordinator: Arc<ApplyCoordinator>,
     ) -> Result<Self, ConfigError> {
-        Self::validate_config(config, applied_seed.sequence)?;
+        Self::validate_config(config, applied_seed.sequence, maximum_sequence)?;
 
         // A power-of-two ring lets the publication hot path map a sequence to
         // its stable cell with one mask instead of a hardware integer divide.
@@ -2345,6 +2415,7 @@ impl<B: Blobs> Writeback<B> {
             backend,
             apply_coordinator,
             config,
+            maximum_sequence,
             single_producer,
             shared_fail_stop,
             state: Mutex::new(State {
@@ -2393,6 +2464,19 @@ impl<B: Blobs> Writeback<B> {
     /// Maximum native/log record extent accepted by this queue.
     pub(crate) const fn max_record_bytes(&self) -> usize {
         self.config.max_record_bytes
+    }
+
+    /// Validate a non-cancelable sequence returned by the same-build native
+    /// terminal. Once native reports an accepted generation, unwinding cannot
+    /// safely release its capacity right. Treat a value outside this stream's
+    /// physical range as process-fatal protocol corruption.
+    #[inline(always)]
+    fn external_sequence_or_abort(&self, sequence: NonZeroU64) -> CommitSeq {
+        if sequence.get() > self.maximum_sequence {
+            std::process::abort();
+        }
+        // `sequence` is nonzero by type.
+        CommitSeq::new(sequence.get()).unwrap_or_else(|| std::process::abort())
     }
 
     #[inline(always)]
@@ -2503,7 +2587,8 @@ impl<B: Blobs> Writeback<B> {
     /// Borrow the stable ring layout used by the callback-free native binder.
     ///
     /// The returned control is valid only while this write-back queue remains
-    /// alive. Native uses its packed pair CAS to assign one sequence, acquires
+    /// alive. Native assigns an HLC timestamp and independent cache sequence,
+    /// then acquires
     /// that generation's exact FREE turn, publishes BOUND, and serializes into
     /// the matching arena block. Exact-turn probing, not `next_bound`, makes
     /// the descriptor discoverable.
@@ -2513,7 +2598,7 @@ impl<B: Blobs> Writeback<B> {
     /// The caller must retain one concurrent detached occupancy claim and may
     /// pass this control only to the matching same-build trusted one-Put
     /// terminal. The LocalDb must hold an immutable Concurrent cache-order
-    /// claim, and every cache-record terminal must use that packed namespace.
+    /// claim, and every cache-record terminal must use that cache-order namespace.
     #[inline(always)]
     pub(crate) unsafe fn native_ordered_arena_control(
         &self,
@@ -2629,6 +2714,9 @@ impl<B: Blobs> Writeback<B> {
         let mut state = lock_recover(&self.state);
         self.import_bound_locked(&mut state);
         let acknowledged = self.acknowledged.load(Ordering::Acquire);
+        if acknowledged > self.maximum_sequence {
+            std::process::abort();
+        }
         debug_assert!(state.last_bound >= acknowledged);
         let capacity = NonZeroU64::new(
             u64::try_from(self.config.capacity).expect("queue capacity fits the native u64 ABI"),
@@ -2660,6 +2748,7 @@ impl<B: Blobs> Writeback<B> {
             state.applied.sequence,
             state.last_bound,
             capacity.get(),
+            self.maximum_sequence,
             fused_holder_control,
         )
     }
@@ -2741,6 +2830,9 @@ impl<B: Blobs> Writeback<B> {
     /// resumes at the same sequence.
     fn import_bound_locked(&self, state: &mut State) {
         loop {
+            if state.last_bound >= self.maximum_sequence {
+                return;
+            }
             let Some(raw_sequence) = state.last_bound.checked_add(1) else {
                 return;
             };
@@ -2898,6 +2990,10 @@ impl<B: Blobs> Writeback<B> {
                 self.publication_shift,
                 &self.native_arena,
                 self.publication_index(slot.sequence),
+                self.native_holder_pool
+                    .as_ref()
+                    .expect("writeback always owns a native holder pool")
+                    .timestamp_origin(),
             )
         });
         let Some(record) = record else {
@@ -3138,13 +3234,14 @@ impl<B: Blobs> Writeback<B> {
         }
         let tail = producer.next_sequence.load(Ordering::Relaxed);
         let capacity_limit = producer.capacity_limit.load(Ordering::Relaxed);
-        if tail >= capacity_limit {
+        if tail >= capacity_limit || tail >= self.maximum_sequence {
             return None;
         }
 
-        // SAFETY: `tail != u64::MAX` proves the addition cannot wrap, and its
-        // successor is nonzero. The unique producer retains this generation
-        // without modifying either cursor until native acceptance.
+        // SAFETY: `tail < maximum_sequence` proves the addition cannot wrap
+        // or leave this lane, and its successor is nonzero. The unique
+        // producer retains this generation without modifying either cursor
+        // until native acceptance.
         Some(unsafe { NonZeroU64::new_unchecked(tail + 1) })
     }
 
@@ -3392,7 +3489,7 @@ impl<B: Blobs> Writeback<B> {
             // mutex. Acquire observes the consumer's final arena/cold reads
             // before admitting reuse of that applied generation.
             let applied = self.applied_frontier.load(Ordering::Acquire);
-            let capacity_limit = applied.saturating_add(capacity);
+            let capacity_limit = applied.saturating_add(capacity).min(self.maximum_sequence);
             producer
                 .capacity_limit
                 .store(capacity_limit, Ordering::Relaxed);
@@ -3414,10 +3511,14 @@ impl<B: Blobs> Writeback<B> {
             }
             let tail = producer.next_sequence.load(Ordering::Relaxed);
             producer.capacity_limit.store(
-                state.applied.sequence.saturating_add(capacity),
+                state
+                    .applied
+                    .sequence
+                    .saturating_add(capacity)
+                    .min(self.maximum_sequence),
                 Ordering::Relaxed,
             );
-            if tail == u64::MAX {
+            if tail >= self.maximum_sequence {
                 return Err(ReserveError::SequenceExhausted);
             }
             let live = tail
@@ -3433,6 +3534,9 @@ impl<B: Blobs> Writeback<B> {
 
     #[inline(always)]
     fn acquire_single_detached_turn(&self, tail: u64) -> Result<CommitSeq, ReserveError> {
+        if tail >= self.maximum_sequence {
+            return Err(ReserveError::SequenceExhausted);
+        }
         let raw_sequence = tail.checked_add(1).ok_or(ReserveError::SequenceExhausted)?;
         let sequence = CommitSeq::new(raw_sequence)
             .expect("the sequence after a valid applied seed is nonzero");
@@ -3465,12 +3569,12 @@ impl<B: Blobs> Writeback<B> {
         let observed = self.next_bound.load(Ordering::Acquire);
         let fast_headroom = u64::try_from(self.config.capacity)
             .ok()
-            .and_then(|capacity| u64::MAX.checked_sub(capacity))
+            .and_then(|capacity| self.maximum_sequence.checked_sub(capacity))
             .is_some_and(|safe_tail| observed <= safe_tail);
-        // Only the final `capacity` values need the state mutex. This legacy
-        // Rust-side binder retains the cold checked-RMW path; the newer native
-        // allocator relies on its already-claimed occupancy credit and checks
-        // MAX before advancing the same atomic tail.
+        // Only the final `capacity` values in this physical stream need the
+        // state mutex. This legacy Rust-side binder retains the cold checked
+        // RMW path; the newer native allocator relies on its already-claimed
+        // occupancy credit and checks its sequence bound before advancing.
         let sequence_guard = if fast_headroom {
             None
         } else {
@@ -3500,7 +3604,7 @@ impl<B: Blobs> Writeback<B> {
         } else {
             self.next_bound
                 .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
-                    current.checked_add(1)
+                    (current < self.maximum_sequence).then(|| current + 1)
                 })
                 .map_err(|_| ReserveError::SequenceExhausted)?
         };
@@ -3530,7 +3634,7 @@ impl<B: Blobs> Writeback<B> {
         }
         drop(sequence_guard);
         self.notify_descriptor_waiters();
-        if raw_sequence == u64::MAX {
+        if raw_sequence == self.maximum_sequence {
             self.capacity_available.notify_all();
         }
         Ok(sequence)
@@ -3551,6 +3655,9 @@ impl<B: Blobs> Writeback<B> {
             self.single_producer,
             "single-producer bind requires a single-producer queue"
         );
+        if sequence.get() > self.maximum_sequence {
+            return Err(ReserveError::SequenceExhausted);
+        }
         if self.unhealthy.load(Ordering::Acquire) {
             let mut state = lock_recover(&self.state);
             self.import_bound_locked(&mut state);
@@ -3575,7 +3682,7 @@ impl<B: Blobs> Writeback<B> {
         // There is no suffix producer which can be waiting for this descriptor
         // in SPSC mode. Unknown/failure resolution imports its own BOUND turn
         // synchronously, while the background consumer independently polls.
-        if sequence.get() == u64::MAX {
+        if sequence.get() == self.maximum_sequence {
             self.capacity_available.notify_all();
         }
         Ok(sequence)
@@ -3602,6 +3709,9 @@ impl<B: Blobs> Writeback<B> {
         sequence: CommitSeq,
     ) {
         debug_assert!(self.single_producer);
+        if sequence.get() > self.maximum_sequence {
+            std::process::abort();
+        }
         producer.accept(sequence);
         // SAFETY: required by this method's retained-sequence and unique-lease
         // contract. The following BOUND Release makes the already accepted
@@ -4046,7 +4156,10 @@ impl<B: Blobs> Writeback<B> {
                             // Sweep successors which became READY before their
                             // missing predecessor, otherwise no producer may
                             // remain to move the consumer frontier again.
-                            self.advance_atomic_acknowledgement(sequence.get(), u64::MAX);
+                            self.advance_atomic_acknowledgement(
+                                sequence.get(),
+                                self.maximum_sequence,
+                            );
                             self.notify_activity_waiter();
                             // A later publisher may release Ready just after
                             // this CAS, then enroll to sleep. Every frontier
@@ -4077,8 +4190,8 @@ impl<B: Blobs> Writeback<B> {
                 // CPU before advancing the dense frontier. Help it once before
                 // paying for the locked fallback.
                 let prior_acknowledgement = self.acknowledged.load(Ordering::SeqCst);
-                let acknowledged =
-                    self.advance_atomic_acknowledgement(prior_acknowledgement, u64::MAX);
+                let acknowledged = self
+                    .advance_atomic_acknowledgement(prior_acknowledgement, self.maximum_sequence);
                 if acknowledged > prior_acknowledgement {
                     self.notify_activity_waiter();
                     self.notify_acknowledgement_waiters();
@@ -4160,7 +4273,8 @@ impl<B: Blobs> Writeback<B> {
             };
             let safe_maximum = health_barrier
                 .map(|barrier| barrier.get().saturating_sub(1))
-                .unwrap_or(u64::MAX);
+                .unwrap_or(self.maximum_sequence)
+                .min(self.maximum_sequence);
             let prior_acknowledgement = self.acknowledged.load(Ordering::Acquire);
             if prior_acknowledgement < safe_maximum {
                 let acknowledged =
@@ -4250,6 +4364,10 @@ impl<B: Blobs> Writeback<B> {
             self.publication_shift,
             &self.native_arena,
             self.publication_index(sequence),
+            self.native_holder_pool
+                .as_ref()
+                .expect("writeback always owns a native holder pool")
+                .timestamp_origin(),
         );
         state.queue[offset].state = SlotState::Prepared { pinned: true };
         // Publish the slow-path marker while holding `state`, before installing
@@ -4305,8 +4423,12 @@ impl<B: Blobs> Writeback<B> {
         };
         let health_maximum = health_barrier
             .map(|barrier| barrier.get().saturating_sub(1))
-            .unwrap_or(u64::MAX);
-        let sweep_maximum = max_sequence.unwrap_or(u64::MAX).min(health_maximum);
+            .unwrap_or(self.maximum_sequence)
+            .min(self.maximum_sequence);
+        let sweep_maximum = max_sequence
+            .unwrap_or(self.maximum_sequence)
+            .min(health_maximum)
+            .min(self.maximum_sequence);
         let prior_acknowledgement = self.acknowledged.load(Ordering::Acquire);
         let acknowledged =
             self.advance_atomic_acknowledgement(prior_acknowledgement, sweep_maximum);
@@ -4527,8 +4649,8 @@ impl<B: Blobs> Writeback<B> {
                 })?;
             if view.mako_timestamp() != holder.mako_timestamp() {
                 return Err(RecordError::WrongMakoTimestamp {
-                    expected: holder.mako_timestamp().get(),
-                    record: view.mako_timestamp().get(),
+                    expected: holder.mako_timestamp(),
+                    record: view.mako_timestamp(),
                 });
             }
             return holder.materialize(
@@ -4804,7 +4926,8 @@ impl<B: Blobs> Writeback<B> {
         producer: &SingleProducerState,
         sequence: NonZeroU64,
     ) -> bool {
-        producer.accept_raw(sequence);
+        let sequence = self.external_sequence_or_abort(sequence);
+        producer.accept(sequence);
         if self.unhealthy.load(Ordering::Acquire) {
             return false;
         }
@@ -4837,8 +4960,7 @@ impl<B: Blobs> Writeback<B> {
         mako_timestamp: MakoTimestamp,
         exact_record_bytes: NonZeroU32,
     ) -> Result<CommitSeq, ResolveError> {
-        let sequence =
-            CommitSeq::new(sequence.get()).expect("a native holder reservation is always nonzero");
+        let sequence = self.external_sequence_or_abort(sequence);
         // SAFETY: the unique producer already accepted this exact generation;
         // the unhealthy fast-path observation requires retaining it in the
         // established cell/state protocol rather than advancing the ACK tail.
@@ -4878,8 +5000,7 @@ impl<B: Blobs> Writeback<B> {
         exact_record_bytes: NonZeroU32,
     ) -> Result<CommitSeq, ResolveError> {
         producer.accept_raw(sequence);
-        let sequence =
-            CommitSeq::new(sequence.get()).expect("a native holder reservation is always nonzero");
+        let sequence = self.external_sequence_or_abort(sequence);
         // SAFETY: this method's accepted-generation contract retains the exact
         // turn while the locked fail-stop state becomes visible.
         unsafe {
@@ -4911,8 +5032,7 @@ impl<B: Blobs> Writeback<B> {
         sequence: NonZeroU64,
     ) -> Result<CommitSeq, ResolveError> {
         producer.accept_raw(sequence);
-        let sequence =
-            CommitSeq::new(sequence.get()).expect("a native holder reservation is always nonzero");
+        let sequence = self.external_sequence_or_abort(sequence);
         // SAFETY: the retained unique generation is being made visible only
         // to the locked pin path; no replayable holder descriptor is attached.
         unsafe {
@@ -5178,7 +5298,7 @@ impl<'a, B: Blobs> NativeArenaPermit<'a, B> {
         })
     }
 
-    /// Adopt a sequence already assigned by native's packed order state.
+    /// Adopt a sequence already assigned by native's cache-order state.
     ///
     /// The exact publication cell is intentionally acquired here, after the
     /// gate has been released. This keeps arena/cache-line acquisition out of
@@ -5189,7 +5309,8 @@ impl<'a, B: Blobs> NativeArenaPermit<'a, B> {
     ///
     /// # Safety
     ///
-    /// `sequence` must be the exact successor assigned by native's packed CAS
+    /// `sequence` must be the exact successor assigned by native's independent
+    /// cache-sequence atomic
     /// while this LocalDb held its immutable Concurrent claim. This permit must
     /// still own its pre-commit capacity claim, and native must not serialize
     /// into the returned target before this call completes.
@@ -5203,8 +5324,7 @@ impl<'a, B: Blobs> NativeArenaPermit<'a, B> {
             // during unwinding would leave a permanent queue hole.
             std::process::abort();
         }
-        // `sequence` is nonzero by type, so this conversion cannot fail.
-        let sequence = CommitSeq::new(sequence.get()).unwrap_or_else(|| std::process::abort());
+        let sequence = self.owner.external_sequence_or_abort(sequence);
         let publication = self.owner.publication_cell(sequence);
         // SAFETY: the native-assigned sequence consumes this permit's unique
         // occupancy claim. Distinct live assignments cannot alias one ring
@@ -5217,7 +5337,7 @@ impl<'a, B: Blobs> NativeArenaPermit<'a, B> {
             )
         };
         self.owner.notify_descriptor_waiters();
-        if sequence.get() == u64::MAX {
+        if sequence.get() == self.owner.maximum_sequence {
             self.owner.capacity_available.notify_all();
         }
         let block = self.owner.publication_index(sequence);
@@ -5242,8 +5362,8 @@ impl<'a, B: Blobs> NativeArenaPermit<'a, B> {
     /// Adopt one generation which native already changed from FREE to BOUND.
     ///
     /// This is the callback-free counterpart of
-    /// [`Self::bind_externally_ordered`]. Native assigned the dense sequence
-    /// with its packed pair CAS, acquired the exact publication cell, and
+    /// [`Self::bind_externally_ordered`]. Native assigned the physical sequence,
+    /// acquired the exact publication cell, and
     /// selected either the matching arena address or deferred holder before
     /// completing the record. Rust only transfers this permit's occupancy
     /// ownership into the ordinary bound-reservation RAII state. The retained
@@ -5268,7 +5388,7 @@ impl<'a, B: Blobs> NativeArenaPermit<'a, B> {
             // detached credit would leave a permanent unfillable hole.
             std::process::abort();
         }
-        let sequence = CommitSeq::new(sequence.get()).unwrap_or_else(|| std::process::abort());
+        let sequence = self.owner.external_sequence_or_abort(sequence);
         let publication = self.owner.publication_cell(sequence);
         let expected_bound = turn_token(sequence.get(), self.owner.publication_shift, TURN_BOUND);
         if publication.turn.load(Ordering::Acquire) != expected_bound {
@@ -5283,7 +5403,7 @@ impl<'a, B: Blobs> NativeArenaPermit<'a, B> {
         }
 
         self.owner.notify_descriptor_waiters();
-        if sequence.get() == u64::MAX {
+        if sequence.get() == self.owner.maximum_sequence {
             self.owner.capacity_available.notify_all();
         }
         let block = self.owner.publication_index(sequence);
@@ -5335,7 +5455,7 @@ impl<'a, B: Blobs> NativeArenaPermit<'a, B> {
         {
             std::process::abort();
         }
-        let sequence = CommitSeq::new(sequence.get()).unwrap_or_else(|| std::process::abort());
+        let sequence = self.owner.external_sequence_or_abort(sequence);
         let Some(caller_ack) = self.owner.trusted_caller_ack_by_worker.get(worker_slot) else {
             std::process::abort();
         };
@@ -5602,7 +5722,7 @@ impl<'a, B: Blobs> DetachedPermit<'a, B> {
         self.bind_inner(mako_timestamp)
     }
 
-    /// Adopt one dense sequence assigned by native's packed order state.
+    /// Adopt one physical sequence assigned by native's cache-order state.
     ///
     /// This is the general/oversized-record counterpart of
     /// [`NativeArenaPermit::bind_externally_ordered`]. Native has already
@@ -5612,7 +5732,7 @@ impl<'a, B: Blobs> DetachedPermit<'a, B> {
     /// # Safety
     ///
     /// `sequence` must be the exact successor assigned while native owned the
-    /// packed general-certification bit for this cache namespace. This permit
+    /// process HLC validation gate for this cache namespace. This permit
     /// must own one concurrent detached claim. The LocalDb mode claim must
     /// exclude every legacy Rust-side sequence allocator for this queue.
     pub(crate) unsafe fn bind_native_externally_ordered(
@@ -5626,9 +5746,9 @@ impl<'a, B: Blobs> DetachedPermit<'a, B> {
         if self.prepared.is_some() || self.native_buffer.is_none() {
             std::process::abort();
         }
-        let sequence = CommitSeq::new(sequence.get()).unwrap_or_else(|| std::process::abort());
+        let sequence = self.owner.external_sequence_or_abort(sequence);
         let publication = self.owner.publication_cell(sequence);
-        // SAFETY: native's packed allocator and this permit's unique occupancy
+        // SAFETY: native's cache-sequence allocator and this permit's unique occupancy
         // claim select a distinct live ring generation.
         unsafe {
             publication.publish_bound_preassigned(
@@ -5642,14 +5762,14 @@ impl<'a, B: Blobs> DetachedPermit<'a, B> {
         let native_buffer = self
             .native_buffer
             .take()
-            .map(|buffer| buffer.bind_arena(self.owner.publication_index(sequence)));
+            .map(|buffer| buffer.bind_arena(self.owner.publication_index(sequence)))
+            .expect("a native reservation retains its serialization buffer");
         self.owns_claim = false;
         BoundReservation {
             owner: self.owner,
             token: QueueToken::new(sequence),
             mako_timestamp,
-            legacy_prepared: None,
-            native_buffer,
+            payload: BoundPayload::Native(native_buffer),
             on_drop: DropAction::PinUnknown,
         }
     }
@@ -5685,14 +5805,18 @@ impl<'a, B: Blobs> DetachedPermit<'a, B> {
             .native_buffer
             .take()
             .map(|buffer| buffer.bind_arena(self.owner.publication_index(sequence)));
+        let payload = match (legacy_prepared, native_buffer) {
+            (Some(prepared), None) => BoundPayload::Legacy(prepared),
+            (None, Some(buffer)) => BoundPayload::Native(buffer),
+            _ => unreachable!("a detached permit has exactly one record representation"),
+        };
         self.owns_claim = false;
 
         Ok(BoundReservation {
             owner: self.owner,
             token: QueueToken::new(sequence),
             mako_timestamp,
-            legacy_prepared,
-            native_buffer,
+            payload,
             on_drop: DropAction::PinUnknown,
         })
     }
@@ -5713,14 +5837,25 @@ impl<B: Blobs> Drop for DetachedPermit<'_, B> {
 /// Dropping this handle pins its slot because Silo may already have installed
 /// the transaction. A definite native success must call [`Self::publish`]; an
 /// ambiguous return may call [`Self::pin_unknown`] explicitly or simply drop.
+enum BoundPayload {
+    /// Legacy and unit-test materialized write set, still awaiting its final
+    /// sequence/timestamp fields and checksum.
+    Legacy(Box<LegacyCommitRecord>),
+    /// Native serialization storage, still awaiting an exact completion
+    /// witness from the synchronous terminal.
+    Native(NativeRecordBuffer),
+    /// The record has been attached to its queue cell.
+    Attached,
+}
+
 pub struct BoundReservation<'a, B: Blobs> {
     owner: &'a Writeback<B>,
     token: QueueToken,
     mako_timestamp: MakoTimestamp,
-    /// Legacy/unit-test write-set representation. Production native
-    /// reservations carry only a null pointer here.
-    legacy_prepared: Option<Box<LegacyCommitRecord>>,
-    native_buffer: Option<NativeRecordBuffer>,
+    // The legacy and native representations are mutually exclusive. Keeping
+    // them in one enum offsets the eight bytes added when the old scalar
+    // timestamp became the full 16-byte HLC, preserving a 64-byte handle.
+    payload: BoundPayload,
     on_drop: DropAction,
 }
 
@@ -5742,14 +5877,9 @@ impl<B: Blobs> BoundReservation<'_, B> {
     /// may attach the buffer as initialized only after an exact completion
     /// witness.
     pub(crate) unsafe fn native_record_target(&mut self) -> CommitRecordTarget {
-        assert!(
-            self.legacy_prepared.is_none(),
-            "only a native Prepared reservation has raw target storage"
-        );
-        let buffer = self
-            .native_buffer
-            .as_mut()
-            .expect("a native reservation owns one serialization buffer");
+        let BoundPayload::Native(buffer) = &mut self.payload else {
+            panic!("only a native Prepared reservation has raw target storage");
+        };
         let exact_record_bytes = buffer.exact_record_bytes();
         let bytes = buffer.target(&self.owner.native_arena);
         let sequence = NonZeroU64::new(self.token.sequence().get())
@@ -5773,13 +5903,14 @@ impl<B: Blobs> BoundReservation<'_, B> {
     /// verifies those fields before replay.
     pub(crate) unsafe fn attach_written_native_record(&mut self) {
         assert!(
-            self.legacy_prepared.is_none(),
+            matches!(&self.payload, BoundPayload::Native(_)),
             "only a native Prepared reservation accepts target bytes"
         );
-        let buffer = self
-            .native_buffer
-            .take()
-            .expect("a native reservation owns one serialization buffer");
+        let BoundPayload::Native(buffer) =
+            std::mem::replace(&mut self.payload, BoundPayload::Attached)
+        else {
+            unreachable!("the native payload was checked immediately above");
+        };
         match buffer {
             NativeRecordBuffer::Arena {
                 block,
@@ -5812,12 +5943,15 @@ impl<B: Blobs> BoundReservation<'_, B> {
     /// background replay path.
     pub(crate) fn attach_native_record(&mut self, encoded: Vec<u8>) {
         assert!(
-            self.legacy_prepared.is_none(),
+            matches!(&self.payload, BoundPayload::Native(_)),
             "a materialized reservation cannot accept native bytes"
         );
-        if let Some(buffer) = self.native_buffer.take() {
-            self.owner.recycle_native_buffer(buffer);
-        }
+        let BoundPayload::Native(buffer) =
+            std::mem::replace(&mut self.payload, BoundPayload::Attached)
+        else {
+            unreachable!("the native payload was checked immediately above");
+        };
+        self.owner.recycle_native_buffer(buffer);
         let record =
             NativeCommitRecord::from_native(self.token.sequence(), self.mako_timestamp, encoded);
         self.owner
@@ -5842,7 +5976,7 @@ impl<B: Blobs> BoundReservation<'_, B> {
         );
         self.finalize_once();
         assert!(
-            self.native_buffer.is_none(),
+            matches!(&self.payload, BoundPayload::Attached),
             "native bytes need an exact completion witness before publication"
         );
         let result = self.owner.resolve(self.token, Resolution::Publish);
@@ -5868,12 +6002,14 @@ impl<B: Blobs> BoundReservation<'_, B> {
         );
         self.on_drop = DropAction::PinUnknown;
         self.finalize_once();
-        let native_buffer = self.native_buffer.take();
+        let payload = std::mem::replace(&mut self.payload, BoundPayload::Attached);
         let result = self.owner.resolve(self.token, Resolution::PinUnknown);
-        if let Some(buffer) = native_buffer {
+        if let BoundPayload::Native(buffer) = payload {
             // A bound-but-unwritten record has no replayable bytes. Its queue
             // slot remains pinned, while the unused storage can be reused.
             self.owner.recycle_native_buffer(buffer);
+        } else {
+            debug_assert!(matches!(payload, BoundPayload::Attached));
         }
         result?;
         self.on_drop = DropAction::Done;
@@ -5886,8 +6022,13 @@ impl<B: Blobs> BoundReservation<'_, B> {
     /// scan and moves the record into this reservation, so neither publication
     /// nor fail-stop retention can fail because of allocation.
     fn finalize_once(&mut self) {
-        let Some(mut prepared) = self.legacy_prepared.take() else {
+        if !matches!(&self.payload, BoundPayload::Legacy(_)) {
             return;
+        }
+        let BoundPayload::Legacy(mut prepared) =
+            std::mem::replace(&mut self.payload, BoundPayload::Attached)
+        else {
+            unreachable!("the legacy payload was checked immediately above");
         };
         prepared.finalize_in_place(self.token.sequence(), self.mako_timestamp);
         self.owner
@@ -5908,7 +6049,8 @@ impl<B: Blobs> Drop for BoundReservation<'_, B> {
         let _ = catch_unwind(AssertUnwindSafe(|| {
             let _ = self.owner.resolve(self.token, resolution);
         }));
-        if let Some(buffer) = self.native_buffer.take() {
+        let payload = std::mem::replace(&mut self.payload, BoundPayload::Attached);
+        if let BoundPayload::Native(buffer) = payload {
             let _ = catch_unwind(AssertUnwindSafe(|| {
                 self.owner.recycle_native_buffer(buffer)
             }));
@@ -6119,7 +6261,7 @@ mod tests {
             .unwrap()
             .bind(
                 CommitSeq::new(sequence).unwrap(),
-                MakoTimestamp::new(timestamp).unwrap(),
+                mako_timestamp_of(timestamp),
             )
             .finalize()
     }
@@ -6594,6 +6736,39 @@ mod tests {
         }
     }
 
+    #[test]
+    fn construction_and_spsc_capacity_stop_at_the_legacy_lane_limit() {
+        assert!(matches!(
+            Writeback::new(MemBlobs::new(), LOG_LOCAL_MASK, config(1, 0)),
+            Err(ConfigError::SequenceExhausted)
+        ));
+
+        let writeback =
+            Writeback::new_single(MemBlobs::new(), LOG_LOCAL_MASK - 1, config(8, 0)).unwrap();
+        let producer = writeback.single_producer_state();
+        assert_eq!(
+            producer.capacity_limit.load(Ordering::Relaxed),
+            LOG_LOCAL_MASK,
+            "logical capacity must not extend beyond the physical lane"
+        );
+        let record_bytes = NonZeroU32::new(1).unwrap();
+        let final_sequence = unsafe {
+            writeback
+                .try_reserve_native_holder_single(&producer, record_bytes)
+                .expect("the final lane-local position remains available")
+        };
+        assert_eq!(final_sequence.get(), LOG_LOCAL_MASK);
+        producer.accept_raw(final_sequence);
+        assert!(
+            unsafe { writeback.try_reserve_native_holder_single(&producer, record_bytes) }
+                .is_none()
+        );
+        assert!(matches!(
+            writeback.reserve_native_holder_single_slow(&producer, record_bytes),
+            Err(ReserveError::SequenceExhausted)
+        ));
+    }
+
     fn batch_config(
         capacity: usize,
         max_batch_records: usize,
@@ -6938,8 +7113,8 @@ mod tests {
         ));
         let mut reservation = permit.bind_native(mako_timestamp_of(2)).unwrap();
         assert!(matches!(
-            reservation.native_buffer,
-            Some(NativeRecordBuffer::Arena { .. })
+            &reservation.payload,
+            BoundPayload::Native(NativeRecordBuffer::Arena { .. })
         ));
         fill_checked_out_native_buffer(&mut reservation, &small);
         assert_eq!(reservation.publish().unwrap().get(), 2);
@@ -6953,8 +7128,8 @@ mod tests {
             .unwrap();
         let mut reservation = permit.bind_native(mako_timestamp_of(3)).unwrap();
         assert!(matches!(
-            reservation.native_buffer,
-            Some(NativeRecordBuffer::Owned(_))
+            &reservation.payload,
+            BoundPayload::Native(NativeRecordBuffer::Owned(_))
         ));
         fill_checked_out_native_buffer(&mut reservation, &oversized);
         assert_eq!(reservation.publish().unwrap().get(), 3);
@@ -7115,11 +7290,11 @@ mod tests {
     #[test]
     fn single_producer_preserves_sequence_exhaustion() {
         let backend = Arc::new(MemBlobs::new());
-        let writeback = Writeback::new_single(backend, u64::MAX - 2, config(1, 0)).unwrap();
+        let writeback = Writeback::new_single(backend, LOG_LOCAL_MASK - 2, config(1, 0)).unwrap();
         let producer = writeback.single_producer_state();
         let mutations = vec![put(b"tail", b"value")];
 
-        for (sequence, timestamp) in [(u64::MAX - 1, 1), (u64::MAX, 2)] {
+        for (sequence, timestamp) in [(LOG_LOCAL_MASK - 1, 1), (LOG_LOCAL_MASK, 2)] {
             assert_eq!(
                 publish_fast_arena_single(&writeback, &producer, timestamp, mutations.clone(),)
                     .get(),
@@ -7681,7 +7856,7 @@ mod tests {
     #[test]
     fn externally_serialized_arena_bind_preserves_sequence_exhaustion() {
         let backend = Arc::new(MemBlobs::new());
-        let writeback = Writeback::new(backend, u64::MAX - 2, config(2, 0)).unwrap();
+        let writeback = Writeback::new(backend, LOG_LOCAL_MASK - 2, config(2, 0)).unwrap();
         let mutations = vec![put(b"tail", b"value")];
         let exact_record_bytes = record_encoded_len(mutations.clone());
         let mut first_permit = writeback
@@ -7705,11 +7880,11 @@ mod tests {
                 .bind_externally_serialized(mako_timestamp_of(2))
                 .unwrap()
         };
-        assert_eq!(first.sequence().get(), u64::MAX - 1);
-        assert_eq!(second.sequence().get(), u64::MAX);
+        assert_eq!(first.sequence().get(), LOG_LOCAL_MASK - 1);
+        assert_eq!(second.sequence().get(), LOG_LOCAL_MASK);
 
-        let first_encoded = encoded_native_record(u64::MAX - 1, 1, mutations.clone());
-        let second_encoded = encoded_native_record(u64::MAX, 2, mutations);
+        let first_encoded = encoded_native_record(LOG_LOCAL_MASK - 1, 1, mutations.clone());
+        let second_encoded = encoded_native_record(LOG_LOCAL_MASK, 2, mutations);
         fill_fast_arena_reservation(&mut first, &first_encoded);
         fill_fast_arena_reservation(&mut second, &second_encoded);
         // SAFETY: both exact targets were initialized completely above.
@@ -7737,10 +7912,9 @@ mod tests {
         reservation: &mut BoundReservation<'_, B>,
         encoded: &[u8],
     ) {
-        let buffer = reservation
-            .native_buffer
-            .as_mut()
-            .expect("test native reservation owns a checked-out buffer");
+        let BoundPayload::Native(buffer) = &mut reservation.payload else {
+            panic!("test native reservation owns a checked-out buffer");
+        };
         assert_eq!(buffer.exact_record_bytes(), encoded.len());
         let destination = buffer.target(&reservation.owner.native_arena);
         // SAFETY: the reservation uniquely owns an exact writable extent, and
@@ -7795,7 +7969,8 @@ mod tests {
     }
 
     fn mako_timestamp_of(raw: u32) -> MakoTimestamp {
-        MakoTimestamp::new(raw).expect("test Mako timestamps are nonzero")
+        MakoTimestamp::new(1_700_000_000_000_000, raw, 1)
+            .expect("test Mako timestamps have a nonzero origin")
     }
 
     fn wait_until_ready<B: Blobs>(writeback: &Writeback<B>, raw_sequence: u64) {
@@ -7936,10 +8111,15 @@ mod tests {
         ));
         assert_eq!(writeback.free_len(), 3);
         let mut reservation = permit.bind_native(mako_timestamp_of(201)).unwrap();
-        let first_block = match reservation.native_buffer.as_ref().unwrap() {
-            NativeRecordBuffer::Arena { block, .. } => *block,
-            NativeRecordBuffer::UnboundArena { .. } | NativeRecordBuffer::Owned(_) => {
+        let first_block = match &reservation.payload {
+            BoundPayload::Native(NativeRecordBuffer::Arena { block, .. }) => *block,
+            BoundPayload::Native(
+                NativeRecordBuffer::UnboundArena { .. } | NativeRecordBuffer::Owned(_),
+            ) => {
                 panic!("small record missed its sequence-indexed arena block")
+            }
+            BoundPayload::Legacy(_) | BoundPayload::Attached => {
+                panic!("small native reservation lost its checked-out buffer")
             }
         };
         assert_eq!(
@@ -8712,8 +8892,8 @@ mod tests {
         ));
         assert_eq!(
             writeback.applied_watermark(),
-            AppliedWatermark::recovered(2, Some(mako_timestamp_of(101))),
-            "the timestamp names the frontier record; it is not a numeric maximum"
+            AppliedWatermark::recovered(2, Some(mako_timestamp_of(202))),
+            "the applied timestamp remains the greatest applied value"
         );
     }
 
@@ -9352,7 +9532,9 @@ mod tests {
     fn concurrent_capacity_claim_ignores_stale_legacy_tail_and_drop_releases() {
         let backend = Arc::new(MemBlobs::new());
         let writeback = Writeback::new(backend, 0, config(1, 0)).unwrap();
-        writeback.next_bound.store(u64::MAX, Ordering::Release);
+        writeback
+            .next_bound
+            .store(LOG_LOCAL_MASK, Ordering::Release);
         let exact_record_bytes = record_encoded_len(vec![put(b"packed", b"capacity")]);
 
         let permit = writeback
@@ -9377,7 +9559,7 @@ mod tests {
     fn retiring_final_legacy_sequence_wakes_waiter_which_rejects_at_bind() {
         let backend = Arc::new(MemBlobs::new());
         let writeback = Arc::new(
-            Writeback::new(backend, u64::MAX - 1, config(1, 0))
+            Writeback::new(backend, LOG_LOCAL_MASK - 1, config(1, 0))
                 .expect("the final sequence remains available"),
         );
         let final_permit = writeback.reserve(vec![put(b"final", b"value")]).unwrap();
@@ -9400,7 +9582,7 @@ mod tests {
         assert!(result_rx.recv_timeout(Duration::from_millis(30)).is_err());
 
         let mut final_reservation = bind(final_permit, 82);
-        assert_eq!(final_reservation.sequence().get(), u64::MAX);
+        assert_eq!(final_reservation.sequence().get(), LOG_LOCAL_MASK);
         final_reservation.publish().unwrap();
         assert!(matches!(
             writeback.process_front(),
@@ -9411,7 +9593,7 @@ mod tests {
             "the capacity waiter did not reach legacy tail exhaustion"
         );
         waiter.join().unwrap();
-        assert_eq!(writeback.applied_sequence(), u64::MAX);
+        assert_eq!(writeback.applied_sequence(), LOG_LOCAL_MASK);
         assert_eq!(writeback.occupied.load(), 0);
     }
 

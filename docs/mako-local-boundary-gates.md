@@ -12,8 +12,35 @@ The all-green records below are historical evidence for the exact candidates
 they name. Subsequent closure work and the native-record/bounded-batching
 rewrite changed the implementation and therefore require a fresh validation
 record; the old PASS rows must not be read as results for the current source.
-The ABI intentionally continues to report revision 0 until a separate
-promotion action.
+Those historical candidates reported ABI revision 0. The current timestamp
+cutover reports revision 1. Its functional verification and combined timestamp
+mutation campaign have passed. The performance sweep and canonical all-in-one
+hook CI gate remain pending. Nothing in the old PASS rows is evidence for the
+revision-1 binary or record layouts.
+
+## Current revision-1 verification status
+
+The completed revision-1 functional verification recorded these results:
+
+- The native suite passed 123 of 123 tests.
+- `mako-cache` passed 159 unit tests, 23 integration tests, and three doctests.
+- The native-backed `mako-local` library, integration, and documentation suites
+  passed. The fake-ABI suites also passed.
+- `mako-history` passed 25 application tests and 12 base transaction-oracle
+  tests.
+- The release Cargo check passed.
+- The strict native fingerprint, symbol, C11, and C++ conformance gates passed.
+
+The combined timestamp mutation campaign killed all 12 mutants, with zero
+survivors and zero harness errors. The first full run killed 11 and exposed a
+weak oracle in
+`recovery_advances_mako_timestamp_past_the_recovered_maximum`. The test was
+strengthened with a future but representable HLC, and the focused rerun killed
+`missing-recovery-clock-floor`. The source-integrity check matched before and
+after the campaign.
+
+This is functional and mutation verification, not final acceptance. The
+performance sweep and canonical all-in-one hook CI gate remain pending.
 
 ## Historical Milestone 1 closure status
 
@@ -296,7 +323,12 @@ Machine-readable transcripts and the wrapper-tax summary are retained beneath
 `build_item4/mako-local-overhead-artifacts/`. Absolute throughput is diagnostic
 only.
 
-## Phase 1F cache correctness gate
+## Current Phase 1F cache correctness gate
+
+This section defines the revision-1 gate. It is not a completed acceptance
+record. Functional and mutation verification have passed, while the performance
+sweep and canonical all-in-one hook CI gate remain pending. The dated results
+later in this document belong only to their named pre-HLC candidates.
 
 The cache cleanup matrix keeps the native and safe-wrapper surfaces distinct.
 The raw native ABI exercises all five injected cleanup boundaries: begin,
@@ -309,31 +341,35 @@ scenario: safe Rust aborts an active transaction before destroy, while a
 terminal commit makes the facade inactive before destroy. The raw ABI test is
 the executable coverage for that lower-level seam.
 
-Fresh-process crash coverage has ten production-default write-path points and
-all sixteen points in the hook-enabled profile. Eight recovery/replay points
-are interrupted on two consecutive fresh-process restarts. These tests prove
-whole-record cache publication and recovery behavior around the native and
-black-box RocksDB calls; they do not interrupt RocksDB internals or claim an
+The revision-1 gate requires ten production-default fresh-process write-path
+points and all sixteen points in the hook-enabled profile. It interrupts eight
+recovery and replay points on two consecutive fresh-process restarts. These
+tests cover whole-record cache publication and recovery around the native and
+black-box RocksDB calls. They do not interrupt RocksDB internals or claim an
 unflushed tail survives.
 
 The `mako-history` application checker always runs the transaction oracle
-first. It then requires one global logical clock, constrains serialization by
-dense `CacheSeq` order, derives canonical final same-key/RYW mutations, and
-checks exact backend batches, retries, frontiers, visible/backend states,
-wait barriers, and pinned unknown suffixes. Real cache histories exercise a
-three-transaction asynchronous backlog/reopen path and concurrent disjoint
-commits where a later transaction reaches Ready first but cannot acknowledge
-until the earlier transaction closes the dense prefix. The backend transcript
-is decoded through the production record reader and compared independently
-with the actual `BlobOp` batch. Deliberate decoded-batch divergence must turn
-the same checker path red; partial materialization is rejected earlier by
-transcript decoding.
+first. It assigns a dense projected sequence to application attempts and public
+frontiers. That projection is aggregate bookkeeping, not a physical
+cross-lane `CacheSeq`. The checker separately decodes physical record IDs and
+checks lane-local batch density. It constrains serialization by the full
+committed-write `MakoTimestamp` tuple, derives canonical final same-key and RYW
+mutations, and checks exact backend batches, retries, frontiers, visible and
+backend states, wait barriers, and pinned unknown suffixes. Real cache histories
+exercise a three-transaction asynchronous backlog and reopen path plus
+concurrent worker-lane publication. A same-key regression deliberately puts
+physical ingestion in the opposite order from HLC serialization and requires
+both visible and backend state to retain the newer timestamp's value. The
+backend transcript is decoded through the production record reader, including
+each record's exact timestamp, and compared independently with the actual
+`BlobOp` batch. Deliberate decoded-batch divergence must turn the same checker
+path red; partial materialization is rejected earlier by transcript decoding.
 
-The hook gate also proves that detached bind performs exactly zero allocations
-or frees while a live allocator tripwire detects an injected allocation, and
-that the exact native `MakoTimestamp` reaches both the persisted record and the
-applied frontier. Recovery records the exact replay sequence and requires
-`[1, 2, 3]` before exposure.
+The revision-1 hook gate must prove that detached bind performs exactly zero
+allocations or frees while a live allocator tripwire detects an injected
+allocation. It must also prove that the exact native `MakoTimestamp` reaches
+both the persisted record and the applied frontier. Recovery records the exact
+replay sequence and requires `[1, 2, 3]` before exposure.
 
 The mutation runner is deliberately outside the production crate path. It
 copies the crate and lockfile into a fresh workspace for the baseline and each
@@ -343,7 +379,7 @@ one designated exact failure signature. Its twelve contracts cover corrupted
 native-record put replay, early capacity discharge, hook allocation, cancellation
 gaps, missing/premature Ready, an unpinned unknown, partial/reordered/duplicate
 replay, a wrong Mako timestamp, and a missing recovery clock floor. It verifies
-that the original source hash tree is unchanged and removes every temporary
+that the original source hash tree is unchanged and must remove every temporary
 workspace before returning success.
 
 Throughout this gate, *applied* means that the ordered atomic RocksDB batch
@@ -360,6 +396,9 @@ RocksDB WAL tail. Neither the applied watermark nor the Phase 1F crash matrix
 claims that such a tail is durable.
 
 ## Validation record
+
+This is the historical ABI-revision-0 validation record. It does not cover the
+current HLC source.
 
 Item 4 was accepted only after every row below passed from the same candidate
 source state. No failure was hidden by a new or ad hoc sanitizer suppression.
@@ -384,10 +423,13 @@ Toolchains: Clang 21.1.8; Rust/Cargo 1.97.1; pinned Miri and Rust TSan
 | Required-native boundary suite | `cmake --build build_item4 --target run_mako_local_rust_tests` | `PASS` | History 12/12, fake-ABI 7/7, required-native 41 + 1 ignored, docs 4/4; 32-symbol allowlist and hook-off fingerprint `0fdce521373a479105052c672e2b2fd2f66a780abb07177a50c56d3b2596b11a` verified; logs `sha256:3b1a2425ec172b399290052a5d15f7a57acc6a32fa6ee587a8878b8a711c650a` and `sha256:c1c0d4882e485d7b43c02e3b6f48e237482ce8d6fca431e47155c4cd6c7adfc3`. |
 
 This all-green record completes Item 4 and the executable Phase 1A-1D boundary
-gate only. The ABI remains revision 0 until the separate design/freeze work is
-explicitly accepted.
+gate only. At that validation date the ABI remained revision 0. The later HLC
+timestamp cutover intentionally advances the current contract to revision 1.
 
 ## Item 5 (Phase 1F) validation record
+
+This is the historical pre-HLC Item 5 record. It does not cover the current
+HLC source.
 
 Item 5 was accepted from implementation commit
 `5546062af6955ce4b7928ade1da00e16c803580c`.

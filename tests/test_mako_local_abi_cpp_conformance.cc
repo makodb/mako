@@ -1,4 +1,4 @@
-// C++23 revision-0 conformance and link probe for mako_local_abi.h.
+// C++23 ABI-v1 conformance and link probe for mako_local_abi.h.
 
 #include "mako/storage/mako_local_abi.h"
 
@@ -15,7 +15,7 @@
   static_assert(std::same_as<decltype(name), expected_type>,                \
                 #name " changed type")
 
-MAKO_LOCAL_ASSERT_CONSTANT(MAKO_LOCAL_ABI_VERSION, std::uint32_t{0},
+MAKO_LOCAL_ASSERT_CONSTANT(MAKO_LOCAL_ABI_VERSION, std::uint32_t{1},
                            std::uint32_t);
 static_assert(std::string_view{MAKO_LOCAL_ENGINE_ID} ==
               "mako-local/sto-masstrans");
@@ -47,11 +47,15 @@ MAKO_LOCAL_ASSERT_CONSTANT(MAKO_LOCAL_TXN_ITEM_BUDGET, std::uint32_t{512},
                            std::uint32_t);
 MAKO_LOCAL_ASSERT_CONSTANT(MAKO_LOCAL_MAX_WORKERS, std::uint32_t{460},
                            std::uint32_t);
-MAKO_LOCAL_ASSERT_CONSTANT(
-    MAKO_LOCAL_MAX_MAKO_TIMESTAMP,
-    (std::numeric_limits<std::uint32_t>::max() - std::uint32_t{9}) /
-        std::uint32_t{10},
-    std::uint32_t);
+MAKO_LOCAL_ASSERT_CONSTANT(MAKO_TIMESTAMP_V1_PHYSICAL_UNIT_US,
+                           std::uint64_t{1000}, std::uint64_t);
+MAKO_LOCAL_ASSERT_CONSTANT(MAKO_TIMESTAMP_V1_PHYSICAL_MS_BITS,
+                           std::uint32_t{44}, std::uint32_t);
+MAKO_LOCAL_ASSERT_CONSTANT(MAKO_TIMESTAMP_V1_LOGICAL_BITS,
+                           std::uint32_t{19}, std::uint32_t);
+MAKO_LOCAL_ASSERT_CONSTANT(MAKO_TIMESTAMP_V1_LOGICAL_MAX,
+                           (std::uint32_t{1} << 19) - std::uint32_t{1},
+                           std::uint32_t);
 
 MAKO_LOCAL_ASSERT_CONSTANT(MAKO_LOCAL_SCAN_HAS_UPPER, std::uint32_t{1} << 0,
                            std::uint32_t);
@@ -189,6 +193,12 @@ static_assert(std::is_standard_layout_v<mako_local_scan_entry>);
 static_assert(std::is_trivially_copyable_v<mako_local_scan_entry>);
 static_assert(sizeof(mako_local_scan_entry) == sizeof(ExpectedScanEntryV0));
 static_assert(alignof(mako_local_scan_entry) == alignof(ExpectedScanEntryV0));
+static_assert(std::is_standard_layout_v<mako_timestamp_v1>);
+static_assert(std::is_trivially_copyable_v<mako_timestamp_v1>);
+static_assert(sizeof(mako_timestamp_v1) == 16);
+static_assert(offsetof(mako_timestamp_v1, physical_us) == 0);
+static_assert(offsetof(mako_timestamp_v1, logical) == 8);
+static_assert(offsetof(mako_timestamp_v1, origin) == 12);
 MAKO_LOCAL_ASSERT_MEMBER(mako_local_scan_entry, ExpectedScanEntryV0,
                          key_offset, std::uint32_t);
 MAKO_LOCAL_ASSERT_MEMBER(mako_local_scan_entry, ExpectedScanEntryV0,
@@ -200,9 +210,9 @@ MAKO_LOCAL_ASSERT_MEMBER(mako_local_scan_entry, ExpectedScanEntryV0,
 
 #undef MAKO_LOCAL_ASSERT_MEMBER
 
-using ExpectedPostValidateHook = int (*)(void *, std::uint32_t);
+using ExpectedPostValidateHook = int (*)(void *, const mako_timestamp_v1 *);
 using ExpectedTestCommitObserver = void (*)(void *, std::uint32_t,
-                                            std::uint32_t);
+                                            const mako_timestamp_v1 *);
 static_assert(std::same_as<mako_local_post_validate_hook,
                            ExpectedPostValidateHook>);
 static_assert(std::same_as<mako_local_test_commit_observer,
@@ -216,9 +226,12 @@ using ExpectedSizeQuery = std::size_t() noexcept;
 using ExpectedStatusString = const char *(int) noexcept;
 using ExpectedNoargStatus = int() noexcept;
 using ExpectedNoargU64 = std::uint64_t() noexcept;
+using ExpectedNoargU32 = std::uint32_t() noexcept;
 using ExpectedSetCommitObserver = int(mako_local_test_commit_observer,
                                       void *) noexcept;
 using ExpectedU32Status = int(std::uint32_t) noexcept;
+using ExpectedU64Status = int(std::uint64_t) noexcept;
+using ExpectedTimestampStatus = int(const mako_timestamp_v1 *) noexcept;
 using ExpectedDbOpen = int(mako_local_db **) noexcept;
 using ExpectedDbOpenWithOptions = int(const mako_local_db_options *,
                                       mako_local_db **) noexcept;
@@ -257,6 +270,7 @@ using ExpectedBytesFree = void(void *) noexcept;
 
 MAKO_LOCAL_ASSERT_FUNCTION(mako_local_abi_version, ExpectedAbiVersion);
 MAKO_LOCAL_ASSERT_FUNCTION(mako_local_feature_bits, ExpectedFeatureBits);
+MAKO_LOCAL_ASSERT_FUNCTION(mako_local_timestamp_origin, ExpectedNoargU32);
 MAKO_LOCAL_ASSERT_FUNCTION(mako_local_engine_id, ExpectedEngineId);
 MAKO_LOCAL_ASSERT_FUNCTION(mako_local_build_fingerprint,
                            ExpectedBuildFingerprint);
@@ -279,7 +293,11 @@ MAKO_LOCAL_ASSERT_FUNCTION(mako_local_test_arm_cleanup_failure,
 MAKO_LOCAL_ASSERT_FUNCTION(mako_local_test_clear_cleanup_failure,
                            ExpectedNoargStatus);
 MAKO_LOCAL_ASSERT_FUNCTION(mako_local_advance_mako_timestamp_past,
-                           ExpectedU32Status);
+                           ExpectedTimestampStatus);
+MAKO_LOCAL_ASSERT_FUNCTION(mako_local_test_set_timestamp_physical_ms,
+                           ExpectedU64Status);
+MAKO_LOCAL_ASSERT_FUNCTION(mako_local_test_clear_timestamp_physical_ms,
+                           ExpectedNoargStatus);
 MAKO_LOCAL_ASSERT_FUNCTION(mako_local_db_open, ExpectedDbOpen);
 MAKO_LOCAL_ASSERT_FUNCTION(mako_local_db_open_with_options,
                            ExpectedDbOpenWithOptions);
