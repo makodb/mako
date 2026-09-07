@@ -133,6 +133,64 @@ the crate needs the same per-module allow line that generated
 
 ---
 
+## Q1c. `pub trait` is NOT a drop-in for a pure-virtual class — verified
+
+I was about to recommend converting the six pure-virtual interfaces
+(`LogStorage` 18 methods, `SnapshotManager` 10, `TransportBase` 9,
+`DispatcherBase` 8, `SnapshotReader`/`SnapshotWriter` 4 each) as `pub trait`,
+on the basis that a trait renders byte-identically and so cannot change
+behaviour. **I probed it, and that basis is false.** Do not act on the
+"byte-identical" claim.
+
+For `SnapshotWriter`, the transpiler emits:
+
+```cpp
+class SnapshotWriter {
+public:
+    virtual ~SnapshotWriter() noexcept(false) {}      // <-- (1)
+    virtual bool Write(const int8_t* data, size_t size) = 0;
+    virtual bool Finalize() = 0;
+    virtual bool Abort() = 0;
+    virtual size_t GetOffset() const = 0;
+    SnapshotWriter(const SnapshotWriter&) = delete;   // <-- (2)
+    SnapshotWriter& operator=(const SnapshotWriter&) = delete;
+    SnapshotWriter(SnapshotWriter&&) = delete;
+    SnapshotWriter& operator=(SnapshotWriter&&) = delete;
+protected:
+    SnapshotWriter() = default;
+};
+template <class U> class SnapshotWriterAdapter;                // <-- (3)
+template <class U> class SnapshotWriterAdapterRef;
+template <class U> class SnapshotWriterAdapterRefMut;
+```
+
+Three differences from the incumbent at `snapshot_manager.hpp:119`:
+
+1. **Exception specification changes.** Incumbent is
+   `virtual ~SnapshotWriter() = default;`, which is implicitly
+   `noexcept(true)`. The generated form is `noexcept(false)`. That flips
+   `std::is_nothrow_destructible_v` and relaxes a guarantee derived classes
+   were compiled under — `FileSnapshotWriter::~FileSnapshotWriter() override`
+   at `file_snapshot_manager.hpp:307` is one of them.
+2. **Deleted copy and move are added.** The incumbent declares none.
+3. **Three adapter templates are added** that do not exist today.
+
+Whether those actually break the build I did **not** test — that needs a
+production build of a live storage interface, which I would not do unattended.
+But "no behaviour can change because it renders identically" is not true, so
+the trait route needs either an emitter option to match the incumbent
+destructor, or an accepted, reviewed ABI delta.
+
+There is also a mechanical cost: rustc rejects the C++ method names
+(`fn Write` -> `error: trait method should have a snake case name`), so each
+trait needs `#[allow(non_snake_case)]`, exactly like the enums.
+
+**Recommendation, revised:** do not convert any of the six interfaces until
+(1) or an emitter fix is settled. This is now a bigger blocker than Q1b for
+the trait route specifically.
+
+---
+
 ## Q2. `ReplicatedDBOp` — what should decoding do with an invalid byte?
 
 `replicated_db.h:28` is a `#[repr(u8)]` enum with `PUT = 1, DELETE = 2,
@@ -224,19 +282,30 @@ annoying the next fifty are. I'd keep both for now and revisit at Stage 3.
 
 ---
 
-## Q7. May I run the third RaftLab arm?
+## Q7. ~~May I run the third RaftLab arm?~~ — DONE, AND IT PASSES
 
-There are three persistence modes, not two: unset, `MAKO_RAFT_PERSISTENCE=1`,
-and `MAKO_RAFT_PERSISTENCE=1` **plus** `MAKO_RAFT_ASYNC_PERSISTENCE=1`
-(`server.cc:2463`). I have only ever run the first two (55 + 50 = 105 tests).
-The doc's "155 cases" is 55 + 50 + 50, so the async arm is the missing third.
+Ran it. `MAKO_RAFT_PERSISTENCE=1 MAKO_RAFT_ASYNC_PERSISTENCE=1` genuinely
+enters async mode (`[RAFT-PERSISTENCE] Initializing LogStorage ... (mode=async)`)
+and passes: **50 tests, 0 failed, exit 0**.
 
-I'll run it as part of tonight's verification unless it turns out to be
-long-running or flaky. Flagging it because **if it fails, I won't know whether
-that's my change or a pre-existing condition** — nobody has run it in this
-checkout.
+That closes the "155 cases" arithmetic empirically:
 
----
+| arm | tests |
+|---|---|
+| BASIC (no persistence) | 55 |
+| PERSISTENCE, sync | 50 |
+| PERSISTENCE, **async** | 50 |
+| **total** | **155** |
+
+Matches the figure in `docs/migration/rustycpp/raft-rust-migration.md` exactly.
+The full documented matrix now passes on this host; it had never been run here
+before tonight.
+
+Caveat that still stands, per Q8: all three arms run with the log on `/tmp`,
+which is tmpfs, so `fsync()` never reaches stable storage. The async arm in
+particular is the one whose whole point is deferring durable acknowledgement —
+so passing it on tmpfs proves the *bookkeeping* (memory vs durable acks,
+`securedLogIndex_` advancement) but not the *durability*.
 
 ## Q8. Is `/tmp` acceptable for the persistence tests, or should durability be tested on real disk?
 

@@ -311,3 +311,20 @@
  (4.3) rather than taking more scalar predicates.
 
 ================================================================================
+
+--------------------------------------------------------------------------------
+ ADDENDUM: the full 155-case matrix now passes
+--------------------------------------------------------------------------------
+
+   BASIC (no persistence)                        55 passed / 0 failed
+   PERSISTENCE  MAKO_RAFT_PERSISTENCE=1          50 passed / 0 failed
+   ASYNC        + MAKO_RAFT_ASYNC_PERSISTENCE=1  50 passed / 0 failed
+                                                ---
+                                                155
+
+ Matches the "155-case RaftLab" figure in
+ docs/migration/rustycpp/raft-rust-migration.md. The async arm had never
+ been run in this checkout before. All three run with the log on /tmp,
+ which is tmpfs, so fsync reaches no stable storage -- the async arm proves
+ the memory-vs-durable BOOKKEEPING, not durability. See
+ docs/stage2_open_questions.md Q8.
