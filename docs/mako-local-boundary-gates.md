@@ -82,9 +82,22 @@ detached permits plus prepared/ready in-memory records and applies producer
 backpressure before native commit.
 
 Exactly one recovered cache namespace per process is a Milestone 1 deployment
-precondition, not a mutex-enforced feature. A future multi-namespace supervisor
-must discover and scan every backend and floor the shared timestamp authority
-before any namespace admits work.
+rule. Native serializes claims with a process-wide mutex and returns `BUSY` to
+a second live cache facade. A future multi-namespace supervisor must discover
+and scan every backend and floor the shared timestamp authority before any
+namespace admits work.
+
+The current release boundary is a library, not a network-server cutover. A
+service host must finish open and recovery before readiness, use a bounded pool
+of long-lived workers, and stop admission before calling the owning
+`Db::close()`. Runtime health is reported by `Db::status()`: active replay
+retries or an over-threshold backend call are degraded, while a stopped writer
+or a latched fail-stop error is unhealthy. `close()` drains acknowledged work
+but does not add a WAL sync; `Drop` is only best-effort cleanup. RocksDB calls
+cannot be safely cancelled in process, so the supervisor must impose a bounded
+shutdown deadline. A standalone local Rust host is a follow-up. Integrating the
+existing distributed C++ server belongs to Milestone 2 because that server has
+different native-table and worker-lifetime ownership.
 
 The historical Milestone 1 acceptance row is complete for its named candidate.
 The linked record retains the

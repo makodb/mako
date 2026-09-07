@@ -604,13 +604,12 @@ nonopaque row version.
 - One cache exclusively owns the backend and its tagged keyspace. External
   writers, a second cache writer, or distributed writers would bypass the
   shared apply coordinator and invalidate last-writer-wins materialization.
-- Phase 1 admits exactly one recovered cache namespace per process. This is a
-  deployment precondition, not a mutex-enforced runtime feature. Native tables
-  and the timestamp authority are process-wide, so independently opening a
-  second pre-existing backend after work begins cannot retroactively preserve
-  history. Supporting multiple caches requires a supervisor that identifies
-  every namespace, scans every backend, and floors the shared timestamp clock
-  before admitting any transaction to any of them.
+- Phase 1 admits exactly one recovered cache namespace per process. Native
+  serializes claims with a process-wide mutex and returns `BUSY` to a second
+  live cache facade. Native tables and the timestamp authority are still
+  process-wide, so supporting multiple caches requires a supervisor that
+  identifies every namespace, scans every backend, and floors the shared
+  timestamp clock before admitting any transaction to any of them.
 - Before log pruning or distributed backend writers, store the winning
   timestamp with each materialized value and tombstone. A RocksDB merge
   operator or an equivalent conditional-update envelope must compare that

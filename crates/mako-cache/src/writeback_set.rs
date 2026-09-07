@@ -11,8 +11,8 @@ use mrx_core::Blobs;
 use crate::record::{worker_log_base, LOG_LOCAL_MASK};
 use crate::runtime::RuntimeTarget;
 use crate::writeback::{
-    AppliedWatermark, ApplyCoordinator, ApplyError, ConfigError, ProcessOutcome,
-    SingleProducerState, Writeback, WritebackConfig,
+    AppliedWatermark, ApplyCoordinator, ApplyError, ApplyTelemetrySnapshot, ConfigError,
+    ProcessOutcome, SingleProducerState, Writeback, WritebackConfig,
 };
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -358,6 +358,14 @@ impl<B: Blobs + 'static> WritebackSet<B> {
             .sum()
     }
 
+    pub(crate) fn apply_telemetry(&self) -> ApplyTelemetrySnapshot {
+        self.coordinator.telemetry_snapshot()
+    }
+
+    pub(crate) fn record_runtime_loop_panic(&self, message: String) {
+        self.coordinator.record_runtime_loop_panic(message);
+    }
+
     pub(crate) fn reclaim_credits_for_shutdown(&self) {
         for lane in self.initialized_lanes() {
             lane.writeback
@@ -437,6 +445,10 @@ impl<B: Blobs + 'static> RuntimeTarget for WritebackSet<B> {
 
     fn wake_waiters(&self) {
         WritebackSet::wake_waiters(self)
+    }
+
+    fn record_runtime_loop_panic(&self, message: String) {
+        WritebackSet::record_runtime_loop_panic(self, message)
     }
 }
 
@@ -529,6 +541,70 @@ mod tests {
 
         fn snapshot(&self) -> std::collections::BTreeMap<Vec<u8>, Vec<u8>> {
             self.inner.snapshot()
+        }
+    }
+
+    struct ApplyThenErrorOnceBlobs {
+        inner: MemBlobs,
+        error_once: AtomicBool,
+        attempted_batches: Mutex<Vec<Vec<CommitSeq>>>,
+    }
+
+    impl ApplyThenErrorOnceBlobs {
+        fn new() -> Self {
+            Self {
+                inner: MemBlobs::new(),
+                error_once: AtomicBool::new(true),
+                attempted_batches: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn attempted_batches(&self) -> Vec<Vec<CommitSeq>> {
+            self.attempted_batches
+                .lock()
+                .expect("attempt history poisoned")
+                .clone()
+        }
+
+        fn snapshot(&self) -> std::collections::BTreeMap<Vec<u8>, Vec<u8>> {
+            self.inner.snapshot()
+        }
+    }
+
+    impl Blobs for ApplyThenErrorOnceBlobs {
+        fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, BlobError> {
+            self.inner.get(key)
+        }
+
+        fn write_batch(&self, operations: &[BlobOp<'_>]) -> Result<(), BlobError> {
+            let sequences = operations
+                .iter()
+                .filter_map(|operation| {
+                    let key = match operation {
+                        BlobOp::Put { key, .. } | BlobOp::Delete { key } => *key,
+                    };
+                    match crate::record::classify_backend_key(key) {
+                        BackendKey::Log(sequence) => Some(sequence),
+                        BackendKey::Data { .. } | BackendKey::Foreign => None,
+                    }
+                })
+                .collect();
+            self.attempted_batches
+                .lock()
+                .expect("attempt history poisoned")
+                .push(sequences);
+
+            self.inner.write_batch(operations)?;
+            if self.error_once.swap(false, Ordering::SeqCst) {
+                return Err(BlobError(
+                    "injected error after applying backend batch".to_owned(),
+                ));
+            }
+            Ok(())
+        }
+
+        fn for_each_key(&self, f: &mut dyn FnMut(&[u8])) -> Result<(), BlobError> {
+            self.inner.for_each_key(f)
         }
     }
 
@@ -722,6 +798,114 @@ mod tests {
                 .count(),
             3
         );
+    }
+
+    #[test]
+    fn apply_then_error_retries_exact_physical_batch_before_same_local_other_lane() {
+        let backend = Arc::new(ApplyThenErrorOnceBlobs::new());
+        let set = WritebackSet::new(
+            Arc::clone(&backend),
+            RecoveredWriteback::empty(),
+            WritebackConfig::default(),
+            true,
+        )
+        .unwrap();
+        let newer_lane = set.lane(0).unwrap();
+        let older_lane = set.lane(1).unwrap();
+
+        let newer = newer_lane
+            .writeback()
+            .reserve_single(newer_lane.producer(), vec![put(b"shared", b"new")])
+            .unwrap()
+            .bind(timestamp(20))
+            .unwrap()
+            .publish()
+            .unwrap();
+        let older = older_lane
+            .writeback()
+            .reserve_single(older_lane.producer(), vec![put(b"shared", b"old")])
+            .unwrap()
+            .bind(timestamp(10))
+            .unwrap()
+            .publish()
+            .unwrap();
+
+        assert_eq!(crate::record::split_log_sequence(newer), Some((Some(0), 1)));
+        assert_eq!(crate::record::split_log_sequence(older), Some((Some(1), 1)));
+        assert_ne!(
+            newer, older,
+            "retry identity must include the physical worker-lane tag"
+        );
+
+        assert!(matches!(
+            newer_lane.writeback().process_front(),
+            ProcessOutcome::BackendFailed { sequence, .. } if sequence == newer
+        ));
+        assert_eq!(backend.attempted_batches(), vec![vec![newer]]);
+
+        let value_after_error = backend.snapshot().into_iter().find_map(|(key, value)| {
+            matches!(
+                crate::record::classify_backend_key(&key),
+                BackendKey::Data { key, .. } if key == b"shared"
+            )
+            .then_some(value)
+        });
+        assert_eq!(
+            value_after_error.as_deref(),
+            Some(&b"new"[..]),
+            "the injected error must model an already-applied atomic batch"
+        );
+
+        // Both records have lane-local position one. The other lane still
+        // cannot pass because retry identity uses their full physical IDs.
+        assert!(matches!(
+            older_lane.writeback().process_front(),
+            ProcessOutcome::Blocked
+        ));
+        assert_eq!(backend.attempted_batches(), vec![vec![newer]]);
+
+        // A suffix published after the error must not be folded into the
+        // required retry batch.
+        let suffix = newer_lane
+            .writeback()
+            .reserve_single(newer_lane.producer(), vec![put(b"suffix", b"value")])
+            .unwrap()
+            .bind(timestamp(30))
+            .unwrap()
+            .publish()
+            .unwrap();
+        assert!(matches!(
+            newer_lane.writeback().process_front(),
+            ProcessOutcome::Advanced
+        ));
+        assert_eq!(backend.attempted_batches(), vec![vec![newer], vec![newer]]);
+        assert_eq!(newer_lane.writeback().applied_sequence(), newer.get());
+        assert_eq!(newer_lane.writeback().queue_len(), 1);
+
+        // Once the exact retry succeeds, normal cross-lane replay resumes.
+        // Timestamp arbitration keeps the older same-key value from replacing
+        // the already-applied newer value.
+        assert!(matches!(
+            older_lane.writeback().process_front(),
+            ProcessOutcome::Advanced
+        ));
+        assert!(matches!(
+            newer_lane.writeback().process_front(),
+            ProcessOutcome::Advanced
+        ));
+        assert_eq!(
+            backend.attempted_batches(),
+            vec![vec![newer], vec![newer], vec![older], vec![suffix]]
+        );
+        let final_value = backend.snapshot().into_iter().find_map(|(key, value)| {
+            matches!(
+                crate::record::classify_backend_key(&key),
+                BackendKey::Data { key, .. } if key == b"shared"
+            )
+            .then_some(value)
+        });
+        assert_eq!(final_value.as_deref(), Some(&b"new"[..]));
+        assert_eq!(set.applied_watermark().sequence(), 3);
     }
 
     #[test]

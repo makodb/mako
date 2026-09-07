@@ -1234,6 +1234,52 @@ Code must never cast one watermark into the other. A historical snapshot at a
 Mako timestamp requires retained versions or a proven materialization
 watermark. RocksDB's latest internal sequence number alone is insufficient.
 
+#### Single-machine service lifecycle
+
+The cache is a library component, not yet a production network server. A host
+must complete `Db::open` and recovery before it opens a listener or reports
+ready. Startup failure leaves the service unready. The legacy distributed C++
+server cannot host this cache unchanged: it owns a different native table
+facade and uses transient request threads, while the local ABI requires one
+fixed set of long-lived STO workers. A standalone Rust host is the next
+integration step. Connecting this cache to distributed routing, 2PC, and
+replication remains a later milestone.
+
+While serving, the host polls `Db::status()` and interprets it as follows:
+
+- `Healthy` permits normal admission.
+- `Degraded` means that the writer is retrying a record or backend batch, or
+  that a backend call exceeded `backend_stall_threshold`. The host should
+  alert with `last_failure` and shed or stop admission before the bounded
+  writeback queue fills.
+- `Unhealthy` means that the writer stopped or the cache latched a fail-stop
+  error. The host must stop write admission immediately.
+
+The status counters are cumulative diagnostics. An active retry or stalled
+backend call determines current degradation; `last_failure` intentionally
+remains populated after recovery. Operators should also track the difference
+between `acknowledged_transactions` and `applied_watermark.sequence()` together
+with `queued_transactions`. Those values show volatile writeback backlog, not
+disk-sync progress. A live RocksDB `write_batch` call cannot safely be
+cancelled in process. If it hangs, status remains readable and exposes its
+monotonic age, but an external supervisor must enforce a shutdown deadline and
+terminate the process if the call never returns. Such termination can lose the
+acknowledged, unapplied tail under this milestone's durability contract.
+
+Clean shutdown has a strict order:
+
+1. Stop admission and close the listener.
+2. Join all request workers and release every shared `Arc<Db>` clone.
+3. Call the owning `Db::close()` and treat an error as a failed shutdown.
+
+`close()` drains every acknowledged lane snapshot and joins the writer. It
+does not add a RocksDB flush or WAL sync. The default `Wal` mode still uses
+`sync=false`. `Drop` is best-effort cleanup and is not the service lifecycle
+protocol. Deployments must use a bounded pool of long-lived workers because
+native worker registrations are process-lifetime and capped. They must also
+keep exactly one cache namespace and one exclusive backend/keyspace in each
+process.
+
 #### Required invariants
 
 The implementation and review checklist uses these invariants:

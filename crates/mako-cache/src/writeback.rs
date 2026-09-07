@@ -22,7 +22,7 @@
 //! prefix to the shared timestamp coordinator in one atomic backend batch.
 
 use std::cell::UnsafeCell;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::fmt;
 use std::mem::{ManuallyDrop, MaybeUninit};
 use std::num::{NonZeroU32, NonZeroU64};
@@ -30,7 +30,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use mako_local::{CommitRecordTarget, MakoTimestamp, TrustedOnePutHolderPool};
 use mrx_core::{BlobError, Blobs};
@@ -247,14 +247,164 @@ pub struct AppliedWatermark {
 struct ApplyCoordinatorState {
     latest: HashMap<Vec<u8>, MakoTimestamp>,
     /// Exact physical batch whose backend outcome became uncertain when the
-    /// backend unwound. No other lane may apply until this batch is retried to
-    /// a normal success, because its materialized mutations may already be
-    /// visible even though the in-memory timestamp index did not advance.
+    /// backend returned an error or unwound. No other lane may apply until
+    /// this batch is retried to a normal success, because its materialized
+    /// mutations may already be visible even though the in-memory timestamp
+    /// index did not advance. `CommitSeq` includes the worker-lane tag, so
+    /// equal lane-local positions cannot alias one another here. A queued
+    /// sequence keeps ownership of its immutable record and ring generation
+    /// until retirement, which makes the sequence vector a complete identity.
     retry_batch: Option<Vec<CommitSeq>>,
 }
 
 pub(crate) struct ApplyCoordinator {
     state: Mutex<ApplyCoordinatorState>,
+    telemetry: ApplyTelemetry,
+}
+
+struct ApplyTelemetry {
+    epoch: Instant,
+    state: Mutex<ApplyTelemetryState>,
+}
+
+#[derive(Debug, Default)]
+struct ApplyTelemetryState {
+    pending_retry: Option<CommitSeq>,
+    in_progress: Option<(CommitSeq, u64)>,
+    active_retryable_failures: BTreeSet<CommitSeq>,
+    backend_failures: u64,
+    record_failures: u64,
+    runtime_loop_panics: u64,
+    last_failure: Option<crate::WritebackFailure>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ApplyTelemetrySnapshot {
+    pub(crate) pending_retry: Option<CommitSeq>,
+    pub(crate) in_progress: Option<(CommitSeq, Duration)>,
+    pub(crate) active_retryable_failures: Vec<CommitSeq>,
+    pub(crate) backend_failures: u64,
+    pub(crate) record_failures: u64,
+    pub(crate) runtime_loop_panics: u64,
+    pub(crate) last_failure: Option<crate::WritebackFailure>,
+}
+
+impl ApplyTelemetry {
+    fn new() -> Self {
+        Self {
+            epoch: Instant::now(),
+            state: Mutex::new(ApplyTelemetryState::default()),
+        }
+    }
+
+    fn elapsed_nanos(&self) -> u64 {
+        self.epoch
+            .elapsed()
+            .as_nanos()
+            .min(u128::from(u64::MAX - 1)) as u64
+    }
+
+    fn begin_backend_write(&self, sequence: CommitSeq) {
+        let started = self.elapsed_nanos().saturating_add(1);
+        lock_recover(&self.state).in_progress = Some((sequence, started));
+    }
+
+    fn finish_backend_success(&self, sequences: &[CommitSeq]) {
+        let mut state = lock_recover(&self.state);
+        state.pending_retry = None;
+        state.in_progress = None;
+        for sequence in sequences {
+            state.active_retryable_failures.remove(sequence);
+        }
+    }
+
+    fn finish_backend_failure(&self, sequence: CommitSeq, error: &BlobError) {
+        let message = error.to_string();
+        let mut state = lock_recover(&self.state);
+        state.pending_retry = Some(sequence);
+        state.in_progress = None;
+        Self::record_failure_locked(
+            &mut state,
+            crate::WritebackFailureKind::Backend,
+            Some(sequence),
+            message,
+            true,
+        );
+    }
+
+    fn record_backend_prewrite_failure(&self, sequence: CommitSeq, error: &BlobError) {
+        let message = error.to_string();
+        let mut state = lock_recover(&self.state);
+        debug_assert!(state.in_progress.is_none());
+        Self::record_failure_locked(
+            &mut state,
+            crate::WritebackFailureKind::Backend,
+            Some(sequence),
+            message,
+            true,
+        );
+    }
+
+    fn record_failure(
+        &self,
+        kind: crate::WritebackFailureKind,
+        sequence: Option<CommitSeq>,
+        message: String,
+        retryable: bool,
+    ) {
+        let mut state = lock_recover(&self.state);
+        Self::record_failure_locked(&mut state, kind, sequence, message, retryable);
+    }
+
+    fn record_failure_locked(
+        state: &mut ApplyTelemetryState,
+        kind: crate::WritebackFailureKind,
+        sequence: Option<CommitSeq>,
+        message: String,
+        retryable: bool,
+    ) {
+        match kind {
+            crate::WritebackFailureKind::Backend => {
+                state.backend_failures = state.backend_failures.saturating_add(1);
+            }
+            crate::WritebackFailureKind::Record => {
+                state.record_failures = state.record_failures.saturating_add(1);
+            }
+            crate::WritebackFailureKind::RuntimeLoopPanic => {
+                state.runtime_loop_panics = state.runtime_loop_panics.saturating_add(1);
+            }
+        }
+        if let Some(sequence) = sequence {
+            if retryable {
+                state.active_retryable_failures.insert(sequence);
+            } else {
+                state.active_retryable_failures.remove(&sequence);
+            }
+        }
+        state.last_failure = Some(crate::WritebackFailure {
+            kind,
+            sequence,
+            message,
+        });
+    }
+
+    fn snapshot(&self) -> ApplyTelemetrySnapshot {
+        let elapsed_nanos = self.elapsed_nanos();
+        let state = lock_recover(&self.state);
+        let in_progress = state.in_progress.map(|(sequence, started)| {
+            let elapsed = elapsed_nanos.saturating_sub(started.saturating_sub(1));
+            (sequence, Duration::from_nanos(elapsed))
+        });
+        ApplyTelemetrySnapshot {
+            pending_retry: state.pending_retry,
+            in_progress,
+            active_retryable_failures: state.active_retryable_failures.iter().copied().collect(),
+            backend_failures: state.backend_failures,
+            record_failures: state.record_failures,
+            runtime_loop_panics: state.runtime_loop_panics,
+            last_failure: state.last_failure.clone(),
+        }
+    }
 }
 
 enum CoordinatorApplyOutcome {
@@ -275,6 +425,7 @@ impl ApplyCoordinator {
                 latest: HashMap::new(),
                 retry_batch: None,
             }),
+            telemetry: ApplyTelemetry::new(),
         }
     }
 
@@ -284,7 +435,30 @@ impl ApplyCoordinator {
                 latest,
                 retry_batch: None,
             }),
+            telemetry: ApplyTelemetry::new(),
         }
+    }
+
+    pub(crate) fn telemetry_snapshot(&self) -> ApplyTelemetrySnapshot {
+        self.telemetry.snapshot()
+    }
+
+    pub(crate) fn record_runtime_loop_panic(&self, message: String) {
+        self.telemetry.record_failure(
+            crate::WritebackFailureKind::RuntimeLoopPanic,
+            None,
+            message,
+            false,
+        );
+    }
+
+    fn record_record_failure(&self, sequence: CommitSeq, error: &RecordError, retryable: bool) {
+        self.telemetry.record_failure(
+            crate::WritebackFailureKind::Record,
+            Some(sequence),
+            error.to_string(),
+            retryable,
+        );
     }
 
     fn capture_requirement(&self, first_sequence: CommitSeq) -> CoordinatorCaptureRequirement {
@@ -310,6 +484,10 @@ impl ApplyCoordinator {
             .iter()
             .map(crate::record::CommitRecord::sequence)
             .collect::<Vec<_>>();
+        let first_sequence = batch_sequences
+            .first()
+            .copied()
+            .expect("the apply coordinator receives a nonempty batch");
         if let Some(required) = state.retry_batch.as_deref() {
             if required != batch_sequences.as_slice() {
                 return Ok(CoordinatorApplyOutcome::BlockedByRetry);
@@ -321,9 +499,12 @@ impl ApplyCoordinator {
             .iter()
             .map(|record| record.mutations().len())
             .sum::<usize>();
-        winners
-            .try_reserve(mutation_count)
-            .map_err(|error| BlobError(format!("cannot stage timestamp winners: {error}")))?;
+        winners.try_reserve(mutation_count).map_err(|error| {
+            let error = BlobError(format!("cannot stage timestamp winners: {error}"));
+            self.telemetry
+                .record_backend_prewrite_failure(first_sequence, &error);
+            error
+        })?;
 
         for record in records {
             let timestamp = record.mako_timestamp();
@@ -347,23 +528,35 @@ impl ApplyCoordinator {
             .keys()
             .filter(|key| !state.latest.contains_key(**key))
             .count();
-        state
-            .latest
-            .try_reserve(new_keys)
-            .map_err(|error| BlobError(format!("cannot grow timestamp index: {error}")))?;
+        state.latest.try_reserve(new_keys).map_err(|error| {
+            let error = BlobError(format!("cannot grow timestamp index: {error}"));
+            self.telemetry
+                .record_backend_prewrite_failure(first_sequence, &error);
+            error
+        })?;
 
         let mut updates = Vec::<(Vec<u8>, MakoTimestamp)>::new();
-        updates
-            .try_reserve_exact(winners.len())
-            .map_err(|error| BlobError(format!("cannot stage timestamp updates: {error}")))?;
-        let operation_count = records
-            .len()
-            .checked_add(winners.len())
-            .ok_or_else(|| BlobError("writeback operation count overflow".to_owned()))?;
+        updates.try_reserve_exact(winners.len()).map_err(|error| {
+            let error = BlobError(format!("cannot stage timestamp updates: {error}"));
+            self.telemetry
+                .record_backend_prewrite_failure(first_sequence, &error);
+            error
+        })?;
+        let operation_count = records.len().checked_add(winners.len()).ok_or_else(|| {
+            let error = BlobError("writeback operation count overflow".to_owned());
+            self.telemetry
+                .record_backend_prewrite_failure(first_sequence, &error);
+            error
+        })?;
         let mut operations = Vec::new();
         operations
             .try_reserve_exact(operation_count)
-            .map_err(|error| BlobError(format!("cannot stage backend batch: {error}")))?;
+            .map_err(|error| {
+                let error = BlobError(format!("cannot stage backend batch: {error}"));
+                self.telemetry
+                    .record_backend_prewrite_failure(first_sequence, &error);
+                error
+            })?;
 
         for record in records {
             record.append_log_op(&mut operations);
@@ -389,6 +582,7 @@ impl ApplyCoordinator {
         }
         debug_assert!(winners.is_empty());
 
+        self.telemetry.begin_backend_write(first_sequence);
         let result = catch_unwind(AssertUnwindSafe(|| backend.write_batch(&operations)));
         match result {
             Ok(Ok(())) => {
@@ -397,16 +591,31 @@ impl ApplyCoordinator {
                     state.latest.insert(key, timestamp);
                 }
                 state.retry_batch = None;
+                self.telemetry.finish_backend_success(&batch_sequences);
                 Ok(CoordinatorApplyOutcome::Applied)
             }
-            Ok(Err(error)) => Err(error),
+            Ok(Err(error)) => {
+                // `Blobs` promises atomic batches, but an error does not prove
+                // whether that atomic batch landed. Keep the identical batch
+                // ahead of every other lane until one retry returns success.
+                // Reapplying Put/Delete operations under the same physical log
+                // IDs is idempotent and then lets `latest` advance exactly once.
+                if state.retry_batch.is_none() {
+                    state.retry_batch = Some(batch_sequences);
+                }
+                self.telemetry
+                    .finish_backend_failure(first_sequence, &error);
+                Err(error)
+            }
             Err(_) => {
                 if state.retry_batch.is_none() {
                     state.retry_batch = Some(batch_sequences);
                 }
-                Err(BlobError(
-                    "backend panicked with an uncertain atomic-batch outcome".to_owned(),
-                ))
+                let error =
+                    BlobError("backend panicked with an uncertain atomic-batch outcome".to_owned());
+                self.telemetry
+                    .finish_backend_failure(first_sequence, &error);
+                Err(error)
             }
         }
     }
@@ -4670,7 +4879,10 @@ impl<B: Blobs> Writeback<B> {
     /// Allocation failure is transient: the Ready slot remains untouched and
     /// a future background or synchronous consumer may retry materialization.
     fn record_failure_outcome(&self, sequence: CommitSeq, error: RecordError) -> ProcessOutcome {
-        if error == RecordError::AllocationFailed {
+        let retryable = error == RecordError::AllocationFailed;
+        self.apply_coordinator
+            .record_record_failure(sequence, &error, retryable);
+        if retryable {
             return ProcessOutcome::RecordFailed { sequence, error };
         }
 
@@ -4765,6 +4977,14 @@ impl<B: Blobs> Writeback<B> {
 
     pub(crate) fn local_health_error(&self) -> Option<ApplyError> {
         lock_recover(&self.state).health_error()
+    }
+
+    pub(crate) fn apply_telemetry(&self) -> ApplyTelemetrySnapshot {
+        self.apply_coordinator.telemetry_snapshot()
+    }
+
+    pub(crate) fn record_runtime_loop_panic(&self, message: String) {
+        self.apply_coordinator.record_runtime_loop_panic(message);
     }
 
     pub(crate) fn wake_waiters(&self) {
@@ -8721,6 +8941,18 @@ mod tests {
         assert_eq!(writeback.applied_sequence(), 1);
         assert_eq!(writeback.queue_len(), 1);
         assert!(writeback.ensure_no_unknown().is_ok());
+        let telemetry = writeback.apply_telemetry();
+        assert_eq!(telemetry.pending_retry, None);
+        assert_eq!(telemetry.active_retryable_failures, vec![later]);
+        assert_eq!(telemetry.record_failures, 1);
+        assert!(matches!(
+            telemetry.last_failure,
+            Some(crate::WritebackFailure {
+                kind: crate::WritebackFailureKind::Record,
+                sequence: Some(sequence),
+                ..
+            }) if sequence == later
+        ));
 
         drop(failure);
         assert!(matches!(
@@ -8729,6 +8961,9 @@ mod tests {
         ));
         assert_eq!(writeback.applied_sequence(), 2);
         assert_eq!(backend.batch_count(), 2);
+        let telemetry = writeback.apply_telemetry();
+        assert!(telemetry.active_retryable_failures.is_empty());
+        assert_eq!(telemetry.record_failures, 1);
     }
 
     #[test]
@@ -9849,5 +10084,53 @@ mod tests {
         ));
         assert_eq!(writeback.backend().inner.batch_count(), 1);
         assert_eq!(writeback.applied_sequence(), 1);
+    }
+
+    #[test]
+    fn telemetry_transitions_are_coherent_across_same_sequence_retry() {
+        let telemetry = ApplyTelemetry::new();
+        let sequence = CommitSeq::new(7).unwrap();
+
+        telemetry.begin_backend_write(sequence);
+        let applying = telemetry.snapshot();
+        assert_eq!(
+            applying.in_progress.map(|(sequence, _)| sequence),
+            Some(sequence)
+        );
+        assert_eq!(applying.pending_retry, None);
+        assert!(applying.active_retryable_failures.is_empty());
+
+        let error = BlobError("uncertain backend outcome".to_owned());
+        telemetry.finish_backend_failure(sequence, &error);
+        let failed = telemetry.snapshot();
+        assert!(failed.in_progress.is_none());
+        assert_eq!(failed.pending_retry, Some(sequence));
+        assert_eq!(failed.active_retryable_failures, vec![sequence]);
+        assert_eq!(failed.backend_failures, 1);
+        assert!(matches!(
+            failed.last_failure,
+            Some(crate::WritebackFailure {
+                kind: crate::WritebackFailureKind::Backend,
+                sequence: Some(failed_sequence),
+                ..
+            }) if failed_sequence == sequence
+        ));
+
+        telemetry.begin_backend_write(sequence);
+        let retrying = telemetry.snapshot();
+        assert_eq!(
+            retrying.in_progress.map(|(sequence, _)| sequence),
+            Some(sequence)
+        );
+        assert_eq!(retrying.pending_retry, Some(sequence));
+        assert_eq!(retrying.active_retryable_failures, vec![sequence]);
+
+        telemetry.finish_backend_success(&[sequence]);
+        let recovered = telemetry.snapshot();
+        assert!(recovered.in_progress.is_none());
+        assert_eq!(recovered.pending_retry, None);
+        assert!(recovered.active_retryable_failures.is_empty());
+        assert_eq!(recovered.backend_failures, 1);
+        assert!(recovered.last_failure.is_some());
     }
 }

@@ -8,7 +8,7 @@
 use std::fmt;
 use std::io;
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -26,6 +26,7 @@ pub(crate) trait RuntimeTarget: Send + Sync + 'static {
     fn ensure_no_unknown(&self) -> Result<(), ApplyError>;
     fn retry_delay(&self) -> Duration;
     fn wake_waiters(&self);
+    fn record_runtime_loop_panic(&self, message: String);
 }
 
 impl<B: Blobs + 'static> RuntimeTarget for Writeback<B> {
@@ -47,6 +48,10 @@ impl<B: Blobs + 'static> RuntimeTarget for Writeback<B> {
 
     fn wake_waiters(&self) {
         Writeback::wake_waiters(self)
+    }
+
+    fn record_runtime_loop_panic(&self, message: String) {
+        Writeback::record_runtime_loop_panic(self, message)
     }
 }
 
@@ -89,7 +94,47 @@ impl std::error::Error for RuntimeError {
 pub struct Runtime<T: RuntimeTarget> {
     writeback: Arc<T>,
     stop: Arc<AtomicBool>,
+    metrics: Arc<RuntimeMetrics>,
     thread: Option<JoinHandle<()>>,
+}
+
+#[derive(Debug, Default)]
+struct RuntimeMetrics {
+    backend_failures: AtomicU64,
+    record_failures: AtomicU64,
+    runtime_loop_panics: AtomicU64,
+    consecutive_failures: AtomicU64,
+}
+
+/// Point-in-time state of the background write-back consumer.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct RuntimeSnapshot {
+    pub(crate) running: bool,
+    pub(crate) backend_failures: u64,
+    pub(crate) record_failures: u64,
+    pub(crate) runtime_loop_panics: u64,
+    pub(crate) consecutive_failures: u64,
+}
+
+impl RuntimeMetrics {
+    fn backend_failed(&self) {
+        self.backend_failures.fetch_add(1, Ordering::Relaxed);
+        self.consecutive_failures.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_failed(&self) {
+        self.record_failures.fetch_add(1, Ordering::Relaxed);
+        self.consecutive_failures.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn runtime_loop_panicked(&self) {
+        self.runtime_loop_panics.fetch_add(1, Ordering::Relaxed);
+        self.consecutive_failures.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn made_progress(&self) {
+        self.consecutive_failures.store(0, Ordering::Relaxed);
+    }
 }
 
 impl<T: RuntimeTarget> Runtime<T> {
@@ -108,8 +153,10 @@ impl<T: RuntimeTarget> Runtime<T> {
     /// silently ignored.
     pub fn start_on_cpu(writeback: Arc<T>, cpu: Option<usize>) -> std::io::Result<Self> {
         let stop = Arc::new(AtomicBool::new(false));
+        let metrics = Arc::new(RuntimeMetrics::default());
         let worker_writeback = Arc::clone(&writeback);
         let worker_stop = Arc::clone(&stop);
+        let worker_metrics = Arc::clone(&metrics);
         let (started_tx, started_rx) = mpsc::sync_channel(0);
         let thread = std::thread::Builder::new()
             .name("mako-writeback".to_owned())
@@ -119,7 +166,7 @@ impl<T: RuntimeTarget> Runtime<T> {
                 if started_tx.send(affinity).is_err() || !should_run {
                     return;
                 }
-                run(worker_writeback, worker_stop);
+                run(worker_writeback, worker_stop, worker_metrics);
             })?;
 
         match started_rx.recv() {
@@ -139,8 +186,27 @@ impl<T: RuntimeTarget> Runtime<T> {
         Ok(Self {
             writeback,
             stop,
+            metrics,
             thread: Some(thread),
         })
+    }
+
+    /// Whether the background consumer thread has not stopped or unwound.
+    pub(crate) fn is_running(&self) -> bool {
+        self.thread
+            .as_ref()
+            .is_some_and(|thread| !thread.is_finished())
+    }
+
+    /// Read background-consumer liveness and retry counters.
+    pub(crate) fn snapshot(&self) -> RuntimeSnapshot {
+        RuntimeSnapshot {
+            running: self.is_running(),
+            backend_failures: self.metrics.backend_failures.load(Ordering::Relaxed),
+            record_failures: self.metrics.record_failures.load(Ordering::Relaxed),
+            runtime_loop_panics: self.metrics.runtime_loop_panics.load(Ordering::Relaxed),
+            consecutive_failures: self.metrics.consecutive_failures.load(Ordering::Relaxed),
+        }
     }
 
     /// Stop the worker and apply every captured lane acknowledgement snapshot.
@@ -222,19 +288,40 @@ impl<T: RuntimeTarget> Drop for Runtime<T> {
     }
 }
 
-fn run<T: RuntimeTarget>(writeback: Arc<T>, stop: Arc<AtomicBool>) {
+fn run<T: RuntimeTarget>(writeback: Arc<T>, stop: Arc<AtomicBool>, metrics: Arc<RuntimeMetrics>) {
     while !stop.load(Ordering::Acquire) {
         let outcome = catch_unwind(AssertUnwindSafe(|| writeback.process_front()));
         match outcome {
-            Ok(ProcessOutcome::Advanced) => {}
-            Ok(ProcessOutcome::BackendFailed { .. } | ProcessOutcome::RecordFailed { .. })
-            | Err(_) => {
+            Ok(ProcessOutcome::Advanced | ProcessOutcome::Idle) => {
+                metrics.made_progress();
+            }
+            Ok(ProcessOutcome::BackendFailed { .. }) => {
+                metrics.backend_failed();
                 wait_interruptibly(&stop, writeback.retry_delay());
             }
-            Ok(ProcessOutcome::Idle | ProcessOutcome::Blocked | ProcessOutcome::Pinned(_)) => {
+            Err(payload) => {
+                metrics.runtime_loop_panicked();
+                writeback.record_runtime_loop_panic(panic_message(payload.as_ref()));
+                wait_interruptibly(&stop, writeback.retry_delay());
+            }
+            Ok(ProcessOutcome::RecordFailed { .. }) => {
+                metrics.record_failed();
+                wait_interruptibly(&stop, writeback.retry_delay());
+            }
+            Ok(ProcessOutcome::Blocked | ProcessOutcome::Pinned(_)) => {
                 wait_interruptibly(&stop, IDLE_POLL);
             }
         }
+    }
+}
+
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else if let Some(message) = payload.downcast_ref::<&str>() {
+        (*message).to_owned()
+    } else {
+        "background runtime loop panicked with a non-string payload".to_owned()
     }
 }
 
@@ -290,6 +377,25 @@ mod tests {
     fn timestamp(raw: u32) -> MakoTimestamp {
         MakoTimestamp::new(1_700_000_000_000_000, raw, 1)
             .expect("test timestamps have a nonzero origin")
+    }
+
+    #[test]
+    fn retry_metrics_count_each_failure_class_and_clear_only_the_streak() {
+        let metrics = RuntimeMetrics::default();
+        metrics.backend_failed();
+        metrics.record_failed();
+        metrics.runtime_loop_panicked();
+
+        assert_eq!(metrics.backend_failures.load(Ordering::Relaxed), 1);
+        assert_eq!(metrics.record_failures.load(Ordering::Relaxed), 1);
+        assert_eq!(metrics.runtime_loop_panics.load(Ordering::Relaxed), 1);
+        assert_eq!(metrics.consecutive_failures.load(Ordering::Relaxed), 3);
+
+        metrics.made_progress();
+        assert_eq!(metrics.backend_failures.load(Ordering::Relaxed), 1);
+        assert_eq!(metrics.record_failures.load(Ordering::Relaxed), 1);
+        assert_eq!(metrics.runtime_loop_panics.load(Ordering::Relaxed), 1);
+        assert_eq!(metrics.consecutive_failures.load(Ordering::Relaxed), 0);
     }
 
     #[cfg(target_os = "linux")]
@@ -349,8 +455,10 @@ mod tests {
             .unwrap();
 
         let mut runtime = Runtime::start(Arc::clone(&writeback)).unwrap();
+        assert!(runtime.is_running());
         assert!(runtime.thread.is_some());
         assert_eq!(runtime.shutdown().unwrap(), 1);
+        assert!(!runtime.is_running());
         assert!(runtime.thread.is_none());
         assert_eq!(backend.batch_count(), 1);
         assert_eq!(backend.op_count(), 3);
@@ -442,17 +550,22 @@ mod tests {
 
         let mut runtime = Runtime::start(Arc::clone(&writeback)).unwrap();
         let attempt_deadline = Instant::now() + Duration::from_secs(1);
-        while backend.attempts.load(Ordering::SeqCst) == 0 {
+        while runtime.snapshot().backend_failures == 0 {
             assert!(
                 Instant::now() < attempt_deadline,
                 "background worker did not attempt the failing write"
             );
             std::thread::yield_now();
         }
+        let snapshot = runtime.snapshot();
+        assert!(snapshot.running);
+        assert!(snapshot.backend_failures >= 1);
+        assert!(snapshot.consecutive_failures >= 1);
         std::thread::sleep(Duration::from_millis(20));
 
         let abort_started = Instant::now();
         runtime.abort().unwrap();
+        assert!(!runtime.snapshot().running);
         assert!(
             abort_started.elapsed() < Duration::from_secs(1),
             "abort waited for the 30-second backend retry delay"
@@ -579,6 +692,11 @@ mod tests {
             "full queue did not apply backpressure"
         );
         assert_eq!(runtime.shutdown().unwrap(), 2);
+        let snapshot = runtime.snapshot();
+        assert!(!snapshot.running);
+        assert_eq!(snapshot.backend_failures, 1);
+        assert_eq!(snapshot.runtime_loop_panics, 0);
+        assert_eq!(snapshot.consecutive_failures, 0);
         assert_eq!(backend.attempts.load(Ordering::SeqCst), 3);
         assert_eq!(backend.inner.batch_count(), 2);
         assert_eq!(writeback.applied_sequence(), 2);
@@ -629,6 +747,7 @@ mod tests {
         let mut runtime = Runtime {
             writeback,
             stop: Arc::new(AtomicBool::new(false)),
+            metrics: Arc::new(RuntimeMetrics::default()),
             thread: Some(std::thread::spawn(|| panic!("injected worker panic"))),
         };
 

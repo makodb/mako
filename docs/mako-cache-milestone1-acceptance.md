@@ -101,6 +101,19 @@ deferred until materialized values and tombstones persist their winning
 timestamps. Recovery of an acknowledged but unapplied memory tail, and of an
 applied RocksDB tail not synced by `sync=false`, is also deferred.
 
+The release surface is a library component. A service host must recover the
+database before reporting ready, use a fixed pool of long-lived STO workers,
+and poll `Db::status()` while serving. `Degraded` identifies active retry or a
+backend call older than its stall threshold; `Unhealthy` identifies a stopped
+writer or latched fail-stop state. The host must stop admission before clean
+shutdown, join request workers, release all shared database owners, and call
+`Db::close()`. That call drains and joins the writer but does not fsync the WAL.
+If a RocksDB call never returns, status remains available, but an external
+supervisor must enforce the shutdown deadline. `Drop` is not the production
+shutdown protocol. No current network server embeds this component; a
+standalone local Rust host and the legacy distributed-server cutover remain
+later integration work.
+
 ## Historical pre-HLC per-worker validation
 
 For the frozen pre-HLC source, the production native ABI suite passed 91 tests

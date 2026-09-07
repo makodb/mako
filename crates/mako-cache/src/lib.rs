@@ -48,6 +48,7 @@ use std::path::Path;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Duration;
 
 use mako_local::{CommitDisposition, LocalDb};
 use mrx_core::{BlobError, Blobs};
@@ -329,6 +330,13 @@ pub struct CacheOptions {
     /// setting. Explicit affinity is currently supported on Linux, where an
     /// invalid or disallowed CPU makes cache startup fail.
     pub writeback_cpu: Option<usize>,
+    /// Elapsed backend-call time after which [`Cache::status`] reports
+    /// [`CacheHealth::Degraded`].
+    ///
+    /// The status still exposes every in-progress call and its monotonic age,
+    /// so a deployment may enforce a stricter external threshold. This timer
+    /// does not cancel RocksDB and does not change shutdown semantics.
+    pub backend_stall_threshold: Duration,
     /// Reject startup unless the native engine advertises conventional
     /// read-your-writes behavior.
     ///
@@ -363,6 +371,7 @@ impl Default for CacheOptions {
             foreground_mode: ForegroundMode::Concurrent,
             record_checksum: RecordChecksum::Crc32c,
             writeback_cpu: None,
+            backend_stall_threshold: Duration::from_secs(30),
             require_read_my_writes: true,
             isolation: Isolation::StrictSerializable,
         }
@@ -388,6 +397,138 @@ impl Default for Options {
             durability: Durability::Wal,
             cache: CacheOptions::default(),
         }
+    }
+}
+
+/// Operational health of one cache instance.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CacheHealth {
+    /// The writer is running with no active retry, fail-stop condition, or
+    /// backend call older than the configured stall threshold.
+    Healthy,
+    /// The background writer is running with an active retry or backend stall.
+    ///
+    /// Foreground commits may still acknowledge into the bounded volatile
+    /// queue. Capacity backpressure remains the admission limit while the
+    /// writer retries.
+    Degraded,
+    /// The background writer stopped, or write-back reached a permanent
+    /// fail-stop condition.
+    Unhealthy,
+}
+
+/// Stage which produced a retained write-back diagnostic.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WritebackFailureKind {
+    /// The backend-application pipeline returned an error.
+    ///
+    /// This includes backend panics, which the coordinator converts into a
+    /// normal error while retaining the exact batch for retry.
+    Backend,
+    /// A queued native record could not be materialized for replay.
+    Record,
+    /// The outer background runtime loop caught a panic outside the backend
+    /// panic boundary.
+    RuntimeLoopPanic,
+}
+
+/// Most recently observed write-back failure.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WritebackFailure {
+    /// Failure stage.
+    pub kind: WritebackFailureKind,
+    /// First physical cache sequence involved, when one is known.
+    pub sequence: Option<CommitSeq>,
+    /// Owned diagnostic text retained after the original error is returned.
+    pub message: String,
+}
+
+/// Backend batch currently inside `Blobs::write_batch`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BackendWriteInProgress {
+    /// First physical cache sequence in the atomic batch.
+    pub sequence: CommitSeq,
+    /// Monotonic time elapsed since the backend call began.
+    pub elapsed: Duration,
+}
+
+/// Point-in-time cache health and progress counters.
+///
+/// Coordinator retry and failure fields are one coherent snapshot. Runtime
+/// liveness and queue progress are sampled separately and may move while this
+/// value is being assembled. Applied progress remains process-local and does
+/// not mean that RocksDB synced its WAL. Coordinator failure counters cover
+/// both the dedicated `mako-writeback` thread and caller-driven
+/// [`Cache::wait_applied`] attempts.
+///
+/// Timestamp-clock RDTSCP fallback state is not yet available through the
+/// native C ABI. Add that native diagnostic before using clock-source changes
+/// in readiness policy.
+#[derive(Clone, Debug)]
+#[must_use = "cache health snapshots should be inspected or exported"]
+pub struct CacheStatus {
+    /// Overall operational classification for this snapshot.
+    pub health: CacheHealth,
+    /// Whether the dedicated background writer has not stopped or unwound.
+    pub background_writer_running: bool,
+    /// Backend-application failures observed by any consumer since startup.
+    pub backend_failures: u64,
+    /// Replay-materialization failures observed by any consumer since startup.
+    ///
+    /// Allocation failures are retryable. Structural record failures also
+    /// appear in [`Self::writeback_error`] and make the cache unhealthy.
+    pub record_failures: u64,
+    /// Panics caught by the outer dedicated-writer loop since startup.
+    ///
+    /// Backend panics are converted into ordinary backend failures inside the
+    /// coordinator and therefore increment [`Self::backend_failures`] instead.
+    pub runtime_loop_panics: u64,
+    /// Consecutive failed or panicking dedicated-writer attempts.
+    ///
+    /// This returns to zero after the writer applies a batch or observes an
+    /// empty queue.
+    pub consecutive_background_failures: u64,
+    /// First physical sequence of the exact batch that must retry before
+    /// another lane may apply.
+    pub pending_backend_retry: Option<CommitSeq>,
+    /// Physical sequences with a retryable failure that has not yet been
+    /// followed by successful application of that sequence.
+    ///
+    /// The pending exact-retry sequence appears here too. Allocation and
+    /// record-materialization failures can appear here without requiring the
+    /// stricter cross-lane barrier represented by
+    /// [`Self::pending_backend_retry`].
+    pub active_retryable_failures: Vec<CommitSeq>,
+    /// Backend call currently in progress, including its monotonic age.
+    pub backend_write_in_progress: Option<BackendWriteInProgress>,
+    /// Threshold used to classify a long in-progress backend call as degraded.
+    pub backend_stall_threshold: Duration,
+    /// Most recent coordinator or background-runtime failure.
+    ///
+    /// This remains available after a later successful retry.
+    pub last_failure: Option<WritebackFailure>,
+    /// Permanent write-back failure, if this cache has latched one.
+    pub writeback_error: Option<ApplyError>,
+    /// Current process-local backend application watermark.
+    pub applied_watermark: AppliedWatermark,
+    /// Cache transactions acknowledged to foreground callers.
+    pub acknowledged_transactions: u64,
+    /// Bound prepared, ready, or currently applying queue slots across lanes.
+    ///
+    /// Detached pre-commit capacity reservations are not included.
+    pub queued_transactions: usize,
+    /// Process-wide native workers quarantined after uncertain cleanup.
+    ///
+    /// This count is monotonic and can include workers outside this cache. It
+    /// is informational and does not affect [`Self::health`]. A fixed-worker
+    /// pool reports its own usable worker count separately.
+    pub quarantined_workers: u64,
+}
+
+impl CacheStatus {
+    /// Whether this snapshot has no active degradation or fail-stop signal.
+    pub const fn is_healthy(&self) -> bool {
+        matches!(self.health, CacheHealth::Healthy)
     }
 }
 
@@ -678,6 +819,7 @@ pub struct Cache<B: Blobs + 'static> {
     runtime: Mutex<Option<Runtime<WritebackSet<B>>>>,
     record_checksum: RecordChecksum,
     foreground_mode: ForegroundMode,
+    backend_stall_threshold: Duration,
     /// Lease acquisition is a cold, once-per-owner operation. The lease
     /// itself is thread-affine, so ordinary transactions pay no owner atomic.
     single_producer_claimed: AtomicBool,
@@ -751,6 +893,7 @@ impl<B: Blobs + 'static> Cache<B> {
             runtime: Mutex::new(Some(runtime)),
             record_checksum: options.record_checksum,
             foreground_mode: options.foreground_mode,
+            backend_stall_threshold: options.backend_stall_threshold,
             single_producer_claimed: AtomicBool::new(false),
             commit_fence: CommitFence::new(),
         })
@@ -877,9 +1020,65 @@ impl<B: Blobs + 'static> Cache<B> {
         self.writeback.highest_acknowledged()
     }
 
-    /// Number of bound prepared or ready slots across initialized lanes.
+    /// Number of bound prepared, ready, or applying slots across initialized
+    /// lanes.
     pub fn queued_transactions(&self) -> usize {
         self.writeback.queue_len()
+    }
+
+    /// Read operational health and progress without draining the cache.
+    ///
+    /// A transient backend or record-allocation failure reports
+    /// [`CacheHealth::Degraded`] while the dedicated writer retries the exact
+    /// front batch. A permanent record or commit-outcome failure, or an
+    /// unexpectedly stopped writer, reports [`CacheHealth::Unhealthy`]. This
+    /// call never flushes or syncs RocksDB.
+    pub fn status(&self) -> Result<CacheStatus, Error> {
+        let runtime = {
+            let runtime = self
+                .runtime
+                .lock()
+                .map_err(|_| Error::RuntimeLockPoisoned)?;
+            runtime.as_ref().map(Runtime::snapshot).unwrap_or_default()
+        };
+
+        let writeback_error = self.writeback.ensure_no_unknown().err();
+        let apply = self.writeback.apply_telemetry();
+        let backend_stalled = apply
+            .in_progress
+            .is_some_and(|(_, elapsed)| elapsed >= self.backend_stall_threshold);
+        let health = if !runtime.running || writeback_error.is_some() {
+            CacheHealth::Unhealthy
+        } else if runtime.consecutive_failures != 0
+            || apply.pending_retry.is_some()
+            || !apply.active_retryable_failures.is_empty()
+            || backend_stalled
+        {
+            CacheHealth::Degraded
+        } else {
+            CacheHealth::Healthy
+        };
+
+        Ok(CacheStatus {
+            health,
+            background_writer_running: runtime.running,
+            backend_failures: apply.backend_failures,
+            record_failures: apply.record_failures,
+            runtime_loop_panics: apply.runtime_loop_panics,
+            consecutive_background_failures: runtime.consecutive_failures,
+            pending_backend_retry: apply.pending_retry,
+            active_retryable_failures: apply.active_retryable_failures,
+            backend_write_in_progress: apply
+                .in_progress
+                .map(|(sequence, elapsed)| BackendWriteInProgress { sequence, elapsed }),
+            backend_stall_threshold: self.backend_stall_threshold,
+            last_failure: apply.last_failure,
+            writeback_error,
+            applied_watermark: self.writeback.applied_watermark(),
+            acknowledged_transactions: self.writeback.highest_acknowledged(),
+            queued_transactions: self.writeback.queue_len(),
+            quarantined_workers: mako_local::quarantined_worker_count()?,
+        })
     }
 
     /// Access the backend for read-only diagnostics and tests.
@@ -2986,6 +3185,313 @@ mod tests {
     }
 
     #[cfg(have_mako)]
+    #[derive(Debug)]
+    struct ApplyThenErrorOnceBlobs {
+        inner: mrx_core::fakes::MemBlobs,
+        fail_once: AtomicBool,
+    }
+
+    #[cfg(have_mako)]
+    impl ApplyThenErrorOnceBlobs {
+        fn new() -> Self {
+            Self {
+                inner: mrx_core::fakes::MemBlobs::new(),
+                fail_once: AtomicBool::new(true),
+            }
+        }
+    }
+
+    #[cfg(have_mako)]
+    impl mrx_core::Blobs for ApplyThenErrorOnceBlobs {
+        fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, mrx_core::BlobError> {
+            self.inner.get(key)
+        }
+
+        fn write_batch(
+            &self,
+            operations: &[mrx_core::BlobOp<'_>],
+        ) -> Result<(), mrx_core::BlobError> {
+            self.inner.write_batch(operations)?;
+            if self.fail_once.swap(false, Ordering::SeqCst) {
+                return Err(mrx_core::BlobError(
+                    "injected error after applying backend batch".to_owned(),
+                ));
+            }
+            Ok(())
+        }
+
+        fn for_each_key(&self, f: &mut dyn FnMut(&[u8])) -> Result<(), mrx_core::BlobError> {
+            self.inner.for_each_key(f)
+        }
+    }
+
+    #[cfg(have_mako)]
+    #[derive(Debug, Default)]
+    struct BlockingHealthBlobs {
+        inner: mrx_core::fakes::MemBlobs,
+        gate: Mutex<(bool, bool)>,
+        changed: std::sync::Condvar,
+    }
+
+    #[cfg(have_mako)]
+    impl BlockingHealthBlobs {
+        fn wait_until_entered(&self, timeout: Duration) -> bool {
+            let deadline = std::time::Instant::now() + timeout;
+            let mut gate = self.gate.lock().unwrap();
+            while !gate.0 {
+                let now = std::time::Instant::now();
+                if now >= deadline {
+                    return false;
+                }
+                let (next, result) = self.changed.wait_timeout(gate, deadline - now).unwrap();
+                gate = next;
+                if result.timed_out() && !gate.0 {
+                    return false;
+                }
+            }
+            true
+        }
+
+        fn release(&self) {
+            let mut gate = self.gate.lock().unwrap();
+            gate.1 = true;
+            self.changed.notify_all();
+        }
+    }
+
+    #[cfg(have_mako)]
+    impl mrx_core::Blobs for BlockingHealthBlobs {
+        fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, mrx_core::BlobError> {
+            self.inner.get(key)
+        }
+
+        fn write_batch(
+            &self,
+            operations: &[mrx_core::BlobOp<'_>],
+        ) -> Result<(), mrx_core::BlobError> {
+            let mut gate = self.gate.lock().unwrap();
+            gate.0 = true;
+            self.changed.notify_all();
+            while !gate.1 {
+                gate = self.changed.wait(gate).unwrap();
+            }
+            drop(gate);
+            self.inner.write_batch(operations)
+        }
+
+        fn for_each_key(&self, f: &mut dyn FnMut(&[u8])) -> Result<(), mrx_core::BlobError> {
+            self.inner.for_each_key(f)
+        }
+    }
+
+    #[cfg(have_mako)]
+    #[test]
+    fn cache_status_reports_background_retry_and_recovery() {
+        use std::sync::Arc;
+        use std::time::{Duration, Instant};
+
+        use mrx_core::fakes::MemBlobs;
+
+        let backend = Arc::new(MemBlobs::new());
+        backend.fail_next_writes(usize::MAX);
+        let mut options = CacheOptions::default();
+        options.writeback.retry_delay = Duration::from_millis(50);
+        let cache = Cache::from_backend(Arc::clone(&backend), options).unwrap();
+
+        let initial = cache.status().unwrap();
+        assert_eq!(initial.health, CacheHealth::Healthy);
+        assert!(initial.is_healthy());
+        assert!(initial.background_writer_running);
+        assert_eq!(initial.applied_watermark, AppliedWatermark::default());
+        assert_eq!(initial.acknowledged_transactions, 0);
+        assert_eq!(initial.queued_transactions, 0);
+        assert!(initial.writeback_error.is_none());
+
+        cache.put(b"health/retry", b"queued").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let degraded = loop {
+            let status = cache.status().unwrap();
+            // Coordinator telemetry is intentionally sampled separately from
+            // the dedicated writer's retry counters. Wait until both sides of
+            // this background failure have become observable.
+            if status.backend_failures != 0 && status.consecutive_background_failures != 0 {
+                break status;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "background failure did not reach the health snapshot"
+            );
+            std::thread::yield_now();
+        };
+        assert_eq!(degraded.health, CacheHealth::Degraded);
+        assert!(!degraded.is_healthy());
+        assert!(degraded.background_writer_running);
+        assert!(degraded.consecutive_background_failures >= 1);
+        assert!(degraded.pending_backend_retry.is_some());
+        assert_eq!(degraded.active_retryable_failures.len(), 1);
+        assert!(matches!(
+            degraded.last_failure,
+            Some(WritebackFailure {
+                kind: WritebackFailureKind::Backend,
+                sequence: Some(_),
+                ..
+            })
+        ));
+        assert_eq!(degraded.applied_watermark.sequence(), 0);
+        assert_eq!(degraded.acknowledged_transactions, 1);
+        assert_eq!(degraded.queued_transactions, 1);
+        assert!(degraded.writeback_error.is_none());
+
+        backend.fail_next_writes(0);
+        assert_eq!(cache.wait_applied().unwrap(), 1);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let recovered = loop {
+            let status = cache.status().unwrap();
+            if status.health == CacheHealth::Healthy {
+                break status;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "background health did not recover after backend progress"
+            );
+            std::thread::yield_now();
+        };
+        assert!(recovered.background_writer_running);
+        assert!(recovered.backend_failures >= 1);
+        assert_eq!(recovered.consecutive_background_failures, 0);
+        assert!(recovered.pending_backend_retry.is_none());
+        assert!(recovered.active_retryable_failures.is_empty());
+        assert!(recovered.last_failure.is_some());
+        assert_eq!(recovered.applied_watermark.sequence(), 1);
+        assert_eq!(recovered.acknowledged_transactions, 1);
+        assert_eq!(recovered.queued_transactions, 0);
+        cache.close().unwrap();
+    }
+
+    #[cfg(have_mako)]
+    #[test]
+    fn cache_status_retains_caller_driven_apply_failure_and_stopped_writer() {
+        use std::sync::Arc;
+
+        let backend = Arc::new(ApplyThenErrorOnceBlobs::new());
+        let mut options = CacheOptions::default();
+        options.writeback.max_apply_retries = 0;
+        let cache = Cache::from_backend(Arc::clone(&backend), options).unwrap();
+
+        cache
+            .runtime
+            .lock()
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .abort()
+            .unwrap();
+        cache.put(b"health/caller", b"queued").unwrap();
+        let error = cache.wait_applied().unwrap_err();
+        let sequence = match error {
+            Error::Apply(ApplyError::Backend {
+                sequence,
+                attempts: 1,
+                source,
+            }) => {
+                assert!(source.0.contains("injected error after applying"));
+                sequence
+            }
+            other => panic!("unexpected caller-driven apply result: {other}"),
+        };
+
+        let failed = cache.status().unwrap();
+        assert_eq!(failed.health, CacheHealth::Unhealthy);
+        assert!(!failed.background_writer_running);
+        assert_eq!(failed.backend_failures, 1);
+        assert_eq!(failed.pending_backend_retry, Some(sequence));
+        assert_eq!(failed.active_retryable_failures, vec![sequence]);
+        assert_eq!(failed.acknowledged_transactions, 1);
+        assert_eq!(failed.applied_watermark.sequence(), 0);
+        assert_eq!(failed.queued_transactions, 1);
+        assert_eq!(
+            failed.last_failure.as_ref().map(|failure| failure.kind),
+            Some(WritebackFailureKind::Backend)
+        );
+        assert_eq!(
+            failed
+                .last_failure
+                .as_ref()
+                .and_then(|failure| failure.sequence),
+            Some(sequence)
+        );
+
+        assert_eq!(cache.wait_applied().unwrap(), 1);
+        let recovered = cache.status().unwrap();
+        assert_eq!(recovered.health, CacheHealth::Unhealthy);
+        assert!(!recovered.background_writer_running);
+        assert_eq!(recovered.backend_failures, 1);
+        assert!(recovered.pending_backend_retry.is_none());
+        assert!(recovered.active_retryable_failures.is_empty());
+        assert!(recovered.last_failure.is_some());
+        assert_eq!(recovered.applied_watermark.sequence(), 1);
+        assert_eq!(recovered.queued_transactions, 0);
+        cache.close().unwrap();
+    }
+
+    #[cfg(have_mako)]
+    #[test]
+    fn cache_status_observes_backend_call_without_coordinator_lock() {
+        use std::sync::{mpsc, Arc};
+        use std::time::Duration;
+
+        let backend = Arc::new(BlockingHealthBlobs::default());
+        let options = CacheOptions {
+            backend_stall_threshold: Duration::from_millis(1),
+            ..CacheOptions::default()
+        };
+        let cache = Cache::from_backend(Arc::clone(&backend), options).unwrap();
+        cache.put(b"health/hung", b"queued").unwrap();
+        assert!(
+            backend.wait_until_entered(Duration::from_secs(1)),
+            "background writer did not enter the backend"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+
+        std::thread::scope(|scope| {
+            let (status_tx, status_rx) = mpsc::channel();
+            let cache_ref = &cache;
+            let observer = scope.spawn(move || status_tx.send(cache_ref.status()).unwrap());
+            let status = status_rx.recv_timeout(Duration::from_secs(1));
+
+            // Release before asserting or joining so a lock regression reports
+            // a bounded test failure instead of hanging the test process.
+            backend.release();
+            observer.join().unwrap();
+
+            let status = status
+                .expect("status blocked behind the coordinator's backend call")
+                .unwrap();
+            assert_eq!(status.health, CacheHealth::Degraded);
+            assert!(status.background_writer_running);
+            let in_progress = status
+                .backend_write_in_progress
+                .expect("the backend call must be visible");
+            let (_, local_sequence) =
+                crate::record::split_log_sequence(in_progress.sequence).unwrap();
+            assert_eq!(local_sequence, 1);
+            assert!(in_progress.elapsed >= status.backend_stall_threshold);
+            assert!(status.pending_backend_retry.is_none());
+            assert!(status.active_retryable_failures.is_empty());
+            assert_eq!(status.applied_watermark.sequence(), 0);
+            assert_eq!(status.acknowledged_transactions, 1);
+            assert_eq!(status.queued_transactions, 1);
+        });
+
+        assert_eq!(cache.wait_applied().unwrap(), 1);
+        let recovered = cache.status().unwrap();
+        assert_eq!(recovered.health, CacheHealth::Healthy);
+        assert!(recovered.backend_write_in_progress.is_none());
+        assert_eq!(recovered.queued_transactions, 0);
+        cache.close().unwrap();
+    }
+
+    #[cfg(have_mako)]
     #[test]
     fn single_producer_mode_requires_and_exclusively_reuses_its_lease() {
         use std::sync::Arc;
@@ -3597,6 +4103,17 @@ mod tests {
             Err(Error::Apply(ApplyError::UnknownOutcome { sequence }))
                 if sequence == pinned
         ));
+
+        let status = cache.status().unwrap();
+        assert_eq!(status.health, CacheHealth::Unhealthy);
+        assert!(status.background_writer_running);
+        assert!(matches!(
+            status.writeback_error,
+            Some(ApplyError::UnknownOutcome { sequence }) if sequence == pinned
+        ));
+        assert_eq!(status.applied_watermark.sequence(), 0);
+        assert_eq!(status.acknowledged_transactions, 0);
+        assert_eq!(status.queued_transactions, 1);
 
         assert!(matches!(
             cache.close(),

@@ -242,13 +242,16 @@ pub trait Blobs: Send + Sync {
     /// Read one key.
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, BlobError>;
 
-    /// Apply a batch atomically-enough: either the whole batch lands or
-    /// none of it does.
+    /// Apply a batch atomically: either the whole batch lands or none of it
+    /// does.
     ///
     /// Operations apply in slice order. If a key occurs more than once, the
     /// last operation for that key determines its final state. The cache
     /// relies on this rule when one physical batch contains several logical
     /// transactions. It does not rely on ordering between separate batches.
+    /// An error need not reveal which atomic outcome occurred, so callers may
+    /// retry the identical batch. Implementations must make that retry
+    /// idempotent for these Put/Delete operations.
     fn write_batch(&self, ops: &[BlobOp<'_>]) -> Result<(), BlobError>;
 
     /// Iterate every key, in ascending order, for the open-time load.

@@ -217,11 +217,12 @@ authoritative TLS quarantine flag on every admission.
   epoch runtime intentionally remain process-lifetime. Opening another
   database creates a new logical facade; it does not recover or adopt the old
   facade's tables.
-- The Milestone 1 cache therefore has a deployment precondition of exactly one
-  recovered cache namespace per process. The ABI does not enforce this with a
-  mutex. Supporting several recovered namespaces requires a supervisor to
-  identify and scan every backend, floor the shared Mako timestamp authority,
-  and only then admit work to any namespace.
+- The Milestone 1 cache therefore permits exactly one recovered cache namespace
+  per process. The build-private cache-order ABI serializes claims with a
+  process-wide mutex and returns `BUSY` to a second live cache facade.
+  Supporting several recovered namespaces requires a supervisor to identify
+  and scan every backend, floor the shared Mako timestamp authority, and only
+  then admit work to any namespace.
 - A **Q** transaction retains its worker's active-database marker, so
   `db_close` continues to return `BUSY`. This is intentional containment.
 - Quarantine is stored independently of a transaction facade in TLS. It
