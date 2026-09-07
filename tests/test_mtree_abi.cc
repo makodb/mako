@@ -450,7 +450,7 @@ TEST(MtreeAbiPoint, StructureSealRacingWithInsertionHasOneLinearizedWinner) {
   std::barrier complete(2);
   std::atomic<mt_status> attach_status{MT_ERR_INTERNAL};
   std::atomic<mt_status> quiesce_status{MT_ERR_INTERNAL};
-  std::array<mt_status, kTreeCount> insert_statuses{};
+  std::array<std::atomic<mt_status>, kTreeCount> insert_statuses{};
   std::array<mt_get_or_insert_result, kTreeCount> insert_results{};
   std::thread writer([&]() {
     mt_thread *worker = nullptr;
@@ -462,9 +462,10 @@ TEST(MtreeAbiPoint, StructureSealRacingWithInsertionHasOneLinearizedWinner) {
         std::this_thread::yield();
       }
       if (attach_status.load(std::memory_order_acquire) == MT_OK) {
-        insert_statuses[index] = mt_get_or_insert(
+        const mt_status insert_status = mt_get_or_insert(
             trees[index], worker, key.data(), key.size(), index + 1,
             &insert_results[index]);
+        insert_statuses[index].store(insert_status, std::memory_order_release);
       }
       complete.arrive_and_wait();
     }
@@ -483,7 +484,8 @@ TEST(MtreeAbiPoint, StructureSealRacingWithInsertionHasOneLinearizedWinner) {
     complete.arrive_and_wait();
 
     ASSERT_EQ(attach_status.load(std::memory_order_acquire), MT_OK);
-    const mt_status insert_status = insert_statuses[index];
+    const mt_status insert_status =
+        insert_statuses[index].load(std::memory_order_acquire);
     EXPECT_TRUE(insert_status == MT_OK ||
                 insert_status == MT_ERR_STRUCTURE_SEALED);
     if (insert_status == MT_OK) {
