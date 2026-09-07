@@ -2906,7 +2906,7 @@ int RaftServer::LeaderSiteToLocaleLocked(siteid_t leader_site) const {
   }
 
   return raft_server_view_leader_locale(
-      leader_site, site_id_, self_locale, mapped_locale, invalid);
+      leader_site, site_id_, self_locale, mapped_locale);
 }
 
 // @unsafe - Caller holds mtx_; Config remains live for the server lifetime.
@@ -2946,7 +2946,7 @@ siteid_t RaftServer::LeaderLocaleToSiteLocked(int leader_locale) const {
 
   return raft_server_recovery_leader_site(
       leader_locale, self_locale,
-      self_is_member ? site_id_ : invalid, mapped_site, invalid);
+      self_is_member ? site_id_ : invalid, mapped_site);
 }
 
 rusty::Arc<ViewData> RaftServer::GetCurrentViewData() {
@@ -3155,7 +3155,7 @@ void RaftServer::setIsLeader(bool isLeader) {
   current_leader_id_ = raft_server_leader_hint_after_transition(
       isLeader,
       !isLeader && current_leader_id_ != INVALID_SITEID,
-      site_id_, current_leader_id_, static_cast<siteid_t>(INVALID_SITEID));
+      site_id_, current_leader_id_);
 
   // Only log on actual transitions, not no-op calls
   if (become_new_leader || become_new_follower) {
@@ -3774,8 +3774,7 @@ void RaftServer::HeartbeatLoop() {
                       // publishing follower state.
                       server->current_leader_id_ =
                           raft_server_leader_hint_after_transition(
-                              false, false, server->site_id_, site_id,
-                              static_cast<siteid_t>(INVALID_SITEID));
+                              false, false, server->site_id_, site_id);
                       server->stepDown(StepDownReason::HigherTerm);
                       server->req_voting_ = false;
                       server->election_in_progress_ = false;
@@ -4070,8 +4069,7 @@ void RaftServer::HeartbeatLoop() {
                             previous_term, currentTerm, pending.follower_id);
               // The responding follower proves a newer term, not its leader.
               current_leader_id_ = raft_server_leader_hint_after_transition(
-                  false, false, site_id_, pending.follower_id,
-                  static_cast<siteid_t>(INVALID_SITEID));
+                  false, false, site_id_, pending.follower_id);
               stepDown(StepDownReason::HigherTerm);
               req_voting_ = false;
               election_in_progress_ = false;
@@ -4595,8 +4593,7 @@ bool RaftServer::RequestVoteImpl(bool timer_guarded,
     // particular, it must not redirect clients to the leader from the term it
     // just left.
     current_leader_id_ = raft_server_leader_hint_after_transition(
-        false, false, site_id_, current_leader_id_,
-        static_cast<siteid_t>(INVALID_SITEID));
+        false, false, site_id_, current_leader_id_);
 
     // CRITICAL: Persist term and vote BEFORE sending RequestVote RPCs
     local_vote_persisted = PersistState(
@@ -4668,8 +4665,7 @@ bool RaftServer::RequestVoteImpl(bool timer_guarded,
     currentTerm = static_cast<uint64_t>(observed_response_term);
     vote_for_ = INVALID_SITEID;
     current_leader_id_ = raft_server_leader_hint_after_transition(
-        false, false, site_id_, current_leader_id_,
-        static_cast<siteid_t>(INVALID_SITEID));
+        false, false, site_id_, current_leader_id_);
 
     const bool has_configured_storage = HasConfiguredStorage();
     const bool persistence_succeeded =
@@ -5455,7 +5451,7 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
           // Publish the accepted leader before a possible leader-change
           // callback observes the follower transition.
           current_leader_id_ = raft_server_leader_hint_after_transition(
-              false, true, site_id_, leaderSiteId, invalid);
+              false, true, site_id_, leaderSiteId);
 
           // CRITICAL: Persist term before accepting any entries from new leader
           if (HasConfiguredStorage() &&
@@ -5499,7 +5495,7 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
       // Refresh the validated leader hint for current-term contact too. A
       // higher-term sender was already published before its role transition.
       current_leader_id_ = raft_server_leader_hint_after_transition(
-          false, true, site_id_, leaderSiteId, invalid);
+          false, true, site_id_, leaderSiteId);
       // @unsafe
       { resetTimer("AppendEntries from current-term leader"); }
   }
@@ -6038,8 +6034,7 @@ void RaftServer::OnTimeoutNow(const uint64_t leaderTerm,
   // higher term; never leave is_leader_ paired with a remote leader hint.
   if (!leader_has_higher_term && !is_leader_) {
     current_leader_id_ = raft_server_leader_hint_after_transition(
-        false, true, site_id_, leaderSiteId,
-        static_cast<siteid_t>(INVALID_SITEID));
+        false, true, site_id_, leaderSiteId);
   }
 
   // ============================================================================
@@ -6064,8 +6059,7 @@ void RaftServer::OnTimeoutNow(const uint64_t leaderTerm,
         PersistState(currentTerm, vote_for_,
                      "OnTimeoutNow: leader higher term");
     current_leader_id_ = raft_server_leader_hint_after_transition(
-        false, true, site_id_, leaderSiteId,
-        static_cast<siteid_t>(INVALID_SITEID));
+        false, true, site_id_, leaderSiteId);
     if (is_leader_) {
       stepDown(StepDownReason::HigherTerm);
     } else {
@@ -6252,7 +6246,7 @@ void RaftServer::OnInstallSnapshot(const uint64_t term,
   // volatile term advanced, fail-stop must not leave leadership, view, or
   // speculative callback state published from the prior epoch.
   current_leader_id_ = raft_server_leader_hint_after_transition(
-      false, true, site_id_, leader_site, invalid);
+      false, true, site_id_, leader_site);
 
   // Any accepted leader RPC, including one in our current term, establishes
   // follower state. Cancel the outstanding election as well as leadership;
@@ -6931,8 +6925,7 @@ void RaftServer::InitiateLeadershipTransfer() {
     // The preferred target is only a candidate until it wins the transfer
     // election. Do not advertise it (or retain self) as an elected leader.
     current_leader_id_ = raft_server_leader_hint_after_transition(
-        false, false, site_id_, target_site_id,
-        static_cast<siteid_t>(INVALID_SITEID));
+        false, false, site_id_, target_site_id);
 
     // Become follower - this stops heartbeats and allows new leader to emerge
     setIsLeader(false);
@@ -7143,8 +7136,7 @@ void RaftServer::stepDown(StepDownReason reason) {
   // entering this central transition.
   if (reason != StepDownReason::HigherTerm) {
     current_leader_id_ = raft_server_leader_hint_after_transition(
-        false, false, site_id_, current_leader_id_,
-        static_cast<siteid_t>(INVALID_SITEID));
+        false, false, site_id_, current_leader_id_);
   }
 
   // Transition to follower state

@@ -308,36 +308,36 @@ TEST(RaftDurabilityAccountingTest,
   // validated lookup result 2 -- never either global site ID.
   EXPECT_EQ(janus::raft_server_view_leader_locale(
                 /*leader_site=*/4, /*self_site=*/4, /*self_locale=*/1,
-                /*mapped_locale=*/-1, invalid),
+                /*mapped_locale=*/-1),
             1);
   EXPECT_EQ(janus::raft_server_view_leader_locale(
                 /*leader_site=*/5, /*self_site=*/4, /*self_locale=*/1,
-                /*mapped_locale=*/2, invalid),
+                /*mapped_locale=*/2),
             2);
   EXPECT_EQ(janus::raft_server_view_leader_locale(
                 /*leader_site=*/5, /*self_site=*/4, /*self_locale=*/1,
-                /*mapped_locale=*/-1, invalid),
+                /*mapped_locale=*/-1),
             -1);
   EXPECT_EQ(janus::raft_server_view_leader_locale(
                 invalid, /*self_site=*/4, /*self_locale=*/1,
-                /*mapped_locale=*/2, invalid),
+                /*mapped_locale=*/2),
             -1);
 
   EXPECT_EQ(janus::raft_server_recovery_leader_site(
                 /*leader_locale=*/1, /*self_locale=*/1, /*self_site=*/4,
-                /*mapped_site=*/invalid, invalid),
+                /*mapped_site=*/invalid),
             4);
   EXPECT_EQ(janus::raft_server_recovery_leader_site(
                 /*leader_locale=*/2, /*self_locale=*/1, /*self_site=*/4,
-                /*mapped_site=*/5, invalid),
+                /*mapped_site=*/5),
             5);
   EXPECT_EQ(janus::raft_server_recovery_leader_site(
                 /*leader_locale=*/2, /*self_locale=*/1, /*self_site=*/4,
-                /*mapped_site=*/invalid, invalid),
+                /*mapped_site=*/invalid),
             invalid);
   EXPECT_EQ(janus::raft_server_recovery_leader_site(
                 /*leader_locale=*/-1, /*self_locale=*/1, /*self_site=*/4,
-                /*mapped_site=*/5, invalid),
+                /*mapped_site=*/5),
             invalid);
 
   EXPECT_TRUE(janus::raft_server_recovery_view_matches_term(
@@ -481,21 +481,21 @@ TEST(RaftDurabilityAccountingTest,
   // hint retained from the previous term.
   EXPECT_EQ(janus::raft_server_leader_hint_after_transition(
                 /*is_leader=*/true, /*has_known_leader=*/false,
-                self, previous_leader, invalid),
+                self, previous_leader),
             self);
 
   // Starting an election or learning only that a higher term exists provides
   // no evidence about that term's elected leader.
   EXPECT_EQ(janus::raft_server_leader_hint_after_transition(
                 /*is_leader=*/false, /*has_known_leader=*/false,
-                self, previous_leader, invalid),
+                self, previous_leader),
             invalid);
 
   // AppendEntries and InstallSnapshot identify their sender as the leader, so
   // follower transitions caused by those RPCs retain the observed identity.
   EXPECT_EQ(janus::raft_server_leader_hint_after_transition(
                 /*is_leader=*/false, /*has_known_leader=*/true,
-                self, observed_leader, invalid),
+                self, observed_leader),
             observed_leader);
 }
 
