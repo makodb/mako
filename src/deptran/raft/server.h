@@ -315,6 +315,13 @@ pub const fn raft_server_random_range_cap(range: u64, maximum: u64) -> u64 {
     }
 }
 
+// TODO(stage2): allowed pending codegen check, NOT a decision. clippy wants
+// `saturating_sub` here. The hand-written guard below is what production
+// compiles today and the emitter is proven on that shape; `saturating_sub`
+// may lower to a `rusty::` call a bare-rustc carrier cannot name. Verify the
+// emitter output for it, apply the change on its own with the predicate
+// reviewed, then remove this allow.
+#[allow(clippy::implicit_saturating_sub)]
 pub const fn raft_server_effective_election_timeout(
     randomized_timeout: u64,
     randomized_minimum: u64,
@@ -905,6 +912,13 @@ pub const fn raft_server_retention_window_normalize(window: u64) -> u64 {
     }
 }
 
+// TODO(stage2): allowed pending codegen check, NOT a decision. clippy wants
+// `saturating_sub` here. The hand-written guard below is what production
+// compiles today and the emitter is proven on that shape; `saturating_sub`
+// may lower to a `rusty::` call a bare-rustc carrier cannot name. Verify the
+// emitter output for it, apply the change on its own with the predicate
+// reviewed, then remove this allow.
+#[allow(clippy::implicit_saturating_sub)]
 pub const fn raft_server_retention_cutoff(execute_index: u64,
                                            retention_window: u64) -> u64 {
     if execute_index > retention_window {
@@ -1030,7 +1044,7 @@ pub const fn raft_server_term_advance_is_durable(
     !has_configured_storage || persistence_succeeded
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.scalar_decisions version=1 rust_sha256=f18c7e484ca7a3497d5221b35417c1da23d1ed55b7513a1ea3b8c5ee71fdb072*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.scalar_decisions version=1 rust_sha256=43d7510645f99d0659807066dbc99c95b47113498041a931740ea5e8a9145cc0*/
 constexpr uint16_t RAFT_SERVER_INVALID_SITE_ID = static_cast<uint16_t>(65535);
 constexpr bool raft_server_log_index_at_or_below(uint64_t index, uint64_t boundary);
 constexpr bool raft_server_log_index_above(uint64_t index, uint64_t boundary);

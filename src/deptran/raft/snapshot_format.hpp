@@ -328,6 +328,15 @@ static_assert(snapshot_crc32_finalize(0xFFFFFFFFu) == 0);
 // kernel, raw pointers preserve the incumbent's legal `unsigned char` view
 // when the input points into the CRC32 object's own representation.
 #if RUSTYCPP_RUST
+/// Fold `size` bytes at `data` into the CRC32 accumulator at `crc`.
+///
+/// # Safety
+///
+/// The caller must guarantee that `crc` points to one writable 32-bit
+/// accumulator, that `data` is readable for `size` bytes, and that
+/// `table` is readable for 256 32-bit entries. `data` MAY alias the
+/// accumulator's own storage: that is deliberate, and is why each byte is
+/// read before the accumulator is mutated instead of borrowing a slice.
 pub const unsafe fn snapshot_crc32_update_buffer(crc: *mut u32,
                                                   data: *const u8,
                                                   size: usize,
@@ -344,8 +353,17 @@ pub const unsafe fn snapshot_crc32_update_buffer(crc: *mut u32,
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_snapshot.crc32_update_loop version=1 rust_sha256=a464e417c3929aabc8dd5a42bcf910bef0e80633d1e1a0af13ed5e433270148e*/
+/*RUSTYCPP:GEN-BEGIN id=raft_snapshot.crc32_update_loop version=1 rust_sha256=f6c6246b740c860ec5f1976f8f33ed42c8ca9f79db74e5e2a0665876cccd2a72*/
 constexpr void snapshot_crc32_update_buffer(uint32_t* crc, const uint8_t* data, size_t size, const uint32_t* table);
+/// Fold `size` bytes at `data` into the CRC32 accumulator at `crc`.
+///
+/// # Safety
+///
+/// The caller must guarantee that `crc` points to one writable 32-bit
+/// accumulator, that `data` is readable for `size` bytes, and that
+/// `table` is readable for 256 32-bit entries. `data` MAY alias the
+/// accumulator's own storage: that is deliberate, and is why each byte is
+/// read before the accumulator is mutated instead of borrowing a slice.
 // @unsafe
 constexpr void snapshot_crc32_update_buffer(uint32_t* crc, const uint8_t* data, size_t size, const uint32_t* table) {
     size_t i = static_cast<size_t>(0);
