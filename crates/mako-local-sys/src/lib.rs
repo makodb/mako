@@ -20,6 +20,8 @@ mod tests {
         let _: u32 = MAKO_LOCAL_ABI_VERSION;
         let _: u32 = MAKO_LOCAL_BUILD_FINGERPRINT_SIZE;
         let _: u64 = MAKO_LOCAL_FEATURE_POINT_TRANSACTIONS;
+        let _: u64 = MAKO_LOCAL_FEATURE_TEST_TIMESTAMP_CLOCK;
+        assert_eq!(MAKO_LOCAL_FEATURE_TEST_TIMESTAMP_CLOCK, 1_u64 << 7);
         let _: u32 = MAKO_LOCAL_MAX_TABLE_NAME_BYTES;
         let _: u32 = MAKO_LOCAL_MAX_KEY_BYTES;
         let _: u32 = MAKO_LOCAL_MAX_VALUE_BYTES;

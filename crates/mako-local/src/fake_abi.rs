@@ -2756,6 +2756,7 @@ mod tests {
         let capabilities = features().unwrap();
         assert!(!capabilities.test_commit_observer());
         assert!(!capabilities.test_cleanup_failures());
+        assert!(!capabilities.test_timestamp_clock());
         assert_eq!(
             install_test_commit_observer(unavailable_commit_observer),
             Err(Error::FeatureUnavailable)

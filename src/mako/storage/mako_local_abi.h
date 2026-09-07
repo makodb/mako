@@ -15,7 +15,7 @@
  *     recycled, so a thread-per-request design will exhaust the runtime.
  *
  * Lifetime contract:
- *   db > table and db/table > transaction. In this draft the underlying
+ *   db > table and db/table > transaction. In revision 1 the underlying
  *   MassTrans tables are process-lifetime, matching native Mako.
  *   mako_local_db_close() frees the facade handles but deliberately does not
  *   pretend it can reclaim a live Masstree safely without a process-wide RCU
@@ -67,18 +67,21 @@ extern "C" {
  * the symbols below as FEATURE_UNAVAILABLE stubs but omit every hot-path
  * branch. */
 #define MAKO_LOCAL_FEATURE_TEST_CLEANUP_FAILURES (UINT64_C(1) << 6)
+/* Test-only process-global physical-clock override. Production builds retain
+ * the symbols below as FEATURE_UNAVAILABLE stubs. */
+#define MAKO_LOCAL_FEATURE_TEST_TIMESTAMP_CLOCK (UINT64_C(1) << 7)
 
-/* Draft input and transaction limits. The weighted transaction budget is one
- * item for get/remove and 4 + ceil(key_len / 8) for put/insert. Keeping it at
- * STO's 512 embedded items deliberately prevents a transaction-set allocation
- * after MassTrans has begun mutating a missing-key insert. */
+/* Revision-1 input and transaction limits. The weighted transaction budget is
+ * one item for get/remove and 4 + ceil(key_len / 8) for put/insert. Keeping it
+ * at STO's 512 embedded items deliberately prevents a transaction-set
+ * allocation after MassTrans has begun mutating a missing-key insert. */
 #define MAKO_LOCAL_MAX_TABLE_NAME_BYTES 1024u
 #define MAKO_LOCAL_MAX_KEY_BYTES 1024u
 #define MAKO_LOCAL_MAX_VALUE_BYTES 1048576u
 #define MAKO_LOCAL_TXN_ITEM_BUDGET 512u
 /* STO keeps one process-lifetime transaction slot per attached OS worker. */
 #define MAKO_LOCAL_MAX_WORKERS 460u
-/* Draft status numbers. Assigned numbers are never renumbered within this
+/* Revision-1 status numbers. Assigned numbers are never renumbered within this
  * revision. A missing key is OK with found_out == 0; it is not a conflict. */
 /* MAKO_LOCAL_STATUS_DEFINITIONS_BEGIN */
 #define MAKO_LOCAL_OK 0
@@ -133,9 +136,9 @@ extern "C" {
   X(DUPLICATE_WRITE, MAKO_LOCAL_DUPLICATE_WRITE,                           \
     "second mutation of one key is not supported")                        \
   X(TXN_TOO_LARGE, MAKO_LOCAL_TXN_TOO_LARGE,                               \
-    "transaction exceeds the draft item budget")                          \
+    "transaction exceeds the revision-1 item budget")                     \
   X(VALUE_TOO_LARGE, MAKO_LOCAL_VALUE_TOO_LARGE,                           \
-    "table name, key, or value exceeds the draft byte limit")             \
+    "table name, key, or value exceeds the revision-1 byte limit")        \
   X(COMMIT_HOOK_REJECTED, MAKO_LOCAL_COMMIT_HOOK_REJECTED,                 \
     "post-validation commit hook rejected transaction")                   \
   X(TIMESTAMP_EXHAUSTED, MAKO_LOCAL_TIMESTAMP_EXHAUSTED,                   \
@@ -152,10 +155,10 @@ typedef struct mako_local_db mako_local_db;
 typedef struct mako_local_table mako_local_table;
 typedef struct mako_local_txn mako_local_txn;
 
-/* Database-open options are append-only while this ABI is a draft. Callers
- * set struct_size to MAKO_LOCAL_DB_OPTIONS_V0_SIZE and zero every flag. The
- * initially empty flag namespace preserves a sized negotiation seam for
- * later ABI revisions without inventing a durability policy at this layer. */
+/* Database-open options are append-only across compatible ABI revisions.
+ * Callers set struct_size to MAKO_LOCAL_DB_OPTIONS_V0_SIZE and zero every
+ * flag. The initially empty flag namespace preserves a sized negotiation seam
+ * for later ABI revisions without inventing a durability policy here. */
 typedef struct mako_local_db_options {
   uint32_t struct_size;
   uint32_t flags;
@@ -165,7 +168,7 @@ typedef struct mako_local_db_options {
   ((uint32_t)(offsetof(mako_local_db_options, flags) +                    \
               sizeof(((mako_local_db_options *)0)->flags)))
 
-/* Scan options are append-only while this ABI is a draft. Callers set
+/* Scan options are append-only across compatible ABI revisions. Callers set
  * struct_size to MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE and zero fields they do not
  * use. lower is always an inclusive binary bound. HAS_UPPER supplies an
  * exclusive upper bound; without it the range is unbounded above. HAS_RESUME
@@ -302,9 +305,11 @@ int mako_local_advance_mako_timestamp_past(
     const mako_timestamp_v1 *observed)
     MAKO_LOCAL_NOEXCEPT;
 
-/* Test-only physical-clock override. A representable Unix millisecond value,
- * including zero, freezes the HLC's physical candidate until clear. Both
- * symbols return FEATURE_UNAVAILABLE when MAKO_LOCAL_TEST_HOOKS is disabled. */
+/* Test-only physical-clock override, negotiated with
+ * MAKO_LOCAL_FEATURE_TEST_TIMESTAMP_CLOCK. A representable Unix millisecond
+ * value, including zero, freezes the HLC's physical candidate until clear.
+ * Both symbols return FEATURE_UNAVAILABLE when MAKO_LOCAL_TEST_HOOKS is
+ * disabled. */
 int mako_local_test_set_timestamp_physical_ms(uint64_t unix_ms)
     MAKO_LOCAL_NOEXCEPT;
 int mako_local_test_clear_timestamp_physical_ms(void) MAKO_LOCAL_NOEXCEPT;

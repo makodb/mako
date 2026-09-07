@@ -428,11 +428,11 @@ option(MAKO_USE_RAFT "Build Mako with the Raft replication helper" OFF)
 option(RAFT_TEST "Enable Raft lab testing fiber" OFF)
 option(SINGLE_RAFT_INSTANCE "Default runtime Raft group mode (ON=single group, OFF=one group per partition)" ON)
 option(MAKO_LOCAL_TEST_HOOKS
-       "Enable test-only local commit observers and cleanup failures" OFF)
+       "Enable local test-only commit, cleanup, and timestamp-clock seams" OFF)
 
 if(MAKO_LOCAL_TEST_HOOKS)
   add_compile_definitions(MAKO_LOCAL_TEST_HOOKS=1)
-  message(STATUS "Test-only local commit and cleanup seams enabled")
+  message(STATUS "Local test-only commit, cleanup, and timestamp-clock seams enabled")
 endif()
 
 if(MAKO_USE_RAFT)

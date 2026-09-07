@@ -36,6 +36,8 @@ MAKO_LOCAL_ASSERT_CONSTANT(MAKO_LOCAL_FEATURE_TEST_COMMIT_OBSERVER,
                            std::uint64_t{1} << 5, std::uint64_t);
 MAKO_LOCAL_ASSERT_CONSTANT(MAKO_LOCAL_FEATURE_TEST_CLEANUP_FAILURES,
                            std::uint64_t{1} << 6, std::uint64_t);
+MAKO_LOCAL_ASSERT_CONSTANT(MAKO_LOCAL_FEATURE_TEST_TIMESTAMP_CLOCK,
+                           std::uint64_t{1} << 7, std::uint64_t);
 
 MAKO_LOCAL_ASSERT_CONSTANT(MAKO_LOCAL_MAX_TABLE_NAME_BYTES,
                            std::uint32_t{1024}, std::uint32_t);

@@ -2548,7 +2548,8 @@ uint64_t mako_local_feature_bits(void) noexcept {
 #endif
 #if defined(MAKO_LOCAL_TEST_HOOKS)
   features |= MAKO_LOCAL_FEATURE_TEST_COMMIT_OBSERVER |
-              MAKO_LOCAL_FEATURE_TEST_CLEANUP_FAILURES;
+              MAKO_LOCAL_FEATURE_TEST_CLEANUP_FAILURES |
+              MAKO_LOCAL_FEATURE_TEST_TIMESTAMP_CLOCK;
 #endif
   return features;
 }

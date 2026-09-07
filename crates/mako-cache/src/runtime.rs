@@ -58,8 +58,10 @@ impl<B: Blobs + 'static> RuntimeTarget for Writeback<B> {
 /// Failure while stopping or cleanly draining the background runtime.
 #[derive(Debug, Clone)]
 pub enum RuntimeError {
-    /// The background worker panicked outside its guarded consumer attempt.
-    /// Panics from `process_front` or the backend are caught and retried.
+    /// In a panic-unwind build, the background worker panicked outside its
+    /// guarded consumer attempt. Panics from `process_front` or the backend
+    /// are caught and retried only in such builds. The workspace release
+    /// profile uses `panic = "abort"` and terminates the process instead.
     BackgroundPanicked,
     /// The clean-shutdown queue drain failed.
     Apply(ApplyError),
@@ -88,9 +90,10 @@ impl std::error::Error for RuntimeError {
 /// [`Runtime::shutdown`] stops the worker and then synchronously drains the
 /// acknowledged snapshot from each initialized lane. [`Runtime::abort`] stops
 /// without a drain, preserving the cache contract that an unapplied in-memory
-/// tail may be lost on process failure. A panic from a backend attempt retains
-/// the exact original batch for retry before any other lane may apply. Dropping
-/// the runtime is equivalent to aborting.
+/// tail may be lost on process failure. In a panic-unwind build, a panic from a
+/// backend attempt retains the exact original batch for retry before any other
+/// lane may apply. The workspace release profile instead aborts the process on
+/// panic. Dropping the runtime is equivalent to aborting.
 pub struct Runtime<T: RuntimeTarget> {
     writeback: Arc<T>,
     stop: Arc<AtomicBool>,
@@ -209,15 +212,17 @@ impl<T: RuntimeTarget> Runtime<T> {
         }
     }
 
-    /// Stop the worker and apply every captured lane acknowledgement snapshot.
+    /// Attempt to stop the worker and apply every captured acknowledgement.
     ///
-    /// The drain is attempted even if the worker panicked, since queue and
-    /// consumer mutexes recover poison and Ready records remain retryable. A
-    /// cache-wide unknown outcome is rejected even when its lane lies outside
-    /// a captured applied snapshot, so clean close cannot discard possibly
-    /// visible native state. If both the worker and synchronous drain fail, the
-    /// application error is returned instead of the less specific worker
-    /// panic.
+    /// In a panic-unwind build, the drain is attempted even if the worker
+    /// panicked, since queue and consumer mutexes recover poison and Ready
+    /// records remain retryable. The workspace release profile aborts the
+    /// process on panic. A cache-wide unknown outcome is rejected even when its
+    /// lane lies outside a captured applied snapshot, so clean close cannot
+    /// discard possibly visible native state. If both the worker and
+    /// synchronous drain fail in an unwind build, the application error is
+    /// returned instead of the less specific worker panic. Success means every
+    /// captured lane acknowledgement snapshot was applied.
     pub fn shutdown(&mut self) -> Result<u64, RuntimeError> {
         let worker_result = self.stop_worker();
         let apply_result = self

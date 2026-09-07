@@ -1988,13 +1988,13 @@ impl CommitRecordTarget {
     }
 }
 
-/// Maximum table-name length accepted by the draft ABI.
+/// Maximum table-name length accepted by ABI revision 1.
 pub const MAX_TABLE_NAME_BYTES: usize = sys::MAKO_LOCAL_MAX_TABLE_NAME_BYTES as usize;
-/// Maximum key length accepted by the draft ABI.
+/// Maximum key length accepted by ABI revision 1.
 pub const MAX_KEY_BYTES: usize = sys::MAKO_LOCAL_MAX_KEY_BYTES as usize;
-/// Maximum value length accepted by the draft ABI.
+/// Maximum value length accepted by ABI revision 1.
 pub const MAX_VALUE_BYTES: usize = sys::MAKO_LOCAL_MAX_VALUE_BYTES as usize;
-/// Weighted native item budget for one draft transaction.
+/// Weighted native item budget for one revision-1 transaction.
 pub const TRANSACTION_ITEM_BUDGET: usize = sys::MAKO_LOCAL_TXN_ITEM_BUDGET as usize;
 
 const UNCHECKED_ONE_PUT_RECORD_OVERHEAD_BYTES: usize = 38 + 17;
@@ -2042,6 +2042,12 @@ impl Features {
     #[doc(hidden)]
     pub const fn test_cleanup_failures(self) -> bool {
         self.0 & sys::MAKO_LOCAL_FEATURE_TEST_CLEANUP_FAILURES != 0
+    }
+
+    /// The process-global physical-clock override is compiled in for tests.
+    #[doc(hidden)]
+    pub const fn test_timestamp_clock(self) -> bool {
+        self.0 & sys::MAKO_LOCAL_FEATURE_TEST_TIMESTAMP_CLOCK != 0
     }
 
     /// Raw ABI feature bits, including future bits unknown to this crate.
@@ -2565,7 +2571,7 @@ fn ensure_current_thread_attached() -> Result<()> {
 /// A local in-memory Mako database using the C++ STO/MassTrans engine.
 ///
 /// The facade can be shared between fixed, long-lived workers. Its underlying
-/// MassTrans tables remain process-lifetime in this draft; dropping this value
+/// MassTrans tables remain process-lifetime in revision 1; dropping this value
 /// releases the facade handles after all safe Rust borrows have ended.
 pub struct LocalDb {
     raw: NonNull<sys::mako_local_db>,
@@ -2599,7 +2605,7 @@ impl LocalDb {
         Self::open_with_options(DbOptions::default())
     }
 
-    /// Open with the revision-0 sized options contract.
+    /// Open with the V0-sized options prefix of the revision-1 ABI.
     pub fn open_with_options(_options: DbOptions) -> Result<Self> {
         verify_abi()?;
         let timestamp_origin = timestamp_origin()?;
@@ -5676,6 +5682,8 @@ mod tests {
         assert!(!Features(0).test_commit_observer());
         assert!(Features(sys::MAKO_LOCAL_FEATURE_TEST_CLEANUP_FAILURES).test_cleanup_failures());
         assert!(!Features(0).test_cleanup_failures());
+        assert!(Features(sys::MAKO_LOCAL_FEATURE_TEST_TIMESTAMP_CLOCK).test_timestamp_clock());
+        assert!(!Features(0).test_timestamp_clock());
         assert_eq!(
             TestCleanupBoundary::Begin as u32,
             sys::MAKO_LOCAL_CLEANUP_BOUNDARY_BEGIN

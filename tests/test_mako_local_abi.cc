@@ -820,9 +820,11 @@ TEST(MakoLocalAbiIdentity, VersionAndStatusStringsAreStable) {
 #if defined(MAKO_LOCAL_TEST_HOOKS)
   EXPECT_NE(features & MAKO_LOCAL_FEATURE_TEST_COMMIT_OBSERVER, 0U);
   EXPECT_NE(features & MAKO_LOCAL_FEATURE_TEST_CLEANUP_FAILURES, 0U);
+  EXPECT_NE(features & MAKO_LOCAL_FEATURE_TEST_TIMESTAMP_CLOCK, 0U);
 #else
   EXPECT_EQ(features & MAKO_LOCAL_FEATURE_TEST_COMMIT_OBSERVER, 0U);
   EXPECT_EQ(features & MAKO_LOCAL_FEATURE_TEST_CLEANUP_FAILURES, 0U);
+  EXPECT_EQ(features & MAKO_LOCAL_FEATURE_TEST_TIMESTAMP_CLOCK, 0U);
   EXPECT_EQ(mako_local_test_set_commit_observer(record_commit_phase, nullptr),
             MAKO_LOCAL_FEATURE_UNAVAILABLE);
   EXPECT_EQ(mako_local_test_clear_commit_observer(),
@@ -832,6 +834,10 @@ TEST(MakoLocalAbiIdentity, VersionAndStatusStringsAreStable) {
             MAKO_LOCAL_FEATURE_UNAVAILABLE);
   EXPECT_EQ(mako_local_test_clear_cleanup_failure(),
             MAKO_LOCAL_FEATURE_UNAVAILABLE);
+  EXPECT_EQ(mako_local_test_set_timestamp_physical_ms(0),
+            MAKO_LOCAL_FEATURE_UNAVAILABLE);
+  EXPECT_EQ(mako_local_test_clear_timestamp_physical_ms(),
+            MAKO_LOCAL_FEATURE_UNAVAILABLE);
 #endif
   EXPECT_STREQ(mako_local_status_string(MAKO_LOCAL_OK), "ok");
   EXPECT_STREQ(mako_local_status_string(MAKO_LOCAL_CONFLICT),
@@ -840,9 +846,9 @@ TEST(MakoLocalAbiIdentity, VersionAndStatusStringsAreStable) {
   EXPECT_STREQ(mako_local_status_string(MAKO_LOCAL_DUPLICATE_WRITE),
                "second mutation of one key is not supported");
   EXPECT_STREQ(mako_local_status_string(MAKO_LOCAL_TXN_TOO_LARGE),
-               "transaction exceeds the draft item budget");
+               "transaction exceeds the revision-1 item budget");
   EXPECT_STREQ(mako_local_status_string(MAKO_LOCAL_VALUE_TOO_LARGE),
-               "table name, key, or value exceeds the draft byte limit");
+               "table name, key, or value exceeds the revision-1 byte limit");
   EXPECT_STREQ(mako_local_status_string(MAKO_LOCAL_COMMIT_HOOK_REJECTED),
                "post-validation commit hook rejected transaction");
   EXPECT_STREQ(mako_local_status_string(MAKO_LOCAL_TIMESTAMP_EXHAUSTED),

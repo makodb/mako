@@ -422,13 +422,16 @@ pub enum CacheHealth {
 pub enum WritebackFailureKind {
     /// The backend-application pipeline returned an error.
     ///
-    /// This includes backend panics, which the coordinator converts into a
-    /// normal error while retaining the exact batch for retry.
+    /// In a panic-unwind build this also includes backend panics, which the
+    /// coordinator converts into a normal error while retaining the exact
+    /// batch for retry. The workspace release profile uses `panic = "abort"`;
+    /// a panic in that profile terminates the process instead.
     Backend,
     /// A queued native record could not be materialized for replay.
     Record,
-    /// The outer background runtime loop caught a panic outside the backend
-    /// panic boundary.
+    /// In a panic-unwind build, the outer background runtime loop caught a
+    /// panic outside the backend panic boundary. The workspace release profile
+    /// aborts the process instead of producing this diagnostic.
     RuntimeLoopPanic,
 }
 
@@ -478,12 +481,16 @@ pub struct CacheStatus {
     /// Allocation failures are retryable. Structural record failures also
     /// appear in [`Self::writeback_error`] and make the cache unhealthy.
     pub record_failures: u64,
-    /// Panics caught by the outer dedicated-writer loop since startup.
+    /// Panics caught by the outer dedicated-writer loop since startup in a
+    /// panic-unwind build.
     ///
-    /// Backend panics are converted into ordinary backend failures inside the
-    /// coordinator and therefore increment [`Self::backend_failures`] instead.
+    /// Backend panics are then converted into ordinary backend failures inside
+    /// the coordinator and increment [`Self::backend_failures`] instead. The
+    /// workspace release profile uses `panic = "abort"`, so either kind of
+    /// panic terminates the process and cannot increment these counters.
     pub runtime_loop_panics: u64,
-    /// Consecutive failed or panicking dedicated-writer attempts.
+    /// Consecutive failed dedicated-writer attempts. Panic-unwind builds also
+    /// count caught panics; the workspace release profile aborts on panic.
     ///
     /// This returns to zero after the writer applies a batch or observes an
     /// empty queue.
@@ -1090,7 +1097,12 @@ impl<B: Blobs + 'static> Cache<B> {
         self.writeback.backend()
     }
 
-    /// Cleanly drain every acknowledged lane snapshot and stop the writer.
+    /// Attempt to drain every acknowledged lane snapshot and stop the writer.
+    ///
+    /// Success means every captured acknowledgement reached RocksDB. An error
+    /// means the synchronous retry budget or another shutdown invariant failed;
+    /// because this operation consumes the cache, recovery requires reopening
+    /// it. A backend call that never returns can block this operation.
     pub fn close(self) -> Result<u64, Error> {
         self.shutdown()
     }
