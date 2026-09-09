@@ -1,0 +1,348 @@
+================================================================================
+ RAFT MEMORY-ONLY BRANCH -- RECORD
+================================================================================
+ Branch:  codex/raft-memory-only   (base: codex/raft-stage2-prep @ f53f3804)
+ Updated: 2026-09-09
+ LOCAL ONLY, like the Stage 2 branch: no credentials for github.com/makodb.
+
+ CONTENTS
+   1. Why this branch exists
+   2. The cut criterion
+   3. What was removed
+   4. What survives with a narrower meaning
+   5. What deliberately stays in src/deptran/raft although it is disk code
+   6. Verification
+   7. Decisions the owner should confirm
+   8. Suggested next steps
+
+================================================================================
+ 1. WHY THIS BRANCH EXISTS
+================================================================================
+
+ The Rust conversion (docs/stage2_raft.txt) stalled on two gates, and its
+ data-structure classification put the whole memory/durable two-tier design
+ in Class A, "on the boundary, do not convert without review". The owner's
+ decision is to convert the in-memory consensus first and bring disk
+ persistence back afterwards. This branch produces that smaller codebase:
+ the Raft that Mako production actually runs today.
+
+ That last point is the load-bearing fact. Production never configures a
+ LogStorage, a SnapshotManager or a ReplicatedDB: those are opt-in through
+ environment variables read in RaftServer::SetupInternal (MAKO_RAFT_PERSISTENCE,
+ MAKO_RAFT_SNAPSHOTS, MAKO_REPLICATED_DB), and no example script, CI script
+ or config sets them. Only the RaftLab harness (testconf.cc) and the
+ persistence test arms turn them on. So removing the disk side removes code
+ that production does not execute, and the memory path can be preserved
+ exactly rather than redesigned.
+
+================================================================================
+ 2. THE CUT CRITERION
+================================================================================
+
+ DELETE code reachable only when one of these is configured:
+   (a) a LogStorage            -- persistence, recovery, the fsync ticket
+                                  FIFO, the async persistence threads
+   (b) the ON-DISK side of snapshots only: FileSnapshotManager,
+                                  MAKO_RAFT_SNAPSHOT_PATH, recovery of snapshots
+                                  from disk at startup. Snapshots, log
+                                  compaction and InstallSnapshot STAY, backed by
+                                  the in-memory snapshot manager (owner's call).
+   (c) a ReplicatedDB          -- the RocksDB-backed test state machine
+   (d) the DURABLE ack tier    -- VoteDurable / AppendEntriesDurable RPCs,
+                                  followerAckType, durableVoters_,
+                                  durableAcks_, securedLeader_,
+                                  CommitStatus::DURABLE,
+                                  StepDownReason::SecuredFailure
+
+ PRESERVE exactly the path taken when none of (a)-(d) is configured. Where a
+ branch tested HasConfiguredStorage() / HasDurableStorage() /
+ async_persistence_ / snapshot_manager_ / replicated_db_, the branch taken
+ when they are false or null was kept and the other was dropped. Where a
+ removed variable was compared against, its constant value was substituted
+ first (snapidx_ == 0, securedLeader_ == false) and the expression simplified
+ only when provably identical. Nothing was renamed: renames belong to the
+ conversion.
+
+ TWO FURTHER OWNER DECISIONS, taken during the cut:
+   * Snapshots are memory logic in the Raft sense and stay. Only their
+     on-disk implementation went. MAKO_RAFT_SNAPSHOTS=1 now constructs a
+     MemorySnapshotManager; MAKO_RAFT_SNAPSHOT_INTERVAL still sets the
+     threshold; MAKO_RAFT_SNAPSHOT_PATH is gone.
+   * The two RaftServer friendships (RaftTestConfig, RaftLabTest) are
+     removed. A public nested struct RaftServer::LabAccess, compiled only
+     under RAFT_TEST_CORO, gives the harness one static accessor per private
+     member it still needs. A nested class reaches the enclosing class's
+     private members without friendship, and a Rust port expresses the same
+     thing as a #[cfg(test)] module. The inert RaftCommo friendship of the
+     generated RaftProxy is deleted outright.
+
+ The MEMORY ack tier is NOT disk code and stays: memoryAcks_, specVoters_,
+ specCommitIndex_, SPECULATIVE notifications, OnPeerRestart removing a
+ restarted peer's memory vote and stepping down with UnsecuredFailure when
+ the memory quorum is lost, and the ROLLEDBACK notifications that follow.
+ That is the speculative design's memory half, and it is what production
+ runs.
+
+================================================================================
+ 3. WHAT WAS REMOVED
+================================================================================
+
+ Net diff against the base: 56 files changed, 4202 insertions, 20620
+ deletions.
+
+ FILES DELETED (13)
+   src/deptran/raft/file_snapshot_manager.hpp      on-disk snapshot manager
+   src/deptran/raft/recovery_manager.hpp           storage recovery driver
+   src/deptran/raft/replicated_db.h, .cc           RocksDB test state machine
+   src/deptran/raft/read_raft_disk.cc              disk inspection tool
+   src/deptran/raft/src/{file_snapshot_manager_hpp,recovery_manager_hpp,
+                         replicated_db_h,read_raft_disk_cc}.rs   crate outputs
+   src/deptran/raft/PERSISTENCE_TESTS.md, PERSISTENCE_TEST_STATUS.txt,
+   test_raft_persistence_explanation.txt          notes on deleted tests
+   tests/raft_durability_accounting_test.cc
+
+ WIRE PROTOCOL (src/deptran/rcc_rpc.rpc, rcc_rpc.h regenerated by bin/rpcgen)
+   RPCs VoteDurable and AppendEntriesDurable are gone. AppendEntries and
+   EmptyAppendEntries no longer return followerAckType. InstallSnapshot,
+   TimeoutNow, NotifyRestart, AddServer, RemoveServer are unchanged and every
+   surviving rpc id is unchanged (rpcgen freezes ids from the committed header).
+
+ RaftServer (server.h 3763 -> 2887 lines, server.cc 7530 -> 5595)
+   Gone: every Persist* method, the log-persistence ticket FIFO and its
+   completion guard, the async persistence threads, RecordPersistenceResult,
+   PersistedAppendContextIsCurrentLocked, RecoverFromStorage,
+   ReplayCommittedEntries, GetUncommittedCount, SetLogStorage/GetLogStorage,
+   GetReplicatedDB, OnVoteDurable, OnAppendEntriesDurable,
+   MaybeAdvanceSecuredLogIndex, IsSecuredLeader, GetDurableVoters(Count),
+   GetDurableAckCount, HasConfiguredStorage, HasDurableStorage,
+   YieldAfterSynchronousLocalAppend (a no-op without storage), and the fields
+   log_storage_, persistence_healthy_, replicated_db_, async_persistence_,
+   async_threads_, securedLeader_, durableVoters_, earlyDurableVoters_,
+   durableAcks_, lastDurableNotifiedIndex_. The OnAppendEntries out-parameter
+   followerAckType is gone. CommitStatus lost DURABLE and StepDownReason lost
+   SecuredFailure; the surviving discriminants keep their numeric values
+   (SPECULATIVE=0, ROLLEDBACK=2; UnsecuredFailure=0, HigherTerm=2) so nothing
+   that logs or forwards the integer changes.
+   Kept and narrowed: InitializeSnapshotManager (MAKO_RAFT_SNAPSHOTS=1 reuses
+   a manager already installed through SetSnapshotManager, restoring its
+   latest boundary, and otherwise constructs an empty MemorySnapshotManager;
+   the base always built a fresh FileSnapshotManager and overwrote an
+   injected one -- this is the one snapshot rule that is not a pure
+   projection of the base, and the Rust port must reproduce it), CompactLog
+   and OnInstallSnapshot (memory parts only), the HeartbeatLoop
+   InstallSnapshot branch, GetElectionTimeout (now returns the randomized
+   timeout directly; the storage floor was never applied without storage).
+   snapshot_manager.hpp lost SnapshotConfig and GetStoragePath(), both
+   file-manager leftovers with no remaining user.
+   One non-persistence effect went with ReplayCommittedEntries: Setup used
+   to fail closed if no learner action was registered before it ran.
+   RaftWorker refuses startup itself in that case (raft_worker.cc, the
+   BindLearnerCallback guard) and the harness registers before Setup, so
+   no reachable configuration observes the difference.
+   DSL: 104 -> 88 predicates in server.h. Deleted: ack_is_memory,
+   ack_is_durable, persistence_can_report_durable, sync_reply_is_durable,
+   follower_append_ack_type, durable_write_succeeded,
+   async_persistence_should_queue, persistence_ticket_is_ready,
+   persisted_reply_context_is_current, can_buffer_early_durable_vote,
+   should_become_secured, unsecured_leader_needs_quorum_check,
+   commit_status_is_durable, term_advance_is_durable, and after review
+   effective_election_timeout (its only caller passed storage_configured=
+   false, so it returned its input) and start_is_indeterminate (nothing
+   produces RaftStartResult::INDETERMINATE once the failed-fsync path is
+   gone; the variant is deleted and RaftWorker's dead Log_fatal branch with
+   it). snapshot_recovery_retains_suffix and snapshot_recovery_has_unproven_gap
+   lost their storage_compaction_proves_suffix parameter, which every caller
+   passed as false. Every other snapshot and compaction predicate stays.
+
+ RaftCommo / RaftServiceImpl / test transport facade
+   SendVoteDurable, SendAppendEntriesDurable and the two service handlers are
+   gone; AppendEntriesResponse lost ack_type; the AckType enum block
+   (raft_commo.ack_type) and the durable message block (raft_messages.durable)
+   are deleted; AppendEntriesReply/EmptyAppendEntriesReply in messages.hpp
+   lost follower_ack_type to keep mirroring the wire. The RaftNode skeleton
+   and TestCluster lost their LogStorage members but keep MemorySnapshotManager.
+   raft_lab_standalone runs three cases (the durable and ReplicatedDB cases
+   went). tests/raft_memory_snapshot_manager_test.cc keeps its name and target
+   but lost the seven FileSnapshotManager cases.
+
+ FRIENDSHIPS (3 -> 0 under src/deptran/raft)
+   RaftServer no longer befriends RaftTestConfig or RaftLabTest; RaftCommo no
+   longer befriends the generated RaftProxy (it was inert); the ReplicatedDB
+   friendship went with the file. RaftServer::LabAccess (public, nested,
+   RAFT_TEST_CORO only) carries 30 static accessors, every one with a live
+   caller in test.cc or testconf.cc. Verified: grep -rn "friend "
+   src/deptran/raft is empty.
+
+ RaftLab (test.cc 10567 -> 5105 lines, testconf.cc 1299 -> 1070)
+   Run() no longer branches on MAKO_RAFT_PERSISTENCE. It runs 37 tests:
+   1-11 (elections, agreement, backup, RPC counts, unreliable agreement,
+   Figure 8), 50-52 and 54-60 (snapshot format, manager contract, wiring,
+   CreateSnapshot, compaction, threshold, InstallSnapshot, heartbeat-triggered
+   install -- 52, 54-56, 58-60 converted from FileSnapshotManager to
+   MemorySnapshotManager), 63-64 (rollback on UnsecuredFailure, none on
+   HigherTerm), 67-70 (heartbeat interval, retention window, long partition
+   recovery via InstallSnapshot, leadership transfer timeout), 72 (high
+   frequency apply), 73-81 (membership changes). Deleted: the persistence
+   arm 13-19, 53 (on-disk directory listing), 61-62, 65-66, 71, 82-91,
+   99-103, and every disabled two-tier test whose purpose was durability.
+   Kept but still disabled: the memory-tier speculative tests, with their
+   durable-only assertions dropped. Restart() keeps only the memory path.
+
+ BUILD SYSTEM
+   CMake lost replicated_db.cc, the read_raft_disk app, raft_disk_reader_compile
+   and test_raft_durability_accounting; .github/workflows/ci.yml lost the same
+   test name (a build-time gate asserts the CI list matches the targets).
+   scripts/raft_dsl.sh EXPECTED_BLOCKS 40 -> 32; rust-modules.toml 21 -> 17
+   modules; the crate re-extracted. RaftWorker::PrepareForStartup always
+   installs the learner trampoline (the MAKO_REPLICATED_DB gate is gone).
+
+================================================================================
+ 4. WHAT SURVIVES WITH A NARROWER MEANING
+================================================================================
+
+ securedLogIndex_   Still assigned commitIndex when a node becomes leader and
+                    0 when it steps down. Its only remaining role is the lower
+                    bound of the UnsecuredFailure rollback range
+                    (securedLogIndex_, lastLogIndex]. In memory-only Raft it
+                    is "the commit index at leader start", not a durability
+                    boundary. Name kept; comment added at the declaration.
+
+ specCommitIndex_   Advances on memory-ack quorum and drives SPECULATIVE
+                    notifications, exactly as before. Without a durable tier
+                    it is the only notification tier.
+
+ StepDownReason     UnsecuredFailure and HigherTerm remain. "Unsecured" now
+                    simply means "a leader" -- every memory-only leader is
+                    unsecured -- so the name is a fossil.
+
+ CommitStatus       SPECULATIVE and ROLLEDBACK remain. DURABLE was never
+                    emitted without storage and is gone. Consequence carried
+                    over from the base branch: a pending commit callback is
+                    erased only on DURABLE or on step-down, so in memory-only
+                    mode pendingCallbacks_ entries live until leadership
+                    changes. That is the base branch's no-storage behaviour,
+                    preserved on purpose; see section 7.
+
+ min_active_slot_   Advanced by the log retention window GC and by in-memory
+                    log compaction after a snapshot, as before.
+
+================================================================================
+ 5. WHAT STAYS IN src/deptran/raft ALTHOUGH IT IS DISK CODE
+================================================================================
+
+ log_storage.hpp, memory_log_storage.hpp, rocksdb_log_storage.hpp remain
+ unchanged. src/deptran/paxos/server.h holds a janus::raft::LogStorage and
+ src/rrr/tests/rpc_log_storage_test.cc, rpc_rocksdb_log_storage_test.cc and
+ rpc_marshallable_proxy_test.cc include them. RaftServer, RaftCommo,
+ RaftServiceImpl, RaftWorker and the RaftLab harness no longer include or
+ reference them. Moving these three headers out of the raft directory is a
+ separate, mechanical change that touches Paxos and rrr; it was not done
+ here.
+
+ src/deptran/mako_commands.h keeps 'class ReplicatedDBCommand;' and the
+ MakoCommandKind::ReplicatedDBCommand = 19 payload registration inside its
+ DSL block. The kind number stays reserved on purpose (wire compatibility);
+ the forward declaration compiles without the class.
+
+================================================================================
+ 6. VERIFICATION
+================================================================================
+
+ Run on this host (source ~/.local/bin/mako-env.sh; Ninja trees build/ and
+ build_raftlab/, the latter configured -DMAKO_USE_RAFT=ON -DRAFT_TEST=ON):
+
+   ninja -C build_raftlab                  clean, 0 errors
+   ninja -C build                          clean, 0 errors
+   ctest -R raft  (build_raftlab)          11/11 passed
+   ctest -R raft  (build)                  11/11 passed
+   RaftLab  deptran_server -f config/raft_lab_test.yml -P localhost
+                                           37/37 passed, ALL TESTS PASSED
+   scripts/raft_dsl.sh --check             17 carriers, 0 failures;
+                                           crate rustc -D warnings + clippy
+                                           clean
+   scripts/rrr_dsl_check.sh                5 files, 0 drift
+   bin/rpcgen --cpp src/deptran/rcc_rpc.rpc  idempotent (no further diff)
+   grep -rn "friend " src/deptran/raft     empty
+
+ The 155-case matrix of the base branch (55 BASIC + 50 PERSISTENCE + 50
+ ASYNC) collapses to this single 37-case arm: the two persistence arms have
+ nothing left to test, and 18 of the 55 BASIC cases were snapshot-on-disk,
+ ReplicatedDB or persistence-boundary tests.
+
+ NOT run here: the Docker CI suites (shard1ReplicationRaft etc.); Docker is
+ not installed on this host. They exercise the production memory path that
+ this branch preserves, so they are the next check to run where Docker exists.
+
+ REVIEW: two adversarial reviewers read the full diff against the base
+ (one for memory-path semantics in server.h/server.cc, one for cut
+ coherence and leftovers). Neither found a must-fix. Six should-fix items
+ were applied by a fixer, after which both trees were rebuilt clean,
+ raft_dsl.sh --check stayed green, the 11 unit tests passed again and
+ RaftLab passed its 37 tests a second time. The semantics reviewer's
+ verdict, verbatim: "NO behaviour change on the memory path".
+
+================================================================================
+ 7. DECISIONS THE OWNER SHOULD CONFIRM
+================================================================================
+
+ D1. Should SPECULATIVE be terminal in memory-only mode? Today a commit
+     callback is notified SPECULATIVE on memory quorum and then left
+     registered until step-down (it used to be erased on DURABLE). Nothing in
+     Mako production registers commit callbacks (the only caller was the
+     deleted ReplicatedDB), so this only affects RaftLab tests 63/64 and
+     future users of StartWithCallback. Preserved as-is here.
+
+ D2. Should the shared storage headers move out of src/deptran/raft?
+     See section 5.
+
+ D2b. LabAccess hands out references to private fields, so the harness can
+     still mutate server state directly (membership tests seed match_index_
+     and next_index_ that way). That mirrors what the friendships allowed. If
+     the conversion wants a read-only inspection surface, the mutating
+     accessors are the list to shrink.
+
+ D3. Rename the fossil names during conversion (securedLogIndex_ ->
+     leader start commit index; StepDownReason::UnsecuredFailure ->
+     MemoryQuorumLost; specVoters_/specCommitIndex_ keep "spec" or become
+     plain voters/commit)? Not done here by design.
+
+ D4. Tests 16-18 (partition-plus-restart) exercised the NotifyRestart retry
+     path and asserted nothing persistence-specific, but the base ran them
+     only in the persistence arm, so they went with it. If NotifyRestart
+     retry coverage is wanted in the memory-only lab, they can be restored
+     as memory-only tests: a restarted node comes back empty and catches up
+     by replication or InstallSnapshot, which they already tolerated.
+
+ D5. The two-tier design will need to come back for production durability.
+     This branch is the memory core it will be layered on; the base branch
+     codex/raft-stage2-prep keeps the full implementation and its 155-case
+     matrix as the reference.
+
+================================================================================
+ 8. SUGGESTED NEXT STEPS
+================================================================================
+
+ 1. Run the Docker Raft CI suites against this branch on a host with Docker:
+    shard1ReplicationRaft, shard2ReplicationRaft and the Simple variants.
+    They drive the production memory path end to end through Mako; RaftLab
+    drives it through the harness. Both green closes the preservation
+    argument.
+ 2. Decide D1-D4 in section 7. D1 (is SPECULATIVE terminal?) is the one that
+    changes code.
+ 3. Start the conversion on the reduced surface: 90 predicates in server.h,
+    32 DSL blocks, 17 crate modules, 38 files. The two Stage 2 gates still
+    apply unchanged -- Q1b (no ODR post-pass for raft carriers, so header
+    types with methods do not link) and Q1c (a pub trait is not a drop-in
+    for a pure-virtual class). Six pure-virtual interfaces became two:
+    LogStorage and its storage siblings left RaftServer's reach, leaving
+    SnapshotManager, SnapshotReader/Writer, TransportBase and DispatcherBase.
+ 4. The disk side comes back later as a layer on this core. The base branch
+    codex/raft-stage2-prep holds the full two-tier implementation and its
+    155-case matrix as the reference for that work.
+ 5. Documentation outside src/ still describes the deleted mechanisms
+    (docs/raft-book.md sections 11-12 in part,
+    docs/raft-restart-and-ownership.txt
+    section 4 on friends, docs/plans/log-persistence/*, docs/stage2_raft.txt).
+    They are correct for the base branch and were left alone; this file is
+    the record for the memory-only branch.
+================================================================================
