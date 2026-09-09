@@ -65,12 +65,6 @@ class DummyDispatcher : public DispatcherBase {
   EmptyAppendEntriesReply handle_empty_append_entries(EmptyAppendEntriesReq) override {
     EmptyAppendEntriesReply r{}; r.follower_append_ok = 1; return r;
   }
-  TimeoutNowReply handle_timeout_now(TimeoutNowReq) override {
-    TimeoutNowReply r{}; r.success = true; return r;
-  }
-  NotifyRestartReply handle_notify_restart(NotifyRestartReq) override {
-    NotifyRestartReply r{}; r.acknowledged = true; return r;
-  }
   InstallSnapshotReply handle_install_snapshot(InstallSnapshotReq) override {
     InstallSnapshotReply r{}; r.term_out = 0; return r;
   }

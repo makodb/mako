@@ -18,8 +18,6 @@
  *     deliver closure against the local DispatcherProxy. The closure
  *     synchronously calls the matching handle_* and forwards its
  *     return value through the reply sender.
- *   - Fire-and-forget methods push an envelope whose deliver closure
- *     calls handle_* and discards the return value.
  *
  * Rusty-safety:
  *  - No inheritance, no std::thread, no std::mutex.
@@ -115,8 +113,6 @@ template <> struct is_send<janus::raft::Envelope>                 : std::true_ty
 template <> struct is_send<janus::raft::VoteReply>                : std::true_type {};
 template <> struct is_send<janus::raft::AppendEntriesReply>       : std::true_type {};
 template <> struct is_send<janus::raft::EmptyAppendEntriesReply>  : std::true_type {};
-template <> struct is_send<janus::raft::TimeoutNowReply>          : std::true_type {};
-template <> struct is_send<janus::raft::NotifyRestartReply>       : std::true_type {};
 template <> struct is_send<janus::raft::InstallSnapshotReply>     : std::true_type {};
 }  // namespace rusty
 
@@ -202,23 +198,6 @@ class ChannelSwitchboard {
 };
 
 // ---------------------------------------------------------------------------
-// Helper: build a fire-and-forget deliver closure.
-// ---------------------------------------------------------------------------
-namespace detail {
-
-template <typename Handle>
-// @safe
-inline rusty::Function<void(DispatcherProxy&)>
-make_fire_and_forget(Handle handle) {
-  return rusty::Function<void(DispatcherProxy&)>(
-      [handle = std::move(handle)](DispatcherProxy& disp) mutable {
-        handle(disp);
-      });
-}
-
-}  // namespace detail
-
-// ---------------------------------------------------------------------------
 // ChannelTransportAdapter — satisfies TransportBase (fiber-sync).
 // ---------------------------------------------------------------------------
 
@@ -293,20 +272,6 @@ class ChannelTransportAdapter : public TransportBase {
   }
 
   // @unsafe { mpsc bridge }
-  TimeoutNowReply send_timeout_now(siteid_t dst, TimeoutNowReq req) override {
-    auto [tx, rx] = rusty::sync::mpsc::channel<TimeoutNowReply>();
-    Envelope env{self_, dst,
-        rusty::Function<void(DispatcherProxy&)>(
-            [req = std::move(req), tx = std::move(tx)](DispatcherProxy& disp) mutable {
-              (void)tx.send(disp->handle_timeout_now(std::move(req)));
-            })};
-    sw_->send(std::move(env));
-    auto r = rx.recv();
-    if (r.is_err()) return TimeoutNowReply{};
-    return r.unwrap();
-  }
-
-  // @unsafe { mpsc bridge }
   InstallSnapshotReply send_install_snapshot(siteid_t dst, InstallSnapshotReq req) override {
     auto [tx, rx] = rusty::sync::mpsc::channel<InstallSnapshotReply>();
     Envelope env{self_, dst,
@@ -318,22 +283,6 @@ class ChannelTransportAdapter : public TransportBase {
     auto r = rx.recv();
     if (r.is_err()) return InstallSnapshotReply{};
     return r.unwrap();
-  }
-
-  // ------------------------------------------------------------------
-  // Fire-and-forget RPCs. Reply is discarded.
-  // ------------------------------------------------------------------
-
-  // @safe
-  void send_notify_restart(siteid_t dst, parid_t /*par*/) override {
-    NotifyRestartReq req{};
-    req.restarted_site_id = self_;
-    Envelope env{self_, dst,
-        rusty::Function<void(DispatcherProxy&)>(
-            [req](DispatcherProxy& disp) mutable {
-              (void)disp->handle_notify_restart(req);
-            })};
-    sw_->send(std::move(env));
   }
 
  private:

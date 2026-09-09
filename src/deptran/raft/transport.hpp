@@ -14,7 +14,6 @@
  *    rrr side, or a reply-slot signaled by the channel worker on the
  *    in-memory side) until the reply arrives. No callbacks, no
  *    rusty::Function in the base signatures.
- *  - Fire-and-forget methods (notify-restart) stay `void`.
  *  - No per-partition broadcast on the base. Leaders that want to
  *    vote a quorum spawn N fibers, each issuing a per-peer send_vote.
  *
@@ -42,8 +41,6 @@ namespace raft {
 // messages.hpp's import of the rrr module.
 struct VoteReq;
 struct VoteReply;
-struct TimeoutNowReq;
-struct TimeoutNowReply;
 struct AppendEntriesReq;
 struct AppendEntriesReply;
 struct EmptyAppendEntriesReq;
@@ -64,11 +61,7 @@ class TransportBase {
   virtual AppendEntriesReply       send_append_entries(siteid_t /*dst*/, AppendEntriesReq) = 0;
   virtual EmptyAppendEntriesReply  send_empty_append_entries(siteid_t /*dst*/, EmptyAppendEntriesReq) = 0;
   virtual VoteReply                send_vote(siteid_t /*dst*/, VoteReq) = 0;
-  virtual TimeoutNowReply          send_timeout_now(siteid_t /*dst*/, TimeoutNowReq) = 0;
   virtual InstallSnapshotReply     send_install_snapshot(siteid_t /*dst*/, InstallSnapshotReq) = 0;
-
-  // Restart notifications are fire-and-forget by design.
-  virtual void                     send_notify_restart(siteid_t /*self*/, parid_t) = 0;
 
   // Identity — useful for adapters that need to know their own site
   // for logging / loopback suppression.

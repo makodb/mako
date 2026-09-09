@@ -4,9 +4,7 @@
 #include <stdlib.h>
 
 #include "testconf.h"
-#include "../config.h"
 #include "frame.h"
-#include "service.h"
 #include "commo.h"
 #include "application_log.h"
 #include "../replication_log_entry.h"
@@ -312,31 +310,6 @@ bool RaftTestConfig::Start(siteid_t svr, int cmd, uint64_t *index, uint64_t *ter
   return raft_server_start_was_appended(result);
 }
 
-bool RaftTestConfig::StartWithCallback(siteid_t svr, int cmd, uint64_t *index, uint64_t *term,
-                                       std::function<void(CommitStatus)> callback) {
-  auto it = replicas.find(svr);
-  if (it == replicas.end()) {
-    Log_error("Server {} not found in replicas map", svr);
-    return false;
-  }
-
-  // Build the same command shape as Start(), but submit it through the server's
-  // atomic append+callback API so step-down/replication cannot race registration.
-  auto cmdptr = rusty::Arc<TpcCommitCommand>::make();
-  LogEntry raw_log;
-  verify(raft::EncodeApplicationLog(nullptr, 0, 0, &raw_log.log_entry));
-  raw_log.length = static_cast<int>(raw_log.log_entry.size());
-  {
-    auto& mut_cmd = cmdptr.get_mut().unwrap();
-    mut_cmd.tx_id_ = cmd;
-    mut_cmd.cmd_ = rusty::Arc<LogEntry>::make(std::move(raw_log));
-  }
-
-  return raft_server_start_was_appended(
-      it->second->svr_->StartWithCallback(
-          std::move(cmdptr), index, term, std::move(callback)));
-}
-
 int RaftTestConfig::Wait(uint64_t index, int n, uint64_t term) {
   int nc = 0, i;
   auto to = 10000; // 10 milliseconds
@@ -558,7 +531,7 @@ void RaftTestConfig::Shutdown(void) {
 
   // This method runs inside the RaftLab reactor fiber.  Quiesce every current
   // server through its owner-thread completion barrier before the harness
-  // stops poll threads; ServerWorker::rep_sched_ can be stale after Restart.
+  // stops poll threads.
   for (auto& pair : replicas) {
     if (pair.second != nullptr && pair.second->svr_) {
       pair.second->svr_->PrepareForShutdown();
@@ -724,225 +697,6 @@ RaftServer *RaftTestConfig::GetServer(siteid_t svr) {
   return it->second->svr_.get();
 }
 
-void RaftTestConfig::Kill(siteid_t svr) {
-  std::lock_guard<std::recursive_mutex> lk(connection_m_);
-  std::lock_guard<std::mutex> lk2(disconnect_mtx_);
-
-  Log_info("[RAFT-TEST] Killing server {}", svr);
-
-  auto it = replicas.find(svr);
-  if (it == replicas.end()) {
-    Log_error("[RAFT-TEST] Server {} not found in replicas", svr);
-    return;
-  }
-
-  // Mark as disconnected
-  disconnected_[svr] = true;
-
-  // Clear atomic pointer in RaftServiceImpl BEFORE deleting frame
-  // This ensures in-flight RPCs get nullptr and return failure gracefully
-  RaftServiceImpl::UpdateServer(svr, nullptr);
-
-  // Stop the owner-thread runtime loops before disconnecting their communicator
-  // or destroying the frame. PrepareForShutdown wakes both waits through the
-  // owner PollThread and yields this reactor fiber until both completion flags
-  // are clear.
-  RaftFrame* frame = it->second;
-  if (frame && frame->svr_) {
-    frame->svr_->PrepareForShutdown();
-    frame->svr_->Disconnect(true);
-  }
-
-  // Delete the frame (this will cascade delete svr_ and commo_)
-  delete frame;
-
-  // Remove from replicas map
-  replicas.erase(it);
-
-  // Clear committed commands for this server
-  {
-    auto committed = committed_cmds.lock().unwrap();
-    (*committed)[svr] = {kMissingCommittedCommand};
-  }
-
-  // Reset RPC count
-  rpc_count_last[svr] = 0;
-
-  Log_info("[RAFT-TEST] Server {} killed successfully", svr);
-}
-
-bool RaftTestConfig::Restart(siteid_t svr) {
-  std::lock_guard<std::recursive_mutex> lk(connection_m_);
-  std::lock_guard<std::mutex> lk2(disconnect_mtx_);
-
-  Log_info("[RAFT-TEST] Restarting server {}", svr);
-
-  // Check if server is already running
-  if (replicas.find(svr) != replicas.end()) {
-    Log_error("[RAFT-TEST] Server {} is already running, cannot restart", svr);
-    return false;
-  }
-
-  // Get the config to find site info
-  auto config = Config::GetConfig();
-  verify(config != nullptr);
-
-  // Find the site info for this server ID
-  Config::SiteInfo* site_info = nullptr;
-  for (auto& site : config->sites_) {
-    if (site.id == svr) {
-      site_info = &site;
-      break;
-    }
-  }
-
-  if (!site_info) {
-    Log_error("[RAFT-TEST] Could not find site info for server {}", svr);
-    return false;
-  }
-
-  // Keep the candidate private and reclaim it on every fail-closed exit.  It is
-  // released to replicas only after runtime wiring has succeeded.
-  auto frame_owner = std::make_unique<RaftFrame>();
-  RaftFrame* frame = frame_owner.get();
-  frame->site_info_ = site_info;
-
-  // Create a fresh RaftServer. Restart() bypasses Setup(), so all Setup-owned
-  // state needed by the runtime loops is restored explicitly below.
-  frame->svr_ = std::make_unique<RaftServer>();
-  frame->svr_->site_id_ = svr;
-  frame->svr_->partition_id_ = site_info->partition_id_;
-  frame->svr_->loc_id_ = site_info->locale_id;
-
-  // Fix 2: Get the ORIGINAL poll thread from RaftServiceImpl (survives Kill)
-  // This ensures inbound RPCs (via RPC server) and outbound RPCs (via Commo)
-  // use the SAME poll thread, eliminating race conditions on RaftServer state
-  auto poll_thread = RaftServiceImpl::GetPollThread(svr);
-  if (poll_thread.is_some()) {
-    frame->commo_ = std::make_unique<RaftCommo>(std::move(poll_thread));
-  } else {
-    Log_warn("[RAFT-RESTART] site {}: poll thread not found, creating new one", svr);
-    frame->commo_ = std::make_unique<RaftCommo>(rusty::None);
-  }
-  // Set commo_ in server before initializing
-  frame->svr_->commo_ = frame->commo_.get();
-  auto replication_poll = frame->commo_->PollThread();
-  if (replication_poll.is_some()) {
-    frame->svr_->BindReplicationWakeOwner(replication_poll.unwrap());
-  } else {
-    Log_error("[RAFT-RESTART] site {}: cannot bind replication wake owner",
-              svr);
-    return false;
-  }
-
-  // Restart() bypasses Setup(), so restore snapshot manager wiring explicitly.
-  // Memory-only Raft has nothing to recover: with MAKO_RAFT_SNAPSHOTS set this
-  // seeds an empty in-memory manager so the server can accept InstallSnapshot.
-  if (!RaftServer::LabAccess::InitializeSnapshotManager(*frame->svr_)) {
-    Log_error("[RAFT-TEST-RESTART] Snapshot manager initialization failed for server {}",
-              svr);
-    return false;
-  }
-
-  // Setup() normally seeds current_config_ from static partition metadata.
-  // HeartbeatLoop uses this membership immediately, so initialize it before
-  // queuing either runtime loop.
-  if (RaftServer::LabAccess::current_config(*frame->svr_).empty()) {
-    auto replicas_for_partition =
-        Config::GetConfig()->SitesByPartitionId(frame->svr_->partition_id_);
-    for (const auto& site : replicas_for_partition) {
-      RaftServer::LabAccess::current_config(*frame->svr_).insert(site.id);
-    }
-  }
-
-  // Record startup timestamp for grace period logic (same as Setup())
-  RaftServer::LabAccess::startup_timestamp(*frame->svr_) = Time::now(true);
-
-  // CRITICAL: Mark Setup() as already done to prevent EnsureSetup() from calling it again
-  RaftServer::LabAccess::heartbeat_setup(*frame->svr_) = true;
-
-  // Register the learner callback before any committed entry can be applied,
-  // then restore the apply infrastructure normally started by Setup().
-  commit_callbacks[svr] =
-      [svr](slotid_t slot, janus::Command md) -> int {
-        verify(raft_test_should_record_agreement_command(
-            md.kind_, TpcCommitCommand::static_kind()));
-        const auto commit_cmd = marshallable_cast<TpcCommitCommand>(md);
-        verify(commit_cmd.is_some());
-        Log_debug("server {} committed value {} at slot {}",
-                  svr, commit_cmd.unwrap()->tx_id_, slot);
-        RaftTestConfig::RecordCommittedCommand(
-            svr, slot, commit_cmd.unwrap()->tx_id_);
-        return 0;
-      };
-  frame->svr_->RegLearnerAction(commit_callbacks[svr]);
-
-  RaftServer::LabAccess::StartApplyThread(*frame->svr_);
-  RaftServer::LabAccess::rpc_ready(*frame->svr_).store(
-      true, rusty::sync::atomic::Ordering::Release);
-
-  // Start the heartbeat loop and election timer manually since we're skipping Setup()
-  // CRITICAL (Fix 2 part 2): Must add coroutines to the CORRECT poll thread!
-  // Using Fiber::create_run would schedule on the current reactor (site 0's test thread),
-  // not on this server's poll thread. We must use poll_thread->add() instead.
-#ifdef RAFT_TEST_CORO
-  auto restart_poll_thread = frame->commo_->PollThread();
-  if (RaftServer::LabAccess::heartbeat(*frame->svr_) && restart_poll_thread.is_some()) {
-    auto& poll_thread = restart_poll_thread.as_ref().unwrap();
-
-    // Add HeartbeatLoop as a job to the correct poll thread
-    RaftServer::LabAccess::heartbeat_loop_running(*frame->svr_).store(
-        true, rusty::sync::atomic::Ordering::Release);
-    auto hb_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([frame]() {
-      Fiber::create_run([frame]() {
-        RaftServer::LabAccess::HeartbeatLoop(*frame->svr_);
-      });
-    }));
-    poll_thread->add(rusty::Arc<Job>(hb_job));
-
-    // Add election timer as a job to the correct poll thread
-    if (RaftServer::LabAccess::failover(*frame->svr_)) {
-      RaftServer::LabAccess::election_loop_running(*frame->svr_).store(
-          true, rusty::sync::atomic::Ordering::Release);
-      auto election_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([frame]() {
-        Fiber::create_run([frame]() {
-          frame->svr_->StartElectionTimer();
-        });
-      }));
-      poll_thread->add(rusty::Arc<Job>(election_job));
-    }
-
-  }
-#endif
-
-  // Update atomic pointer in RaftServiceImpl to point to the new server
-  // This allows the existing RPC service to forward requests to the new server
-  RaftServiceImpl::UpdateServer(svr, frame->svr_.get());
-
-  // Add the fully initialized frame back to the replicas map.
-  replicas[svr] = frame_owner.release();
-
-  // The fresh communicator owns fresh peers; no stale proxy cache is restored.
-  disconnected_[svr] = false;
-
-  // Reset RPC count
-  rpc_count_last[svr] = 0;
-
-  // Notify all other servers to reconnect their client connections to this server
-  // This is needed because after Kill/Restart, other servers' TCP connections to us are stale
-  if (frame->commo_ != nullptr) {
-    Log_info("[RAFT-TEST] Sending NotifyRestart from site {} to all peers", svr);
-    auto commo = dynamic_cast<RaftCommo*>(frame->commo_.get());
-    if (commo != nullptr) {
-      commo->SendNotifyRestart(svr, frame->svr_->partition_id_);
-    }
-  }
-
-  Log_info("[RAFT-TEST] Server {} restarted successfully (term={}, lastLogIndex={})",
-           svr, frame->svr_->currentTerm, frame->svr_->lastLogIndex);
-  return true;
-}
-
 siteid_t RaftTestConfig::mapServerId(siteid_t server_id) const {
   // Find the server_id in the replicas map and return its position (0-4)
   int index = 0;
@@ -1003,66 +757,6 @@ siteid_t RaftTestConfig::getNextServerId(siteid_t current_server_id, int offset)
   }
 
   return result;
-}
-
-// ============================================================================
-// SPECULATIVE RAFT STATE QUERIES
-// ============================================================================
-
-uint64_t RaftTestConfig::GetSpecCommitIndex(siteid_t svr) {
-  auto server = GetServer(svr);
-  if (!server) {
-    return 0;
-  }
-  return server->GetSpecCommitIndex();
-}
-
-uint64_t RaftTestConfig::GetSecuredLogIndex(siteid_t svr) {
-  auto server = GetServer(svr);
-  if (!server) {
-    return 0;
-  }
-  return server->GetSecuredLogIndex();
-}
-
-size_t RaftTestConfig::GetSpecVotersCount(siteid_t svr) {
-  auto server = GetServer(svr);
-  if (!server) {
-    return 0;
-  }
-  return server->GetSpecVotersCount();
-}
-
-bool RaftTestConfig::VerifySpecInvariants(siteid_t svr) {
-  auto server = GetServer(svr);
-  if (!server) {
-    return true;  // Non-existent server trivially satisfies invariants
-  }
-
-  uint64_t securedLogIndex = server->GetSecuredLogIndex();
-  uint64_t specCommitIndex = server->GetSpecCommitIndex();
-  uint64_t lastLogIndex = server->GetLastLogIndex();
-
-  // Invariant: securedLogIndex <= specCommitIndex <= lastLogIndex
-  if (securedLogIndex > specCommitIndex) {
-    Log_error("[SPEC-TEST] Invariant violation: securedLogIndex ({}) > specCommitIndex ({})",
-              securedLogIndex, specCommitIndex);
-    return false;
-  }
-  if (specCommitIndex > lastLogIndex) {
-    Log_error("[SPEC-TEST] Invariant violation: specCommitIndex ({}) > lastLogIndex ({})",
-              specCommitIndex, lastLogIndex);
-    return false;
-  }
-  return true;
-}
-
-size_t RaftTestConfig::GetMemoryAckCount(siteid_t svr, uint64_t index) {
-  auto server = GetServer(svr);
-  if (!server) {
-    return 0;
-  }
-  return server->GetMemoryAckCount(index);
 }
 
 #endif

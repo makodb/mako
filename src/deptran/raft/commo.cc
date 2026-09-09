@@ -77,7 +77,6 @@ shared_ptr<AppendEntriesResponse> RaftCommo::SendAppendEntries2(
       req.leaderPrevLogIndex = prevLogIndex;
       req.leaderPrevLogTerm = prevLogTerm;
       req.leaderCommitIndex = commitIndex;
-      req.trigger_election_now = false;
       auto result = proxy.async_EmptyAppendEntries(req, attr);
       _RPC_COUNT();
       if (result.is_ok()) {
@@ -110,89 +109,6 @@ shared_ptr<AppendEntriesResponse> RaftCommo::SendAppendEntries2(
   return response;
 }
 
-shared_ptr<SendAppendEntriesResults> RaftCommo::SendAppendEntries(
-    siteid_t site_id,
-    parid_t par_id,
-    slotid_t slot_id,
-    ballot_t ballot,
-    bool isLeader,
-    siteid_t leader_site_id,
-    uint64_t currentTerm,
-    uint64_t prevLogIndex,
-    uint64_t prevLogTerm,
-    uint64_t commitIndex,
-    const janus::Command& cmd,
-    uint64_t cmdLogTerm,
-    bool trigger_election_now) {
-  (void)isLeader;
-  auto result_data = std::make_shared<SendAppendEntriesResults>();
-  auto peer = PeerForSite(par_id, site_id);
-  if (!peer) {
-    return result_data;
-  }
-
-  FutureAttr attr;
-  attr.callback = rrr::FutureCallback::from_callable(
-      [result_data, cmd, site_id](rusty::Arc<Future> future) {
-        if (commo_future_failed(future->get_error_code())) {
-          Log_debug("[APPEND_RPC] Error response from site {}, error_code={}",
-                    site_id, future->get_error_code());
-          return;
-        }
-        rrr::deserialize_from(future->get_reply(), result_data->ok);
-        rrr::deserialize_from(future->get_reply(), result_data->followerTerm);
-        rrr::deserialize_from(future->get_reply(),
-                              result_data->followerLastLogIndex);
-        result_data->empty =
-            commo_append_entries_empty_from_cmd(cmd.has_value());
-        result_data->done = commo_append_entries_done_from_reply(
-            result_data->ok, result_data->followerTerm,
-            result_data->followerLastLogIndex);
-      });
-
-  peer->WithClient([&](rrr::Client* client) {
-    RaftProxy proxy(client);
-    if (commo_append_entries_empty_from_cmd(cmd.has_value())) {
-      Log_debug("Heartbeat AppendEntries to site {} prevLogIndex={} "
-                "trigger_election={}",
-                site_id, prevLogIndex, trigger_election_now);
-      RaftProxy::RpcEmptyAppendEntriesRequest req{};
-      req.slot = slot_id;
-      req.ballot = ballot;
-      req.leaderCurrentTerm = currentTerm;
-      req.leaderSiteId = leader_site_id;
-      req.leaderPrevLogIndex = prevLogIndex;
-      req.leaderPrevLogTerm = prevLogTerm;
-      req.leaderCommitIndex = commitIndex;
-      req.trigger_election_now = trigger_election_now;
-      auto result = proxy.async_EmptyAppendEntries(req, attr);
-      _RPC_COUNT();
-      if (result.is_ok()) {
-        Future::safe_release(result.unwrap().raw_future());
-      }
-    } else {
-      Log_debug("AppendEntries to site {} for log index {}",
-                site_id, prevLogIndex + 1);
-      RaftProxy::RpcAppendEntriesRequest req{};
-      req.slot = slot_id;
-      req.ballot = ballot;
-      req.leaderCurrentTerm = currentTerm;
-      req.leaderSiteId = leader_site_id;
-      req.leaderPrevLogIndex = prevLogIndex;
-      req.leaderPrevLogTerm = prevLogTerm;
-      req.leaderCommitIndex = commitIndex;
-      req.cmd = cmd;
-      req.leaderNextLogTerm = cmdLogTerm;
-      auto result = proxy.async_AppendEntries(req, attr);
-      _RPC_COUNT();
-      if (result.is_ok()) {
-        Future::safe_release(result.unwrap().raw_future());
-      }
-    }
-  });
-  return result_data;
-}
-
 shared_ptr<RaftVoteQuorumEvent> RaftCommo::BroadcastVote(
     parid_t par_id,
     slotid_t lst_log_idx,
@@ -219,7 +135,7 @@ shared_ptr<RaftVoteQuorumEvent> RaftCommo::BroadcastVote(
           bool_t vote = false;
           rrr::deserialize_from(future->get_reply(), term);
           rrr::deserialize_from(future->get_reply(), vote);
-          event->FeedResponse(vote, term, site_id);
+          event->FeedResponse(vote, term);
         });
     RaftProxy::RpcVoteRequest req{};
     req.lst_log_idx = lst_log_idx;
@@ -236,189 +152,6 @@ shared_ptr<RaftVoteQuorumEvent> RaftCommo::BroadcastVote(
     });
   }
   return event;
-}
-
-void RaftCommo::SendTimeoutNow(
-    siteid_t site_id,
-    parid_t par_id,
-    uint64_t leader_term,
-    siteid_t leader_site_id,
-    std::function<void(bool, uint64_t)> callback) {
-  auto peer = PeerForSite(par_id, site_id);
-  if (!peer) {
-    Log_warn("[TIMEOUT-NOW-RPC] Site {} is unavailable", site_id);
-    if (callback) {
-      callback(false, 0);
-    }
-    return;
-  }
-
-  FutureAttr attr;
-  attr.callback = rrr::FutureCallback::from_callable(
-      [callback, site_id](rusty::Arc<Future> future) {
-        if (commo_future_failed(future->get_error_code())) {
-          Log_debug("[TIMEOUT-NOW-RPC] Network error from site {} (code={})",
-                    site_id, future->get_error_code());
-          if (callback) {
-            callback(false, 0);
-          }
-          return;
-        }
-        uint64_t follower_term = 0;
-        bool_t success = false;
-        rrr::deserialize_from(future->get_reply(), follower_term);
-        rrr::deserialize_from(future->get_reply(), success);
-        if (callback) {
-          callback(success, follower_term);
-        }
-      });
-
-  RaftProxy::RpcTimeoutNowRequest req{};
-  req.leaderTerm = leader_term;
-  req.leaderSiteId = leader_site_id;
-  peer->WithClient([&](rrr::Client* client) {
-    RaftProxy proxy(client);
-    auto result = proxy.async_TimeoutNow(req, attr);
-    _RPC_COUNT();
-    if (result.is_ok()) {
-      Future::safe_release(result.unwrap().raw_future());
-    }
-  });
-}
-
-void RaftCommo::SendNotifyRestart(siteid_t self_id, parid_t par_id) {
-  const auto peers = PeersForPartition(par_id);
-  const auto state = notify_restart_state_;
-  uint64_t generation = 0;
-  {
-    std::lock_guard<std::mutex> lock(state->mutex);
-    state->self_site_id = self_id;
-    state->self_par_id = par_id;
-    generation = ++state->generation;
-    state->status.clear();
-    for (const auto& peer : peers) {
-      if (peer->site_id() != self_id) {
-        state->status[peer->site_id()] = NotifyRestartStatus::PENDING;
-      }
-    }
-  }
-
-  Log_info("[NOTIFY-RESTART] Broadcasting restart notification from site {} "
-           "to {} peers", self_id, peers.size());
-  for (const auto& peer : peers) {
-    const auto site_id = peer->site_id();
-    if (site_id == self_id) {
-      continue;
-    }
-
-    FutureAttr attr;
-    attr.callback = rrr::FutureCallback::from_callable(
-        [state, site_id, generation](rusty::Arc<Future> future) {
-          if (commo_future_failed(future->get_error_code())) {
-            Log_warn("[NOTIFY-RESTART] Failed to notify site {} - error {} "
-                     "(will retry)", site_id, future->get_error_code());
-            return;
-          }
-          bool_t acknowledged = false;
-          rrr::deserialize_from(future->get_reply(), acknowledged);
-          std::lock_guard<std::mutex> lock(state->mutex);
-          if (state->generation != generation) {
-            return;
-          }
-          auto status = state->status.find(site_id);
-          if (status == state->status.end()) {
-            return;
-          }
-          if (acknowledged) {
-            status->second = NotifyRestartStatus::ACKNOWLEDGED;
-          } else if (status->second != NotifyRestartStatus::ACKNOWLEDGED) {
-            status->second = NotifyRestartStatus::PENDING;
-          }
-        });
-    RaftProxy::RpcNotifyRestartRequest req{};
-    req.restartedSiteId = self_id;
-    peer->WithClient([&](rrr::Client* client) {
-      RaftProxy proxy(client);
-      auto result = proxy.async_NotifyRestart(req, attr);
-      _RPC_COUNT();
-      if (result.is_ok()) {
-        Future::safe_release(result.unwrap().raw_future());
-      }
-    });
-  }
-}
-
-void RaftCommo::RetryPendingNotifyRestart() {
-  const auto state = notify_restart_state_;
-  std::vector<siteid_t> pending_sites;
-  siteid_t self_id = 0;
-  parid_t self_par_id = 0;
-  uint64_t generation = 0;
-  {
-    std::lock_guard<std::mutex> lock(state->mutex);
-    self_id = state->self_site_id;
-    self_par_id = state->self_par_id;
-    generation = state->generation;
-    for (const auto& [site_id, status] : state->status) {
-      if (commo_notify_restart_is_pending(status)) {
-        pending_sites.push_back(site_id);
-      }
-    }
-  }
-  if (!commo_retry_has_pending_sites(pending_sites.size())) {
-    return;
-  }
-
-  for (const auto site_id : pending_sites) {
-    auto peer = PeerForSite(self_par_id, site_id);
-    if (!peer) {
-      Log_warn("[NOTIFY-RESTART] No peer available for site {}", site_id);
-      continue;
-    }
-    FutureAttr attr;
-    attr.callback = rrr::FutureCallback::from_callable(
-        [state, site_id, generation](rusty::Arc<Future> future) {
-          if (commo_future_failed(future->get_error_code())) {
-            Log_warn("[NOTIFY-RESTART] Retry failed for site {} - error {}",
-                     site_id, future->get_error_code());
-            return;
-          }
-          bool_t acknowledged = false;
-          rrr::deserialize_from(future->get_reply(), acknowledged);
-          std::lock_guard<std::mutex> lock(state->mutex);
-          if (state->generation != generation) {
-            return;
-          }
-          auto status = state->status.find(site_id);
-          if (status == state->status.end()) {
-            return;
-          }
-          if (acknowledged) {
-            status->second = NotifyRestartStatus::ACKNOWLEDGED;
-          } else if (status->second != NotifyRestartStatus::ACKNOWLEDGED) {
-            status->second = NotifyRestartStatus::PENDING;
-          }
-        });
-    RaftProxy::RpcNotifyRestartRequest req{};
-    req.restartedSiteId = self_id;
-    peer->WithClient([&](rrr::Client* client) {
-      RaftProxy proxy(client);
-      auto result = proxy.async_NotifyRestart(req, attr);
-      _RPC_COUNT();
-      if (result.is_ok()) {
-        Future::safe_release(result.unwrap().raw_future());
-      }
-    });
-  }
-}
-
-bool RaftCommo::HasPendingNotifyRestart() {
-  const auto state = notify_restart_state_;
-  std::lock_guard<std::mutex> lock(state->mutex);
-  return std::any_of(state->status.begin(), state->status.end(),
-                     [](const auto& entry) {
-                       return entry.second == NotifyRestartStatus::PENDING;
-                     });
 }
 
 void RaftCommo::SendInstallSnapshot(
@@ -484,7 +217,6 @@ void RaftCommo::SendAppendEntriesCb(
     uint64_t commitIndex,
     const janus::Command& cmd,
     uint64_t cmdLogTerm,
-    bool trigger_election_now,
     std::function<void(siteid_t, raft::AppendEntriesReply)> on_reply) {
   (void)isLeader;
   auto peer = PeerForSite(par_id, site_id);
@@ -520,7 +252,6 @@ void RaftCommo::SendAppendEntriesCb(
       req.leaderPrevLogIndex = prevLogIndex;
       req.leaderPrevLogTerm = prevLogTerm;
       req.leaderCommitIndex = commitIndex;
-      req.trigger_election_now = trigger_election_now;
       auto result = proxy.async_EmptyAppendEntries(req, attr);
       _RPC_COUNT();
       if (result.is_ok()) {

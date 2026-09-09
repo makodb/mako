@@ -1,22 +1,6 @@
-#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Eq, PartialEq))]
-#[repr(i32)]
-pub enum StepDownReason {
-    UnsecuredFailure = 0,
-    HigherTerm = 2,
-}
-
-#[allow(non_camel_case_types)]
-#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Eq, PartialEq))]
-#[repr(i32)]
-pub enum CommitStatus {
-    SPECULATIVE = 0,
-    ROLLEDBACK = 2,
-}
-
 // Submission admission result for the RaftWorker interface.  Memory-only Raft
 // either rejects a command (not leader) or appends it; there is no durable
-// append whose outcome could be unknown.  Keep this separate from
-// CommitStatus: no callback has been registered at this boundary yet.
+// append whose outcome could be unknown.
 #[allow(non_camel_case_types)]
 #[cfg_attr(not(any()), derive(Clone, Copy, Debug, Eq, PartialEq))]
 #[repr(i32)]
@@ -55,22 +39,6 @@ pub const fn raft_server_site_is_preferred_leader(site_id: u16,
     preferred_site_id != RAFT_SERVER_INVALID_SITE_ID && site_id == preferred_site_id
 }
 
-pub const fn raft_server_leadership_monitor_should_start(is_preferred: bool,
-                                                          is_leader: bool,
-                                                          looping: bool) -> bool {
-    !is_preferred && is_leader && looping
-}
-
-pub const fn raft_server_preferred_replica_is_caught_up(preferred_match_index: u64,
-                                                         commit_index: u64) -> bool {
-    preferred_match_index >= commit_index
-}
-
-pub const fn raft_server_local_commit_has_caught_up(local_commit_index: u64,
-                                                     leader_commit_index: u64) -> bool {
-    local_commit_index >= leader_commit_index
-}
-
 pub const fn raft_server_election_timeout_has_fired(is_leader: bool,
                                                      elapsed: u64,
                                                      timeout: u64) -> bool {
@@ -89,11 +57,6 @@ pub const fn raft_server_timer_campaign_is_current(is_leader: bool,
 pub const fn raft_server_campaign_can_start(is_leader: bool,
                                              election_in_progress: bool) -> bool {
     !is_leader && !election_in_progress
-}
-
-pub const fn raft_server_leadership_stable_window_elapsed(elapsed: u64,
-                                                           minimum: u64) -> bool {
-    elapsed >= minimum
 }
 
 pub const fn raft_server_random_range_needs_swap(minimum: u64,
@@ -335,11 +298,6 @@ pub const fn raft_server_commit_index_clamp(candidate_index: u64,
     }
 }
 
-pub const fn raft_server_read_index_local_state_allows(is_leader: bool,
-                                                        disconnected: bool) -> bool {
-    is_leader && !disconnected
-}
-
 pub const fn raft_server_read_index_round_can_advance(round: u64) -> bool {
     round != u64::MAX
 }
@@ -358,24 +316,6 @@ pub const fn raft_server_read_index_reply_confirms_authority(
         sent_term == current_term &&
         response_term == sent_term &&
         sent_round == active_round
-}
-
-pub const fn raft_server_read_index_quorum_is_fresh(request_term: u64,
-                                                     baseline_round: u64,
-                                                     confirmed_term: u64,
-                                                     confirmed_round: u64) -> bool {
-    confirmed_term == request_term && confirmed_round > baseline_round
-}
-
-pub const fn raft_server_read_index_has_current_term_commit(commit_index: u64,
-                                                             commit_term: u64,
-                                                             current_term: u64) -> bool {
-    commit_index != 0 && commit_term == current_term
-}
-
-pub const fn raft_server_read_index_deadline_expired(timeout_us: u64,
-                                                      elapsed_us: u64) -> bool {
-    timeout_us != 0 && elapsed_us >= timeout_us
 }
 
 pub const fn raft_server_log_entry_is_current_term(entry_term: i64,
@@ -491,71 +431,6 @@ pub const fn raft_server_start_was_appended(result: RaftStartResult) -> bool {
 }
 
 
-// A leadership or term change does not resolve an old entry. The exact slot
-// becomes terminal only once it is inside the committed prefix.
-pub const fn raft_server_submission_is_committed(commit_index: u64,
-                                                  submitted_index: u64,
-                                                  entry_matches: bool) -> bool {
-    commit_index >= submitted_index && entry_matches
-}
-
-pub const fn raft_server_submission_is_superseded(commit_index: u64,
-                                                   submitted_index: u64,
-                                                   entry_known_conflict: bool,
-                                                   committed_newer_prefix: bool) -> bool {
-    entry_known_conflict &&
-        (commit_index >= submitted_index || committed_newer_prefix)
-}
-
-// An accepted snapshot commits every slot through its boundary, but a local
-// entry match proves inclusion only when the snapshot boundary proves the two
-// prefixes identical. A divergent snapshot carries no per-entry identities
-// below its boundary, so those otherwise-unresolved slots are indeterminate.
-pub const fn raft_server_snapshot_resolves_submission(snapshot_index: u64,
-                                                       submitted_index: u64) -> bool {
-    submitted_index <= snapshot_index
-}
-
-pub const fn raft_server_snapshot_submission_is_committed(
-    snapshot_index: u64,
-    snapshot_term: u64,
-    submitted_index: u64,
-    submitted_term: u64,
-    local_entry_matches: bool,
-    local_commit_crossed: bool,
-    snapshot_prefix_matches: bool,
-) -> bool {
-    raft_server_snapshot_resolves_submission(snapshot_index, submitted_index) &&
-        ((local_commit_crossed && local_entry_matches) ||
-         (snapshot_prefix_matches && local_entry_matches) ||
-         (submitted_index == snapshot_index && submitted_term == snapshot_term))
-}
-
-pub const fn raft_server_snapshot_submission_is_superseded(
-    snapshot_index: u64,
-    snapshot_term: u64,
-    submitted_index: u64,
-    submitted_term: u64,
-    local_entry_known_conflict: bool,
-    local_commit_crossed: bool,
-    snapshot_prefix_matches: bool,
-) -> bool {
-    raft_server_snapshot_resolves_submission(snapshot_index, submitted_index) &&
-        ((local_commit_crossed && local_entry_known_conflict) ||
-         (snapshot_prefix_matches && local_entry_known_conflict) ||
-         (submitted_index == snapshot_index && submitted_term != snapshot_term))
-}
-
-pub const fn raft_server_snapshot_submission_is_indeterminate(
-    snapshot_index: u64,
-    submitted_index: u64,
-    committed: bool,
-    superseded: bool,
-) -> bool {
-    raft_server_snapshot_resolves_submission(snapshot_index, submitted_index) &&
-        !committed && !superseded
-}
-
 pub const fn raft_server_command_is_internal_noop(command_kind: i32,
                                                    noop_kind: i32) -> bool {
     command_kind == noop_kind
@@ -618,68 +493,6 @@ pub const fn raft_server_leader_hint_after_transition(is_leader: bool,
     }
 }
 
-// Raft identifies replicas globally, but the client-routing View wire format
-// identifies a replica by its locale within one partition. Keep the conversion
-// decision in the Rust DSL; C++ supplies the validated remote lookup result.
-pub const fn raft_server_view_leader_locale(leader_site: u16,
-                                             self_site: u16,
-                                             self_locale: i32,
-                                             mapped_locale: i32) -> i32 {
-    if leader_site == RAFT_SERVER_INVALID_SITE_ID {
-        -1
-    } else if leader_site == self_site {
-        self_locale
-    } else {
-        mapped_locale
-    }
-}
-
-pub const fn raft_server_recovery_leader_site(leader_locale: i32,
-                                               self_locale: i32,
-                                               self_site: u16,
-                                               mapped_site: u16) -> u16 {
-    if leader_locale < 0 {
-        RAFT_SERVER_INVALID_SITE_ID
-    } else if leader_locale == self_locale {
-        self_site
-    } else {
-        mapped_site
-    }
-}
-
-// Jetpack recovery may describe a leader, but only a Raft RPC may advance and
-// durably publish currentTerm. Accept recovery routing for the current term.
-pub const fn raft_server_recovery_view_matches_term(incoming_view_id: u32,
-                                                     local_view_id: u32) -> bool {
-    incoming_view_id == local_view_id
-}
-
-pub const fn raft_server_recovery_view_shape_is_valid(
-    incoming_partition: u32,
-    expected_partition: u32,
-    incoming_replicas: i32,
-    expected_replicas: i32,
-    leader_count: u64,
-    allow_empty: bool,
-) -> bool {
-    incoming_partition == expected_partition &&
-        ((allow_empty && incoming_replicas == 0 && leader_count == 0) ||
-         (incoming_replicas > 0 &&
-          (allow_empty || incoming_replicas == expected_replicas) &&
-          leader_count == 1))
-}
-
-pub const fn raft_server_recovery_view_matches_role(term_matches: bool,
-                                                     local_is_leader: bool,
-                                                     view_leader_is_self: bool,
-                                                     has_known_leader: bool,
-                                                     known_leader_matches_view: bool) -> bool {
-    term_matches &&
-        ((local_is_leader && view_leader_is_self) ||
-         (!local_is_leader && !view_leader_is_self &&
-          (!has_known_leader || known_leader_matches_view)))
-}
-
 pub const fn raft_server_leader_rpc_sender_is_authoritative(
     leader_has_higher_term: bool,
     local_is_leader: bool,
@@ -692,17 +505,4 @@ pub const fn raft_server_leader_rpc_sender_is_authoritative(
          (leader_has_higher_term ||
           (!local_is_leader &&
            (!has_known_leader || known_leader_matches_sender))))
-}
-
-#[cfg_attr(any(), cpp_no_auto_traits)]
-#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Default, Eq, PartialEq))]
-#[repr(C)]
-pub struct RaftSubmissionProgress {
-    #[cfg_attr(any(), cpp_value_init)]
-    pub committed: bool,
-    #[cfg_attr(any(), cpp_value_init)]
-    pub superseded: bool,
-    // terminal commit-outcome ambiguity; see the note above the block
-    #[cfg_attr(any(), cpp_value_init)]
-    pub indeterminate: bool,
 }

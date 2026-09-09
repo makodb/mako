@@ -27,7 +27,6 @@ using AtomicInt = rusty::sync::atomic::detail::Atomic<int>;
 struct Counts {
   AtomicInt n_append{0};
   AtomicInt n_vote{0};
-  AtomicInt n_timeout{0};
   AtomicInt n_install{0};
 };
 
@@ -46,13 +45,6 @@ class RecordingDispatcher : public DispatcherBase {
   EmptyAppendEntriesReply handle_empty_append_entries(EmptyAppendEntriesReq) override {
     counts->n_append.fetch_add(1);
     EmptyAppendEntriesReply r{}; r.follower_append_ok = 1; return r;
-  }
-  TimeoutNowReply handle_timeout_now(TimeoutNowReq) override {
-    counts->n_timeout.fetch_add(1);
-    TimeoutNowReply r{}; r.success = true; return r;
-  }
-  NotifyRestartReply handle_notify_restart(NotifyRestartReq) override {
-    return NotifyRestartReply{};
   }
   InstallSnapshotReply handle_install_snapshot(InstallSnapshotReq) override {
     counts->n_install.fetch_add(1);
@@ -106,13 +98,13 @@ TEST(RaftChannelTransportTest, RoundTripBetweenTwoSites) {
   auto ae = tr_a->send_append_entries(2, AppendEntriesReq{});
   EXPECT_EQ(ae.follower_append_ok, 1u);
 
-  auto tn = tr_b->send_timeout_now(1, TimeoutNowReq{});
-  EXPECT_TRUE(tn.success);
+  auto vb = tr_b->send_vote(1, VoteReq{});
+  EXPECT_TRUE(vb.vote_granted);
 
   auto v = tr_a->send_vote(2, VoteReq{});
   EXPECT_TRUE(v.vote_granted);
 
-  EXPECT_EQ(counts_a->n_timeout.load(), 1);
+  EXPECT_EQ(counts_a->n_vote.load(),    1);
   EXPECT_EQ(counts_b->n_append.load(),  1);
   EXPECT_EQ(counts_b->n_vote.load(),    1);
 }
@@ -136,15 +128,15 @@ TEST(RaftChannelTransportTest, DropDirectionFallsBackToDefault) {
   WorkerHarness ha{&w_a};
   WorkerHarness hb{&w_b};
 
-  // Drop 1→2; send_timeout_now's envelope is dropped at the switchboard,
+  // Drop 1→2; send_vote's envelope is dropped at the switchboard,
   // so the reply sender is destroyed and recv() returns Err. The adapter
-  // falls back to a default-constructed reply (success=false).
+  // falls back to a default-constructed reply (vote_granted=false).
   sw.drop_direction(/*from=*/1, /*to=*/2);
-  auto dropped = tr_a->send_timeout_now(2, TimeoutNowReq{});
-  EXPECT_FALSE(dropped.success);
+  auto dropped = tr_a->send_vote(2, VoteReq{});
+  EXPECT_FALSE(dropped.vote_granted);
 
   sw.reset_faults();
-  auto ok = tr_a->send_timeout_now(2, TimeoutNowReq{});
-  EXPECT_TRUE(ok.success);
-  EXPECT_EQ(counts_b->n_timeout.load(), 1);
+  auto ok = tr_a->send_vote(2, VoteReq{});
+  EXPECT_TRUE(ok.vote_granted);
+  EXPECT_EQ(counts_b->n_vote.load(), 1);
 }

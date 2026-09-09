@@ -19,8 +19,6 @@ struct Counts {
   AtomicInt n_vote{0};
   AtomicInt n_append{0};
   AtomicInt n_empty{0};
-  AtomicInt n_timeout{0};
-  AtomicInt n_notify_restart{0};
   AtomicInt n_install_snap{0};
 };
 
@@ -39,14 +37,6 @@ class RecordingDispatcher : public DispatcherBase {
   EmptyAppendEntriesReply handle_empty_append_entries(EmptyAppendEntriesReq) override {
     counts->n_empty.fetch_add(1);
     EmptyAppendEntriesReply r{}; r.follower_append_ok = 1; return r;
-  }
-  TimeoutNowReply handle_timeout_now(TimeoutNowReq) override {
-    counts->n_timeout.fetch_add(1);
-    TimeoutNowReply r{}; r.success = true; return r;
-  }
-  NotifyRestartReply handle_notify_restart(NotifyRestartReq) override {
-    counts->n_notify_restart.fetch_add(1);
-    NotifyRestartReply r{}; r.acknowledged = true; return r;
   }
   InstallSnapshotReply handle_install_snapshot(InstallSnapshotReq) override {
     counts->n_install_snap.fetch_add(1);
@@ -67,17 +57,11 @@ TEST(RaftDispatcherFacadeTest, AdapterConformsToFacade) {
   EXPECT_EQ(a.follower_append_ok, 1u);
   auto e  = proxy->handle_empty_append_entries(EmptyAppendEntriesReq{});
   EXPECT_EQ(e.follower_append_ok, 1u);
-  auto tn = proxy->handle_timeout_now(TimeoutNowReq{});
-  EXPECT_TRUE(tn.success);
-  auto nr = proxy->handle_notify_restart(NotifyRestartReq{});
-  EXPECT_TRUE(nr.acknowledged);
   auto is = proxy->handle_install_snapshot(InstallSnapshotReq{});
   EXPECT_EQ(is.term_out, 42u);
 
   EXPECT_EQ(counts_handle->n_vote.load(),            1);
   EXPECT_EQ(counts_handle->n_append.load(),          1);
   EXPECT_EQ(counts_handle->n_empty.load(),           1);
-  EXPECT_EQ(counts_handle->n_timeout.load(),         1);
-  EXPECT_EQ(counts_handle->n_notify_restart.load(),  1);
   EXPECT_EQ(counts_handle->n_install_snap.load(),    1);
 }

@@ -21,8 +21,6 @@ struct Counts {
   AtomicInt n_append{0};
   AtomicInt n_empty{0};
   AtomicInt n_vote{0};
-  AtomicInt n_timeout{0};
-  AtomicInt n_notify_restart{0};
   AtomicInt n_install_snap{0};
 };
 
@@ -55,17 +53,6 @@ class RecordingAdapter : public TransportBase {
     return r;
   }
 
-  TimeoutNowReply send_timeout_now(siteid_t, TimeoutNowReq) override {
-    counts->n_timeout.fetch_add(1);
-    TimeoutNowReply r{};
-    r.success = true;
-    return r;
-  }
-
-  void send_notify_restart(siteid_t, parid_t) override {
-    counts->n_notify_restart.fetch_add(1);
-  }
-
   InstallSnapshotReply send_install_snapshot(siteid_t, InstallSnapshotReq) override {
     counts->n_install_snap.fetch_add(1);
     InstallSnapshotReply r{};
@@ -92,18 +79,11 @@ TEST(RaftTransportFacadeTest, AdapterConformsToFacade) {
   auto v = proxy->send_vote(3, VoteReq{});
   EXPECT_TRUE(v.vote_granted);
 
-  auto t = proxy->send_timeout_now(4, TimeoutNowReq{});
-  EXPECT_TRUE(t.success);
-
-  proxy->send_notify_restart(99, 0);
-
   auto s = proxy->send_install_snapshot(7, InstallSnapshotReq{});
   EXPECT_EQ(s.term_out, 42u);
 
   EXPECT_EQ(counts_handle->n_append.load(),          1);
   EXPECT_EQ(counts_handle->n_empty.load(),           1);
   EXPECT_EQ(counts_handle->n_vote.load(),            1);
-  EXPECT_EQ(counts_handle->n_timeout.load(),         1);
-  EXPECT_EQ(counts_handle->n_notify_restart.load(),  1);
   EXPECT_EQ(counts_handle->n_install_snap.load(),    1);
 }

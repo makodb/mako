@@ -577,7 +577,6 @@ public:
         uint64_t leaderPrevLogIndex;
         uint64_t leaderPrevLogTerm;
         uint64_t leaderCommitIndex;
-        bool_t trigger_election_now;
     };
     friend inline void serialize(const RpcEmptyAppendEntriesRequest& o, rrr::BinaryWriteArchive& ar) {
         rrr::Serialize_::serialize(o.slot, ar);
@@ -587,7 +586,6 @@ public:
         rrr::Serialize_::serialize(o.leaderPrevLogIndex, ar);
         rrr::Serialize_::serialize(o.leaderPrevLogTerm, ar);
         rrr::Serialize_::serialize(o.leaderCommitIndex, ar);
-        rrr::Serialize_::serialize(o.trigger_election_now, ar);
     }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcEmptyAppendEntriesRequest& o) { serialize(o, ar); return ar; }
     friend inline void deserialize(RpcEmptyAppendEntriesRequest& o, rrr::BinaryReadArchive& ar) {
@@ -598,7 +596,6 @@ public:
         rrr::Deserialize_::deserialize(o.leaderPrevLogIndex, ar);
         rrr::Deserialize_::deserialize(o.leaderPrevLogTerm, ar);
         rrr::Deserialize_::deserialize(o.leaderCommitIndex, ar);
-        rrr::Deserialize_::deserialize(o.trigger_election_now, ar);
     }
     friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcEmptyAppendEntriesRequest& o) { deserialize(o, ar); return ar; }
 
@@ -619,60 +616,6 @@ public:
         rrr::Deserialize_::deserialize(o.followerLastLogIndex, ar);
     }
     friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcEmptyAppendEntriesResponse& o) { deserialize(o, ar); return ar; }
-
-    struct RpcTimeoutNowRequest {
-        uint64_t leaderTerm;
-        siteid_t leaderSiteId;
-    };
-    friend inline void serialize(const RpcTimeoutNowRequest& o, rrr::BinaryWriteArchive& ar) {
-        rrr::Serialize_::serialize(o.leaderTerm, ar);
-        rrr::Serialize_::serialize(o.leaderSiteId, ar);
-    }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTimeoutNowRequest& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcTimeoutNowRequest& o, rrr::BinaryReadArchive& ar) {
-        rrr::Deserialize_::deserialize(o.leaderTerm, ar);
-        rrr::Deserialize_::deserialize(o.leaderSiteId, ar);
-    }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTimeoutNowRequest& o) { deserialize(o, ar); return ar; }
-
-    struct RpcTimeoutNowResponse {
-        uint64_t followerTerm;
-        bool_t success;
-    };
-    friend inline void serialize(const RpcTimeoutNowResponse& o, rrr::BinaryWriteArchive& ar) {
-        rrr::Serialize_::serialize(o.followerTerm, ar);
-        rrr::Serialize_::serialize(o.success, ar);
-    }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTimeoutNowResponse& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcTimeoutNowResponse& o, rrr::BinaryReadArchive& ar) {
-        rrr::Deserialize_::deserialize(o.followerTerm, ar);
-        rrr::Deserialize_::deserialize(o.success, ar);
-    }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTimeoutNowResponse& o) { deserialize(o, ar); return ar; }
-
-    struct RpcNotifyRestartRequest {
-        siteid_t restartedSiteId;
-    };
-    friend inline void serialize(const RpcNotifyRestartRequest& o, rrr::BinaryWriteArchive& ar) {
-        rrr::Serialize_::serialize(o.restartedSiteId, ar);
-    }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcNotifyRestartRequest& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcNotifyRestartRequest& o, rrr::BinaryReadArchive& ar) {
-        rrr::Deserialize_::deserialize(o.restartedSiteId, ar);
-    }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcNotifyRestartRequest& o) { deserialize(o, ar); return ar; }
-
-    struct RpcNotifyRestartResponse {
-        bool_t acknowledged;
-    };
-    friend inline void serialize(const RpcNotifyRestartResponse& o, rrr::BinaryWriteArchive& ar) {
-        rrr::Serialize_::serialize(o.acknowledged, ar);
-    }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcNotifyRestartResponse& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcNotifyRestartResponse& o, rrr::BinaryReadArchive& ar) {
-        rrr::Deserialize_::deserialize(o.acknowledged, ar);
-    }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcNotifyRestartResponse& o) { deserialize(o, ar); return ar; }
 
     struct RpcInstallSnapshotRequest {
         uint64_t term;
@@ -710,84 +653,11 @@ public:
     }
     friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcInstallSnapshotResponse& o) { deserialize(o, ar); return ar; }
 
-    struct RpcAddServerRequest {
-        uint64_t term;
-        uint64_t new_server_id;
-        std::string new_server_addr;
-    };
-    friend inline void serialize(const RpcAddServerRequest& o, rrr::BinaryWriteArchive& ar) {
-        rrr::Serialize_::serialize(o.term, ar);
-        rrr::Serialize_::serialize(o.new_server_id, ar);
-        rrr::Serialize_::serialize(o.new_server_addr, ar);
-    }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcAddServerRequest& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcAddServerRequest& o, rrr::BinaryReadArchive& ar) {
-        rrr::Deserialize_::deserialize(o.term, ar);
-        rrr::Deserialize_::deserialize(o.new_server_id, ar);
-        rrr::Deserialize_::deserialize(o.new_server_addr, ar);
-    }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcAddServerRequest& o) { deserialize(o, ar); return ar; }
-
-    struct RpcAddServerResponse {
-        bool_t success;
-        std::string error_msg;
-        uint64_t leader_hint;
-    };
-    friend inline void serialize(const RpcAddServerResponse& o, rrr::BinaryWriteArchive& ar) {
-        rrr::Serialize_::serialize(o.success, ar);
-        rrr::Serialize_::serialize(o.error_msg, ar);
-        rrr::Serialize_::serialize(o.leader_hint, ar);
-    }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcAddServerResponse& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcAddServerResponse& o, rrr::BinaryReadArchive& ar) {
-        rrr::Deserialize_::deserialize(o.success, ar);
-        rrr::Deserialize_::deserialize(o.error_msg, ar);
-        rrr::Deserialize_::deserialize(o.leader_hint, ar);
-    }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcAddServerResponse& o) { deserialize(o, ar); return ar; }
-
-    struct RpcRemoveServerRequest {
-        uint64_t term;
-        uint64_t server_id;
-    };
-    friend inline void serialize(const RpcRemoveServerRequest& o, rrr::BinaryWriteArchive& ar) {
-        rrr::Serialize_::serialize(o.term, ar);
-        rrr::Serialize_::serialize(o.server_id, ar);
-    }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcRemoveServerRequest& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcRemoveServerRequest& o, rrr::BinaryReadArchive& ar) {
-        rrr::Deserialize_::deserialize(o.term, ar);
-        rrr::Deserialize_::deserialize(o.server_id, ar);
-    }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcRemoveServerRequest& o) { deserialize(o, ar); return ar; }
-
-    struct RpcRemoveServerResponse {
-        bool_t success;
-        std::string error_msg;
-        uint64_t leader_hint;
-    };
-    friend inline void serialize(const RpcRemoveServerResponse& o, rrr::BinaryWriteArchive& ar) {
-        rrr::Serialize_::serialize(o.success, ar);
-        rrr::Serialize_::serialize(o.error_msg, ar);
-        rrr::Serialize_::serialize(o.leader_hint, ar);
-    }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcRemoveServerResponse& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcRemoveServerResponse& o, rrr::BinaryReadArchive& ar) {
-        rrr::Deserialize_::deserialize(o.success, ar);
-        rrr::Deserialize_::deserialize(o.error_msg, ar);
-        rrr::Deserialize_::deserialize(o.leader_hint, ar);
-    }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcRemoveServerResponse& o) { deserialize(o, ar); return ar; }
-
     enum {
         VOTE = 0x2802b911,
         APPENDENTRIES = 0x3935326f,
         EMPTYAPPENDENTRIES = 0x6e089268,
-        TIMEOUTNOW = 0x59a6a5f9,
-        NOTIFYRESTART = 0x3df03452,
         INSTALLSNAPSHOT = 0x5276442f,
-        ADDSERVER = 0x10e10b20,
-        REMOVESERVER = 0x68ea2fc0,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -802,19 +672,7 @@ public:
         if ((ret = svr.reg_rpc(EMPTYAPPENDENTRIES, svc_index)) != 0) {
             goto err;
         }
-        if ((ret = svr.reg_rpc(TIMEOUTNOW, svc_index)) != 0) {
-            goto err;
-        }
-        if ((ret = svr.reg_rpc(NOTIFYRESTART, svc_index)) != 0) {
-            goto err;
-        }
         if ((ret = svr.reg_rpc(INSTALLSNAPSHOT, svc_index)) != 0) {
-            goto err;
-        }
-        if ((ret = svr.reg_rpc(ADDSERVER, svc_index)) != 0) {
-            goto err;
-        }
-        if ((ret = svr.reg_rpc(REMOVESERVER, svc_index)) != 0) {
             goto err;
         }
         return 0;
@@ -822,11 +680,7 @@ public:
         svr.unreg(VOTE);
         svr.unreg(APPENDENTRIES);
         svr.unreg(EMPTYAPPENDENTRIES);
-        svr.unreg(TIMEOUTNOW);
-        svr.unreg(NOTIFYRESTART);
         svr.unreg(INSTALLSNAPSHOT);
-        svr.unreg(ADDSERVER);
-        svr.unreg(REMOVESERVER);
         return ret;
     }
     // @safe - Dispatch for RPC requests
@@ -835,11 +689,7 @@ public:
         case VOTE: __Vote__wrapper__(std::move(req), weak_sconn); break;
         case APPENDENTRIES: __AppendEntries__wrapper__(std::move(req), weak_sconn); break;
         case EMPTYAPPENDENTRIES: __EmptyAppendEntries__wrapper__(std::move(req), weak_sconn); break;
-        case TIMEOUTNOW: __TimeoutNow__wrapper__(std::move(req), weak_sconn); break;
-        case NOTIFYRESTART: __NotifyRestart__wrapper__(std::move(req), weak_sconn); break;
         case INSTALLSNAPSHOT: __InstallSnapshot__wrapper__(std::move(req), weak_sconn); break;
-        case ADDSERVER: __AddServer__wrapper__(std::move(req), weak_sconn); break;
-        case REMOVESERVER: __RemoveServer__wrapper__(std::move(req), weak_sconn); break;
         default: break;  // Unknown RPC ID, ignore
         }
     }
@@ -851,15 +701,7 @@ public:
     // @safe
     virtual rusty::Result<RpcEmptyAppendEntriesResponse, rrr::i32> EmptyAppendEntries(const RpcEmptyAppendEntriesRequest& req) = 0;
     // @safe
-    virtual rusty::Result<RpcTimeoutNowResponse, rrr::i32> TimeoutNow(const RpcTimeoutNowRequest& req) = 0;
-    // @safe
-    virtual rusty::Result<RpcNotifyRestartResponse, rrr::i32> NotifyRestart(const RpcNotifyRestartRequest& req) = 0;
-    // @safe
     virtual rusty::Result<RpcInstallSnapshotResponse, rrr::i32> InstallSnapshot(const RpcInstallSnapshotRequest& req) = 0;
-    // @safe
-    virtual rusty::Result<RpcAddServerResponse, rrr::i32> AddServer(const RpcAddServerRequest& req) = 0;
-    // @safe
-    virtual rusty::Result<RpcRemoveServerResponse, rrr::i32> RemoveServer(const RpcRemoveServerRequest& req) = 0;
     // these RPC handler functions need to be implemented by user
     // for 'raw' handlers, req is rusty::Box (auto-cleaned); weak_sconn requires lock() before use
 private:
@@ -944,7 +786,6 @@ private:
             rrr::Deserialize_::deserialize(__typed_req__.leaderPrevLogIndex, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.leaderPrevLogTerm, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.leaderCommitIndex, __req_ar__);
-            rrr::Deserialize_::deserialize(__typed_req__.trigger_election_now, __req_ar__);
             auto __fiber_req__ = std::move(req);
             auto __fiber_weak_sconn__ = weak_sconn;
             auto __fiber__ = Fiber::create_run([this, __typed_req__ = std::move(__typed_req__), __fiber_req__ = std::move(__fiber_req__), __fiber_weak_sconn__]() mutable {
@@ -960,62 +801,6 @@ private:
                             rrr::Serialize_::serialize(__typed_resp__.followerAppendOK, m);
                             rrr::Serialize_::serialize(__typed_resp__.followerCurrentTerm, m);
                             rrr::Serialize_::serialize(__typed_resp__.followerLastLogIndex, m);
-                        });
-                    }
-                }
-            });
-            (void)__fiber__;
-        }
-    }
-    // @safe
-    void __TimeoutNow__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        // @unsafe
-        {
-            RpcTimeoutNowRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
-            rrr::Deserialize_::deserialize(__typed_req__.leaderTerm, __req_ar__);
-            rrr::Deserialize_::deserialize(__typed_req__.leaderSiteId, __req_ar__);
-            auto __fiber_req__ = std::move(req);
-            auto __fiber_weak_sconn__ = weak_sconn;
-            auto __fiber__ = Fiber::create_run([this, __typed_req__ = std::move(__typed_req__), __fiber_req__ = std::move(__fiber_req__), __fiber_weak_sconn__]() mutable {
-                auto __typed_result__ = this->TimeoutNow(__typed_req__);
-                auto sconn_opt = __fiber_weak_sconn__.upgrade();
-                if (sconn_opt.is_some()) {
-                    auto sconn = sconn_opt.unwrap();
-                    if (__typed_result__.is_err()) {
-                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err(), rrr::ServerReplyFn{});
-                    } else {
-                        auto __typed_resp__ = __typed_result__.unwrap();
-                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::BinaryWriteArchive& m) {
-                            rrr::Serialize_::serialize(__typed_resp__.followerTerm, m);
-                            rrr::Serialize_::serialize(__typed_resp__.success, m);
-                        });
-                    }
-                }
-            });
-            (void)__fiber__;
-        }
-    }
-    // @safe
-    void __NotifyRestart__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        // @unsafe
-        {
-            RpcNotifyRestartRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
-            rrr::Deserialize_::deserialize(__typed_req__.restartedSiteId, __req_ar__);
-            auto __fiber_req__ = std::move(req);
-            auto __fiber_weak_sconn__ = weak_sconn;
-            auto __fiber__ = Fiber::create_run([this, __typed_req__ = std::move(__typed_req__), __fiber_req__ = std::move(__fiber_req__), __fiber_weak_sconn__]() mutable {
-                auto __typed_result__ = this->NotifyRestart(__typed_req__);
-                auto sconn_opt = __fiber_weak_sconn__.upgrade();
-                if (sconn_opt.is_some()) {
-                    auto sconn = sconn_opt.unwrap();
-                    if (__typed_result__.is_err()) {
-                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err(), rrr::ServerReplyFn{});
-                    } else {
-                        auto __typed_resp__ = __typed_result__.unwrap();
-                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::BinaryWriteArchive& m) {
-                            rrr::Serialize_::serialize(__typed_resp__.acknowledged, m);
                         });
                     }
                 }
@@ -1054,67 +839,6 @@ private:
             (void)__fiber__;
         }
     }
-    // @safe
-    void __AddServer__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        // @unsafe
-        {
-            RpcAddServerRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
-            rrr::Deserialize_::deserialize(__typed_req__.term, __req_ar__);
-            rrr::Deserialize_::deserialize(__typed_req__.new_server_id, __req_ar__);
-            rrr::Deserialize_::deserialize(__typed_req__.new_server_addr, __req_ar__);
-            auto __fiber_req__ = std::move(req);
-            auto __fiber_weak_sconn__ = weak_sconn;
-            auto __fiber__ = Fiber::create_run([this, __typed_req__ = std::move(__typed_req__), __fiber_req__ = std::move(__fiber_req__), __fiber_weak_sconn__]() mutable {
-                auto __typed_result__ = this->AddServer(__typed_req__);
-                auto sconn_opt = __fiber_weak_sconn__.upgrade();
-                if (sconn_opt.is_some()) {
-                    auto sconn = sconn_opt.unwrap();
-                    if (__typed_result__.is_err()) {
-                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err(), rrr::ServerReplyFn{});
-                    } else {
-                        auto __typed_resp__ = __typed_result__.unwrap();
-                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::BinaryWriteArchive& m) {
-                            rrr::Serialize_::serialize(__typed_resp__.success, m);
-                            rrr::Serialize_::serialize(__typed_resp__.error_msg, m);
-                            rrr::Serialize_::serialize(__typed_resp__.leader_hint, m);
-                        });
-                    }
-                }
-            });
-            (void)__fiber__;
-        }
-    }
-    // @safe
-    void __RemoveServer__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        // @unsafe
-        {
-            RpcRemoveServerRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
-            rrr::Deserialize_::deserialize(__typed_req__.term, __req_ar__);
-            rrr::Deserialize_::deserialize(__typed_req__.server_id, __req_ar__);
-            auto __fiber_req__ = std::move(req);
-            auto __fiber_weak_sconn__ = weak_sconn;
-            auto __fiber__ = Fiber::create_run([this, __typed_req__ = std::move(__typed_req__), __fiber_req__ = std::move(__fiber_req__), __fiber_weak_sconn__]() mutable {
-                auto __typed_result__ = this->RemoveServer(__typed_req__);
-                auto sconn_opt = __fiber_weak_sconn__.upgrade();
-                if (sconn_opt.is_some()) {
-                    auto sconn = sconn_opt.unwrap();
-                    if (__typed_result__.is_err()) {
-                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err(), rrr::ServerReplyFn{});
-                    } else {
-                        auto __typed_resp__ = __typed_result__.unwrap();
-                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::BinaryWriteArchive& m) {
-                            rrr::Serialize_::serialize(__typed_resp__.success, m);
-                            rrr::Serialize_::serialize(__typed_resp__.error_msg, m);
-                            rrr::Serialize_::serialize(__typed_resp__.leader_hint, m);
-                        });
-                    }
-                }
-            });
-            (void)__fiber__;
-        }
-    }
 };
 
 class RaftProxy {
@@ -1129,16 +853,8 @@ public:
     using RpcAppendEntriesResponse = RaftService::RpcAppendEntriesResponse;
     using RpcEmptyAppendEntriesRequest = RaftService::RpcEmptyAppendEntriesRequest;
     using RpcEmptyAppendEntriesResponse = RaftService::RpcEmptyAppendEntriesResponse;
-    using RpcTimeoutNowRequest = RaftService::RpcTimeoutNowRequest;
-    using RpcTimeoutNowResponse = RaftService::RpcTimeoutNowResponse;
-    using RpcNotifyRestartRequest = RaftService::RpcNotifyRestartRequest;
-    using RpcNotifyRestartResponse = RaftService::RpcNotifyRestartResponse;
     using RpcInstallSnapshotRequest = RaftService::RpcInstallSnapshotRequest;
     using RpcInstallSnapshotResponse = RaftService::RpcInstallSnapshotResponse;
-    using RpcAddServerRequest = RaftService::RpcAddServerRequest;
-    using RpcAddServerResponse = RaftService::RpcAddServerResponse;
-    using RpcRemoveServerRequest = RaftService::RpcRemoveServerRequest;
-    using RpcRemoveServerResponse = RaftService::RpcRemoveServerResponse;
     class VoteTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -1283,7 +999,6 @@ public:
             rrr::Serialize_::serialize(req.leaderPrevLogIndex, __m__);
             rrr::Serialize_::serialize(req.leaderPrevLogTerm, __m__);
             rrr::Serialize_::serialize(req.leaderCommitIndex, __m__);
-            rrr::Serialize_::serialize(req.trigger_election_now, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<EmptyAppendEntriesTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -1294,98 +1009,6 @@ public:
         auto __typed_fu_result__ = this->async_EmptyAppendEntries(req);
         if (__typed_fu_result__.is_err()) {
             return rusty::Result<RpcEmptyAppendEntriesResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
-        }
-        return __typed_fu_result__.unwrap().resolve();
-    }
-    class TimeoutNowTypedFuture {
-    private:
-        rusty::Arc<rrr::Future> __fu__;
-    public:
-        explicit TimeoutNowTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
-        bool ready() const {
-            return __fu__->ready();
-        }
-        void wait() const {
-            __fu__->wait();
-        }
-        rrr::i32 get_error_code() const {
-            return __fu__->get_error_code();
-        }
-        rusty::Arc<rrr::Future> raw_future() const {
-            return __fu__;
-        }
-        rusty::Result<RpcTimeoutNowResponse, rrr::i32> resolve() const {
-            rrr::i32 __ret__ = __fu__->get_error_code();
-            if (__ret__ != 0) {
-                return rusty::Result<RpcTimeoutNowResponse, rrr::i32>::Err(__ret__);
-            }
-            RpcTimeoutNowResponse __typed_resp__;
-            auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
-            rrr::Deserialize_::deserialize(__typed_resp__.followerTerm, __reply_ar__);
-            rrr::Deserialize_::deserialize(__typed_resp__.success, __reply_ar__);
-            return rusty::Result<RpcTimeoutNowResponse, rrr::i32>::Ok(__typed_resp__);
-        }
-    };
-    rusty::Result<TimeoutNowTypedFuture, rrr::i32> async_TimeoutNow(const RpcTimeoutNowRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(RaftService::TIMEOUTNOW, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            rrr::Serialize_::serialize(req.leaderTerm, __m__);
-            rrr::Serialize_::serialize(req.leaderSiteId, __m__);
-        });
-        if (__fu_result__.is_err()) {
-            return rusty::Result<TimeoutNowTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
-        }
-        return rusty::Result<TimeoutNowTypedFuture, rrr::i32>::Ok(TimeoutNowTypedFuture(__fu_result__.unwrap()));
-    }
-    rusty::Result<RpcTimeoutNowResponse, rrr::i32> TimeoutNow(const RpcTimeoutNowRequest& req) {
-        auto __typed_fu_result__ = this->async_TimeoutNow(req);
-        if (__typed_fu_result__.is_err()) {
-            return rusty::Result<RpcTimeoutNowResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
-        }
-        return __typed_fu_result__.unwrap().resolve();
-    }
-    class NotifyRestartTypedFuture {
-    private:
-        rusty::Arc<rrr::Future> __fu__;
-    public:
-        explicit NotifyRestartTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
-        bool ready() const {
-            return __fu__->ready();
-        }
-        void wait() const {
-            __fu__->wait();
-        }
-        rrr::i32 get_error_code() const {
-            return __fu__->get_error_code();
-        }
-        rusty::Arc<rrr::Future> raw_future() const {
-            return __fu__;
-        }
-        rusty::Result<RpcNotifyRestartResponse, rrr::i32> resolve() const {
-            rrr::i32 __ret__ = __fu__->get_error_code();
-            if (__ret__ != 0) {
-                return rusty::Result<RpcNotifyRestartResponse, rrr::i32>::Err(__ret__);
-            }
-            RpcNotifyRestartResponse __typed_resp__;
-            auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
-            rrr::Deserialize_::deserialize(__typed_resp__.acknowledged, __reply_ar__);
-            return rusty::Result<RpcNotifyRestartResponse, rrr::i32>::Ok(__typed_resp__);
-        }
-    };
-    rusty::Result<NotifyRestartTypedFuture, rrr::i32> async_NotifyRestart(const RpcNotifyRestartRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(RaftService::NOTIFYRESTART, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            rrr::Serialize_::serialize(req.restartedSiteId, __m__);
-        });
-        if (__fu_result__.is_err()) {
-            return rusty::Result<NotifyRestartTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
-        }
-        return rusty::Result<NotifyRestartTypedFuture, rrr::i32>::Ok(NotifyRestartTypedFuture(__fu_result__.unwrap()));
-    }
-    rusty::Result<RpcNotifyRestartResponse, rrr::i32> NotifyRestart(const RpcNotifyRestartRequest& req) {
-        auto __typed_fu_result__ = this->async_NotifyRestart(req);
-        if (__typed_fu_result__.is_err()) {
-            return rusty::Result<RpcNotifyRestartResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
     }
@@ -1435,103 +1058,6 @@ public:
         auto __typed_fu_result__ = this->async_InstallSnapshot(req);
         if (__typed_fu_result__.is_err()) {
             return rusty::Result<RpcInstallSnapshotResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
-        }
-        return __typed_fu_result__.unwrap().resolve();
-    }
-    class AddServerTypedFuture {
-    private:
-        rusty::Arc<rrr::Future> __fu__;
-    public:
-        explicit AddServerTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
-        bool ready() const {
-            return __fu__->ready();
-        }
-        void wait() const {
-            __fu__->wait();
-        }
-        rrr::i32 get_error_code() const {
-            return __fu__->get_error_code();
-        }
-        rusty::Arc<rrr::Future> raw_future() const {
-            return __fu__;
-        }
-        rusty::Result<RpcAddServerResponse, rrr::i32> resolve() const {
-            rrr::i32 __ret__ = __fu__->get_error_code();
-            if (__ret__ != 0) {
-                return rusty::Result<RpcAddServerResponse, rrr::i32>::Err(__ret__);
-            }
-            RpcAddServerResponse __typed_resp__;
-            auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
-            rrr::Deserialize_::deserialize(__typed_resp__.success, __reply_ar__);
-            rrr::Deserialize_::deserialize(__typed_resp__.error_msg, __reply_ar__);
-            rrr::Deserialize_::deserialize(__typed_resp__.leader_hint, __reply_ar__);
-            return rusty::Result<RpcAddServerResponse, rrr::i32>::Ok(__typed_resp__);
-        }
-    };
-    rusty::Result<AddServerTypedFuture, rrr::i32> async_AddServer(const RpcAddServerRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(RaftService::ADDSERVER, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            rrr::Serialize_::serialize(req.term, __m__);
-            rrr::Serialize_::serialize(req.new_server_id, __m__);
-            rrr::Serialize_::serialize(req.new_server_addr, __m__);
-        });
-        if (__fu_result__.is_err()) {
-            return rusty::Result<AddServerTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
-        }
-        return rusty::Result<AddServerTypedFuture, rrr::i32>::Ok(AddServerTypedFuture(__fu_result__.unwrap()));
-    }
-    rusty::Result<RpcAddServerResponse, rrr::i32> AddServer(const RpcAddServerRequest& req) {
-        auto __typed_fu_result__ = this->async_AddServer(req);
-        if (__typed_fu_result__.is_err()) {
-            return rusty::Result<RpcAddServerResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
-        }
-        return __typed_fu_result__.unwrap().resolve();
-    }
-    class RemoveServerTypedFuture {
-    private:
-        rusty::Arc<rrr::Future> __fu__;
-    public:
-        explicit RemoveServerTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
-        bool ready() const {
-            return __fu__->ready();
-        }
-        void wait() const {
-            __fu__->wait();
-        }
-        rrr::i32 get_error_code() const {
-            return __fu__->get_error_code();
-        }
-        rusty::Arc<rrr::Future> raw_future() const {
-            return __fu__;
-        }
-        rusty::Result<RpcRemoveServerResponse, rrr::i32> resolve() const {
-            rrr::i32 __ret__ = __fu__->get_error_code();
-            if (__ret__ != 0) {
-                return rusty::Result<RpcRemoveServerResponse, rrr::i32>::Err(__ret__);
-            }
-            RpcRemoveServerResponse __typed_resp__;
-            auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
-            rrr::Deserialize_::deserialize(__typed_resp__.success, __reply_ar__);
-            rrr::Deserialize_::deserialize(__typed_resp__.error_msg, __reply_ar__);
-            rrr::Deserialize_::deserialize(__typed_resp__.leader_hint, __reply_ar__);
-            return rusty::Result<RpcRemoveServerResponse, rrr::i32>::Ok(__typed_resp__);
-        }
-    };
-    rusty::Result<RemoveServerTypedFuture, rrr::i32> async_RemoveServer(const RpcRemoveServerRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(RaftService::REMOVESERVER, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            rrr::Serialize_::serialize(req.term, __m__);
-            rrr::Serialize_::serialize(req.server_id, __m__);
-        });
-        if (__fu_result__.is_err()) {
-            return rusty::Result<RemoveServerTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
-        }
-        return rusty::Result<RemoveServerTypedFuture, rrr::i32>::Ok(RemoveServerTypedFuture(__fu_result__.unwrap()));
-    }
-    rusty::Result<RpcRemoveServerResponse, rrr::i32> RemoveServer(const RpcRemoveServerRequest& req) {
-        auto __typed_fu_result__ = this->async_RemoveServer(req);
-        if (__typed_fu_result__.is_err()) {
-            return rusty::Result<RpcRemoveServerResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
     }

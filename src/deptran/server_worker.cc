@@ -162,9 +162,9 @@ void ServerWorker::ShutDown() {
     svr_hb_poll_thread_worker_g = rusty::None;
   }
 
-  // RaftTestConfig::Kill/Restart can replace/delete server objects
-  // independently of ServerWorker, so rep_sched_ may be stale here. Skip
-  // manual deletion to avoid double-free/use-after-free on shutdown.
+  // The scheduler is owned by RaftFrame::svr_ (a unique_ptr on the frame that
+  // CreateScheduler() returned it from); rep_sched_ only borrows it, so
+  // ServerWorker must not delete it.
   Log_info("Skipping replication scheduler delete in RAFT_TEST_CORO shutdown");
   rep_sched_ = nullptr;
   Log_info("ServerWorker shutdown complete.");

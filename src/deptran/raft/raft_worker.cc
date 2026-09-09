@@ -9,7 +9,6 @@
 #include "raft_worker.h"
 #include "server.h"
 #include "commo.h"
-#include "service.h"
 #include "application_log.h"
 #include "../config.h"
 #include "../legacy_raft_log_payload.h"
@@ -241,6 +240,11 @@ static_assert(raft_worker_callback_available(true));
 static_assert(!raft_worker_should_buffer_unreplayed(7, 7, 0));
 static_assert(raft_worker_should_buffer_unreplayed(7, 7, 1));
 static_assert(!raft_worker_should_buffer_unreplayed(6, 7, 1));
+
+// Bound on the shutdown wait for RPC handlers that were already admitted when
+// teardown began. Every Raft handler is a short, non-yielding critical section,
+// so this is a diagnostic ceiling rather than an expected wait.
+static constexpr uint64_t kRpcDrainTimeoutMs = 5000;
 
 // @safe
 RaftWorker::RaftWorker() = default;
@@ -512,14 +516,30 @@ void RaftWorker::ShutDown() {
   // this after PrepareForShutdown would append into a quiesced server.
   StopSubmitThread();
 
+  // Close RPC admission and drain the requests already admitted BEFORE the
+  // server is quiesced. RaftServiceImpl holds a bare RaftServer* and its
+  // handlers dereference it without any lifetime lease, so a handler fiber
+  // that is mid-call on the server PollThread would otherwise still be
+  // running when this thread reaches `delete rep_sched_` below. rrr attaches
+  // a pending-request guard to every request for the whole life of its
+  // handler fiber, so drain() is the barrier that guarantee needs.
+  if (rpc_server_) {
+    rpc_server_->set_admission_ready(false);
+    if (!rpc_server_->drain(kRpcDrainTimeoutMs)) {
+      Log_warn("[RAFT-WORKER-SHUTDOWN] RPC drain timed out with {} request(s) "
+               "still in flight",
+               rpc_server_->pending_request_count());
+    }
+  }
+
   // Raft's heartbeat and election fibers are owned by the server PollThread.
-  // First close RPC admission and drain every handler that borrowed the raw
-  // server pointer. Then quiesce the runtime loops while their owner is still
-  // able to run the gate's shutdown wake job; deleting the scheduler after
-  // stopping the PollThread would leave those fibers suspended with raw
-  // references to the server.
+  // PrepareForShutdown first closes RPC admission (RaftServiceImpl handlers
+  // fail closed once the server is no longer rpc-ready), then quiesces the
+  // runtime loops while their owner is still able to run the gate's shutdown
+  // wake job; deleting the scheduler after stopping the PollThread would leave
+  // those fibers suspended with raw references to the server. rpc_server_,
+  // which owns the service, is deleted below before the scheduler.
   if (auto* raft_server = dynamic_cast<RaftServer*>(rep_sched_)) {
-    RaftServiceImpl::UpdateServer(site_info_->id, nullptr);
     raft_server->PrepareForShutdown();
   }
 

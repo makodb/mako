@@ -347,6 +347,10 @@ void check_current_path() {
   }
 }
 
+// Bound on the shutdown wait for stub-server RPC handlers already admitted
+// when teardown began; matches RaftWorker's own drain ceiling.
+static constexpr uint64_t kStubRpcDrainTimeoutMs = 5000;
+
 // SINGLE-RAFT: Create stub RPC servers on extra partition ports.
 // Remote replicas' Communicators expect to connect to all partition ports.
 // Stub servers register the same RaftServiceImpl pointing to the single RaftServer.
@@ -376,7 +380,7 @@ void create_stub_servers() {
     rpc_server->set_admission_ready(false);
 
     // Register RaftServiceImpl pointing to the single RaftServer
-    rpc_server->reg_service_typed(rusty::make_box<RaftServiceImpl>(rep_sched, poll_thread.clone()));
+    rpc_server->reg_service_typed(rusty::make_box<RaftServiceImpl>(rep_sched));
 
     // Bind to the site's port
     int ret = rpc_server->start(reinterpret_cast<const int8_t*>(bind_addr.c_str()));
@@ -394,6 +398,20 @@ void create_stub_servers() {
 
 // SINGLE-RAFT: Shutdown and clean up stub servers
 void destroy_stub_servers() {
+  // Each stub registers a RaftServiceImpl over the single RaftServer, whose
+  // handlers dereference a bare pointer with no lifetime lease. Close
+  // admission and drain the already-admitted requests before the service is
+  // destroyed here and the RaftServer is destroyed by RaftWorker::ShutDown().
+  for (auto* server : stub_rpc_servers_g) {
+    if (server) {
+      server->set_admission_ready(false);
+      if (!server->drain(kStubRpcDrainTimeoutMs)) {
+        Log_warn("[SINGLE-RAFT] Stub server drain timed out with {} request(s) "
+                 "still in flight",
+                 server->pending_request_count());
+      }
+    }
+  }
   for (auto* server : stub_rpc_servers_g) {
     if (server) {
       delete server;
@@ -796,7 +814,8 @@ std::vector<std::string> setup(int argc, char* argv[]) {
 // - Machine_id 0 (localhost) is set as the preferred leader
 // - Elections are biased toward the preferred replica
 // - If preferred fails, others can take over
-// - When preferred recovers, it catches up then reclaims leadership
+// - The bias is timer-only: the preferred replica wins whenever a new
+//   election is held, but a sitting leader is not displaced
 //
 // This provides similar behavior to Paxos fixed leader but with automatic failover.
 int setup2(int action, int shardIndex) {
@@ -1203,10 +1222,9 @@ void worker_info_stats(size_t /*worker_id*/) {
  * Dynamically set the preferred leader for all Raft workers.
  *
  * This allows Mako worker threads to change the preferred leader at runtime.
- * When a new preferred leader is set:
- * 1. All replicas update their voting bias
- * 2. If the new preferred is not currently leader, it starts catch-up monitoring
- * 3. Once caught up, it triggers an election and reclaims leadership
+ * When a new preferred leader is set every replica updates its election-timer
+ * bias, so the new preferred replica wins the next election that occurs. The
+ * bias is timer-only: a sitting leader is not displaced.
  *
  * @param site_id The site ID of the new preferred leader (or INVALID_SITEID to disable)
  *

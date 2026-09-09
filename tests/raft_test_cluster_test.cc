@@ -27,16 +27,16 @@ TEST(RaftTestClusterTest, DisconnectStopsTraffic) {
   c->disconnect(2);
 
   // 1→2 is dropped at the switchboard; reply channel closes, adapter
-  // falls back to default TimeoutNowReply (success=false).
-  auto dropped = c->node(1).transport()->send_timeout_now(2, TimeoutNowReq{});
-  EXPECT_FALSE(dropped.success);
+  // falls back to default VoteReply (vote_granted=false).
+  auto dropped = c->node(1).transport()->send_vote(2, VoteReq{});
+  EXPECT_FALSE(dropped.vote_granted);
   // 1→3 still works (not on the drop list).
-  auto ok3 = c->node(1).transport()->send_timeout_now(3, TimeoutNowReq{});
-  EXPECT_TRUE(ok3.success);
+  auto ok3 = c->node(1).transport()->send_vote(3, VoteReq{});
+  EXPECT_TRUE(ok3.vote_granted);
 
   c->reset_faults();
-  auto ok2 = c->node(1).transport()->send_timeout_now(2, TimeoutNowReq{});
-  EXPECT_TRUE(ok2.success);
+  auto ok2 = c->node(1).transport()->send_vote(2, VoteReq{});
+  EXPECT_TRUE(ok2.vote_granted);
 }
 
 TEST(RaftTestClusterTest, PartitionIsolatesGroups) {
@@ -44,11 +44,11 @@ TEST(RaftTestClusterTest, PartitionIsolatesGroups) {
   c->partition({1, 2}, {3, 4, 5});
 
   // 1→3: across partition, dropped.
-  auto cross = c->node(1).transport()->send_timeout_now(3, TimeoutNowReq{});
-  EXPECT_FALSE(cross.success);
+  auto cross = c->node(1).transport()->send_vote(3, VoteReq{});
+  EXPECT_FALSE(cross.vote_granted);
   // 1→2: same partition, delivered.
-  auto intra = c->node(1).transport()->send_timeout_now(2, TimeoutNowReq{});
-  EXPECT_TRUE(intra.success);
+  auto intra = c->node(1).transport()->send_vote(2, VoteReq{});
+  EXPECT_TRUE(intra.vote_granted);
 }
 
 TEST(RaftTestClusterTest, InspectionAccessors) {

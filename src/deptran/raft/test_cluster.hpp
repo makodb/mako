@@ -4,8 +4,7 @@
  * @file test_cluster.hpp
  * @brief Phase 6 — in-process raft cluster harness. Wires N RaftNodes
  *        together through a ChannelSwitchboard and exposes the fault-
- *        injection controls the lab tests need (kill / restart /
- *        disconnect / partition).
+ *        injection controls the lab tests need (disconnect / partition).
  *
  * Current scope (matches raft_node.hpp): this is a SKELETON. The
  * cluster plumbing — per-node worker threads, transport fan-out, peer
@@ -80,26 +79,6 @@ class TestCluster {
 
   // @safe - clear all fault injections.
   void reset_faults() { sw_.reset_faults(); }
-
-  // @safe - pretends to kill a node by flipping its is_leader /
-  // dispatcher state. A full impl destroys+recreates the node.
-  void kill(siteid_t s) {
-    node(s).force_leader(false);
-    disconnect(s);
-  }
-
-  // @safe - re-attaches a node that was previously killed.
-  void restart(siteid_t s) {
-    for (auto peer : site_ids_) {
-      if (peer == s) continue;
-      // A full impl would rebuild the node in place; the MVP just
-      // clears its direction from the fault list. Since ChannelFaults
-      // lacks a per-direction remove, we reset and re-apply — the
-      // MVP cluster only supports one site being down at a time.
-      (void)peer;
-    }
-    sw_.reset_faults();
-  }
 
   // ------------------------------------------------------------------
   // Each node has a background worker thread draining its channel

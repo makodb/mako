@@ -41,7 +41,6 @@ struct LegacyEmptyAppendEntriesReqLayout {
   uint64_t leader_prev_log_index;
   uint64_t leader_prev_log_term;
   uint64_t leader_commit_index;
-  bool trigger_election_now;
 };
 
 struct LegacyEmptyAppendEntriesReplyLayout {
@@ -50,31 +49,8 @@ struct LegacyEmptyAppendEntriesReplyLayout {
   uint64_t follower_last_log_index;
 };
 
-struct LegacyTimeoutNowReqLayout {
-  uint64_t leader_term;
-  uint16_t leader_site_id;
-};
-
-struct LegacyTimeoutNowReplyLayout {
-  uint64_t follower_term;
-  bool success;
-};
-
-struct LegacyNotifyRestartReqLayout {
-  uint16_t restarted_site_id;
-};
-
-struct LegacyNotifyRestartReplyLayout {
-  bool acknowledged;
-};
-
 struct LegacyInstallSnapshotReplyLayout {
   uint64_t term_out;
-};
-
-struct LegacyRemoveServerReqLayout {
-  uint64_t term;
-  uint64_t server_id;
 };
 
 #define ASSERT_POD_LAYOUT(type, legacy)                  \
@@ -103,24 +79,14 @@ ASSERT_POD_LAYOUT(AppendEntriesReply, LegacyAppendEntriesReplyLayout);
 ASSERT_POD_LAYOUT(EmptyAppendEntriesReq, LegacyEmptyAppendEntriesReqLayout);
 ASSERT_POD_LAYOUT(EmptyAppendEntriesReply,
                   LegacyEmptyAppendEntriesReplyLayout);
-ASSERT_POD_LAYOUT(TimeoutNowReq, LegacyTimeoutNowReqLayout);
-ASSERT_POD_LAYOUT(TimeoutNowReply, LegacyTimeoutNowReplyLayout);
-ASSERT_POD_LAYOUT(NotifyRestartReq, LegacyNotifyRestartReqLayout);
-ASSERT_POD_LAYOUT(NotifyRestartReply, LegacyNotifyRestartReplyLayout);
 ASSERT_POD_LAYOUT(InstallSnapshotReply, LegacyInstallSnapshotReplyLayout);
-ASSERT_POD_LAYOUT(RemoveServerReq, LegacyRemoveServerReqLayout);
 
 ASSERT_ZERO_DEFAULT_CONTRACT(VoteReq);
 ASSERT_ZERO_DEFAULT_CONTRACT(VoteReply);
 ASSERT_ZERO_DEFAULT_CONTRACT(AppendEntriesReply);
 ASSERT_ZERO_DEFAULT_CONTRACT(EmptyAppendEntriesReq);
 ASSERT_ZERO_DEFAULT_CONTRACT(EmptyAppendEntriesReply);
-ASSERT_ZERO_DEFAULT_CONTRACT(TimeoutNowReq);
-ASSERT_ZERO_DEFAULT_CONTRACT(TimeoutNowReply);
-ASSERT_ZERO_DEFAULT_CONTRACT(NotifyRestartReq);
-ASSERT_ZERO_DEFAULT_CONTRACT(NotifyRestartReply);
 ASSERT_ZERO_DEFAULT_CONTRACT(InstallSnapshotReply);
-ASSERT_ZERO_DEFAULT_CONTRACT(RemoveServerReq);
 
 static_assert(
     std::is_same_v<decltype(VoteReq::last_log_idx), uint64_t>);
@@ -146,24 +112,7 @@ static_assert(
 static_assert(std::is_same_v<decltype(EmptyAppendEntriesReq::leader_site_id),
                              uint16_t>);
 static_assert(
-    std::is_same_v<decltype(EmptyAppendEntriesReq::trigger_election_now),
-                   bool>);
-static_assert(
-    std::is_same_v<decltype(TimeoutNowReq::leader_term), uint64_t>);
-static_assert(
-    std::is_same_v<decltype(TimeoutNowReq::leader_site_id), uint16_t>);
-static_assert(
-    std::is_same_v<decltype(TimeoutNowReply::follower_term), uint64_t>);
-static_assert(std::is_same_v<decltype(TimeoutNowReply::success), bool>);
-static_assert(std::is_same_v<decltype(NotifyRestartReq::restarted_site_id),
-                             uint16_t>);
-static_assert(
-    std::is_same_v<decltype(NotifyRestartReply::acknowledged), bool>);
-static_assert(
     std::is_same_v<decltype(InstallSnapshotReply::term_out), uint64_t>);
-static_assert(std::is_same_v<decltype(RemoveServerReq::term), uint64_t>);
-static_assert(
-    std::is_same_v<decltype(RemoveServerReq::server_id), uint64_t>);
 
 static_assert(sizeof(VoteReq) == sizeof(LegacyVoteReqLayout));
 static_assert(alignof(VoteReq) == alignof(LegacyVoteReqLayout));
@@ -206,8 +155,6 @@ ASSERT_FIELD_OFFSET(EmptyAppendEntriesReq, LegacyEmptyAppendEntriesReqLayout,
                     leader_prev_log_term);
 ASSERT_FIELD_OFFSET(EmptyAppendEntriesReq, LegacyEmptyAppendEntriesReqLayout,
                     leader_commit_index);
-ASSERT_FIELD_OFFSET(EmptyAppendEntriesReq, LegacyEmptyAppendEntriesReqLayout,
-                    trigger_election_now);
 ASSERT_FIELD_OFFSET(EmptyAppendEntriesReply,
                     LegacyEmptyAppendEntriesReplyLayout, follower_append_ok);
 ASSERT_FIELD_OFFSET(EmptyAppendEntriesReply,
@@ -216,19 +163,8 @@ ASSERT_FIELD_OFFSET(EmptyAppendEntriesReply,
 ASSERT_FIELD_OFFSET(EmptyAppendEntriesReply,
                     LegacyEmptyAppendEntriesReplyLayout,
                     follower_last_log_index);
-ASSERT_FIELD_OFFSET(TimeoutNowReq, LegacyTimeoutNowReqLayout, leader_term);
-ASSERT_FIELD_OFFSET(TimeoutNowReq, LegacyTimeoutNowReqLayout, leader_site_id);
-ASSERT_FIELD_OFFSET(TimeoutNowReply, LegacyTimeoutNowReplyLayout,
-                    follower_term);
-ASSERT_FIELD_OFFSET(TimeoutNowReply, LegacyTimeoutNowReplyLayout, success);
-ASSERT_FIELD_OFFSET(NotifyRestartReq, LegacyNotifyRestartReqLayout,
-                    restarted_site_id);
-ASSERT_FIELD_OFFSET(NotifyRestartReply, LegacyNotifyRestartReplyLayout,
-                    acknowledged);
 ASSERT_FIELD_OFFSET(InstallSnapshotReply, LegacyInstallSnapshotReplyLayout,
                     term_out);
-ASSERT_FIELD_OFFSET(RemoveServerReq, LegacyRemoveServerReqLayout, term);
-ASSERT_FIELD_OFFSET(RemoveServerReq, LegacyRemoveServerReqLayout, server_id);
 
 #undef ASSERT_FIELD_OFFSET
 #undef ASSERT_POD_LAYOUT
@@ -252,18 +188,10 @@ TEST(RaftMessagesTest, DefaultConstructAllRequestReplyTypes) {
   }
   { AppendEntriesReq r{};   EXPECT_EQ(r.leader_commit_index, 0u); }
   { AppendEntriesReply r{}; EXPECT_EQ(r.follower_append_ok, 0u); }
-  { EmptyAppendEntriesReq r{};   EXPECT_FALSE(r.trigger_election_now); }
+  { EmptyAppendEntriesReq r{};   EXPECT_EQ(r.leader_commit_index, 0u); }
   { EmptyAppendEntriesReply r{}; EXPECT_EQ(r.follower_last_log_index, 0u); }
-  { TimeoutNowReq r{};       EXPECT_EQ(r.leader_term, 0u); }
-  { TimeoutNowReply r{};     EXPECT_FALSE(r.success); }
-  { NotifyRestartReq r{};    EXPECT_EQ(r.restarted_site_id, 0u); }
-  { NotifyRestartReply r{};  EXPECT_FALSE(r.acknowledged); }
   { InstallSnapshotReq r{};  EXPECT_TRUE(r.data.empty()); }
   { InstallSnapshotReply r{};EXPECT_EQ(r.term_out, 0u); }
-  { AddServerReq r{};        EXPECT_EQ(r.new_server_id, 0u); }
-  { AddServerReply r{};      EXPECT_FALSE(r.success); }
-  { RemoveServerReq r{};     EXPECT_EQ(r.server_id, 0u); }
-  { RemoveServerReply r{};   EXPECT_FALSE(r.success); }
 }
 
 TEST(RaftMessagesTest, PlainDefaultInitializationPreservesZeroContract) {
@@ -290,33 +218,14 @@ TEST(RaftMessagesTest, PlainDefaultInitializationPreservesZeroContract) {
   EXPECT_EQ(heartbeat.leader_prev_log_index, 0u);
   EXPECT_EQ(heartbeat.leader_prev_log_term, 0u);
   EXPECT_EQ(heartbeat.leader_commit_index, 0u);
-  EXPECT_FALSE(heartbeat.trigger_election_now);
 
   EmptyAppendEntriesReply heartbeat_reply;
   EXPECT_EQ(heartbeat_reply.follower_append_ok, 0u);
   EXPECT_EQ(heartbeat_reply.follower_current_term, 0u);
   EXPECT_EQ(heartbeat_reply.follower_last_log_index, 0u);
 
-  TimeoutNowReq timeout_request;
-  EXPECT_EQ(timeout_request.leader_term, 0u);
-  EXPECT_EQ(timeout_request.leader_site_id, 0u);
-
-  TimeoutNowReply timeout;
-  EXPECT_EQ(timeout.follower_term, 0u);
-  EXPECT_FALSE(timeout.success);
-
-  NotifyRestartReq restart;
-  EXPECT_EQ(restart.restarted_site_id, 0u);
-
-  NotifyRestartReply restart_reply;
-  EXPECT_FALSE(restart_reply.acknowledged);
-
   InstallSnapshotReply snapshot_reply;
   EXPECT_EQ(snapshot_reply.term_out, 0u);
-
-  RemoveServerReq remove;
-  EXPECT_EQ(remove.term, 0u);
-  EXPECT_EQ(remove.server_id, 0u);
 }
 
 TEST(RaftMessagesTest, FieldAssignmentRoundTrip) {
@@ -358,10 +267,6 @@ TEST(RaftMessagesTest, PrimitiveFamiliesPreserveValueInitialization) {
   EXPECT_EQ(append->follower_current_term, 0u);
   EXPECT_EQ(append->follower_last_log_index, 0u);
 
-  auto timeout = std::make_shared<TimeoutNowReply>();
-  EXPECT_EQ(timeout->follower_term, 0u);
-  EXPECT_FALSE(timeout->success);
-
   auto snapshot = std::make_shared<InstallSnapshotReply>();
   EXPECT_EQ(snapshot->term_out, 0u);
 }
@@ -372,30 +277,15 @@ TEST(RaftMessagesTest, PrimitiveFamiliesPreservePositionalConstruction) {
   EXPECT_EQ(append.follower_current_term, 2u);
   EXPECT_EQ(append.follower_last_log_index, 3u);
 
-  EmptyAppendEntriesReq heartbeat{5, -6, 7, 8, 9, 10, 11, true};
+  EmptyAppendEntriesReq heartbeat{5, -6, 7, 8, 9, 10, 11};
   EXPECT_EQ(heartbeat.slot, 5u);
   EXPECT_EQ(heartbeat.ballot, -6);
   EXPECT_EQ(heartbeat.leader_site_id, 8u);
-  EXPECT_TRUE(heartbeat.trigger_election_now);
+  EXPECT_EQ(heartbeat.leader_commit_index, 11u);
 
   EmptyAppendEntriesReply heartbeat_reply{12, 13, 14};
   EXPECT_EQ(heartbeat_reply.follower_last_log_index, 14u);
 
-  TimeoutNowReq timeout{19, 20};
-  TimeoutNowReply timeout_reply{21, true};
-  EXPECT_EQ(timeout.leader_site_id, 20u);
-  EXPECT_EQ(timeout_reply.follower_term, 21u);
-  EXPECT_TRUE(timeout_reply.success);
-
-  NotifyRestartReq restart{22};
-  NotifyRestartReply restart_reply{true};
-  EXPECT_EQ(restart.restarted_site_id, 22u);
-  EXPECT_TRUE(restart_reply.acknowledged);
-
   InstallSnapshotReply snapshot{23};
   EXPECT_EQ(snapshot.term_out, 23u);
-
-  RemoveServerReq remove{24, 25};
-  EXPECT_EQ(remove.term, 24u);
-  EXPECT_EQ(remove.server_id, 25u);
 }

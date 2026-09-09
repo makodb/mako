@@ -46,21 +46,10 @@ abstract service Raft {
                            siteid_t leaderSiteId,
                            uint64_t leaderPrevLogIndex,
                            uint64_t leaderPrevLogTerm,
-                           uint64_t leaderCommitIndex,
-                           bool_t trigger_election_now |
+                           uint64_t leaderCommitIndex |
                            uint64_t followerAppendOK,
                            uint64_t followerCurrentTerm,
                            uint64_t followerLastLogIndex);
-
-  fiber TimeoutNow(uint64_t leaderTerm,
-                   siteid_t leaderSiteId |
-                   uint64_t followerTerm,
-                   bool_t success);
-
-  // NotifyRestart - Sent by a server after it restarts to tell other servers
-  // to reconnect their client connections to it
-  fiber NotifyRestart(siteid_t restartedSiteId |
-                      bool_t acknowledged);
 
   // InstallSnapshot - Sent by leader to follower that is too far behind
   // Transfers the full snapshot in one RPC (no chunking)
@@ -70,13 +59,6 @@ abstract service Raft {
                         uint64_t last_included_term,
                         string data |
                         uint64_t term_out);
-
-  // Membership changes - single-server protocol
-  fiber AddServer(uint64_t term, uint64_t new_server_id, string new_server_addr |
-                  bool_t success, string error_msg, uint64_t leader_hint);
-
-  fiber RemoveServer(uint64_t term, uint64_t server_id |
-                     bool_t success, string error_msg, uint64_t leader_hint);
 
 }
 

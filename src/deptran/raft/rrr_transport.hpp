@@ -41,15 +41,6 @@ class RrrTransportAdapter : public TransportBase {
   siteid_t self_site_id() const override { return self_; }
 
   // ------------------------------------------------------------------
-  // Fire-and-forget RPCs — forwarded directly.
-  // ------------------------------------------------------------------
-
-  // @safe
-  void send_notify_restart(siteid_t self, parid_t par) override {
-    commo_->SendNotifyRestart(self, par);
-  }
-
-  // ------------------------------------------------------------------
   // Reply-expecting RPCs — fiber-synchronous.
   // Each method registers an IntEvent + reply slot with RaftCommo's
   // callback-shaped Send* variant, then blocks the calling fiber on
@@ -67,7 +58,6 @@ class RrrTransportAdapter : public TransportBase {
         req.leader_site_id, req.leader_current_term,
         req.leader_prev_log_index, req.leader_prev_log_term,
         req.leader_commit_index, req.cmd, req.leader_next_log_term,
-        /*trigger_election_now=*/false,
         [slot, ready](siteid_t, AppendEntriesReply r) {
           *slot = std::move(r);
           ready->set(1);
@@ -87,7 +77,6 @@ class RrrTransportAdapter : public TransportBase {
         req.leader_site_id, req.leader_current_term,
         req.leader_prev_log_index, req.leader_prev_log_term,
         req.leader_commit_index, janus::Command{}, /*cmdLogTerm=*/0,
-        req.trigger_election_now,
         [slot, ready](siteid_t, AppendEntriesReply r) {
           *slot = std::move(r);
           ready->set(1);
@@ -115,21 +104,6 @@ class RrrTransportAdapter : public TransportBase {
             *slot = std::move(r);
             ready->set(1);
           }
-        });
-    ready->wait();
-    return *slot;
-  }
-
-  // @unsafe { std::function bridge }
-  TimeoutNowReply send_timeout_now(siteid_t dst, TimeoutNowReq req) override {
-    auto slot  = std::make_shared<TimeoutNowReply>();
-    auto ready = create_sp_int_event(1);
-    commo_->SendTimeoutNow(
-        dst, par_, req.leader_term, req.leader_site_id,
-        [slot, ready](bool success, uint64_t follower_term) {
-          slot->success = success;
-          slot->follower_term = follower_term;
-          ready->set(1);
         });
     ready->wait();
     return *slot;

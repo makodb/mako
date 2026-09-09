@@ -60,9 +60,9 @@ class RaftTestConfig {
   static rusty::Mutex<std::map<siteid_t, std::vector<int>>> committed_cmds;
   static std::map<siteid_t, uint64_t> rpc_count_last;
 
-  // Records a callback by its real Raft slot. Restart from a snapshot resumes
-  // applying above snapidx, so append-only vector bookkeeping would otherwise
-  // store slot N at vector index 1 after Kill() reset the oracle.
+  // Records a callback by its real Raft slot. A follower that catches up
+  // through InstallSnapshot resumes applying above snapidx, so append-only
+  // vector bookkeeping would otherwise misplace the slots it never replayed.
   // @safe - Rusty mutex guard bounds the oracle mutation.
   static void RecordCommittedCommand(siteid_t svr, slotid_t slot, int cmd);
 
@@ -142,13 +142,6 @@ class RaftTestConfig {
   // Reconnects disconnected server
   void Reconnect(siteid_t svr);
 
-  // Kills server (destroys it completely, clearing all in-memory state)
-  void Kill(siteid_t svr);
-
-  // Restarts server (creates a fresh, empty instance; memory-only Raft keeps
-  // no state on disk, so the peer catches up through replication).
-  bool Restart(siteid_t svr);
-
   // Returns number of disconnected servers
   int NDisconnected(void);
 
@@ -179,11 +172,6 @@ class RaftTestConfig {
   // Returns true if svr committed a log entry at index with value cmd
   bool ServerCommitted(siteid_t svr, uint64_t index, int cmd);
 
-  // Starts a command with a callback for commit status notification
-  // Returns same values as Start()
-  bool StartWithCallback(siteid_t svr, int cmd, uint64_t *index, uint64_t *term,
-                         std::function<void(CommitStatus)> callback);
-
  private:
   // vars & subroutine for unreliable network setting
   std::thread th_;
@@ -205,47 +193,6 @@ class RaftTestConfig {
 
  public:
   RaftServer *GetServer(siteid_t svr);
-
-  // ============================================================================
-  // SPECULATIVE RAFT STATE QUERIES
-  // ============================================================================
-  // Query speculative state from servers for testing
-
-  /**
-   * Get the speculative commit index for a server.
-   * @param svr Server ID
-   * @return specCommitIndex value, or 0 if server is not leader
-   */
-  uint64_t GetSpecCommitIndex(siteid_t svr);
-
-  /**
-   * Get the secured log index for a server.
-   * @param svr Server ID
-   * @return securedLogIndex value, or 0 if server is not leader
-   */
-  uint64_t GetSecuredLogIndex(siteid_t svr);
-
-  /**
-   * Get the count of speculative voters for a server.
-   * @param svr Server ID
-   * @return Number of servers in specVoters, or 0 if not leader
-   */
-  size_t GetSpecVotersCount(siteid_t svr);
-
-  /**
-   * Verify speculative invariants hold for a server.
-   * @param svr Server ID
-   * @return true if securedLogIndex <= specCommitIndex <= lastLogIndex
-   */
-  bool VerifySpecInvariants(siteid_t svr);
-
-  /**
-   * Get the memory ack count for a specific log index.
-   * @param svr Server ID
-   * @param index Log index to query
-   * @return Number of memory acks for that index, or 0 if not available
-   */
-  size_t GetMemoryAckCount(siteid_t svr, uint64_t index);
 
 };
 

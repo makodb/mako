@@ -36,10 +36,6 @@ struct AppendEntriesReq;
 struct AppendEntriesReply;
 struct EmptyAppendEntriesReq;
 struct EmptyAppendEntriesReply;
-struct TimeoutNowReq;
-struct TimeoutNowReply;
-struct NotifyRestartReq;
-struct NotifyRestartReply;
 struct InstallSnapshotReq;
 struct InstallSnapshotReply;
 
@@ -54,8 +50,6 @@ class DispatcherBase {
   virtual VoteReply                 handle_vote(VoteReq) = 0;
   virtual AppendEntriesReply        handle_append_entries(AppendEntriesReq) = 0;
   virtual EmptyAppendEntriesReply   handle_empty_append_entries(EmptyAppendEntriesReq) = 0;
-  virtual TimeoutNowReply           handle_timeout_now(TimeoutNowReq) = 0;
-  virtual NotifyRestartReply        handle_notify_restart(NotifyRestartReq) = 0;
   virtual InstallSnapshotReply      handle_install_snapshot(InstallSnapshotReq) = 0;
 };
 
