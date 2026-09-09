@@ -4,17 +4,11 @@
 #include <inttypes.h>
 #include <cerrno>
 #include <cstring>
-#include <sys/stat.h>
-#include <unistd.h>
 
 #include "test.h"
-#include "application_log.h"
-#include "../replication_log_entry.h"
 #include "snapshot_manager.hpp"
 #include "snapshot_format.hpp"
-#include "file_snapshot_manager.hpp"
-#include "memory_log_storage.hpp"
-#include "replicated_db.h"
+#include "memory_snapshot_manager.hpp"
 
 import std;
 import rusty;
@@ -42,32 +36,6 @@ class RaftTestScopeExit {
   Cleanup cleanup_;
 };
 
-// Writes and compensating removals take effect in memory, but neither can
-// cross a durable boundary. This models the exact local-append ambiguity that
-// must not be collapsed into a normal retryable rejection.
-class AlwaysFailingSyncLogStorage final
-    : public janus::raft::InMemoryLogStorage {
- public:
-  int put_calls = 0;
-  int remove_calls = 0;
-  int sync_calls = 0;
-
-  bool put(const janus::raft::LogEntry& entry) override {
-    ++put_calls;
-    return InMemoryLogStorage::put(entry);
-  }
-
-  bool remove(slotid_t slot_id) override {
-    ++remove_calls;
-    return InMemoryLogStorage::remove(slot_id);
-  }
-
-  bool sync() override {
-    ++sync_calls;
-    return false;
-  }
-};
-
 // @unsafe - Constructs a test-only cleanup guard around a C++ closure.
 template <typename Cleanup>
 RaftTestScopeExit<Cleanup> MakeRaftTestScopeExit(Cleanup cleanup) {
@@ -76,7 +44,7 @@ RaftTestScopeExit<Cleanup> MakeRaftTestScopeExit(Cleanup cleanup) {
 
 // Test-only prepared transaction whose commit succeeds only after the exact
 // Raft snapshot is readable from SnapshotManager. This is an executable oracle
-// for Prepare -> durable TakeSnapshot -> Commit publication ordering.
+// for Prepare -> manager TakeSnapshot -> Commit publication ordering.
 class SnapshotPublicationProbe final
     : public PreparedStateMachineSnapshotInstall {
  public:
@@ -136,8 +104,8 @@ class SnapshotPublicationProbe final
   bool commit_attempted_ = false;
 };
 
-// @unsafe - Test-only friend bridge for rotating storage on a live server.
-// Holding both locks through manager publication and initial persistence means
+// @unsafe - Test-only LabAccess bridge for rotating storage on a live server.
+// Holding both locks through manager publication and the initial checkpoint means
 // the server never advertises a compacted prefix without bytes in the active
 // manager. This deliberately does not become production RaftServer API.
 bool RaftLabTest::InstallAndSeedSnapshotManager(
@@ -151,22 +119,22 @@ bool RaftLabTest::InstallAndSeedSnapshotManager(
   }
 
   std::lock_guard<std::mutex> apply_lock(
-      server->state_machine_apply_mtx_);
+      RaftServer::LabAccess::state_machine_apply_mtx(*server));
   std::lock_guard<std::recursive_mutex> lock(server->mtx_);
 
-  if (server->snapidx_ > 0) {
+  if (RaftServer::LabAccess::snapidx(*server) > 0) {
     // A compacted boundary is meaningful only together with its exact state
     // bytes. Copy that checkpoint rather than regenerating a possibly newer
     // state-machine image while rotating managers.
-    auto old_manager = server->snapshot_manager_;
+    auto old_manager = RaftServer::LabAccess::snapshot_manager(*server);
     if (old_manager == nullptr) {
       return false;
     }
     janus::raft::SnapshotMetadata metadata;
     std::string state_data;
     if (!old_manager->LoadLatestSnapshot(&metadata, &state_data) ||
-        metadata.last_included_index != server->snapidx_ ||
-        metadata.last_included_term != server->snapterm_ ||
+        metadata.last_included_index != RaftServer::LabAccess::snapidx(*server) ||
+        metadata.last_included_term != RaftServer::LabAccess::snapterm(*server) ||
         !manager->TakeSnapshot(
             metadata.last_included_index, metadata.last_included_term,
             state_data.data(), state_data.size())) {
@@ -177,79 +145,17 @@ bool RaftLabTest::InstallAndSeedSnapshotManager(
   } else {
     // With no advertised boundary, the replacement may be published only
     // inside this gate and rolled back if the initial checkpoint fails.
-    auto old_manager = server->snapshot_manager_;
+    auto old_manager = RaftServer::LabAccess::snapshot_manager(*server);
     server->SetSnapshotManager(manager);
-    if (!server->CreateSnapshotLocked()) {
+    if (!RaftServer::LabAccess::CreateSnapshotLocked(*server)) {
       server->SetSnapshotManager(std::move(old_manager));
       return false;
     }
   }
 
   server->SetSnapshotThreshold(snapshot_threshold);
-  *seeded_snapshot_index = server->snapidx_;
+  *seeded_snapshot_index = RaftServer::LabAccess::snapidx(*server);
   return true;
-}
-
-// @unsafe - Test-only state-machine transition.  Unlike the generic manager
-// rotation above, this deliberately serializes a new checkpoint at the current
-// applied boundary rather than copying the previous RaftLab marker bytes.
-bool RaftLabTest::InstallFreshStateMachineSnapshotManager(
-    RaftServer* server,
-    std::shared_ptr<janus::raft::SnapshotManager> manager,
-    uint64_t snapshot_threshold,
-    uint64_t* seeded_snapshot_index) {
-  if (server == nullptr || manager == nullptr ||
-      seeded_snapshot_index == nullptr) {
-    return false;
-  }
-
-  std::lock_guard<std::mutex> apply_lock(
-      server->state_machine_apply_mtx_);
-  std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-  auto old_manager = server->snapshot_manager_;
-  server->SetSnapshotManager(manager);
-  if (!server->CreateSnapshotLocked()) {
-    server->SetSnapshotManager(std::move(old_manager));
-    return false;
-  }
-  server->SetSnapshotThreshold(snapshot_threshold);
-  *seeded_snapshot_index = server->snapidx_;
-  return true;
-}
-
-// @unsafe - Test-only late attachment for an application namespace created
-// after the shared RaftLab log already contains unrelated commands. Holding
-// the application gate across construction, metadata adoption, snapshot
-// callback registration, and learner replacement makes them one boundary: the
-// next callback must see exactly S+1.
-std::shared_ptr<ReplicatedDB>
-RaftLabTest::CreateAndAttachReplicatedDBAtCurrentBoundary(
-    RaftServer* server, const std::string& database_path) {
-  if (server == nullptr || database_path.empty()) {
-    return nullptr;
-  }
-  std::lock_guard<std::mutex> apply_lock(
-      server->state_machine_apply_mtx_);
-  auto database =
-      std::make_shared<ReplicatedDB>(server, database_path);
-  if (!database->IsOpen()) {
-    return nullptr;
-  }
-  const slotid_t applied_index = server->GetAppliedIndex();
-  if (!database->BootstrapEmptyStateMachine(applied_index)) {
-    return nullptr;
-  }
-  std::weak_ptr<ReplicatedDB> database_weak = database;
-  server->RegLearnerAction(
-      [database_weak](slotid_t slot, janus::Command command) -> int {
-        auto database_pin = database_weak.lock();
-        if (!database_pin || !database_pin->ApplyEntry(slot, command)) {
-          throw std::runtime_error(
-              "late-attached ReplicatedDB failed atomic apply");
-        }
-        return 0;
-      });
-  return database;
 }
 
 // #define TEST_EXPAND(x) x || x || x || x || x 
@@ -262,41 +168,20 @@ int RaftLabTest::Run(void) {
   uint64_t start_rpc = config_->RpcTotal();
   Log_info("Beginning test sequence");
 
-  const char* persistence_flag = std::getenv("MAKO_RAFT_PERSISTENCE");
-  const bool persistence_enabled =
-      persistence_flag != nullptr &&
-      (std::strcmp(persistence_flag, "1") == 0 ||
-       std::strcmp(persistence_flag, "true") == 0);
-
-  bool failed = false;
-  if (!persistence_enabled) {
-    Log_info("Running BASIC Raft test group (MAKO_RAFT_PERSISTENCE disabled)");
-    failed =
-        // Basic Raft tests (no disk durability)
-        testInitialElection()                              // Test 1
-        || TEST_EXPAND(testReElection())                   // Test 2
-        || TEST_EXPAND(testBasicAgree())                   // Test 3
-        || TEST_EXPAND(testFailAgree())                    // Test 4
-        || TEST_EXPAND(testFailNoAgree())                  // Test 5
-        || TEST_EXPAND(testRejoin())                       // Test 6
-        || TEST_EXPAND(testConcurrentStarts())             // Test 7
-        || TEST_EXPAND(testBackup())                       // Test 8
-        || TEST_EXPAND(testCount())                        // Test 9
-        || TEST_EXPAND(testUnreliableAgree())              // Test 10
-        || TEST_EXPAND(testFigure8());                     // Test 11
-  } else {
-    Log_info("Running PERSISTENCE Raft test group (MAKO_RAFT_PERSISTENCE enabled)");
-    Log_info("TEST 15 (testComprehensiveCrashRecovery) is temporarily disabled");
-    failed =
-        // Disk persistence and crash-recovery tests
-        TEST_EXPAND(testPersistence())                     // Test 13
-        || TEST_EXPAND(testLeaderFollowerPersistence())    // Test 14
-        // Test 15 disabled: testComprehensiveCrashRecovery()
-        || TEST_EXPAND(testPartitionPlusRestart())         // Test 16
-        || TEST_EXPAND(testSequentialPartitionsPlusRestart()) // Test 17
-        || TEST_EXPAND(testMultipleRestartsPlusPartition()) // Test 18
-        || TEST_EXPAND(testFigure8CrashRecovery());        // Test 19
-  }
+  Log_info("Running BASIC Raft test group");
+  bool failed =
+      // Basic Raft tests (no disk durability)
+      testInitialElection()                              // Test 1
+      || TEST_EXPAND(testReElection())                   // Test 2
+      || TEST_EXPAND(testBasicAgree())                   // Test 3
+      || TEST_EXPAND(testFailAgree())                    // Test 4
+      || TEST_EXPAND(testFailNoAgree())                  // Test 5
+      || TEST_EXPAND(testRejoin())                       // Test 6
+      || TEST_EXPAND(testConcurrentStarts())             // Test 7
+      || TEST_EXPAND(testBackup())                       // Test 8
+      || TEST_EXPAND(testCount())                        // Test 9
+      || TEST_EXPAND(testUnreliableAgree())              // Test 10
+      || TEST_EXPAND(testFigure8());                     // Test 11
 
   // Snapshot data format and metadata tests
   // These are unit tests that don't require persistence
@@ -306,7 +191,6 @@ int RaftLabTest::Run(void) {
         TEST_EXPAND(testSnapshotMetadataCreation())         // Test 50
         || TEST_EXPAND(testSnapshotFormatRoundTrip())       // Test 51
         || TEST_EXPAND(testSnapshotManagerSaveLoad())       // Test 52
-        || TEST_EXPAND(testSnapshotManagerListing())         // Test 53
         || TEST_EXPAND(testSnapshotManagerWiring());         // Test 54
   }
 
@@ -328,39 +212,12 @@ int RaftLabTest::Run(void) {
         || TEST_EXPAND(testHeartbeatTriggersInstallSnapshot()); // Test 60
   }
 
-  // Speculative index persistence tests
-  if (!failed) {
-    if (persistence_enabled) {
-      Log_info("Running speculative index persistence tests");
-      failed =
-          TEST_EXPAND(testSpecCommitIndexPersistence())             // Test 61
-          || TEST_EXPAND(testSpecIndicesRecoveredOnRestart());      // Test 62
-      ;
-    } else {
-      Log_info("Skipping speculative index persistence tests (MAKO_RAFT_PERSISTENCE disabled)");
-    }
-  }
-
   // Reason-aware rollback notification tests
   if (!failed) {
     Log_info("Running reason-aware rollback notification tests");
-    if (!persistence_enabled) {
-      failed = TEST_EXPAND(testRollbackOnUnsecuredFailure());    // Test 63
-    } else {
-      Log_info("Skipping Test 63: UnsecuredFailure requires persistence-off; "
-               "persistence modes need explicit durable-ack fault injection");
-    }
-    if (!failed) {
-      failed = TEST_EXPAND(testNoRollbackOnHigherTerm());        // Test 64
-    }
-  }
-
-  // Snapshot recovery on startup tests
-  if (!failed) {
-    Log_info("Running snapshot recovery on startup tests");
     failed =
-        TEST_EXPAND(testSnapshotRecoveryOnStartup())              // Test 65
-        || TEST_EXPAND(testSnapshotRecoveryFieldAdvancement());   // Test 66
+        TEST_EXPAND(testRollbackOnUnsecuredFailure())          // Test 63
+        || TEST_EXPAND(testNoRollbackOnHigherTerm());          // Test 64
   }
 
   // Heartbeat interval configurability test
@@ -391,13 +248,6 @@ int RaftLabTest::Run(void) {
         TEST_EXPAND(testLeadershipTransferTimeout());          // Test 70
   }
 
-  // Durable ack loss test
-  if (!failed) {
-    Log_info("Running durable ack loss test");
-    failed =
-        TEST_EXPAND(testDurableAckLoss());                     // Test 71
-  }
-
   // High frequency apply stress test
   if (!failed) {
     Log_info("Running high frequency apply stress test");
@@ -420,72 +270,8 @@ int RaftLabTest::Run(void) {
         || TEST_EXPAND(testCannotAddTwoServersSimultaneously()); // Test 81
   }
 
-  // ReplicatedDB command serialization tests
-  if (!failed) {
-    Log_info("Running ReplicatedDB command tests");
-    failed =
-        TEST_EXPAND(testReplicatedDBCommandPutMarshal())      // Test 82
-        || TEST_EXPAND(testReplicatedDBCommandDeleteMarshal()) // Test 83
-        || TEST_EXPAND(testReplicatedDBCommandBatchMarshal()); // Test 84
-  }
-
-  // ReplicatedDB integration tests (require running Raft cluster)
-  if (!failed) {
-    Log_info("Running ReplicatedDB integration tests");
-    failed =
-        TEST_EXPAND(testReplicatedDBPutGet())         // Test 85
-        || TEST_EXPAND(testReplicatedDBDelete())      // Test 86
-        || TEST_EXPAND(testReplicatedDBReplication()) // Test 87
-        || TEST_EXPAND(testReplicatedDBSnapshot())    // Test 88
-        || TEST_EXPAND(testReplicatedDBSnapshotTransfer()) // Test 89
-        || TEST_EXPAND(testReplicatedDBWiring())      // Test 90
-        || TEST_EXPAND(testReplicatedDBSnapshotCompression()); // Test 91
-  }
-
-  // ConfigManager / ClusterConfig / ConfigWatcher tests (old Tests 92-98)
-  // were removed: ConfigManager no longer stores config in a
-  // ReplicatedDB — it now uses Mako's unified FullOrderedIndex storage
-  // interface (the __mako_config__ system table). That component is
-  // covered standalone by tests/config_manager_test.cc (against an
-  // in-memory FullOrderedIndex fake). A future integration test can
-  // exercise ConfigManager over a real replicated index once the
-  // dbtest bootstrap wiring lands.
-
-  // LinearizableGet tests (require running Raft cluster + ReplicatedDB)
-  if (!failed) {
-    Log_info("Running LinearizableGet tests");
-    failed =
-        TEST_EXPAND(testLinearizableGet())                    // Test 99
-        || TEST_EXPAND(testLinearizableGetAfterLeaderChange()); // Test 100
-  }
-
-  // A retained application marker can be recovered only alongside a durable
-  // Raft commit boundary.  With persistence disabled Restart() intentionally
-  // creates an empty Raft server, whose fail-closed ahead-marker check must
-  // reject that database.  Exercise the positive crash-recovery case in both
-  // sync and async persistence runs instead of weakening the recovery check.
-  if (!failed && persistence_enabled) {
-    Log_info("Running ReplicatedDB crash recovery tests");
-    failed = TEST_EXPAND(testReplicatedDBCrashRecovery());     // Test 101
-  } else if (!failed) {
-    Log_info("Skipping TEST 101 without durable Raft persistence");
-  }
-
-  // This fault injection swaps storage on three successive live leaders and
-  // intentionally fail-stops them. Run it only in the persistence-off matrix
-  // (so no storage worker can race the swap) and make it the terminal cluster
-  // mutation.
-  if (!failed && !persistence_enabled) {
-    Log_info("Running terminal persistence-boundary fault tests");
-    failed =
-        TEST_EXPAND(testAmbiguousLeaderAppendAdmission())       // Test 102
-        || TEST_EXPAND(testRequestVoteTermPersistenceFailure()); // Test 103
-  } else if (!failed) {
-    Log_info("Skipping TESTS 102-103 with live persistent storage enabled");
-  }
-
-  // Speculative/notify/integration/stress/notification/relaxed-invariant tests
-  // remain intentionally disabled in this runner for now.
+  // Speculative/notify/integration/stress/notification tests remain
+  // intentionally disabled in this runner for now.
   if (failed) {
     Log_info("Test sequence failed");
     Print("TESTS FAILED");
@@ -549,946 +335,6 @@ void RaftLabTest::Cleanup(void) {
         Assert2(r > 0, "failed to reach agreement for command %d among %d servers", cmd, n); \
         index_ = r + 1; \
       }
-
-int RaftLabTest::testPersistence(void) {
-  Init2(12, "Persistence across server kill and restart (single)");
-
-  Log_info("TEST 12: Waiting for initial election");
-  Fiber::sleep(ELECTIONTIMEOUT);
-  int leader = config_->OneLeader();
-  AssertOneLeader(leader);
-  Log_info("TEST 12: Leader elected: {}", leader);
-
-  // Commit some entries
-  Log_info("TEST 12: Committing initial entries");
-  DoAgreeAndAssertIndex(101, NSERVERS, index_++);
-  DoAgreeAndAssertIndex(102, NSERVERS, index_++);
-  DoAgreeAndAssertIndex(103, NSERVERS, index_++);
-  Log_info("TEST 12: Committed 3 entries");
-
-  // Pick a follower to kill and restart
-  siteid_t victim = config_->getNextServerId(leader, 1);
-  Log_info("TEST 12: Killing follower {}", victim);
-
-  // Get state before killing
-  auto victim_server = config_->GetServer(victim);
-  uint64_t term_before = victim_server->currentTerm;
-  uint64_t last_log_before = victim_server->lastLogIndex;
-  Log_info("TEST 12: Before kill - term={}, lastLogIndex={}", term_before, last_log_before);
-
-  // Kill the server
-  config_->Kill(victim);
-  Log_info("TEST 12: Server {} killed", victim);
-
-  // Sleep to ensure it's really gone
-  Fiber::sleep(ELECTIONTIMEOUT / 2);
-
-  // Commit more entries with remaining servers
-  Log_info("TEST 12: Committing entries with {} servers", NSERVERS - 1);
-  DoAgreeAndAssertIndex(104, NSERVERS - 1, index_++);
-  DoAgreeAndAssertIndex(105, NSERVERS - 1, index_++);
-  Log_info("TEST 12: Committed 2 more entries");
-
-  // Restart the killed server
-  Log_info("TEST 12: Restarting server {}", victim);
-  config_->Restart(victim);
-  Log_info("TEST 12: Server {} restarted", victim);
-
-  // Give it time to catch up
-  Fiber::sleep(ELECTIONTIMEOUT);
-
-  Log_info("TEST 12: After Sleep for ELECTIONTIMEOUT");
-
-  // Verify the restarted server recovered its state
-  victim_server = config_->GetServer(victim);
-  uint64_t term_after = victim_server->currentTerm;
-  uint64_t last_log_after = victim_server->lastLogIndex;
-  Log_info("TEST 12: After restart - term={}, lastLogIndex={}", term_after, last_log_after);
-
-  // Term should be at least what it was before (may be higher if elections occurred)
-  Assert2(term_after >= term_before,
-          "term decreased after restart: was %lu, now %lu",
-          term_before, term_after);
-
-  // Last log index should be at least what it was before
-  Assert2(last_log_after >= last_log_before,
-          "lastLogIndex decreased after restart: was %lu, now %lu",
-          last_log_before, last_log_after);
-
-  Log_info("TEST 12: State recovered correctly");
-
-  // Commit with all servers to verify restarted server works
-  Log_info("TEST 12: Committing with all {} servers", NSERVERS);
-  DoAgreeAndAssertWaitSuccess(106, NSERVERS);
-  Log_info("TEST 12: Final commit successful");
-
-  // Now test killing and restarting the leader
-  leader = config_->OneLeader();
-  AssertOneLeader(leader);
-  Log_info("TEST 12: Testing leader kill - current leader is {}", leader);
-
-  // Get leader state before killing
-  auto leader_server = config_->GetServer(leader);
-  term_before = leader_server->currentTerm;
-  last_log_before = leader_server->lastLogIndex;
-  Log_info("TEST 12: Leader before kill - term={}, lastLogIndex={}", term_before, last_log_before);
-
-  // Kill the leader
-  config_->Kill(leader);
-  Log_info("TEST 12: Leader {} killed", leader);
-
-  // Wait for new leader election
-  Fiber::sleep(ELECTIONTIMEOUT);
-  int new_leader = config_->OneLeader();
-  AssertOneLeader(new_leader);
-  AssertReElection(new_leader, leader);
-  Log_info("TEST 12: New leader elected: {}", new_leader);
-
-  // Commit entries with new leader
-  DoAgreeAndAssertIndex(107, NSERVERS - 1, index_++);
-  Log_info("TEST 12: Committed entry with new leader");
-
-  // Restart the old leader
-  Log_info("TEST 12: Restarting old leader {}", leader);
-  config_->Restart(leader);
-  Log_info("TEST 12: Old leader {} restarted", leader);
-
-  // Give it time to catch up
-  Fiber::sleep(ELECTIONTIMEOUT);
-
-  // Verify old leader recovered
-  leader_server = config_->GetServer(leader);
-  term_after = leader_server->currentTerm;
-  last_log_after = leader_server->lastLogIndex;
-  Log_info("TEST 12: Old leader after restart - term={}, lastLogIndex={}", term_after, last_log_after);
-
-  Assert2(term_after >= term_before,
-          "old leader term decreased after restart: was %lu, now %lu",
-          term_before, term_after);
-
-  // Final commit with all servers
-  Log_info("TEST 12: Final commit with all servers");
-  DoAgreeAndAssertWaitSuccess(108, NSERVERS);
-  Log_info("TEST 12: All servers working correctly");
-
-  Passed2();
-}
-
-int RaftLabTest::testTwoFollowerPersistence(void) {
-  Init2(13, "Persistence across two follower kill and restart");
-
-  Log_info("TEST 13: Waiting for initial election");
-  Fiber::sleep(ELECTIONTIMEOUT);
-  int leader = config_->OneLeader();
-  AssertOneLeader(leader);
-  Log_info("TEST 13: Leader elected: {}", leader);
-
-  // Commit some entries
-  Log_info("TEST 13: Committing initial entries");
-  DoAgreeAndAssertIndex(1301, NSERVERS, index_++);
-  DoAgreeAndAssertIndex(1302, NSERVERS, index_++);
-  DoAgreeAndAssertIndex(1303, NSERVERS, index_++);
-  Log_info("TEST 13: Committed 3 entries");
-
-  // Pick two followers to kill
-  siteid_t victim1 = config_->getNextServerId(leader, 1);
-  siteid_t victim2 = config_->getNextServerId(leader, 2);
-  Log_info("TEST 13: Killing two followers: {} and {}", victim1, victim2);
-
-  // Get state before killing
-  auto victim1_server = config_->GetServer(victim1);
-  auto victim2_server = config_->GetServer(victim2);
-  uint64_t term_before1 = victim1_server->currentTerm;
-  uint64_t term_before2 = victim2_server->currentTerm;
-  uint64_t last_log_before1 = victim1_server->lastLogIndex;
-  uint64_t last_log_before2 = victim2_server->lastLogIndex;
-  Log_info("TEST 13: Victim1 before kill - term={}, lastLogIndex={}", term_before1, last_log_before1);
-  Log_info("TEST 13: Victim2 before kill - term={}, lastLogIndex={}", term_before2, last_log_before2);
-
-  // Kill both servers
-  config_->Kill(victim1);
-  Log_info("TEST 13: Server {} killed", victim1);
-  config_->Kill(victim2);
-  Log_info("TEST 13: Server {} killed", victim2);
-
-  // Sleep to ensure they're really gone
-  Fiber::sleep(ELECTIONTIMEOUT / 2);
-
-  // We still have quorum (3 out of 5), commit more entries
-  Log_info("TEST 13: Committing entries with {} servers", NSERVERS - 2);
-  DoAgreeAndAssertIndex(1304, NSERVERS - 2, index_++);
-  DoAgreeAndAssertIndex(1305, NSERVERS - 2, index_++);
-  Log_info("TEST 13: Committed 2 more entries with reduced cluster");
-
-  // Restart victim1 first
-  Log_info("TEST 13: Restarting server {}", victim1);
-  config_->Restart(victim1);
-  Log_info("TEST 13: Server {} restarted", victim1);
-
-  // Give it time to catch up
-  Fiber::sleep(ELECTIONTIMEOUT / 2);
-
-  // Restart victim2
-  Log_info("TEST 13: Restarting server {}", victim2);
-  config_->Restart(victim2);
-  Log_info("TEST 13: Server {} restarted", victim2);
-
-  // Give both time to catch up
-  Fiber::sleep(ELECTIONTIMEOUT);
-
-  Log_info("TEST 13: Both servers restarted, verifying state");
-
-  // Verify both restarted servers recovered their state
-  victim1_server = config_->GetServer(victim1);
-  victim2_server = config_->GetServer(victim2);
-  uint64_t term_after1 = victim1_server->currentTerm;
-  uint64_t term_after2 = victim2_server->currentTerm;
-  uint64_t last_log_after1 = victim1_server->lastLogIndex;
-  uint64_t last_log_after2 = victim2_server->lastLogIndex;
-  Log_info("TEST 13: Victim1 after restart - term={}, lastLogIndex={}", term_after1, last_log_after1);
-  Log_info("TEST 13: Victim2 after restart - term={}, lastLogIndex={}", term_after2, last_log_after2);
-
-  // Term should be at least what it was before
-  Assert2(term_after1 >= term_before1,
-          "victim1 term decreased after restart: was %lu, now %lu",
-          term_before1, term_after1);
-  Assert2(term_after2 >= term_before2,
-          "victim2 term decreased after restart: was %lu, now %lu",
-          term_before2, term_after2);
-
-  // Last log index should be at least what it was before
-  Assert2(last_log_after1 >= last_log_before1,
-          "victim1 lastLogIndex decreased after restart: was %lu, now %lu",
-          last_log_before1, last_log_after1);
-  Assert2(last_log_after2 >= last_log_before2,
-          "victim2 lastLogIndex decreased after restart: was %lu, now %lu",
-          last_log_before2, last_log_after2);
-
-  Log_info("TEST 13: State recovered correctly for both servers");
-
-  // Commit with all servers to verify both restarted servers work
-  Log_info("TEST 13: Committing with all {} servers", NSERVERS);
-  DoAgreeAndAssertWaitSuccess(1306, NSERVERS);
-  Log_info("TEST 13: Final commit successful with all servers");
-
-  // Verify leader is still stable
-  int final_leader = config_->OneLeader();
-  AssertOneLeader(final_leader);
-  Log_info("TEST 13: Leader after all restarts: {}", final_leader);
-
-  Passed2();
-}
-
-int RaftLabTest::testLeaderFollowerPersistence(void) {
-  Init2(14, "Persistence across leader + follower kill and restart");
-
-  Log_info("TEST 14: Waiting for initial election");
-  Fiber::sleep(ELECTIONTIMEOUT);
-  int leader = config_->OneLeader();
-  AssertOneLeader(leader);
-  Log_info("TEST 14: Leader elected: {}", leader);
-
-  // Commit some entries
-  Log_info("TEST 14: Committing initial entries");
-  DoAgreeAndAssertIndex(1401, NSERVERS, index_++);
-  DoAgreeAndAssertIndex(1402, NSERVERS, index_++);
-  DoAgreeAndAssertIndex(1403, NSERVERS, index_++);
-  Log_info("TEST 14: Committed 3 entries");
-
-  // Pick one follower to kill along with the leader
-  siteid_t victim_follower = config_->getNextServerId(leader, 1);
-  siteid_t victim_leader = leader;
-  Log_info("TEST 14: Killing leader {} and follower {}", victim_leader, victim_follower);
-
-  // Get state before killing
-  auto leader_server = config_->GetServer(victim_leader);
-  auto follower_server = config_->GetServer(victim_follower);
-  uint64_t term_before_leader = leader_server->currentTerm;
-  uint64_t term_before_follower = follower_server->currentTerm;
-  uint64_t last_log_before_leader = leader_server->lastLogIndex;
-  uint64_t last_log_before_follower = follower_server->lastLogIndex;
-  Log_info("TEST 14: Leader before kill - term={}, lastLogIndex={}", term_before_leader, last_log_before_leader);
-  Log_info("TEST 14: Follower before kill - term={}, lastLogIndex={}", term_before_follower, last_log_before_follower);
-
-  // Kill both servers (leader first, then follower)
-  config_->Kill(victim_leader);
-  Log_info("TEST 14: Leader {} killed", victim_leader);
-  config_->Kill(victim_follower);
-  Log_info("TEST 14: Follower {} killed", victim_follower);
-
-  // Wait for new leader election among remaining 3 servers
-  Log_info("TEST 14: Waiting for new leader election");
-  Fiber::sleep(ELECTIONTIMEOUT);
-
-  int new_leader = config_->OneLeader();
-  AssertOneLeader(new_leader);
-  Assert2(new_leader != victim_leader, "new leader should not be the killed leader");
-  Assert2(new_leader != victim_follower, "new leader should not be the killed follower");
-  Log_info("TEST 14: New leader elected: {}", new_leader);
-
-  // We still have quorum (3 out of 5), commit more entries
-  Log_info("TEST 14: Committing entries with {} servers", NSERVERS - 2);
-  DoAgreeAndAssertIndex(1404, NSERVERS - 2, index_++);
-  DoAgreeAndAssertIndex(1405, NSERVERS - 2, index_++);
-  Log_info("TEST 14: Committed 2 more entries with reduced cluster");
-
-  // Restart the follower first
-  Log_info("TEST 14: Restarting follower {}", victim_follower);
-  config_->Restart(victim_follower);
-  Log_info("TEST 14: Follower {} restarted", victim_follower);
-
-  // Give it time to catch up
-  Fiber::sleep(ELECTIONTIMEOUT / 2);
-
-  // Restart the old leader
-  Log_info("TEST 14: Restarting old leader {}", victim_leader);
-  config_->Restart(victim_leader);
-  Log_info("TEST 14: Old leader {} restarted", victim_leader);
-
-  // Give both time to catch up
-  Fiber::sleep(ELECTIONTIMEOUT);
-
-  Log_info("TEST 14: Both servers restarted, verifying state");
-
-  // Verify both restarted servers recovered their state
-  leader_server = config_->GetServer(victim_leader);
-  follower_server = config_->GetServer(victim_follower);
-  uint64_t term_after_leader = leader_server->currentTerm;
-  uint64_t term_after_follower = follower_server->currentTerm;
-  uint64_t last_log_after_leader = leader_server->lastLogIndex;
-  uint64_t last_log_after_follower = follower_server->lastLogIndex;
-  Log_info("TEST 14: Old leader after restart - term={}, lastLogIndex={}", term_after_leader, last_log_after_leader);
-  Log_info("TEST 14: Follower after restart - term={}, lastLogIndex={}", term_after_follower, last_log_after_follower);
-
-  // Term should be at least what it was before (may be higher due to new election)
-  Assert2(term_after_leader >= term_before_leader,
-          "old leader term decreased after restart: was %lu, now %lu",
-          term_before_leader, term_after_leader);
-  Assert2(term_after_follower >= term_before_follower,
-          "follower term decreased after restart: was %lu, now %lu",
-          term_before_follower, term_after_follower);
-
-  // Last log index should be at least what it was before
-  Assert2(last_log_after_leader >= last_log_before_leader,
-          "old leader lastLogIndex decreased after restart: was %lu, now %lu",
-          last_log_before_leader, last_log_after_leader);
-  Assert2(last_log_after_follower >= last_log_before_follower,
-          "follower lastLogIndex decreased after restart: was %lu, now %lu",
-          last_log_before_follower, last_log_after_follower);
-
-  Log_info("TEST 14: State recovered correctly for both servers");
-
-  // Commit with all servers to verify both restarted servers work
-  Log_info("TEST 14: Committing with all {} servers", NSERVERS);
-  DoAgreeAndAssertWaitSuccess(1406, NSERVERS);
-  Log_info("TEST 14: Final commit successful with all servers");
-
-  // Verify we have a stable leader
-  int final_leader = config_->OneLeader();
-  AssertOneLeader(final_leader);
-  Log_info("TEST 14: Leader after all restarts: {}", final_leader);
-
-  Passed2();
-}
-
-int RaftLabTest::testComprehensiveCrashRecovery(void) {
-  Init2(15, "Comprehensive crash-recovery with random server selection");
-
-  Log_info("TEST 15: Waiting for initial election");
-  Fiber::sleep(ELECTIONTIMEOUT);
-  int leader = config_->OneLeader();
-  AssertOneLeader(leader);
-  Log_info("TEST 15: Initial leader elected: {}", leader);
-
-  // Commit initial entries
-  Log_info("TEST 15: Committing initial entries");
-  DoAgreeAndAssertIndex(1501, NSERVERS, index_++);
-  DoAgreeAndAssertIndex(1502, NSERVERS, index_++);
-  Log_info("TEST 15: Initial entries committed");
-
-  // Random number generator
-  std::srand(std::time(nullptr));
-
-  // Helper to get a random server from a set
-  auto pickRandom = [](const std::set<siteid_t>& servers) -> siteid_t {
-    if (servers.empty()) return -1;
-    int idx = std::rand() % servers.size();
-    auto it = servers.begin();
-    std::advance(it, idx);
-    return *it;
-  };
-
-  // Track which servers are currently alive
-  std::set<siteid_t> alive_servers;
-  std::set<siteid_t> dead_servers;
-  for (int i = 0; i < NSERVERS; i++) {
-    alive_servers.insert(config_->getServerIdByIndex(i));
-  }
-
-  const int NUM_ROUNDS = 5;
-  int cmd_base = 1510;
-
-  for (int round = 1; round <= NUM_ROUNDS; round++) {
-    Log_info("TEST 15: ===== ROUND {} =====", round);
-
-    // Kill 2 random servers (maintain quorum with 3 remaining)
-    Log_info("TEST 15: Phase 1 - Killing 2 random servers");
-
-    siteid_t victim1 = pickRandom(alive_servers);
-    alive_servers.erase(victim1);
-    dead_servers.insert(victim1);
-
-    siteid_t victim2 = pickRandom(alive_servers);
-    alive_servers.erase(victim2);
-    dead_servers.insert(victim2);
-
-    Log_info("TEST 15: Round {} - Killing servers {} and {}", round, victim1, victim2);
-    config_->Kill(victim1);
-    config_->Kill(victim2);
-
-    // Wait for potential leader election if we killed the leader
-    Fiber::sleep(ELECTIONTIMEOUT);
-
-    // Verify we still have a leader among surviving servers
-    leader = config_->OneLeader();
-    AssertOneLeader(leader);
-    Assert2(alive_servers.count(leader) > 0, "Leader %d should be among alive servers", leader);
-    Log_info("TEST 15: Round {} - Leader after kills: {}", round, leader);
-
-    // Commit with 3 servers (quorum)
-    Log_info("TEST 15: Round {} - Committing with {} alive servers", round, alive_servers.size());
-    DoAgreeAndAssertIndex(cmd_base++, (int)alive_servers.size(), index_++);
-
-    // Restart one of the dead servers
-    Log_info("TEST 15: Phase 2 - Restarting one dead server");
-
-    siteid_t restart1 = pickRandom(dead_servers);
-    dead_servers.erase(restart1);
-    alive_servers.insert(restart1);
-
-    Log_info("TEST 15: Round {} - Restarting server {}", round, restart1);
-    config_->Restart(restart1);
-
-    // Wait for it to catch up
-    Fiber::sleep(ELECTIONTIMEOUT);
-
-    // Verify leader and commit
-    leader = config_->OneLeader();
-    AssertOneLeader(leader);
-    Log_info("TEST 15: Round {} - Leader after restart1: {}", round, leader);
-
-    DoAgreeAndAssertIndex(cmd_base++, (int)alive_servers.size(), index_++);
-
-    // Kill another random alive server (back to 3 alive)
-    Log_info("TEST 15: Phase 3 - Killing another random server");
-
-    // Make sure we don't kill the current leader to make it more interesting sometimes
-    // But we allow it with 50% probability to test leader crash recovery
-    siteid_t victim3;
-    if (std::rand() % 2 == 0 && alive_servers.size() > 1) {
-      // Try to kill a non-leader
-      std::set<siteid_t> non_leaders = alive_servers;
-      non_leaders.erase(leader);
-      if (!non_leaders.empty()) {
-        victim3 = pickRandom(non_leaders);
-      } else {
-        victim3 = pickRandom(alive_servers);
-      }
-    } else {
-      victim3 = pickRandom(alive_servers);
-    }
-
-    alive_servers.erase(victim3);
-    dead_servers.insert(victim3);
-
-    Log_info("TEST 15: Round {} - Killing server {} (was leader: {})",
-             round, victim3, victim3 == leader ? "yes" : "no");
-    config_->Kill(victim3);
-
-    // Wait for potential leader election
-    Fiber::sleep(ELECTIONTIMEOUT);
-
-    leader = config_->OneLeader();
-    AssertOneLeader(leader);
-    Log_info("TEST 15: Round {} - Leader after kill3: {}", round, leader);
-
-    // Commit with remaining servers
-    DoAgreeAndAssertIndex(cmd_base++, (int)alive_servers.size(), index_++);
-
-    // Restart all dead servers
-    Log_info("TEST 15: Phase 4 - Restarting all dead servers");
-
-    std::vector<siteid_t> to_restart(dead_servers.begin(), dead_servers.end());
-    for (siteid_t svr : to_restart) {
-      Log_info("TEST 15: Round {} - Restarting server {}", round, svr);
-      config_->Restart(svr);
-      dead_servers.erase(svr);
-      alive_servers.insert(svr);
-
-      // Small delay between restarts
-      Fiber::sleep(ELECTIONTIMEOUT / 2);
-    }
-
-    // Wait for all servers to catch up
-    Fiber::sleep(ELECTIONTIMEOUT);
-
-    // Verify all servers are working
-    leader = config_->OneLeader();
-    AssertOneLeader(leader);
-    Log_info("TEST 15: Round {} - Leader after all restarts: {}", round, leader);
-
-    Assert2(alive_servers.size() == NSERVERS,
-            "Expected %d alive servers, got %zu", NSERVERS, alive_servers.size());
-    Assert2(dead_servers.empty(),
-            "Expected 0 dead servers, got %zu", dead_servers.size());
-
-    // Final commit with all servers
-    Log_info("TEST 15: Round {} - Final commit with all {} servers", round, NSERVERS);
-    DoAgreeAndAssertWaitSuccess(cmd_base++, NSERVERS);
-
-    Log_info("TEST 15: ===== ROUND {} COMPLETE =====", round);
-  }
-
-  // Final verification
-  Log_info("TEST 15: Final verification after {} rounds", NUM_ROUNDS);
-
-  leader = config_->OneLeader();
-  AssertOneLeader(leader);
-
-  // One more commit to verify everything works
-  DoAgreeAndAssertWaitSuccess(cmd_base++, NSERVERS);
-
-  Log_info("TEST 15: All {} rounds completed successfully!", NUM_ROUNDS);
-
-  Passed2();
-}
-
-int RaftLabTest::testPartitionPlusRestart(void) {
-  Init2(16, "Partition plus restart - one server partitioned, another killed/restarted");
-
-  Log_info("TEST 16: Waiting for initial election");
-  Fiber::sleep(ELECTIONTIMEOUT);
-  int leader = config_->OneLeader();
-  AssertOneLeader(leader);
-  Log_info("TEST 16: Initial leader elected: {}", leader);
-
-  // Commit initial entries to ensure cluster is stable
-  Log_info("TEST 16: Committing initial entries");
-  DoAgreeAndAssertIndex(1601, NSERVERS, index_++);
-  DoAgreeAndAssertIndex(1602, NSERVERS, index_++);
-  Log_info("TEST 16: Initial entries committed");
-
-  // Pick two different non-leader servers
-  // Server A will be partitioned, Server B will be killed/restarted
-  siteid_t partitioned_server = 0;
-  siteid_t killed_server = 0;
-  bool found_partitioned = false;
-  bool found_killed = false;
-
-  for (int i = 0; i < NSERVERS; i++) {
-    siteid_t svr = config_->getServerIdByIndex(i);
-    if (svr != (siteid_t)leader) {
-      if (!found_partitioned) {
-        partitioned_server = svr;
-        found_partitioned = true;
-      } else if (!found_killed) {
-        killed_server = svr;
-        found_killed = true;
-        break;
-      }
-    }
-  }
-
-  Assert2(found_partitioned, "Could not find server to partition");
-  Assert2(found_killed, "Could not find server to kill");
-  Assert2(partitioned_server != killed_server, "Partitioned and killed server must be different");
-
-  Log_info("TEST 16: Will partition server {} and kill/restart server {}",
-           partitioned_server, killed_server);
-
-  // Step 1: Partition server A
-  Log_info("TEST 16: Step 1 - Partitioning server {}", partitioned_server);
-  config_->Disconnect(partitioned_server);
-
-  // Step 2: Kill server B
-  Log_info("TEST 16: Step 2 - Killing server {}", killed_server);
-  config_->Kill(killed_server);
-
-  // Wait for potential leader re-election (if we killed/partitioned the leader)
-  Fiber::sleep(ELECTIONTIMEOUT);
-
-  // Verify cluster still works with 3 servers (quorum)
-  leader = config_->OneLeader();
-  AssertOneLeader(leader);
-  Log_info("TEST 16: Leader after partition+kill: {}", leader);
-
-  // Commit with 3 servers
-  Log_info("TEST 16: Committing with 3 servers");
-  DoAgreeAndAssertIndex(1603, 3, index_++);
-
-  // Step 3: Restart server B (while A is still partitioned)
-  Log_info("TEST 16: Step 3 - Restarting server {} (while {} is still partitioned)",
-           killed_server, partitioned_server);
-  config_->Restart(killed_server);
-
-  // Wait for server B to catch up
-  Fiber::sleep(ELECTIONTIMEOUT);
-
-  // Verify cluster works with 4 servers
-  leader = config_->OneLeader();
-  AssertOneLeader(leader);
-  Log_info("TEST 16: Leader after restart: {}", leader);
-
-  // Commit with 4 servers
-  Log_info("TEST 16: Committing with 4 servers");
-  DoAgreeAndAssertIndex(1604, 4, index_++);
-
-  // Step 4: Heal partition (reconnect server A)
-  // This is the critical test: A was partitioned when B restarted
-  // A's connection to B should be stale, but B's retry mechanism should fix it
-  Log_info("TEST 16: Step 4 - Healing partition (reconnecting server {})", partitioned_server);
-  config_->Reconnect(partitioned_server);
-
-  // Wait for server A to catch up and for NotifyRestart retry to work
-  Log_info("TEST 16: Waiting for partition to heal and connections to refresh...");
-  Fiber::sleep(ELECTIONTIMEOUT * 2);
-
-  // Verify all 5 servers are working
-  leader = config_->OneLeader();
-  AssertOneLeader(leader);
-  Log_info("TEST 16: Leader after partition heal: {}", leader);
-
-  // Step 5: Final commit with all 5 servers
-  // This verifies that A can communicate with B (the restarted server)
-  Log_info("TEST 16: Step 5 - Final commit with all {} servers", NSERVERS);
-  DoAgreeAndAssertWaitSuccess(1605, NSERVERS);
-
-  // Additional verification: commit a few more entries
-  Log_info("TEST 16: Additional commits to verify stability");
-  DoAgreeAndAssertWaitSuccess(1606, NSERVERS);
-  DoAgreeAndAssertWaitSuccess(1607, NSERVERS);
-
-  Log_info("TEST 16: Partition plus restart test PASSED!");
-
-  Passed2();
-}
-
-int RaftLabTest::testSequentialPartitionsPlusRestart(void) {
-  Init2(17, "Sequential partitions plus restart - two servers partitioned at different times while one restarts");
-
-  Log_info("TEST 17: Waiting for initial election");
-  Fiber::sleep(ELECTIONTIMEOUT);
-  int leader = config_->OneLeader();
-  AssertOneLeader(leader);
-  Log_info("TEST 17: Initial leader elected: {}", leader);
-
-  // Commit initial entries to ensure cluster is stable
-  Log_info("TEST 17: Committing initial entries");
-  DoAgreeAndAssertIndex(1701, NSERVERS, index_++);
-  DoAgreeAndAssertIndex(1702, NSERVERS, index_++);
-  Log_info("TEST 17: Initial entries committed");
-
-  // Pick three different non-leader servers: A (partition first), B (kill/restart), C (partition second)
-  siteid_t server_A = 0;  // Will be partitioned first
-  siteid_t server_B = 0;  // Will be killed and restarted
-  siteid_t server_C = 0;  // Will be partitioned second
-  int found_count = 0;
-
-  for (int i = 0; i < NSERVERS && found_count < 3; i++) {
-    siteid_t svr = config_->getServerIdByIndex(i);
-    if (svr != (siteid_t)leader) {
-      if (found_count == 0) {
-        server_A = svr;
-      } else if (found_count == 1) {
-        server_B = svr;
-      } else if (found_count == 2) {
-        server_C = svr;
-      }
-      found_count++;
-    }
-  }
-
-  Assert2(found_count >= 3, "Could not find 3 non-leader servers");
-  Log_info("TEST 17: Server A (partition first): {}", server_A);
-  Log_info("TEST 17: Server B (kill/restart): {}", server_B);
-  Log_info("TEST 17: Server C (partition second): {}", server_C);
-
-  // ========================================
-  // T1: Partition A → Healthy: {B,C,D,E} = 4
-  // ========================================
-  Log_info("TEST 17: Step 1 - Partitioning server A ({})", server_A);
-  config_->Disconnect(server_A);
-
-  Fiber::sleep(ELECTIONTIMEOUT);
-  leader = config_->OneLeader();
-  AssertOneLeader(leader);
-  Log_info("TEST 17: Leader after partitioning A: {}", leader);
-
-  // Commit with 4 servers
-  Log_info("TEST 17: Committing with 4 servers (A partitioned)");
-  DoAgreeAndAssertIndex(1703, 4, index_++);
-
-  // ========================================
-  // T2: Kill B → Healthy: {C,D,E} = 3
-  // ========================================
-  Log_info("TEST 17: Step 2 - Killing server B ({})", server_B);
-  config_->Kill(server_B);
-
-  Fiber::sleep(ELECTIONTIMEOUT);
-  leader = config_->OneLeader();
-  AssertOneLeader(leader);
-  Log_info("TEST 17: Leader after killing B: {}", leader);
-
-  // Commit with 3 servers
-  Log_info("TEST 17: Committing with 3 servers (A partitioned, B dead)");
-  DoAgreeAndAssertIndex(1704, 3, index_++);
-
-  // ========================================
-  // T3: Restart B → B sends NotifyRestart, A is PENDING
-  // ========================================
-  Log_info("TEST 17: Step 3 - Restarting server B ({}) while A ({}) is still partitioned",
-           server_B, server_A);
-  config_->Restart(server_B);
-
-  Fiber::sleep(ELECTIONTIMEOUT);
-  leader = config_->OneLeader();
-  AssertOneLeader(leader);
-  Log_info("TEST 17: Leader after restarting B: {}", leader);
-
-  // Commit with 4 servers (B is back, A still partitioned)
-  Log_info("TEST 17: Committing with 4 servers (A partitioned, B restarted)");
-  DoAgreeAndAssertIndex(1705, 4, index_++);
-
-  // ========================================
-  // T4: Partition C → Healthy: {B,D,E} = 3 (A and C both isolated)
-  // ========================================
-  Log_info("TEST 17: Step 4 - Partitioning server C ({}) while A ({}) is still partitioned",
-           server_C, server_A);
-  config_->Disconnect(server_C);
-
-  Fiber::sleep(ELECTIONTIMEOUT);
-  leader = config_->OneLeader();
-  AssertOneLeader(leader);
-  Log_info("TEST 17: Leader after partitioning C: {}", leader);
-
-  // Commit with 3 servers (A and C partitioned)
-  Log_info("TEST 17: Committing with 3 servers (A and C partitioned)");
-  DoAgreeAndAssertIndex(1706, 3, index_++);
-
-  // ========================================
-  // T5: Heal A → A has stale connection to B, B's retry fixes it
-  // ========================================
-  Log_info("TEST 17: Step 5 - Healing partition for server A ({})", server_A);
-  Log_info("TEST 17: A was partitioned when B restarted, so A has stale connection to B");
-  config_->Reconnect(server_A);
-
-  // Wait for A to catch up and for B's retry mechanism to fix A's stale connection
-  Log_info("TEST 17: Waiting for A to reconnect and B's retry to fix stale connection...");
-  Fiber::sleep(ELECTIONTIMEOUT * 2);
-
-  leader = config_->OneLeader();
-  AssertOneLeader(leader);
-  Log_info("TEST 17: Leader after healing A: {}", leader);
-
-  // Commit with 4 servers (A is back, C still partitioned)
-  Log_info("TEST 17: Committing with 4 servers (A healed, C still partitioned)");
-  DoAgreeAndAssertIndex(1707, 4, index_++);
-
-  // ========================================
-  // T6: Heal C → C has stale connection to B, B's retry fixes it
-  // ========================================
-  Log_info("TEST 17: Step 6 - Healing partition for server C ({})", server_C);
-  Log_info("TEST 17: C was partitioned when B restarted, so C has stale connection to B");
-  config_->Reconnect(server_C);
-
-  // Wait for C to catch up and for B's retry mechanism to fix C's stale connection
-  Log_info("TEST 17: Waiting for C to reconnect and B's retry to fix stale connection...");
-  Fiber::sleep(ELECTIONTIMEOUT * 2);
-
-  leader = config_->OneLeader();
-  AssertOneLeader(leader);
-  Log_info("TEST 17: Leader after healing C: {}", leader);
-
-  // ========================================
-  // T7: Verify all 5 servers work
-  // ========================================
-  Log_info("TEST 17: Step 7 - Final verification with all {} servers", NSERVERS);
-  DoAgreeAndAssertWaitSuccess(1708, NSERVERS);
-
-  // Additional commits to verify stability
-  Log_info("TEST 17: Additional commits to verify stability");
-  DoAgreeAndAssertWaitSuccess(1709, NSERVERS);
-  DoAgreeAndAssertWaitSuccess(1710, NSERVERS);
-
-  Log_info("TEST 17: Sequential partitions plus restart test PASSED!");
-
-  Passed2();
-}
-
-int RaftLabTest::testMultipleRestartsPlusPartition(void) {
-  Init2(18, "Multiple restarts plus partition - server restarts multiple times while another is partitioned");
-
-  Log_info("TEST 18: Waiting for initial election");
-  Fiber::sleep(ELECTIONTIMEOUT);
-  int leader = config_->OneLeader();
-  AssertOneLeader(leader);
-  Log_info("TEST 18: Initial leader elected: {}", leader);
-
-  // Commit initial entries
-  Log_info("TEST 18: Committing initial entries");
-  DoAgreeAndAssertIndex(1801, NSERVERS, index_++);
-  DoAgreeAndAssertIndex(1802, NSERVERS, index_++);
-  Log_info("TEST 18: Initial entries committed");
-
-  // Pick three different non-leader servers: A (partition), B (multiple restarts), C (single restart)
-  siteid_t server_A = 0;  // Will be partitioned
-  siteid_t server_B = 0;  // Will be killed/restarted multiple times
-  siteid_t server_C = 0;  // Will be killed/restarted once
-  int found_count = 0;
-
-  for (int i = 0; i < NSERVERS && found_count < 3; i++) {
-    siteid_t svr = config_->getServerIdByIndex(i);
-    if (svr != (siteid_t)leader) {
-      if (found_count == 0) {
-        server_A = svr;
-      } else if (found_count == 1) {
-        server_B = svr;
-      } else if (found_count == 2) {
-        server_C = svr;
-      }
-      found_count++;
-    }
-  }
-
-  Assert2(found_count >= 3, "Could not find 3 non-leader servers");
-  Log_info("TEST 18: Server A (partition): {}", server_A);
-  Log_info("TEST 18: Server B (multiple restarts): {}", server_B);
-  Log_info("TEST 18: Server C (single restart): {}", server_C);
-
-  // ========================================
-  // T1: Partition A → Healthy: {B,C,D,E} = 4
-  // ========================================
-  Log_info("TEST 18: Step 1 - Partitioning server A ({})", server_A);
-  config_->Disconnect(server_A);
-
-  Fiber::sleep(ELECTIONTIMEOUT);
-  leader = config_->OneLeader();
-  AssertOneLeader(leader);
-  Log_info("TEST 18: Leader after partitioning A: {}", leader);
-
-  DoAgreeAndAssertIndex(1803, 4, index_++);
-
-  // ========================================
-  // T2: Kill B → Healthy: {C,D,E} = 3
-  // ========================================
-  Log_info("TEST 18: Step 2 - Killing server B ({}) [first time]", server_B);
-  config_->Kill(server_B);
-
-  Fiber::sleep(ELECTIONTIMEOUT);
-  leader = config_->OneLeader();
-  AssertOneLeader(leader);
-  Log_info("TEST 18: Leader after killing B: {}", leader);
-
-  DoAgreeAndAssertIndex(1804, 3, index_++);
-
-  // ========================================
-  // T3: Restart B → B sends NotifyRestart, A is PENDING
-  // ========================================
-  Log_info("TEST 18: Step 3 - Restarting server B ({}) [first time]", server_B);
-  config_->Restart(server_B);
-
-  Fiber::sleep(ELECTIONTIMEOUT);
-  leader = config_->OneLeader();
-  AssertOneLeader(leader);
-  Log_info("TEST 18: Leader after restarting B [first time]: {}", leader);
-
-  DoAgreeAndAssertIndex(1805, 4, index_++);
-
-  // ========================================
-  // T4: Kill B again → Healthy: {C,D,E} = 3
-  //     B's retry state is lost!
-  // ========================================
-  Log_info("TEST 18: Step 4 - Killing server B ({}) [second time] - retry state will be lost!", server_B);
-  config_->Kill(server_B);
-
-  Fiber::sleep(ELECTIONTIMEOUT);
-  leader = config_->OneLeader();
-  AssertOneLeader(leader);
-  Log_info("TEST 18: Leader after killing B [second time]: {}", leader);
-
-  DoAgreeAndAssertIndex(1806, 3, index_++);
-
-  // ========================================
-  // T5: Restart B again → B sends NotifyRestart again, A still PENDING
-  // ========================================
-  Log_info("TEST 18: Step 5 - Restarting server B ({}) [second time]", server_B);
-  config_->Restart(server_B);
-
-  Fiber::sleep(ELECTIONTIMEOUT);
-  leader = config_->OneLeader();
-  AssertOneLeader(leader);
-  Log_info("TEST 18: Leader after restarting B [second time]: {}", leader);
-
-  DoAgreeAndAssertIndex(1807, 4, index_++);
-
-  // ========================================
-  // T6: Heal A → A receives NotifyRestart from B, fixes stale connection
-  // ========================================
-  Log_info("TEST 18: Step 6 - Healing partition for server A ({})", server_A);
-  Log_info("TEST 18: A was partitioned through TWO restart cycles of B");
-  config_->Reconnect(server_A);
-
-  // Wait for A to catch up and for B's retry mechanism to fix A's stale connection
-  Log_info("TEST 18: Waiting for A to reconnect and B's retry to fix stale connection...");
-  Fiber::sleep(ELECTIONTIMEOUT * 2);
-
-  leader = config_->OneLeader();
-  AssertOneLeader(leader);
-  Log_info("TEST 18: Leader after healing A: {}", leader);
-
-  // Verify all 5 servers work
-  Log_info("TEST 18: Verifying all 5 servers work after A healed");
-  DoAgreeAndAssertWaitSuccess(1808, NSERVERS);
-
-  // ========================================
-  // T7: Kill C → Healthy: {A,B,D,E} = 4
-  // ========================================
-  Log_info("TEST 18: Step 7 - Killing server C ({})", server_C);
-  config_->Kill(server_C);
-
-  Fiber::sleep(ELECTIONTIMEOUT);
-  leader = config_->OneLeader();
-  AssertOneLeader(leader);
-  Log_info("TEST 18: Leader after killing C: {}", leader);
-
-  DoAgreeAndAssertIndex(1809, 4, index_++);
-
-  // ========================================
-  // T8: Restart C → C notifies all (all respond since everyone is connected)
-  // ========================================
-  Log_info("TEST 18: Step 8 - Restarting server C ({})", server_C);
-  config_->Restart(server_C);
-
-  Fiber::sleep(ELECTIONTIMEOUT);
-  leader = config_->OneLeader();
-  AssertOneLeader(leader);
-  Log_info("TEST 18: Leader after restarting C: {}", leader);
-
-  // ========================================
-  // T9: Verify all 5 servers work
-  // ========================================
-  Log_info("TEST 18: Step 9 - Final verification with all {} servers", NSERVERS);
-  DoAgreeAndAssertWaitSuccess(1810, NSERVERS);
-
-  // Additional commits to verify stability
-  Log_info("TEST 18: Additional commits to verify stability");
-  DoAgreeAndAssertWaitSuccess(1811, NSERVERS);
-  DoAgreeAndAssertWaitSuccess(1812, NSERVERS);
-
-  Log_info("TEST 18: Multiple restarts plus partition test PASSED!");
-
-  Passed2();
-}
 
 int RaftLabTest::testInitialElection(void) {
   Init2(1, "Initial election");
@@ -1914,9 +760,10 @@ int RaftLabTest::testCount(void) {
   // initial election RPC count
   Log_info("TEST 9: init_rpcs_ observed = {}", init_rpcs_);
   // Ceiling raised from 40 to 70 to accommodate Mako-specific RPC traffic
-  // (VoteDurable, AppendEntriesDurable, TimeoutNow, NotifyRestart) that the
-  // upstream MIT 6.824 reference implementation did not emit. Observed
-  // range on a quiet local run: 40-56; 70 leaves headroom for jitter.
+  // (TimeoutNow, NotifyRestart) that the upstream MIT 6.824 reference
+  // implementation did not emit. The 40-56 range was observed on a quiet
+  // local run while the since-retired durable-ack RPCs were still emitted;
+  // 70 leaves headroom for jitter.
   Assert2(init_rpcs_ > 1 && init_rpcs_ <= 70,
           "too many or too few RPCs (%ld) to elect initial leader",
           init_rpcs_);
@@ -2138,205 +985,6 @@ int RaftLabTest::testFigure8(void) {
   Passed2();
 }
 
-int RaftLabTest::testFigure8CrashRecovery(void) {
-  Init2(19, "Figure 8 with crash/recovery instead of partitions");
-  bool success = false;
-
-  // This test is the crash/recovery version of testFigure8.
-  // Instead of using Disconnect/Reconnect (network partitions),
-  // we use Kill/Restart (crash/recovery) to test persistence.
-  // Leader should not determine commitment using log entries from previous terms.
-
-  for (int again = 0; again < 10; again++) {
-    Log_info("TEST 19: Attempt {}", again + 1);
-
-    // 1. Find initial leader (S1) and commit an entry
-    auto leader1 = config_->OneLeader();
-    AssertOneLeader(leader1);
-    uint64_t index1, term1, index2, term2;
-    auto ok = config_->Start(leader1, 1900, &index1, &term1);
-    if (!ok) {
-      Log_info("TEST 19: Leader changed during initial Start, retrying");
-      continue;
-    }
-    auto r = config_->Wait(index1, NSERVERS, term1);
-    AssertWaitNoError(r, index1);
-    AssertWaitNoTimeout(r, index1, NSERVERS);
-    index_ = index1;
-    Log_info("TEST 19: Initial entry committed at index {}, term {}", index1, term1);
-
-    // 2. Kill 3 followers, leaving S1 + 1 follower (S2)
-    //    S2 is getNextServerId(leader1, 4) to match original Figure 8 structure
-    siteid_t follower_s2 = config_->getNextServerId(leader1, 4);
-    siteid_t killed1 = config_->getNextServerId(leader1, 1);
-    siteid_t killed2 = config_->getNextServerId(leader1, 2);
-    siteid_t killed3 = config_->getNextServerId(leader1, 3);
-
-    Log_info("TEST 19: Killing 3 followers: {}, {}, {} (keeping leader {} and follower {})",
-             killed1, killed2, killed3, leader1, follower_s2);
-    config_->Kill(killed1);
-    config_->Kill(killed2);
-    config_->Kill(killed3);
-
-    // 3. Start C1 on S1 - only replicated to S1 and S2 (NOT committed, only 2 servers)
-    ok = config_->Start(leader1, 1901, &index1, &term1);
-    if (!ok) {
-      Log_info("TEST 19: Leader changed during C1 Start, restarting killed servers and retrying");
-      config_->Restart(killed1);
-      config_->Restart(killed2);
-      config_->Restart(killed3);
-      Fiber::sleep(ELECTIONTIMEOUT);
-      continue;
-    }
-    Log_info("TEST 19: Started C1 (1901) at index {}, term {} - should NOT be committed", index1, term1);
-    Fiber::sleep(ELECTIONTIMEOUT);
-
-    // C1 is at index1 for S1 and S2, but NOT committed (only 2 servers)
-    AssertNoneCommitted(index1);
-    Log_info("TEST 19: Verified C1 is not committed (only on 2 servers)");
-
-    // 4. Kill S1 and S2, restart the other 3 to elect new leader S3
-    Log_info("TEST 19: Killing S1 ({}) and S2 ({}), restarting other 3", leader1, follower_s2);
-    config_->Kill(leader1);
-    config_->Kill(follower_s2);
-    config_->Restart(killed1);
-    config_->Restart(killed2);
-    config_->Restart(killed3);
-
-    // 5. New leader S3 elected among the 3 restarted servers
-    Fiber::sleep(ELECTIONTIMEOUT);
-    auto leader2 = config_->OneLeader();
-    AssertOneLeader(leader2);
-    Log_info("TEST 19: New leader S3 elected: {}", leader2);
-
-    // 6. Restart S1 and S2 - they recover from disk with C1 in their logs
-    Log_info("TEST 19: Restarting S1 ({}) and S2 ({}) - they should recover C1 from disk",
-             leader1, follower_s2);
-    config_->Restart(leader1);
-    config_->Restart(follower_s2);
-    Fiber::sleep(ELECTIONTIMEOUT);
-
-    // S3 should still be leader
-    int current_leader = config_->OneLeader();
-    AssertOneLeader(current_leader);
-    Log_info("TEST 19: Current leader after S1/S2 restart: {}", current_leader);
-
-    // 7. Kill all except S3, have S3 start C2 at the same index as C1
-    //    We know exactly which servers exist: leader1, follower_s2, killed1, killed2, killed3
-    //    One of killed1/killed2/killed3 is now leader2, so we kill the others
-    Log_info("TEST 19: Isolating leader S3 ({}) by killing all others", leader2);
-
-    // Kill using explicit server IDs we tracked, not getServerIdByIndex
-    std::vector<siteid_t> all_servers = {
-        static_cast<siteid_t>(leader1),
-        static_cast<siteid_t>(follower_s2),
-        static_cast<siteid_t>(killed1),
-        static_cast<siteid_t>(killed2),
-        static_cast<siteid_t>(killed3)};
-    std::vector<siteid_t> killed_in_step7;
-    for (siteid_t svr : all_servers) {
-      if (svr != leader2) {
-        Log_info("TEST 19: Step 7 - Killing server {}", svr);
-        config_->Kill(svr);
-        killed_in_step7.push_back(svr);
-      }
-    }
-
-    ok = config_->Start(leader2, 1902, &index2, &term2);
-    if (!ok) {
-      Log_info("TEST 19: Leader S3 changed during C2 Start, restarting all and retrying");
-      for (siteid_t svr : killed_in_step7) {
-        config_->Restart(svr);
-      }
-      Fiber::sleep(ELECTIONTIMEOUT);
-      continue;
-    }
-
-    // C2 is at the same index as C1, but in a higher term
-    Log_info("TEST 19: Started C2 (1902) at index {}, term {}", index2, term2);
-    Assert2(index2 == index1, "Start() returned index %ld (%ld expected)", index2, index1);
-    Assert2(term2 > term1, "Start() returned term %ld (expected > %ld)", term2, term1);
-    Fiber::sleep(ELECTIONTIMEOUT);
-    AssertNoneCommitted(index1);
-    Log_info("TEST 19: Verified neither C1 nor C2 is committed yet");
-
-    // 8. Kill S3, restart S1 (has C1), S2 (has C1), and one other
-    //    S1 or S2 should become leader because they have C1 (longer log)
-    Log_info("TEST 19: Killing S3 ({}), restarting S1, S2, and one other", leader2);
-    config_->Kill(leader2);
-    config_->Restart(leader1);      // S1 has C1
-    config_->Restart(follower_s2);  // S2 has C1
-
-    // Restart one more server (not S3/leader2) - use our tracked server IDs
-    // The other servers are killed1, killed2, killed3 - pick one that's not leader2
-    siteid_t third_server = 0;
-    for (siteid_t svr : {killed1, killed2, killed3}) {
-      if (svr != leader2) {
-        config_->Restart(svr);
-        third_server = svr;
-        Log_info("TEST 19: Also restarted server {} as third member", svr);
-        break;
-      }
-    }
-
-    Fiber::sleep(ELECTIONTIMEOUT);
-    auto leader3 = config_->OneLeader();
-    AssertOneLeader(leader3);
-    Log_info("TEST 19: New leader after S3 killed: {}", leader3);
-
-    // Leader3 should ideally be S1 or S2 (they have longer logs with C1)
-    // But if not, we retry
-    if (leader3 != leader1 && leader3 != follower_s2) {
-      Log_info("TEST 19: Leader {} is not S1 or S2, retrying (1/3 chance)", leader3);
-      // Restart remaining servers for cleanup using explicit IDs
-      config_->Restart(leader2);
-      for (siteid_t svr : {killed1, killed2, killed3}) {
-        if (svr != third_server && svr != leader2) {
-          config_->Restart(svr);
-        }
-      }
-      Fiber::sleep(ELECTIONTIMEOUT);
-      continue;
-    }
-
-    // 9. C1 should NOT be committed yet - it's from a previous term
-    //    Leader cannot commit entries from previous terms directly
-    Fiber::sleep(ELECTIONTIMEOUT);
-    AssertNoneCommitted(index1);
-    Log_info("TEST 19: Verified C1 still not committed (correct - from previous term)");
-
-    // 10. Commit something in the current term - this should also commit C1 indirectly
-    Log_info("TEST 19: Committing new entry in current term to trigger C1 commit");
-    auto new_index = config_->DoAgreement(1903, NSERVERS - 2, false);
-    Assert2(new_index > index1, "failed to reach agreement, got index %ld", new_index);
-    Log_info("TEST 19: New entry committed at index {}", new_index);
-
-    // 11. Now C1 SHOULD be committed (indirectly, by the new commit in current term)
-    AssertNCommitted(index1, NSERVERS - 2);
-    Assert2(config_->ServerCommitted(leader3, index1, 1901),
-            "value 1901 not committed at index %ld when it should be", index1);
-    Log_info("TEST 19: Verified C1 (1901) is now committed at index {}", index1);
-
-    success = true;
-
-    // Cleanup: restart all remaining dead servers using explicit IDs
-    Log_info("TEST 19: Cleaning up - restarting remaining servers");
-    config_->Restart(leader2);
-    // Restart any of killed1/killed2/killed3 that weren't already restarted
-    for (siteid_t svr : {killed1, killed2, killed3}) {
-      if (svr != third_server && svr != leader2) {
-        config_->Restart(svr);
-      }
-    }
-    Fiber::sleep(ELECTIONTIMEOUT);
-    break;
-  }
-
-  Assert2(success, "Failed to test Figure 8 with crash/recovery");
-  Log_info("TEST 19: Figure 8 crash/recovery test PASSED!");
-  Passed2();
-}
-
 void RaftLabTest::wait(uint64_t microseconds) {
   create_sp_timeout_event(microseconds)->wait();
 }
@@ -2346,12 +994,11 @@ void RaftLabTest::wait(uint64_t microseconds) {
 // ============================================================================
 
 /**
- * Test that leader becomes speculative first, then secured after VoteDurable.
+ * Test that an elected leader holds a speculative (memory) vote quorum.
  *
  * Expected behavior:
  * 1. After election, leader should exist
- * 2. Leader should initially be unsecured (securedLeader = false)
- * 3. After VoteDurable messages arrive, leader becomes secured
+ * 2. Leader's specVoters cover at least a quorum
  */
 int RaftLabTest::testSpeculativeLeaderElection(void) {
   Init2(20, "Speculative leader election");
@@ -2365,36 +1012,17 @@ int RaftLabTest::testSpeculativeLeaderElection(void) {
   siteid_t leader_id = config_->getServerIdByIndex(leader);
   Log_info("[SPEC-TEST] Leader elected: index={}, site_id={}", leader, leader_id);
 
-  // Check initial speculative state
-  // Note: By the time we check, VoteDurable messages may have already arrived
-  // So we can't assert securedLeader == false here. Instead, check that
-  // the speculative state accessors work and invariants hold.
+  // Check initial speculative state: the speculative state accessors work
+  // and invariants hold.
 
   size_t specVoters = config_->GetSpecVotersCount(leader_id);
-  size_t durableVoters = config_->GetDurableVotersCount(leader_id);
 
-  Log_info("[SPEC-TEST] Leader {}: specVoters={}, durableVoters={}",
-           leader_id, specVoters, durableVoters);
+  Log_info("[SPEC-TEST] Leader {}: specVoters={}", leader_id, specVoters);
 
   // Spec voters should be at least quorum (we won election)
   size_t quorum = (NSERVERS / 2) + 1;
   Assert2(specVoters >= quorum, "Leader has fewer spec voters (%zu) than quorum (%zu)",
           specVoters, quorum);
-
-  // Wait a bit for VoteDurable messages to arrive
-  Fiber::sleep(500000);  // 500ms
-
-  // After waiting, leader should become secured (assuming no crashes)
-  bool secured = config_->IsSecuredLeader(leader_id);
-  durableVoters = config_->GetDurableVotersCount(leader_id);
-
-  Log_info("[SPEC-TEST] After waiting: secured={}, durableVoters={}",
-           secured, durableVoters);
-
-  // With no crashes, we expect durable voters to reach quorum
-  Assert2(durableVoters >= quorum, "Leader has fewer durable voters (%zu) than quorum (%zu)",
-          durableVoters, quorum);
-  Assert2(secured, "Leader should be secured after VoteDurable quorum");
 
   // Verify invariants hold
   Assert2(config_->VerifySpecInvariants(leader_id), "Speculative invariants violated");
@@ -2408,7 +1036,6 @@ int RaftLabTest::testSpeculativeLeaderElection(void) {
  * Expected behavior:
  * 1. Submit entry to leader
  * 2. specCommitIndex should advance when memory ack quorum reached
- * 3. Eventually entry becomes durably committed
  */
 int RaftLabTest::testSpecCommitIndexAdvances(void) {
   Init2(21, "Spec commit index advances");
@@ -2449,22 +1076,6 @@ int RaftLabTest::testSpecCommitIndexAdvances(void) {
   // specCommitIndex should have advanced (at least to our submitted entry)
   Assert2(newSpecCommit >= index, "specCommitIndex (%lu) did not reach submitted index (%lu)",
           newSpecCommit, index);
-
-  // Wait longer for durable commit
-  Fiber::sleep(500000);  // 500ms more
-
-  // Check that securedLogIndex also advances (if leader is secured)
-  bool secured = config_->IsSecuredLeader(leader_id);
-  uint64_t newSecuredLog = config_->GetSecuredLogIndex(leader_id);
-
-  Log_info("[SPEC-TEST] After more waiting: secured={}, securedLogIndex={} (was {})",
-           secured, newSecuredLog, initialSecuredLog);
-
-  if (secured) {
-    // If leader is secured, securedLogIndex should advance
-    Assert2(newSecuredLog >= index, "securedLogIndex (%lu) did not reach submitted index (%lu)",
-            newSecuredLog, index);
-  }
 
   // Verify invariants
   Assert2(config_->VerifySpecInvariants(leader_id), "Speculative invariants violated");
@@ -2529,115 +1140,24 @@ int RaftLabTest::testSpeculativeInvariantsHold(void) {
   Passed2();
 }
 
-/**
- * Test that secured leader continues operating even after losing speculative quorum.
- *
- * Scenario:
- * 1. Establish a secured leader (durable vote quorum achieved)
- * 2. Kill followers to lose speculative quorum
- * 3. Leader should continue operating (it's still secured!)
- * 4. Commits should still work with remaining quorum
- *
- * Key insight: Once a leader is secured, it has durably won the election.
- * No other leader can win in this term, so losing speculative voters doesn't
- * invalidate the leadership - they can crash/restart but can't vote elsewhere.
- */
-int RaftLabTest::testSecuredLeaderContinuesAfterSpecQuorumLoss(void) {
-  Init2(23, "Secured leader continues after spec quorum loss");
-
-  // Wait for initial election and secure leadership
-  Fiber::sleep(ELECTIONTIMEOUT);
-
-  int leader = config_->OneLeader();
-  Assert2(leader >= 0, "No leader elected");
-
-  siteid_t leader_id = config_->getServerIdByIndex(leader);
-
-  // Wait for leader to become secured
-  Fiber::sleep(500000);  // 500ms for VoteDurable messages
-
-  bool secured = config_->IsSecuredLeader(leader_id);
-  size_t initialDurableVoters = config_->GetDurableVotersCount(leader_id);
-  size_t initialSpecVoters = config_->GetSpecVotersCount(leader_id);
-
-  Log_info("[SPEC-TEST] Initial state: secured={}, specVoters={}, durableVoters={}",
-           secured, initialSpecVoters, initialDurableVoters);
-
-  Assert2(secured, "Leader should be secured before test continues");
-
-  // Commit an initial entry to ensure everything is working
-  int cmd = 300;
-  uint64_t index = 0;
-  uint64_t term = 0;
-  bool ok = config_->Start(leader_id, cmd, &index, &term);
-  Assert2(ok, "Failed to submit initial command");
-
-  // Wait for commit
-  int result = config_->Wait(index, NSERVERS, term);
-  AssertWaitNoError(result, index);
-  Log_info("[SPEC-TEST] Initial command committed at index {}", index);
-
-  // Now disconnect one follower to simulate losing a speculative voter
-  // (but keep majority for quorum)
-  siteid_t disconnected_follower = 0;
-  for (int i = 0; i < NSERVERS; i++) {
-    siteid_t svr = config_->getServerIdByIndex(i);
-    if (svr != leader_id) {
-      disconnected_follower = svr;
-      break;
-    }
-  }
-
-  Log_info("[SPEC-TEST] Disconnecting follower {} to lose spec voter", disconnected_follower);
-  config_->Disconnect(disconnected_follower);
-
-  // Wait a bit for the disconnect to take effect
-  Fiber::sleep(200000);  // 200ms
-
-  // Check that leader is still leader
-  int current_leader = config_->OneLeader();
-  Assert2(current_leader == leader, "Leader %d changed to %d after disconnect",
-          leader, current_leader);
-
-  // Leader should still be secured (disconnect doesn't invalidate secured status)
-  secured = config_->IsSecuredLeader(leader_id);
-  Log_info("[SPEC-TEST] After disconnect: secured={}", secured);
-
-  // The leader should still be able to commit with remaining quorum
-  cmd = 301;
-  ok = config_->Start(leader_id, cmd, &index, &term);
-  Assert2(ok, "Failed to submit command after disconnect");
-
-  // Wait for commit with NSERVERS-1 (we disconnected 1)
-  result = config_->Wait(index, NSERVERS - 1, term);
-  AssertWaitNoError(result, index);
-  Log_info("[SPEC-TEST] Command committed after disconnect at index {}", index);
-
-  // Verify invariants
-  Assert2(config_->VerifySpecInvariants(leader_id), "Invariants violated");
-
-  // Reconnect the follower
-  config_->Reconnect(disconnected_follower);
-  Fiber::sleep(ELECTIONTIMEOUT);
-
-  Passed2();
-}
+// ============================================================================
+// PHASE 7.2: NotifyRestart Tests
+// ============================================================================
 
 /**
- * Test that durable commit (securedLogIndex advance) requires secured leader.
+ * Test that follower restart removes from specVoters.
  *
  * Scenario:
- * 1. Get durable ack quorum for an entry
- * 2. If leader is not secured, securedLogIndex should NOT advance
- * 3. Once leader becomes secured, securedLogIndex can advance
+ * 1. Establish a leader
+ * 2. Kill and restart a follower
+ * 3. Verify that the restarted follower sends notifyRestart
+ * 4. Leader should remove the follower from specVoters
  *
- * Note: This is hard to test directly because in a working cluster,
- * the leader typically becomes secured very quickly (within a few hundred ms).
- * This test verifies the invariants and the relationship between
- * secured status and securedLogIndex.
+ * Note: This tests that the notifyRestart mechanism properly invalidates
+ * in-memory votes, which is critical for correctness.
  */
-int RaftLabTest::testDurableCommitRequiresSecuredLeader(void) {
-  Init2(24, "Durable commit requires secured leader");
+int RaftLabTest::testRestartRemovesFromSpecVoters(void) {
+  Init2(25, "Restart removes from specVoters");
 
   // Wait for initial election
   Fiber::sleep(ELECTIONTIMEOUT);
@@ -2647,92 +1167,13 @@ int RaftLabTest::testDurableCommitRequiresSecuredLeader(void) {
 
   siteid_t leader_id = config_->getServerIdByIndex(leader);
 
-  // Wait for leader to become secured
-  Fiber::sleep(500000);  // 500ms for VoteDurable messages
+  // Let leadership settle
+  Fiber::sleep(500000);  // 500ms
 
-  bool secured = config_->IsSecuredLeader(leader_id);
-
-  Log_info("[SPEC-TEST] Initial secured status: {}", secured);
-  Assert2(secured, "Leader should be secured for this test");
-
-  uint64_t initialSecuredLog = config_->GetSecuredLogIndex(leader_id);
-  Log_info("[SPEC-TEST] Initial securedLogIndex: {}", initialSecuredLog);
-
-  // Submit multiple entries
-  for (int i = 0; i < 5; i++) {
-    int cmd = 400 + i;
-    uint64_t index = 0;
-    uint64_t term = 0;
-
-    bool ok = config_->Start(leader_id, cmd, &index, &term);
-    Assert2(ok, "Failed to submit command %d", cmd);
-
-    Log_info("[SPEC-TEST] Submitted command {} at index {}", cmd, index);
-  }
-
-  // Wait for durable commits
-  Fiber::sleep(1000000);  // 1 second for fsync and durable acks
-
-  uint64_t finalSecuredLog = config_->GetSecuredLogIndex(leader_id);
-  uint64_t finalSpecCommit = config_->GetSpecCommitIndex(leader_id);
-
-  Log_info("[SPEC-TEST] Final state: securedLogIndex={}, specCommitIndex={}",
-           finalSecuredLog, finalSpecCommit);
-
-  // Since leader is secured, securedLogIndex should have advanced
-  Assert2(finalSecuredLog > initialSecuredLog,
-          "securedLogIndex (%lu) did not advance from initial (%lu)",
-          finalSecuredLog, initialSecuredLog);
-
-  // Verify the invariant: securedLogIndex <= specCommitIndex
-  Assert2(finalSecuredLog <= finalSpecCommit,
-          "securedLogIndex (%lu) > specCommitIndex (%lu)",
-          finalSecuredLog, finalSpecCommit);
-
-  // Verify all invariants
-  Assert2(config_->VerifySpecInvariants(leader_id), "Invariants violated");
-
-  Passed2();
-}
-
-// ============================================================================
-// PHASE 7.2: NotifyRestart Tests
-// ============================================================================
-
-/**
- * Test that follower restart removes from specVoters.
- *
- * Scenario:
- * 1. Establish a secured leader
- * 2. Kill and restart a follower
- * 3. Verify that the restarted follower sends notifyRestart
- * 4. Leader should remove the follower from specVoters (but not durableVoters)
- *
- * Note: This tests that the notifyRestart mechanism properly invalidates
- * in-memory votes, which is critical for correctness.
- */
-int RaftLabTest::testRestartRemovesFromSpecVoters(void) {
-  Init2(25, "Restart removes from specVoters");
-
-  // Wait for initial election and secure leadership
-  Fiber::sleep(ELECTIONTIMEOUT);
-
-  int leader = config_->OneLeader();
-  Assert2(leader >= 0, "No leader elected");
-
-  siteid_t leader_id = config_->getServerIdByIndex(leader);
-
-  // Wait for leader to become secured
-  Fiber::sleep(500000);  // 500ms for VoteDurable messages
-
-  bool secured = config_->IsSecuredLeader(leader_id);
   size_t initialSpecVoters = config_->GetSpecVotersCount(leader_id);
-  size_t initialDurableVoters = config_->GetDurableVotersCount(leader_id);
 
-  Log_info("[SPEC-TEST] Initial state: secured={}, specVoters={}, durableVoters={}",
-           secured, initialSpecVoters, initialDurableVoters);
+  Log_info("[SPEC-TEST] Initial state: specVoters={}", initialSpecVoters);
 
-  Assert2(secured, "Leader should be secured before test continues");
   Assert2(initialSpecVoters >= 3, "Should have at least quorum spec voters");
 
   // Commit an entry to ensure everything is stable
@@ -2778,18 +1219,6 @@ int RaftLabTest::testRestartRemovesFromSpecVoters(void) {
   int current_leader = config_->OneLeader();
   Assert2(current_leader == leader, "Leader changed after follower restart");
 
-  // Should still be secured (durable voters unaffected)
-  secured = config_->IsSecuredLeader(leader_id);
-  size_t finalDurableVoters = config_->GetDurableVotersCount(leader_id);
-
-  Log_info("[SPEC-TEST] After restart: secured={}, durableVoters={}",
-           secured, finalDurableVoters);
-
-  // Durable voters should not be affected by restart
-  // (They already persisted their vote before the restart)
-  Assert2(secured, "Leader should still be secured");
-  Assert2(finalDurableVoters >= 3, "Durable voters should be preserved");
-
   // Verify leader can still commit
   cmd = 501;
   ok = config_->Start(leader_id, cmd, &index, &term);
@@ -2809,13 +1238,12 @@ int RaftLabTest::testRestartRemovesFromSpecVoters(void) {
  * Test that unsecured leader steps down when losing spec quorum.
  *
  * Scenario:
- * 1. Have an unsecured leader (before VoteDurable quorum reached)
+ * 1. Have an unsecured leader (every memory-only leader is unsecured)
  * 2. Cause it to lose speculative quorum via restarts
  * 3. Leader should step down
  *
- * Note: This is difficult to test reliably because VoteDurable messages
- * typically arrive very quickly. This test documents the expected behavior
- * but may not always trigger the unsecured state reliably.
+ * Note: Killing two of five followers keeps the memory quorum, so this test
+ * documents the expected behavior rather than forcing the step-down.
  */
 int RaftLabTest::testUnsecuredLostQuorumStepsDown(void) {
   Init2(26, "Unsecured lost quorum steps down");
@@ -2828,20 +1256,12 @@ int RaftLabTest::testUnsecuredLostQuorumStepsDown(void) {
 
   siteid_t leader_id = config_->getServerIdByIndex(leader);
 
-  // In a normal cluster, the leader becomes secured quickly.
   // This test verifies that if we kill enough followers after election,
   // the leader can still operate as long as it has quorum.
-  // If the leader was unsecured and lost spec quorum, it would step down.
+  // If the leader lost spec quorum, it would step down.
 
-  // Wait for secured state
+  // Let leadership settle
   Fiber::sleep(500000);  // 500ms
-
-  bool secured = config_->IsSecuredLeader(leader_id);
-  Log_info("[SPEC-TEST] Leader {} secured status: {}", leader_id, secured);
-
-  // Since the leader is likely secured, we test that it continues to work
-  // even when followers are killed (secured leader doesn't step down on
-  // losing spec quorum alone)
 
   // Kill 2 followers (still have quorum with 3)
   std::vector<siteid_t> killed_followers;
@@ -2857,19 +1277,12 @@ int RaftLabTest::testUnsecuredLostQuorumStepsDown(void) {
   // Wait for changes to take effect
   Fiber::sleep(ELECTIONTIMEOUT);
 
-  // Leader should still be leader (secured leader doesn't step down)
   int current_leader = config_->OneLeader();
 
-  if (secured) {
-    // Secured leader should continue
-    Assert2(current_leader == leader, "Secured leader should not step down");
-    Log_info("[SPEC-TEST] Secured leader continued as expected");
-  } else {
-    // Unsecured leader may have stepped down
-    // Either outcome is acceptable based on timing
-    Log_info("[SPEC-TEST] Leader status after kills: current_leader={} (original={})",
-             current_leader, leader);
-  }
+  // Unsecured leader may have stepped down
+  // Either outcome is acceptable based on timing
+  Log_info("[SPEC-TEST] Leader status after kills: current_leader={} (original={})",
+           current_leader, leader);
 
   // Verify system still works with quorum
   if (current_leader >= 0) {
@@ -2905,7 +1318,7 @@ int RaftLabTest::testUnsecuredLostQuorumStepsDown(void) {
  * Test that restart removes from memoryAcks for unsecured entries.
  *
  * Scenario:
- * 1. Establish a secured leader with some committed entries
+ * 1. Establish a leader with some committed entries
  * 2. Submit new entries and track memory acks
  * 3. Kill and restart a follower
  * 4. Verify that leader properly handles the restart
@@ -2916,7 +1329,7 @@ int RaftLabTest::testUnsecuredLostQuorumStepsDown(void) {
 int RaftLabTest::testRestartRemovesFromMemoryAcks(void) {
   Init2(27, "Restart removes from memoryAcks");
 
-  // Wait for initial election and secure leadership
+  // Wait for initial election
   Fiber::sleep(ELECTIONTIMEOUT);
 
   int leader = config_->OneLeader();
@@ -2924,13 +1337,10 @@ int RaftLabTest::testRestartRemovesFromMemoryAcks(void) {
 
   siteid_t leader_id = config_->getServerIdByIndex(leader);
 
-  // Wait for leader to become secured
-  Fiber::sleep(500000);  // 500ms for VoteDurable messages
+  // Let leadership settle
+  Fiber::sleep(500000);  // 500ms
 
-  bool secured = config_->IsSecuredLeader(leader_id);
-  Assert2(secured, "Leader should be secured for this test");
-
-  // Commit some entries to ensure securedLogIndex is established
+  // Commit some entries to establish a committed prefix
   for (int i = 0; i < 3; i++) {
     int cmd = 700 + i;
     uint64_t index = 0;
@@ -2998,377 +1408,9 @@ int RaftLabTest::testRestartRemovesFromMemoryAcks(void) {
   Passed2();
 }
 
-/**
- * Test that restart does not affect durableVoters.
- *
- * Scenario:
- * 1. Establish a secured leader (durable vote quorum achieved)
- * 2. Restart a follower
- * 3. Verify that durableVoters count is preserved
- *
- * Key insight: Durable votes are on disk, so they survive restarts.
- * The restarted follower's vote is still durable.
- */
-int RaftLabTest::testRestartDoesNotAffectDurableVoters(void) {
-  Init2(28, "Restart does not affect durableVoters");
-
-  // Wait for initial election and secure leadership
-  Fiber::sleep(ELECTIONTIMEOUT);
-
-  int leader = config_->OneLeader();
-  Assert2(leader >= 0, "No leader elected");
-
-  siteid_t leader_id = config_->getServerIdByIndex(leader);
-
-  // Wait for leader to become secured
-  Fiber::sleep(500000);  // 500ms for VoteDurable messages
-
-  bool secured = config_->IsSecuredLeader(leader_id);
-  size_t durableVotersBefore = config_->GetDurableVotersCount(leader_id);
-
-  Log_info("[SPEC-TEST] Initial state: secured={}, durableVoters={}",
-           secured, durableVotersBefore);
-
-  Assert2(secured, "Leader should be secured for this test");
-  Assert2(durableVotersBefore >= 3, "Should have quorum of durable voters");
-
-  // Commit an entry to ensure stability
-  int cmd = 800;
-  uint64_t index = 0;
-  uint64_t term = 0;
-  bool ok = config_->Start(leader_id, cmd, &index, &term);
-  Assert2(ok, "Failed to submit command");
-  int result = config_->Wait(index, NSERVERS, term);
-  AssertWaitNoError(result, index);
-
-  // Pick a follower to restart
-  siteid_t follower_to_restart = 0;
-  for (int i = 0; i < NSERVERS; i++) {
-    siteid_t svr = config_->getServerIdByIndex(i);
-    if (svr != leader_id) {
-      follower_to_restart = svr;
-      break;
-    }
-  }
-
-  Log_info("[SPEC-TEST] Killing and restarting follower {}", follower_to_restart);
-
-  // Kill and restart
-  config_->Kill(follower_to_restart);
-  Fiber::sleep(200000);  // 200ms
-  config_->Restart(follower_to_restart);
-
-  // Wait for recovery
-  Fiber::sleep(ELECTIONTIMEOUT);
-
-  // Check durableVoters after restart
-  // Note: The leader tracks durableVoters from the election.
-  // A restart doesn't remove from durableVoters because the vote is on disk.
-  // However, the leader may not update durableVoters after restart
-  // (it was set during election).
-
-  secured = config_->IsSecuredLeader(leader_id);
-  size_t durableVotersAfter = config_->GetDurableVotersCount(leader_id);
-
-  Log_info("[SPEC-TEST] After restart: secured={}, durableVoters={}",
-           secured, durableVotersAfter);
-
-  // Leader should still be secured
-  Assert2(secured, "Leader should still be secured after restart");
-
-  // Durable voters should be preserved (or may increase if new VoteDurable arrives)
-  Assert2(durableVotersAfter >= 3, "Should still have quorum of durable voters");
-
-  // Commit another entry to verify system works
-  cmd = 801;
-  ok = config_->Start(leader_id, cmd, &index, &term);
-  Assert2(ok, "Failed to submit command after restart");
-  result = config_->Wait(index, NSERVERS, term);
-  AssertWaitNoError(result, index);
-
-  Log_info("[SPEC-TEST] Successfully committed after follower restart");
-
-  // Verify invariants
-  Assert2(config_->VerifySpecInvariants(leader_id), "Invariants violated");
-
-  Passed2();
-}
-
 // ============================================================================
 // PHASE 7.3: Integration Tests
 // ============================================================================
-
-/**
- * Test that speculative entries survive leader crash if new leader has them.
- *
- * Scenario:
- * 1. A is leader, speculatively commits entry X (memory quorum achieved)
- * 2. A crashes before durable commit
- * 3. B (who has X in memory/log) wins election
- * 4. X eventually becomes durably committed under B
- * 5. Verify: X persists after full cluster restart
- *
- * Note: This test verifies the "lucky path" where speculative entries
- * survive because the new leader happens to have them.
- */
-int RaftLabTest::testSpeculativeEntriesSurviveCrash(void) {
-  Init2(29, "Speculative entries survive crash");
-
-  // Wait for initial election
-  Fiber::sleep(ELECTIONTIMEOUT);
-
-  int leader1 = config_->OneLeader();
-  Assert2(leader1 >= 0, "No leader elected");
-
-  siteid_t leader1_id = config_->getServerIdByIndex(leader1);
-  Log_info("[SPEC-TEST] Initial leader: {} (site {})", leader1, leader1_id);
-
-  // Wait for leader to become secured
-  Fiber::sleep(500000);
-
-  bool secured = config_->IsSecuredLeader(leader1_id);
-  Assert2(secured, "Leader should be secured");
-
-  // Commit initial entries to establish a baseline
-  for (int i = 0; i < 3; i++) {
-    int cmd = 900 + i;
-    uint64_t index = 0;
-    uint64_t term = 0;
-    bool ok = config_->Start(leader1_id, cmd, &index, &term);
-    Assert2(ok, "Failed to submit command %d", cmd);
-    int result = config_->Wait(index, NSERVERS, term);
-    AssertWaitNoError(result, index);
-    index_ = index;
-  }
-
-  Log_info("[SPEC-TEST] Baseline established, index={}", index_);
-
-  // Submit a new entry that will be speculatively committed
-  int specCmd = 950;
-  uint64_t specIndex = 0;
-  uint64_t specTerm = 0;
-  bool ok = config_->Start(leader1_id, specCmd, &specIndex, &specTerm);
-  Assert2(ok, "Failed to submit speculative command");
-
-  Log_info("[SPEC-TEST] Submitted speculative entry {} at index {} term {}",
-           specCmd, specIndex, specTerm);
-
-  // Wait for memory quorum (but not necessarily durable quorum)
-  // In practice, entries are replicated quickly via heartbeats
-  Fiber::sleep(300000);  // 300ms - should be enough for memory replication
-
-  // Now crash the leader
-  Log_info("[SPEC-TEST] Crashing leader {}", leader1_id);
-  config_->Kill(leader1_id);
-
-  // Wait for new election
-  Fiber::sleep(ELECTIONTIMEOUT * 2);
-
-  // Find new leader
-  int leader2 = config_->OneLeader();
-  Assert2(leader2 >= 0, "No new leader elected after crash");
-
-  siteid_t leader2_id = config_->getServerIdByIndex(leader2);
-  Assert2(leader2_id != leader1_id, "Same leader elected (should be different)");
-
-  Log_info("[SPEC-TEST] New leader: {} (site {})", leader2, leader2_id);
-
-  // Wait for new leader to become secured
-  Fiber::sleep(500000);
-
-  secured = config_->IsSecuredLeader(leader2_id);
-  Log_info("[SPEC-TEST] New leader secured: {}", secured);
-
-  // Now commit a new entry with the new leader to trigger commit of any
-  // previous entries (including our speculative entry if it survived)
-  int newCmd = 960;
-  uint64_t newIndex = 0;
-  uint64_t newTerm = 0;
-  ok = config_->Start(leader2_id, newCmd, &newIndex, &newTerm);
-  Assert2(ok, "Failed to submit command to new leader");
-
-  Log_info("[SPEC-TEST] Submitted new entry {} at index {} term {}",
-           newCmd, newIndex, newTerm);
-
-  // Wait for the entry to commit with the remaining servers
-  int result = config_->Wait(newIndex, NSERVERS - 1, newTerm);
-  AssertWaitNoError(result, newIndex);
-
-  Log_info("[SPEC-TEST] New entry committed at index {}", newIndex);
-
-  // Now restart the crashed leader
-  Log_info("[SPEC-TEST] Restarting crashed leader {}", leader1_id);
-  config_->Restart(leader1_id);
-
-  // Wait for it to catch up
-  Fiber::sleep(ELECTIONTIMEOUT * 2);
-
-  // Verify all servers agree on the committed entries
-  int nCommitted = config_->NCommitted(newIndex);
-  Log_info("[SPEC-TEST] Number of servers with entry at index {}: {}",
-           newIndex, nCommitted);
-
-  // Check if the speculative entry survived
-  // It should either:
-  // 1. Be at specIndex if the new leader had it, or
-  // 2. Be overwritten if the new leader didn't have it
-  // Either outcome is acceptable - we're testing that the system is consistent
-
-  // Verify the new entry is committed on all servers
-  Assert2(nCommitted >= NSERVERS - 1, "Not enough servers committed the entry");
-
-  // Verify invariants on the current leader
-  Assert2(config_->VerifySpecInvariants(leader2_id), "Invariants violated");
-
-  // Final verification: commit one more entry with all servers
-  int finalCmd = 999;
-  ok = config_->Start(leader2_id, finalCmd, &newIndex, &newTerm);
-  if (ok) {
-    result = config_->Wait(newIndex, NSERVERS, newTerm);
-    if (result >= 0) {
-      Log_info("[SPEC-TEST] Final commit succeeded with all servers");
-    }
-  }
-
-  Log_info("[SPEC-TEST] Speculative entries survive crash test PASSED!");
-
-  Passed2();
-}
-
-/**
- * Test that voter crash before VoteDurable fsync is handled correctly.
- *
- * Scenario:
- * 1. A gets memory votes from {A, B, C, D, E}, becomes spec leader
- * 2. Kill and restart a follower (simulating crash before VoteDurable fsync)
- * 3. Follower restarts → sends notifyRestart to leader
- * 4. Leader removes follower from specVoters
- * 5. In 5-node cluster: still quorum (4/5) → leader continues
- * 6. Verify system continues operating correctly
- *
- * Note: This tests that a follower whose vote wasn't durably persisted
- * doesn't break the system when it restarts.
- */
-int RaftLabTest::testVoterCrashBeforeVoteFsync(void) {
-  Init2(30, "Voter crash before VoteDurable fsync");
-
-  // Wait for initial election
-  Fiber::sleep(ELECTIONTIMEOUT);
-
-  int leader = config_->OneLeader();
-  Assert2(leader >= 0, "No leader elected");
-
-  siteid_t leader_id = config_->getServerIdByIndex(leader);
-  Log_info("[SPEC-TEST] Initial leader: {} (site {})", leader, leader_id);
-
-  // Check initial specVoters count
-  size_t specVotersBefore = config_->GetSpecVotersCount(leader_id);
-  Log_info("[SPEC-TEST] Initial specVoters count: {}", specVotersBefore);
-
-  // In a normal election, leader should have spec quorum from all servers
-  Assert2(specVotersBefore >= 3, "Leader should have spec quorum");
-
-  // Commit a baseline entry to verify initial state
-  int cmd = 1000;
-  uint64_t index = 0;
-  uint64_t term = 0;
-  bool ok = config_->Start(leader_id, cmd, &index, &term);
-  Assert2(ok, "Failed to submit baseline command");
-  int result = config_->Wait(index, NSERVERS, term);
-  AssertWaitNoError(result, index);
-  index_ = index;
-
-  Log_info("[SPEC-TEST] Baseline committed at index {}", index);
-
-  // Pick a follower to simulate crash before VoteDurable
-  siteid_t follower_to_crash = 0;
-  for (int i = 0; i < NSERVERS; i++) {
-    siteid_t svr = config_->getServerIdByIndex(i);
-    if (svr != leader_id) {
-      follower_to_crash = svr;
-      break;
-    }
-  }
-
-  Log_info("[SPEC-TEST] Simulating crash of follower {} before VoteDurable fsync",
-           follower_to_crash);
-
-  // Kill the follower (simulating crash before vote was durably persisted)
-  config_->Kill(follower_to_crash);
-
-  // Brief wait to ensure crash is processed
-  Fiber::sleep(200000);  // 200ms
-
-  // Restart the follower - it will send notifyRestart
-  config_->Restart(follower_to_crash);
-
-  // Wait for notifyRestart and recovery
-  Fiber::sleep(ELECTIONTIMEOUT);
-
-  // Leader should still be leader (5-node cluster, lost 1 spec voter → 4/5 still quorum)
-  int current_leader = config_->OneLeader();
-  if (current_leader < 0) {
-    // Election may be happening, wait longer
-    Fiber::sleep(ELECTIONTIMEOUT);
-    current_leader = config_->OneLeader();
-  }
-
-  Log_info("[SPEC-TEST] Current leader after restart: {}", current_leader);
-
-  // Check specVoters count after restart
-  size_t specVotersAfter = 0;
-  if (current_leader >= 0) {
-    siteid_t current_leader_id = config_->getServerIdByIndex(current_leader);
-    specVotersAfter = config_->GetSpecVotersCount(current_leader_id);
-    Log_info("[SPEC-TEST] SpecVoters after restart: {} (leader {})",
-             specVotersAfter, current_leader_id);
-  }
-
-  // The system should continue functioning regardless of leader change
-  // Try to commit a new entry
-  if (current_leader >= 0) {
-    siteid_t current_leader_id = config_->getServerIdByIndex(current_leader);
-    int newCmd = 1001;
-    uint64_t newIndex = 0;
-    uint64_t newTerm = 0;
-    ok = config_->Start(current_leader_id, newCmd, &newIndex, &newTerm);
-    if (ok) {
-      result = config_->Wait(newIndex, NSERVERS - 1, newTerm);
-      if (result >= 0) {
-        Log_info("[SPEC-TEST] New entry committed after restart at index {}", newIndex);
-      } else {
-        Log_info("[SPEC-TEST] Entry pending commit (result={})", result);
-      }
-    }
-  }
-
-  // Verify all servers eventually agree
-  // Wait for full recovery
-  Fiber::sleep(ELECTIONTIMEOUT);
-
-  // Try to commit one final entry with full cluster
-  current_leader = config_->OneLeader();
-  Assert2(current_leader >= 0, "Should have a leader after recovery");
-
-  siteid_t final_leader_id = config_->getServerIdByIndex(current_leader);
-  int finalCmd = 1002;
-  uint64_t finalIndex = 0;
-  uint64_t finalTerm = 0;
-  ok = config_->Start(final_leader_id, finalCmd, &finalIndex, &finalTerm);
-  Assert2(ok, "Failed to submit final command");
-
-  result = config_->Wait(finalIndex, NSERVERS, finalTerm);
-  AssertWaitNoError(result, finalIndex);
-
-  Log_info("[SPEC-TEST] Final entry committed with all servers at index {}", finalIndex);
-
-  // Verify invariants
-  Assert2(config_->VerifySpecInvariants(final_leader_id), "Invariants violated");
-
-  Log_info("[SPEC-TEST] Voter crash before VoteDurable fsync test PASSED!");
-
-  Passed2();
-}
 
 /**
  * Test double-vote prevention after crash.
@@ -3400,12 +1442,8 @@ int RaftLabTest::testDoubleVotePrevention(void) {
   siteid_t leader1_id = config_->getServerIdByIndex(leader1);
   Log_info("[SPEC-TEST] Initial leader: {} (site {})", leader1, leader1_id);
 
-  // Wait for leader to become secured
+  // Let leadership settle
   Fiber::sleep(500000);
-
-  bool secured = config_->IsSecuredLeader(leader1_id);
-  Log_info("[SPEC-TEST] Leader secured: {}", secured);
-  Assert2(secured, "Leader should be secured");
 
   // Commit some entries to establish state
   for (int i = 0; i < 3; i++) {
@@ -3554,11 +1592,8 @@ int RaftLabTest::testRapidRestarts(void) {
   siteid_t leader_id = config_->getServerIdByIndex(leader);
   Log_info("[SPEC-TEST] Initial leader: {} (site {})", leader, leader_id);
 
-  // Wait for leader to become secured
+  // Let leadership settle
   Fiber::sleep(500000);
-
-  bool secured = config_->IsSecuredLeader(leader_id);
-  Assert2(secured, "Leader should be secured");
 
   // Commit initial entries
   for (int i = 0; i < 3; i++) {
@@ -3709,11 +1744,8 @@ int RaftLabTest::testConcurrentElections(void) {
   siteid_t leader_id = config_->getServerIdByIndex(leader);
   Log_info("[SPEC-TEST] Initial leader: {} (site {})", leader, leader_id);
 
-  // Wait for leader to become secured
+  // Let leadership settle
   Fiber::sleep(500000);
-
-  bool secured = config_->IsSecuredLeader(leader_id);
-  Assert2(secured, "Leader should be secured");
 
   // Commit initial entries
   for (int i = 0; i < 2; i++) {
@@ -3765,11 +1797,8 @@ int RaftLabTest::testConcurrentElections(void) {
     Log_info("[SPEC-TEST] Election {}: new leader {} (site {})",
              e + 1, new_leader, new_leader_id);
 
-    // Wait for new leader to become secured
+    // Let the new leader settle
     Fiber::sleep(500000);
-
-    secured = config_->IsSecuredLeader(new_leader_id);
-    Log_info("[SPEC-TEST] Election {}: new leader secured={}", e + 1, secured);
 
     // Commit an entry with new leader
     int cmd = 3100 + e;
@@ -3878,12 +1907,11 @@ int RaftLabTest::testSpeculativeCommitNotification(void) {
   siteid_t leader_id = config_->getServerIdByIndex(leader);
   Log_info("[CALLBACK-TEST] Leader: {} (site {})", leader, leader_id);
 
-  // Wait for leader to become secured
+  // Let leadership settle
   Fiber::sleep(500000);
 
   // Track callback invocations
   std::atomic<int> specNotifications{0};
-  std::atomic<int> durableNotifications{0};
   std::atomic<bool> gotSpeculative{false};
 
   // Submit entry with callback
@@ -3897,8 +1925,6 @@ int RaftLabTest::testSpeculativeCommitNotification(void) {
       if (status == CommitStatus::SPECULATIVE) {
         specNotifications++;
         gotSpeculative = true;
-      } else if (status == CommitStatus::DURABLE) {
-        durableNotifications++;
       }
     });
 
@@ -3909,8 +1935,7 @@ int RaftLabTest::testSpeculativeCommitNotification(void) {
   Fiber::sleep(500000);  // 500ms - should be enough for memory replication
 
   // Verify we got SPECULATIVE notification
-  Log_info("[CALLBACK-TEST] Spec notifications: {}, Durable: {}",
-           specNotifications.load(), durableNotifications.load());
+  Log_info("[CALLBACK-TEST] Spec notifications: {}", specNotifications.load());
 
   Assert2(gotSpeculative.load(), "Should have received SPECULATIVE notification");
   Assert2(specNotifications.load() >= 1, "Should have at least 1 SPECULATIVE notification");
@@ -3921,162 +1946,17 @@ int RaftLabTest::testSpeculativeCommitNotification(void) {
 }
 
 /**
- * Test that client gets DURABLE notification.
- *
- * Scenario:
- * 1. Establish secured leader
- * 2. Submit entry with callback
- * 3. Wait for durable commit
- * 4. Verify callback receives DURABLE status
- */
-int RaftLabTest::testDurableCommitNotification(void) {
-  Init2(35, "Durable commit notification");
-
-  // Wait for initial election
-  Fiber::sleep(ELECTIONTIMEOUT);
-
-  int leader = config_->OneLeader();
-  Assert2(leader >= 0, "No leader elected");
-
-  siteid_t leader_id = config_->getServerIdByIndex(leader);
-  Log_info("[CALLBACK-TEST] Leader: {} (site {})", leader, leader_id);
-
-  // Wait for leader to become secured
-  Fiber::sleep(500000);
-
-  bool secured = config_->IsSecuredLeader(leader_id);
-  Assert2(secured, "Leader should be secured");
-
-  // Track callback invocations
-  std::atomic<int> specNotifications{0};
-  std::atomic<int> durableNotifications{0};
-  std::atomic<bool> gotDurable{false};
-
-  // Submit entry with callback
-  int cmd = 4100;
-  uint64_t index = 0;
-  uint64_t term = 0;
-
-  bool ok = config_->StartWithCallback(leader_id, cmd, &index, &term,
-    [&](CommitStatus status) {
-      Log_info("[CALLBACK-TEST] Received notification: status={}", static_cast<int>(status));
-      if (status == CommitStatus::SPECULATIVE) {
-        specNotifications++;
-      } else if (status == CommitStatus::DURABLE) {
-        durableNotifications++;
-        gotDurable = true;
-      }
-    });
-
-  Assert2(ok, "Failed to submit command with callback");
-  Log_info("[CALLBACK-TEST] Submitted command {} at index {}", cmd, index);
-
-  // Wait for the entry to be durably committed (disk quorum with secured leader)
-  // This requires fsync to complete on majority
-  Fiber::sleep(1000000);  // 1s - should be enough for durable commit
-
-  // Verify we got DURABLE notification
-  Log_info("[CALLBACK-TEST] Spec notifications: {}, Durable: {}",
-           specNotifications.load(), durableNotifications.load());
-
-  Assert2(gotDurable.load(), "Should have received DURABLE notification");
-  Assert2(durableNotifications.load() >= 1, "Should have at least 1 DURABLE notification");
-
-  Log_info("[CALLBACK-TEST] Durable commit notification test PASSED!");
-
-  Passed2();
-}
-
-/**
- * Test that SPECULATIVE notification comes before DURABLE.
- *
- * Scenario:
- * 1. Establish secured leader
- * 2. Submit entry with callback
- * 3. Track order of notifications
- * 4. Verify SPECULATIVE comes before DURABLE
- */
-int RaftLabTest::testNotificationOrdering(void) {
-  Init2(36, "Notification ordering (SPECULATIVE before DURABLE)");
-
-  // Wait for initial election
-  Fiber::sleep(ELECTIONTIMEOUT);
-
-  int leader = config_->OneLeader();
-  Assert2(leader >= 0, "No leader elected");
-
-  siteid_t leader_id = config_->getServerIdByIndex(leader);
-  Log_info("[CALLBACK-TEST] Leader: {} (site {})", leader, leader_id);
-
-  // Wait for leader to become secured
-  Fiber::sleep(500000);
-
-  bool secured = config_->IsSecuredLeader(leader_id);
-  Assert2(secured, "Leader should be secured");
-
-  // Track callback invocation order
-  std::atomic<int> callCount{0};
-  std::atomic<int> specOrder{-1};
-  std::atomic<int> durableOrder{-1};
-
-  // Submit entry with callback
-  int cmd = 4200;
-  uint64_t index = 0;
-  uint64_t term = 0;
-
-  bool ok = config_->StartWithCallback(leader_id, cmd, &index, &term,
-    [&](CommitStatus status) {
-      int order = callCount++;
-      Log_info("[CALLBACK-TEST] Notification #{}: status={}", order, static_cast<int>(status));
-      if (status == CommitStatus::SPECULATIVE) {
-        specOrder = order;
-      } else if (status == CommitStatus::DURABLE) {
-        durableOrder = order;
-      }
-    });
-
-  Assert2(ok, "Failed to submit command with callback");
-  Log_info("[CALLBACK-TEST] Submitted command {} at index {}", cmd, index);
-
-  // Wait for both notifications
-  Fiber::sleep(1000000);  // 1s
-
-  // Verify ordering
-  Log_info("[CALLBACK-TEST] Spec order: {}, Durable order: {}",
-           specOrder.load(), durableOrder.load());
-
-  // SPECULATIVE should come first (if both arrived)
-  if (specOrder.load() >= 0 && durableOrder.load() >= 0) {
-    Assert2(specOrder.load() < durableOrder.load(),
-            "SPECULATIVE should come before DURABLE");
-  } else if (durableOrder.load() >= 0 && specOrder.load() < 0) {
-    // If we only got DURABLE, that's actually OK - it means SPECULATIVE
-    // was delivered immediately before we started tracking (edge case)
-    Log_info("[CALLBACK-TEST] Only got DURABLE - SPECULATIVE may have been immediate");
-  }
-
-  // At minimum, we should get at least one notification
-  Assert2(callCount.load() >= 1, "Should have at least 1 notification");
-
-  Log_info("[CALLBACK-TEST] Notification ordering test PASSED!");
-
-  Passed2();
-}
-
-/**
  * Test that unsecured leader step-down notifies ROLLEDBACK to pending clients.
  *
  * Scenario:
- * 1. Establish an unsecured leader (before VoteDurable quorum)
- *    - This is tricky because VoteDurable usually arrives quickly
+ * 1. Establish an unsecured leader (every memory-only leader is unsecured)
  *    - We'll test the rollback mechanism by crashing majority after entry submission
  * 2. Submit entry with callback
  * 3. Crash majority of followers to trigger step-down
  * 4. Verify callback receives ROLLEDBACK (if leader is still alive)
  *
- * Note: Due to the async nature and quick VoteDurable, we may not be able to
- * catch a truly unsecured leader. But we can test that when leadership changes,
- * pending callbacks get notified appropriately.
+ * Note: We test that when leadership changes, pending callbacks get notified
+ * appropriately.
  */
 int RaftLabTest::testUnsecuredStepDownNotifiesRollback(void) {
   Init2(37, "Unsecured step-down notifies rollback");
@@ -4090,15 +1970,14 @@ int RaftLabTest::testUnsecuredStepDownNotifiesRollback(void) {
   siteid_t leader_id = config_->getServerIdByIndex(leader);
   Log_info("[CALLBACK-TEST] Leader: {} (site {})", leader, leader_id);
 
-  // Wait for leader to become secured first (so we have a baseline)
+  // Let leadership settle first (so we have a baseline)
   Fiber::sleep(500000);
 
   // Track callback invocations
   std::atomic<int> specNotifications{0};
-  std::atomic<int> durableNotifications{0};
   std::atomic<int> rollbackNotifications{0};
 
-  // Submit entry with callback - this will likely become durable
+  // Submit entry with callback - this will likely commit
   int cmd = 4300;
   uint64_t index = 0;
   uint64_t term = 0;
@@ -4108,8 +1987,6 @@ int RaftLabTest::testUnsecuredStepDownNotifiesRollback(void) {
       Log_info("[CALLBACK-TEST] Received notification: status={}", static_cast<int>(status));
       if (status == CommitStatus::SPECULATIVE) {
         specNotifications++;
-      } else if (status == CommitStatus::DURABLE) {
-        durableNotifications++;
       } else if (status == CommitStatus::ROLLEDBACK) {
         rollbackNotifications++;
       }
@@ -4162,8 +2039,8 @@ int RaftLabTest::testUnsecuredStepDownNotifiesRollback(void) {
   Fiber::sleep(ELECTIONTIMEOUT * 2);
 
   // Log results
-  Log_info("[CALLBACK-TEST] Results: spec={} durable={} rollback={}",
-           specNotifications.load(), durableNotifications.load(), rollbackNotifications.load());
+  Log_info("[CALLBACK-TEST] Results: spec={} rollback={}",
+           specNotifications.load(), rollbackNotifications.load());
   Log_info("[CALLBACK-TEST] Entry2 results: spec={} rollback={}",
            cmd2Spec.load(), cmd2Rollback.load());
 
@@ -4176,12 +2053,12 @@ int RaftLabTest::testUnsecuredStepDownNotifiesRollback(void) {
   Fiber::sleep(ELECTIONTIMEOUT * 2);
 
   // The test passes if:
-  // 1. First command got at least speculative (and possibly durable)
+  // 1. First command got speculative
   // 2. The infrastructure handled the step-down (even if no rollback notification
   //    was sent because the leader crashed before it could notify)
 
   // Verify at least first entry was speculatively committed
-  Assert2(specNotifications.load() >= 1 || durableNotifications.load() >= 1,
+  Assert2(specNotifications.load() >= 1,
           "First entry should have been at least speculatively committed");
 
   // Final cleanup - ensure cluster is operational
@@ -4193,250 +2070,6 @@ int RaftLabTest::testUnsecuredStepDownNotifiesRollback(void) {
   Assert2(final_leader >= 0, "Should have leader after recovery");
 
   Log_info("[CALLBACK-TEST] Unsecured step-down rollback test PASSED!");
-
-  Passed2();
-}
-
-/**
- * Test the full commit path: SPECULATIVE -> DURABLE -> persist after restart.
- *
- * Happy path scenario:
- * 1. Submit request to secured leader
- * 2. Verify client callback receives SPECULATIVE
- * 3. Wait for fsyncs to complete
- * 4. Verify client callback receives DURABLE
- * 5. Crash/restart all servers
- * 6. Verify entry persisted correctly
- */
-int RaftLabTest::testFullCommitPath(void) {
-  Init2(38, "Full commit path (SPECULATIVE -> DURABLE -> persist)");
-
-  // Wait for initial election
-  Fiber::sleep(ELECTIONTIMEOUT);
-
-  int leader = config_->OneLeader();
-  Assert2(leader >= 0, "No leader elected");
-
-  siteid_t leader_id = config_->getServerIdByIndex(leader);
-  Log_info("[FULL-PATH-TEST] Leader: {} (site {})", leader, leader_id);
-
-  // Wait for leader to become secured
-  Fiber::sleep(500000);
-
-  bool secured = config_->IsSecuredLeader(leader_id);
-  Assert2(secured, "Leader should be secured for full path test");
-
-  // Track callback invocations with timestamps
-  std::atomic<bool> gotSpeculative{false};
-  std::atomic<bool> gotDurable{false};
-  std::atomic<uint64_t> specTime{0};
-  std::atomic<uint64_t> durableTime{0};
-
-  // Submit entry with callback
-  int cmd = 4400;
-  uint64_t index = 0;
-  uint64_t term = 0;
-
-  Log_info("[FULL-PATH-TEST] Submitting command {} with callback", cmd);
-
-  bool ok = config_->StartWithCallback(leader_id, cmd, &index, &term,
-    [&](CommitStatus status) {
-      uint64_t now = Time::now(false);
-      Log_info("[FULL-PATH-TEST] Callback received: status={} time={}",
-               static_cast<int>(status), now);
-      if (status == CommitStatus::SPECULATIVE) {
-        gotSpeculative = true;
-        specTime = now;
-      } else if (status == CommitStatus::DURABLE) {
-        gotDurable = true;
-        durableTime = now;
-      }
-    });
-
-  Assert2(ok, "Failed to submit command with callback");
-  Log_info("[FULL-PATH-TEST] Submitted command {} at index {} term {}", cmd, index, term);
-
-  // Step 2: Wait for SPECULATIVE (memory quorum)
-  // Should be very fast
-  Fiber::sleep(200000);  // 200ms
-  Log_info("[FULL-PATH-TEST] After 200ms: spec={} durable={}",
-           gotSpeculative.load(), gotDurable.load());
-
-  // Step 3: Wait for DURABLE (disk quorum with secured leader)
-  // This requires fsync to complete
-  Fiber::sleep(1000000);  // 1s total
-  Log_info("[FULL-PATH-TEST] After 1s: spec={} durable={}",
-           gotSpeculative.load(), gotDurable.load());
-
-  // Step 4: Verify both notifications received
-  Assert2(gotSpeculative.load(), "Should have received SPECULATIVE notification");
-  Assert2(gotDurable.load(), "Should have received DURABLE notification");
-
-  // Verify SPECULATIVE came before DURABLE
-  if (specTime.load() > 0 && durableTime.load() > 0) {
-    Assert2(specTime.load() <= durableTime.load(),
-            "SPECULATIVE should come before or at DURABLE");
-    Log_info("[FULL-PATH-TEST] Spec time: {}, Durable time: {}, delta: {} us",
-             specTime.load(), durableTime.load(), durableTime.load() - specTime.load());
-  }
-
-  // Step 5: Restart all servers to verify persistence
-  Log_info("[FULL-PATH-TEST] Restarting all servers...");
-
-  // First, kill all servers
-  for (int i = 0; i < NSERVERS; i++) {
-    siteid_t svr = config_->getServerIdByIndex(i);
-    config_->Kill(svr);
-  }
-
-  Fiber::sleep(200000);  // 200ms
-
-  // Restart all servers
-  for (int i = 0; i < NSERVERS; i++) {
-    siteid_t svr = config_->getServerIdByIndex(i);
-    config_->Restart(svr);
-  }
-
-  // Wait for election
-  Fiber::sleep(ELECTIONTIMEOUT * 2);
-
-  // Step 6: Verify entry persisted
-  int new_leader = config_->OneLeader();
-  if (new_leader < 0) {
-    Fiber::sleep(ELECTIONTIMEOUT);
-    new_leader = config_->OneLeader();
-  }
-  Assert2(new_leader >= 0, "Should have leader after restart");
-
-  Log_info("[FULL-PATH-TEST] New leader after restart: {}", new_leader);
-
-  // Check if entry is committed on servers
-  int nCommitted = config_->NCommitted(index);
-  Log_info("[FULL-PATH-TEST] Servers with entry at index {}: {}", index, nCommitted);
-
-  // The entry should be committed on all servers (it was durably committed)
-  Assert2(nCommitted >= 3, "Entry should be committed on majority after restart");
-
-  // Submit another entry to verify system is operational
-  siteid_t new_leader_id = config_->getServerIdByIndex(new_leader);
-  int finalCmd = 4401;
-  uint64_t finalIndex = 0;
-  uint64_t finalTerm = 0;
-
-  ok = config_->Start(new_leader_id, finalCmd, &finalIndex, &finalTerm);
-  Assert2(ok, "Failed to submit final command");
-
-  int result = config_->Wait(finalIndex, NSERVERS, finalTerm);
-  AssertWaitNoError(result, finalIndex);
-
-  Log_info("[FULL-PATH-TEST] Final entry committed at index {}", finalIndex);
-  Log_info("[FULL-PATH-TEST] Full commit path test PASSED!");
-
-  Passed2();
-}
-
-/**
- * Test that durably committed entries don't receive ROLLEDBACK on step-down.
- *
- * This test verifies:
- * 1. Entries that reached DURABLE status are removed from pendingCallbacks_
- * 2. Therefore, they cannot receive ROLLEDBACK notifications
- * 3. The callback lifecycle is correct: SPECULATIVE -> DURABLE -> removed
- *
- * Note: Full partial rollback testing (entries > securedLogIndex get ROLLEDBACK
- * while entries <= securedLogIndex don't) is covered by the implementation logic
- * in NotifyRollback() which filters by idx > securedLogIndex_. The complex
- * timing-dependent scenario to create entries in (securedLogIndex, specCommitIndex]
- * that are pending during step-down is hard to orchestrate deterministically.
- */
-int RaftLabTest::testSecuredStepDownPartialRollback(void) {
-  Init2(39, "Durable entries not rolled back on step-down");
-
-  // Wait for initial election
-  Fiber::sleep(ELECTIONTIMEOUT);
-
-  int leader = config_->OneLeader();
-  Assert2(leader >= 0, "No leader elected");
-
-  siteid_t leader_id = config_->getServerIdByIndex(leader);
-  Log_info("[PARTIAL-ROLLBACK] Leader: {} (site {})", leader, leader_id);
-
-  // Wait for leader to become secured
-  Fiber::sleep(500000);
-
-  bool secured = config_->IsSecuredLeader(leader_id);
-  Assert2(secured, "Leader should be secured for this test");
-
-  // Submit entry that will become durably committed
-  int durableCmd = 4500;
-  uint64_t durableIndex = 0;
-  uint64_t durableTerm = 0;
-
-  std::atomic<bool> durableGotSpec{false};
-  std::atomic<bool> durableGotDurable{false};
-  std::atomic<bool> durableGotRollback{false};
-
-  bool ok = config_->StartWithCallback(leader_id, durableCmd, &durableIndex, &durableTerm,
-    [&](CommitStatus status) {
-      Log_info("[PARTIAL-ROLLBACK] Durable entry callback: status={}", static_cast<int>(status));
-      if (status == CommitStatus::SPECULATIVE) {
-        durableGotSpec = true;
-      } else if (status == CommitStatus::DURABLE) {
-        durableGotDurable = true;
-      } else if (status == CommitStatus::ROLLEDBACK) {
-        durableGotRollback = true;
-      }
-    });
-
-  Assert2(ok, "Failed to submit durable command");
-  Log_info("[PARTIAL-ROLLBACK] Submitted durable entry at index {}", durableIndex);
-
-  // Wait for this entry to become durably committed
-  Fiber::sleep(500000);
-
-  Assert2(durableGotSpec.load(), "Entry should have been speculatively committed");
-  Assert2(durableGotDurable.load(), "Entry should be durably committed by now");
-  Log_info("[PARTIAL-ROLLBACK] Entry is durably committed");
-
-  // Get current securedLogIndex
-  uint64_t securedLog = config_->GetSecuredLogIndex(leader_id);
-  Log_info("[PARTIAL-ROLLBACK] securedLogIndex: {}, durableIndex: {}", securedLog, durableIndex);
-  Assert2(durableIndex <= securedLog, "Durable entry should be at or below securedLogIndex");
-
-  // Force step-down by disconnecting leader and forcing new election
-  config_->Disconnect(leader_id);
-  Log_info("[PARTIAL-ROLLBACK] Disconnected leader {} to force new election", leader_id);
-
-  // Wait for new election
-  Fiber::sleep(ELECTIONTIMEOUT * 2);
-
-  // Reconnect old leader so it can receive higher term and step down
-  config_->Reconnect(leader_id);
-  Log_info("[PARTIAL-ROLLBACK] Reconnected old leader {}", leader_id);
-
-  // Wait for old leader to see higher term and step down
-  Fiber::sleep(ELECTIONTIMEOUT);
-
-  // Check results
-  Log_info("[PARTIAL-ROLLBACK] Results:");
-  Log_info("  Durable entry (index {}): spec={} durable={} rollback={}",
-           durableIndex, durableGotSpec.load(), durableGotDurable.load(), durableGotRollback.load());
-
-  // Verify: durable entry should NOT have received ROLLEDBACK
-  // The callback was removed after DURABLE notification, so it cannot receive ROLLEDBACK
-  Assert2(!durableGotRollback.load(),
-          "Durable entry should NOT receive ROLLEDBACK notification");
-
-  // Final verification: cluster should be operational
-  int new_leader = config_->OneLeader();
-  if (new_leader < 0) {
-    Fiber::sleep(ELECTIONTIMEOUT);
-    new_leader = config_->OneLeader();
-  }
-  Assert2(new_leader >= 0, "Should have leader after test");
-
-  Log_info("[PARTIAL-ROLLBACK] New leader: {}", new_leader);
-  Log_info("[PARTIAL-ROLLBACK] Partial rollback test PASSED!");
 
   Passed2();
 }
@@ -4635,197 +2268,6 @@ int RaftLabTest::testSpeculativeEntriesOverwritten(void) {
   Passed2();
 }
 
-/**
- * Test 41: testDurableQuorumPreemptsStepDown
- *
- * Tests Phase 6: Relaxed invariant - leader doesn't step down if durableVoters
- * reaches quorum even when specVoters falls below quorum.
- *
- * Scenario:
- * 1. Start 5-node cluster, wait for leader to become secured
- * 2. Get durableVoters to reach quorum (3)
- * 3. Have followers restart (removes from specVoters but not durableVoters)
- * 4. Verify leader doesn't step down (durableVoters still >= quorum)
- */
-int RaftLabTest::testDurableQuorumPreemptsStepDown(void) {
-  Init2(41, "Durable quorum preempts step-down");
-
-  // Wait for initial election and leadership stabilization
-  Fiber::sleep(ELECTIONTIMEOUT);
-
-  int leader = config_->OneLeader();
-  Assert2(leader >= 0, "No leader elected");
-
-  siteid_t leader_id = config_->getServerIdByIndex(leader);
-  Log_info("[DURABLE-QUORUM-TEST] Initial leader: {} (site {})", leader, leader_id);
-
-  // Commit entries to establish secured leadership
-  // This ensures fsyncs complete and leader becomes secured
-  DoAgreeAndAssertIndex(6000, NSERVERS, index_++);
-  DoAgreeAndAssertIndex(6001, NSERVERS, index_++);
-
-  // Wait for durable commits (fsyncs to complete)
-  Fiber::sleep(500000);  // 500ms for fsyncs
-
-  // Verify leader is still the same and secured
-  int current_leader = config_->OneLeader();
-  Assert2(current_leader >= 0, "Leader lost after commits");
-  Assert2(current_leader == leader, "Leader changed unexpectedly");
-
-  auto server = config_->GetServer(leader_id);
-  Assert2(server != nullptr, "Leader server is null");
-
-  // Check leader is secured (has durable quorum)
-  bool isSecured = config_->IsSecuredLeader(leader_id);
-  Log_info("[DURABLE-QUORUM-TEST] Leader securedLeader={}", isSecured);
-
-  // Get specVoters and durableVoters counts
-  size_t specVotersCount = config_->GetSpecVotersCount(leader_id);
-  size_t durableVotersCount = config_->GetDurableVotersCount(leader_id);
-  Log_info("[DURABLE-QUORUM-TEST] Before restarts: specVoters={}, durableVoters={}",
-           specVotersCount, durableVotersCount);
-
-  Assert2(isSecured, "Leader should be secured after commits with fsync");
-
-  // Now restart 2 followers (not leader) - this removes them from specVoters
-  // but keeps them in durableVoters (their durable votes survive restart)
-  std::vector<siteid_t> followers;
-  for (int i = 0; i < NSERVERS; i++) {
-    siteid_t svr = config_->getServerIdByIndex(i);
-    if (svr != leader_id) {
-      followers.push_back(svr);
-    }
-  }
-
-  Assert2(followers.size() >= 2, "Need at least 2 followers");
-
-  // Restart 2 followers - this triggers notifyRestart which removes from specVoters
-  Log_info("[DURABLE-QUORUM-TEST] Restarting followers {} and {}",
-           followers[0], followers[1]);
-
-  config_->Restart(followers[0]);
-  Fiber::sleep(100000);  // 100ms
-  config_->Restart(followers[1]);
-  Fiber::sleep(100000);  // 100ms
-
-  // Wait for notifyRestart to be processed
-  Fiber::sleep(300000);  // 300ms
-
-  // Check if leader is still leader
-  current_leader = config_->OneLeader();
-  Log_info("[DURABLE-QUORUM-TEST] Leader after restarts: {} (expected {})",
-           current_leader, leader);
-
-  // Get updated counts
-  specVotersCount = config_->GetSpecVotersCount(leader_id);
-  durableVotersCount = config_->GetDurableVotersCount(leader_id);
-  isSecured = config_->IsSecuredLeader(leader_id);
-  Log_info("[DURABLE-QUORUM-TEST] After restarts: specVoters={}, durableVoters={}, secured={}",
-           specVotersCount, durableVotersCount, isSecured);
-
-  // Key assertion: Leader should still be leader because durableVoters >= quorum
-  // even if specVoters < quorum after restarts
-  Assert2(current_leader == leader,
-          "Leader should NOT step down when durableVoters >= quorum");
-
-  // Verify system still works by committing another entry
-  DoAgreeAndAssertIndex(6002, NSERVERS, index_++);
-
-  Log_info("[DURABLE-QUORUM-TEST] System still operational - test PASSED!");
-
-  Passed2();
-}
-
-/**
- * Test 42: testSecuredViaDurableAfterSpecLoss
- *
- * Tests that an unsecured leader can become secured via durable quorum
- * even after losing spec quorum due to restarts.
- *
- * Scenario:
- * 1. Start 5-node cluster
- * 2. Leader gets memory votes (spec leader) but not yet durable quorum
- * 3. VoteDurable arrives, building durableVoters
- * 4. Follower restarts (removes from specVoters)
- * 5. If durableVoters reaches quorum before spec quorum lost, leader becomes secured
- */
-int RaftLabTest::testSecuredViaDurableAfterSpecLoss(void) {
-  Init2(42, "Secured via durable quorum after spec loss");
-
-  // Wait for initial election
-  Fiber::sleep(ELECTIONTIMEOUT);
-
-  int leader = config_->OneLeader();
-  Assert2(leader >= 0, "No leader elected");
-
-  siteid_t leader_id = config_->getServerIdByIndex(leader);
-  Log_info("[SECURED-VIA-DURABLE-TEST] Initial leader: {} (site {})", leader, leader_id);
-
-  // Commit entries to establish stable system and ensure durable quorum
-  DoAgreeAndAssertIndex(6100, NSERVERS, index_++);
-
-  // Wait for fsyncs to complete (VoteDurable messages sent)
-  Fiber::sleep(500000);  // 500ms
-
-  // Verify leader is secured
-  bool isSecured = config_->IsSecuredLeader(leader_id);
-  size_t specVotersCount = config_->GetSpecVotersCount(leader_id);
-  size_t durableVotersCount = config_->GetDurableVotersCount(leader_id);
-
-  Log_info("[SECURED-VIA-DURABLE-TEST] Initial state: secured={}, specVoters={}, durableVoters={}",
-           isSecured, specVotersCount, durableVotersCount);
-
-  // For this test to be meaningful, we need to verify the Phase 6 logic works
-  // The key insight is: once durableVoters >= quorum, losing specVoters doesn't matter
-
-  // Get all followers
-  std::vector<siteid_t> followers;
-  for (int i = 0; i < NSERVERS; i++) {
-    siteid_t svr = config_->getServerIdByIndex(i);
-    if (svr != leader_id) {
-      followers.push_back(svr);
-    }
-  }
-
-  // Restart all followers one by one
-  // Each restart removes from specVoters but durableVoters stays intact
-  for (size_t i = 0; i < followers.size(); i++) {
-    Log_info("[SECURED-VIA-DURABLE-TEST] Restarting follower {} ({}/{})",
-             followers[i], i + 1, followers.size());
-    config_->Restart(followers[i]);
-    Fiber::sleep(200000);  // 200ms between restarts
-
-    // Check leader status after each restart
-    int current_leader = config_->OneLeader();
-    if (current_leader >= 0) {
-      siteid_t curr_leader_id = config_->getServerIdByIndex(current_leader);
-      if (curr_leader_id == leader_id) {
-        // Still same leader - check if secured via durable quorum
-        isSecured = config_->IsSecuredLeader(leader_id);
-        specVotersCount = config_->GetSpecVotersCount(leader_id);
-        durableVotersCount = config_->GetDurableVotersCount(leader_id);
-        Log_info("[SECURED-VIA-DURABLE-TEST] After restart {}: secured={}, specVoters={}, durableVoters={}",
-                 i + 1, isSecured, specVotersCount, durableVotersCount);
-      } else {
-        Log_info("[SECURED-VIA-DURABLE-TEST] Leader changed to {} (site {})",
-                 current_leader, curr_leader_id);
-      }
-    }
-  }
-
-  // Final check - system should still have a leader (either original or new)
-  Fiber::sleep(ELECTIONTIMEOUT);
-  int final_leader = config_->OneLeader();
-  Assert2(final_leader >= 0, "Should have a leader after restarts");
-
-  // Verify system still works
-  DoAgreeAndAssertIndex(6101, NSERVERS, index_++);
-
-  Log_info("[SECURED-VIA-DURABLE-TEST] System operational after restarts - test PASSED!");
-
-  Passed2();
-}
-
 // ===========================================================================
 // PHASE 3.1: Snapshot Data Format and Metadata Tests
 // ===========================================================================
@@ -4931,14 +2373,7 @@ int RaftLabTest::testSnapshotFormatRoundTrip(void) {
 int RaftLabTest::testSnapshotManagerSaveLoad(void) {
   Init2(52, "SnapshotManager save/load round-trip");
 
-  // Create a temporary directory for test snapshots
-  std::string test_path = "/tmp/raft_snapshot_test_" + std::to_string(getpid());
-
-  janus::raft::SnapshotConfig config;
-  config.storage_path = test_path;
-  config.max_snapshots = 5;
-
-  janus::raft::FileSnapshotManager mgr(config);
+  janus::raft::MemorySnapshotManager mgr;
 
   // Initially no snapshots
   Assert2(!mgr.HasSnapshotAtOrAfter(1), "Should have no snapshots initially");
@@ -4982,62 +2417,8 @@ int RaftLabTest::testSnapshotManagerSaveLoad(void) {
 
   // Clean up
   mgr.DeleteAllSnapshots();
-  rmdir(test_path.c_str());
 
   Log_info("[SNAPSHOT-MGR-TEST] Save/load round-trip PASSED");
-  Passed2();
-}
-
-int RaftLabTest::testSnapshotManagerListing(void) {
-  Init2(53, "SnapshotManager listing and pruning");
-
-  std::string test_path = "/tmp/raft_snapshot_list_test_" + std::to_string(getpid());
-
-  janus::raft::SnapshotConfig config;
-  config.storage_path = test_path;
-  config.max_snapshots = 3;
-
-  janus::raft::FileSnapshotManager mgr(config);
-
-  // Create multiple snapshots
-  for (uint64_t i = 1; i <= 5; i++) {
-    std::string data = "data_" + std::to_string(i * 10);
-    bool ok = mgr.TakeSnapshot(i * 10, i, data.data(), data.size());
-    Assert2(ok, "TakeSnapshot %lu should succeed", i * 10);
-  }
-
-  // List snapshots - retention policy should have pruned oldest
-  auto snapshots = mgr.ListSnapshots();
-  Assert2(snapshots.size() <= 3,
-          "Should have at most 3 snapshots (retention policy), got %zu", snapshots.size());
-
-  // Newest should be first (sorted by index descending)
-  if (!snapshots.empty()) {
-    Assert2(snapshots[0].last_included_index == 50,
-            "Newest snapshot should be index 50, got %lu",
-            snapshots[0].last_included_index);
-  }
-
-  // Prune: keep only snapshots at or after index 40
-  size_t pruned = mgr.PruneSnapshots(40);
-  Log_info("[SNAPSHOT-LIST-TEST] Pruned {} snapshots", pruned);
-
-  // Verify remaining snapshots
-  snapshots = mgr.ListSnapshots();
-  for (const auto& snap : snapshots) {
-    Assert2(snap.last_included_index >= 40,
-            "After prune, snapshot index %lu should be >= 40",
-            snap.last_included_index);
-  }
-
-  // Delete all and verify empty
-  mgr.DeleteAllSnapshots();
-  snapshots = mgr.ListSnapshots();
-  Assert2(snapshots.empty(), "Should have no snapshots after DeleteAll");
-
-  rmdir(test_path.c_str());
-
-  Log_info("[SNAPSHOT-LIST-TEST] Listing and pruning PASSED");
   Passed2();
 }
 
@@ -5059,10 +2440,7 @@ int RaftLabTest::testSnapshotManagerWiring(void) {
   // Might be null if MAKO_RAFT_SNAPSHOTS not set - that's fine
 
   // Test SetSnapshotManager with a temporary manager
-  std::string test_path = "/tmp/raft_snap_wiring_test_" + std::to_string(getpid());
-  janus::raft::SnapshotConfig config;
-  config.storage_path = test_path;
-  auto test_mgr = std::make_shared<janus::raft::FileSnapshotManager>(config);
+  auto test_mgr = std::make_shared<janus::raft::MemorySnapshotManager>();
 
   server->SetSnapshotManager(test_mgr);
   Assert2(server->GetSnapshotManager() != nullptr,
@@ -5085,7 +2463,6 @@ int RaftLabTest::testSnapshotManagerWiring(void) {
 
   // Clean up
   test_mgr->DeleteAllSnapshots();
-  rmdir(test_path.c_str());
 
   Log_info("[SNAPSHOT-WIRING-TEST] Wiring in RaftServer PASSED");
   Passed2();
@@ -5106,17 +2483,8 @@ int RaftLabTest::testCreateSnapshotBasic(void) {
   auto server = config_->GetServer(leader);
   Assert2(server != nullptr, "Server should not be null");
 
-  // Set up a snapshot manager with a temporary path
-  std::string test_path_template =
-      "/tmp/raft_snap_create_test_55_" + std::to_string(getpid()) +
-      "_XXXXXX";
-  char* created_test_path = mkdtemp(test_path_template.data());  // @unsafe
-  Assert2(created_test_path != nullptr,
-          "Could not create Test55 snapshot directory: %s", strerror(errno));
-  std::string test_path(created_test_path);
-  janus::raft::SnapshotConfig config;
-  config.storage_path = test_path;
-  auto test_mgr = std::make_shared<janus::raft::FileSnapshotManager>(config);
+  // Set up an in-memory snapshot manager
+  auto test_mgr = std::make_shared<janus::raft::MemorySnapshotManager>();
   auto original_threshold = server->GetSnapshotThreshold();
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
@@ -5157,13 +2525,12 @@ int RaftLabTest::testCreateSnapshotBasic(void) {
           meta.last_included_index, server->GetSnapshotIndex());
 
   // The snapshot now backs a compacted live prefix.  Restore only the runtime
-  // threshold; keep the manager and files available for future catch-up.
+  // threshold; keep the manager and its snapshot available for future catch-up.
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
     server->SetSnapshotThreshold(original_threshold);
   }
-  Log_info("[CREATE-SNAPSHOT-BASIC-TEST] Retaining live snapshot path {}",
-           test_path.c_str());
+  Log_info("[CREATE-SNAPSHOT-BASIC-TEST] Retaining live in-memory snapshot manager");
 
   Log_info("[CREATE-SNAPSHOT-BASIC-TEST] PASSED");
   Passed2();
@@ -5185,16 +2552,7 @@ int RaftLabTest::testCreateSnapshotAndCompaction(void) {
   Assert2(server != nullptr, "Server should not be null");
 
   // Set up snapshot manager
-  std::string test_path_template =
-      "/tmp/raft_snap_compact_test_56_" + std::to_string(getpid()) +
-      "_XXXXXX";
-  char* created_test_path = mkdtemp(test_path_template.data());  // @unsafe
-  Assert2(created_test_path != nullptr,
-          "Could not create Test56 snapshot directory: %s", strerror(errno));
-  std::string test_path(created_test_path);
-  janus::raft::SnapshotConfig config;
-  config.storage_path = test_path;
-  auto test_mgr = std::make_shared<janus::raft::FileSnapshotManager>(config);
+  auto test_mgr = std::make_shared<janus::raft::MemorySnapshotManager>();
   auto original_threshold = server->GetSnapshotThreshold();
   uint64_t snapshot_baseline = 0;
   Assert2(InstallAndSeedSnapshotManager(
@@ -5251,13 +2609,12 @@ int RaftLabTest::testCreateSnapshotAndCompaction(void) {
   Assert2(leader2 >= 0, "Should still have a leader after snapshot+compaction");
 
   // The snapshot now backs a compacted live prefix.  Restore only the runtime
-  // threshold; keep the manager and files available for future catch-up.
+  // threshold; keep the manager and its snapshot available for future catch-up.
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
     server->SetSnapshotThreshold(original_threshold);
   }
-  Log_info("[CREATE-SNAPSHOT-COMPACTION-TEST] Retaining live snapshot path {}",
-           test_path.c_str());
+  Log_info("[CREATE-SNAPSHOT-COMPACTION-TEST] Retaining live in-memory snapshot manager");
 
   Log_info("[CREATE-SNAPSHOT-COMPACTION-TEST] PASSED");
   Passed2();
@@ -5335,16 +2692,7 @@ int RaftLabTest::testInstallSnapshotBasic(void) {
   // Install a unique manager and seed it atomically. A prior test may already
   // have compacted this server, so an empty replacement would violate the live
   // snapshot/log invariant even before this RPC is exercised.
-  std::string test_path_template =
-      "/tmp/raft_install_snap_test_58_" + std::to_string(getpid()) +
-      "_XXXXXX";
-  char* created_test_path = mkdtemp(test_path_template.data());  // @unsafe
-  Assert2(created_test_path != nullptr,
-          "Could not create Test58 snapshot directory: %s", strerror(errno));
-  std::string test_path(created_test_path);
-  janus::raft::SnapshotConfig snap_config;
-  snap_config.storage_path = test_path;
-  auto test_mgr = std::make_shared<janus::raft::FileSnapshotManager>(snap_config);
+  auto test_mgr = std::make_shared<janus::raft::MemorySnapshotManager>();
 
   uint64_t old_snapidx = 0;
   uint64_t old_snapterm = 0;
@@ -5378,7 +2726,7 @@ int RaftLabTest::testInstallSnapshotBasic(void) {
 
   // A snapshot at commitIndex is stale by definition. It is still valid
   // leader contact (same term), but its payload must not rewrite snapshot,
-  // log, apply, or persistence state.
+  // log, or apply state.
   const uint64_t stale_snapshot_index = old_commit_index;
   Assert2(stale_snapshot_index > 0,
           "Test58 needs a non-zero committed prefix");
@@ -5429,10 +2777,10 @@ int RaftLabTest::testInstallSnapshotBasic(void) {
               after_metadata.checksum == before_metadata.checksum &&
               after_snapshot_data == before_snapshot_data &&
               test_mgr->ListSnapshots().size() == before_snapshot_count,
-          "Stale snapshot changed persistent snapshot state");
+          "Stale snapshot changed snapshot manager state");
 
   // Exercise the fallible Prepare boundary itself (not the stale fast path).
-  // A validation rejection must not publish bytes, compact either log, or
+  // A validation rejection must not publish bytes, compact the log, or
   // fail-stop a healthy follower because the prepare contract forbids live
   // state-machine mutation.
   std::map<slotid_t, std::shared_ptr<RaftData>> rejected_logs_before;
@@ -5443,26 +2791,18 @@ int RaftLabTest::testInstallSnapshotBasic(void) {
   uint64_t rejected_last_log_before = 0;
   uint64_t rejected_min_active_before = 0;
   uint64_t rejected_local_progress = 0;
-  std::shared_ptr<janus::raft::LogStorage> rejected_storage;
-  slotid_t rejected_storage_first_before = 0;
-  slotid_t rejected_storage_last_before = 0;
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
     rejected_logs_before = server->raft_logs_;
-    rejected_snapidx_before = server->snapidx_;
-    rejected_snapterm_before = server->snapterm_;
+    rejected_snapidx_before = RaftServer::LabAccess::snapidx(*server);
+    rejected_snapterm_before = RaftServer::LabAccess::snapterm(*server);
     rejected_commit_before = server->commitIndex;
     rejected_execute_before = server->executeIndex;
     rejected_last_log_before = server->lastLogIndex;
     rejected_min_active_before = server->min_active_slot_;
     rejected_local_progress = std::max(
         {server->commitIndex, server->executeIndex,
-         server->GetAppliedIndex(), server->snapidx_, server->lastLogIndex});
-    rejected_storage = server->log_storage_;
-    if (rejected_storage != nullptr) {
-      rejected_storage_first_before = rejected_storage->get_first_index();
-      rejected_storage_last_before = rejected_storage->get_last_index();
-    }
+         server->GetAppliedIndex(), RaftServer::LabAccess::snapidx(*server), server->lastLogIndex});
   }
   Assert2(rejected_local_progress < UINT64_MAX,
           "Test58 cannot construct a successor snapshot boundary");
@@ -5500,26 +2840,19 @@ int RaftLabTest::testInstallSnapshotBasic(void) {
   Assert2(rejected_reply_term == 0,
           "Rejected Prepare must return unavailable term 0, got %lu",
           rejected_reply_term);
-  Assert2(!server->stop_.load(rusty::sync::atomic::Ordering::Acquire),
+  Assert2(!RaftServer::LabAccess::stop(*server).load(rusty::sync::atomic::Ordering::Acquire),
           "Clean Prepare rejection incorrectly fail-stopped the follower");
 
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    Assert2(server->snapidx_ == rejected_snapidx_before &&
-                server->snapterm_ == rejected_snapterm_before &&
+    Assert2(RaftServer::LabAccess::snapidx(*server) == rejected_snapidx_before &&
+                RaftServer::LabAccess::snapterm(*server) == rejected_snapterm_before &&
                 server->commitIndex == rejected_commit_before &&
                 server->executeIndex == rejected_execute_before &&
                 server->lastLogIndex == rejected_last_log_before &&
                 server->min_active_slot_ == rejected_min_active_before &&
                 server->raft_logs_ == rejected_logs_before,
             "Rejected Prepare mutated the in-memory snapshot/log boundary");
-    if (rejected_storage != nullptr) {
-      Assert2(rejected_storage->get_first_index() ==
-                  rejected_storage_first_before &&
-                  rejected_storage->get_last_index() ==
-                      rejected_storage_last_before,
-              "Rejected Prepare mutated the persistent log range");
-    }
   }
 
   janus::raft::SnapshotMetadata rejected_after_metadata;
@@ -5537,15 +2870,14 @@ int RaftLabTest::testInstallSnapshotBasic(void) {
               rejected_after_metadata.checksum == before_metadata.checksum &&
               rejected_after_data == before_snapshot_data &&
               test_mgr->ListSnapshots().size() == before_snapshot_count,
-          "Rejected Prepare changed the durable snapshot manager");
+          "Rejected Prepare changed the snapshot manager");
 
   Assert2(server->ClearStateMachineSnapshotCallbacks(
               rejecting_callback_token),
           "Could not clear Test58 rejecting prepare callback");
   rejecting_callback_token = 0;
 
-  Log_info("[INSTALL-SNAPSHOT-STALE-INDEX-TEST] Retaining live snapshot path {}",
-           test_path.c_str());
+  Log_info("[INSTALL-SNAPSHOT-STALE-INDEX-TEST] Retaining live in-memory snapshot manager");
 
   Log_info("[INSTALL-SNAPSHOT-STALE-INDEX-TEST] PASSED");
   Passed2();
@@ -5595,21 +2927,19 @@ int RaftLabTest::testInstallSnapshotRejectsStaleTerm(void) {
   bool before_is_leader = false;
   bool before_req_voting = false;
   bool before_election_in_progress = false;
-  std::set<siteid_t> before_early_durable_voters;
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    before_snapidx = server->snapidx_;
-    before_snapterm = server->snapterm_;
+    before_snapidx = RaftServer::LabAccess::snapidx(*server);
+    before_snapterm = RaftServer::LabAccess::snapterm(*server);
     before_commitIndex = server->commitIndex;
     before_executeIndex = server->executeIndex;
     before_lastLogIndex = server->lastLogIndex;
     follower_term = server->currentTerm;
-    before_leader_id = server->current_leader_id_;
-    before_vote_for = server->vote_for_;
-    before_is_leader = server->is_leader_;
-    before_req_voting = server->req_voting_;
-    before_election_in_progress = server->election_in_progress_;
-    before_early_durable_voters = server->earlyDurableVoters_;
+    before_leader_id = RaftServer::LabAccess::current_leader_id(*server);
+    before_vote_for = RaftServer::LabAccess::vote_for(*server);
+    before_is_leader = RaftServer::LabAccess::is_leader(*server);
+    before_req_voting = RaftServer::LabAccess::req_voting(*server);
+    before_election_in_progress = RaftServer::LabAccess::election_in_progress(*server);
   }
 
   // Send InstallSnapshot with a stale term (term 0, which is less than any active term)
@@ -5634,12 +2964,12 @@ int RaftLabTest::testInstallSnapshotRejectsStaleTerm(void) {
   // Verify follower state is UNCHANGED through one synchronized observation.
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    Assert2(server->snapidx_ == before_snapidx,
+    Assert2(RaftServer::LabAccess::snapidx(*server) == before_snapidx,
             "snapidx should be unchanged (%lu), got %lu",
-            before_snapidx, server->snapidx_);
-    Assert2(server->snapterm_ == before_snapterm,
+            before_snapidx, RaftServer::LabAccess::snapidx(*server));
+    Assert2(RaftServer::LabAccess::snapterm(*server) == before_snapterm,
             "snapterm should be unchanged (%lu), got %lu",
-            before_snapterm, static_cast<uint64_t>(server->snapterm_));
+            before_snapterm, static_cast<uint64_t>(RaftServer::LabAccess::snapterm(*server)));
     Assert2(server->commitIndex == before_commitIndex,
             "commitIndex should be unchanged (%lu), got %lu",
             before_commitIndex, server->commitIndex);
@@ -5648,14 +2978,12 @@ int RaftLabTest::testInstallSnapshotRejectsStaleTerm(void) {
             before_executeIndex, server->executeIndex);
     Assert2(server->lastLogIndex == before_lastLogIndex &&
                 server->currentTerm == follower_term &&
-                server->current_leader_id_ == before_leader_id &&
-                server->vote_for_ == before_vote_for &&
-                server->is_leader_ == before_is_leader &&
-                server->req_voting_ == before_req_voting &&
-                server->election_in_progress_ ==
-                    before_election_in_progress &&
-                server->earlyDurableVoters_ ==
-                    before_early_durable_voters,
+                RaftServer::LabAccess::current_leader_id(*server) == before_leader_id &&
+                RaftServer::LabAccess::vote_for(*server) == before_vote_for &&
+                RaftServer::LabAccess::is_leader(*server) == before_is_leader &&
+                RaftServer::LabAccess::req_voting(*server) == before_req_voting &&
+                RaftServer::LabAccess::election_in_progress(*server) ==
+                    before_election_in_progress,
             "Stale-term snapshot mutated Raft role/election state");
   }
 
@@ -5680,20 +3008,18 @@ int RaftLabTest::testInstallSnapshotRejectsStaleTerm(void) {
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
     Assert2(server->currentTerm == follower_term &&
-                server->snapidx_ == before_snapidx &&
-                static_cast<uint64_t>(server->snapterm_) ==
+                RaftServer::LabAccess::snapidx(*server) == before_snapidx &&
+                static_cast<uint64_t>(RaftServer::LabAccess::snapterm(*server)) ==
                     before_snapterm &&
                 server->commitIndex == before_commitIndex &&
                 server->executeIndex == before_executeIndex &&
                 server->lastLogIndex == before_lastLogIndex &&
-                server->current_leader_id_ == before_leader_id &&
-                server->vote_for_ == before_vote_for &&
-                server->is_leader_ == before_is_leader &&
-                server->req_voting_ == before_req_voting &&
-                server->election_in_progress_ ==
-                    before_election_in_progress &&
-                server->earlyDurableVoters_ ==
-                    before_early_durable_voters,
+                RaftServer::LabAccess::current_leader_id(*server) == before_leader_id &&
+                RaftServer::LabAccess::vote_for(*server) == before_vote_for &&
+                RaftServer::LabAccess::is_leader(*server) == before_is_leader &&
+                RaftServer::LabAccess::req_voting(*server) == before_req_voting &&
+                RaftServer::LabAccess::election_in_progress(*server) ==
+                    before_election_in_progress,
             "Future-boundary snapshot mutated receiver state");
   }
 
@@ -5726,20 +3052,18 @@ int RaftLabTest::testInstallSnapshotRejectsStaleTerm(void) {
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
     Assert2(server->currentTerm == follower_term &&
-                server->snapidx_ == before_snapidx &&
-                static_cast<uint64_t>(server->snapterm_) ==
+                RaftServer::LabAccess::snapidx(*server) == before_snapidx &&
+                static_cast<uint64_t>(RaftServer::LabAccess::snapterm(*server)) ==
                     before_snapterm &&
                 server->commitIndex == before_commitIndex &&
                 server->executeIndex == before_executeIndex &&
                 server->lastLogIndex == before_lastLogIndex &&
-                server->current_leader_id_ == before_leader_id &&
-                server->vote_for_ == before_vote_for &&
-                server->is_leader_ == before_is_leader &&
-                server->req_voting_ == before_req_voting &&
-                server->election_in_progress_ ==
-                    before_election_in_progress &&
-                server->earlyDurableVoters_ ==
-                    before_early_durable_voters,
+                RaftServer::LabAccess::current_leader_id(*server) == before_leader_id &&
+                RaftServer::LabAccess::vote_for(*server) == before_vote_for &&
+                RaftServer::LabAccess::is_leader(*server) == before_is_leader &&
+                RaftServer::LabAccess::req_voting(*server) == before_req_voting &&
+                RaftServer::LabAccess::election_in_progress(*server) ==
+                    before_election_in_progress,
             "Unauthorized snapshot rejection mutated receiver state");
   }
 
@@ -5760,21 +3084,12 @@ int RaftLabTest::testHeartbeatTriggersInstallSnapshot(void) {
 
   // Give every possible leader a unique, live backing manager before the
   // partition. This keeps the test valid across an ordinary re-election.
-  std::string snapshot_root_template =
-      "/tmp/raft_hb_snap_test_60_" + std::to_string(getpid()) +
-      "_XXXXXX";
-  char* created_snapshot_root =
-      mkdtemp(snapshot_root_template.data());  // @unsafe
-  Assert2(created_snapshot_root != nullptr,
-          "Could not create Test60 snapshot root: %s", strerror(errno));
-  std::string snapshot_root(created_snapshot_root);
   // The managers below become the live backing store for compacted prefixes.
-  // Keep their root discoverable by later Restart() calls for the remainder of
-  // the suite, just as Test69 does after its manager rotation.
-  Assert2(setenv("MAKO_RAFT_SNAPSHOTS", "1", 1) == 0,
+  // Keep snapshots enabled for the remainder of the suite so later Restart()
+  // calls construct an in-memory manager that can accept InstallSnapshot,
+  // just as Test69 does after its manager rotation.
+  Assert2(setenv("MAKO_RAFT_SNAPSHOTS", "1", 1) == 0,  // @unsafe
           "Could not enable Test60 snapshots: %s", strerror(errno));
-  Assert2(setenv("MAKO_RAFT_SNAPSHOT_PATH", snapshot_root.c_str(), 1) == 0,
-          "Could not publish Test60 snapshot root: %s", strerror(errno));
   std::vector<std::shared_ptr<janus::raft::SnapshotManager>> managers(
       NSERVERS);
   std::vector<uint64_t> original_thresholds(NSERVERS, 0);
@@ -5782,12 +3097,7 @@ int RaftLabTest::testHeartbeatTriggersInstallSnapshot(void) {
   for (int i = 0; i < NSERVERS; ++i) {
     auto server = config_->GetServer(i);
     Assert2(server != nullptr, "Test60 server %d is null", i);
-    janus::raft::SnapshotConfig snapshot_config;
-    snapshot_config.storage_path =
-        snapshot_root + "/raft_snap_" + std::to_string(server->site_id_) +
-        "_partition_" + std::to_string(server->partition_id_);
-    auto manager =
-        std::make_shared<janus::raft::FileSnapshotManager>(snapshot_config);
+    auto manager = std::make_shared<janus::raft::MemorySnapshotManager>();
     managers[i] = manager;
     original_thresholds[i] = server->GetSnapshotThreshold();
     Assert2(InstallAndSeedSnapshotManager(
@@ -6014,192 +3324,9 @@ int RaftLabTest::testHeartbeatTriggersInstallSnapshot(void) {
   Assert2(new_idx > 0,
           "Cluster did not make progress after Test60 snapshot recovery");
 
-  Log_info("[HEARTBEAT-SNAPSHOT-TEST] Retaining live snapshot root {}",
-           snapshot_root.c_str());
+  Log_info("[HEARTBEAT-SNAPSHOT-TEST] Retaining live in-memory snapshot managers");
 
   Log_info("[HEARTBEAT-SNAPSHOT-TEST] PASSED");
-  Passed2();
-}
-
-// ============================================================================
-// Test 61: testSpecCommitIndexPersistence
-// Verifies that specCommitIndex_ and securedLogIndex_ are persisted to storage
-// ============================================================================
-// @unsafe - Uses test infrastructure and LogStorage API
-int RaftLabTest::testSpecCommitIndexPersistence(void) {
-  Init2(61, "Speculative indices persisted to storage");
-
-  Log_info("TEST 61: Waiting for initial election");
-  Fiber::sleep(ELECTIONTIMEOUT);
-  int leader = config_->OneLeader();
-  AssertOneLeader(leader);
-  Log_info("TEST 61: Leader elected: {}", leader);
-
-  // Commit some entries
-  Log_info("TEST 61: Committing entries");
-  // Snapshot tests immediately before this case append their own entries and
-  // intentionally do not maintain the legacy global index_ oracle.  This test
-  // cares about durable speculative metadata, not an absolute slot number.
-  DoAgreeAndAssertWaitSuccess(201, NSERVERS);
-  DoAgreeAndAssertWaitSuccess(202, NSERVERS);
-  DoAgreeAndAssertWaitSuccess(203, NSERVERS);
-  Log_info("TEST 61: Committed 3 entries");
-
-  // Allow time for speculative index advancement
-  Fiber::sleep(ELECTIONTIMEOUT / 2);
-
-  // Get the leader server and check persisted values
-  auto leader_server = config_->GetServer(leader);
-  auto storage = leader_server->GetLogStorage();
-
-  uint64_t mem_spec = leader_server->specCommitIndex_;
-  uint64_t mem_secured = leader_server->securedLogIndex_;
-  uint64_t mem_last = leader_server->lastLogIndex;
-
-  Log_info("TEST 61: In-memory values - specCommitIndex={} securedLogIndex={} lastLogIndex={}",
-           mem_spec, mem_secured, mem_last);
-
-  // Verify invariant: securedLogIndex <= specCommitIndex <= lastLogIndex
-  Assert2(mem_secured <= mem_spec,
-          "invariant violation: securedLogIndex (%lu) > specCommitIndex (%lu)",
-          mem_secured, mem_spec);
-  Assert2(mem_spec <= mem_last,
-          "invariant violation: specCommitIndex (%lu) > lastLogIndex (%lu)",
-          mem_spec, mem_last);
-
-  // Check persisted values in storage if storage is available
-  if (storage && storage->is_open()) {
-    // @unsafe { LogStorage API calls }
-    auto spec_str = storage->get_metadata(RaftServer::META_SPEC_COMMIT_INDEX);
-    auto secured_str = storage->get_metadata(RaftServer::META_SECURED_LOG_INDEX);
-
-    if (spec_str.is_some()) {
-      uint64_t persisted_spec = std::stoull(spec_str.unwrap());
-      Log_info("TEST 61: Persisted specCommitIndex={}, in-memory={}",
-               persisted_spec, mem_spec);
-      Assert2(persisted_spec == mem_spec,
-              "persisted specCommitIndex (%lu) != in-memory (%lu)",
-              persisted_spec, mem_spec);
-    } else {
-      Log_info("TEST 61: specCommitIndex not yet persisted (may be 0)");
-    }
-
-    if (secured_str.is_some()) {
-      uint64_t persisted_secured = std::stoull(secured_str.unwrap());
-      Log_info("TEST 61: Persisted securedLogIndex={}, in-memory={}",
-               persisted_secured, mem_secured);
-      Assert2(persisted_secured == mem_secured,
-              "persisted securedLogIndex (%lu) != in-memory (%lu)",
-              persisted_secured, mem_secured);
-    } else {
-      Log_info("TEST 61: securedLogIndex not yet persisted (may be 0)");
-    }
-  } else {
-    Log_info("TEST 61: No log storage available, checking in-memory values only");
-  }
-
-  Log_info("TEST 61: PASSED - speculative indices persisted correctly");
-  Passed2();
-}
-
-// ============================================================================
-// Test 62: testSpecIndicesRecoveredOnRestart
-// Verifies specCommitIndex_ and securedLogIndex_ are recovered on restart
-// ============================================================================
-// @unsafe - Uses test infrastructure, Kill/Restart, and LogStorage API
-int RaftLabTest::testSpecIndicesRecoveredOnRestart(void) {
-  Init2(62, "Speculative indices recovered on restart");
-
-  Log_info("TEST 62: Waiting for initial election");
-  Fiber::sleep(ELECTIONTIMEOUT);
-  int leader = config_->OneLeader();
-  AssertOneLeader(leader);
-  Log_info("TEST 62: Leader elected: {}", leader);
-
-  // Commit some entries
-  Log_info("TEST 62: Committing entries");
-  DoAgreeAndAssertWaitSuccess(301, NSERVERS);
-  DoAgreeAndAssertWaitSuccess(302, NSERVERS);
-  DoAgreeAndAssertWaitSuccess(303, NSERVERS);
-  Log_info("TEST 62: Committed 3 entries");
-
-  // Allow time for speculative and durable advancement
-  Fiber::sleep(ELECTIONTIMEOUT / 2);
-
-  // Pick a follower to kill and restart
-  siteid_t victim = config_->getNextServerId(leader, 1);
-  auto victim_server = config_->GetServer(victim);
-
-  // Record the values before killing
-  uint64_t spec_before = victim_server->specCommitIndex_;
-  uint64_t secured_before = victim_server->securedLogIndex_;
-  uint64_t commit_before = victim_server->commitIndex;
-  uint64_t last_log_before = victim_server->lastLogIndex;
-  Log_info("TEST 62: Before kill - server {}: specCommitIndex={} securedLogIndex={} "
-           "commitIndex={} lastLogIndex={}",
-           victim, spec_before, secured_before, commit_before, last_log_before);
-
-  // Kill the server
-  Log_info("TEST 62: Killing server {}", victim);
-  config_->Kill(victim);
-
-  // Wait for it to be gone
-  Fiber::sleep(ELECTIONTIMEOUT / 2);
-
-  // Commit more entries with remaining servers
-  Log_info("TEST 62: Committing with {} servers while {} is down", NSERVERS - 1, victim);
-  DoAgreeAndAssertWaitSuccess(304, NSERVERS - 1);
-  DoAgreeAndAssertWaitSuccess(305, NSERVERS - 1);
-  Log_info("TEST 62: Committed 2 more entries");
-
-  // Restart the killed server
-  Log_info("TEST 62: Restarting server {}", victim);
-  Assert2(config_->Restart(victim),
-          "Restart failed for server %d after speculative-index recovery",
-          victim);
-
-  // Give it time to catch up
-  Fiber::sleep(ELECTIONTIMEOUT);
-
-  // Get the restarted server and check recovery
-  victim_server = config_->GetServer(victim);
-  Assert2(victim_server != nullptr,
-          "Restarted server %d was not published", victim);
-  uint64_t spec_after = victim_server->specCommitIndex_;
-  uint64_t secured_after = victim_server->securedLogIndex_;
-  uint64_t commit_after = victim_server->commitIndex;
-  uint64_t last_log_after = victim_server->lastLogIndex;
-  Log_info("TEST 62: After restart - server {}: specCommitIndex={} securedLogIndex={} "
-           "commitIndex={} lastLogIndex={}",
-           victim, spec_after, secured_after, commit_after, last_log_after);
-
-  // After restart and catching up, the log should have all entries
-  Assert2(last_log_after >= last_log_before,
-          "lastLogIndex decreased after restart: was %lu, now %lu",
-          last_log_before, last_log_after);
-
-  // commitIndex should have recovered and potentially advanced
-  Assert2(commit_after >= commit_before,
-          "commitIndex decreased after restart: was %lu, now %lu",
-          commit_before, commit_after);
-
-  // Verify invariant: securedLogIndex <= specCommitIndex <= lastLogIndex
-  // Note: On a follower after restart, specCommitIndex_ and securedLogIndex_ may be 0
-  // (reset during ResetSpeculativeState for non-leaders), but the invariant must still hold.
-  Assert2(secured_after <= spec_after,
-          "invariant violation after restart: securedLogIndex (%lu) > specCommitIndex (%lu)",
-          secured_after, spec_after);
-  // specCommitIndex may be 0 for a follower, which is <= lastLogIndex
-  Assert2(spec_after <= last_log_after || spec_after == 0,
-          "invariant violation after restart: specCommitIndex (%lu) > lastLogIndex (%lu)",
-          spec_after, last_log_after);
-
-  // Verify the cluster still works
-  Log_info("TEST 62: Committing with all {} servers to verify cluster health", NSERVERS);
-  DoAgreeAndAssertWaitSuccess(306, NSERVERS);
-  Log_info("TEST 62: Final commit successful");
-
-  Log_info("TEST 62: PASSED - speculative indices recovered on restart");
   Passed2();
 }
 
@@ -6209,10 +3336,10 @@ int RaftLabTest::testSpecIndicesRecoveredOnRestart(void) {
 // @unsafe - Uses test infrastructure, modifies cluster state
 /**
  * Verify that UnsecuredFailure step-down rolls back every pending entry above
- * the last durably secured index.
+ * the rollback floor (securedLogIndex_).
  *
  * Scenario:
- * 1. On a persistence-off (therefore unsecured) leader, commit one entry to a
+ * 1. On a memory-only (therefore unsecured) leader, commit one entry to a
  *    memory quorum and observe its SPECULATIVE callback.
  * 2. Disconnect the followers and append a second, local-only entry.
  * 3. Feed the real peer-restart invalidation path the leader's speculative
@@ -6221,7 +3348,7 @@ int RaftLabTest::testSpecIndicesRecoveredOnRestart(void) {
  *    exactly one ROLLEDBACK notification, then restore the cluster.
  */
 int RaftLabTest::testRollbackOnUnsecuredFailure(void) {
-  Init2(63, "UnsecuredFailure rolls back all non-durable pending entries");
+  Init2(63, "UnsecuredFailure rolls back all pending entries");
 
   // Wait for initial election
   Fiber::sleep(ELECTIONTIMEOUT);
@@ -6234,14 +3361,11 @@ int RaftLabTest::testRollbackOnUnsecuredFailure(void) {
 
   RaftServer* leader_server = config_->GetServer(leader_id);
   Assert2(leader_server != nullptr, "Leader server is unavailable");
-  Assert2(!config_->IsSecuredLeader(leader_id),
-          "Persistence-off leader must remain unsecured for Test 63");
 
   // First exercise the lower rollback bound: this entry reaches memory quorum,
   // advances commitIndex/specCommitIndex, and is exposed as SPECULATIVE, but it
   // has no durable-quorum guarantee.
   std::atomic<int> committedSpec{0};
-  std::atomic<int> committedDurable{0};
   std::atomic<int> committedRollback{0};
   uint64_t committed_index = 0;
   uint64_t committed_term = 0;
@@ -6253,8 +3377,6 @@ int RaftLabTest::testRollbackOnUnsecuredFailure(void) {
                static_cast<int>(status));
       if (status == CommitStatus::SPECULATIVE) {
         committedSpec++;
-      } else if (status == CommitStatus::DURABLE) {
-        committedDurable++;
       } else if (status == CommitStatus::ROLLEDBACK) {
         committedRollback++;
       }
@@ -6265,8 +3387,6 @@ int RaftLabTest::testRollbackOnUnsecuredFailure(void) {
   }
   Assert2(committedSpec.load() == 1,
           "Memory-quorum entry did not receive one SPECULATIVE notification");
-  Assert2(committedDurable.load() == 0,
-          "Persistence-off entry unexpectedly received DURABLE");
 
   // Disconnect every follower before adding the upper-bound case.  Disconnect
   // is immediate and reversible; unlike Kill/Restart it does not introduce a
@@ -6283,7 +3403,6 @@ int RaftLabTest::testRollbackOnUnsecuredFailure(void) {
   }
 
   std::atomic<int> localSpec{0};
-  std::atomic<int> localDurable{0};
   std::atomic<int> localRollback{0};
   uint64_t local_index = 0;
   uint64_t local_term = 0;
@@ -6307,17 +3426,15 @@ int RaftLabTest::testRollbackOnUnsecuredFailure(void) {
                    static_cast<int>(status));
           if (status == CommitStatus::SPECULATIVE) {
             localSpec++;
-          } else if (status == CommitStatus::DURABLE) {
-            localDurable++;
           } else if (status == CommitStatus::ROLLEDBACK) {
             localRollback++;
           }
         });
 
-    local_was_above_spec = local_index > leader_server->specCommitIndex_;
+    local_was_above_spec = local_index > leader_server->GetSpecCommitIndex();
 
     std::vector<siteid_t> speculative_voters;
-    for (siteid_t voter : leader_server->specVoters_) {
+    for (siteid_t voter : leader_server->GetSpecVoters()) {
       if (voter != leader_id) {
         speculative_voters.push_back(voter);
       }
@@ -6331,15 +3448,12 @@ int RaftLabTest::testRollbackOnUnsecuredFailure(void) {
     }
 
     stepped_down = !leader_server->IsLeader();
-    callbacks_cleared = leader_server->pendingCallbacks_.empty();
+    callbacks_cleared = (RaftServer::LabAccess::pending_callback_count(*leader_server) == 0);
     speculative_state_cleared =
-        leader_server->specVoters_.empty() &&
-        leader_server->durableVoters_.empty() &&
-        leader_server->memoryAcks_.empty() &&
-        leader_server->durableAcks_.empty() &&
-        !leader_server->securedLeader_ &&
-        leader_server->securedLogIndex_ == 0 &&
-        leader_server->specCommitIndex_ == 0;
+        leader_server->GetSpecVoters().empty() &&
+        RaftServer::LabAccess::memory_acks(*leader_server).empty() &&
+        leader_server->GetSecuredLogIndex() == 0 &&
+        leader_server->GetSpecCommitIndex() == 0;
   }
 
   // Always restore connectivity before evaluating the captured assertions.
@@ -6356,10 +3470,10 @@ int RaftLabTest::testRollbackOnUnsecuredFailure(void) {
     final_leader = config_->OneLeader();
   }
 
-  Log_info("[ROLLBACK-UNSECURED] committed: spec={} durable={} rollback={}; "
-           "local: spec={} durable={} rollback={}; invalidated={}",
-           committedSpec.load(), committedDurable.load(), committedRollback.load(),
-           localSpec.load(), localDurable.load(), localRollback.load(),
+  Log_info("[ROLLBACK-UNSECURED] committed: spec={} rollback={}; "
+           "local: spec={} rollback={}; invalidated={}",
+           committedSpec.load(), committedRollback.load(),
+           localSpec.load(), localRollback.load(),
            voters_invalidated);
 
   Assert2(appended_local, "Failed to append local-only command");
@@ -6367,14 +3481,12 @@ int RaftLabTest::testRollbackOnUnsecuredFailure(void) {
           "Local-only entry must remain above specCommitIndex");
   Assert2(stepped_down,
           "Unsecured leader did not step down after losing speculative quorum");
-  Assert2(committedSpec.load() == 1 && committedDurable.load() == 0 &&
-              committedRollback.load() == 1,
-          "Already-speculative entry notifications were spec=%d durable=%d rollback=%d",
-          committedSpec.load(), committedDurable.load(), committedRollback.load());
-  Assert2(localSpec.load() == 0 && localDurable.load() == 0 &&
-              localRollback.load() == 1,
-          "Local-only entry notifications were spec=%d durable=%d rollback=%d",
-          localSpec.load(), localDurable.load(), localRollback.load());
+  Assert2(committedSpec.load() == 1 && committedRollback.load() == 1,
+          "Already-speculative entry notifications were spec=%d rollback=%d",
+          committedSpec.load(), committedRollback.load());
+  Assert2(localSpec.load() == 0 && localRollback.load() == 1,
+          "Local-only entry notifications were spec=%d rollback=%d",
+          localSpec.load(), localRollback.load());
   Assert2(callbacks_cleared, "Pending callbacks were not cleared on step-down");
   Assert2(speculative_state_cleared,
           "Follower speculative state was not fully cleared after rollback");
@@ -6414,12 +3526,11 @@ int RaftLabTest::testNoRollbackOnHigherTerm(void) {
   siteid_t leader_id = config_->getServerIdByIndex(leader);
   Log_info("[ROLLBACK-HIGHERTERM] Leader: {} (site {})", leader, leader_id);
 
-  // Wait for leader to become secured
+  // Let leadership settle
   Fiber::sleep(500000);
 
   // Track callback invocations
   std::atomic<int> specNotifications{0};
-  std::atomic<int> durableNotifications{0};
   std::atomic<int> rollbackNotifications{0};
 
   // Submit an entry with callback
@@ -6432,8 +3543,6 @@ int RaftLabTest::testNoRollbackOnHigherTerm(void) {
       Log_info("[ROLLBACK-HIGHERTERM] Callback status={}", static_cast<int>(status));
       if (status == CommitStatus::SPECULATIVE) {
         specNotifications++;
-      } else if (status == CommitStatus::DURABLE) {
-        durableNotifications++;
       } else if (status == CommitStatus::ROLLEDBACK) {
         rollbackNotifications++;
       }
@@ -6445,22 +3554,19 @@ int RaftLabTest::testNoRollbackOnHigherTerm(void) {
   // Wait for entry to commit
   Fiber::sleep(500000);
 
-  // Now submit a new entry that hasn't been durably committed
+  // Now submit a new entry that has not committed yet
   int cmd2 = 6401;
   uint64_t index2 = 0;
   uint64_t term2 = 0;
 
   std::atomic<int> cmd2Rollback{0};
   std::atomic<int> cmd2Spec{0};
-  std::atomic<int> cmd2Durable{0};
 
   ok = config_->StartWithCallback(leader_id, cmd2, &index2, &term2,
     [&](CommitStatus status) {
       Log_info("[ROLLBACK-HIGHERTERM] Entry 2 status={}", static_cast<int>(status));
       if (status == CommitStatus::SPECULATIVE) {
         cmd2Spec++;
-      } else if (status == CommitStatus::DURABLE) {
-        cmd2Durable++;
       } else if (status == CommitStatus::ROLLEDBACK) {
         cmd2Rollback++;
       }
@@ -6487,10 +3593,10 @@ int RaftLabTest::testNoRollbackOnHigherTerm(void) {
   Fiber::sleep(ELECTIONTIMEOUT);
 
   // Log results
-  Log_info("[ROLLBACK-HIGHERTERM] Entry1: spec={} durable={} rollback={}",
-           specNotifications.load(), durableNotifications.load(), rollbackNotifications.load());
-  Log_info("[ROLLBACK-HIGHERTERM] Entry2: spec={} durable={} rollback={}",
-           cmd2Spec.load(), cmd2Durable.load(), cmd2Rollback.load());
+  Log_info("[ROLLBACK-HIGHERTERM] Entry1: spec={} rollback={}",
+           specNotifications.load(), rollbackNotifications.load());
+  Log_info("[ROLLBACK-HIGHERTERM] Entry2: spec={} rollback={}",
+           cmd2Spec.load(), cmd2Rollback.load());
 
   // The key assertion: HigherTerm should NOT generate ROLLEDBACK notifications
   // for entry2 (which may still be pending when leader steps down).
@@ -6509,469 +3615,6 @@ int RaftLabTest::testNoRollbackOnHigherTerm(void) {
   Assert2(new_leader >= 0, "Should have leader after test");
 
   Log_info("[ROLLBACK-HIGHERTERM] HigherTerm no-rollback test PASSED!");
-  Passed2();
-}
-
-// ============================================================================
-// Test 65: testSnapshotRecoveryOnStartup
-// ============================================================================
-// @unsafe - Uses test infrastructure, Kill/Restart, snapshot manager API
-/**
- * Verify that a server with a snapshot recovers executeIndex, commitIndex,
- * lastLogIndex, and min_active_slot_ correctly on restart.
- *
- * Scenario:
- * 1. Start 5-node cluster, elect leader
- * 2. Create a unique file snapshot manager without installing it live
- * 3. Commit entries and synchronously write a snapshot of the applied prefix
- * 4. Kill the follower, restart it (snapshot manager re-initialized)
- * 5. Verify state reflects snapshot: executeIndex >= snapidx_, etc.
- * 6. Verify cluster can still make progress
- */
-int RaftLabTest::testSnapshotRecoveryOnStartup(void) {
-  Init2(65, "Snapshot recovery on startup");
-
-  // Wait for initial election
-  Fiber::sleep(ELECTIONTIMEOUT);
-  int leader = config_->OneLeader();
-  AssertOneLeader(leader);
-  Log_info("TEST 65: Leader elected: {}", leader);
-
-  // Pick a follower
-  siteid_t follower_id = config_->getNextServerId(leader, 1);
-  auto follower_server = config_->GetServer(follower_id);
-  Assert2(follower_server != nullptr, "Follower server should not be null");
-  const uint64_t original_snapshot_threshold =
-      follower_server->GetSnapshotThreshold();
-
-  // Build the snapshot path that InitializeSnapshotManager() will construct on restart.
-  // It uses: MAKO_RAFT_SNAPSHOT_PATH + "/raft_snap_" + site_id + "_partition_" + partition_id
-  // mkdtemp gives this run an empty, collision-free parent.  A PID-only path
-  // can be reused after a crashed run and make GetLatestSnapshot() observe a
-  // stale file rather than a snapshot created by this test.
-  std::string base_path_template =
-      "/tmp/raft_snap_recovery_test_65_" + std::to_string(getpid()) + "_XXXXXX";
-  char* created_base_path = mkdtemp(base_path_template.data());  // @unsafe
-  Assert2(created_base_path != nullptr,
-          "Could not create unique snapshot parent: %s", strerror(errno));
-  std::string base_path(created_base_path);
-  std::string full_snap_path = base_path + "/raft_snap_" +
-                               std::to_string(follower_server->site_id_) + "_partition_" +
-                               std::to_string(follower_server->partition_id_);
-
-  // Build an isolated manager, but do not install it on the live follower.
-  // Installing a low-threshold manager here would compact the follower before
-  // restart and couple this recovery test to asynchronous snapshot scheduling.
-  janus::raft::SnapshotConfig snap_config;
-  snap_config.storage_path = full_snap_path;
-  auto snap_mgr = std::make_shared<janus::raft::FileSnapshotManager>(snap_config);
-
-  // Once Restart() adopts this snapshot directory it must remain available:
-  // in persistence-off mode the snapshot is the only recovered prefix, and a
-  // later InstallSnapshot may still need its bytes.  Before adoption, however,
-  // every early return removes the test-owned empty directory.
-  bool snapshot_path_adopted = false;
-  auto snapshot_cleanup = MakeRaftTestScopeExit([&]() {  // @unsafe
-    if (snapshot_path_adopted && follower_server != nullptr) {
-      follower_server->SetSnapshotThreshold(original_snapshot_threshold);
-    }
-    if (!snapshot_path_adopted) {
-      snap_mgr->DeleteAllSnapshots();
-      (void)rmdir(full_snap_path.c_str());
-      (void)rmdir(base_path.c_str());
-    } else {
-      Log_info("TEST 65: Retaining live recovered snapshot directory {} until process shutdown",
-               base_path.c_str());
-    }
-  });
-
-  struct stat snap_dir_stat;
-  Assert2(stat(full_snap_path.c_str(), &snap_dir_stat) == 0 &&
-              S_ISDIR(snap_dir_stat.st_mode),
-          "Snapshot manager did not create storage directory %s: %s",
-          full_snap_path.c_str(), strerror(errno));
-
-  // Snapshot restart configuration is process-global.  Preserve every value
-  // that this test overrides, including the interval used by Restart(), and
-  // restore it on every Assert2 early return.
-  const char* old_snapshots_raw = std::getenv("MAKO_RAFT_SNAPSHOTS");
-  const char* old_snapshot_path_raw = std::getenv("MAKO_RAFT_SNAPSHOT_PATH");
-  const char* old_snapshot_interval_raw =
-      std::getenv("MAKO_RAFT_SNAPSHOT_INTERVAL");
-  const bool had_snapshots = old_snapshots_raw != nullptr;
-  const bool had_snapshot_path = old_snapshot_path_raw != nullptr;
-  const bool had_snapshot_interval = old_snapshot_interval_raw != nullptr;
-  const std::string old_snapshots =
-      had_snapshots ? old_snapshots_raw : "";
-  const std::string old_snapshot_path =
-      had_snapshot_path ? old_snapshot_path_raw : "";
-  const std::string old_snapshot_interval =
-      had_snapshot_interval ? old_snapshot_interval_raw : "";
-  bool snapshot_env_overridden = false;
-  auto restore_snapshot_env = [&]() {  // @unsafe
-    if (!snapshot_env_overridden) {
-      return;
-    }
-    auto restore_one = [](const char* name, bool existed,
-                          const std::string& value) {  // @unsafe
-      int rc = existed ? setenv(name, value.c_str(), 1) : unsetenv(name);
-      if (rc != 0) {
-        Log_error("TEST 65: Failed to restore {}: {}", name, strerror(errno));
-      }
-    };
-    restore_one("MAKO_RAFT_SNAPSHOTS", had_snapshots, old_snapshots);
-    restore_one("MAKO_RAFT_SNAPSHOT_PATH", had_snapshot_path,
-                old_snapshot_path);
-    restore_one("MAKO_RAFT_SNAPSHOT_INTERVAL", had_snapshot_interval,
-                old_snapshot_interval);
-    snapshot_env_overridden = false;
-  };
-  auto env_cleanup =
-      MakeRaftTestScopeExit([&]() { restore_snapshot_env(); });
-
-  // Commit entries
-  Log_info("TEST 65: Committing 8 entries");
-  uint64_t first_new_index = 0;
-  uint64_t last_new_index = 0;
-  for (int i = 1; i <= 8; i++) {
-    uint64_t idx = config_->DoAgreement(6500 + i, NSERVERS, true);
-    Assert2(idx > 0, "DoAgreement failed for cmd %d", 6500 + i);
-    if (first_new_index == 0) {
-      first_new_index = idx;
-    }
-    last_new_index = idx;
-  }
-
-  // Wait for this follower to apply the agreed prefix, then write exactly one
-  // snapshot synchronously.  This gives the test a precise provenance range
-  // and avoids depending on the apply thread's threshold timing.
-  for (int attempt = 0;
-       attempt < 200 && follower_server->executeIndex < last_new_index;
-       ++attempt) {
-    Fiber::sleep(10000);
-  }
-  Assert2(follower_server->executeIndex >= last_new_index,
-          "Follower executeIndex (%lu) did not reach last new index (%lu)",
-          follower_server->executeIndex, last_new_index);
-
-  uint64_t snap_idx = follower_server->executeIndex;
-  uint64_t snap_term = 0;
-  {
-    std::lock_guard<std::recursive_mutex> lock(follower_server->mtx_);  // @unsafe
-    auto snap_instance = follower_server->raft_logs_.find(snap_idx);
-    Assert2(snap_instance != follower_server->raft_logs_.end() &&
-                snap_instance->second != nullptr,
-            "No Raft instance at manual snapshot index %lu", snap_idx);
-    snap_term = snap_instance->second->term;
-  }
-  Assert2(snap_term > 0, "Manual snapshot term should be non-zero");
-  std::string snapshot_data(sizeof(uint64_t) * 2, '\0');
-  std::memcpy(snapshot_data.data(), &snap_idx, sizeof(uint64_t));
-  std::memcpy(snapshot_data.data() + sizeof(uint64_t), &snap_term,
-              sizeof(uint64_t));
-  Assert2(snap_mgr->TakeSnapshot(snap_idx, snap_term,
-                                 snapshot_data.data(), snapshot_data.size()),
-          "Manual snapshot write failed in %s", full_snap_path.c_str());
-
-  // Verify this manager actually wrote a snapshot.  Checking only the server's
-  // snapidx_ can produce a false positive because it may retain metadata from
-  // an earlier snapshot test even when every new file write failed.
-  auto latest_snapshot = snap_mgr->GetLatestSnapshot();
-  Assert2(latest_snapshot.is_some(),
-          "Snapshot manager did not create a snapshot in %s",
-          full_snap_path.c_str());
-  const auto snapshot_metadata = latest_snapshot.unwrap();
-  Log_info("TEST 65: Follower {} snapshot: index={} term={}", follower_id, snap_idx, snap_term);
-  Assert2(snapshot_metadata.last_included_index == snap_idx &&
-              snapshot_metadata.last_included_term == snap_term,
-          "Fresh snapshot metadata mismatch: got index=%lu term=%lu, expected index=%lu term=%lu",
-          snapshot_metadata.last_included_index,
-          snapshot_metadata.last_included_term, snap_idx, snap_term);
-  Assert2(snap_idx >= first_new_index && snap_idx <= follower_server->executeIndex,
-          "Snapshot index %lu is outside this run's fresh range [%lu, %lu]",
-          snap_idx, first_new_index, follower_server->executeIndex);
-
-  // Record pre-kill state
-  uint64_t exec_before = follower_server->executeIndex;
-  uint64_t commit_before = follower_server->commitIndex;
-  uint64_t last_log_before = follower_server->lastLogIndex;
-  Log_info("TEST 65: Before kill - executeIndex={} commitIndex={} lastLogIndex={} min_active_slot_={}",
-           exec_before, commit_before, last_log_before, follower_server->min_active_slot_);
-
-  // Kill the follower
-  Log_info("TEST 65: Killing follower {}", follower_id);
-  config_->Kill(follower_id);
-  Fiber::sleep(ELECTIONTIMEOUT / 2);
-
-  // Set MAKO_RAFT_SNAPSHOTS and MAKO_RAFT_SNAPSHOT_PATH env vars so
-  // InitializeSnapshotManager() finds the existing snapshot on restart
-  snapshot_env_overridden = true;
-  Assert2(setenv("MAKO_RAFT_SNAPSHOTS", "1", 1) == 0,  // @unsafe
-          "Could not set MAKO_RAFT_SNAPSHOTS: %s", strerror(errno));
-  Assert2(setenv("MAKO_RAFT_SNAPSHOT_PATH", base_path.c_str(), 1) == 0,  // @unsafe
-          "Could not set MAKO_RAFT_SNAPSHOT_PATH: %s", strerror(errno));
-  Assert2(setenv("MAKO_RAFT_SNAPSHOT_INTERVAL", "1000000", 1) == 0,  // @unsafe
-          "Could not set MAKO_RAFT_SNAPSHOT_INTERVAL: %s", strerror(errno));
-
-  // Restart the follower - Setup() will call InitializeSnapshotManager()
-  Log_info("TEST 65: Restarting follower {}", follower_id);
-  Assert2(config_->Restart(follower_id),
-          "Snapshot-backed restart failed for follower %d", follower_id);
-  restore_snapshot_env();
-
-  // Get restarted server
-  follower_server = config_->GetServer(follower_id);
-  Assert2(follower_server != nullptr, "Restarted server should not be null");
-  auto restarted_snapshot_manager = follower_server->GetSnapshotManager();
-  if (restarted_snapshot_manager != nullptr &&
-      restarted_snapshot_manager->GetStoragePath() == full_snap_path) {
-    snapshot_path_adopted = true;
-  }
-  Assert2(snapshot_path_adopted,
-          "Restarted server did not adopt snapshot directory %s",
-          full_snap_path.c_str());
-  Fiber::sleep(ELECTIONTIMEOUT);
-
-  uint64_t exec_after = follower_server->executeIndex;
-  uint64_t commit_after = follower_server->commitIndex;
-  uint64_t last_log_after = follower_server->lastLogIndex;
-  uint64_t min_slot_after = follower_server->min_active_slot_;
-  uint64_t snap_idx_after = follower_server->GetSnapshotIndex();
-
-  Log_info("TEST 65: After restart - executeIndex={} commitIndex={} lastLogIndex={} "
-           "min_active_slot_={} snapidx={}",
-           exec_after, commit_after, last_log_after, min_slot_after, snap_idx_after);
-
-  // Verify state reflects snapshot
-  Assert2(exec_after >= snap_idx,
-          "executeIndex (%lu) should be >= snapshot index (%lu)", exec_after, snap_idx);
-  Assert2(commit_after >= snap_idx,
-          "commitIndex (%lu) should be >= snapshot index (%lu)", commit_after, snap_idx);
-  Assert2(last_log_after >= snap_idx,
-          "lastLogIndex (%lu) should be >= snapshot index (%lu)", last_log_after, snap_idx);
-  Assert2(min_slot_after >= snap_idx + 1,
-          "min_active_slot_ (%lu) should be >= snapshot index + 1 (%lu)",
-          min_slot_after, snap_idx + 1);
-  Assert2(snap_idx_after == snap_idx &&
-              follower_server->GetSnapshotTerm() == snap_term,
-          "Restart loaded wrong snapshot metadata: index=%lu term=%lu, expected index=%lu term=%lu",
-          snap_idx_after, follower_server->GetSnapshotTerm(), snap_idx, snap_term);
-
-  // Verify cluster can still make progress
-  Fiber::sleep(ELECTIONTIMEOUT);
-  int new_leader = config_->OneLeader();
-  if (new_leader < 0) {
-    Fiber::sleep(ELECTIONTIMEOUT);
-    new_leader = config_->OneLeader();
-  }
-  Assert2(new_leader >= 0, "Should have leader after restart");
-
-  Log_info("TEST 65: Snapshot recovery on startup PASSED!");
-  Passed2();
-}
-
-// ============================================================================
-// Test 66: testSnapshotRecoveryFieldAdvancement
-// ============================================================================
-// @unsafe - Uses test infrastructure, snapshot manager API
-/**
- * Verify that InitializeSnapshotManager() only advances indices, never
- * goes backwards. If log recovery already set higher values, snapshot
- * recovery should not overwrite them.
- *
- * Scenario:
- * 1. Start cluster, elect leader
- * 2. Set up snapshot manager on a server, commit entries, create snapshot
- * 3. Record snapidx_
- * 4. Commit more entries so executeIndex/commitIndex are ahead of snapshot
- * 5. Call InitializeSnapshotManager() again (simulating re-init)
- * 6. Verify indices were NOT set backwards
- */
-int RaftLabTest::testSnapshotRecoveryFieldAdvancement(void) {
-  Init2(66, "Snapshot recovery field advancement");
-
-  // Wait for initial election
-  Fiber::sleep(ELECTIONTIMEOUT);
-  int leader = config_->OneLeader();
-  AssertOneLeader(leader);
-  Log_info("TEST 66: Leader elected: {}", leader);
-
-  auto server = config_->GetServer(leader);
-  Assert2(server != nullptr, "Server should not be null");
-
-  // Set up the snapshot manager at the exact leaf path reconstructed by
-  // InitializeSnapshotManager().  A unique parent prevents a crashed prior
-  // run from supplying stale metadata.
-  std::string snap_root_template =
-      "/tmp/raft_snap_advancement_test_66_" +
-      std::to_string(getpid()) + "_XXXXXX";
-  char* created_snap_root = mkdtemp(snap_root_template.data());  // @unsafe
-  Assert2(created_snap_root != nullptr,
-          "Could not create Test66 snapshot parent: %s", strerror(errno));
-  std::string snap_root(created_snap_root);
-  std::string snap_path =
-      snap_root + "/raft_snap_" + std::to_string(server->site_id_) +
-      "_partition_" + std::to_string(server->partition_id_);
-  janus::raft::SnapshotConfig snap_config;
-  snap_config.storage_path = snap_path;
-  auto snap_mgr = std::make_shared<janus::raft::FileSnapshotManager>(snap_config);
-  const uint64_t original_snapshot_threshold =
-      server->GetSnapshotThreshold();
-  uint64_t snapshot_baseline = 0;
-  Assert2(InstallAndSeedSnapshotManager(
-              server, snap_mgr, 3, &snapshot_baseline),
-          "Could not atomically seed Test66 replacement snapshot manager");
-
-  const char* old_snapshots_raw = std::getenv("MAKO_RAFT_SNAPSHOTS");
-  const char* old_snapshot_path_raw =
-      std::getenv("MAKO_RAFT_SNAPSHOT_PATH");
-  const bool had_snapshots = old_snapshots_raw != nullptr;
-  const bool had_snapshot_path = old_snapshot_path_raw != nullptr;
-  const std::string old_snapshots =
-      had_snapshots ? old_snapshots_raw : "";
-  const std::string old_snapshot_path =
-      had_snapshot_path ? old_snapshot_path_raw : "";
-  bool snapshot_env_overridden = false;
-  auto restore_test66_state = MakeRaftTestScopeExit([&]() {  // @unsafe
-    if (snapshot_env_overridden) {
-      if (had_snapshots) {
-        (void)setenv("MAKO_RAFT_SNAPSHOTS", old_snapshots.c_str(), 1);
-      } else {
-        (void)unsetenv("MAKO_RAFT_SNAPSHOTS");
-      }
-      if (had_snapshot_path) {
-        (void)setenv("MAKO_RAFT_SNAPSHOT_PATH",
-                     old_snapshot_path.c_str(), 1);
-      } else {
-        (void)unsetenv("MAKO_RAFT_SNAPSHOT_PATH");
-      }
-      snapshot_env_overridden = false;
-    }
-    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    server->SetSnapshotThreshold(original_snapshot_threshold);
-  });
-
-  // Commit initial entries to trigger snapshot
-  Log_info("TEST 66: Committing initial entries");
-  uint64_t first_new_index = 0;
-  for (int i = 1; i <= 6; i++) {
-    uint64_t idx = config_->DoAgreement(6600 + i, NSERVERS, true);
-    Assert2(idx > 0, "DoAgreement failed for cmd %d", 6600 + i);
-    if (first_new_index == 0) {
-      first_new_index = idx;
-    }
-  }
-
-  uint64_t snap_idx = 0;
-  bool snapshot_ready = false;
-  for (int attempt = 0; attempt < 200 && !snapshot_ready; ++attempt) {
-    {
-      std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-      snap_idx = server->GetSnapshotIndex();
-    }
-    auto candidate = snap_mgr->GetLatestSnapshot();
-    if (candidate.is_some()) {
-      const auto candidate_metadata = candidate.unwrap();
-      snapshot_ready =
-          candidate_metadata.last_included_index == snap_idx &&
-          snap_idx > snapshot_baseline && snap_idx >= first_new_index;
-    }
-    if (!snapshot_ready) {
-      Fiber::sleep(10000);
-    }
-  }
-  auto fresh_snapshot = snap_mgr->GetLatestSnapshot();
-  Assert2(snapshot_ready && fresh_snapshot.is_some(),
-          "Test66 replacement manager did not advance for this workload");
-  const auto fresh_metadata = fresh_snapshot.unwrap();
-  Log_info("TEST 66: Snapshot created at index {}", snap_idx);
-  Assert2(snap_idx == fresh_metadata.last_included_index,
-          "Server snapshot index %lu does not match manager index %lu",
-          snap_idx, fresh_metadata.last_included_index);
-  Assert2(snap_idx > snapshot_baseline && snap_idx >= first_new_index,
-          "Test66 snapshot did not advance for this workload: baseline=%lu, first=%lu, got=%lu",
-          snapshot_baseline, first_new_index, snap_idx);
-
-  // Commit MORE entries so that executeIndex/commitIndex are ahead of snapshot
-  Log_info("TEST 66: Committing additional entries beyond snapshot");
-  for (int i = 1; i <= 5; i++) {
-    uint64_t idx = config_->DoAgreement(6610 + i, NSERVERS, true);
-    Assert2(idx > 0, "DoAgreement failed for cmd %d", 6610 + i);
-  }
-
-  // Wait for apply
-  Fiber::sleep(1000000);
-
-  // Record current values (should be ahead of snapshot)
-  uint64_t exec_before = 0;
-  uint64_t commit_before = 0;
-  uint64_t last_log_before = 0;
-  uint64_t min_slot_before = 0;
-  {
-    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    exec_before = server->executeIndex;
-    commit_before = server->commitIndex;
-    last_log_before = server->lastLogIndex;
-    min_slot_before = server->min_active_slot_;
-  }
-  Log_info("TEST 66: Before re-init - executeIndex={} commitIndex={} lastLogIndex={} "
-           "min_active_slot_={} snap_idx={}",
-           exec_before, commit_before, last_log_before, min_slot_before, snap_idx);
-
-  Assert2(exec_before > snap_idx,
-          "executeIndex (%lu) should be > snapshot index (%lu) after more commits",
-          exec_before, snap_idx);
-  Assert2(commit_before > snap_idx,
-          "commitIndex (%lu) should be > snapshot index (%lu) after more commits",
-          commit_before, snap_idx);
-
-  // Set env vars and call InitializeSnapshotManager() again.
-  Assert2(setenv("MAKO_RAFT_SNAPSHOTS", "1", 1) == 0,
-          "Could not set MAKO_RAFT_SNAPSHOTS: %s", strerror(errno));
-  Assert2(setenv("MAKO_RAFT_SNAPSHOT_PATH", snap_root.c_str(), 1) == 0,
-          "Could not set MAKO_RAFT_SNAPSHOT_PATH: %s", strerror(errno));
-  snapshot_env_overridden = true;
-  Assert2(server->InitializeSnapshotManager(),
-          "Test66 snapshot manager reinitialization failed");
-
-  // Verify indices were NOT set backwards
-  uint64_t exec_after = 0;
-  uint64_t commit_after = 0;
-  uint64_t last_log_after = 0;
-  uint64_t min_slot_after = 0;
-  {
-    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    exec_after = server->executeIndex;
-    commit_after = server->commitIndex;
-    last_log_after = server->lastLogIndex;
-    min_slot_after = server->min_active_slot_;
-  }
-  Log_info("TEST 66: After re-init - executeIndex={} commitIndex={} lastLogIndex={} "
-           "min_active_slot_={}",
-           exec_after, commit_after, last_log_after, min_slot_after);
-
-  Assert2(exec_after >= exec_before,
-          "executeIndex went backwards: was %lu, now %lu", exec_before, exec_after);
-  Assert2(commit_after >= commit_before,
-          "commitIndex went backwards: was %lu, now %lu", commit_before, commit_after);
-  Assert2(last_log_after >= last_log_before,
-          "lastLogIndex went backwards: was %lu, now %lu", last_log_before, last_log_after);
-  Assert2(min_slot_after >= min_slot_before,
-          "min_active_slot_ went backwards: was %lu, now %lu", min_slot_before, min_slot_after);
-
-  // Also verify they're still >= snapshot values
-  Assert2(exec_after >= snap_idx,
-          "executeIndex (%lu) should be >= snapshot (%lu)", exec_after, snap_idx);
-  Assert2(commit_after >= snap_idx,
-          "commitIndex (%lu) should be >= snapshot (%lu)", commit_after, snap_idx);
-  Assert2(min_slot_after >= snap_idx + 1,
-          "min_active_slot_ (%lu) should be >= snapshot+1 (%lu)", min_slot_after, snap_idx + 1);
-
-  // The reinitialized manager now backs compacted live state.  The scope guard
-  // restores environment/tuning, while the files remain through suite exit.
-  Log_info("TEST 66: Retaining live snapshot root {}", snap_root.c_str());
-
-  Log_info("TEST 66: Snapshot recovery field advancement PASSED!");
   Passed2();
 }
 
@@ -7121,23 +3764,15 @@ int RaftLabTest::testLongPartitionRecovery(void) {
   AssertOneLeader(leader);
   Log_info("TEST 69: Leader elected: {}", leader);
 
-  // Set up snapshot managers on ALL servers with a low threshold.  Use the
-  // same directory layout that InitializeSnapshotManager() reconstructs after
-  // Kill/Restart, and retain it for the rest of this process: compacted logs
-  // are not self-contained without the snapshot bytes that cover their prefix.
-  // @unsafe { mkdtemp, setenv, filesystem and shared_ptr usage }
-  std::string base_path_template =
-      "/tmp/raft_long_part_test_" + std::to_string(getpid()) + "_XXXXXX";
-  char* created_base_path = mkdtemp(base_path_template.data());
-  Assert2(created_base_path != nullptr,
-          "Could not create unique long-partition snapshot parent: %s",
-          strerror(errno));
-  std::string base_path(created_base_path);
+  // Set up snapshot managers on ALL servers with a low threshold.  Keep
+  // snapshots enabled for the rest of this process so a server restarted by a
+  // later test constructs an in-memory manager and can accept InstallSnapshot:
+  // compacted logs are not self-contained without the snapshot bytes that
+  // cover their prefix.
+  // @unsafe { setenv and shared_ptr usage }
   Assert2(setenv("MAKO_RAFT_SNAPSHOTS", "1", 1) == 0,
           "Could not enable snapshots for long-partition fixture: %s",
           strerror(errno));
-  Assert2(setenv("MAKO_RAFT_SNAPSHOT_PATH", base_path.c_str(), 1) == 0,
-          "Could not set long-partition snapshot root: %s", strerror(errno));
 
   std::vector<std::shared_ptr<janus::raft::SnapshotManager>> test_mgrs(
       NSERVERS);
@@ -7147,11 +3782,7 @@ int RaftLabTest::testLongPartitionRecovery(void) {
   for (int i = 0; i < NSERVERS; i++) {
     auto server = config_->GetServer(i);
     if (server == nullptr) continue;
-    janus::raft::SnapshotConfig snap_config;
-    snap_config.storage_path =
-        base_path + "/raft_snap_" + std::to_string(server->site_id_) +
-        "_partition_" + std::to_string(server->partition_id_);
-    auto mgr = std::make_shared<janus::raft::FileSnapshotManager>(snap_config);
+    auto mgr = std::make_shared<janus::raft::MemorySnapshotManager>();
     test_mgrs[i] = mgr;
     {
       std::lock_guard<std::recursive_mutex> lock(server->mtx_);
@@ -7261,7 +3892,7 @@ int RaftLabTest::testLongPartitionRecovery(void) {
     }
   }
   Assert2(leader_snapshot_ready,
-          "Leader did not persist a fresh snapshot for partition workload [%lu, %lu]",
+          "Leader did not create a fresh snapshot for partition workload [%lu, %lu]",
           first_partition_index, last_partition_index);
   Assert2(leader_execute_index >= last_partition_index,
           "Leader executeIndex %lu did not reach partition workload end %lu",
@@ -7356,8 +3987,8 @@ int RaftLabTest::testLongPartitionRecovery(void) {
   Log_info("TEST 69: Full cluster agreement reached at index {}", new_idx);
 
   // Restore runtime tuning, but keep each server on the live snapshot manager
-  // whose files back its compacted prefix.  MAKO_RAFT_SNAPSHOT_PATH remains
-  // pointed at the same root so later Restart() calls reconstruct it.
+  // that backs its compacted prefix.  MAKO_RAFT_SNAPSHOTS stays enabled so
+  // later Restart() calls construct an in-memory manager.
   for (int i = 0; i < NSERVERS; i++) {
     auto server = config_->GetServer(i);
     if (server == nullptr) continue;
@@ -7369,8 +4000,7 @@ int RaftLabTest::testLongPartitionRecovery(void) {
       server->SetLogRetentionWindow(original_retention_windows[i]);
     }
   }
-  Log_info("TEST 69: Retaining live snapshot root {} through suite shutdown",
-           base_path.c_str());
+  Log_info("TEST 69: Retaining live in-memory snapshot managers through suite shutdown");
 
   Log_info("TEST 69: Long partition recovery via InstallSnapshot PASSED!");
   Passed2();
@@ -7463,110 +4093,6 @@ int RaftLabTest::testLeadershipTransferTimeout(void) {
   Log_info("TEST 70: Full cluster agreement at index {}", final_idx);
 
   Log_info("TEST 70: Leadership transfer timeout PASSED!");
-  Passed2();
-}
-
-// =============================================================================
-// Test 71: testDurableAckLoss
-// Leader receives memory acks from quorum but durable ack RPCs are lost.
-// Verify securedLogIndex_ doesn't advance while specCommitIndex_ does,
-// and the invariant securedLogIndex_ <= specCommitIndex_ <= lastLogIndex holds.
-// =============================================================================
-
-// @unsafe - accesses Raft server state through test config helpers
-int RaftLabTest::testDurableAckLoss(void) {
-  Init2(71, "Durable ack loss: specCommitIndex advances, securedLogIndex lags");
-
-  // @unsafe { wait for initial election }
-  Fiber::sleep(ELECTIONTIMEOUT);
-
-  // @unsafe { find leader }
-  int leader = config_->OneLeader();
-  Assert2(leader >= 0, "No leader elected");
-
-  siteid_t leader_id = config_->getServerIdByIndex(leader);
-
-  // Commit a few entries so indices advance normally
-  // @unsafe { DoAgreement calls into Raft }
-  for (int i = 0; i < 3; i++) {
-    uint64_t idx = config_->DoAgreement(7100 + i, NSERVERS, true);
-    Assert2(idx > 0, "Failed to reach agreement for entry %d", i);
-  }
-
-  // Re-check leader (may have changed)
-  leader = config_->OneLeader();
-  Assert2(leader >= 0, "No leader after initial commits");
-  leader_id = config_->getServerIdByIndex(leader);
-
-  // @unsafe { wait for replication and durable acks to settle }
-  Fiber::sleep(500000);  // 500ms
-
-  // Record current state
-  // @unsafe { reading speculative state from leader }
-  uint64_t securedBefore = config_->GetSecuredLogIndex(leader_id);
-  uint64_t specCommitBefore = config_->GetSpecCommitIndex(leader_id);
-
-  Log_info("TEST 71: Before new entries: securedLogIndex={}, specCommitIndex={}",
-           securedBefore, specCommitBefore);
-
-  // Submit more entries - these should get memory acks (advancing specCommitIndex_)
-  // In the test framework, securedLogIndex_ advancement depends on whether durable
-  // acks arrive. We verify the invariant regardless of whether they do or not.
-  // @unsafe { Start calls into Raft }
-  for (int i = 0; i < 5; i++) {
-    uint64_t index = 0;
-    uint64_t term = 0;
-    bool ok = config_->Start(leader_id, 7110 + i, &index, &term);
-    Assert2(ok, "Failed to submit command %d to leader", 7110 + i);
-    Log_info("TEST 71: Submitted command {} at index {}", 7110 + i, index);
-  }
-
-  // Wait for memory acks to arrive (short wait - enough for memory, may not be
-  // enough for full durable cycle)
-  // @unsafe { fiber sleep }
-  Fiber::sleep(300000);  // 300ms
-
-  // Check specCommitIndex advanced
-  // @unsafe { reading speculative state }
-  uint64_t specCommitAfter = config_->GetSpecCommitIndex(leader_id);
-  uint64_t securedAfter = config_->GetSecuredLogIndex(leader_id);
-
-  Log_info("TEST 71: After new entries: securedLogIndex={}, specCommitIndex={}",
-           securedAfter, specCommitAfter);
-
-  // specCommitIndex should have advanced beyond the "before" value
-  Assert2(specCommitAfter > specCommitBefore,
-          "specCommitIndex (%lu) did not advance beyond previous value (%lu)",
-          specCommitAfter, specCommitBefore);
-
-  // Verify the core invariant: securedLogIndex <= specCommitIndex <= lastLogIndex
-  // @unsafe { GetLastLogIndex reads server state }
-  auto* server = config_->GetServer(leader_id);
-  Assert2(server != nullptr, "Leader server is null");
-
-  uint64_t lastLog = server->GetLastLogIndex();
-
-  Log_info("TEST 71: Invariant check: securedLogIndex={} <= specCommitIndex={} <= lastLogIndex={}",
-           securedAfter, specCommitAfter, lastLog);
-
-  Assert2(securedAfter <= specCommitAfter,
-          "Invariant violated: securedLogIndex (%lu) > specCommitIndex (%lu)",
-          securedAfter, specCommitAfter);
-  Assert2(specCommitAfter <= lastLog,
-          "Invariant violated: specCommitIndex (%lu) > lastLogIndex (%lu)",
-          specCommitAfter, lastLog);
-
-  // Also verify via the helper
-  // @unsafe { VerifySpecInvariants reads server state }
-  Assert2(config_->VerifySpecInvariants(leader_id),
-          "VerifySpecInvariants returned false");
-
-  // Wait for all entries to be fully committed so cleanup passes
-  // @unsafe { DoAgreement calls into Raft }
-  uint64_t final_idx = config_->DoAgreement(7199, NSERVERS, true);
-  Assert2(final_idx > 0, "Final agreement failed");
-
-  Log_info("TEST 71: Durable ack loss PASSED!");
   Passed2();
 }
 
@@ -7685,7 +4211,7 @@ int RaftLabTest::testHighFrequencyApply(void) {
 // ============================================================================
 // Verify that AddServer adds a new server to the config, increases config size,
 // and updates quorum size. Tests the config tracking infrastructure directly
-// via friend class access since OnAddServer requires DeferredReply (RPC context).
+// via RaftServer::LabAccess since OnAddServer requires DeferredReply (RPC context).
 int RaftLabTest::testAddServerBasic(void) {
   Init2(73, "AddServer basic functionality");
 
@@ -7715,11 +4241,11 @@ int RaftLabTest::testAddServerBasic(void) {
   siteid_t new_server_id = 9999;
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    Assert2(server->current_config_.count(new_server_id) == 0,
+    Assert2(RaftServer::LabAccess::current_config(*server).count(new_server_id) == 0,
             "Server %d should not already be in config", new_server_id);
-    server->current_config_.insert(new_server_id);
-    server->config_change_pending_ = true;
-    server->pending_config_index_ = server->lastLogIndex;
+    RaftServer::LabAccess::current_config(*server).insert(new_server_id);
+    RaftServer::LabAccess::config_change_pending(*server) = true;
+    RaftServer::LabAccess::pending_config_index(*server) = server->lastLogIndex;
   }
   Log_info("TEST 73: Added server {} to config", new_server_id);
 
@@ -7742,15 +4268,15 @@ int RaftLabTest::testAddServerBasic(void) {
   Log_info("TEST 73: Quorum after add: {}", new_quorum);
 
   // 7. Verify config_change_pending_ flag is set
-  Assert2(server->config_change_pending_,
+  Assert2(RaftServer::LabAccess::config_change_pending(*server),
           "config_change_pending_ should be true after add");
 
   // 8. Cluster should still work (the extra server is fake, doesn't affect real quorum)
   // Reset config to original to not break subsequent operations
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    server->current_config_.erase(new_server_id);
-    server->config_change_pending_ = false;
+    RaftServer::LabAccess::current_config(*server).erase(new_server_id);
+    RaftServer::LabAccess::config_change_pending(*server) = false;
   }
 
   uint64_t idx = config_->DoAgreement(7300, NSERVERS, true);
@@ -7782,8 +4308,8 @@ int RaftLabTest::testRemoveServerBasic(void) {
   siteid_t extra_server_id = 8888;
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    server->current_config_.insert(extra_server_id);
-    server->config_change_pending_ = false;  // Clear so we can do remove
+    RaftServer::LabAccess::current_config(*server).insert(extra_server_id);
+    RaftServer::LabAccess::config_change_pending(*server) = false;  // Clear so we can do remove
   }
 
   size_t size_before = server->GetCurrentConfig().size();
@@ -7795,11 +4321,11 @@ int RaftLabTest::testRemoveServerBasic(void) {
   // Remove the extra server
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    Assert2(server->current_config_.count(extra_server_id) > 0,
+    Assert2(RaftServer::LabAccess::current_config(*server).count(extra_server_id) > 0,
             "Extra server should be in config before remove");
-    server->current_config_.erase(extra_server_id);
-    server->config_change_pending_ = true;
-    server->pending_config_index_ = server->lastLogIndex;
+    RaftServer::LabAccess::current_config(*server).erase(extra_server_id);
+    RaftServer::LabAccess::config_change_pending(*server) = true;
+    RaftServer::LabAccess::pending_config_index(*server) = server->lastLogIndex;
   }
   Log_info("TEST 74: Removed server {} from config", extra_server_id);
 
@@ -7820,7 +4346,7 @@ int RaftLabTest::testRemoveServerBasic(void) {
   Log_info("TEST 74: Quorum after remove: {}", server->GetQuorumSize());
 
   // Clear pending and verify cluster still works
-  server->config_change_pending_ = false;
+  RaftServer::LabAccess::config_change_pending(*server) = false;
 
   uint64_t idx = config_->DoAgreement(7400, NSERVERS, true);
   Assert2(idx > 0, "DoAgreement should succeed after RemoveServer");
@@ -7849,14 +4375,14 @@ int RaftLabTest::testRejectDuplicateConfigChange(void) {
   // 1. Simulate first AddServer - sets pending flag
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    server->current_config_.insert(static_cast<siteid_t>(7777));
-    server->config_change_pending_ = true;
-    server->pending_config_index_ = server->lastLogIndex;
+    RaftServer::LabAccess::current_config(*server).insert(static_cast<siteid_t>(7777));
+    RaftServer::LabAccess::config_change_pending(*server) = true;
+    RaftServer::LabAccess::pending_config_index(*server) = server->lastLogIndex;
   }
   Log_info("TEST 75: First config change simulated (pending=true)");
 
   // 2. Verify pending flag blocks further changes
-  Assert2(server->config_change_pending_,
+  Assert2(RaftServer::LabAccess::config_change_pending(*server),
           "config_change_pending_ should be true");
 
   // 3. A second change should detect pending flag
@@ -7864,23 +4390,23 @@ int RaftLabTest::testRejectDuplicateConfigChange(void) {
   // Here we verify the flag mechanism works
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    Assert2(server->config_change_pending_,
+    Assert2(RaftServer::LabAccess::config_change_pending(*server),
             "Cannot add second server while pending");
   }
   Log_info("TEST 75: Pending flag correctly blocks second change");
 
   // 4. Clear pending flag (simulating commit) and verify changes work again
-  server->config_change_pending_ = false;
+  RaftServer::LabAccess::config_change_pending(*server) = false;
 
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    Assert2(!server->config_change_pending_,
+    Assert2(!RaftServer::LabAccess::config_change_pending(*server),
             "Pending flag should be cleared");
     // Now a new change should be allowed
-    server->current_config_.erase(static_cast<siteid_t>(7777));
-    server->config_change_pending_ = true;
+    RaftServer::LabAccess::current_config(*server).erase(static_cast<siteid_t>(7777));
+    RaftServer::LabAccess::config_change_pending(*server) = true;
   }
-  Assert2(server->config_change_pending_,
+  Assert2(RaftServer::LabAccess::config_change_pending(*server),
           "Pending flag should be set after new change");
   Log_info("TEST 75: Config change succeeded after clearing pending flag");
 
@@ -7912,7 +4438,7 @@ int RaftLabTest::testRejectDuplicateConfigChange(void) {
   Log_info("TEST 75: All servers have correct initial config size");
 
   // Cleanup: clear pending flag on leader
-  server->config_change_pending_ = false;
+  RaftServer::LabAccess::config_change_pending(*server) = false;
 
   Log_info("TEST 75: Reject duplicate config change PASSED!");
   Passed2();
@@ -7924,7 +4450,7 @@ int RaftLabTest::testRejectDuplicateConfigChange(void) {
 // Verify that AddServer adds a new server as a learner (not directly to
 // current_config_), and that CheckAndPromoteLearners promotes the learner
 // to full member once its match_index_ is within catchup_threshold_.
-// @unsafe - Accesses internal server state via friend class
+// @unsafe - Accesses internal server state via RaftServer::LabAccess
 int RaftLabTest::testNewServerCatchUp(void) {
   Init2(76, "New server catch-up (learner tracking and promotion)");
 
@@ -7958,19 +4484,19 @@ int RaftLabTest::testNewServerCatchUp(void) {
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
     // Verify not already present
-    Assert2(server->current_config_.count(new_server_id) == 0,
+    Assert2(RaftServer::LabAccess::current_config(*server).count(new_server_id) == 0,
             "New server should not already be in config");
-    Assert2(server->learners_.count(new_server_id) == 0,
+    Assert2(RaftServer::LabAccess::learners(*server).count(new_server_id) == 0,
             "New server should not already be a learner");
 
     // Add as learner (mimicking what OnAddServer now does)
-    server->learners_.insert(new_server_id);
-    server->config_change_pending_ = true;
-    server->pending_config_index_ = server->lastLogIndex;
+    RaftServer::LabAccess::learners(*server).insert(new_server_id);
+    RaftServer::LabAccess::config_change_pending(*server) = true;
+    RaftServer::LabAccess::pending_config_index(*server) = server->lastLogIndex;
 
     // Initialize replication state
-    server->next_index_[new_server_id] = server->lastLogIndex + 1;
-    server->match_index_[new_server_id] = 0;
+    RaftServer::LabAccess::next_index(*server)[new_server_id] = server->lastLogIndex + 1;
+    RaftServer::LabAccess::match_index(*server)[new_server_id] = 0;
   }
   Log_info("TEST 76: Added server {} as learner", new_server_id);
 
@@ -7981,7 +4507,7 @@ int RaftLabTest::testNewServerCatchUp(void) {
           "New server should NOT be in current_config_ yet");
   Assert2(server->GetCurrentConfig().size() == initial_config_size,
           "Config size should be unchanged while server is learner");
-  Assert2(server->config_change_pending_,
+  Assert2(RaftServer::LabAccess::config_change_pending(*server),
           "config_change_pending_ should be true");
   Log_info("TEST 76: Verified learner state - learner={}, in_config={}",
            server->IsLearner(new_server_id),
@@ -8011,7 +4537,7 @@ int RaftLabTest::testNewServerCatchUp(void) {
     // Set match_index to be within threshold
     uint64_t leader_last = server->lastLogIndex;
     Assert2(leader_last > 0, "Leader should have log entries");
-    server->match_index_[new_server_id] = leader_last;  // Fully caught up
+    RaftServer::LabAccess::match_index(*server)[new_server_id] = leader_last;  // Fully caught up
     Log_info("TEST 76: Set match_index[{}] = {} (lastLogIndex={})",
              new_server_id, leader_last, leader_last);
   }
@@ -8029,7 +4555,7 @@ int RaftLabTest::testNewServerCatchUp(void) {
           "Server should be in current_config_ after promotion");
   Assert2(server->GetCurrentConfig().size() == initial_config_size + 1,
           "Config size should have grown by 1 after promotion");
-  Assert2(!server->config_change_pending_,
+  Assert2(!RaftServer::LabAccess::config_change_pending(*server),
           "config_change_pending_ should be false after promotion");
   Log_info("TEST 76: Promoted! config_size={}, quorum={}",
            server->GetCurrentConfig().size(), server->GetQuorumSize());
@@ -8045,19 +4571,19 @@ int RaftLabTest::testNewServerCatchUp(void) {
   siteid_t new_server_id2 = 9999;
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    server->learners_.insert(new_server_id2);
-    server->config_change_pending_ = true;
-    server->next_index_[new_server_id2] = server->lastLogIndex + 1;
+    RaftServer::LabAccess::learners(*server).insert(new_server_id2);
+    RaftServer::LabAccess::config_change_pending(*server) = true;
+    RaftServer::LabAccess::next_index(*server)[new_server_id2] = server->lastLogIndex + 1;
     // Set match_index just at the threshold boundary
-    uint64_t threshold = server->catchup_threshold_;
+    uint64_t threshold = RaftServer::LabAccess::catchup_threshold(*server);
     uint64_t leader_last = server->lastLogIndex;
     if (leader_last > threshold) {
-      server->match_index_[new_server_id2] = leader_last - threshold;  // Exactly at threshold
+      RaftServer::LabAccess::match_index(*server)[new_server_id2] = leader_last - threshold;  // Exactly at threshold
     } else {
-      server->match_index_[new_server_id2] = 0;  // Close enough for small logs
+      RaftServer::LabAccess::match_index(*server)[new_server_id2] = 0;  // Close enough for small logs
     }
     Log_info("TEST 76: Added second learner {}, match_index={}, threshold={}, lastLogIndex={}",
-             new_server_id2, server->match_index_[new_server_id2], threshold, leader_last);
+             new_server_id2, RaftServer::LabAccess::match_index(*server)[new_server_id2], threshold, leader_last);
   }
 
   // Should promote since within threshold
@@ -8075,26 +4601,26 @@ int RaftLabTest::testNewServerCatchUp(void) {
   siteid_t new_server_id3 = 7777;
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    server->learners_.insert(new_server_id3);
-    server->config_change_pending_ = true;
-    server->next_index_[new_server_id3] = server->lastLogIndex + 1;
+    RaftServer::LabAccess::learners(*server).insert(new_server_id3);
+    RaftServer::LabAccess::config_change_pending(*server) = true;
+    RaftServer::LabAccess::next_index(*server)[new_server_id3] = server->lastLogIndex + 1;
     // Commit more entries to make the gap large
     // We just set match_index far behind
-    uint64_t threshold = server->catchup_threshold_;
+    uint64_t threshold = RaftServer::LabAccess::catchup_threshold(*server);
     uint64_t leader_last = server->lastLogIndex;
     if (leader_last > threshold + 10) {
-      server->match_index_[new_server_id3] = leader_last - threshold - 10;  // Beyond threshold
+      RaftServer::LabAccess::match_index(*server)[new_server_id3] = leader_last - threshold - 10;  // Beyond threshold
     } else {
       // If log is too short, skip this sub-test
-      server->match_index_[new_server_id3] = 0;
+      RaftServer::LabAccess::match_index(*server)[new_server_id3] = 0;
     }
     Log_info("TEST 76: Added third learner {}, match_index={}, threshold={}, lastLogIndex={}",
-             new_server_id3, server->match_index_[new_server_id3], threshold, leader_last);
+             new_server_id3, RaftServer::LabAccess::match_index(*server)[new_server_id3], threshold, leader_last);
   }
 
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    uint64_t threshold = server->catchup_threshold_;
+    uint64_t threshold = RaftServer::LabAccess::catchup_threshold(*server);
     uint64_t leader_last = server->lastLogIndex;
     // Only check if the gap is actually beyond threshold
     if (leader_last > threshold + 10) {
@@ -8110,16 +4636,16 @@ int RaftLabTest::testNewServerCatchUp(void) {
   // Cleanup: remove fake servers from config to avoid breaking subsequent operations
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    server->current_config_.erase(new_server_id);
-    server->current_config_.erase(new_server_id2);
-    server->learners_.erase(new_server_id3);
-    server->match_index_.erase(new_server_id);
-    server->match_index_.erase(new_server_id2);
-    server->match_index_.erase(new_server_id3);
-    server->next_index_.erase(new_server_id);
-    server->next_index_.erase(new_server_id2);
-    server->next_index_.erase(new_server_id3);
-    server->config_change_pending_ = false;
+    RaftServer::LabAccess::current_config(*server).erase(new_server_id);
+    RaftServer::LabAccess::current_config(*server).erase(new_server_id2);
+    RaftServer::LabAccess::learners(*server).erase(new_server_id3);
+    RaftServer::LabAccess::match_index(*server).erase(new_server_id);
+    RaftServer::LabAccess::match_index(*server).erase(new_server_id2);
+    RaftServer::LabAccess::match_index(*server).erase(new_server_id3);
+    RaftServer::LabAccess::next_index(*server).erase(new_server_id);
+    RaftServer::LabAccess::next_index(*server).erase(new_server_id2);
+    RaftServer::LabAccess::next_index(*server).erase(new_server_id3);
+    RaftServer::LabAccess::config_change_pending(*server) = false;
   }
 
   // Verify cluster still works
@@ -8137,7 +4663,7 @@ int RaftLabTest::testNewServerCatchUp(void) {
 // Verify that adding a server as a learner, catching it up, and promoting it
 // results in correct config size and quorum. This exercises the full add path:
 // commit entries -> add learner -> initialize tracking -> catch up -> promote.
-// @unsafe - Accesses internal server state via friend class
+// @unsafe - Accesses internal server state via RaftServer::LabAccess
 int RaftLabTest::testAddServerReceivesLogs(void) {
   Init2(77, "AddServer receives logs and promotes with correct quorum");
 
@@ -8170,11 +4696,11 @@ int RaftLabTest::testAddServerReceivesLogs(void) {
   siteid_t new_server_id = 999;
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    server->learners_.insert(new_server_id);
-    server->config_change_pending_ = true;
-    server->pending_config_index_ = server->lastLogIndex;
-    server->next_index_[new_server_id] = server->lastLogIndex + 1;
-    server->match_index_[new_server_id] = 0;
+    RaftServer::LabAccess::learners(*server).insert(new_server_id);
+    RaftServer::LabAccess::config_change_pending(*server) = true;
+    RaftServer::LabAccess::pending_config_index(*server) = server->lastLogIndex;
+    RaftServer::LabAccess::next_index(*server)[new_server_id] = server->lastLogIndex + 1;
+    RaftServer::LabAccess::match_index(*server)[new_server_id] = 0;
   }
 
   // 4. Verify learner state
@@ -8189,7 +4715,7 @@ int RaftLabTest::testAddServerReceivesLogs(void) {
   // 5. Simulate catch-up: set match_index to lastLogIndex
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    server->match_index_[new_server_id] = server->lastLogIndex;
+    RaftServer::LabAccess::match_index(*server)[new_server_id] = server->lastLogIndex;
   }
 
   // 6. Promote via CheckAndPromoteLearners
@@ -8219,10 +4745,10 @@ int RaftLabTest::testAddServerReceivesLogs(void) {
   // Cleanup
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    server->current_config_.erase(new_server_id);
-    server->match_index_.erase(new_server_id);
-    server->next_index_.erase(new_server_id);
-    server->config_change_pending_ = false;
+    RaftServer::LabAccess::current_config(*server).erase(new_server_id);
+    RaftServer::LabAccess::match_index(*server).erase(new_server_id);
+    RaftServer::LabAccess::next_index(*server).erase(new_server_id);
+    RaftServer::LabAccess::config_change_pending(*server) = false;
   }
 
   // @unsafe { DoAgreement calls into non-borrow-checked RPC layer }
@@ -8238,7 +4764,7 @@ int RaftLabTest::testAddServerReceivesLogs(void) {
 // ============================================================================
 // Verify that removing a server shrinks the quorum and the cluster can still
 // commit entries with the reduced config.
-// @unsafe - Accesses internal server state via friend class
+// @unsafe - Accesses internal server state via RaftServer::LabAccess
 int RaftLabTest::testRemoveServerQuorumShrinks(void) {
   Init2(78, "RemoveServer quorum shrinks");
 
@@ -8263,7 +4789,7 @@ int RaftLabTest::testRemoveServerQuorumShrinks(void) {
   siteid_t fake1 = 8001;
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    server->current_config_.insert(fake1);
+    RaftServer::LabAccess::current_config(*server).insert(fake1);
   }
 
   size_t size_with_extras = server->GetCurrentConfig().size();
@@ -8276,9 +4802,9 @@ int RaftLabTest::testRemoveServerQuorumShrinks(void) {
   // 3. Remove fake1 via config manipulation (simulating OnRemoveServer)
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    server->current_config_.erase(fake1);
-    server->config_change_pending_ = true;
-    server->pending_config_index_ = server->lastLogIndex;
+    RaftServer::LabAccess::current_config(*server).erase(fake1);
+    RaftServer::LabAccess::config_change_pending(*server) = true;
+    RaftServer::LabAccess::pending_config_index(*server) = server->lastLogIndex;
   }
 
   // 4. Verify config shrinks
@@ -8299,7 +4825,7 @@ int RaftLabTest::testRemoveServerQuorumShrinks(void) {
            size_after_remove, quorum_after_remove, quorum_with_extras);
 
   // 6. Verify cluster can still commit entries
-  server->config_change_pending_ = false;
+  RaftServer::LabAccess::config_change_pending(*server) = false;
 
   // @unsafe { DoAgreement calls into non-borrow-checked RPC layer }
   uint64_t idx = config_->DoAgreement(7800, NSERVERS, true);
@@ -8314,7 +4840,7 @@ int RaftLabTest::testRemoveServerQuorumShrinks(void) {
 // Test 79: testAddServerDuringActiveWorkload
 // ============================================================================
 // Verify that adding a learner mid-workload does not disrupt ongoing commits.
-// @unsafe - Accesses internal server state via friend class
+// @unsafe - Accesses internal server state via RaftServer::LabAccess
 int RaftLabTest::testAddServerDuringActiveWorkload(void) {
   Init2(79, "AddServer during active workload");
 
@@ -8339,11 +4865,11 @@ int RaftLabTest::testAddServerDuringActiveWorkload(void) {
   siteid_t new_server_id = 997;
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    server->learners_.insert(new_server_id);
-    server->config_change_pending_ = true;
-    server->pending_config_index_ = server->lastLogIndex;
-    server->next_index_[new_server_id] = server->lastLogIndex + 1;
-    server->match_index_[new_server_id] = 0;
+    RaftServer::LabAccess::learners(*server).insert(new_server_id);
+    RaftServer::LabAccess::config_change_pending(*server) = true;
+    RaftServer::LabAccess::pending_config_index(*server) = server->lastLogIndex;
+    RaftServer::LabAccess::next_index(*server)[new_server_id] = server->lastLogIndex + 1;
+    RaftServer::LabAccess::match_index(*server)[new_server_id] = 0;
   }
   Assert2(server->IsLearner(new_server_id),
           "Server 997 should be a learner");
@@ -8376,10 +4902,10 @@ int RaftLabTest::testAddServerDuringActiveWorkload(void) {
   // Cleanup
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    server->learners_.erase(new_server_id);
-    server->match_index_.erase(new_server_id);
-    server->next_index_.erase(new_server_id);
-    server->config_change_pending_ = false;
+    RaftServer::LabAccess::learners(*server).erase(new_server_id);
+    RaftServer::LabAccess::match_index(*server).erase(new_server_id);
+    RaftServer::LabAccess::next_index(*server).erase(new_server_id);
+    RaftServer::LabAccess::config_change_pending(*server) = false;
   }
 
   Log_info("TEST 79: AddServer during active workload PASSED!");
@@ -8392,7 +4918,7 @@ int RaftLabTest::testAddServerDuringActiveWorkload(void) {
 // Verify that if the leader fails while a config change is pending, the new
 // leader does not inherit the pending state (config_change_pending_ is local
 // to each server and resets on new elections).
-// @unsafe - Accesses internal server state via friend class
+// @unsafe - Accesses internal server state via RaftServer::LabAccess
 int RaftLabTest::testLeaderFailureDuringConfigChange(void) {
   Init2(80, "Leader failure during config change");
 
@@ -8409,13 +4935,13 @@ int RaftLabTest::testLeaderFailureDuringConfigChange(void) {
   siteid_t fake_server = 996;
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    server->learners_.insert(fake_server);
-    server->config_change_pending_ = true;
-    server->pending_config_index_ = server->lastLogIndex;
-    server->next_index_[fake_server] = server->lastLogIndex + 1;
-    server->match_index_[fake_server] = 0;
+    RaftServer::LabAccess::learners(*server).insert(fake_server);
+    RaftServer::LabAccess::config_change_pending(*server) = true;
+    RaftServer::LabAccess::pending_config_index(*server) = server->lastLogIndex;
+    RaftServer::LabAccess::next_index(*server)[fake_server] = server->lastLogIndex + 1;
+    RaftServer::LabAccess::match_index(*server)[fake_server] = 0;
   }
-  Assert2(server->config_change_pending_,
+  Assert2(RaftServer::LabAccess::config_change_pending(*server),
           "Leader should have config_change_pending_=true");
   Log_info("TEST 80: Set config_change_pending=true on leader {}", leader);
 
@@ -8435,7 +4961,7 @@ int RaftLabTest::testLeaderFailureDuringConfigChange(void) {
   // 4. Verify new leader does NOT have config_change_pending
   auto new_server = config_->GetServer(new_leader);
   Assert2(new_server != nullptr, "New leader server should not be null");
-  Assert2(!new_server->config_change_pending_,
+  Assert2(!RaftServer::LabAccess::config_change_pending(*new_server),
           "New leader should NOT have config_change_pending_=true");
   Log_info("TEST 80: New leader has config_change_pending_=false (correct)");
 
@@ -8458,10 +4984,10 @@ int RaftLabTest::testLeaderFailureDuringConfigChange(void) {
   // Cleanup old leader's pending state (it may rejoin as follower)
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    server->learners_.erase(fake_server);
-    server->match_index_.erase(fake_server);
-    server->next_index_.erase(fake_server);
-    server->config_change_pending_ = false;
+    RaftServer::LabAccess::learners(*server).erase(fake_server);
+    RaftServer::LabAccess::match_index(*server).erase(fake_server);
+    RaftServer::LabAccess::next_index(*server).erase(fake_server);
+    RaftServer::LabAccess::config_change_pending(*server) = false;
   }
 
   Log_info("TEST 80: Leader failure during config change PASSED!");
@@ -8475,7 +5001,7 @@ int RaftLabTest::testLeaderFailureDuringConfigChange(void) {
 // This tests the serialization of membership changes via config_change_pending_.
 // While Test 75 tests the pending flag mechanism, this test explicitly simulates
 // two sequential OnAddServer-like operations and verifies the second fails.
-// @unsafe - Accesses internal server state via friend class
+// @unsafe - Accesses internal server state via RaftServer::LabAccess
 int RaftLabTest::testCannotAddTwoServersSimultaneously(void) {
   Init2(81, "Cannot add two servers simultaneously");
 
@@ -8492,15 +5018,15 @@ int RaftLabTest::testCannotAddTwoServersSimultaneously(void) {
   siteid_t server1 = 995;
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    Assert2(!server->config_change_pending_,
+    Assert2(!RaftServer::LabAccess::config_change_pending(*server),
             "No config change should be pending initially");
-    server->learners_.insert(server1);
-    server->config_change_pending_ = true;
-    server->pending_config_index_ = server->lastLogIndex;
-    server->next_index_[server1] = server->lastLogIndex + 1;
-    server->match_index_[server1] = 0;
+    RaftServer::LabAccess::learners(*server).insert(server1);
+    RaftServer::LabAccess::config_change_pending(*server) = true;
+    RaftServer::LabAccess::pending_config_index(*server) = server->lastLogIndex;
+    RaftServer::LabAccess::next_index(*server)[server1] = server->lastLogIndex + 1;
+    RaftServer::LabAccess::match_index(*server)[server1] = 0;
   }
-  Assert2(server->config_change_pending_,
+  Assert2(RaftServer::LabAccess::config_change_pending(*server),
           "config_change_pending_ should be true after first add");
   Assert2(server->IsLearner(server1),
           "Server 995 should be a learner");
@@ -8511,7 +5037,7 @@ int RaftLabTest::testCannotAddTwoServersSimultaneously(void) {
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
     // Simulate OnAddServer rejection logic: check pending flag first
-    bool rejected = server->config_change_pending_;
+    bool rejected = RaftServer::LabAccess::config_change_pending(*server);
     Assert2(rejected,
             "Second AddServer should be rejected (config_change_pending_=true)");
     // Do NOT add server2 since the change is rejected
@@ -8525,44 +5051,44 @@ int RaftLabTest::testCannotAddTwoServersSimultaneously(void) {
   // 3. Complete the first change (promote server1)
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    server->match_index_[server1] = server->lastLogIndex;
+    RaftServer::LabAccess::match_index(*server)[server1] = server->lastLogIndex;
     server->CheckAndPromoteLearners();
   }
   Assert2(!server->IsLearner(server1),
           "Server 995 should be promoted");
   Assert2(server->GetCurrentConfig().count(server1) > 0,
           "Server 995 should be in current_config_");
-  Assert2(!server->config_change_pending_,
+  Assert2(!RaftServer::LabAccess::config_change_pending(*server),
           "config_change_pending_ should be false after promotion");
   Log_info("TEST 81: First change completed, server 995 promoted");
 
   // 4. Now adding server 994 should succeed
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    Assert2(!server->config_change_pending_,
+    Assert2(!RaftServer::LabAccess::config_change_pending(*server),
             "Pending should be false, allowing new config change");
-    server->learners_.insert(server2);
-    server->config_change_pending_ = true;
-    server->pending_config_index_ = server->lastLogIndex;
-    server->next_index_[server2] = server->lastLogIndex + 1;
-    server->match_index_[server2] = 0;
+    RaftServer::LabAccess::learners(*server).insert(server2);
+    RaftServer::LabAccess::config_change_pending(*server) = true;
+    RaftServer::LabAccess::pending_config_index(*server) = server->lastLogIndex;
+    RaftServer::LabAccess::next_index(*server)[server2] = server->lastLogIndex + 1;
+    RaftServer::LabAccess::match_index(*server)[server2] = 0;
   }
   Assert2(server->IsLearner(server2),
           "Server 994 should now be a learner");
-  Assert2(server->config_change_pending_,
+  Assert2(RaftServer::LabAccess::config_change_pending(*server),
           "config_change_pending_ should be true for second change");
   Log_info("TEST 81: Second AddServer (994) now succeeded after first completed");
 
   // Cleanup
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    server->current_config_.erase(server1);
-    server->learners_.erase(server2);
-    server->match_index_.erase(server1);
-    server->match_index_.erase(server2);
-    server->next_index_.erase(server1);
-    server->next_index_.erase(server2);
-    server->config_change_pending_ = false;
+    RaftServer::LabAccess::current_config(*server).erase(server1);
+    RaftServer::LabAccess::learners(*server).erase(server2);
+    RaftServer::LabAccess::match_index(*server).erase(server1);
+    RaftServer::LabAccess::match_index(*server).erase(server2);
+    RaftServer::LabAccess::next_index(*server).erase(server1);
+    RaftServer::LabAccess::next_index(*server).erase(server2);
+    RaftServer::LabAccess::config_change_pending(*server) = false;
   }
 
   // Verify cluster still works
@@ -8571,1994 +5097,6 @@ int RaftLabTest::testCannotAddTwoServersSimultaneously(void) {
   Assert2(idx > 0, "DoAgreement should succeed after cleanup");
 
   Log_info("TEST 81: Cannot add two servers simultaneously PASSED!");
-  Passed2();
-}
-
-// ============================================================================
-// Test 82: testReplicatedDBCommandPutMarshal
-// ============================================================================
-// Verify PUT command marshal/unmarshal round-trip preserves all fields.
-// @unsafe - Uses Marshal I/O (non-borrow-checked)
-int RaftLabTest::testReplicatedDBCommandPutMarshal(void) {
-  Init2(82, "ReplicatedDBCommand PUT marshal round-trip");
-
-  // @unsafe { Factory creates rusty::Arc }
-  auto cmd = ReplicatedDBCommand::CreatePut("test_key", "test_value");
-  Assert2(cmd->op_ == ReplicatedDBOp::PUT, "Op should be PUT");
-  Assert2(cmd->key_ == "test_key", "Key should be test_key");
-  Assert2(cmd->value_ == "test_value", "Value should be test_value");
-
-  // Marshal
-  // @unsafe { Archive I/O }
-  rrr::BufferSink sink;
-  rrr::BinaryWriteArchive war(rrr::make_sink_proxy_buffer(&sink));
-  cmd->save(war);
-
-  // Unmarshal into a new command
-  // @unsafe { Archive I/O }
-  auto cmd2 = std::make_shared<ReplicatedDBCommand>();
-  rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-  rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
-  cmd2->load(rar);
-
-  Assert2(cmd2->op_ == ReplicatedDBOp::PUT,
-          "Unmarshalled op should be PUT");
-  Assert2(cmd2->key_ == "test_key",
-          "Unmarshalled key should be test_key, got %s", cmd2->key_.c_str());
-  Assert2(cmd2->value_ == "test_value",
-          "Unmarshalled value should be test_value, got %s", cmd2->value_.c_str());
-  Assert2(cmd2->batch_ops_.empty(),
-          "Unmarshalled batch_ops should be empty for PUT");
-
-  // Test with empty key and value
-  // @unsafe { Factory creates rusty::Arc }
-  auto cmd_empty = ReplicatedDBCommand::CreatePut("", "");
-  rrr::BufferSink sink2;
-  rrr::BinaryWriteArchive war2(rrr::make_sink_proxy_buffer(&sink2));
-  cmd_empty->save(war2);
-  auto cmd_empty2 = std::make_shared<ReplicatedDBCommand>();
-  rrr::BufferSource src2(sink2.bytes.data(), sink2.bytes.len());
-  rrr::BinaryReadArchive rar2(rrr::make_source_proxy_buffer(&src2));
-  cmd_empty2->load(rar2);
-  Assert2(cmd_empty2->op_ == ReplicatedDBOp::PUT, "Empty PUT op should be PUT");
-  Assert2(cmd_empty2->key_.empty(), "Empty PUT key should be empty");
-  Assert2(cmd_empty2->value_.empty(), "Empty PUT value should be empty");
-
-  // Test with large key/value
-  std::string large_key(1024, 'K');
-  std::string large_value(4096, 'V');
-  // @unsafe { Factory creates rusty::Arc }
-  auto cmd_large = ReplicatedDBCommand::CreatePut(large_key, large_value);
-  rrr::BufferSink sink3;
-  rrr::BinaryWriteArchive war3(rrr::make_sink_proxy_buffer(&sink3));
-  cmd_large->save(war3);
-  auto cmd_large2 = std::make_shared<ReplicatedDBCommand>();
-  rrr::BufferSource src3(sink3.bytes.data(), sink3.bytes.len());
-  rrr::BinaryReadArchive rar3(rrr::make_source_proxy_buffer(&src3));
-  cmd_large2->load(rar3);
-  Assert2(cmd_large2->key_ == large_key,
-          "Large key should survive round-trip");
-  Assert2(cmd_large2->value_ == large_value,
-          "Large value should survive round-trip");
-
-  Log_info("TEST 82: ReplicatedDBCommand PUT marshal round-trip PASSED!");
-  Passed2();
-}
-
-// ============================================================================
-// Test 83: testReplicatedDBCommandDeleteMarshal
-// ============================================================================
-// Verify DELETE command marshal/unmarshal round-trip preserves all fields.
-// @unsafe - Uses Marshal I/O (non-borrow-checked)
-int RaftLabTest::testReplicatedDBCommandDeleteMarshal(void) {
-  Init2(83, "ReplicatedDBCommand DELETE marshal round-trip");
-
-  // @unsafe { Factory creates rusty::Arc }
-  auto cmd = ReplicatedDBCommand::CreateDelete("delete_key");
-  Assert2(cmd->op_ == ReplicatedDBOp::DELETE, "Op should be DELETE");
-  Assert2(cmd->key_ == "delete_key", "Key should be delete_key");
-  Assert2(cmd->value_.empty(), "Value should be empty for DELETE");
-
-  // Marshal
-  // @unsafe { Archive I/O }
-  rrr::BufferSink sink;
-  rrr::BinaryWriteArchive war(rrr::make_sink_proxy_buffer(&sink));
-  cmd->save(war);
-
-  // Unmarshal into a new command
-  // @unsafe { Archive I/O }
-  auto cmd2 = std::make_shared<ReplicatedDBCommand>();
-  rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-  rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
-  cmd2->load(rar);
-
-  Assert2(cmd2->op_ == ReplicatedDBOp::DELETE,
-          "Unmarshalled op should be DELETE");
-  Assert2(cmd2->key_ == "delete_key",
-          "Unmarshalled key should be delete_key, got %s", cmd2->key_.c_str());
-  Assert2(cmd2->value_.empty(),
-          "Unmarshalled value should be empty for DELETE");
-  Assert2(cmd2->batch_ops_.empty(),
-          "Unmarshalled batch_ops should be empty for DELETE");
-
-  // Test janus::Command round-trip (tests factory registration)
-  // @unsafe { janus::Command uses non-borrow-checked factory }
-  auto cmd3 = ReplicatedDBCommand::CreateDelete("deputy_test_key");
-  janus::Command md;
-  md = std::move(cmd3);
-  rrr::BufferSink sink2;
-  rrr::BinaryWriteArchive war2(rrr::make_sink_proxy_buffer(&sink2));
-  rrr::Serialize_::serialize(md, war2);
-
-  janus::Command md2;
-  rrr::BufferSource src2(sink2.bytes.data(), sink2.bytes.len());
-  rrr::BinaryReadArchive rar2(rrr::make_source_proxy_buffer(&src2));
-  rrr::Deserialize_::deserialize(md2, rar2);
-  Assert2(md2.has_value(), "janus::Command should have deserialized data");
-  const auto cmd4 = marshallable_cast<ReplicatedDBCommand>(md2);
-  Assert2(cmd4.is_some(), "Should dynamic_cast to ReplicatedDBCommand");
-  Assert2(cmd4.unwrap()->op_ == ReplicatedDBOp::DELETE,
-          "Deputy round-trip op should be DELETE");
-  Assert2(cmd4.unwrap()->key_ == "deputy_test_key",
-          "Deputy round-trip key should match");
-
-  Log_info("TEST 83: ReplicatedDBCommand DELETE marshal round-trip PASSED!");
-  Passed2();
-}
-
-// ============================================================================
-// Test 84: testReplicatedDBCommandBatchMarshal
-// ============================================================================
-// Verify BATCH command marshal/unmarshal round-trip preserves all ops.
-// @unsafe - Uses Marshal I/O (non-borrow-checked)
-int RaftLabTest::testReplicatedDBCommandBatchMarshal(void) {
-  Init2(84, "ReplicatedDBCommand BATCH marshal round-trip");
-
-  // Create a batch with 3 operations
-  std::vector<KVOperation> ops;
-  ops.push_back({ReplicatedDBOp::PUT, "key1", "value1"});
-  ops.push_back({ReplicatedDBOp::DELETE, "key2", ""});
-  ops.push_back({ReplicatedDBOp::PUT, "key3", "value3"});
-
-  // @unsafe { Factory creates rusty::Arc }
-  auto cmd = ReplicatedDBCommand::CreateBatch(ops);
-  Assert2(cmd->op_ == ReplicatedDBOp::BATCH, "Op should be BATCH");
-  Assert2(cmd->batch_ops_.size() == 3, "Should have 3 batch ops");
-
-  // Marshal
-  // @unsafe { Archive I/O }
-  rrr::BufferSink sink;
-  rrr::BinaryWriteArchive war(rrr::make_sink_proxy_buffer(&sink));
-  cmd->save(war);
-
-  // Unmarshal into a new command
-  // @unsafe { Archive I/O }
-  auto cmd2 = std::make_shared<ReplicatedDBCommand>();
-  rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-  rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
-  cmd2->load(rar);
-
-  Assert2(cmd2->op_ == ReplicatedDBOp::BATCH,
-          "Unmarshalled op should be BATCH");
-  Assert2(cmd2->batch_ops_.size() == 3,
-          "Unmarshalled batch should have 3 ops, got %zu", cmd2->batch_ops_.size());
-
-  // Verify each operation
-  Assert2(cmd2->batch_ops_[0].op == ReplicatedDBOp::PUT,
-          "Op 0 should be PUT");
-  Assert2(cmd2->batch_ops_[0].key == "key1",
-          "Op 0 key should be key1");
-  Assert2(cmd2->batch_ops_[0].value == "value1",
-          "Op 0 value should be value1");
-
-  Assert2(cmd2->batch_ops_[1].op == ReplicatedDBOp::DELETE,
-          "Op 1 should be DELETE");
-  Assert2(cmd2->batch_ops_[1].key == "key2",
-          "Op 1 key should be key2");
-  Assert2(cmd2->batch_ops_[1].value.empty(),
-          "Op 1 value should be empty for DELETE");
-
-  Assert2(cmd2->batch_ops_[2].op == ReplicatedDBOp::PUT,
-          "Op 2 should be PUT");
-  Assert2(cmd2->batch_ops_[2].key == "key3",
-          "Op 2 key should be key3");
-  Assert2(cmd2->batch_ops_[2].value == "value3",
-          "Op 2 value should be value3");
-
-  // Test empty batch
-  std::vector<KVOperation> empty_ops;
-  // @unsafe { Factory creates rusty::Arc }
-  auto cmd_empty = ReplicatedDBCommand::CreateBatch(empty_ops);
-  rrr::BufferSink sink2;
-  rrr::BinaryWriteArchive war2(rrr::make_sink_proxy_buffer(&sink2));
-  cmd_empty->save(war2);
-  auto cmd_empty2 = std::make_shared<ReplicatedDBCommand>();
-  rrr::BufferSource src2(sink2.bytes.data(), sink2.bytes.len());
-  rrr::BinaryReadArchive rar2(rrr::make_source_proxy_buffer(&src2));
-  cmd_empty2->load(rar2);
-  Assert2(cmd_empty2->op_ == ReplicatedDBOp::BATCH,
-          "Empty batch op should be BATCH");
-  Assert2(cmd_empty2->batch_ops_.empty(),
-          "Empty batch should have 0 ops");
-
-  // Test large batch (100 operations)
-  std::vector<KVOperation> large_ops;
-  for (int i = 0; i < 100; i++) {
-    ReplicatedDBOp op = (i % 2 == 0) ? ReplicatedDBOp::PUT : ReplicatedDBOp::DELETE;
-    large_ops.push_back({op, "key_" + std::to_string(i), "val_" + std::to_string(i)});
-  }
-  // @unsafe { Factory creates rusty::Arc }
-  auto cmd_large = ReplicatedDBCommand::CreateBatch(large_ops);
-  rrr::BufferSink sink3;
-  rrr::BinaryWriteArchive war3(rrr::make_sink_proxy_buffer(&sink3));
-  cmd_large->save(war3);
-  auto cmd_large2 = std::make_shared<ReplicatedDBCommand>();
-  rrr::BufferSource src3(sink3.bytes.data(), sink3.bytes.len());
-  rrr::BinaryReadArchive rar3(rrr::make_source_proxy_buffer(&src3));
-  cmd_large2->load(rar3);
-  Assert2(cmd_large2->batch_ops_.size() == 100,
-          "Large batch should have 100 ops, got %zu", cmd_large2->batch_ops_.size());
-  for (int i = 0; i < 100; i++) {
-    ReplicatedDBOp expected_op = (i % 2 == 0) ? ReplicatedDBOp::PUT : ReplicatedDBOp::DELETE;
-    Assert2(cmd_large2->batch_ops_[i].op == expected_op,
-            "Op %d type mismatch", i);
-    Assert2(cmd_large2->batch_ops_[i].key == "key_" + std::to_string(i),
-            "Op %d key mismatch", i);
-    Assert2(cmd_large2->batch_ops_[i].value == "val_" + std::to_string(i),
-            "Op %d value mismatch", i);
-  }
-
-  Log_info("TEST 84: ReplicatedDBCommand BATCH marshal round-trip PASSED!");
-  Passed2();
-}
-
-// ============================================================================
-// Test 85: testReplicatedDBPutGet
-// ============================================================================
-// Create ReplicatedDB on leader, Put a key, Get it back from local RocksDB.
-// @unsafe - Uses ReplicatedDB which wraps RocksDB and Raft
-int RaftLabTest::testReplicatedDBPutGet(void) {
-  Init2(85, "ReplicatedDB Put/Get on leader");
-
-  // Wait for election
-  // @unsafe { Fiber::sleep }
-  Fiber::sleep(ELECTIONTIMEOUT);
-
-  int leader = config_->OneLeader();
-  Assert2(leader >= 0, "No leader elected");
-
-  auto* svr = config_->GetServer(leader);
-  Assert2(svr != nullptr, "Leader server is null");
-
-  // Create ReplicatedDB with a temp path
-  std::string db_path = "/tmp/raft_test_repldb_85_" + std::to_string(leader);
-
-  // Clean up any leftover DB from previous runs
-  // @unsafe { RocksDB C API }
-  {
-    rocksdb_options_t* opts = rocksdb_options_create();
-    char* err = nullptr;
-    rocksdb_destroy_db(opts, db_path.c_str(), &err);
-    if (err) rocksdb_free(err);
-    rocksdb_options_destroy(opts);
-  }
-
-  auto rdb = CreateAndAttachReplicatedDBAtCurrentBoundary(svr, db_path);
-  Assert2(rdb != nullptr,
-          "ReplicatedDB should open and attach at the current Raft boundary");
-
-  // Put a key-value pair (goes through Raft)
-  bool put_ok = rdb->Put("hello", "world");
-  Assert2(put_ok, "Put should succeed on leader");
-
-  // Put returns only after apply and unregisters its uniquely owned callback,
-  // including when persistence is disabled and no DURABLE event will arrive.
-  bool put_callback_released = false;
-  {
-    std::lock_guard<std::recursive_mutex> lock(svr->mtx_);
-    const uint64_t applied_index = svr->GetAppliedIndex();
-    put_callback_released = std::none_of(
-        svr->pendingCallbacks_.begin(), svr->pendingCallbacks_.end(),
-        [applied_index](const auto& entry) {
-          return raft_server_log_index_at_or_below(
-              entry.first, applied_index);
-        });
-  }
-  Assert2(put_callback_released,
-          "Put callback should be released before Put returns");
-
-  // Get the value back from local RocksDB
-  // The apply callback should have written it
-  std::string value;
-  bool get_ok = rdb->Get("hello", &value);
-  Assert2(get_ok, "Get should find the key");
-  Assert2(value == "world", "Get value should be 'world', got '%s'", value.c_str());
-
-  // Test Get for non-existent key
-  std::string value2;
-  bool get_ok2 = rdb->Get("nonexistent", &value2);
-  Assert2(!get_ok2, "Get should return false for non-existent key");
-
-  // Test overwrite
-  bool put_ok2 = rdb->Put("hello", "updated");
-  Assert2(put_ok2, "Put overwrite should succeed");
-
-  std::string value3;
-  bool get_ok3 = rdb->Get("hello", &value3);
-  Assert2(get_ok3, "Get after overwrite should succeed");
-  Assert2(value3 == "updated", "Value should be 'updated', got '%s'", value3.c_str());
-
-  // Verify last applied index advanced
-  Assert2(rdb->GetLastAppliedIndex() > 0, "Last applied index should be > 0");
-
-  // Restore the original learner action
-  config_->SetLearnerAction();
-
-  // Cleanup
-  rdb.reset();
-  bool snapshot_callbacks_cleared = false;
-  {
-    std::lock_guard<std::recursive_mutex> lock(svr->mtx_);
-    snapshot_callbacks_cleared =
-        svr->snapshot_callback_owner_token_ == 0 &&
-        !svr->create_sm_snapshot_cb_ &&
-        !svr->prepare_sm_snapshot_cb_;
-  }
-  Assert2(snapshot_callbacks_cleared,
-          "ReplicatedDB destruction should clear owned snapshot callbacks");
-  // @unsafe { RocksDB C API }
-  {
-    rocksdb_options_t* opts = rocksdb_options_create();
-    char* err = nullptr;
-    rocksdb_destroy_db(opts, db_path.c_str(), &err);
-    if (err) rocksdb_free(err);
-    rocksdb_options_destroy(opts);
-  }
-
-  Log_info("TEST 85: ReplicatedDB Put/Get on leader PASSED!");
-  Passed2();
-}
-
-// ============================================================================
-// Test 86: testReplicatedDBDelete
-// ============================================================================
-// Put a key, Delete it, verify Get returns not-found.
-// @unsafe - Uses ReplicatedDB which wraps RocksDB and Raft
-int RaftLabTest::testReplicatedDBDelete(void) {
-  Init2(86, "ReplicatedDB Delete");
-
-  // Wait for election
-  // @unsafe { Fiber::sleep }
-  Fiber::sleep(ELECTIONTIMEOUT);
-
-  int leader = config_->OneLeader();
-  Assert2(leader >= 0, "No leader elected");
-
-  auto* svr = config_->GetServer(leader);
-  Assert2(svr != nullptr, "Leader server is null");
-
-  std::string db_path = "/tmp/raft_test_repldb_86_" + std::to_string(leader);
-
-  // Clean up
-  // @unsafe { RocksDB C API }
-  {
-    rocksdb_options_t* opts = rocksdb_options_create();
-    char* err = nullptr;
-    rocksdb_destroy_db(opts, db_path.c_str(), &err);
-    if (err) rocksdb_free(err);
-    rocksdb_options_destroy(opts);
-  }
-
-  auto rdb = CreateAndAttachReplicatedDBAtCurrentBoundary(svr, db_path);
-  Assert2(rdb != nullptr,
-          "ReplicatedDB should open and attach at the current Raft boundary");
-
-  // Put a key
-  bool put_ok = rdb->Put("to_delete", "some_value");
-  Assert2(put_ok, "Put should succeed");
-
-  // Verify it exists
-  std::string value;
-  bool get_ok = rdb->Get("to_delete", &value);
-  Assert2(get_ok, "Get should find the key after Put");
-  Assert2(value == "some_value", "Value should be 'some_value'");
-
-  // Delete the key
-  bool del_ok = rdb->Delete("to_delete");
-  Assert2(del_ok, "Delete should succeed");
-
-  // Verify it's gone
-  std::string value2;
-  bool get_ok2 = rdb->Get("to_delete", &value2);
-  Assert2(!get_ok2, "Get should return false after Delete");
-
-  // Restore the original learner action
-  config_->SetLearnerAction();
-
-  // Cleanup
-  rdb.reset();
-  // @unsafe { RocksDB C API }
-  {
-    rocksdb_options_t* opts = rocksdb_options_create();
-    char* err = nullptr;
-    rocksdb_destroy_db(opts, db_path.c_str(), &err);
-    if (err) rocksdb_free(err);
-    rocksdb_options_destroy(opts);
-  }
-
-  Log_info("TEST 86: ReplicatedDB Delete PASSED!");
-  Passed2();
-}
-
-// ============================================================================
-// Test 87: testReplicatedDBReplication
-// ============================================================================
-// Put on leader, verify a follower's ReplicatedDB also has the value via
-// the apply callback (data replicated through Raft).
-// @unsafe - Uses ReplicatedDB which wraps RocksDB and Raft
-int RaftLabTest::testReplicatedDBReplication(void) {
-  Init2(87, "ReplicatedDB replication to follower");
-
-  // Wait for election
-  // @unsafe { Fiber::sleep }
-  Fiber::sleep(ELECTIONTIMEOUT);
-
-  int leader = config_->OneLeader();
-  Assert2(leader >= 0, "No leader elected");
-
-  auto* leader_svr = config_->GetServer(leader);
-  Assert2(leader_svr != nullptr, "Leader server is null");
-
-  // Find a follower
-  siteid_t follower = -1;
-  for (int i = 0; i < NSERVERS; i++) {
-    siteid_t sid = config_->getServerIdByIndex(i);
-    if (static_cast<int>(sid) != leader) {
-      follower = sid;
-      break;
-    }
-  }
-  Assert2(follower != static_cast<siteid_t>(-1), "No follower found");
-
-  auto* follower_svr = config_->GetServer(follower);
-  Assert2(follower_svr != nullptr, "Follower server is null");
-
-  std::string leader_db_path = "/tmp/raft_test_repldb_87_leader_" + std::to_string(leader);
-  std::string follower_db_path = "/tmp/raft_test_repldb_87_follower_" + std::to_string(follower);
-
-  // Clean up previous DBs
-  // @unsafe { RocksDB C API }
-  {
-    rocksdb_options_t* opts = rocksdb_options_create();
-    char* err = nullptr;
-    rocksdb_destroy_db(opts, leader_db_path.c_str(), &err);
-    if (err) { rocksdb_free(err); err = nullptr; }
-    rocksdb_destroy_db(opts, follower_db_path.c_str(), &err);
-    if (err) { rocksdb_free(err); err = nullptr; }
-    rocksdb_options_destroy(opts);
-  }
-
-  auto leader_rdb = CreateAndAttachReplicatedDBAtCurrentBoundary(
-      leader_svr, leader_db_path);
-  Assert2(leader_rdb != nullptr,
-          "Leader ReplicatedDB should open and attach");
-  auto follower_rdb = CreateAndAttachReplicatedDBAtCurrentBoundary(
-      follower_svr, follower_db_path);
-  Assert2(follower_rdb != nullptr,
-          "Follower ReplicatedDB should open and attach");
-
-  // Put on leader
-  bool put_ok = leader_rdb->Put("replicated_key", "replicated_value");
-  Assert2(put_ok, "Put on leader should succeed");
-
-  // Wait for replication to follower
-  // The Raft heartbeat will replicate the entry and the apply callback will fire
-  bool found = false;
-  for (int attempt = 0; attempt < 50; attempt++) {
-    std::string value;
-    if (follower_rdb->Get("replicated_key", &value)) {
-      Assert2(value == "replicated_value",
-              "Follower value should be 'replicated_value', got '%s'", value.c_str());
-      found = true;
-      break;
-    }
-    // @unsafe { usleep }
-    usleep(100000);  // 100ms
-  }
-  Assert2(found, "Follower should eventually have the replicated key");
-
-  // Verify leader also has it
-  std::string leader_value;
-  bool leader_get = leader_rdb->Get("replicated_key", &leader_value);
-  Assert2(leader_get, "Leader should have the key");
-  Assert2(leader_value == "replicated_value", "Leader value should match");
-
-  // Restore the original learner action
-  config_->SetLearnerAction();
-
-  // Cleanup
-  leader_rdb.reset();
-  follower_rdb.reset();
-  // @unsafe { RocksDB C API }
-  {
-    rocksdb_options_t* opts = rocksdb_options_create();
-    char* err = nullptr;
-    rocksdb_destroy_db(opts, leader_db_path.c_str(), &err);
-    if (err) { rocksdb_free(err); err = nullptr; }
-    rocksdb_destroy_db(opts, follower_db_path.c_str(), &err);
-    if (err) { rocksdb_free(err); err = nullptr; }
-    rocksdb_options_destroy(opts);
-  }
-
-  Log_info("TEST 87: ReplicatedDB replication to follower PASSED!");
-  Passed2();
-}
-
-// ============================================================================
-// Test 88: testReplicatedDBSnapshot
-// ============================================================================
-// Create ReplicatedDB on leader, put several keys, create a snapshot via
-// CreateStateMachineSnapshot(), verify blob is non-empty, then load it back
-// via LoadStateMachineSnapshot() and verify all keys are still accessible.
-// @unsafe - Uses ReplicatedDB which wraps RocksDB and Raft
-int RaftLabTest::testReplicatedDBSnapshot(void) {
-  Init2(88, "ReplicatedDB snapshot create/load round-trip");
-
-  // Wait for election
-  // @unsafe { Fiber::sleep }
-  Fiber::sleep(ELECTIONTIMEOUT);
-
-  int leader = config_->OneLeader();
-  Assert2(leader >= 0, "No leader elected");
-
-  auto* svr = config_->GetServer(leader);
-  Assert2(svr != nullptr, "Leader server is null");
-
-  std::string db_path = "/tmp/raft_test_repldb_88_" + std::to_string(leader);
-
-  // Clean up any leftover DB from previous runs
-  // @unsafe { RocksDB C API }
-  {
-    rocksdb_options_t* opts = rocksdb_options_create();
-    char* err = nullptr;
-    rocksdb_destroy_db(opts, db_path.c_str(), &err);
-    if (err) rocksdb_free(err);
-    rocksdb_options_destroy(opts);
-  }
-
-  auto rdb = CreateAndAttachReplicatedDBAtCurrentBoundary(svr, db_path);
-  Assert2(rdb != nullptr,
-          "ReplicatedDB should open and attach at the current Raft boundary");
-
-  // Put several keys
-  Assert2(rdb->Put("snap_key1", "value1"), "Put snap_key1 should succeed");
-  Assert2(rdb->Put("snap_key2", "value2"), "Put snap_key2 should succeed");
-  Assert2(rdb->Put("snap_key3", "value3"), "Put snap_key3 should succeed");
-
-  // Verify keys are present
-  std::string val;
-  Assert2(rdb->Get("snap_key1", &val) && val == "value1", "snap_key1 should be value1");
-  Assert2(rdb->Get("snap_key2", &val) && val == "value2", "snap_key2 should be value2");
-  Assert2(rdb->Get("snap_key3", &val) && val == "value3", "snap_key3 should be value3");
-
-  // Create snapshot
-  std::string snapshot_blob = rdb->CreateStateMachineSnapshot();
-  Assert2(!snapshot_blob.empty(), "Snapshot blob should be non-empty");
-  const uint64_t snapshot_applied_index = rdb->GetLastAppliedIndex();
-  Assert2(snapshot_applied_index > 0 && snapshot_applied_index < UINT64_MAX,
-          "Snapshot applied index must be a non-terminal Raft index, got %lu",
-          snapshot_applied_index);
-  Assert2(rdb->CreateStateMachineSnapshot(snapshot_applied_index + 1).empty(),
-          "Snapshot creator must reject a boundary ahead of application state");
-  Log_info("TEST 88: Snapshot blob size = {} bytes", snapshot_blob.size());
-
-  // Verify the blob has a compression header byte followed by data
-  Assert2(snapshot_blob.size() >= 1, "Blob should have at least 1 byte (compression header)");
-  uint8_t compression_byte = static_cast<uint8_t>(snapshot_blob[0]);
-  Assert2(compression_byte == 0 || compression_byte == 1,
-          "Compression header should be 0 (uncompressed) or 1 (LZ4), got %u", compression_byte);
-  Log_info("TEST 88: Snapshot compression byte = {}", compression_byte);
-
-  // The checkpoint is valid only for the exact Raft boundary serialized in
-  // its metadata. Reject a mismatched RPC boundary without touching live DB.
-  Assert2(!rdb->LoadStateMachineSnapshot(
-              snapshot_blob, snapshot_applied_index + 1),
-          "Snapshot loader should reject a mismatched Raft boundary");
-  Assert2(rdb->IsOpen() &&
-              rdb->Get("snap_key1", &val) && val == "value1",
-          "Rejected boundary mismatch must preserve the live database");
-
-  // Load snapshot back into the same ReplicatedDB (simulates recovery).
-  Assert2(rdb->LoadStateMachineSnapshot(
-              snapshot_blob, snapshot_applied_index),
-          "Snapshot round-trip load should succeed");
-  Assert2(rdb->IsOpen(), "ReplicatedDB should be open after snapshot load");
-
-  // Verify all keys are still accessible after loading
-  Assert2(rdb->Get("snap_key1", &val) && val == "value1",
-          "snap_key1 should be value1 after snapshot load");
-  Assert2(rdb->Get("snap_key2", &val) && val == "value2",
-          "snap_key2 should be value2 after snapshot load");
-  Assert2(rdb->Get("snap_key3", &val) && val == "value3",
-          "snap_key3 should be value3 after snapshot load");
-
-  // Verify last_applied_index was preserved
-  Assert2(rdb->GetLastAppliedIndex() > 0,
-          "last_applied_index should be > 0 after snapshot load");
-
-  // Restore the original learner action
-  config_->SetLearnerAction();
-
-  // Cleanup
-  rdb.reset();
-  // @unsafe { RocksDB C API }
-  {
-    rocksdb_options_t* opts = rocksdb_options_create();
-    char* err = nullptr;
-    rocksdb_destroy_db(opts, db_path.c_str(), &err);
-    if (err) rocksdb_free(err);
-    rocksdb_options_destroy(opts);
-  }
-
-  Log_info("TEST 88: ReplicatedDB snapshot create/load round-trip PASSED!");
-  Passed2();
-}
-
-// ============================================================================
-// Test 89: testReplicatedDBSnapshotTransfer
-// ============================================================================
-// Create ReplicatedDB on leader and follower. Put keys on leader. Create
-// snapshot on leader. Load snapshot on follower. Verify follower has all keys.
-// @unsafe - Uses ReplicatedDB which wraps RocksDB and Raft
-int RaftLabTest::testReplicatedDBSnapshotTransfer(void) {
-  Init2(89, "ReplicatedDB snapshot transfer to follower");
-
-  // Wait for election
-  // @unsafe { Fiber::sleep }
-  Fiber::sleep(ELECTIONTIMEOUT);
-
-  int leader = config_->OneLeader();
-  Assert2(leader >= 0, "No leader elected");
-
-  auto* leader_svr = config_->GetServer(leader);
-  Assert2(leader_svr != nullptr, "Leader server is null");
-
-  // Find a follower
-  siteid_t follower = -1;
-  for (int i = 0; i < NSERVERS; i++) {
-    siteid_t sid = config_->getServerIdByIndex(i);
-    if (static_cast<int>(sid) != leader) {
-      follower = sid;
-      break;
-    }
-  }
-  Assert2(follower != static_cast<siteid_t>(-1), "No follower found");
-
-  auto* follower_svr = config_->GetServer(follower);
-  Assert2(follower_svr != nullptr, "Follower server is null");
-
-  std::string leader_db_path = "/tmp/raft_test_repldb_89_leader_" + std::to_string(leader);
-  std::string follower_db_path = "/tmp/raft_test_repldb_89_follower_" + std::to_string(follower);
-
-  // Clean up previous DBs
-  // @unsafe { RocksDB C API }
-  {
-    rocksdb_options_t* opts = rocksdb_options_create();
-    char* err = nullptr;
-    rocksdb_destroy_db(opts, leader_db_path.c_str(), &err);
-    if (err) { rocksdb_free(err); err = nullptr; }
-    rocksdb_destroy_db(opts, follower_db_path.c_str(), &err);
-    if (err) { rocksdb_free(err); err = nullptr; }
-    rocksdb_options_destroy(opts);
-  }
-
-  // Create ReplicatedDB on leader only (follower gets snapshot).
-  auto leader_rdb = CreateAndAttachReplicatedDBAtCurrentBoundary(
-      leader_svr, leader_db_path);
-  Assert2(leader_rdb != nullptr,
-          "Leader ReplicatedDB should open and attach");
-
-  // Put keys on leader (goes through Raft)
-  Assert2(leader_rdb->Put("transfer_key1", "val_a"), "Put transfer_key1 should succeed");
-  Assert2(leader_rdb->Put("transfer_key2", "val_b"), "Put transfer_key2 should succeed");
-  Assert2(leader_rdb->Put("transfer_key3", "val_c"), "Put transfer_key3 should succeed");
-
-  // Create snapshot on leader
-  std::string snapshot_blob = leader_rdb->CreateStateMachineSnapshot();
-  Assert2(!snapshot_blob.empty(), "Leader snapshot blob should be non-empty");
-  const uint64_t snapshot_applied_index =
-      leader_rdb->GetLastAppliedIndex();
-  Assert2(snapshot_applied_index > 0,
-          "Leader snapshot should carry a non-zero applied index");
-  Log_info("TEST 89: Leader snapshot blob size = {} bytes", snapshot_blob.size());
-
-  // Create a follower ReplicatedDB (empty initially)
-  auto follower_rdb = std::make_unique<ReplicatedDB>(
-      follower_svr, follower_db_path, false);
-  Assert2(follower_rdb->IsOpen(), "Follower ReplicatedDB should be open");
-
-  // Verify follower does NOT have the keys yet
-  std::string val;
-  Assert2(!follower_rdb->Get("transfer_key1", &val),
-          "Follower should NOT have transfer_key1 before snapshot load");
-
-  // Prepare must fully validate and stage the leader image without exchanging
-  // the follower's canonical RocksDB directory or publishing any of its keys.
-  struct stat follower_path_before_prepare {};
-  struct stat follower_path_after_prepare {};
-  Assert2(::lstat(follower_db_path.c_str(),
-                  &follower_path_before_prepare) == 0,
-          "Could not stat follower database before snapshot Prepare");
-  const uint64_t follower_applied_before_prepare =
-      follower_rdb->GetLastAppliedIndex();
-  auto prepared_snapshot = follower_rdb->PrepareStateMachineSnapshot(
-      snapshot_blob, snapshot_applied_index);
-  Assert2(prepared_snapshot != nullptr,
-          "Follower snapshot Prepare should succeed");
-  Assert2(::lstat(follower_db_path.c_str(),
-                  &follower_path_after_prepare) == 0 &&
-              follower_path_after_prepare.st_dev ==
-                  follower_path_before_prepare.st_dev &&
-              follower_path_after_prepare.st_ino ==
-                  follower_path_before_prepare.st_ino,
-          "Snapshot Prepare exchanged the canonical follower directory early");
-  Assert2(!follower_rdb->Get("transfer_key1", &val) &&
-              follower_rdb->GetLastAppliedIndex() ==
-                  follower_applied_before_prepare,
-          "Snapshot Prepare published leader state before Commit");
-
-  Assert2(prepared_snapshot->Commit(),
-          "Follower prepared snapshot Commit should succeed");
-  prepared_snapshot.reset();
-  Assert2(follower_rdb->IsOpen(), "Follower ReplicatedDB should be open after snapshot load");
-
-  // Verify follower now has all keys
-  Assert2(follower_rdb->Get("transfer_key1", &val) && val == "val_a",
-          "Follower should have transfer_key1=val_a after snapshot load");
-  Assert2(follower_rdb->Get("transfer_key2", &val) && val == "val_b",
-          "Follower should have transfer_key2=val_b after snapshot load");
-  Assert2(follower_rdb->Get("transfer_key3", &val) && val == "val_c",
-          "Follower should have transfer_key3=val_c after snapshot load");
-
-  // Verify follower's last_applied_index was transferred
-  Assert2(follower_rdb->GetLastAppliedIndex() > 0,
-          "Follower last_applied_index should be > 0 after snapshot load");
-  Assert2(follower_rdb->GetLastAppliedIndex() == leader_rdb->GetLastAppliedIndex(),
-          "Follower and leader last_applied_index should match");
-
-  // Restore the original learner action
-  config_->SetLearnerAction();
-
-  // Cleanup
-  leader_rdb.reset();
-  follower_rdb.reset();
-  // @unsafe { RocksDB C API }
-  {
-    rocksdb_options_t* opts = rocksdb_options_create();
-    char* err = nullptr;
-    rocksdb_destroy_db(opts, leader_db_path.c_str(), &err);
-    if (err) { rocksdb_free(err); err = nullptr; }
-    rocksdb_destroy_db(opts, follower_db_path.c_str(), &err);
-    if (err) { rocksdb_free(err); err = nullptr; }
-    rocksdb_options_destroy(opts);
-  }
-
-  Log_info("TEST 89: ReplicatedDB snapshot transfer to follower PASSED!");
-  Passed2();
-}
-
-// ============================================================================
-// Test 90: testReplicatedDBWiring
-// Verifies that Setup() creates a ReplicatedDB and registers the apply callback
-// when MAKO_REPLICATED_DB=1 env var is set. Tests the full wiring path:
-//   1. Manually create and wire a ReplicatedDB on leader (simulates Setup() logic)
-//   2. Verify GetReplicatedDB() returns non-null
-//   3. Put/Get through the wired ReplicatedDB
-//   4. Verify follower also works when wired
-// ============================================================================
-// @unsafe - Creates ReplicatedDB, interacts with Raft and RocksDB
-int RaftLabTest::testReplicatedDBWiring(void) {
-  Init2(90, "ReplicatedDB wiring in Setup path");
-
-  // Wait for election
-  // @unsafe { Fiber::sleep }
-  Fiber::sleep(ELECTIONTIMEOUT);
-
-  int leader = config_->OneLeader();
-  Assert2(leader >= 0, "No leader elected");
-
-  auto* leader_svr = config_->GetServer(leader);
-  Assert2(leader_svr != nullptr, "Leader server is null");
-
-  // Verify no ReplicatedDB exists initially (Setup() was called without env var)
-  Assert2(leader_svr->GetReplicatedDB() == nullptr,
-          "ReplicatedDB should be null before wiring");
-
-  // Simulate what Setup() does when MAKO_REPLICATED_DB=1: create and register
-  std::string leader_db_path = "/tmp/raft_test_repldb_90_leader_" + std::to_string(leader);
-
-  // Clean up previous DB
-  // @unsafe { RocksDB C API }
-  {
-    rocksdb_options_t* opts = rocksdb_options_create();
-    char* err = nullptr;
-    rocksdb_destroy_db(opts, leader_db_path.c_str(), &err);
-    if (err) { rocksdb_free(err); err = nullptr; }
-    rocksdb_options_destroy(opts);
-  }
-
-  auto rdb = CreateAndAttachReplicatedDBAtCurrentBoundary(
-      leader_svr, leader_db_path);
-  Assert2(rdb != nullptr,
-          "Leader ReplicatedDB should open and attach");
-
-  // Publish only after the database and its learner share one applied boundary.
-  leader_svr->replicated_db_ = rdb;
-
-  // Verify GetReplicatedDB() now returns the instance
-  Assert2(leader_svr->GetReplicatedDB() != nullptr,
-          "GetReplicatedDB() should return non-null after wiring");
-  Assert2(leader_svr->GetReplicatedDB().get() == rdb.get(),
-          "GetReplicatedDB() should return the same instance we set");
-
-  // Test Put/Get through the wired ReplicatedDB (goes through Raft)
-  Assert2(rdb->Put("wiring_key1", "value1"), "Put wiring_key1 should succeed");
-  Assert2(rdb->Put("wiring_key2", "value2"), "Put wiring_key2 should succeed");
-
-  std::string val;
-  Assert2(rdb->Get("wiring_key1", &val) && val == "value1",
-          "Get wiring_key1 should return value1");
-  Assert2(rdb->Get("wiring_key2", &val) && val == "value2",
-          "Get wiring_key2 should return value2");
-
-  // Verify last_applied_index was updated by the apply callback
-  Assert2(rdb->GetLastAppliedIndex() > 0,
-          "last_applied_index should be > 0 after applying entries");
-
-  // Test Delete through wired path
-  Assert2(rdb->Delete("wiring_key1"), "Delete wiring_key1 should succeed");
-  Assert2(!rdb->Get("wiring_key1", &val),
-          "wiring_key1 should not exist after delete");
-  Assert2(rdb->Get("wiring_key2", &val) && val == "value2",
-          "wiring_key2 should still exist after deleting key1");
-
-  // Now wire a follower too and verify it also works
-  siteid_t follower_id = static_cast<siteid_t>(-1);
-  for (int i = 0; i < NSERVERS; i++) {
-    siteid_t sid = config_->getServerIdByIndex(i);
-    if (static_cast<int>(sid) != leader) {
-      follower_id = sid;
-      break;
-    }
-  }
-  Assert2(follower_id != static_cast<siteid_t>(-1), "No follower found");
-
-  auto* follower_svr = config_->GetServer(follower_id);
-  Assert2(follower_svr != nullptr, "Follower server is null");
-
-  std::string follower_db_path = "/tmp/raft_test_repldb_90_follower_" + std::to_string(follower_id);
-
-  // @unsafe { RocksDB C API }
-  {
-    rocksdb_options_t* opts = rocksdb_options_create();
-    char* err = nullptr;
-    rocksdb_destroy_db(opts, follower_db_path.c_str(), &err);
-    if (err) { rocksdb_free(err); err = nullptr; }
-    rocksdb_options_destroy(opts);
-  }
-
-  auto follower_rdb = CreateAndAttachReplicatedDBAtCurrentBoundary(
-      follower_svr, follower_db_path);
-  Assert2(follower_rdb != nullptr,
-          "Follower ReplicatedDB should open and attach");
-
-  follower_svr->replicated_db_ = follower_rdb;
-
-  Assert2(follower_svr->GetReplicatedDB() != nullptr,
-          "Follower GetReplicatedDB() should return non-null after wiring");
-
-  // Put through leader, wait for replication, check follower
-  Assert2(rdb->Put("wiring_replicated", "cross_node"), "Put wiring_replicated should succeed");
-
-  // Give time for replication
-  // @unsafe { Fiber::sleep }
-  Fiber::sleep(500000);  // 500ms
-
-  Assert2(follower_rdb->Get("wiring_replicated", &val) && val == "cross_node",
-          "Follower should have wiring_replicated=cross_node after replication");
-
-  // Restore original learner action
-  config_->SetLearnerAction();
-
-  // Cleanup: clear replicated_db_ pointers
-  leader_svr->replicated_db_ = nullptr;
-  follower_svr->replicated_db_ = nullptr;
-  rdb.reset();
-  follower_rdb.reset();
-
-  // @unsafe { RocksDB C API }
-  {
-    rocksdb_options_t* opts = rocksdb_options_create();
-    char* err = nullptr;
-    rocksdb_destroy_db(opts, leader_db_path.c_str(), &err);
-    if (err) { rocksdb_free(err); err = nullptr; }
-    rocksdb_destroy_db(opts, follower_db_path.c_str(), &err);
-    if (err) { rocksdb_free(err); err = nullptr; }
-    rocksdb_options_destroy(opts);
-  }
-
-  Log_info("TEST 90: ReplicatedDB wiring in Setup path PASSED!");
-  Passed2();
-}
-
-// ============================================================================
-// Test 91: testReplicatedDBSnapshotCompression
-// ============================================================================
-// Create ReplicatedDB with compression enabled, put several large keys, create
-// snapshot, verify it is LZ4-compressed (check header byte), load it back,
-// verify all keys survive. Then test with compression disabled (uncompressed
-// header byte) and verify round-trip still works.
-// @unsafe - Uses ReplicatedDB which wraps RocksDB and Raft
-int RaftLabTest::testReplicatedDBSnapshotCompression(void) {
-  Init2(91, "ReplicatedDB snapshot compression (LZ4)");
-
-  // Wait for election
-  // @unsafe { Fiber::sleep }
-  Fiber::sleep(ELECTIONTIMEOUT);
-
-  int leader = config_->OneLeader();
-  Assert2(leader >= 0, "No leader elected");
-
-  auto* svr = config_->GetServer(leader);
-  Assert2(svr != nullptr, "Leader server is null");
-
-  std::string db_path = "/tmp/raft_test_repldb_91_" + std::to_string(leader);
-
-  // Clean up any leftover DB from previous runs
-  // @unsafe { RocksDB C API }
-  {
-    rocksdb_options_t* opts = rocksdb_options_create();
-    char* err = nullptr;
-    rocksdb_destroy_db(opts, db_path.c_str(), &err);
-    if (err) rocksdb_free(err);
-    rocksdb_options_destroy(opts);
-  }
-
-  auto rdb = CreateAndAttachReplicatedDBAtCurrentBoundary(svr, db_path);
-  Assert2(rdb != nullptr,
-          "ReplicatedDB should open and attach at the current Raft boundary");
-  Assert2(rdb->IsCompressionEnabled(), "Compression should be enabled by default");
-
-  // Put several keys with large-ish values (to make compression meaningful)
-  std::string large_value(1024, 'A');  // 1KB of repeated 'A' - compresses well
-  Assert2(rdb->Put("comp_key1", large_value), "Put comp_key1 should succeed");
-  Assert2(rdb->Put("comp_key2", large_value), "Put comp_key2 should succeed");
-  Assert2(rdb->Put("comp_key3", "small_val"), "Put comp_key3 should succeed");
-
-  // Verify keys are present
-  std::string val;
-  Assert2(rdb->Get("comp_key1", &val) && val == large_value,
-          "comp_key1 should have large_value");
-  Assert2(rdb->Get("comp_key2", &val) && val == large_value,
-          "comp_key2 should have large_value");
-  Assert2(rdb->Get("comp_key3", &val) && val == "small_val",
-          "comp_key3 should be small_val");
-
-  // --- Part 1: Compressed snapshot ---
-  std::string compressed_blob = rdb->CreateStateMachineSnapshot();
-  Assert2(!compressed_blob.empty(), "Compressed snapshot blob should be non-empty");
-  const uint64_t compressed_snapshot_index = rdb->GetLastAppliedIndex();
-  Assert2(compressed_snapshot_index > 0,
-          "Compressed snapshot should carry a non-zero applied index");
-
-  // Verify header byte is LZ4 (1)
-  uint8_t header = static_cast<uint8_t>(compressed_blob[0]);
-  Assert2(header == 1, "Compressed snapshot header should be 1 (LZ4), got %u", header);
-
-  // Verify the compressed blob has the original size field
-  Assert2(compressed_blob.size() >= 5,
-          "Compressed blob should have at least 5 bytes (header + orig_size)");
-  uint32_t orig_size = 0;
-  std::memcpy(&orig_size, compressed_blob.data() + 1, sizeof(orig_size));
-  Assert2(orig_size > 0, "Original size should be > 0, got %u", orig_size);
-  Log_info("TEST 91: Compressed blob: {} bytes, original: {} bytes (ratio: {:.1f}%)",
-           compressed_blob.size(), orig_size,
-           100.0 * static_cast<double>(compressed_blob.size()) / static_cast<double>(orig_size));
-
-  // Load the compressed snapshot back
-  Assert2(rdb->LoadStateMachineSnapshot(
-              compressed_blob, compressed_snapshot_index),
-          "Compressed snapshot load should succeed");
-  Assert2(rdb->IsOpen(), "ReplicatedDB should be open after compressed snapshot load");
-
-  // Verify all keys survive
-  Assert2(rdb->Get("comp_key1", &val) && val == large_value,
-          "comp_key1 should survive compressed snapshot round-trip");
-  Assert2(rdb->Get("comp_key2", &val) && val == large_value,
-          "comp_key2 should survive compressed snapshot round-trip");
-  Assert2(rdb->Get("comp_key3", &val) && val == "small_val",
-          "comp_key3 should survive compressed snapshot round-trip");
-
-  // Verify last_applied_index was preserved
-  Assert2(rdb->GetLastAppliedIndex() > 0,
-          "last_applied_index should be > 0 after compressed snapshot load");
-  Log_info("TEST 91: Compressed snapshot round-trip PASSED");
-
-  // --- Part 2: Build an uncompressed blob manually and load it ---
-  // Create a fresh snapshot to get the raw blob, then manually construct
-  // an uncompressed version by stripping the LZ4 header and decompressing
-  // We test backward compat by constructing an uncompressed blob
-  // First, create a new snapshot (which will be compressed)
-  std::string compressed2 = rdb->CreateStateMachineSnapshot();
-  Assert2(!compressed2.empty(), "Second compressed snapshot should be non-empty");
-  Assert2(static_cast<uint8_t>(compressed2[0]) == 1, "Should still be LZ4");
-  const uint64_t uncompressed_snapshot_index = rdb->GetLastAppliedIndex();
-
-  // Decompress to get raw blob, then wrap as uncompressed
-  uint32_t orig_size2 = 0;
-  std::memcpy(&orig_size2, compressed2.data() + 1, sizeof(orig_size2));
-  std::string raw_blob(orig_size2, '\0');
-  int decompressed = LZ4_decompress_safe(
-      compressed2.data() + 5, raw_blob.data(),
-      static_cast<int>(compressed2.size() - 5),
-      static_cast<int>(orig_size2));
-  Assert2(decompressed == static_cast<int>(orig_size2),
-          "Manual decompression should produce exactly %u bytes, got %d",
-          orig_size2, decompressed);
-
-  // Construct uncompressed blob: header(0) + raw_blob
-  std::string uncompressed_blob;
-  uncompressed_blob.resize(1 + raw_blob.size());
-  uncompressed_blob[0] = 0;  // uncompressed
-  std::memcpy(uncompressed_blob.data() + 1, raw_blob.data(), raw_blob.size());
-
-  // Load the uncompressed blob
-  Assert2(rdb->LoadStateMachineSnapshot(
-              uncompressed_blob, uncompressed_snapshot_index),
-          "Uncompressed snapshot load should succeed");
-  Assert2(rdb->IsOpen(), "ReplicatedDB should be open after uncompressed snapshot load");
-
-  // Verify all keys survive
-  Assert2(rdb->Get("comp_key1", &val) && val == large_value,
-          "comp_key1 should survive uncompressed snapshot round-trip");
-  Assert2(rdb->Get("comp_key2", &val) && val == large_value,
-          "comp_key2 should survive uncompressed snapshot round-trip");
-  Assert2(rdb->Get("comp_key3", &val) && val == "small_val",
-          "comp_key3 should survive uncompressed snapshot round-trip");
-  Log_info("TEST 91: Uncompressed (backward compat) snapshot round-trip PASSED");
-
-  // A malformed archive must be rejected before the live RocksDB directory is
-  // closed or replaced. Appending one byte is an exact-consumption failure in
-  // the uncompressed archive and gives us a deterministic rollback oracle.
-  std::string malformed_blob = uncompressed_blob;
-  malformed_blob.push_back('\0');
-  Assert2(!rdb->LoadStateMachineSnapshot(
-              malformed_blob, uncompressed_snapshot_index),
-          "Snapshot loader should reject trailing archive bytes");
-  Assert2(rdb->IsOpen(),
-          "Rejected snapshot must leave the live ReplicatedDB open");
-  Assert2(rdb->Get("comp_key1", &val) && val == large_value,
-          "Rejected snapshot must preserve the live state machine");
-
-  // Restore the original learner action
-  config_->SetLearnerAction();
-
-  // Cleanup
-  rdb.reset();
-  // @unsafe { RocksDB C API }
-  {
-    rocksdb_options_t* opts = rocksdb_options_create();
-    char* err = nullptr;
-    rocksdb_destroy_db(opts, db_path.c_str(), &err);
-    if (err) rocksdb_free(err);
-    rocksdb_options_destroy(opts);
-  }
-
-  Log_info("TEST 91: ReplicatedDB snapshot compression PASSED!");
-  Passed2();
-}
-
-// ============================================================================
-// Test 99: testLinearizableGet
-// ============================================================================
-// Put a key via Raft, then read it via LinearizableGet on the leader.
-// Verify value matches. Verify LinearizableGet fails on a non-leader (follower).
-// @unsafe - Uses ReplicatedDB which wraps RocksDB and Raft
-int RaftLabTest::testLinearizableGet(void) {
-  Init2(99, "LinearizableGet on leader and follower");
-
-  // Wait for election
-  // @unsafe { Fiber::sleep }
-  Fiber::sleep(ELECTIONTIMEOUT);
-
-  int leader = config_->OneLeader();
-  Assert2(leader >= 0, "No leader elected");
-
-  auto* svr = config_->GetServer(leader);
-  Assert2(svr != nullptr, "Leader server is null");
-
-  // Create ReplicatedDB on the leader
-  std::string db_path = "/tmp/raft_test_repldb_99_" + std::to_string(leader);
-
-  // Clean up any leftover DB from previous runs
-  // @unsafe { RocksDB C API }
-  {
-    rocksdb_options_t* opts = rocksdb_options_create();
-    char* err = nullptr;
-    rocksdb_destroy_db(opts, db_path.c_str(), &err);
-    if (err) rocksdb_free(err);
-    rocksdb_options_destroy(opts);
-  }
-
-  auto rdb = CreateAndAttachReplicatedDBAtCurrentBoundary(svr, db_path);
-  Assert2(rdb != nullptr,
-          "ReplicatedDB should open and attach at the current Raft boundary");
-
-  // Put a key-value pair (goes through Raft)
-  bool put_ok = rdb->Put("linread_key", "linread_value");
-  Assert2(put_ok, "Put should succeed on leader");
-
-  // LinearizableGet on the leader should succeed
-  std::string value;
-  bool get_ok = rdb->LinearizableGet("linread_key", &value);
-  Assert2(get_ok, "LinearizableGet should succeed on leader");
-  Assert2(value == "linread_value",
-          "LinearizableGet value should be 'linread_value', got '%s'", value.c_str());
-
-  // LinearizableGet for non-existent key should fail
-  std::string value2;
-  bool get_ok2 = rdb->LinearizableGet("nonexistent_key", &value2);
-  Assert2(!get_ok2, "LinearizableGet should return false for non-existent key");
-
-  // Create ReplicatedDB on a follower and verify LinearizableGet fails
-  siteid_t follower = static_cast<siteid_t>(-1);
-  for (int i = 0; i < NSERVERS; i++) {
-    siteid_t sid = config_->getServerIdByIndex(i);
-    if (static_cast<int>(sid) != leader) {
-      follower = sid;
-      break;
-    }
-  }
-  Assert2(follower != static_cast<siteid_t>(-1), "Should have at least one follower");
-
-  auto* follower_svr = config_->GetServer(follower);
-  Assert2(follower_svr != nullptr, "Follower server is null");
-
-  std::string follower_db_path = "/tmp/raft_test_repldb_99_follower_" + std::to_string(follower);
-
-  // Clean up any leftover DB
-  // @unsafe { RocksDB C API }
-  {
-    rocksdb_options_t* opts = rocksdb_options_create();
-    char* err = nullptr;
-    rocksdb_destroy_db(opts, follower_db_path.c_str(), &err);
-    if (err) rocksdb_free(err);
-    rocksdb_options_destroy(opts);
-  }
-
-  auto follower_rdb = std::make_unique<ReplicatedDB>(
-      follower_svr, follower_db_path, false);
-  Assert2(follower_rdb->IsOpen(), "Follower ReplicatedDB should be open");
-
-  // LinearizableGet on follower should fail (not leader)
-  std::string follower_value;
-  bool follower_get = follower_rdb->LinearizableGet("linread_key", &follower_value);
-  Assert2(!follower_get, "LinearizableGet should fail on follower");
-
-  // A leader role bit is historical state, not current read authority. Leave
-  // this leader locally connected, but isolate enough followers that it cannot
-  // obtain a fresh 3/5 quorum confirmation. A real ReadIndex must fail even
-  // though the test-only disconnected_ bit on the leader itself remains false.
-  std::vector<siteid_t> quorum_isolated_followers;
-  for (int i = 0; i < NSERVERS && quorum_isolated_followers.size() < 3; ++i) {
-    const siteid_t sid = config_->getServerIdByIndex(i);
-    if (static_cast<int>(sid) == leader) {
-      continue;
-    }
-    config_->Disconnect(sid);
-    quorum_isolated_followers.push_back(sid);
-  }
-  Assert2(quorum_isolated_followers.size() == 3,
-          "Expected to isolate three followers for ReadIndex quorum test");
-  Assert2(!svr->IsDisconnected(),
-          "ReadIndex quorum test must leave the leader locally connected");
-  bool no_quorum_read = svr->ReadIndex(250000);
-  Assert2(!no_quorum_read,
-          "ReadIndex should fail without a fresh quorum even when the local "
-          "leader is not marked disconnected");
-  for (siteid_t sid : quorum_isolated_followers) {
-    config_->Reconnect(sid);
-  }
-  Fiber::sleep(HEARTBEAT_INTERVAL * 3);
-
-  // Restore and cleanup
-  config_->SetLearnerAction();
-  follower_rdb.reset();
-  rdb.reset();
-
-  // @unsafe { RocksDB C API }
-  {
-    rocksdb_options_t* opts = rocksdb_options_create();
-    char* err = nullptr;
-    rocksdb_destroy_db(opts, db_path.c_str(), &err);
-    if (err) rocksdb_free(err);
-    rocksdb_options_destroy(opts);
-  }
-  // @unsafe { RocksDB C API }
-  {
-    rocksdb_options_t* opts = rocksdb_options_create();
-    char* err = nullptr;
-    rocksdb_destroy_db(opts, follower_db_path.c_str(), &err);
-    if (err) rocksdb_free(err);
-    rocksdb_options_destroy(opts);
-  }
-
-  Log_info("TEST 99: LinearizableGet on leader and follower PASSED!");
-  Passed2();
-}
-
-// ============================================================================
-// Test 100: testLinearizableGetAfterLeaderChange
-// ============================================================================
-// Put a key, disconnect the leader to force a new election, verify
-// LinearizableGet fails on the old leader and succeeds on the new leader.
-// @unsafe - Uses ReplicatedDB which wraps RocksDB and Raft
-int RaftLabTest::testLinearizableGetAfterLeaderChange(void) {
-  Init2(100, "LinearizableGet after leader change");
-
-  // Wait for election
-  // @unsafe { Fiber::sleep }
-  Fiber::sleep(ELECTIONTIMEOUT);
-
-  int leader1 = config_->OneLeader();
-  Assert2(leader1 >= 0, "No leader elected");
-
-  auto* svr1 = config_->GetServer(leader1);
-  Assert2(svr1 != nullptr, "Leader server is null");
-
-  // Create ReplicatedDB on the leader
-  std::string db_path1 = "/tmp/raft_test_repldb_100_" + std::to_string(leader1);
-
-  // Clean up any leftover DB
-  // @unsafe { RocksDB C API }
-  {
-    rocksdb_options_t* opts = rocksdb_options_create();
-    char* err = nullptr;
-    rocksdb_destroy_db(opts, db_path1.c_str(), &err);
-    if (err) rocksdb_free(err);
-    rocksdb_options_destroy(opts);
-  }
-
-  auto rdb1 = CreateAndAttachReplicatedDBAtCurrentBoundary(svr1, db_path1);
-  Assert2(rdb1 != nullptr,
-          "Old-leader ReplicatedDB should open and attach");
-
-  // Put a key-value pair
-  bool put_ok = rdb1->Put("leader_change_key", "leader_change_value");
-  Assert2(put_ok, "Put should succeed on leader");
-
-  // Verify LinearizableGet works on current leader
-  std::string value1;
-  bool get_ok1 = rdb1->LinearizableGet("leader_change_key", &value1);
-  Assert2(get_ok1, "LinearizableGet should succeed on leader before disconnect");
-  Assert2(value1 == "leader_change_value",
-          "Value should be 'leader_change_value', got '%s'", value1.c_str());
-
-  // Disconnect the leader to force a new election
-  config_->Disconnect(leader1);
-
-  // Wait for new election
-  // @unsafe { Fiber::sleep }
-  Fiber::sleep(ELECTIONTIMEOUT * 2);
-
-  int leader2 = config_->OneLeader();
-  Assert2(leader2 >= 0, "New leader should be elected after disconnect");
-  Assert2(leader2 != leader1, "New leader should be different from old leader");
-
-  // LinearizableGet on disconnected old leader should fail
-  // (it's disconnected, IsLeader() should eventually return false)
-  std::string old_value;
-  bool old_get = rdb1->LinearizableGet("leader_change_key", &old_value);
-  Assert2(!old_get, "LinearizableGet should fail on disconnected old leader");
-
-  // Create ReplicatedDB on the new leader and verify LinearizableGet works
-  auto* svr2 = config_->GetServer(leader2);
-  Assert2(svr2 != nullptr, "New leader server is null");
-
-  std::string db_path2 = "/tmp/raft_test_repldb_100_" + std::to_string(leader2);
-
-  // Clean up any leftover DB
-  // @unsafe { RocksDB C API }
-  {
-    rocksdb_options_t* opts = rocksdb_options_create();
-    char* err = nullptr;
-    rocksdb_destroy_db(opts, db_path2.c_str(), &err);
-    if (err) rocksdb_free(err);
-    rocksdb_options_destroy(opts);
-  }
-
-  auto rdb2 = CreateAndAttachReplicatedDBAtCurrentBoundary(svr2, db_path2);
-  Assert2(rdb2 != nullptr,
-          "New-leader ReplicatedDB should open and attach");
-
-  // Put a new key on the new leader to ensure it's applied
-  bool put_ok2 = rdb2->Put("new_leader_key", "new_leader_value");
-  Assert2(put_ok2, "Put should succeed on new leader");
-
-  // LinearizableGet on new leader should work
-  std::string new_value;
-  bool new_get = rdb2->LinearizableGet("new_leader_key", &new_value);
-  Assert2(new_get, "LinearizableGet should succeed on new leader");
-  Assert2(new_value == "new_leader_value",
-          "Value should be 'new_leader_value', got '%s'", new_value.c_str());
-
-  // Reconnect old leader and cleanup
-  config_->Reconnect(leader1);
-
-  // Restore and cleanup
-  config_->SetLearnerAction();
-  rdb1.reset();
-  rdb2.reset();
-
-  // @unsafe { RocksDB C API }
-  {
-    rocksdb_options_t* opts = rocksdb_options_create();
-    char* err = nullptr;
-    rocksdb_destroy_db(opts, db_path1.c_str(), &err);
-    if (err) rocksdb_free(err);
-    rocksdb_options_destroy(opts);
-  }
-  // @unsafe { RocksDB C API }
-  {
-    rocksdb_options_t* opts = rocksdb_options_create();
-    char* err = nullptr;
-    rocksdb_destroy_db(opts, db_path2.c_str(), &err);
-    if (err) rocksdb_free(err);
-    rocksdb_options_destroy(opts);
-  }
-
-  Log_info("TEST 100: LinearizableGet after leader change PASSED!");
-  Passed2();
-}
-
-// ============================================================================
-// Test 101: testReplicatedDBCrashRecovery
-// ============================================================================
-// Kill a follower replica, commit entries on remaining nodes, restart the killed
-// replica, verify it catches up and has correct RocksDB state.
-// @unsafe - Uses ReplicatedDB, Kill/Restart, RocksDB C API
-int RaftLabTest::testReplicatedDBCrashRecovery(void) {
-  Init2(101, "ReplicatedDB crash recovery");
-
-  // Wait for election
-  // @unsafe { Fiber::sleep }
-  Fiber::sleep(ELECTIONTIMEOUT);
-
-  int leader = config_->OneLeader();
-  Assert2(leader >= 0, "No leader elected");
-
-  auto* leader_svr = config_->GetServer(leader);
-  Assert2(leader_svr != nullptr, "Leader server is null");
-
-  // Find two followers: one to kill, one to verify replication
-  siteid_t follower_victim = static_cast<siteid_t>(-1);
-  for (int i = 0; i < NSERVERS; i++) {
-    siteid_t sid = config_->getServerIdByIndex(i);
-    if (static_cast<int>(sid) != leader) {
-      follower_victim = sid;
-      break;
-    }
-  }
-  Assert2(follower_victim != static_cast<siteid_t>(-1), "No follower found");
-
-  auto* follower_svr = config_->GetServer(follower_victim);
-  Assert2(follower_svr != nullptr, "Follower server is null");
-
-  // Set up DB paths
-  std::string leader_db_path = "/tmp/raft_test_repldb_101_leader_" + std::to_string(leader);
-  std::string follower_db_path = "/tmp/raft_test_repldb_101_follower_" + std::to_string(follower_victim);
-
-  // Clean up previous DBs
-  // @unsafe { RocksDB C API }
-  {
-    rocksdb_options_t* opts = rocksdb_options_create();
-    char* err = nullptr;
-    rocksdb_destroy_db(opts, leader_db_path.c_str(), &err);
-    if (err) { rocksdb_free(err); err = nullptr; }
-    rocksdb_destroy_db(opts, follower_db_path.c_str(), &err);
-    if (err) { rocksdb_free(err); err = nullptr; }
-    rocksdb_options_destroy(opts);
-  }
-
-  // Step 1: Create ReplicatedDB on both replicas before submitting entries.
-  // Learner registration is not retroactive, so installing the follower state
-  // machine after k1/k2 commit would make this a callback-timing test rather
-  // than a crash-recovery test.
-  auto leader_rdb = CreateAndAttachReplicatedDBAtCurrentBoundary(
-      leader_svr, leader_db_path);
-  Assert2(leader_rdb != nullptr,
-          "Leader ReplicatedDB should open and attach");
-  auto follower_rdb = CreateAndAttachReplicatedDBAtCurrentBoundary(
-      follower_svr, follower_db_path);
-  Assert2(follower_rdb != nullptr,
-          "Follower ReplicatedDB should open and attach");
-
-  // Test69 intentionally leaves marker-only RaftLab snapshots active because
-  // their bytes cover the cluster's compacted prefix.  Before restarting a
-  // ReplicatedDB, rotate the victim to a unique manager and seed it with a real
-  // RocksDB checkpoint at this adopted boundary.  Restart will reconstruct the
-  // same path and replay k1/k2 plus the later missed suffix from that checkpoint.
-  std::string snapshot_root_template =
-      "/tmp/raft_repldb_recovery_101_" + std::to_string(getpid()) +
-      "_XXXXXX";
-  char* created_snapshot_root = mkdtemp(snapshot_root_template.data());
-  Assert2(created_snapshot_root != nullptr,
-          "Could not create Test101 snapshot root: %s", strerror(errno));
-  const std::string snapshot_root(created_snapshot_root);
-  Assert2(setenv("MAKO_RAFT_SNAPSHOTS", "1", 1) == 0,
-          "Could not enable Test101 snapshots: %s", strerror(errno));
-  Assert2(setenv("MAKO_RAFT_SNAPSHOT_PATH", snapshot_root.c_str(), 1) == 0,
-          "Could not set Test101 snapshot root: %s", strerror(errno));
-
-  janus::raft::SnapshotConfig recovery_snapshot_config;
-  recovery_snapshot_config.storage_path =
-      snapshot_root + "/raft_snap_" +
-      std::to_string(follower_svr->site_id_) + "_partition_" +
-      std::to_string(follower_svr->partition_id_);
-  auto recovery_snapshot_manager =
-      std::make_shared<janus::raft::FileSnapshotManager>(
-          recovery_snapshot_config);
-  uint64_t recovery_snapshot_index = 0;
-  uint64_t follower_snapshot_threshold = 0;
-  {
-    std::lock_guard<std::recursive_mutex> lock(follower_svr->mtx_);
-    follower_snapshot_threshold = follower_svr->GetSnapshotThreshold();
-  }
-  Assert2(InstallFreshStateMachineSnapshotManager(
-              follower_svr, recovery_snapshot_manager,
-              follower_snapshot_threshold, &recovery_snapshot_index),
-          "Could not seed Test101 ReplicatedDB snapshot manager");
-  Assert2(recovery_snapshot_index == follower_rdb->GetLastAppliedIndex(),
-          "Test101 snapshot boundary %lu does not match application marker %lu",
-          recovery_snapshot_index, follower_rdb->GetLastAppliedIndex());
-
-  // Step 2: Put initial keys on leader
-  Assert2(leader_rdb->Put("k1", "v1"), "Put k1 should succeed");
-  Assert2(leader_rdb->Put("k2", "v2"), "Put k2 should succeed");
-  Log_info("TEST 101: Put k1=v1, k2=v2 on leader");
-
-  // Step 3: Wait for replication to all followers
-  // @unsafe { Fiber::sleep }
-  Fiber::sleep(1000000);  // 1 second
-
-  // Step 4: Verify the follower applied k1 and k2 through its live callback.
-  bool found_k1 = false;
-  bool found_k2 = false;
-  for (int attempt = 0; attempt < 30; attempt++) {
-    std::string val;
-    found_k1 = follower_rdb->Get("k1", &val) && val == "v1";
-    found_k2 = follower_rdb->Get("k2", &val) && val == "v2";
-    if (found_k1 && found_k2) break;
-    // @unsafe { usleep }
-    usleep(100000);  // 100ms
-  }
-  Assert2(found_k1, "Follower should have k1=v1 before kill");
-  Assert2(found_k2, "Follower should have k2=v2 before kill");
-  Log_info("TEST 101: Follower verified k1, k2 before kill");
-
-  // Step 5: Detach the callback under the same gate used for application, then
-  // destroy the ReplicatedDB while its RaftServer is still alive. This drains
-  // any in-flight callback and prevents either a dangling reference or a late
-  // ReplicatedDB destructor from reaching an already-destroyed server.
-  {
-    std::lock_guard<std::mutex> apply_lock(
-        follower_svr->state_machine_apply_mtx_);
-    follower_svr->RegLearnerAction(
-        [](slotid_t, janus::Command) -> int { return 0; });
-    follower_rdb.reset();
-  }
-  Log_info("TEST 101: Killing follower {}", follower_victim);
-  config_->Kill(follower_victim);
-
-  // Wait for the kill to take effect
-  // @unsafe { Fiber::sleep }
-  Fiber::sleep(ELECTIONTIMEOUT / 2);
-
-  // Step 6: Put more keys on leader while follower is dead
-  Assert2(leader_rdb->Put("k3", "v3"), "Put k3 should succeed while follower is dead");
-  Assert2(leader_rdb->Put("k4", "v4"), "Put k4 should succeed while follower is dead");
-  Log_info("TEST 101: Put k3=v3, k4=v4 on leader while follower is dead");
-
-  // Verify leader has all 4 keys
-  {
-    std::string val;
-    Assert2(leader_rdb->Get("k1", &val) && val == "v1", "Leader should have k1=v1");
-    Assert2(leader_rdb->Get("k2", &val) && val == "v2", "Leader should have k2=v2");
-    Assert2(leader_rdb->Get("k3", &val) && val == "v3", "Leader should have k3=v3");
-    Assert2(leader_rdb->Get("k4", &val) && val == "v4", "Leader should have k4=v4");
-  }
-  Log_info("TEST 101: Leader verified all 4 keys");
-
-  // Step 7: Restart the follower. Construct and register its durable state
-  // machine in Restart's pre-runtime window so no recovered/catch-up entry can
-  // pass the callback before RocksDB is ready.
-  Log_info("TEST 101: Restarting follower {}", follower_victim);
-
-  // A hook-owned state machine must not be publishable when its durable marker
-  // is ahead of the recovered Raft commit. Exercise that rejection before the
-  // real restart; no apply/runtime loop or service pointer may escape it.
-  const bool accepted_ahead_marker = config_->Restart(
-      follower_victim,
-      [](RaftServer* candidate) -> RestartHookStatus {
-        candidate->RegLearnerAction(
-            [](slotid_t, janus::Command) -> int { return 0; });
-        return RestartHookStatus{
-            true,
-            true,
-            []() -> slotid_t { return UINT64_MAX; },
-            []() {}};
-      });
-  Assert2(!accepted_ahead_marker,
-          "Restart must reject an application marker ahead of Raft commit");
-  Assert2(config_->GetServer(follower_victim) == nullptr,
-          "Rejected Restart must not publish its candidate server");
-
-  RaftServer* restarted_svr = nullptr;
-  std::unique_ptr<ReplicatedDB> restarted_rdb;
-  bool restarted_db_open = false;
-  const bool restart_succeeded = config_->Restart(
-      follower_victim,
-      [&](RaftServer* new_server) -> RestartHookStatus {
-        restarted_svr = new_server;
-        restarted_rdb =
-            std::make_unique<ReplicatedDB>(new_server, follower_db_path);
-        restarted_db_open = restarted_rdb->IsOpen();
-        if (!restarted_db_open) {
-          return RestartHookStatus{
-              false,
-              false,
-              {},
-              [&]() {
-                restarted_rdb.reset();
-                restarted_svr = nullptr;
-              }};
-        }
-        new_server->RegLearnerAction(
-            [&restarted_rdb](slotid_t slot, janus::Command md) -> int {
-              if (!restarted_rdb || !restarted_rdb->ApplyEntry(slot, md)) {
-                throw std::runtime_error(
-                    "restarted ReplicatedDB failed atomic apply");
-              }
-              return 0;
-            });
-        return RestartHookStatus{
-            true,
-            true,
-            [&restarted_rdb]() -> slotid_t {
-              if (!restarted_rdb) {
-                throw std::runtime_error(
-                    "restarted ReplicatedDB marker owner is missing");
-              }
-              return restarted_rdb->GetLastAppliedIndex();
-            },
-            [&]() {
-              restarted_rdb.reset();
-              restarted_svr = nullptr;
-              restarted_db_open = false;
-            }};
-      });
-  Assert2(restart_succeeded, "Restarted follower startup should succeed");
-  Assert2(restarted_svr != nullptr, "Restarted follower server is null");
-  Assert2(restarted_db_open, "Restarted follower ReplicatedDB should be open");
-
-  // Step 8: Wait for Raft to replicate missed entries to the restarted follower
-  // @unsafe { Fiber::sleep }
-  Fiber::sleep(ELECTIONTIMEOUT);
-
-  // Step 10: Verify the restarted follower has all 4 keys
-  bool all_found = false;
-  for (int attempt = 0; attempt < 50; attempt++) {
-    std::string v1, v2, v3, v4;
-    bool has_k1 = restarted_rdb->Get("k1", &v1) && v1 == "v1";
-    bool has_k2 = restarted_rdb->Get("k2", &v2) && v2 == "v2";
-    bool has_k3 = restarted_rdb->Get("k3", &v3) && v3 == "v3";
-    bool has_k4 = restarted_rdb->Get("k4", &v4) && v4 == "v4";
-    if (has_k1 && has_k2 && has_k3 && has_k4) {
-      all_found = true;
-      break;
-    }
-    // @unsafe { usleep }
-    usleep(200000);  // 200ms
-  }
-  Assert2(all_found, "Restarted follower should have all 4 keys (k1-k4)");
-  Log_info("TEST 101: Restarted follower verified all 4 keys");
-
-  // Step 11: Verify the cluster can still commit with all 5 nodes
-  // Restore learner action first for the agreement check
-  config_->SetLearnerAction();
-
-  uint64_t agree_idx = config_->DoAgreement(10101, NSERVERS, true);
-  Assert2(agree_idx > 0, "Cluster should still commit with all 5 nodes after recovery");
-  Log_info("TEST 101: Cluster committed with all 5 nodes, index={}", agree_idx);
-
-  // Cleanup
-  leader_rdb.reset();
-  restarted_rdb.reset();
-
-  // @unsafe { RocksDB C API }
-  {
-    rocksdb_options_t* opts = rocksdb_options_create();
-    char* err = nullptr;
-    rocksdb_destroy_db(opts, leader_db_path.c_str(), &err);
-    if (err) { rocksdb_free(err); err = nullptr; }
-    rocksdb_destroy_db(opts, follower_db_path.c_str(), &err);
-    if (err) { rocksdb_free(err); err = nullptr; }
-    rocksdb_options_destroy(opts);
-  }
-
-  Log_info("TEST 101: ReplicatedDB crash recovery PASSED!");
-  Passed2();
-}
-
-// ============================================================================
-// Test 102: testAmbiguousLeaderAppendAdmission
-// ============================================================================
-// Exercise the real public admission methods with a storage backend where the
-// append and compensating removal both mutate state but neither fsync succeeds.
-// The possibly durable command identity must survive in the return value, and
-// no callback may be registered for an append that was never proven.
-// @unsafe - Terminal test swaps test-only storage and intentionally fail-stops
-// three leaders. It runs only when the cluster began with persistence disabled.
-int RaftLabTest::testAmbiguousLeaderAppendAdmission(void) {
-  Init2(102, "Ambiguous leader append admission remains explicit");
-
-  Fiber::sleep(ELECTIONTIMEOUT);
-  const int first_leader = config_->OneLeader();
-  Assert2(first_leader >= 0, "No leader elected for plain Start fault test");
-  auto* first_server = config_->GetServer(first_leader);
-  Assert2(first_server != nullptr, "Plain Start leader server is null");
-
-  auto first_command = rusty::Arc<TpcCommitCommand>::make();
-  LogEntry first_log;
-  verify(raft::EncodeApplicationLog(nullptr, 0, 0, &first_log.log_entry));
-  first_log.length = static_cast<int>(first_log.log_entry.size());
-  {
-    auto& command = first_command.get_mut().unwrap();
-    command.tx_id_ = 10201;
-    command.cmd_ = rusty::Arc<LogEntry>::make(std::move(first_log));
-  }
-
-  auto first_storage = std::make_shared<AlwaysFailingSyncLogStorage>();
-  uint64_t first_index = 0;
-  uint64_t first_term = 0;
-  uint64_t first_last_before = 0;
-  uint64_t first_term_before = 0;
-  RaftStartResult first_result = RaftStartResult::REJECTED;
-  {
-    std::lock_guard<std::recursive_mutex> lock(first_server->mtx_);
-    Assert2(first_server->is_leader_ &&
-                !first_server->stop_.load(
-                    rusty::sync::atomic::Ordering::Acquire),
-            "Plain Start target lost live leadership before injection");
-    first_last_before = first_server->lastLogIndex;
-    first_term_before = first_server->currentTerm;
-    Assert2(first_last_before < UINT64_MAX,
-            "Plain Start test cannot allocate a successor slot");
-    Assert2(first_term_before > 0,
-            "Plain Start test requires an elected term");
-    first_server->SetLogStorage(first_storage);
-    first_result = first_server->Start(
-        std::move(first_command), &first_index, &first_term);
-  }
-
-  Assert2(raft_server_start_is_indeterminate(first_result),
-          "Plain Start collapsed ambiguous persistence into result %d",
-          static_cast<int>(first_result));
-  Assert2(first_index == first_last_before + 1 &&
-              first_term == first_term_before,
-          "Plain Start lost ambiguous identity: index=%lu expected=%lu "
-          "term=%lu expected=%lu",
-          first_index, first_last_before + 1,
-          first_term, first_term_before);
-  Assert2(first_storage->put_calls == 1 &&
-              first_storage->remove_calls == 1 &&
-              first_storage->sync_calls == 2,
-          "Plain Start fault path calls put/remove/sync=%d/%d/%d, "
-          "expected 1/1/2",
-          first_storage->put_calls, first_storage->remove_calls,
-          first_storage->sync_calls);
-  Assert2(first_storage->get(first_index).is_none(),
-          "Plain Start compensating removal did not remove failed slot");
-  {
-    std::lock_guard<std::recursive_mutex> lock(first_server->mtx_);
-    Assert2(first_server->lastLogIndex == first_last_before,
-            "Plain Start did not restore lastLogIndex");
-    Assert2(first_server->raft_logs_.count(first_index) == 0 &&
-                first_server->memoryAcks_.count(first_index) == 0 &&
-                first_server->durableAcks_.count(first_index) == 0,
-            "Plain Start retained failed slot in volatile Raft state");
-    Assert2(!first_server->is_leader_ &&
-                !first_server->rpc_ready_.load(
-                    rusty::sync::atomic::Ordering::Acquire) &&
-                first_server->stop_.load(
-                    rusty::sync::atomic::Ordering::Acquire) &&
-                !first_server->looping_.load(
-                    rusty::sync::atomic::Ordering::Acquire),
-            "Plain Start ambiguity did not fail-stop the leader");
-  }
-
-  const int second_leader = config_->OneLeader();
-  Assert2(second_leader >= 0 && second_leader != first_leader,
-          "No replacement leader after plain Start fail-stop (old=%d new=%d)",
-          first_leader, second_leader);
-  auto* second_server = config_->GetServer(second_leader);
-  Assert2(second_server != nullptr,
-          "StartWithCallback replacement leader server is null");
-
-  auto second_command = rusty::Arc<TpcCommitCommand>::make();
-  LogEntry second_log;
-  verify(raft::EncodeApplicationLog(nullptr, 0, 0, &second_log.log_entry));
-  second_log.length = static_cast<int>(second_log.log_entry.size());
-  {
-    auto& command = second_command.get_mut().unwrap();
-    command.tx_id_ = 10202;
-    command.cmd_ = rusty::Arc<LogEntry>::make(std::move(second_log));
-  }
-
-  auto second_storage = std::make_shared<AlwaysFailingSyncLogStorage>();
-  auto callback_calls = std::make_shared<std::atomic<int>>(0);
-  uint64_t callback_token = UINT64_MAX;
-  uint64_t second_index = 0;
-  uint64_t second_term = 0;
-  uint64_t second_last_before = 0;
-  uint64_t second_term_before = 0;
-  RaftStartResult second_result = RaftStartResult::REJECTED;
-  {
-    std::lock_guard<std::recursive_mutex> lock(second_server->mtx_);
-    Assert2(second_server->is_leader_ &&
-                !second_server->stop_.load(
-                    rusty::sync::atomic::Ordering::Acquire),
-            "StartWithCallback target lost live leadership before injection");
-    second_last_before = second_server->lastLogIndex;
-    second_term_before = second_server->currentTerm;
-    Assert2(second_last_before < UINT64_MAX,
-            "StartWithCallback test cannot allocate a successor slot");
-    Assert2(second_term_before > first_term_before,
-            "Replacement leader term %lu did not advance past %lu",
-            second_term_before, first_term_before);
-    second_server->SetLogStorage(second_storage);
-    second_result = second_server->StartWithCallback(
-        std::move(second_command), &second_index, &second_term,
-        [callback_calls](CommitStatus) {
-          callback_calls->fetch_add(1, std::memory_order_relaxed);
-        },
-        &callback_token);
-  }
-
-  Assert2(raft_server_start_is_indeterminate(second_result),
-          "StartWithCallback collapsed ambiguous persistence into result %d",
-          static_cast<int>(second_result));
-  Assert2(second_index == second_last_before + 1 &&
-              second_term == second_term_before,
-          "StartWithCallback lost ambiguous identity: index=%lu expected=%lu "
-          "term=%lu expected=%lu",
-          second_index, second_last_before + 1,
-          second_term, second_term_before);
-  Assert2(callback_token == 0,
-          "StartWithCallback registered token %lu for ambiguous append",
-          callback_token);
-  Assert2(callback_calls->load(std::memory_order_relaxed) == 0,
-          "StartWithCallback invoked callback for ambiguous append");
-  Assert2(second_storage->put_calls == 1 &&
-              second_storage->remove_calls == 1 &&
-              second_storage->sync_calls == 2,
-          "StartWithCallback fault path calls put/remove/sync=%d/%d/%d, "
-          "expected 1/1/2",
-          second_storage->put_calls, second_storage->remove_calls,
-          second_storage->sync_calls);
-  Assert2(second_storage->get(second_index).is_none(),
-          "StartWithCallback compensating removal did not remove failed slot");
-  {
-    std::lock_guard<std::recursive_mutex> lock(second_server->mtx_);
-    Assert2(second_server->lastLogIndex == second_last_before,
-            "StartWithCallback did not restore lastLogIndex");
-    Assert2(second_server->raft_logs_.count(second_index) == 0 &&
-                second_server->memoryAcks_.count(second_index) == 0 &&
-                second_server->durableAcks_.count(second_index) == 0 &&
-                second_server->pendingCallbacks_.count(second_index) == 0,
-            "StartWithCallback retained failed slot in volatile Raft state");
-    Assert2(!second_server->is_leader_ &&
-                !second_server->rpc_ready_.load(
-                    rusty::sync::atomic::Ordering::Acquire) &&
-                second_server->stop_.load(
-                    rusty::sync::atomic::Ordering::Acquire) &&
-                !second_server->looping_.load(
-                    rusty::sync::atomic::Ordering::Acquire),
-            "StartWithCallback ambiguity did not fail-stop the leader");
-  }
-
-  Fiber::sleep(1000);
-  Assert2(callback_calls->load(std::memory_order_relaxed) == 0,
-          "Ambiguous append callback fired after StartWithCallback returned");
-
-  // The coordinator-facing API additionally records a one-shot terminal
-  // UNKNOWN result, so CoordinatorRaft cannot spin or turn the ambiguity into
-  // WRONG_LEADER. Three healthy voters remain after the first two fail-stops,
-  // which is exactly the five-node quorum needed for this final election.
-  const int third_leader = config_->OneLeader();
-  Assert2(third_leader >= 0 && third_leader != first_leader &&
-              third_leader != second_leader,
-          "No third leader for StartTracked fault test (first=%d second=%d "
-          "third=%d)",
-          first_leader, second_leader, third_leader);
-  auto* third_server = config_->GetServer(third_leader);
-  Assert2(third_server != nullptr,
-          "StartTracked replacement leader server is null");
-
-  auto third_command = rusty::Arc<TpcCommitCommand>::make();
-  LogEntry third_log;
-  verify(raft::EncodeApplicationLog(nullptr, 0, 0, &third_log.log_entry));
-  third_log.length = static_cast<int>(third_log.log_entry.size());
-  {
-    auto& command = third_command.get_mut().unwrap();
-    command.tx_id_ = 10203;
-    command.cmd_ = rusty::Arc<LogEntry>::make(std::move(third_log));
-  }
-
-  auto third_storage = std::make_shared<AlwaysFailingSyncLogStorage>();
-  uint64_t third_index = 0;
-  uint64_t third_term = 0;
-  uint64_t third_last_before = 0;
-  uint64_t third_term_before = 0;
-  RaftStartResult third_result = RaftStartResult::REJECTED;
-  {
-    std::lock_guard<std::recursive_mutex> lock(third_server->mtx_);
-    Assert2(third_server->is_leader_ &&
-                !third_server->stop_.load(
-                    rusty::sync::atomic::Ordering::Acquire),
-            "StartTracked target lost live leadership before injection");
-    third_last_before = third_server->lastLogIndex;
-    third_term_before = third_server->currentTerm;
-    Assert2(third_last_before < UINT64_MAX,
-            "StartTracked test cannot allocate a successor slot");
-    Assert2(third_term_before > second_term_before,
-            "Third leader term %lu did not advance past %lu",
-            third_term_before, second_term_before);
-    third_server->SetLogStorage(third_storage);
-    third_result = third_server->StartTracked(
-        std::move(third_command), &third_index, &third_term);
-  }
-
-  Assert2(raft_server_start_is_indeterminate(third_result),
-          "StartTracked collapsed ambiguous persistence into result %d",
-          static_cast<int>(third_result));
-  Assert2(third_index == third_last_before + 1 &&
-              third_term == third_term_before,
-          "StartTracked lost ambiguous identity: index=%lu expected=%lu "
-          "term=%lu expected=%lu",
-          third_index, third_last_before + 1,
-          third_term, third_term_before);
-  const RaftSubmissionProgress wrong_term_progress =
-      third_server->GetSubmissionProgress(third_index, third_term - 1);
-  Assert2(!wrong_term_progress.committed &&
-              !wrong_term_progress.superseded &&
-              !wrong_term_progress.indeterminate,
-          "Wrong-term progress lookup consumed the exact UNKNOWN result");
-  const RaftSubmissionProgress tracked_progress =
-      third_server->GetSubmissionProgress(third_index, third_term);
-  Assert2(!tracked_progress.committed && !tracked_progress.superseded &&
-              tracked_progress.indeterminate,
-          "StartTracked did not publish exactly one terminal UNKNOWN result");
-  const RaftSubmissionProgress consumed_progress =
-      third_server->GetSubmissionProgress(third_index, third_term);
-  Assert2(!consumed_progress.committed && !consumed_progress.superseded &&
-              !consumed_progress.indeterminate,
-          "StartTracked UNKNOWN result was observable more than once");
-  Assert2(third_storage->put_calls == 1 &&
-              third_storage->remove_calls == 1 &&
-              third_storage->sync_calls == 2,
-          "StartTracked fault path calls put/remove/sync=%d/%d/%d, "
-          "expected 1/1/2",
-          third_storage->put_calls, third_storage->remove_calls,
-          third_storage->sync_calls);
-
-  Log_info("TEST 102: Ambiguous leader append admission PASSED!");
-  Passed2();
-}
-
-// ============================================================================
-// Test 103: testRequestVoteTermPersistenceFailure
-// ============================================================================
-// A RequestVote carrying a higher term updates stable Raft state even when the
-// vote itself is NO. If that term cannot be fsynced, the follower must return
-// the observed term, vote NO, and stop accepting RPCs.
-// @unsafe - Terminal fault injection against one of the two healthy replicas
-// left by Test 102; no later test requires a quorum.
-int RaftLabTest::testRequestVoteTermPersistenceFailure(void) {
-  Init2(103, "RequestVote higher term is durability gated");
-
-  RaftServer* target = nullptr;
-  siteid_t candidate_id = static_cast<siteid_t>(INVALID_SITEID);
-  for (int i = 0; i < NSERVERS; ++i) {
-    const siteid_t server_id = config_->getServerIdByIndex(i);
-    auto* server = config_->GetServer(server_id);
-    if (server == nullptr ||
-        server->stop_.load(rusty::sync::atomic::Ordering::Acquire)) {
-      continue;
-    }
-    if (target == nullptr) {
-      target = server;
-    } else {
-      candidate_id = server_id;
-      break;
-    }
-  }
-  Assert2(target != nullptr &&
-              candidate_id != static_cast<siteid_t>(INVALID_SITEID),
-          "Test 103 requires the two healthy replicas left by Test 102");
-
-  auto storage = std::make_shared<AlwaysFailingSyncLogStorage>();
-  ballot_t reply_term = -1;
-  bool_t vote_granted = true;
-  uint64_t previous_term = 0;
-  uint64_t requested_term = 0;
-  slotid_t target_last_log_index = 0;
-  ballot_t target_last_log_term = 0;
-  {
-    std::lock_guard<std::recursive_mutex> lock(target->mtx_);
-    Assert2(!target->is_leader_,
-            "Test 103 target unexpectedly remains leader");
-    Assert2(!target->stop_.load(
-                rusty::sync::atomic::Ordering::Acquire),
-            "Test 103 target stopped before fault injection");
-    Assert2(candidate_id != target->site_id_ &&
-                target->current_config_.count(candidate_id) == 1 &&
-                target->learners_.count(candidate_id) == 0,
-            "Test 103 candidate %u is not a remote current voter",
-            static_cast<unsigned>(candidate_id));
-    previous_term = target->currentTerm;
-    Assert2(previous_term < static_cast<uint64_t>(INT64_MAX),
-            "Test 103 cannot allocate a higher signed ballot");
-    requested_term = previous_term + 1;
-    target_last_log_index = target->lastLogIndex;
-    target_last_log_term = target->ElectionLastLogTermLocked();
-    Assert2(target_last_log_index > 0 && target_last_log_term > 0,
-            "Test 103 requires a non-empty target log");
-    Assert2(!raft_server_candidate_log_is_at_least(
-                /*candidate_term=*/0, target_last_log_term,
-                /*candidate_index=*/0, target_last_log_index),
-            "Test 103 candidate tuple is not provably stale");
-    target->SetLogStorage(storage);
-    target->OnRequestVote(
-        /*lst_log_idx=*/0, /*lst_log_term=*/0, candidate_id,
-        static_cast<ballot_t>(requested_term),
-        &reply_term, &vote_granted);
-  }
-
-  Assert2(static_cast<uint64_t>(reply_term) == requested_term,
-          "RequestVote replied with stale term %ld instead of %lu",
-          static_cast<int64_t>(reply_term), requested_term);
-  Assert2(!vote_granted,
-          "RequestVote granted a vote after higher-term persistence failed");
-  Assert2(storage->sync_calls == 1,
-          "Higher RequestVote term performed %d sync calls, expected 1",
-          storage->sync_calls);
-  {
-    std::lock_guard<std::recursive_mutex> lock(target->mtx_);
-    Assert2(target->currentTerm == requested_term &&
-                target->vote_for_ == static_cast<siteid_t>(INVALID_SITEID),
-            "RequestVote did not retain fail-stopped term/vote state");
-    Assert2(!target->is_leader_ &&
-                !target->rpc_ready_.load(
-                    rusty::sync::atomic::Ordering::Acquire) &&
-                target->stop_.load(
-                    rusty::sync::atomic::Ordering::Acquire) &&
-                !target->looping_.load(
-                    rusty::sync::atomic::Ordering::Acquire),
-            "RequestVote term persistence failure did not fail-stop target");
-  }
-
-  Log_info("TEST 103: RequestVote higher-term durability gate PASSED!");
   Passed2();
 }
 

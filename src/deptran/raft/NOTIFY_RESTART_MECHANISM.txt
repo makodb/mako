@@ -1,8 +1,7 @@
 NOTIFY-RESTART MECHANISM DOCUMENTATION
 ======================================
 
-Last Updated: 2026-01-10
-Branch: zeyu-raft-disk
+Last Updated: 2026-09-09
 
 
 OVERVIEW
@@ -143,22 +142,30 @@ STEP 2: Broadcast to All Peers (commo.cc)
 
 
 STEP 3: Peer Receives Notification (service.cc)
-  HandleNotifyRestart returns acknowledged=false if server is down:
+  RaftServiceImpl::NotifyRestart returns acknowledged=false if the server is
+  down (no server lease, disconnected, or RPC not ready yet):
 
-    void RaftServiceImpl::HandleNotifyRestart(siteid_t restartedSiteId, ...) {
-      RaftServer* svr = GetServer();  // Atomic load
-      if (svr == nullptr) {
+    Result<RpcNotifyRestartResponse, rrr::i32>
+    RaftServiceImpl::NotifyRestart(const RpcNotifyRestartRequest& req) {
+      RpcNotifyRestartResponse resp{};
+      auto server_lease = AcquireServerLease();
+      RaftServer* svr = server_lease.get();
+      if (raft_service_server_unavailable(...)) {
         // We're down - tell caller not to retry
-        *acknowledged = false;
-        defer.reply();
-        return;
+        resp.acknowledged = false;
+        return Ok(resp);
       }
 
       // We're up - reconnect to the restarted server
       auto commo = svr->commo();
-      bool success = commo->ReconnectToSite(restartedSiteId, svr->partition_id_);
-      *acknowledged = success;
-      defer.reply();
+      bool success = commo->ReconnectToSite(req.restartedSiteId, svr->partition_id_);
+      resp.acknowledged = success;
+
+      // Invalidate speculative state for the peer that just restarted
+      // (removes it from specVoters_/memoryAcks_; the leader steps down with
+      // StepDownReason::UnsecuredFailure if the memory vote quorum is lost).
+      svr->OnPeerRestart(req.restartedSiteId);
+      return Ok(resp);
     }
 
 
@@ -239,8 +246,9 @@ RELATED FILES
 -------------
 - src/deptran/raft/commo.cc - SendNotifyRestart(), RetryPendingNotifyRestart()
 - src/deptran/raft/commo.h - NotifyRestartStatus enum, RaftCommo class
-- src/deptran/raft/service.cc - HandleNotifyRestart()
-- src/deptran/raft/service.h - NotifyRestart RPC handler macro
+- src/deptran/raft/service.cc - RaftServiceImpl::NotifyRestart()
+- src/deptran/raft/service.h - NotifyRestart RPC handler declaration
+- src/deptran/raft/server.cc - OnPeerRestart(), retry loop in StartElectionTimer()
 - src/deptran/communicator.cc - ReconnectToSite()
 - src/deptran/communicator.h - ReconnectToSite() declaration
 - src/deptran/raft/testconf.cc - Invocation in Restart()
@@ -248,20 +256,23 @@ RELATED FILES
 
 TEST COVERAGE
 -------------
-Crash-Recovery Tests (Kill/Restart only):
-- Test 12: Single server kill/restart (follower, then leader)
-- Test 13: Two followers kill/restart
-- Test 14: Leader + follower kill/restart
-- Test 15: Comprehensive random crash-recovery (5 rounds, random server selection)
+Memory-only Raft (this branch) has no disk persistence, so the former
+kill/restart lab tests 12-18 (single/two-follower/leader kill-restart,
+comprehensive crash recovery, and the three partition+restart tests) were
+retired together with the persistence layer: a restarted server comes back
+with an empty log and rejoins as a follower, so those tests' recovery
+assertions no longer apply.
 
-Partition + Restart Tests (Tests the retry mechanism):
-- Test 16: One server partitioned, another killed/restarted
-  * Verifies retry fixes stale connection when partition heals
-- Test 17: Two servers sequentially partitioned while one restarts
-  * Verifies retry can fix multiple PENDING peers
-- Test 18: Multiple restarts while one server is partitioned
-  * Verifies retry survives server kill/restart cycles
-  * B restarts twice while A is partitioned, retry still fixes A
-
-All tests pass consistently, demonstrating the NotifyRestart mechanism
-with automatic retry handles both crash-recovery and partition+restart scenarios.
+What still exercises NotifyRestart:
+- RaftTestConfig::Restart() (testconf.cc) recreates the frame/server/commo and
+  calls SendNotifyRestart on the fresh RaftCommo; every test that restarts a
+  server goes through it.
+- Test 70 (testLeadershipTransferTimeout) restarts a server via Restart() in
+  the RaftLab Run() sequence.
+- The memory-tier restart tests testRestartRemovesFromSpecVoters,
+  testRestartRemovesFromMemoryAcks and testRapidRestarts are defined but
+  currently disabled in Run(); they cover the OnPeerRestart side
+  (specVoters_/memoryAcks_ invalidation and UnsecuredFailure step-down).
+- The retry path (StartElectionTimer -> HasPendingNotifyRestart /
+  RetryPendingNotifyRestart) has no dedicated lab test in Run(); it is
+  exercised only implicitly by the restarts above.

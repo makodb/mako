@@ -93,8 +93,7 @@ static_assert(raft_service_lease_count(kServerLeaseDrainBit | 7,
 //
 // Each method here is invoked by the rrr-generated wrapper on a fresh
 // Fiber (see src/rrr/pylib/simplerpcgen/lang_cpp.py). We do synchronous
-// work — including any PersistState fsync from RaftServer — and return
-// the response struct by value. The framework marshals and sends the
+// work and return the response struct by value. The framework marshals and sends the
 // reply when the fiber completes; no DeferredReply anywhere.
 //
 // Disconnected/killed server path: fill the response with the same
@@ -125,23 +124,6 @@ RaftServiceImpl::Vote(const RpcVoteRequest& req) {
   return Result<RpcVoteResponse, rrr::i32>::Ok(resp);
 }
 
-Result<RaftService::RpcVoteDurableResponse, rrr::i32>
-RaftServiceImpl::VoteDurable(const RpcVoteDurableRequest& req) {
-  RpcVoteDurableResponse resp{};
-  auto server_lease = AcquireServerLease();
-  RaftServer* svr = server_lease.get();
-  bool has_server = svr != nullptr;
-  bool disconnected = has_server && svr->IsDisconnected();
-  bool rpc_ready = has_server && svr->IsRpcReady();
-  if (raft_service_server_unavailable(
-          has_server, disconnected, rpc_ready)) {
-    resp.acknowledged = false;
-    return Result<RpcVoteDurableResponse, rrr::i32>::Ok(resp);
-  }
-  svr->OnVoteDurable(req.term, req.voter_id, &resp.acknowledged);
-  return Result<RpcVoteDurableResponse, rrr::i32>::Ok(resp);
-}
-
 Result<RaftService::RpcAppendEntriesResponse, rrr::i32>
 RaftServiceImpl::AppendEntries(const RpcAppendEntriesRequest& req) {
   RpcAppendEntriesResponse resp{};
@@ -155,7 +137,6 @@ RaftServiceImpl::AppendEntries(const RpcAppendEntriesRequest& req) {
     resp.followerAppendOK = 0;
     resp.followerCurrentTerm = 0;
     resp.followerLastLogIndex = 0;
-    resp.followerAckType = 0;  // Memory
     return Result<RpcAppendEntriesResponse, rrr::i32>::Ok(resp);
   }
   svr->OnAppendEntries(req.slot, req.ballot, req.leaderCurrentTerm,
@@ -163,11 +144,7 @@ RaftServiceImpl::AppendEntries(const RpcAppendEntriesRequest& req) {
                        req.leaderPrevLogTerm, req.leaderCommitIndex,
                        req.cmd, req.leaderNextLogTerm,
                        &resp.followerAppendOK, &resp.followerCurrentTerm,
-                       &resp.followerLastLogIndex,
-                       &resp.followerAckType);
-  // OnAppendEntries publishes the strength of this exact call. Disabled,
-  // failed, heartbeat-only, and asynchronous paths remain memory ACKs; async
-  // durability is reported later through AppendEntriesDurable.
+                       &resp.followerLastLogIndex);
   return Result<RpcAppendEntriesResponse, rrr::i32>::Ok(resp);
 }
 
@@ -185,7 +162,6 @@ RaftServiceImpl::EmptyAppendEntries(const RpcEmptyAppendEntriesRequest& req) {
     resp.followerAppendOK = 0;
     resp.followerCurrentTerm = 0;
     resp.followerLastLogIndex = 0;
-    resp.followerAckType = 0;
     return Result<RpcEmptyAppendEntriesResponse, rrr::i32>::Ok(resp);
   }
   // OnAppendEntries uses the same fields as the non-empty variant with
@@ -198,27 +174,8 @@ RaftServiceImpl::EmptyAppendEntries(const RpcEmptyAppendEntriesRequest& req) {
                        janus::Command{}, 0,
                        &resp.followerAppendOK, &resp.followerCurrentTerm,
                        &resp.followerLastLogIndex,
-                       &resp.followerAckType,
                        req.trigger_election_now);
   return Result<RpcEmptyAppendEntriesResponse, rrr::i32>::Ok(resp);
-}
-
-Result<RaftService::RpcAppendEntriesDurableResponse, rrr::i32>
-RaftServiceImpl::AppendEntriesDurable(const RpcAppendEntriesDurableRequest& req) {
-  RpcAppendEntriesDurableResponse resp{};
-  auto server_lease = AcquireServerLease();
-  RaftServer* svr = server_lease.get();
-  bool has_server = svr != nullptr;
-  bool disconnected = has_server && svr->IsDisconnected();
-  bool rpc_ready = has_server && svr->IsRpcReady();
-  if (raft_service_server_unavailable(
-          has_server, disconnected, rpc_ready)) {
-    resp.acknowledged = false;
-    return Result<RpcAppendEntriesDurableResponse, rrr::i32>::Ok(resp);
-  }
-  svr->OnAppendEntriesDurable(req.term, req.follower_id,
-                              req.lastLogIndex, &resp.acknowledged);
-  return Result<RpcAppendEntriesDurableResponse, rrr::i32>::Ok(resp);
 }
 
 Result<RaftService::RpcTimeoutNowResponse, rrr::i32>

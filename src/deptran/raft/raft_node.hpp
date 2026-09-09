@@ -3,7 +3,7 @@
 /**
  * @file raft_node.hpp
  * @brief Phase 6 of the decouple plan — single-node facade that owns a
- *        transport, storage, and snapshot-manager and exposes a
+ *        transport and snapshot-manager and exposes a
  *        DispatcherProxy to the cluster. Intentionally a SKELETON: it
  *        holds the wiring but does not yet drive the full RaftServer
  *        state machine, because RaftServer is still coupled to
@@ -12,7 +12,7 @@
  *
  * What this file provides right now:
  *   - RaftNode type holding:
- *       siteid_t id, TransportProxy, LogStorage&, SnapshotManager&,
+ *       siteid_t id, TransportProxy, SnapshotManager&,
  *       a simple DispatcherProxy produced by the node itself.
  *   - Inspection accessors (is_leader, current_term, commit_index) —
  *     placeholder implementations backed by in-node fields so tests
@@ -34,7 +34,6 @@
 
 #include "channel_transport.hpp"
 #include "dispatcher.hpp"
-#include "log_storage.hpp"
 #include "messages.hpp"
 #include "snapshot_manager.hpp"
 #include "transport.hpp"
@@ -60,17 +59,11 @@ class DummyDispatcher : public DispatcherBase {
     r.vote_granted = true;
     return r;
   }
-  VoteDurableReply handle_vote_durable(VoteDurableReq) override {
-    VoteDurableReply r{}; r.acknowledged = true; return r;
-  }
   AppendEntriesReply handle_append_entries(AppendEntriesReq) override {
     AppendEntriesReply r{}; r.follower_append_ok = 1; return r;
   }
   EmptyAppendEntriesReply handle_empty_append_entries(EmptyAppendEntriesReq) override {
     EmptyAppendEntriesReply r{}; r.follower_append_ok = 1; return r;
-  }
-  AppendEntriesDurableReply handle_append_entries_durable(AppendEntriesDurableReq) override {
-    AppendEntriesDurableReply r{}; r.acknowledged = true; return r;
   }
   TimeoutNowReply handle_timeout_now(TimeoutNowReq) override {
     TimeoutNowReply r{}; r.success = true; return r;
@@ -89,21 +82,19 @@ class DummyDispatcher : public DispatcherBase {
 };
 
 // ---------------------------------------------------------------------------
-// RaftNode — owns transport + storage + dispatcher for one site.
+// RaftNode — owns transport + snapshot-manager + dispatcher for one site.
 // ---------------------------------------------------------------------------
 
 class RaftNode {
  public:
-  // @unsafe { log_storage and snap_manager are non-owning references;
-  //           their lifetimes are managed by TestCluster (phase 6) or
+  // @unsafe { snap_manager is a non-owning reference;
+  //           its lifetime is managed by TestCluster (phase 6) or
   //           by the production wiring (later). }
   RaftNode(siteid_t id,
            TransportProxy transport,
-           LogStorage* log_storage,
            SnapshotManager* snap_manager)
       : id_(id),
         transport_(std::move(transport)),
-        log_storage_(log_storage),
         snap_manager_(snap_manager),
         dispatcher_(rusty::make_box<DummyDispatcher>(id)) {}
 
@@ -139,13 +130,11 @@ class RaftNode {
   TransportProxy& transport() { return transport_; }
 
   // @safe
-  LogStorage*      log_storage()     { return log_storage_; }
   SnapshotManager* snapshot_manager(){ return snap_manager_; }
 
  private:
   siteid_t                      id_{0};
   TransportProxy                transport_;
-  LogStorage*                   log_storage_{nullptr};
   SnapshotManager*              snap_manager_{nullptr};
   DispatcherProxy               dispatcher_;
 

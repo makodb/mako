@@ -57,11 +57,10 @@ shared_ptr<AppendEntriesResponse> RaftCommo::SendAppendEntries2(
         rrr::deserialize_from(future->get_reply(), response->status);
         rrr::deserialize_from(future->get_reply(), response->term);
         rrr::deserialize_from(future->get_reply(), response->last_log_index);
-        rrr::deserialize_from(future->get_reply(), response->ack_type);
         Log_debug("[APPEND_RPC] Success response from site {}: status={}, "
-                  "term={}, lastLogIndex={}, ackType={}",
+                  "term={}, lastLogIndex={}",
                   site_id, response->status, response->term,
-                  response->last_log_index, response->ack_type);
+                  response->last_log_index);
         CompleteAppendEntriesResponse(response);
       });
 
@@ -144,8 +143,6 @@ shared_ptr<SendAppendEntriesResults> RaftCommo::SendAppendEntries(
         rrr::deserialize_from(future->get_reply(), result_data->followerTerm);
         rrr::deserialize_from(future->get_reply(),
                               result_data->followerLastLogIndex);
-        rrr::deserialize_from(future->get_reply(),
-                              result_data->followerAckType);
         result_data->empty =
             commo_append_entries_empty_from_cmd(cmd.has_value());
         result_data->done = commo_append_entries_done_from_reply(
@@ -282,82 +279,6 @@ void RaftCommo::SendTimeoutNow(
   peer->WithClient([&](rrr::Client* client) {
     RaftProxy proxy(client);
     auto result = proxy.async_TimeoutNow(req, attr);
-    _RPC_COUNT();
-    if (result.is_ok()) {
-      Future::safe_release(result.unwrap().raw_future());
-    }
-  });
-}
-
-void RaftCommo::SendVoteDurable(
-    siteid_t candidate_id,
-    parid_t par_id,
-    ballot_t term,
-    siteid_t voter_id) {
-  auto peer = PeerForSite(par_id, candidate_id);
-  if (!peer) {
-    Log_warn("[SPEC-RAFT] No peer for candidate {}", candidate_id);
-    return;
-  }
-
-  FutureAttr attr;
-  attr.callback = rrr::FutureCallback::from_callable(
-      [candidate_id](rusty::Arc<Future> future) {
-        if (commo_future_failed(future->get_error_code())) {
-          Log_debug("[SPEC-RAFT] VoteDurable RPC to {} failed with error {}",
-                    candidate_id, future->get_error_code());
-          return;
-        }
-        bool_t acknowledged = false;
-        rrr::deserialize_from(future->get_reply(), acknowledged);
-        Log_debug("[SPEC-RAFT] VoteDurable RPC to {} completed, ack={}",
-                  candidate_id, acknowledged);
-      });
-  RaftProxy::RpcVoteDurableRequest req{};
-  req.term = term;
-  req.voter_id = voter_id;
-  peer->WithClient([&](rrr::Client* client) {
-    RaftProxy proxy(client);
-    auto result = proxy.async_VoteDurable(req, attr);
-    _RPC_COUNT();
-    if (result.is_ok()) {
-      Future::safe_release(result.unwrap().raw_future());
-    }
-  });
-}
-
-void RaftCommo::SendAppendEntriesDurable(
-    siteid_t leader_id,
-    parid_t par_id,
-    ballot_t term,
-    siteid_t follower_id,
-    uint64_t lastLogIndex) {
-  auto peer = PeerForSite(par_id, leader_id);
-  if (!peer) {
-    Log_warn("[SPEC-RAFT] No peer for leader {}", leader_id);
-    return;
-  }
-
-  FutureAttr attr;
-  attr.callback = rrr::FutureCallback::from_callable(
-      [leader_id](rusty::Arc<Future> future) {
-        if (commo_future_failed(future->get_error_code())) {
-          Log_debug("[SPEC-RAFT] AppendEntriesDurable RPC to {} failed with "
-                    "error {}", leader_id, future->get_error_code());
-          return;
-        }
-        bool_t acknowledged = false;
-        rrr::deserialize_from(future->get_reply(), acknowledged);
-        Log_debug("[SPEC-RAFT] AppendEntriesDurable RPC to {} completed, ack={}",
-                  leader_id, acknowledged);
-      });
-  RaftProxy::RpcAppendEntriesDurableRequest req{};
-  req.term = term;
-  req.follower_id = follower_id;
-  req.lastLogIndex = lastLogIndex;
-  peer->WithClient([&](rrr::Client* client) {
-    RaftProxy proxy(client);
-    auto result = proxy.async_AppendEntriesDurable(req, attr);
     _RPC_COUNT();
     if (result.is_ok()) {
       Future::safe_release(result.unwrap().raw_future());
@@ -585,7 +506,6 @@ void RaftCommo::SendAppendEntriesCb(
         rrr::deserialize_from(future->get_reply(), reply.follower_current_term);
         rrr::deserialize_from(future->get_reply(),
                               reply.follower_last_log_index);
-        rrr::deserialize_from(future->get_reply(), reply.follower_ack_type);
         on_reply(site_id, reply);
       });
 

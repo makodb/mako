@@ -56,10 +56,8 @@ class RaftServiceImpl : public RaftService {
   // Fiber::create_run; we return a packed response struct and the
   // framework sends the reply on fiber completion. No DeferredReply.
   rusty::Result<RpcVoteResponse,                rrr::i32> Vote(const RpcVoteRequest& req) override;
-  rusty::Result<RpcVoteDurableResponse,         rrr::i32> VoteDurable(const RpcVoteDurableRequest& req) override;
   rusty::Result<RpcAppendEntriesResponse,       rrr::i32> AppendEntries(const RpcAppendEntriesRequest& req) override;
   rusty::Result<RpcEmptyAppendEntriesResponse,  rrr::i32> EmptyAppendEntries(const RpcEmptyAppendEntriesRequest& req) override;
-  rusty::Result<RpcAppendEntriesDurableResponse, rrr::i32> AppendEntriesDurable(const RpcAppendEntriesDurableRequest& req) override;
   rusty::Result<RpcTimeoutNowResponse,          rrr::i32> TimeoutNow(const RpcTimeoutNowRequest& req) override;
   rusty::Result<RpcNotifyRestartResponse,       rrr::i32> NotifyRestart(const RpcNotifyRestartRequest& req) override;
   rusty::Result<RpcInstallSnapshotResponse,     rrr::i32> InstallSnapshot(const RpcInstallSnapshotRequest& req) override;

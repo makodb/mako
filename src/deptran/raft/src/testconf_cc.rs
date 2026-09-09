@@ -30,8 +30,3 @@ pub const fn raft_test_should_record_agreement_command(command_kind: i32,
                                                         agreement_kind: i32) -> bool {
     command_kind == agreement_kind
 }
-
-pub const fn raft_test_is_known_application_command(command_kind: i32,
-                                                     replicated_db_kind: i32) -> bool {
-    command_kind == replicated_db_kind
-}

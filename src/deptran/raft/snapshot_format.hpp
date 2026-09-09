@@ -471,9 +471,10 @@ class SnapshotFormat {
   static constexpr uint32_t MAGIC = 0x504E4153;
   // Format version
   static constexpr uint32_t VERSION = 1;
-  // Matches ReplicatedDB's maximum compressed archive wire size: the
-  // vendored LZ4-compatible raw limit, worst-case compression overhead, and
-  // ReplicatedDB's five-byte compression header.
+  // Historical bound inherited from the retired ReplicatedDB compressed-archive
+  // wire size: the vendored LZ4-compatible raw limit, worst-case compression
+  // overhead, and a five-byte compression header. It is a wire-format
+  // constant: do not change it.
   static constexpr size_t MAX_PAYLOAD_SIZE =
       0x7E000000ULL + (0x7E000000ULL / 255) + 16 + 1 + sizeof(uint32_t);
   static constexpr size_t MAX_SERIALIZED_SIZE =

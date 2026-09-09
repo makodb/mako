@@ -68,31 +68,10 @@ pub struct VoteReply {
     #[cfg_attr(any(), cpp_value_init)]
     pub vote_granted: bool,
 }
-
-// VoteDurable — sent by a voter once its vote has been persisted.
-#[cfg_attr(any(), cpp_no_auto_traits)]
-#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Default, Eq, PartialEq))]
-#[repr(C)]
-pub struct VoteDurableReq {
-    #[cfg_attr(any(), cpp_value_init)]
-    pub term: i64,
-    #[cfg_attr(any(), cpp_value_init)]
-    pub voter_id: u16,
-}
-
-#[cfg_attr(any(), cpp_no_auto_traits)]
-#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Default, Eq, PartialEq))]
-#[repr(C)]
-pub struct VoteDurableReply {
-    #[cfg_attr(any(), cpp_value_init)]
-    pub acknowledged: bool,
-}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_messages.vote version=1 rust_sha256=06daa0599a6464f54eb30a5d892a2365b069e7a09f67900274002af3555f82fe*/
+/*RUSTYCPP:GEN-BEGIN id=raft_messages.vote version=1 rust_sha256=7d1f301d8ea2cf70923ecb86ad6327b797440ce7b46c4210ff44acd6a90f5829*/
 struct VoteReq;
 struct VoteReply;
-struct VoteDurableReq;
-struct VoteDurableReply;
 
 struct VoteReq {
     uint64_t last_log_idx{};
@@ -104,15 +83,6 @@ struct VoteReq {
 struct VoteReply {
     int64_t max_ballot{};
     bool vote_granted{};
-};
-
-struct VoteDurableReq {
-    int64_t term{};
-    uint16_t voter_id{};
-};
-
-struct VoteDurableReply {
-    bool acknowledged{};
 };
 /*RUSTYCPP:GEN-END id=raft_messages.vote*/
 
@@ -146,18 +116,15 @@ pub struct AppendEntriesReply {
     pub follower_current_term: u64,
     #[cfg_attr(any(), cpp_value_init)]
     pub follower_last_log_index: u64,
-    #[cfg_attr(any(), cpp_value_init)]
-    pub follower_ack_type: u64,
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_messages.append_entries_reply version=1 rust_sha256=e5500a47a858b0edbf96bdb631736d0df240ed4461f0110ad22fff7001c28f7c*/
+/*RUSTYCPP:GEN-BEGIN id=raft_messages.append_entries_reply version=1 rust_sha256=69785cc8c2904284407fcb78ae4224ca0da4aab708889891f493f4409fbee1c8*/
 struct AppendEntriesReply;
 
 struct AppendEntriesReply {
     uint64_t follower_append_ok{};
     uint64_t follower_current_term{};
     uint64_t follower_last_log_index{};
-    uint64_t follower_ack_type{};
 };
 /*RUSTYCPP:GEN-END id=raft_messages.append_entries_reply*/
 
@@ -197,11 +164,9 @@ pub struct EmptyAppendEntriesReply {
     pub follower_current_term: u64,
     #[cfg_attr(any(), cpp_value_init)]
     pub follower_last_log_index: u64,
-    #[cfg_attr(any(), cpp_value_init)]
-    pub follower_ack_type: u64,
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_messages.heartbeat version=1 rust_sha256=116e7c9c4b2067115c90f2f1b46984f94bc9cc6cdc64cdeff465b0cbbb396f56*/
+/*RUSTYCPP:GEN-BEGIN id=raft_messages.heartbeat version=1 rust_sha256=d5c3e2b56f4f898cb9d2829b0259e3dfa9d097b673f4ead126fd7eb93d65e204*/
 struct EmptyAppendEntriesReq;
 struct EmptyAppendEntriesReply;
 
@@ -220,48 +185,8 @@ struct EmptyAppendEntriesReply {
     uint64_t follower_append_ok{};
     uint64_t follower_current_term{};
     uint64_t follower_last_log_index{};
-    uint64_t follower_ack_type{};
 };
 /*RUSTYCPP:GEN-END id=raft_messages.heartbeat*/
-
-// ---------------------------------------------------------------------------
-// AppendEntriesDurable — follower acks that its log has been fsync'd.
-// ---------------------------------------------------------------------------
-#if RUSTYCPP_RUST
-#[cfg_attr(any(), cpp_no_auto_traits)]
-#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Default, Eq, PartialEq))]
-#[repr(C)]
-pub struct AppendEntriesDurableReq {
-    #[cfg_attr(any(), cpp_value_init)]
-    pub term: i64,
-    #[cfg_attr(any(), cpp_value_init)]
-    pub follower_id: u16,
-    #[cfg_attr(any(), cpp_value_init)]
-    pub last_log_index: u64,
-}
-
-#[cfg_attr(any(), cpp_no_auto_traits)]
-#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Default, Eq, PartialEq))]
-#[repr(C)]
-pub struct AppendEntriesDurableReply {
-    #[cfg_attr(any(), cpp_value_init)]
-    pub acknowledged: bool,
-}
-#endif
-/*RUSTYCPP:GEN-BEGIN id=raft_messages.durable version=1 rust_sha256=2c2d53634a2498010ad6d2f68cec2e7ababc54e598cf8326e188ccf1668a6b5e*/
-struct AppendEntriesDurableReq;
-struct AppendEntriesDurableReply;
-
-struct AppendEntriesDurableReq {
-    int64_t term{};
-    uint16_t follower_id{};
-    uint64_t last_log_index{};
-};
-
-struct AppendEntriesDurableReply {
-    bool acknowledged{};
-};
-/*RUSTYCPP:GEN-END id=raft_messages.durable*/
 
 // ---------------------------------------------------------------------------
 // TimeoutNow — leader asks a follower to immediately start election

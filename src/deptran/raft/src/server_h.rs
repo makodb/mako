@@ -2,7 +2,6 @@
 #[repr(i32)]
 pub enum StepDownReason {
     UnsecuredFailure = 0,
-    SecuredFailure = 1,
     HigherTerm = 2,
 }
 
@@ -11,12 +10,12 @@ pub enum StepDownReason {
 #[repr(i32)]
 pub enum CommitStatus {
     SPECULATIVE = 0,
-    DURABLE = 1,
     ROLLEDBACK = 2,
 }
 
-// Submission admission cannot be represented by a bool once a failed local
-// fsync may have left the command durable.  Keep this separate from
+// Submission admission result for the RaftWorker interface.  Memory-only Raft
+// either rejects a command (not leader) or appends it; there is no durable
+// append whose outcome could be unknown.  Keep this separate from
 // CommitStatus: no callback has been registered at this boundary yet.
 #[allow(non_camel_case_types)]
 #[cfg_attr(not(any()), derive(Clone, Copy, Debug, Eq, PartialEq))]
@@ -24,7 +23,6 @@ pub enum CommitStatus {
 pub enum RaftStartResult {
     REJECTED = 0,
     APPENDED = 1,
-    INDETERMINATE = 2,
 }
 
 // A delayed vote quorum result is interpreted before its YES/NO/TIMEOUT
@@ -116,41 +114,6 @@ pub const fn raft_server_random_range_cap(range: u64, maximum: u64) -> u64 {
     }
 }
 
-// TODO(stage2): allowed pending codegen check, NOT a decision. clippy wants
-// `saturating_sub` here. The hand-written guard below is what production
-// compiles today and the emitter is proven on that shape; `saturating_sub`
-// may lower to a `rusty::` call a bare-rustc carrier cannot name. Verify the
-// emitter output for it, apply the change on its own with the predicate
-// reviewed, then remove this allow.
-#[allow(clippy::implicit_saturating_sub)]
-pub const fn raft_server_effective_election_timeout(
-    randomized_timeout: u64,
-    randomized_minimum: u64,
-    heartbeat_interval: u64,
-    storage_configured: bool,
-) -> u64 {
-    if storage_configured {
-        let maximum_floor_input = u64::MAX / 20;
-        let persistence_floor = if heartbeat_interval > maximum_floor_input {
-            u64::MAX
-        } else {
-            heartbeat_interval * 20
-        };
-        let persistence_guard = if persistence_floor > randomized_minimum {
-            persistence_floor - randomized_minimum
-        } else {
-            0
-        };
-        if randomized_timeout > u64::MAX - persistence_guard {
-            u64::MAX
-        } else {
-            randomized_timeout + persistence_guard
-        }
-    } else {
-        randomized_timeout
-    }
-}
-
 pub const fn raft_server_election_in_startup_grace_period(now: u64,
                                                            started_at: u64,
                                                            grace_period: u64) -> bool {
@@ -215,21 +178,17 @@ pub const fn raft_server_snapshot_recovery_retains_suffix(
     has_suffix: bool,
     has_boundary: bool,
     boundary_matches: bool,
-    storage_compaction_proves_suffix: bool,
     live_snapshot_proves_suffix: bool) -> bool {
     has_suffix &&
         ((has_boundary && boundary_matches) ||
-         (!has_boundary &&
-          (storage_compaction_proves_suffix || live_snapshot_proves_suffix)))
+         (!has_boundary && live_snapshot_proves_suffix))
 }
 
 pub const fn raft_server_snapshot_recovery_has_unproven_gap(
     has_suffix: bool,
     has_boundary: bool,
-    storage_compaction_proves_suffix: bool,
     live_snapshot_proves_suffix: bool) -> bool {
-    has_suffix && !has_boundary &&
-        !storage_compaction_proves_suffix && !live_snapshot_proves_suffix
+    has_suffix && !has_boundary && !live_snapshot_proves_suffix
 }
 
 pub const fn raft_server_snapshot_term_uses_boundary(snapshot_index: u64,
@@ -511,10 +470,6 @@ pub const fn raft_server_append_reject_floor() -> u64 {
     1
 }
 
-pub const fn raft_server_ack_is_memory(ack_type: u64) -> bool {
-    ack_type == 0
-}
-
 // @safe - pure packed callback-gate admission decision.
 pub const fn raft_server_callback_gate_is_open(state: u64,
                                                 drain_bit: u64) -> bool {
@@ -527,102 +482,6 @@ pub const fn raft_server_callback_gate_count(state: u64,
     state & count_mask
 }
 
-// @safe - pure persistence-mode classification.
-pub const fn raft_server_persistence_can_report_durable(has_durable_storage: bool) -> bool {
-    has_durable_storage
-}
-
-// @safe - pure persistence-mode classification.
-pub const fn raft_server_sync_reply_is_durable(has_durable_storage: bool,
-                                                 async_persistence: bool) -> bool {
-    has_durable_storage && !async_persistence
-}
-
-// @safe - pure persistence-result classification.  A synchronous transport
-// reply is durable only when this exact call crossed its write+sync boundary.
-pub const fn raft_server_follower_append_ack_type(has_durable_storage: bool,
-                                                   async_persistence: bool,
-                                                   persistence_succeeded: bool) -> u64 {
-    if persistence_succeeded &&
-        raft_server_sync_reply_is_durable(has_durable_storage, async_persistence) {
-        1
-    } else {
-        0
-    }
-}
-
-// @safe - pure write-boundary result aggregation.
-pub const fn raft_server_durable_write_succeeded(storage_ready: bool,
-                                                  writes_succeeded: bool,
-                                                  sync_succeeded: bool) -> bool {
-    storage_ready && writes_succeeded && sync_succeeded
-}
-
-// @safe - pure async persistence admission decision.
-pub const fn raft_server_async_persistence_should_queue(
-    async_persistence: bool,
-    storage_configured: bool,
-    has_entries: bool,
-) -> bool {
-    async_persistence && storage_configured && has_entries
-}
-
-// @safe - pure FIFO ticket readiness decision.
-pub const fn raft_server_persistence_ticket_is_ready(serving_ticket: u64,
-                                                      worker_ticket: u64) -> bool {
-    serving_ticket == worker_ticket
-}
-
-pub const fn raft_server_persisted_reply_context_is_current(
-    stopping: bool,
-    is_leader: bool,
-    current_term: u64,
-    accepted_term: u64,
-    current_leader: u16,
-    accepted_leader: u16,
-) -> bool {
-    !stopping &&
-        !is_leader &&
-        current_term == accepted_term &&
-        current_leader == accepted_leader
-}
-
-// @safe - pure wire acknowledgement classification.
-pub const fn raft_server_ack_is_durable(ack_type: u64) -> bool {
-    ack_type == 1
-}
-
-// @safe - pure election/message-ordering decision.
-pub const fn raft_server_can_buffer_early_durable_vote(
-    has_durable_storage: bool,
-    async_persistence: bool,
-    is_leader: bool,
-    election_in_progress: bool,
-    vote_term: i64,
-    election_term: i64,
-) -> bool {
-    has_durable_storage &&
-        async_persistence &&
-        !is_leader &&
-        election_in_progress &&
-        vote_term == election_term
-}
-
-pub const fn raft_server_should_become_secured(already_secured: bool,
-                                                durable_vote_count: usize,
-                                                quorum: usize) -> bool {
-    !already_secured && durable_vote_count >= quorum
-}
-
-pub const fn raft_server_unsecured_leader_needs_quorum_check(already_secured: bool,
-                                                              is_leader: bool) -> bool {
-    !already_secured && is_leader
-}
-
-pub const fn raft_server_commit_status_is_durable(status: CommitStatus) -> bool {
-    (status as i32) == (CommitStatus::DURABLE as i32)
-}
-
 pub const fn raft_server_start_was_rejected(result: RaftStartResult) -> bool {
     (result as i32) == (RaftStartResult::REJECTED as i32)
 }
@@ -631,9 +490,6 @@ pub const fn raft_server_start_was_appended(result: RaftStartResult) -> bool {
     (result as i32) == (RaftStartResult::APPENDED as i32)
 }
 
-pub const fn raft_server_start_is_indeterminate(result: RaftStartResult) -> bool {
-    (result as i32) == (RaftStartResult::INDETERMINATE as i32)
-}
 
 // A leadership or term change does not resolve an old entry. The exact slot
 // becomes terminal only once it is inside the committed prefix.
@@ -836,13 +692,6 @@ pub const fn raft_server_leader_rpc_sender_is_authoritative(
          (leader_has_higher_term ||
           (!local_is_leader &&
            (!has_known_leader || known_leader_matches_sender))))
-}
-
-pub const fn raft_server_term_advance_is_durable(
-    has_configured_storage: bool,
-    persistence_succeeded: bool,
-) -> bool {
-    !has_configured_storage || persistence_succeeded
 }
 
 #[cfg_attr(any(), cpp_no_auto_traits)]

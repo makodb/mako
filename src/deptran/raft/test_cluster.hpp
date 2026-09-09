@@ -24,7 +24,6 @@
 #include <rusty/box.hpp>
 
 #include "channel_transport.hpp"
-#include "memory_log_storage.hpp"
 #include "memory_snapshot_manager.hpp"
 #include "raft_node.hpp"
 
@@ -36,8 +35,8 @@ namespace raft {
 class TestCluster {
  public:
   // @safe - builds an N-site cluster wired through an internal
-  // ChannelSwitchboard. Each site gets its own InMemoryLogStorage +
-  // MemorySnapshotManager. Site IDs are 1..N.
+  // ChannelSwitchboard. Each site gets its own MemorySnapshotManager.
+  // Site IDs are 1..N.
   // @unsafe { direct `new` because Box::make() requires a copy }
   static rusty::Box<TestCluster> with_in_memory_transport(size_t n) {
     rusty::Box<TestCluster> c(new TestCluster());
@@ -138,12 +137,11 @@ class TestCluster {
       auto id = site_ids_[i];
       // @unsafe { direct `new` because Mutex-containing types are not
       //           copy-constructible, so Box::make() does not apply }
-      logs_.emplace_back(new InMemoryLogStorage());
       snaps_.emplace_back(new MemorySnapshotManager());
 
       TransportProxy tr = make_channel_transport(&sw_, id, /*par=*/0);
       rusty::Box<RaftNode> node(new RaftNode(
-          id, std::move(tr), logs_.back().get(), snaps_.back().get()));
+          id, std::move(tr), snaps_.back().get()));
 
       rusty::Box<ChannelNodeWorker> worker(new ChannelNodeWorker(
           std::move(receivers[i]), node->take_dispatcher()));
@@ -172,7 +170,6 @@ class TestCluster {
   std::vector<rusty::Box<ChannelNodeWorker>>     workers_;
   std::vector<rusty::Box<RaftNode>>              nodes_;
   std::vector<rusty::Box<MemorySnapshotManager>> snaps_;
-  std::vector<rusty::Box<InMemoryLogStorage>>    logs_;
   std::vector<siteid_t>                          site_ids_;
   ChannelSwitchboard                             sw_;
 };

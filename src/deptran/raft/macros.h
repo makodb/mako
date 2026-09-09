@@ -1,22 +1,6 @@
 #pragma once
 
-// ============================================================================
-// RAFT DISK PERSISTENCE - Runtime-configurable async vs sync modes
-// ============================================================================
-// Controlled by environment variables at runtime:
-//
-// MAKO_RAFT_PERSISTENCE=1           → Enable disk persistence (sync by default)
-// MAKO_RAFT_ASYNC_PERSISTENCE=1     → Switch to async disk persistence
-//
-// Sync mode (default): Traditional Raft
-//   - Vote requests: persist first, then respond (no VoteDurable RPC)
-//   - AppendEntries: persist first, then ack (no AppendEntriesDurable RPC)
-//
-// Async mode: Speculative Raft
-//   - Vote requests: respond immediately, persist async, send VoteDurable after fsync
-//   - AppendEntries: ack immediately, persist async, send AppendEntriesDurable after fsync
-//   - Tracks specVoters/durableVoters, specCommitIndex/securedLogIndex separately
-// ============================================================================
+// Variadic parameter-list helper macros.
 
 #define _PARAMS0(...)
 #define _PARAMS1(first, second, ...) second

@@ -45,15 +45,6 @@ class RrrTransportAdapter : public TransportBase {
   // ------------------------------------------------------------------
 
   // @safe
-  void send_vote_durable(siteid_t candidate, VoteDurableReq req) override {
-    commo_->SendVoteDurable(candidate, par_, req.term, req.voter_id);
-  }
-  // @safe
-  void send_append_entries_durable(siteid_t leader, AppendEntriesDurableReq req) override {
-    commo_->SendAppendEntriesDurable(
-        leader, par_, req.term, req.follower_id, req.last_log_index);
-  }
-  // @safe
   void send_notify_restart(siteid_t self, parid_t par) override {
     commo_->SendNotifyRestart(self, par);
   }
@@ -106,7 +97,6 @@ class RrrTransportAdapter : public TransportBase {
     out.follower_append_ok = slot->follower_append_ok;
     out.follower_current_term = slot->follower_current_term;
     out.follower_last_log_index = slot->follower_last_log_index;
-    out.follower_ack_type = slot->follower_ack_type;
     return out;
   }
 

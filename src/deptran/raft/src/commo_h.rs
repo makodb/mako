@@ -42,10 +42,3 @@ pub const fn commo_quorum_should_advance_term(candidate_term: i64,
                                                highest_term: i64) -> bool {
     candidate_term > highest_term
 }
-
-#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Eq, PartialEq))]
-#[repr(u64)]
-pub enum AckType {
-    Memory = 0,
-    Durable = 1,
-}

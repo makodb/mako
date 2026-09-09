@@ -515,33 +515,6 @@ public:
     }
     friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcVoteResponse& o) { deserialize(o, ar); return ar; }
 
-    struct RpcVoteDurableRequest {
-        ballot_t term;
-        siteid_t voter_id;
-    };
-    friend inline void serialize(const RpcVoteDurableRequest& o, rrr::BinaryWriteArchive& ar) {
-        rrr::Serialize_::serialize(o.term, ar);
-        rrr::Serialize_::serialize(o.voter_id, ar);
-    }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcVoteDurableRequest& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcVoteDurableRequest& o, rrr::BinaryReadArchive& ar) {
-        rrr::Deserialize_::deserialize(o.term, ar);
-        rrr::Deserialize_::deserialize(o.voter_id, ar);
-    }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcVoteDurableRequest& o) { deserialize(o, ar); return ar; }
-
-    struct RpcVoteDurableResponse {
-        bool_t acknowledged;
-    };
-    friend inline void serialize(const RpcVoteDurableResponse& o, rrr::BinaryWriteArchive& ar) {
-        rrr::Serialize_::serialize(o.acknowledged, ar);
-    }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcVoteDurableResponse& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcVoteDurableResponse& o, rrr::BinaryReadArchive& ar) {
-        rrr::Deserialize_::deserialize(o.acknowledged, ar);
-    }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcVoteDurableResponse& o) { deserialize(o, ar); return ar; }
-
     struct RpcAppendEntriesRequest {
         uint64_t slot;
         ballot_t ballot;
@@ -582,20 +555,17 @@ public:
         uint64_t followerAppendOK;
         uint64_t followerCurrentTerm;
         uint64_t followerLastLogIndex;
-        uint64_t followerAckType;
     };
     friend inline void serialize(const RpcAppendEntriesResponse& o, rrr::BinaryWriteArchive& ar) {
         rrr::Serialize_::serialize(o.followerAppendOK, ar);
         rrr::Serialize_::serialize(o.followerCurrentTerm, ar);
         rrr::Serialize_::serialize(o.followerLastLogIndex, ar);
-        rrr::Serialize_::serialize(o.followerAckType, ar);
     }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcAppendEntriesResponse& o) { serialize(o, ar); return ar; }
     friend inline void deserialize(RpcAppendEntriesResponse& o, rrr::BinaryReadArchive& ar) {
         rrr::Deserialize_::deserialize(o.followerAppendOK, ar);
         rrr::Deserialize_::deserialize(o.followerCurrentTerm, ar);
         rrr::Deserialize_::deserialize(o.followerLastLogIndex, ar);
-        rrr::Deserialize_::deserialize(o.followerAckType, ar);
     }
     friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcAppendEntriesResponse& o) { deserialize(o, ar); return ar; }
 
@@ -636,52 +606,19 @@ public:
         uint64_t followerAppendOK;
         uint64_t followerCurrentTerm;
         uint64_t followerLastLogIndex;
-        uint64_t followerAckType;
     };
     friend inline void serialize(const RpcEmptyAppendEntriesResponse& o, rrr::BinaryWriteArchive& ar) {
         rrr::Serialize_::serialize(o.followerAppendOK, ar);
         rrr::Serialize_::serialize(o.followerCurrentTerm, ar);
         rrr::Serialize_::serialize(o.followerLastLogIndex, ar);
-        rrr::Serialize_::serialize(o.followerAckType, ar);
     }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcEmptyAppendEntriesResponse& o) { serialize(o, ar); return ar; }
     friend inline void deserialize(RpcEmptyAppendEntriesResponse& o, rrr::BinaryReadArchive& ar) {
         rrr::Deserialize_::deserialize(o.followerAppendOK, ar);
         rrr::Deserialize_::deserialize(o.followerCurrentTerm, ar);
         rrr::Deserialize_::deserialize(o.followerLastLogIndex, ar);
-        rrr::Deserialize_::deserialize(o.followerAckType, ar);
     }
     friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcEmptyAppendEntriesResponse& o) { deserialize(o, ar); return ar; }
-
-    struct RpcAppendEntriesDurableRequest {
-        ballot_t term;
-        siteid_t follower_id;
-        uint64_t lastLogIndex;
-    };
-    friend inline void serialize(const RpcAppendEntriesDurableRequest& o, rrr::BinaryWriteArchive& ar) {
-        rrr::Serialize_::serialize(o.term, ar);
-        rrr::Serialize_::serialize(o.follower_id, ar);
-        rrr::Serialize_::serialize(o.lastLogIndex, ar);
-    }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcAppendEntriesDurableRequest& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcAppendEntriesDurableRequest& o, rrr::BinaryReadArchive& ar) {
-        rrr::Deserialize_::deserialize(o.term, ar);
-        rrr::Deserialize_::deserialize(o.follower_id, ar);
-        rrr::Deserialize_::deserialize(o.lastLogIndex, ar);
-    }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcAppendEntriesDurableRequest& o) { deserialize(o, ar); return ar; }
-
-    struct RpcAppendEntriesDurableResponse {
-        bool_t acknowledged;
-    };
-    friend inline void serialize(const RpcAppendEntriesDurableResponse& o, rrr::BinaryWriteArchive& ar) {
-        rrr::Serialize_::serialize(o.acknowledged, ar);
-    }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcAppendEntriesDurableResponse& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcAppendEntriesDurableResponse& o, rrr::BinaryReadArchive& ar) {
-        rrr::Deserialize_::deserialize(o.acknowledged, ar);
-    }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcAppendEntriesDurableResponse& o) { deserialize(o, ar); return ar; }
 
     struct RpcTimeoutNowRequest {
         uint64_t leaderTerm;
@@ -844,10 +781,8 @@ public:
 
     enum {
         VOTE = 0x2802b911,
-        VOTEDURABLE = 0x538739a2,
         APPENDENTRIES = 0x3935326f,
         EMPTYAPPENDENTRIES = 0x6e089268,
-        APPENDENTRIESDURABLE = 0x1e8b9027,
         TIMEOUTNOW = 0x59a6a5f9,
         NOTIFYRESTART = 0x3df03452,
         INSTALLSNAPSHOT = 0x5276442f,
@@ -861,16 +796,10 @@ public:
         if ((ret = svr.reg_rpc(VOTE, svc_index)) != 0) {
             goto err;
         }
-        if ((ret = svr.reg_rpc(VOTEDURABLE, svc_index)) != 0) {
-            goto err;
-        }
         if ((ret = svr.reg_rpc(APPENDENTRIES, svc_index)) != 0) {
             goto err;
         }
         if ((ret = svr.reg_rpc(EMPTYAPPENDENTRIES, svc_index)) != 0) {
-            goto err;
-        }
-        if ((ret = svr.reg_rpc(APPENDENTRIESDURABLE, svc_index)) != 0) {
             goto err;
         }
         if ((ret = svr.reg_rpc(TIMEOUTNOW, svc_index)) != 0) {
@@ -891,10 +820,8 @@ public:
         return 0;
     err:
         svr.unreg(VOTE);
-        svr.unreg(VOTEDURABLE);
         svr.unreg(APPENDENTRIES);
         svr.unreg(EMPTYAPPENDENTRIES);
-        svr.unreg(APPENDENTRIESDURABLE);
         svr.unreg(TIMEOUTNOW);
         svr.unreg(NOTIFYRESTART);
         svr.unreg(INSTALLSNAPSHOT);
@@ -906,10 +833,8 @@ public:
     void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
         switch (rpc_id) {
         case VOTE: __Vote__wrapper__(std::move(req), weak_sconn); break;
-        case VOTEDURABLE: __VoteDurable__wrapper__(std::move(req), weak_sconn); break;
         case APPENDENTRIES: __AppendEntries__wrapper__(std::move(req), weak_sconn); break;
         case EMPTYAPPENDENTRIES: __EmptyAppendEntries__wrapper__(std::move(req), weak_sconn); break;
-        case APPENDENTRIESDURABLE: __AppendEntriesDurable__wrapper__(std::move(req), weak_sconn); break;
         case TIMEOUTNOW: __TimeoutNow__wrapper__(std::move(req), weak_sconn); break;
         case NOTIFYRESTART: __NotifyRestart__wrapper__(std::move(req), weak_sconn); break;
         case INSTALLSNAPSHOT: __InstallSnapshot__wrapper__(std::move(req), weak_sconn); break;
@@ -922,13 +847,9 @@ public:
     // @safe
     virtual rusty::Result<RpcVoteResponse, rrr::i32> Vote(const RpcVoteRequest& req) = 0;
     // @safe
-    virtual rusty::Result<RpcVoteDurableResponse, rrr::i32> VoteDurable(const RpcVoteDurableRequest& req) = 0;
-    // @safe
     virtual rusty::Result<RpcAppendEntriesResponse, rrr::i32> AppendEntries(const RpcAppendEntriesRequest& req) = 0;
     // @safe
     virtual rusty::Result<RpcEmptyAppendEntriesResponse, rrr::i32> EmptyAppendEntries(const RpcEmptyAppendEntriesRequest& req) = 0;
-    // @safe
-    virtual rusty::Result<RpcAppendEntriesDurableResponse, rrr::i32> AppendEntriesDurable(const RpcAppendEntriesDurableRequest& req) = 0;
     // @safe
     virtual rusty::Result<RpcTimeoutNowResponse, rrr::i32> TimeoutNow(const RpcTimeoutNowRequest& req) = 0;
     // @safe
@@ -974,34 +895,6 @@ private:
         }
     }
     // @safe
-    void __VoteDurable__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        // @unsafe
-        {
-            RpcVoteDurableRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
-            rrr::Deserialize_::deserialize(__typed_req__.term, __req_ar__);
-            rrr::Deserialize_::deserialize(__typed_req__.voter_id, __req_ar__);
-            auto __fiber_req__ = std::move(req);
-            auto __fiber_weak_sconn__ = weak_sconn;
-            auto __fiber__ = Fiber::create_run([this, __typed_req__ = std::move(__typed_req__), __fiber_req__ = std::move(__fiber_req__), __fiber_weak_sconn__]() mutable {
-                auto __typed_result__ = this->VoteDurable(__typed_req__);
-                auto sconn_opt = __fiber_weak_sconn__.upgrade();
-                if (sconn_opt.is_some()) {
-                    auto sconn = sconn_opt.unwrap();
-                    if (__typed_result__.is_err()) {
-                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err(), rrr::ServerReplyFn{});
-                    } else {
-                        auto __typed_resp__ = __typed_result__.unwrap();
-                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::BinaryWriteArchive& m) {
-                            rrr::Serialize_::serialize(__typed_resp__.acknowledged, m);
-                        });
-                    }
-                }
-            });
-            (void)__fiber__;
-        }
-    }
-    // @safe
     void __AppendEntries__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
         // @unsafe
         {
@@ -1031,7 +924,6 @@ private:
                             rrr::Serialize_::serialize(__typed_resp__.followerAppendOK, m);
                             rrr::Serialize_::serialize(__typed_resp__.followerCurrentTerm, m);
                             rrr::Serialize_::serialize(__typed_resp__.followerLastLogIndex, m);
-                            rrr::Serialize_::serialize(__typed_resp__.followerAckType, m);
                         });
                     }
                 }
@@ -1068,36 +960,6 @@ private:
                             rrr::Serialize_::serialize(__typed_resp__.followerAppendOK, m);
                             rrr::Serialize_::serialize(__typed_resp__.followerCurrentTerm, m);
                             rrr::Serialize_::serialize(__typed_resp__.followerLastLogIndex, m);
-                            rrr::Serialize_::serialize(__typed_resp__.followerAckType, m);
-                        });
-                    }
-                }
-            });
-            (void)__fiber__;
-        }
-    }
-    // @safe
-    void __AppendEntriesDurable__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        // @unsafe
-        {
-            RpcAppendEntriesDurableRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
-            rrr::Deserialize_::deserialize(__typed_req__.term, __req_ar__);
-            rrr::Deserialize_::deserialize(__typed_req__.follower_id, __req_ar__);
-            rrr::Deserialize_::deserialize(__typed_req__.lastLogIndex, __req_ar__);
-            auto __fiber_req__ = std::move(req);
-            auto __fiber_weak_sconn__ = weak_sconn;
-            auto __fiber__ = Fiber::create_run([this, __typed_req__ = std::move(__typed_req__), __fiber_req__ = std::move(__fiber_req__), __fiber_weak_sconn__]() mutable {
-                auto __typed_result__ = this->AppendEntriesDurable(__typed_req__);
-                auto sconn_opt = __fiber_weak_sconn__.upgrade();
-                if (sconn_opt.is_some()) {
-                    auto sconn = sconn_opt.unwrap();
-                    if (__typed_result__.is_err()) {
-                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err(), rrr::ServerReplyFn{});
-                    } else {
-                        auto __typed_resp__ = __typed_result__.unwrap();
-                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::BinaryWriteArchive& m) {
-                            rrr::Serialize_::serialize(__typed_resp__.acknowledged, m);
                         });
                     }
                 }
@@ -1263,14 +1125,10 @@ public:
     // Alias typed request/response structs from the sibling Service class.
     using RpcVoteRequest = RaftService::RpcVoteRequest;
     using RpcVoteResponse = RaftService::RpcVoteResponse;
-    using RpcVoteDurableRequest = RaftService::RpcVoteDurableRequest;
-    using RpcVoteDurableResponse = RaftService::RpcVoteDurableResponse;
     using RpcAppendEntriesRequest = RaftService::RpcAppendEntriesRequest;
     using RpcAppendEntriesResponse = RaftService::RpcAppendEntriesResponse;
     using RpcEmptyAppendEntriesRequest = RaftService::RpcEmptyAppendEntriesRequest;
     using RpcEmptyAppendEntriesResponse = RaftService::RpcEmptyAppendEntriesResponse;
-    using RpcAppendEntriesDurableRequest = RaftService::RpcAppendEntriesDurableRequest;
-    using RpcAppendEntriesDurableResponse = RaftService::RpcAppendEntriesDurableResponse;
     using RpcTimeoutNowRequest = RaftService::RpcTimeoutNowRequest;
     using RpcTimeoutNowResponse = RaftService::RpcTimeoutNowResponse;
     using RpcNotifyRestartRequest = RaftService::RpcNotifyRestartRequest;
@@ -1330,52 +1188,6 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
-    class VoteDurableTypedFuture {
-    private:
-        rusty::Arc<rrr::Future> __fu__;
-    public:
-        explicit VoteDurableTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
-        bool ready() const {
-            return __fu__->ready();
-        }
-        void wait() const {
-            __fu__->wait();
-        }
-        rrr::i32 get_error_code() const {
-            return __fu__->get_error_code();
-        }
-        rusty::Arc<rrr::Future> raw_future() const {
-            return __fu__;
-        }
-        rusty::Result<RpcVoteDurableResponse, rrr::i32> resolve() const {
-            rrr::i32 __ret__ = __fu__->get_error_code();
-            if (__ret__ != 0) {
-                return rusty::Result<RpcVoteDurableResponse, rrr::i32>::Err(__ret__);
-            }
-            RpcVoteDurableResponse __typed_resp__;
-            auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
-            rrr::Deserialize_::deserialize(__typed_resp__.acknowledged, __reply_ar__);
-            return rusty::Result<RpcVoteDurableResponse, rrr::i32>::Ok(__typed_resp__);
-        }
-    };
-    rusty::Result<VoteDurableTypedFuture, rrr::i32> async_VoteDurable(const RpcVoteDurableRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(RaftService::VOTEDURABLE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            rrr::Serialize_::serialize(req.term, __m__);
-            rrr::Serialize_::serialize(req.voter_id, __m__);
-        });
-        if (__fu_result__.is_err()) {
-            return rusty::Result<VoteDurableTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
-        }
-        return rusty::Result<VoteDurableTypedFuture, rrr::i32>::Ok(VoteDurableTypedFuture(__fu_result__.unwrap()));
-    }
-    rusty::Result<RpcVoteDurableResponse, rrr::i32> VoteDurable(const RpcVoteDurableRequest& req) {
-        auto __typed_fu_result__ = this->async_VoteDurable(req);
-        if (__typed_fu_result__.is_err()) {
-            return rusty::Result<RpcVoteDurableResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
-        }
-        return __typed_fu_result__.unwrap().resolve();
-    }
     class AppendEntriesTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -1404,7 +1216,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.followerAppendOK, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.followerCurrentTerm, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.followerLastLogIndex, __reply_ar__);
-            rrr::Deserialize_::deserialize(__typed_resp__.followerAckType, __reply_ar__);
             return rusty::Result<RpcAppendEntriesResponse, rrr::i32>::Ok(__typed_resp__);
         }
     };
@@ -1460,7 +1271,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.followerAppendOK, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.followerCurrentTerm, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.followerLastLogIndex, __reply_ar__);
-            rrr::Deserialize_::deserialize(__typed_resp__.followerAckType, __reply_ar__);
             return rusty::Result<RpcEmptyAppendEntriesResponse, rrr::i32>::Ok(__typed_resp__);
         }
     };
@@ -1484,53 +1294,6 @@ public:
         auto __typed_fu_result__ = this->async_EmptyAppendEntries(req);
         if (__typed_fu_result__.is_err()) {
             return rusty::Result<RpcEmptyAppendEntriesResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
-        }
-        return __typed_fu_result__.unwrap().resolve();
-    }
-    class AppendEntriesDurableTypedFuture {
-    private:
-        rusty::Arc<rrr::Future> __fu__;
-    public:
-        explicit AppendEntriesDurableTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
-        bool ready() const {
-            return __fu__->ready();
-        }
-        void wait() const {
-            __fu__->wait();
-        }
-        rrr::i32 get_error_code() const {
-            return __fu__->get_error_code();
-        }
-        rusty::Arc<rrr::Future> raw_future() const {
-            return __fu__;
-        }
-        rusty::Result<RpcAppendEntriesDurableResponse, rrr::i32> resolve() const {
-            rrr::i32 __ret__ = __fu__->get_error_code();
-            if (__ret__ != 0) {
-                return rusty::Result<RpcAppendEntriesDurableResponse, rrr::i32>::Err(__ret__);
-            }
-            RpcAppendEntriesDurableResponse __typed_resp__;
-            auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
-            rrr::Deserialize_::deserialize(__typed_resp__.acknowledged, __reply_ar__);
-            return rusty::Result<RpcAppendEntriesDurableResponse, rrr::i32>::Ok(__typed_resp__);
-        }
-    };
-    rusty::Result<AppendEntriesDurableTypedFuture, rrr::i32> async_AppendEntriesDurable(const RpcAppendEntriesDurableRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(RaftService::APPENDENTRIESDURABLE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            rrr::Serialize_::serialize(req.term, __m__);
-            rrr::Serialize_::serialize(req.follower_id, __m__);
-            rrr::Serialize_::serialize(req.lastLogIndex, __m__);
-        });
-        if (__fu_result__.is_err()) {
-            return rusty::Result<AppendEntriesDurableTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
-        }
-        return rusty::Result<AppendEntriesDurableTypedFuture, rrr::i32>::Ok(AppendEntriesDurableTypedFuture(__fu_result__.unwrap()));
-    }
-    rusty::Result<RpcAppendEntriesDurableResponse, rrr::i32> AppendEntriesDurable(const RpcAppendEntriesDurableRequest& req) {
-        auto __typed_fu_result__ = this->async_AppendEntriesDurable(req);
-        if (__typed_fu_result__.is_err()) {
-            return rusty::Result<RpcAppendEntriesDurableResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
     }

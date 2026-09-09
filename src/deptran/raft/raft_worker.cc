@@ -374,16 +374,6 @@ void RaftWorker::SetupCommo() {
 // @unsafe - synchronizes legacy std::function callbacks with Raft startup.
 bool RaftWorker::PrepareForStartup(
     const std::vector<uint32_t>& partition_ids) {
-  const char* replicated_db_flag = std::getenv("MAKO_REPLICATED_DB");
-  if (replicated_db_flag != nullptr &&
-      (strcmp(replicated_db_flag, "1") == 0 ||
-       strcmp(replicated_db_flag, "true") == 0)) {
-    // SetupInternal constructs ReplicatedDB and installs its atomic apply
-    // callback before snapshot discovery or committed replay. Do not install
-    // the standalone helper trampoline over that built-in state machine.
-    return true;
-  }
-
   auto learner = std::bind(&RaftWorker::Next, this,
                            std::placeholders::_1,
                            std::placeholders::_2);
@@ -758,14 +748,6 @@ void RaftWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
       raft_server->Start(std::move(tpc_cmd), &index, &term);
   if (raft_server_start_was_rejected(start_result)) {
     return;
-  }
-  if (raft_server_start_is_indeterminate(start_result)) {
-    // This fire-and-forget interface has no channel for commit-outcome-unknown.
-    // Continuing would let upstream retry a command that may already be
-    // durable, so terminate the replica process at the ambiguity boundary.
-    Log_fatal("[RAFT-SUBMIT] Local append outcome is indeterminate for "
-              "slot {} term {}; refusing to report rejection",
-              index, term);
   }
   }
 

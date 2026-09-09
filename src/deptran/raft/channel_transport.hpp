@@ -113,10 +113,8 @@ struct Envelope {
 namespace rusty {
 template <> struct is_send<janus::raft::Envelope>                 : std::true_type {};
 template <> struct is_send<janus::raft::VoteReply>                : std::true_type {};
-template <> struct is_send<janus::raft::VoteDurableReply>         : std::true_type {};
 template <> struct is_send<janus::raft::AppendEntriesReply>       : std::true_type {};
 template <> struct is_send<janus::raft::EmptyAppendEntriesReply>  : std::true_type {};
-template <> struct is_send<janus::raft::AppendEntriesDurableReply>: std::true_type {};
 template <> struct is_send<janus::raft::TimeoutNowReply>          : std::true_type {};
 template <> struct is_send<janus::raft::NotifyRestartReply>       : std::true_type {};
 template <> struct is_send<janus::raft::InstallSnapshotReply>     : std::true_type {};
@@ -325,26 +323,6 @@ class ChannelTransportAdapter : public TransportBase {
   // ------------------------------------------------------------------
   // Fire-and-forget RPCs. Reply is discarded.
   // ------------------------------------------------------------------
-
-  // @safe
-  void send_vote_durable(siteid_t candidate, VoteDurableReq req) override {
-    Envelope env{self_, candidate,
-        rusty::Function<void(DispatcherProxy&)>(
-            [req](DispatcherProxy& disp) mutable {
-              (void)disp->handle_vote_durable(req);
-            })};
-    sw_->send(std::move(env));
-  }
-
-  // @safe
-  void send_append_entries_durable(siteid_t leader, AppendEntriesDurableReq req) override {
-    Envelope env{self_, leader,
-        rusty::Function<void(DispatcherProxy&)>(
-            [req](DispatcherProxy& disp) mutable {
-              (void)disp->handle_append_entries_durable(req);
-            })};
-    sw_->send(std::move(env));
-  }
 
   // @safe
   void send_notify_restart(siteid_t dst, parid_t /*par*/) override {

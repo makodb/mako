@@ -8,8 +8,8 @@
  * Deliberately kept minimal: a single latest snapshot is retained.
  * BeginSnapshot / BeginLoad return trivial writers/readers that
  * accumulate and serve the payload in-memory. This covers everything
- * the lab-style correctness tests exercise; production still uses
- * FileSnapshotManager.
+ * the lab-style correctness tests exercise, and it is the manager
+ * MAKO_RAFT_SNAPSHOTS=1 installs in memory-only Raft.
  *
  * Note on rusty-safety: this file implements the existing virtual
  * SnapshotManager interface (which itself is virtual). Retiring that
@@ -253,17 +253,11 @@ class MemorySnapshotManager : public SnapshotManager {
     return n;
   }
 
-  // @lifetime: (&'a) -> &'a
-  const std::string& GetStoragePath() const override {
-    return storage_path_;
-  }
-
  private:
   mutable std::mutex     mtx_;
   bool                   has_snapshot_{false};
   SnapshotMetadata       meta_{};
   std::string            payload_{};
-  std::string            storage_path_{"<memory>"};
 };
 
 }  // namespace raft

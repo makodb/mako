@@ -251,7 +251,7 @@ class SnapshotManager {
    * @param keep_after_index Keep snapshots with last_included_index >= this
    * @return Number of snapshots deleted
    */
-  // @unsafe - Deletes files
+  // @unsafe - Mutates manager-owned snapshot storage
   virtual size_t PruneSnapshots(slotid_t keep_after_index) = 0;
 
   /**
@@ -259,55 +259,9 @@ class SnapshotManager {
    * Used for testing or forced fresh start.
    * @return Number of snapshots deleted
    */
-  // @unsafe - Deletes files
+  // @unsafe - Mutates manager-owned snapshot storage
   virtual size_t DeleteAllSnapshots() = 0;
-
-  // ========================================================================
-  // Configuration
-  // ========================================================================
-
-  /**
-   * Get the storage path for snapshots.
-   */
-  // @lifetime: (&'a) -> &'a
-  virtual const std::string& GetStoragePath() const = 0;
 };
-
-/**
- * Configuration for snapshot behavior.
- */
-// @safe - POD struct
-struct SnapshotConfig {
-  std::string storage_path;           // Path for snapshot files
-  size_t snapshot_interval{10000};    // Take snapshot every N log entries
-  size_t max_snapshots{3};            // Maximum snapshots to keep
-  bool verify_on_load{true};          // Verify checksum when loading
-  size_t chunk_size{64 * 1024};       // Chunk size for streaming (64KB)
-
-  // @unsafe - Returns struct by value
-  static SnapshotConfig defaults() {
-    return SnapshotConfig{};
-  }
-
-  // @unsafe - Uses getenv and string operations
-  static SnapshotConfig for_replica(uint32_t partition_id, uint32_t locale_id) {
-    SnapshotConfig config;
-    // Use username prefix to avoid conflicts between users
-    std::string username;
-    auto user = std::getenv("USER");  // @unsafe
-    if (user) {
-      username = user;
-    } else {
-      username = "unknown";
-    }
-    config.storage_path = "/tmp/" + username + "_mako_snapshot_shard" +
-                         std::to_string(partition_id) + "_replica" +
-                         std::to_string(locale_id);
-    return config;
-  }
-};
-
-static_assert(std::is_nothrow_default_constructible_v<SnapshotConfig>);
 
 }  // namespace raft
 }  // namespace janus

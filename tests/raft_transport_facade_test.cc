@@ -22,8 +22,6 @@ struct Counts {
   AtomicInt n_empty{0};
   AtomicInt n_vote{0};
   AtomicInt n_timeout{0};
-  AtomicInt n_vote_durable{0};
-  AtomicInt n_append_durable{0};
   AtomicInt n_notify_restart{0};
   AtomicInt n_install_snap{0};
 };
@@ -64,14 +62,6 @@ class RecordingAdapter : public TransportBase {
     return r;
   }
 
-  void send_vote_durable(siteid_t, VoteDurableReq) override {
-    counts->n_vote_durable.fetch_add(1);
-  }
-
-  void send_append_entries_durable(siteid_t, AppendEntriesDurableReq) override {
-    counts->n_append_durable.fetch_add(1);
-  }
-
   void send_notify_restart(siteid_t, parid_t) override {
     counts->n_notify_restart.fetch_add(1);
   }
@@ -105,8 +95,6 @@ TEST(RaftTransportFacadeTest, AdapterConformsToFacade) {
   auto t = proxy->send_timeout_now(4, TimeoutNowReq{});
   EXPECT_TRUE(t.success);
 
-  proxy->send_vote_durable(5, VoteDurableReq{});
-  proxy->send_append_entries_durable(6, AppendEntriesDurableReq{});
   proxy->send_notify_restart(99, 0);
 
   auto s = proxy->send_install_snapshot(7, InstallSnapshotReq{});
@@ -116,8 +104,6 @@ TEST(RaftTransportFacadeTest, AdapterConformsToFacade) {
   EXPECT_EQ(counts_handle->n_empty.load(),           1);
   EXPECT_EQ(counts_handle->n_vote.load(),            1);
   EXPECT_EQ(counts_handle->n_timeout.load(),         1);
-  EXPECT_EQ(counts_handle->n_vote_durable.load(),    1);
-  EXPECT_EQ(counts_handle->n_append_durable.load(),  1);
   EXPECT_EQ(counts_handle->n_notify_restart.load(),  1);
   EXPECT_EQ(counts_handle->n_install_snap.load(),    1);
 }

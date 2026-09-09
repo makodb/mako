@@ -213,44 +213,8 @@ class SendAppendEntriesResults {
   uint64_t ok = 0;
   uint64_t followerTerm = 0;
   uint64_t followerLastLogIndex = 0;
-  uint64_t followerAckType = 0;  // 0=Memory, 1=Durable
   bool empty = true;
 };
-
-/**
- * AckType - Speculative Replication acknowledgment type
- *
- * Memory: Entry appended to in-memory log (immediate response)
- * Durable: Entry persisted to disk (sent via AppendEntriesDurable RPC)
- */
-#if RUSTYCPP_RUST
-#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Eq, PartialEq))]
-#[repr(u64)]
-pub enum AckType {
-    Memory = 0,
-    Durable = 1,
-}
-#endif
-/*RUSTYCPP:GEN-BEGIN id=raft_commo.ack_type version=1 rust_sha256=a4a8dc541c6c5e970e786f9c1e0f32a2c02cfd2eed148b63e2c8623f07058b56*/
-enum class AckType : uint64_t;
-constexpr AckType AckType_Memory();
-constexpr AckType AckType_Durable();
-
-enum class AckType : uint64_t {
-    Memory = 0,
-    Durable = 1
-};
-inline constexpr AckType AckType_Memory() { return AckType::Memory; }
-inline constexpr AckType AckType_Durable() { return AckType::Durable; }
-/*RUSTYCPP:GEN-END id=raft_commo.ack_type*/
-
-static_assert(std::is_same_v<std::underlying_type_t<AckType>, uint64_t>);
-static_assert(std::is_trivially_copyable_v<AckType>);
-static_assert(sizeof(AckType) == sizeof(uint64_t));
-static_assert(alignof(AckType) == alignof(uint64_t));
-static_assert(static_cast<uint64_t>(AckType::Memory) == 0);
-static_assert(static_cast<uint64_t>(AckType::Durable) == 1);
-static_assert(AckType{} == AckType::Memory);
 
 // Response data for async AppendEntries RPC
 // Uses shared_ptr semantics to ensure memory validity when callback fires.
@@ -265,14 +229,12 @@ struct AppendEntriesResponse {
   uint64_t status = 0;
   uint64_t term = 0;
   uint64_t last_log_index = 0;
-  uint64_t ack_type = 0;  // 0=Memory, 1=Durable (see AckType enum)
 };
 
 
 // @unsafe - inherits from non-@interface base Communicator
 class RaftCommo : public Communicator {
 
-friend class RaftProxy;
  private:
   struct NotifyRestartState {
     std::mutex mutex;
@@ -361,44 +323,6 @@ friend class RaftProxy;
                       uint64_t leader_term,
                       siteid_t leader_site_id,
                       std::function<void(bool success, uint64_t follower_term)> callback);
-
-  /**
-   * SendVoteDurable - Send VoteDurable RPC to candidate after vote is persisted
-   *
-   * Called after a follower has durably persisted its vote to disk.
-   * Enables speculative voting by notifying the candidate that this vote
-   * is now durable and can count towards secured leader status.
-   *
-   * @param candidate_id - The site ID of the candidate who received the vote
-   * @param par_id - Partition ID
-   * @param term - Term of the vote
-   * @param voter_id - Our own site ID (the voter)
-   */
-  // @safe
-  void SendVoteDurable(siteid_t candidate_id,
-                       parid_t par_id,
-                       ballot_t term,
-                       siteid_t voter_id);
-
-  /**
-   * SendAppendEntriesDurable - Send durable ack to leader after log fsync
-   *
-   * Called after a follower has durably persisted log entries to disk.
-   * Enables speculative commits by notifying the leader that entries up to
-   * lastLogIndex are now durable and can count towards secured commit.
-   *
-   * @param leader_id - The site ID of the current leader
-   * @param par_id - Partition ID
-   * @param term - Current term when entries were persisted
-   * @param follower_id - Our own site ID (the follower)
-   * @param lastLogIndex - Highest log index that is now durable
-   */
-  // @safe
-  void SendAppendEntriesDurable(siteid_t leader_id,
-                                parid_t par_id,
-                                ballot_t term,
-                                siteid_t follower_id,
-                                uint64_t lastLogIndex);
 
   /**
    * SendNotifyRestart - Broadcast restart notification to all peers

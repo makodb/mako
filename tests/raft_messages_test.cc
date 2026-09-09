@@ -27,20 +27,10 @@ struct LegacyVoteReplyLayout {
   bool vote_granted;
 };
 
-struct LegacyVoteDurableReqLayout {
-  int64_t term;
-  uint16_t voter_id;
-};
-
-struct LegacyVoteDurableReplyLayout {
-  bool acknowledged;
-};
-
 struct LegacyAppendEntriesReplyLayout {
   uint64_t follower_append_ok;
   uint64_t follower_current_term;
   uint64_t follower_last_log_index;
-  uint64_t follower_ack_type;
 };
 
 struct LegacyEmptyAppendEntriesReqLayout {
@@ -58,17 +48,6 @@ struct LegacyEmptyAppendEntriesReplyLayout {
   uint64_t follower_append_ok;
   uint64_t follower_current_term;
   uint64_t follower_last_log_index;
-  uint64_t follower_ack_type;
-};
-
-struct LegacyAppendEntriesDurableReqLayout {
-  int64_t term;
-  uint16_t follower_id;
-  uint64_t last_log_index;
-};
-
-struct LegacyAppendEntriesDurableReplyLayout {
-  bool acknowledged;
 };
 
 struct LegacyTimeoutNowReqLayout {
@@ -113,27 +92,17 @@ struct LegacyRemoveServerReqLayout {
 
 static_assert(std::is_aggregate_v<VoteReq>);
 static_assert(std::is_aggregate_v<VoteReply>);
-static_assert(std::is_aggregate_v<VoteDurableReq>);
-static_assert(std::is_aggregate_v<VoteDurableReply>);
 
 static_assert(std::is_standard_layout_v<VoteReq>);
 static_assert(std::is_standard_layout_v<VoteReply>);
-static_assert(std::is_standard_layout_v<VoteDurableReq>);
-static_assert(std::is_standard_layout_v<VoteDurableReply>);
 
 static_assert(std::is_trivially_copyable_v<VoteReq>);
 static_assert(std::is_trivially_copyable_v<VoteReply>);
-static_assert(std::is_trivially_copyable_v<VoteDurableReq>);
-static_assert(std::is_trivially_copyable_v<VoteDurableReply>);
 
 ASSERT_POD_LAYOUT(AppendEntriesReply, LegacyAppendEntriesReplyLayout);
 ASSERT_POD_LAYOUT(EmptyAppendEntriesReq, LegacyEmptyAppendEntriesReqLayout);
 ASSERT_POD_LAYOUT(EmptyAppendEntriesReply,
                   LegacyEmptyAppendEntriesReplyLayout);
-ASSERT_POD_LAYOUT(AppendEntriesDurableReq,
-                  LegacyAppendEntriesDurableReqLayout);
-ASSERT_POD_LAYOUT(AppendEntriesDurableReply,
-                  LegacyAppendEntriesDurableReplyLayout);
 ASSERT_POD_LAYOUT(TimeoutNowReq, LegacyTimeoutNowReqLayout);
 ASSERT_POD_LAYOUT(TimeoutNowReply, LegacyTimeoutNowReplyLayout);
 ASSERT_POD_LAYOUT(NotifyRestartReq, LegacyNotifyRestartReqLayout);
@@ -143,13 +112,9 @@ ASSERT_POD_LAYOUT(RemoveServerReq, LegacyRemoveServerReqLayout);
 
 ASSERT_ZERO_DEFAULT_CONTRACT(VoteReq);
 ASSERT_ZERO_DEFAULT_CONTRACT(VoteReply);
-ASSERT_ZERO_DEFAULT_CONTRACT(VoteDurableReq);
-ASSERT_ZERO_DEFAULT_CONTRACT(VoteDurableReply);
 ASSERT_ZERO_DEFAULT_CONTRACT(AppendEntriesReply);
 ASSERT_ZERO_DEFAULT_CONTRACT(EmptyAppendEntriesReq);
 ASSERT_ZERO_DEFAULT_CONTRACT(EmptyAppendEntriesReply);
-ASSERT_ZERO_DEFAULT_CONTRACT(AppendEntriesDurableReq);
-ASSERT_ZERO_DEFAULT_CONTRACT(AppendEntriesDurableReply);
 ASSERT_ZERO_DEFAULT_CONTRACT(TimeoutNowReq);
 ASSERT_ZERO_DEFAULT_CONTRACT(TimeoutNowReply);
 ASSERT_ZERO_DEFAULT_CONTRACT(NotifyRestartReq);
@@ -166,11 +131,6 @@ static_assert(
 static_assert(std::is_same_v<decltype(VoteReq::current_term), int64_t>);
 static_assert(std::is_same_v<decltype(VoteReply::max_ballot), int64_t>);
 static_assert(std::is_same_v<decltype(VoteReply::vote_granted), bool>);
-static_assert(std::is_same_v<decltype(VoteDurableReq::term), int64_t>);
-static_assert(
-    std::is_same_v<decltype(VoteDurableReq::voter_id), uint16_t>);
-static_assert(
-    std::is_same_v<decltype(VoteDurableReply::acknowledged), bool>);
 static_assert(std::is_same_v<decltype(AppendEntriesReply::follower_append_ok),
                              uint64_t>);
 static_assert(
@@ -179,8 +139,6 @@ static_assert(
 static_assert(
     std::is_same_v<decltype(AppendEntriesReply::follower_last_log_index),
                    uint64_t>);
-static_assert(std::is_same_v<decltype(AppendEntriesReply::follower_ack_type),
-                             uint64_t>);
 static_assert(
     std::is_same_v<decltype(EmptyAppendEntriesReq::slot), uint64_t>);
 static_assert(
@@ -190,16 +148,6 @@ static_assert(std::is_same_v<decltype(EmptyAppendEntriesReq::leader_site_id),
 static_assert(
     std::is_same_v<decltype(EmptyAppendEntriesReq::trigger_election_now),
                    bool>);
-static_assert(std::is_same_v<
-              decltype(EmptyAppendEntriesReply::follower_ack_type), uint64_t>);
-static_assert(
-    std::is_same_v<decltype(AppendEntriesDurableReq::term), int64_t>);
-static_assert(std::is_same_v<decltype(AppendEntriesDurableReq::follower_id),
-                             uint16_t>);
-static_assert(std::is_same_v<decltype(AppendEntriesDurableReq::last_log_index),
-                             uint64_t>);
-static_assert(std::is_same_v<
-              decltype(AppendEntriesDurableReply::acknowledged), bool>);
 static_assert(
     std::is_same_v<decltype(TimeoutNowReq::leader_term), uint64_t>);
 static_assert(
@@ -235,20 +183,6 @@ static_assert(offsetof(VoteReply, max_ballot) ==
 static_assert(offsetof(VoteReply, vote_granted) ==
               offsetof(LegacyVoteReplyLayout, vote_granted));
 
-static_assert(sizeof(VoteDurableReq) == sizeof(LegacyVoteDurableReqLayout));
-static_assert(alignof(VoteDurableReq) == alignof(LegacyVoteDurableReqLayout));
-static_assert(offsetof(VoteDurableReq, term) ==
-              offsetof(LegacyVoteDurableReqLayout, term));
-static_assert(offsetof(VoteDurableReq, voter_id) ==
-              offsetof(LegacyVoteDurableReqLayout, voter_id));
-
-static_assert(sizeof(VoteDurableReply) ==
-              sizeof(LegacyVoteDurableReplyLayout));
-static_assert(alignof(VoteDurableReply) ==
-              alignof(LegacyVoteDurableReplyLayout));
-static_assert(offsetof(VoteDurableReply, acknowledged) ==
-              offsetof(LegacyVoteDurableReplyLayout, acknowledged));
-
 #define ASSERT_FIELD_OFFSET(type, legacy, field) \
   static_assert(offsetof(type, field) == offsetof(legacy, field))
 
@@ -258,8 +192,6 @@ ASSERT_FIELD_OFFSET(AppendEntriesReply, LegacyAppendEntriesReplyLayout,
                     follower_current_term);
 ASSERT_FIELD_OFFSET(AppendEntriesReply, LegacyAppendEntriesReplyLayout,
                     follower_last_log_index);
-ASSERT_FIELD_OFFSET(AppendEntriesReply, LegacyAppendEntriesReplyLayout,
-                    follower_ack_type);
 ASSERT_FIELD_OFFSET(EmptyAppendEntriesReq, LegacyEmptyAppendEntriesReqLayout,
                     slot);
 ASSERT_FIELD_OFFSET(EmptyAppendEntriesReq, LegacyEmptyAppendEntriesReqLayout,
@@ -284,16 +216,6 @@ ASSERT_FIELD_OFFSET(EmptyAppendEntriesReply,
 ASSERT_FIELD_OFFSET(EmptyAppendEntriesReply,
                     LegacyEmptyAppendEntriesReplyLayout,
                     follower_last_log_index);
-ASSERT_FIELD_OFFSET(EmptyAppendEntriesReply,
-                    LegacyEmptyAppendEntriesReplyLayout, follower_ack_type);
-ASSERT_FIELD_OFFSET(AppendEntriesDurableReq,
-                    LegacyAppendEntriesDurableReqLayout, term);
-ASSERT_FIELD_OFFSET(AppendEntriesDurableReq,
-                    LegacyAppendEntriesDurableReqLayout, follower_id);
-ASSERT_FIELD_OFFSET(AppendEntriesDurableReq,
-                    LegacyAppendEntriesDurableReqLayout, last_log_index);
-ASSERT_FIELD_OFFSET(AppendEntriesDurableReply,
-                    LegacyAppendEntriesDurableReplyLayout, acknowledged);
 ASSERT_FIELD_OFFSET(TimeoutNowReq, LegacyTimeoutNowReqLayout, leader_term);
 ASSERT_FIELD_OFFSET(TimeoutNowReq, LegacyTimeoutNowReqLayout, leader_site_id);
 ASSERT_FIELD_OFFSET(TimeoutNowReply, LegacyTimeoutNowReplyLayout,
@@ -323,19 +245,15 @@ TEST(RaftMessagesTest, DefaultConstructAllRequestReplyTypes) {
     EXPECT_EQ(r.candidate_site_id, 0u);
   }
   { VoteReply r{};          EXPECT_FALSE(r.vote_granted); }
-  { VoteDurableReq r{};     EXPECT_EQ(r.term, 0); }
-  { VoteDurableReply r{};   EXPECT_FALSE(r.acknowledged); }
   {
     auto r = std::make_shared<VoteReply>();
     EXPECT_EQ(r->max_ballot, 0);
     EXPECT_FALSE(r->vote_granted);
   }
   { AppendEntriesReq r{};   EXPECT_EQ(r.leader_commit_index, 0u); }
-  { AppendEntriesReply r{}; EXPECT_EQ(r.follower_ack_type, 0u); }
+  { AppendEntriesReply r{}; EXPECT_EQ(r.follower_append_ok, 0u); }
   { EmptyAppendEntriesReq r{};   EXPECT_FALSE(r.trigger_election_now); }
   { EmptyAppendEntriesReply r{}; EXPECT_EQ(r.follower_last_log_index, 0u); }
-  { AppendEntriesDurableReq r{};   EXPECT_EQ(r.last_log_index, 0u); }
-  { AppendEntriesDurableReply r{}; EXPECT_FALSE(r.acknowledged); }
   { TimeoutNowReq r{};       EXPECT_EQ(r.leader_term, 0u); }
   { TimeoutNowReply r{};     EXPECT_FALSE(r.success); }
   { NotifyRestartReq r{};    EXPECT_EQ(r.restarted_site_id, 0u); }
@@ -359,18 +277,10 @@ TEST(RaftMessagesTest, PlainDefaultInitializationPreservesZeroContract) {
   EXPECT_EQ(vote_reply.max_ballot, 0);
   EXPECT_FALSE(vote_reply.vote_granted);
 
-  VoteDurableReq vote_durable;
-  EXPECT_EQ(vote_durable.term, 0);
-  EXPECT_EQ(vote_durable.voter_id, 0u);
-
-  VoteDurableReply vote_durable_reply;
-  EXPECT_FALSE(vote_durable_reply.acknowledged);
-
   AppendEntriesReply append;
   EXPECT_EQ(append.follower_append_ok, 0u);
   EXPECT_EQ(append.follower_current_term, 0u);
   EXPECT_EQ(append.follower_last_log_index, 0u);
-  EXPECT_EQ(append.follower_ack_type, 0u);
 
   EmptyAppendEntriesReq heartbeat;
   EXPECT_EQ(heartbeat.slot, 0u);
@@ -386,15 +296,6 @@ TEST(RaftMessagesTest, PlainDefaultInitializationPreservesZeroContract) {
   EXPECT_EQ(heartbeat_reply.follower_append_ok, 0u);
   EXPECT_EQ(heartbeat_reply.follower_current_term, 0u);
   EXPECT_EQ(heartbeat_reply.follower_last_log_index, 0u);
-  EXPECT_EQ(heartbeat_reply.follower_ack_type, 0u);
-
-  AppendEntriesDurableReq append_durable;
-  EXPECT_EQ(append_durable.term, 0);
-  EXPECT_EQ(append_durable.follower_id, 0u);
-  EXPECT_EQ(append_durable.last_log_index, 0u);
-
-  AppendEntriesDurableReply append_durable_reply;
-  EXPECT_FALSE(append_durable_reply.acknowledged);
 
   TimeoutNowReq timeout_request;
   EXPECT_EQ(timeout_request.leader_term, 0u);
@@ -434,7 +335,6 @@ TEST(RaftMessagesTest, FieldAssignmentRoundTrip) {
   reply.follower_append_ok = 1;
   reply.follower_current_term = 11;
   reply.follower_last_log_index = 100;
-  reply.follower_ack_type = 2;
 
   EXPECT_EQ(reply.follower_append_ok, 1u);
   EXPECT_EQ(reply.follower_last_log_index, 100u);
@@ -450,13 +350,6 @@ TEST(RaftMessagesTest, VoteFamilyPreservesPositionalAggregateConstruction) {
   VoteReply reply{-11, true};
   EXPECT_EQ(reply.max_ballot, -11);
   EXPECT_TRUE(reply.vote_granted);
-
-  VoteDurableReq durable{-13, 5};
-  EXPECT_EQ(durable.term, -13);
-  EXPECT_EQ(durable.voter_id, 5u);
-
-  VoteDurableReply durable_reply{true};
-  EXPECT_TRUE(durable_reply.acknowledged);
 }
 
 TEST(RaftMessagesTest, PrimitiveFamiliesPreserveValueInitialization) {
@@ -464,7 +357,6 @@ TEST(RaftMessagesTest, PrimitiveFamiliesPreserveValueInitialization) {
   EXPECT_EQ(append->follower_append_ok, 0u);
   EXPECT_EQ(append->follower_current_term, 0u);
   EXPECT_EQ(append->follower_last_log_index, 0u);
-  EXPECT_EQ(append->follower_ack_type, 0u);
 
   auto timeout = std::make_shared<TimeoutNowReply>();
   EXPECT_EQ(timeout->follower_term, 0u);
@@ -475,11 +367,10 @@ TEST(RaftMessagesTest, PrimitiveFamiliesPreserveValueInitialization) {
 }
 
 TEST(RaftMessagesTest, PrimitiveFamiliesPreservePositionalConstruction) {
-  AppendEntriesReply append{1, 2, 3, 4};
+  AppendEntriesReply append{1, 2, 3};
   EXPECT_EQ(append.follower_append_ok, 1u);
   EXPECT_EQ(append.follower_current_term, 2u);
   EXPECT_EQ(append.follower_last_log_index, 3u);
-  EXPECT_EQ(append.follower_ack_type, 4u);
 
   EmptyAppendEntriesReq heartbeat{5, -6, 7, 8, 9, 10, 11, true};
   EXPECT_EQ(heartbeat.slot, 5u);
@@ -487,16 +378,8 @@ TEST(RaftMessagesTest, PrimitiveFamiliesPreservePositionalConstruction) {
   EXPECT_EQ(heartbeat.leader_site_id, 8u);
   EXPECT_TRUE(heartbeat.trigger_election_now);
 
-  EmptyAppendEntriesReply heartbeat_reply{12, 13, 14, 15};
+  EmptyAppendEntriesReply heartbeat_reply{12, 13, 14};
   EXPECT_EQ(heartbeat_reply.follower_last_log_index, 14u);
-
-  AppendEntriesDurableReq durable{-16, 17, 18};
-  EXPECT_EQ(durable.term, -16);
-  EXPECT_EQ(durable.follower_id, 17u);
-  EXPECT_EQ(durable.last_log_index, 18u);
-
-  AppendEntriesDurableReply durable_reply{true};
-  EXPECT_TRUE(durable_reply.acknowledged);
 
   TimeoutNowReq timeout{19, 20};
   TimeoutNowReply timeout_reply{21, true};

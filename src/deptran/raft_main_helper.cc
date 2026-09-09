@@ -534,7 +534,7 @@ bool server_launch_worker(std::vector<Config::SiteInfo>& server_sites) {
 
   }
 
-  // Recovery may complete in any order, but no application listener opens
+  // Startup jobs may complete in any order, but no application listener opens
   // until every worker has crossed the startup success barrier.
   for (size_t i = 0; i < raft_workers_g.size(); ++i) {
     auto& worker = raft_workers_g[i];

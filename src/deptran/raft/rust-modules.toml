@@ -26,11 +26,6 @@ source = "src/deptran/raft/commo.h"
 output = "src/deptran/raft/src/commo_h.rs"
 
 [[module]]
-cpp_module = "raft.file_snapshot_manager_hpp"
-source = "src/deptran/raft/file_snapshot_manager.hpp"
-output = "src/deptran/raft/src/file_snapshot_manager_hpp.rs"
-
-[[module]]
 cpp_module = "raft.frame_cc"
 source = "src/deptran/raft/frame.cc"
 output = "src/deptran/raft/src/frame_cc.rs"
@@ -64,21 +59,6 @@ output = "src/deptran/raft/src/quorum_hpp.rs"
 cpp_module = "raft.raft_worker_cc"
 source = "src/deptran/raft/raft_worker.cc"
 output = "src/deptran/raft/src/raft_worker_cc.rs"
-
-[[module]]
-cpp_module = "raft.read_raft_disk_cc"
-source = "src/deptran/raft/read_raft_disk.cc"
-output = "src/deptran/raft/src/read_raft_disk_cc.rs"
-
-[[module]]
-cpp_module = "raft.recovery_manager_hpp"
-source = "src/deptran/raft/recovery_manager.hpp"
-output = "src/deptran/raft/src/recovery_manager_hpp.rs"
-
-[[module]]
-cpp_module = "raft.replicated_db_h"
-source = "src/deptran/raft/replicated_db.h"
-output = "src/deptran/raft/src/replicated_db_h.rs"
 
 [[module]]
 cpp_module = "raft.rocksdb_log_storage_hpp"

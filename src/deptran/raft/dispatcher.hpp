@@ -32,14 +32,10 @@ namespace raft {
 // Forward declarations; full definitions are pulled in at the end of file.
 struct VoteReq;
 struct VoteReply;
-struct VoteDurableReq;
-struct VoteDurableReply;
 struct AppendEntriesReq;
 struct AppendEntriesReply;
 struct EmptyAppendEntriesReq;
 struct EmptyAppendEntriesReply;
-struct AppendEntriesDurableReq;
-struct AppendEntriesDurableReply;
 struct TimeoutNowReq;
 struct TimeoutNowReply;
 struct NotifyRestartReq;
@@ -56,10 +52,8 @@ class DispatcherBase {
   virtual ~DispatcherBase() = default;
 
   virtual VoteReply                 handle_vote(VoteReq) = 0;
-  virtual VoteDurableReply          handle_vote_durable(VoteDurableReq) = 0;
   virtual AppendEntriesReply        handle_append_entries(AppendEntriesReq) = 0;
   virtual EmptyAppendEntriesReply   handle_empty_append_entries(EmptyAppendEntriesReq) = 0;
-  virtual AppendEntriesDurableReply handle_append_entries_durable(AppendEntriesDurableReq) = 0;
   virtual TimeoutNowReply           handle_timeout_now(TimeoutNowReq) = 0;
   virtual NotifyRestartReply        handle_notify_restart(NotifyRestartReq) = 0;
   virtual InstallSnapshotReply      handle_install_snapshot(InstallSnapshotReq) = 0;

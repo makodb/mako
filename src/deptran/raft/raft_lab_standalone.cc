@@ -11,8 +11,6 @@
  *     switchboard to every peer's DummyDispatcher.
  *   - disconnect / partition / reset_faults silence and restore
  *     traffic as expected.
- *   - ReplicatedDBCommand preserves unnamed raw operation bytes on its
- *     existing wire path.
  *   - It runs without binding a socket (verify with
  *     `ss -lntp | grep raft_lab_standalone` — no rows).
  *
@@ -23,14 +21,11 @@
 #include <stddef.h>
 
 
-#include "deptran/raft/replicated_db.h"
 #include "deptran/raft/test_cluster.hpp"
 
 import std;
 
 using namespace janus::raft;
-using janus::ReplicatedDBCommand;
-using janus::ReplicatedDBOp;
 
 namespace {
 
@@ -84,73 +79,6 @@ bool case_partition_isolates_groups() {
   return !cross.success && intra.success;
 }
 
-// @safe
-bool case_fire_and_forget_durables_deliver(TestCluster& c) {
-  c.reset_faults();
-  c.node(1).transport()->send_vote_durable(2, VoteDurableReq{});
-  c.node(1).transport()->send_append_entries_durable(2,
-      AppendEntriesDurableReq{});
-  // Give the background workers a beat to consume the durables.
-  std::this_thread::sleep_for(std::chrono::milliseconds(20));
-  return true;
-}
-
-// Stage 1 still executes the emitted C++ enum, whose fixed uint8_t
-// representation accepts every byte. Pin that legacy wire contract before a
-// future native-Rust provider introduces validation or a transparent newtype.
-bool case_unknown_top_level_db_op_round_trips() {
-  for (uint8_t raw : {uint8_t{0}, uint8_t{0xff}}) {
-    ReplicatedDBCommand original;
-    original.op_ = static_cast<ReplicatedDBOp>(raw);
-    original.key_ = "raw-key";
-    original.value_ = "raw-value";
-
-    rrr::BufferSink sink;
-    rrr::BinaryWriteArchive writer(rrr::make_sink_proxy_buffer(&sink));
-    original.save(writer);
-
-    ReplicatedDBCommand decoded;
-    rrr::BufferSource source(sink.bytes.data(), sink.bytes.len());
-    rrr::BinaryReadArchive reader(rrr::make_source_proxy_buffer(&source));
-    decoded.load(reader);
-
-    if (static_cast<uint8_t>(decoded.op_) != raw ||
-        decoded.key_ != original.key_ ||
-        decoded.value_ != original.value_ ||
-        !decoded.batch_ops_.empty()) {
-      return false;
-    }
-  }
-  return true;
-}
-
-bool case_unknown_batch_db_ops_round_trip() {
-  ReplicatedDBCommand original;
-  original.op_ = ReplicatedDBOp::BATCH;
-  original.batch_ops_ = {
-      {static_cast<ReplicatedDBOp>(0), "zero-key", "zero-value"},
-      {static_cast<ReplicatedDBOp>(0xff), "max-key", "max-value"},
-  };
-
-  rrr::BufferSink sink;
-  rrr::BinaryWriteArchive writer(rrr::make_sink_proxy_buffer(&sink));
-  original.save(writer);
-
-  ReplicatedDBCommand decoded;
-  rrr::BufferSource source(sink.bytes.data(), sink.bytes.len());
-  rrr::BinaryReadArchive reader(rrr::make_source_proxy_buffer(&source));
-  decoded.load(reader);
-
-  return decoded.op_ == ReplicatedDBOp::BATCH &&
-         decoded.batch_ops_.size() == 2 &&
-         static_cast<uint8_t>(decoded.batch_ops_[0].op) == 0 &&
-         decoded.batch_ops_[0].key == "zero-key" &&
-         decoded.batch_ops_[0].value == "zero-value" &&
-         static_cast<uint8_t>(decoded.batch_ops_[1].op) == 0xff &&
-         decoded.batch_ops_[1].key == "max-key" &&
-         decoded.batch_ops_[1].value == "max-value";
-}
-
 }  // namespace
 
 int main(int /*argc*/, char** /*argv*/) {
@@ -166,15 +94,6 @@ int main(int /*argc*/, char** /*argv*/) {
 
   h.check("partition_isolates_groups",
           [&] { return case_partition_isolates_groups(); });
-
-  h.check("fire_and_forget_durables_deliver",
-          [&] { return case_fire_and_forget_durables_deliver(*h.cluster); });
-
-  h.check("unknown_top_level_db_op_round_trips",
-          [] { return case_unknown_top_level_db_op_round_trips(); });
-
-  h.check("unknown_batch_db_ops_round_trip",
-          [] { return case_unknown_batch_db_ops_round_trip(); });
 
   std::printf("[==========] ");
   if (h.failures == 0) {

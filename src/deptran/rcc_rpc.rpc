@@ -27,12 +27,6 @@ abstract service Raft {
                 ballot_t max_ballot,
                 bool_t vote_granted );
 
-  // VoteDurable - Sent by follower AFTER vote is persisted to disk
-  // Enables speculative voting: leader knows when vote is durable
-  fiber VoteDurable(ballot_t term,
-                    siteid_t voter_id |
-                    bool_t acknowledged );
-
   fiber AppendEntries(uint64_t slot,
                       ballot_t ballot,
                       uint64_t leaderCurrentTerm,
@@ -44,8 +38,7 @@ abstract service Raft {
                       uint64_t leaderNextLogTerm |
                       uint64_t followerAppendOK,
                       uint64_t followerCurrentTerm,
-                      uint64_t followerLastLogIndex,
-                      uint64_t followerAckType);
+                      uint64_t followerLastLogIndex);
 
   fiber EmptyAppendEntries(uint64_t slot,
                            ballot_t ballot,
@@ -57,15 +50,7 @@ abstract service Raft {
                            bool_t trigger_election_now |
                            uint64_t followerAppendOK,
                            uint64_t followerCurrentTerm,
-                           uint64_t followerLastLogIndex,
-                           uint64_t followerAckType);
-
-  // AppendEntriesDurable - Sent by follower AFTER log entries are persisted to disk
-  // Enables speculative commits: leader tracks memory vs durable acknowledgments
-  fiber AppendEntriesDurable(ballot_t term,
-                             siteid_t follower_id,
-                             uint64_t lastLogIndex |
-                             bool_t acknowledged);
+                           uint64_t followerLastLogIndex);
 
   fiber TimeoutNow(uint64_t leaderTerm,
                    siteid_t leaderSiteId |

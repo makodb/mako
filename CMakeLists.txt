@@ -1046,7 +1046,6 @@ set(DEPTRAN_CORE_SRC
     src/deptran/raft/commo.cc
     src/deptran/raft/frame.cc
     src/deptran/raft/raft_worker.cc
-    src/deptran/raft/replicated_db.cc
     src/deptran/raft/server.cc
     src/deptran/raft/service.cc
     src/deptran/replication_log_entry.cc
@@ -1193,10 +1192,7 @@ file(GLOB RAFT_BORROW_SRC
 # - test.cc: Test harness that depends on testconf.h
 # NOTE: raft_main_helper.cc is also excluded because it includes third-party headers
 # (YAML, etc.) that generate 1000+ false positive violations from header code.
-#   - replicated_db.cc: includes <rocksdb/c.h> third-party header that generates
-#     false positive violations from header code.
 list(FILTER RAFT_BORROW_SRC EXCLUDE REGEX ".*test(conf)?\\.cc$")
-list(FILTER RAFT_BORROW_SRC EXCLUDE REGEX ".*replicated_db\\.cc$")
 # Note: config_manager.cc / cluster_config.cc / config_watcher.cc moved to
 # src/cluster/ and are no longer part of RAFT_BORROW_SRC.
 
@@ -1517,7 +1513,6 @@ if(MAKO_USE_RAFT)
   add_apps(testPreferredReplicaStartup examples/mako-raft-tests/testPreferredReplicaStartup.cc)
   add_apps(testPreferredReplicaLogReplication examples/mako-raft-tests/testPreferredReplicaLogReplication.cc)
   add_apps(testNoOps examples/mako-raft-tests/testNoOps.cc)
-  add_apps(read_raft_disk src/deptran/raft/read_raft_disk.cc)
 endif()
 
 # Borrow checking for dbtest DISABLED - uses STO (Software Transactional Objects)
@@ -1917,20 +1912,6 @@ if(BUILD_TESTS)
     target_link_libraries(test_raft_quorum ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
     add_test(NAME test_raft_quorum COMMAND test_raft_quorum)
 
-    add_executable(test_raft_durability_accounting
-        tests/raft_durability_accounting_test.cc)
-    target_include_directories(test_raft_durability_accounting PRIVATE
-        ${TEST_INCLUDE_DIRS}
-        ${GTEST_INCLUDE_DIRS}
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran
-        ${CMAKE_CURRENT_SOURCE_DIR}/third-party/yaml-cpp/include)
-    target_compile_options(test_raft_durability_accounting PRIVATE
-        ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_raft_durability_accounting
-        ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
-    add_test(NAME test_raft_durability_accounting
-        COMMAND test_raft_durability_accounting)
-
     add_executable(test_raft_dispatcher_facade tests/raft_dispatcher_facade_test.cc)
     target_include_directories(test_raft_dispatcher_facade PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_raft_dispatcher_facade PRIVATE ${TEST_COMPILE_OPTIONS})
@@ -1961,16 +1942,6 @@ if(BUILD_TESTS)
     target_link_libraries(raft_lab_standalone pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
     add_test(NAME raft_lab_standalone COMMAND raft_lab_standalone)
 
-    # read_raft_disk is excluded from txlog_core_obj and its application is
-    # behind MAKO_USE_RAFT. Compile its generated-C++ carrier in the focused
-    # lane so a Rust-valid payload cannot hide a C++ emission regression.
-    add_library(raft_disk_reader_compile OBJECT EXCLUDE_FROM_ALL
-        src/deptran/raft/read_raft_disk.cc)
-    target_include_directories(raft_disk_reader_compile PRIVATE
-        ${TEST_INCLUDE_DIRS})
-    target_compile_options(raft_disk_reader_compile PRIVATE
-        ${TEST_COMPILE_OPTIONS})
-
     # Every direct Raft consumer first proves that committed generated C++ is
     # the exact output of the owned inline Rust blocks. This keeps focused
     # builds from bypassing the source-provenance gate.
@@ -1979,20 +1950,15 @@ if(BUILD_TESTS)
         test_raft_transport_facade
         test_raft_rrr_transport_compile
         test_raft_quorum
-        test_raft_durability_accounting
         test_raft_dispatcher_facade
         test_raft_channel_transport
         test_raft_memory_snapshot_manager
         test_raft_test_cluster
         raft_lab_standalone
-        raft_disk_reader_compile
     )
     foreach(raft_dsl_consumer IN LISTS RAFT_DSL_CONSUMER_TARGETS)
         add_dependencies(${raft_dsl_consumer} raft_goal0_source_gate)
     endforeach()
-    # test_raft_messages is part of the focused CI target list, so this edge
-    # makes that lane compile the otherwise standalone disk carrier too.
-    add_dependencies(test_raft_messages raft_disk_reader_compile)
 
     # Service proxy facade guard tests (Phase 2 leaf 1)
 
@@ -2071,7 +2037,6 @@ if(BUILD_TESTS)
         add_dependencies(run_tests borrow_check_rrr)
     endif()
     add_dependencies(run_tests raft_goal0_source_gate)
-    add_dependencies(run_tests raft_disk_reader_compile)
     add_dependencies(run_tests rrr_goal0_dual_compile)
 
     # Add borrow checking for test files if enabled

@@ -20,8 +20,6 @@
 #include <rusty/thread.hpp>
 #include <type_traits>
 #include <utility>
-#include "log_storage.hpp"
-#include "recovery_manager.hpp"
 #include "snapshot_manager.hpp"
 
 // @external: {
@@ -50,7 +48,6 @@
 // }
 
 namespace janus {
-class ReplicatedDB;
 class ReplicationWakeGate;
 class InstallSnapshotCallbackGate;
 
@@ -76,35 +73,33 @@ class PreparedStateMachineSnapshotInstall {
  * StepDownReason - Why the leader is stepping down
  *
  * Used by stepDown() to determine what action to take:
- * - UnsecuredFailure: Lost speculative quorum while unsecured leader.
- *   All current-term entries are suspect, clients should be notified.
- * - SecuredFailure: Lost quorum but was secured leader.
- *   Only unsecured entries (specCommitIndex, securedLogIndex] are suspect.
+ * - UnsecuredFailure: Lost the memory vote quorum while leader.
+ *   Every pending entry in (securedLogIndex_, lastLogIndex] is suspect and
+ *   clients are notified with ROLLEDBACK.
  * - HigherTerm: Saw higher term from another server.
  *   Entries may still be valid, no automatic rollback notification.
+ *
+ * The discriminants keep their historical values; SecuredFailure (1) was the
+ * retired durable-tier reason.
  */
 #if RUSTYCPP_RUST
 #[cfg_attr(not(any()), derive(Clone, Copy, Debug, Eq, PartialEq))]
 #[repr(i32)]
 pub enum StepDownReason {
     UnsecuredFailure = 0,
-    SecuredFailure = 1,
     HigherTerm = 2,
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.step_down_reason version=1 rust_sha256=7dbfeb0d9b13f74566cf44845511c90676df477ef444f17563468b22c83508ad*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.step_down_reason version=1 rust_sha256=72264c71e65a16458429a15bb093c3bac802f9cda9c6cc0711f0387cf22d43e4*/
 enum class StepDownReason : int32_t;
 constexpr StepDownReason StepDownReason_UnsecuredFailure();
-constexpr StepDownReason StepDownReason_SecuredFailure();
 constexpr StepDownReason StepDownReason_HigherTerm();
 
 enum class StepDownReason : int32_t {
     UnsecuredFailure = 0,
-    SecuredFailure = 1,
     HigherTerm = 2
 };
 inline constexpr StepDownReason StepDownReason_UnsecuredFailure() { return StepDownReason::UnsecuredFailure; }
-inline constexpr StepDownReason StepDownReason_SecuredFailure() { return StepDownReason::SecuredFailure; }
 inline constexpr StepDownReason StepDownReason_HigherTerm() { return StepDownReason::HigherTerm; }
 /*RUSTYCPP:GEN-END id=raft_server.step_down_reason*/
 
@@ -114,7 +109,6 @@ static_assert(std::is_trivially_copyable_v<StepDownReason>);
 static_assert(sizeof(StepDownReason) == sizeof(int32_t));
 static_assert(alignof(StepDownReason) == alignof(int32_t));
 static_assert(static_cast<int32_t>(StepDownReason::UnsecuredFailure) == 0);
-static_assert(static_cast<int32_t>(StepDownReason::SecuredFailure) == 1);
 static_assert(static_cast<int32_t>(StepDownReason::HigherTerm) == 2);
 static_assert(StepDownReason{} == StepDownReason::UnsecuredFailure);
 
@@ -123,8 +117,10 @@ static_assert(StepDownReason{} == StepDownReason::UnsecuredFailure);
  *
  * Used by client callback infrastructure to notify clients of entry status:
  * - SPECULATIVE: Entry reached memory quorum, likely to commit
- * - DURABLE: Entry reached disk quorum with secured leader, guaranteed
  * - ROLLEDBACK: Entry will not commit (leader stepped down gracefully)
+ *
+ * The discriminants keep their historical values; DURABLE (1) was the retired
+ * durable-tier status.
  */
 #if RUSTYCPP_RUST
 #[allow(non_camel_case_types)]
@@ -132,12 +128,12 @@ static_assert(StepDownReason{} == StepDownReason::UnsecuredFailure);
 #[repr(i32)]
 pub enum CommitStatus {
     SPECULATIVE = 0,
-    DURABLE = 1,
     ROLLEDBACK = 2,
 }
 
-// Submission admission cannot be represented by a bool once a failed local
-// fsync may have left the command durable.  Keep this separate from
+// Submission admission result for the RaftWorker interface.  Memory-only Raft
+// either rejects a command (not leader) or appends it; there is no durable
+// append whose outcome could be unknown.  Keep this separate from
 // CommitStatus: no callback has been registered at this boundary yet.
 #[allow(non_camel_case_types)]
 #[cfg_attr(not(any()), derive(Clone, Copy, Debug, Eq, PartialEq))]
@@ -145,7 +141,6 @@ pub enum CommitStatus {
 pub enum RaftStartResult {
     REJECTED = 0,
     APPENDED = 1,
-    INDETERMINATE = 2,
 }
 
 // A delayed vote quorum result is interpreted before its YES/NO/TIMEOUT
@@ -160,15 +155,13 @@ pub enum ElectionCompletionAction {
     ADVANCE_HIGHER_TERM = 2,
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.commit_status version=1 rust_sha256=022633501d8d075bef2037569600f909780cbe81135560df733ab554dcf68265*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.commit_status version=1 rust_sha256=22ff47f166b0dd196ea59216cdfadb27fc08d672f1e036b72d201be5dc8b60ef*/
 enum class CommitStatus : int32_t;
 constexpr CommitStatus CommitStatus_SPECULATIVE();
-constexpr CommitStatus CommitStatus_DURABLE();
 constexpr CommitStatus CommitStatus_ROLLEDBACK();
 enum class RaftStartResult : int32_t;
 constexpr RaftStartResult RaftStartResult_REJECTED();
 constexpr RaftStartResult RaftStartResult_APPENDED();
-constexpr RaftStartResult RaftStartResult_INDETERMINATE();
 enum class ElectionCompletionAction : int32_t;
 constexpr ElectionCompletionAction ElectionCompletionAction_IGNORE_STALE();
 constexpr ElectionCompletionAction ElectionCompletionAction_APPLY_CURRENT();
@@ -176,21 +169,17 @@ constexpr ElectionCompletionAction ElectionCompletionAction_ADVANCE_HIGHER_TERM(
 
 enum class CommitStatus : int32_t {
     SPECULATIVE = 0,
-    DURABLE = 1,
     ROLLEDBACK = 2
 };
 inline constexpr CommitStatus CommitStatus_SPECULATIVE() { return CommitStatus::SPECULATIVE; }
-inline constexpr CommitStatus CommitStatus_DURABLE() { return CommitStatus::DURABLE; }
 inline constexpr CommitStatus CommitStatus_ROLLEDBACK() { return CommitStatus::ROLLEDBACK; }
 
 enum class RaftStartResult : int32_t {
     REJECTED = 0,
-    APPENDED = 1,
-    INDETERMINATE = 2
+    APPENDED = 1
 };
 inline constexpr RaftStartResult RaftStartResult_REJECTED() { return RaftStartResult::REJECTED; }
 inline constexpr RaftStartResult RaftStartResult_APPENDED() { return RaftStartResult::APPENDED; }
-inline constexpr RaftStartResult RaftStartResult_INDETERMINATE() { return RaftStartResult::INDETERMINATE; }
 
 enum class ElectionCompletionAction : int32_t {
     IGNORE_STALE = 0,
@@ -207,7 +196,6 @@ static_assert(std::is_trivially_copyable_v<CommitStatus>);
 static_assert(sizeof(CommitStatus) == sizeof(int32_t));
 static_assert(alignof(CommitStatus) == alignof(int32_t));
 static_assert(static_cast<int32_t>(CommitStatus::SPECULATIVE) == 0);
-static_assert(static_cast<int32_t>(CommitStatus::DURABLE) == 1);
 static_assert(static_cast<int32_t>(CommitStatus::ROLLEDBACK) == 2);
 static_assert(CommitStatus{} == CommitStatus::SPECULATIVE);
 
@@ -217,7 +205,6 @@ static_assert(sizeof(RaftStartResult) == sizeof(int32_t));
 static_assert(alignof(RaftStartResult) == alignof(int32_t));
 static_assert(static_cast<int32_t>(RaftStartResult::REJECTED) == 0);
 static_assert(static_cast<int32_t>(RaftStartResult::APPENDED) == 1);
-static_assert(static_cast<int32_t>(RaftStartResult::INDETERMINATE) == 2);
 static_assert(RaftStartResult{} == RaftStartResult::REJECTED);
 
 static_assert(
@@ -315,41 +302,6 @@ pub const fn raft_server_random_range_cap(range: u64, maximum: u64) -> u64 {
     }
 }
 
-// TODO(stage2): allowed pending codegen check, NOT a decision. clippy wants
-// `saturating_sub` here. The hand-written guard below is what production
-// compiles today and the emitter is proven on that shape; `saturating_sub`
-// may lower to a `rusty::` call a bare-rustc carrier cannot name. Verify the
-// emitter output for it, apply the change on its own with the predicate
-// reviewed, then remove this allow.
-#[allow(clippy::implicit_saturating_sub)]
-pub const fn raft_server_effective_election_timeout(
-    randomized_timeout: u64,
-    randomized_minimum: u64,
-    heartbeat_interval: u64,
-    storage_configured: bool,
-) -> u64 {
-    if storage_configured {
-        let maximum_floor_input = u64::MAX / 20;
-        let persistence_floor = if heartbeat_interval > maximum_floor_input {
-            u64::MAX
-        } else {
-            heartbeat_interval * 20
-        };
-        let persistence_guard = if persistence_floor > randomized_minimum {
-            persistence_floor - randomized_minimum
-        } else {
-            0
-        };
-        if randomized_timeout > u64::MAX - persistence_guard {
-            u64::MAX
-        } else {
-            randomized_timeout + persistence_guard
-        }
-    } else {
-        randomized_timeout
-    }
-}
-
 pub const fn raft_server_election_in_startup_grace_period(now: u64,
                                                            started_at: u64,
                                                            grace_period: u64) -> bool {
@@ -414,21 +366,17 @@ pub const fn raft_server_snapshot_recovery_retains_suffix(
     has_suffix: bool,
     has_boundary: bool,
     boundary_matches: bool,
-    storage_compaction_proves_suffix: bool,
     live_snapshot_proves_suffix: bool) -> bool {
     has_suffix &&
         ((has_boundary && boundary_matches) ||
-         (!has_boundary &&
-          (storage_compaction_proves_suffix || live_snapshot_proves_suffix)))
+         (!has_boundary && live_snapshot_proves_suffix))
 }
 
 pub const fn raft_server_snapshot_recovery_has_unproven_gap(
     has_suffix: bool,
     has_boundary: bool,
-    storage_compaction_proves_suffix: bool,
     live_snapshot_proves_suffix: bool) -> bool {
-    has_suffix && !has_boundary &&
-        !storage_compaction_proves_suffix && !live_snapshot_proves_suffix
+    has_suffix && !has_boundary && !live_snapshot_proves_suffix
 }
 
 pub const fn raft_server_snapshot_term_uses_boundary(snapshot_index: u64,
@@ -710,10 +658,6 @@ pub const fn raft_server_append_reject_floor() -> u64 {
     1
 }
 
-pub const fn raft_server_ack_is_memory(ack_type: u64) -> bool {
-    ack_type == 0
-}
-
 // @safe - pure packed callback-gate admission decision.
 pub const fn raft_server_callback_gate_is_open(state: u64,
                                                 drain_bit: u64) -> bool {
@@ -726,102 +670,6 @@ pub const fn raft_server_callback_gate_count(state: u64,
     state & count_mask
 }
 
-// @safe - pure persistence-mode classification.
-pub const fn raft_server_persistence_can_report_durable(has_durable_storage: bool) -> bool {
-    has_durable_storage
-}
-
-// @safe - pure persistence-mode classification.
-pub const fn raft_server_sync_reply_is_durable(has_durable_storage: bool,
-                                                 async_persistence: bool) -> bool {
-    has_durable_storage && !async_persistence
-}
-
-// @safe - pure persistence-result classification.  A synchronous transport
-// reply is durable only when this exact call crossed its write+sync boundary.
-pub const fn raft_server_follower_append_ack_type(has_durable_storage: bool,
-                                                   async_persistence: bool,
-                                                   persistence_succeeded: bool) -> u64 {
-    if persistence_succeeded &&
-        raft_server_sync_reply_is_durable(has_durable_storage, async_persistence) {
-        1
-    } else {
-        0
-    }
-}
-
-// @safe - pure write-boundary result aggregation.
-pub const fn raft_server_durable_write_succeeded(storage_ready: bool,
-                                                  writes_succeeded: bool,
-                                                  sync_succeeded: bool) -> bool {
-    storage_ready && writes_succeeded && sync_succeeded
-}
-
-// @safe - pure async persistence admission decision.
-pub const fn raft_server_async_persistence_should_queue(
-    async_persistence: bool,
-    storage_configured: bool,
-    has_entries: bool,
-) -> bool {
-    async_persistence && storage_configured && has_entries
-}
-
-// @safe - pure FIFO ticket readiness decision.
-pub const fn raft_server_persistence_ticket_is_ready(serving_ticket: u64,
-                                                      worker_ticket: u64) -> bool {
-    serving_ticket == worker_ticket
-}
-
-pub const fn raft_server_persisted_reply_context_is_current(
-    stopping: bool,
-    is_leader: bool,
-    current_term: u64,
-    accepted_term: u64,
-    current_leader: u16,
-    accepted_leader: u16,
-) -> bool {
-    !stopping &&
-        !is_leader &&
-        current_term == accepted_term &&
-        current_leader == accepted_leader
-}
-
-// @safe - pure wire acknowledgement classification.
-pub const fn raft_server_ack_is_durable(ack_type: u64) -> bool {
-    ack_type == 1
-}
-
-// @safe - pure election/message-ordering decision.
-pub const fn raft_server_can_buffer_early_durable_vote(
-    has_durable_storage: bool,
-    async_persistence: bool,
-    is_leader: bool,
-    election_in_progress: bool,
-    vote_term: i64,
-    election_term: i64,
-) -> bool {
-    has_durable_storage &&
-        async_persistence &&
-        !is_leader &&
-        election_in_progress &&
-        vote_term == election_term
-}
-
-pub const fn raft_server_should_become_secured(already_secured: bool,
-                                                durable_vote_count: usize,
-                                                quorum: usize) -> bool {
-    !already_secured && durable_vote_count >= quorum
-}
-
-pub const fn raft_server_unsecured_leader_needs_quorum_check(already_secured: bool,
-                                                              is_leader: bool) -> bool {
-    !already_secured && is_leader
-}
-
-pub const fn raft_server_commit_status_is_durable(status: CommitStatus) -> bool {
-    (status as i32) == (CommitStatus::DURABLE as i32)
-}
-
 pub const fn raft_server_start_was_rejected(result: RaftStartResult) -> bool {
     (result as i32) == (RaftStartResult::REJECTED as i32)
 }
@@ -830,9 +678,6 @@ pub const fn raft_server_start_was_appended(result: RaftStartResult) -> bool {
     (result as i32) == (RaftStartResult::APPENDED as i32)
 }
 
-pub const fn raft_server_start_is_indeterminate(result: RaftStartResult) -> bool {
-    (result as i32) == (RaftStartResult::INDETERMINATE as i32)
-}
 
 // A leadership or term change does not resolve an old entry. The exact slot
 // becomes terminal only once it is inside the committed prefix.
@@ -1036,15 +881,8 @@ pub const fn raft_server_leader_rpc_sender_is_authoritative(
           (!local_is_leader &&
            (!has_known_leader || known_leader_matches_sender))))
 }
-
-pub const fn raft_server_term_advance_is_durable(
-    has_configured_storage: bool,
-    persistence_succeeded: bool,
-) -> bool {
-    !has_configured_storage || persistence_succeeded
-}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.scalar_decisions version=1 rust_sha256=43d7510645f99d0659807066dbc99c95b47113498041a931740ea5e8a9145cc0*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.scalar_decisions version=1 rust_sha256=d4e5f800852cb58efb77885511cee6b5f64cfb1605fceb5d4f44d875e5e6bd66*/
 constexpr uint16_t RAFT_SERVER_INVALID_SITE_ID = static_cast<uint16_t>(65535);
 constexpr bool raft_server_log_index_at_or_below(uint64_t index, uint64_t boundary);
 constexpr bool raft_server_log_index_above(uint64_t index, uint64_t boundary);
@@ -1059,7 +897,6 @@ constexpr bool raft_server_leadership_stable_window_elapsed(uint64_t elapsed, ui
 constexpr bool raft_server_random_range_needs_swap(uint64_t minimum, uint64_t maximum);
 constexpr bool raft_server_random_range_is_single_point(uint64_t minimum, uint64_t maximum);
 constexpr uint64_t raft_server_random_range_cap(uint64_t range, uint64_t maximum);
-constexpr uint64_t raft_server_effective_election_timeout(uint64_t randomized_timeout, uint64_t randomized_minimum, uint64_t heartbeat_interval, bool storage_configured);
 constexpr bool raft_server_election_in_startup_grace_period(uint64_t now, uint64_t started_at, uint64_t grace_period);
 constexpr bool raft_server_vote_term_is_stale(uint64_t candidate_term, uint64_t current_term);
 constexpr bool raft_server_vote_is_already_granted_to_other(uint64_t candidate_term, uint64_t current_term, uint16_t voted_for, uint16_t candidate_id);
@@ -1070,8 +907,8 @@ constexpr bool raft_server_install_snapshot_reply_is_available(uint64_t follower
 constexpr bool raft_server_snapshot_is_stale(uint64_t last_included_index, uint64_t local_progress_index);
 constexpr bool raft_server_snapshot_boundary_matches(bool has_entry, uint64_t local_term, uint64_t snapshot_term);
 constexpr bool raft_server_snapshot_term_is_valid(uint64_t snapshot_term, uint64_t leader_term);
-constexpr bool raft_server_snapshot_recovery_retains_suffix(bool has_suffix, bool has_boundary, bool boundary_matches, bool storage_compaction_proves_suffix, bool live_snapshot_proves_suffix);
-constexpr bool raft_server_snapshot_recovery_has_unproven_gap(bool has_suffix, bool has_boundary, bool storage_compaction_proves_suffix, bool live_snapshot_proves_suffix);
+constexpr bool raft_server_snapshot_recovery_retains_suffix(bool has_suffix, bool has_boundary, bool boundary_matches, bool live_snapshot_proves_suffix);
+constexpr bool raft_server_snapshot_recovery_has_unproven_gap(bool has_suffix, bool has_boundary, bool live_snapshot_proves_suffix);
 constexpr bool raft_server_snapshot_term_uses_boundary(uint64_t snapshot_index, uint64_t existing_snapshot_index);
 constexpr bool raft_server_snapshot_marker_matches(size_t payload_size, size_t marker_size, uint64_t payload_index, uint64_t payload_term, uint64_t expected_index, uint64_t expected_term);
 constexpr bool raft_server_election_result_is_current(bool election_in_progress, uint64_t election_term, uint64_t result_term, uint64_t current_term);
@@ -1111,20 +948,8 @@ constexpr bool raft_server_append_reject_can_decrement(uint64_t next_index);
 constexpr uint64_t raft_server_append_reject_halved(uint64_t next_index);
 constexpr uint64_t raft_server_append_reject_decremented(uint64_t next_index);
 constexpr uint64_t raft_server_append_reject_floor();
-constexpr bool raft_server_ack_is_memory(uint64_t ack_type);
 constexpr bool raft_server_callback_gate_is_open(uint64_t state, uint64_t drain_bit);
 constexpr uint64_t raft_server_callback_gate_count(uint64_t state, uint64_t count_mask);
-constexpr bool raft_server_persistence_can_report_durable(bool has_durable_storage);
-constexpr bool raft_server_sync_reply_is_durable(bool has_durable_storage, bool async_persistence);
-constexpr uint64_t raft_server_follower_append_ack_type(bool has_durable_storage, bool async_persistence, bool persistence_succeeded);
-constexpr bool raft_server_durable_write_succeeded(bool storage_ready, bool writes_succeeded, bool sync_succeeded);
-constexpr bool raft_server_async_persistence_should_queue(bool async_persistence, bool storage_configured, bool has_entries);
-constexpr bool raft_server_persistence_ticket_is_ready(uint64_t serving_ticket, uint64_t worker_ticket);
-constexpr bool raft_server_persisted_reply_context_is_current(bool stopping, bool is_leader, uint64_t current_term, uint64_t accepted_term, uint16_t current_leader, uint16_t accepted_leader);
-constexpr bool raft_server_ack_is_durable(uint64_t ack_type);
-constexpr bool raft_server_can_buffer_early_durable_vote(bool has_durable_storage, bool async_persistence, bool is_leader, bool election_in_progress, int64_t vote_term, int64_t election_term);
-constexpr bool raft_server_should_become_secured(bool already_secured, size_t durable_vote_count, size_t quorum);
-constexpr bool raft_server_unsecured_leader_needs_quorum_check(bool already_secured, bool is_leader);
 constexpr bool raft_server_submission_is_committed(uint64_t commit_index, uint64_t submitted_index, bool entry_matches);
 constexpr bool raft_server_submission_is_superseded(uint64_t commit_index, uint64_t submitted_index, bool entry_known_conflict, bool committed_newer_prefix);
 constexpr bool raft_server_snapshot_resolves_submission(uint64_t snapshot_index, uint64_t submitted_index);
@@ -1145,7 +970,6 @@ constexpr bool raft_server_recovery_view_matches_term(uint32_t incoming_view_id,
 constexpr bool raft_server_recovery_view_shape_is_valid(uint32_t incoming_partition, uint32_t expected_partition, int32_t incoming_replicas, int32_t expected_replicas, uint64_t leader_count, bool allow_empty);
 constexpr bool raft_server_recovery_view_matches_role(bool term_matches, bool local_is_leader, bool view_leader_is_self, bool has_known_leader, bool known_leader_matches_view);
 constexpr bool raft_server_leader_rpc_sender_is_authoritative(bool leader_has_higher_term, bool local_is_leader, bool sender_is_self, bool has_known_leader, bool known_leader_matches_sender);
-constexpr bool raft_server_term_advance_is_durable(bool has_configured_storage, bool persistence_succeeded);
 constexpr bool raft_server_log_index_at_or_below(uint64_t index, uint64_t boundary) {
     return rusty::detail::deref_if_pointer_like(index) <= rusty::detail::deref_if_pointer_like(boundary);
 }
@@ -1189,20 +1013,6 @@ constexpr uint64_t raft_server_random_range_cap(uint64_t range, uint64_t maximum
         return std::move(range);
     }
 }
-constexpr uint64_t raft_server_effective_election_timeout(uint64_t randomized_timeout, uint64_t randomized_minimum, uint64_t heartbeat_interval, bool storage_configured) {
-    if (storage_configured) {
-        const auto maximum_floor_input = rusty::detail::deref_if_pointer_like(std::numeric_limits<uint64_t>::max()) / 20;
-        const auto persistence_floor = (rusty::detail::deref_if_pointer_like(heartbeat_interval) > rusty::detail::deref_if_pointer_like(maximum_floor_input) ? std::numeric_limits<uint64_t>::max() : rusty::detail::deref_if_pointer_like(heartbeat_interval) * static_cast<uint64_t>(20));
-        const auto persistence_guard = (rusty::detail::deref_if_pointer_like(persistence_floor) > rusty::detail::deref_if_pointer_like(randomized_minimum) ? rusty::detail::deref_if_pointer_like(persistence_floor) - rusty::detail::deref_if_pointer_like(randomized_minimum) : 0);
-        if (rusty::detail::deref_if_pointer_like(randomized_timeout) > (rusty::detail::deref_if_pointer_like(std::numeric_limits<uint64_t>::max()) - rusty::detail::deref_if_pointer_like(persistence_guard))) {
-            return std::numeric_limits<uint64_t>::max();
-        } else {
-            return rusty::detail::deref_if_pointer_like(randomized_timeout) + rusty::detail::deref_if_pointer_like(persistence_guard);
-        }
-    } else {
-        return std::move(randomized_timeout);
-    }
-}
 constexpr bool raft_server_election_in_startup_grace_period(uint64_t now, uint64_t started_at, uint64_t grace_period) {
     return rusty::wrapping_sub(now, static_cast<std::remove_cvref_t<decltype(now)>>(std::move(started_at))) < rusty::detail::deref_if_pointer_like(grace_period);
 }
@@ -1233,11 +1043,11 @@ constexpr bool raft_server_snapshot_boundary_matches(bool has_entry, uint64_t lo
 constexpr bool raft_server_snapshot_term_is_valid(uint64_t snapshot_term, uint64_t leader_term) {
     return rusty::detail::deref_if_pointer_like(snapshot_term) <= rusty::detail::deref_if_pointer_like(leader_term);
 }
-constexpr bool raft_server_snapshot_recovery_retains_suffix(bool has_suffix, bool has_boundary, bool boundary_matches, bool storage_compaction_proves_suffix, bool live_snapshot_proves_suffix) {
-    return rusty::detail::deref_if_pointer_like(has_suffix) && ((((rusty::detail::deref_if_pointer_like(has_boundary) && rusty::detail::deref_if_pointer_like(boundary_matches))) || ((!has_boundary && ((rusty::detail::deref_if_pointer_like(storage_compaction_proves_suffix) || rusty::detail::deref_if_pointer_like(live_snapshot_proves_suffix)))))));
+constexpr bool raft_server_snapshot_recovery_retains_suffix(bool has_suffix, bool has_boundary, bool boundary_matches, bool live_snapshot_proves_suffix) {
+    return rusty::detail::deref_if_pointer_like(has_suffix) && ((((rusty::detail::deref_if_pointer_like(has_boundary) && rusty::detail::deref_if_pointer_like(boundary_matches))) || ((!has_boundary && rusty::detail::deref_if_pointer_like(live_snapshot_proves_suffix)))));
 }
-constexpr bool raft_server_snapshot_recovery_has_unproven_gap(bool has_suffix, bool has_boundary, bool storage_compaction_proves_suffix, bool live_snapshot_proves_suffix) {
-    return ((rusty::detail::deref_if_pointer_like(has_suffix) && !has_boundary) && !storage_compaction_proves_suffix) && !live_snapshot_proves_suffix;
+constexpr bool raft_server_snapshot_recovery_has_unproven_gap(bool has_suffix, bool has_boundary, bool live_snapshot_proves_suffix) {
+    return (rusty::detail::deref_if_pointer_like(has_suffix) && !has_boundary) && !live_snapshot_proves_suffix;
 }
 constexpr bool raft_server_snapshot_term_uses_boundary(uint64_t snapshot_index, uint64_t existing_snapshot_index) {
     return rusty::detail::deref_if_pointer_like(snapshot_index) == rusty::detail::deref_if_pointer_like(existing_snapshot_index);
@@ -1389,63 +1199,17 @@ constexpr uint64_t raft_server_append_reject_decremented(uint64_t next_index) {
 constexpr uint64_t raft_server_append_reject_floor() {
     return static_cast<uint64_t>(1);
 }
-constexpr bool raft_server_ack_is_memory(uint64_t ack_type) {
-    return rusty::detail::deref_if_pointer_like(ack_type) == static_cast<uint64_t>(0);
-}
 constexpr bool raft_server_callback_gate_is_open(uint64_t state, uint64_t drain_bit) {
     return ((rusty::detail::deref_if_pointer_like(state) & rusty::detail::deref_if_pointer_like(drain_bit))) == static_cast<uint64_t>(0);
 }
 constexpr uint64_t raft_server_callback_gate_count(uint64_t state, uint64_t count_mask) {
     return rusty::detail::deref_if_pointer_like(state) & rusty::detail::deref_if_pointer_like(count_mask);
 }
-constexpr bool raft_server_persistence_can_report_durable(bool has_durable_storage) {
-    return std::move(has_durable_storage);
-}
-constexpr bool raft_server_sync_reply_is_durable(bool has_durable_storage, bool async_persistence) {
-    return rusty::detail::deref_if_pointer_like(has_durable_storage) && !async_persistence;
-}
-constexpr uint64_t raft_server_follower_append_ack_type(bool has_durable_storage, bool async_persistence, bool persistence_succeeded) {
-    if (rusty::detail::deref_if_pointer_like(persistence_succeeded) && raft_server_sync_reply_is_durable(std::move(has_durable_storage), std::move(async_persistence))) {
-        return static_cast<uint64_t>(1);
-    } else {
-        return static_cast<uint64_t>(0);
-    }
-}
-constexpr bool raft_server_durable_write_succeeded(bool storage_ready, bool writes_succeeded, bool sync_succeeded) {
-    return (rusty::detail::deref_if_pointer_like(storage_ready) && rusty::detail::deref_if_pointer_like(writes_succeeded)) && rusty::detail::deref_if_pointer_like(sync_succeeded);
-}
-constexpr bool raft_server_async_persistence_should_queue(bool async_persistence, bool storage_configured, bool has_entries) {
-    return (rusty::detail::deref_if_pointer_like(async_persistence) && rusty::detail::deref_if_pointer_like(storage_configured)) && rusty::detail::deref_if_pointer_like(has_entries);
-}
-constexpr bool raft_server_persistence_ticket_is_ready(uint64_t serving_ticket, uint64_t worker_ticket) {
-    return rusty::detail::deref_if_pointer_like(serving_ticket) == rusty::detail::deref_if_pointer_like(worker_ticket);
-}
-constexpr bool raft_server_persisted_reply_context_is_current(bool stopping, bool is_leader, uint64_t current_term, uint64_t accepted_term, uint16_t current_leader, uint16_t accepted_leader) {
-    return ((!stopping && !is_leader) && (rusty::detail::deref_if_pointer_like(current_term) == rusty::detail::deref_if_pointer_like(accepted_term))) && (rusty::detail::deref_if_pointer_like(current_leader) == rusty::detail::deref_if_pointer_like(accepted_leader));
-}
-constexpr bool raft_server_ack_is_durable(uint64_t ack_type) {
-    return rusty::detail::deref_if_pointer_like(ack_type) == static_cast<uint64_t>(1);
-}
-constexpr bool raft_server_can_buffer_early_durable_vote(bool has_durable_storage, bool async_persistence, bool is_leader, bool election_in_progress, int64_t vote_term, int64_t election_term) {
-    return (((rusty::detail::deref_if_pointer_like(has_durable_storage) && rusty::detail::deref_if_pointer_like(async_persistence)) && !is_leader) && rusty::detail::deref_if_pointer_like(election_in_progress)) && (rusty::detail::deref_if_pointer_like(vote_term) == rusty::detail::deref_if_pointer_like(election_term));
-}
-constexpr bool raft_server_should_become_secured(bool already_secured, size_t durable_vote_count, size_t quorum) {
-    return !already_secured && (rusty::detail::deref_if_pointer_like(durable_vote_count) >= rusty::detail::deref_if_pointer_like(quorum));
-}
-constexpr bool raft_server_unsecured_leader_needs_quorum_check(bool already_secured, bool is_leader) {
-    return !already_secured && rusty::detail::deref_if_pointer_like(is_leader);
-}
-constexpr bool raft_server_commit_status_is_durable(CommitStatus status) {
-    return ((static_cast<int32_t>(status))) == ((static_cast<int32_t>(CommitStatus_DURABLE())));
-}
 constexpr bool raft_server_start_was_rejected(RaftStartResult result) {
     return ((static_cast<int32_t>(result))) == ((static_cast<int32_t>(RaftStartResult_REJECTED())));
 }
 constexpr bool raft_server_start_was_appended(RaftStartResult result) {
     return ((static_cast<int32_t>(result))) == ((static_cast<int32_t>(RaftStartResult_APPENDED())));
-}
-constexpr bool raft_server_start_is_indeterminate(RaftStartResult result) {
-    return ((static_cast<int32_t>(result))) == ((static_cast<int32_t>(RaftStartResult_INDETERMINATE())));
 }
 constexpr bool raft_server_submission_is_committed(uint64_t commit_index, uint64_t submitted_index, bool entry_matches) {
     return (rusty::detail::deref_if_pointer_like(commit_index) >= rusty::detail::deref_if_pointer_like(submitted_index)) && rusty::detail::deref_if_pointer_like(entry_matches);
@@ -1533,9 +1297,6 @@ constexpr bool raft_server_recovery_view_matches_role(bool term_matches, bool lo
 constexpr bool raft_server_leader_rpc_sender_is_authoritative(bool leader_has_higher_term, bool local_is_leader, bool sender_is_self, bool has_known_leader, bool known_leader_matches_sender) {
     return (((rusty::detail::deref_if_pointer_like(sender_is_self) && rusty::detail::deref_if_pointer_like(local_is_leader)) && !leader_has_higher_term)) || ((!sender_is_self && ((rusty::detail::deref_if_pointer_like(leader_has_higher_term) || ((!local_is_leader && ((!has_known_leader || rusty::detail::deref_if_pointer_like(known_leader_matches_sender)))))))));
 }
-constexpr bool raft_server_term_advance_is_durable(bool has_configured_storage, bool persistence_succeeded) {
-    return !has_configured_storage || rusty::detail::deref_if_pointer_like(persistence_succeeded);
-}
 /*RUSTYCPP:GEN-END id=raft_server.scalar_decisions*/
 
 // The sentinel is now owned by the DSL block as
@@ -1566,18 +1327,6 @@ static_assert(!raft_server_timer_campaign_is_current(
     false, 9, 9, 500, 500));
 static_assert(!raft_server_timer_campaign_is_current(
     true, 9, 9, 501, 500));
-static_assert(raft_server_effective_election_timeout(
-                  600000, 500000, 100000, true) == 2100000);
-static_assert(raft_server_effective_election_timeout(
-                  500000, 500000, 100000, true) == 2000000);
-static_assert(raft_server_effective_election_timeout(
-                  1000000, 500000, 100000, true) == 2500000);
-static_assert(raft_server_effective_election_timeout(
-                  200000, 150000, 5000, true) == 200000);
-static_assert(raft_server_effective_election_timeout(
-                  600000, 500000, 100000, false) == 600000);
-static_assert(raft_server_effective_election_timeout(
-                  7, 0, UINT64_MAX, true) == UINT64_MAX);
 static_assert(raft_server_campaign_can_start(false, false));
 static_assert(!raft_server_campaign_can_start(true, false));
 static_assert(!raft_server_campaign_can_start(false, true));
@@ -1594,21 +1343,21 @@ static_assert(raft_server_snapshot_term_is_valid(7, 7));
 static_assert(raft_server_snapshot_term_is_valid(6, 7));
 static_assert(!raft_server_snapshot_term_is_valid(8, 7));
 static_assert(raft_server_snapshot_recovery_retains_suffix(
-    true, true, true, false, false));
+    true, true, true, false));
 static_assert(!raft_server_snapshot_recovery_retains_suffix(
-    true, true, false, true, true));
+    true, true, false, true));
 static_assert(raft_server_snapshot_recovery_retains_suffix(
-    true, false, false, true, false));
-static_assert(raft_server_snapshot_recovery_retains_suffix(
-    true, false, false, false, true));
+    true, false, false, true));
 static_assert(!raft_server_snapshot_recovery_retains_suffix(
-    false, false, false, true, true));
-static_assert(raft_server_snapshot_recovery_has_unproven_gap(
     true, false, false, false));
+static_assert(!raft_server_snapshot_recovery_retains_suffix(
+    false, false, false, true));
+static_assert(raft_server_snapshot_recovery_has_unproven_gap(
+    true, false, false));
 static_assert(!raft_server_snapshot_recovery_has_unproven_gap(
-    true, true, false, false));
+    true, true, false));
 static_assert(!raft_server_snapshot_recovery_has_unproven_gap(
-    true, false, true, false));
+    true, false, true));
 static_assert(raft_server_snapshot_term_uses_boundary(11, 11));
 static_assert(!raft_server_snapshot_term_uses_boundary(12, 11));
 static_assert(raft_server_snapshot_marker_matches(16, 16, 11, 7, 11, 7));
@@ -1714,27 +1463,10 @@ static_assert(raft_server_append_reject_can_fast_backoff(UINT64_MAX, 5));
 static_assert(raft_server_follower_next_index(UINT64_MAX) == 0);
 static_assert(!raft_server_append_reject_can_fast_backoff(UINT64_MAX, 0));
 static_assert(!raft_server_append_reject_has_term_conflict(UINT64_MAX, 0));
-static_assert(raft_server_ack_is_memory(0));
-static_assert(!raft_server_ack_is_memory(1));
-static_assert(!raft_server_ack_is_memory(UINT64_MAX));
-static_assert(raft_server_should_become_secured(false, 2, 2));
-static_assert(!raft_server_should_become_secured(false, 1, 2));
-static_assert(!raft_server_should_become_secured(true, 2, 2));
-static_assert(raft_server_should_become_secured(false, 0, 0));
-static_assert(raft_server_unsecured_leader_needs_quorum_check(false, true));
-static_assert(!raft_server_unsecured_leader_needs_quorum_check(true, true));
-static_assert(!raft_server_unsecured_leader_needs_quorum_check(false, false));
-static_assert(raft_server_commit_status_is_durable(CommitStatus::DURABLE));
-static_assert(!raft_server_commit_status_is_durable(CommitStatus::SPECULATIVE));
 static_assert(raft_server_start_was_rejected(RaftStartResult::REJECTED));
 static_assert(!raft_server_start_was_rejected(RaftStartResult::APPENDED));
 static_assert(raft_server_start_was_appended(RaftStartResult::APPENDED));
-static_assert(!raft_server_start_was_appended(
-    RaftStartResult::INDETERMINATE));
-static_assert(raft_server_start_is_indeterminate(
-    RaftStartResult::INDETERMINATE));
-static_assert(!raft_server_start_is_indeterminate(
-    RaftStartResult::REJECTED));
+static_assert(!raft_server_start_was_appended(RaftStartResult::REJECTED));
 static_assert(raft_server_retention_window_normalize(0) == 1);
 static_assert(raft_server_retention_window_normalize(1) == 1);
 static_assert(raft_server_retention_window_normalize(UINT64_MAX) == UINT64_MAX);
@@ -1751,144 +1483,6 @@ static_assert(!raft_server_signed_term_is_newer(0, 0));
 static_assert(raft_server_signed_term_is_newer(1, 0));
 static_assert(raft_server_log_entry_is_current_term(
     -1, static_cast<uint64_t>(-1)));
-
-// @unsafe - Stateful STL-set kernel. Scalar persistence decisions are owned by
-// the Rust DSL helpers above.
-inline std::set<siteid_t> raft_server_initial_durable_voters(
-    bool has_durable_storage,
-    bool async_persistence,
-    bool local_vote_persisted,
-    siteid_t self,
-    const std::set<siteid_t>& speculative_voters,
-    const std::set<siteid_t>& early_durable_voters) {
-  if (!raft_server_persistence_can_report_durable(has_durable_storage)) {
-    return {};
-  }
-  if (raft_server_sync_reply_is_durable(has_durable_storage,
-                                        async_persistence)) {
-    // Every successful synchronous Vote reply crossed the persistence
-    // boundary before it entered speculative_voters. The candidate's own
-    // in-memory vote is removed if its local write+sync failed.
-    std::set<siteid_t> voters = speculative_voters;
-    if (!local_vote_persisted) {
-      voters.erase(self);
-    }
-    return voters;
-  }
-
-  // The candidate attempts its own vote synchronously before broadcasting.
-  // Followers become durable only through VoteDurable notifications, some of
-  // which can race ahead of the ordinary Vote quorum response.
-  std::set<siteid_t> voters = early_durable_voters;
-  if (local_vote_persisted) {
-    voters.insert(self);
-  }
-  return voters;
-}
-
-// @unsafe - Stateful STL-map/set kernel. The quorum predicate itself is owned
-// by the Rust DSL scalar block above.
-inline uint64_t raft_server_highest_contiguous_secured_index(
-    uint64_t secured_index,
-    uint64_t speculative_index,
-    uint64_t last_log_index,
-    size_t quorum,
-    const std::map<uint64_t, std::set<siteid_t>>& durable_acks) {
-  const uint64_t upper = std::min(speculative_index, last_log_index);
-  if (secured_index >= upper) {
-    return secured_index;
-  }
-
-  uint64_t result = secured_index;
-  for (uint64_t index = secured_index + 1; index <= upper; ++index) {
-    const auto it = durable_acks.find(index);
-    if (it == durable_acks.end() ||
-        !raft_server_should_become_secured(
-            /*already_secured=*/false, it->second.size(), quorum)) {
-      break;
-    }
-    result = index;
-    if (index == upper) {
-      break;  // Avoid wrapping when upper == UINT64_MAX.
-    }
-  }
-  return result;
-}
-
-static_assert(raft_server_follower_append_ack_type(false, false, true) == 0);
-static_assert(raft_server_follower_append_ack_type(true, false, true) == 1);
-static_assert(raft_server_follower_append_ack_type(true, false, false) == 0);
-static_assert(raft_server_follower_append_ack_type(true, true, true) == 0);
-static_assert(!raft_server_persistence_can_report_durable(false));
-static_assert(raft_server_persistence_can_report_durable(true));
-static_assert(raft_server_durable_write_succeeded(true, true, true));
-static_assert(!raft_server_durable_write_succeeded(false, true, true));
-static_assert(!raft_server_durable_write_succeeded(true, false, true));
-static_assert(!raft_server_durable_write_succeeded(true, true, false));
-static_assert(raft_server_async_persistence_should_queue(true, true, true));
-static_assert(!raft_server_async_persistence_should_queue(false, true, true));
-static_assert(!raft_server_async_persistence_should_queue(true, false, true));
-static_assert(!raft_server_async_persistence_should_queue(true, true, false));
-static_assert(raft_server_persistence_ticket_is_ready(7, 7));
-static_assert(!raft_server_persistence_ticket_is_ready(6, 7));
-static_assert(raft_server_persisted_reply_context_is_current(
-    false, false, 9, 9, 3, 3));
-static_assert(!raft_server_persisted_reply_context_is_current(
-    true, false, 9, 9, 3, 3));
-static_assert(!raft_server_persisted_reply_context_is_current(
-    false, true, 9, 9, 3, 3));
-static_assert(!raft_server_persisted_reply_context_is_current(
-    false, false, 10, 9, 3, 3));
-static_assert(!raft_server_persisted_reply_context_is_current(
-    false, false, 9, 9, 4, 3));
-
-// @unsafe - Executes an external LogStorage mutation and sync.  This is the
-// single write+sync boundary used by durable Raft state and log writes; callers
-// additionally gate its result with the server's sticky persistence health.
-template <typename WriteOperation>
-bool raft_server_write_and_sync(
-    raft::LogStorage& storage, WriteOperation&& write_operation) {
-  try {
-    const bool storage_ready = storage.is_open();
-    if (!storage_ready) {
-      return false;
-    }
-    const bool writes_succeeded =
-        std::forward<WriteOperation>(write_operation)(storage);
-    const bool sync_succeeded = writes_succeeded && storage.sync();
-    return raft_server_durable_write_succeeded(
-        storage_ready, writes_succeeded, sync_succeeded);
-  } catch (...) {
-    // Storage implementations parse persistent metadata and invoke backend
-    // APIs that may throw.  A durable ACK boundary must convert every such
-    // failure into a failed write, never unwind through an RPC handler after
-    // partially changing Raft or its state machine.
-    return false;
-  }
-}
-
-// A failed append may already have changed storage before its sync/exception
-// boundary. A caller may report definitive rejection only after this
-// compensating removal itself crosses a sync boundary and a final read proves
-// the slot absent. This deliberately bypasses the sticky health gate: it is a
-// last best-effort proof before the replica fail-stops.
-inline bool raft_server_compensating_remove_and_sync(
-    raft::LogStorage& storage, slotid_t slot_id) {
-  try {
-    if (!storage.is_open()) {
-      return false;
-    }
-    const bool already_absent = storage.get(slot_id).is_none();
-    const bool removal_succeeded =
-        already_absent || storage.remove(slot_id);
-    if (!removal_succeeded || !storage.sync()) {
-      return false;
-    }
-    return storage.get(slot_id).is_none();
-  } catch (...) {
-    return false;
-  }
-}
 
 // @safe - data struct with shared_ptr fields (shared_ptr marked @external)
 //
@@ -2018,8 +1612,6 @@ class RaftResolvedSubmissionLedger {
 
 // @unsafe - inherits from non-@interface TxLogServer (individual methods are @safe)
 class RaftServer : public TxLogServer {
-  friend class RaftTestConfig;  // Allow test config to access private members for kill/restart
-  friend class RaftLabTest;     // Allow test cases to access private members for verification
  private:
   struct AsyncCallbackLifetime {
     std::mutex mutex;
@@ -2061,16 +1653,6 @@ class RaftServer : public TxLogServer {
                             ballot_t ballot);
 
   // ============================================================================
-  // LOG PERSISTENCE
-  // ============================================================================
-  std::shared_ptr<janus::raft::LogStorage> log_storage_;  // Optional persistent storage
-  bool async_persistence_ = false;  // Runtime: sync (default) vs async disk persistence
-  // Sticky for this server lifetime: after any configured-storage write/sync
-  // failure, no later operation may advertise a durable prefix that contains
-  // the failed state. Recovery/restart installs a fresh healthy storage epoch.
-  rusty::sync::atomic::AtomicBool persistence_healthy_{true};
-
-  // ============================================================================
   // SNAPSHOT SUPPORT
   // ============================================================================
   std::shared_ptr<janus::raft::SnapshotManager> snapshot_manager_;  // Optional snapshot manager
@@ -2083,7 +1665,7 @@ class RaftServer : public TxLogServer {
   rusty::sync::atomic::AtomicU64 snapshot_trigger_index_{0};
   rusty::sync::atomic::AtomicU64 snapshot_trigger_threshold_{10000};
 
-  // State machine snapshot callbacks (set by ReplicatedDB or other state machines)
+  // State machine snapshot callbacks (set by the application state machine)
   // @unsafe - std::function holds non-borrow-checked closures
   // The requested boundary is part of the callback contract: an application
   // checkpoint that represents any other applied index must be rejected before
@@ -2094,11 +1676,8 @@ class RaftServer : public TxLogServer {
   uint64_t snapshot_callback_owner_token_ = 0;
   uint64_t next_snapshot_callback_owner_token_ = 1;
 
-  // Optional replicated DB (created when MAKO_REPLICATED_DB=1 env var is set)
-  std::shared_ptr<ReplicatedDB> replicated_db_;
-
-  // @unsafe - Initializes the snapshot manager and restores the exact state
-  // machine bytes before publishing any recovered snapshot boundary.
+  // @unsafe - Initializes the in-memory snapshot manager and restores the exact
+  // state machine bytes before publishing any recovered snapshot boundary.
   bool InitializeSnapshotManager();
 
   // @unsafe - Caller holds state_machine_apply_mtx_ then mtx_. Fully validates
@@ -2110,8 +1689,9 @@ class RaftServer : public TxLogServer {
       uint64_t last_included_index,
       uint64_t last_included_term);
 
-  // @unsafe - Startup helper for an already-durable Raft snapshot. Prepares and
-  // immediately commits its state-machine image before publishing recovery.
+  // @unsafe - Startup helper for a snapshot already held by the manager.
+  // Prepares and immediately commits its state-machine image before publishing
+  // recovery.
   bool LoadStateMachineSnapshotLocked(
       const std::string& data,
       uint64_t last_included_index,
@@ -2123,119 +1703,13 @@ class RaftServer : public TxLogServer {
   void CreateSnapshot();
 
   // @unsafe - Requires state_machine_apply_mtx_ and mtx_ in that order.
-  // Split out so the apply trigger and RaftLabTest's friend-only manager
+  // Split out so the apply trigger and RaftLabTest's LabAccess-driven manager
   // rotation helper can preserve the global lock order without re-locking.
   bool CreateSnapshotLocked();
 
   // @unsafe - Cheap-trigger slow path. Acquires state_machine_apply_mtx_ then
   // mtx_, rechecks the canonical snapshot state, and snapshots only if due.
   void MaybeCreateSnapshot();
-
-  // Metadata keys for LogStorage persistence
-  static constexpr const char* META_TERM = "currentTerm";
-  static constexpr const char* META_VOTE_FOR = "vote_for";
-  static constexpr const char* META_COMMIT_INDEX = "commitIndex";
-  static constexpr const char* META_SPEC_COMMIT_INDEX = "specCommitIndex";
-  static constexpr const char* META_SECURED_LOG_INDEX = "securedLogIndex";
-
-  // @safe - LogStorage-based persistence helper methods (external LogStorage API calls wrapped in @unsafe blocks)
-  bool PersistTermAndVoteToLogStorage(uint64_t term, siteid_t voted_for);
-  // @unsafe - Ordered wrapper for the current speculative metadata.
-  bool PersistSpeculativeIndicesToLogStorage();
-  // @unsafe - Unordered storage primitive; caller already owns a persistence
-  // ticket or is running before concurrent admission opens.
-  bool PersistSpeculativeIndicesSnapshotToLogStorage(
-      uint64_t spec_commit_index, uint64_t secured_log_index);
-  // @safe - Persists vote_for only to storage
-  bool PersistVoteToLogStorage(siteid_t voted_for);
-  // @safe - Persists commitIndex to storage
-  bool PersistCommitIndexToLogStorage(uint64_t commit_index,
-                                      uint64_t spec_commit_index,
-                                      uint64_t secured_log_index);
-  // @safe - Persists a single log entry
-  bool PersistLogEntryToLogStorage(slotid_t slot_id, const RaftData& data);
-  // @safe - Persists multiple log entries
-  bool PersistLogEntriesToLogStorage(const std::vector<std::pair<slotid_t, std::shared_ptr<RaftData>>>& entries);
-  // @unsafe - Replaces one follower log suffix and crosses one storage sync
-  // boundary. The optional removal range is inclusive.
-  bool PersistFollowerAppendToLogStorage(
-      const std::vector<std::pair<slotid_t, std::shared_ptr<RaftData>>>& entries,
-      const std::vector<std::pair<slotid_t, std::shared_ptr<RaftData>>>&
-          matching_entries_to_verify,
-      uint64_t committed_index,
-      bool truncate_suffix,
-      slotid_t truncate_first,
-      slotid_t truncate_last);
-
-  // Every accepted follower-log storage action (sync, async, or snapshot)
-  // reserves its sequence while mtx_ still defines acceptance order.
-  uint64_t ReserveLogPersistenceTicketLocked();
-  void WaitForLogPersistenceTicket(uint64_t ticket);
-  void CompleteLogPersistenceTicket(uint64_t ticket);
-  void DrainLogPersistenceSequence();
-
-  // Executes one already-reserved ticket and always advances the FIFO, even if
-  // external storage throws. Callers reserve under mtx_ before publishing the
-  // corresponding in-memory mutation.
-  template <typename PersistenceOperation>
-  bool ExecuteLogPersistenceTicket(
-      uint64_t ticket,
-      const char* operation,
-      PersistenceOperation&& persistence_operation) {
-    WaitForLogPersistenceTicket(ticket);
-    bool succeeded = false;
-    try {
-      succeeded = std::forward<PersistenceOperation>(
-          persistence_operation)();
-    } catch (const std::exception& error) {
-      Log_error("[RAFT-PERSISTENCE] Site {} operation '{}' threw: {}",
-                site_id_, operation ? operation : "unknown", error.what());
-      RecordPersistenceResult(false, operation);
-    } catch (...) {
-      Log_error("[RAFT-PERSISTENCE] Site {} operation '{}' threw an unknown exception",
-                site_id_, operation ? operation : "unknown");
-      RecordPersistenceResult(false, operation);
-    }
-    CompleteLogPersistenceTicket(ticket);
-    return succeeded;
-  }
-
-  // Scope completion for the InstallSnapshot epoch, whose ticket deliberately
-  // spans storage, in-memory reconciliation, and state-machine installation.
-  class LogPersistenceTicketCompletion {
-   public:
-    LogPersistenceTicketCompletion(RaftServer* owner,
-                                   uint64_t ticket,
-                                   bool active)
-        : owner_(owner), ticket_(ticket), active_(active) {}
-    LogPersistenceTicketCompletion(const LogPersistenceTicketCompletion&) = delete;
-    LogPersistenceTicketCompletion& operator=(
-        const LogPersistenceTicketCompletion&) = delete;
-    ~LogPersistenceTicketCompletion() noexcept {
-      if (active_) {
-        owner_->CompleteLogPersistenceTicket(ticket_);
-      }
-    }
-
-   private:
-    RaftServer* owner_;
-    uint64_t ticket_;
-    bool active_;
-  };
-
-  // Caller holds mtx_. Snapshot-aware, non-mutating boundary validation used
-  // after persistence completes and before a success/durable proof is emitted.
-  bool PersistedAppendContextIsCurrentLocked(
-      uint64_t accepted_term,
-      siteid_t accepted_leader,
-      slotid_t boundary_index,
-      ballot_t boundary_term) const;
-
-  // @safe - Atomically marks the current persistence epoch unhealthy on the
-  // first failed external storage operation.
-  bool RecordPersistenceResult(bool succeeded, const char* operation);
-  // @unsafe - Moves and joins every tracked native persistence worker.
-  void DrainAsyncPersistenceThreads();
 
   // ============================================================================
 
@@ -2248,8 +1722,8 @@ class RaftServer : public TxLogServer {
   uint64_t read_quorum_confirmed_term_ = 0;
   uint64_t read_quorum_confirmed_round_ = 0;
 
-  // Caller holds mtx_. Uses only non-mutating log lookup and the persisted
-  // snapshot boundary tuple; it must never recreate a compacted log entry.
+  // Caller holds mtx_. Uses only non-mutating log lookup and the snapshot
+  // boundary tuple; it must never recreate a compacted log entry.
   bool HasCommittedEntryInCurrentTermLocked() const;
 
   std::vector<std::thread> timer_threads_ = {};
@@ -2263,17 +1737,12 @@ class RaftServer : public TxLogServer {
   uint64_t last_heartbeat_time_ = 0;
   uint64_t election_timeout_us_ = 0;
   uint64_t election_timer_generation_ = 0;
-  // Guarded by mtx_. OnAppendEntries releases mtx_ while synchronous storage
-  // crosses its durability boundary. Treat that interval as one active leader
-  // contact, matching a single-threaded Raft event loop: this follower must not
-  // campaign in the middle of an already-accepted AppendEntries handler.
-  uint64_t accepted_sync_append_persistence_ = 0;
   // @safe - logging calls wrapped in @unsafe blocks in implementation
   void LogTermChange(const char* reason, uint64_t old_term, uint64_t new_term, siteid_t source = INVALID_SITEID);
   rusty::sync::atomic::AtomicBool stop_{false};
   // Consensus RPC services are registered before their owner-thread Setup job
-  // runs. Admission stays closed until durable log/snapshot recovery and state-
-  // machine replay have completed, and closes again before shutdown drains.
+  // runs. Admission stays closed until snapshot recovery has completed, and
+  // closes again before shutdown drains.
   rusty::sync::atomic::AtomicBool rpc_ready_{false};
   // Worker launch/readiness waits for the owner-thread Setup job to finish.
   // This is deliberately separate from rpc_ready_: a failed setup must wake
@@ -2324,9 +1793,6 @@ class RaftServer : public TxLogServer {
 
   // @unsafe - Reactor bridge; schedules a gate-only job on the bound owner.
   void RequestReplication();
-  // @unsafe - Gives the owner scheduler one run opportunity after configured
-  // local persistence, preventing hot client relocks from starving heartbeats.
-  void YieldAfterSynchronousLocalAppend();
   // @unsafe - Owner-thread-only wait on the gate's IntEvent.
   bool WaitForReplicationOrHeartbeat(uint64_t timeout_us);
   // @unsafe - Owner-thread-only election delay that shutdown can interrupt.
@@ -2367,80 +1833,28 @@ class RaftServer : public TxLogServer {
   // ============================================================================
   // SPECULATIVE REPLICATION STATE
   // ============================================================================
-  // Enables separation of "speculative" (memory quorum) from "secured" (durable
-  // quorum) for both leadership and log entries. See docs/dev/phase1_speculative_state_plan.md
-
-  // Leader security status - true when durable vote quorum achieved
-  // When securedLeader_ = true, a quorum has votedFor = me on disk,
-  // so no other candidate can win election in this term.
-  bool securedLeader_ = false;
+  // Memory-quorum ("speculative") tracking for both leadership and log entries.
+  // See docs/dev/phase1_speculative_state_plan.md
 
   // Vote tracking for current term (as candidate/leader)
   std::set<siteid_t> specVoters_;     // servers that have memory-voted for us
-  std::set<siteid_t> durableVoters_;  // servers that have durably-voted for us
 
-  // VoteDurable can arrive before BroadcastVote returns and before the
-  // candidate flips is_leader_.  Track that narrow election window explicitly
-  // so a genuinely durable async vote is not lost due to message ordering.
+  // The campaign that owns req_voting_; a delayed vote result applies only to
+  // this exact term.
   bool election_in_progress_ = false;
   ballot_t election_term_ = 0;
-  std::set<siteid_t> earlyDurableVoters_;
 
   // Log commit tracking
   // Invariant: securedLogIndex_ <= specCommitIndex_ <= lastLogIndex
-  uint64_t securedLogIndex_ = 0;      // highest index with durable ack quorum
+  // In memory-only Raft securedLogIndex_ is the rollback floor: commitIndex
+  // when a node becomes leader, 0 on step-down, and the exclusive lower bound
+  // of the UnsecuredFailure rollback range.
+  uint64_t securedLogIndex_ = 0;
   uint64_t specCommitIndex_ = 0;      // highest index with memory ack quorum
 
   // Acknowledgment tracking per log index
-  // Key: log index, Value: set of nodes that have acked at that level
+  // Key: log index, Value: set of nodes that have acked that index
   std::map<uint64_t, std::set<siteid_t>> memoryAcks_;   // track memory acks per index
-  std::map<uint64_t, std::set<siteid_t>> durableAcks_;  // track durable acks per index
-
-  // @unsafe - shared_ptr presence is stable after Setup/SetLogStorage.
-  bool HasConfiguredStorage() const {
-    return log_storage_ != nullptr;
-  }
-
-  // @unsafe - LogStorage ownership and open-state inspection are external.
-  bool HasDurableStorage() const {
-    return log_storage_ &&
-           persistence_healthy_.load(
-               rusty::sync::atomic::Ordering::Acquire) &&
-           log_storage_->is_open();
-  }
-
-  // Caller must hold mtx_.  Re-evaluates securedLogIndex_ from already-recorded
-  // acknowledgements, so advancement is independent of whether durability,
-  // speculative quorum, or secured leadership arrived first.
-  void MaybeAdvanceSecuredLogIndex();
-
-  // @unsafe - Thread completion flag wrapping std::atomic<bool> for use with rusty::Arc.
-  // Arc only provides const access, so the atomic must be mutable to allow store().
-  // Uses C++ mutable for interior mutability (analogous to UnsafeCell in Rust).
-  struct AtomicFlag {
-    mutable std::atomic<bool> value{false}; // @unsafe { mutable field for interior mutability }
-    explicit AtomicFlag(bool v) : value(v) {}
-    void set(bool v, std::memory_order order = std::memory_order_release) const {
-      value.store(v, order);
-    }
-    bool get(std::memory_order order = std::memory_order_acquire) const {
-      return value.load(order);
-    }
-  };
-
-  // @safe - Tracked async persistence threads (joined in destructor to prevent UAF)
-  // Each entry pairs a thread with a completion flag. The lambda sets the flag to true
-  // when done, allowing us to prune finished threads at each new insertion to prevent
-  // unbounded growth of thread handles.
-  std::mutex async_threads_mtx_;
-  std::vector<std::pair<std::thread, rusty::Arc<AtomicFlag>>> async_threads_;
-  // Tickets are allocated while mtx_ still serializes accepted AppendEntries.
-  // Native workers wait for their exact ticket, proving that index N cannot
-  // write/sync or advertise a prefix before every earlier accepted batch has
-  // completed (or poisoned persistence_healthy_).
-  rusty::sync::atomic::AtomicU64 next_log_persistence_ticket_{0};
-  rusty::Mutex<uint64_t> serving_log_persistence_ticket_{0};
-  rusty::Condvar log_persistence_ticket_cv_;
 
   // Client notification callbacks. The registration token lets a timed-out
   // owner remove only its own callback, even if the index is reused later.
@@ -2450,12 +1864,11 @@ class RaftServer : public TxLogServer {
   };
 
   // Key: log index, Value: uniquely owned callback registration.
-  // Callbacks are invoked with: SPECULATIVE (memory quorum), DURABLE (disk quorum),
-  // or ROLLEDBACK (leader stepped down gracefully)
+  // Callbacks are invoked with: SPECULATIVE (memory quorum) or ROLLEDBACK
+  // (leader stepped down gracefully)
   std::map<uint64_t, PendingCommitCallback> pendingCallbacks_;
   uint64_t nextCommitCallbackToken_ = 1;
   uint64_t lastSpecNotifiedIndex_ = 0;    // last index notified with SPECULATIVE
-  uint64_t lastDurableNotifiedIndex_ = 0; // last index notified with DURABLE
 
   // Caller must hold mtx_. Returns a non-zero ownership token.
   // @unsafe - May invoke the supplied callback while mtx_ is held.
@@ -2519,7 +1932,7 @@ class RaftServer : public TxLogServer {
 	void HeartbeatLoop() ;
 
   // @unsafe - raw pointer output parameters (reply_term, vote_granted)
-  // SPECULATIVE VOTING: Respond immediately, then persist and send VoteDurable async
+  // Memory-only voting: record the vote and reply immediately.
   void doVote(const slotid_t& lst_log_idx,
               const ballot_t& lst_log_term,
               const siteid_t& can_id,
@@ -2554,13 +1967,6 @@ class RaftServer : public TxLogServer {
           }
 
           // A higher term is stable state even when this RequestVote is denied.
-          // Persist it before replying or admitting any work in the new term.
-          const bool has_configured_storage = HasConfiguredStorage();
-          const bool persistence_succeeded =
-              !has_configured_storage ||
-              PersistState(
-                  currentTerm, vote_for_, "doVote: observed higher term");
-
           if (was_leader) {
             stepDown(StepDownReason::HigherTerm);
           } else {
@@ -2568,23 +1974,9 @@ class RaftServer : public TxLogServer {
           }
           req_voting_ = false;
           election_in_progress_ = false;
-          earlyDurableVoters_.clear();
 
           // Publish the newly observed term, never the pre-transition value.
           *reply_term = currentTerm;
-          if (!raft_server_term_advance_is_durable(
-                  has_configured_storage, persistence_succeeded)) {
-            *vote_granted = false;
-            rpc_ready_.store(
-                false, rusty::sync::atomic::Ordering::Release);
-            stop_.store(true, rusty::sync::atomic::Ordering::Release);
-            looping_.store(false, rusty::sync::atomic::Ordering::Release);
-            apply_thread_running_.store(false);
-            Log_error("[RAFT-PERSISTENCE] Site {} could not durably record "
-                      "RequestVote term {}; failing stop and voting NO",
-                      site_id_, currentTerm);
-            return;
-          }
           LogTermChange("vote request carried newer term", prev_term, currentTerm, can_id);
       }
 
@@ -2598,125 +1990,6 @@ class RaftServer : public TxLogServer {
 #endif
           // Reset timeout
           resetTimer("granted vote");
-
-          if (async_persistence_ && HasConfiguredStorage()) {
-            // SPECULATIVE VOTING (async mode): return NOW (memory vote), then
-            // start async persistence and send VoteDurable after fsync. The
-            // outer fiber replies automatically once this function returns.
-            n_vote_++ ;
-
-            // Capture necessary state for the async persistence thread.
-            ballot_t term_copy = currentTerm;
-            siteid_t voter_copy = site_id_;
-            siteid_t can_id_copy = can_id;
-            parid_t par_id_copy = partition_id_;
-
-            // Install a non-joinable placeholder before reserving the ordered
-            // ticket. Allocation can then fail without leaving a FIFO hole, and
-            // the real thread is moved into already-owned storage noexcept.
-            {
-              std::lock_guard<std::mutex> lk(async_threads_mtx_);
-              // Prune completed threads to prevent unbounded accumulation
-              async_threads_.erase(
-                std::remove_if(async_threads_.begin(), async_threads_.end(),
-                  [](auto& entry) {
-                    if (entry.second->get()) {
-                      if (entry.first.joinable()) entry.first.join();
-                      return true;
-                    }
-                    return false;
-                  }),
-                async_threads_.end());
-              auto done = rusty::Arc<AtomicFlag>::make(false);
-              async_threads_.emplace_back(std::thread{}, done);
-              const uint64_t vote_persistence_ticket =
-                  ReserveLogPersistenceTicketLocked();
-              try {
-                async_threads_.back().first = std::thread(
-                  [this, term_copy, voter_copy, can_id_copy, par_id_copy,
-                   vote_persistence_ticket, done]() {
-                    try {
-                      const bool vote_persisted = ExecuteLogPersistenceTicket(
-                          vote_persistence_ticket,
-                          "ordered async vote persistence",
-                          [this, term_copy, can_id_copy]() {
-                            return PersistTermAndVoteToLogStorage(
-                                term_copy, can_id_copy);
-                          });
-
-                      // Revalidate only after the ticket completes. A newer
-                      // term/vote or shutdown suppresses the durable proof.
-                      if (vote_persisted) {
-                        std::lock_guard<std::recursive_mutex> lock(mtx_);
-                        if (!stop_.load(
-                                rusty::sync::atomic::Ordering::Acquire) &&
-                            !is_leader_ && currentTerm == term_copy &&
-                            vote_for_ == can_id_copy && HasDurableStorage()) {
-                          auto c = commo();
-                          if (c != nullptr) {
-                            c->SendVoteDurable(
-                                can_id_copy, par_id_copy, term_copy, voter_copy);
-                          }
-                        }
-                      }
-                    } catch (const std::exception& error) {
-                      Log_error("[RAFT-PERSISTENCE] Site {} async vote worker "
-                                "threw after launch: {}", site_id_, error.what());
-                    } catch (...) {
-                      Log_error("[RAFT-PERSISTENCE] Site {} async vote worker "
-                                "threw after launch", site_id_);
-                    }
-                    done->set(true);
-                  });
-              } catch (const std::exception& error) {
-                ExecuteLogPersistenceTicket(
-                    vote_persistence_ticket,
-                    "async vote thread launch failure",
-                    [this]() {
-                      return RecordPersistenceResult(
-                          false, "async vote thread launch failure");
-                    });
-                async_threads_.pop_back();
-                Log_error("[RAFT-PERSISTENCE] Site {} could not launch async "
-                          "vote worker: {}", site_id_, error.what());
-              } catch (...) {
-                ExecuteLogPersistenceTicket(
-                    vote_persistence_ticket,
-                    "async vote thread launch failure",
-                    [this]() {
-                      return RecordPersistenceResult(
-                          false, "async vote thread launch failure");
-                    });
-                async_threads_.pop_back();
-                Log_error("[RAFT-PERSISTENCE] Site {} could not launch async "
-                          "vote worker", site_id_);
-              }
-            }
-
-            return;
-          } else {
-            // SYNC PERSISTENCE (traditional Raft) persists before returning.
-            // With persistence disabled PersistState is a no-op and the caller
-            // classifies the vote as memory-only.
-            const bool persistence_required = HasConfiguredStorage();
-            const bool vote_persisted = PersistState(
-                currentTerm, can_id, "doVote: sync vote persist");
-            if (persistence_required && !vote_persisted) {
-              // Vote replies have no acknowledgement-strength field. Returning
-              // YES here would let a synchronous candidate count this failed
-              // write as durable, so reject while retaining the local memory
-              // vote for idempotence/safety.
-              // @unsafe
-              {
-                *vote_granted = false;
-              }
-              Log_error("[RAFT-PERSISTENCE] Site {} suppressing sync vote YES "
-                        "for candidate {} term {} after persistence failure",
-                        site_id_, can_id, currentTerm);
-            }
-            n_vote_++ ;
-            return;
-          }
       }
 
       n_vote_++ ;
@@ -2807,19 +2080,6 @@ class RaftServer : public TxLogServer {
     return RandomGenerator::rand_double(0.4, 0.7) ;
   }
 
-  // @unsafe - Uses LogStorage for persistence. False means no configured
-  // durable boundary was crossed (disabled, unhealthy, or I/O failure).
-  bool PersistState(uint64_t term, siteid_t voted_for,
-                    const char* reason = "unspecified");
-
-  // @unsafe - Uses LogStorage for persistence.
-  bool PersistLogEntry(slotid_t slot_id, const RaftData& entry,
-                       const char* reason = "unspecified");
-
-  // @unsafe - Uses LogStorage for persistence.
-  bool PersistCommitIndex(uint64_t commit_index,
-                          const char* reason = "unspecified");
-
   /**
    * Get dynamic election timeout based on preferred replica role and grace period
    *
@@ -2839,6 +2099,60 @@ class RaftServer : public TxLogServer {
     verify(communicator != nullptr);
     return communicator;
   }
+
+#ifdef RAFT_TEST_CORO
+  // Test-only inspection surface for the RaftLab harness (testconf.cc,
+  // test.cc). It replaces the former friendship grants to RaftTestConfig
+  // and RaftLabTest: a nested class may name the enclosing class's private
+  // members, so no friendship is required. Each
+  // accessor hands back a reference to one private field (read and write
+  // through the same function) or forwards one private method. Production
+  // code must not use it; the Rust port expresses this as a #[cfg(test)]
+  // module.
+  struct LabAccess {
+    // --- fields restored by RaftTestConfig::Restart / SetLearnerAction ---
+    static std::set<siteid_t>& current_config(RaftServer& s) { return s.current_config_; }
+    static uint64_t& startup_timestamp(RaftServer& s) { return s.startup_timestamp_; }
+    static bool& heartbeat_setup(RaftServer& s) { return s.heartbeat_setup_; }
+    static bool& heartbeat(RaftServer& s) { return s.heartbeat_; }
+    static bool& failover(RaftServer& s) { return s.failover_; }
+    static rusty::sync::atomic::AtomicBool& rpc_ready(RaftServer& s) { return s.rpc_ready_; }
+    static rusty::sync::atomic::AtomicBool& heartbeat_loop_running(RaftServer& s) { return s.heartbeat_loop_running_; }
+    static rusty::sync::atomic::AtomicBool& election_loop_running(RaftServer& s) { return s.election_loop_running_; }
+    static rusty::sync::atomic::AtomicBool& stop(RaftServer& s) { return s.stop_; }
+    static std::mutex& state_machine_apply_mtx(RaftServer& s) { return s.state_machine_apply_mtx_; }
+
+    // --- role / election state inspected by tests ---
+    static bool& is_leader(RaftServer& s) { return s.is_leader_; }
+    static siteid_t& vote_for(RaftServer& s) { return s.vote_for_; }
+    static siteid_t& current_leader_id(RaftServer& s) { return s.current_leader_id_; }
+    static bool& req_voting(RaftServer& s) { return s.req_voting_; }
+    static bool& election_in_progress(RaftServer& s) { return s.election_in_progress_; }
+
+    // --- membership / learner tracking (membership tests seed these) ---
+    static std::map<siteid_t, uint64_t>& match_index(RaftServer& s) { return s.match_index_; }
+    static std::map<siteid_t, uint64_t>& next_index(RaftServer& s) { return s.next_index_; }
+    static std::set<siteid_t>& learners(RaftServer& s) { return s.learners_; }
+    static uint64_t& catchup_threshold(RaftServer& s) { return s.catchup_threshold_; }
+    static bool& config_change_pending(RaftServer& s) { return s.config_change_pending_; }
+    static uint64_t& pending_config_index(RaftServer& s) { return s.pending_config_index_; }
+
+    // --- speculative bookkeeping without a public getter ---
+    static std::map<uint64_t, std::set<siteid_t>>& memory_acks(RaftServer& s) { return s.memoryAcks_; }
+    static std::size_t pending_callback_count(const RaftServer& s) { return s.pendingCallbacks_.size(); }
+
+    // --- snapshot boundary ---
+    static slotid_t& snapidx(RaftServer& s) { return s.snapidx_; }
+    static ballot_t& snapterm(RaftServer& s) { return s.snapterm_; }
+    static std::shared_ptr<janus::raft::SnapshotManager>& snapshot_manager(RaftServer& s) { return s.snapshot_manager_; }
+
+    // --- private methods the harness drives directly ---
+    static void HeartbeatLoop(RaftServer& s) { s.HeartbeatLoop(); }
+    static void StartApplyThread(RaftServer& s) { s.StartApplyThread(); }
+    static bool InitializeSnapshotManager(RaftServer& s) { return s.InitializeSnapshotManager(); }
+    static bool CreateSnapshotLocked(RaftServer& s) { return s.CreateSnapshotLocked(); }
+  };
+#endif
 
   slotid_t min_active_slot_ = 1; // anything before (lt) this slot is freed
   slotid_t max_executed_slot_ = 0;
@@ -2927,8 +2241,8 @@ class RaftServer : public TxLogServer {
   // Atomically appends and installs the callback under mtx_, then publishes
   // replication after releasing the lock. callback_token receives a unique,
   // non-zero registration owner on success and zero when no definitive append
-  // was admitted. The tri-state result distinguishes safe rejection from a
-  // possibly durable local append.
+  // was admitted. Memory-only Raft returns only REJECTED or APPENDED; the
+  // tri-state type is retained for the RaftWorker interface.
   // @unsafe - Callback ownership, mutex operations, and output pointers.
   RaftStartResult StartWithCallback(
       const janus::Command& cmd,
@@ -3006,53 +2320,6 @@ class RaftServer : public TxLogServer {
 		instance->slot_id = slot_id;
 		instance->ballot = ballot;
 
-    // CRITICAL: Persist log entry before replicating to followers
-    // @unsafe
-    {
-      const bool local_entry_persisted = PersistLogEntry(
-          lastLogIndex, *instance, "SetLocalAppend: leader log");
-      if (HasConfiguredStorage() && !local_entry_persisted) {
-        const slotid_t failed_index = lastLogIndex;
-        const ballot_t failed_term = instance->term;
-        const bool durable_absence_proven =
-            log_storage_ != nullptr &&
-            raft_server_compensating_remove_and_sync(
-                *log_storage_, failed_index);
-        const StepDownReason failure_reason = securedLeader_
-            ? StepDownReason::SecuredFailure
-            : StepDownReason::UnsecuredFailure;
-        // Preserve the central transition: existing pending submissions must
-        // receive terminal rollback notification and observers must see the
-        // leader-change callback before RPC admission closes.
-        stepDown(failure_reason);
-        raft_logs_.erase(failed_index);
-        durableAcks_.erase(failed_index);
-        memoryAcks_.erase(failed_index);
-        --lastLogIndex;
-        // Nonzero outputs identify the potentially persisted slot. Zero means
-        // the compensating durable removal proved that a normal retry cannot
-        // resurrect this command.
-        *index = durable_absence_proven ? 0 : failed_index;
-        *term = durable_absence_proven ? 0 : failed_term;
-        rpc_ready_.store(false, rusty::sync::atomic::Ordering::Release);
-        stop_.store(true, rusty::sync::atomic::Ordering::Release);
-        looping_.store(false, rusty::sync::atomic::Ordering::Release);
-        apply_thread_running_.store(false);
-        Log_error("[RAFT-PERSISTENCE] Site {} could not durably append "
-                  "leader slot {}; compensating_absence={} and failing stop",
-                  site_id_, failed_index, durable_absence_proven);
-        return durable_absence_proven
-            ? RaftStartResult::REJECTED
-            : RaftStartResult::INDETERMINATE;
-      }
-      if (is_leader_ && local_entry_persisted &&
-          raft_server_persistence_can_report_durable(HasDurableStorage())) {
-        // The leader's local append crosses its persistence boundary before
-        // replication begins, so it is one member of the durable quorum.
-        durableAcks_[lastLogIndex].insert(site_id_);
-      }
-    }
-
     // @unsafe
     {
       *term = currentTerm ;
@@ -3097,56 +2364,6 @@ class RaftServer : public TxLogServer {
   ~RaftServer() ;
 
   // ============================================================================
-  // LOG PERSISTENCE PUBLIC API
-  // ============================================================================
-
-  /**
-   * Set the log storage backend for persistence.
-   * Should be called before starting the server.
-   * @param storage Shared pointer to LogStorage implementation
-   */
-  // @unsafe - moves shared_ptr into member field
-  void SetLogStorage(std::shared_ptr<janus::raft::LogStorage> storage) {
-    log_storage_ = std::move(storage);
-    persistence_healthy_.store(
-        true, rusty::sync::atomic::Ordering::Release);
-  }
-
-  /**
-   * Get the current log storage backend.
-   * @return Shared pointer to LogStorage, or nullptr if not set
-   */
-  // @unsafe - returns copy of shared_ptr
-  std::shared_ptr<janus::raft::LogStorage> GetLogStorage() const {
-    return log_storage_;
-  }
-
-  /**
-   * Recover state from persistent storage.
-   * Restores currentTerm, vote_for_, commitIndex, and log entries.
-   * Should be called during initialization if storage is available.
-   * @return true if recovery succeeded or storage is not set, false on error
-   */
-  // @safe - recovery from storage (external calls wrapped in @unsafe blocks)
-  bool RecoverFromStorage();
-
-  /**
-   * Replay committed entries after recovery.
-   * Called after app_next_ callback is registered to apply recovered entries.
-   * Must be called AFTER RegLearnerAction() sets up the callback.
-   */
-  // @safe - replays committed entries (callbacks wrapped in @unsafe blocks)
-  bool ReplayCommittedEntries();
-
-  /**
-   * Get count of uncommitted entries after recovery.
-   * These entries will be resolved by the consensus protocol.
-   * @return Number of uncommitted entries (lastLogIndex - commitIndex)
-   */
-  // @safe - Read-only accessor
-  size_t GetUncommittedCount() const;
-
-  // ============================================================================
   // SNAPSHOT SUPPORT PUBLIC API
   // ============================================================================
 
@@ -3168,17 +2385,8 @@ class RaftServer : public TxLogServer {
   std::shared_ptr<janus::raft::SnapshotManager> GetSnapshotManager();
 
   /**
-   * Get the ReplicatedDB instance, if one was created during Setup().
-   * @return Shared pointer to ReplicatedDB, or nullptr if not enabled
-   */
-  // @unsafe - returns copy of shared_ptr
-  std::shared_ptr<ReplicatedDB> GetReplicatedDB() const {
-    return replicated_db_;
-  }
-
-  /**
    * Set state machine snapshot callbacks.
-   * Called by ReplicatedDB (or other state machines) to hook into
+   * Called by the application state machine to hook into
    * CreateSnapshot() and OnInstallSnapshot().
    * @param create_cb Returns serialized state machine snapshot data
    * @param prepare_cb Validates and stages serialized state-machine bytes. The
@@ -3219,11 +2427,11 @@ class RaftServer : public TxLogServer {
 
   /**
    * Compact log entries up to the given index.
-   * Removes entries from storage that are covered by a snapshot.
+   * Removes in-memory entries that are covered by a snapshot.
    * @param up_to_index Remove entries with index <= this value
    * @return Number of entries removed
    */
-  // @safe - log compaction (storage operations wrapped in @unsafe blocks)
+  // @unsafe - In-memory log compaction under mtx_.
   size_t CompactLog(slotid_t up_to_index);
 
   /**
@@ -3253,23 +2461,6 @@ class RaftServer : public TxLogServer {
                      ballot_t *reply_term,
                      bool_t *vote_granted) ;
 
-  /**
-   * VoteDurable RPC Handler - Speculative Voting Protocol
-   *
-   * Receives VoteDurable RPC from a follower after it has durably persisted
-   * its vote to disk. This allows the leader to track durable votes separately
-   * from memory votes, enabling speculative leader election.
-   *
-   * @param term - Term of the vote (must match current term)
-   * @param voter_id - Site ID of the voter
-   * @param acknowledged - [OUT] true if vote was recorded
-   * @param cb - Callback to invoke when handling complete
-   */
-  // @unsafe - Modifies durableVoters_ and securedLeader_
-  void OnVoteDurable(const ballot_t& term,
-                     const siteid_t& voter_id,
-                     bool_t* acknowledged);
-
   // @safe - external calls marked @external, output pointer writes in @unsafe blocks
   // take janus::Command;
   // shared_ptr<Marshallable> callers auto-convert via Command's
@@ -3286,27 +2477,7 @@ class RaftServer : public TxLogServer {
                        uint64_t *followerAppendOK,
                        uint64_t *followerCurrentTerm,
                        uint64_t *followerLastLogIndex,
-                       uint64_t *followerAckType,
                        bool trigger_election_now = false);
-
-  /**
-   * AppendEntriesDurable RPC Handler - Speculative Commit Protocol
-   *
-   * Receives AppendEntriesDurable RPC from a follower after it has durably
-   * persisted log entries to disk. This allows the leader to track durable
-   * acknowledgments separately from memory acks, enabling speculative commits.
-   *
-   * @param term - Term when entries were persisted (must match current term)
-   * @param follower_id - Site ID of the follower
-   * @param lastLogIndex - Highest log index that is now durable on follower
-   * @param acknowledged - [OUT] true if ack was recorded
-   * @param cb - Callback to invoke when handling complete
-   */
-  // @unsafe - Modifies durableAcks_ and securedLogIndex_
-  void OnAppendEntriesDurable(const ballot_t& term,
-                              const siteid_t& follower_id,
-                              const uint64_t& lastLogIndex,
-                              bool_t* acknowledged);
 
   /**
    * TimeoutNow RPC Handler - Leadership Transfer Protocol
@@ -3539,19 +2710,6 @@ class RaftServer : public TxLogServer {
   // ============================================================================
 
   /**
-   * Check if this leader has achieved secured status (durable vote quorum).
-   * When securedLeader_ = true, a quorum has votedFor = me on disk,
-   * so no other candidate can win election in this term.
-   * @return true if leader has durable vote quorum
-   */
-  // @unsafe - Locks mtx_ before reading securedLeader_, then reads the external
-  // LogStorage open state. The mutex is recursive for consensus-path callers.
-  bool IsSecuredLeader() {
-    std::lock_guard<std::recursive_mutex> lock(mtx_);
-    return securedLeader_ && HasDurableStorage();
-  }
-
-  /**
    * Get the speculative commit index (highest index with memory ack quorum).
    * @return specCommitIndex value
    */
@@ -3561,7 +2719,8 @@ class RaftServer : public TxLogServer {
   }
 
   /**
-   * Get the secured log index (highest index with durable ack quorum).
+   * Get the secured log index (the rollback floor: commitIndex at election,
+   * 0 after step-down).
    * Invariant: securedLogIndex <= specCommitIndex <= lastLogIndex
    * @return securedLogIndex value
    */
@@ -3589,24 +2748,6 @@ class RaftServer : public TxLogServer {
   }
 
   /**
-   * Get the set of servers that have durably-voted for us in current term.
-   * @return copy of durableVoters set
-   */
-  // @unsafe - Returns copy, read-only access
-  std::set<siteid_t> GetDurableVoters() const {
-    return durableVoters_;
-  }
-
-  /**
-   * Get the count of servers that have durably-voted for us in current term.
-   * @return Number of servers in durableVoters
-   */
-  // @unsafe - Read-only accessor on std::set
-  size_t GetDurableVotersCount() const {
-    return durableVoters_.size();
-  }
-
-  /**
    * Get the last log index.
    * @return lastLogIndex value
    */
@@ -3627,23 +2768,11 @@ class RaftServer : public TxLogServer {
   }
 
   /**
-   * Get the number of durable acks for a specific log index.
-   * @param index Log index to query
-   * @return Number of nodes that have durably-acked this index
-   */
-  // @unsafe - Read-only accessor on std::map
-  size_t GetDurableAckCount(uint64_t index) const {
-    auto it = durableAcks_.find(index);
-    return it != durableAcks_.end() ? it->second.size() : 0;
-  }
-
-  /**
    * Reset speculative state when becoming leader or stepping down.
    * Called during leadership transitions.
    *
    * On becoming leader:
    * - specVoters = {self}  (voted for self)
-   * - durableVoters = {self} only when local persistence is enabled
    * - securedLogIndex = commitIndex (from previous term)
    * - specCommitIndex = commitIndex
    *
@@ -3658,7 +2787,6 @@ class RaftServer : public TxLogServer {
    * Debug helper - asserts if invariants are violated.
    * Invariants:
    * - securedLogIndex <= specCommitIndex <= lastLogIndex
-   * - durableVoters ⊆ specVoters (conceptually, not strictly enforced after crashes)
    */
   // @safe - Read-only check
   void VerifySpeculativeInvariants() const;
@@ -3668,12 +2796,12 @@ class RaftServer : public TxLogServer {
    *
    * Called when we receive notifyRestart from another server. For speculative
    * replication, this means the restarted server has lost:
-   * 1. Its memory vote (if it voted but didn't fsync)
-   * 2. Memory-acked log entries (not yet fsynced)
+   * 1. Its memory vote
+   * 2. Memory-acked log entries
    *
    * This method invalidates any speculative state that depended on the
-   * restarted server and may trigger step-down if we're an unsecured leader
-   * who has lost speculative quorum.
+   * restarted server and triggers step-down if we are a leader who has lost
+   * the memory vote quorum.
    *
    * @param restarted_site_id - Site ID of the server that restarted
    */
@@ -3690,9 +2818,8 @@ class RaftServer : public TxLogServer {
    * 3. Transitioning to follower state
    * 4. Resetting election timer
    *
-   * Future: Will also notify pending clients based on reason:
-   * - UnsecuredFailure: Rollback all current-term entries
-   * - SecuredFailure: Rollback only unsecured entries
+   * Also notifies pending clients based on reason:
+   * - UnsecuredFailure: Rollback every pending entry above the rollback floor
    * - HigherTerm: No automatic rollback (entries may still be valid)
    *
    * @param reason - Why the leader is stepping down
@@ -3709,7 +2836,6 @@ class RaftServer : public TxLogServer {
    *
    * The callback will be invoked with:
    * - SPECULATIVE: When entry reaches memory quorum (specCommitIndex advances)
-   * - DURABLE: When entry reaches disk quorum with secured leader
    * - ROLLEDBACK: If leader steps down gracefully (best-effort)
    *
    * Note: Callback is invoked while holding mtx_, keep it lightweight.
@@ -3733,7 +2859,7 @@ class RaftServer : public TxLogServer {
 
   /**
    * Notify all registered callbacks for indices in range (from, to] with status.
-   * Used internally by specCommitIndex/securedLogIndex advancement handlers.
+   * Used internally by the specCommitIndex advancement and rollback handlers.
    *
    * @param from - Exclusive lower bound
    * @param to - Inclusive upper bound
@@ -3748,8 +2874,6 @@ class RaftServer : public TxLogServer {
    *
    * Behavior per reason:
    * - UnsecuredFailure: Rollback every pending entry in
-   *   (securedLogIndex_, lastLogIndex]
-   * - SecuredFailure: Rollback every pending entry in
    *   (securedLogIndex_, lastLogIndex]
    * - HigherTerm: No automatic rollback (entries may still be valid under new leader)
    *

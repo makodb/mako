@@ -8,7 +8,6 @@
 
 pub mod channel_transport_hpp;
 pub mod commo_h;
-pub mod file_snapshot_manager_hpp;
 pub mod frame_cc;
 pub mod log_storage_hpp;
 pub mod memory_log_storage_hpp;
@@ -17,9 +16,6 @@ pub mod messages_hpp;
 pub mod quorum_hpp;
 pub mod raft_main_helper_cc;
 pub mod raft_worker_cc;
-pub mod read_raft_disk_cc;
-pub mod recovery_manager_hpp;
-pub mod replicated_db_h;
 pub mod rocksdb_log_storage_hpp;
 pub mod server_cc;
 pub mod server_h;

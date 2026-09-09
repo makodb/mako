@@ -8,10 +8,8 @@
 #include "frame.h"
 #include "service.h"
 #include "commo.h"
-#include "recovery_manager.hpp"
 #include "application_log.h"
 #include "../replication_log_entry.h"
-#include "replicated_db.h"
 
 #include "rrr/rrr.hpp"
 
@@ -58,19 +56,13 @@ pub const fn raft_test_should_record_agreement_command(command_kind: i32,
                                                         agreement_kind: i32) -> bool {
     command_kind == agreement_kind
 }
-
-pub const fn raft_test_is_known_application_command(command_kind: i32,
-                                                     replicated_db_kind: i32) -> bool {
-    command_kind == replicated_db_kind
-}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_testconf.index_math version=1 rust_sha256=cd8e772d60583e91f305704f1d7a1954f6afa69a5c77d1d98d7487684cd3e3da*/
+/*RUSTYCPP:GEN-BEGIN id=raft_testconf.index_math version=1 rust_sha256=922d60e1a09b2c2f685aae7bbdf244ab746ea6ac855b9e45ca5f8aa802aeed1e*/
 constexpr bool raft_test_server_index_is_valid(int32_t index, int32_t server_count);
 constexpr int32_t raft_test_wrapped_server_index(int32_t index, int32_t offset, int32_t server_count);
 constexpr bool raft_test_connected_term_moved_on(bool disconnected, uint64_t current_term, uint64_t observed_term);
 constexpr bool raft_test_wait_leader_is_invalid(bool disconnected, bool is_leader, uint64_t current_term, uint64_t expected_term);
 constexpr bool raft_test_should_record_agreement_command(int32_t command_kind, int32_t agreement_kind);
-constexpr bool raft_test_is_known_application_command(int32_t command_kind, int32_t replicated_db_kind);
 constexpr bool raft_test_server_index_is_valid(int32_t index, int32_t server_count) {
     return (rusty::detail::deref_if_pointer_like(index) >= 0) && (rusty::detail::deref_if_pointer_like(index) < rusty::detail::deref_if_pointer_like(server_count));
 }
@@ -90,9 +82,6 @@ constexpr bool raft_test_wait_leader_is_invalid(bool disconnected, bool is_leade
 constexpr bool raft_test_should_record_agreement_command(int32_t command_kind, int32_t agreement_kind) {
     return rusty::detail::deref_if_pointer_like(command_kind) == rusty::detail::deref_if_pointer_like(agreement_kind);
 }
-constexpr bool raft_test_is_known_application_command(int32_t command_kind, int32_t replicated_db_kind) {
-    return rusty::detail::deref_if_pointer_like(command_kind) == rusty::detail::deref_if_pointer_like(replicated_db_kind);
-}
 /*RUSTYCPP:GEN-END id=raft_testconf.index_math*/
 
 static_assert(!raft_test_server_index_is_valid(-1, 5));
@@ -110,8 +99,6 @@ static_assert(raft_test_wait_leader_is_invalid(false, true, 51, 50));
 static_assert(!raft_test_wait_leader_is_invalid(false, true, 50, 50));
 static_assert(raft_test_should_record_agreement_command(7, 7));
 static_assert(!raft_test_should_record_agreement_command(8, 7));
-static_assert(raft_test_is_known_application_command(19, 19));
-static_assert(!raft_test_is_known_application_command(20, 19));
 
 namespace {
 
@@ -154,15 +141,8 @@ void RaftTestConfig::SetLearnerAction(void) {
     auto frame = pair.second;
     RaftTestConfig::commit_callbacks[svr] =
         [svr](slotid_t slot, janus::Command md) -> int {
-          if (!raft_test_should_record_agreement_command(
-                  md.kind_, TpcCommitCommand::static_kind())) {
-            verify(raft_test_is_known_application_command(
-                md.kind_, ReplicatedDBCommand::static_kind()));
-            Log_debug("server {} applied ReplicatedDB command kind {} at "
-                      "slot {}; outside the RaftLab integer agreement oracle",
-                      svr, md.kind_, slot);
-            return 0;
-          }
+          verify(raft_test_should_record_agreement_command(
+              md.kind_, TpcCommitCommand::static_kind()));
           const auto commit_cmd = marshallable_cast<TpcCommitCommand>(md);
           verify(commit_cmd.is_some());
           Log_debug("server {} committed value {} at slot {}",
@@ -174,7 +154,7 @@ void RaftTestConfig::SetLearnerAction(void) {
     // Runtime apply takes the same gate before copying/invoking app_next_.
     // Replace the fail-closed startup placeholder without a data race.
     std::lock_guard<std::mutex> apply_lock(
-        frame->svr_->state_machine_apply_mtx_);
+        RaftServer::LabAccess::state_machine_apply_mtx(*frame->svr_));
     frame->svr_->RegLearnerAction(RaftTestConfig::commit_callbacks[svr]);
   }
 }
@@ -791,9 +771,7 @@ void RaftTestConfig::Kill(siteid_t svr) {
   Log_info("[RAFT-TEST] Server {} killed successfully", svr);
 }
 
-bool RaftTestConfig::Restart(
-    siteid_t svr,
-    std::function<RestartHookStatus(RaftServer*)> before_runtime_start) {
+bool RaftTestConfig::Restart(siteid_t svr) {
   std::lock_guard<std::recursive_mutex> lk(connection_m_);
   std::lock_guard<std::mutex> lk2(disconnect_mtx_);
 
@@ -824,8 +802,7 @@ bool RaftTestConfig::Restart(
   }
 
   // Keep the candidate private and reclaim it on every fail-closed exit.  It is
-  // released to replicas only after recovery, replay, and runtime wiring have
-  // all succeeded.
+  // released to replicas only after runtime wiring has succeeded.
   auto frame_owner = std::make_unique<RaftFrame>();
   RaftFrame* frame = frame_owner.get();
   frame->site_info_ = site_info;
@@ -858,231 +835,50 @@ bool RaftTestConfig::Restart(
     return false;
   }
 
-  // Manually initialize persistence and load state (without starting coroutines)
-  const char* persistence_flag = std::getenv("MAKO_RAFT_PERSISTENCE");
-  bool should_enable = (persistence_flag &&
-                       (strcmp(persistence_flag, "1") == 0 ||
-                        strcmp(persistence_flag, "true") == 0));
-
-  if (should_enable) {
-    // Set async persistence flag on the server (default: sync)
-    const char* async_flag = std::getenv("MAKO_RAFT_ASYNC_PERSISTENCE");
-    frame->svr_->async_persistence_ = (async_flag &&
-                                       (strcmp(async_flag, "1") == 0 ||
-                                        strcmp(async_flag, "true") == 0));
-
-    Log_info("[RAFT-TEST-RESTART] Loading persistence for site {} (mode={})",
-             svr, frame->svr_->async_persistence_ ? "async" : "sync");
-
-    // Create RecoveryConfig
-    raft::RecoveryConfig config;
-    std::string base_path = "/tmp";
-    const char* custom_path = std::getenv("MAKO_RAFT_PERSISTENCE_PATH");
-    if (custom_path && custom_path[0] != '\0') {
-      base_path = custom_path;
-    }
-    config.storage_path = base_path + "/raft_" + std::to_string(svr) +
-                         "_partition_" + std::to_string(site_info->partition_id_);
-
-    // Create RecoveryManager and storage
-    raft::RecoveryManager manager(config);
-    auto storage = manager.create_storage();
-
-    if (storage) {
-      // Use RecoveryManager to orchestrate recovery
-      auto result = manager.recover(
-        [frame](std::shared_ptr<janus::raft::LogStorage> s) { frame->svr_->SetLogStorage(s); },
-        [frame]() { return frame->svr_->RecoverFromStorage(); },
-        [frame](raft::RecoveryResult& r) {
-          r.recovered_term = frame->svr_->currentTerm;
-          r.recovered_entries = frame->svr_->raft_logs_.size();
-        }
-      );
-
-      if (result.success) {
-        Log_info("[RAFT-TEST-RESTART] Loaded: term={} vote={} lastLogIndex={} (mode={})",
-                 frame->svr_->currentTerm, frame->svr_->vote_for_,
-                 frame->svr_->lastLogIndex, static_cast<int>(result.mode));
-      } else {
-        Log_error("[RAFT-TEST-RESTART] Recovery failed: {}", result.error_message.c_str());
-        return false;
-      }
-    } else {
-      Log_error("[RAFT-TEST-RESTART] Configured storage could not be opened "
-                "for server {}",
-                svr);
-      return false;
-    }
-  }
-
-  // A durable application owns the snapshot loader, so construct/register it
-  // before snapshot discovery can replace application state. The server is not
-  // published through RaftServiceImpl until this entire restart completes.
-  RestartHookStatus hook_status;
-  bool hook_initialized = false;
-  if (before_runtime_start) {
-    try {
-      hook_status = before_runtime_start(frame->svr_.get());
-    } catch (const std::exception& error) {
-      Log_error("[RAFT-TEST-RESTART] Application hook threw for server {}: {}",
-                svr, error.what());
-      return false;
-    } catch (...) {
-      Log_error("[RAFT-TEST-RESTART] Application hook threw for server {}",
-                svr);
-      return false;
-    }
-    hook_initialized = true;
-  }
-
-  auto fail_after_hook = [&](const char* reason) {
-    Log_error("[RAFT-TEST-RESTART] Server {} startup rejected: {}", svr,
-              reason);
-    if (hook_initialized && hook_status.abort_cleanup) {
-      try {
-        hook_status.abort_cleanup();
-      } catch (const std::exception& error) {
-        Log_error("[RAFT-TEST-RESTART] Server {} application cleanup threw: {}",
-                  svr, error.what());
-      } catch (...) {
-        Log_error("[RAFT-TEST-RESTART] Server {} application cleanup threw",
-                  svr);
-      }
-    }
-    hook_initialized = false;
-    return false;
-  };
-
-  if (before_runtime_start &&
-      (!hook_status.initialized || !hook_status.callback_registered ||
-       !hook_status.read_applied_index || !hook_status.abort_cleanup)) {
-    return fail_after_hook(
-        "application hook did not prove initialization, callback, applied marker, and cleanup");
-  }
-
-  auto read_hook_applied_index = [&](slotid_t* applied_index) {
-    if (!before_runtime_start) {
-      return true;
-    }
-    try {
-      *applied_index = hook_status.read_applied_index();
-      return true;
-    } catch (const std::exception& error) {
-      Log_error("[RAFT-TEST-RESTART] Server {} applied-marker read threw: {}",
-                svr, error.what());
-    } catch (...) {
-      Log_error("[RAFT-TEST-RESTART] Server {} applied-marker read threw",
-                svr);
-    }
-    return false;
-  };
-
-  auto validate_hook_applied_index = [&](const char* phase) {
-    if (!before_runtime_start) {
-      return true;
-    }
-    slotid_t application_applied_index = 0;
-    if (!read_hook_applied_index(&application_applied_index)) {
-      return false;
-    }
-    if (application_applied_index > frame->svr_->commitIndex) {
-      Log_error("[RAFT-TEST-RESTART] Server {} application is ahead of durable "
-                "Raft commit {} snapshot restore: applied={} commit={}",
-                svr, phase, application_applied_index,
-                frame->svr_->commitIndex);
-      return false;
-    }
-    return true;
-  };
-
-  // Preserve the recovered application's marker as evidence until it has
-  // been compared with Raft. A snapshot install may legitimately replace the
-  // live application directory, so this check cannot be deferred until after
-  // InitializeSnapshotManager().
-  if (!validate_hook_applied_index("before")) {
-    return fail_after_hook("application applied marker exceeds commit before snapshot restore");
-  }
-
   // Restart() bypasses Setup(), so restore snapshot manager wiring explicitly.
-  // This runs after RecoverFromStorage(), matching Setup()'s recovery order.
-  if (!frame->svr_->InitializeSnapshotManager()) {
-    Log_error("[RAFT-TEST-RESTART] Snapshot recovery failed for server {}",
+  // Memory-only Raft has nothing to recover: with MAKO_RAFT_SNAPSHOTS set this
+  // seeds an empty in-memory manager so the server can accept InstallSnapshot.
+  if (!RaftServer::LabAccess::InitializeSnapshotManager(*frame->svr_)) {
+    Log_error("[RAFT-TEST-RESTART] Snapshot manager initialization failed for server {}",
               svr);
-    return fail_after_hook("snapshot recovery failed");
-  }
-
-  // Retain the post-restore assertion as defense against a loader that
-  // publishes an invalid marker despite accepting the snapshot transaction.
-  if (!validate_hook_applied_index("after")) {
-    return fail_after_hook("application applied marker exceeds commit after snapshot restore");
+    return false;
   }
 
   // Setup() normally seeds current_config_ from static partition metadata.
   // HeartbeatLoop uses this membership immediately, so initialize it before
   // queuing either runtime loop.
-  if (frame->svr_->current_config_.empty()) {
+  if (RaftServer::LabAccess::current_config(*frame->svr_).empty()) {
     auto replicas_for_partition =
         Config::GetConfig()->SitesByPartitionId(frame->svr_->partition_id_);
     for (const auto& site : replicas_for_partition) {
-      frame->svr_->current_config_.insert(site.id);
+      RaftServer::LabAccess::current_config(*frame->svr_).insert(site.id);
     }
   }
 
   // Record startup timestamp for grace period logic (same as Setup())
-  frame->svr_->startup_timestamp_ = Time::now(true);
+  RaftServer::LabAccess::startup_timestamp(*frame->svr_) = Time::now(true);
 
   // CRITICAL: Mark Setup() as already done to prevent EnsureSetup() from calling it again
-  // This prevents double-initialization of persistence which would reset the loaded state
-  frame->svr_->heartbeat_setup_ = true;
+  RaftServer::LabAccess::heartbeat_setup(*frame->svr_) = true;
 
-  // Register the learner callback before recovered committed entries can be
-  // applied, then restore the apply infrastructure normally started by Setup().
-  // A durable application test can construct its state machine in this exact
-  // pre-runtime window; all other tests retain the RaftLab agreement oracle.
-  if (!before_runtime_start) {
-    commit_callbacks[svr] =
-        [svr](slotid_t slot, janus::Command md) -> int {
-          if (!raft_test_should_record_agreement_command(
-                  md.kind_, TpcCommitCommand::static_kind())) {
-            verify(raft_test_is_known_application_command(
-                md.kind_, ReplicatedDBCommand::static_kind()));
-            Log_debug("server {} applied ReplicatedDB command kind {} at "
-                      "slot {}; outside the RaftLab integer agreement oracle",
-                      svr, md.kind_, slot);
-            return 0;
-          }
-          const auto commit_cmd = marshallable_cast<TpcCommitCommand>(md);
-          verify(commit_cmd.is_some());
-          Log_debug("server {} committed value {} at slot {}",
-                    svr, commit_cmd.unwrap()->tx_id_, slot);
-          RaftTestConfig::RecordCommittedCommand(
-              svr, slot, commit_cmd.unwrap()->tx_id_);
-          return 0;
-        };
-    frame->svr_->RegLearnerAction(commit_callbacks[svr]);
-  }
+  // Register the learner callback before any committed entry can be applied,
+  // then restore the apply infrastructure normally started by Setup().
+  commit_callbacks[svr] =
+      [svr](slotid_t slot, janus::Command md) -> int {
+        verify(raft_test_should_record_agreement_command(
+            md.kind_, TpcCommitCommand::static_kind()));
+        const auto commit_cmd = marshallable_cast<TpcCommitCommand>(md);
+        verify(commit_cmd.is_some());
+        Log_debug("server {} committed value {} at slot {}",
+                  svr, commit_cmd.unwrap()->tx_id_, slot);
+        RaftTestConfig::RecordCommittedCommand(
+            svr, slot, commit_cmd.unwrap()->tx_id_);
+        return 0;
+      };
+  frame->svr_->RegLearnerAction(commit_callbacks[svr]);
 
-  if (!frame->svr_->ReplayCommittedEntries() ||
-      frame->svr_->executeIndex != frame->svr_->commitIndex) {
-    Log_error("[RAFT-TEST-RESTART] Committed replay failed for server {}: "
-              "executeIndex={} commitIndex={}",
-              svr, frame->svr_->executeIndex, frame->svr_->commitIndex);
-    return fail_after_hook("committed replay failed");
-  }
-  if (before_runtime_start) {
-    slotid_t application_applied_index = 0;
-    if (!read_hook_applied_index(&application_applied_index)) {
-      return fail_after_hook("post-replay applied marker is unreadable");
-    }
-    if (application_applied_index != frame->svr_->commitIndex) {
-      Log_error("[RAFT-TEST-RESTART] Server {} application replay marker {} "
-                "does not match commit {}",
-                svr, application_applied_index, frame->svr_->commitIndex);
-      return fail_after_hook("application replay did not reach commit");
-    }
-  }
-  frame->svr_->StartApplyThread();
-  frame->svr_->rpc_ready_.store(
+  RaftServer::LabAccess::StartApplyThread(*frame->svr_);
+  RaftServer::LabAccess::rpc_ready(*frame->svr_).store(
       true, rusty::sync::atomic::Ordering::Release);
 
   // Start the heartbeat loop and election timer manually since we're skipping Setup()
@@ -1091,22 +887,22 @@ bool RaftTestConfig::Restart(
   // not on this server's poll thread. We must use poll_thread->add() instead.
 #ifdef RAFT_TEST_CORO
   auto restart_poll_thread = frame->commo_->PollThread();
-  if (frame->svr_->heartbeat_ && restart_poll_thread.is_some()) {
+  if (RaftServer::LabAccess::heartbeat(*frame->svr_) && restart_poll_thread.is_some()) {
     auto& poll_thread = restart_poll_thread.as_ref().unwrap();
 
     // Add HeartbeatLoop as a job to the correct poll thread
-    frame->svr_->heartbeat_loop_running_.store(
+    RaftServer::LabAccess::heartbeat_loop_running(*frame->svr_).store(
         true, rusty::sync::atomic::Ordering::Release);
     auto hb_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([frame]() {
       Fiber::create_run([frame]() {
-        frame->svr_->HeartbeatLoop();
+        RaftServer::LabAccess::HeartbeatLoop(*frame->svr_);
       });
     }));
     poll_thread->add(rusty::Arc<Job>(hb_job));
 
     // Add election timer as a job to the correct poll thread
-    if (frame->svr_->failover_) {
-      frame->svr_->election_loop_running_.store(
+    if (RaftServer::LabAccess::failover(*frame->svr_)) {
+      RaftServer::LabAccess::election_loop_running(*frame->svr_).store(
           true, rusty::sync::atomic::Ordering::Release);
       auto election_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([frame]() {
         Fiber::create_run([frame]() {
@@ -1144,7 +940,6 @@ bool RaftTestConfig::Restart(
 
   Log_info("[RAFT-TEST] Server {} restarted successfully (term={}, lastLogIndex={})",
            svr, frame->svr_->currentTerm, frame->svr_->lastLogIndex);
-  hook_initialized = false;
   return true;
 }
 
@@ -1214,14 +1009,6 @@ siteid_t RaftTestConfig::getNextServerId(siteid_t current_server_id, int offset)
 // SPECULATIVE RAFT STATE QUERIES
 // ============================================================================
 
-bool RaftTestConfig::IsSecuredLeader(siteid_t svr) {
-  auto server = GetServer(svr);
-  if (!server || !server->IsLeader()) {
-    return false;
-  }
-  return server->IsSecuredLeader();
-}
-
 uint64_t RaftTestConfig::GetSpecCommitIndex(siteid_t svr) {
   auto server = GetServer(svr);
   if (!server) {
@@ -1244,14 +1031,6 @@ size_t RaftTestConfig::GetSpecVotersCount(siteid_t svr) {
     return 0;
   }
   return server->GetSpecVotersCount();
-}
-
-size_t RaftTestConfig::GetDurableVotersCount(siteid_t svr) {
-  auto server = GetServer(svr);
-  if (!server) {
-    return 0;
-  }
-  return server->GetDurableVotersCount();
 }
 
 bool RaftTestConfig::VerifySpecInvariants(siteid_t svr) {
@@ -1284,14 +1063,6 @@ size_t RaftTestConfig::GetMemoryAckCount(siteid_t svr, uint64_t index) {
     return 0;
   }
   return server->GetMemoryAckCount(index);
-}
-
-size_t RaftTestConfig::GetDurableAckCount(siteid_t svr, uint64_t index) {
-  auto server = GetServer(svr);
-  if (!server) {
-    return 0;
-  }
-  return server->GetDurableAckCount(index);
 }
 
 #endif

@@ -163,7 +163,7 @@ public:
   bool WaitForStartup();
   // Open or close this worker's shared application-RPC admission gate.
   void SetRpcAdmissionReady(bool ready);
-  // Wait for Raft recovery/replay, then open the shared RPC listener.
+  // Wait for the owner-thread Raft startup job, then open the shared RPC listener.
   bool FinishStartup();
   // @unsafe - uses new, raw pointers
   void SetupHeartbeat();

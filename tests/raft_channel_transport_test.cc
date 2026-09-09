@@ -28,7 +28,6 @@ struct Counts {
   AtomicInt n_append{0};
   AtomicInt n_vote{0};
   AtomicInt n_timeout{0};
-  AtomicInt n_vote_durable{0};
   AtomicInt n_install{0};
 };
 
@@ -40,10 +39,6 @@ class RecordingDispatcher : public DispatcherBase {
     counts->n_vote.fetch_add(1);
     VoteReply r{}; r.vote_granted = true; return r;
   }
-  VoteDurableReply handle_vote_durable(VoteDurableReq) override {
-    counts->n_vote_durable.fetch_add(1);
-    return VoteDurableReply{};
-  }
   AppendEntriesReply handle_append_entries(AppendEntriesReq) override {
     counts->n_append.fetch_add(1);
     AppendEntriesReply r{}; r.follower_append_ok = 1; return r;
@@ -51,9 +46,6 @@ class RecordingDispatcher : public DispatcherBase {
   EmptyAppendEntriesReply handle_empty_append_entries(EmptyAppendEntriesReq) override {
     counts->n_append.fetch_add(1);
     EmptyAppendEntriesReply r{}; r.follower_append_ok = 1; return r;
-  }
-  AppendEntriesDurableReply handle_append_entries_durable(AppendEntriesDurableReq) override {
-    return AppendEntriesDurableReply{};
   }
   TimeoutNowReply handle_timeout_now(TimeoutNowReq) override {
     counts->n_timeout.fetch_add(1);
@@ -120,15 +112,9 @@ TEST(RaftChannelTransportTest, RoundTripBetweenTwoSites) {
   auto v = tr_a->send_vote(2, VoteReq{});
   EXPECT_TRUE(v.vote_granted);
 
-  tr_a->send_vote_durable(2, VoteDurableReq{});
-  tr_a->send_append_entries_durable(2, AppendEntriesDurableReq{});
-  // Give the durables a moment to be consumed before we tear down.
-  std::this_thread::sleep_for(std::chrono::milliseconds(20));
-
   EXPECT_EQ(counts_a->n_timeout.load(), 1);
   EXPECT_EQ(counts_b->n_append.load(),  1);
   EXPECT_EQ(counts_b->n_vote.load(),    1);
-  EXPECT_EQ(counts_b->n_vote_durable.load(), 1);
 }
 
 TEST(RaftChannelTransportTest, DropDirectionFallsBackToDefault) {

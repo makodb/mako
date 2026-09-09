@@ -22,25 +22,6 @@ pub struct VoteReply {
     pub vote_granted: bool,
 }
 
-// VoteDurable — sent by a voter once its vote has been persisted.
-#[cfg_attr(any(), cpp_no_auto_traits)]
-#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Default, Eq, PartialEq))]
-#[repr(C)]
-pub struct VoteDurableReq {
-    #[cfg_attr(any(), cpp_value_init)]
-    pub term: i64,
-    #[cfg_attr(any(), cpp_value_init)]
-    pub voter_id: u16,
-}
-
-#[cfg_attr(any(), cpp_no_auto_traits)]
-#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Default, Eq, PartialEq))]
-#[repr(C)]
-pub struct VoteDurableReply {
-    #[cfg_attr(any(), cpp_value_init)]
-    pub acknowledged: bool,
-}
-
 #[cfg_attr(any(), cpp_no_auto_traits)]
 #[cfg_attr(not(any()), derive(Clone, Copy, Debug, Default, Eq, PartialEq))]
 #[repr(C)]
@@ -51,8 +32,6 @@ pub struct AppendEntriesReply {
     pub follower_current_term: u64,
     #[cfg_attr(any(), cpp_value_init)]
     pub follower_last_log_index: u64,
-    #[cfg_attr(any(), cpp_value_init)]
-    pub follower_ack_type: u64,
 }
 
 #[cfg_attr(any(), cpp_no_auto_traits)]
@@ -87,28 +66,6 @@ pub struct EmptyAppendEntriesReply {
     pub follower_current_term: u64,
     #[cfg_attr(any(), cpp_value_init)]
     pub follower_last_log_index: u64,
-    #[cfg_attr(any(), cpp_value_init)]
-    pub follower_ack_type: u64,
-}
-
-#[cfg_attr(any(), cpp_no_auto_traits)]
-#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Default, Eq, PartialEq))]
-#[repr(C)]
-pub struct AppendEntriesDurableReq {
-    #[cfg_attr(any(), cpp_value_init)]
-    pub term: i64,
-    #[cfg_attr(any(), cpp_value_init)]
-    pub follower_id: u16,
-    #[cfg_attr(any(), cpp_value_init)]
-    pub last_log_index: u64,
-}
-
-#[cfg_attr(any(), cpp_no_auto_traits)]
-#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Default, Eq, PartialEq))]
-#[repr(C)]
-pub struct AppendEntriesDurableReply {
-    #[cfg_attr(any(), cpp_value_init)]
-    pub acknowledged: bool,
 }
 
 #[cfg_attr(any(), cpp_no_auto_traits)]
