@@ -2399,6 +2399,23 @@ if(TARGET sto_tpcc_bench)
         TIMEOUT 30)
 endif()
 
+# Capacity diagnostics must remain intact when shutdown loggers write to the
+# same pipe without sharing the benchmark stream lock. Keep this regression
+# independent of libmako and native process-lifetime allocations.
+add_executable(test_benchmark_output EXCLUDE_FROM_ALL
+    tests/test_benchmark_output.cc)
+target_include_directories(test_benchmark_output PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/mako")
+target_link_libraries(test_benchmark_output PRIVATE pthread)
+set_target_properties(test_benchmark_output PROPERTIES CXX_MODULE_STD OFF)
+target_compile_options(test_benchmark_output PRIVATE
+    $<$<COMPILE_LANG_AND_ID:CXX,Clang,AppleClang,GNU>:-Wall;-Wextra;-Wpedantic;-Werror>)
+add_test(NAME test_benchmark_output COMMAND test_benchmark_output)
+set_tests_properties(test_benchmark_output PROPERTIES
+    LABELS "sto;rust;ffi;diagnostics;concurrency"
+    RUN_SERIAL TRUE
+    TIMEOUT 30)
+
 # C consumers must be able to include the public ABI without any C++
 # compatibility layer. This executable contains no ABI calls and therefore
 # compiles and links independently of libmako and Masstree.
@@ -2514,6 +2531,7 @@ if(MAKO_CARGO_EXECUTABLE)
             sto_tpcc_cpp_wrapper_smoke
             sto_tpcc_cpp_wrapper_scan_smoke
             rocksdbInterfaceTest
+            test_benchmark_output
             test_mtree_abi_c11_header
             test_sto_tpcc_ffi_c11_header
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"

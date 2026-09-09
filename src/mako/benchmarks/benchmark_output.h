@@ -1,10 +1,13 @@
 #ifndef MAKO_BENCHMARKS_BENCHMARK_OUTPUT_H
 #define MAKO_BENCHMARKS_BENCHMARK_OUTPUT_H
 
+#include <cerrno>
+#include <cstddef>
 #include <iostream>
 #include <mutex>
 #include <ostream>
 #include <utility>
+#include <unistd.h>
 
 namespace mako {
 
@@ -15,6 +18,44 @@ inline std::mutex &benchmark_output_mutex()
 {
   static std::mutex output_mutex;
   return output_mutex;
+}
+
+// Shutdown loggers do not share benchmark_output_mutex(). Emit this record in
+// one write bounded by POSIX's minimum PIPE_BUF, including both newlines, so a
+// partial concurrent log cannot split or attach to the machine-readable line.
+// Use stack storage because this path reports exhausted storage resources.
+inline bool emit_benchmark_resource_exhaustion(const char *phase,
+                                              const char *detail)
+{
+  char line[512];
+  std::size_t size = 0;
+  bool truncated = false;
+  line[size++] = '\n';
+  const auto append = [&](const char *text) {
+    while (*text != '\0' && size < sizeof(line) - 1) {
+      const unsigned char ch = static_cast<unsigned char>(*text++);
+      line[size++] = ch < 0x20 || ch == 0x7f ? ' ' : static_cast<char>(ch);
+    }
+    truncated = truncated || *text != '\0';
+  };
+  append("TPCC_RESOURCE_EXHAUSTED phase=");
+  append(phase ? phase : "unknown");
+  append(" error=");
+  append(detail ? detail : "");
+  if (truncated) {
+    line[size - 3] = '.';
+    line[size - 2] = '.';
+    line[size - 1] = '.';
+  }
+  line[size++] = '\n';
+
+  std::lock_guard<std::mutex> lock(benchmark_output_mutex());
+  std::cerr.flush();
+  ssize_t written;
+  do {
+    written = ::write(STDERR_FILENO, line, size);
+  } while (written < 0 && errno == EINTR);
+  return written == static_cast<ssize_t>(size);
 }
 
 class locked_benchmark_ostream {

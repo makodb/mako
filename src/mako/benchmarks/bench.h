@@ -27,8 +27,7 @@ class bench_runner;
 inline void report_benchmark_resource_exhaustion(
     const char *phase, const storage_resource_exhausted &error) {
   if (BenchmarkConfig::getInstance().requestResourceExhaustion()) {
-    mako::benchmark_cerr() << "TPCC_RESOURCE_EXHAUSTED phase=" << phase
-                           << " error=" << error.what() << std::endl;
+    ALWAYS_ASSERT(mako::emit_benchmark_resource_exhaustion(phase, error.what()));
   }
 }
 

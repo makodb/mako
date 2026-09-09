@@ -1117,6 +1117,7 @@ else:
         raise SystemExit(f"sto-tpcc-ffi Rust build lacks linker flag {required_flag}")
 
 boundary_executables = (
+    "test_benchmark_output",
     "dbtest",
     "rocksdbInterfaceTest",
     "sto_tpcc_bench",
@@ -1223,6 +1224,7 @@ required_sources = {
     "tests/mtree_abi_c11_header.c",
     "tests/srpc_epoll_platform_test.cc",
     "tests/sto_tpcc_ffi_c11_header.c",
+    "tests/test_benchmark_output.cc",
     "tests/test_mako_value_metadata.cc",
     "tests/test_mtree_abi.cc",
     "tests/test_silo_nontxn_api.cc",
@@ -1300,6 +1302,7 @@ required = {
     "test_silo_transitem_lifetime",
     "test_srpc_epoll_platform",
     "test_sto_tpcc_ffi_c11_header",
+    "test_benchmark_output",
     "test_sto_tpcc_cpp_wrapper_scan_smoke",
     "test_sto_tpcc_cpp_wrapper_smoke",
     "test_sto_tpcc_cpp_slow_exit",
