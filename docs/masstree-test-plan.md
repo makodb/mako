@@ -224,12 +224,15 @@ Clang runtime into the stable Rust-owned processes; Rust itself has no UBSan
 compiler mode. The ASan workspace sweep keeps leak detection enabled except for
 the shared list of 30 exact intentional transaction-frame quarantine cases,
 which it audits and reruns individually with leak reporting disabled. The
-native FFI runner leak-checks 34 of 35 unit cases and applies the same narrow
+native FFI runner leak-checks all other unit cases and applies the same narrow
 exception only to
-`tests::post_install_row_count_failure_marks_runtime_indeterminate`. The two
-Rust TPC-C lifecycle tests retain leak checking with one exact native
-Masstree-root suppression; the gate audits a combined 20 allocations and 6,400
-bytes for those roots. ASan disables leak reporting for the six default-profile
+`tests::post_install_row_count_failure_marks_runtime_indeterminate`. The four
+Rust TPC-C normal-shutdown and worker-exhaustion tests retain leak checking with
+one exact native Masstree-root suppression. The gate audits 4 allocations and
+1,280 bytes for each one-worker case, and 16 allocations and 5,120 bytes for
+each four-worker case, totaling 40 allocations and 12,800 bytes. Startup and
+loader exhaustion tests use no suppression and must exit without leaks.
+ASan disables leak reporting for the six default-profile
 process-lifetime native CTests and the two focused `STO_RMW=ON` aliases of the
 MassTrans suite. The four critical default-profile transaction regressions,
 including the reused-`TransItem` ownership case, retain leak checking. Address

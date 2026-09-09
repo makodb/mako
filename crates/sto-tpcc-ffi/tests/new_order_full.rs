@@ -8,6 +8,7 @@ const OK: i32 = 0;
 const MISS: i32 = 1;
 const RETRY: i32 = 3;
 const FATAL: i32 = 5;
+const RESOURCE_EXHAUSTED: i32 = 6;
 const READ_CAPACITY: usize = 512;
 
 fn last_error() -> String {
@@ -161,6 +162,7 @@ fn full_new_order_commits_exact_bytes_and_rolls_back_collisions() {
             max_key_length: 64,
             max_items_per_txn: 128,
             max_locks_per_txn: 256,
+            max_registry_bytes: 0,
         };
         let table_config = StoTpccTableConfig {
             max_retained_records: 512,
@@ -174,6 +176,15 @@ fn full_new_order_commits_exact_bytes_and_rolls_back_collisions() {
         for table in &mut tables {
             expect(sto_tpcc_table_create(db, &table_config, table), OK);
         }
+        let limited_config = StoTpccTableConfig {
+            max_retained_records: 2,
+            ..table_config
+        };
+        let mut limited_order_line = ptr::null_mut();
+        expect(
+            sto_tpcc_table_create(db, &limited_config, &mut limited_order_line),
+            OK,
+        );
         let [warehouse, district, customer, item, stock, new_order, oorder, oorder_idx, order_line] =
             tables;
         let mut thread = ptr::null_mut();
@@ -372,6 +383,47 @@ fn full_new_order_commits_exact_bytes_and_rolls_back_collisions() {
         assert_eq!(read_status(thread, new_order, &key3(1, 2, 3_005)).0, MISS);
         expect(sto_tpcc_txn_commit(thread), OK);
 
+        // Capacity failure happens after stock/header staging. The fused
+        // guard must roll back every table and leave the worker reusable.
+        request.quantities = quantities.as_ptr();
+        request.order_id = 4_000;
+        request.order_line_table = limited_order_line;
+        expect(sto_tpcc_txn_begin(thread), OK);
+        let stock_before_capacity = read(thread, stock, &key2(1, 1));
+        expect(sto_tpcc_txn_commit(thread), OK);
+        result.reported_value_bytes = 101;
+        expect(sto_tpcc_txn_begin(thread), OK);
+        expect(
+            mako_sto_tpcc_new_order_full_trusted(thread, &request, &mut result),
+            RESOURCE_EXHAUSTED,
+        );
+        assert_eq!(result.reported_value_bytes, 101);
+        expect(sto_tpcc_txn_begin(thread), OK);
+        assert_eq!(read(thread, stock, &key2(1, 1)), stock_before_capacity);
+        assert_eq!(read_status(thread, new_order, &key3(1, 2, 4_000)).0, MISS);
+        assert_eq!(read_status(thread, oorder, &key3(1, 2, 4_000)).0, MISS);
+        assert_eq!(
+            read_status(thread, oorder_idx, &key4(1, 2, 7, 4_000)).0,
+            MISS
+        );
+        expect(sto_tpcc_txn_commit(thread), OK);
+        let mut limited_rows = u64::MAX;
+        expect(
+            sto_tpcc_table_size(limited_order_line, &mut limited_rows),
+            OK,
+        );
+        assert_eq!(limited_rows, 0);
+        // The same order can commit using an order-line table with room.
+        request.order_line_table = order_line;
+        expect(sto_tpcc_txn_begin(thread), OK);
+        expect(
+            mako_sto_tpcc_new_order_full_trusted(thread, &request, &mut result),
+            OK,
+        );
+        expect(sto_tpcc_txn_begin(thread), OK);
+        assert_eq!(read(thread, oorder, &key3(1, 2, 4_000)), expected_oorder);
+        expect(sto_tpcc_txn_commit(thread), OK);
+
         // A cached token for a tombstoned required row remains a missing-row
         // fatal error, rather than weakening the required-presence contract.
         expect(sto_tpcc_txn_begin(thread), OK);
@@ -395,6 +447,7 @@ fn full_new_order_commits_exact_bytes_and_rolls_back_collisions() {
         expect(sto_tpcc_txn_commit(thread), OK);
 
         expect(sto_tpcc_thread_destroy(thread), OK);
+        expect(sto_tpcc_table_destroy(limited_order_line), OK);
         for table in tables.into_iter().rev() {
             expect(sto_tpcc_table_destroy(table), OK);
         }

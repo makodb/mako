@@ -27,6 +27,13 @@ ENGINES = ("cpp", "rust")
 MIX_KEYS = ("NewOrder", "Payment", "Delivery", "OrderStatus", "StockLevel")
 ALLOCATOR_MEMORY_ENV = "MAKO_TPCC_ALLOCATOR_MEMORY"
 DEFAULT_ALLOCATOR_MEMORY = "1G"
+RUST_REGISTRY_MEMORY_ENV = "MAKO_STO_TPCC_REGISTRY_MEMORY"
+DEFAULT_RUST_REGISTRY_MEMORY = "8G"
+TPCC_RECORD_QUOTA_ENVIRONMENT_KEYS = (
+    "MAKO_STO_TPCC_MAX_RETAINED_RECORDS",
+    "MAKO_STO_TPCC_MAX_CONSUMED_RECORD_IDS",
+    "MAKO_STO_TPCC_MAX_RETAINED_KEY_BYTES",
+)
 MEMORY_SPEC_RE = re.compile(r"[1-9][0-9]*[KMG]?")
 MEMORY_SPEC_MULTIPLIERS = {
     "K": 1 << 10,
@@ -42,6 +49,7 @@ TPCC_DIAGNOSTIC_FALLBACK_ENVIRONMENT_KEYS = (
 )
 RECORDED_ENVIRONMENT_KEYS = (
     ALLOCATOR_MEMORY_ENV,
+    RUST_REGISTRY_MEMORY_ENV,
     "MAKO_TPCC_WORKLOAD_MIX",
 )
 # tpcc.cc opens 11 separate per-warehouse trees and one shared item tree.
@@ -248,11 +256,15 @@ def ensure_tpcc_diagnostic_fallbacks_unset(
 
 
 def benchmark_environment(
-    workload_mix: list[int] | None, allocator_memory: str
+    workload_mix: list[int] | None,
+    allocator_memory: str,
+    rust_registry_memory: str = DEFAULT_RUST_REGISTRY_MEMORY,
 ) -> dict[str, str]:
     environment = os.environ.copy()
     ensure_tpcc_diagnostic_fallbacks_unset(environment)
+    ensure_tpcc_record_quotas_unset(environment)
     environment[ALLOCATOR_MEMORY_ENV] = allocator_memory
+    environment[RUST_REGISTRY_MEMORY_ENV] = parse_allocator_memory(rust_registry_memory)
     if workload_mix is None:
         environment.pop("MAKO_TPCC_WORKLOAD_MIX", None)
     else:
@@ -260,6 +272,15 @@ def benchmark_environment(
             str(value) for value in workload_mix
         )
     return environment
+
+
+def ensure_tpcc_record_quotas_unset(environment: Mapping[str, str]) -> None:
+    present = [key for key in TPCC_RECORD_QUOTA_ENVIRONMENT_KEYS if key in environment]
+    if present:
+        raise RuntimeError(
+            "TPC-C record quota overrides must be unset for performance comparisons: "
+            + ", ".join(present)
+        )
 
 
 def recorded_environment_overrides(environment: dict[str, str]) -> dict[str, str]:
@@ -294,6 +315,16 @@ def parse_args() -> argparse.Namespace:
         help=(
             "NUMA allocator capacity shared by both engines, as a positive "
             "integer with an optional K, M, or G suffix (default: 1G)"
+        ),
+    )
+    parser.add_argument(
+        "--rust-registry-memory",
+        type=parse_allocator_memory,
+        default=DEFAULT_RUST_REGISTRY_MEMORY,
+        help=(
+            "Rust registry allocation budget across all tables (default: 8G); "
+            "covers arenas, lock metadata and directory buckets, separately "
+            "from --allocator-memory and variable-sized values"
         ),
     )
     parser.add_argument(
@@ -342,6 +373,7 @@ def parse_args() -> argparse.Namespace:
 
     try:
         ensure_tpcc_diagnostic_fallbacks_unset(os.environ)
+        ensure_tpcc_record_quotas_unset(os.environ)
     except RuntimeError as error:
         parser.error(str(error))
 
@@ -857,7 +889,11 @@ def run_one(
         "--storage-engine",
         engine,
     ]
-    environment = benchmark_environment(args.workload_mix, args.allocator_memory)
+    environment = benchmark_environment(
+        args.workload_mix,
+        args.allocator_memory,
+        getattr(args, "rust_registry_memory", DEFAULT_RUST_REGISTRY_MEMORY),
+    )
     log_stem = f"{run_order:03d}-{pair_id}-attempt{pair_attempt:02d}-{engine}"
     stdout_path = args.output_dir / f"{log_stem}.stdout.log"
     stderr_path = args.output_dir / f"{log_stem}.stderr.log"
@@ -1284,6 +1320,7 @@ def main() -> int:
         "repetitions": args.repetitions,
         "runtime_seconds": args.runtime_seconds,
         "allocator_memory": args.allocator_memory,
+        "rust_registry_memory": args.rust_registry_memory,
         "workload_mix": args.workload_mix,
         "diagnostic_fallback_environment": {
             key: "unset" for key in TPCC_DIAGNOSTIC_FALLBACK_ENVIRONMENT_KEYS

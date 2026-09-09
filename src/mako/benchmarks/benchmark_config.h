@@ -95,6 +95,7 @@ class BenchmarkConfig {
       std::unique_ptr<transport::Configuration> owned_config_;
       transport::Configuration* config_;
       std::atomic<bool> running_;
+      std::atomic<bool> resource_exhausted_{false};
       std::atomic<int> control_mode_;
       int verbose_;
       uint64_t txn_flags_;
@@ -177,6 +178,17 @@ class BenchmarkConfig {
       transport::Configuration* getConfig() const { return config_; }
       bool isRunning() const {
         return running_.load(std::memory_order_acquire);
+      }
+      bool hasResourceExhaustion() const {
+        return resource_exhausted_.load(std::memory_order_acquire);
+      }
+      // Return true only to the first reporting thread. A capacity failure
+      // stops every worker and is never counted as a retryable conflict.
+      bool requestResourceExhaustion() {
+        const bool first = !resource_exhausted_.exchange(
+            true, std::memory_order_acq_rel);
+        running_.store(false, std::memory_order_release);
+        return first;
       }
       int getControlMode() const {
         return control_mode_.load(std::memory_order_acquire);

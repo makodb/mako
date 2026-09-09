@@ -29,15 +29,17 @@ use sto_core::{
     InvalidUse, Runtime, RuntimeConfig, RuntimeId, Transaction,
 };
 use sto_masstree::{
-    DenseResolvedCache, PointMutation, PointReadBatch, ResolvedRecord, ScanBound, ScanBytesRef,
-    ScanControl, ScanDirection, ScanRequest, ScanScratch, Table, TableConfig, Value,
+    DenseResolvedCache, PointMutation, PointReadBatch, RegistryBudget, ResolvedRecord, ScanBound,
+    ScanBytesRef, ScanControl, ScanDirection, ScanRequest, ScanScratch, Table, TableConfig, Value,
     ValueCopyOutcome,
 };
 
 mod sto_worker_owner {
     use std::{marker::PhantomData, mem, mem::MaybeUninit, ptr::NonNull};
 
-    use sto_core::{Active, BeginError, InvalidUse, RuntimeId, Transaction, WorkerContext};
+    use sto_core::{
+        Active, BeginError, InvalidUse, RuntimeHealth, RuntimeId, Transaction, WorkerContext,
+    };
 
     type ActiveTransaction = Transaction<'static, Active>;
 
@@ -140,6 +142,15 @@ mod sto_worker_owner {
             Some(operation(transaction))
         }
 
+        pub(super) fn inactive_runtime_health(&self) -> Option<RuntimeHealth> {
+            if self.active {
+                return None;
+            }
+            // SAFETY: This owner retains the worker allocation, and no active
+            // transaction exists to borrow that worker exclusively.
+            Some(unsafe { self.worker.as_ref() }.runtime().health())
+        }
+
         /// Borrows the initialized slot while tying both transaction lifetimes
         /// to the exclusive owner borrow.
         unsafe fn borrow_active<'transaction>(
@@ -201,6 +212,7 @@ const DELIVERY_ORDER_LINE_VALUE_MAX: usize = 20;
 const STOCK_LEVEL_MAX_ORDER_LINE_ROWS: usize = 20 * 15;
 const STOCK_LEVEL_ITEM_SET_SLOTS: usize = 512;
 static NEXT_THREAD_COOKIE: AtomicU64 = AtomicU64::new(1);
+const DEFAULT_MAX_REGISTRY_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -211,6 +223,7 @@ enum Status {
     Retry = 3,
     BufferTooSmall = 4,
     Fatal = 5,
+    ResourceExhausted = 6,
 }
 
 impl Status {
@@ -267,6 +280,8 @@ thread_local! {
     static RESOLVED_CACHE_SLOT_CALLS: Cell<usize> = const { Cell::new(0) };
     #[cfg(test)]
     static STOCK_LEVEL_CACHE_PARTITION: Cell<(usize, usize)> = const { Cell::new((0, 0)) };
+    #[cfg(test)]
+    static INJECT_ABORT_NATIVE_CLOSE_ERROR: Cell<bool> = const { Cell::new(false) };
 }
 
 #[inline(always)]
@@ -314,6 +329,11 @@ fn fatal(arguments: fmt::Arguments<'_>) -> Status {
     Status::Fatal
 }
 
+fn resource_exhausted(arguments: fmt::Arguments<'_>) -> Status {
+    set_last_error(arguments);
+    Status::ResourceExhausted
+}
+
 fn boundary(operation: &'static str, body: impl FnOnce() -> FfiResult<Status>) -> i32 {
     match catch_unwind(AssertUnwindSafe(body)) {
         Ok(Ok(status) | Err(status)) => status.code(),
@@ -348,6 +368,26 @@ pub struct StoTpccDbConfig {
     pub max_key_length: u32,
     pub max_items_per_txn: usize,
     pub max_locks_per_txn: usize,
+    pub max_registry_bytes: u64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct StoTpccDbUsageInfo {
+    pub allocated_registry_bytes: u64,
+    pub max_registry_bytes: u64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct StoTpccTableUsageInfo {
+    pub retained_records: u64,
+    pub retained_key_bytes: u64,
+    pub consumed_record_ids: u64,
+    pub allocated_registry_bytes: u64,
+    pub max_retained_records: u64,
+    pub max_retained_key_bytes: u64,
+    pub max_consumed_record_ids: u64,
 }
 
 #[repr(C)]
@@ -696,10 +736,12 @@ pub struct StoTpccDb {
     sto: Arc<Runtime>,
     masstree: MasstreeRuntime,
     max_pending_size_deltas: usize,
+    registry_budget: RegistryBudget,
 }
 
 struct TableState {
     table: Table,
+    config: TableConfig,
     logical_rows: AtomicU64,
     runtime_id: RuntimeId,
 }
@@ -1087,6 +1129,9 @@ pub struct StoTpccThread {
     sto_worker: StoWorkerOwner,
     native_worker: Box<Worker>,
     owner_cookie: u64,
+    // Drop-based fused cleanup cannot return an error. Preserve its failure
+    // so a capacity result cannot hide native-scope or logical cleanup errors.
+    cleanup_failed: bool,
     // A small linear vector avoids allocating a hash table in every TPC-C
     // transaction. Thread creation reserves the runtime's complete item bound,
     // so recording size deltas cannot allocate after staging a mutation;
@@ -1131,7 +1176,7 @@ impl StoTpccThread {
         }
 
         self.pending_size.try_reserve(1).map_err(|_| {
-            fatal(format_args!(
+            resource_exhausted(format_args!(
                 "unable to reserve transactional table-size accounting"
             ))
         })?;
@@ -1196,7 +1241,18 @@ fn abort_active_attempt_after_fatal(handle: &mut StoTpccThread) -> FfiResult<()>
     handle.pending_size.clear();
     rcu_scope
         .close()
-        .map_err(|error| fatal(format_args!("unable to end native RCU scope: {error}")))
+        .map_err(|error| fatal(format_args!("unable to end native RCU scope: {error}")))?;
+    #[cfg(test)]
+    if INJECT_ABORT_NATIVE_CLOSE_ERROR.with(|inject| inject.replace(false)) {
+        // Model a native close error while the STO runtime remains healthy.
+        return Err(fatal(format_args!("injected native scope close failure")));
+    }
+    match handle.sto_worker.inactive_runtime_health() {
+        Some(sto_core::RuntimeHealth::Healthy) => Ok(()),
+        health => Err(fatal(format_args!(
+            "transaction cleanup left runtime {health:?}"
+        ))),
+    }
 }
 
 fn record_size_delta_after_staging(
@@ -1251,7 +1307,9 @@ fn status_from_access(operation: &str, error: AccessError) -> Status {
         AccessError::Conflict(_) | AccessError::InvalidUse(sto_core::InvalidUse::TransactionDoomed)
     );
     set_last_error(format_args!("{operation}: {error}"));
-    if retry {
+    if matches!(error, AccessError::Capacity(_)) {
+        Status::ResourceExhausted
+    } else if retry {
         Status::Retry
     } else {
         Status::Fatal
@@ -1261,11 +1319,25 @@ fn status_from_access(operation: &str, error: AccessError) -> Status {
 fn status_from_abort(reason: AbortReason) -> Status {
     let retry = matches!(reason, AbortReason::Doomed | AbortReason::Conflict(_));
     set_last_error(format_args!("transaction commit aborted: {reason}"));
-    if retry {
+    if matches!(reason, AbortReason::Capacity(_)) {
+        Status::ResourceExhausted
+    } else if retry {
         Status::Retry
     } else {
         Status::Fatal
     }
+}
+
+fn status_from_transaction_access(
+    handle: &mut StoTpccThread,
+    operation: &str,
+    error: AccessError,
+) -> FfiResult<Status> {
+    let status = status_from_access(operation, error);
+    if status == Status::ResourceExhausted {
+        abort_active_attempt_after_fatal(handle)?;
+    }
+    Ok(status)
 }
 
 unsafe fn required_ref<'a, T>(pointer: *const T, name: &str) -> FfiResult<&'a T> {
@@ -1554,6 +1626,11 @@ pub unsafe extern "C" fn sto_tpcc_db_create(
             sto,
             masstree,
             max_pending_size_deltas,
+            registry_budget: RegistryBudget::new(if raw.max_registry_bytes == 0 {
+                DEFAULT_MAX_REGISTRY_BYTES
+            } else {
+                raw.max_registry_bytes
+            }),
         }));
         Ok(Status::Ok)
     })
@@ -1591,17 +1668,30 @@ unsafe fn create_table(
             "unable to attach Masstree table creator: {error}"
         ))
     })?;
-    let table = Table::new_direct(&db.sto, &db.masstree, &worker, table_config(raw))
-        .map_err(|error| fatal(format_args!("unable to create STO table: {error}")))?;
+    let config = table_config(raw);
+    let table = Table::new_direct_with_budget(
+        &db.sto,
+        &db.masstree,
+        &worker,
+        config,
+        db.registry_budget.clone(),
+    )
+    .map_err(|error| {
+        set_last_error(format_args!("unable to create STO table: {error}"));
+        match error {
+            sto_masstree::TableCreateError::Registration(
+                sto_core::RegistrationError::Capacity(_),
+            ) => Status::ResourceExhausted,
+            _ => Status::Fatal,
+        }
+    })?;
     drop(worker);
     let dense_cache = match dense_policy {
         DenseCachePolicy::Item | DenseCachePolicy::Stock => Some(
             table
                 .dense_resolved_cache(DENSE_TPCC_ITEM_SLOTS)
                 .map_err(|error| {
-                    fatal(format_args!(
-                        "unable to create dense TPC-C resolved cache: {error}"
-                    ))
+                    status_from_access("unable to create dense TPC-C resolved cache", error.into())
                 })?,
         ),
         DenseCachePolicy::None => None,
@@ -1609,6 +1699,7 @@ unsafe fn create_table(
     *output = Box::into_raw(Box::new(StoTpccTable {
         state: Arc::new(TableState {
             table,
+            config,
             logical_rows: AtomicU64::new(0),
             runtime_id: db.sto.id(),
         }),
@@ -1700,6 +1791,48 @@ pub unsafe extern "C" fn sto_tpcc_table_size(
 }
 
 /// # Safety
+/// `db` must be live and `out_usage` uniquely writable and disjoint from it.
+#[no_mangle]
+pub unsafe extern "C" fn sto_tpcc_db_usage(
+    db: *const StoTpccDb,
+    out_usage: *mut StoTpccDbUsageInfo,
+) -> i32 {
+    boundary("sto_tpcc_db_usage", || {
+        let db = unsafe { required_ref(db, "db")? };
+        let output = unsafe { required_mut(out_usage, "out_usage")? };
+        *output = StoTpccDbUsageInfo {
+            allocated_registry_bytes: db.registry_budget.used_bytes(),
+            max_registry_bytes: db.registry_budget.max_bytes(),
+        };
+        Ok(Status::Ok)
+    })
+}
+
+/// # Safety
+/// `table` must be live and `out_usage` uniquely writable and disjoint from it.
+#[no_mangle]
+pub unsafe extern "C" fn sto_tpcc_table_usage(
+    table: *const StoTpccTable,
+    out_usage: *mut StoTpccTableUsageInfo,
+) -> i32 {
+    boundary("sto_tpcc_table_usage", || {
+        let table = unsafe { required_ref(table, "table")? };
+        let output = unsafe { required_mut(out_usage, "out_usage")? };
+        let usage = table.state.table.usage();
+        *output = StoTpccTableUsageInfo {
+            retained_records: usage.retained_records(),
+            retained_key_bytes: usage.retained_key_bytes(),
+            consumed_record_ids: usage.consumed_record_ids(),
+            allocated_registry_bytes: usage.allocated_registry_bytes(),
+            max_retained_records: table.state.config.max_retained_records(),
+            max_retained_key_bytes: table.state.config.max_retained_key_bytes(),
+            max_consumed_record_ids: table.state.config.max_consumed_record_ids(),
+        };
+        Ok(Status::Ok)
+    })
+}
+
+/// # Safety
 /// `db` must be live and `out_thread` uniquely writable. The returned handle
 /// must remain on this OS thread.
 #[no_mangle]
@@ -1718,7 +1851,7 @@ pub unsafe extern "C" fn sto_tpcc_thread_create(
         pending_size
             .try_reserve_exact(db.max_pending_size_deltas)
             .map_err(|_| {
-                fatal(format_args!(
+                resource_exhausted(format_args!(
                     "unable to reserve transactional table-size accounting"
                 ))
             })?;
@@ -1735,6 +1868,7 @@ pub unsafe extern "C" fn sto_tpcc_thread_create(
             sto_worker: StoWorkerOwner::new(sto_worker),
             native_worker: Box::new(native_worker),
             owner_cookie: allocate_current_thread_cookie()?,
+            cleanup_failed: false,
             pending_size,
             resolved_cache: ResolvedCache::default(),
             scan_scratch: ScanScratch::default(),
@@ -1772,14 +1906,26 @@ fn txn_begin_impl(handle: &mut StoTpccThread) -> FfiResult<Status> {
         return Err(fatal(format_args!("a transaction is already active")));
     }
     handle.pending_size.clear();
+    handle.cleanup_failed = false;
     let rcu_scope = handle
         .native_worker
         .rcu_scope()
         .map_err(|error| fatal(format_args!("unable to begin native RCU scope: {error}")))?;
-    handle
-        .sto_worker
-        .begin_erased()
-        .map_err(|error| fatal(format_args!("unable to begin transaction: {error}")))?;
+    if let Err(error) = handle.sto_worker.begin_erased() {
+        let status = match error {
+            sto_core::BeginError::Capacity(_) => Status::ResourceExhausted,
+            _ => Status::Fatal,
+        };
+        // A failed logical begin still owns a native scope. Preserve a native
+        // close failure instead of hiding it behind ordinary capacity.
+        rcu_scope.close().map_err(|error| {
+            fatal(format_args!(
+                "unable to end native RCU scope after failed begin: {error}"
+            ))
+        })?;
+        set_last_error(format_args!("unable to begin transaction: {error}"));
+        return Err(status);
+    }
     // SAFETY: The native worker is boxed, so moving the outer handle never moves
     // the borrowed pointee. `active` is consumed or dropped before that box in
     // every path, and the guard is a same-thread capability.
@@ -2015,7 +2161,7 @@ fn get_impl(
             }
             Ok(status)
         }
-        Err(error) => Ok(status_from_access("get", error)),
+        Err(error) => status_from_transaction_access(handle, "get", error),
     }
 }
 
@@ -2131,7 +2277,7 @@ fn visit_fixed_width<const KEY_LENGTH: usize>(
             debug_assert_eq!(count, keys.len());
             Ok(Status::Ok)
         }
-        Err(error) => Ok(status_from_access("fixed read", error)),
+        Err(error) => status_from_transaction_access(handle, "fixed read", error),
     }
 }
 
@@ -2317,7 +2463,7 @@ fn modify_fixed_width<const KEY_LENGTH: usize>(
             }
             Ok(Status::Ok)
         }
-        Err(error) => Ok(status_from_access("fixed mutation", error)),
+        Err(error) => status_from_transaction_access(handle, "fixed mutation", error),
     }
 }
 
@@ -2460,7 +2606,7 @@ fn put_fixed_width<const KEY_LENGTH: usize>(
                 Ok(Status::Ok)
             }
         }
-        Err(error) => Ok(status_from_access("fixed put", error)),
+        Err(error) => status_from_transaction_access(handle, "fixed put", error),
     }
 }
 
@@ -2551,7 +2697,7 @@ fn put_impl(
             }
             Ok(Status::Ok)
         }
-        Err(error) => Ok(status_from_access("put", error)),
+        Err(error) => status_from_transaction_access(handle, "put", error),
     }
 }
 
@@ -2619,7 +2765,7 @@ unsafe fn put_borrowed_impl(
             }
             Ok(Status::Ok)
         }
-        Err(error) => Ok(status_from_access("borrowed put", error)),
+        Err(error) => status_from_transaction_access(handle, "borrowed put", error),
     }
 }
 
@@ -2720,7 +2866,7 @@ fn insert_impl(
             Ok(Status::Ok)
         }
         Ok(false) => Ok(Status::Duplicate),
-        Err(error) => Ok(status_from_access("insert", error)),
+        Err(error) => status_from_transaction_access(handle, "insert", error),
     }
 }
 
@@ -2762,7 +2908,7 @@ unsafe fn insert_borrowed_impl(
             Ok(Status::Ok)
         }
         Ok(false) => Ok(Status::Duplicate),
-        Err(error) => Ok(status_from_access("borrowed insert", error)),
+        Err(error) => status_from_transaction_access(handle, "borrowed insert", error),
     }
 }
 
@@ -2905,7 +3051,7 @@ pub unsafe extern "C" fn sto_tpcc_insert_many(
                         output.first_duplicate = index;
                     }
                 }
-                Err(error) => return Ok(status_from_access("insert many", error)),
+                Err(error) => return status_from_transaction_access(handle, "insert many", error),
             }
         }
 
@@ -2959,7 +3105,7 @@ pub unsafe extern "C" fn sto_tpcc_remove(
                 Ok(Status::Ok)
             }
             Ok(false) => Ok(Status::Miss),
-            Err(error) => Ok(status_from_access("remove", error)),
+            Err(error) => status_from_transaction_access(handle, "remove", error),
         }
     })
 }
@@ -3054,6 +3200,12 @@ fn scan_impl(
         Err(error) => Err(error),
     };
     *visited = visited_count;
+    if matches!(
+        result,
+        Ok(Status::ResourceExhausted) | Err(Status::ResourceExhausted)
+    ) {
+        abort_active_attempt_after_fatal(handle)?;
+    }
     result
 }
 
@@ -3799,7 +3951,9 @@ fn payment_abort_attempt(handle: &mut StoTpccThread) {
     handle.point_batch.clear();
     handle.scan_scratch = ScanScratch::default();
     if handle.active.is_some() {
-        let _ = abort_active_attempt_after_fatal(handle);
+        if abort_active_attempt_after_fatal(handle).is_err() {
+            handle.cleanup_failed = true;
+        }
     } else {
         handle.pending_size.clear();
     }
@@ -3810,8 +3964,33 @@ fn payment_boundary(
     operation: &'static str,
     body: impl FnOnce() -> FfiResult<Status>,
 ) -> i32 {
-    match catch_unwind(AssertUnwindSafe(body)) {
-        Ok(Ok(status) | Err(status)) => status.code(),
+    match catch_unwind(AssertUnwindSafe(|| {
+        let status = match body() {
+            Ok(status) | Err(status) => status,
+        };
+        if matches!(status, Status::ResourceExhausted | Status::Retry) {
+            // The fused attempt guard has already dropped and ended the
+            // active borrow. Cleanup quarantine takes precedence over the
+            // capacity error or conflict that originally caused the abort.
+            let handle = unsafe { &mut *thread_handle };
+            if handle.cleanup_failed {
+                return Status::Fatal;
+            }
+            if handle.active.is_some() {
+                if let Err(error) = abort_active_attempt_after_fatal(handle) {
+                    return error;
+                }
+            }
+            if handle.sto_worker.inactive_runtime_health() != Some(sto_core::RuntimeHealth::Healthy)
+            {
+                return fatal(format_args!(
+                    "failed transaction left a quarantined runtime"
+                ));
+            }
+        }
+        status
+    })) {
+        Ok(status) => status.code(),
         Err(_) => {
             // The attempt guard normally performs this cleanup while the
             // panic unwinds. This fallback also covers a panic between
@@ -7064,6 +7243,7 @@ mod tests {
         assert_eq!(Status::Retry.code(), 3);
         assert_eq!(Status::BufferTooSmall.code(), 4);
         assert_eq!(Status::Fatal.code(), 5);
+        assert_eq!(Status::ResourceExhausted.code(), 6);
         assert_eq!(STO_TPCC_FIXED_MODIFY_KEEP, 0);
         assert_eq!(STO_TPCC_FIXED_MODIFY_PUT, 1);
         assert_eq!(STO_TPCC_FIXED_MODIFY_REMOVE, 2);
@@ -7573,6 +7753,7 @@ mod tests {
                 max_key_length: NATIVE_TEST_MAX_KEY_LENGTH,
                 max_items_per_txn: 8,
                 max_locks_per_txn: 16,
+                max_registry_bytes: 0,
             };
             let mut db = ptr::null_mut();
             let mut table = ptr::null_mut();
@@ -7651,6 +7832,7 @@ mod tests {
                 max_key_length: NATIVE_TEST_MAX_KEY_LENGTH,
                 max_items_per_txn: 16,
                 max_locks_per_txn: 32,
+                max_registry_bytes: 0,
             };
             let mut db = ptr::null_mut();
             let mut table = ptr::null_mut();
@@ -7712,6 +7894,7 @@ mod tests {
                 max_key_length: NATIVE_TEST_MAX_KEY_LENGTH,
                 max_items_per_txn: 16,
                 max_locks_per_txn: 32,
+                max_registry_bytes: 0,
             };
             let mut db = ptr::null_mut();
             let mut table = ptr::null_mut();
@@ -7767,6 +7950,7 @@ mod tests {
                 max_key_length: NATIVE_TEST_MAX_KEY_LENGTH,
                 max_items_per_txn: 16,
                 max_locks_per_txn: 32,
+                max_registry_bytes: 0,
             };
             let mut db = ptr::null_mut();
             let mut table = ptr::null_mut();
@@ -7852,6 +8036,7 @@ mod tests {
                 max_key_length: NATIVE_TEST_MAX_KEY_LENGTH,
                 max_items_per_txn: 64,
                 max_locks_per_txn: 128,
+                max_registry_bytes: 0,
             };
             let mut db = ptr::null_mut();
             let mut table = ptr::null_mut();
@@ -8102,6 +8287,7 @@ mod tests {
                 max_key_length: NATIVE_TEST_MAX_KEY_LENGTH,
                 max_items_per_txn: 128,
                 max_locks_per_txn: 256,
+                max_registry_bytes: 0,
             };
             let mut db = ptr::null_mut();
             let mut table = ptr::null_mut();
@@ -8403,6 +8589,7 @@ mod tests {
                 max_key_length: NATIVE_TEST_MAX_KEY_LENGTH,
                 max_items_per_txn: 16,
                 max_locks_per_txn: 32,
+                max_registry_bytes: 0,
             };
             let table_config = StoTpccTableConfig {
                 max_retained_records: 1,
@@ -8452,18 +8639,44 @@ mod tests {
                     (&mut context as *mut FixedModifyContext).cast(),
                     &mut visited,
                 ),
-                Status::Fatal.code()
+                Status::ResourceExhausted.code()
             );
             // Exact-unique fixed mutations pre-intern every miss before the
             // first callback. A reservation failure is therefore callback-free
             // even when an earlier key was already present.
             assert_eq!(visited, 0);
             assert!(context.observed.is_empty());
-            assert!((*thread)
-                .sto_worker
-                .with_active_transaction(|transaction| transaction.is_doomed())
-                .unwrap());
+            assert!((*thread).active.is_none());
+            assert!(!(*thread).sto_worker.is_active());
             assert!((*thread).pending_size.is_empty());
+            assert_eq!(sto_tpcc_txn_abort(thread), Status::Ok.code());
+
+            // A native cleanup failure takes precedence over either capacity
+            // or conflict triggering fused Drop-based abort, even when STO's
+            // own runtime health remains Healthy.
+            for failure in [Status::ResourceExhausted, Status::Retry] {
+                assert_eq!(sto_tpcc_txn_begin(thread), Status::Ok.code());
+                INJECT_ABORT_NATIVE_CLOSE_ERROR.with(|inject| inject.set(true));
+                let status = payment_boundary(thread, "injected_fused_failure", || {
+                    let _guard = PaymentAttemptGuard::new(&mut *thread);
+                    set_last_error(format_args!("injected operation failure"));
+                    Err(failure)
+                });
+                assert_eq!(status, Status::Fatal.code());
+                assert!((*thread).active.is_none());
+                assert!((*thread).cleanup_failed);
+                assert_eq!(
+                    (*thread).sto_worker.inactive_runtime_health(),
+                    Some(sto_core::RuntimeHealth::Healthy)
+                );
+                assert!(LAST_ERROR.with(|slot| {
+                    std::str::from_utf8(slot.borrow().as_bytes())
+                        .unwrap()
+                        .contains("injected native scope close failure")
+                }));
+            }
+            assert_eq!(sto_tpcc_txn_begin(thread), Status::Ok.code());
+            assert!(!(*thread).cleanup_failed);
             assert_eq!(sto_tpcc_txn_abort(thread), Status::Ok.code());
 
             assert_eq!(sto_tpcc_thread_destroy(thread), Status::Ok.code());
@@ -8481,6 +8694,7 @@ mod tests {
                 max_key_length: NATIVE_TEST_MAX_KEY_LENGTH,
                 max_items_per_txn: 128,
                 max_locks_per_txn: 256,
+                max_registry_bytes: 0,
             };
             let mut db = ptr::null_mut();
             let mut table = ptr::null_mut();
@@ -8672,13 +8886,11 @@ mod tests {
                     STO_TPCC_FIXED_PUT_UPSERT,
                     &mut result,
                 ),
-                Status::Fatal.code()
+                Status::ResourceExhausted.code()
             );
             assert_eq!(result, StoTpccFixedPutResult::default());
-            assert!((*thread)
-                .sto_worker
-                .with_active_transaction(|transaction| transaction.is_doomed())
-                .unwrap());
+            assert!((*thread).active.is_none());
+            assert!(!(*thread).sto_worker.is_active());
             assert!((*thread).pending_size.is_empty());
             assert_eq!((*thread).point_batch.capacity(), retained_capacity);
             assert_eq!(sto_tpcc_txn_abort(thread), Status::Ok.code());
@@ -8952,6 +9164,7 @@ mod tests {
                 max_key_length: NATIVE_TEST_MAX_KEY_LENGTH,
                 max_items_per_txn: 1_024,
                 max_locks_per_txn: 2_048,
+                max_registry_bytes: 0,
             };
             let mut db = ptr::null_mut();
             assert_eq!(sto_tpcc_db_create(&config, &mut db), Status::Ok.code());
@@ -9197,6 +9410,7 @@ mod tests {
                 max_key_length: NATIVE_TEST_MAX_KEY_LENGTH,
                 max_items_per_txn: 1_024,
                 max_locks_per_txn: 2_048,
+                max_registry_bytes: 0,
             };
             let mut db = ptr::null_mut();
             assert_eq!(sto_tpcc_db_create(&config, &mut db), Status::Ok.code());
@@ -9437,6 +9651,14 @@ mod tests {
     #[test]
     #[cfg(target_pointer_width = "64")]
     fn tpcc_table_config_c_layout_appends_the_bounded_value_flag() {
+        assert_eq!(mem::offset_of!(StoTpccDbConfig, max_registry_bytes), 24);
+        assert_eq!(mem::size_of::<StoTpccDbConfig>(), 32);
+        assert_eq!(mem::size_of::<StoTpccDbUsageInfo>(), 16);
+        assert_eq!(mem::size_of::<StoTpccTableUsageInfo>(), 56);
+        assert_eq!(
+            mem::offset_of!(StoTpccTableUsageInfo, max_consumed_record_ids),
+            48
+        );
         assert_eq!(
             mem::offset_of!(StoTpccTableConfig, trusted_scan_value_generation),
             64
@@ -9542,6 +9764,7 @@ mod tests {
                 max_key_length: NATIVE_TEST_MAX_KEY_LENGTH,
                 max_items_per_txn: 128,
                 max_locks_per_txn: 256,
+                max_registry_bytes: 0,
             };
             let mut db = ptr::null_mut();
             assert_eq!(sto_tpcc_db_create(&config, &mut db), Status::Ok.code());
@@ -9789,6 +10012,7 @@ mod tests {
                 max_key_length: NATIVE_TEST_MAX_KEY_LENGTH,
                 max_items_per_txn: 64,
                 max_locks_per_txn: 128,
+                max_registry_bytes: 0,
             };
             let mut db = ptr::null_mut();
             assert_eq!(sto_tpcc_db_create(&config, &mut db), Status::Ok.code());

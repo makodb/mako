@@ -21,6 +21,62 @@ void require(bool condition) {
     std::abort();
 }
 
+void check_capacity_environment() {
+  const std::array<const char *, 4> names{
+      "MAKO_STO_TPCC_REGISTRY_MEMORY", "MAKO_STO_TPCC_MAX_RETAINED_RECORDS",
+      "MAKO_STO_TPCC_MAX_CONSUMED_RECORD_IDS",
+      "MAKO_STO_TPCC_MAX_RETAINED_KEY_BYTES"};
+  std::array<std::string, 4> saved;
+  std::array<bool, 4> present{};
+  for (size_t i = 0; i < names.size(); ++i) {
+    if (const char *value = std::getenv(names[i])) {
+      present[i] = true;
+      saved[i] = value;
+    }
+    require(unsetenv(names[i]) == 0);
+  }
+  rust_sto_tpcc_detail::validate_capacity_environment();
+  require(rust_sto_tpcc_detail::db_config_for_worker_count(1).max_registry_bytes ==
+          8ULL * 1024 * 1024 * 1024);
+  for (const auto &valid : std::array<std::pair<const char *, uint64_t>, 5>{
+           std::pair{"8G", 8ULL * 1024 * 1024 * 1024},
+           std::pair{"64M", 64ULL * 1024 * 1024},
+           std::pair{"1024K", 1024ULL * 1024},
+           std::pair{"123", 123ULL},
+           std::pair{"18446744073709551615", UINT64_MAX}}) {
+    require(setenv(names[0], valid.first, 1) == 0);
+    rust_sto_tpcc_detail::validate_capacity_environment();
+    require(rust_sto_tpcc_detail::db_config_for_worker_count(1).max_registry_bytes ==
+            valid.second);
+  }
+  require(unsetenv(names[0]) == 0);
+  for (size_t i = 0; i < names.size(); ++i) {
+    for (const char *invalid : {"", "0", "01", "-1", "+1", " 1", "1 ",
+                                "1x", "1k", "18446744073709551616",
+                                "18446744073709551615G"}) {
+      require(setenv(names[i], invalid, 1) == 0);
+      bool rejected = false;
+      try {
+        rust_sto_tpcc_detail::validate_capacity_environment();
+      } catch (const std::invalid_argument &error) {
+        rejected = std::string(error.what()).find(names[i]) != std::string::npos;
+      }
+      require(rejected);
+    }
+    require(unsetenv(names[i]) == 0);
+  }
+  for (size_t i = 1; i < names.size(); ++i) {
+    require(setenv(names[i], "123", 1) == 0);
+  }
+  const auto configured = rust_sto_tpcc_detail::table_config_for("order_line_1");
+  require(configured.max_retained_records == 123);
+  require(configured.max_consumed_record_ids == 123);
+  require(configured.max_retained_key_bytes == 123);
+  for (size_t i = 0; i < names.size(); ++i) {
+    require((present[i] ? setenv(names[i], saved[i].c_str(), 1) : unsetenv(names[i])) == 0);
+  }
+}
+
 template <size_t N>
 bool suffix_equals(const std::array<char, N> &bytes, size_t begin,
                    char expected) {
@@ -210,6 +266,7 @@ public:
 // lifecycle assertion easy to audit.
 int main(int argc, char **argv) {
   require(argc == 2);
+  check_capacity_environment();
 
   transport::Configuration config(argv[1]);
   auto &benchmark = BenchmarkConfig::getInstance();
@@ -220,23 +277,17 @@ int main(int argc, char **argv) {
   benchmark.setIsReplicated(false);
   benchmark.setPinCpus(false);
 
-  // A one-warehouse load leaves 3.97M rows in the former 4M history tier.
-  // Pure Payment can cross that deterministic boundary inside the paired
-  // runner's default interval, so history must retain the append-heavy tier
-  // and enough key bytes for every admitted 24-byte key.
+  // Lazy registry growth no longer imposes workload-duration record ceilings.
   const sto_tpcc_table_config history_config =
       rust_sto_tpcc_detail::table_config_for("history_1");
-  require(history_config.max_retained_records == 16'000'000);
-  require(history_config.max_consumed_record_ids == 20'000'000);
-  require(history_config.max_retained_key_bytes >=
-          history_config.max_retained_records * sizeof(history::key));
+  require(history_config.max_retained_records == UINT64_MAX);
+  require(history_config.max_consumed_record_ids == UINT64_MAX);
+  require(history_config.max_retained_key_bytes == UINT64_MAX);
 
-  // Keep the fix table-specific: the lower-volume one-row growth tables do
-  // not need history's larger segment directory.
   const sto_tpcc_table_config order_config =
       rust_sto_tpcc_detail::table_config_for("oorder_1");
-  require(order_config.max_retained_records == 4'000'000);
-  require(order_config.max_consumed_record_ids == 6'000'000);
+  require(order_config.max_retained_records == UINT64_MAX);
+  require(order_config.max_consumed_record_ids == UINT64_MAX);
   require(rust_sto_tpcc_detail::table_config_for("warehouse_1")
               .bounded_atomic_values != 0);
   require(rust_sto_tpcc_detail::table_config_for("customer_1")

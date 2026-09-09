@@ -92,6 +92,7 @@ Useful overrides are:
 - `STO_TPCC_PGO_TRAIN_SECONDS`
 - `STO_TPCC_PGO_TRAIN_MIX`
 - `STO_TPCC_PGO_TRAIN_ALLOCATOR_MEMORY`
+- `STO_TPCC_PGO_TRAIN_REGISTRY_MEMORY`, default `8G` for the Rust registry
 - `STO_TPCC_PGO_CONFIG`
 - `STO_TPCC_PGO_SITE`
 - `STO_TPCC_PGO_BUILD_JOBS` (clean mode only)
@@ -102,7 +103,7 @@ worker, one warehouse, the requested duration, zero aborts, consistent
 attempt/abort totals, mix counters that sum to commits, and at least one commit
 for every transaction type with nonzero configured weight. The builder passes
 the allocator setting through `MAKO_TPCC_ALLOCATOR_MEMORY` and records the
-effective allocator and mix in `provenance.txt`, `training.log`, and the
+effective allocator, registry budget, and mix in `provenance.txt`, `training.log`, and the
 `environment_overrides` object in `training-result.json`. Raw build-time
 profiles are kept separate and are never merged into the workload profile.
 
@@ -195,6 +196,64 @@ The comparison runner now accepts `--allocator-memory` and passes the selected
 every raw sample and as `allocator_memory` in `run.json`. The 2026-09-04 historical sweep uses
 `2G`, which gives 128 MiB per worker at 16 workers before huge-page rounding.
 The benchmark default remains `1G` for callers that do not select a value.
+
+### Rust registry capacity
+
+The Rust adapter previously imposed name-based record limits, including
+16 million retained `order_line` rows per warehouse. Since slots are never
+reused, ordinary TPC-C growth could exhaust that quota during a timed run.
+The prior wrapper converted the error into an uncaught exception. Historical
+short-duration throughput samples do not demonstrate survival past this limit.
+
+The registry now grows through sparse directory buckets and stable 1,024-entry
+record chunks. Setting a large consumed-ID quota allocates no proportional
+outer directory at startup. Numeric retained-record, consumed-ID, and
+retained-key-byte quotas default to `u64::MAX` in the TPC-C wrapper, subject to
+the `isize::MAX` addressable ID limit. Operators can lower those independent
+per-table limits with `MAKO_STO_TPCC_MAX_RETAINED_RECORDS`,
+`MAKO_STO_TPCC_MAX_CONSUMED_RECORD_IDS`, and
+`MAKO_STO_TPCC_MAX_RETAINED_KEY_BYTES`. Each accepts a positive decimal integer.
+
+`MAKO_STO_TPCC_REGISTRY_MEMORY` defaults to `8G` and caps structural Rust
+registry allocations across all tables in the database. It accepts bytes or
+uppercase `K`, `M`, and `G` suffixes using powers of 1,024. It accounts for sparse
+directory arrays, record arenas, their ownership allocations, and record-lock
+targets and pointer arrays. It excludes separate variable-size key/value
+payloads, fixed table/budget controls, dense caches, worker scratch, allocator
+overhead, native Masstree allocations, and process RSS. Inline value fields
+remain part of the charged record stride. The native
+`MAKO_TPCC_ALLOCATOR_MEMORY` limit is independent and excludes Rust heap memory.
+Increasing either budget leaves the other unchanged.
+
+The comparison runner accepts `--rust-registry-memory` and records the selected
+value as `rust_registry_memory`. PGO training accepts
+`STO_TPCC_PGO_TRAIN_REGISTRY_MEMORY`, also defaulting to `8G`. Both tools reject
+inherited numeric quota overrides so a hidden small quota cannot alter an
+otherwise matched run. Empty, zero, signed, leading-zero, whitespace-containing,
+malformed, and overflowing capacity values are invalid startup configuration.
+
+Ordinary exhaustion returns `STO_TPCC_RESOURCE_EXHAUSTED`, status 6, after
+aborting the active attempt and closing its native scope. If cleanup fails or
+publication is uncertain, fatal/quarantine handling takes precedence. The
+benchmark catches capacity failures during startup, loading, and worker
+execution, joins started threads, emits `TPCC_RESOURCE_EXHAUSTED` with its
+phase, and exits 3 without a successful `TPCC_BENCH_RESULT`.
+
+Quiescent snapshots after loading and after worker join emit
+`STO_TPCC_CAPACITY` lines. Database rows include allocated structural registry
+bytes, maximum bytes, and headroom; table rows include retained records,
+consumed IDs, retained key bytes, allocated registry bytes, and configured
+numeric limits. `STO_TPCC_NATIVE_ALLOCATOR` records the separately configured
+native budget. These counters are independent; retained records cannot be used
+as a proxy for consumed slots or total RSS. Failed attempts can leave interned
+tombstones and consumed IDs, and logical deletion still does not reclaim them.
+
+Capacity validation must exercise startup, loader, and worker failure paths,
+transaction rollback and reuse, concurrent growth, and execution past the
+former 16-million-row ceiling. Sustained growth of live data still needs a
+memory and retention policy. This change does not add physical reclamation,
+durability, archival, or new performance qualification; the historical numbers
+below remain evidence only for their recorded revision.
 
 ## Historical exact-source result (2026-09-04)
 

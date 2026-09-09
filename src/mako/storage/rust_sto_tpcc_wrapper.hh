@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "abstract_db.h"
+#include "resource_exhausted.hh"
 #include "benchmarks/tpcc_fixed_batch.h"
 #include "sto_tpcc_ffi.h"
 
@@ -26,6 +27,7 @@ namespace rust_sto_tpcc_detail {
 // worker count cannot fit the shared C++/native attachment limit.
 sto_tpcc_db_config db_config_for_worker_count(size_t configured_workers);
 sto_tpcc_table_config table_config_for(std::string_view index_name);
+void validate_capacity_environment();
 bool table_has_static_directory(std::string_view index_name);
 
 #ifdef MAKO_RUST_STO_TEST_HOOKS
@@ -133,6 +135,8 @@ public:
 
   void init() override;
   void on_load_complete() override;
+  // Quiescent snapshots after loading, after workers join, and on failure.
+  void report_capacity_usage(const char *phase) const override;
   void preallocate_open_index() override;
   ssize_t txn_max_batch_size() const override;
   size_t sizeof_txn_object(uint64_t txn_flags) const override;

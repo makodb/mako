@@ -10,6 +10,7 @@
 #include <string>
 
 #include "storage/abstract_db.h"
+#include "storage/resource_exhausted.hh"
 #include "../macros.h"
 #include "../thread.h"
 #include "../util.h"
@@ -22,6 +23,14 @@
 #include "benchmark_config.h"
 
 class bench_runner;
+
+inline void report_benchmark_resource_exhaustion(
+    const char *phase, const storage_resource_exhausted &error) {
+  if (BenchmarkConfig::getInstance().requestResourceExhaustion()) {
+    mako::benchmark_cerr() << "TPCC_RESOURCE_EXHAUSTED phase=" << phase
+                           << " error=" << error.what() << std::endl;
+  }
+}
 
 extern void ycsb_do_test(abstract_db *db, int argc, char **argv);
 extern bench_runner* tpcc_do_test(abstract_db *db, int argc, char **argv, int, bench_runner *);
@@ -105,8 +114,14 @@ public:
     // ALWAYS_ASSERT(b);
     // b->count_down();
     // b->wait_for();
-    scoped_db_thread_ctx ctx(db, true);
-    load();
+    try {
+      scoped_db_thread_ctx ctx(db, true);
+      load();
+    } catch (const storage_resource_exhausted &error) {
+      // Unwinding the context ends any remaining attempt on this loader's
+      // own thread before the runner joins and closes table facades.
+      report_benchmark_resource_exhaustion("load", error);
+    }
   }
 protected:
   inline void *txn_buf() { return (void *) txn_obj_buf.data(); }
@@ -211,6 +226,7 @@ public:
 protected:
 
   virtual void on_run_setup() {}
+  void run_body(bool &startup_barrier_entered);
 
   inline void *txn_buf() { return (void *) txn_obj_buf.data(); }
 
@@ -267,7 +283,15 @@ public:
   bench_runner(abstract_db *db, int shard_index)
     : db(db), shard_index_(shard_index), barrier_a(BenchmarkConfig::getInstance().getNthreads()), barrier_b(1) {}
 
-  virtual ~bench_runner() {}
+  virtual ~bench_runner() {
+    if (!worker_barriers_in_use_) {
+      // Table construction and loading may fail before any worker exists.
+      // Release unused barriers even when a derived constructor unwinds.
+      for (size_t i = 0; i < barrier_participants_; ++i)
+        barrier_a.count_down();
+      barrier_b.count_down();
+    }
+  }
   void run();
   void stop();
   // Multi-shard slow exit calls this only after every shard runner has
@@ -291,6 +315,9 @@ protected:
   std::map<std::string, abstract_ordered_index *> open_tables;
 
   // barriers for actual benchmark execution
+  const size_t barrier_participants_ =
+      BenchmarkConfig::getInstance().getNthreads();
+  bool worker_barriers_in_use_{false};
   spin_barrier barrier_a;
   spin_barrier barrier_b;
 };

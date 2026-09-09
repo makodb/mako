@@ -155,6 +155,7 @@ fn full_delivery_preserves_scalar_empty_zero_line_and_rollback_semantics() {
             max_key_length: 64,
             max_items_per_txn: 512,
             max_locks_per_txn: 512,
+            max_registry_bytes: 0,
         };
         let table_config = StoTpccTableConfig {
             max_retained_records: 512,

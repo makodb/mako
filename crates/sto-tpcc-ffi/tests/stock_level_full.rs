@@ -94,6 +94,7 @@ fn foreign_runtime_table_aborts_fused_attempt_and_worker_reuses() {
             max_key_length: 64,
             max_items_per_txn: 64,
             max_locks_per_txn: 64,
+            max_registry_bytes: 0,
         };
         let mut owner_db = ptr::null_mut();
         let mut foreign_db = ptr::null_mut();
@@ -166,6 +167,7 @@ fn full_stock_level_matches_scalar_scan_dedup_threshold_and_failure_semantics() 
             max_key_length: 64,
             max_items_per_txn: 1_024,
             max_locks_per_txn: 1_024,
+            max_registry_bytes: 0,
         };
         let table_config = StoTpccTableConfig {
             max_retained_records: 1_024,

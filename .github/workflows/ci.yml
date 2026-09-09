@@ -310,6 +310,10 @@ jobs:
               "test_sto_tpcc_cpp_multishard_slow_exit",
               "test_sto_tpcc_rust_slow_exit",
               "test_sto_tpcc_rust_concurrent",
+              "test_sto_tpcc_rust_startup_resource_exhausted",
+              "test_sto_tpcc_rust_load_resource_exhausted",
+              "test_sto_tpcc_rust_run_resource_exhausted",
+              "test_sto_tpcc_rust_concurrent_resource_exhausted",
               "test_sto_tpcc_rejects_duplicate_local_shards",
               "test_sto_tpcc_rejects_partial_local_shards",
               "test_sto_tpcc_rejects_rust_distributed_shard",
@@ -355,6 +359,20 @@ jobs:
               "WILL_FAIL",
           }
           allowed_environment = {
+              "test_sto_tpcc_rust_startup_resource_exhausted": [
+                  "MAKO_STO_TPCC_REGISTRY_MEMORY=1"
+              ],
+              "test_sto_tpcc_rust_load_resource_exhausted": [
+                  "MAKO_STO_TPCC_MAX_RETAINED_RECORDS=1"
+              ],
+              "test_sto_tpcc_rust_run_resource_exhausted": [
+                  "MAKO_STO_TPCC_MAX_RETAINED_RECORDS=350000",
+                  "MAKO_TPCC_WORKLOAD_MIX=100,0,0,0,0"
+              ],
+              "test_sto_tpcc_rust_concurrent_resource_exhausted": [
+                  "MAKO_STO_TPCC_MAX_RETAINED_RECORDS=350000",
+                  "MAKO_TPCC_WORKLOAD_MIX=100,0,0,0,0"
+              ],
               "test_sto_tpcc_cpp_multishard_slow_exit": [
                   "MAKO_TPCC_WORKLOAD_MIX=0,0,34,33,33"
               ],
@@ -471,7 +489,7 @@ jobs:
           ctest --test-dir build
           --output-on-failure
           --no-tests=error
-          -R '^(SiloVarintTests|test_mako_value_metadata|test_mtree_abi|test_mtree_abi_c11_header|test_rocksdb_interface_lifecycle|test_silo_nontxn_api|test_silo_nontxn_api_mv_delete_delete_conflict|test_silo_nontxn_api_mv_delete_update_conflict|test_silo_runtime_concurrency_lifecycle|test_silo_transaction_install_exception_fail_stop|test_silo_transaction_set_capacity_exhaustion|test_silo_transaction_set_exact_chunk_boundary|test_silo_transitem_lifetime|test_srpc_epoll_platform|test_sto_tpcc_ffi_c11_header|test_sto_tpcc_cpp_wrapper_smoke|test_sto_tpcc_cpp_wrapper_scan_smoke|test_sto_tpcc_cpp_slow_exit|test_sto_tpcc_cpp_multishard_slow_exit|test_sto_tpcc_rust_slow_exit|test_sto_tpcc_rust_concurrent|test_sto_tpcc_rejects_duplicate_local_shards|test_sto_tpcc_rejects_partial_local_shards|test_sto_tpcc_rejects_rust_distributed_shard|test_sto_tpcc_rejects_rust_replication|test_sto_tpcc_rejects_rust_worker_limit)$'
+          -R '^(SiloVarintTests|test_mako_value_metadata|test_mtree_abi|test_mtree_abi_c11_header|test_rocksdb_interface_lifecycle|test_silo_nontxn_api|test_silo_nontxn_api_mv_delete_delete_conflict|test_silo_nontxn_api_mv_delete_update_conflict|test_silo_runtime_concurrency_lifecycle|test_silo_transaction_install_exception_fail_stop|test_silo_transaction_set_capacity_exhaustion|test_silo_transaction_set_exact_chunk_boundary|test_silo_transitem_lifetime|test_srpc_epoll_platform|test_sto_tpcc_ffi_c11_header|test_sto_tpcc_cpp_wrapper_smoke|test_sto_tpcc_cpp_wrapper_scan_smoke|test_sto_tpcc_cpp_slow_exit|test_sto_tpcc_cpp_multishard_slow_exit|test_sto_tpcc_rust_slow_exit|test_sto_tpcc_rust_concurrent|test_sto_tpcc_rust_startup_resource_exhausted|test_sto_tpcc_rust_load_resource_exhausted|test_sto_tpcc_rust_run_resource_exhausted|test_sto_tpcc_rust_concurrent_resource_exhausted|test_sto_tpcc_rejects_duplicate_local_shards|test_sto_tpcc_rejects_partial_local_shards|test_sto_tpcc_rejects_rust_distributed_shard|test_sto_tpcc_rejects_rust_replication|test_sto_tpcc_rejects_rust_worker_limit)$'
 
       - name: Run Rust STO workspace tests in release mode
         run: >-

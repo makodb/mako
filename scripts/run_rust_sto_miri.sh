@@ -179,7 +179,7 @@ run_miri -p sto-tpcc-ffi --lib -- \
 
 # The 128-seed history sweep and three high-iteration concurrency stress tests
 # belong in the native/TSan gate and are prohibitively slow under the
-# interpreter. The remaining 185 tests retain the smaller concurrency cases
+# interpreter. The remaining tests retain the smaller concurrency cases
 # plus registry, publication, record-address, scan, and ownership coverage.
 run_miri -p sto-masstree --all-features --lib -- \
     --skip history_tests:: \

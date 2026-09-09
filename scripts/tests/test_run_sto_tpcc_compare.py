@@ -188,6 +188,32 @@ class RunnerTests(unittest.TestCase):
                 args = MODULE.parse_args()
 
         self.assertEqual(args.allocator_memory, "1G")
+        self.assertEqual(args.rust_registry_memory, "8G")
+
+    def test_registry_budget_overrides_ambient_value_and_is_recorded(self) -> None:
+        with mock.patch.dict(
+            MODULE.os.environ,
+            {"MAKO_STO_TPCC_REGISTRY_MEMORY": "1"},
+            clear=True,
+        ):
+            environment = MODULE.benchmark_environment(None, "2G", "24G")
+        self.assertEqual(environment["MAKO_STO_TPCC_REGISTRY_MEMORY"], "24G")
+        self.assertEqual(environment["MAKO_TPCC_ALLOCATOR_MEMORY"], "2G")
+        self.assertEqual(
+            MODULE.recorded_environment_overrides(environment),
+            {
+                "MAKO_TPCC_ALLOCATOR_MEMORY": "2G",
+                "MAKO_STO_TPCC_REGISTRY_MEMORY": "24G",
+            },
+        )
+
+    def test_performance_comparisons_reject_record_quota_overrides(self) -> None:
+        for key in MODULE.TPCC_RECORD_QUOTA_ENVIRONMENT_KEYS:
+            for value in ("", "1", "16000000"):
+                with self.subTest(key=key, value=value):
+                    with mock.patch.dict(MODULE.os.environ, {key: value}, clear=True):
+                        with self.assertRaisesRegex(RuntimeError, "quota overrides"):
+                            MODULE.benchmark_environment(None, "1G")
 
     def test_allocator_memory_accepts_strict_positive_memory_specs(self) -> None:
         for spec in ("1", "4K", "512M", "2G"):
@@ -278,6 +304,7 @@ class RunnerTests(unittest.TestCase):
                 record["environment_overrides"],
                 {
                     "MAKO_TPCC_ALLOCATOR_MEMORY": "2G",
+                    "MAKO_STO_TPCC_REGISTRY_MEMORY": "8G",
                     "MAKO_TPCC_WORKLOAD_MIX": "45,43,4,4,4",
                 },
             )

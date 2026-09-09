@@ -20,6 +20,9 @@ mod record_prefetch;
 #[cfg(test)]
 mod history_tests;
 
+#[cfg(test)]
+mod registry_growth_tests;
+
 #[cfg(feature = "fixed-u64")]
 mod fixed_u64;
 
@@ -33,7 +36,7 @@ use std::{
     ops::Deref,
     sync::{
         atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
-        Arc, OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard, TryLockError,
+        Arc, Mutex, OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard, TryLockError,
     },
 };
 
@@ -130,11 +133,11 @@ const _: () = assert!(RECORD_LOCK_SEGMENT_SLOTS == 16);
 const RECORD_LOCK_SEGMENTS_PER_REGISTRY_SEGMENT: usize =
     REGISTRY_SEGMENT_SLOTS / RECORD_LOCK_SEGMENT_SLOTS;
 const REGISTRY_ENTRY_SLOT_BYTES: usize = 64;
+const REGISTRY_BUCKET_COUNT: usize = usize::BITS as usize;
 
-// The native default is part of the production capacity contract. Miri uses a
-// smaller bound because it interprets destruction of every outer segment slot,
-// including slots that were never initialized. Tests that need larger bounds
-// continue to request them explicitly.
+// Keep the existing finite default as an application quota. The sparse
+// directory no longer allocates storage proportional to this bound. Miri
+// retains its smaller test default; growth tests request larger bounds.
 #[cfg(not(miri))]
 const DEFAULT_MAX_CONSUMED_RECORD_IDS: u64 = 4_000_000;
 #[cfg(miri)]
@@ -714,7 +717,9 @@ pub enum RegistryLayout {
     /// Allocate fixed-size segments only as consumed IDs first reach them.
     ///
     /// This minimizes startup work and commits record memory incrementally,
-    /// but resolving an ID depends on its segment's published `OnceLock`.
+    /// including a sparse directory whose buckets also allocate on demand.
+    /// Resolving an ID depends on its bucket and segment's published
+    /// `OnceLock`s; neither allocation ever moves after publication.
     #[default]
     LazySegmented,
     /// Allocate the entire bounded record arena and all lock targets when the
@@ -1099,6 +1104,103 @@ impl ScanRecord {
     }
 }
 
+/// Shared limit for structural Rust record-registry allocations.
+///
+/// Clones share one limit across tables. Accounted bytes include sparse
+/// directory arrays, record arenas, Arc ownership headers, and record lock
+/// targets and their pointer arrays. Charges precede allocation and remain
+/// until the allocation's last owner is dropped, including detached lock
+/// targets. Variable-sized values, native Masstree allocations, transaction
+/// scratch space, fixed table/budget control objects, allocator overhead,
+/// and process RSS are not included.
+#[derive(Clone, Debug)]
+pub struct RegistryBudget {
+    shared: Arc<RegistryBudgetState>,
+}
+
+#[derive(Debug)]
+struct RegistryBudgetState {
+    maximum: u64,
+    used: AtomicU64,
+}
+
+impl RegistryBudget {
+    pub fn new(max_bytes: u64) -> Self {
+        Self {
+            shared: Arc::new(RegistryBudgetState {
+                maximum: max_bytes,
+                used: AtomicU64::new(0),
+            }),
+        }
+    }
+
+    /// Bytes currently reserved for or retained by registry allocations.
+    pub fn used_bytes(&self) -> u64 {
+        self.shared.used.load(Ordering::Acquire)
+    }
+
+    pub fn max_bytes(&self) -> u64 {
+        self.shared.maximum
+    }
+}
+
+struct RegistryAccounting {
+    budget: RegistryBudget,
+    used: AtomicU64,
+}
+
+impl RegistryAccounting {
+    fn reserve(self: &Arc<Self>, bytes: usize) -> Result<RegistryCharge, CapacityError> {
+        let bytes = u64::try_from(bytes).map_err(|_| CapacityError::BufferLimit)?;
+        reserve_atomic(&self.budget.shared.used, bytes, self.budget.max_bytes())
+            .map_err(|_| CapacityError::BufferLimit)?;
+        // This table's outstanding charges are a subset of the shared budget,
+        // whose checked reservation proves this addition cannot overflow.
+        self.used.fetch_add(bytes, Ordering::AcqRel);
+        Ok(RegistryCharge {
+            accounting: Arc::clone(self),
+            bytes,
+        })
+    }
+}
+
+struct RegistryCharge {
+    accounting: Arc<RegistryAccounting>,
+    bytes: u64,
+}
+
+impl RegistryCharge {
+    /// Transfer part of an admitted reservation to its allocation owner.
+    /// Splitting changes neither accounting counter: the outstanding parent
+    /// and child charges still sum to the original reservation.
+    fn split_off(&mut self, bytes: usize) -> Result<Self, CapacityError> {
+        let bytes = u64::try_from(bytes).map_err(|_| CapacityError::BufferLimit)?;
+        let remaining = self
+            .bytes
+            .checked_sub(bytes)
+            .ok_or(CapacityError::BufferLimit)?;
+        self.bytes = remaining;
+        Ok(Self {
+            accounting: Arc::clone(&self.accounting),
+            bytes,
+        })
+    }
+}
+
+impl Drop for RegistryCharge {
+    fn drop(&mut self) {
+        if self.bytes == 0 {
+            return;
+        }
+        self.accounting.used.fetch_sub(self.bytes, Ordering::AcqRel);
+        self.accounting
+            .budget
+            .shared
+            .used
+            .fetch_sub(self.bytes, Ordering::AcqRel);
+    }
+}
+
 /// Current bounded registry accounting.
 ///
 /// `retained_*` counts directory-reachable candidates and records. Every
@@ -1109,6 +1211,7 @@ pub struct TableUsage {
     retained_records: u64,
     retained_key_bytes: u64,
     consumed_record_ids: u64,
+    allocated_registry_bytes: u64,
 }
 
 impl TableUsage {
@@ -1122,6 +1225,12 @@ impl TableUsage {
 
     pub const fn consumed_record_ids(self) -> u64 {
         self.consumed_record_ids
+    }
+
+    /// This table's reserved or retained structural registry bytes, using the
+    /// same accounting scope as [`RegistryBudget::used_bytes`].
+    pub const fn allocated_registry_bytes(self) -> u64 {
+        self.allocated_registry_bytes
     }
 }
 
@@ -1330,7 +1439,27 @@ impl Table {
         tree: Tree,
         config: TableConfig,
     ) -> Result<Self, RegistrationError> {
-        Self::with_directory(runtime, Directory::Native(NativeDirectory { tree }), config)
+        Self::new_with_budget(runtime, tree, config, RegistryBudget::new(u64::MAX))
+    }
+
+    /// Registers a registry-ID table sharing an explicit structural allocation
+    /// budget. `tree` has the same fresh-tree and exclusive semantic ownership
+    /// requirements as [`Self::new`]. Record, key-byte, and consumed-ID quotas
+    /// remain independent of the shared [`RegistryBudget`].
+    #[cfg(not(test))]
+    pub fn new_with_budget(
+        runtime: &Arc<Runtime>,
+        tree: Tree,
+        config: TableConfig,
+        budget: RegistryBudget,
+    ) -> Result<Self, RegistrationError> {
+        Self::with_directory_mode_and_budget(
+            runtime,
+            Directory::Native(NativeDirectory { tree }),
+            config,
+            RecordTokenMode::RegistryId,
+            budget,
+        )
     }
 
     /// Creates a table with a fresh, internally owned native directory and
@@ -1349,16 +1478,39 @@ impl Table {
         native_worker: &Worker,
         config: TableConfig,
     ) -> Result<Self, TableCreateError> {
+        Self::new_direct_with_budget(
+            runtime,
+            native_runtime,
+            native_worker,
+            config,
+            RegistryBudget::new(u64::MAX),
+        )
+    }
+
+    /// Creates a private-directory table sharing an explicit structural
+    /// allocation limit with other tables. See [`RegistryBudget`] for the
+    /// accounting scope; record, key-byte, and consumed-ID quotas in `config`
+    /// are enforced independently.
+    #[cfg(not(test))]
+    pub fn new_direct_with_budget(
+        runtime: &Arc<Runtime>,
+        native_runtime: &MasstreeRuntime,
+        native_worker: &Worker,
+        config: TableConfig,
+        budget: RegistryBudget,
+    ) -> Result<Self, TableCreateError> {
         let tree = native_runtime.create_tree(native_worker)?;
-        Self::with_directory_mode(
+        Self::with_directory_mode_and_budget(
             runtime,
             Directory::Native(NativeDirectory { tree }),
             config,
             RecordTokenMode::DirectRecordPointer,
+            budget,
         )
         .map_err(Into::into)
     }
 
+    #[cfg(test)]
     fn with_directory(
         runtime: &Arc<Runtime>,
         directory: Directory,
@@ -1367,11 +1519,28 @@ impl Table {
         Self::with_directory_mode(runtime, directory, config, RecordTokenMode::RegistryId)
     }
 
+    #[cfg(test)]
     fn with_directory_mode(
         runtime: &Arc<Runtime>,
         directory: Directory,
         config: TableConfig,
         record_token_mode: RecordTokenMode,
+    ) -> Result<Self, RegistrationError> {
+        Self::with_directory_mode_and_budget(
+            runtime,
+            directory,
+            config,
+            record_token_mode,
+            RegistryBudget::new(u64::MAX),
+        )
+    }
+
+    fn with_directory_mode_and_budget(
+        runtime: &Arc<Runtime>,
+        directory: Directory,
+        config: TableConfig,
+        record_token_mode: RecordTokenMode,
+        budget: RegistryBudget,
     ) -> Result<Self, RegistrationError> {
         let object = runtime.register_object()?;
         let namespace = LockNamespaceId::new(object.object_id().get())
@@ -1379,7 +1548,13 @@ impl Table {
         let record_lock_class =
             LockClass::new(RECORD_LOCK_CLASS_VALUE).expect("the record lock class is nonzero");
 
-        let registry = Registry::new(config, object.runtime_id(), namespace, record_lock_class)?;
+        let registry = Registry::new_with_budget(
+            config,
+            object.runtime_id(),
+            namespace,
+            record_lock_class,
+            budget,
+        )?;
         let scan_publication_owners =
             scan_publication_owners(runtime, config.trusted_scan_value_generation)?;
         let shared = Arc::new(TableShared {
@@ -6763,8 +6938,13 @@ enum RegistryStorage {
 /// every lock-frame use and prevents interpreting one layout as the other.
 #[derive(Clone)]
 struct RegistryArena {
-    storage: Arc<RegistryArenaStorage>,
+    storage: Arc<RegistryArenaOwner>,
     len: usize,
+}
+
+struct RegistryArenaOwner {
+    slots: RegistryArenaStorage,
+    _charge: RegistryCharge,
 }
 
 enum RegistryArenaStorage {
@@ -6787,14 +6967,42 @@ impl<'slot> RegistrySlotAccess<'slot> {
 }
 
 impl RegistryArena {
-    fn allocate(slot_count: usize, bounded_atomic_values: bool) -> Result<Self, CapacityError> {
+    fn allocate(
+        slot_count: usize,
+        bounded_atomic_values: bool,
+        accounting: &Arc<RegistryAccounting>,
+    ) -> Result<Self, CapacityError> {
+        let charge = accounting.reserve(registry_arena_accounted_bytes(
+            slot_count,
+            bounded_atomic_values,
+        )?)?;
+        Self::allocate_prepaid(slot_count, bounded_atomic_values, charge)
+    }
+
+    fn allocate_prepaid(
+        slot_count: usize,
+        bounded_atomic_values: bool,
+        charge: RegistryCharge,
+    ) -> Result<Self, CapacityError> {
+        debug_assert_eq!(
+            u64::try_from(registry_arena_accounted_bytes(
+                slot_count,
+                bounded_atomic_values
+            )?),
+            Ok(charge.bytes),
+        );
+        #[cfg(test)]
+        registry_growth_tests::allocation_checkpoint()?;
         let storage = if bounded_atomic_values {
             allocate_stable_registry_slots(slot_count).map(RegistryArenaStorage::Stable160)?
         } else {
             allocate_registry_slots(slot_count).map(RegistryArenaStorage::Standard)?
         };
         Ok(Self {
-            storage: Arc::new(storage),
+            storage: Arc::new(RegistryArenaOwner {
+                slots: storage,
+                _charge: charge,
+            }),
             len: slot_count,
         })
     }
@@ -6806,7 +7014,7 @@ impl RegistryArena {
 
     #[inline(always)]
     fn get(&self, index: usize) -> Option<RegistrySlotAccess<'_>> {
-        match self.storage.as_ref() {
+        match &self.storage.slots {
             RegistryArenaStorage::Standard(slots) => {
                 slots.get(index).map(|entry| RegistrySlotAccess {
                     entry,
@@ -6831,7 +7039,7 @@ impl RegistryArena {
 
     #[cfg(debug_assertions)]
     fn owns_element_address(&self, address: usize) -> bool {
-        match self.storage.as_ref() {
+        match &self.storage.slots {
             RegistryArenaStorage::Standard(slots) => registry_slice_owns_address(slots, address),
             RegistryArenaStorage::Stable160(slots) => registry_slice_owns_address(slots, address),
         }
@@ -6839,12 +7047,12 @@ impl RegistryArena {
 
     #[cfg(test)]
     fn is_stable(&self) -> bool {
-        matches!(self.storage.as_ref(), RegistryArenaStorage::Stable160(_))
+        matches!(&self.storage.slots, RegistryArenaStorage::Stable160(_))
     }
 
     #[cfg(test)]
     fn standard_slots(&self) -> &[RegistryEntry] {
-        match self.storage.as_ref() {
+        match &self.storage.slots {
             RegistryArenaStorage::Standard(slots) => slots,
             RegistryArenaStorage::Stable160(_) => {
                 panic!("test expected the standard registry arena")
@@ -6866,14 +7074,32 @@ struct Registry {
     config: TableConfig,
     effective_id_limit: u64,
     lock_domain: RecordLockDomain,
+    accounting: Arc<RegistryAccounting>,
 }
 
 impl Registry {
+    #[cfg(test)]
     fn new(
         config: TableConfig,
         runtime_id: sto_core::RuntimeId,
         namespace: LockNamespaceId,
         lock_class: LockClass,
+    ) -> Result<Self, RegistrationError> {
+        Self::new_with_budget(
+            config,
+            runtime_id,
+            namespace,
+            lock_class,
+            RegistryBudget::new(u64::MAX),
+        )
+    }
+
+    fn new_with_budget(
+        config: TableConfig,
+        runtime_id: sto_core::RuntimeId,
+        namespace: LockNamespaceId,
+        lock_class: LockClass,
+        budget: RegistryBudget,
     ) -> Result<Self, RegistrationError> {
         let addressable = u64::try_from(isize::MAX).unwrap_or(u64::MAX);
         let effective_id_limit = config.max_consumed_record_ids.min(addressable);
@@ -6882,16 +7108,25 @@ impl Registry {
             namespace,
             lock_class,
         };
+        let accounting = Arc::new(RegistryAccounting {
+            budget,
+            used: AtomicU64::new(0),
+        });
         let storage = match config.registry_layout {
-            RegistryLayout::LazySegmented => RegistryStorage::LazySegmented(
-                SegmentedRegistry::new(effective_id_limit, config.bounded_atomic_values)?,
-            ),
+            RegistryLayout::LazySegmented => {
+                RegistryStorage::LazySegmented(SegmentedRegistry::new(
+                    effective_id_limit,
+                    config.bounded_atomic_values,
+                    Arc::clone(&accounting),
+                )?)
+            }
             RegistryLayout::EagerContiguous { max_bytes } => {
                 RegistryStorage::EagerContiguous(ContiguousRegistry::new(
                     effective_id_limit,
                     max_bytes,
                     lock_domain,
                     config.bounded_atomic_values,
+                    &accounting,
                 )?)
             }
         };
@@ -6903,6 +7138,7 @@ impl Registry {
             effective_id_limit,
             config,
             lock_domain,
+            accounting,
         })
     }
 
@@ -6911,6 +7147,7 @@ impl Registry {
             retained_records: self.retained_records.load(Ordering::Acquire),
             retained_key_bytes: self.retained_key_bytes.load(Ordering::Acquire),
             consumed_record_ids: self.consumed.load(Ordering::Acquire),
+            allocated_registry_bytes: self.accounting.used.load(Ordering::Acquire),
         }
     }
 
@@ -7269,9 +7506,7 @@ impl Registry {
     fn owns_entry_address(&self, address: usize) -> bool {
         match &self.storage {
             RegistryStorage::LazySegmented(storage) => storage
-                .segments
-                .iter()
-                .filter_map(OnceLock::get)
+                .allocated_segments()
                 .any(|segment| segment.arena.owns_element_address(address)),
             RegistryStorage::EagerContiguous(storage) => {
                 storage.arena.owns_element_address(address)
@@ -7358,12 +7593,43 @@ fn record_index(record_id: RecordId) -> Result<usize, AccessError> {
 }
 
 struct SegmentedRegistry {
-    segments: Box<[OnceLock<RegistrySegment>]>,
+    buckets: Box<[OnceLock<RegistryBucket>]>,
+    _directory_charge: RegistryCharge,
+    growth: Mutex<()>,
+    segment_count: usize,
     bounded_atomic_values: bool,
+    accounting: Arc<RegistryAccounting>,
+}
+
+struct RegistryBucket {
+    segments: Box<[OnceLock<RegistrySegment>]>,
+    _charge: RegistryCharge,
+}
+
+impl RegistryBucket {
+    fn new(count: usize, accounting: &Arc<RegistryAccounting>) -> Result<Self, CapacityError> {
+        let bytes = count
+            .checked_mul(std::mem::size_of::<OnceLock<RegistrySegment>>())
+            .ok_or(CapacityError::BufferLimit)?;
+        let charge = accounting.reserve(bytes)?;
+        let mut segments = Vec::new();
+        segments
+            .try_reserve_exact(count)
+            .map_err(|_| CapacityError::BufferLimit)?;
+        segments.resize_with(count, OnceLock::new);
+        Ok(Self {
+            segments: segments.into_boxed_slice(),
+            _charge: charge,
+        })
+    }
 }
 
 impl SegmentedRegistry {
-    fn new(effective_id_limit: u64, bounded_atomic_values: bool) -> Result<Self, CapacityError> {
+    fn new(
+        effective_id_limit: u64,
+        bounded_atomic_values: bool,
+        accounting: Arc<RegistryAccounting>,
+    ) -> Result<Self, CapacityError> {
         let segment_slots = REGISTRY_SEGMENT_SLOTS as u64;
         let segment_count = effective_id_limit
             .checked_add(segment_slots - 1)
@@ -7371,15 +7637,54 @@ impl SegmentedRegistry {
             / segment_slots;
         let segment_count =
             usize::try_from(segment_count).map_err(|_| CapacityError::BufferLimit)?;
-        let mut segments = Vec::new();
-        segments
-            .try_reserve_exact(segment_count)
+        // Only this small root is allocated at construction. Bucket b covers
+        // 2^b segment positions, starting at 2^b - 1. Both the bucket and its
+        // segments publish once, so growth never moves a borrowed record or
+        // requires a reader to retain a mutable-directory guard.
+        let directory_bytes = REGISTRY_BUCKET_COUNT
+            .checked_mul(std::mem::size_of::<OnceLock<RegistryBucket>>())
+            .ok_or(CapacityError::BufferLimit)?;
+        let directory_charge = accounting.reserve(directory_bytes)?;
+        let mut buckets = Vec::new();
+        buckets
+            .try_reserve_exact(REGISTRY_BUCKET_COUNT)
             .map_err(|_| CapacityError::BufferLimit)?;
-        segments.resize_with(segment_count, OnceLock::new);
+        buckets.resize_with(REGISTRY_BUCKET_COUNT, OnceLock::new);
         Ok(Self {
-            segments: segments.into_boxed_slice(),
+            buckets: buckets.into_boxed_slice(),
+            _directory_charge: directory_charge,
+            growth: Mutex::new(()),
+            segment_count,
             bounded_atomic_values,
+            accounting,
         })
+    }
+
+    #[inline(always)]
+    fn bucket_position(segment_index: usize) -> (usize, usize) {
+        // Registry::new limits IDs to isize::MAX and segments contain more
+        // than one record, so segment_index + 1 cannot overflow usize.
+        let ordinal = segment_index + 1;
+        let bucket = (usize::BITS - 1 - ordinal.leading_zeros()) as usize;
+        let first_segment = (1_usize << bucket) - 1;
+        (bucket, segment_index - first_segment)
+    }
+
+    #[inline(always)]
+    fn segment(&self, segment_index: usize) -> Option<&RegistrySegment> {
+        if segment_index >= self.segment_count {
+            return None;
+        }
+        let (bucket, offset) = Self::bucket_position(segment_index);
+        self.buckets.get(bucket)?.get()?.segments.get(offset)?.get()
+    }
+
+    #[cfg(any(test, debug_assertions))]
+    fn allocated_segments(&self) -> impl Iterator<Item = &RegistrySegment> {
+        self.buckets
+            .iter()
+            .filter_map(OnceLock::get)
+            .flat_map(|bucket| bucket.segments.iter().filter_map(OnceLock::get))
     }
 
     fn ensure_segment(
@@ -7387,18 +7692,54 @@ impl SegmentedRegistry {
         segment_index: usize,
         lock_domain: RecordLockDomain,
     ) -> Result<&RegistrySegment, AccessError> {
-        let slot = self
-            .segments
-            .get(segment_index)
-            .ok_or(CapacityError::BufferLimit)?;
-        if let Some(segment) = slot.get() {
+        if segment_index >= self.segment_count {
+            return Err(CapacityError::BufferLimit.into());
+        }
+        if let Some(segment) = self.segment(segment_index) {
             return Ok(segment);
         }
-
-        let candidate =
-            RegistrySegment::new(segment_index, lock_domain, self.bounded_atomic_values)?;
-        let _ = slot.set(candidate);
-        slot.get()
+        // Serialize only missing-segment allocation. Without this recheck,
+        // concurrent contenders could reserve duplicate temporary arenas and
+        // report a budget error even though the winner fits the shared limit.
+        let _growth = self
+            .growth
+            .lock()
+            .map_err(|_| table_fault("record registry growth is poisoned"))?;
+        if let Some(segment) = self.segment(segment_index) {
+            return Ok(segment);
+        }
+        let (bucket_index, offset) = Self::bucket_position(segment_index);
+        let bucket_slot = &self.buckets[bucket_index];
+        if let Some(bucket) = bucket_slot.get() {
+            let segment = RegistrySegment::new(
+                segment_index,
+                lock_domain,
+                self.bounded_atomic_values,
+                &self.accounting,
+            )?;
+            bucket.segments[offset]
+                .set(segment)
+                .map_err(|_| table_fault("record registry segment published twice"))?;
+        } else {
+            let bucket_start = (1_usize << bucket_index) - 1;
+            let count = (1_usize << bucket_index).min(self.segment_count - bucket_start);
+            let bucket = RegistryBucket::new(count, &self.accounting)?;
+            let segment = RegistrySegment::new(
+                segment_index,
+                lock_domain,
+                self.bounded_atomic_values,
+                &self.accounting,
+            )?;
+            bucket.segments[offset]
+                .set(segment)
+                .map_err(|_| table_fault("new record registry segment was already published"))?;
+            // Publish the bucket only after its first segment is ready. Any
+            // preceding allocation failure drops all temporary charges.
+            bucket_slot
+                .set(bucket)
+                .map_err(|_| table_fault("record registry bucket published twice"))?;
+        }
+        self.segment(segment_index)
             .ok_or_else(|| table_fault("record registry segment publication failed"))
     }
 
@@ -7419,9 +7760,7 @@ impl SegmentedRegistry {
         let segment_index = index / REGISTRY_SEGMENT_SLOTS;
         let slot_index = index % REGISTRY_SEGMENT_SLOTS;
         let segment = self
-            .segments
-            .get(segment_index)
-            .and_then(OnceLock::get)
+            .segment(segment_index)
             .ok_or_else(|| table_fault("directory returned an unallocated RecordId"))?;
         Ok((segment, slot_index))
     }
@@ -7456,7 +7795,7 @@ impl SegmentedRegistry {
 
 struct ContiguousRegistry {
     arena: RegistryArena,
-    lock_segments: Box<[Arc<RecordLockSegment>]>,
+    lock_segments: ChargedLockSegments,
 }
 
 impl ContiguousRegistry {
@@ -7465,6 +7804,7 @@ impl ContiguousRegistry {
         max_bytes: usize,
         lock_domain: RecordLockDomain,
         bounded_atomic_values: bool,
+        accounting: &Arc<RegistryAccounting>,
     ) -> Result<Self, CapacityError> {
         let slot_count = checked_registry_slot_count(effective_id_limit, bounded_atomic_values)?;
         let accounted_bytes = eager_registry_accounted_bytes(slot_count, bounded_atomic_values)?;
@@ -7475,8 +7815,8 @@ impl ContiguousRegistry {
         // The budget and all size arithmetic are validated before either
         // proportional allocation begins. Failure never silently selects the
         // segmented backend because that would invalidate benchmark intent.
-        let arena = RegistryArena::allocate(slot_count, bounded_atomic_values)?;
-        let lock_segments = build_record_lock_segments(&arena, 0, lock_domain)?;
+        let arena = RegistryArena::allocate(slot_count, bounded_atomic_values, accounting)?;
+        let lock_segments = build_record_lock_segments(&arena, 0, lock_domain, accounting)?;
         Ok(Self {
             arena,
             lock_segments,
@@ -7547,13 +7887,29 @@ fn eager_registry_accounted_bytes(
     slot_count: usize,
     bounded_atomic_values: bool,
 ) -> Result<usize, CapacityError> {
+    // Preserve the existing empty eager-arena configuration. The shared
+    // RegistryBudget separately charges its small Arc ownership allocation.
     if slot_count == 0 {
         return Ok(0);
     }
     let lock_count = record_lock_segment_count(slot_count)?;
-    let arc_header_bytes = 2_usize
-        .checked_mul(std::mem::size_of::<usize>())
+    let slot_bytes = registry_arena_accounted_bytes(slot_count, bounded_atomic_values)?;
+    let lock_pointer_bytes = lock_count
+        .checked_mul(std::mem::size_of::<Arc<RecordLockSegment>>())
         .ok_or(CapacityError::BufferLimit)?;
+    let lock_allocation_bytes = lock_count
+        .checked_mul(record_lock_accounted_bytes())
+        .ok_or(CapacityError::BufferLimit)?;
+    slot_bytes
+        .checked_add(lock_pointer_bytes)
+        .and_then(|bytes| bytes.checked_add(lock_allocation_bytes))
+        .ok_or(CapacityError::BufferLimit)
+}
+
+fn registry_arena_accounted_bytes(
+    slot_count: usize,
+    bounded_atomic_values: bool,
+) -> Result<usize, CapacityError> {
     let entry_size = if bounded_atomic_values {
         std::mem::size_of::<StableRegistryEntry>()
     } else {
@@ -7562,26 +7918,17 @@ fn eager_registry_accounted_bytes(
     // Slots live in one exactly sized Box allocation. One thin Arc allocation
     // owns that concrete box and the immutable layout discriminant shared by
     // the registry and every lock target.
-    let arena_owner_bytes = arc_header_bytes
-        .checked_add(std::mem::size_of::<RegistryArenaStorage>())
+    let arena_owner_bytes = (2 * std::mem::size_of::<usize>())
+        .checked_add(std::mem::size_of::<RegistryArenaOwner>())
         .ok_or(CapacityError::BufferLimit)?;
-    let slot_bytes = slot_count
+    slot_count
         .checked_mul(entry_size)
         .and_then(|bytes| bytes.checked_add(arena_owner_bytes))
-        .ok_or(CapacityError::BufferLimit)?;
-    let lock_pointer_bytes = lock_count
-        .checked_mul(std::mem::size_of::<Arc<RecordLockSegment>>())
-        .ok_or(CapacityError::BufferLimit)?;
-    let one_lock_bytes = std::mem::size_of::<RecordLockSegment>()
-        .checked_add(arc_header_bytes)
-        .ok_or(CapacityError::BufferLimit)?;
-    let lock_allocation_bytes = lock_count
-        .checked_mul(one_lock_bytes)
-        .ok_or(CapacityError::BufferLimit)?;
-    slot_bytes
-        .checked_add(lock_pointer_bytes)
-        .and_then(|bytes| bytes.checked_add(lock_allocation_bytes))
         .ok_or(CapacityError::BufferLimit)
+}
+
+fn record_lock_accounted_bytes() -> usize {
+    std::mem::size_of::<RecordLockSegment>() + 2 * std::mem::size_of::<usize>()
 }
 
 fn allocate_registry_slots(slot_count: usize) -> Result<Box<[RegistryEntry]>, CapacityError> {
@@ -7616,12 +7963,43 @@ fn allocate_stable_registry_slots(
     Ok(slots.into_boxed_slice())
 }
 
+struct ChargedLockSegments {
+    targets: Box<[Arc<RecordLockSegment>]>,
+    _charge: RegistryCharge,
+}
+
+impl Deref for ChargedLockSegments {
+    type Target = [Arc<RecordLockSegment>];
+
+    fn deref(&self) -> &Self::Target {
+        &self.targets
+    }
+}
+
 fn build_record_lock_segments(
     arena: &RegistryArena,
     logical_base: usize,
     lock_domain: RecordLockDomain,
-) -> Result<Box<[Arc<RecordLockSegment>]>, CapacityError> {
+    accounting: &Arc<RegistryAccounting>,
+) -> Result<ChargedLockSegments, CapacityError> {
+    build_record_lock_segments_with_charge(arena, logical_base, lock_domain, |bytes| {
+        accounting.reserve(bytes)
+    })
+}
+
+fn build_record_lock_segments_with_charge(
+    arena: &RegistryArena,
+    logical_base: usize,
+    lock_domain: RecordLockDomain,
+    mut take_charge: impl FnMut(usize) -> Result<RegistryCharge, CapacityError>,
+) -> Result<ChargedLockSegments, CapacityError> {
     let lock_count = record_lock_segment_count(arena.len())?;
+    let pointer_bytes = lock_count
+        .checked_mul(std::mem::size_of::<Arc<RecordLockSegment>>())
+        .ok_or(CapacityError::BufferLimit)?;
+    let charge = take_charge(pointer_bytes)?;
+    #[cfg(test)]
+    registry_growth_tests::allocation_checkpoint()?;
     let mut lock_segments = Vec::new();
     lock_segments
         .try_reserve_exact(lock_count)
@@ -7633,14 +8011,21 @@ fn build_record_lock_segments(
         let record_base = logical_base
             .checked_add(physical_base)
             .ok_or(CapacityError::BufferLimit)?;
+        let target_charge = take_charge(record_lock_accounted_bytes())?;
+        #[cfg(test)]
+        registry_growth_tests::allocation_checkpoint()?;
         lock_segments.push(Arc::new(RecordLockSegment {
             arena: arena.clone(),
             logical_base: record_base,
             physical_base,
             lock_domain,
+            _charge: target_charge,
         }));
     }
-    Ok(lock_segments.into_boxed_slice())
+    Ok(ChargedLockSegments {
+        targets: lock_segments.into_boxed_slice(),
+        _charge: charge,
+    })
 }
 
 struct RegistrySegment {
@@ -7650,7 +8035,7 @@ struct RegistrySegment {
     arena: RegistryArena,
     // Targets never point back to this owner: each owns only `slots`, so table
     // teardown cannot dangle a guard and the ownership graph has no cycle.
-    lock_segments: Box<[Arc<RecordLockSegment>]>,
+    lock_segments: ChargedLockSegments,
 }
 
 impl RegistrySegment {
@@ -7658,13 +8043,33 @@ impl RegistrySegment {
         segment_index: usize,
         lock_domain: RecordLockDomain,
         bounded_atomic_values: bool,
+        accounting: &Arc<RegistryAccounting>,
     ) -> Result<Self, AccessError> {
         debug_assert_eq!(REGISTRY_SEGMENT_SLOTS % RECORD_LOCK_SEGMENT_SLOTS, 0);
         let logical_base = segment_index
             .checked_mul(REGISTRY_SEGMENT_SLOTS)
             .ok_or(CapacityError::BufferLimit)?;
-        let arena = RegistryArena::allocate(REGISTRY_SEGMENT_SLOTS, bounded_atomic_values)?;
-        let lock_segments = build_record_lock_segments(&arena, logical_base, lock_domain)?;
+        // Admit the complete segment in one shared-budget operation. Each
+        // allocation still owns its exact charge, so failure unwinds the
+        // unspent balance and detached targets retain only their live bytes.
+        let mut prepaid = accounting.reserve(eager_registry_accounted_bytes(
+            REGISTRY_SEGMENT_SLOTS,
+            bounded_atomic_values,
+        )?)?;
+        let arena_charge = prepaid.split_off(registry_arena_accounted_bytes(
+            REGISTRY_SEGMENT_SLOTS,
+            bounded_atomic_values,
+        )?)?;
+        let arena = RegistryArena::allocate_prepaid(
+            REGISTRY_SEGMENT_SLOTS,
+            bounded_atomic_values,
+            arena_charge,
+        )?;
+        let lock_segments =
+            build_record_lock_segments_with_charge(&arena, logical_base, lock_domain, |bytes| {
+                prepaid.split_off(bytes)
+            })?;
+        debug_assert_eq!(prepaid.bytes, 0);
         debug_assert_eq!(
             lock_segments.len(),
             RECORD_LOCK_SEGMENTS_PER_REGISTRY_SEGMENT
@@ -7692,6 +8097,7 @@ struct RecordLockSegment {
     logical_base: usize,
     physical_base: usize,
     lock_domain: RecordLockDomain,
+    _charge: RegistryCharge,
 }
 
 impl RecordLockSegment {
@@ -11972,7 +12378,7 @@ mod tests {
         assert_eq!(std::mem::align_of::<direct_record::CachedRecord>(), 8);
         assert_eq!(std::mem::size_of::<DirectRecordLockGuard>(), 40);
         assert_eq!(std::mem::size_of::<Option<DirectRecordLockGuard>>(), 40);
-        assert_eq!(std::mem::size_of::<RecordLockSegment>(), 56);
+        assert_eq!(std::mem::size_of::<RecordLockSegment>(), 72);
         assert_eq!(std::mem::size_of::<Candidate>(), 16);
         assert_eq!(std::mem::size_of::<RecordObservation>(), 16);
         assert_eq!(std::mem::size_of::<DirectoryObservation>(), 8);
@@ -12289,8 +12695,8 @@ mod tests {
         let RegistryStorage::LazySegmented(storage) = &registry.storage else {
             panic!("the test uses the default segmented registry");
         };
-        let segment = storage.segments[0].get().unwrap();
-        let RegistryArenaStorage::Stable160(slots) = segment.arena.storage.as_ref() else {
+        let segment = storage.segment(0).unwrap();
+        let RegistryArenaStorage::Stable160(slots) = &segment.arena.storage.slots else {
             panic!("bounded tables must allocate extended entries");
         };
         assert!(std::ptr::eq(first.entry, &slots[0].base));
@@ -12332,7 +12738,7 @@ mod tests {
         #[cfg(not(miri))]
         assert_eq!(
             eager_registry_accounted_bytes(100_000, false).unwrap(),
-            6_900_040
+            7_000_056
         );
         #[cfg(not(miri))]
         assert!(eager_registry_accounted_bytes(100_000, false).unwrap() <= 8 * 1024 * 1024);
@@ -12612,6 +13018,7 @@ mod tests {
                 retained_records: 4,
                 retained_key_bytes: 28,
                 consumed_record_ids: 4,
+                ..registry.usage()
             }
         );
         for candidate in &candidates {
@@ -12635,6 +13042,7 @@ mod tests {
                 retained_records: 2,
                 retained_key_bytes: 14,
                 consumed_record_ids: 4,
+                ..registry.usage()
             }
         );
     }
@@ -12710,15 +13118,13 @@ mod tests {
                     retained_records: 0,
                     retained_key_bytes: 0,
                     consumed_record_ids: 0,
+                    ..registry.usage()
                 }
             );
             let RegistryStorage::LazySegmented(storage) = &registry.storage else {
                 panic!("the default registry layout must remain lazy segmented");
             };
-            assert!(storage
-                .segments
-                .iter()
-                .all(|segment| segment.get().is_none()));
+            assert_eq!(storage.allocated_segments().count(), 0);
         }
 
         // The caller's scalar replay retains its established prefix behavior.
@@ -12782,8 +13188,8 @@ mod tests {
         let RegistryStorage::LazySegmented(storage) = &registry.storage else {
             panic!("the default registry layout must remain lazy segmented");
         };
-        assert!(storage.segments[0].get().is_some());
-        assert!(storage.segments[1].get().is_some());
+        assert!(storage.segment(0).is_some());
+        assert!(storage.segment(1).is_some());
         assert_eq!(registry.usage().consumed_record_ids(), maximum as u64 - 2);
     }
 
@@ -12834,6 +13240,7 @@ mod tests {
                 retained_records: TOTAL as u64,
                 retained_key_bytes: (TOTAL * 4) as u64,
                 consumed_record_ids: TOTAL as u64,
+                ..registry.usage()
             }
         );
     }
@@ -12899,6 +13306,7 @@ mod tests {
                 retained_records: retained,
                 retained_key_bytes: retained * 4,
                 consumed_record_ids: retained,
+                ..registry.usage()
             }
         );
     }
@@ -12934,6 +13342,7 @@ mod tests {
                 retained_records: 0,
                 retained_key_bytes: 0,
                 consumed_record_ids: 0,
+                ..registry.usage()
             }
         );
         assert!(slots[1..3]
@@ -12964,6 +13373,7 @@ mod tests {
                 retained_records: 0,
                 retained_key_bytes: 0,
                 consumed_record_ids: 1,
+                ..registry.usage()
             }
         );
 
@@ -12976,6 +13386,7 @@ mod tests {
                 retained_records: 1,
                 retained_key_bytes: 1,
                 consumed_record_ids: 2,
+                ..registry.usage()
             }
         );
     }
@@ -13046,6 +13457,7 @@ mod tests {
                 retained_records: TOTAL as u64,
                 retained_key_bytes: TOTAL as u64,
                 consumed_record_ids: TOTAL as u64,
+                ..registry.usage()
             }
         );
     }
@@ -13170,9 +13582,7 @@ mod tests {
             panic!("the default registry layout must remain lazy segmented");
         };
         for index in 0..THREADS {
-            let segment = storage.segments[index / REGISTRY_SEGMENT_SLOTS]
-                .get()
-                .unwrap();
+            let segment = storage.segment(index / REGISTRY_SEGMENT_SLOTS).unwrap();
             assert_eq!(
                 segment.arena.standard_slots()[index % REGISTRY_SEGMENT_SLOTS]
                     .state
@@ -13180,7 +13590,7 @@ mod tests {
                 SLOT_READY
             );
         }
-        match storage.segments[THREADS / REGISTRY_SEGMENT_SLOTS].get() {
+        match storage.segment(THREADS / REGISTRY_SEGMENT_SLOTS) {
             Some(segment) => assert_eq!(
                 segment.arena.standard_slots()[THREADS % REGISTRY_SEGMENT_SLOTS]
                     .state
@@ -15071,6 +15481,7 @@ mod tests {
                 retained_records: 2,
                 retained_key_bytes: 8,
                 consumed_record_ids: 2,
+                ..table.usage()
             }
         );
         transaction.abort();
@@ -17139,6 +17550,7 @@ mod tests {
                 retained_records: 1,
                 retained_key_bytes: 1,
                 consumed_record_ids: 1,
+                ..table.usage()
             }
         );
 
@@ -17794,6 +18206,7 @@ mod tests {
                 retained_records: 0,
                 retained_key_bytes: 0,
                 consumed_record_ids: 1,
+                ..table.usage()
             }
         );
         assert_eq!(
@@ -17857,6 +18270,7 @@ mod tests {
                 retained_records: 0,
                 retained_key_bytes: 0,
                 consumed_record_ids: COUNT as u64,
+                ..table.usage()
             }
         );
         for candidate in candidates {
@@ -18083,6 +18497,7 @@ mod tests {
                 retained_records: 1,
                 retained_key_bytes: 4,
                 consumed_record_ids: 1,
+                ..registry.usage()
             }
         );
         assert!(matches!(

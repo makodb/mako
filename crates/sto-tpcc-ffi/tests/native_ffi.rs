@@ -8,6 +8,7 @@ const MISS: i32 = 1;
 const DUPLICATE: i32 = 2;
 const BUFFER_TOO_SMALL: i32 = 4;
 const FATAL: i32 = 5;
+const RESOURCE_EXHAUSTED: i32 = 6;
 
 fn last_error() -> String {
     let length = sto_tpcc_last_error_length();
@@ -1166,7 +1167,7 @@ fn streaming_scan_counts_rows_delivered_before_a_later_error_and_reuses_thread_s
                 (&mut rows as *mut Vec<(Vec<u8>, Vec<u8>)>).cast(),
                 &mut visited,
             ),
-            FATAL
+            RESOURCE_EXHAUSTED
         );
         assert_eq!(visited, 1);
         assert_eq!(rows, [(b"a".to_vec(), b"A".to_vec())]);

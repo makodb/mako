@@ -31,6 +31,7 @@ enum {
   STO_TPCC_RETRY = 3,
   STO_TPCC_BUFFER_TOO_SMALL = 4,
   STO_TPCC_FATAL = 5,
+  STO_TPCC_RESOURCE_EXHAUSTED = 6,
 };
 
 /* Pointer safety contract for every function below: each non-NULL handle,
@@ -49,7 +50,28 @@ typedef struct sto_tpcc_db_config {
   uint32_t max_key_length;
   size_t max_items_per_txn;
   size_t max_locks_per_txn;
+  /* Shared limit for allocated Rust record-registry chunks and directory
+   * metadata across all tables. Zero selects 8 GiB. This includes inline
+   * value cells within the arenas, but excludes variable-sized values, native
+   * Masstree allocations, dense caches, worker scratch, fixed control objects,
+   * and allocator overhead. It does not bound total process RSS. */
+  uint64_t max_registry_bytes;
 } sto_tpcc_db_config;
+
+typedef struct sto_tpcc_db_usage_info {
+  uint64_t allocated_registry_bytes;
+  uint64_t max_registry_bytes;
+} sto_tpcc_db_usage_info;
+
+typedef struct sto_tpcc_table_usage_info {
+  uint64_t retained_records;
+  uint64_t retained_key_bytes;
+  uint64_t consumed_record_ids;
+  uint64_t allocated_registry_bytes;
+  uint64_t max_retained_records;
+  uint64_t max_retained_key_bytes;
+  uint64_t max_consumed_record_ids;
+} sto_tpcc_table_usage_info;
 
 /* A zero field selects sto-masstree's bounded default for that field. */
 typedef struct sto_tpcc_table_config {
@@ -201,6 +223,12 @@ typedef int32_t (*sto_tpcc_scan_callback)(void *context,
 sto_tpcc_status sto_tpcc_db_create(const sto_tpcc_db_config *config,
                                     sto_tpcc_db **out_db) STO_TPCC_NOEXCEPT;
 sto_tpcc_status sto_tpcc_db_destroy(sto_tpcc_db *db) STO_TPCC_NOEXCEPT;
+/* Atomic counters sampled independently, not a transactionally consistent
+ * snapshot. The shared budget includes allocations currently being prepared
+ * by concurrent inserts. */
+sto_tpcc_status sto_tpcc_db_usage(const sto_tpcc_db *db,
+                                sto_tpcc_db_usage_info *out_usage)
+    STO_TPCC_NOEXCEPT;
 
 /* Create every table during startup, before any long-lived transaction worker
  * attaches or concurrent table use begins. The compatibility creator selects
@@ -227,6 +255,11 @@ sto_tpcc_status sto_tpcc_table_destroy(sto_tpcc_table *table)
  * so a conflicting writer cannot commit against a stale count. */
 sto_tpcc_status sto_tpcc_table_size(const sto_tpcc_table *table,
                                      uint64_t *out_rows) STO_TPCC_NOEXCEPT;
+/* Retained entries include tombstones; consumed IDs cannot be reused. Counters
+ * are sampled independently and can include in-progress reservations. */
+sto_tpcc_status sto_tpcc_table_usage(const sto_tpcc_table *table,
+                                   sto_tpcc_table_usage_info *out_usage)
+    STO_TPCC_NOEXCEPT;
 
 /* Create, use, and destroy a thread handle on one OS thread. Keep the worker
  * set bounded and long-lived; destroy every handle before database teardown. */
@@ -252,6 +285,14 @@ sto_tpcc_status sto_tpcc_txn_abort(sto_tpcc_thread *thread)
  * idempotent sto_tpcc_txn_abort before reusing the thread handle. Some failure
  * paths have already closed the attempt while others leave it active or
  * doomed; abort safely normalizes all of them. */
+
+/* RESOURCE_EXHAUSTED means a configured quota or fallible allocation failed.
+ * Transactional operations abort the entire attempt and close its native RCU
+ * scope before returning this status. No staged changes commit, and the
+ * thread handle is ready for a new begin. Existing records remain accessible.
+ * Retrying the same operation requires sufficient capacity to become available.
+ * An idempotent abort is also safe. Poisoned or indeterminate outcomes remain
+ * FATAL and must never be interpreted as ordinary capacity exhaustion. */
 
 /* out_actual is required. On BUFFER_TOO_SMALL it reports the required size;
  * otherwise a non-OK result leaves it zero. out_value is unchanged unless the

@@ -174,6 +174,7 @@ fn payment_prefix_commits_aborts_scans_and_fails_atomically() {
             max_key_length: 64,
             max_items_per_txn: 128,
             max_locks_per_txn: 256,
+            max_registry_bytes: 0,
         };
         let mut db = ptr::null_mut();
         expect(sto_tpcc_db_create(&db_config, &mut db), OK);

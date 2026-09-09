@@ -252,6 +252,10 @@ public:
   // Called once after a successful load and its synchronization barriers,
   // before benchmark workers are created. Recovery and no-load runs skip it.
   virtual void on_load_complete() {}
+
+  // Called while workers are quiescent. Backends with bounded resources may
+  // report usage and configured limits without adding transaction-path work.
+  virtual void report_capacity_usage(const char *phase) const { (void)phase; }
 };
 
 #endif /* _ABSTRACT_DB_H_ */

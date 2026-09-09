@@ -23,6 +23,7 @@
 #   STO_TPCC_PGO_TRAIN_SECONDS   60
 #   STO_TPCC_PGO_TRAIN_MIX       45,43,4,4,4
 #   STO_TPCC_PGO_TRAIN_ALLOCATOR_MEMORY  1G
+#   STO_TPCC_PGO_TRAIN_REGISTRY_MEMORY   8G (Rust registry only)
 #   STO_TPCC_PGO_CONFIG          config/mako_sto_tpcc_local.yml
 #   STO_TPCC_PGO_SITE            local_s0
 #   STO_TPCC_PGO_BUILD_JOBS      8
@@ -31,7 +32,7 @@
 set -euo pipefail
 
 usage() {
-  sed -n '2,29s/^# \{0,1\}//p' "${BASH_SOURCE[0]}"
+  sed -n '2,30s/^# \{0,1\}//p' "${BASH_SOURCE[0]}"
 }
 
 die() {
@@ -220,7 +221,7 @@ validate_training_result() {
   local log=$1
   local output_json=$2
   "$python_bin" - "$log" "$train_seconds" "$train_mix" \
-    "$train_allocator_memory" >"$output_json" <<'PY'
+    "$train_allocator_memory" "$train_registry_memory" >"$output_json" <<'PY'
 import json
 import pathlib
 import sys
@@ -230,6 +231,7 @@ path = pathlib.Path(sys.argv[1])
 expected_seconds = int(sys.argv[2])
 configured_mix = [int(value) for value in sys.argv[3].split(",")]
 allocator_memory = sys.argv[4]
+registry_memory = sys.argv[5]
 records = [
     line[len(prefix):]
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -276,6 +278,7 @@ for name, weight in zip(mix_names, configured_mix, strict=True):
 
 result["environment_overrides"] = {
     "MAKO_TPCC_ALLOCATOR_MEMORY": allocator_memory,
+    "MAKO_STO_TPCC_REGISTRY_MEMORY": registry_memory,
     "MAKO_TPCC_WORKLOAD_MIX": ",".join(str(value) for value in configured_mix),
 }
 json.dump(result, sys.stdout, indent=2, sort_keys=True)
@@ -698,6 +701,12 @@ for variable in "${tpcc_fallback_variables[@]}"; do
   fi
 done
 unset "${tpcc_fallback_variables[@]}"
+for variable in MAKO_STO_TPCC_MAX_RETAINED_RECORDS \
+  MAKO_STO_TPCC_MAX_CONSUMED_RECORD_IDS MAKO_STO_TPCC_MAX_RETAINED_KEY_BYTES; do
+  if [[ -v "$variable" ]]; then
+    die "$variable must be unset so PGO trains without record quota overrides"
+  fi
+done
 inherited_environment="$(env)"
 if grep -q '^CARGO_TARGET_.*_RUSTFLAGS=' <<< "$inherited_environment"; then
   die "target-specific Cargo RUSTFLAGS must be unset"
@@ -726,6 +735,7 @@ train_cpu=${STO_TPCC_PGO_TRAIN_CPU:-$(first_allowed_cpu)}
 train_seconds=${STO_TPCC_PGO_TRAIN_SECONDS:-60}
 train_mix=${STO_TPCC_PGO_TRAIN_MIX:-45,43,4,4,4}
 train_allocator_memory=${STO_TPCC_PGO_TRAIN_ALLOCATOR_MEMORY:-1G}
+train_registry_memory=${STO_TPCC_PGO_TRAIN_REGISTRY_MEMORY:-8G}
 train_config=${STO_TPCC_PGO_CONFIG:-$repo_root/config/mako_sto_tpcc_local.yml}
 train_site=${STO_TPCC_PGO_SITE:-local_s0}
 build_jobs=${STO_TPCC_PGO_BUILD_JOBS:-8}
@@ -733,6 +743,7 @@ build_jobs=${STO_TPCC_PGO_BUILD_JOBS:-8}
 require_unsigned STO_TPCC_PGO_TRAIN_CPU "$train_cpu"
 require_positive STO_TPCC_PGO_TRAIN_SECONDS "$train_seconds"
 require_memory_spec STO_TPCC_PGO_TRAIN_ALLOCATOR_MEMORY "$train_allocator_memory"
+require_memory_spec STO_TPCC_PGO_TRAIN_REGISTRY_MEMORY "$train_registry_memory"
 require_positive STO_TPCC_PGO_BUILD_JOBS "$build_jobs"
 [[ -f "$train_config" ]] || die "TPC-C shard config does not exist: $train_config"
 [[ -n "$train_site" ]] || die "STO_TPCC_PGO_SITE must not be empty"
@@ -1003,6 +1014,7 @@ fi
   printf 'train_seconds=%s\n' "$train_seconds"
   printf 'train_mix=%s\n' "$train_mix"
   printf 'train_allocator_memory=%s\n' "$train_allocator_memory"
+  printf 'train_registry_memory=%s\n' "$train_registry_memory"
   printf 'tpcc_fallback_overrides=all-unset\n'
   printf 'train_config=%s\n' "$train_config"
   printf 'train_site=%s\n' "$train_site"
@@ -1121,8 +1133,8 @@ training_command=(
   --storage-engine rust
 )
 {
-  printf 'environment=MAKO_TPCC_ALLOCATOR_MEMORY=%q MAKO_TPCC_WORKLOAD_MIX=%q LLVM_PROFILE_FILE=%q' \
-    "$train_allocator_memory" "$train_mix" "$training_profile_pattern"
+  printf 'environment=MAKO_TPCC_ALLOCATOR_MEMORY=%q MAKO_STO_TPCC_REGISTRY_MEMORY=%q MAKO_TPCC_WORKLOAD_MIX=%q LLVM_PROFILE_FILE=%q' \
+    "$train_allocator_memory" "$train_registry_memory" "$train_mix" "$training_profile_pattern"
   for variable in "${tpcc_fallback_variables[@]}"; do
     printf ' %s=<unset>' "$variable"
   done
@@ -1132,6 +1144,7 @@ training_command=(
   printf '\n'
 } >"$output/training.log"
 MAKO_TPCC_ALLOCATOR_MEMORY="$train_allocator_memory" \
+MAKO_STO_TPCC_REGISTRY_MEMORY="$train_registry_memory" \
 MAKO_TPCC_WORKLOAD_MIX="$train_mix" \
 LLVM_PROFILE_FILE="$training_profile_pattern" \
   "${training_command[@]}" 2>&1 |

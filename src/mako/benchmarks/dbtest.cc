@@ -370,12 +370,22 @@ static void handle_new_config_format(const string& site_name)
 
 static void run_workers(abstract_db* db)
 {
+  std::unique_ptr<abstract_db> owned_db(db);
   auto& benchConfig = BenchmarkConfig::getInstance();
-  bench_runner *r = start_workers_tpcc(benchConfig.getLeaderConfig(), db, benchConfig.getNthreads());
-  start_workers_tpcc(benchConfig.getLeaderConfig(), db, benchConfig.getNthreads(), false, 1, r);
-  if (benchConfig.getSlowExit())
+  bench_runner *r = nullptr;
+  try {
+    r = start_workers_tpcc(benchConfig.getLeaderConfig(), db, benchConfig.getNthreads());
+    start_workers_tpcc(benchConfig.getLeaderConfig(), db, benchConfig.getNthreads(), false, 1, r);
+  } catch (const storage_resource_exhausted &) {
+    db->report_capacity_usage("startup_failed");
+    mako::stop_rpc_server();
     delete r;
-  delete db;
+    mako::clear_tpcc_sharding_policy();
+    throw;
+  }
+  if (benchConfig.getSlowExit() || benchConfig.hasResourceExhaustion())
+    delete r;
+  owned_db.reset();
   mako::clear_tpcc_sharding_policy();
 }
 
@@ -627,7 +637,12 @@ main(int argc, char **argv)
     try {
       (void)rust_sto_tpcc_detail::db_config_for_worker_count(
           benchConfig.getNthreads());
-    } catch (const std::invalid_argument &error) {
+      rust_sto_tpcc_detail::validate_capacity_environment();
+      mako::benchmark_cerr()
+          << "STO_TPCC_NATIVE_ALLOCATOR configured_bytes="
+          << tpcc_allocator_memory_bytes()
+          << " scope=native_only rust_heap_excluded=1" << endl;
+    } catch (const std::exception &error) {
       mako::benchmark_cerr() << "[ERROR] " << error.what() << endl;
       return 2;
     }
@@ -698,15 +713,21 @@ main(int argc, char **argv)
     }
   } else {
     // Single-shard mode: keep existing behavior
-    abstract_db * db = initWithDB(); // Some init is required for followers/learners
-    restore_default_termination_signals();
-    startup_watchdog.complete();
-    // Run worker threads on the leader
-    if (benchConfig.getLeaderConfig()) {
-      run_workers(db);
+    try {
+      abstract_db * db = initWithDB(); // Some init is required for followers/learners
+      restore_default_termination_signals();
+      startup_watchdog.complete();
+      // Run worker threads on the leader
+      if (benchConfig.getLeaderConfig()) {
+        run_workers(db);
+      }
+    } catch (const storage_resource_exhausted &error) {
+      report_benchmark_resource_exhaustion("startup", error);
+      startup_watchdog.complete();
+      mako::stop_rpc_server();
     }
   }
 
   db_close() ;
-  return 0;
+  return benchConfig.hasResourceExhaustion() ? 3 : 0;
 }

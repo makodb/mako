@@ -485,6 +485,15 @@ if(DEFINED MAKO_STO_TPCC_NATIVE_TEST
         TARGET native_ffi
         EXPECTED_VARIABLE _sto_tpcc_native_expected_tests)
 
+    set(_sto_tpcc_capacity_expected_tests
+        scalar_capacity_aborts_staged_changes_and_preserves_existing_access
+        registry_budget_is_shared_and_exhaustion_does_not_poison_existing_tables)
+    _mako_run_native_suite(
+        LABEL "Rust STO TPC-C capacity recovery"
+        PACKAGE sto-tpcc-ffi
+        TARGET capacity
+        EXPECTED_VARIABLE _sto_tpcc_capacity_expected_tests)
+
     get_filename_component(_sto_tpcc_test_dir
         "${MAKO_STO_TPCC_NATIVE_TEST}" DIRECTORY)
     set(_sto_tpcc_trusted_test "${_sto_tpcc_test_dir}/trusted_ffi.rs")

@@ -6,7 +6,8 @@
 > transactional Masstree point operations, copied scans, physical-directory
 > generation validation, the homogeneous direct-commit lane, private direct
 > directory tokens, bounded atomic values, trusted scan-generation validation,
-> bounded registries, the terminal-read typestate, the optional fixed-`u64`
+> growable registries with explicit allocation budgets, the terminal-read
+> typestate, the optional fixed-`u64`
 > Masstree specialization, pure Rust reference map/vector/queue adapters, and
 > the upper commit-hook seam, including post-install publication while write
 > locks remain held, exist on this branch.
@@ -39,7 +40,7 @@
 > **Baseline:** Mako `mako-dev` at `378fc281d2c6`; compatibility oracle
 > pull request 86, `worktree-masstree-rocks` at `a3ede48859a4`
 >
-> **Last updated:** 2026-09-07
+> **Last updated:** 2026-09-09
 
 This document defines the intended semantics and architecture of Mako's native
 Rust implementation of STO. It is a living design contract: implementation
@@ -2722,8 +2723,8 @@ record and key-byte quota, but its internal numeric slot ID remains consumed.
 The private direct-directory mode may publish the stable slot address rather
 than that numeric ID; the same no-move and no-reuse rule applies. An
 implementation may drop separately allocated candidate backing or retain its
-in-place arena slot; in the latter case the consumed-ID limit is also the hard
-bound on failed-candidate slot memory. Logical deletion installs a tombstone;
+in-place arena slot. Consumed-ID limits and the structural allocation budget
+both constrain retained slot storage. Logical deletion installs a tombstone;
 it does not free the record or remove the directory key. These rules apply
 during live runtime operation; a successful whole-runtime shutdown may free the
 entire ownership unit after quiescence.
@@ -2782,8 +2783,10 @@ The registry still consumes an internal numeric slot ID monotonically in both
 modes. IDs and slots are never reused in v1. The allocatable domain is bounded
 by the minimum of the configured consumed-ID limit, the registry-addressable
 slot domain, and `u64::MAX`; scalar ABI support for every nonzero `u64` does not
-imply the registry can allocate every value. Exhaustion is a terminal capacity
-error before native publication. Wrapping to zero or aliasing any consumed slot
+imply the registry can allocate every value. The current addressable numeric
+domain is capped at `isize::MAX`. Exhaustion ends the current attempt with a
+capacity error before native publication of the rejected candidate. It does
+not require process termination. Wrapping to zero or aliasing any consumed slot
 is forbidden. Direct mode additionally rejects zero, misaligned, or
 non-pointer-domain address encodings before publication.
 
@@ -2813,8 +2816,16 @@ proven-unpublished/publication-unknown slots outside quarantine diagnostics.
 
 An implementation may use segmented append-only storage or another design that
 keeps registry lookup stable while the registry grows. The default
-`RegistryLayout::LazySegmented` publishes fixed-size `RegistrySegment`s through
-segment-level `OnceLock`s. A published segment already contains eagerly
+`RegistryLayout::LazySegmented` has a small fixed root of sparse directory
+buckets. Bucket `b` covers `2^b` segment positions starting at `2^b - 1`; both
+the bucket's segment-pointer array and each 1,024-entry `RegistrySegment` are
+allocated only when needed. Construction does not allocate one directory cell
+for every configured segment. Thus a large numeric quota does not reserve a
+proportional outer directory at startup. A per-table growth mutex serializes
+first allocation; existing-record resolution requires no growth mutex.
+
+Buckets and segments publish through `OnceLock`s and remain at stable
+addresses. A published segment already contains eagerly
 initialized slots of the table's standard or extended entry type; an atomic
 `UNALLOCATED -> RESERVED -> READY` transition claims and publishes a slot.
 There is no per-slot `OnceLock`. Each entry owns its `Record` in place, and both
@@ -2838,10 +2849,38 @@ Exhaustion returns `Capacity` before native publication. A proven-unpublished
 loser may release retained-record and key-byte quota, although its numeric ID
 and registry slot remain consumed. In the stable in-place arena it also retains
 the initialized tombstone/version/lock slot until whole-table destruction;
-`max_consumed_record_ids`, not retained-record quota, bounds that physical arena
-memory. A publication-unknown candidate retains both quotas. A deployment may
-configure very large limits, but unbounded miss-driven allocation is not an
-acceptable implicit policy.
+retained-record quota alone therefore cannot bound physical arena memory.
+A publication-unknown candidate retains both quotas. A deployment may
+configure very large numeric limits, but MUST select an explicit allocation
+budget for growth driven by misses or new keys.
+
+`RegistryBudget` is shared across tables by cloning its accounting handle.
+`Table::new_with_budget` selects it for the registry-ID lane;
+`Table::new_direct_with_budget` selects it for a private direct-token table.
+The existing constructors retain their finite numeric quota defaults and use
+an unrestricted structural budget. Callers that enable large numeric quotas
+should use one of the explicit-budget constructors.
+Charges are atomically reserved before allocation and released only when the
+allocation's last owner drops. Each lazy segment reserves its full structural
+byte total once, then divides that reservation among its arena, pointer array,
+and individual lock targets without further shared-counter updates. A failed
+construction releases both the unused reservation and any constructed owners.
+Directory buckets have separate, infrequent reservations. The budget includes
+sparse directory arrays,
+record arenas with their concrete entry stride, arena ownership allocations,
+record-lock targets, and their pointer arrays. Detached lock targets retain
+their arena charge, so dropping the table handle cannot falsely report that
+still-reachable storage was freed. A failed allocation releases its unconsumed
+charge; already published directory buckets remain allocated and accounted.
+
+This is a structural registry budget, not a Rust heap or process memory limit.
+It excludes separately allocated variable-size key/value payloads, fixed table
+and budget control objects, dense resolved caches, transaction/worker scratch,
+allocator overhead, native Masstree allocations, and process RSS. Inline
+payload fields are included in the charged record stride. Deployments MUST
+measure these other allocations separately. Numeric retained-record,
+consumed-ID, and retained-key-byte quotas remain independent limits, and their
+counters do not represent interchangeable memory measurements.
 
 ### 14.3 Record representation
 
@@ -3798,6 +3837,59 @@ alignment, lengths, the Rust `isize` slice bound, address overflow,
 owner-thread affinity, active transaction state, table ownership, enum values,
 callback presence, and output capacities.
 
+The TPC-C wrapper selects sparse registry growth for every table. Its previous
+name-based 4-million and 16-million retained-record ceilings and 6-million and
+20-million consumed-ID ceilings are removed. All three numeric table quotas
+default to `u64::MAX`, subject to the registry's `isize::MAX` addressable ID
+limit and shared structural allocation budget. The startup environment is:
+
+| Variable | Default | Accepted value |
+| --- | --- | --- |
+| `MAKO_STO_TPCC_REGISTRY_MEMORY` | `8G` | Positive decimal byte count, optionally followed by uppercase `K`, `M`, or `G`, using powers of 1,024. |
+| `MAKO_STO_TPCC_MAX_RETAINED_RECORDS` | `u64::MAX` | Positive decimal integer, applied to every table. |
+| `MAKO_STO_TPCC_MAX_CONSUMED_RECORD_IDS` | `u64::MAX` | Positive decimal integer, applied to every table. |
+| `MAKO_STO_TPCC_MAX_RETAINED_KEY_BYTES` | `u64::MAX` | Positive decimal integer byte count, applied to every table. |
+
+Unset variables select defaults. Empty values, zero, leading zeros, signs,
+whitespace, invalid suffixes, and arithmetic overflow are rejected before
+database initialization with exit status 2. Registry bytes must also fit
+`size_t`. The C ABI's trailing `sto_tpcc_db_config.max_registry_bytes` selects
+the shared budget; its zero value selects 8 GiB for zero-initialized C callers.
+That C defaulting convention does not make an explicit environment value of
+zero valid. The lockstep Rust library, wrapper, and C header MUST all be
+rebuilt after this structure change.
+
+`STO_TPCC_RESOURCE_EXHAUSTED`, numeric status 6, distinguishes ordinary capacity
+exhaustion from retryable conflicts and fatal integrity failures. If an access
+or commit exhausts capacity, the FFI ends the active attempt, discards staged
+writes and logical-row-count deltas, releases its locks, and closes its native
+RCU scope before returning. Another commit without a new begin is invalid;
+idempotent abort and a fresh begin remain permitted. Ordinary exhaustion MUST
+NOT quarantine a healthy runtime. If cleanup fails, or publication was
+ambiguous or the runtime becomes poisoned, fatal/quarantine status takes
+precedence over the capacity result. Successfully interned tombstones and
+consumed IDs from the aborted attempt can remain allocated under the v1
+identity rules; transactional rollback does not promise allocation rollback.
+
+The C++ wrapper translates status 6 into `storage_resource_exhausted`. Loader
+and worker boundaries catch it, stop the workload, join started threads, and
+complete database-thread cleanup. Failure during worker setup still completes
+the startup barrier protocol. A stopped process emits
+`TPCC_RESOURCE_EXHAUSTED phase=startup|load|run`, exits with status 3, and MUST
+NOT emit a successful `TPCC_BENCH_RESULT`. It does not retry an unchanged full
+budget indefinitely.
+
+`sto_tpcc_db_usage` reports allocated structural registry bytes and their
+shared maximum. `sto_tpcc_table_usage` reports retained records, retained key
+bytes, consumed IDs, allocated structural registry bytes, and each configured
+numeric maximum. These are independent observations, not one atomic snapshot
+across counters during concurrent mutation. The benchmark samples them while
+workers are quiescent after loading and after joining, including failure paths,
+and emits `STO_TPCC_CAPACITY` records with the phase and table name. End-of-run
+reporting occurs after the measured interval. Native allocator configuration
+is reported separately as `STO_TPCC_NATIVE_ALLOCATOR`; it excludes Rust heap
+allocations. A larger registry budget never increases native allocator memory.
+
 The thread handle uses a private owner with a raw pointer to its stable
 `WorkerContext` allocation and an inline lifetime-erased active transaction
 slot. Only the borrowed worker is address-sensitive; keeping the movable
@@ -4154,6 +4246,12 @@ Before safe integration, test:
 - exactly one winner under concurrent get-or-insert;
 - success, proven-unpublished, and publication-unknown insertion outcomes;
 - atomic retained-record/key-byte quota reservation under concurrent misses;
+- concurrent sparse-directory and segment growth without moving existing
+  records, budget reservation failure before publication, and accounting until
+  the last detached arena owner drops;
+- tiny-quota scalar, batch, and fused-transaction exhaustion with full abort,
+  healthy worker reuse, and fatal precedence if cleanup or publication is
+  uncertain;
 - Release publication and Acquire registry resolution;
 - forward/reverse inclusive/exclusive bounds;
 - concurrent split scans never omit or duplicate continuously present entries,
@@ -4470,6 +4568,8 @@ satisfy, the performance and false-conflict gate.
 | D26 | RUST/COMPAT | Full local Payment, exact-home NewOrder, local Delivery, and the local StockLevel tail use hidden fixed-layout calls that own the active attempt through commit or abort and publish result metadata only after a successful commit. | Removes repeated C ABI crossings without adding a second transaction protocol or exposing workload-specific calls as a stable application ABI. StockLevel retains its district read and current-ID selection in C++ before handing off the scan-and-join tail. |
 | D27 | COMPAT | Full NewOrder consumes its external fast order ID and timestamp before the Rust call. Full Delivery advances each worker cursor immediately after selecting a row, even if a later operation aborts. | Matches the benchmark's existing nontransactional state and retry semantics while keeping database writes atomic. |
 | D28 | RUST/COMPAT | `contains_resolving` and `contains_resolved` provide metadata-only transactional presence with ordinary final OCC validation. Full NewOrder uses them for customer, warehouse, and district witnesses. | Avoids loading and decoding payloads that the valid-data release path does not consume. Missing rows, staged liveness, resolved-token ownership, and commit conflicts remain checked; corruption diagnostics for unused payload bytes are not a parity promise. |
+| D29 | RUST | Lazy record registries grow through sparse, stable directory buckets and share an explicit structural allocation budget. Numeric record/ID/key quotas remain separately configurable; published slots are never reused. | Removes workload-duration ceilings without moving cached records or treating a very large ID quota as a proportional startup allocation. |
+| D30 | RUST/COMPAT | Ordinary capacity exhaustion ends the active attempt and returns status 6 through the closed TPC-C ABI; benchmark boundaries join workers, report usage, suppress successful results, and exit 3. Fatal cleanup or uncertain publication takes precedence. | A full configured budget becomes an application-visible resource outcome while preserving transaction atomicity and quarantine guarantees. |
 
 ### 20.2 Deferred decisions and review triggers
 

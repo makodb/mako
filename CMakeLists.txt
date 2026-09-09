@@ -2264,6 +2264,54 @@ if(TARGET sto_tpcc_bench)
         RUN_SERIAL TRUE
         TIMEOUT 180)
 
+    # Exercise real process shutdown at each capacity-failure boundary. The
+    # runner requires exit 3 and rejects any successful TPCC_BENCH_RESULT.
+    foreach(_capacity_phase IN ITEMS startup load run)
+        add_test(NAME test_sto_tpcc_rust_${_capacity_phase}_resource_exhausted
+            COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/scripts/ci/run_sto_tpcc_ctest.py"
+                --expected-failure-text "TPCC_RESOURCE_EXHAUSTED phase=${_capacity_phase}"
+                --expected-exit-code 3
+                --
+                "$<TARGET_FILE:sto_tpcc_bench>"
+                --num-threads 1
+                --shard-config "${CMAKE_CURRENT_SOURCE_DIR}/config/mako_sto_tpcc_local.yml"
+                --site-name local_s0
+                --runtime 30
+                --storage-engine rust
+                --slow-exit)
+        set_tests_properties(test_sto_tpcc_rust_${_capacity_phase}_resource_exhausted
+            PROPERTIES
+            LABELS "sto;masstree;rust;ffi;lifecycle;tpcc;capacity"
+            RUN_SERIAL TRUE
+            TIMEOUT 240)
+    endforeach()
+    set_tests_properties(test_sto_tpcc_rust_startup_resource_exhausted PROPERTIES
+        ENVIRONMENT "MAKO_STO_TPCC_REGISTRY_MEMORY=1")
+    set_tests_properties(test_sto_tpcc_rust_load_resource_exhausted PROPERTIES
+        ENVIRONMENT "MAKO_STO_TPCC_MAX_RETAINED_RECORDS=1")
+    set_tests_properties(test_sto_tpcc_rust_run_resource_exhausted PROPERTIES
+        ENVIRONMENT "MAKO_STO_TPCC_MAX_RETAINED_RECORDS=350000;MAKO_TPCC_WORKLOAD_MIX=100,0,0,0,0")
+
+    add_test(NAME test_sto_tpcc_rust_concurrent_resource_exhausted
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/ci/run_sto_tpcc_ctest.py"
+            --expected-failure-text "TPCC_RESOURCE_EXHAUSTED phase=run"
+            --expected-exit-code 3
+            --
+            "$<TARGET_FILE:sto_tpcc_bench>"
+            --num-threads 4
+            --shard-config "${CMAKE_CURRENT_SOURCE_DIR}/config/mako_sto_tpcc_local.yml"
+            --site-name local_s0
+            --runtime 30
+            --storage-engine rust
+            --slow-exit)
+    set_tests_properties(test_sto_tpcc_rust_concurrent_resource_exhausted PROPERTIES
+        LABELS "sto;masstree;rust;ffi;lifecycle;tpcc;capacity;concurrency"
+        ENVIRONMENT "MAKO_STO_TPCC_MAX_RETAINED_RECORDS=350000;MAKO_TPCC_WORKLOAD_MIX=100,0,0,0,0"
+        RUN_SERIAL TRUE
+        TIMEOUT 240)
+
     add_test(NAME test_sto_tpcc_rejects_duplicate_local_shards
         COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/scripts/ci/run_sto_tpcc_ctest.py"

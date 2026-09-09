@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "benchmarks/benchmark_config.h"
+#include "benchmarks/benchmark_output.h"
 #include "lib/common.h"
 #include "rcu.h"
 #include "mbta_wrapper.hh"
@@ -458,54 +459,14 @@ static_assert(tpcc_resolved_cache_policy_for("order_line_1") ==
 
 constexpr sto_tpcc_table_config
 tpcc_table_config_for(std::string_view index_name) {
-  constexpr uint64_t kMiB = uint64_t{1} << 20;
-  constexpr uint64_t kStaticRetained = 262'144;
-  constexpr uint64_t kStaticConsumed = 524'288;
-  constexpr uint64_t kGrowthRetained = 4'000'000;
-  constexpr uint64_t kGrowthConsumed = 6'000'000;
-  constexpr uint64_t kAppendHeavyRetained = 16'000'000;
-  constexpr uint64_t kAppendHeavyConsumed = 20'000'000;
-
-  // Paper-style TPC-C forces one tree per warehouse, so increasing the
-  // 1/4/8/16-thread scale increases the table count rather than one
-  // table's initial cardinality. The largest initial table is order_line at
-  // about 300k rows per warehouse. Its exact encoded key is 16 bytes; the
-  // 512 MiB key quota therefore still has a 2x margin at the 16M row cap.
-  // The remaining 15.7M order-line slots cover over 1.04M maximum-size
-  // (15-line) new-order transactions per warehouse after loading.
-  //
-  // History starts with 30k rows per warehouse and appends one 24-byte key for
-  // every committed Payment. The generic 4M tier therefore failed after
-  // exactly 3.97M pure-Payment commits, within a normal benchmark run. Its
-  // 16M retained-record tier needs 384M key bytes and thus also fits this
-  // quota, while the 20M consumed-ID allowance retains collision headroom.
   const std::string_view tablespace = tpcc_tablespace_name(index_name);
-  const bool static_cardinality = tpcc_table_has_static_directory(index_name);
-
   sto_tpcc_table_config config{};
-  if (tablespace == "order_line" || tablespace == "history") {
-    config.max_retained_records = kAppendHeavyRetained;
-    config.max_consumed_record_ids = kAppendHeavyConsumed;
-    config.max_retained_key_bytes = 512 * kMiB;
-  } else if (static_cardinality) {
-    config.max_retained_records = kStaticRetained;
-    config.max_consumed_record_ids = kStaticConsumed;
-    config.max_retained_key_bytes = 128 * kMiB;
-  } else {
-    // new_order, oorder, and oorder_c_id_idx each consume at most one new key
-    // per corresponding TPC-C transaction. Keep this conservative tier as the
-    // fallback so an unexpected table name fails by a clear bound instead of
-    // silently receiving an unbounded registry.
-    config.max_retained_records = kGrowthRetained;
-    config.max_consumed_record_ids = kGrowthConsumed;
-    config.max_retained_key_bytes = 512 * kMiB;
-  }
-
-  // LazySegmented reserves one 40-byte OnceLock directory cell per 1,024
-  // consumed IDs and allocates the 64-byte registry entries only as segments
-  // are used.
-  // At 18 warehouses these tiers reserve about 41.1 MiB of directory cells,
-  // versus about 79.0 MiB for the former uniform 8M-ID limit.
+  // Sparse directory nodes and record chunks grow on demand within the
+  // database's shared registry-byte budget. These independent logical quotas
+  // impose no smaller default ceiling and allocate no metadata in advance.
+  config.max_retained_records = std::numeric_limits<uint64_t>::max();
+  config.max_consumed_record_ids = std::numeric_limits<uint64_t>::max();
+  config.max_retained_key_bytes = std::numeric_limits<uint64_t>::max();
   config.scan_chunk_records = 128;
   config.scan_initial_key_arena_bytes = 16 * 1024;
   config.scan_max_key_arena_bytes = 64 * 1024;
@@ -530,16 +491,17 @@ tpcc_table_config_for(std::string_view index_name) {
 
 constexpr sto_tpcc_table_config kHistoryCapacityRegression =
     tpcc_table_config_for("history_1");
-static_assert(kHistoryCapacityRegression.max_retained_records == 16'000'000);
+static_assert(kHistoryCapacityRegression.max_retained_records ==
+              std::numeric_limits<uint64_t>::max());
 static_assert(kHistoryCapacityRegression.max_consumed_record_ids ==
-              20'000'000);
-static_assert(kHistoryCapacityRegression.max_retained_key_bytes >=
-              kHistoryCapacityRegression.max_retained_records * uint64_t{24});
+              std::numeric_limits<uint64_t>::max());
 
 constexpr sto_tpcc_table_config kOrderCapacityRegression =
     tpcc_table_config_for("oorder_1");
-static_assert(kOrderCapacityRegression.max_retained_records == 4'000'000);
-static_assert(kOrderCapacityRegression.max_consumed_record_ids == 6'000'000);
+static_assert(kOrderCapacityRegression.max_retained_records ==
+              std::numeric_limits<uint64_t>::max());
+static_assert(kOrderCapacityRegression.max_consumed_record_ids ==
+              std::numeric_limits<uint64_t>::max());
 static_assert(kOrderCapacityRegression.trusted_scan_value_generation == 0);
 static_assert(tpcc_table_config_for("oorder_c_id_idx_1")
                   .trusted_scan_value_generation != 0);
@@ -713,6 +675,50 @@ int32_t invoke_fixed_modify_bridge(
 
 } // namespace
 
+namespace {
+
+uint64_t capacity_environment(const char *name, uint64_t fallback,
+                              bool allow_size_suffix) {
+  const char *raw = std::getenv(name);
+  if (!raw)
+    return fallback;
+  const std::string_view spec(raw);
+  const auto invalid = [&]() -> std::invalid_argument {
+    return std::invalid_argument(std::string("invalid ") + name + ": " +
+                                 std::string(spec));
+  };
+  if (spec.empty() || spec.front() < '1' || spec.front() > '9')
+    throw invalid();
+  uint64_t multiplier = 1;
+  size_t digits = spec.size();
+  if (allow_size_suffix) {
+    switch (spec.back()) {
+    case 'K': multiplier = uint64_t{1} << 10; --digits; break;
+    case 'M': multiplier = uint64_t{1} << 20; --digits; break;
+    case 'G': multiplier = uint64_t{1} << 30; --digits; break;
+    default: break;
+    }
+  }
+  uint64_t amount = 0;
+  for (size_t index = 0; index < digits; ++index) {
+    const char digit = spec[index];
+    if (digit < '0' || digit > '9')
+      throw invalid();
+    const uint64_t value = static_cast<uint64_t>(digit - '0');
+    if (amount > (std::numeric_limits<uint64_t>::max() - value) / 10)
+      throw invalid();
+    amount = amount * 10 + value;
+  }
+  if (amount > std::numeric_limits<uint64_t>::max() / multiplier)
+    throw invalid();
+  amount *= multiplier;
+  if (allow_size_suffix && amount > std::numeric_limits<size_t>::max())
+    throw invalid();
+  return amount;
+}
+
+} // namespace
+
 sto_tpcc_db_config rust_sto_tpcc_detail::db_config_for_worker_count(
     size_t configured_workers) {
   // A Rust worker also initializes the legacy C++ TThread state. Size the
@@ -749,12 +755,29 @@ sto_tpcc_db_config rust_sto_tpcc_detail::db_config_for_worker_count(
   config.max_key_length = 1024;
   config.max_items_per_txn = 1024;
   config.max_locks_per_txn = 2048;
+  config.max_registry_bytes = capacity_environment(
+      "MAKO_STO_TPCC_REGISTRY_MEMORY", uint64_t{8} << 30, true);
   return config;
 }
 
 sto_tpcc_table_config
 rust_sto_tpcc_detail::table_config_for(std::string_view index_name) {
-  return tpcc_table_config_for(index_name);
+  sto_tpcc_table_config config = tpcc_table_config_for(index_name);
+  config.max_retained_records = capacity_environment(
+      "MAKO_STO_TPCC_MAX_RETAINED_RECORDS", config.max_retained_records, false);
+  config.max_consumed_record_ids = capacity_environment(
+      "MAKO_STO_TPCC_MAX_CONSUMED_RECORD_IDS", config.max_consumed_record_ids,
+      false);
+  config.max_retained_key_bytes = capacity_environment(
+      "MAKO_STO_TPCC_MAX_RETAINED_KEY_BYTES", config.max_retained_key_bytes,
+      false);
+  return config;
+}
+
+void rust_sto_tpcc_detail::validate_capacity_environment() {
+  (void)table_config_for("order_line");
+  (void)capacity_environment("MAKO_STO_TPCC_REGISTRY_MEMORY",
+                             uint64_t{8} << 30, true);
 }
 
 bool rust_sto_tpcc_detail::table_has_static_directory(
@@ -1133,6 +1156,33 @@ void rust_sto_tpcc_wrapper::on_load_complete() {
     require_ok("table_seal_directory_structure",
                sto_tpcc_table_seal_directory_structure(table->table_));
   }
+}
+
+void rust_sto_tpcc_wrapper::report_capacity_usage(const char *phase) const {
+  sto_tpcc_db_usage_info db_usage{};
+  require_ok("db_usage", sto_tpcc_db_usage(db_, &db_usage));
+  auto output = mako::benchmark_cerr();
+  output << "STO_TPCC_CAPACITY phase=" << phase
+         << " scope=database allocated_registry_bytes="
+         << db_usage.allocated_registry_bytes
+         << " max_registry_bytes=" << db_usage.max_registry_bytes
+         << " registry_headroom_bytes="
+         << (db_usage.max_registry_bytes - db_usage.allocated_registry_bytes)
+         << '\n';
+  for (const auto &table : tables_) {
+    sto_tpcc_table_usage_info usage{};
+    require_ok("table_usage", sto_tpcc_table_usage(table->table_, &usage));
+    output << "STO_TPCC_CAPACITY phase=" << phase << " table=" << table->name_
+           << " retained_records=" << usage.retained_records
+           << " consumed_record_ids=" << usage.consumed_record_ids
+           << " retained_key_bytes=" << usage.retained_key_bytes
+           << " allocated_registry_bytes=" << usage.allocated_registry_bytes
+           << " max_retained_records=" << usage.max_retained_records
+           << " max_consumed_record_ids=" << usage.max_consumed_record_ids
+           << " max_retained_key_bytes=" << usage.max_retained_key_bytes
+           << '\n';
+  }
+  output << std::flush;
 }
 
 void rust_sto_tpcc_wrapper::preallocate_open_index() {}
@@ -1875,9 +1925,16 @@ void rust_sto_tpcc_wrapper::shard_reset() { begin_current_transaction(); }
 
 [[noreturn]] void rust_sto_tpcc_wrapper::throw_fatal(
     const char *operation, sto_tpcc_status status) {
-  throw std::runtime_error(std::string("Rust STO ") + operation +
-                           " failed (status " + std::to_string(status) +
-                           "): " + last_rust_error());
+  const std::string message = std::string("Rust STO ") + operation +
+                             " failed (status " + std::to_string(status) +
+                             "): " + last_rust_error();
+  if (status == STO_TPCC_RESOURCE_EXHAUSTED) {
+    // The FFI ends the attempt before reporting resource exhaustion. Keep the
+    // wrapper's transaction state consistent so thread_end remains safe.
+    tls_transaction_active_ = false;
+    throw storage_resource_exhausted(message);
+  }
+  throw std::runtime_error(message);
 }
 
 void rust_sto_tpcc_wrapper::require_ok(const char *operation,

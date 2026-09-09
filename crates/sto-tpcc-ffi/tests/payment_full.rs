@@ -174,6 +174,7 @@ fn full_payment_commits_gc_bc_and_duplicate_history_as_a_noop() {
             max_key_length: 64,
             max_items_per_txn: 64,
             max_locks_per_txn: 128,
+            max_registry_bytes: 0,
         };
         let mut db = ptr::null_mut();
         expect(sto_tpcc_db_create(&db_config, &mut db), OK);

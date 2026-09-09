@@ -41,7 +41,7 @@ Coverage contract:
     in the sweep and rerun one-by-one with only leak reporting disabled. The
     exact C++ slow-exit, local-facade, and MassTrans non-transactional CTests
     also disable leak reporting because the native backend retains
-    STO/Masstree state for process lifetime. Two exact Rust TPC-C lifecycle
+    STO/Masstree state for process lifetime. Four exact Rust TPC-C lifecycle
     tests use one checked-in LSan
     constructor suppression for native Masstree roots retained until exit.
   * The UBSan job compiler-instruments native C and C++ code. Stable Rust 1.95
@@ -819,11 +819,13 @@ manifest="${build_dir}/rust-sto-sanitizer-manifest.txt"
         echo "suppression_file=${lsan_suppressions}"
         echo "suppression_sha256=${lsan_suppression_sha256}"
         echo "lsan_suppression_rule=leak:mt_tree::mt_tree"
-        echo "lsan_suppression_scope=test_sto_tpcc_rust_slow_exit;test_sto_tpcc_rust_concurrent"
+        echo "lsan_suppression_scope=test_sto_tpcc_rust_slow_exit;test_sto_tpcc_rust_concurrent;test_sto_tpcc_rust_run_resource_exhausted;test_sto_tpcc_rust_concurrent_resource_exhausted"
         echo "lsan_options=${lsan_options}"
         echo "lsan_expected_test_sto_tpcc_rust_slow_exit=allocations:4,bytes:1280"
         echo "lsan_expected_test_sto_tpcc_rust_concurrent=allocations:16,bytes:5120"
-        echo "lsan_expected_total=allocations:20,bytes:6400"
+        echo "lsan_expected_test_sto_tpcc_rust_run_resource_exhausted=allocations:4,bytes:1280"
+        echo "lsan_expected_test_sto_tpcc_rust_concurrent_resource_exhausted=allocations:16,bytes:5120"
+        echo "lsan_expected_total=allocations:40,bytes:12800"
         echo "asan_quarantine_test_count=${#asan_quarantine_cases[@]}"
         echo "asan_quarantine_tests=${asan_quarantine_cmake}"
         echo "asan_quarantine_allowlist=${quarantine_allowlist}"
@@ -1304,6 +1306,10 @@ required = {
     "test_sto_tpcc_cpp_multishard_slow_exit",
     "test_sto_tpcc_rust_slow_exit",
     "test_sto_tpcc_rust_concurrent",
+    "test_sto_tpcc_rust_startup_resource_exhausted",
+    "test_sto_tpcc_rust_load_resource_exhausted",
+    "test_sto_tpcc_rust_run_resource_exhausted",
+    "test_sto_tpcc_rust_concurrent_resource_exhausted",
     "test_sto_tpcc_rejects_duplicate_local_shards",
     "test_sto_tpcc_rejects_partial_local_shards",
     "test_sto_tpcc_rejects_rust_distributed_shard",
@@ -1339,6 +1345,20 @@ forbidden_properties = {
     "WILL_FAIL",
 }
 allowed_environment = {
+    "test_sto_tpcc_rust_startup_resource_exhausted": [
+        "MAKO_STO_TPCC_REGISTRY_MEMORY=1"
+    ],
+    "test_sto_tpcc_rust_load_resource_exhausted": [
+        "MAKO_STO_TPCC_MAX_RETAINED_RECORDS=1"
+    ],
+    "test_sto_tpcc_rust_run_resource_exhausted": [
+        "MAKO_STO_TPCC_MAX_RETAINED_RECORDS=350000",
+        "MAKO_TPCC_WORKLOAD_MIX=100,0,0,0,0"
+    ],
+    "test_sto_tpcc_rust_concurrent_resource_exhausted": [
+        "MAKO_STO_TPCC_MAX_RETAINED_RECORDS=350000",
+        "MAKO_TPCC_WORKLOAD_MIX=100,0,0,0,0"
+    ],
     "test_sto_tpcc_cpp_multishard_slow_exit": [
         "MAKO_TPCC_WORKLOAD_MIX=0,0,34,33,33"
     ],
@@ -1504,7 +1524,7 @@ if [[ "${sanitizer}" == "address" ]]; then
     fi
 
     # Passing CTests hide child output unless verbose mode is selected. Run the
-    # only two qualified tests separately so their suppression tables are
+    # only four qualified tests separately so their suppression tables are
     # retained as independently auditable evidence.
     run_logged ctest-rust-slow-exit-lsan \
         env LSAN_OPTIONS="${lsan_options}" \
@@ -1514,6 +1534,14 @@ if [[ "${sanitizer}" == "address" ]]; then
         env LSAN_OPTIONS="${lsan_options}" \
             ctest --test-dir "${build_dir}" --verbose \
                 --no-tests=error -R '^test_sto_tpcc_rust_concurrent$'
+    run_logged ctest-rust-run-exhausted-lsan \
+        env LSAN_OPTIONS="${lsan_options}" \
+            ctest --test-dir "${build_dir}" --verbose \
+                --no-tests=error -R '^test_sto_tpcc_rust_run_resource_exhausted$'
+    run_logged ctest-rust-concurrent-exhausted-lsan \
+        env LSAN_OPTIONS="${lsan_options}" \
+            ctest --test-dir "${build_dir}" --verbose \
+                --no-tests=error -R '^test_sto_tpcc_rust_concurrent_resource_exhausted$'
 
     current_lsan_sha256="$(sha256sum "${lsan_suppressions}" | awk '{print $1}')"
     if [[ "${current_lsan_sha256}" != "${lsan_suppression_sha256}" ]]; then
@@ -1525,7 +1553,11 @@ if [[ "${sanitizer}" == "address" ]]; then
         "${build_dir}/sanitizer-logs/ctest-rust-slow-exit-lsan.log" \
         test_sto_tpcc_rust_slow_exit 4 1280 \
         "${build_dir}/sanitizer-logs/ctest-rust-concurrent-lsan.log" \
-        test_sto_tpcc_rust_concurrent 16 5120 <<'PY'
+        test_sto_tpcc_rust_concurrent 16 5120 \
+        "${build_dir}/sanitizer-logs/ctest-rust-run-exhausted-lsan.log" \
+        test_sto_tpcc_rust_run_resource_exhausted 4 1280 \
+        "${build_dir}/sanitizer-logs/ctest-rust-concurrent-exhausted-lsan.log" \
+        test_sto_tpcc_rust_concurrent_resource_exhausted 16 5120 <<'PY'
 import hashlib
 import pathlib
 import re
@@ -1574,8 +1606,8 @@ for index in range(0, len(arguments), 4):
         raise SystemExit(f"{test_name}: LSan rows {rows!r}, expected {expected!r}")
     observed.append((test_name, expected_count, expected_bytes, log.resolve(), hashlib.sha256(log.read_bytes()).hexdigest()))
 
-if (sum(row[1] for row in observed), sum(row[2] for row in observed)) != (20, 6400):
-    raise SystemExit("qualified LSan totals differ from 20 allocations / 6400 bytes")
+if (sum(row[1] for row in observed), sum(row[2] for row in observed)) != (40, 12800):
+    raise SystemExit("qualified LSan totals differ from 40 allocations / 12800 bytes")
 
 with manifest.open("a", encoding="utf-8") as output:
     for test_name, count, byte_count, log, digest in observed:
@@ -1584,8 +1616,8 @@ with manifest.open("a", encoding="utf-8") as output:
         )
         output.write(f"lsan_evidence_{test_name}={log}\n")
         output.write(f"lsan_evidence_{test_name}_sha256={digest}\n")
-    output.write("lsan_observed_total=allocations:20,bytes:6400\n")
-print("verified exact LSan evidence: 20 allocations / 6400 bytes")
+    output.write("lsan_observed_total=allocations:40,bytes:12800\n")
+print("verified exact LSan evidence: 40 allocations / 12800 bytes")
 PY
 
     # Every other Rust-labeled test runs with leak detection enabled and no
@@ -1593,7 +1625,7 @@ PY
     run_logged ctest-rust-boundary \
         ctest --test-dir "${build_dir}" --output-on-failure \
             --no-tests=error -L '^rust$' \
-            -E '^(test_sto_tpcc_rust_slow_exit|test_sto_tpcc_rust_concurrent)$'
+            -E '^(test_sto_tpcc_rust_slow_exit|test_sto_tpcc_rust_concurrent|test_sto_tpcc_rust_run_resource_exhausted|test_sto_tpcc_rust_concurrent_resource_exhausted)$'
 else
     run_logged ctest-rust-boundary \
         ctest --test-dir "${build_dir}" --output-on-failure \

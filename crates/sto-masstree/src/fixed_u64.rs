@@ -247,6 +247,9 @@ impl FixedU64Table {
     }
 
     /// Returns bounded initial-load registry accounting.
+    /// Reports structural bytes reserved by this table's eager arena and lock
+    /// metadata. This restricted table uses its per-table `EagerContiguous`
+    /// byte limit; it does not participate in [`super::RegistryBudget`].
     pub fn usage(&self) -> TableUsage {
         self.shared().registry.usage()
     }
@@ -778,6 +781,7 @@ struct FixedRegistry {
     retained_key_bytes: AtomicU64,
     config: TableConfig,
     effective_id_limit: u64,
+    allocated_registry_bytes: u64,
 }
 
 impl FixedRegistry {
@@ -794,7 +798,8 @@ impl FixedRegistry {
         let effective_id_limit = config.max_consumed_record_ids.min(addressable);
         let slot_count = usize::try_from(effective_id_limit)
             .map_err(|_| RegistrationError::from(CapacityError::BufferLimit))?;
-        if fixed_registry_accounted_bytes(slot_count)? > max_bytes {
+        let allocated_registry_bytes = fixed_registry_accounted_bytes(slot_count)?;
+        if allocated_registry_bytes > max_bytes {
             return Err(CapacityError::BufferLimit.into());
         }
 
@@ -841,6 +846,7 @@ impl FixedRegistry {
             retained_key_bytes: AtomicU64::new(0),
             config,
             effective_id_limit,
+            allocated_registry_bytes: allocated_registry_bytes as u64,
         })
     }
 
@@ -849,6 +855,7 @@ impl FixedRegistry {
             retained_records: self.retained_records.load(Ordering::Acquire),
             retained_key_bytes: self.retained_key_bytes.load(Ordering::Acquire),
             consumed_record_ids: self.consumed.load(Ordering::Acquire),
+            allocated_registry_bytes: self.allocated_registry_bytes,
         }
     }
 
@@ -1466,6 +1473,18 @@ mod tests {
             std::mem::size_of::<Option<<FixedAdapter as TransactionalResource>::Intent>>(),
             1
         );
+    }
+
+    #[test]
+    fn usage_reports_the_full_eager_registry_allocation_before_loading() {
+        let (_runtime, table) = table_with_capacity(17);
+        let expected = fixed_registry_accounted_bytes(17).unwrap() as u64;
+        assert!(expected > 17 * std::mem::size_of::<FixedRecord>() as u64);
+        assert_eq!(table.usage().allocated_registry_bytes(), expected);
+        assert_eq!(table.usage().consumed_record_ids(), 0);
+        table.shared().insert_initial(None, b"loaded", 7).unwrap();
+        assert_eq!(table.usage().allocated_registry_bytes(), expected);
+        assert_eq!(table.usage().consumed_record_ids(), 1);
     }
 
     #[test]

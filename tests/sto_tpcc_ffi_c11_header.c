@@ -2,7 +2,8 @@
 
 _Static_assert(sizeof(sto_tpcc_status) == sizeof(int32_t),
                "status must have a fixed-width representation");
-_Static_assert(STO_TPCC_OK == 0 && STO_TPCC_FATAL == 5,
+_Static_assert(STO_TPCC_OK == 0 && STO_TPCC_FATAL == 5 &&
+                   STO_TPCC_RESOURCE_EXHAUSTED == 6,
                "status constants changed");
 _Static_assert(STO_TPCC_RESOLVED_CACHE_FULL == 0 &&
                    STO_TPCC_RESOLVED_CACHE_NONE == 3 &&
@@ -27,6 +28,22 @@ _Static_assert(offsetof(sto_tpcc_insert_operation, value_length) >
 STO_TPCC_ASSERT_FUNCTION(
     sto_tpcc_db_create,
     sto_tpcc_status (*)(const sto_tpcc_db_config *, sto_tpcc_db **));
+STO_TPCC_ASSERT_FUNCTION(
+    sto_tpcc_db_usage,
+    sto_tpcc_status (*)(const sto_tpcc_db *, sto_tpcc_db_usage_info *));
+STO_TPCC_ASSERT_FUNCTION(
+    sto_tpcc_table_usage,
+    sto_tpcc_status (*)(const sto_tpcc_table *, sto_tpcc_table_usage_info *));
+#if UINTPTR_MAX == UINT64_MAX
+_Static_assert(offsetof(sto_tpcc_db_config, max_registry_bytes) == 24,
+               "database registry budget offset changed");
+_Static_assert(sizeof(sto_tpcc_db_config) == 32,
+               "database configuration size changed");
+#endif
+_Static_assert(sizeof(sto_tpcc_db_usage_info) == 16,
+               "database usage size changed");
+_Static_assert(sizeof(sto_tpcc_table_usage_info) == 56,
+               "table usage size changed");
 STO_TPCC_ASSERT_FUNCTION(
     sto_tpcc_table_create_with_cache_policy,
     sto_tpcc_status (*)(sto_tpcc_db *, const sto_tpcc_table_config *,

@@ -230,6 +230,23 @@ static event_avg_counter evt_avg_abort_spins("avg_abort_spins");
 void
 bench_worker::run()
 {
+  bool startup_barrier_entered = false;
+  try {
+    run_body(startup_barrier_entered);
+  } catch (const storage_resource_exhausted &error) {
+    report_benchmark_resource_exhaustion("run", error);
+    if (!startup_barrier_entered) {
+      // A failed thread_init or setup still participates in startup so the
+      // runner can release all workers and then join them without hanging.
+      barrier_a->count_down();
+      barrier_b->wait_for();
+    }
+  }
+}
+
+void
+bench_worker::run_body(bool &startup_barrier_entered)
+{
   // this is only reserved for leader cluster
   // on other alive leader servers
   auto& benchConfig = BenchmarkConfig::getInstance();
@@ -387,6 +404,7 @@ bench_worker::run()
   //    i+30: remote shard commits - nano - Tc
   //    i+35: remote shard aborts - nano - Td
   txn_counts.resize(40);
+  startup_barrier_entered = true;
   barrier_a->count_down();
   barrier_b->wait_for();
 
@@ -533,6 +551,8 @@ bench_runner::run()
             //Warning("start thread-(DONE):%d",i);
           }
         }
+        if (benchConfig.hasResourceExhaustion())
+          break;
       }
       if (BenchmarkConfig::getInstance().getVerbose()) {
         const double elapsed_ms = dataload_timer.lap() / 1000.0;
@@ -541,6 +561,15 @@ bench_runner::run()
       }
     }
     
+    if (BenchmarkConfig::getInstance().hasResourceExhaustion()) {
+      db->report_capacity_usage("load_failed");
+      stop();
+      mako::stop_rpc_server();
+      // Every started loader was joined above. Runner destruction releases
+      // the unused worker barriers.
+      delete_pointers(loaders);
+      return;
+    }
     const pair<uint64_t, uint64_t> mem_info_after = get_system_memory_info();
     const int64_t delta = int64_t(mem_info_before.first) - int64_t(mem_info_after.first); // free mem
     const double delta_mb = double(delta)/1048576.0;
@@ -618,12 +647,23 @@ bench_runner::run()
       }
     }
 
-    db->on_load_complete();
+    try {
+      db->on_load_complete();
+    } catch (const storage_resource_exhausted &error) {
+      report_benchmark_resource_exhaustion("load", error);
+      db->report_capacity_usage("load_failed");
+      stop();
+      mako::stop_rpc_server();
+      delete_pointers(loaders);
+      return;
+    }
+    db->report_capacity_usage("load_complete");
   }
   const vector<bench_worker *> workers = make_workers();
   ALWAYS_ASSERT(!workers.empty());
   Transaction::clear_stats();
   int idx=0;
+  worker_barriers_in_use_ = true;
   for (vector<bench_worker *>::const_iterator it = workers.begin();
        it != workers.end(); ++it) {
         int core_id = BenchmarkConfig::getInstance().getShardIndex() * 64 + idx;
@@ -654,7 +694,7 @@ bench_runner::run()
     int interval = 10; // 10 ms
     int repeats = 1000/interval;
     int runtime_loop = benchConfig.getRuntime() * repeats;
-    while (runtime_loop>0) {
+    while (runtime_loop>0 && !benchConfig.hasResourceExhaustion()) {
       if (benchConfig.getShardIndex()==0 &&
             benchConfig.getRuntime() * repeats - runtime_loop >= repeats * 5 &&
             benchConfig.getCluster().compare("localhost")==0) { // 5 seconds, kill it on leader{0}
@@ -677,7 +717,8 @@ bench_runner::run()
     }
     Warning("runtime_plus:%d",benchConfig.getRuntimePlus());
     runtime_loop = benchConfig.getRuntimePlus() * repeats;
-    while (runtime_loop>0 && benchConfig.getRuntimePlus()>0) { // runtime_plus can be used to terminate the process
+    while (runtime_loop>0 && benchConfig.getRuntimePlus()>0 &&
+           !benchConfig.hasResourceExhaustion()) { // runtime_plus can be used to terminate the process
       std::this_thread::sleep_for(std::chrono::milliseconds(interval));
       if (runtime_loop % repeats == 0) 
         Warning("runtime time left:%d ms, bool:%d",runtime_loop * interval, runtime_loop>0);
@@ -727,8 +768,18 @@ bench_runner::run()
   mako::benchmark_cerr() << "[SHUTDOWN] Calling second stop()" << endl;
   stop(); // ensure transports are torn down after workers exit
   mako::benchmark_cerr() << "[SHUTDOWN] Second stop() completed" << endl;
-  const unsigned long elapsed_nosync = t_nosync.lap()-1e6; // take 1 second off due to sleep(1) within bench_worker::run()
+  const unsigned long measured_nosync = t_nosync.lap();
+  const unsigned long elapsed_nosync = measured_nosync > 1'000'000
+      ? measured_nosync - 1'000'000 : 0; // normal workers sleep(1) on exit
   Warning("TPCC_BENCH_MEASURE_END");
+  if (benchConfig.hasResourceExhaustion()) {
+    db->report_capacity_usage("run_failed");
+    // The run was stopped by resource policy, so it has no successful
+    // throughput result. All worker contexts have ended before cleanup.
+    delete_pointers(loaders);
+    delete_pointers(workers);
+    return;
+  }
   mako::benchmark_cerr() << "[SHUTDOWN] Calling do_txn_finish()" << endl;
   db->do_txn_finish(); // waits for all worker txns to persist
   mako::benchmark_cerr() << "[SHUTDOWN] do_txn_finish() completed" << endl;
@@ -791,6 +842,7 @@ bench_runner::run()
   const unsigned long elapsed = t.lap()-1e6; // lap() must come after do_txn_finish(),
                                          // because do_txn_finish() potentially
                                          // waits a bit
+  db->report_capacity_usage("run_complete");
   const auto safe_div = [](double numer, double denom) -> double {
     return denom > 0.0 ? numer / denom : 0.0;
   };
