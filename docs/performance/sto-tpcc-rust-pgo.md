@@ -238,6 +238,9 @@ publication is uncertain, fatal/quarantine handling takes precedence. The
 benchmark catches capacity failures during startup, loading, and worker
 execution, joins started threads, emits `TPCC_RESOURCE_EXHAUSTED` with its
 phase, and exits 3 without a successful `TPCC_BENCH_RESULT`.
+The failure marker and detail use one write of at most 512 bytes, including
+newlines, to prevent interleaving with shutdown logs. Control characters become
+spaces and oversized details end with `...`.
 
 Quiescent snapshots after loading and after worker join emit
 `STO_TPCC_CAPACITY` lines. Database rows include allocated structural registry
@@ -254,6 +257,10 @@ former 16-million-row ceiling. Sustained growth of live data still needs a
 memory and retention policy. This change does not add physical reclamation,
 durability, archival, or new performance qualification; the historical numbers
 below remain evidence only for their recorded revision.
+
+The [capacity-fix validation report](sto-capacity-zoo2-2026-09-09/README.md)
+records the exact implementation, growth beyond the removed ceilings,
+correctness tests, and the separate controlled performance comparison.
 
 ## Historical exact-source result (2026-09-04)
 

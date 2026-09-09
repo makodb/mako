@@ -1,0 +1,687 @@
+[OUTPUT] 
+Internal ctest changing into directory: /dev/shm/sto-capacity-asan-20260909-v3
+
+[HANDLER_VERBOSE_OUTPUT] 
+UpdateCTestConfiguration  from :/dev/shm/sto-capacity-asan-20260909-v3/DartConfiguration.tcl
+
+UpdateCTestConfiguration  from :/dev/shm/sto-capacity-asan-20260909-v3/DartConfiguration.tcl
+[HANDLER_OUTPUT] 
+Test project /dev/shm/sto-capacity-asan-20260909-v3
+
+[HANDLER_VERBOSE_OUTPUT] 
+Constructing a list of tests
+
+Done constructing a list of tests
+Updating test list for fixtures
+Added 0 tests to meet fixture requirements
+Checking test dependency graph...
+Checking test dependency graph end
+test 7
+[HANDLER_OUTPUT] 
+    Start 7: test_sto_tpcc_rust_concurrent
+
+[HANDLER_VERBOSE_OUTPUT] 
+
+7: Test command: /home/users/shuai/.linuxbrew/bin/python3.14 "/home/users/shuai/mako/.claude/worktrees/sto-rust/scripts/ci/run_sto_tpcc_ctest.py" "--expected-engine" "rust" "--expected-threads" "4" "--expected-warehouses" "4" "--expected-seconds" "1" "--" "/dev/shm/sto-capacity-asan-20260909-v3/sto_tpcc_bench" "--num-threads" "4" "--shard-config" "/home/users/shuai/mako/.claude/worktrees/sto-rust/config/mako_sto_tpcc_local.yml" "--site-name" "local_s0" "--runtime" "1" "--storage-engine" "rust" "--slow-exit"
+
+7: Working Directory: /dev/shm/sto-capacity-asan-20260909-v3
+7: Test timeout computed to be: 180
+7: 20260909-02:16.13-73944(us) 3122427 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+7: 20260909-02:16.13-74122(us) 3122427 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+7: 20260909-02:16.13-74181(us) 3122427 * handle_new_config_format (dbtest.cc:368):    Site local_s0: shard=0, replica_idx=0, is_leader=1, cluster=localhost
+7: STO_TPCC_NATIVE_ALLOCATOR configured_bytes=1073741824 scope=native_only rust_heap_excluded=1
+7: SiloRuntime[0]::InitializeAllocator()
+7:   hugepgsize: 2097152
+7:   mmap() region [0x7ba394800000, 0x7ba3d4a00000)
+7:   runtime0 cpu0 owns [0x7ba394800000, 0x7ba3a4800000)
+7:   runtime0 cpu1 owns [0x7ba3a4800000, 0x7ba3b4800000)
+7:   runtime0 cpu2 owns [0x7ba3b4800000, 0x7ba3c4800000)
+7:   runtime0 cpu3 owns [0x7ba3c4800000, 0x7ba3d4800000)
+7: Database Benchmark:
+7:   pid: 3122427
+7: settings:
+7:   num-cpus    : 64
+7:   num-threads : 4
+7:   shardIndex  : 0
+7:   paxos_proc_name  : localhost
+7:   nshards     : 1
+7:   is_micro    : 0
+7:   is_replicated : 0
+7:   storage_engine : rust
+7:   var-encode  : yes
+7:   allocator   : libc
+7: system properties:
+7:   tuple_prefetch          : no
+7:   btree_node_prefetch     : yes
+7: tpcc settings:
+7:   cross_partition_transactions : 1
+7:   read_only_snapshots          : 1
+7:   partition_locks              : 0
+7:   separate_tree_per_partition  : 1
+7:   new_order_remote_item_pct    : 1
+7:   new_order_fast_id_gen        : 1
+7:   uniform_item_dist            : 0
+7:   order_status_scan_hack       : 0
+7:   workload_mix                 : [45, 43, 4, 4, 4]
+7: TPC-C Sharding: Initialized policy with 4 warehouses across 1 shards (version 1788934573)
+7: 20260909-02:16.13-82106(us) 3122427 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+7: 20260909-02:16.13-82226(us) 3122427 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+7: 20260909-02:16.13-82520(us) 3122427 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+7: D [<unknown>:0] 2026-09-09 02:16:13.082 | Server: generated instance_id=8278935657248363968
+7: D [<unknown>:0] 2026-09-09 02:16:13.082 | [poll_loop] Starting poll loop
+7: 20260909-02:16.13-82789(us) 3122427 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31010 (listening on 0.0.0.0:31010)
+7: 20260909-02:16.13-82805(us) 3122427 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31010
+7: 20260909-02:16.13-82821(us) 3122427 * RunEventLoop    (srpc_rpc_backend.cc:516): SrpcRpcBackend::RunEventLoop: Starting event loop
+7: 20260909-02:16.13-82843(us) 3122427 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+7: 20260909-02:16.13-82970(us) 3122427 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+7: 20260909-02:16.13-83398(us) 3122427 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+7: D [<unknown>:0] 2026-09-09 02:16:13.083 | Server: generated instance_id=1230106974253747261
+7: 20260909-02:16.13-83619(us) 3122427 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31009 (listening on 0.0.0.0:31009)
+7: 20260909-02:16.13-83635(us) 3122427 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31009
+7: 20260909-02:16.13-83649(us) 3122427 * RunEventLoop    (srpc_rpc_backend.cc:516): SrpcRpcBackend::RunEventLoop: Starting event loop
+7: start worker:8953
+7: D [<unknown>:0] 2026-09-09 02:16:13.083 | [poll_loop] Starting poll loop
+7: D [<unknown>:0] 2026-09-09 02:16:13.083 | create a fiber scheduler
+7: D [<unknown>:0] 2026-09-09 02:16:13.084 | create a fiber scheduler
+7: 20260909-02:16.13-87140(us) 3122427 ! run             (bench.cc:537):     # of loaders size:6
+7: 20260909-02:16.13-91838(us) 3122427 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=0, shard_index=0, getShardIndex=0, loader=1
+7: PinToWarehouseId(): coreid=2 pinned to whse=1 (partid=0)
+7: 20260909-02:16.13-93469(us) 3122427 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=1, shard_index=0, getShardIndex=0, loader=1
+7: 20260909-02:16.13-93518(us) 3122427 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=2, shard_index=0, getShardIndex=0, loader=1
+7: PinToWarehouseId(): coreid=2 pinned to whse=2 (partid=1)
+7: PinToWarehouseId(): coreid=4 pinned to whse=1 (partid=0)
+7: PinToWarehouseId(): coreid=2 pinned to whse=3 (partid=2)
+7: 20260909-02:16.13-94703(us) 3122427 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=3, shard_index=0, getShardIndex=0, loader=1
+7: PinToWarehouseId(): coreid=2 pinned to whse=4 (partid=3)
+7: [INFO] finished loading district
+7: [INFO]   * average district record length: 99 bytes
+7: [INFO] finished loading warehouse
+7: [INFO]   * average warehouse record length: 97 bytes
+7: [INFO] finished loading item
+7: [INFO]   * average item record length: 84.1739 bytes
+7: PinToWarehouseId(): coreid=4 pinned to whse=2 (partid=1)
+7: PinToWarehouseId(): coreid=4 pinned to whse=3 (partid=2)
+7: PinToWarehouseId(): coreid=4 pinned to whse=4 (partid=3)
+7: [INFO] finished loading stock
+7: [INFO]   * average stock record length: 8 bytes
+7: 20260909-02:16.20-265464(us) 3122427 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=4, shard_index=0, getShardIndex=0, loader=1
+7: PinToWarehouseId(): coreid=5 pinned to whse=1 (partid=0)
+7: 20260909-02:16.20-266182(us) 3122427 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=5, shard_index=0, getShardIndex=0, loader=1
+7: num batches: 30
+7: PinToWarehouseId(): coreid=6 pinned to whse=1 (partid=0)
+7: PinToWarehouseId(): coreid=6 pinned to whse=2 (partid=1)
+7: PinToWarehouseId(): coreid=5 pinned to whse=2 (partid=1)
+7: PinToWarehouseId(): coreid=6 pinned to whse=3 (partid=2)
+7: PinToWarehouseId(): coreid=5 pinned to whse=3 (partid=2)
+7: PinToWarehouseId(): coreid=6 pinned to whse=4 (partid=3)
+7: PinToWarehouseId(): coreid=5 pinned to whse=4 (partid=3)
+7: [INFO] finished loading customer
+7: [INFO]   * average customer record length: 153.931 bytes 
+7: [INFO] finished loading order
+7: [INFO]   * average order_line record length: 11.2189 bytes
+7: [INFO]   * average oorder record length: 7.8414 bytes
+7: [INFO]   * average new_order record length: 12 bytes
+7: timed region dataloading took 10634.1 ms
+7: DB size: 2059.95 MB
+7: [0, 0, 0] txns persisted in loading phase
+7: 20260909-02:16.23-721331(us) 3122427 ! run             (bench.cc:607):     # of nthreads:4
+7: starting benchmark...
+7: --------------Finish loading data and wait for others completing load phase ------------
+7: STO_TPCC_CAPACITY phase=load_complete scope=database allocated_registry_bytes=258443464 max_registry_bytes=8589934592 registry_headroom_bytes=8331491128
+7: STO_TPCC_CAPACITY phase=load_complete table=customer_0 retained_records=90000 consumed_record_ids=90000 retained_key_bytes=1080000 allocated_registry_bytes=17856776 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=customer_1 retained_records=90000 consumed_record_ids=90000 retained_key_bytes=1080000 allocated_registry_bytes=17856776 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=customer_2 retained_records=90000 consumed_record_ids=90000 retained_key_bytes=1080000 allocated_registry_bytes=17856776 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=customer_3 retained_records=90000 consumed_record_ids=90000 retained_key_bytes=1080000 allocated_registry_bytes=17856776 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=customer_name_idx_0 retained_records=30000 consumed_record_ids=30000 retained_key_bytes=1200000 allocated_registry_bytes=2156376 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=customer_name_idx_1 retained_records=30000 consumed_record_ids=30000 retained_key_bytes=1200000 allocated_registry_bytes=2156376 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=customer_name_idx_2 retained_records=30000 consumed_record_ids=30000 retained_key_bytes=1200000 allocated_registry_bytes=2156376 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=customer_name_idx_3 retained_records=30000 consumed_record_ids=30000 retained_key_bytes=1200000 allocated_registry_bytes=2156376 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=district_0 retained_records=10 consumed_record_ids=10 retained_key_bytes=80 allocated_registry_bytes=205424 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=district_1 retained_records=10 consumed_record_ids=10 retained_key_bytes=80 allocated_registry_bytes=205424 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=district_2 retained_records=10 consumed_record_ids=10 retained_key_bytes=80 allocated_registry_bytes=205424 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=district_3 retained_records=10 consumed_record_ids=10 retained_key_bytes=80 allocated_registry_bytes=205424 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=history_0 retained_records=30000 consumed_record_ids=30000 retained_key_bytes=720000 allocated_registry_bytes=2156376 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=history_1 retained_records=30000 consumed_record_ids=30000 retained_key_bytes=720000 allocated_registry_bytes=2156376 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=history_2 retained_records=30000 consumed_record_ids=30000 retained_key_bytes=720000 allocated_registry_bytes=2156376 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=history_3 retained_records=30000 consumed_record_ids=30000 retained_key_bytes=720000 allocated_registry_bytes=2156376 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=new_order_0 retained_records=9000 consumed_record_ids=9000 retained_key_bytes=108000 allocated_registry_bytes=649024 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=new_order_1 retained_records=9000 consumed_record_ids=9000 retained_key_bytes=108000 allocated_registry_bytes=649024 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=new_order_2 retained_records=9000 consumed_record_ids=9000 retained_key_bytes=108000 allocated_registry_bytes=649024 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=new_order_3 retained_records=9000 consumed_record_ids=9000 retained_key_bytes=108000 allocated_registry_bytes=649024 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=oorder_0 retained_records=30000 consumed_record_ids=30000 retained_key_bytes=360000 allocated_registry_bytes=2156376 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=oorder_1 retained_records=30000 consumed_record_ids=30000 retained_key_bytes=360000 allocated_registry_bytes=2156376 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=oorder_2 retained_records=30000 consumed_record_ids=30000 retained_key_bytes=360000 allocated_registry_bytes=2156376 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=oorder_3 retained_records=30000 consumed_record_ids=30000 retained_key_bytes=360000 allocated_registry_bytes=2156376 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=oorder_c_id_idx_0 retained_records=30000 consumed_record_ids=30000 retained_key_bytes=480000 allocated_registry_bytes=2156376 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=oorder_c_id_idx_1 retained_records=30000 consumed_record_ids=30000 retained_key_bytes=480000 allocated_registry_bytes=2156376 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=oorder_c_id_idx_2 retained_records=30000 consumed_record_ids=30000 retained_key_bytes=480000 allocated_registry_bytes=2156376 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=oorder_c_id_idx_3 retained_records=30000 consumed_record_ids=30000 retained_key_bytes=480000 allocated_registry_bytes=2156376 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=order_line_0 retained_records=299560 consumed_record_ids=299560 retained_key_bytes=4792960 allocated_registry_bytes=21049824 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=order_line_1 retained_records=300029 consumed_record_ids=300029 retained_key_bytes=4800464 allocated_registry_bytes=21049824 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=order_line_2 retained_records=300826 consumed_record_ids=300826 retained_key_bytes=4813216 allocated_registry_bytes=21121560 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=order_line_3 retained_records=300078 consumed_record_ids=300078 retained_key_bytes=4801248 allocated_registry_bytes=21121560 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=stock_0 retained_records=100000 consumed_record_ids=100999 retained_key_bytes=800000 allocated_registry_bytes=7111536 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=stock_1 retained_records=100000 consumed_record_ids=100999 retained_key_bytes=800000 allocated_registry_bytes=7111536 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=stock_2 retained_records=100000 consumed_record_ids=100999 retained_key_bytes=800000 allocated_registry_bytes=7111536 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=stock_3 retained_records=100000 consumed_record_ids=100999 retained_key_bytes=800000 allocated_registry_bytes=7111536 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=stock_data_0 retained_records=100000 consumed_record_ids=100999 retained_key_bytes=800000 allocated_registry_bytes=7111536 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=stock_data_1 retained_records=100000 consumed_record_ids=100999 retained_key_bytes=800000 allocated_registry_bytes=7111536 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=stock_data_2 retained_records=100000 consumed_record_ids=100999 retained_key_bytes=800000 allocated_registry_bytes=7111536 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=stock_data_3 retained_records=100000 consumed_record_ids=100999 retained_key_bytes=800000 allocated_registry_bytes=7111536 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=warehouse_0 retained_records=1 consumed_record_ids=1 retained_key_bytes=4 allocated_registry_bytes=205424 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=warehouse_1 retained_records=1 consumed_record_ids=1 retained_key_bytes=4 allocated_registry_bytes=205424 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=warehouse_2 retained_records=1 consumed_record_ids=1 retained_key_bytes=4 allocated_registry_bytes=205424 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=warehouse_3 retained_records=1 consumed_record_ids=1 retained_key_bytes=4 allocated_registry_bytes=205424 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_complete table=item retained_records=100000 consumed_record_ids=100000 retained_key_bytes=400000 allocated_registry_bytes=7039800 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: tpcc: worker id 64 => warehouses [1, 2)
+7: tpcc: worker id 65 => warehouses [2, 3)
+7: tpcc: worker id 66 => warehouses [3, 4)
+7: tpcc: worker id 67 => warehouses [4, 5)
+7: No JEMALLOC_NO_RENAME
+7: No JEMALLOC_NO_RENAME
+7: No JEMALLOC_NO_RENAME
+7: No JEMALLOC_NO_RENAME
+7: 20260909-02:16.23-729243(us) 3122427 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=6, shard_index=0, getShardIndex=0, loader=0
+7: 20260909-02:16.23-730643(us) 3122427 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=7, shard_index=0, getShardIndex=0, loader=0
+7: 20260909-02:16.23-731561(us) 3122427 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+7: 20260909-02:16.23-731682(us) 3122427 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+7: 20260909-02:16.23-731901(us) 3122427 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=8, shard_index=0, getShardIndex=0, loader=0
+7: 20260909-02:16.23-732087(us) 3122427 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+7: 20260909-02:16.23-732121(us) 3122427 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=9, shard_index=0, getShardIndex=0, loader=0
+7: 20260909-02:16.23-732216(us) 3122427 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+7: 20260909-02:16.23-732673(us) 3122427 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+7: 20260909-02:16.23-732808(us) 3122427 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+7: 20260909-02:16.23-732887(us) 3122427 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+7: 20260909-02:16.23-732943(us) 3122427 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+7: 20260909-02:16.23-732988(us) 3122427 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+7: 20260909-02:16.23-733097(us) 3122427 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+7: 20260909-02:16.23-733149(us) 3122427 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+7: D [<unknown>:0] 2026-09-09 02:16:23.733 | Server: generated instance_id=5435645365014141336
+7: 20260909-02:16.23-733287(us) 3122427 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31000 (listening on 0.0.0.0:31000)
+7: 20260909-02:16.23-733302(us) 3122427 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31000
+7: 20260909-02:16.23-733404(us) 3122427 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+7: D [<unknown>:0] 2026-09-09 02:16:23.733 | Server: generated instance_id=7920587509059173308
+7: 20260909-02:16.23-733562(us) 3122427 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31001 (listening on 0.0.0.0:31001)
+7: 20260909-02:16.23-733578(us) 3122427 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31001
+7: 20260909-02:16.23-733721(us) 3122427 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+7: D [<unknown>:0] 2026-09-09 02:16:23.733 | [poll_loop] Starting poll loop
+7: D [<unknown>:0] 2026-09-09 02:16:23.733 | [poll_loop] Starting poll loop
+7: 20260909-02:16.23-733877(us) 3122427 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+7: 20260909-02:16.23-733956(us) 3122427 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+7: 20260909-02:16.23-733986(us) 3122427 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+7: 20260909-02:16.23-734293(us) 3122427 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+7: D [<unknown>:0] 2026-09-09 02:16:23.734 | Server: generated instance_id=5053049425797161118
+7: 20260909-02:16.23-734351(us) 3122427 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+7: 20260909-02:16.23-734425(us) 3122427 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31002 (listening on 0.0.0.0:31002)
+7: 20260909-02:16.23-734443(us) 3122427 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31002
+7: 20260909-02:16.23-734469(us) 3122427 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+7: D [<unknown>:0] 2026-09-09 02:16:23.734 | [poll_loop] Starting poll loop
+7: D [<unknown>:0] 2026-09-09 02:16:23.734 | create a fiber scheduler
+7: 20260909-02:16.23-734961(us) 3122427 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+7: D [<unknown>:0] 2026-09-09 02:16:23.735 | create a fiber scheduler
+7: 20260909-02:16.23-735082(us) 3122427 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+7: 20260909-02:16.23-735130(us) 3122427 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+7: 20260909-02:16.23-735250(us) 3122427 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+7: 20260909-02:16.23-735488(us) 3122427 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+7: D [<unknown>:0] 2026-09-09 02:16:23.735 | Server: generated instance_id=9077965046456547776
+7: 20260909-02:16.23-735543(us) 3122427 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+7: 20260909-02:16.23-735649(us) 3122427 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+7: 20260909-02:16.23-735733(us) 3122427 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31003 (listening on 0.0.0.0:31003)
+7: 20260909-02:16.23-735763(us) 3122427 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31003
+7: D [<unknown>:0] 2026-09-09 02:16:23.735 | [poll_loop] Starting poll loop
+7: D [<unknown>:0] 2026-09-09 02:16:23.735 | create a fiber scheduler
+7: D [<unknown>:0] 2026-09-09 02:16:23.736 | create a fiber scheduler
+7: 20260909-02:16.23-737288(us) 3122427 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+7: 20260909-02:16.23-737400(us) 3122427 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+7: 20260909-02:16.23-738090(us) 3122427 ! run             (bench.cc:685):     TPCC_BENCH_MEASURE_START
+7: 20260909-02:16.23-738117(us) 3122427 ! run             (bench.cc:693):     start the running time, runTime:1
+7: 20260909-02:16.23-738128(us) 3122427 ! run             (bench.cc:705):     runtime time left:1000 ms, bool:1
+7: 20260909-02:16.24-747378(us) 3122427 ! run             (bench.cc:718):     runtime_plus:0
+7: [SHUTDOWN] Setting running=false to stop database worker threads
+7: [SHUTDOWN] Calling first stop() to stop client transports
+7: 20260909-02:16.24-747452(us) 3122427 ! stop            (bench.cc:514):     stop all rpc clients. set stop=false
+7: 20260909-02:16.24-747466(us) 3122427 * Stop            (srpc_rpc_backend.cc:593): SrpcRpcBackend::Stop: BEGIN - Setting stop flag
+7: 20260909-02:16.24-747477(us) 3122427 * Stop            (srpc_rpc_backend.cc:596): SrpcRpcBackend::Stop: Waiting for event loop to exit...
+7: 20260909-02:16.24-747489(us) 3122427 * Stop            (srpc_rpc_backend.cc:612): SrpcRpcBackend::Stop: Event loop exited successfully
+7: 20260909-02:16.24-747503(us) 3122427 * Stop            (srpc_rpc_backend.cc:616): SrpcRpcBackend::Stop: Signaling 0 request queues to stop
+7: 20260909-02:16.24-747513(us) 3122427 * Stop            (srpc_rpc_backend.cc:624): SrpcRpcBackend::Stop: Signaling 0 response queues to stop
+7: 20260909-02:16.24-747526(us) 3122427 * Stop            (srpc_rpc_backend.cc:635): SrpcRpcBackend::Stop: Server cleanup deferred to destructor
+7: 20260909-02:16.24-747535(us) 3122427 * Stop            (srpc_rpc_backend.cc:638): SrpcRpcBackend::Stop: Closing client connections
+7: 20260909-02:16.24-747551(us) 3122427 * PrintStats      (srpc_rpc_backend.cc:686): SrpcRpcBackend request stats: msg_size_req_sent: 0 bytes, counter: 0, avg: 0.000000
+7: 20260909-02:16.24-747650(us) 3122427 * PrintStats      (srpc_rpc_backend.cc:686): SrpcRpcBackend request stats: msg_size_req_sent: 0 bytes, counter: 0, avg: 0.000000
+7: 20260909-02:16.24-747687(us) 3122427 * PrintStats      (srpc_rpc_backend.cc:686): SrpcRpcBackend request stats: msg_size_req_sent: 0 bytes, counter: 0, avg: 0.000000
+7: 20260909-02:16.24-747761(us) 3122427 * Stop            (srpc_rpc_backend.cc:642): SrpcRpcBackend::Stop: Found 0 client connections to close
+7: 20260909-02:16.24-747780(us) 3122427 * Stop            (srpc_rpc_backend.cc:662): SrpcRpcBackend::Stop: Closed 0 client connections
+7: 20260909-02:16.24-747790(us) 3122427 * Stop            (srpc_rpc_backend.cc:675): SrpcRpcBackend stats: msg_size_resp_sent: 0 bytes, counter: 0, avg: 0.000000
+7: 20260909-02:16.24-747804(us) 3122427 * Stop            (srpc_rpc_backend.cc:676): SrpcRpcBackend::Stop: END
+7: 20260909-02:16.24-747815(us) 3122427 * Stop            (srpc_rpc_backend.cc:593): SrpcRpcBackend::Stop: BEGIN - Setting stop flag
+7: 20260909-02:16.24-747825(us) 3122427 * Stop            (srpc_rpc_backend.cc:596): SrpcRpcBackend::Stop: Waiting for event loop to exit...
+7: 20260909-02:16.24-747838(us) 3122427 * Stop            (srpc_rpc_backend.cc:612): SrpcRpcBackend::Stop: Event loop exited successfully
+7: 20260909-02:16.24-747863(us) 3122427 * Stop            (srpc_rpc_backend.cc:616): SrpcRpcBackend::Stop: Signaling 0 request queues to stop
+7: 20260909-02:16.24-747873(us) 3122427 * Stop            (srpc_rpc_backend.cc:624): SrpcRpcBackend::Stop: Signaling 0 response queues to stop
+7: 20260909-02:16.24-747882(us) 3122427 * Stop            (srpc_rpc_backend.cc:635): SrpcRpcBackend::Stop: Server cleanup deferred to destructor
+7: 20260909-02:16.24-747892(us) 3122427 * Stop            (srpc_rpc_backend.cc:638): SrpcRpcBackend::Stop: Closing client connections
+7: 20260909-02:16.24-747901(us) 3122427 * Stop            (srpc_rpc_backend.cc:642): SrpcRpcBackend::Stop: Found 0 client connections to close
+7: 20260909-02:16.24-747911(us) 3122427 * Stop            (srpc_rpc_backend.cc:662): SrpcRpcBackend::Stop: Closed 0 client connections
+7: 20260909-02:16.24-747921(us) 3122427 * Stop            (srpc_rpc_backend.cc:675): SrpcRpcBackend stats: msg_size_resp_sent: 0 bytes, counter: 0, avg: 0.000000
+7: 20260909-02:16.24-747934(us) 3122427 * Stop            (srpc_rpc_backend.cc:676): SrpcRpcBackend::Stop: END
+7: 20260909-02:16.24-747947(us) 3122427 * Stop            (srpc_rpc_backend.cc:593): SrpcRpcBackend::Stop: BEGIN - Setting stop flag
+7: 20260909-02:16.24-747956(us) 3122427 * Stop            (srpc_rpc_backend.cc:596): SrpcRpcBackend::Stop: Waiting for event loop to exit...
+7: 20260909-02:16.24-747965(us) 3122427 * Stop            (srpc_rpc_backend.cc:612): SrpcRpcBackend::Stop: Event loop exited successfully
+7: 20260909-02:16.24-747975(us) 3122427 * Stop            (srpc_rpc_backend.cc:616): SrpcRpcBackend::Stop: Signaling 0 request queues to stop
+7: 20260909-02:16.24-747984(us) 3122427 * Stop            (srpc_rpc_backend.cc:624): SrpcRpcBackend::Stop: Signaling 0 response queues to stop
+7: 20260909-02:16.24-747994(us) 3122427 * Stop            (srpc_rpc_backend.cc:635): SrpcRpcBackend::Stop: Server cleanup deferred to destructor
+7: 20260909-02:16.24-748009(us) 3122427 * Stop            (srpc_rpc_backend.cc:638): SrpcRpcBackend::Stop: Closing client connections
+7: 20260909-02:16.24-748022(us) 3122427 * Stop            (srpc_rpc_backend.cc:642): SrpcRpcBackend::Stop: Found 0 client connections to close
+7: 20260909-02:16.24-748034(us) 3122427 * Stop            (srpc_rpc_backend.cc:662): SrpcRpcBackend::Stop: Closed 0 client connections
+7: 20260909-02:16.24-748044(us) 3122427 * Stop            (srpc_rpc_backend.cc:675): SrpcRpcBackend stats: msg_size_resp_sent: 0 bytes, counter: 0, avg: 0.000000
+7: 20260909-02:16.24-748054(us) 3122427 * Stop            (srpc_rpc_backend.cc:676): SrpcRpcBackend::Stop: END
+7: 20260909-02:16.24-748064(us) 3122427 * Stop            (srpc_rpc_backend.cc:593): SrpcRpcBackend::Stop: BEGIN - Setting stop flag
+7: 20260909-02:16.24-748074(us) 3122427 * Stop            (srpc_rpc_backend.cc:596): SrpcRpcBackend::Stop: Waiting for event loop to exit...
+7: 20260909-02:16.24-748084(us) 3122427 * Stop            (srpc_rpc_backend.cc:612): SrpcRpcBackend::Stop: Event loop exited successfully
+7: 20260909-02:16.24-748093(us) 3122427 * Stop            (srpc_rpc_backend.cc:616): SrpcRpcBackend::Stop: Signaling 0 request queues to stop
+7: 20260909-02:16.24-748106(us) 3122427 * Stop            (srpc_rpc_backend.cc:624): SrpcRpcBackend::Stop: Signaling 0 response queues to stop
+7: 20260909-02:16.24-748119(us) 3122427 * Stop            (srpc_rpc_backend.cc:635): SrpcRpcBackend::Stop: Server cleanup deferred to destructor
+7: 20260909-02:16.24-748128(us) 3122427 * Stop            (srpc_rpc_backend.cc:638): SrpcRpcBackend::Stop: Closing client connections
+7: 20260909-02:16.24-748138(us) 3122427 * Stop            (srpc_rpc_backend.cc:642): SrpcRpcBackend::Stop: Found 0 client connections to close
+7: 20260909-02:16.24-748147(us) 3122427 * Stop            (srpc_rpc_backend.cc:662): SrpcRpcBackend::Stop: Closed 0 client connections
+7: 20260909-02:16.24-748159(us) 3122427 * Stop            (srpc_rpc_backend.cc:675): SrpcRpcBackend stats: msg_size_resp_sent: 0 bytes, counter: 0, avg: 0.000000
+7: 20260909-02:16.24-748173(us) 3122427 * Stop            (srpc_rpc_backend.cc:676): SrpcRpcBackend::Stop: END
+7: [SHUTDOWN] First stop() completed
+7: [SHUTDOWN] Joining 4 worker threads
+7: [SHUTDOWN] Joining worker 0
+7: 20260909-02:16.24-748301(us) 3122427 * PrintStats      (srpc_rpc_backend.cc:686): SrpcRpcBackend request stats: msg_size_req_sent: 0 bytes, counter: 0, avg: 0.000000
+7: 20260909-02:16.25-747803(us) 3122427 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+7: 20260909-02:16.25-747849(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+7: 20260909-02:16.25-747861(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:116): SrpcRpcBackend::Shutdown: Server pointer is valid, deleting...
+7: 20260909-02:16.25-747896(us) 3122427 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+7: 20260909-02:16.25-747920(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+7: 20260909-02:16.25-747933(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:116): SrpcRpcBackend::Shutdown: Server pointer is valid, deleting...
+7: 20260909-02:16.25-747947(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:120): SrpcRpcBackend::Shutdown: Server deleted successfully
+7: 20260909-02:16.25-747959(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+7: 20260909-02:16.25-747970(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:136): SrpcRpcBackend::Shutdown: poll_thread_worker_ is valid, calling shutdown()
+7: 20260909-02:16.25-747982(us) 3122427 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returningD [<unknown>:0] 2026-09-09 02:16:25.748 | [PollThread::shutdown] Called from TID=3122921
+7: 
+7: D [<unknown>:0] 2026-09-09 02:16:25.748 | [PollThread::shutdown] Sending CmdShutdown
+7: 20260909-02:16.25-748038(us) 3122427 * D [<unknown>:0] 2026-09-09 02:16:25.748 | [PollThread::shutdown] CmdShutdown sent
+7: Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+7: D [<unknown>:0] 2026-09-09 02:16:25.748 | [PollThread::shutdown] Acquiring join_handle lock...
+7: 20260909-02:16.25-748056(us) 3122427 D [<unknown>:0] 2026-09-09 02:16:25.748 | [PollThread::shutdown] join_handle lock acquired
+7: * Shutdown        (srpc_rpc_backend.cc:116): SrpcRpcBackend::Shutdown: Server pointer is valid, deleting...D [<unknown>:0] 2026-09-09 02:16:25.748 | [PollThread::shutdown] Calling thread.join()...
+7: 
+7: 20260909-02:16.25-748075(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:120): SrpcRpcBackend::Shutdown: Server deleted successfully
+7: 20260909-02:16.25-748091(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+7: 20260909-02:16.25-748105(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:136): SrpcRpcBackend::Shutdown: poll_thread_worker_ is valid, calling shutdown()
+7: D [<unknown>:0] 2026-09-09 02:16:25.748 | [PollThread::shutdown] Called from TID=3122920
+7: D [<unknown>:0] 2026-09-09 02:16:25.748 | [PollThread::shutdown] Sending CmdShutdown
+7: D [<unknown>:0] 2026-09-09 02:16:25.748 | [PollThread::shutdown] CmdShutdown sent
+7: D [<unknown>:0] 2026-09-09 02:16:25.748 | [PollThread::shutdown] Acquiring join_handle lock...
+7: D [<unknown>:0] 2026-09-09 02:16:25.748 | [PollThread::shutdown] join_handle lock acquired
+7: D [<unknown>:0] 2026-09-09 02:16:25.748 | [PollThread::shutdown] Calling thread.join()...
+7: 20260909-02:16.25-748165(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:120): SrpcRpcBackend::Shutdown: Server deleted successfully
+7: 20260909-02:16.25-748182(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+7: 20260909-02:16.25-748196(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:136): SrpcRpcBackend::Shutdown: poll_thread_worker_ is valid, calling shutdown()
+7: D [<unknown>:0] 2026-09-09 02:16:25.748 | [PollThread::shutdown] Called from TID=3122922
+7: D [<unknown>:0] 2026-09-09 02:16:25.748 | [PollThread::shutdown] Sending CmdShutdown
+7: D [<unknown>:0] 2026-09-09 02:16:25.748 | [PollThread::shutdown] CmdShutdown sent
+7: D [<unknown>:0] 2026-09-09 02:16:25.748 | [PollThread::shutdown] Acquiring join_handle lock...
+7: D [<unknown>:0] 2026-09-09 02:16:25.748 | [PollThread::shutdown] join_handle lock acquired
+7: D [<unknown>:0] 2026-09-09 02:16:25.748 | [PollThread::shutdown] Calling thread.join()...
+7: 20260909-02:16.25-748434(us) 3122427 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+7: 20260909-02:16.25-748456(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+7: 20260909-02:16.25-748466(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:116): SrpcRpcBackend::Shutdown: Server pointer is valid, deleting...
+7: 20260909-02:16.25-748484(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:120): SrpcRpcBackend::Shutdown: Server deleted successfully
+7: 20260909-02:16.25-748494(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+7: 20260909-02:16.25-748503(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:136): SrpcRpcBackend::Shutdown: poll_thread_worker_ is valid, calling shutdown()
+7: D [<unknown>:0] 2026-09-09 02:16:25.748 | [PollThread::shutdown] Called from TID=3122923
+7: D [<unknown>:0] 2026-09-09 02:16:25.748 | [PollThread::shutdown] Sending CmdShutdown
+7: D [<unknown>:0] 2026-09-09 02:16:25.748 | [PollThread::shutdown] CmdShutdown sent
+7: D [<unknown>:0] 2026-09-09 02:16:25.748 | [PollThread::shutdown] Acquiring join_handle lock...
+7: D [<unknown>:0] 2026-09-09 02:16:25.748 | [PollThread::shutdown] join_handle lock acquired
+7: D [<unknown>:0] 2026-09-09 02:16:25.748 | [PollThread::shutdown] Calling thread.join()...
+7: ==3122427==WARNING: ASan is ignoring requested __asan_handle_no_return: stack type: default top: 0x7ba386b5ba00; bottom 0x7ba381de0000; size: 0x000004d7ba00 (81246720)
+7: False positive error reports may follow
+7: For details see https://github.com/google/sanitizers/issues/189
+7: D [<unknown>:0] 2026-09-09 02:16:25.748 | [poll_loop] Exited while loop (stop_=true), starting cleanup
+7: D [<unknown>:0] 2026-09-09 02:16:25.748 | [poll_loop] Cleanup complete, poll_loop exiting
+7: D [<unknown>:0] 2026-09-09 02:16:25.748 | [Reactor::~Reactor] Starting destruction, all_events_.len()=0, fibers_.size()=0
+7: D [<unknown>:0] 2026-09-09 02:16:25.748 | [Reactor::~Reactor] Destructor body complete, about to destroy member variables
+7: D [<unknown>:0] 2026-09-09 02:16:25.749 | [poll_loop] Exited while loop (stop_=true), starting cleanup
+7: D [<unknown>:0] 2026-09-09 02:16:25.749 | [poll_loop] Cleanup complete, poll_loop exiting
+7: D [<unknown>:0] 2026-09-09 02:16:25.749 | [poll_loop] Exited while loop (stop_=true), starting cleanup
+7: D [<unknown>:0] 2026-09-09 02:16:25.749 | [poll_loop] Cleanup complete, poll_loop exiting
+7: D [<unknown>:0] 2026-09-09 02:16:25.749 | [Reactor::~Reactor] Starting destruction, all_events_.len()=0, fibers_.size()=0
+7: D [<unknown>:0] 2026-09-09 02:16:25.749 | [Reactor::~Reactor] Destructor body complete, about to destroy member variables
+7: D [<unknown>:0] 2026-09-09 02:16:25.749 | [poll_loop] Exited while loop (stop_=true), starting cleanup
+7: D [<unknown>:0] 2026-09-09 02:16:25.750 | [Reactor::~Reactor] Starting destruction, all_events_.len()=0, fibers_.size()=0
+7: D [<unknown>:0] 2026-09-09 02:16:25.750 | [poll_loop] Cleanup complete, poll_loop exiting
+7: D [<unknown>:0] 2026-09-09 02:16:25.750 | [Reactor::~Reactor] Destructor body complete, about to destroy member variables
+7: D [<unknown>:0] 2026-09-09 02:16:25.750 | [Reactor::~Reactor] Starting destruction, all_events_.len()=0, fibers_.size()=0
+7: D [<unknown>:0] 2026-09-09 02:16:25.750 | [Reactor::~Reactor] Destructor body complete, about to destroy member variables
+7: D [<unknown>:0] 2026-09-09 02:16:25.751 | [PollThread::shutdown] thread.join() completed!
+7: D [<unknown>:0] 2026-09-09 02:16:25.751 | [PollThread::shutdown] Released join_handle lock
+7: D [<unknown>:0] 2026-09-09 02:16:25.751 | [PollThread::shutdown] Complete
+7: 20260909-02:16.25-751576(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:138): SrpcRpcBackend::Shutdown: poll_thread_worker_->shutdown() completed
+7: D [<unknown>:0] 2026-09-09 02:16:25.751 | [PollThread::~PollThread] Destructor called from TID=3122920
+7: D [<unknown>:0] 2026-09-09 02:16:25.751 | [PollThread::shutdown] Called from TID=3122920
+7: D [<unknown>:0] 2026-09-09 02:16:25.751 | [PollThread::shutdown] Already called, returning
+7: D [<unknown>:0] 2026-09-09 02:16:25.751 | [PollThread::~PollThread] Destructor complete
+7: 20260909-02:16.25-751623(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:140): SrpcRpcBackend::Shutdown: poll_thread_worker_ reset to None
+7: 20260909-02:16.25-751633(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+7: 20260909-02:16.25-751642(us) 3122427 * ~SrpcRpcBackend (srpc_rpc_backend.cc:52): SrpcRpcBackend::~SrpcRpcBackend: START destructor
+7: 20260909-02:16.25-751652(us) 3122427 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+7: 20260909-02:16.25-751663(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+7: 20260909-02:16.25-751673(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:129): SrpcRpcBackend::Shutdown: Server pointer is null, skipping deletion
+7: 20260909-02:16.25-751682(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+7: 20260909-02:16.25-751691(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:142): SrpcRpcBackend::Shutdown: poll_thread_worker_ is null, skipping shutdown
+7: 20260909-02:16.25-751700(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+7: 20260909-02:16.25-751709(us) 3122427 * ~SrpcRpcBackend (srpc_rpc_backend.cc:54): SrpcRpcBackend::~SrpcRpcBackend: Shutdown() completed
+7: D [<unknown>:0] 2026-09-09 02:16:25.752 | [PollThread::shutdown] thread.join() completed!
+7: D [<unknown>:0] 2026-09-09 02:16:25.752 | [PollThread::shutdown] Released join_handle lock
+7: D [<unknown>:0] 2026-09-09 02:16:25.752 | [PollThread::shutdown] Complete
+7: 20260909-02:16.25-752621(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:138): SrpcRpcBackend::Shutdown: poll_thread_worker_->shutdown() completed
+7: D [<unknown>:0] 2026-09-09 02:16:25.752 | [PollThread::~PollThread] Destructor called from TID=3122923
+7: D [<unknown>:0] 2026-09-09 02:16:25.752 | [PollThread::shutdown] Called from TID=3122923
+7: D [<unknown>:0] 2026-09-09 02:16:25.752 | [PollThread::shutdown] Already called, returning
+7: D [<unknown>:0] 2026-09-09 02:16:25.752 | [PollThread::~PollThread] Destructor complete
+7: 20260909-02:16.25-752662(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:140): SrpcRpcBackend::Shutdown: poll_thread_worker_ reset to None
+7: 20260909-02:16.25-752673(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+7: 20260909-02:16.25-752682(us) 3122427 * ~SrpcRpcBackend (srpc_rpc_backend.cc:52): SrpcRpcBackend::~SrpcRpcBackend: START destructor
+7: 20260909-02:16.25-752691(us) 3122427 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+7: 20260909-02:16.25-752700(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+7: 20260909-02:16.25-752718(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:129): SrpcRpcBackend::Shutdown: Server pointer is null, skipping deletion
+7: 20260909-02:16.25-752731(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+7: 20260909-02:16.25-752742(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:142): SrpcRpcBackend::Shutdown: poll_thread_worker_ is null, skipping shutdown
+7: 20260909-02:16.25-752754(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+7: 20260909-02:16.25-752767(us) 3122427 * ~SrpcRpcBackend (srpc_rpc_backend.cc:54): SrpcRpcBackend::~SrpcRpcBackend: Shutdown() completed
+7: D [<unknown>:0] 2026-09-09 02:16:25.753 | [PollThread::shutdown] thread.join() completed!
+7: D [<unknown>:0] 2026-09-09 02:16:25.753 | [PollThread::shutdown] Released join_handle lock
+7: D [<unknown>:0] 2026-09-09 02:16:25.753 | [PollThread::shutdown] Complete
+7: 20260909-02:16.25-753599(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:138): SrpcRpcBackend::Shutdown: poll_thread_worker_->shutdown() completed
+7: D [<unknown>:0] 2026-09-09 02:16:25.753 | [PollThread::~PollThread] Destructor called from TID=3122922
+7: D [<unknown>:0] 2026-09-09 02:16:25.753 | [PollThread::shutdown] Called from TID=3122922
+7: D [<unknown>:0] 2026-09-09 02:16:25.753 | [PollThread::shutdown] Already called, returning
+7: D [<unknown>:0] 2026-09-09 02:16:25.753 | [PollThread::~PollThread] Destructor complete
+7: 20260909-02:16.25-753654(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:140): SrpcRpcBackend::Shutdown: poll_thread_worker_ reset to None
+7: 20260909-02:16.25-753669(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+7: 20260909-02:16.25-753682(us) 3122427 * ~SrpcRpcBackend (srpc_rpc_backend.cc:52): SrpcRpcBackend::~SrpcRpcBackend: START destructor
+7: 20260909-02:16.25-753703(us) 3122427 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+7: 20260909-02:16.25-753730(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+7: 20260909-02:16.25-753754(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:129): SrpcRpcBackend::Shutdown: Server pointer is null, skipping deletion
+7: 20260909-02:16.25-753769(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+7: 20260909-02:16.25-753781(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:142): SrpcRpcBackend::Shutdown: poll_thread_worker_ is null, skipping shutdown
+7: 20260909-02:16.25-753800(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+7: 20260909-02:16.25-753818(us) 3122427 * ~SrpcRpcBackend (srpc_rpc_backend.cc:54): SrpcRpcBackend::~SrpcRpcBackend: Shutdown() completed
+7: D [<unknown>:0] 2026-09-09 02:16:25.754 | [PollThread::shutdown] thread.join() completed!
+7: D [<unknown>:0] 2026-09-09 02:16:25.754 | [PollThread::shutdown] Released join_handle lock
+7: D [<unknown>:0] 2026-09-09 02:16:25.754 | [PollThread::shutdown] Complete
+7: 20260909-02:16.25-754491(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:138): SrpcRpcBackend::Shutdown: poll_thread_worker_->shutdown() completed
+7: D [<unknown>:0] 2026-09-09 02:16:25.754 | [PollThread::~PollThread] Destructor called from TID=3122921
+7: D [<unknown>:0] 2026-09-09 02:16:25.754 | [PollThread::shutdown] Called from TID=3122921
+7: D [<unknown>:0] 2026-09-09 02:16:25.754 | [PollThread::shutdown] Already called, returning
+7: D [<unknown>:0] 2026-09-09 02:16:25.754 | [PollThread::~PollThread] Destructor complete
+7: 20260909-02:16.25-754540(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:140): SrpcRpcBackend::Shutdown: poll_thread_worker_ reset to None
+7: 20260909-02:16.25-754551(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+7: 20260909-02:16.25-754562(us) 3122427 * ~SrpcRpcBackend (srpc_rpc_backend.cc:52): SrpcRpcBackend::~SrpcRpcBackend: START destructor
+7: 20260909-02:16.25-754572(us) 3122427 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+7: 20260909-02:16.25-754582(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+7: 20260909-02:16.25-754592(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:129): SrpcRpcBackend::Shutdown: Server pointer is null, skipping deletion
+7: 20260909-02:16.25-754601(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+7: 20260909-02:16.25-754611(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:142): SrpcRpcBackend::Shutdown: poll_thread_worker_ is null, skipping shutdown
+7: 20260909-02:16.25-754620(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+7: 20260909-02:16.25-754629(us) 3122427 * ~SrpcRpcBackend (srpc_rpc_backend.cc:54): SrpcRpcBackend::~SrpcRpcBackend: Shutdown() completed
+7: [SHUTDOWN] Worker 0 joined
+7: [SHUTDOWN] Joining worker 1
+7: [SHUTDOWN] Worker 1 joined
+7: [SHUTDOWN] Joining worker 2
+7: [SHUTDOWN] Worker 2 joined
+7: [SHUTDOWN] Joining worker 3
+7: [SHUTDOWN] Worker 3 joined
+7: [SHUTDOWN] All workers joined
+7: [SHUTDOWN] Calling stop_rpc_server()
+7: [STOP_SERVER] Stopping 2 server transports
+7: [STOP_SERVER] Stopping server transport 0
+7: 20260909-02:16.25-760593(us) 3122427 * Stop            (srpc_rpc_backend.cc:593): SrpcRpcBackend::Stop: BEGIN - Setting stop flag
+7: 20260909-02:16.25-760632(us) 3122427 * Stop            (srpc_rpc_backend.cc:596): SrpcRpcBackend::Stop: Waiting for event loop to exit...
+7: 20260909-02:16.25-760650(us) 3122427 * RunEventLoop    (srpc_rpc_backend.cc:577): SrpcRpcBackend::RunEventLoop: Stop flag detected, exiting event loop
+7: 20260909-02:16.25-760728(us) 3122427 * RunEventLoop    (srpc_rpc_backend.cc:581): SrpcRpcBackend::RunEventLoop: Exited cleanly
+7: 20260909-02:16.25-760740(us) 3122427 * rpc_server      (rpc_setup.cc:126): the rpc_server is terminated on shardIdx:0, alpha:0!
+7: 20260909-02:16.25-770704(us) 3122427 * Stop            (srpc_rpc_backend.cc:612): SrpcRpcBackend::Stop: Event loop exited successfully
+7: 20260909-02:16.25-770731(us) 3122427 * Stop            (srpc_rpc_backend.cc:616): SrpcRpcBackend::Stop: Signaling 0 request queues to stop
+7: 20260909-02:16.25-770743(us) 3122427 * Stop            (srpc_rpc_backend.cc:624): SrpcRpcBackend::Stop: Signaling 0 response queues to stop
+7: 20260909-02:16.25-770759(us) 3122427 * Stop            (srpc_rpc_backend.cc:635): SrpcRpcBackend::Stop: Server cleanup deferred to destructor
+7: 20260909-02:16.25-770769(us) 3122427 * Stop            (srpc_rpc_backend.cc:638): SrpcRpcBackend::Stop: Closing client connections
+7: 20260909-02:16.25-770779(us) 3122427 * Stop            (srpc_rpc_backend.cc:642): SrpcRpcBackend::Stop: Found 0 client connections to close
+7: 20260909-02:16.25-770789(us) 3122427 * Stop            (srpc_rpc_backend.cc:662): SrpcRpcBackend::Stop: Closed 0 client connections
+7: 20260909-02:16.25-770799(us) 3122427 * Stop            (srpc_rpc_backend.cc:675): SrpcRpcBackend stats: msg_size_resp_sent: 0 bytes, counter: 0, avg: 0.000000
+7: 20260909-02:16.25-770816(us) 3122427 * Stop            (srpc_rpc_backend.cc:676): SrpcRpcBackend::Stop: END
+7: [STOP_SERVER] Server transport 0 stopped
+7: [STOP_SERVER] Stopping server transport 1
+7: 20260909-02:16.25-770836(us) 3122427 * Stop            (srpc_rpc_backend.cc:593): SrpcRpcBackend::Stop: BEGIN - Setting stop flag
+7: 20260909-02:16.25-770845(us) 3122427 * Stop            (srpc_rpc_backend.cc:596): SrpcRpcBackend::Stop: Waiting for event loop to exit...
+7: 20260909-02:16.25-770969(us) 3122427 * RunEventLoop    (srpc_rpc_backend.cc:577): SrpcRpcBackend::RunEventLoop: Stop flag detected, exiting event loop
+7: 20260909-02:16.25-771005(us) 3122427 * RunEventLoop    (srpc_rpc_backend.cc:581): SrpcRpcBackend::RunEventLoop: Exited cleanly
+7: 20260909-02:16.25-771016(us) 3122427 * rpc_server      (rpc_setup.cc:126): the rpc_server is terminated on shardIdx:0, alpha:1!
+7: 20260909-02:16.25-780959(us) 3122427 * Stop            (srpc_rpc_backend.cc:612): SrpcRpcBackend::Stop: Event loop exited successfully
+7: 20260909-02:16.25-780979(us) 3122427 * Stop            (srpc_rpc_backend.cc:616): SrpcRpcBackend::Stop: Signaling 0 request queues to stop
+7: 20260909-02:16.25-780988(us) 3122427 * Stop            (srpc_rpc_backend.cc:624): SrpcRpcBackend::Stop: Signaling 0 response queues to stop
+7: 20260909-02:16.25-780998(us) 3122427 * Stop            (srpc_rpc_backend.cc:635): SrpcRpcBackend::Stop: Server cleanup deferred to destructor
+7: 20260909-02:16.25-781012(us) 3122427 * Stop            (srpc_rpc_backend.cc:638): SrpcRpcBackend::Stop: Closing client connections
+7: 20260909-02:16.25-781022(us) 3122427 * Stop            (srpc_rpc_backend.cc:642): SrpcRpcBackend::Stop: Found 0 client connections to close
+7: 20260909-02:16.25-781032(us) 3122427 * Stop            (srpc_rpc_backend.cc:662): SrpcRpcBackend::Stop: Closed 0 client connections
+7: 20260909-02:16.25-781041(us) 3122427 * Stop            (srpc_rpc_backend.cc:675): SrpcRpcBackend stats: msg_size_resp_sent: 0 bytes, counter: 0, avg: 0.000000
+7: 20260909-02:16.25-781052(us) 3122427 * Stop            (srpc_rpc_backend.cc:676): SrpcRpcBackend::Stop: END
+7: [STOP_SERVER] Server transport 1 stopped
+7: 20260909-02:16.25-781176(us) 3122427 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+7: 20260909-02:16.25-781189(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+7: 20260909-02:16.25-781198(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:116): SrpcRpcBackend::Shutdown: Server pointer is valid, deleting...
+7: 20260909-02:16.25-781221(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:120): SrpcRpcBackend::Shutdown: Server deleted successfully
+7: 20260909-02:16.25-781231(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+7: 20260909-02:16.25-781239(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:136): SrpcRpcBackend::Shutdown: poll_thread_worker_ is valid, calling shutdown()
+7: D [<unknown>:0] 2026-09-09 02:16:25.781 | [PollThread::shutdown] Called from TID=3122427
+7: D [<unknown>:0] 2026-09-09 02:16:25.781 | [PollThread::shutdown] Sending CmdShutdown
+7: D [<unknown>:0] 2026-09-09 02:16:25.781 | [PollThread::shutdown] CmdShutdown sent
+7: D [<unknown>:0] 2026-09-09 02:16:25.781 | [PollThread::shutdown] Acquiring join_handle lock...
+7: D [<unknown>:0] 2026-09-09 02:16:25.781 | [PollThread::shutdown] join_handle lock acquired
+7: D [<unknown>:0] 2026-09-09 02:16:25.781 | [PollThread::shutdown] Calling thread.join()...
+7: D [<unknown>:0] 2026-09-09 02:16:25.781 | [poll_loop] Exited while loop (stop_=true), starting cleanup
+7: D [<unknown>:0] 2026-09-09 02:16:25.781 | [poll_loop] Cleanup complete, poll_loop exiting
+7: D [<unknown>:0] 2026-09-09 02:16:25.781 | [Reactor::~Reactor] Starting destruction, all_events_.len()=0, fibers_.size()=0
+7: D [<unknown>:0] 2026-09-09 02:16:25.781 | [Reactor::~Reactor] Destructor body complete, about to destroy member variables
+7: D [<unknown>:0] 2026-09-09 02:16:25.783 | [PollThread::shutdown] thread.join() completed!
+7: D [<unknown>:0] 2026-09-09 02:16:25.783 | [PollThread::shutdown] Released join_handle lock
+7: D [<unknown>:0] 2026-09-09 02:16:25.783 | [PollThread::shutdown] Complete
+7: 20260909-02:16.25-783330(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:138): SrpcRpcBackend::Shutdown: poll_thread_worker_->shutdown() completed
+7: D [<unknown>:0] 2026-09-09 02:16:25.783 | [PollThread::~PollThread] Destructor called from TID=3122427
+7: D [<unknown>:0] 2026-09-09 02:16:25.783 | [PollThread::shutdown] Called from TID=3122427
+7: D [<unknown>:0] 2026-09-09 02:16:25.783 | [PollThread::shutdown] Already called, returning
+7: D [<unknown>:0] 2026-09-09 02:16:25.783 | [PollThread::~PollThread] Destructor complete
+7: 20260909-02:16.25-783387(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:140): SrpcRpcBackend::Shutdown: poll_thread_worker_ reset to None
+7: 20260909-02:16.25-783397(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+7: 20260909-02:16.25-783407(us) 3122427 * ~SrpcRpcBackend (srpc_rpc_backend.cc:52): SrpcRpcBackend::~SrpcRpcBackend: START destructor
+7: 20260909-02:16.25-783416(us) 3122427 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+7: 20260909-02:16.25-783425(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+7: 20260909-02:16.25-783437(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:129): SrpcRpcBackend::Shutdown: Server pointer is null, skipping deletion
+7: 20260909-02:16.25-783447(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+7: 20260909-02:16.25-783455(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:142): SrpcRpcBackend::Shutdown: poll_thread_worker_ is null, skipping shutdown
+7: 20260909-02:16.25-783465(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+7: 20260909-02:16.25-783474(us) 3122427 * ~SrpcRpcBackend (srpc_rpc_backend.cc:54): SrpcRpcBackend::~SrpcRpcBackend: Shutdown() completed
+7: 20260909-02:16.25-783526(us) 3122427 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+7: 20260909-02:16.25-783537(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+7: 20260909-02:16.25-783546(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:116): SrpcRpcBackend::Shutdown: Server pointer is valid, deleting...
+7: 20260909-02:16.25-783559(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:120): SrpcRpcBackend::Shutdown: Server deleted successfully
+7: 20260909-02:16.25-783568(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+7: 20260909-02:16.25-783577(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:136): SrpcRpcBackend::Shutdown: poll_thread_worker_ is valid, calling shutdown()
+7: D [<unknown>:0] 2026-09-09 02:16:25.783 | [PollThread::shutdown] Called from TID=3122427
+7: D [<unknown>:0] 2026-09-09 02:16:25.783 | [PollThread::shutdown] Sending CmdShutdown
+7: D [<unknown>:0] 2026-09-09 02:16:25.783 | [PollThread::shutdown] CmdShutdown sent
+7: D [<unknown>:0] 2026-09-09 02:16:25.783 | [PollThread::shutdown] Acquiring join_handle lock...
+7: D [<unknown>:0] 2026-09-09 02:16:25.783 | [PollThread::shutdown] join_handle lock acquired
+7: D [<unknown>:0] 2026-09-09 02:16:25.783 | [PollThread::shutdown] Calling thread.join()...
+7: D [<unknown>:0] 2026-09-09 02:16:25.783 | [poll_loop] Exited while loop (stop_=true), starting cleanup
+7: D [<unknown>:0] 2026-09-09 02:16:25.783 | [poll_loop] Cleanup complete, poll_loop exiting
+7: D [<unknown>:0] 2026-09-09 02:16:25.783 | [Reactor::~Reactor] Starting destruction, all_events_.len()=0, fibers_.size()=0
+7: D [<unknown>:0] 2026-09-09 02:16:25.783 | [Reactor::~Reactor] Destructor body complete, about to destroy member variables
+7: D [<unknown>:0] 2026-09-09 02:16:25.785 | [PollThread::shutdown] thread.join() completed!
+7: D [<unknown>:0] 2026-09-09 02:16:25.785 | [PollThread::shutdown] Released join_handle lock
+7: D [<unknown>:0] 2026-09-09 02:16:25.785 | [PollThread::shutdown] Complete
+7: 20260909-02:16.25-785160(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:138): SrpcRpcBackend::Shutdown: poll_thread_worker_->shutdown() completed
+7: D [<unknown>:0] 2026-09-09 02:16:25.785 | [PollThread::~PollThread] Destructor called from TID=3122427
+7: D [<unknown>:0] 2026-09-09 02:16:25.785 | [PollThread::shutdown] Called from TID=3122427
+7: D [<unknown>:0] 2026-09-09 02:16:25.785 | [PollThread::shutdown] Already called, returning
+7: D [<unknown>:0] 2026-09-09 02:16:25.785 | [PollThread::~PollThread] Destructor complete
+7: 20260909-02:16.25-785200(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:140): SrpcRpcBackend::Shutdown: poll_thread_worker_ reset to None
+7: 20260909-02:16.25-785210(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+7: 20260909-02:16.25-785219(us) 3122427 * ~SrpcRpcBackend (srpc_rpc_backend.cc:52): SrpcRpcBackend::~SrpcRpcBackend: START destructor
+7: 20260909-02:16.25-785228(us) 3122427 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+7: 20260909-02:16.25-785237(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+7: 20260909-02:16.25-785246(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:129): SrpcRpcBackend::Shutdown: Server pointer is null, skipping deletion
+7: 20260909-02:16.25-785254(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+7: 20260909-02:16.25-785266(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:142): SrpcRpcBackend::Shutdown: poll_thread_worker_ is null, skipping shutdown
+7: 20260909-02:16.25-785278(us) 3122427 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+7: 20260909-02:16.25-785287(us) 3122427 * ~SrpcRpcBackend (srpc_rpc_backend.cc:54): SrpcRpcBackend::~SrpcRpcBackend: Shutdown() completed
+7: [STOP_SERVER] All server transports stopped
+7: [SHUTDOWN] stop_rpc_server() completed
+7: [SHUTDOWN] Calling second stop()
+7: 20260909-02:16.25-785326(us) 3122427 ! stop            (bench.cc:514):     stop all rpc clients. set stop=false
+7: [SHUTDOWN] Second stop() completed
+7: 20260909-02:16.25-785338(us) 3122427 ! run             (bench.cc:774):     TPCC_BENCH_MEASURE_END
+7: [SHUTDOWN] Calling do_txn_finish()
+7: [SHUTDOWN] do_txn_finish() completed
+7: --- n_commits per partition ---
+7:  par_id: 0, n_commits: 12370
+7:  par_id: 1, n_commits: 12780
+7:  par_id: 2, n_commits: 13130
+7:  par_id: 3, n_commits: 13267
+7: STO_TPCC_CAPACITY phase=run_complete scope=database allocated_registry_bytes=280990072 max_registry_bytes=8589934592 registry_headroom_bytes=8308944520
+7: STO_TPCC_CAPACITY phase=run_complete table=customer_0 retained_records=90000 consumed_record_ids=90000 retained_key_bytes=1080000 allocated_registry_bytes=17856776 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=customer_1 retained_records=90000 consumed_record_ids=90000 retained_key_bytes=1080000 allocated_registry_bytes=17856776 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=customer_2 retained_records=90000 consumed_record_ids=90000 retained_key_bytes=1080000 allocated_registry_bytes=17856776 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=customer_3 retained_records=90000 consumed_record_ids=90000 retained_key_bytes=1080000 allocated_registry_bytes=17856776 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=customer_name_idx_0 retained_records=30000 consumed_record_ids=30000 retained_key_bytes=1200000 allocated_registry_bytes=2156376 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=customer_name_idx_1 retained_records=30000 consumed_record_ids=30000 retained_key_bytes=1200000 allocated_registry_bytes=2156376 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=customer_name_idx_2 retained_records=30000 consumed_record_ids=30000 retained_key_bytes=1200000 allocated_registry_bytes=2156376 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=customer_name_idx_3 retained_records=30000 consumed_record_ids=30000 retained_key_bytes=1200000 allocated_registry_bytes=2156376 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=district_0 retained_records=10 consumed_record_ids=10 retained_key_bytes=80 allocated_registry_bytes=205424 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=district_1 retained_records=10 consumed_record_ids=10 retained_key_bytes=80 allocated_registry_bytes=205424 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=district_2 retained_records=10 consumed_record_ids=10 retained_key_bytes=80 allocated_registry_bytes=205424 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=district_3 retained_records=10 consumed_record_ids=10 retained_key_bytes=80 allocated_registry_bytes=205424 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=history_0 retained_records=35263 consumed_record_ids=35263 retained_key_bytes=846312 allocated_registry_bytes=2516848 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=history_1 retained_records=35500 consumed_record_ids=35500 retained_key_bytes=852000 allocated_registry_bytes=2516848 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=history_2 retained_records=35672 consumed_record_ids=35672 retained_key_bytes=856128 allocated_registry_bytes=2516848 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=history_3 retained_records=35716 consumed_record_ids=35716 retained_key_bytes=857184 allocated_registry_bytes=2516848 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=new_order_0 retained_records=14579 consumed_record_ids=14579 retained_key_bytes=174948 allocated_registry_bytes=1079440 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=new_order_1 retained_records=14786 consumed_record_ids=14786 retained_key_bytes=177432 allocated_registry_bytes=1079440 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=new_order_2 retained_records=14879 consumed_record_ids=14879 retained_key_bytes=178548 allocated_registry_bytes=1079440 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=new_order_3 retained_records=14935 consumed_record_ids=14935 retained_key_bytes=179220 allocated_registry_bytes=1079440 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=oorder_0 retained_records=35579 consumed_record_ids=35579 retained_key_bytes=426948 allocated_registry_bytes=2516848 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=oorder_1 retained_records=35786 consumed_record_ids=35786 retained_key_bytes=429432 allocated_registry_bytes=2516848 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=oorder_2 retained_records=35879 consumed_record_ids=35879 retained_key_bytes=430548 allocated_registry_bytes=2588584 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=oorder_3 retained_records=35935 consumed_record_ids=35935 retained_key_bytes=431220 allocated_registry_bytes=2588584 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=oorder_c_id_idx_0 retained_records=35579 consumed_record_ids=35579 retained_key_bytes=569264 allocated_registry_bytes=2516848 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=oorder_c_id_idx_1 retained_records=35786 consumed_record_ids=35786 retained_key_bytes=572576 allocated_registry_bytes=2516848 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=oorder_c_id_idx_2 retained_records=35879 consumed_record_ids=35879 retained_key_bytes=574064 allocated_registry_bytes=2588584 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=oorder_c_id_idx_3 retained_records=35935 consumed_record_ids=35935 retained_key_bytes=574960 allocated_registry_bytes=2588584 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=order_line_0 retained_records=355138 consumed_record_ids=355138 retained_key_bytes=5682208 allocated_registry_bytes=24923568 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=order_line_1 retained_records=357333 consumed_record_ids=357333 retained_key_bytes=5717328 allocated_registry_bytes=25067040 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=order_line_2 retained_records=359912 consumed_record_ids=359912 retained_key_bytes=5758592 allocated_registry_bytes=25282248 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=order_line_3 retained_records=359487 consumed_record_ids=359487 retained_key_bytes=5751792 allocated_registry_bytes=25282248 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=stock_0 retained_records=100000 consumed_record_ids=100999 retained_key_bytes=800000 allocated_registry_bytes=7111536 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=stock_1 retained_records=100000 consumed_record_ids=100999 retained_key_bytes=800000 allocated_registry_bytes=7111536 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=stock_2 retained_records=100000 consumed_record_ids=100999 retained_key_bytes=800000 allocated_registry_bytes=7111536 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=stock_3 retained_records=100000 consumed_record_ids=100999 retained_key_bytes=800000 allocated_registry_bytes=7111536 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=stock_data_0 retained_records=100000 consumed_record_ids=100999 retained_key_bytes=800000 allocated_registry_bytes=7111536 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=stock_data_1 retained_records=100000 consumed_record_ids=100999 retained_key_bytes=800000 allocated_registry_bytes=7111536 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=stock_data_2 retained_records=100000 consumed_record_ids=100999 retained_key_bytes=800000 allocated_registry_bytes=7111536 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=stock_data_3 retained_records=100000 consumed_record_ids=100999 retained_key_bytes=800000 allocated_registry_bytes=7111536 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=warehouse_0 retained_records=1 consumed_record_ids=1 retained_key_bytes=4 allocated_registry_bytes=205424 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=warehouse_1 retained_records=1 consumed_record_ids=1 retained_key_bytes=4 allocated_registry_bytes=205424 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=warehouse_2 retained_records=1 consumed_record_ids=1 retained_key_bytes=4 allocated_registry_bytes=205424 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=warehouse_3 retained_records=1 consumed_record_ids=1 retained_key_bytes=4 allocated_registry_bytes=205424 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=run_complete table=item retained_records=100000 consumed_record_ids=100000 retained_key_bytes=400000 allocated_registry_bytes=7039800 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: --- benchmark statistics ---
+7: runtime: 1.04726 sec
+7: memory delta: 183.859 MB
+7: n_commits: 51547
+7: latency_numer_us: 4005634
+7: latency_numer_us_remote: 0
+7: memory delta rate: 175.562 MB/sec
+7: logical memory delta: 3.24148 MB
+7: logical memory delta rate: 3.09519 MB/sec
+7: agg_nosync_throughput: 49222.7 ops/sec
+7: avg_nosync_per_core_throughput: 12305.7 ops/sec/core
+7: agg_throughput: 49220.7 ops/sec
+7: avg_per_core_throughput: 12305.2 ops/sec/core
+7: agg_persist_throughput: 49220.7 ops/sec
+7: avg_per_core_persist_throughput: 12305.2 ops/sec/core
+7: avg_latency: 0.0777084 ms
+7: avg_persist_latency: 0 ms
+7: agg_abort_rate: 0.954871 aborts/sec
+7: avg_per_core_abort_rate: 0.238718 aborts/sec/core
+7:   NewOrder_local_commit_latency: 0.0812179 ms
+7:   NewOrder_local_abort_latency: 0 ms
+7:   NewOrder_local_abort_ratio: 0
+7:   Payment_local_commit_latency: 0.0350689 ms
+7:   Payment_local_abort_latency: 0 ms
+7:   Payment_local_abort_ratio: 0
+7:   Delivery_local_commit_latency: 0.415768 ms
+7:   Delivery_local_abort_latency: 0 ms
+7:   Delivery_local_abort_ratio: 0
+7:   OrderStatus_local_commit_latency: 0.0401565 ms
+7:   OrderStatus_local_abort_latency: 0 ms
+7:   OrderStatus_local_abort_ratio: 0
+7:   StockLevel_local_commit_latency: 0.212308 ms
+7:   StockLevel_local_abort_latency: 0.370857 ms
+7:   StockLevel_local_abort_ratio: 0.000469263
+7:   NewOrder_remote_ratio: 0 %
+7:   NewOrder_remote_abort_ratio: 0 %
+7:   NewOrder_remote_commit_latency: 0 ms
+7:   NewOrder_remote_abort_latency: 0 ms
+7:   Payment_remote_ratio: 0 %
+7:   Payment_remote_abort_ratio: 0 %
+7:   Payment_remote_commit_latency: 0 ms
+7:   Payment_remote_abort_latency: 0 ms
+7: --- system counters (for benchmark) ---
+7: --- perf counters (if enabled, for benchmark) ---
+7: --- allocator stats ---
+7: [SiloRuntime 0] ncpus=4
+7: [SiloRuntime 0] cpu=0 fully_faulted?=0 remaining=232783872 bytes
+7: [SiloRuntime 0] cpu=1 fully_faulted?=0 remaining=232783872 bytes
+7: [SiloRuntime 0] cpu=2 fully_faulted?=0 remaining=232783872 bytes
+7: [SiloRuntime 0] cpu=3 fully_faulted?=0 remaining=220200960 bytes
+7: ---------------------------------------
+7: --- system counters for n_commits ---
+7: 
+7: TPCC_BENCH_RESULT {"schema_version":1,"engine":"rust","threads":4,"warehouses":4,"configured_seconds":1,"measured_seconds":1.047221,"commits":51547,"aborts":1,"attempts":51548,"throughput_txn_s":49222.656917689776,"mix":{"NewOrder":23179,"Payment":22151,"Delivery":2012,"OrderStatus":2075,"StockLevel":2130}}
+7: [STOP_SERVER] Stopping 0 server transports
+7: [STOP_SERVER] All server transports stopped
+7: -----------------------------------------------------
+7: Suppressions used:
+7:   count      bytes template
+7:      16       5120 mt_tree::mt_tree
+7: -----------------------------------------------------
+7: 
+7: validated TPC-C result(s): count=1 engine=rust threads=4 commits=51547 aborts=1
+[HANDLER_OUTPUT] 
+1/1 Test #7: test_sto_tpcc_rust_concurrent ....
+   Passed   16.02 sec
+[HANDLER_VERBOSE_OUTPUT] 
+
+The following tests passed:
+
+	test_sto_tpcc_rust_concurrent
+[HANDLER_OUTPUT] 
+
+100% tests passed, 0 tests failed out of 1
+
+
+Label Time Summary:
+concurrency    =  16.02 sec*proc (1 test)
+ffi            =  16.02 sec*proc (1 test)
+lifecycle      =  16.02 sec*proc (1 test)
+masstree       =  16.02 sec*proc (1 test)
+rust           =  16.02 sec*proc (1 test)
+sto            =  16.02 sec*proc (1 test)
+tpcc           =  16.02 sec*proc (1 test)
+
+Total Test time (real) =  16.03 sec

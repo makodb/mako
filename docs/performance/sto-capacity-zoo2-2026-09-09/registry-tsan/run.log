@@ -1,0 +1,78 @@
++ cd /home/users/shuai/mako/.claude/worktrees/sto-rust
++ date -u
+Wed Sep  9 06:48:26 UTC 2026
++ git rev-parse HEAD
+81aa134884219ad148d960c78decca12630648e3
++ git diff --binary
++ sha256sum
+3b15f35056cfa3b5d1b4707e7c761a453b07034485a92050cf16a3f568dce1c3  -
++ sha256sum crates/Cargo.lock crates/sto-masstree/src/lib.rs crates/sto-masstree/src/registry_growth_tests.rs crates/sto-masstree/src/fixed_u64.rs
+038b69a4691f8eaae7cb5aa4fd90b654fb320282c0e7a6af294eafa02b1f8173  crates/Cargo.lock
+c6ff62065eeead20aeb502033fdb58f8e620146360cece64829decf9e4561d0d  crates/sto-masstree/src/lib.rs
+70969ab0d4ccbb2abb38111f6cf71efc331dbb26fe8418ff4f88d63fe026c026  crates/sto-masstree/src/registry_growth_tests.rs
+1dcb0b52d93772840882dd93b332f48d6d89db9d8caa9e4fac1729ee32b0eca4  crates/sto-masstree/src/fixed_u64.rs
++ rustup run nightly-2026-08-12 rustc -Vv
+rustc 1.99.0-nightly (3d6c19bb9 2026-08-11)
+binary: rustc
+commit-hash: 3d6c19bb9ab4798ecfb2ee943df01a811720fc27
+commit-date: 2026-08-11
+host: x86_64-unknown-linux-gnu
+release: 1.99.0-nightly
+LLVM version: 23.1.0
++ rustup run nightly-2026-08-12 cargo -V
+cargo 1.99.0-nightly (b07e5a086 2026-08-07)
++ /home/users/shuai/.linuxbrew/opt/llvm@22/bin/clang --version
+Homebrew clang version 22.1.8
+Target: x86_64-unknown-linux-gnu
+Thread model: posix
+InstalledDir: /home/users/shuai/.linuxbrew/Cellar/llvm/22.1.8/bin
++ env -u RUSTC -u RUSTC_WRAPPER -u RUSTC_WORKSPACE_WRAPPER -u CARGO_ENCODED_RUSTFLAGS -u CARGO_BUILD_RUSTFLAGS -u CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS -u MAKO_MTREE_NATIVE_INTEGRATION -u MAKO_MTREE_NATIVE_LIB_DIRS -u MAKO_MTREE_NATIVE_LIBS RUSTUP_TOOLCHAIN=nightly-2026-08-12 CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=/home/users/shuai/.linuxbrew/opt/llvm@22/bin/clang 'RUSTFLAGS=-Zsanitizer=thread -Zexternal-clangrt -C force-frame-pointers=yes -C link-arg=-fsanitize=thread' 'RUSTDOCFLAGS=-Zsanitizer=thread -Zexternal-clangrt -C force-frame-pointers=yes -C link-arg=-fsanitize=thread' TSAN_OPTIONS=halt_on_error=1:print_suppressions=1:second_deadlock_stack=1 TMPDIR=/dev/shm CARGO_TARGET_DIR=/dev/shm/mako-registry-tsan-20260909.BUDV4D LD_LIBRARY_PATH=/home/users/shuai/.linuxbrew/opt/llvm@22/lib cargo test --manifest-path crates/Cargo.toml --offline --locked --target x86_64-unknown-linux-gnu -Zbuild-std -p sto-masstree --lib --all-features registry_growth_tests -- --test-threads=1 --nocapture
+   Compiling compiler_builtins v0.1.160 (/home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/compiler-builtins/compiler-builtins)
+   Compiling core v0.0.0 (/home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core)
+   Compiling libc v0.2.189
+   Compiling object v0.39.1
+   Compiling std v0.0.0 (/home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std)
+   Compiling test v0.0.0 (/home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/test)
+   Compiling rustversion v1.0.23
+   Compiling masstree v0.0.0 (/home/users/shuai/mako/.claude/worktrees/sto-rust/crates/masstree)
+   Compiling sto-masstree v0.0.0 (/home/users/shuai/mako/.claude/worktrees/sto-rust/crates/sto-masstree)
+   Compiling rustc-std-workspace-core v1.99.0 (/home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/rustc-std-workspace-core)
+   Compiling alloc v0.0.0 (/home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc)
+   Compiling memchr v2.8.3
+   Compiling adler2 v2.0.1
+   Compiling panic_abort v0.0.0 (/home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/panic_abort)
+   Compiling rustc-demangle v0.1.28
+   Compiling cfg-if v1.0.4
+   Compiling rustc-literal-escaper v0.0.8
+   Compiling unwind v0.0.0 (/home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/unwind)
+   Compiling rustc-std-workspace-alloc v1.99.0 (/home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/rustc-std-workspace-alloc)
+   Compiling panic_unwind v0.0.0 (/home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/panic_unwind)
+   Compiling gimli v0.34.0
+   Compiling hashbrown v0.17.1
+   Compiling std_detect v0.1.5 (/home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std_detect)
+   Compiling miniz_oxide v0.9.1
+   Compiling addr2line v0.27.1
+   Compiling rustc-std-workspace-std v1.99.0 (/home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/rustc-std-workspace-std)
+   Compiling proc_macro v0.0.0 (/home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/proc_macro)
+   Compiling getopts v0.2.24
+   Compiling arc-swap v1.9.2
+   Compiling mtree-sys v0.0.0 (/home/users/shuai/mako/.claude/worktrees/sto-rust/crates/mtree-sys)
+   Compiling mako-history v0.0.0 (/home/users/shuai/mako/.claude/worktrees/sto-rust/crates/mako-history)
+   Compiling sto-core v0.0.0 (/home/users/shuai/mako/.claude/worktrees/sto-rust/crates/sto-core)
+   Compiling sto-test-datatypes v0.0.0 (/home/users/shuai/mako/.claude/worktrees/sto-rust/crates/sto-test-datatypes)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 46.20s
+     Running unittests src/lib.rs (/dev/shm/mako-registry-tsan-20260909.BUDV4D/x86_64-unknown-linux-gnu/debug/build/sto-masstree/4a0625f869f902f3/out/sto_masstree-4a0625f869f902f3)
+
+running 9 tests
+test registry_growth_tests::cached_resolved_token_keeps_its_value_and_budget_after_directory_growth ... ok
+test registry_growth_tests::concurrent_growth_fits_the_exact_budget_without_duplicate_arenas ... ok
+test registry_growth_tests::detached_lock_keeps_only_its_live_arena_and_target_charged ... ok
+test registry_growth_tests::failed_batch_growth_does_not_consume_ids_or_retained_quota ... ok
+test registry_growth_tests::failed_directory_arena_and_lock_allocations_release_every_temporary_charge ... ok
+test registry_growth_tests::growth_preserves_borrowed_records_and_direct_tokens_across_buckets ... ok
+test registry_growth_tests::maximum_id_quota_allocates_only_a_small_sparse_root ... ok
+test registry_growth_tests::registry_id_table_constructor_enforces_its_shared_budget ... ok
+test registry_growth_tests::shared_budget_can_be_reused_after_another_table_releases_its_allocations ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 192 filtered out; finished in 1.58s
+

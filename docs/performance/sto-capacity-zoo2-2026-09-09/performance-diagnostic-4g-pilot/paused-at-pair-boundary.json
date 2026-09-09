@@ -1,0 +1,8 @@
+{
+  "accepted_samples": 4,
+  "active_benchmarks_before_termination": [],
+  "controller_pid": 2399884,
+  "controller_starttime_ticks": "297313034",
+  "paused_at_utc": "2026-09-09T08:18:32.838823+00:00",
+  "reason": "Parent requested a pause at the complete pair boundary for a cold diagnostic logging fix and rebuild."
+}

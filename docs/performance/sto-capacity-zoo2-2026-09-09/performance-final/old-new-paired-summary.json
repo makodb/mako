@@ -1,0 +1,91 @@
+{
+  "cells": [
+    {
+      "cpp": {
+        "approx_log_t_95_change_percent_interval": [
+          -2.521407104640805,
+          0.6209536748268851
+        ],
+        "geometric_mean_change_percent": -0.9626889500161884,
+        "median_change_percent": -0.656233391155514,
+        "paired_changes_percent": [
+          -1.6872855966720057,
+          -0.5405137051633702,
+          -0.656233391155514
+        ]
+      },
+      "normalized_rust": {
+        "approx_log_t_95_change_percent_interval": [
+          -1.4493929675991057,
+          2.246483987335357
+        ],
+        "geometric_mean_change_percent": 0.3815374652159864,
+        "median_change_percent": 0.2873988781916914,
+        "paired_changes_percent": [
+          1.1710857068296887,
+          -0.30835747280819614,
+          0.2873988781916914
+        ]
+      },
+      "paired_blocks": 3,
+      "rust": {
+        "approx_log_t_95_change_percent_interval": [
+          -1.184238160198392,
+          0.018225179090580745
+        ],
+        "geometric_mean_change_percent": -0.5848245038180044,
+        "median_change_percent": -0.5359594502983289,
+        "paired_changes_percent": [
+          -0.5359594502983289,
+          -0.8472044635701392,
+          -0.37072052036832837
+        ]
+      },
+      "threads": 1
+    },
+    {
+      "cpp": {
+        "approx_log_t_95_change_percent_interval": [
+          -2.3182398437837537,
+          0.11660529199017944
+        ],
+        "geometric_mean_change_percent": -1.108310633366394,
+        "median_change_percent": -1.0413873454821698,
+        "paired_changes_percent": [
+          -1.6270250716318269,
+          -0.6540917197649931,
+          -1.0413873454821698
+        ]
+      },
+      "normalized_rust": {
+        "approx_log_t_95_change_percent_interval": [
+          -3.2399542619278354,
+          2.4919811719706697
+        ],
+        "geometric_mean_change_percent": -0.41521810042705054,
+        "median_change_percent": 0.04795768628140795,
+        "paired_changes_percent": [
+          -1.7195572658449287,
+          0.4392816138666156,
+          0.04795768628140795
+        ]
+      },
+      "paired_blocks": 3,
+      "rust": {
+        "approx_log_t_95_change_percent_interval": [
+          -5.460467796024759,
+          2.5869448168513998
+        ],
+        "geometric_mean_change_percent": -1.5189268274347412,
+        "median_change_percent": -0.9939290844768744,
+        "paired_changes_percent": [
+          -3.3186047096403937,
+          -0.21768341056112028,
+          -0.9939290844768744
+        ]
+      },
+      "threads": 16
+    }
+  ],
+  "qualification": "Three paired blocks per boundary cell. Approximate t intervals estimate geometric-mean ratios under log-normal assumptions and do not establish equivalence. The C++-normalized ratio is a secondary control, not guaranteed removal of host or ordering effects."
+}

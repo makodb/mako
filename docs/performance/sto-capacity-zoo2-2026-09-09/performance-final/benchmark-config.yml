@@ -1,0 +1,18 @@
+# Single-node configuration for matched C++/Rust STO TPC-C trials.
+#
+# The worker ShardClient derives its private listening port from the local
+# partition ID modulo `warehouses`. Keep this at the paired runner's maximum
+# so 1/4/8/16/18-thread cells never alias a client port.
+
+sites:
+    - name: "local_s0"
+      id: 1
+      ip: 127.0.0.1
+      port: 31000
+
+shard_map:
+    - ["local_s0"]
+
+warehouses: 18
+
+memlocalhost: 31500

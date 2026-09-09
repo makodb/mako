@@ -1,0 +1,39 @@
+command: /usr/bin/cmake -S . -B /dev/shm/sto-output-regression.2V57O6/cmake -DCMAKE_BUILD_TYPE=Release -DMAKO_ASAN=ON -DMAKO_UBSAN=OFF -DMAKO_TSAN=OFF
+-- Using Homebrew libc++ from /home/users/shuai/.linuxbrew/Cellar/llvm/22.1.8/lib
+-- Auto-detected LIBCLANG_PATH=/home/users/shuai/.linuxbrew/opt/llvm@21/lib (Homebrew clang 21)
+-- Using CARGO_TARGET_DIR from environment: /dev/shm/sto-capacity-asan-20260909-host-cargo
+-- RustyCpp parallel jobs: 64
+-- Rusty C++ Checker submodule found at: /home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp
+-- Checker will be built on demand at: /dev/shm/sto-capacity-asan-20260909-host-cargo/release/rusty-cpp-checker
+-- rusty-cpp toolchain: Clang (/home/users/shuai/.linuxbrew/opt/llvm@22/bin/clang++)
+-- Using CARGO_TARGET_DIR for rust-lib: /dev/shm/sto-capacity-asan-20260909-host-cargo
+-- Default runtime Raft group mode: single (override with --raft-groups or MAKO_RAFT_GROUP_MODE)
+-- Generated Masstree config.h via CMake: /dev/shm/sto-output-regression.2V57O6/cmake/generated/masstree/config.h
+-- Reuse fiber enabled
+-- MAKO_ASAN=1: building with -fsanitize=address; forcing USE_MALLOC_MODE=0 (libc malloc), stripping -ljemalloc.
+-- GoogleTest configured from vendored source: /home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/googletest/googletest
+-- Skipping test_masstree_legacy_scan: missing log.hh
+-- Test targets configured:
+--   Masstree Tests:
+--     - test_masstree: Core Masstree b-tree regression tests
+--   Live Silo-support/STO Tests:
+--     - test_silo_varint: Varint/serializer encoding (29 tests)
+--     - test_silo_rcu_thread: RCU memory management (9 tests)
+--     - test_silo_allocator: allocator support (9 tests)
+--     - test_sto_transaction: STO Transaction RCU (13 tests)
+--     - test_sto_transaction_real: STO Transaction integration tests
+-- Additional perf binaries:
+--   - masstree_perf: On-demand Masstree throughput benchmark (JSON output)
+-- 
+-- Run all tests with: make run_tests
+-- Run live Silo-support/STO tests: make run_silo_sto_tests
+-- Or individually: make test && ctest
+-- Configuring done (0.3s)
+CMake Warning (dev) in CMakeLists.txt:
+  CMake's support for `import std;` in C++23 and newer is experimental.  It
+  is meant only for experimentation and feedback to CMake developers.
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+-- Generating done (0.5s)
+-- Build files have been written to: /dev/shm/sto-output-regression.2V57O6/cmake
+exit_status=0

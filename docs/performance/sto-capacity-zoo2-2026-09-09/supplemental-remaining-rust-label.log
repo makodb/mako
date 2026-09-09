@@ -1,0 +1,741 @@
+[OUTPUT] 
+Internal ctest changing into directory: /dev/shm/sto-capacity-asan-20260909-v3
+
+[HANDLER_VERBOSE_OUTPUT] 
+UpdateCTestConfiguration  from :/dev/shm/sto-capacity-asan-20260909-v3/DartConfiguration.tcl
+
+UpdateCTestConfiguration  from :/dev/shm/sto-capacity-asan-20260909-v3/DartConfiguration.tcl
+[HANDLER_OUTPUT] 
+Test project /dev/shm/sto-capacity-asan-20260909-v3
+
+[HANDLER_VERBOSE_OUTPUT] 
+Constructing a list of tests
+
+Done constructing a list of tests
+Updating test list for fixtures
+Added 0 tests to meet fixture requirements
+Checking test dependency graph...
+Checking test dependency graph end
+test 2
+[HANDLER_OUTPUT] 
+      Start  2: test_sto_tpcc_cpp_wrapper_smoke
+
+[HANDLER_VERBOSE_OUTPUT] 
+
+2: Test command: /dev/shm/sto-capacity-asan-20260909-v3/sto_tpcc_cpp_wrapper_smoke "/home/users/shuai/mako/.claude/worktrees/sto-rust/config/mako_sto_tpcc_local.yml"
+
+2: Working Directory: /dev/shm/sto-capacity-asan-20260909-v3
+2: Test timeout computed to be: 10000000
+2: 20260909-02:16.49-287726(us) 3124008 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+2: 20260909-02:16.49-287922(us) 3124008 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+2: 20260909-02:16.49-291046(us) 3124008 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=0, shard_index=0, getShardIndex=0, loader=1
+2: 20260909-02:16.49-295749(us) 3124008 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=0, shard_index=0, getShardIndex=0, loader=1
+[HANDLER_OUTPUT] 
+ 1/14 Test  #2: test_sto_tpcc_cpp_wrapper_smoke .................
+   Passed    0.10 sec
+[HANDLER_VERBOSE_OUTPUT] 
+test 3
+
+[HANDLER_OUTPUT] 
+      Start  3: test_sto_tpcc_cpp_wrapper_scan_smoke
+
+[HANDLER_VERBOSE_OUTPUT] 
+
+3: Test command: /dev/shm/sto-capacity-asan-20260909-v3/sto_tpcc_cpp_wrapper_scan_smoke "/home/users/shuai/mako/.claude/worktrees/sto-rust/config/mako_sto_tpcc_local.yml"
+
+3: Working Directory: /dev/shm/sto-capacity-asan-20260909-v3
+3: Test timeout computed to be: 10000000
+3: 20260909-02:16.49-385798(us) 3124012 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+3: 20260909-02:16.49-386009(us) 3124012 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+3: 20260909-02:16.49-387765(us) 3124012 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=0, shard_index=0, getShardIndex=0, loader=1
+[HANDLER_OUTPUT] 
+ 2/14 Test  #3: test_sto_tpcc_cpp_wrapper_scan_smoke ............
+   Passed    0.10 sec
+[HANDLER_VERBOSE_OUTPUT] 
+test 6
+
+[HANDLER_OUTPUT] 
+      Start  6: test_sto_tpcc_rust_startup_resource_exhausted
+
+[HANDLER_VERBOSE_OUTPUT] 
+
+6: Test command: /home/users/shuai/.linuxbrew/bin/python3.14 "/home/users/shuai/mako/.claude/worktrees/sto-rust/scripts/ci/run_sto_tpcc_ctest.py" "--expected-failure-text" "TPCC_RESOURCE_EXHAUSTED phase=startup" "--expected-exit-code" "3" "--" "/dev/shm/sto-capacity-asan-20260909-v3/sto_tpcc_bench" "--num-threads" "1" "--shard-config" "/home/users/shuai/mako/.claude/worktrees/sto-rust/config/mako_sto_tpcc_local.yml" "--site-name" "local_s0" "--runtime" "30" "--storage-engine" "rust" "--slow-exit"
+
+6: Working Directory: /dev/shm/sto-capacity-asan-20260909-v3
+6: Environment variables: 
+6:  MAKO_STO_TPCC_REGISTRY_MEMORY=1
+6: Test timeout computed to be: 240
+6: 20260909-02:16.49-748737(us) 3124019 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+6: 20260909-02:16.49-748953(us) 3124019 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+6: 20260909-02:16.49-749021(us) 3124019 * handle_new_config_format (dbtest.cc:368):    Site local_s0: shard=0, replica_idx=0, is_leader=1, cluster=localhost
+6: STO_TPCC_NATIVE_ALLOCATOR configured_bytes=1073741824 scope=native_only rust_heap_excluded=1
+6: SiloRuntime[0]::InitializeAllocator()
+6:   hugepgsize: 2097152
+6:   mmap() region [0x71951e200000, 0x71955e400000)
+6:   runtime0 cpu0 owns [0x71951e200000, 0x71955e200000)
+6: Database Benchmark:
+6:   pid: 3124019
+6: settings:
+6:   num-cpus    : 64
+6:   num-threads : 1
+6:   shardIndex  : 0
+6:   paxos_proc_name  : localhost
+6:   nshards     : 1
+6:   is_micro    : 0
+6:   is_replicated : 0
+6:   storage_engine : rust
+6:   var-encode  : yes
+6:   allocator   : libc
+6: system properties:
+6:   tuple_prefetch          : no
+6:   btree_node_prefetch     : yes
+6: tpcc settings:
+6:   cross_partition_transactions : 1
+6:   read_only_snapshots          : 1
+6:   partition_locks              : 0
+6:   separate_tree_per_partition  : 1
+6:   new_order_remote_item_pct    : 1
+6:   new_order_fast_id_gen        : 1
+6:   uniform_item_dist            : 0
+6:   order_status_scan_hack       : 0
+6:   workload_mix                 : [45, 43, 4, 4, 4]
+6: STO_TPCC_CAPACITY phase=startup_failed scope=database allocated_registry_bytes=0 max_registry_bytes=1 registry_headroom_bytes=1
+6: [STOP_SERVER] Stopping 0 server transports
+6: [STOP_SERVER] All server transports stopped
+6: TPCC_RESOURCE_EXHAUSTED phase=startup error=Rust STO table_create_with_cache_policy failed (status 6): unable to create STO table: register table: Capacity(BufferLimit)
+6: [STOP_SERVER] Stopping 0 server transports
+6: [STOP_SERVER] All server transports stopped
+6: validated TPC-C argument rejection: status=3 text='TPCC_RESOURCE_EXHAUSTED phase=startup'
+[HANDLER_OUTPUT] 
+ 3/14 Test  #6: test_sto_tpcc_rust_startup_resource_exhausted ...
+   Passed    0.38 sec
+[HANDLER_VERBOSE_OUTPUT] 
+test 7
+
+[HANDLER_OUTPUT] 
+      Start  7: test_sto_tpcc_rust_load_resource_exhausted
+
+[HANDLER_VERBOSE_OUTPUT] 
+
+7: Test command: /home/users/shuai/.linuxbrew/bin/python3.14 "/home/users/shuai/mako/.claude/worktrees/sto-rust/scripts/ci/run_sto_tpcc_ctest.py" "--expected-failure-text" "TPCC_RESOURCE_EXHAUSTED phase=load" "--expected-exit-code" "3" "--" "/dev/shm/sto-capacity-asan-20260909-v3/sto_tpcc_bench" "--num-threads" "1" "--shard-config" "/home/users/shuai/mako/.claude/worktrees/sto-rust/config/mako_sto_tpcc_local.yml" "--site-name" "local_s0" "--runtime" "30" "--storage-engine" "rust" "--slow-exit"
+
+7: Working Directory: /dev/shm/sto-capacity-asan-20260909-v3
+7: Environment variables: 
+7:  MAKO_STO_TPCC_MAX_RETAINED_RECORDS=1
+7: Test timeout computed to be: 240
+7: 20260909-02:16.50-111308(us) 3124041 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+7: 20260909-02:16.50-111514(us) 3124041 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+7: 20260909-02:16.50-111590(us) 3124041 * handle_new_config_format (dbtest.cc:368):    Site local_s0: shard=0, replica_idx=0, is_leader=1, cluster=localhost
+7: STO_TPCC_NATIVE_ALLOCATOR configured_bytes=1073741824 scope=native_only rust_heap_excluded=1
+7: SiloRuntime[0]::InitializeAllocator()
+7:   hugepgsize: 2097152
+7:   mmap() region [0x6db86f000000, 0x6db8af200000)
+7:   runtime0 cpu0 owns [0x6db86f000000, 0x6db8af000000)
+7: Database Benchmark:
+7:   pid: 3124041
+7: settings:
+7:   num-cpus    : 64
+7:   num-threads : 1
+7:   shardIndex  : 0
+7:   paxos_proc_name  : localhost
+7:   nshards     : 1
+7:   is_micro    : 0
+7:   is_replicated : 0
+7:   storage_engine : rust
+7:   var-encode  : yes
+7:   allocator   : libc
+7: system properties:
+7:   tuple_prefetch          : no
+7:   btree_node_prefetch     : yes
+7: tpcc settings:
+7:   cross_partition_transactions : 1
+7:   read_only_snapshots          : 1
+7:   partition_locks              : 0
+7:   separate_tree_per_partition  : 1
+7:   new_order_remote_item_pct    : 1
+7:   new_order_fast_id_gen        : 1
+7:   uniform_item_dist            : 0
+7:   order_status_scan_hack       : 0
+7:   workload_mix                 : [45, 43, 4, 4, 4]
+7: TPC-C Sharding: Initialized policy with 1 warehouses across 1 shards (version 1788934610)
+7: 20260909-02:16.50-117874(us) 3124041 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+7: 20260909-02:16.50-118013(us) 3124041 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+7: 20260909-02:16.50-118319(us) 3124041 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+7: 20260909-02:16.50-118372(us) 3124041 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+7: D [<unknown>:0] 2026-09-09 02:16:50.118 | Server: generated instance_id=6145923008989092746
+7: 20260909-02:16.50-118455(us) 3124041 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+7: 20260909-02:16.50-118676(us) 3124041 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31007 (listening on 0.0.0.0:31007)
+7: 20260909-02:16.50-118696(us) 3124041 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31007
+7: 20260909-02:16.50-118718(us) 3124041 * RunEventLoop    (srpc_rpc_backend.cc:516): SrpcRpcBackend::RunEventLoop: Starting event loop
+7: D [<unknown>:0] 2026-09-09 02:16:50.118 | [poll_loop] Starting poll loop
+7: 20260909-02:16.50-118855(us) 3124041 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+7: D [<unknown>:0] 2026-09-09 02:16:50.118 | Server: generated instance_id=862199810922128802
+7: 20260909-02:16.50-119092(us) 3124041 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31006 (listening on 0.0.0.0:31006)
+7: 20260909-02:16.50-119111(us) 3124041 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31006
+7: 20260909-02:16.50-119125(us) 3124041 * RunEventLoop    (srpc_rpc_backend.cc:516): SrpcRpcBackend::RunEventLoop: Starting event loop
+7: start worker:6969
+7: D [<unknown>:0] 2026-09-09 02:16:50.119 | [poll_loop] Starting poll loop
+7: D [<unknown>:0] 2026-09-09 02:16:50.120 | create a fiber scheduler
+7: D [<unknown>:0] 2026-09-09 02:16:50.120 | create a fiber scheduler
+7: 20260909-02:16.50-122961(us) 3124041 ! run             (bench.cc:537):     # of loaders size:6
+7: 20260909-02:16.50-124499(us) 3124041 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=0, shard_index=0, getShardIndex=0, loader=1
+7: [INFO] finished loading warehouse
+7: [INFO]   * average warehouse record length: 97 bytes
+7: 20260909-02:16.50-127176(us) 3124041 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=1, shard_index=0, getShardIndex=0, loader=1
+7: TPCC_RESOURCE_EXHAUSTED phase=load error=Rust STO insert failed (status 6): insert: Capacity(BufferLimit)
+7: timed region dataloading took 5.277 ms
+7: STO_TPCC_CAPACITY phase=load_failed scope=database allocated_registry_bytes=305376 max_registry_bytes=8589934592 registry_headroom_bytes=8589629216
+7: STO_TPCC_CAPACITY phase=load_failed table=customer_0 retained_records=0 consumed_record_ids=0 retained_key_bytes=0 allocated_registry_bytes=2560 max_retained_records=1 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_failed table=customer_name_idx_0 retained_records=0 consumed_record_ids=0 retained_key_bytes=0 allocated_registry_bytes=2560 max_retained_records=1 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_failed table=district_0 retained_records=0 consumed_record_ids=0 retained_key_bytes=0 allocated_registry_bytes=2560 max_retained_records=1 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_failed table=history_0 retained_records=0 consumed_record_ids=0 retained_key_bytes=0 allocated_registry_bytes=2560 max_retained_records=1 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_failed table=new_order_0 retained_records=0 consumed_record_ids=0 retained_key_bytes=0 allocated_registry_bytes=2560 max_retained_records=1 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_failed table=oorder_0 retained_records=0 consumed_record_ids=0 retained_key_bytes=0 allocated_registry_bytes=2560 max_retained_records=1 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_failed table=oorder_c_id_idx_0 retained_records=0 consumed_record_ids=0 retained_key_bytes=0 allocated_registry_bytes=2560 max_retained_records=1 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_failed table=order_line_0 retained_records=0 consumed_record_ids=0 retained_key_bytes=0 allocated_registry_bytes=2560 max_retained_records=1 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_failed table=stock_0 retained_records=0 consumed_record_ids=0 retained_key_bytes=0 allocated_registry_bytes=2560 max_retained_records=1 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_failed table=stock_data_0 retained_records=0 consumed_record_ids=0 retained_key_bytes=0 allocated_registry_bytes=2560 max_retained_records=1 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_failed table=warehouse_0 retained_records=1 consumed_record_ids=1 retained_key_bytes=4 allocated_registry_bytes=205424 max_retained_records=1 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: STO_TPCC_CAPACITY phase=load_failed table=item retained_records=1 consumed_record_ids=1 retained_key_bytes=4 allocated_registry_bytes=74352 max_retained_records=1 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+7: 20260909-02:16.50-128558(us) 3124041 ! stop            (bench.cc:514):     stop all rpc clients. set stop=false
+7: [STOP_SERVER] Stopping 2 server transports
+7: [STOP_SERVER] Stopping server transport 0
+7: 20260909-02:16.50-128587(us) 3124041 * Stop            (srpc_rpc_backend.cc:593): SrpcRpcBackend::Stop: BEGIN - Setting stop flag
+7: 20260909-02:16.50-128602(us) 3124041 * Stop            (srpc_rpc_backend.cc:596): SrpcRpcBackend::Stop: Waiting for event loop to exit...
+7: 20260909-02:16.50-128723(us) 3124041 * RunEventLoop    (srpc_rpc_backend.cc:577): SrpcRpcBackend::RunEventLoop: Stop flag detected, exiting event loop
+7: 20260909-02:16.50-128751(us) 3124041 * RunEventLoop    (srpc_rpc_backend.cc:581): SrpcRpcBackend::RunEventLoop: Exited cleanly
+7: 20260909-02:16.50-128762(us) 3124041 * rpc_server      (rpc_setup.cc:126): the rpc_server is terminated on shardIdx:0, alpha:0!
+7: 20260909-02:16.50-138818(us) 3124041 * Stop            (srpc_rpc_backend.cc:612): SrpcRpcBackend::Stop: Event loop exited successfully
+7: 20260909-02:16.50-138837(us) 3124041 * Stop            (srpc_rpc_backend.cc:616): SrpcRpcBackend::Stop: Signaling 0 request queues to stop
+7: 20260909-02:16.50-138848(us) 3124041 * Stop            (srpc_rpc_backend.cc:624): SrpcRpcBackend::Stop: Signaling 0 response queues to stop
+7: 20260909-02:16.50-138858(us) 3124041 * Stop            (srpc_rpc_backend.cc:635): SrpcRpcBackend::Stop: Server cleanup deferred to destructor
+7: 20260909-02:16.50-138868(us) 3124041 * Stop            (srpc_rpc_backend.cc:638): SrpcRpcBackend::Stop: Closing client connections
+7: 20260909-02:16.50-138878(us) 3124041 * Stop            (srpc_rpc_backend.cc:642): SrpcRpcBackend::Stop: Found 0 client connections to close
+7: 20260909-02:16.50-138888(us) 3124041 * Stop            (srpc_rpc_backend.cc:662): SrpcRpcBackend::Stop: Closed 0 client connections
+7: 20260909-02:16.50-138898(us) 3124041 * Stop            (srpc_rpc_backend.cc:675): SrpcRpcBackend stats: msg_size_resp_sent: 0 bytes, counter: 0, avg: 0.000000
+7: 20260909-02:16.50-138910(us) 3124041 * Stop            (srpc_rpc_backend.cc:676): SrpcRpcBackend::Stop: END
+7: [STOP_SERVER] Server transport 0 stopped
+7: [STOP_SERVER] Stopping server transport 1
+7: 20260909-02:16.50-138930(us) 3124041 * Stop            (srpc_rpc_backend.cc:593): SrpcRpcBackend::Stop: BEGIN - Setting stop flag
+7: 20260909-02:16.50-138939(us) 3124041 * Stop            (srpc_rpc_backend.cc:596): SrpcRpcBackend::Stop: Waiting for event loop to exit...
+7: 20260909-02:16.50-139047(us) 3124041 * RunEventLoop    (srpc_rpc_backend.cc:577): SrpcRpcBackend::RunEventLoop: Stop flag detected, exiting event loop
+7: 20260909-02:16.50-139077(us) 3124041 * RunEventLoop    (srpc_rpc_backend.cc:581): SrpcRpcBackend::RunEventLoop: Exited cleanly
+7: 20260909-02:16.50-139089(us) 3124041 * rpc_server      (rpc_setup.cc:126): the rpc_server is terminated on shardIdx:0, alpha:1!
+7: 20260909-02:16.50-149073(us) 3124041 * Stop            (srpc_rpc_backend.cc:612): SrpcRpcBackend::Stop: Event loop exited successfully
+7: 20260909-02:16.50-149092(us) 3124041 * Stop            (srpc_rpc_backend.cc:616): SrpcRpcBackend::Stop: Signaling 0 request queues to stop
+7: 20260909-02:16.50-149101(us) 3124041 * Stop            (srpc_rpc_backend.cc:624): SrpcRpcBackend::Stop: Signaling 0 response queues to stop
+7: 20260909-02:16.50-149111(us) 3124041 * Stop            (srpc_rpc_backend.cc:635): SrpcRpcBackend::Stop: Server cleanup deferred to destructor
+7: 20260909-02:16.50-149121(us) 3124041 * Stop            (srpc_rpc_backend.cc:638): SrpcRpcBackend::Stop: Closing client connections
+7: 20260909-02:16.50-149131(us) 3124041 * Stop            (srpc_rpc_backend.cc:642): SrpcRpcBackend::Stop: Found 0 client connections to close
+7: 20260909-02:16.50-149141(us) 3124041 * Stop            (srpc_rpc_backend.cc:662): SrpcRpcBackend::Stop: Closed 0 client connections
+7: 20260909-02:16.50-149151(us) 3124041 * Stop            (srpc_rpc_backend.cc:675): SrpcRpcBackend stats: msg_size_resp_sent: 0 bytes, counter: 0, avg: 0.000000
+7: 20260909-02:16.50-149162(us) 3124041 * Stop            (srpc_rpc_backend.cc:676): SrpcRpcBackend::Stop: END
+7: [STOP_SERVER] Server transport 1 stopped
+7: 20260909-02:16.50-149193(us) 3124041 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+7: 20260909-02:16.50-149203(us) 3124041 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+7: 20260909-02:16.50-149213(us) 3124041 * Shutdown        (srpc_rpc_backend.cc:116): SrpcRpcBackend::Shutdown: Server pointer is valid, deleting...
+7: 20260909-02:16.50-149245(us) 3124041 * Shutdown        (srpc_rpc_backend.cc:120): SrpcRpcBackend::Shutdown: Server deleted successfully
+7: 20260909-02:16.50-149256(us) 3124041 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+7: 20260909-02:16.50-149266(us) 3124041 * Shutdown        (srpc_rpc_backend.cc:136): SrpcRpcBackend::Shutdown: poll_thread_worker_ is valid, calling shutdown()
+7: D [<unknown>:0] 2026-09-09 02:16:50.149 | [PollThread::shutdown] Called from TID=3124041
+7: D [<unknown>:0] 2026-09-09 02:16:50.149 | [PollThread::shutdown] Sending CmdShutdown
+7: D [<unknown>:0] 2026-09-09 02:16:50.149 | [PollThread::shutdown] CmdShutdown sent
+7: D [<unknown>:0] 2026-09-09 02:16:50.149 | [PollThread::shutdown] Acquiring join_handle lock...
+7: D [<unknown>:0] 2026-09-09 02:16:50.149 | [PollThread::shutdown] join_handle lock acquired
+7: D [<unknown>:0] 2026-09-09 02:16:50.149 | [PollThread::shutdown] Calling thread.join()...
+7: ==3124041==WARNING: ASan is ignoring requested __asan_handle_no_return: stack type: default top: 0x6db86b699a00; bottom 0x6db8b16e5000; size: 0xffffffffb9fb4a00 (-1174713856)
+7: False positive error reports may follow
+7: For details see https://github.com/google/sanitizers/issues/189
+7: D [<unknown>:0] 2026-09-09 02:16:50.150 | [poll_loop] Exited while loop (stop_=true), starting cleanup
+7: D [<unknown>:0] 2026-09-09 02:16:50.150 | [poll_loop] Cleanup complete, poll_loop exiting
+7: D [<unknown>:0] 2026-09-09 02:16:50.150 | [Reactor::~Reactor] Starting destruction, all_events_.len()=0, fibers_.size()=0
+7: D [<unknown>:0] 2026-09-09 02:16:50.150 | [Reactor::~Reactor] Destructor body complete, about to destroy member variables
+7: D [<unknown>:0] 2026-09-09 02:16:50.150 | [PollThread::shutdown] thread.join() completed!
+7: D [<unknown>:0] 2026-09-09 02:16:50.150 | [PollThread::shutdown] Released join_handle lock
+7: D [<unknown>:0] 2026-09-09 02:16:50.150 | [PollThread::shutdown] Complete
+7: 20260909-02:16.50-150774(us) 3124041 * Shutdown        (srpc_rpc_backend.cc:138): SrpcRpcBackend::Shutdown: poll_thread_worker_->shutdown() completed
+7: D [<unknown>:0] 2026-09-09 02:16:50.150 | [PollThread::~PollThread] Destructor called from TID=3124041
+7: D [<unknown>:0] 2026-09-09 02:16:50.150 | [PollThread::shutdown] Called from TID=3124041
+7: D [<unknown>:0] 2026-09-09 02:16:50.150 | [PollThread::shutdown] Already called, returning
+7: D [<unknown>:0] 2026-09-09 02:16:50.150 | [PollThread::~PollThread] Destructor complete
+7: 20260909-02:16.50-150829(us) 3124041 * Shutdown        (srpc_rpc_backend.cc:140): SrpcRpcBackend::Shutdown: poll_thread_worker_ reset to None
+7: 20260909-02:16.50-150842(us) 3124041 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+7: 20260909-02:16.50-150852(us) 3124041 * ~SrpcRpcBackend (srpc_rpc_backend.cc:52): SrpcRpcBackend::~SrpcRpcBackend: START destructor
+7: 20260909-02:16.50-150861(us) 3124041 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+7: 20260909-02:16.50-150870(us) 3124041 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+7: 20260909-02:16.50-150880(us) 3124041 * Shutdown        (srpc_rpc_backend.cc:129): SrpcRpcBackend::Shutdown: Server pointer is null, skipping deletion
+7: 20260909-02:16.50-150890(us) 3124041 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+7: 20260909-02:16.50-150899(us) 3124041 * Shutdown        (srpc_rpc_backend.cc:142): SrpcRpcBackend::Shutdown: poll_thread_worker_ is null, skipping shutdown
+7: 20260909-02:16.50-150909(us) 3124041 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+7: 20260909-02:16.50-150918(us) 3124041 * ~SrpcRpcBackend (srpc_rpc_backend.cc:54): SrpcRpcBackend::~SrpcRpcBackend: Shutdown() completed
+7: 20260909-02:16.50-150972(us) 3124041 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+7: 20260909-02:16.50-150984(us) 3124041 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+7: 20260909-02:16.50-150994(us) 3124041 * Shutdown        (srpc_rpc_backend.cc:116): SrpcRpcBackend::Shutdown: Server pointer is valid, deleting...
+7: 20260909-02:16.50-151014(us) 3124041 * Shutdown        (srpc_rpc_backend.cc:120): SrpcRpcBackend::Shutdown: Server deleted successfully
+7: 20260909-02:16.50-151024(us) 3124041 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+7: 20260909-02:16.50-151039(us) 3124041 * Shutdown        (srpc_rpc_backend.cc:136): SrpcRpcBackend::Shutdown: poll_thread_worker_ is valid, calling shutdown()
+7: D [<unknown>:0] 2026-09-09 02:16:50.151 | [PollThread::shutdown] Called from TID=3124041
+7: D [<unknown>:0] 2026-09-09 02:16:50.151 | [PollThread::shutdown] Sending CmdShutdown
+7: D [<unknown>:0] 2026-09-09 02:16:50.151 | [PollThread::shutdown] CmdShutdown sent
+7: D [<unknown>:0] 2026-09-09 02:16:50.151 | [PollThread::shutdown] Acquiring join_handle lock...
+7: D [<unknown>:0] 2026-09-09 02:16:50.151 | [PollThread::shutdown] join_handle lock acquired
+7: D [<unknown>:0] 2026-09-09 02:16:50.151 | [PollThread::shutdown] Calling thread.join()...
+7: D [<unknown>:0] 2026-09-09 02:16:50.152 | [poll_loop] Exited while loop (stop_=true), starting cleanup
+7: D [<unknown>:0] 2026-09-09 02:16:50.152 | [poll_loop] Cleanup complete, poll_loop exiting
+7: D [<unknown>:0] 2026-09-09 02:16:50.152 | [Reactor::~Reactor] Starting destruction, all_events_.len()=0, fibers_.size()=0
+7: D [<unknown>:0] 2026-09-09 02:16:50.152 | [Reactor::~Reactor] Destructor body complete, about to destroy member variables
+7: D [<unknown>:0] 2026-09-09 02:16:50.152 | [PollThread::shutdown] thread.join() completed!
+7: D [<unknown>:0] 2026-09-09 02:16:50.152 | [PollThread::shutdown] Released join_handle lock
+7: D [<unknown>:0] 2026-09-09 02:16:50.152 | [PollThread::shutdown] Complete
+7: 20260909-02:16.50-152697(us) 3124041 * Shutdown        (srpc_rpc_backend.cc:138): SrpcRpcBackend::Shutdown: poll_thread_worker_->shutdown() completed
+7: D [<unknown>:0] 2026-09-09 02:16:50.152 | [PollThread::~PollThread] Destructor called from TID=3124041
+7: D [<unknown>:0] 2026-09-09 02:16:50.152 | [PollThread::shutdown] Called from TID=3124041
+7: D [<unknown>:0] 2026-09-09 02:16:50.152 | [PollThread::shutdown] Already called, returning
+7: D [<unknown>:0] 2026-09-09 02:16:50.152 | [PollThread::~PollThread] Destructor complete
+7: 20260909-02:16.50-152751(us) 3124041 * Shutdown        (srpc_rpc_backend.cc:140): SrpcRpcBackend::Shutdown: poll_thread_worker_ reset to None
+7: 20260909-02:16.50-152762(us) 3124041 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+7: 20260909-02:16.50-152772(us) 3124041 * ~SrpcRpcBackend (srpc_rpc_backend.cc:52): SrpcRpcBackend::~SrpcRpcBackend: START destructor
+7: 20260909-02:16.50-152790(us) 3124041 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+7: 20260909-02:16.50-152800(us) 3124041 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+7: 20260909-02:16.50-152809(us) 3124041 * Shutdown        (srpc_rpc_backend.cc:129): SrpcRpcBackend::Shutdown: Server pointer is null, skipping deletion
+7: 20260909-02:16.50-152819(us) 3124041 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+7: 20260909-02:16.50-152828(us) 3124041 * Shutdown        (srpc_rpc_backend.cc:142): SrpcRpcBackend::Shutdown: poll_thread_worker_ is null, skipping shutdown
+7: 20260909-02:16.50-152838(us) 3124041 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+7: 20260909-02:16.50-152848(us) 3124041 * ~SrpcRpcBackend (srpc_rpc_backend.cc:54): SrpcRpcBackend::~SrpcRpcBackend: Shutdown() completed
+7: [STOP_SERVER] All server transports stopped
+7: [STOP_SERVER] Stopping 0 server transports
+7: [STOP_SERVER] All server transports stopped
+7: validated TPC-C argument rejection: status=3 text='TPCC_RESOURCE_EXHAUSTED phase=load'
+[HANDLER_OUTPUT] 
+ 4/14 Test  #7: test_sto_tpcc_rust_load_resource_exhausted ......
+   Passed    0.41 sec
+[HANDLER_VERBOSE_OUTPUT] 
+test 8
+
+[HANDLER_OUTPUT] 
+      Start  8: test_sto_tpcc_rejects_duplicate_local_shards
+
+[HANDLER_VERBOSE_OUTPUT] 
+
+8: Test command: /home/users/shuai/.linuxbrew/bin/python3.14 "/home/users/shuai/mako/.claude/worktrees/sto-rust/scripts/ci/run_sto_tpcc_ctest.py" "--expected-failure-text" "duplicate shard index 0" "--expected-exit-code" "2" "--" "/dev/shm/sto-capacity-asan-20260909-v3/sto_tpcc_bench" "--num-threads" "1" "--shard-config" "/home/users/shuai/mako/.claude/worktrees/sto-rust/config/mako_sto_tpcc_local.yml" "--local-shards" "0,0" "--storage-engine" "rust" "--slow-exit"
+
+8: Working Directory: /dev/shm/sto-capacity-asan-20260909-v3
+8: Test timeout computed to be: 30
+8: 20260909-02:16.50-532198(us) 3124052 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+8: 20260909-02:16.50-532400(us) 3124052 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+8: [ERROR] Invalid --local-shards: duplicate shard index 0
+8: validated TPC-C argument rejection: status=2 text='duplicate shard index 0'
+[HANDLER_OUTPUT] 
+ 5/14 Test  #8: test_sto_tpcc_rejects_duplicate_local_shards ....
+   Passed    0.37 sec
+[HANDLER_VERBOSE_OUTPUT] 
+test 9
+
+[HANDLER_OUTPUT] 
+      Start  9: test_sto_tpcc_rejects_partial_local_shards
+
+[HANDLER_VERBOSE_OUTPUT] 
+
+9: Test command: /home/users/shuai/.linuxbrew/bin/python3.14 "/home/users/shuai/mako/.claude/worktrees/sto-rust/scripts/ci/run_sto_tpcc_ctest.py" "--expected-failure-text" "hybrid local/remote multi-shard topology is unsupported" "--expected-exit-code" "2" "--" "/dev/shm/sto-capacity-asan-20260909-v3/sto_tpcc_bench" "--num-threads" "1" "--shard-config" "/home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/config/local-shards3-warehouses1.yml" "--local-shards" "0,1" "--storage-engine" "rust" "--slow-exit"
+
+9: Working Directory: /dev/shm/sto-capacity-asan-20260909-v3
+9: Test timeout computed to be: 30
+9: 20260909-02:16.50-891602(us) 3124057 * ParseOldFormat  (configuration.cc:69): Using old configuration format
+9: [ERROR] --local-shards cannot select multiple but not all configured shards; hybrid local/remote multi-shard topology is unsupported
+9: validated TPC-C argument rejection: status=2 text='hybrid local/remote multi-shard topology is unsupported'
+[HANDLER_OUTPUT] 
+ 6/14 Test  #9: test_sto_tpcc_rejects_partial_local_shards ......
+   Passed    0.36 sec
+[HANDLER_VERBOSE_OUTPUT] 
+test 10
+
+[HANDLER_OUTPUT] 
+      Start 10: test_sto_tpcc_rejects_rust_distributed_shard
+
+[HANDLER_VERBOSE_OUTPUT] 
+
+10: Test command: /home/users/shuai/.linuxbrew/bin/python3.14 "/home/users/shuai/mako/.claude/worktrees/sto-rust/scripts/ci/run_sto_tpcc_ctest.py" "--expected-failure-text" "Rust STO TPC-C comparison supports one non-replicated shard" "--expected-exit-code" "2" "--" "/dev/shm/sto-capacity-asan-20260909-v3/sto_tpcc_bench" "--num-threads" "1" "--shard-config" "/home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/config/local-shards2-warehouses1.yml" "--local-shards" "0" "--storage-engine" "rust" "--slow-exit"
+
+10: Working Directory: /dev/shm/sto-capacity-asan-20260909-v3
+10: Test timeout computed to be: 30
+10: 20260909-02:16.51-256872(us) 3124084 * ParseOldFormat  (configuration.cc:69): Using old configuration format
+10: 20260909-02:16.51-257233(us) 3124084 * main            (dbtest.cc:615):    Multi-shard mode: running 1 shards in this process
+10: 20260909-02:16.51-257254(us) 3124084 * main            (dbtest.cc:617):      - Shard 0
+10: [ERROR] Rust STO TPC-C comparison supports one non-replicated shard
+10: validated TPC-C argument rejection: status=2 text='Rust STO TPC-C comparison supports one non-replicated shard'
+[HANDLER_OUTPUT] 
+ 7/14 Test #10: test_sto_tpcc_rejects_rust_distributed_shard ....
+   Passed    0.36 sec
+[HANDLER_VERBOSE_OUTPUT] 
+test 11
+
+[HANDLER_OUTPUT] 
+      Start 11: test_sto_tpcc_rejects_rust_replication
+
+[HANDLER_VERBOSE_OUTPUT] 
+
+11: Test command: /home/users/shuai/.linuxbrew/bin/python3.14 "/home/users/shuai/mako/.claude/worktrees/sto-rust/scripts/ci/run_sto_tpcc_ctest.py" "--expected-failure-text" "Rust STO TPC-C comparison supports one non-replicated shard" "--expected-exit-code" "2" "--" "/dev/shm/sto-capacity-asan-20260909-v3/sto_tpcc_bench" "--num-threads" "1" "--shard-config" "/home/users/shuai/mako/.claude/worktrees/sto-rust/config/mako_sto_tpcc_local.yml" "--site-name" "local_s0" "--is-replicated" "--storage-engine" "rust" "--slow-exit"
+
+11: Working Directory: /dev/shm/sto-capacity-asan-20260909-v3
+11: Test timeout computed to be: 30
+11: 20260909-02:16.51-606751(us) 3124196 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+11: 20260909-02:16.51-606955(us) 3124196 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+11: 20260909-02:16.51-607031(us) 3124196 * handle_new_config_format (dbtest.cc:368):    Site local_s0: shard=0, replica_idx=0, is_leader=1, cluster=localhost
+11: [ERROR] Rust STO TPC-C comparison supports one non-replicated shard
+11: validated TPC-C argument rejection: status=2 text='Rust STO TPC-C comparison supports one non-replicated shard'
+[HANDLER_OUTPUT] 
+ 8/14 Test #11: test_sto_tpcc_rejects_rust_replication ..........
+   Passed    0.35 sec
+[HANDLER_VERBOSE_OUTPUT] 
+test 12
+
+[HANDLER_OUTPUT] 
+      Start 12: test_sto_tpcc_rejects_rust_worker_limit
+
+[HANDLER_VERBOSE_OUTPUT] 
+
+12: Test command: /home/users/shuai/.linuxbrew/bin/python3.14 "/home/users/shuai/mako/.claude/worktrees/sto-rust/scripts/ci/run_sto_tpcc_ctest.py" "--expected-failure-text" "worker count must be in [1, 111]" "--expected-exit-code" "2" "--" "/dev/shm/sto-capacity-asan-20260909-v3/sto_tpcc_bench" "--num-threads" "112" "--shard-config" "/home/users/shuai/mako/.claude/worktrees/sto-rust/config/mako_sto_tpcc_local.yml" "--site-name" "local_s0" "--storage-engine" "rust" "--slow-exit"
+
+12: Working Directory: /dev/shm/sto-capacity-asan-20260909-v3
+12: Test timeout computed to be: 30
+12: 20260909-02:16.51-937553(us) 3124400 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+12: 20260909-02:16.51-937764(us) 3124400 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+12: 20260909-02:16.51-937827(us) 3124400 * handle_new_config_format (dbtest.cc:368):    Site local_s0: shard=0, replica_idx=0, is_leader=1, cluster=localhost
+12: [ERROR] Rust STO TPC-C worker count must be in [1, 111]; max(32, 4 * workers + 16) must fit 460 shared C++/native attachment slots
+12: validated TPC-C argument rejection: status=2 text='worker count must be in [1, 111]'
+[HANDLER_OUTPUT] 
+ 9/14 Test #12: test_sto_tpcc_rejects_rust_worker_limit .........
+   Passed    0.33 sec
+[HANDLER_VERBOSE_OUTPUT] 
+test 14
+
+[HANDLER_OUTPUT] 
+      Start 14: test_sto_tpcc_ffi_c11_header
+
+[HANDLER_VERBOSE_OUTPUT] 
+
+14: Test command: /dev/shm/sto-capacity-asan-20260909-v3/test_sto_tpcc_ffi_c11_header
+
+14: Working Directory: /dev/shm/sto-capacity-asan-20260909-v3
+14: Test timeout computed to be: 10000000
+[HANDLER_OUTPUT] 
+10/14 Test #14: test_sto_tpcc_ffi_c11_header ....................
+   Passed    0.02 sec
+[HANDLER_VERBOSE_OUTPUT] 
+test 15
+
+[HANDLER_OUTPUT] 
+      Start 15: test_srpc_epoll_platform
+
+[HANDLER_VERBOSE_OUTPUT] 
+
+15: Test command: /dev/shm/sto-capacity-asan-20260909-v3/test_srpc_epoll_platform "--gtest_fail_if_no_test_selected"
+
+15: Working Directory: /dev/shm/sto-capacity-asan-20260909-v3
+15: Test timeout computed to be: 30
+15: [==========] Running 1 test from 1 test suite.
+15: [----------] Global test environment set-up.
+15: [----------] 1 test from EpollPlatformTest
+15: [ RUN      ] EpollPlatformTest.AddAndUpdatePreserveReadyFileDescriptor
+15: [       OK ] EpollPlatformTest.AddAndUpdatePreserveReadyFileDescriptor (0 ms)
+15: [----------] 1 test from EpollPlatformTest (0 ms total)
+15: 
+15: [----------] Global test environment tear-down
+15: [==========] 1 test from 1 test suite ran. (0 ms total)
+15: [  PASSED  ] 1 test.
+[HANDLER_OUTPUT] 
+11/14 Test #15: test_srpc_epoll_platform ........................
+   Passed    0.02 sec
+[HANDLER_VERBOSE_OUTPUT] 
+test 54
+
+[HANDLER_OUTPUT] 
+      Start 54: SiloVarintTests
+
+[HANDLER_VERBOSE_OUTPUT] 
+
+54: Test command: /dev/shm/sto-capacity-asan-20260909-v3/test_silo_varint "--gtest_fail_if_no_test_selected"
+
+54: Working Directory: /dev/shm/sto-capacity-asan-20260909-v3
+54: Test timeout computed to be: 10000000
+54: [==========] Running 29 tests from 2 test suites.
+54: [----------] Global test environment set-up.
+54: [----------] 7 tests from SerializerTest
+54: [ RUN      ] SerializerTest.FixedWidthRoundTripsAtUnalignedAddress
+54: [       OK ] SerializerTest.FixedWidthRoundTripsAtUnalignedAddress (0 ms)
+54: [ RUN      ] SerializerTest.FixedWidthWritePreservesDeletedCopySupport
+54: [       OK ] SerializerTest.FixedWidthWritePreservesDeletedCopySupport (0 ms)
+54: [ RUN      ] SerializerTest.GenericAdapterAcceptsUnalignedObjectFields
+54: [       OK ] SerializerTest.GenericAdapterAcceptsUnalignedObjectFields (0 ms)
+54: [ RUN      ] SerializerTest.CompressedNbytesAcceptsUnalignedObjects
+54: [       OK ] SerializerTest.CompressedNbytesAcceptsUnalignedObjects (0 ms)
+54: [ RUN      ] SerializerTest.CompressedReadAcceptsUnalignedDestinations
+54: [       OK ] SerializerTest.CompressedReadAcceptsUnalignedDestinations (0 ms)
+54: [ RUN      ] SerializerTest.NontrivialInlineStringRetainsClampingAssignment
+54: [       OK ] SerializerTest.NontrivialInlineStringRetainsClampingAssignment (0 ms)
+54: [ RUN      ] SerializerTest.ZigZagBoundariesRoundTripWithCanonicalBytes
+54: [       OK ] SerializerTest.ZigZagBoundariesRoundTripWithCanonicalBytes (0 ms)
+54: [----------] 7 tests from SerializerTest (0 ms total)
+54: 
+54: [----------] 22 tests from VarintTest
+54: [ RUN      ] VarintTest.WriteUvint32_SingleByte
+54: [       OK ] VarintTest.WriteUvint32_SingleByte (0 ms)
+54: [ RUN      ] VarintTest.WriteUvint32_MinValue
+54: [       OK ] VarintTest.WriteUvint32_MinValue (0 ms)
+54: [ RUN      ] VarintTest.WriteUvint32_MaxSingleByte
+54: [       OK ] VarintTest.WriteUvint32_MaxSingleByte (0 ms)
+54: [ RUN      ] VarintTest.WriteUvint32_TwoBytes
+54: [       OK ] VarintTest.WriteUvint32_TwoBytes (0 ms)
+54: [ RUN      ] VarintTest.WriteUvint32_MaxValue
+54: [       OK ] VarintTest.WriteUvint32_MaxValue (0 ms)
+54: [ RUN      ] VarintTest.WriteUvint32_PowersOfTwo
+54: [       OK ] VarintTest.WriteUvint32_PowersOfTwo (0 ms)
+54: [ RUN      ] VarintTest.ReadUvint32_SingleByte
+54: [       OK ] VarintTest.ReadUvint32_SingleByte (0 ms)
+54: [ RUN      ] VarintTest.ReadUvint32_MinValue
+54: [       OK ] VarintTest.ReadUvint32_MinValue (0 ms)
+54: [ RUN      ] VarintTest.ReadUvint32_TwoBytes
+54: [       OK ] VarintTest.ReadUvint32_TwoBytes (0 ms)
+54: [ RUN      ] VarintTest.RoundTrip_RandomValues
+54: [       OK ] VarintTest.RoundTrip_RandomValues (0 ms)
+54: [ RUN      ] VarintTest.SizeUvint32_Boundaries
+54: [       OK ] VarintTest.SizeUvint32_Boundaries (0 ms)
+54: [ RUN      ] VarintTest.SizeUvint32_MatchesActual
+54: [       OK ] VarintTest.SizeUvint32_MatchesActual (0 ms)
+54: [ RUN      ] VarintTest.SkipUvint32_NoRaw
+54: [       OK ] VarintTest.SkipUvint32_NoRaw (0 ms)
+54: [ RUN      ] VarintTest.SkipUvint32_WithRaw
+54: [       OK ] VarintTest.SkipUvint32_WithRaw (0 ms)
+54: [ RUN      ] VarintTest.FailsafeRead_Success
+54: [       OK ] VarintTest.FailsafeRead_Success (0 ms)
+54: [ RUN      ] VarintTest.FailsafeRead_InsufficientBytes
+54: [       OK ] VarintTest.FailsafeRead_InsufficientBytes (0 ms)
+54: [ RUN      ] VarintTest.FailsafeRead_ZeroBytes
+54: [       OK ] VarintTest.FailsafeRead_ZeroBytes (0 ms)
+54: [ RUN      ] VarintTest.FailsafeSkip_Success
+54: [       OK ] VarintTest.FailsafeSkip_Success (0 ms)
+54: [ RUN      ] VarintTest.FailsafeSkip_InsufficientBytes
+54: [       OK ] VarintTest.FailsafeSkip_InsufficientBytes (0 ms)
+54: [ RUN      ] VarintTest.EdgeCase_ConsecutiveWrites
+54: [       OK ] VarintTest.EdgeCase_ConsecutiveWrites (0 ms)
+54: [ RUN      ] VarintTest.EdgeCase_BufferBoundaries
+54: [       OK ] VarintTest.EdgeCase_BufferBoundaries (0 ms)
+54: [ RUN      ] VarintTest.Sanity_EncodingEfficiency
+54: [       OK ] VarintTest.Sanity_EncodingEfficiency (0 ms)
+54: [----------] 22 tests from VarintTest (0 ms total)
+54: 
+54: [----------] Global test environment tear-down
+54: [==========] 29 tests from 2 test suites ran. (0 ms total)
+54: [  PASSED  ] 29 tests.
+[HANDLER_OUTPUT] 
+12/14 Test #54: SiloVarintTests .................................
+   Passed    0.05 sec
+[HANDLER_VERBOSE_OUTPUT] 
+test 63
+
+[HANDLER_OUTPUT] 
+      Start 63: test_mtree_abi
+
+[HANDLER_VERBOSE_OUTPUT] 
+
+63: Test command: /dev/shm/sto-capacity-asan-20260909-v3/test_mtree_abi "--gtest_fail_if_no_test_selected"
+
+63: Working Directory: /dev/shm/sto-capacity-asan-20260909-v3
+63: Test timeout computed to be: 10000000
+63: [==========] Running 38 tests from 7 test suites.
+63: [----------] Global test environment set-up.
+63: [----------] 1 test from MtreeAbiIdentity
+63: [ RUN      ] MtreeAbiIdentity.ReportsExactPublicLayoutsAndLimits
+63: [       OK ] MtreeAbiIdentity.ReportsExactPublicLayoutsAndLimits (0 ms)
+63: [----------] 1 test from MtreeAbiIdentity (0 ms total)
+63: 
+63: [----------] 3 tests from MtreeAbiLifecycle
+63: [ RUN      ] MtreeAbiLifecycle.SingletonIsExplicitAndIncompatibleConfigIsRejected
+63: [       OK ] MtreeAbiLifecycle.SingletonIsExplicitAndIncompatibleConfigIsRejected (1 ms)
+63: [ RUN      ] MtreeAbiLifecycle.CloseRacingWithGetIsFailClosedAndMemorySafe
+63: [       OK ] MtreeAbiLifecycle.CloseRacingWithGetIsFailClosedAndMemorySafe (1 ms)
+63: [ RUN      ] MtreeAbiLifecycle.ReleasingFacadeNeverDestroysNativeTree
+63: [       OK ] MtreeAbiLifecycle.ReleasingFacadeNeverDestroysNativeTree (0 ms)
+63: [----------] 3 tests from MtreeAbiLifecycle (3 ms total)
+63: 
+63: [----------] 18 tests from MtreeAbiPoint
+63: [ RUN      ] MtreeAbiPoint.EmptyAndBinaryKeysRoundTripWithoutPointerValues
+63: [       OK ] MtreeAbiPoint.EmptyAndBinaryKeysRoundTripWithoutPointerValues (0 ms)
+63: [ RUN      ] MtreeAbiPoint.WinnerAndPublicationDispositionAreUnambiguous
+63: [       OK ] MtreeAbiPoint.WinnerAndPublicationDispositionAreUnambiguous (0 ms)
+63: [ RUN      ] MtreeAbiPoint.StructureSealIsIdempotentAndPreservesReadsAndScans
+63: [       OK ] MtreeAbiPoint.StructureSealIsIdempotentAndPreservesReadsAndScans (0 ms)
+63: [ RUN      ] MtreeAbiPoint.StructureSealDrainsAnActiveReaderThenReadersBypassIt
+63: [       OK ] MtreeAbiPoint.StructureSealDrainsAnActiveReaderThenReadersBypassIt (0 ms)
+63: [ RUN      ] MtreeAbiPoint.StructureSealRacingWithInsertionHasOneLinearizedWinner
+63: [       OK ] MtreeAbiPoint.StructureSealRacingWithInsertionHasOneLinearizedWinner (5 ms)
+63: [ RUN      ] MtreeAbiPoint.KeyLimitIsCheckedBeforeMasstreeSeesTheInput
+63: [       OK ] MtreeAbiPoint.KeyLimitIsCheckedBeforeMasstreeSeesTheInput (0 ms)
+63: [ RUN      ] MtreeAbiPoint.ScopedReadsRetainGuardsAndRejectStaleGenerations
+63: [       OK ] MtreeAbiPoint.ScopedReadsRetainGuardsAndRejectStaleGenerations (0 ms)
+63: [ RUN      ] MtreeAbiPoint.WorkerRcuScopeSpansTreesReadsWritesAndScans
+63: [       OK ] MtreeAbiPoint.WorkerRcuScopeSpansTreesReadsWritesAndScans (0 ms)
+63: [ RUN      ] MtreeAbiPoint.WorkerRcuScopeDoesNotRetainStructuralAdmission
+63: [       OK ] MtreeAbiPoint.WorkerRcuScopeDoesNotRetainStructuralAdmission (1 ms)
+63: [ RUN      ] MtreeAbiPoint.WorkerRcuTokenCannotCrossAnOsThread
+63: [       OK ] MtreeAbiPoint.WorkerRcuTokenCannotCrossAnOsThread (0 ms)
+63: [ RUN      ] MtreeAbiPoint.OneShotStridedReadsValidateOnceAndReleaseEveryGuard
+63: [       OK ] MtreeAbiPoint.OneShotStridedReadsValidateOnceAndReleaseEveryGuard (0 ms)
+63: [ RUN      ] MtreeAbiPoint.ScopedStridedReadsValidateOnceAndClearEveryFailure
+63: [       OK ] MtreeAbiPoint.ScopedStridedReadsValidateOnceAndClearEveryFailure (0 ms)
+63: [ RUN      ] MtreeAbiPoint.ScopedReadTokenCannotCrossAnOsThread
+63: [       OK ] MtreeAbiPoint.ScopedReadTokenCannotCrossAnOsThread (0 ms)
+63: [ RUN      ] MtreeAbiPoint.ScopedReaderDrainsBeforeStructuralWriterEnters
+63: [       OK ] MtreeAbiPoint.ScopedReaderDrainsBeforeStructuralWriterEnters (1 ms)
+63: [ RUN      ] MtreeAbiPoint.FirstReadRegistrationsRaceWritersOnFreshTrees
+63: [       OK ] MtreeAbiPoint.FirstReadRegistrationsRaceWritersOnFreshTrees (14 ms)
+63: [ RUN      ] MtreeAbiPoint.ThreadExitClosesAnUnendedReadScope
+63: [       OK ] MtreeAbiPoint.ThreadExitClosesAnUnendedReadScope (1 ms)
+63: [ RUN      ] MtreeAbiPoint.ThreadExitClosesAnUnendedWorkerRcuScope
+63: [       OK ] MtreeAbiPoint.ThreadExitClosesAnUnendedWorkerRcuScope (1 ms)
+63: [ RUN      ] MtreeAbiPoint.RecordIdsPreserveEveryBitWithoutPointerInterpretation
+63: [       OK ] MtreeAbiPoint.RecordIdsPreserveEveryBitWithoutPointerInterpretation (0 ms)
+63: [----------] 18 tests from MtreeAbiPoint (28 ms total)
+63: 
+63: [----------] 7 tests from MtreeAbiScan
+63: [ RUN      ] MtreeAbiScan.EmptyBinaryAndAbsentBoundsRemainDistinct
+63: [       OK ] MtreeAbiScan.EmptyBinaryAndAbsentBoundsRemainDistinct (0 ms)
+63: [ RUN      ] MtreeAbiScan.EveryInclusivityCombinationWorksInBothDirections
+63: [       OK ] MtreeAbiScan.EveryInclusivityCombinationWorksInBothDirections (0 ms)
+63: [ RUN      ] MtreeAbiScan.CapacityStopsReportExactNextKeyAndAuthoritativeResume
+63: [       OK ] MtreeAbiScan.CapacityStopsReportExactNextKeyAndAuthoritativeResume (0 ms)
+63: [ RUN      ] MtreeAbiScan.ExclusiveResumePartitionsForwardAndReverseScans
+63: [       OK ] MtreeAbiScan.ExclusiveResumePartitionsForwardAndReverseScans (0 ms)
+63: [ RUN      ] MtreeAbiScan.UnboundedReverseIncludesTheMaximumLengthAllFfKey
+63: [       OK ] MtreeAbiScan.UnboundedReverseIncludesTheMaximumLengthAllFfKey (2 ms)
+63: [ RUN      ] MtreeAbiScan.FixedWorkersPreserveStableKeysAcrossConcurrentSplits
+63: [       OK ] MtreeAbiScan.FixedWorkersPreserveStableKeysAcrossConcurrentSplits (13 ms)
+63: [ RUN      ] MtreeAbiScan.MalformedInputsAreRejectedAfterResultInitialization
+63: [       OK ] MtreeAbiScan.MalformedInputsAreRejectedAfterResultInitialization (0 ms)
+63: [----------] 7 tests from MtreeAbiScan (16 ms total)
+63: 
+63: [----------] 7 tests from MtreeAbiThreading
+63: [ RUN      ] MtreeAbiThreading.WorkerCannotBeUsedFromAnotherOsThread
+63: [       OK ] MtreeAbiThreading.WorkerCannotBeUsedFromAnotherOsThread (0 ms)
+63: [ RUN      ] MtreeAbiThreading.FreshWorkerBindsTheRuntimeMasstreeContext
+63: [       OK ] MtreeAbiThreading.FreshWorkerBindsTheRuntimeMasstreeContext (1 ms)
+63: [ RUN      ] MtreeAbiThreading.RebindingAnAttachedWorkerRejectsTheWrongRuntime
+63: [       OK ] MtreeAbiThreading.RebindingAnAttachedWorkerRejectsTheWrongRuntime (0 ms)
+63: [ RUN      ] MtreeAbiThreading.ConcurrentGetOrInsertReturnsOneWinner
+63: [       OK ] MtreeAbiThreading.ConcurrentGetOrInsertReturnsOneWinner (13 ms)
+63: [ RUN      ] MtreeAbiThreading.ValidOperationsSurviveConcurrentHandleRegistryPublication
+63: [       OK ] MtreeAbiThreading.ValidOperationsSurviveConcurrentHandleRegistryPublication (10 ms)
+63: [ RUN      ] MtreeAbiThreading.PointReadersRemainExactAcrossConcurrentSplits
+63: [       OK ] MtreeAbiThreading.PointReadersRemainExactAcrossConcurrentSplits (15 ms)
+63: [ RUN      ] MtreeAbiThreading.LayeredPointReadersRemainExactAcrossConcurrentSplits
+63: [       OK ] MtreeAbiThreading.LayeredPointReadersRemainExactAcrossConcurrentSplits (10 ms)
+63: [----------] 7 tests from MtreeAbiThreading (51 ms total)
+63: 
+63: [----------] 1 test from MtreeAbiHandles
+63: [ RUN      ] MtreeAbiHandles.UnknownPointersAreRejectedBeforeDereference
+63: [       OK ] MtreeAbiHandles.UnknownPointersAreRejectedBeforeDereference (0 ms)
+63: [----------] 1 test from MtreeAbiHandles (0 ms total)
+63: 
+63: [----------] 1 test from MtreeAbiZWorkerLimit
+63: [ RUN      ] MtreeAbiZWorkerLimit.ExhaustionIsReportedWithoutAbort
+63: [       OK ] MtreeAbiZWorkerLimit.ExhaustionIsReportedWithoutAbort (664 ms)
+63: [----------] 1 test from MtreeAbiZWorkerLimit (664 ms total)
+63: 
+63: [----------] Global test environment tear-down
+63: [==========] 38 tests from 7 test suites ran. (765 ms total)
+63: [  PASSED  ] 38 tests.
+[HANDLER_OUTPUT] 
+13/14 Test #63: test_mtree_abi ..................................
+   Passed    1.74 sec
+[HANDLER_VERBOSE_OUTPUT] 
+test 64
+
+[HANDLER_OUTPUT] 
+      Start 64: test_mako_value_metadata
+
+[HANDLER_VERBOSE_OUTPUT] 
+
+64: Test command: /dev/shm/sto-capacity-asan-20260909-v3/test_mako_value_metadata "--gtest_fail_if_no_test_selected"
+
+64: Working Directory: /dev/shm/sto-capacity-asan-20260909-v3
+64: Test timeout computed to be: 10000000
+64: [==========] Running 9 tests from 4 test suites.
+64: [----------] Global test environment set-up.
+64: [----------] 2 tests from MakoValueMetadata
+64: [ RUN      ] MakoValueMetadata.EncodeInitializesCanonicalSuffixAtEveryAlignment
+64: [       OK ] MakoValueMetadata.EncodeInitializesCanonicalSuffixAtEveryAlignment (0 ms)
+64: [ RUN      ] MakoValueMetadata.MemberStoresPreservePayloadAndWireOffsets
+64: [       OK ] MakoValueMetadata.MemberStoresPreservePayloadAndWireOffsets (0 ms)
+64: [----------] 2 tests from MakoValueMetadata (0 ms total)
+64: 
+64: [----------] 2 tests from MakoReplayFields
+64: [ RUN      ] MakoReplayFields.ProductionParserHandlesOddOffsetsAndTruncation
+64: [       OK ] MakoReplayFields.ProductionParserHandlesOddOffsetsAndTruncation (0 ms)
+64: [ RUN      ] MakoReplayFields.ReusedValueGetsCanonicalMetadataForShortAndDelete
+64: [       OK ] MakoReplayFields.ReusedValueGetsCanonicalMetadataForShortAndDelete (0 ms)
+64: [----------] 2 tests from MakoReplayFields (0 ms total)
+64: 
+64: [----------] 2 tests from MakoReplayLog
+64: [ RUN      ] MakoReplayLog.ProductionParserValidatesCompleteMultiTransactionFrame
+64: [       OK ] MakoReplayLog.ProductionParserValidatesCompleteMultiTransactionFrame (0 ms)
+64: [ RUN      ] MakoReplayLog.RejectsShortFooterPartialHeaderAndInvalidRecordBlock
+64: [       OK ] MakoReplayLog.RejectsShortFooterPartialHeaderAndInvalidRecordBlock (0 ms)
+64: [----------] 2 tests from MakoReplayLog (0 ms total)
+64: 
+64: [----------] 3 tests from MakoValueVersions
+64: [ RUN      ] MakoValueVersions.CowPruneLeavesPublishedChainUntouched
+64: [       OK ] MakoValueVersions.CowPruneLeavesPublishedChainUntouched (0 ms)
+64: [ RUN      ] MakoValueVersions.ReclamationUsesExplicitEmbeddedOwnershipBoundary
+64: [       OK ] MakoValueVersions.ReclamationUsesExplicitEmbeddedOwnershipBoundary (0 ms)
+64: [ RUN      ] MakoValueVersions.RepeatedReclamationFreesTruncatedHeapAnchor
+64: [       OK ] MakoValueVersions.RepeatedReclamationFreesTruncatedHeapAnchor (0 ms)
+64: [----------] 3 tests from MakoValueVersions (0 ms total)
+64: 
+64: [----------] Global test environment tear-down
+64: [==========] 9 tests from 4 test suites ran. (0 ms total)
+64: [  PASSED  ] 9 tests.
+[HANDLER_OUTPUT] 
+14/14 Test #64: test_mako_value_metadata ........................
+   Passed    0.03 sec
+[HANDLER_VERBOSE_OUTPUT] 
+
+The following tests passed:
+
+	test_sto_tpcc_cpp_wrapper_smoke
+	test_sto_tpcc_cpp_wrapper_scan_smoke
+	test_sto_tpcc_rust_startup_resource_exhausted
+	test_sto_tpcc_rust_load_resource_exhausted
+	test_sto_tpcc_rejects_duplicate_local_shards
+	test_sto_tpcc_rejects_partial_local_shards
+	test_sto_tpcc_rejects_rust_distributed_shard
+	test_sto_tpcc_rejects_rust_replication
+	test_sto_tpcc_rejects_rust_worker_limit
+	test_sto_tpcc_ffi_c11_header
+	test_srpc_epoll_platform
+	SiloVarintTests
+	test_mtree_abi
+	test_mako_value_metadata
+[HANDLER_OUTPUT] 
+
+100% tests passed, 0 tests failed out of 14
+
+
+Label Time Summary:
+abi              =   1.74 sec*proc (1 test)
+c11              =   0.02 sec*proc (1 test)
+capacity         =   0.79 sec*proc (2 tests)
+configuration    =   1.77 sec*proc (5 tests)
+epoll            =   0.02 sec*proc (1 test)
+ffi              =   4.54 sec*proc (12 tests)
+lifecycle        =   2.56 sec*proc (7 tests)
+masstree         =   4.52 sec*proc (11 tests)
+metadata         =   0.03 sec*proc (1 test)
+replay           =   0.03 sec*proc (1 test)
+rust             =   4.61 sec*proc (14 tests)
+serializer       =   0.05 sec*proc (1 test)
+silo             =   1.79 sec*proc (2 tests)
+srpc             =   0.02 sec*proc (1 test)
+sto              =   2.85 sec*proc (12 tests)
+tpcc             =   2.56 sec*proc (7 tests)
+
+Total Test time (real) =   4.62 sec

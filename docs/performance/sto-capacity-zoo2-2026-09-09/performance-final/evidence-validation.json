@@ -1,0 +1,25 @@
+{
+  "accepted_samples": 30,
+  "binary_sha256": {
+    "new": "3e32ba7d47a6de1b080d14cdc4955d04ecee0ece32a969a2dcfdf3925a2e31fe",
+    "old": "b2d484ffb6c80fe31cd03e09119e3885300516c1587218984ec5b9aedba8f716"
+  },
+  "candidate_only_intermediate_pairs": 3,
+  "captured_git_heads_context_only": [
+    "a3ad9a110727f5ecc937cbeee23fe40152df719f"
+  ],
+  "native_allocator_memory": "4G",
+  "paired_boundary_blocks": 6,
+  "prior_run_qualification": "The separate 2G-native protocol stopped at 12 accepted samples after the old Rust baseline exhausted a 128-MiB per-core native allocator region during measurement. A separate four-process 4G pilot preceded the final C++ diagnostic logging fix. No samples from either earlier protocol are included here. The final candidate reuses the exact prior trained Rust archive after rebuilding native C++. Both binaries retain their original matched 2G-native PGO training policy.",
+  "quiet_window_attempts": 36,
+  "rejected_measurement_pair_attempts": 0,
+  "rejected_quiet_windows": 6,
+  "rust_registry_memory": "8G",
+  "source_identity_basis": "Pinned binary hashes, captured PGO source provenance, configuration hash, and archived controller/runner fingerprints. Live Git HEAD is contextual only.",
+  "validated_at_utc": "2026-09-09T09:29:10.849371+00:00",
+  "validation": "Exact expected sample set/order, command settings, CPU masks and SMT guard coverage, snapshots, logs, empty accepted measurement journals, quiet thresholds, restart identity/visibility, and competitor checks verified.",
+  "waiting_policy_sample_counts": {
+    "fixed-settle-v1": 0,
+    "same-restart-quiet-v2": 30
+  }
+}

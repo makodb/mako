@@ -1,0 +1,24 @@
+{
+  "aborts": 0,
+  "attempts": 2135018,
+  "commits": 2135018,
+  "configured_seconds": 60,
+  "engine": "rust",
+  "environment_overrides": {
+    "MAKO_STO_TPCC_REGISTRY_MEMORY": "8G",
+    "MAKO_TPCC_ALLOCATOR_MEMORY": "2G",
+    "MAKO_TPCC_WORKLOAD_MIX": "45,43,4,4,4"
+  },
+  "measured_seconds": 60.42483,
+  "mix": {
+    "Delivery": 85664,
+    "NewOrder": 961092,
+    "OrderStatus": 85131,
+    "Payment": 918032,
+    "StockLevel": 85099
+  },
+  "schema_version": 1,
+  "threads": 1,
+  "throughput_txn_s": 35333.45480657538,
+  "warehouses": 1
+}

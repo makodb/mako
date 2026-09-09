@@ -3879,6 +3879,13 @@ the startup barrier protocol. A stopped process emits
 NOT emit a successful `TPCC_BENCH_RESULT`. It does not retry an unchanged full
 budget indefinitely.
 
+The failure reporter emits one record of at most 512 bytes with a single
+write to standard error, so concurrent shutdown logging cannot split the
+phase marker on a pipe. The bound includes leading and trailing newlines.
+Embedded control characters become spaces; truncated details end with `...`.
+Failure to write the complete diagnostic is fatal. This does not change the
+successful result format or the quiescent usage records.
+
 `sto_tpcc_db_usage` reports allocated structural registry bytes and their
 shared maximum. `sto_tpcc_table_usage` reports retained records, retained key
 bytes, consumed IDs, allocated structural registry bytes, and each configured

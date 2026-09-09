@@ -1,0 +1,15 @@
+Internal ctest changing into directory: /dev/shm/sto-capacity-asan-20260909-v4
+Test project /dev/shm/sto-capacity-asan-20260909-v4
+    Start 74: test_silo_nontxn_api_sto_rmw_insert_delete
+1/1 Test #74: test_silo_nontxn_api_sto_rmw_insert_delete ...   Passed    0.09 sec
+
+100% tests passed, 0 tests failed out of 1
+
+Label Time Summary:
+masstree            =   0.09 sec*proc (1 test)
+mv                  =   0.09 sec*proc (1 test)
+nontransactional    =   0.09 sec*proc (1 test)
+silo                =   0.09 sec*proc (1 test)
+sto-rmw             =   0.09 sec*proc (1 test)
+
+Total Test time (real) =   0.09 sec
