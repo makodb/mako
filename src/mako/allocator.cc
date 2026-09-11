@@ -108,16 +108,26 @@ allocator::CheckedPerWorkerCapacity(size_t total_bytes, size_t ncpus,
                              std::to_string(ncpus) + ")");
   }
   const size_t remainder = per_worker % hugepage_size;
-  if (remainder == 0) {
-    return per_worker;
+  size_t rounded = per_worker;
+  if (remainder != 0) {
+    const size_t step = hugepage_size - remainder;
+    if (per_worker > std::numeric_limits<size_t>::max() - step) {
+      throw std::runtime_error(
+          name + " cannot be rounded up to a huge page multiple without "
+                 "overflowing size_t");
+    }
+    rounded = per_worker + step;
   }
-  const size_t step = hugepage_size - remainder;
-  if (per_worker > std::numeric_limits<size_t>::max() - step) {
-    throw std::runtime_error(
-        name + " cannot be rounded up to a huge page multiple without "
-               "overflowing size_t");
+  // InitializeAllocator maps `ncpus * maxpercore` bytes, so the rounded total
+  // must also be representable; otherwise the region is sized from a wrapped
+  // product.
+  if (rounded > std::numeric_limits<size_t>::max() / ncpus) {
+    throw std::runtime_error(name + " per-worker capacity of " +
+                             std::to_string(rounded) +
+                             " bytes overflows the total region size for " +
+                             std::to_string(ncpus) + " workers");
   }
-  return per_worker + step;
+  return rounded;
 }
 
 // @unsafe: uses mmap and numa operations

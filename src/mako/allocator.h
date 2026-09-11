@@ -62,11 +62,12 @@ public:
   // that Initialize() expects, rounding up to a whole number of huge pages.
   //
   // The conversion is fully checked because Initialize() has no way to report
-  // an unusable capacity: it receives the per-worker size directly, so a zero
-  // worker count, a budget smaller than the worker count, or a rounding step
-  // that would overflow size_t previously produced a zero or wrapped capacity
-  // and reached an allocator failure instead of a diagnosable configuration
-  // error. `label` names the originating setting in the thrown error.
+  // an unusable capacity: it receives the per-worker size directly and maps
+  // `ncpus * maxpercore` bytes, so a zero worker count, a budget smaller than
+  // the worker count, or a rounding or scaling step that would overflow size_t
+  // previously produced a zero or wrapped capacity and reached an allocator
+  // failure instead of a diagnosable configuration error. `label` names the
+  // originating setting in the thrown error.
   //
   // @safe - Pure checked arithmetic; rejects unusable budgets explicitly.
   static size_t

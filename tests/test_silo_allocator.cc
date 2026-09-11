@@ -239,6 +239,12 @@ TEST(CheckedPerWorkerCapacityTest, RejectsBudgetsThatCannotBeSatisfied) {
         allocator::CheckedPerWorkerCapacity(std::numeric_limits<size_t>::max(),
                                             1, page, "TEST"),
         std::runtime_error);
+    // A share that only becomes unrepresentable once it is scaled by the worker
+    // count would size the mapped region from a wrapped product.
+    EXPECT_THROW(
+        allocator::CheckedPerWorkerCapacity(std::numeric_limits<size_t>::max() - 1,
+                                            2, page, "TEST"),
+        std::runtime_error);
 }
 
 TEST(CheckedPerWorkerCapacityTest, NamesTheRejectedSetting) {
