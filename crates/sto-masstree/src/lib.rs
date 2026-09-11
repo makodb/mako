@@ -67,10 +67,10 @@ use sto_core::{
     DirectValidationContext, DirectValidationItem, Entry, ErasedLockUse, ExecutionCheckContext,
     FinishContext, FinishDisposition, FinishItem, InstallContext, InstallItem, InvalidUse,
     ItemBatchControl, ItemBatchOutcome, LockClass, LockDisposition, LockIdentity, LockNamespaceId,
-    LockRequest, NoPredicate, ObjectId, ObservationOrder, ObservationRef, OccCommitId, OccVersion,
-    OpacityToken, OwnerId, PredicateContext, PreflightContext, PreflightFreeReadCapability,
-    PreflightFreeValidationContext, PreflightItem, PrepareError, RegisteredResource,
-    RegistrationError, ReleaseContext, ResourceClass, Runtime, RuntimeId,
+    LockRequest, NoPredicate, ObjectId, ObjectRegistration, ObservationOrder, ObservationRef,
+    OccCommitId, OccVersion, OpacityToken, OwnerId, PredicateContext, PreflightContext,
+    PreflightFreeReadCapability, PreflightFreeValidationContext, PreflightItem, PrepareError,
+    RegisteredResource, RegistrationError, ReleaseContext, ResourceClass, Runtime, RuntimeId,
     TerminalReadBatchCapability, TerminalReadOpen, TerminalReadReady, TerminalReadTransaction,
     Transaction, TransactionLock, TransactionalResource, UniqueItemKeyIndex, UniqueItemKeys,
     Unsupported, ValidationContext,
@@ -1499,15 +1499,19 @@ impl Table {
         config: TableConfig,
         budget: RegistryBudget,
     ) -> Result<Self, TableCreateError> {
+        // Admit the structural budget before creating native storage. A native
+        // tree is process-lifetime in ABI v1 and cannot be released, so a
+        // rejected creation must not leave one behind. `finish_table` runs
+        // only once the table is known to be affordable.
+        let admitted =
+            Self::admit_table(runtime, config, budget).map_err(TableCreateError::Registration)?;
         let tree = native_runtime.create_tree(native_worker)?;
-        Self::with_directory_mode_and_budget(
-            runtime,
+        Self::finish_table(
+            admitted,
             Directory::Native(NativeDirectory { tree }),
-            config,
             RecordTokenMode::DirectRecordPointer,
-            budget,
         )
-        .map_err(Into::into)
+        .map_err(TableCreateError::Registration)
     }
 
     #[cfg(test)]
@@ -1535,13 +1539,14 @@ impl Table {
         )
     }
 
-    fn with_directory_mode_and_budget(
+    /// Charges the structural registry budget and builds the table's stable
+    /// registry. No native directory is created here, so a budget rejection
+    /// leaves no process-lifetime native allocation behind.
+    fn admit_table(
         runtime: &Arc<Runtime>,
-        directory: Directory,
         config: TableConfig,
-        record_token_mode: RecordTokenMode,
         budget: RegistryBudget,
-    ) -> Result<Self, RegistrationError> {
+    ) -> Result<AdmittedTable, RegistrationError> {
         let object = runtime.register_object()?;
         let namespace = LockNamespaceId::new(object.object_id().get())
             .expect("nonzero ObjectId always forms a lock namespace");
@@ -1557,6 +1562,33 @@ impl Table {
         )?;
         let scan_publication_owners =
             scan_publication_owners(runtime, config.trusted_scan_value_generation)?;
+        Ok(AdmittedTable {
+            object,
+            namespace,
+            record_lock_class,
+            registry,
+            scan_publication_owners,
+        })
+    }
+
+    /// Completes a table around the directory admitted by [`Self::admit_table`].
+    ///
+    /// The remaining fallible steps are registering this table's three resource
+    /// classes on the already-created object. Those classes are distinct fixed
+    /// constants, so the only reachable failures are a poisoned runtime or a
+    /// failed reservation; neither is a routine budget rejection.
+    fn finish_table(
+        admitted: AdmittedTable,
+        directory: Directory,
+        record_token_mode: RecordTokenMode,
+    ) -> Result<Self, RegistrationError> {
+        let AdmittedTable {
+            object,
+            namespace,
+            record_lock_class,
+            registry,
+            scan_publication_owners,
+        } = admitted;
         let shared = Arc::new(TableShared {
             directory,
             registry,
@@ -1604,6 +1636,17 @@ impl Table {
             directory_resource,
             scan_resource,
         })
+    }
+
+    fn with_directory_mode_and_budget(
+        runtime: &Arc<Runtime>,
+        directory: Directory,
+        config: TableConfig,
+        record_token_mode: RecordTokenMode,
+        budget: RegistryBudget,
+    ) -> Result<Self, RegistrationError> {
+        let admitted = Self::admit_table(runtime, config, budget)?;
+        Self::finish_table(admitted, directory, record_token_mode)
     }
 
     /// Binds point operations for `transaction` to one lazy native read scope.
@@ -5787,6 +5830,21 @@ fn scan_publication_owners(
         .map_err(|_| RegistrationError::Capacity(CapacityError::BufferLimit))?;
     owners.resize_with(owner_count, ScanPublicationOwner::new);
     Ok(owners.into_boxed_slice())
+}
+
+/// Structural table state admitted before any native directory exists.
+///
+/// Native tree storage is process-lifetime in ABI v1 and is never released, so
+/// a table constructor must be able to refuse an unaffordable table before it
+/// creates a directory. Splitting admission from assembly lets
+/// [`Table::new_direct_with_budget`] charge the registry budget first and only
+/// then create native storage.
+struct AdmittedTable {
+    object: ObjectRegistration,
+    namespace: LockNamespaceId,
+    record_lock_class: LockClass,
+    registry: Registry,
+    scan_publication_owners: Box<[ScanPublicationOwner]>,
 }
 
 struct TableShared {

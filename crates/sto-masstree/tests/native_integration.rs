@@ -2,14 +2,15 @@
 
 use masstree::{Runtime as MasstreeRuntime, RuntimeConfig as MasstreeRuntimeConfig};
 use sto_core::{
-    AbortReason, AccessError, CapacityError, CommitOutcome, Conflict, InvalidUse, Runtime,
-    RuntimeConfig, Unsupported,
+    AbortReason, AccessError, CapacityError, CommitOutcome, Conflict, InvalidUse,
+    RegistrationError, Runtime, RuntimeConfig, Unsupported,
 };
 #[cfg(feature = "fixed-u64")]
 use sto_masstree::{FixedU64Batch, FixedU64Mutation, FixedU64Table, TerminalReadVisitOutcome};
 use sto_masstree::{
-    InsertOutcome, PointMutation, PointReadBatch, RegistryLayout, ScanBound, ScanControl,
-    ScanDirection, ScanRequest, ScanScratch, Table, TableConfig, Value,
+    InsertOutcome, PointMutation, PointReadBatch, RegistryBudget, RegistryLayout, ScanBound,
+    ScanControl, ScanDirection, ScanRequest, ScanScratch, Table, TableConfig, TableCreateError,
+    Value,
 };
 
 #[test]
@@ -1704,4 +1705,62 @@ fn native_transactional_scan_resumes_and_rejects_a_phantom() {
         CommitOutcome::Aborted(AbortReason::Conflict(Conflict::ReadValidation))
     );
     native_worker.quiesce().unwrap();
+}
+
+#[test]
+fn rejected_registry_budget_never_allocates_a_process_lifetime_native_directory() {
+    let native_runtime = MasstreeRuntime::new(MasstreeRuntimeConfig::new()).unwrap();
+    let native_worker = native_runtime.attach().unwrap();
+    let sto_runtime = Runtime::new(RuntimeConfig::default()).unwrap();
+
+    // A budget that cannot cover even the lazy layout's fixed directory root is
+    // rejected while the registry is admitted. Native tree storage is
+    // process-lifetime in ABI v1 and cannot be released, so the rejection must
+    // happen before any directory exists; otherwise every rejected attempt
+    // permanently consumes one.
+    //
+    // `created_tree_count` counts the whole process and the other tests in this
+    // binary create directories concurrently, so the attempt count is chosen to
+    // dominate that ambient growth: the defect adds exactly one directory per
+    // attempt, while concurrent tests contribute a small bounded number.
+    const ATTEMPTS: u64 = 512;
+    let before = native_runtime.created_tree_count();
+    for _ in 0..ATTEMPTS {
+        let rejected = Table::new_direct_with_budget(
+            &sto_runtime,
+            &native_runtime,
+            &native_worker,
+            TableConfig::default(),
+            RegistryBudget::new(0),
+        );
+        assert!(matches!(
+            rejected,
+            Err(TableCreateError::Registration(RegistrationError::Capacity(
+                CapacityError::BufferLimit
+            )))
+        ));
+    }
+    let rejected_growth = native_runtime.created_tree_count() - before;
+    assert!(
+        rejected_growth < ATTEMPTS,
+        "{ATTEMPTS} rejected table creations allocated {rejected_growth} native \
+         directories; budget admission must precede native directory creation"
+    );
+
+    // The same constructor still allocates one directory once the table is
+    // affordable, and closing it releases only Rust-side reachability.
+    let table = Table::new_direct_with_budget(
+        &sto_runtime,
+        &native_runtime,
+        &native_worker,
+        TableConfig::default(),
+        RegistryBudget::new(u64::MAX),
+    )
+    .unwrap();
+    let with_success = native_runtime.created_tree_count() - before;
+    assert!(
+        with_success > rejected_growth,
+        "an affordable table must still allocate its native directory"
+    );
+    drop(table);
 }

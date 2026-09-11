@@ -14,7 +14,10 @@ use std::{
     marker::PhantomData,
     num::NonZeroU64,
     rc::Rc,
-    sync::{Arc, Mutex, MutexGuard, OnceLock, Weak},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex, MutexGuard, OnceLock, Weak,
+    },
     thread::{self, ThreadId},
 };
 
@@ -216,6 +219,9 @@ struct RuntimeInner {
     features: u64,
     build_id: mtree_sys::BuildId,
     attached: Mutex<HashSet<ThreadId>>,
+    // Native directories are process-lived in ABI v1, so this only grows and
+    // restart is the only way to reclaim what it accounts for.
+    created_trees: AtomicU64,
 }
 
 static SHARED_RUNTIME: OnceLock<Mutex<Weak<RuntimeInner>>> = OnceLock::new();
@@ -269,6 +275,7 @@ impl Runtime {
             features: acquired.features,
             build_id: acquired.build_id,
             attached: Mutex::new(HashSet::new()),
+            created_trees: AtomicU64::new(0),
         });
         *slot = Arc::downgrade(&inner);
         Ok(Self { inner })
@@ -292,6 +299,18 @@ impl Runtime {
 
     pub fn health(&self) -> Result<RuntimeHealth, Error> {
         native::runtime_health(self.inner.raw)
+    }
+
+    /// Native directories created through this runtime so far.
+    ///
+    /// Native tree storage is process-lived in ABI v1: closing a table facade
+    /// releases only Rust-side reachability, so this counter never decreases and
+    /// a restart is the only way to reclaim the memory it accounts for. It makes
+    /// that process-lifetime resource observable, in particular so a table
+    /// constructor can be shown not to have consumed one when it rejects a
+    /// configuration.
+    pub fn created_tree_count(&self) -> u64 {
+        self.inner.created_trees.load(Ordering::Acquire)
     }
 
     /// Attaches one non-sendable worker facade to the calling OS thread.
@@ -318,6 +337,8 @@ impl Runtime {
     pub fn create_tree(&self, worker: &Worker) -> Result<Tree, Error> {
         worker.ensure(&self.inner)?;
         let raw = native::tree_create(self.inner.raw, worker.raw)?;
+        // Count the process-lifetime allocation before it becomes reachable.
+        self.inner.created_trees.fetch_add(1, Ordering::AcqRel);
         Ok(Tree {
             inner: Arc::new(TreeInner {
                 runtime: Arc::clone(&self.inner),

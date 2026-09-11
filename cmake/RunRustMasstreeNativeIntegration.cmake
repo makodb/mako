@@ -310,7 +310,8 @@ set(_sto_masstree_native_expected_tests
     private_direct_native_scan_handles_chunks_bounds_binary_keys_and_tombstones
     private_keyless_value_scan_accepts_32_33_and_300_but_rejects_301
     private_direct_native_scan_stop_excludes_the_copied_suffix
-    native_transactional_scan_resumes_and_rejects_a_phantom)
+    native_transactional_scan_resumes_and_rejects_a_phantom
+    rejected_registry_budget_never_allocates_a_process_lifetime_native_directory)
 set(_sto_masstree_history_expected_tests
     native_masstree_histories_are_strictly_serializable)
 
