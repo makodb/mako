@@ -564,9 +564,8 @@ phase_summary() {
                 echo "- \`$f\`"
             done
             echo ""
-            echo "A failed run is a result, not a gap: check the matching .log."
-            echo "The known one is group_mode=multi above one partition, which"
-            echo "does not elect a leader on this tree."
+            echo "A failed run is a result, not a gap: check the matching .log"
+            echo "and the .logs/ directory beside it for the three replicas."
             echo ""
         elif $regenerating && [ "$disk_failed" -gt 0 ]; then
             echo "## Failed runs"
