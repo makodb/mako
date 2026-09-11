@@ -47,6 +47,22 @@ pub enum CapacityError {
     KeyLimit,
 }
 
+impl CapacityError {
+    /// Whether this exhaustion permanently disables the runtime instead of
+    /// bounding the current attempt.
+    ///
+    /// `VersionExhausted` is terminal: the checked OCC commit-ID domain is
+    /// spent, so `Runtime::reserve_commit_id` transitions the runtime to
+    /// `RuntimeHealth::Exhausted` and every later transaction is refused. The
+    /// remaining variants bound one attempt's resources and leave a healthy
+    /// runtime able to serve a fresh one. Integrations that translate capacity
+    /// exhaustion into a caller-visible retry decision MUST consult this
+    /// predicate so a terminal exhaustion is not reported as retryable.
+    pub const fn is_terminal(self) -> bool {
+        matches!(self, Self::VersionExhausted)
+    }
+}
+
 /// An operation was attempted with an incompatible handle or lifecycle state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum InvalidUse {
@@ -480,6 +496,28 @@ mod tests {
             PrepareError::Capacity(capacity)
         );
         assert_eq!(AccessError::from(capacity), AccessError::Capacity(capacity));
+    }
+
+    #[test]
+    fn only_commit_id_exhaustion_is_terminal() {
+        // Spent OCC commit IDs permanently disable the runtime; every other
+        // bound describes the current attempt and leaves a healthy runtime.
+        assert!(CapacityError::VersionExhausted.is_terminal());
+        for bounded in [
+            CapacityError::RuntimeIdExhausted,
+            CapacityError::ObjectIdExhausted,
+            CapacityError::OwnerIdExhausted,
+            CapacityError::WorkerLimit,
+            CapacityError::ItemLimit,
+            CapacityError::LockLimit,
+            CapacityError::BufferLimit,
+            CapacityError::KeyLimit,
+        ] {
+            assert!(
+                !bounded.is_terminal(),
+                "{bounded:?} bounds one attempt, not the runtime"
+            );
+        }
     }
 
     #[test]

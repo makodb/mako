@@ -1307,24 +1307,28 @@ fn status_from_access(operation: &str, error: AccessError) -> Status {
         AccessError::Conflict(_) | AccessError::InvalidUse(sto_core::InvalidUse::TransactionDoomed)
     );
     set_last_error(format_args!("{operation}: {error}"));
-    if matches!(error, AccessError::Capacity(_)) {
-        Status::ResourceExhausted
-    } else if retry {
-        Status::Retry
-    } else {
-        Status::Fatal
+    match error {
+        // Terminal exhaustion disables the runtime, so it is not an ordinary
+        // capacity outcome. Reporting it as retryable would invite a retry that
+        // can never succeed.
+        AccessError::Capacity(capacity) if capacity.is_terminal() => Status::Fatal,
+        AccessError::Capacity(_) => Status::ResourceExhausted,
+        _ if retry => Status::Retry,
+        _ => Status::Fatal,
     }
 }
 
 fn status_from_abort(reason: AbortReason) -> Status {
     let retry = matches!(reason, AbortReason::Doomed | AbortReason::Conflict(_));
     set_last_error(format_args!("transaction commit aborted: {reason}"));
-    if matches!(reason, AbortReason::Capacity(_)) {
-        Status::ResourceExhausted
-    } else if retry {
-        Status::Retry
-    } else {
-        Status::Fatal
+    match reason {
+        // The checked OCC commit-ID domain is spent and the runtime is
+        // permanently refusing new transactions, so this is a terminal failure
+        // rather than ordinary, retryable capacity exhaustion.
+        AbortReason::Capacity(capacity) if capacity.is_terminal() => Status::Fatal,
+        AbortReason::Capacity(_) => Status::ResourceExhausted,
+        _ if retry => Status::Retry,
+        _ => Status::Fatal,
     }
 }
 
@@ -1334,7 +1338,9 @@ fn status_from_transaction_access(
     error: AccessError,
 ) -> FfiResult<Status> {
     let status = status_from_access(operation, error);
-    if status == Status::ResourceExhausted {
+    if matches!(error, AccessError::Capacity(_)) {
+        // Every capacity failure ends the attempt, including a terminal one
+        // whose caller-visible status is fatal instead of resource-exhausted.
         abort_active_attempt_after_fatal(handle)?;
     }
     Ok(status)
@@ -1680,8 +1686,8 @@ unsafe fn create_table(
         set_last_error(format_args!("unable to create STO table: {error}"));
         match error {
             sto_masstree::TableCreateError::Registration(
-                sto_core::RegistrationError::Capacity(_),
-            ) => Status::ResourceExhausted,
+                sto_core::RegistrationError::Capacity(capacity),
+            ) if !capacity.is_terminal() => Status::ResourceExhausted,
             _ => Status::Fatal,
         }
     })?;
@@ -1913,7 +1919,9 @@ fn txn_begin_impl(handle: &mut StoTpccThread) -> FfiResult<Status> {
         .map_err(|error| fatal(format_args!("unable to begin native RCU scope: {error}")))?;
     if let Err(error) = handle.sto_worker.begin_erased() {
         let status = match error {
-            sto_core::BeginError::Capacity(_) => Status::ResourceExhausted,
+            sto_core::BeginError::Capacity(capacity) if !capacity.is_terminal() => {
+                Status::ResourceExhausted
+            }
             _ => Status::Fatal,
         };
         // A failed logical begin still owns a native scope. Preserve a native
@@ -6860,6 +6868,42 @@ mod tests {
     const NATIVE_TEST_MAX_THREADS: u32 = 8;
     #[cfg(mtree_native_integration)]
     const NATIVE_TEST_MAX_KEY_LENGTH: u32 = 128;
+
+    #[test]
+    fn terminal_capacity_exhaustion_is_fatal_not_retryable() {
+        // A spent OCC commit-ID domain leaves the runtime permanently refusing
+        // new transactions. Reporting a retryable status here would invite a
+        // caller to retry a commit that can never succeed.
+        assert_eq!(
+            status_from_abort(AbortReason::Capacity(
+                sto_core::CapacityError::VersionExhausted
+            ))
+            .code(),
+            Status::Fatal.code()
+        );
+        assert_eq!(
+            status_from_access(
+                "exhaustion test",
+                AccessError::Capacity(sto_core::CapacityError::VersionExhausted)
+            )
+            .code(),
+            Status::Fatal.code()
+        );
+        // Ordinary exhaustion must stay an application-visible resource
+        // outcome so the closed TPC-C boundary still stops and exits 3.
+        assert_eq!(
+            status_from_abort(AbortReason::Capacity(sto_core::CapacityError::ItemLimit)).code(),
+            Status::ResourceExhausted.code()
+        );
+        assert_eq!(
+            status_from_access(
+                "exhaustion test",
+                AccessError::Capacity(sto_core::CapacityError::BufferLimit)
+            )
+            .code(),
+            Status::ResourceExhausted.code()
+        );
+    }
 
     #[test]
     fn logical_row_adjustment_preserves_value_on_overflow_and_underflow() {

@@ -381,6 +381,7 @@ if(DEFINED MAKO_STO_TPCC_NATIVE_TEST
         tests::shared_ffi_boundary_contains_panics
         tests::stable_resolved_cache_policies_match_header
         tests::stable_status_numbers_match_header
+        tests::terminal_capacity_exhaustion_is_fatal_not_retryable
         tests::thread_affinity_cookie_is_stable_and_distinct
         tests::tpcc_table_config_c_layout_appends_the_bounded_value_flag
         tests::tpcc_table_configuration_always_selects_unique_lock_requests
