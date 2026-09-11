@@ -2800,8 +2800,26 @@ bool RaftServer::RequestVoteImpl(bool timer_guarded,
   shared_ptr<RaftVoteQuorumEvent> sp_quorum;
   // @unsafe
   {
+  // The candidate id on the wire is a GLOBAL site id, not the per-partition
+  // locale id. Everything downstream treats it that way: RaftCommo skips
+  // itself by comparing against peer->site_id() (commo.cc:121-124), the
+  // receiver admits a candidate only if current_config_ contains it and
+  // current_config_ is filled from Config::SitesByPartitionId()'s site.id
+  // (server.cc:1565-1571, 2939-2942), and this candidate has just recorded
+  // vote_for_ = site_id_ above, which the grant path compares against can_id.
+  //
+  // Passing loc_id_ here was correct only for partition 0. Config::LoadSiteYML
+  // increments site_id globally across replica-group rows while resetting
+  // locale_id to 0 at the top of each row (config.cc:336-366), so with three
+  // replicas per group site_id == 3 * partition + locale and the two id spaces
+  // coincide only when partition == 0. For every partition above 0 the
+  // candidate advertised 0, 1 or 2 while current_config_ held {3p, 3p+1,
+  // 3p+2}: every vote was rejected as a non-voter, the self-skip never
+  // matched so a candidate also RequestVoted its own listener, and the term
+  // counter ran away. It compiled silently because locid_t is uint32_t and
+  // siteid_t is uint16_t (constants.h:15,18), so the call narrowed.
   sp_quorum = commo()->BroadcastVote(
-      par_id, lst_idx, lst_term, loc_id, term);
+      par_id, lst_idx, lst_term, site_id_, term);
   sp_quorum->wait_timeout(1000000);
   }
   std::unique_lock<std::recursive_mutex> lock1(mtx_);
