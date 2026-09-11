@@ -40,7 +40,6 @@
 #![warn(missing_docs)]
 
 use std::cell::Cell;
-use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::marker::PhantomData;
 use std::num::{NonZeroU32, NonZeroU64};
@@ -54,14 +53,16 @@ use mako_local::{CommitDisposition, LocalDb};
 use mrx_core::{BlobError, Blobs};
 use mrx_rocks::RocksBlobs;
 
+mod checkpoint;
 #[cfg(test)]
 mod failpoint;
+mod recovery;
 // Reviewed native-record ownership seam. Keep unsafe code denied everywhere
 // else in the crate so future fast-path work cannot silently broaden it.
 #[allow(unsafe_code)]
 mod record;
 mod runtime;
-/// Deterministic cache mutation controls used only by validation binaries.
+/// Backend injection and structural probes used only by validation binaries.
 #[cfg(feature = "test-support")]
 #[doc(hidden)]
 pub mod test_support;
@@ -83,16 +84,20 @@ pub use mako_local::{CommitRecordChecksum as RecordChecksum, Error as LocalError
 pub use mrx_rocks::Durability;
 pub use record::{CommitSeq, RecordError};
 pub use writeback::{
-    AppliedWatermark, ApplyError, ConfigError as WritebackConfigError, ReserveError, ResolveError,
-    WritebackConfig,
+    AppliedWatermark, ApplyError, ConfigError as WritebackConfigError, LogGcStatus, ReserveError,
+    ResolveError, WritebackConfig,
 };
 
+#[cfg(not(test))]
+use record::DEFAULT_TABLE_ID;
+#[cfg(test)]
 use record::{
     classify_backend_key, split_log_sequence, BackendKey, CommitRecord, Mutation, DEFAULT_TABLE_ID,
 };
+use recovery::recover;
 use runtime::{Runtime, RuntimeError};
 use writeback::Writeback;
-use writeback_set::{RecoveredWriteback, WritebackSet};
+use writeback_set::WritebackSet;
 
 const DEFAULT_TABLE_NAME: &[u8] = b"mako-cache/default";
 
@@ -314,6 +319,14 @@ pub enum ForegroundMode {
 pub struct CacheOptions {
     /// Bounded transaction-log and retry settings.
     pub writeback: WritebackConfig,
+    /// Retain applied transaction logs until their HLC physical time is older
+    /// than Unix time minus this duration. Defaults to five minutes. Row and
+    /// deletion timestamps remain after log expiration. Zero expires records
+    /// on the next eligible GC sweep; it does not disable WAL or logging.
+    pub log_retention: Duration,
+    /// Monotonic interval between background log-GC sweeps. Must be nonzero.
+    /// Each sweep interleaves bounded deletion batches with normal writeback.
+    pub gc_interval: Duration,
     /// Foreground transaction concurrency profile.
     pub foreground_mode: ForegroundMode,
     /// Integrity mode for newly produced cache-log records.
@@ -368,6 +381,8 @@ impl Default for CacheOptions {
     fn default() -> Self {
         Self {
             writeback: WritebackConfig::default(),
+            log_retention: Duration::from_secs(300),
+            gc_interval: Duration::from_secs(10),
             foreground_mode: ForegroundMode::Concurrent,
             record_checksum: RecordChecksum::Crc32c,
             writeback_cpu: None,
@@ -524,6 +539,9 @@ pub struct CacheStatus {
     ///
     /// Detached pre-commit capacity reservations are not included.
     pub queued_transactions: usize,
+    /// Retained application-log history, GC progress, and GC backend errors.
+    /// Reclaimed counts do not reduce the transaction application watermark.
+    pub log_gc: LogGcStatus,
     /// Process-wide native workers quarantined after uncertain cleanup.
     ///
     /// This count is monotonic and can include workers outside this cache. It
@@ -582,6 +600,14 @@ pub enum Error {
     MissingOpacity,
     /// The RocksDB contains a key outside this cache's tagged format.
     ForeignBackendKey,
+    /// Persisted cache state uses an incompatible layout. Rebuild it in a new
+    /// database; opening never converts or deletes existing data implicitly.
+    RebuildRequired,
+    /// Log retention or the GC scheduling interval cannot be represented, or
+    /// the interval is zero.
+    InvalidGcOptions,
+    /// GC recovery requires the RocksDB WAL to remain enabled.
+    WalRequired,
     /// A backend record or data key names a table unsupported by this slice.
     UnsupportedTable(u64),
     /// A backend log record and its materialized RocksDB data disagree.
@@ -681,6 +707,9 @@ impl fmt::Display for Error {
                 f,
                 "RocksDB contains a key outside the mako-cache tagged format"
             ),
+            Self::RebuildRequired => write!(f, "cache layout is incompatible; rebuild in a new database"),
+            Self::InvalidGcOptions => write!(f, "invalid log retention or GC interval"),
+            Self::WalRequired => write!(f, "log GC requires RocksDB WAL; use Wal or Sync durability"),
             Self::UnsupportedTable(table) => {
                 write!(f, "backend state names unsupported table {table}")
             }
@@ -755,6 +784,9 @@ impl std::error::Error for Error {
             | Self::MissingReadMyWrites
             | Self::MissingOpacity
             | Self::ForeignBackendKey
+            | Self::RebuildRequired
+            | Self::InvalidGcOptions
+            | Self::WalRequired
             | Self::UnsupportedTable(_)
             | Self::BackendStateMismatch
             | Self::RecoveryDiverged => None,
@@ -810,10 +842,31 @@ impl From<RuntimeError> for Error {
     }
 }
 
-/// Generic transaction cache over any atomic [`Blobs`] backend.
+/// Transaction cache with an exclusively owned backend.
 ///
-/// Production uses [`Db`], while tests use `Cache<Arc<MemBlobs>>` to inject
-/// failures and inspect backend state.
+/// Applications construct [`Db`] with [`Db::open`]. The cache opens RocksDB
+/// internally and never exposes a backend handle, so callers cannot bypass
+/// Silo, the commit log, or timestamp checks by writing directly to RocksDB.
+/// Backend injection is available only through the opt-in `test-support`
+/// feature for fault and recovery tests.
+///
+/// The backend cannot be obtained from an open cache:
+///
+/// ```compile_fail,E0599
+/// fn bypass(cache: &mako_cache::Db) {
+///     let _backend = cache.backend();
+/// }
+/// ```
+///
+/// Callers also cannot construct a cache with a retained writable handle:
+///
+/// ```compile_fail,E0624
+/// use std::sync::Arc;
+/// use mako_cache::{Cache, CacheOptions};
+/// use mrx_core::fakes::MemBlobs;
+/// let backend = Arc::new(MemBlobs::new());
+/// let cache = Cache::from_backend(Arc::clone(&backend), CacheOptions::default());
+/// ```
 ///
 /// This local milestone supports one recovered cache namespace per
 /// process. Native tables and the Mako timestamp authority are process-wide;
@@ -842,6 +895,10 @@ pub type Db = Cache<RocksBlobs>;
 impl Cache<RocksBlobs> {
     /// Open or create a RocksDB-backed transaction cache.
     pub fn open<P: AsRef<Path>>(path: P, options: Options) -> Result<Self, Error> {
+        validate_gc_options(options.cache)?;
+        if options.durability == Durability::None {
+            return Err(Error::WalRequired);
+        }
         let backend = RocksBlobs::open(path.as_ref(), options.durability)?;
         Self::from_backend(backend, options.cache)
     }
@@ -854,7 +911,8 @@ impl<B: Blobs + 'static> Cache<B> {
     /// or this cache becomes accessible to callers. The Phase 1 process model
     /// permits only one pre-existing cache namespace; see [`Cache`].
     #[allow(unsafe_code)]
-    pub fn from_backend(backend: B, options: CacheOptions) -> Result<Self, Error> {
+    fn from_backend(backend: B, options: CacheOptions) -> Result<Self, Error> {
+        validate_gc_options(options)?;
         let features = mako_local::features()?;
         if options.require_read_my_writes
             && (!features.read_my_writes() || !features.scan_read_my_writes())
@@ -885,11 +943,13 @@ impl<B: Blobs + 'static> Cache<B> {
         };
         unsafe { local.reseed_cache_order_namespace(native_sequence_seed)? };
         local.bind_trusted_table(DEFAULT_TABLE_NAME, DEFAULT_TABLE_ID)?;
-        let writeback = Arc::new(WritebackSet::new(
+        let writeback = Arc::new(WritebackSet::new_with_gc(
             backend,
             recovered,
             options.writeback,
             options.foreground_mode == ForegroundMode::Concurrent,
+            options.log_retention,
+            options.gc_interval,
         )?);
         let runtime = Runtime::start_on_cpu(Arc::clone(&writeback), options.writeback_cpu)
             .map_err(Error::RuntimeStart)?;
@@ -1051,6 +1111,7 @@ impl<B: Blobs + 'static> Cache<B> {
 
         let writeback_error = self.writeback.ensure_no_unknown().err();
         let apply = self.writeback.apply_telemetry();
+        let log_gc = self.writeback.gc_snapshot();
         let backend_stalled = apply
             .in_progress
             .is_some_and(|(_, elapsed)| elapsed >= self.backend_stall_threshold);
@@ -1060,6 +1121,11 @@ impl<B: Blobs + 'static> Cache<B> {
             || apply.pending_retry.is_some()
             || !apply.active_retryable_failures.is_empty()
             || backend_stalled
+            || log_gc.pending_retry
+            || log_gc.active_error
+            || log_gc
+                .in_progress
+                .is_some_and(|elapsed| elapsed >= self.backend_stall_threshold)
         {
             CacheHealth::Degraded
         } else {
@@ -1084,16 +1150,23 @@ impl<B: Blobs + 'static> Cache<B> {
             applied_watermark: self.writeback.applied_watermark(),
             acknowledged_transactions: self.writeback.highest_acknowledged(),
             queued_transactions: self.writeback.queue_len(),
+            log_gc,
             quarantined_workers: mako_local::quarantined_worker_count()?,
         })
     }
 
-    /// Access the backend for read-only diagnostics and tests.
+    /// Observe the backend's current database-file sizes, when supported.
     ///
-    /// The cache exclusively owns its tagged keyspace. Calling a mutating
-    /// [`Blobs`] method through this reference while the cache is live can
-    /// invalidate transaction-log and materialized-state invariants.
-    pub fn backend(&self) -> &B {
+    /// This performs filesystem I/O and is separate from nonblocking status.
+    /// The size includes retained WAL/SST/metadata files and is not an exact
+    /// measure of allocated disk blocks. Compaction may change it concurrently.
+    pub fn disk_usage_bytes(&self) -> Result<Option<u64>, Error> {
+        self.writeback.disk_usage_bytes().map_err(Error::Backend)
+    }
+
+    /// Internal crash tests use this to rendezvous with RocksDB test hooks.
+    #[cfg(test)]
+    fn backend(&self) -> &B {
         self.writeback.backend()
     }
 
@@ -2444,222 +2517,15 @@ fn finish_unwritten_native_arena<B: Blobs>(
     }
 }
 
-fn recover<B: Blobs>(
-    local: &LocalDb,
-    backend: &B,
-    max_bytes: usize,
-) -> Result<RecoveredWriteback, Error> {
-    let mut keys = Vec::<Vec<u8>>::new();
-    backend.for_each_key(&mut |key| keys.push(key.to_vec()))?;
-    #[cfg(test)]
-    crate::failpoint::hit(crate::failpoint::Point::RecoveryKeysEnumerated);
-
-    let mut log_keys = Vec::<(CommitSeq, Vec<u8>)>::new();
-    let mut data_keys = Vec::<(Vec<u8>, u64, Vec<u8>)>::new();
-    for key in keys {
-        match classify_backend_key(&key) {
-            BackendKey::Log(sequence) => log_keys.push((sequence, key)),
-            BackendKey::Data { table_id, key: raw } => {
-                if table_id != DEFAULT_TABLE_ID {
-                    return Err(Error::UnsupportedTable(table_id));
-                }
-                data_keys.push((key.clone(), table_id, raw.to_vec()));
-            }
-            BackendKey::Foreign => return Err(Error::ForeignBackendKey),
-        }
-    }
-    log_keys.sort_unstable_by_key(|(sequence, _)| *sequence);
-    #[cfg(test)]
-    let record_count = log_keys.len();
-
-    let mut records = Vec::new();
-    records
-        .try_reserve_exact(log_keys.len())
-        .map_err(|_| Error::AllocationFailed)?;
-    let mut recovered = RecoveredWriteback::empty();
-    let mut seen_timestamps = HashSet::new();
-    seen_timestamps
-        .try_reserve(log_keys.len())
-        .map_err(|_| Error::AllocationFailed)?;
-    for (_sequence, key) in log_keys {
-        let value = backend.get(&key)?.ok_or(Error::BackendStateMismatch)?;
-        let record = CommitRecord::decode(&key, &value, max_bytes)?;
-        if !seen_timestamps.insert(record.mako_timestamp()) {
-            return Err(Error::BackendStateMismatch);
-        }
-        let (lane, local_sequence) =
-            split_log_sequence(record.sequence()).ok_or(Error::BackendStateMismatch)?;
-        let lane_recovery = match lane {
-            Some(lane) => recovered
-                .lanes
-                .get_mut(lane)
-                .ok_or(Error::BackendStateMismatch)?,
-            None => &mut recovered.legacy,
-        };
-        let expected = lane_recovery
-            .local_tail
-            .checked_add(1)
-            .ok_or(Error::BackendStateMismatch)?;
-        if local_sequence != expected {
-            return Err(Error::BackendStateMismatch);
-        }
-        lane_recovery.local_tail = local_sequence;
-        if lane.is_some()
-            && lane_recovery
-                .mako_timestamp
-                .is_some_and(|current| record.mako_timestamp() <= current)
-        {
-            // One live worker is the sole producer for its tagged SPSC lane.
-            // Its commits therefore have both increasing local sequences and
-            // increasing process-HLC timestamps. A reversal can only be a
-            // corrupt or impossible history. The upper-zero legacy stream is
-            // intentionally more permissive because older integrations could
-            // bind sequence and timestamp order independently.
-            return Err(Error::BackendStateMismatch);
-        }
-        lane_recovery.mako_timestamp = Some(
-            lane_recovery
-                .mako_timestamp
-                .map_or(record.mako_timestamp(), |current| {
-                    current.max(record.mako_timestamp())
-                }),
-        );
-        for mutation in record.mutations() {
-            let table_id = match mutation {
-                Mutation::Put { table_id, .. } | Mutation::Delete { table_id, .. } => *table_id,
-            };
-            if table_id != DEFAULT_TABLE_ID {
-                return Err(Error::UnsupportedTable(table_id));
-            }
-        }
-        records.push(record);
-        #[cfg(test)]
-        {
-            if records.len() == 1 {
-                crate::failpoint::hit(crate::failpoint::Point::RecoveryFirstRecordValidated);
-            }
-            if records.len() == record_count {
-                crate::failpoint::hit(crate::failpoint::Point::RecoveryLastRecordValidated);
-            }
-        }
-    }
-
-    // Physical lane order is not the serialization order.  Whole
-    // transactions replay by their unique Mako timestamp.
-    records.sort_unstable_by_key(CommitRecord::mako_timestamp);
-    recovered.latest = validate_materialized_data(backend, &records, data_keys)?;
-    #[cfg(test)]
-    crate::failpoint::hit(crate::failpoint::Point::RecoveryMaterializedValidated);
-
-    // Mako's logical counter is process-local. Raise it above every recovered
-    // timestamp before replay completes and the recovered cache is exposed,
-    // otherwise a process restart could reuse transaction timestamps.
-    let applied_mako_timestamp = records.last().map(CommitRecord::mako_timestamp);
-    if let Some(timestamp) = applied_mako_timestamp {
-        #[cfg(test)]
-        crate::failpoint::hit(crate::failpoint::Point::RecoveryBeforeClockFloor);
-        mako_local::advance_mako_timestamp_past(timestamp)?;
-        #[cfg(test)]
-        crate::failpoint::hit(crate::failpoint::Point::RecoveryAfterClockFloor);
-    }
-    replay_records(local, &records)?;
-    #[cfg(test)]
-    crate::failpoint::hit(crate::failpoint::Point::RecoveryReplayComplete);
-    recovered.record_count = u64::try_from(records.len()).map_err(|_| Error::AllocationFailed)?;
-    recovered.maximum_timestamp = applied_mako_timestamp;
-    Ok(recovered)
-}
-
-fn validate_materialized_data<B: Blobs>(
-    backend: &B,
-    records: &[CommitRecord],
-    data_keys: Vec<(Vec<u8>, u64, Vec<u8>)>,
-) -> Result<HashMap<Vec<u8>, MakoTimestamp>, Error> {
-    let mut final_state = BTreeMap::<(u64, Vec<u8>), (MakoTimestamp, Option<Vec<u8>>)>::new();
-    let mut latest = HashMap::<Vec<u8>, MakoTimestamp>::new();
-    for record in records {
-        for (mutation, data_key) in record.mutations().iter().zip(record.data_keys()) {
-            latest.insert(data_key.clone(), record.mako_timestamp());
-            match mutation {
-                Mutation::Put {
-                    table_id,
-                    key,
-                    value,
-                } => {
-                    final_state.insert(
-                        (*table_id, key.clone()),
-                        (record.mako_timestamp(), Some(value.clone())),
-                    );
-                }
-                Mutation::Delete { table_id, key } => {
-                    final_state.insert((*table_id, key.clone()), (record.mako_timestamp(), None));
-                }
-            }
-        }
-    }
-
-    for (backend_key, table_id, raw_key) in data_keys {
-        let expected = final_state
-            .remove(&(table_id, raw_key))
-            .and_then(|(_, value)| value)
-            .ok_or(Error::BackendStateMismatch)?;
-        let actual = backend
-            .get(&backend_key)?
-            .ok_or(Error::BackendStateMismatch)?;
-        if actual != expected {
-            return Err(Error::BackendStateMismatch);
-        }
-    }
-    if final_state.values().any(|(_, value)| value.is_some()) {
-        return Err(Error::BackendStateMismatch);
-    }
-    Ok(latest)
-}
-
-fn replay_records(local: &LocalDb, records: &[CommitRecord]) -> Result<(), Error> {
-    let table = local.open_table(DEFAULT_TABLE_NAME, DEFAULT_TABLE_ID)?;
-    #[cfg(test)]
-    let replay_midpoint = records.len() / 2;
-    #[cfg(test)]
-    let mut records_replayed = 0usize;
-    for record in records {
-        let mut transaction = local.transaction()?;
-        for mutation in record.mutations() {
-            match mutation {
-                Mutation::Put { key, value, .. } => {
-                    transaction.put(&table, key, value)?;
-                }
-                Mutation::Delete { key, .. } => {
-                    // Replay is deliberately idempotent. The local engine is
-                    // rebuilt from an empty instance, and a predecessor Put
-                    // may be absent from a valid surviving cross-lane history.
-                    // Applying Delete to an already-absent key still reaches
-                    // the record's required post-state.
-                    let _ = transaction.remove(&table, key)?;
-                }
-            }
-        }
-        let report = transaction.commit_report();
-        match report.disposition {
-            CommitDisposition::Committed if report.cleanup.is_ok() => {}
-            CommitDisposition::Committed => {
-                return Err(Error::Native(
-                    report.cleanup.expect_err("cleanup checked as failed"),
-                ));
-            }
-            CommitDisposition::Aborted(error) | CommitDisposition::Unknown(error) => {
-                return Err(Error::Native(error));
-            }
-        }
-        #[cfg(test)]
-        record_replayed_sequence(record.sequence());
-        #[cfg(test)]
-        {
-            records_replayed += 1;
-            if records_replayed == replay_midpoint {
-                crate::failpoint::hit(crate::failpoint::Point::RecoveryMidReplay);
-            }
-        }
+fn validate_gc_options(options: CacheOptions) -> Result<(), Error> {
+    if options.gc_interval.is_zero()
+        || u64::try_from(options.gc_interval.as_micros()).is_err()
+        || u64::try_from(options.log_retention.as_micros()).is_err()
+        || std::time::Instant::now()
+            .checked_add(options.gc_interval)
+            .is_none()
+    {
+        return Err(Error::InvalidGcOptions);
     }
     Ok(())
 }
@@ -3112,8 +2978,60 @@ mod tests {
     }
 
     #[cfg(have_mako)]
+    fn install_test_record(backend: &impl Blobs, record: &CommitRecord) {
+        // Deliberately permit malformed history (gaps/reversed lane HLCs) so
+        // recovery tests can check rejection independently of the coordinator.
+        let tag = checkpoint::lane_tag(record.sequence()).unwrap();
+        let lane_key = checkpoint::lane_key(tag);
+        let mut lane = backend
+            .get(&lane_key)
+            .unwrap()
+            .map(|bytes| checkpoint::LaneMetadata::decode(&bytes).unwrap())
+            .unwrap_or_default();
+        let (_, position) = record::split_log_sequence(record.sequence()).unwrap();
+        lane.applied = lane.applied.max(position);
+        lane.max_timestamp = Some(lane.max_timestamp.map_or(record.mako_timestamp(), |old| {
+            old.max(record.mako_timestamp())
+        }));
+        lane.retained_bytes += (record.log_key().len() + record.encoded().len()) as u64;
+        let mut writes = vec![
+            (
+                checkpoint::FORMAT_KEY.to_vec(),
+                checkpoint::encode_format().unwrap(),
+            ),
+            (record.log_key().to_vec(), record.encoded().to_vec()),
+            (lane_key, lane.encode().unwrap()),
+        ];
+        for (mutation, data_key) in record.mutations().iter().zip(record.data_keys()) {
+            let old = backend.get(data_key).unwrap();
+            if old
+                .as_deref()
+                .map(checkpoint::decode_row)
+                .transpose()
+                .unwrap()
+                .is_some_and(|old| old.timestamp > record.mako_timestamp())
+            {
+                continue;
+            }
+            let value = match mutation {
+                Mutation::Put { value, .. } => Some(value.as_slice()),
+                Mutation::Delete { .. } => None,
+            };
+            writes.push((
+                data_key.clone(),
+                checkpoint::encode_row(record.mako_timestamp(), record.sequence(), value).unwrap(),
+            ));
+        }
+        let ops: Vec<_> = writes
+            .iter()
+            .map(|(key, val)| mrx_core::BlobOp::Put { key, val })
+            .collect();
+        backend.write_batch(&ops).unwrap();
+    }
+
+    #[cfg(have_mako)]
     #[test]
-    fn recovery_replays_each_cache_sequence_exactly_once_in_order() {
+    fn recovery_hydrates_only_current_rows_without_replaying_history() {
         use std::sync::Arc;
 
         use mrx_core::fakes::MemBlobs;
@@ -3157,7 +3075,7 @@ mod tests {
             ),
         ];
         for record in &records {
-            backend.write_batch(&record.backend_ops()).unwrap();
+            install_test_record(&backend, record);
         }
 
         begin_replay_audit();
@@ -3165,8 +3083,8 @@ mod tests {
             .expect("recover audited history");
         assert_eq!(
             finish_replay_audit(),
-            vec![1, 2, 3],
-            "recovery must replay each dense CacheSeq exactly once and in order"
+            vec![3, 3],
+            "only the two surviving rows are loaded, without replaying older transactions"
         );
         assert_eq!(cache.applied_sequence(), 3);
         assert_eq!(
@@ -3184,6 +3102,11 @@ mod tests {
 
     #[test]
     fn default_profile_requires_read_your_writes() {
+        assert_eq!(
+            CacheOptions::default().log_retention,
+            Duration::from_secs(300)
+        );
+        assert_eq!(CacheOptions::default().gc_interval, Duration::from_secs(10));
         assert!(CacheOptions::default().require_read_my_writes);
         assert_eq!(
             CacheOptions::default().foreground_mode,
@@ -3194,6 +3117,41 @@ mod tests {
             Durability::Wal,
             "the production cache must not request a per-write disk sync"
         );
+    }
+
+    #[test]
+    fn gc_options_reject_invalid_time_ranges_and_allow_zero_retention() {
+        let mut options = CacheOptions::default();
+        options.log_retention = Duration::ZERO;
+        assert!(validate_gc_options(options).is_ok());
+        options.gc_interval = Duration::ZERO;
+        assert!(matches!(
+            validate_gc_options(options),
+            Err(Error::InvalidGcOptions)
+        ));
+        options.gc_interval = Duration::MAX;
+        assert!(matches!(
+            validate_gc_options(options),
+            Err(Error::InvalidGcOptions)
+        ));
+        options.gc_interval = Duration::from_secs(10);
+        options.log_retention = Duration::MAX;
+        assert!(matches!(
+            validate_gc_options(options),
+            Err(Error::InvalidGcOptions)
+        ));
+    }
+
+    #[test]
+    fn cache_rejects_wal_disabled_before_opening_any_files() {
+        let options = Options {
+            durability: Durability::None,
+            ..Options::default()
+        };
+        assert!(matches!(
+            Db::open("this-path-must-not-be-opened", options),
+            Err(Error::WalRequired)
+        ));
     }
 
     #[cfg(have_mako)]
@@ -3224,6 +3182,7 @@ mod tests {
             operations: &[mrx_core::BlobOp<'_>],
         ) -> Result<(), mrx_core::BlobError> {
             self.inner.write_batch(operations)?;
+            if operations.iter().all(|op| matches!(op, mrx_core::BlobOp::Put { key, .. } if *key == checkpoint::FORMAT_KEY)) { return Ok(()); }
             if self.fail_once.swap(false, Ordering::SeqCst) {
                 return Err(mrx_core::BlobError(
                     "injected error after applying backend batch".to_owned(),
@@ -3281,6 +3240,7 @@ mod tests {
             &self,
             operations: &[mrx_core::BlobOp<'_>],
         ) -> Result<(), mrx_core::BlobError> {
+            if operations.iter().all(|op| matches!(op, mrx_core::BlobOp::Put { key, .. } if *key == checkpoint::FORMAT_KEY)) { return self.inner.write_batch(operations); }
             let mut gate = self.gate.lock().unwrap();
             gate.0 = true;
             self.changed.notify_all();
@@ -3305,10 +3265,10 @@ mod tests {
         use mrx_core::fakes::MemBlobs;
 
         let backend = Arc::new(MemBlobs::new());
-        backend.fail_next_writes(usize::MAX);
         let mut options = CacheOptions::default();
         options.writeback.retry_delay = Duration::from_millis(50);
         let cache = Cache::from_backend(Arc::clone(&backend), options).unwrap();
+        backend.fail_next_writes(usize::MAX);
 
         let initial = cache.status().unwrap();
         assert_eq!(initial.health, CacheHealth::Healthy);
@@ -3584,10 +3544,14 @@ mod tests {
         assert!(!backend.is_failing(), "the injected failure was consumed");
         assert_eq!(
             backend.batch_count(),
-            3,
+            4,
             "capacity one permits exactly one successful record per batch"
         );
-        assert_eq!(backend.op_count(), 6, "each Put writes one log and one row");
+        assert_eq!(
+            backend.op_count(),
+            10,
+            "format marker plus three log/row/lane batches"
+        );
 
         let snapshot = backend.snapshot();
         let mut log_records = snapshot
@@ -3597,7 +3561,10 @@ mod tests {
                     CommitRecord::decode(key, encoded, max_record_bytes)
                         .expect("wrapped holder emitted a valid record"),
                 ),
-                BackendKey::Data { .. } | BackendKey::Foreign => None,
+                BackendKey::Data { .. }
+                | BackendKey::Format
+                | BackendKey::Lane(_)
+                | BackendKey::Foreign => None,
             })
             .collect::<Vec<_>>();
         log_records.sort_unstable_by_key(|record| record.sequence());
@@ -3623,7 +3590,7 @@ mod tests {
                         table_id: DEFAULT_TABLE_ID,
                         key: stored_key,
                     } if stored_key == key
-                ) && stored_value.as_slice() == value
+                ) && checkpoint::decode_row(stored_value).unwrap().value == Some(value)
             }));
         }
 
@@ -3771,7 +3738,7 @@ mod tests {
 
         let backend = Arc::new(MemBlobs::new());
         let record = test_record(2, 101, b"gap");
-        backend.write_batch(&record.backend_ops()).unwrap();
+        install_test_record(&backend, &record);
 
         assert!(matches!(
             Cache::from_backend(backend, CacheOptions::default()),
@@ -3809,12 +3776,12 @@ mod tests {
         );
         // The timestamp winner is materialized last. Physical key order is the
         // opposite order and must not define recovery serialization.
-        backend.write_batch(&older.backend_ops()).unwrap();
-        backend.write_batch(&newer.backend_ops()).unwrap();
+        install_test_record(&backend, &older);
+        install_test_record(&backend, &newer);
 
         begin_replay_audit();
         let cache = Cache::from_backend(Arc::clone(&backend), CacheOptions::default()).unwrap();
-        assert_eq!(finish_replay_audit(), vec![lane_one, lane_zero]);
+        assert_eq!(finish_replay_audit(), vec![lane_zero]);
         assert_eq!(
             cache.get(b"cross-lane").unwrap().as_deref(),
             Some(&b"newer"[..])
@@ -3850,8 +3817,8 @@ mod tests {
                 value: b"older".to_vec(),
             }],
         );
-        backend.write_batch(&first.backend_ops()).unwrap();
-        backend.write_batch(&second.backend_ops()).unwrap();
+        install_test_record(&backend, &first);
+        install_test_record(&backend, &second);
 
         assert!(matches!(
             Cache::from_backend(backend, CacheOptions::default()),
@@ -3876,7 +3843,7 @@ mod tests {
                 key: b"lost-cross-lane-predecessor".to_vec(),
             }],
         );
-        backend.write_batch(&delete.backend_ops()).unwrap();
+        install_test_record(&backend, &delete);
 
         let cache = Cache::from_backend(Arc::clone(&backend), CacheOptions::default())
             .expect("Delete replay must be idempotent when the local key is absent");
@@ -3914,16 +3881,12 @@ mod tests {
 
         // Backend application is timestamp-ordered even when the physical log
         // positions are not. Write the older value first to model that result.
-        backend
-            .write_batch(&sequence_two_older.backend_ops())
-            .unwrap();
-        backend
-            .write_batch(&sequence_one_newer.backend_ops())
-            .unwrap();
+        install_test_record(&backend, &sequence_two_older);
+        install_test_record(&backend, &sequence_one_newer);
 
         begin_replay_audit();
         let cache = Cache::from_backend(Arc::clone(&backend), CacheOptions::default()).unwrap();
-        assert_eq!(finish_replay_audit(), vec![2, 1]);
+        assert_eq!(finish_replay_audit(), vec![1]);
         assert_eq!(
             cache.get(b"same-lane-reordered").unwrap().as_deref(),
             Some(&b"newer"[..])
@@ -3946,8 +3909,8 @@ mod tests {
         let backend = Arc::new(MemBlobs::new());
         let first = test_record(1, 202, b"first");
         let second = test_record(2, 202, b"duplicate");
-        backend.write_batch(&first.backend_ops()).unwrap();
-        backend.write_batch(&second.backend_ops()).unwrap();
+        install_test_record(&backend, &first);
+        install_test_record(&backend, &second);
 
         assert!(matches!(
             Cache::from_backend(backend, CacheOptions::default()),
@@ -3967,8 +3930,8 @@ mod tests {
         let backend = Arc::new(MemBlobs::new());
         let first = test_record(1, FIRST_TIMESTAMP, b"first-timestamp");
         let second = test_record(2, FRONTIER_TIMESTAMP, b"sequence-frontier");
-        backend.write_batch(&first.backend_ops()).unwrap();
-        backend.write_batch(&second.backend_ops()).unwrap();
+        install_test_record(&backend, &first);
+        install_test_record(&backend, &second);
 
         let cache = Cache::from_backend(Arc::clone(&backend), CacheOptions::default()).unwrap();
         assert_eq!(cache.applied_watermark().sequence(), 2);
@@ -4010,7 +3973,7 @@ mod tests {
         .unwrap()
         .bind(CommitSeq::new(1).unwrap(), recovered_timestamp)
         .finalize();
-        backend.write_batch(&recovered.backend_ops()).unwrap();
+        install_test_record(&backend, &recovered);
 
         let cache = Cache::from_backend(Arc::clone(&backend), CacheOptions::default()).unwrap();
         cache.put(b"after-recovery", b"new").unwrap();
@@ -4066,7 +4029,7 @@ mod tests {
         .unwrap()
         .bind(CommitSeq::new(1).unwrap(), final_timestamp)
         .finalize();
-        backend.write_batch(&final_record.backend_ops()).unwrap();
+        install_test_record(&backend, &final_record);
 
         assert!(matches!(
             Cache::from_backend(backend, CacheOptions::default()),

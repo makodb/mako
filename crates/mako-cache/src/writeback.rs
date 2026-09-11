@@ -32,6 +32,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
+use crate::checkpoint::{self, LaneMetadata};
 use mako_local::{CommitRecordTarget, MakoTimestamp, TrustedOnePutHolderPool};
 use mrx_core::{BlobError, Blobs};
 #[cfg(test)]
@@ -239,27 +240,109 @@ pub struct AppliedWatermark {
 
 /// Serialized timestamp arbitration for materialized RocksDB values.
 ///
-/// Commit-log records are never discarded. That lets recovery reconstruct
-/// this index, including the timestamp of a physical delete, while user values
-/// keep their existing raw representation.  Every writeback lane shares one
-/// coordinator, so a physically late record cannot overwrite a mutation with
-/// a newer Mako timestamp.
+/// Versioned rows and tombstones preserve this index independently of retained
+/// logs. Every writeback lane and GC operation shares this coordinator, so a
+/// physically late record cannot overwrite a newer timestamp.
 struct ApplyCoordinatorState {
     latest: HashMap<Vec<u8>, MakoTimestamp>,
-    /// Exact physical batch whose backend outcome became uncertain when the
-    /// backend returned an error or unwound. No other lane may apply until
-    /// this batch is retried to a normal success, because its materialized
-    /// mutations may already be visible even though the in-memory timestamp
-    /// index did not advance. `CommitSeq` includes the worker-lane tag, so
-    /// equal lane-local positions cannot alias one another here. A queued
-    /// sequence keeps ownership of its immutable record and ring generation
-    /// until retirement, which makes the sequence vector a complete identity.
-    retry_batch: Option<Vec<CommitSeq>>,
+    lanes: Vec<LaneMetadata>,
+    oldest: Vec<Option<MakoTimestamp>>,
+    gc_cursor: usize,
+    last_gc_cutoff: Option<u64>,
+    gc_attempt_position: Option<(usize, u64)>,
+    /// Owned exact bytes and metadata targets survive ambiguous backend errors.
+    /// Neither application nor GC may interleave ahead of their identical retry.
+    pending: Option<PendingOperation>,
+}
+
+enum OwnedOperation {
+    Put(Vec<u8>, Vec<u8>),
+    Delete(Vec<u8>),
+}
+
+struct PendingOperation {
+    operations: Vec<OwnedOperation>,
+    lane: usize,
+    metadata: LaneMetadata,
+    kind: PendingKind,
+}
+
+enum PendingKind {
+    Apply {
+        sequences: Vec<CommitSeq>,
+        updates: Vec<(Vec<u8>, MakoTimestamp)>,
+        first_timestamp: MakoTimestamp,
+    },
+    Gc {
+        records: u64,
+        bytes: u64,
+        next_oldest: Option<MakoTimestamp>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum GcStep {
+    Progress { records: u64, bytes: u64 },
+    Complete,
+    BlockedByApplyRetry,
+}
+
+/// Logical application-log retention and background collection progress.
+/// Physical SST disk usage can exceed retained bytes until RocksDB compacts.
+#[derive(Clone, Debug, Default)]
+pub struct LogGcStatus {
+    /// Applied records whose transaction logs remain in the backend.
+    pub retained_records: u64,
+    /// Encoded retained log keys and values, excluding metadata and SST overhead.
+    pub retained_bytes: u64,
+    /// Conservative count of reclaimable records observed at the last GC cutoff.
+    /// Includes a full retained lane only when its maximum HLC is expired;
+    /// otherwise counts one expired known head. This is not an exact backlog.
+    pub expired_backlog_lower_bound: u64,
+    /// Unix microsecond cutoff used for the observed expired backlog.
+    pub observed_cutoff_us: Option<u64>,
+    /// Lifetime reclaimed record count, including progress recovered on open.
+    pub reclaimed_records: u64,
+    /// Log key/value bytes reclaimed since this process opened the cache.
+    pub reclaimed_bytes: u64,
+    /// Best known lane-head minimum; recovered heads are learned during sweeps.
+    /// `None` can mean unscanned retained history, including a new frontier after
+    /// a bounded batch. An untagged lane can contain older records after its head.
+    pub oldest_retained_timestamp: Option<MakoTimestamp>,
+    /// Failed GC attempts, including reads and ambiguous writes.
+    pub errors: u64,
+    /// At least one lane failure or clock-sampling error remains unresolved.
+    pub active_error: bool,
+    /// An uncertain GC batch blocks all other backend writes until retry succeeds.
+    pub pending_retry: bool,
+    /// First physical log ID of the pending GC batch, for failure attribution.
+    pub pending_sequence: Option<CommitSeq>,
+    /// Elapsed time in the current GC attempt, available during hung backend calls.
+    pub in_progress: Option<Duration>,
+    /// Wall time spent scanning and submitting completed GC attempts since open.
+    /// Includes backend waits and failed attempts; this is not thread CPU time.
+    pub total_duration: Duration,
+    /// Elapsed time since the last successful collection batch in this process.
+    pub last_progress: Option<Duration>,
+    /// Most recent GC error, retained after a successful retry for diagnosis.
+    pub last_error: Option<String>,
+}
+
+#[derive(Default)]
+struct GcTelemetry {
+    snapshot: LogGcStatus,
+    started: Option<Instant>,
+    progressed: Option<Instant>,
+    unresolved_lanes: HashMap<usize, u64>,
+    clock_error: bool,
 }
 
 pub(crate) struct ApplyCoordinator {
     state: Mutex<ApplyCoordinatorState>,
     telemetry: ApplyTelemetry,
+    // This lock is never held across a backend call, including reads. Status
+    // must remain available when RocksDB is stuck under the coordinator lock.
+    gc_telemetry: Mutex<GcTelemetry>,
 }
 
 struct ApplyTelemetry {
@@ -407,7 +490,7 @@ impl ApplyTelemetry {
     }
 }
 
-enum CoordinatorApplyOutcome {
+pub(crate) enum CoordinatorApplyOutcome {
     Applied,
     BlockedByRetry,
 }
@@ -419,23 +502,40 @@ enum CoordinatorCaptureRequirement {
 }
 
 impl ApplyCoordinator {
+    #[cfg(test)]
     pub(crate) fn empty() -> Self {
-        Self {
-            state: Mutex::new(ApplyCoordinatorState {
-                latest: HashMap::new(),
-                retry_batch: None,
-            }),
-            telemetry: ApplyTelemetry::new(),
-        }
+        Self::recovered(
+            HashMap::new(),
+            vec![LaneMetadata::default(); mako_local::MAX_WORKERS + 1],
+        )
     }
 
-    pub(crate) fn recovered(latest: HashMap<Vec<u8>, MakoTimestamp>) -> Self {
+    pub(crate) fn recovered(
+        latest: HashMap<Vec<u8>, MakoTimestamp>,
+        lanes: Vec<LaneMetadata>,
+    ) -> Self {
+        assert_eq!(lanes.len(), mako_local::MAX_WORKERS + 1);
+        let snapshot = LogGcStatus {
+            retained_records: lanes.iter().map(|lane| lane.applied - lane.reclaimed).sum(),
+            retained_bytes: lanes.iter().map(|lane| lane.retained_bytes).sum(),
+            reclaimed_records: lanes.iter().map(|lane| lane.reclaimed).sum(),
+            ..LogGcStatus::default()
+        };
         Self {
             state: Mutex::new(ApplyCoordinatorState {
                 latest,
-                retry_batch: None,
+                oldest: vec![None; lanes.len()],
+                lanes,
+                gc_cursor: 0,
+                last_gc_cutoff: None,
+                gc_attempt_position: None,
+                pending: None,
             }),
             telemetry: ApplyTelemetry::new(),
+            gc_telemetry: Mutex::new(GcTelemetry {
+                snapshot,
+                ..GcTelemetry::default()
+            }),
         }
     }
 
@@ -463,8 +563,15 @@ impl ApplyCoordinator {
 
     fn capture_requirement(&self, first_sequence: CommitSeq) -> CoordinatorCaptureRequirement {
         let state = lock_recover(&self.state);
-        let Some(required) = state.retry_batch.as_ref() else {
+        let Some(pending) = state.pending.as_ref() else {
             return CoordinatorCaptureRequirement::Unrestricted;
+        };
+        let PendingKind::Apply {
+            sequences: required,
+            ..
+        } = &pending.kind
+        else {
+            return CoordinatorCaptureRequirement::BlockedByRetry;
         };
         if required.first().copied() != Some(first_sequence) {
             return CoordinatorCaptureRequirement::BlockedByRetry;
@@ -472,26 +579,128 @@ impl ApplyCoordinator {
         CoordinatorCaptureRequirement::Exact(required.clone())
     }
 
-    fn apply<B: Blobs>(
+    pub(crate) fn apply<B: Blobs>(
         &self,
         backend: &B,
         records: &[crate::record::CommitRecord],
     ) -> Result<CoordinatorApplyOutcome, BlobError> {
-        // This mutex is also the cross-lane backend-writer lock. The winner
-        // index and the physical RocksDB state therefore advance together.
         let mut state = lock_recover(&self.state);
-        let batch_sequences = records
+        let sequences = records
             .iter()
             .map(crate::record::CommitRecord::sequence)
             .collect::<Vec<_>>();
-        let first_sequence = batch_sequences
-            .first()
-            .copied()
-            .expect("the apply coordinator receives a nonempty batch");
-        if let Some(required) = state.retry_batch.as_deref() {
-            if required != batch_sequences.as_slice() {
-                return Ok(CoordinatorApplyOutcome::BlockedByRetry);
+        let first = *sequences.first().expect("nonempty apply batch");
+        if let Some(pending) = &state.pending {
+            match &pending.kind {
+                PendingKind::Apply {
+                    sequences: required,
+                    ..
+                } if *required == sequences => {}
+                _ => return Ok(CoordinatorApplyOutcome::BlockedByRetry),
             }
+        } else {
+            let staged = Self::stage_apply(&mut state, records, sequences);
+            match staged {
+                Ok(pending) => state.pending = Some(pending),
+                Err(error) => {
+                    self.telemetry
+                        .record_backend_prewrite_failure(first, &error);
+                    return Err(error);
+                }
+            }
+        }
+        self.telemetry.begin_backend_write(first);
+        match Self::write_pending(backend, state.pending.as_ref().unwrap()) {
+            Ok(()) => {
+                let pending = state.pending.take().unwrap();
+                let PendingKind::Apply {
+                    sequences,
+                    updates,
+                    first_timestamp,
+                } = pending.kind
+                else {
+                    unreachable!()
+                };
+                for (key, timestamp) in updates {
+                    state.latest.insert(key, timestamp);
+                }
+                let previous = state.lanes[pending.lane];
+                if previous.applied == previous.reclaimed {
+                    state.oldest[pending.lane] = Some(first_timestamp);
+                }
+                state.lanes[pending.lane] = pending.metadata;
+                {
+                    let mut telemetry = lock_recover(&self.gc_telemetry);
+                    telemetry.snapshot.retained_records +=
+                        pending.metadata.applied - previous.applied;
+                    telemetry.snapshot.retained_bytes +=
+                        pending.metadata.retained_bytes - previous.retained_bytes;
+                    if previous.applied == previous.reclaimed {
+                        telemetry.snapshot.oldest_retained_timestamp = Some(
+                            telemetry
+                                .snapshot
+                                .oldest_retained_timestamp
+                                .map_or(first_timestamp, |current| current.min(first_timestamp)),
+                        );
+                    }
+                }
+                self.telemetry.finish_backend_success(&sequences);
+                Ok(CoordinatorApplyOutcome::Applied)
+            }
+            Err(error) => {
+                self.telemetry.finish_backend_failure(first, &error);
+                Err(error)
+            }
+        }
+    }
+
+    fn stage_apply(
+        state: &mut ApplyCoordinatorState,
+        records: &[crate::record::CommitRecord],
+        sequences: Vec<CommitSeq>,
+    ) -> Result<PendingOperation, BlobError> {
+        let lane = usize::from(checkpoint::lane_tag(sequences[0])?);
+        let mut metadata = state.lanes[lane];
+        for record in records {
+            if usize::from(checkpoint::lane_tag(record.sequence())?) != lane {
+                return Err(BlobError(
+                    "one apply batch spans different worker lanes".into(),
+                ));
+            }
+            let local = record.sequence().get() & LOG_LOCAL_MASK;
+            if metadata.applied.checked_add(1) != Some(local) {
+                return Err(BlobError(format!(
+                    "noncontiguous lane {lane} apply: {} followed by {local}",
+                    metadata.applied
+                )));
+            }
+            if lane != 0
+                && metadata
+                    .max_timestamp
+                    .is_some_and(|timestamp| timestamp >= record.mako_timestamp())
+            {
+                return Err(BlobError(format!(
+                    "nonincreasing HLC in worker lane {lane}"
+                )));
+            }
+            metadata.applied = local;
+            metadata.max_timestamp = Some(
+                metadata
+                    .max_timestamp
+                    .map_or(record.mako_timestamp(), |current| {
+                        current.max(record.mako_timestamp())
+                    }),
+            );
+            let bytes = record
+                .log_key()
+                .len()
+                .checked_add(record.encoded().len())
+                .and_then(|bytes| u64::try_from(bytes).ok())
+                .ok_or_else(|| BlobError("retained log size overflow".into()))?;
+            metadata.retained_bytes = metadata
+                .retained_bytes
+                .checked_add(bytes)
+                .ok_or_else(|| BlobError("retained log bytes overflow".into()))?;
         }
 
         let mut winners = HashMap::<&[u8], MakoTimestamp>::new();
@@ -499,125 +708,391 @@ impl ApplyCoordinator {
             .iter()
             .map(|record| record.mutations().len())
             .sum::<usize>();
-        winners.try_reserve(mutation_count).map_err(|error| {
-            let error = BlobError(format!("cannot stage timestamp winners: {error}"));
-            self.telemetry
-                .record_backend_prewrite_failure(first_sequence, &error);
-            error
-        })?;
-
+        winners
+            .try_reserve(mutation_count)
+            .map_err(|error| BlobError(format!("cannot stage timestamp winners: {error}")))?;
         for record in records {
             let timestamp = record.mako_timestamp();
-            debug_assert_eq!(record.mutations().len(), record.data_keys().len());
-            for data_key in record.data_keys() {
+            for key in record.data_keys() {
                 if state
                     .latest
-                    .get(data_key.as_slice())
+                    .get(key.as_slice())
                     .is_some_and(|current| *current >= timestamp)
                 {
                     continue;
                 }
                 winners
-                    .entry(data_key.as_slice())
+                    .entry(key.as_slice())
                     .and_modify(|current| *current = (*current).max(timestamp))
                     .or_insert(timestamp);
             }
         }
-
         let new_keys = winners
             .keys()
             .filter(|key| !state.latest.contains_key(**key))
             .count();
-        state.latest.try_reserve(new_keys).map_err(|error| {
-            let error = BlobError(format!("cannot grow timestamp index: {error}"));
-            self.telemetry
-                .record_backend_prewrite_failure(first_sequence, &error);
-            error
-        })?;
-
-        let mut updates = Vec::<(Vec<u8>, MakoTimestamp)>::new();
-        updates.try_reserve_exact(winners.len()).map_err(|error| {
-            let error = BlobError(format!("cannot stage timestamp updates: {error}"));
-            self.telemetry
-                .record_backend_prewrite_failure(first_sequence, &error);
-            error
-        })?;
-        let operation_count = records.len().checked_add(winners.len()).ok_or_else(|| {
-            let error = BlobError("writeback operation count overflow".to_owned());
-            self.telemetry
-                .record_backend_prewrite_failure(first_sequence, &error);
-            error
-        })?;
+        state
+            .latest
+            .try_reserve(new_keys)
+            .map_err(|error| BlobError(format!("cannot grow timestamp index: {error}")))?;
+        let mut updates = Vec::new();
+        updates
+            .try_reserve_exact(winners.len())
+            .map_err(|error| BlobError(format!("cannot stage timestamp updates: {error}")))?;
+        let operation_count = records
+            .len()
+            .checked_add(winners.len())
+            .and_then(|n| n.checked_add(1))
+            .ok_or_else(|| BlobError("writeback operation count overflow".into()))?;
         let mut operations = Vec::new();
         operations
             .try_reserve_exact(operation_count)
-            .map_err(|error| {
-                let error = BlobError(format!("cannot stage backend batch: {error}"));
-                self.telemetry
-                    .record_backend_prewrite_failure(first_sequence, &error);
-                error
-            })?;
-
+            .map_err(|error| BlobError(format!("cannot stage backend batch: {error}")))?;
         for record in records {
-            record.append_log_op(&mut operations);
+            operations.push(OwnedOperation::Put(
+                record.log_key().to_vec(),
+                record.encoded().to_vec(),
+            ));
             let timestamp = record.mako_timestamp();
-            for (mutation, data_key) in record.mutations().iter().zip(record.data_keys()) {
-                if winners.get(data_key.as_slice()).copied() != Some(timestamp) {
+            for (mutation, key) in record.mutations().iter().zip(record.data_keys()) {
+                if winners.get(key.as_slice()).copied() != Some(timestamp) {
                     continue;
                 }
-                // Remove now so an impossible duplicate timestamp still emits
-                // at most one physical mutation for this key.
-                winners.remove(data_key.as_slice());
-                updates.push((data_key.clone(), timestamp));
-                match mutation {
-                    Mutation::Put { value, .. } => operations.push(mrx_core::BlobOp::Put {
-                        key: data_key,
-                        val: value,
-                    }),
-                    Mutation::Delete { .. } => {
-                        operations.push(mrx_core::BlobOp::Delete { key: data_key })
+                winners.remove(key.as_slice());
+                let value = match mutation {
+                    Mutation::Put { value, .. } => Some(value.as_slice()),
+                    Mutation::Delete { .. } => None,
+                };
+                operations.push(OwnedOperation::Put(
+                    key.clone(),
+                    checkpoint::encode_row(timestamp, record.sequence(), value)?,
+                ));
+                updates.push((key.clone(), timestamp));
+            }
+        }
+        operations.push(OwnedOperation::Put(
+            checkpoint::lane_key(lane as u16),
+            metadata.encode()?,
+        ));
+        Ok(PendingOperation {
+            operations,
+            lane,
+            metadata,
+            kind: PendingKind::Apply {
+                sequences,
+                updates,
+                first_timestamp: records[0].mako_timestamp(),
+            },
+        })
+    }
+
+    fn write_pending<B: Blobs>(backend: &B, pending: &PendingOperation) -> Result<(), BlobError> {
+        let mut operations = Vec::new();
+        operations
+            .try_reserve_exact(pending.operations.len())
+            .map_err(|error| {
+                BlobError(format!(
+                    "cannot stage backend operation references: {error}"
+                ))
+            })?;
+        for operation in &pending.operations {
+            operations.push(match operation {
+                OwnedOperation::Put(key, val) => mrx_core::BlobOp::Put { key, val },
+                OwnedOperation::Delete(key) => mrx_core::BlobOp::Delete { key },
+            });
+        }
+        match catch_unwind(AssertUnwindSafe(|| backend.write_batch(&operations))) {
+            Ok(result) => result,
+            Err(_) => Err(BlobError(
+                "backend panicked with an uncertain atomic-batch outcome".into(),
+            )),
+        }
+    }
+
+    fn refresh_gc_totals(&self, state: &ApplyCoordinatorState) {
+        let mut telemetry = lock_recover(&self.gc_telemetry);
+        telemetry.snapshot.retained_records = state
+            .lanes
+            .iter()
+            .map(|lane| lane.applied - lane.reclaimed)
+            .sum();
+        telemetry.snapshot.retained_bytes =
+            state.lanes.iter().map(|lane| lane.retained_bytes).sum();
+        telemetry.snapshot.reclaimed_records = state.lanes.iter().map(|lane| lane.reclaimed).sum();
+        telemetry.snapshot.oldest_retained_timestamp = state.oldest.iter().flatten().copied().min();
+        telemetry.snapshot.observed_cutoff_us = state.last_gc_cutoff;
+        telemetry.snapshot.expired_backlog_lower_bound = state.last_gc_cutoff.map_or(0, |cutoff| {
+            state
+                .lanes
+                .iter()
+                .zip(&state.oldest)
+                .map(|(lane, head)| {
+                    if lane.applied == lane.reclaimed {
+                        return 0;
+                    }
+                    if lane
+                        .max_timestamp
+                        .is_some_and(|timestamp| timestamp.physical_us() < cutoff)
+                    {
+                        lane.applied - lane.reclaimed
+                    } else {
+                        u64::from(head.is_some_and(|timestamp| timestamp.physical_us() < cutoff))
+                    }
+                })
+                .sum()
+        });
+    }
+
+    pub(crate) fn gc_snapshot(&self) -> LogGcStatus {
+        let telemetry = lock_recover(&self.gc_telemetry);
+        let mut snapshot = telemetry.snapshot.clone();
+        snapshot.in_progress = telemetry.started.map(|started| started.elapsed());
+        snapshot.last_progress = telemetry.progressed.map(|progressed| progressed.elapsed());
+        snapshot
+    }
+
+    pub(crate) fn record_gc_clock_error(&self, message: &str) {
+        let mut telemetry = lock_recover(&self.gc_telemetry);
+        telemetry.clock_error = true;
+        telemetry.snapshot.active_error = true;
+        telemetry.snapshot.errors = telemetry.snapshot.errors.saturating_add(1);
+        telemetry.snapshot.last_error = Some(message.to_owned());
+    }
+
+    pub(crate) fn clear_gc_clock_error(&self) {
+        let mut telemetry = lock_recover(&self.gc_telemetry);
+        telemetry.clock_error = false;
+        telemetry.snapshot.active_error = !telemetry.unresolved_lanes.is_empty();
+    }
+
+    fn resolve_gc_lane_error_through(&self, lane: usize, local: u64) {
+        let mut telemetry = lock_recover(&self.gc_telemetry);
+        if telemetry
+            .unresolved_lanes
+            .get(&lane)
+            .is_some_and(|failed| *failed <= local)
+        {
+            telemetry.unresolved_lanes.remove(&lane);
+        }
+        telemetry.snapshot.active_error =
+            telemetry.clock_error || !telemetry.unresolved_lanes.is_empty();
+    }
+
+    /// One bounded batch, rotating across every persisted lane, including idle
+    /// lanes not opened in this process. Repeated Progress results must be driven
+    /// until Complete, interleaving application between successful GC batches.
+    pub(crate) fn gc_step<B: Blobs>(
+        &self,
+        backend: &B,
+        cutoff_us: u64,
+        max_record_bytes: usize,
+    ) -> Result<GcStep, BlobError> {
+        let mut state = lock_recover(&self.state);
+        if matches!(
+            state.pending.as_ref().map(|pending| &pending.kind),
+            Some(PendingKind::Apply { .. })
+        ) {
+            return Ok(GcStep::BlockedByApplyRetry);
+        }
+        lock_recover(&self.gc_telemetry).started = Some(Instant::now());
+        let result = self.gc_step_locked(backend, cutoff_us, max_record_bytes, &mut state);
+        self.refresh_gc_totals(&state);
+        let mut telemetry = lock_recover(&self.gc_telemetry);
+        if let Some(started) = telemetry.started.take() {
+            telemetry.snapshot.total_duration = telemetry
+                .snapshot
+                .total_duration
+                .saturating_add(started.elapsed());
+        }
+        if let Err(error) = &result {
+            if let Some((lane, local)) = state.gc_attempt_position {
+                telemetry
+                    .unresolved_lanes
+                    .entry(lane)
+                    .and_modify(|failed| *failed = (*failed).max(local))
+                    .or_insert(local);
+            }
+            telemetry.snapshot.active_error = true;
+            telemetry.snapshot.errors = telemetry.snapshot.errors.saturating_add(1);
+            telemetry.snapshot.last_error = Some(error.to_string());
+            telemetry.snapshot.pending_retry = state.pending.is_some();
+            telemetry.snapshot.pending_sequence = state.pending.as_ref().and_then(|pending| {
+                let local = state.lanes[pending.lane].reclaimed.checked_add(1)?;
+                CommitSeq::new(((pending.lane as u64) << crate::record::LOG_LANE_SHIFT) | local)
+            });
+        } else {
+            telemetry.snapshot.active_error =
+                telemetry.clock_error || !telemetry.unresolved_lanes.is_empty();
+        }
+        result
+    }
+
+    fn gc_step_locked<B: Blobs>(
+        &self,
+        backend: &B,
+        cutoff_us: u64,
+        max_record_bytes: usize,
+        state: &mut ApplyCoordinatorState,
+    ) -> Result<GcStep, BlobError> {
+        const MAX_RECORDS: usize = 1_024;
+        const MAX_KEY_BYTES: usize = 1024 * 1024;
+        if state.pending.is_none() {
+            state.last_gc_cutoff = Some(cutoff_us);
+            for _ in 0..state.lanes.len() {
+                let lane = state.gc_cursor;
+                state.gc_cursor = (lane + 1) % state.lanes.len();
+                let original = state.lanes[lane];
+                state.gc_attempt_position = Some((lane, original.reclaimed));
+                if original.applied == original.reclaimed {
+                    state.oldest[lane] = None;
+                    self.resolve_gc_lane_error_through(lane, original.reclaimed);
+                    continue;
+                }
+                let mut metadata = original;
+                let mut operations = Vec::new();
+                let mut key_bytes = 0usize;
+                let mut removed_bytes = 0u64;
+                let mut next_oldest = None;
+                let first = original
+                    .reclaimed
+                    .checked_add(1)
+                    .ok_or_else(|| BlobError("GC local position overflow".into()))?;
+                let start_key = checkpoint::log_key(lane as u16, first)?;
+                let scan_limit = usize::try_from(
+                    (original.applied - original.reclaimed).min(MAX_RECORDS as u64),
+                )
+                .unwrap()
+                .min(MAX_KEY_BYTES / start_key.len());
+                if scan_limit == 0 {
+                    return Err(BlobError("retained log key exceeds GC batch budget".into()));
+                }
+                let mut visited = 0usize;
+                let mut stopped_early = false;
+                state.gc_attempt_position = Some((lane, first));
+                // One inclusive seek and bounded forward walk keeps adjacent
+                // log reads on the iterator's current SST blocks. Per-record
+                // point lookups repeatedly searched those same indexes.
+                let scan = catch_unwind(AssertUnwindSafe(|| {
+                    backend.for_each_entry_from(&start_key, scan_limit, &mut |key, bytes| {
+                        let next = metadata
+                            .reclaimed
+                            .checked_add(1)
+                            .ok_or_else(|| BlobError("GC local position overflow".into()))?;
+                        state.gc_attempt_position = Some((lane, next));
+                        let expected =
+                            CommitSeq::new(((lane as u64) << crate::record::LOG_LANE_SHIFT) | next)
+                                .expect("validated nonzero GC position");
+                        if crate::record::classify_backend_key(key)
+                            != crate::record::BackendKey::Log(expected)
+                        {
+                            return Err(BlobError(format!(
+                                "missing retained log in lane {lane} at {next}"
+                            )));
+                        }
+                        if key_bytes
+                            .checked_add(key.len())
+                            .is_none_or(|bytes| bytes > MAX_KEY_BYTES)
+                        {
+                            stopped_early = true;
+                            return Ok(false);
+                        }
+                        let record =
+                            crate::record::CommitRecord::decode(key, bytes, max_record_bytes)
+                                .map_err(|error| {
+                                    BlobError(format!("invalid retained log during GC: {error}"))
+                                })?;
+                        visited += 1;
+                        if next == first {
+                            state.oldest[lane] = Some(record.mako_timestamp());
+                        }
+                        if record.mako_timestamp().physical_us() >= cutoff_us {
+                            next_oldest = Some(record.mako_timestamp());
+                            // This valid read resolves an earlier failure at
+                            // the same head even after a clock rollback.
+                            self.resolve_gc_lane_error_through(lane, next);
+                            stopped_early = true;
+                            return Ok(false);
+                        }
+                        let size = u64::try_from(
+                            key.len()
+                                .checked_add(bytes.len())
+                                .ok_or_else(|| BlobError("GC retained size overflow".into()))?,
+                        )
+                        .map_err(|_| BlobError("GC retained size overflow".into()))?;
+                        metadata.retained_bytes =
+                            metadata.retained_bytes.checked_sub(size).ok_or_else(|| {
+                                BlobError("GC retained byte accounting underflow".into())
+                            })?;
+                        removed_bytes = removed_bytes.checked_add(size).ok_or_else(|| {
+                            BlobError("GC reclaimed byte accounting overflow".into())
+                        })?;
+                        key_bytes += key.len();
+                        metadata.reclaimed = next;
+                        operations.push(OwnedOperation::Delete(key.to_vec()));
+                        Ok(visited < scan_limit)
+                    })
+                }));
+                match scan {
+                    Ok(result) => result?,
+                    Err(_) => {
+                        return Err(BlobError("backend panicked scanning retained logs".into()))
                     }
                 }
+                if !stopped_early && visited < scan_limit {
+                    let next = metadata
+                        .reclaimed
+                        .checked_add(1)
+                        .ok_or_else(|| BlobError("GC local position overflow".into()))?;
+                    state.gc_attempt_position = Some((lane, next));
+                    return Err(BlobError(format!(
+                        "missing retained log in lane {lane} at {next}"
+                    )));
+                }
+                if operations.is_empty() {
+                    continue;
+                }
+                let count = operations.len() as u64;
+                operations.push(OwnedOperation::Put(
+                    checkpoint::lane_key(lane as u16),
+                    metadata.encode()?,
+                ));
+                state.pending = Some(PendingOperation {
+                    operations,
+                    lane,
+                    metadata,
+                    kind: PendingKind::Gc {
+                        records: count,
+                        bytes: removed_bytes,
+                        next_oldest,
+                    },
+                });
+                break;
             }
         }
-        debug_assert!(winners.is_empty());
-
-        self.telemetry.begin_backend_write(first_sequence);
-        let result = catch_unwind(AssertUnwindSafe(|| backend.write_batch(&operations)));
-        match result {
-            Ok(Ok(())) => {
-                drop(operations);
-                for (key, timestamp) in updates {
-                    state.latest.insert(key, timestamp);
-                }
-                state.retry_batch = None;
-                self.telemetry.finish_backend_success(&batch_sequences);
-                Ok(CoordinatorApplyOutcome::Applied)
-            }
-            Ok(Err(error)) => {
-                // `Blobs` promises atomic batches, but an error does not prove
-                // whether that atomic batch landed. Keep the identical batch
-                // ahead of every other lane until one retry returns success.
-                // Reapplying Put/Delete operations under the same physical log
-                // IDs is idempotent and then lets `latest` advance exactly once.
-                if state.retry_batch.is_none() {
-                    state.retry_batch = Some(batch_sequences);
-                }
-                self.telemetry
-                    .finish_backend_failure(first_sequence, &error);
-                Err(error)
-            }
-            Err(_) => {
-                if state.retry_batch.is_none() {
-                    state.retry_batch = Some(batch_sequences);
-                }
-                let error =
-                    BlobError("backend panicked with an uncertain atomic-batch outcome".to_owned());
-                self.telemetry
-                    .finish_backend_failure(first_sequence, &error);
-                Err(error)
-            }
-        }
+        let Some(pending) = state.pending.as_ref() else {
+            return Ok(GcStep::Complete);
+        };
+        state.gc_attempt_position = Some((pending.lane, pending.metadata.reclaimed));
+        Self::write_pending(backend, pending)?;
+        let pending = state.pending.take().unwrap();
+        let PendingKind::Gc {
+            records,
+            bytes,
+            next_oldest,
+        } = pending.kind
+        else {
+            unreachable!()
+        };
+        state.lanes[pending.lane] = pending.metadata;
+        state.oldest[pending.lane] = next_oldest;
+        self.resolve_gc_lane_error_through(pending.lane, pending.metadata.reclaimed);
+        let mut telemetry = lock_recover(&self.gc_telemetry);
+        telemetry.snapshot.pending_retry = false;
+        telemetry.snapshot.pending_sequence = None;
+        telemetry.snapshot.reclaimed_bytes =
+            telemetry.snapshot.reclaimed_bytes.saturating_add(bytes);
+        telemetry.progressed = Some(Instant::now());
+        Ok(GcStep::Progress { records, bytes })
     }
 }
 
@@ -2525,6 +3000,22 @@ impl<B: Blobs> Writeback<B> {
         config: WritebackConfig,
         single_producer: bool,
     ) -> Result<Self, ConfigError> {
+        let mut lanes = vec![LaneMetadata::default(); mako_local::MAX_WORKERS + 1];
+        if applied_seed.sequence != 0 {
+            // Standalone queue tests can seed only a position. A real recovered
+            // cache instead supplies validated checkpoint metadata to the shared
+            // coordinator through new_with_shared_state.
+            lanes[0] = LaneMetadata {
+                applied: applied_seed.sequence,
+                reclaimed: applied_seed.sequence,
+                max_timestamp: Some(
+                    applied_seed
+                        .mako_timestamp
+                        .unwrap_or_else(|| MakoTimestamp::new(0, 0, 1).unwrap()),
+                ),
+                retained_bytes: 0,
+            };
+        }
         Self::new_with_shared_state(
             backend,
             applied_seed,
@@ -2534,7 +3025,7 @@ impl<B: Blobs> Writeback<B> {
             false,
             Arc::new(AtomicBool::new(false)),
             Arc::new(AtomicU64::new(0)),
-            Arc::new(ApplyCoordinator::empty()),
+            Arc::new(ApplyCoordinator::recovered(HashMap::new(), lanes)),
         )
     }
 
@@ -2665,8 +3156,9 @@ impl<B: Blobs> Writeback<B> {
         })
     }
 
-    /// Access the underlying backend.
-    pub fn backend(&self) -> &B {
+    /// Inspect the backend in internal failure-injection tests.
+    #[cfg(test)]
+    fn backend(&self) -> &B {
         &self.backend
     }
 
@@ -4298,14 +4790,17 @@ impl<B: Blobs> Writeback<B> {
         let sequence = token.sequence();
         let healthy = !self.unhealthy.load(Ordering::Acquire);
         if healthy {
-            // Recovery initializes ACK == tail == applied. The exclusive
-            // producer cannot start its next transaction until this call
-            // returns, and an abort binds no sequence. Thus known-success SPSC
-            // publications are necessarily the next dense acknowledgement.
-            debug_assert_eq!(
-                self.acknowledged.load(Ordering::Relaxed).checked_add(1),
-                Some(sequence.get())
-            );
+            // The consumer may observe READY and advance ACK before this
+            // producer reaches its store. ACK may therefore already equal the
+            // current sequence. It cannot pass this sequence because the sole
+            // producer cannot publish its next transaction before returning.
+            // Storing this sequence never regresses ACK, even after the
+            // consumer has already applied and retired the record.
+            debug_assert!({
+                let acknowledged = self.acknowledged.load(Ordering::Relaxed);
+                acknowledged == sequence.get()
+                    || acknowledged.checked_add(1) == Some(sequence.get())
+            });
             self.acknowledged.store(sequence.get(), Ordering::Release);
 
             #[cfg(test)]
@@ -6472,6 +6967,56 @@ mod tests {
         assert_eq!(single.spsc_arena_publications.len(), 8);
     }
 
+    #[test]
+    fn single_producer_accepts_consumer_ack_between_ready_and_foreground_ack() {
+        let backend = Arc::new(MemBlobs::new());
+        let writeback = Writeback::new_single(Arc::clone(&backend), 0, config(2, 0)).unwrap();
+        let producer = writeback.single_producer_state();
+        let mut first = writeback
+            .reserve_single(&producer, vec![put(b"key", b"first")])
+            .unwrap()
+            .bind(mako_timestamp_of(1))
+            .unwrap();
+        first.finalize_once();
+        let token = first.token;
+        writeback
+            .publication_cell(token.sequence())
+            .publish_attached(token.sequence(), writeback.publication_shift);
+        // This is a known committed publication, so test teardown must not
+        // turn it into an unknown outcome if the foreground assertion fails.
+        first.on_drop = DropAction::Done;
+        assert_eq!(writeback.highest_acknowledged(), 0);
+
+        // Deterministically place the consumer in the narrow READY/ACK gap.
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::Advanced
+        ));
+        assert_eq!(writeback.highest_acknowledged(), 1);
+        assert_eq!(writeback.applied_sequence(), 1);
+        writeback.finish_ready_publication_single(token).unwrap();
+        assert_eq!(
+            writeback.highest_acknowledged(),
+            1,
+            "foreground completion cannot regress consumer ACK"
+        );
+
+        let second = writeback
+            .reserve_single(&producer, vec![put(b"key", b"second")])
+            .unwrap()
+            .bind(mako_timestamp_of(2))
+            .unwrap()
+            .publish()
+            .unwrap();
+        assert_eq!(second.get(), 2);
+        assert_eq!(writeback.highest_acknowledged(), 2);
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::Advanced
+        ));
+        assert_eq!(writeback.applied_sequence(), 2);
+    }
+
     fn coordinator_record(
         sequence: u64,
         timestamp: u32,
@@ -6492,7 +7037,7 @@ mod tests {
         let coordinator = ApplyCoordinator::empty();
 
         let newer_put = coordinator_record(
-            2,
+            crate::record::worker_log_base(0).unwrap() + 1,
             20,
             Mutation::Put {
                 table_id: TABLE,
@@ -6505,7 +7050,7 @@ mod tests {
             .apply(&backend, std::slice::from_ref(&newer_put))
             .unwrap();
         let older_delete = coordinator_record(
-            1,
+            crate::record::worker_log_base(1).unwrap() + 1,
             10,
             Mutation::Delete {
                 table_id: TABLE,
@@ -6515,10 +7060,15 @@ mod tests {
         coordinator
             .apply(&backend, std::slice::from_ref(&older_delete))
             .unwrap();
-        assert_eq!(backend.get(&put_key).unwrap(), Some(b"new".to_vec()));
+        assert_eq!(
+            checkpoint::decode_row(&backend.get(&put_key).unwrap().unwrap())
+                .unwrap()
+                .value,
+            Some(b"new".as_slice())
+        );
 
         let newer_delete = coordinator_record(
-            4,
+            crate::record::worker_log_base(0).unwrap() + 2,
             40,
             Mutation::Delete {
                 table_id: TABLE,
@@ -6530,7 +7080,7 @@ mod tests {
             .apply(&backend, std::slice::from_ref(&newer_delete))
             .unwrap();
         let older_put = coordinator_record(
-            3,
+            crate::record::worker_log_base(1).unwrap() + 2,
             30,
             Mutation::Put {
                 table_id: TABLE,
@@ -6541,7 +7091,12 @@ mod tests {
         coordinator
             .apply(&backend, std::slice::from_ref(&older_put))
             .unwrap();
-        assert_eq!(backend.get(&delete_key).unwrap(), None);
+        assert_eq!(
+            checkpoint::decode_row(&backend.get(&delete_key).unwrap().unwrap())
+                .unwrap()
+                .value,
+            None
+        );
 
         assert!(backend.get(newer_put.log_key()).unwrap().is_some());
         assert!(backend.get(older_delete.log_key()).unwrap().is_some());
@@ -6554,7 +7109,7 @@ mod tests {
         let backend = Arc::new(MemBlobs::new());
         let coordinator = ApplyCoordinator::empty();
         let high = coordinator_record(
-            8,
+            1,
             80,
             Mutation::Put {
                 table_id: TABLE,
@@ -6564,7 +7119,7 @@ mod tests {
         );
         let data_key = high.data_keys()[0].clone();
         let low = coordinator_record(
-            7,
+            2,
             70,
             Mutation::Put {
                 table_id: TABLE,
@@ -6573,7 +7128,521 @@ mod tests {
             },
         );
         coordinator.apply(&backend, &[high, low]).unwrap();
-        assert_eq!(backend.get(&data_key).unwrap(), Some(b"high".to_vec()));
+        assert_eq!(
+            checkpoint::decode_row(&backend.get(&data_key).unwrap().unwrap())
+                .unwrap()
+                .value,
+            Some(b"high".as_slice())
+        );
+    }
+
+    fn timed_record(
+        tag: u16,
+        local: u64,
+        physical: u64,
+        mutation: Mutation,
+    ) -> crate::record::CommitRecord {
+        PreparedCommitRecord::prepare(vec![mutation], 4_096)
+            .unwrap()
+            .bind(
+                CommitSeq::new((u64::from(tag) << crate::record::LOG_LANE_SHIFT) | local).unwrap(),
+                MakoTimestamp::new(physical, 0, 1).unwrap(),
+            )
+            .finalize()
+    }
+
+    fn persisted_lane<B: Blobs>(backend: &B, tag: u16) -> LaneMetadata {
+        LaneMetadata::decode(&backend.get(&checkpoint::lane_key(tag)).unwrap().unwrap()).unwrap()
+    }
+
+    #[test]
+    fn gc_preserves_winners_against_delayed_put_and_delete_after_recovery() {
+        for newer in [put(b"same", b"new"), delete(b"same")] {
+            let backend = MemBlobs::new();
+            let coordinator = ApplyCoordinator::empty();
+            let record = timed_record(1, 1, 100, newer.clone());
+            let key = record.data_keys()[0].clone();
+            coordinator.apply(&backend, &[record]).unwrap();
+            assert!(matches!(
+                coordinator.gc_step(&backend, 101, 4_096).unwrap(),
+                GcStep::Progress { records: 1, .. }
+            ));
+            assert_eq!(persisted_lane(&backend, 1).reclaimed, 1);
+            assert_eq!(coordinator.gc_snapshot().retained_records, 0);
+
+            let state = lock_recover(&coordinator.state);
+            let recovered = ApplyCoordinator::recovered(state.latest.clone(), state.lanes.clone());
+            drop(state);
+            for (local, older) in [(1, put(b"same", b"old")), (2, delete(b"same"))] {
+                recovered
+                    .apply(&backend, &[timed_record(2, local, 80 + local, older)])
+                    .unwrap();
+                let encoded = backend.get(&key).unwrap().unwrap();
+                let row = checkpoint::decode_row(&encoded).unwrap();
+                assert_eq!(row.timestamp.physical_us(), 100);
+                assert_eq!(
+                    row.value,
+                    match &newer {
+                        Mutation::Put { value, .. } => Some(value.as_slice()),
+                        _ => None,
+                    }
+                );
+            }
+            let old_lane = persisted_lane(&backend, 2);
+            assert_eq!(
+                old_lane.applied, 2,
+                "all-stale transactions still advance A"
+            );
+            assert_eq!(old_lane.max_timestamp.unwrap().physical_us(), 82);
+            assert_eq!(old_lane.reclaimed, 0);
+            assert!(old_lane.retained_bytes > 0);
+        }
+    }
+
+    #[test]
+    fn gc_cutoff_is_strict_and_untagged_reversed_hlc_keeps_dense_suffix() {
+        let backend = MemBlobs::new();
+        let coordinator = ApplyCoordinator::empty();
+        let records = [
+            timed_record(0, 1, 100, put(b"a", b"1")),
+            timed_record(0, 2, 90, put(b"b", b"2")),
+            timed_record(0, 3, 1_000, put(b"c", b"3")),
+        ];
+        coordinator.apply(&backend, &records).unwrap();
+        for cutoff in [0, 99, 100] {
+            assert_eq!(
+                coordinator.gc_step(&backend, cutoff, 4_096).unwrap(),
+                GcStep::Complete
+            );
+            assert_eq!(persisted_lane(&backend, 0).reclaimed, 0);
+        }
+        assert!(matches!(
+            coordinator.gc_step(&backend, 101, 4_096).unwrap(),
+            GcStep::Progress { records: 2, .. }
+        ));
+        assert_eq!(persisted_lane(&backend, 0).reclaimed, 2);
+        assert_eq!(
+            coordinator.gc_step(&backend, 100, 4_096).unwrap(),
+            GcStep::Complete,
+            "clock rollback preserves retained suffix"
+        );
+        assert_eq!(
+            coordinator.gc_step(&backend, 1_000, 4_096).unwrap(),
+            GcStep::Complete,
+            "future HLC remains at exact cutoff"
+        );
+        assert!(matches!(
+            coordinator.gc_step(&backend, 1_001, 4_096).unwrap(),
+            GcStep::Progress { records: 1, .. }
+        ));
+        let metadata = persisted_lane(&backend, 0);
+        assert_eq!(metadata.applied, metadata.reclaimed);
+        assert_eq!(metadata.retained_bytes, 0);
+        assert_eq!(metadata.max_timestamp.unwrap().physical_us(), 1_000);
+    }
+
+    #[test]
+    fn gc_batches_rotate_across_recovered_idle_lanes_and_finish_large_sweeps() {
+        let backend = MemBlobs::new();
+        let coordinator = ApplyCoordinator::empty();
+        for tag in [1, 2] {
+            let records = (1..=2_050)
+                .map(|local| {
+                    timed_record(
+                        tag,
+                        local,
+                        u64::from(tag) * 3_000 + local,
+                        put(b"same", b"value"),
+                    )
+                })
+                .collect::<Vec<_>>();
+            coordinator.apply(&backend, &records).unwrap();
+        }
+        let state = lock_recover(&coordinator.state);
+        let recovered = ApplyCoordinator::recovered(state.latest.clone(), state.lanes.clone());
+        drop(state);
+        let mut batches = 0;
+        while let GcStep::Progress { records, .. } =
+            recovered.gc_step(&backend, 10_000, 4_096).unwrap()
+        {
+            assert!(records <= 1_024);
+            batches += 1;
+            if batches == 1 {
+                let snapshot = recovered.gc_snapshot();
+                assert_eq!(snapshot.expired_backlog_lower_bound, 4_100 - 1_024);
+                assert_eq!(snapshot.observed_cutoff_us, Some(10_000));
+            }
+            if batches == 2 {
+                assert_eq!(persisted_lane(&backend, 1).reclaimed, 1_024);
+                assert_eq!(
+                    persisted_lane(&backend, 2).reclaimed,
+                    1_024,
+                    "a busy first lane must yield"
+                );
+            }
+            assert!(batches <= 6);
+        }
+        assert_eq!(batches, 6);
+        let snapshot = recovered.gc_snapshot();
+        assert_eq!(snapshot.retained_records, 0);
+        assert_eq!(snapshot.retained_bytes, 0);
+        assert_eq!(snapshot.reclaimed_records, 4_100);
+    }
+
+    #[derive(Default)]
+    struct StreamingGcBlobs {
+        inner: MemBlobs,
+        point_reads: AtomicUsize,
+        scans: Mutex<Vec<(Vec<u8>, usize, usize)>>,
+        truncate_scan: AtomicBool,
+    }
+
+    impl Blobs for StreamingGcBlobs {
+        fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, BlobError> {
+            self.point_reads.fetch_add(1, Ordering::Relaxed);
+            self.inner.get(key)
+        }
+        fn write_batch(&self, operations: &[BlobOp<'_>]) -> Result<(), BlobError> {
+            self.inner.write_batch(operations)
+        }
+        fn for_each_key(&self, visitor: &mut dyn FnMut(&[u8])) -> Result<(), BlobError> {
+            self.inner.for_each_key(visitor)
+        }
+        fn for_each_entry_from(
+            &self,
+            start: &[u8],
+            max_entries: usize,
+            visitor: &mut dyn FnMut(&[u8], &[u8]) -> Result<bool, BlobError>,
+        ) -> Result<(), BlobError> {
+            let mut visited = 0;
+            let scan_limit = if self.truncate_scan.load(Ordering::Relaxed) {
+                max_entries.min(1)
+            } else {
+                max_entries
+            };
+            let result = self
+                .inner
+                .for_each_entry_from(start, scan_limit, &mut |key, value| {
+                    visited += 1;
+                    visitor(key, value)
+                });
+            lock_recover(&self.scans).push((start.to_vec(), max_entries, visited));
+            result
+        }
+    }
+
+    #[test]
+    fn gc_uses_bounded_seeks_without_point_reads_or_rescanning_reclaimed_history() {
+        let backend = StreamingGcBlobs::default();
+        let coordinator = ApplyCoordinator::empty();
+        let records = (1..=1_025)
+            .map(|local| timed_record(1, local, local, put(b"a", b"v")))
+            .collect::<Vec<_>>();
+        coordinator.apply(&backend, &records).unwrap();
+        coordinator
+            .apply(&backend, &[timed_record(2, 1, 2_000, put(b"b", b"v"))])
+            .unwrap();
+        assert_eq!(
+            coordinator.gc_step(&backend, 0, 4_096).unwrap(),
+            GcStep::Complete
+        );
+        assert_eq!(
+            lock_recover(&backend.scans)
+                .iter()
+                .map(|(_, _, visited)| *visited)
+                .collect::<Vec<_>>(),
+            vec![1, 1],
+            "young heads stop before reading the remaining suffix"
+        );
+        lock_recover(&backend.scans).clear();
+
+        assert!(matches!(
+            coordinator.gc_step(&backend, 3_000, 4_096).unwrap(),
+            GcStep::Progress { records: 1_024, .. }
+        ));
+        assert!(matches!(
+            coordinator.gc_step(&backend, 3_000, 4_096).unwrap(),
+            GcStep::Progress { records: 1, .. }
+        ));
+        assert!(matches!(
+            coordinator.gc_step(&backend, 3_000, 4_096).unwrap(),
+            GcStep::Progress { records: 1, .. }
+        ));
+        assert_eq!(
+            coordinator.gc_step(&backend, 3_000, 4_096).unwrap(),
+            GcStep::Complete
+        );
+        assert_eq!(backend.point_reads.load(Ordering::Relaxed), 0);
+        assert_eq!(
+            *lock_recover(&backend.scans),
+            vec![
+                (checkpoint::log_key(1, 1).unwrap(), 1_024, 1_024),
+                (checkpoint::log_key(2, 1).unwrap(), 1, 1),
+                (checkpoint::log_key(1, 1_025).unwrap(), 1, 1),
+            ]
+        );
+    }
+
+    #[test]
+    fn gc_rejects_early_iterator_end_without_deleting_the_valid_prefix() {
+        let backend = StreamingGcBlobs::default();
+        let coordinator = ApplyCoordinator::empty();
+        let records = [
+            timed_record(1, 1, 10, put(b"a", b"v1")),
+            timed_record(1, 2, 20, put(b"a", b"v2")),
+        ];
+        coordinator.apply(&backend, &records).unwrap();
+        backend.truncate_scan.store(true, Ordering::Relaxed);
+        let error = coordinator.gc_step(&backend, 100, 4_096).unwrap_err();
+        assert!(error.0.contains("missing retained log in lane 1 at 2"));
+        assert_eq!(persisted_lane(&backend.inner, 1).reclaimed, 0);
+        assert!(backend.inner.get(records[0].log_key()).unwrap().is_some());
+        let status = coordinator.gc_snapshot();
+        assert_eq!(status.retained_records, 2);
+        assert_eq!(status.reclaimed_records, 0);
+        assert!(status.active_error);
+        assert!(!status.pending_retry);
+
+        backend.truncate_scan.store(false, Ordering::Relaxed);
+        assert!(matches!(
+            coordinator.gc_step(&backend, 100, 4_096).unwrap(),
+            GcStep::Progress { records: 2, .. }
+        ));
+        assert!(!coordinator.gc_snapshot().active_error);
+        assert_eq!(backend.point_reads.load(Ordering::Relaxed), 0);
+    }
+
+    #[derive(Default)]
+    struct AmbiguousGcBlobs {
+        inner: MemBlobs,
+        attempts: Mutex<Vec<Vec<OwnedBlobOp>>>,
+        fail_after_apply: AtomicBool,
+        panic_after_apply: AtomicBool,
+    }
+
+    impl Blobs for AmbiguousGcBlobs {
+        fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, BlobError> {
+            self.inner.get(key)
+        }
+        fn for_each_key(&self, visitor: &mut dyn FnMut(&[u8])) -> Result<(), BlobError> {
+            self.inner.for_each_key(visitor)
+        }
+        fn write_batch(&self, operations: &[BlobOp<'_>]) -> Result<(), BlobError> {
+            lock_recover(&self.attempts)
+                .push(operations.iter().map(OwnedBlobOp::capture).collect());
+            self.inner.write_batch(operations)?;
+            if self.panic_after_apply.swap(false, Ordering::SeqCst) {
+                panic!("GC applied then backend panicked");
+            }
+            if self.fail_after_apply.swap(false, Ordering::SeqCst) {
+                Err(BlobError("applied then failed".into()))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[test]
+    fn ambiguous_gc_retries_exact_bytes_before_apply_and_counts_once() {
+        let backend = AmbiguousGcBlobs::default();
+        let coordinator = ApplyCoordinator::empty();
+        coordinator
+            .apply(&backend, &[timed_record(1, 1, 10, put(b"a", b"first"))])
+            .unwrap();
+        let retained_bytes = coordinator.gc_snapshot().retained_bytes;
+        backend.fail_after_apply.store(true, Ordering::SeqCst);
+        assert!(coordinator.gc_step(&backend, 11, 4_096).is_err());
+        assert_eq!(
+            persisted_lane(&backend, 1).reclaimed,
+            1,
+            "backend applied the ambiguous GC"
+        );
+        let failed = coordinator.gc_snapshot();
+        assert!(failed.pending_retry && failed.active_error);
+        assert_eq!(
+            failed.retained_records, 1,
+            "in-memory progress awaits confirmed retry"
+        );
+        assert_eq!(failed.reclaimed_records, 0);
+        let next = timed_record(1, 2, 20, put(b"a", b"second"));
+        assert!(matches!(
+            coordinator
+                .apply(&backend, std::slice::from_ref(&next))
+                .unwrap(),
+            CoordinatorApplyOutcome::BlockedByRetry
+        ));
+        assert_eq!(lock_recover(&backend.attempts).len(), 2);
+        assert_eq!(
+            coordinator.gc_step(&backend, 0, 4_096).unwrap(),
+            GcStep::Progress {
+                records: 1,
+                bytes: retained_bytes
+            }
+        );
+        let attempts = lock_recover(&backend.attempts);
+        assert_eq!(attempts[1], attempts[2]);
+        drop(attempts);
+        coordinator.apply(&backend, &[next]).unwrap();
+        let snapshot = coordinator.gc_snapshot();
+        assert!(!snapshot.pending_retry && !snapshot.active_error);
+        assert_eq!(snapshot.reclaimed_records, 1);
+        assert_eq!(snapshot.reclaimed_bytes, retained_bytes);
+        assert_eq!(snapshot.retained_records, 1);
+        let metadata = persisted_lane(&backend, 1);
+        assert_eq!((metadata.applied, metadata.reclaimed), (2, 1));
+    }
+
+    #[test]
+    fn ambiguous_apply_blocks_gc_and_retries_full_row_log_metadata_bytes() {
+        let backend = AmbiguousGcBlobs::default();
+        let coordinator = ApplyCoordinator::empty();
+        let record = timed_record(1, 1, 10, delete(b"a"));
+        backend.fail_after_apply.store(true, Ordering::SeqCst);
+        assert!(coordinator
+            .apply(&backend, std::slice::from_ref(&record))
+            .is_err());
+        assert_eq!(
+            coordinator.gc_step(&backend, 100, 4_096).unwrap(),
+            GcStep::BlockedByApplyRetry
+        );
+        coordinator.apply(&backend, &[record]).unwrap();
+        let attempts = lock_recover(&backend.attempts);
+        assert_eq!(attempts.len(), 2);
+        assert_eq!(attempts[0], attempts[1]);
+        drop(attempts);
+        assert_eq!(coordinator.gc_snapshot().retained_records, 1);
+        assert_eq!(persisted_lane(&backend, 1).applied, 1);
+    }
+
+    #[test]
+    fn gc_applied_then_panicked_keeps_the_exact_retry() {
+        let backend = AmbiguousGcBlobs::default();
+        let coordinator = ApplyCoordinator::empty();
+        coordinator
+            .apply(&backend, &[timed_record(1, 1, 10, put(b"a", b"v"))])
+            .unwrap();
+        backend.panic_after_apply.store(true, Ordering::SeqCst);
+        assert!(coordinator.gc_step(&backend, 11, 4_096).is_err());
+        let snapshot = coordinator.gc_snapshot();
+        assert!(snapshot.pending_retry);
+        assert!(snapshot.in_progress.is_none());
+        assert!(matches!(
+            coordinator.gc_step(&backend, 0, 4_096).unwrap(),
+            GcStep::Progress { records: 1, .. }
+        ));
+        let attempts = lock_recover(&backend.attempts);
+        assert_eq!(attempts[1], attempts[2]);
+    }
+
+    #[test]
+    fn gc_status_remains_available_while_backend_write_is_blocked() {
+        let backend = BlockingBlobs::default();
+        let coordinator = ApplyCoordinator::empty();
+        coordinator
+            .apply(&backend.inner, &[timed_record(1, 1, 10, put(b"a", b"v"))])
+            .unwrap();
+        std::thread::scope(|scope| {
+            let collector = scope.spawn(|| coordinator.gc_step(&backend, 11, 4_096));
+            backend.wait_until_entered();
+            let (sent, received) = mpsc::channel();
+            let observed_coordinator = &coordinator;
+            let observer =
+                scope.spawn(move || sent.send(observed_coordinator.gc_snapshot()).unwrap());
+            let snapshot = received.recv_timeout(Duration::from_secs(1));
+            backend.release();
+            observer.join().unwrap();
+            assert!(matches!(
+                collector.join().unwrap().unwrap(),
+                GcStep::Progress { records: 1, .. }
+            ));
+            let snapshot = snapshot.expect("GC status waited for backend write completion");
+            assert!(snapshot.in_progress.is_some());
+            assert_eq!(snapshot.retained_records, 1);
+            assert_eq!(snapshot.reclaimed_records, 0);
+        });
+    }
+
+    #[test]
+    fn gc_rejects_missing_or_corrupt_log_without_advancing_frontier() {
+        for corrupt in [false, true] {
+            let backend = MemBlobs::new();
+            let coordinator = ApplyCoordinator::empty();
+            let record = timed_record(1, 1, 10, put(b"a", b"v"));
+            coordinator
+                .apply(&backend, std::slice::from_ref(&record))
+                .unwrap();
+            if corrupt {
+                backend
+                    .write_batch(&[BlobOp::Put {
+                        key: record.log_key(),
+                        val: b"bad",
+                    }])
+                    .unwrap();
+            } else {
+                backend
+                    .write_batch(&[BlobOp::Delete {
+                        key: record.log_key(),
+                    }])
+                    .unwrap();
+            }
+            assert!(coordinator.gc_step(&backend, 100, 4_096).is_err());
+            assert_eq!(persisted_lane(&backend, 1).reclaimed, 0);
+            assert!(
+                !coordinator.gc_snapshot().pending_retry,
+                "failed read never submits a GC batch"
+            );
+        }
+    }
+
+    #[test]
+    fn gc_success_in_another_lane_does_not_clear_unresolved_corruption() {
+        let backend = MemBlobs::new();
+        let coordinator = ApplyCoordinator::empty();
+        let first = timed_record(1, 1, 10, put(b"a", b"v"));
+        let second = timed_record(2, 1, 20, put(b"b", b"v"));
+        coordinator
+            .apply(&backend, std::slice::from_ref(&first))
+            .unwrap();
+        coordinator.apply(&backend, &[second]).unwrap();
+        backend
+            .write_batch(&[BlobOp::Put {
+                key: first.log_key(),
+                val: b"bad",
+            }])
+            .unwrap();
+        assert!(coordinator.gc_step(&backend, 100, 4_096).is_err());
+        assert!(coordinator.gc_snapshot().active_error);
+        assert!(matches!(
+            coordinator.gc_step(&backend, 100, 4_096).unwrap(),
+            GcStep::Progress { records: 1, .. }
+        ));
+        assert!(
+            coordinator.gc_snapshot().active_error,
+            "lane 2 success cannot hide lane 1 corruption"
+        );
+        assert!(coordinator.gc_step(&backend, 100, 4_096).is_err());
+        backend
+            .write_batch(&[BlobOp::Put {
+                key: first.log_key(),
+                val: first.encoded(),
+            }])
+            .unwrap();
+        assert!(matches!(
+            coordinator.gc_step(&backend, 100, 4_096).unwrap(),
+            GcStep::Progress { records: 1, .. }
+        ));
+        assert!(!coordinator.gc_snapshot().active_error);
+        coordinator.record_gc_clock_error("invalid wall time");
+        assert_eq!(
+            coordinator.gc_step(&backend, 100, 4_096).unwrap(),
+            GcStep::Complete
+        );
+        assert!(
+            coordinator.gc_snapshot().active_error,
+            "a successful backend scan cannot validate the clock"
+        );
+        coordinator.clear_gc_clock_error();
+        assert!(!coordinator.gc_snapshot().active_error);
     }
 
     /// Guard the native ACK path against accidentally re-inlining the legacy
@@ -7267,7 +8336,11 @@ mod tests {
         assert_eq!(writeback.applied_sequence(), 3);
         assert_eq!(writeback.applied_frontier.load(Ordering::Acquire), 3);
         assert_eq!(backend.batch_count(), 1);
-        assert_eq!(backend.op_count(), 6, "each record contributes log + data");
+        assert_eq!(
+            backend.op_count(),
+            7,
+            "each record contributes log + data, plus one lane metadata update"
+        );
     }
 
     #[test]
@@ -7428,7 +8501,11 @@ mod tests {
         assert_eq!(writeback.applied_sequence(), 4);
         assert_eq!(writeback.applied_frontier.load(Ordering::Acquire), 4);
         assert_eq!(backend.batch_count(), 4);
-        assert_eq!(backend.op_count(), 8, "each record contributes log + data");
+        assert_eq!(
+            backend.op_count(),
+            12,
+            "each single-record batch contributes log + data + metadata"
+        );
     }
 
     #[test]
@@ -8452,8 +9529,8 @@ mod tests {
 
         assert_eq!(writeback.wait_applied().unwrap(), 1);
         assert_eq!(backend.batch_count(), 1);
-        // One backend commit-record entry plus the transaction's two data ops.
-        assert_eq!(backend.op_count(), 3);
+        // One log, two versioned rows, and one lane metadata update.
+        assert_eq!(backend.op_count(), 4);
         assert_eq!(
             writeback.applied_watermark(),
             AppliedWatermark::recovered(1, Some(mako_timestamp_of(11)))
@@ -8475,7 +9552,11 @@ mod tests {
             ProcessOutcome::Advanced
         ));
         assert_eq!(backend.batch_count(), 1);
-        assert_eq!(backend.op_count(), 6, "each record contributes log + data");
+        assert_eq!(
+            backend.op_count(),
+            7,
+            "each record contributes log + data, plus one lane metadata update"
+        );
         assert_eq!(writeback.applied_sequence(), 3);
         assert_eq!(writeback.queue_len(), 0);
     }
@@ -8534,7 +9615,7 @@ mod tests {
         assert_eq!(writeback.applied_sequence(), 2);
         assert_eq!(writeback.queue_len(), 1);
         assert_eq!(backend.batch_count(), 1);
-        assert_eq!(backend.op_count(), 4);
+        assert_eq!(backend.op_count(), 5);
 
         assert!(matches!(
             writeback.process_front(),
@@ -8651,7 +9732,11 @@ mod tests {
             attempts[0], attempts[1],
             "retry changed the captured prefix"
         );
-        assert_eq!(attempts[0].len(), 6, "three log + data record pairs");
+        assert_eq!(
+            attempts[0].len(),
+            7,
+            "three log + data record pairs and lane metadata"
+        );
         assert_eq!(writeback.applied_sequence(), 3);
         assert_eq!(writeback.queue_len(), 1);
         assert_eq!(backend.inner.batch_count(), 1);
@@ -8704,19 +9789,34 @@ mod tests {
 
         let attempts = backend.attempts();
         assert_eq!(attempts.len(), 1);
-        assert_eq!(attempts[0].len(), 3, "two logs plus one winning value");
+        assert_eq!(
+            attempts[0].len(),
+            4,
+            "two logs plus one winning value and lane metadata"
+        );
         match &attempts[0][2] {
-            OwnedBlobOp::Put { value, .. } => assert_eq!(value, b"second"),
+            OwnedBlobOp::Put { value, .. } => assert_eq!(
+                checkpoint::decode_row(value).unwrap().value,
+                Some(b"second".as_slice())
+            ),
             operation => panic!("unexpected winning data operation: {operation:?}"),
         }
 
         let snapshot = backend.inner.snapshot();
-        assert_eq!(snapshot.len(), 3, "two logs and one materialized data key");
-        assert!(!snapshot.values().any(|value| value.as_slice() == b"first"));
+        assert_eq!(
+            snapshot.len(),
+            4,
+            "two logs, one materialized data key, and lane metadata"
+        );
+        assert!(!snapshot
+            .values()
+            .filter_map(|value| checkpoint::decode_row(value).ok())
+            .any(|row| row.value == Some(b"first".as_slice())));
         assert_eq!(
             snapshot
                 .values()
-                .filter(|value| value.as_slice() == b"second")
+                .filter_map(|value| checkpoint::decode_row(value).ok())
+                .filter(|row| row.value == Some(b"second".as_slice()))
                 .count(),
             1
         );
@@ -8767,7 +9867,7 @@ mod tests {
 
         assert_eq!(writeback.wait_applied().unwrap(), 2);
         assert_eq!(backend.batch_count(), 2);
-        assert_eq!(backend.op_count(), 5);
+        assert_eq!(backend.op_count(), 7);
         assert_eq!(
             writeback.applied_watermark(),
             AppliedWatermark::recovered(2, Some(mako_timestamp_of(13)))

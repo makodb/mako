@@ -8,10 +8,26 @@ license = "MIT"
 publish = false
 
 [features]
-# Test-only structural probes used by the Phase 1F mutation gate. Production
-# builds leave this disabled, so no probe or conditional branch is present in
-# the cache commit path.
+# Test-only backend injection and structural probes. This permits retained
+# writable backend handles for fault tests and must stay disabled in production.
+# Production builds contain no test probes or commit-path conditional branches.
 test-support = []
+
+[[test]]
+name = "native"
+required-features = ["test-support"]
+
+[[test]]
+name = "cleanup"
+required-features = ["test-support"]
+
+[[test]]
+name = "concurrent_holder"
+required-features = ["test-support"]
+
+[[test]]
+name = "timestamp"
+required-features = ["test-support"]
 
 [dependencies]
 mako-local = { path = "../mako-local" }

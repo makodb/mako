@@ -466,7 +466,11 @@ mod tests {
         assert!(!runtime.is_running());
         assert!(runtime.thread.is_none());
         assert_eq!(backend.batch_count(), 1);
-        assert_eq!(backend.op_count(), 3);
+        assert_eq!(
+            backend.op_count(),
+            4,
+            "one log, two rows, and one lane checkpoint"
+        );
         assert_eq!(writeback.applied_sequence(), 1);
         assert_eq!(writeback.queue_len(), 0);
     }

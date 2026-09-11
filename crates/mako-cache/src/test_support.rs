@@ -1,15 +1,43 @@
-//! Structural probes compiled only for the Phase 1F mutation gate.
+//! Backend injection and structural probes for validation binaries.
 //!
 //! These helpers exercise the real write-back transitions while keeping test
-//! instrumentation outside the production commit path.
+//! instrumentation outside the production commit path. Enabling
+//! `test-support` allows tests to retain writable backend handles and violate
+//! normal cache ownership for fault injection. Do not enable it in production.
 
 use std::time::Duration;
 
 use mako_local::MakoTimestamp;
 use mrx_core::fakes::MemBlobs;
+use mrx_core::Blobs;
 
 use crate::record::{classify_backend_key, BackendKey, CommitRecord, Mutation, DEFAULT_TABLE_ID};
 use crate::writeback::{AppliedWatermark, Writeback, WritebackConfig};
+use crate::{Cache, CacheOptions, Error};
+
+/// Construct a cache over a test backend for fault injection and inspection.
+///
+/// Tests may pass a shared backend and retain another handle to it. Mutating
+/// that handle can invalidate the cache's transaction and recovery invariants.
+/// This constructor is deliberately absent from normal builds.
+pub fn cache_from_backend<B: Blobs + 'static>(
+    backend: B,
+    options: CacheOptions,
+) -> Result<Cache<B>, Error> {
+    Cache::from_backend(backend, options)
+}
+
+/// Collect expired records using an injected Unix microsecond clock.
+/// The same bounded atomic GC batches are used as by the background writer.
+pub fn collect_expired_at<B: Blobs + 'static>(
+    cache: &Cache<B>,
+    unix_us: u64,
+) -> Result<u64, Error> {
+    cache
+        .writeback
+        .collect_expired_at(unix_us)
+        .map_err(Error::Backend)
+}
 
 /// Run the exact detached-permit bind transition between two callbacks.
 ///
@@ -62,7 +90,10 @@ pub fn decoded_log_timestamps(backend: &MemBlobs) -> Vec<(u64, MakoTimestamp)> {
                 CommitRecord::decode(&key, &encoded, crate::writeback::DEFAULT_MAX_RECORD_BYTES)
                     .expect("decode test backend commit record"),
             ),
-            BackendKey::Data { .. } | BackendKey::Foreign => None,
+            BackendKey::Data { .. }
+            | BackendKey::Format
+            | BackendKey::Lane(_)
+            | BackendKey::Foreign => None,
         })
         .map(|record| (record.sequence().get(), record.mako_timestamp()))
         .collect();

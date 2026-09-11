@@ -3,16 +3,17 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use mako_local::MakoTimestamp;
-use mrx_core::Blobs;
+use mrx_core::{BlobError, Blobs};
 
+use crate::checkpoint::LaneMetadata;
 use crate::record::{worker_log_base, LOG_LOCAL_MASK};
 use crate::runtime::RuntimeTarget;
 use crate::writeback::{
-    AppliedWatermark, ApplyCoordinator, ApplyError, ApplyTelemetrySnapshot, ConfigError,
-    ProcessOutcome, SingleProducerState, Writeback, WritebackConfig,
+    AppliedWatermark, ApplyCoordinator, ApplyError, ApplyTelemetrySnapshot, ConfigError, GcStep,
+    LogGcStatus, ProcessOutcome, SingleProducerState, Writeback, WritebackConfig,
 };
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -23,6 +24,7 @@ pub(crate) struct LaneRecovery {
 
 /// Backend state reconstructed before foreground work is admitted.
 pub(crate) struct RecoveredWriteback {
+    pub(crate) metadata: Vec<LaneMetadata>,
     pub(crate) legacy: LaneRecovery,
     pub(crate) lanes: Vec<LaneRecovery>,
     pub(crate) latest: HashMap<Vec<u8>, MakoTimestamp>,
@@ -33,6 +35,7 @@ pub(crate) struct RecoveredWriteback {
 impl RecoveredWriteback {
     pub(crate) fn empty() -> Self {
         Self {
+            metadata: vec![LaneMetadata::default(); mako_local::MAX_WORKERS + 1],
             legacy: LaneRecovery::default(),
             lanes: vec![LaneRecovery::default(); mako_local::MAX_WORKERS],
             latest: HashMap::new(),
@@ -88,14 +91,43 @@ pub(crate) struct WritebackSet<B: Blobs + 'static> {
     /// Foreground publication never touches this lock.
     scheduler: Mutex<()>,
     poll_cursor: AtomicUsize,
+    gc: Mutex<GcSchedule>,
+}
+
+struct GcSchedule {
+    retention_us: u64,
+    interval: Duration,
+    // None means the next deadline is beyond the platform's Instant range.
+    next_sweep: Option<Instant>,
+    cutoff: Option<u64>,
+    apply_turn: bool,
 }
 
 impl<B: Blobs + 'static> WritebackSet<B> {
+    #[cfg(test)]
     pub(crate) fn new(
         backend: B,
         recovered: RecoveredWriteback,
         config: WritebackConfig,
         concurrent: bool,
+    ) -> Result<Self, ConfigError> {
+        Self::new_with_gc(
+            backend,
+            recovered,
+            config,
+            concurrent,
+            Duration::from_secs(300),
+            Duration::from_secs(10),
+        )
+    }
+
+    pub(crate) fn new_with_gc(
+        backend: B,
+        recovered: RecoveredWriteback,
+        config: WritebackConfig,
+        concurrent: bool,
+        log_retention: Duration,
+        gc_interval: Duration,
     ) -> Result<Self, ConfigError> {
         Writeback::<Arc<B>>::validate_config(config, 0, LOG_LOCAL_MASK)?;
         let set = Self {
@@ -104,7 +136,10 @@ impl<B: Blobs + 'static> WritebackSet<B> {
             concurrent,
             unhealthy: Arc::new(AtomicBool::new(false)),
             unhealthy_sequence: Arc::new(AtomicU64::new(0)),
-            coordinator: Arc::new(ApplyCoordinator::recovered(recovered.latest)),
+            coordinator: Arc::new(ApplyCoordinator::recovered(
+                recovered.latest,
+                recovered.metadata,
+            )),
             recovery: recovered.lanes.into_boxed_slice(),
             legacy_recovery: recovered.legacy,
             recovered_record_count: recovered.record_count,
@@ -117,6 +152,14 @@ impl<B: Blobs + 'static> WritebackSet<B> {
             initialize: Mutex::new(()),
             scheduler: Mutex::new(()),
             poll_cursor: AtomicUsize::new(0),
+            gc: Mutex::new(GcSchedule {
+                retention_us: u64::try_from(log_retention.as_micros())
+                    .expect("validated retention"),
+                interval: gc_interval,
+                next_sweep: Instant::now().checked_add(gc_interval),
+                cutoff: None,
+                apply_turn: false,
+            }),
         };
         if !concurrent {
             let lane = set.build_lane(None)?;
@@ -198,6 +241,7 @@ impl<B: Blobs + 'static> WritebackSet<B> {
             .expect("single-producer construction initializes its lane")
     }
 
+    #[cfg(test)]
     pub(crate) fn backend(&self) -> &B {
         &self.backend
     }
@@ -248,8 +292,35 @@ impl<B: Blobs + 'static> WritebackSet<B> {
         // completion here could otherwise wait forever for a later lane after
         // Runtime has already joined its background consumer.
         let mut backend_failures = vec![None::<(crate::CommitSeq, usize)>; targets.len()];
+        let mut gc_failures = 0usize;
         loop {
             self.ensure_no_unknown()?;
+            // A GC write may have taken effect despite returning an error.
+            // Finish its exact retry before allowing any other backend write,
+            // including when shutdown has no foreground work left to drain.
+            let gc = self.coordinator.gc_snapshot();
+            if gc.pending_retry {
+                match self
+                    .coordinator
+                    .gc_step(&*self.backend, 0, self.config.max_record_bytes)
+                {
+                    Ok(_) => gc_failures = 0,
+                    Err(source) => {
+                        gc_failures = gc_failures.saturating_add(1);
+                        if gc_failures > self.config.max_apply_retries {
+                            return Err(ApplyError::Backend {
+                                sequence: gc
+                                    .pending_sequence
+                                    .expect("pending GC has a first sequence"),
+                                attempts: gc_failures,
+                                source,
+                            });
+                        }
+                        std::thread::sleep(self.config.retry_delay);
+                        continue;
+                    }
+                }
+            }
             let mut pending = false;
             let mut advanced = false;
             let mut failed = false;
@@ -362,6 +433,101 @@ impl<B: Blobs + 'static> WritebackSet<B> {
         self.coordinator.telemetry_snapshot()
     }
 
+    pub(crate) fn gc_snapshot(&self) -> LogGcStatus {
+        self.coordinator.gc_snapshot()
+    }
+
+    pub(crate) fn disk_usage_bytes(&self) -> Result<Option<u64>, BlobError> {
+        self.backend.disk_usage_bytes()
+    }
+
+    /// Runs at most one bounded GC batch, alternating with foreground apply.
+    /// The scheduler serializes writes, but neither status nor producers take it.
+    fn scheduled_gc(&self) -> Option<ProcessOutcome> {
+        if self.coordinator.gc_snapshot().pending_retry {
+            return Some(
+                match self
+                    .coordinator
+                    .gc_step(&*self.backend, 0, self.config.max_record_bytes)
+                {
+                    Ok(_) => ProcessOutcome::Advanced,
+                    Err(_) => ProcessOutcome::Blocked,
+                },
+            );
+        }
+        let cutoff = {
+            let mut schedule = self.gc.lock().unwrap_or_else(|p| p.into_inner());
+            if schedule.apply_turn {
+                schedule.apply_turn = false;
+                return None;
+            }
+            if schedule.cutoff.is_none() {
+                let now = Instant::now();
+                if schedule.next_sweep.is_none_or(|deadline| now < deadline) {
+                    return None;
+                }
+                let wall_us = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .ok()
+                    .and_then(|time| u64::try_from(time.as_micros()).ok());
+                let Some(wall_us) = wall_us else {
+                    schedule.next_sweep = now.checked_add(schedule.interval);
+                    self.coordinator.record_gc_clock_error(
+                        "wall clock is outside the supported Unix microsecond range",
+                    );
+                    return Some(ProcessOutcome::Blocked);
+                };
+                schedule.cutoff = Some(wall_us.saturating_sub(schedule.retention_us));
+                self.coordinator.clear_gc_clock_error();
+            }
+            schedule.apply_turn = true;
+            schedule.cutoff.expect("a due sweep has a cutoff")
+        };
+        match self
+            .coordinator
+            .gc_step(&*self.backend, cutoff, self.config.max_record_bytes)
+        {
+            Ok(GcStep::Progress { .. }) => Some(ProcessOutcome::Advanced),
+            Ok(GcStep::Complete) => {
+                let mut schedule = self.gc.lock().unwrap_or_else(|p| p.into_inner());
+                schedule.cutoff = None;
+                schedule.next_sweep = Instant::now().checked_add(schedule.interval);
+                schedule.apply_turn = false;
+                None
+            }
+            Ok(GcStep::BlockedByApplyRetry) => None,
+            Err(_) => Some(ProcessOutcome::Blocked),
+        }
+    }
+
+    /// Deterministic collection for failure and clock tests. Production callers
+    /// cannot inject time or access the backend through the cache.
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn collect_expired_at(&self, unix_us: u64) -> Result<u64, BlobError> {
+        let _scheduler = self.scheduler.lock().unwrap_or_else(|p| p.into_inner());
+        self.ensure_no_unknown()
+            .map_err(|error| BlobError(error.to_string()))?;
+        let retention = self
+            .gc
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .retention_us;
+        let cutoff = unix_us.saturating_sub(retention);
+        let mut count = 0u64;
+        loop {
+            match self
+                .coordinator
+                .gc_step(&*self.backend, cutoff, self.config.max_record_bytes)?
+            {
+                GcStep::Progress { records, .. } => count += records,
+                GcStep::Complete => return Ok(count),
+                GcStep::BlockedByApplyRetry => {
+                    return Err(BlobError("GC is waiting for an exact apply retry".into()))
+                }
+            }
+        }
+    }
+
     pub(crate) fn record_runtime_loop_panic(&self, message: String) {
         self.coordinator.record_runtime_loop_panic(message);
     }
@@ -378,19 +544,18 @@ impl<B: Blobs + 'static> WritebackSet<B> {
             .scheduler
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if !self.concurrent {
-            return self
-                .legacy_lane
-                .get()
-                .expect("single-producer construction initializes its lane")
-                .writeback
-                .process_front();
-        }
-
         if self.unhealthy.load(Ordering::Acquire) {
             let sequence = crate::CommitSeq::new(self.unhealthy_sequence.load(Ordering::Acquire))
                 .unwrap_or_else(|| std::process::abort());
             return ProcessOutcome::Pinned(sequence);
+        }
+
+        if let Some(outcome) = self.scheduled_gc() {
+            return outcome;
+        }
+
+        if !self.concurrent {
+            return self.single_lane().writeback.process_front();
         }
 
         let lane_count = self.lanes.len();
@@ -478,10 +643,390 @@ mod tests {
             .expect("test timestamps have a nonzero origin")
     }
 
+    #[derive(Default)]
+    struct EnospcBlobs {
+        inner: MemBlobs,
+        disk_full: AtomicBool,
+        attempts: Mutex<Vec<Vec<(Vec<u8>, Option<Vec<u8>>)>>>,
+    }
+
+    impl Blobs for EnospcBlobs {
+        fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, BlobError> {
+            self.inner.get(key)
+        }
+        fn for_each_key(&self, visitor: &mut dyn FnMut(&[u8])) -> Result<(), BlobError> {
+            self.inner.for_each_key(visitor)
+        }
+        fn write_batch(&self, operations: &[BlobOp<'_>]) -> Result<(), BlobError> {
+            self.attempts.lock().unwrap().push(
+                operations
+                    .iter()
+                    .map(|operation| match operation {
+                        BlobOp::Put { key, val } => (key.to_vec(), Some(val.to_vec())),
+                        BlobOp::Delete { key } => (key.to_vec(), None),
+                    })
+                    .collect(),
+            );
+            if self.disk_full.load(Ordering::Acquire) {
+                Err(BlobError(
+                    "IO error: No space left on device (ENOSPC)".into(),
+                ))
+            } else {
+                self.inner.write_batch(operations)
+            }
+        }
+    }
+
+    #[test]
+    fn persistent_enospc_gc_blocks_apply_and_capacity_until_exact_retry_succeeds() {
+        let backend = Arc::new(EnospcBlobs::default());
+        let set = WritebackSet::new(
+            Arc::clone(&backend),
+            RecoveredWriteback::empty(),
+            WritebackConfig {
+                capacity: 1,
+                max_apply_retries: 2,
+                retry_delay: Duration::from_millis(1),
+                ..WritebackConfig::default()
+            },
+            true,
+        )
+        .unwrap();
+        let lane = set.lane(0).unwrap();
+        for logical in 1..=2 {
+            lane.writeback()
+                .reserve_single(
+                    lane.producer(),
+                    vec![put(
+                        b"same",
+                        if logical == 1 { b"first" } else { b"second" },
+                    )],
+                )
+                .unwrap()
+                .bind(timestamp(logical))
+                .unwrap()
+                .publish()
+                .unwrap();
+            if logical == 1 {
+                set.wait_applied().unwrap();
+            }
+        }
+        backend.disk_full.store(true, Ordering::Release);
+        assert!(set
+            .collect_expired_at(u64::MAX)
+            .unwrap_err()
+            .to_string()
+            .contains("ENOSPC"));
+        assert!(matches!(
+            lane.writeback().process_front(),
+            ProcessOutcome::Blocked
+        ));
+        let started = Instant::now();
+        assert!(
+            matches!(set.wait_applied(), Err(ApplyError::Backend { attempts: 3, source, .. }) if source.to_string().contains("ENOSPC"))
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "drain must honor its finite retry budget"
+        );
+        let failed = set.gc_snapshot();
+        assert!(failed.pending_retry && failed.active_error);
+        assert_eq!((failed.retained_records, failed.reclaimed_records), (1, 0));
+        assert_eq!(set.applied_watermark().sequence(), 1);
+        assert_eq!(set.queue_len(), 1);
+        {
+            let attempts = backend.attempts.lock().unwrap();
+            assert_eq!(
+                attempts.len(),
+                5,
+                "one apply, first GC attempt, and three drain retries"
+            );
+            assert!(attempts[1..].iter().all(|attempt| *attempt == attempts[1]));
+        }
+        std::thread::scope(|scope| {
+            let queue = lane.writeback();
+            let producer = lane.producer();
+            let (sent, received) = std::sync::mpsc::channel();
+            let waiter = scope.spawn(move || {
+                // The synthetic queue hands its sole producer to this scoped
+                // thread. The parent performs consumer work only until join.
+                let permit = queue.reserve_single(producer, vec![put(b"blocked", b"value")]);
+                sent.send(permit.is_ok()).unwrap();
+                drop(permit);
+            });
+            let while_full = received.recv_timeout(Duration::from_millis(30));
+            // Always release disk failure before assertions or scoped joins.
+            backend.disk_full.store(false, Ordering::Release);
+            let drained = set.wait_applied();
+            let admitted = received.recv_timeout(Duration::from_secs(1));
+            waiter.join().unwrap();
+            assert!(
+                while_full.is_err(),
+                "a full queue admitted another transaction during GC ENOSPC"
+            );
+            assert_eq!(drained.unwrap(), 2);
+            assert!(admitted.unwrap());
+        });
+        let attempts = backend.attempts.lock().unwrap();
+        assert_eq!(
+            attempts[1], attempts[5],
+            "recovered disk must receive the identical GC batch first"
+        );
+        assert_eq!(
+            attempts.len(),
+            7,
+            "only the successful GC retry may precede the queued apply"
+        );
+        drop(attempts);
+        let recovered = set.gc_snapshot();
+        assert!(!recovered.pending_retry && !recovered.active_error);
+        assert_eq!(
+            (recovered.retained_records, recovered.reclaimed_records),
+            (1, 1)
+        );
+        assert_eq!(set.queue_len(), 0);
+    }
+
+    #[test]
+    fn changing_retention_on_reopen_uses_persisted_frontiers_and_cannot_restore_logs() {
+        fn checkpoint_seed(backend: &MemBlobs) -> RecoveredWriteback {
+            let mut seed = RecoveredWriteback::empty();
+            for (key, value) in backend.snapshot() {
+                match crate::record::classify_backend_key(&key) {
+                    BackendKey::Lane(tag) => {
+                        seed.metadata[usize::from(tag)] = LaneMetadata::decode(&value).unwrap()
+                    }
+                    BackendKey::Data { .. } => {
+                        seed.latest.insert(
+                            key,
+                            crate::checkpoint::decode_row(&value).unwrap().timestamp,
+                        );
+                    }
+                    _ => {}
+                }
+            }
+            for (tag, metadata) in seed.metadata.iter().enumerate() {
+                seed.record_count += metadata.applied;
+                let lane = LaneRecovery {
+                    local_tail: metadata.applied,
+                    mako_timestamp: metadata.max_timestamp,
+                };
+                if tag == 0 {
+                    seed.legacy = lane;
+                } else {
+                    seed.lanes[tag - 1] = lane;
+                }
+                seed.maximum_timestamp = seed.maximum_timestamp.max(metadata.max_timestamp);
+            }
+            seed
+        }
+
+        let backend = Arc::new(MemBlobs::new());
+        let set = WritebackSet::new(
+            Arc::clone(&backend),
+            RecoveredWriteback::empty(),
+            WritebackConfig::default(),
+            true,
+        )
+        .unwrap();
+        let lane = set.lane(0).unwrap();
+        lane.writeback()
+            .reserve_single(lane.producer(), vec![put(b"key", b"value")])
+            .unwrap()
+            .bind(timestamp(1))
+            .unwrap()
+            .publish()
+            .unwrap();
+        set.wait_applied().unwrap();
+        let two_minutes_later = timestamp(1).physical_us() + 120_000_000;
+        assert_eq!(
+            set.collect_expired_at(two_minutes_later).unwrap(),
+            0,
+            "default five minutes retains a two-minute-old log"
+        );
+        drop(set);
+
+        let shorter = WritebackSet::new_with_gc(
+            Arc::clone(&backend),
+            checkpoint_seed(&backend),
+            WritebackConfig::default(),
+            true,
+            Duration::from_secs(60),
+            Duration::from_secs(10),
+        )
+        .unwrap();
+        assert_eq!(shorter.collect_expired_at(two_minutes_later).unwrap(), 1);
+        assert_eq!(shorter.applied_watermark().sequence(), 1);
+        drop(shorter);
+
+        let longer = WritebackSet::new_with_gc(
+            Arc::clone(&backend),
+            checkpoint_seed(&backend),
+            WritebackConfig::default(),
+            true,
+            Duration::from_secs(600),
+            Duration::from_secs(10),
+        )
+        .unwrap();
+        assert_eq!(longer.collect_expired_at(two_minutes_later).unwrap(), 0);
+        assert_eq!(
+            longer.gc_snapshot().retained_records,
+            0,
+            "increasing retention cannot restore reclaimed history"
+        );
+        let lane = longer.lane(0).unwrap();
+        let sequence = lane
+            .writeback()
+            .reserve_single(lane.producer(), vec![put(b"key", b"new")])
+            .unwrap()
+            .bind(timestamp(2))
+            .unwrap()
+            .publish()
+            .unwrap();
+        assert_eq!(sequence.get(), worker_log_base(0).unwrap() + 2);
+        assert_eq!(longer.wait_applied().unwrap(), 2);
+        let metadata = LaneMetadata::decode(
+            &backend
+                .get(&crate::checkpoint::lane_key(1))
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!((metadata.applied, metadata.reclaimed), (2, 1));
+        assert_eq!(metadata.max_timestamp, Some(timestamp(2)));
+    }
+
+    #[test]
+    fn scheduled_gc_alternates_with_apply_and_finishes_pending_retry_on_drain() {
+        let backend = Arc::new(MemBlobs::new());
+        let set = WritebackSet::new(
+            Arc::clone(&backend),
+            RecoveredWriteback::empty(),
+            WritebackConfig::default(),
+            true,
+        )
+        .unwrap();
+        let lane = set.lane(0).unwrap();
+        lane.writeback()
+            .reserve_single(lane.producer(), vec![put(b"key", b"first")])
+            .unwrap()
+            .bind(timestamp(1))
+            .unwrap()
+            .publish()
+            .unwrap();
+        assert!(matches!(set.process_one_round(), ProcessOutcome::Advanced));
+        lane.writeback()
+            .reserve_single(lane.producer(), vec![put(b"key", b"second")])
+            .unwrap()
+            .bind(timestamp(2))
+            .unwrap()
+            .publish()
+            .unwrap();
+        set.gc.lock().unwrap().cutoff = Some(u64::MAX);
+        assert!(matches!(set.process_one_round(), ProcessOutcome::Advanced));
+        assert_eq!(
+            set.applied_watermark().sequence(),
+            1,
+            "first bounded turn collected, without applying the queued transaction"
+        );
+        assert_eq!(set.gc_snapshot().reclaimed_records, 1);
+        assert!(matches!(set.process_one_round(), ProcessOutcome::Advanced));
+        assert_eq!(
+            set.applied_watermark().sequence(),
+            2,
+            "next turn gives application a chance"
+        );
+        backend.fail_next_writes(1);
+        assert!(matches!(set.process_one_round(), ProcessOutcome::Blocked));
+        assert!(set.gc_snapshot().pending_retry);
+        assert_eq!(
+            set.wait_applied().unwrap(),
+            2,
+            "drain retries GC even without queued transactions"
+        );
+        assert!(!set.gc_snapshot().pending_retry);
+        assert!(!set.gc_snapshot().active_error);
+        assert_eq!(set.gc_snapshot().retained_records, 0);
+        assert_eq!(set.gc_snapshot().reclaimed_records, 2);
+        assert!(
+            set.gc_snapshot().last_error.is_some(),
+            "the resolved error remains diagnostic history"
+        );
+    }
+
+    #[test]
+    fn fifty_minute_clock_model_bounds_retention_independently_of_lifetime_updates() {
+        const ORIGIN_US: u64 = 1_700_000_000_000_000;
+        let backend = Arc::new(MemBlobs::new());
+        let set = WritebackSet::new(
+            Arc::clone(&backend),
+            RecoveredWriteback::empty(),
+            WritebackConfig::default(),
+            true,
+        )
+        .unwrap();
+        for minute in 0..50u64 {
+            let physical = ORIGIN_US + minute * 60_000_000;
+            for worker in 0..4 {
+                let lane = set.lane(worker).unwrap();
+                for update in 0..32 {
+                    let key = format!("worker-{worker}-key-{}", update % 16);
+                    let value = format!("minute-{minute}-update-{update}");
+                    let timestamp =
+                        MakoTimestamp::new(physical, update, worker as u32 + 1).unwrap();
+                    lane.writeback()
+                        .reserve_single(
+                            lane.producer(),
+                            vec![put(key.as_bytes(), value.as_bytes())],
+                        )
+                        .unwrap()
+                        .bind(timestamp)
+                        .unwrap()
+                        .publish()
+                        .unwrap();
+                }
+            }
+            assert_eq!(set.wait_applied().unwrap(), (minute + 1) * 128);
+            set.collect_expired_at(physical).unwrap();
+            let gc = set.gc_snapshot();
+            // Strict cutoff retains the boundary minute, hence six buckets.
+            assert_eq!(gc.retained_records, (minute + 1).min(6) * 128);
+            assert_eq!(
+                gc.reclaimed_records + gc.retained_records,
+                (minute + 1) * 128
+            );
+        }
+        let snapshot = backend.snapshot();
+        assert_eq!(
+            snapshot
+                .keys()
+                .filter(|key| matches!(
+                    crate::record::classify_backend_key(key),
+                    BackendKey::Data { .. }
+                ))
+                .count(),
+            64
+        );
+        assert_eq!(set.gc_snapshot().reclaimed_records, 44 * 128);
+        set.collect_expired_at(ORIGIN_US + 55 * 60_000_000).unwrap();
+        assert_eq!(set.gc_snapshot().retained_records, 0);
+        assert_eq!(set.applied_watermark().sequence(), 50 * 128);
+        assert_eq!(set.gc_snapshot().reclaimed_records, 50 * 128);
+    }
+
     #[test]
     fn worker_lane_stops_before_the_next_tag_and_local_zero() {
         let mut recovered = RecoveredWriteback::empty();
         recovered.lanes[0].local_tail = LOG_LOCAL_MASK - 1;
+        recovered.lanes[0].mako_timestamp = Some(timestamp(0));
+        recovered.metadata[1] = LaneMetadata {
+            applied: LOG_LOCAL_MASK - 1,
+            reclaimed: LOG_LOCAL_MASK - 1,
+            max_timestamp: Some(timestamp(0)),
+            retained_bytes: 0,
+        };
+        recovered.record_count = LOG_LOCAL_MASK - 1;
+        recovered.maximum_timestamp = Some(timestamp(0));
         let set = WritebackSet::new(
             MemBlobs::new(),
             recovered,
@@ -585,7 +1130,10 @@ mod tests {
                     };
                     match crate::record::classify_backend_key(key) {
                         BackendKey::Log(sequence) => Some(sequence),
-                        BackendKey::Data { .. } | BackendKey::Foreign => None,
+                        BackendKey::Data { .. }
+                        | BackendKey::Format
+                        | BackendKey::Lane(_)
+                        | BackendKey::Foreign => None,
                     }
                 })
                 .collect();
@@ -622,7 +1170,10 @@ mod tests {
                     };
                     match crate::record::classify_backend_key(key) {
                         BackendKey::Log(sequence) => Some(sequence),
-                        BackendKey::Data { .. } | BackendKey::Foreign => None,
+                        BackendKey::Data { .. }
+                        | BackendKey::Format
+                        | BackendKey::Lane(_)
+                        | BackendKey::Foreign => None,
                     }
                 })
                 .collect();
@@ -691,7 +1242,10 @@ mod tests {
                 .then(|| value.clone())
             })
             .unwrap();
-        assert_eq!(data_value, b"new");
+        assert_eq!(
+            crate::checkpoint::decode_row(&data_value).unwrap().value,
+            Some(b"new".as_slice())
+        );
         assert_eq!(
             snapshot
                 .iter()
@@ -787,7 +1341,10 @@ mod tests {
                 .then(|| value.clone())
             })
             .unwrap();
-        assert_eq!(data_value, b"new");
+        assert_eq!(
+            crate::checkpoint::decode_row(&data_value).unwrap().value,
+            Some(b"new".as_slice())
+        );
         assert_eq!(
             snapshot
                 .keys()
@@ -851,7 +1408,9 @@ mod tests {
             .then_some(value)
         });
         assert_eq!(
-            value_after_error.as_deref(),
+            crate::checkpoint::decode_row(&value_after_error.unwrap())
+                .unwrap()
+                .value,
             Some(&b"new"[..]),
             "the injected error must model an already-applied atomic batch"
         );
@@ -904,7 +1463,12 @@ mod tests {
             )
             .then_some(value)
         });
-        assert_eq!(final_value.as_deref(), Some(&b"new"[..]));
+        assert_eq!(
+            crate::checkpoint::decode_row(&final_value.unwrap())
+                .unwrap()
+                .value,
+            Some(b"new".as_slice())
+        );
         assert_eq!(set.applied_watermark().sequence(), 3);
     }
 
@@ -960,7 +1524,10 @@ mod tests {
                 .then(|| value.clone())
             })
             .unwrap();
-        assert_eq!(value, b"new");
+        assert_eq!(
+            crate::checkpoint::decode_row(&value).unwrap().value,
+            Some(b"new".as_slice())
+        );
     }
 
     #[test]

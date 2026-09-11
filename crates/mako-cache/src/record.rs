@@ -2,7 +2,7 @@
 //!
 //! A record is the recovery description of one cache transaction. One RocksDB
 //! batch may contain a bounded dense prefix from a single worker lane. Every
-//! selected record contributes its permanent log operation, while the shared
+//! selected record contributes its retained log operation, while the shared
 //! timestamp coordinator chooses which mutations materialize. The backend
 //! keyspace is private to `mako-cache`; raw application keys are never used as
 //! RocksDB keys directly.
@@ -70,8 +70,10 @@ const fn expected_magic(version: u16) -> Option<&'static [u8; 8]> {
 // namespace in RocksDB dumps. The kind byte makes log and materialized data
 // keys disjoint, while the fixed-width table/log-ID fields make each
 // mapping injective.
-const LOG_KEY_PREFIX: &[u8] = b"\0mako-cache\0\x01L";
-const DATA_KEY_PREFIX: &[u8] = b"\0mako-cache\0\x01D";
+const LOG_KEY_PREFIX: &[u8] = b"\0mako-cache\0\x02L";
+const DATA_KEY_PREFIX: &[u8] = b"\0mako-cache\0\x02D";
+pub(crate) const FORMAT_KEY: &[u8] = b"\0mako-cache\0\x02F";
+pub(crate) const LANE_KEY_PREFIX: &[u8] = b"\0mako-cache\0\x02M";
 
 /// Upper bits distinguish worker-local physical log streams from the dense
 /// single-producer stream. Tag zero is reserved for the dense stream; tags
@@ -169,6 +171,10 @@ impl Mutation {
 /// Classification of one key found in the private RocksDB keyspace.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum BackendKey<'a> {
+    /// Checkpoint keyspace version and namespace identity.
+    Format,
+    /// Permanent applied/reclaimed frontiers for a physical log lane.
+    Lane(u16),
     /// A complete transaction record, identified by its physical log ID.
     Log(CommitSeq),
     /// A materialized application key.
@@ -188,6 +194,20 @@ pub(crate) enum BackendKey<'a> {
 /// an eight-byte table identifier followed by an arbitrary (possibly empty)
 /// raw application key. Zero is never accepted as a log ID.
 pub(crate) fn classify_backend_key(key: &[u8]) -> BackendKey<'_> {
+    if key == FORMAT_KEY {
+        return BackendKey::Format;
+    }
+    if let Some(suffix) = key.strip_prefix(LANE_KEY_PREFIX) {
+        if suffix.len() != 2 {
+            return BackendKey::Foreign;
+        }
+        let tag = u16::from_be_bytes(suffix.try_into().expect("length checked"));
+        return if usize::from(tag) <= mako_local::MAX_WORKERS {
+            BackendKey::Lane(tag)
+        } else {
+            BackendKey::Foreign
+        };
+    }
     if key.starts_with(LOG_KEY_PREFIX) {
         let suffix = &key[LOG_KEY_PREFIX.len()..];
         if suffix.len() != 8 {
@@ -797,7 +817,12 @@ impl CommitRecord {
     ) -> Result<Self, RecordError> {
         let key_sequence = match classify_backend_key(log_key) {
             BackendKey::Log(sequence) => sequence,
-            BackendKey::Data { .. } | BackendKey::Foreign => return Err(RecordError::ForeignKey),
+            BackendKey::Format
+            | BackendKey::Lane(_)
+            | BackendKey::Data { .. }
+            | BackendKey::Foreign => {
+                return Err(RecordError::ForeignKey);
+            }
         };
 
         if value.len() > max_bytes {
@@ -948,14 +973,12 @@ impl CommitRecord {
     }
 
     /// Serialized recovery value, with the record's selected integrity mode.
-    #[cfg(test)]
-    pub fn encoded(&self) -> &[u8] {
+    pub(crate) fn encoded(&self) -> &[u8] {
         &self.encoded
     }
 
     /// Exact private RocksDB key for the serialized recovery value.
-    #[cfg(test)]
-    pub fn log_key(&self) -> &[u8] {
+    pub(crate) fn log_key(&self) -> &[u8] {
         &self.log_key
     }
 
@@ -1297,7 +1320,7 @@ fn encode_prepared(mutations: &[Mutation], encoded_len: usize) -> Result<Vec<u8>
     Ok(encoded)
 }
 
-fn make_log_key(sequence: CommitSeq) -> Result<Vec<u8>, RecordError> {
+pub(crate) fn make_log_key(sequence: CommitSeq) -> Result<Vec<u8>, RecordError> {
     let mut key = make_unbound_log_key()?;
     key[LOG_KEY_PREFIX.len()..].copy_from_slice(&sequence.get().to_be_bytes());
     Ok(key)
@@ -1394,7 +1417,7 @@ impl<'a> Cursor<'a> {
 }
 
 /// CRC-32C (Castagnoli), in its standard reflected representation.
-fn crc32c(bytes: &[u8]) -> u32 {
+pub(crate) fn crc32c(bytes: &[u8]) -> u32 {
     let mut crc = !0_u32;
     for &byte in bytes {
         let index = ((crc ^ u32::from(byte)) & 0xff) as usize;
