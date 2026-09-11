@@ -1,0 +1,391 @@
+# The standalone Raft performance harness
+
+Mako's Raft had no performance test. The only throughput numbers in the tree
+came from `dbtest`, which measures transactions through the whole Mako stack
+with Raft's cost folded invisibly into them. This harness measures Raft on its
+own: a real three-process cluster on the production build, offered a controlled
+rate of controlled-size log entries, reporting enqueue-to-apply latency and
+applied entries per second, one structured record per run.
+
+Built to `docs/plans/raft-perf-harness.txt`. That plan is the work order; this
+document is the manual.
+
+## The pieces
+
+| Path | What it is |
+|---|---|
+| `src/deptran/raft/raft_bench.cc` | the driver — one process of the cluster |
+| `examples/raft_bench.sh` | launcher — stands up three processes, produces one record |
+| `scripts/raft_perf/run_sweep.sh` | sweep driver — many points, one output directory |
+| `scripts/raft_perf/processing.py` | parser — a directory of records into plot-ready series |
+| `scripts/raft_perf/lattput.py` | the saturation curve: median latency against throughput |
+| `scripts/raft_perf/plot_latency_cdf.py` | the latency CDF |
+| `docs/plans/raft-perf-profile.txt` | what Mako actually submits to Raft, measured |
+
+## Quick start
+
+```bash
+ninja -C build raft_bench
+
+# One point.
+examples/raft_bench.sh --out /tmp/point.json \
+    --partitions 1 --payload-bytes 1024 --rate 5000 --duration-sec 10
+
+# A few minutes, end to end, including the plots. On a healthy tree this
+# exits 0; a non-zero exit means a run failed, and SUMMARY.md names it.
+./scripts/raft_perf/run_sweep.sh --quick
+python3 scripts/raft_perf/processing.py raft_perf_output/sweep_*/rate
+python3 scripts/raft_perf/lattput.py raft_perf_output/sweep_*/rate -o /tmp/lattput.png
+python3 scripts/raft_perf/plot_latency_cdf.py raft_perf_output/sweep_*/rate -o /tmp/cdf.png
+
+# The full sweep. It prints its own runtime estimate first; see it without
+# running anything:
+./scripts/raft_perf/run_sweep.sh --dry-run
+./scripts/raft_perf/run_sweep.sh
+```
+
+The plot scripts need `matplotlib >= 3.3` (for `Axes.set_box_aspect`). Nothing
+else does; `processing.py` is standard library only, and prints a readable
+table on its own, so a machine that runs the sweep does not need matplotlib.
+
+**Run one sweep at a time on a machine.** Two concurrent sweeps do not collide
+on ports — every run picks its own randomized base — but they do compete for
+the CPU and loopback bandwidth that the numbers are measuring, so both sets of
+results are wrong in a way nothing in the record reveals.
+
+## What it measures
+
+**Enqueue-to-apply latency**, per entry, on the leader: from the moment
+`add_log_to_nc()` is called to the moment the leader's own apply callback sees
+that entry. The enqueue time is written into the payload and read back in the
+callback — the technique `src/mako/benchmarks/paxos_async_commit_test.cc`
+already used. Both timestamps come from the same process's `steady_clock`, so
+the difference needs no cross-clock correction.
+
+**Applied entries per second** over a measured window that excludes a
+configurable warmup prefix.
+
+That path, in order, is: the driver's offer thread → `RaftWorker::submit_queue_`
+→ `RaftWorker::SubmitLoop` → `RaftServer::Start()` (local append) →
+`RequestReplication()` → the leader's heartbeat/replication fiber →
+AppendEntries to a majority → commit → `apply_queue_` → the apply thread →
+the callback.
+
+## What it deliberately does not measure
+
+- **Anything above Raft.** No Masstree, no STO concurrency control, no
+  transaction execution, no client RPC. `dbtest`'s `agg_persist_throughput`
+  (`src/mako/benchmarks/bench.cc:677`) is `n_commits / elapsed_sec` where
+  `n_commits` counts *transactions*; a change confined to Raft moves it by an
+  amount swamped by every layer above.
+- **Network latency.** See the caveats.
+- **Failure or partition behaviour.** This is a performance harness. It has no
+  fault injection and makes no correctness claim.
+- **Durability.** The branch this was built on is memory-only Raft;
+  `MAKO_RAFT_SNAPSHOTS` is unset by default, so no snapshotting is in the path.
+
+## Exit codes
+
+A run that had to be discarded says so in its exit status, so a sweep or a CI
+step does not silently count it. `examples/raft_bench.sh` propagates whichever
+is worse: its own verdict, or the worst of the three replicas'.
+
+| code | meaning |
+|---|---|
+| 0 | a measurement |
+| 1 | no process wrote a record — nobody became leader, or the leader aborted |
+| 2 | bad arguments, missing build, missing config |
+| 3 | leadership was lost mid-window (`offer_rejected > 0`) |
+| 4 | one process led some partitions but not all — a partial cluster |
+| 5 | the run exceeded its wall-clock budget and was killed |
+| 6 | nothing was applied inside the measured window |
+| 7 | no leader anywhere: this process led nothing and applied nothing |
+
+`scripts/raft_perf/run_sweep.sh` exits 1 if any run failed, and `SUMMARY.md`
+names them.
+
+## Reading a record
+
+One flat JSON object per run, written by the leader only. Every key:
+
+### Provenance
+
+| key | meaning |
+|---|---|
+| `commit` | git HEAD when the run started, `-dirty` if the tree was modified. Set by the launcher via `MAKO_BENCH_COMMIT`; `"unknown"` if the driver was run by hand without it. |
+| `date` | UTC, ISO 8601, when the record was written |
+| `host` | `gethostname()` |
+| `build_flavour` | CMake `MODE` (`perf`, `debug`, …), baked in at configure time |
+| `cmake_build_type` | CMake `CMAKE_BUILD_TYPE` |
+| `raft_test_coro` | whether `RAFT_TEST_CORO` was defined. **Must be `false` for a number you intend to believe** — see trap T1 below. |
+| `raft_default_single_group` | whether `RAFT_DEFAULT_SINGLE_GROUP` was defined, i.e. what the group mode would have been without an explicit flag |
+| `config` | the config files passed with `-f`, comma-joined |
+| `proc` | `localhost`, `p1` or `p2` |
+| `role` | always `leader` — only the leader writes a record |
+| `label` | free-form; the sweep driver puts the phase name here |
+
+### Inputs
+
+| key | meaning |
+|---|---|
+| `partitions` | Raft groups driven. In the generated configs this is also the worker-thread count (trap T4). |
+| `replicas` | recorded for provenance; not derived from the config |
+| `group_mode` | `single` or `multi` — see below |
+| `payload_bytes` | total entry size offered, including the 40-byte stamped header |
+| `batch` | the fourth argument of `add_log_to_nc`. **Not entry coalescing** — see below. |
+| `offered_rate` | entries/sec across all partitions that the pacer aimed for; `0` means unthrottled |
+| `duration_sec` | requested measured-window length |
+| `warmup_sec` | discarded prefix |
+| `max_outstanding` | driver-side in-flight bound, **per partition** |
+| `leader_wait_sec` | how long the process was willing to wait for leadership |
+| `max_samples` | cap on retained latency samples per partition. Read it together with `samples_dropped`: a drop count means nothing without the cap it was measured against. |
+| `follower_linger_sec` | how long a follower kept serving past the end markers |
+| `log_level` | rrr log level in force (`0`=FATAL … `4`=DEBUG). Default 2. Raising it changes the number — see caveats. |
+
+### Results
+
+| key | meaning |
+|---|---|
+| `measured_window_sec` | the window actually achieved. Shorter than `duration_sec` means the offer loop stopped early. |
+| `applied_per_sec` | `applied_in_window / measured_window_sec`. **The throughput number.** |
+| `offered_per_sec` | the same for offers, so a pacer that could not keep up is visible |
+| `offered_total` / `applied_total` | whole-run counts, warmup and leadership probes included on both sides. They should agree closely; `applied_total` materially below `offered_total` means Raft took entries it never applied. |
+| `offered_in_window` / `applied_in_window` | counts inside the measured window. A large gap is a shortfall, not noise. |
+| `offer_rejected` | offers `add_log_to_nc` refused because leadership was lost. **Non-zero invalidates the point**; the launcher exits 3 and `processing.py` drops the record. |
+| `offer_stalled_sec` | seconds the offer threads spent blocked on `max_outstanding`, summed across partitions. Large relative to `measured_window_sec × partitions` means the run never offered what it was asked to. Past the knee that is the expected result; below it, the bound leaked because Raft accepted entries and then dropped them on a leadership flap, and the point is dead. `processing.py` names such records. |
+| `leadership_changes` | leadership transitions this process was notified of. More than the initial election means the cluster flapped during the run. |
+| `foreign_applied` | applied entries that were not this harness's (Raft's internal no-ops, mostly). Counted, never measured. |
+| `samples_used` / `samples_dropped` | retained latency samples, and how many exceeded `--max-samples`. Dropped samples cost percentile resolution only; throughput is counted separately and is always exact. |
+| `latency_mean_us`, `latency_p50_us`, `latency_p90_us`, `latency_p99_us`, `latency_p999_us`, `latency_max_us` | enqueue-to-apply latency, microseconds, over in-window samples. Nearest-rank percentiles over the sorted samples. |
+| `peak_outstanding` | the largest value `get_outstanding_logs()` returned during the run, sampled every 64th offer |
+| `applied_per_sec_per_partition` | `applied_per_sec / partitions`, the analogue of bench.cc's `avg_per_core_persist_throughput` |
+| `min_partition_applied_in_window` / `max_partition_applied_in_window` | the slowest and fastest partition. One straggler among six is invisible in the aggregate and diluted to a sixth of its weight in the pooled percentiles; these two make it legible. |
+| `latency_cdf_us` | percentile → microseconds, 1..99 plus `99.9` and `100`. What the CDF plot draws; the raw samples are not written to disk. This is the **one** nested value in an otherwise flat record — the plan asked for "flat, no nesting", and a hundred `latency_p37_us` keys would be worse. `processing.py` special-cases it. |
+
+### Two keys that mean less than they look like
+
+**`batch` is not entry coalescing.** It sets `RaftWorker::batch_limit_`
+(`raft_worker.cc:710`), a single member with last-writer-wins semantics across
+every partition and every caller. All it does is bound how many already-queued
+payloads `SubmitLoop` drains per acquisition of `submit_mutex_`
+(`raft_worker.cc:1135-1143`); each drained payload still gets its own
+`Submit()` → `RaftServer::Start()` → its own Raft log slot. It is lock
+amortisation. Real wire-level coalescing happens later, on the leader's
+replication path, bounded by `MAKO_RAFT_APPEND_BATCH_MAX_ENTRIES` (default 256,
+`server.cc:553-560`) — which this harness does not sweep.
+
+**`peak_outstanding` means different things in the two group modes.** In
+single-group mode one `RaftServer` carries every partition, so all partitions
+read the same process-wide number; in per-partition mode each partition reads
+its own. The two modes' values are therefore not comparable with each other —
+which is awkward, because comparing those two modes is what D5 exists for. Use
+`applied_per_sec` and the latency percentiles for that comparison, not this.
+
+**`peak_outstanding` is a trend indicator, not a queue depth.**
+`get_outstanding_logs()` returns `worker->n_tot - raft_server->commitIndex`
+(`raft_main_helper.cc:947-960`). `n_tot` counts successful `Start()` calls since
+process launch; `commitIndex` is an absolute Raft log index that also counts
+no-ops. It never observes `submit_queue_` at all — an entry waiting to be
+submitted is invisible to it — and the read of `commitIndex` is unsynchronised.
+The driver's own in-flight bound (`max_outstanding`, offered minus applied) is
+the number that actually shapes the run.
+
+## The three configurations, and why those three
+
+Decision D5 of the plan. Not a sweep of partition counts; three shapes.
+
+| partitions | group mode | why | where it runs |
+|---|---|---|---|
+| 1 | single | the low-variance regression gate. One Raft group, one worker thread, nothing to contend. | every phase (`CONFIGS`) |
+| 6 | single | what production runs. | every phase (`CONFIGS`) |
+| 6 | multi | brackets the cost of the shared recursive mutex. | the `groups` phase only — see below |
+
+Group mode selects how many `RaftServer` instances a process creates.
+
+- **single** (`--group-mode single`, or `--raft-groups=single`): one
+  `RaftServer` carries every partition. The other partitions' ports are served
+  by stub servers, each with its own poll thread, all dispatching into that one
+  `RaftServer` behind one recursive mutex — so the mutex becomes genuine
+  cross-thread contention. This is the default: CMake `SINGLE_RAFT_INSTANCE` is
+  `ON`, which defines `RAFT_DEFAULT_SINGLE_GROUP`.
+- **multi** (`--group-mode multi`): one `RaftServer` and one poll thread per
+  partition, no shared lock.
+
+`raft_bench` always passes the mode explicitly rather than inheriting the
+compile-time default, and records what it passed.
+
+### Per-partition group mode does not work above one partition
+
+**As of 2026-09-11 the `6 / multi` row cannot be measured.** Three processes
+enter an unbounded election storm and no partition above 0 ever elects a
+leader. Confirmed matrix: `single`/1 works, `single`/6 works, `multi`/1 works,
+`multi`/2 fails, `multi`/6 fails.
+
+The cause is in the Raft implementation, not in the harness.
+`RaftServer::RequestVoteImpl` passes the **locale** id where a **global site**
+id is required:
+
+- `src/deptran/raft/server.cc:2733` — `const locid_t loc_id = loc_id_;`
+- `src/deptran/raft/server.cc:2803-2804` —
+  `commo()->BroadcastVote(par_id, lst_idx, lst_term, loc_id, term);`
+- `src/deptran/raft/commo.cc:112-117` — that parameter is declared
+  `siteid_t self_id`
+- `src/deptran/raft/commo.cc:143` — `req.site_id = self_id;` puts it on the wire
+- `src/deptran/raft/server.cc:2939-2942` — the receiver rejects any candidate
+  not in `current_config_`
+- `src/deptran/raft/server.cc:1565-1571` — `current_config_` holds **global**
+  site ids, from `Config::SitesByPartitionId`
+
+`Config::LoadSiteYML` (`src/deptran/config.cc:336-366`) increments `site_id`
+globally across every row while resetting `locale_id` to 0 at the top of each
+row, so with three replicas per partition `site_id == 3 * partition + locale`.
+The two id spaces coincide **only for partition 0** — which is exactly why
+single-group mode (whose one worker sits on partition 0) and multi-at-one-
+partition both work. For any partition ≥ 1 the candidate advertises 0, 1 or 2,
+`current_config_` holds `{3p, 3p+1, 3p+2}`, every vote is rejected, and the term
+counter runs away. The observed log line is precisely that rejection:
+
+```
+[RAFT_VOTE] Site 12 rejected malformed/non-voter candidate 0 term 375 last_log_term 0 (voter=false)
+```
+
+The same argument also disables the self-skip at `commo.cc:121-124`, so a
+candidate sends RequestVote to its own listener and rejects itself.
+
+The fix is one argument — `site_id_` in place of `loc_id` at `server.cc:2804`.
+It has **not** been made here: changing the Raft implementation is out of scope
+for this harness (plan section 12 — "this harness exists to measure before
+changing"). It is raised, not fixed.
+
+The configuration is still exercised, in the `groups` phase, which exists for
+exactly this comparison — a sweep that silently omitted it would read as "we
+measured what we could", and the failure is the finding. It is deliberately
+**not** in `CONFIGS`, the list every phase iterates: carrying it through the
+rate sweep would add 189 identical two-minute failures and double the sweep's
+wall clock without adding information. `SUMMARY.md` names the failures.
+
+## Caveats — do not over-read a number
+
+**Loopback means no network latency.** `config/1leader_2followers/raft*.yml`
+maps `localhost`, `p1` and `p2` all to `127.0.0.1`. Three processes buy
+address-space isolation, not network delay. Every number from this harness
+**understates replication latency for a geo-distributed deployment**, which is
+the deployment Mako exists for. Recovering that term needs multi-machine
+deployment, which is out of scope here.
+
+**There is a latency floor of roughly a millisecond, and it is polling, not
+Raft.** The apply thread has no condition variable: when `apply_queue_` is
+empty it sleeps a fixed 1 ms (`server.cc:1478`). And a replication wake that is
+missed falls back to the heartbeat tick, 5 ms in production
+(`HEARTBEAT_INTERVAL`, `server.h:1163-1165`; override with
+`MAKO_RAFT_HEARTBEAT_INTERVAL_US`). At low offered rates the measured p50 is
+dominated by those two constants. A measured 2-3 ms p50 on an idle loopback
+cluster is that floor, not the cost of consensus.
+
+**The unthrottled point's latency is Little's law, not a property of Raft.**
+At `--rate 0` the only thing shaping the offer is `--max-outstanding`, so
+latency converges on `max_outstanding × partitions / throughput`. Measured:
+1 partition, 1 KiB entries, bound 4096 → 39 853 entries/s and a p50 of 100 ms,
+which is 4096/39853 to three digits. Read the unthrottled point for its
+*throughput*; its latency is an artefact of the bound you chose.
+
+**The in-flight bound can leak, and `offer_stalled_sec` is how you see it.**
+`add_log_to_nc()` returning true is not a promise that the entry will be
+applied: it pre-checks leadership and queues the payload on
+`RaftWorker::submit_queue_`, and the submit thread can find that leadership has
+since moved and drop the entry with no counter anywhere
+(`raft_worker.cc:769-771`). The driver's own in-flight accounting — offered
+minus applied — then never gets that unit back. A leadership flap that recovers
+inside the run therefore leaves the bound permanently short, throughput
+collapses, and `offer_rejected` stays 0 because the *next* offer succeeds. The
+symptom is a large `offer_stalled_sec` at an offered rate well below the knee;
+`processing.py` names any record in that state. Past the knee a large
+`offer_stalled_sec` is simply what saturation looks like — the record cannot
+tell the two apart, only the offered rate can.
+
+**`--max-outstanding` is per partition.** Six partitions at the same value put
+six times as much in flight, so a 1-partition and a 6-partition unthrottled
+point are not comparable on latency. It is a memory bound as much as a tuning
+knob: `RaftWorker::submit_queue_` is an unbounded `std::deque` holding a *copy*
+of every payload, so 4096 in flight at 286 KB would be 1.2 GB per partition.
+`run_sweep.sh` scales it down as the payload grows.
+
+**Log level changes the number.** The apply path emits one `Log_info` line per
+applied entry (`[APPLY-LOGS] site=… applying index=…`, `server.cc:1400-1403`
+region) and janus's static initialiser leaves the level at INFO
+(`src/deptran/__dep__.h:110-115`). Measuring at INFO measures the logger, so
+`raft_bench` lowers it to WARN before `setup()` and records the level it used.
+Do not compare records with different `log_level`.
+
+**Partition count equals thread count.** The generated configs derive both from
+the same `N` (`config/1leader_2followers/raft_generator.py`), so
+`raft6_shardidx0.yml` means six partitions *and* six worker threads. They cannot
+be varied independently without regenerating configs.
+
+**Do not build this on `RaftLab`.** There is a five-replica in-process harness
+at `build_raftlab/deptran_server -f config/raft_lab_test.yml`, and it is
+tempting because it is one process. It is compiled with `RAFT_TEST_CORO`, where
+the leader no-op is compiled out and the heartbeat interval is 100 ms against
+production's 5 ms. Its numbers describe a different system. Every record carries
+`raft_test_coro` so this cannot be confused after the fact.
+
+**Three runs minimum.** A single run is not a measurement. `run_sweep.sh`
+defaults to `--trials 3`; `processing.py` reports the median throughput, takes
+the latency and CDF from that same trial rather than mixing statistics from
+different runs, and reports the spread as a population standard deviation.
+
+**If Mako already has a capacity knob you need, use it.** CPU throttling exists
+and is CI-tested (`ci/test_cpu_throttling_scaling.sh`, `MAKO_CPU_LIMIT` /
+`MAKO_THROTTLE_CYCLE_MS`). Use that to vary capacity rather than inventing a
+mechanism.
+
+## The sweep axes
+
+All declared as arrays at the top of `scripts/raft_perf/run_sweep.sh`. Change
+them there, nowhere else.
+
+- **`RATES`** — the saturation axis, one array per payload size because the
+  achievable rate is bandwidth-bound and no single array brackets the knee for
+  a 4 KB entry and a 1 MB entry at once. The shape is ported from jetpack's
+  Raft concurrency array (dense around the knee, sparse above it), re-expressed
+  as fractions of the measured unthrottled rate, with `0` (unthrottled) last.
+  Re-derive the anchors on a new machine with `--phase knee`.
+- **`PAYLOAD_BYTES`** — brackets the profile: 4 KiB, the measured p50 of a real
+  TPC-C Raft entry (286 208 B), and 1 MiB.
+- **`BATCH_SIZES`** — 1 and 400, the value `src/mako/sto/Transaction.cc` passes.
+  Expect a flat curve; see the note above on what `batch` does.
+- **`CONFIGS`** — the shapes every phase iterates: 1 partition / single group,
+  and 6 partitions / single group. The third D5 shape, 6 partitions with
+  per-partition groups, is **not** here: it cannot elect a leader on this tree
+  (see above), and carrying it through the rate sweep would add 189 identical
+  two-minute failures and double the sweep's wall clock for no information. It
+  is exercised once per mode in the `groups` phase, which exists for exactly
+  that comparison, so the failure is still reported rather than omitted.
+- **`GROUPS_MODES` / `GROUPS_PARTITIONS`** — the `groups` phase's own axes.
+- **`FIXED_RATE_FOR`** — the rate every non-rate phase is held at, *per
+  payload*: about 0.85 of that payload's measured unthrottled ceiling
+  (10 000 / 190 / 55 entries/sec). One global constant cannot serve three
+  payload sizes whose ceilings span two orders of magnitude — a single value
+  chosen for the 286 KB knee would drive the 1 MB point three times past
+  saturation, and the payload phase would then show a latency cliff at 1 MB
+  that a reader would attribute to entry size.
+
+## Where the numbers came from
+
+`docs/plans/raft-perf-profile.txt` records what Mako actually submits: entries
+of about 286 KB at the median with a long rare tail into the tens of megabytes,
+roughly 50 per second per partition, and a `SubmitLoop` batch of 1.04. Those
+measurements set the payload and rate axes above. That file also documents the
+temporary instrumentation used to obtain them, which was removed afterwards.
+
+## Not part of this harness
+
+Raised rather than started, per plan section 12:
+
+- A `dbtest` end-to-end cross-check that the standalone numbers predict real
+  behaviour. Worth doing, as validation of the instrument.
+- Multi-machine deployment, to recover the network-latency term.
+- Any change to the Raft implementation — including the vote-id defect above
+  and the locking that single-group mode implicates.
+- Partition counts beyond 1 and 6.
+- Failure or partition injection.

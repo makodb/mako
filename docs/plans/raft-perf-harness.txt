@@ -1,7 +1,11 @@
 ================================================================================
  PLAN: A STANDALONE RAFT PERFORMANCE HARNESS
 ================================================================================
- Status:   NOT STARTED. This is a work order, not a record.
+ Status:   DONE, 2026-09-11. Steps 1 through 7 delivered; see the completion
+           record at the bottom of this file for what was built, what was
+           measured, and the one configuration that could not be measured.
+           The manual is docs/performance/raft-harness.md; the workload
+           profile from step 1 is docs/plans/raft-perf-profile.txt.
  Branch:   codex/raft-memory-only (base codex/raft-stage2-prep @ f53f3804)
  Written:  2026-09-10, from a design discussion with the owner.
  Audience: an agent with no context from that discussion.
@@ -420,4 +424,118 @@
  * Failure or partition injection. This is a performance harness. The
    separate question of partition-correctness evidence is assessed in the
    scratch document referenced from docs/raft-memory-only.txt section 7.
+================================================================================
+
+================================================================================
+ COMPLETION RECORD (2026-09-11)
+================================================================================
+ Appended after the work was done. Everything above is the original work order,
+ unmodified apart from the Status line.
+
+ WHAT WAS BUILT
+
+   src/deptran/raft/raft_bench.cc        the driver (step 2, decision D6)
+   CMakeLists.txt                        add_apps(raft_bench ...) + the two
+                                         provenance compile definitions
+   examples/raft_bench.sh                three-process launcher (step 3)
+   scripts/raft_perf/processing.py       record parser (step 4)
+   scripts/raft_perf/run_sweep.sh        sweep driver (step 5)
+   scripts/raft_perf/lattput.py          saturation curve (step 6)
+   scripts/raft_perf/plot_latency_cdf.py latency CDF (step 6)
+   docs/plans/raft-perf-profile.txt      workload profile (step 1)
+   docs/performance/raft-harness.md      the manual (step 7)
+   .gitignore                            /raft_perf_output/
+
+ WHAT STEP 1 FOUND, and what it changed about the plan's own assumptions
+
+   Mako's Raft entries are much larger and much rarer than a reader of this
+   plan would guess: a p50 of 286 KB, a tail to 25 MB, and only ~50 entries per
+   second per partition (~300 aggregate across six). Each entry is a batch of
+   ~400 transactions assembled by src/mako/sto/Transaction.cc, not one
+   transaction. That set the payload axis (4 KiB / 286208 B / 1 MiB) and forced
+   the offered-rate axis to be declared PER PAYLOAD, because the achievable
+   rate is bandwidth-bound (~50-75 MB/s on this loopback) and no single array
+   brackets the knee for both a 4 KB and a 1 MB entry.
+
+   It also showed the plan's "--batch" axis measures less than it sounds like.
+   The fourth argument of add_log_to_nc is not entry coalescing; it bounds how
+   many queued payloads SubmitLoop drains per mutex acquisition. The observed
+   batch is 1.04 whether Mako passes 1 or 400. That is recorded rather than
+   assumed, and the axis was kept so the flat curve is evidence.
+
+ VERIFIED ACCEPTANCE
+
+   Step 2: three processes elect a leader, the leader applies what it offers,
+           one record is written. --rate 0 saturates (1 partition, 4 KiB:
+           ~11.9k entries/s); a low --rate sits near the floor (600/s ->
+           2.76 ms p50).
+   Step 3: one command, one record, no stray processes, run twice in a row.
+   Step 4: the parser turns a directory of records into the plot input, and
+           fails loudly with exit 1 on a missing key, malformed JSON, or an
+           empty directory.
+   Step 5: --dry-run prints the full matrix and the runtime estimate without
+           running anything; --quick completes in ~2 minutes and produces
+           parseable records.
+   Step 6: both plots produce a PNG from a sweep's output, headless.
+   T2:     bash scripts/raft_dsl.sh --check passes; no DSL item was added and
+           no GEN region hand-edited.
+
+ THE ONE CONFIGURATION THAT COULD NOT BE MEASURED
+
+   D5 asks for both group modes at six partitions. Per-partition ("multi")
+   group mode does not elect a leader above ONE partition on this tree: the
+   three processes enter an unbounded election storm. Measured matrix —
+   single/1 works, single/6 works, multi/1 works, multi/2 fails, multi/6 fails.
+
+   Root cause, confirmed in source and independently by three reviewers:
+   RaftServer::RequestVoteImpl passes the per-partition LOCALE id where a
+   global SITE id is required.
+
+     src/deptran/raft/server.cc:2733    const locid_t loc_id = loc_id_;
+     src/deptran/raft/server.cc:2803-4  BroadcastVote(par_id, lst_idx,
+                                            lst_term, loc_id, term)
+     src/deptran/raft/commo.cc:112-117  that parameter is siteid_t self_id
+     src/deptran/raft/commo.cc:143      req.site_id = self_id  (goes on the wire)
+     src/deptran/raft/server.cc:2939-42 receiver rejects a candidate not in
+                                            current_config_
+     src/deptran/raft/server.cc:1565-71 current_config_ holds GLOBAL site ids
+
+   Config::LoadSiteYML (src/deptran/config.cc:336-366) increments site_id
+   globally across rows while resetting locale_id per row, so with three
+   replicas site_id == 3*partition + locale and the two id spaces coincide
+   only for partition 0 — which is exactly why single-group mode (whose one
+   worker sits on partition 0) and multi-at-one-partition both work. The same
+   mistake also defeats the self-skip at commo.cc:121-124, so a candidate
+   RequestVotes its own listener.
+
+   The fix is one argument (`site_id_` in place of `loc_id`). It was NOT made:
+   section 12 puts changes to the Raft implementation out of scope, and this
+   harness exists to measure before changing. Raised here instead. The
+   configuration remains declared in run_sweep.sh so the sweep fails loudly on
+   it rather than silently omitting it.
+
+ DEVIATIONS FROM THE WORK ORDER
+
+   * CLAUDE.md mandates running tests through Docker. Docker is not installed
+     on this host, so the step-1 dbtest run and every harness run were done
+     directly on the host. Recorded in docs/plans/raft-perf-profile.txt.
+   * D6 says the CMake target is "added the same way" as raft_lab_standalone.
+     raft_lab_standalone uses a bare add_executable inside the RAFT_TEST gate
+     with test-only include dirs; raft_bench is registered with add_apps(),
+     which is what section 5 of this plan actually points at
+     (CMakeLists.txt:1534). add_apps is the correct choice: the driver must
+     link the production `mako` library, and it must NOT sit behind RAFT_TEST,
+     which would define RAFT_TEST_CORO and invalidate every number (trap T1).
+   * The record carries more keys than step 4 suggested, never fewer. The
+     additions are cmake_build_type, raft_default_single_group, max_outstanding,
+     log_level, proc, role, measured_window_sec, offered_per_sec,
+     offered_in_window, applied_in_window, offer_rejected, foreign_applied,
+     samples_used, samples_dropped, latency_max_us and latency_cdf_us. Each
+     exists because a reader who lacks it can misread the number: log_level in
+     particular changes the result, since the apply path logs one INFO line per
+     applied entry.
+   * A --phase knee was added to run_sweep.sh. It is not part of --phase all;
+     it re-derives the offered-rate arrays on a new machine, which the plan
+     asks for implicitly ("using the step-1 profile as the midpoint") but gives
+     no mechanism for.
 ================================================================================
