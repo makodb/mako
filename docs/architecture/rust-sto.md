@@ -6,8 +6,8 @@
 > transactional Masstree point operations, copied scans, physical-directory
 > generation validation, the homogeneous direct-commit lane, private direct
 > directory tokens, bounded atomic values, trusted scan-generation validation,
-> growable registries with explicit allocation budgets, the terminal-read
-> typestate, the optional fixed-`u64`
+> growable registries whose explicit allocation budget is admitted before any
+> native storage, the terminal-read typestate, the optional fixed-`u64`
 > Masstree specialization, pure Rust reference map/vector/queue adapters, and
 > the upper commit-hook seam, including post-install publication while write
 > locks remain held, exist on this branch.
@@ -33,14 +33,15 @@
 > **Unsupported or deferred:** Rust remote indexes, cross-shard or distributed
 > commit, multi-shard Rust execution, Paxos/Raft replication, the `Opaque`
 > runtime, durability and MVCC, upper `mako-local`/cache cutover, native runtime,
-> tree, or registration reclamation, and native worker/core-ID recycling.
+> tree, or registration reclamation, native worker/core-ID recycling, and
+> reported (rather than asserting) native allocator-region exhaustion.
 >
 > **Audience:** STO core, transactional-datatype, Masstree ABI, and Mako integration developers
 >
 > **Baseline:** Mako `mako-dev` at `378fc281d2c6`; compatibility oracle
 > pull request 86, `worktree-masstree-rocks` at `a3ede48859a4`
 >
-> **Last updated:** 2026-09-09
+> **Last updated:** 2026-09-11
 
 This document defines the intended semantics and architecture of Mako's native
 Rust implementation of STO. It is a living design contract: implementation
@@ -3871,6 +3872,17 @@ precedence over the capacity result. Successfully interned tombstones and
 consumed IDs from the aborted attempt can remain allocated under the v1
 identity rules; transactional rollback does not promise allocation rollback.
 
+Not every `Capacity` is ordinary. A spent checked OCC commit-ID domain is
+terminal: `Runtime::reserve_commit_id` transitions the runtime to
+`RuntimeHealth::Exhausted`, and every later transaction is refused until a
+proved quiescent rebase or restart. The runtime therefore MUST classify
+capacity exhaustion as terminal or ordinary before translating it, and a
+terminal exhaustion MUST be reported as a fatal status rather than as status 6.
+Reporting it as status 6 would invite the closed TPC-C boundary to retry a
+commit that can never succeed. `CapacityError::is_terminal` is the single
+predicate for that classification, and the closed boundary MUST consult it in
+every capacity-to-status mapping.
+
 The C++ wrapper translates status 6 into `storage_resource_exhausted`. Loader
 and worker boundaries catch it, stop the workload, join started threads, and
 complete database-thread cleanup. Failure during worker setup still completes
@@ -4577,6 +4589,8 @@ satisfy, the performance and false-conflict gate.
 | D28 | RUST/COMPAT | `contains_resolving` and `contains_resolved` provide metadata-only transactional presence with ordinary final OCC validation. Full NewOrder uses them for customer, warehouse, and district witnesses. | Avoids loading and decoding payloads that the valid-data release path does not consume. Missing rows, staged liveness, resolved-token ownership, and commit conflicts remain checked; corruption diagnostics for unused payload bytes are not a parity promise. |
 | D29 | RUST | Lazy record registries grow through sparse, stable directory buckets and share an explicit structural allocation budget. Numeric record/ID/key quotas remain separately configurable; published slots are never reused. | Removes workload-duration ceilings without moving cached records or treating a very large ID quota as a proportional startup allocation. |
 | D30 | RUST/COMPAT | Ordinary capacity exhaustion ends the active attempt and returns status 6 through the closed TPC-C ABI; benchmark boundaries join workers, report usage, suppress successful results, and exit 3. Fatal cleanup or uncertain publication takes precedence. | A full configured budget becomes an application-visible resource outcome while preserving transaction atomicity and quarantine guarantees. |
+| D31 | RUST | A table constructor admits the shared structural registry budget before it creates any native directory, and a rejected creation therefore allocates no process-lifetime native tree. | Native tree storage cannot be released in ABI v1, so budget admission that followed directory creation would permanently consume one tree per rejected attempt. |
+| D32 | RUST/COMPAT | Terminal capacity exhaustion, currently a spent OCC commit-ID domain, reports a fatal status instead of status 6, and still ends the attempt cleanly. | The runtime permanently refuses new transactions after `RuntimeHealth::Exhausted`, so a retryable resource status would misdescribe the outcome. |
 
 ### 20.2 Deferred decisions and review triggers
 
@@ -4588,6 +4602,7 @@ satisfy, the performance and false-conflict gate.
 | Implicit, raw, or cross-worker RCU pin | Fixed-width strided calls, a tree-bound point scope, and a tree-independent worker RCU scope are RAII-owned in safe Rust; no raw guard or cross-worker pin is exposed. | A use case requires a broader lifetime model with enforceable ownership and progress rules. |
 | Commutative multi-owner locks | Exclusive locks plus semantic intents | Counter/queue workloads justify the additional protocol. |
 | Physical record GC | No reclamation | Growth is material and a grace-period design is proven. |
+| Native allocator-region exhaustion | The Silo region allocator asserts when a worker's configured region is exhausted, so a process that outgrows `MAKO_TPCC_ALLOCATOR_MEMORY` aborts instead of reporting a capacity outcome. Deployments MUST size the region to the dataset and volume, and MUST treat an abort as an operational failure; `sto_tpcc_db_usage` reports structural budget use, and `evt_silo_runtime_region_usage` reports native region use. | The region allocator gains a fallible allocation path and the RCU and Masstree callers can propagate it, so exhaustion becomes a reported capacity error at startup or run time. |
 | Distributed `PreparedTransaction` | Not exposed | `sto-mako` specifies IDs, terms, idempotence, recovery, and liveness. |
 | Native version bit allocation | Opaque `AtomicVersion` contract; legacy layout permitted but not exposed | Before the core implementation is performance-frozen. |
 | Fixed-`u64` liveness changes, scans, or general miss fallback | Unsupported; use the general binary-value `Table` | A workload requires them and supplies a new conflict, publication, and representation proof without weakening the specialized sealed profile. |
