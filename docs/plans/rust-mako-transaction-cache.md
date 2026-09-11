@@ -60,7 +60,9 @@ compatibility suite.
    worker publishes to its own single-producer lane. A physical RocksDB
    `WriteBatch` may hold a bounded contiguous prefix from one lane, but batches
    from different lanes need not follow serialization order. Every batch keeps
-   each transaction's commit record and selected materialized mutations atomic.
+   each transaction's commit record, selected versioned rows/tombstones, and
+   lane recovery metadata atomic. Age-based GC later removes log prefixes in
+   separate atomic batches while preserving row versions and recovery metadata.
    Mako timestamps, not physical batch order, decide which value wins.
 6. **MassTrans OCC versions, physical log IDs, and Mako timestamps remain
    separate types and number spaces.** The single-machine cache uses the
@@ -466,19 +468,19 @@ Create a new `mako-cache` layer rather than adding transaction semantics to
   optional record-format choice. The background runtime polls lanes in round-
   robin order and may apply records in a different physical order than their
   Mako timestamps.
-- Route every backend batch through one shared apply coordinator. It always
-  retains the commit log, but it sends a put or delete to the materialized data
-  key only when that record has the greatest Mako timestamp seen for the key.
+- Route every backend batch through one shared apply coordinator. It appends
+  each commit log and updates lane metadata, but replaces a versioned row or
+  tombstone only when the record has the greatest Mako timestamp seen for the key.
   This makes a late older record harmless without exposing RocksDB internals.
 - Define `wait_applied()` as: every transaction acknowledged before the call
   has reached a successful atomic RocksDB batch. The compatibility spelling
   `flush()` means the same thing and must not add a separate RocksDB flush, WAL
   sync, or `fsync` beyond the configured ordinary batch writes.
-- Keep progress only in memory. The acknowledged and applied sequence APIs
+- Keep acknowledgement progress in memory. The acknowledged and applied sequence APIs
   report aggregate record counts across initialized lanes. The applied
   watermark also reports the greatest applied Mako timestamp. Neither value
-  claims a contiguous global serialization prefix. Recovery from complete
-  backend records may reconstruct these values on open, but recovery of an
+  claims a contiguous global serialization prefix. Atomic lane metadata now
+  preserves applied counts and maximum HLCs after log GC, but recovery of an
   unflushed log tail is outside this phase.
 
 The selected first-slice protocol is below. It supersedes both the early global
@@ -565,22 +567,23 @@ RocksDB remains a black box.
    transaction contributes its commit-log operation. For each data key, the
    coordinator emits only the mutation with a timestamp newer than the latest
    timestamp recorded for that key. One RocksDB `WriteBatch` atomically stores
-   those log records and winning materialized mutations before the lane
+   those log records, winning row/tombstone envelopes, and lane metadata before the lane
    advances. A failure retains the lane prefix for retry and leaves its applied
    position unchanged. Physical application order may differ from timestamp
    order, but an older late batch cannot overwrite a newer value or resurrect a
    newer delete.
-7. **Validate complete backend history on open.** Reopen validates any records
-   RocksDB presents by version, optional checksum, physical `CacheSeq`, and
-   checked `MakoTimestamp`. It requires a dense local sequence and increasing
-   timestamps within each tagged lane, accepts the upper-zero untagged dense
-   stream, and rejects duplicate Mako timestamps across the cache. Recovery
-   reconstructs the latest timestamp for every data key from the permanent commit logs,
-   including delete records, and checks the raw materialized state against
-   those winners. It then sorts whole transactions by Mako timestamp for native
-   replay and sets Mako's process-wide clock floor so the next allocation is
-   greater than the recovered maximum. The progress sequence is the recovered
-   record count, not the last physical ID.
+7. **Validate the checkpoint and retained suffix on open.** Reopen validates
+   the version-2 format marker, checksummed row/tombstone envelopes and lane
+   metadata, then the complete retained suffix `(G, A]` in each lane. Records
+   retain their v5/v6 format, optional payload checksum, physical `CacheSeq`,
+   and full `MakoTimestamp`. Tagged lane timestamps increase; the upper-zero
+   untagged stream may have reversed timestamps. Recovery checks surviving
+   timestamp/source identities, source coverage, and retained mutations against
+   the current rows. It rebuilds the winner index from row envelopes and loads
+   current Put values into a private Silo table in bounded native transactions.
+   Permanent lane HLC maxima establish the process clock floor before admission,
+   including when every log has been reclaimed. The applied count is `sum(A)`
+   over lane metadata, so deleting logs does not reset counts or sequence IDs.
    This validation does not promise recovery of a RocksDB tail that had not
    been synced before a machine failure. The first slice exposes one default
    logical table and uses a tagged RocksDB key format separating user data,
@@ -592,6 +595,9 @@ new formats carry the exact 16-byte `MakoTimestamp`; v5 includes a CRC and v6
 is the explicitly unchecked variant. Recovery rejects older versions rather
 than guessing, synthesizing an origin, or truncating a timestamp. Backward
 compatibility is not part of this cutover, so old cache state must be rebuilt.
+The subsequent GC implementation changes the private backend keyspace to
+version 2 without changing native v5/v6 bytes. Opening old or mixed backend
+layouts fails and requires rebuilding in a fresh database directory.
 
 The protocol has no global publication ticket. Disjoint transactions may
 validate, bind a lane-local sequence, install, publish, and return concurrently.
@@ -601,14 +607,14 @@ densely within its own lane. No ordering relationship exists between physical
 IDs in different lanes. `MakoTimestamp` remains separate from the current
 nonopaque row version.
 
-- This slice is local and keeps resident values and commit-log history
-  unbounded. Its writeback queues are capacity-bounded. It has no value
+- This slice is local and keeps resident values and deletion markers
+  unbounded. Its writeback queues are capacity-bounded and application-log
+  retention now defaults to five minutes. It has no value
   eviction, distributed routing, 2PC, replication, or distributed-finality
   semantics.
-- The timestamp filter is currently an in-memory index over raw RocksDB values.
-  Correct reopen therefore depends on retaining every commit log, including
-  deletes, so recovery can rebuild the index. Milestone 1 never prunes those
-  logs.
+- The timestamp filter is an in-memory index backed by checksummed RocksDB
+  row/tombstone envelopes. GC removes only expired applied log prefixes and
+  atomically advances their reclaimed frontiers; rows and lane metadata remain.
 - One cache exclusively owns the backend and its tagged keyspace. External
   writers, a second cache writer, or distributed writers would bypass the
   shared apply coordinator and invalidate last-writer-wins materialization.
@@ -618,17 +624,19 @@ nonopaque row version.
   process-wide, so supporting multiple caches requires a supervisor that
   identifies every namespace, scans every backend, and floors the shared
   timestamp clock before admitting any transaction to any of them.
-- Before log pruning or distributed backend writers, store the winning
-  timestamp with each materialized value and tombstone. A RocksDB merge
-  operator or an equivalent conditional-update envelope must compare that
-  timestamp atomically in persistent state. The current raw-value layout and
-  process-local coordinator are not sufficient for either extension.
+- Every materialized value and tombstone stores its winning timestamp and
+  source sequence, alongside permanent lane coverage and clock-floor metadata.
+  The exclusive coordinator serializes comparison, atomic apply, and GC writes.
+  Distributed or additional backend writers need a separate conditional-update
+  protocol. See the
+  [log-GC design](mako-cache-log-gc.md).
 
 The in-memory applied watermark has one meaning in every RocksDB write mode:
-its sequence is the aggregate number of commit records confirmed present in
-RocksDB, and its timestamp is the greatest applied Mako timestamp. During live
+its sequence is the aggregate number of transactions confirmed applied to
+RocksDB, including those whose logs were reclaimed, and its timestamp is the
+greatest applied Mako timestamp. During live
 application, confirmation is a successful `rocksdb_write` return. During open,
-it is validated backend history. Neither field claims that all smaller Mako
+it is validated checkpoint metadata. Neither field claims that all smaller Mako
 timestamps have been applied, and neither means "synced." The current
 production default is `Wal`: ordinary writes use `sync=false`, and the cache
 adds no separate `FlushWAL`, `SyncWAL`, or memtable-flush call. The analogous
@@ -642,9 +650,9 @@ rather than waiting for a global prefix.
 - `Wal`: the WAL is enabled but not synchronously flushed. A completed batch
   has been accepted by RocksDB, while a machine or power failure may lose the
   OS-cached tail.
-- `None`: the WAL is disabled. Batch application remains atomic while the
-  process is live; this mode is only valid when RocksDB is disposable or for
-  explicit test and benchmark configurations.
+- `None`: the WAL is disabled. The transactional cache now rejects this mode
+  because GC depends on coherent recovery of ordered checkpoint and deletion
+  batches. The lower-level RocksDB adapter still supports disposable uses.
 
 RocksDB 9.10 exposes a latest sequence number through the C API, but that is
 an accepted-write position rather than a passive last-synced position. It also
@@ -652,9 +660,9 @@ exposes active flush operations, which this phase intentionally does not call.
 If a future version provides a sound passive sync notification, record it as a
 separate observed-durable watermark rather than changing `AppliedWatermark`.
 
-Do not reuse Mako's current recovery behavior unchanged: it applies logged
-key/value pairs as separate one-operation STO transactions and therefore does
-not establish atomic recovery of a multi-key commit.
+Checkpoint loading uses bounded private native transactions only after recovery
+validation. Readers cannot observe partial startup. This does not claim a
+historical transaction snapshot or recovery of acknowledged in-memory queues.
 
 ### 1F. Recovery and crash gates
 
@@ -701,9 +709,9 @@ Required revision-1 coverage includes:
 ### 1G. Bounded values and eviction (deferred until after Milestone 1)
 
 Phase 1G is explicitly not a Milestone 1 release blocker. Milestone 1 keeps
-every live value in Silo, so the complete live dataset must fit in RAM. It also
-does not reclaim the commit-record history accumulated in RocksDB. This is
-separate from writeback backpressure: detached permits plus prepared/ready
+every live value in Silo, so the complete live dataset must fit in RAM.
+The post-Milestone-1 log GC removes expired applied transaction history but
+retains deletion markers. These are separate from writeback backpressure: detached permits plus prepared/ready
 in-memory records are bounded by `WritebackConfig::capacity`, and producers
 block before native commit when that capacity is exhausted. Concurrent mode
 applies that configured capacity to each initialized worker lane, so total
@@ -722,6 +730,23 @@ while bounding resident value bytes:
 If transactional read-through makes OCC windows unacceptable, keep the first
 production Silo cache unbounded and treat bounded values and log reclamation as
 separate designs.
+
+The [log-GC plan, updated 2026-09-09](mako-cache-log-gc.md) has its storage,
+recovery, and background collection implemented, with release validation in
+progress. `CacheOptions::log_retention` defaults to 300 seconds and
+`gc_interval` to 10 seconds. Zero retention is supported; invalid interval or
+time-conversion settings fail construction. A monotonic timer schedules each
+Unix-time sweep, which reclaims strict HLC-age prefixes in bounded atomic
+batches, rotating across lanes and interleaving apply work until the cutoff is
+exhausted. Rows, tombstones, applied counts, HLC floors, and lane IDs survive
+even after every retained log disappears. Asynchronous ACK stays `sync=false`.
+
+The cache reports retained/reclaimed records and logical bytes through
+`CacheStatus::log_gc`, plus observed oldest lane heads, errors, and retry/stall
+state. A separate `disk_usage_bytes()` call measures database file sizes and may
+block on filesystem I/O. Retention is an age policy rather than a byte bound;
+write volume and RocksDB compaction lag still determine disk use. Completion
+of sustained capacity and performance acceptance is tracked in the GC plan.
 
 ### Milestone 1 final acceptance gate
 
@@ -991,8 +1016,10 @@ milestone.
    production-default native commit hot path contains no observer branches.
    See the
    [Item 5 validation record](../mako-local-boundary-gates.md#item-5-phase-1f-validation-record).
-6. Treat disk-sync observation, unflushed-tail recovery, and log reclamation as
-   a separate durability milestone. They do not block beginning the
+6. Keep disk-sync observation and unflushed-tail recovery in a separate
+   durability milestone. Application-log reclamation now has its own
+   checkpoint/GC implementation and acceptance plan with `sync=false`.
+   The deferred durability policies do not block beginning the
    distributed Rust port once the local transaction and timestamp-arbitrated
    contract passes its gate.
 7. The final cache-level comparative benchmark completed on zoo-2 on

@@ -924,7 +924,10 @@ timestamp is immutable once its commit record becomes visible.
 
 This format deliberately has no backward-compatibility path. The local cutover
 uses cache record versions v5 and v6 and rejects v3, v4, and other legacy cache
-records. An upgrade must discard and rebuild old cache state. The later
+records. Log GC also moves the private RocksDB keyspace from version 1 to
+version 2, with a checksummed namespace marker, row envelopes, and lane metadata.
+The native v5/v6 transaction bytes do not change. Opening an old or mixed
+keyspace fails; deployment must rebuild it in a fresh database directory. The later
 distributed cutover will likewise bump its replication-record and persisted
 value formats and reject their old 32-bit timestamp layouts. There is no
 legacy sentinel, decoder, or mixed-version comparison rule inside either new
@@ -1167,11 +1170,11 @@ reuse an origin.
 
 #### Recovery and origin management
 
-The current local stage scans every commit record present in RocksDB after
-reopen, validates its timestamp, finds the maximum tuple, and sets the process
-clock floor before accepting writes. The next timestamp minted is strictly
-greater than that maximum. The local stage uses fixed origin 1 and has no
-origin lease service.
+The current local stage recovers each lane's permanent maximum HLC from its
+checkpoint metadata and validates the surviving rows and retained logs against
+it. It sets the process clock floor above the greatest lane maximum before
+accepting writes, even if every log has been reclaimed and every key deleted.
+The local stage uses fixed origin 1 and has no origin lease service.
 
 The target distributed recovery protocol first obtains a nonzero origin lease,
 then initializes the hot HLC so its first result is greater than both the
@@ -1205,15 +1208,16 @@ their Mako timestamps. In the current single-machine cache, every commit-log
 record present in RocksDB carries the full timestamp. A process-wide apply
 coordinator keeps an in-memory per-key winner index and writes a materialized
 mutation only when the incoming timestamp is newer than the indexed winner.
-Recovery retains and scans all commit-log records to rebuild that index before
-it validates the raw materialized values. Retrying the exact same physical
-RocksDB batch and log key is idempotent. Recovery rejects a copied record under
-a different `CacheSeq` when it reuses the same timestamp.
+Versioned rows and tombstones preserve that index across restart. Recovery
+streams those entries and validates the retained suffix of each lane before
+loading current values into a private Silo table. It rejects conflicting
+timestamp/source identities among surviving rows and logs. Repeating the exact
+same physical RocksDB batch is idempotent.
 
 A returned RocksDB error cannot prove whether the atomic batch took effect.
 The coordinator therefore treats every `write_batch` error as an ambiguous
-outcome: it retains the complete lane-tagged physical sequence vector and
-requires that exact batch to retry before any other lane may apply. Only a
+outcome. It retains the exact operation bytes and target lane metadata and
+requires that batch to retry before another apply or GC batch. Only a
 successful return updates the in-memory winner index, retires queue records,
 or advances the applied watermark. Repeating the same log keys and
 timestamp-filtered row operations makes both the “not applied” and “already
@@ -1221,12 +1225,16 @@ applied” outcomes safe. In panic-unwind builds the same rule covers a caught
 backend panic; the workspace release profile uses `panic = "abort"` and relies
 on process recovery instead.
 
-The current materialized RocksDB user value or tombstone does not embed its
-timestamp. This makes log retention and exclusive ownership of the backend
-mandatory. Log pruning, a second writer, or direct external writes would make
-the in-memory winner index incomplete. Before any of those modes are allowed,
-the materialized value and tombstone format must store the winning timestamp,
-and the backend update must compare and replace the value atomically.
+Each materialized RocksDB row now contains its winning full HLC, source lane
+and local sequence, and either user bytes or a tombstone. CRC32C protects these
+envelopes regardless of the chosen native log-checksum policy. The backend is private to the cache: ordinary
+callers open it with `Db::open` and cannot obtain a backend handle or inject a
+shared backend. External fault tests use the explicitly enabled `test-support`
+feature. Production applications must leave that feature disabled.
+
+The exclusive apply coordinator serializes the timestamp comparison and atomic
+row/metadata batch without a RocksDB merge operator. A
+second backend writer would require a separate conditional-update protocol.
 
 One transaction's operations enter RocksDB in one atomic write batch. A higher
 `CacheSeq` or RocksDB sequence number does not make a value newer. Those
@@ -1235,10 +1243,8 @@ sequences only report physical ingestion and backend application progress.
 RocksDB user-defined timestamps are not a drop-in replacement for this check.
 They impose ordering constraints between an application timestamp and
 RocksDB's sequence order for each key. Mako intentionally permits out-of-order
-background application. It therefore keeps explicit timestamp metadata in the
-retained commit log today and will need it in the materialized value envelope
-before removing the retained-log restriction, unless the replay scheduler
-first proves RocksDB's ordering constraints.
+background application. It therefore keeps explicit timestamp metadata in its
+materialized row envelopes and retained transaction records.
 
 The system also keeps its ordering and progress values distinct:
 
@@ -1255,6 +1261,73 @@ The system also keeps its ordering and progress values distinct:
 Code must never cast one watermark into the other. A historical snapshot at a
 Mako timestamp requires retained versions or a proven materialization
 watermark. RocksDB's latest internal sequence number alone is insufficient.
+
+#### Application-log reclamation
+
+The [log-GC design and implementation plan](plans/mako-cache-log-gc.md) is now
+implemented and undergoing release validation. It reclaims Mako transaction
+records stored under private RocksDB keys. In-memory queue records still remain
+until successful application; RocksDB manages its own WAL and SST file lifetime.
+
+Each atomic apply batch stores the winning row/tombstone envelopes, full
+transaction records, and permanent lane metadata together:
+
+| Lane field | Meaning |
+| --- | --- |
+| `A` | Largest contiguous local sequence applied to RocksDB |
+| `G` | Largest contiguous local sequence whose log has been reclaimed |
+| `H` | Maximum applied HLC, including records whose mutations were superseded |
+| Retained bytes | Sum of the remaining log key and value lengths |
+
+Exactly the log suffix `(G, A]` remains. Recovery resumes the lane after `A`,
+recovers the applied count as `sum(A)`, and establishes the HLC floor from
+`max(H)`. These values remain valid when `G = A` and no log keys remain.
+Recovery validates format checksums, coverage, source identities, and retained
+mutations, then loads current Put values in bounded native transactions. It
+does not replay lifetime transaction history or claim to audit deleted history.
+
+`CacheOptions::log_retention` defaults to 300 seconds and `gc_interval` defaults
+to 10 seconds. Both settings remain fixed while the cache is open. Zero
+retention is supported; zero interval and unrepresentable durations are rejected.
+A monotonic timer schedules sweeps, which sample Unix time once and delete only
+records with `physical_us < now_us.saturating_sub(retention_us)`. Records exactly
+at the boundary remain. A backward clock jump delays collection; a forward jump
+makes more applied records eligible.
+
+The background writer visits each persisted lane, including idle lanes, and
+reclaims its consecutive expired prefix in atomic batches of at most 1,024 log
+deletes and 1 MiB of delete-key bytes. It updates `G` and retained bytes in the
+same batch, preserves `A` and `H`, and interleaves batches with application until
+the sweep has no eligible prefixes left. It stops at the first unexpired log
+even in the untagged stream, whose historical timestamps may run backward.
+RocksDB reads each bounded prefix with one iterator seek followed by sequential
+steps, rather than a separate point lookup for every expired record. The
+iterator stops at the batch limit or the first unexpired record and is released
+before the atomic deletion batch.
+An expired transaction still waiting in memory remains untouched until its own
+row/log/metadata batch succeeds.
+
+Uncertain GC errors retain identical retry bytes and block later backend
+updates. The ordinary writeback retry rules and bounded queue backpressure
+still apply. The adapter explicitly selects ordered writes and point-in-time
+WAL recovery. GC-enabled `Db::open` rejects WAL-disabled durability. ACK remains
+volatile with WAL enabled and `sync=false`; GC adds no WAL sync, memtable flush,
+or foreground compaction.
+
+`CacheStatus::log_gc` reports retained/reclaimed counts and bytes, the observed
+lane-head timestamp, GC errors, and pending or stalled attempts. Its oldest timestamp is a best
+known lane-head minimum, so unscanned lanes or reversed untagged timestamps
+limit that observation. `disk_usage_bytes()` separately reads database file
+sizes and may perform filesystem I/O; it is not part of the nonblocking health
+snapshot. File sizes include WAL, SST, and metadata files, and do not measure
+allocated disk blocks. Compaction determines when deleted bytes leave SST files.
+
+Five-minute retention is not a fixed byte bound. Write rate, payload size,
+backlog, and compaction lag determine storage use. Tombstones and their winner
+timestamps remain so delayed old writes cannot resurrect deleted keys. Live
+values still reside in Silo. Value eviction and tombstone reclamation remain
+separate work. Release acceptance, including sustained runs with boost disabled,
+is tracked in the linked plan.
 
 #### Single-machine service lifecycle
 
