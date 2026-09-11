@@ -10,7 +10,7 @@
 //! store really has: refusing writes, and refusing them for a bounded
 //! number of attempts and then recovering.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, RwLock};
 
@@ -75,10 +75,10 @@ impl KeyIndex for MemIndex {
     }
 }
 
-/// A `HashMap`-backed [`Blobs`] with fault injection.
+/// A `BTreeMap`-backed [`Blobs`] with fault injection and bounded iteration.
 #[derive(Debug, Default)]
 pub struct MemBlobs {
-    rows: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
+    rows: Mutex<BTreeMap<Vec<u8>, Vec<u8>>>,
     /// Remaining write attempts to fail. `usize::MAX` means "fail
     /// forever".
     fail_writes: AtomicUsize,
@@ -91,7 +91,7 @@ pub struct MemBlobs {
     /// Real durable stores are slow, and several properties are only
     /// *observable* when a backlog can exist. Without this, a test that
     /// shuts down and asserts everything is durable passes even with the
-    /// shutdown barrier removed, simply because a `HashMap` insert
+    /// shutdown barrier removed, simply because an in-memory insert
     /// outruns the race — a mutation this crate's suite let survive until
     /// this knob existed.
     write_delay_us: AtomicU64,
@@ -199,11 +199,51 @@ impl Blobs for MemBlobs {
     }
 
     fn for_each_key(&self, f: &mut dyn FnMut(&[u8])) -> Result<(), BlobError> {
-        let m = self.rows.lock().expect("rows poisoned");
-        let mut keys: Vec<&Vec<u8>> = m.keys().collect();
-        keys.sort();
-        for k in keys {
-            f(k);
+        self.for_each_entry(&mut |key, _| {
+            f(key);
+            Ok(())
+        })
+    }
+
+    fn for_each_entry(
+        &self,
+        f: &mut dyn FnMut(&[u8], &[u8]) -> Result<(), BlobError>,
+    ) -> Result<(), BlobError> {
+        self.for_each_entry_from(b"", usize::MAX, &mut |key, value| {
+            f(key, value)?;
+            Ok(true)
+        })
+    }
+
+    fn for_each_entry_from(
+        &self,
+        start: &[u8],
+        max_entries: usize,
+        visitor: &mut dyn FnMut(&[u8], &[u8]) -> Result<bool, BlobError>,
+    ) -> Result<(), BlobError> {
+        use std::ops::Bound::{Excluded, Included, Unbounded};
+        let mut previous: Option<Vec<u8>> = None;
+        for _ in 0..max_entries {
+            // Copy one row and release the lock before invoking caller code.
+            // Recovery may read another backend key in its callback. Holding
+            // this mutex there would deadlock; a panic would also poison it.
+            let entry = {
+                let rows = self.rows.lock().expect("rows poisoned");
+                let next = match &previous {
+                    Some(key) => rows
+                        .range::<[u8], _>((Excluded(key.as_slice()), Unbounded))
+                        .next(),
+                    None => rows.range::<[u8], _>((Included(start), Unbounded)).next(),
+                };
+                next.map(|(key, value)| (key.clone(), value.clone()))
+            };
+            let Some((key, value)) = entry else {
+                return Ok(());
+            };
+            if !visitor(&key, &value)? {
+                return Ok(());
+            }
+            previous = Some(key);
         }
         Ok(())
     }
@@ -212,6 +252,82 @@ impl Blobs for MemBlobs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bounded_entry_seek_is_inclusive_reentrant_and_stops_cleanly() {
+        let backend = MemBlobs::seeded([
+            (b"".to_vec(), b"".to_vec()),
+            (b"a\0".to_vec(), b"first".to_vec()),
+            (b"a\xff".to_vec(), b"second".to_vec()),
+            (b"b".to_vec(), b"last".to_vec()),
+        ]);
+        backend
+            .for_each_entry_from(b"", 0, &mut |_, _| panic!("zero limit"))
+            .unwrap();
+        let mut rows = Vec::new();
+        backend
+            .for_each_entry_from(b"a\0", 2, &mut |key, value| {
+                assert_eq!(backend.get(key)?.as_deref(), Some(value));
+                rows.push(key.to_vec());
+                Ok(true)
+            })
+            .unwrap();
+        assert_eq!(rows, vec![b"a\0".to_vec(), b"a\xff".to_vec()]);
+        rows.clear();
+        backend
+            .for_each_entry_from(b"a\0\0", 9, &mut |key, _| {
+                rows.push(key.to_vec());
+                Ok(false)
+            })
+            .unwrap();
+        assert_eq!(rows, vec![b"a\xff".to_vec()]);
+        backend
+            .for_each_entry_from(b"z", 1, &mut |_, _| panic!("past the end"))
+            .unwrap();
+        let panic = std::panic::catch_unwind(|| {
+            let _ = backend.for_each_entry_from(b"a", 1, &mut |_, _| panic!("visitor"));
+        });
+        assert!(panic.is_err());
+        assert_eq!(
+            backend.get(b"b").unwrap().as_deref(),
+            Some(b"last".as_slice())
+        );
+    }
+
+    #[test]
+    fn entry_visitor_is_ordered_reentrant_and_stops_on_error() {
+        let backend = std::sync::Arc::new(MemBlobs::seeded([
+            (b"b".to_vec(), b"value".to_vec()),
+            (b"".to_vec(), b"".to_vec()),
+            (b"a\0".to_vec(), b"\0\xff".to_vec()),
+        ]));
+        let mut observed = Vec::new();
+        backend
+            .for_each_entry(&mut |key, value| {
+                assert_eq!(backend.get(key)?.as_deref(), Some(value));
+                observed.push((key.to_vec(), value.to_vec()));
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(observed, backend.snapshot().into_iter().collect::<Vec<_>>());
+        let mut visits = 0;
+        let error = backend
+            .for_each_entry(&mut |_, _| {
+                visits += 1;
+                Err(BlobError("stop here".into()))
+            })
+            .unwrap_err();
+        assert_eq!(visits, 1);
+        assert_eq!(error.0, "stop here");
+        let unwind = std::panic::catch_unwind(|| {
+            let _ = backend.for_each_entry(&mut |_, _| panic!("visitor panic"));
+        });
+        assert!(unwind.is_err());
+        assert_eq!(
+            backend.get(b"b").unwrap().as_deref(),
+            Some(b"value".as_slice())
+        );
+    }
 
     #[test]
     fn a_failed_batch_leaves_nothing_behind() {

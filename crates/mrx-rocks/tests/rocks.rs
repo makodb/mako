@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use mrx_core::{BlobOp, Blobs};
+use mrx_core::{BlobError, BlobOp, Blobs};
 #[cfg(feature = "test-hooks")]
 use mrx_rocks::WriteBatchHookPoint;
 use mrx_rocks::{Durability, RocksBlobs};
@@ -295,6 +295,191 @@ fn for_each_key_visits_everything_in_order() {
     assert!(seen.windows(2).all(|w| w[0] < w[1]), "must be ascending");
     let unique: BTreeSet<_> = seen.iter().collect();
     assert_eq!(unique.len(), 500);
+}
+
+#[test]
+fn entry_visitor_streams_ordered_binary_rows_and_empty_values() {
+    let scratch = Scratch::new("entry-visitor");
+    let db = open(&scratch);
+    let expected = [
+        (b"".as_slice(), b"empty-key".as_slice()),
+        (b"\0\xff".as_slice(), b"".as_slice()),
+        (b"z".as_slice(), b"\0\xffvalue".as_slice()),
+    ];
+    db.write_batch(
+        &expected
+            .iter()
+            .map(|(key, val)| BlobOp::Put { key, val })
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    let mut observed = Vec::new();
+    db.for_each_entry(&mut |key, value| {
+        // A visitor can read another key without reentering iterator state.
+        assert_eq!(db.get(key)?.as_deref(), Some(value));
+        observed.push((key.to_vec(), value.to_vec()));
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(
+        observed,
+        expected
+            .iter()
+            .map(|(k, v)| (k.to_vec(), v.to_vec()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn bounded_entry_seek_is_inclusive_and_stops_at_limit_or_callback() {
+    let scratch = Scratch::new("bounded-entry-seek");
+    let db = open(&scratch);
+    let expected = [
+        (b"".as_slice(), b"".as_slice()),
+        (b"a\0".as_slice(), b"first".as_slice()),
+        (b"a\xff".as_slice(), b"second".as_slice()),
+        (b"b".as_slice(), b"last".as_slice()),
+    ];
+    db.write_batch(
+        &expected
+            .iter()
+            .map(|(key, val)| BlobOp::Put { key, val })
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    db.for_each_entry_from(b"", 0, &mut |_, _| panic!("zero limit"))
+        .unwrap();
+    let mut rows = Vec::new();
+    db.for_each_entry_from(b"a\0", 2, &mut |key, value| {
+        assert_eq!(db.get(key)?.as_deref(), Some(value));
+        rows.push(key.to_vec());
+        Ok(true)
+    })
+    .unwrap();
+    assert_eq!(rows, vec![b"a\0".to_vec(), b"a\xff".to_vec()]);
+    rows.clear();
+    db.for_each_entry_from(b"a\0\0", 99, &mut |key, _| {
+        rows.push(key.to_vec());
+        Ok(false)
+    })
+    .unwrap();
+    assert_eq!(rows, vec![b"a\xff".to_vec()]);
+    db.for_each_entry_from(b"z", 10, &mut |_, _| panic!("past the end"))
+        .unwrap();
+    let mut visits = 0;
+    let error = db
+        .for_each_entry_from(b"a", 3, &mut |_, _| {
+            visits += 1;
+            Err(BlobError("bounded visitor failure".into()))
+        })
+        .unwrap_err();
+    assert_eq!(error.0, "bounded visitor failure");
+    assert_eq!(visits, 1);
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = db.for_each_entry_from(b"a", 3, &mut |_, _| panic!("bounded visitor panic"));
+    }));
+    assert!(panic.is_err());
+    drop(db);
+    assert_eq!(
+        open(&scratch).get(b"b").unwrap().as_deref(),
+        Some(b"last".as_slice())
+    );
+}
+
+#[test]
+fn entry_visitor_releases_resources_after_error_and_panic() {
+    let scratch = Scratch::new("entry-visitor-error");
+    {
+        let db = open(&scratch);
+        db.write_batch(&[
+            BlobOp::Put {
+                key: b"a",
+                val: b"1",
+            },
+            BlobOp::Put {
+                key: b"b",
+                val: b"2",
+            },
+        ])
+        .unwrap();
+        let mut visits = 0;
+        let error = db
+            .for_each_entry(&mut |_, _| {
+                visits += 1;
+                Err(BlobError("visitor stopped".into()))
+            })
+            .unwrap_err();
+        assert_eq!(error.0, "visitor stopped");
+        assert_eq!(visits, 1);
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = db.for_each_entry(&mut |_, _| panic!("visitor panic"));
+        }));
+        assert!(panic.is_err());
+        db.write_batch(&[BlobOp::Put {
+            key: b"c",
+            val: b"3",
+        }])
+        .unwrap();
+        let mut count = 0;
+        db.for_each_entry(&mut |_, _| {
+            count += 1;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(count, 3);
+    }
+    // Closing the DB with a leaked native iterator can fail an assertion or
+    // retain native resources. Reopening also checks that no lock is retained.
+    assert_eq!(
+        open(&scratch).get(b"c").unwrap().as_deref(),
+        Some(b"3".as_slice())
+    );
+}
+
+#[test]
+fn checkpoint_storage_uses_ordered_point_in_time_recovery() {
+    let scratch = Scratch::new("recovery-options");
+    let _db = open(&scratch);
+    let options = std::fs::read_dir(&scratch.0)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("OPTIONS-")
+        })
+        .map(|path| std::fs::read_to_string(path).unwrap())
+        .collect::<Vec<_>>();
+    assert!(!options.is_empty(), "RocksDB must persist its options");
+    for contents in options {
+        assert!(contents.contains("wal_recovery_mode=kPointInTimeRecovery"));
+        assert!(contents.contains("unordered_write=false"));
+    }
+}
+
+#[test]
+fn disk_usage_observes_database_files_without_mutating_storage() {
+    let scratch = Scratch::new("disk-usage");
+    let db = std::sync::Arc::new(open(&scratch));
+    db.write_batch(&[BlobOp::Put {
+        key: b"key",
+        val: b"value",
+    }])
+    .unwrap();
+    let measured = db
+        .disk_usage_bytes()
+        .unwrap()
+        .expect("file-backed database");
+    assert!(measured > 0);
+    assert_eq!(
+        db.get(b"key").unwrap().as_deref(),
+        Some(b"value".as_slice())
+    );
+    assert_eq!(
+        mrx_core::fakes::MemBlobs::new().disk_usage_bytes().unwrap(),
+        None
+    );
 }
 
 #[test]

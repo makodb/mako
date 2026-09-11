@@ -15,7 +15,7 @@
 //! every call here goes through [`Err0`], which frees on drop.
 
 use std::ffi::{c_char, c_uchar, CStr, CString};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::ptr;
 
 use mrx_core::{BlobError, BlobOp, Blobs};
@@ -46,6 +46,8 @@ mod sys {
         pub fn rocksdb_options_create() -> *mut rocksdb_options_t;
         pub fn rocksdb_options_destroy(o: *mut rocksdb_options_t);
         pub fn rocksdb_options_set_create_if_missing(o: *mut rocksdb_options_t, v: c_uchar);
+        pub fn rocksdb_options_set_wal_recovery_mode(o: *mut rocksdb_options_t, v: c_int);
+        pub fn rocksdb_options_set_unordered_write(o: *mut rocksdb_options_t, v: c_uchar);
 
         pub fn rocksdb_readoptions_create() -> *mut rocksdb_readoptions_t;
         pub fn rocksdb_readoptions_destroy(o: *mut rocksdb_readoptions_t);
@@ -107,10 +109,12 @@ mod sys {
             o: *const rocksdb_readoptions_t,
         ) -> *mut rocksdb_iterator_t;
         pub fn rocksdb_iter_destroy(it: *mut rocksdb_iterator_t);
-        pub fn rocksdb_iter_seek_to_first(it: *mut rocksdb_iterator_t);
+        pub fn rocksdb_iter_seek(it: *mut rocksdb_iterator_t, key: *const c_char, klen: usize);
         pub fn rocksdb_iter_valid(it: *const rocksdb_iterator_t) -> c_uchar;
         pub fn rocksdb_iter_next(it: *mut rocksdb_iterator_t);
         pub fn rocksdb_iter_key(it: *const rocksdb_iterator_t, klen: *mut usize) -> *const c_char;
+        pub fn rocksdb_iter_value(it: *const rocksdb_iterator_t, vlen: *mut usize)
+            -> *const c_char;
         pub fn rocksdb_iter_get_error(it: *const rocksdb_iterator_t, err: *mut *mut c_char);
 
         pub fn rocksdb_free(p: *mut std::ffi::c_void);
@@ -156,6 +160,20 @@ impl Drop for Err0 {
     }
 }
 
+/// Keeps iterator-owned key/value buffers and native resources scoped to the
+/// database borrow, including callback errors and unwinding panics.
+struct Entries<'a> {
+    raw: *mut sys::rocksdb_iterator_t,
+    _database: &'a RocksBlobs,
+}
+
+impl Drop for Entries<'_> {
+    fn drop(&mut self) {
+        // SAFETY: created once by for_each_entry, never transferred elsewhere.
+        unsafe { sys::rocksdb_iter_destroy(self.raw) };
+    }
+}
+
 /// How durable each writeback batch should be.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Durability {
@@ -187,6 +205,7 @@ pub enum WriteBatchHookPoint {
 
 /// A RocksDB database, usable as the cache's system of record.
 pub struct RocksBlobs {
+    path: PathBuf,
     db: *mut sys::rocksdb_t,
     opts: *mut sys::rocksdb_options_t,
     read: *mut sys::rocksdb_readoptions_t,
@@ -205,8 +224,15 @@ unsafe impl Send for RocksBlobs {}
 unsafe impl Sync for RocksBlobs {}
 
 impl RocksBlobs {
-    /// Open (creating if needed) at `path`.
+    /// Open (creating if needed) at `path` with ordered writes and point-in-time
+    /// WAL recovery. Corruption stops WAL recovery at a consistent point rather
+    /// than skipping arbitrary records that may contain checkpoint prerequisites.
     pub fn open(path: &Path, durability: Durability) -> Result<Self, BlobError> {
+        // Keep file observations tied to the opened directory if the process
+        // later changes its working directory. RocksDB stores WAL and SST files
+        // in this directory with the adapter's fixed options.
+        let path = std::path::absolute(path)
+            .map_err(|error| BlobError(format!("database absolute path: {error}")))?;
         let cpath = CString::new(path.as_os_str().as_encoded_bytes())
             .map_err(|_| BlobError("database path contains a NUL byte".into()))?;
 
@@ -216,6 +242,12 @@ impl RocksBlobs {
         unsafe {
             let opts = sys::rocksdb_options_create();
             sys::rocksdb_options_set_create_if_missing(opts, 1);
+            // rocksdb/c.h defines rocksdb_point_in_time_recovery as 2. Explicitly
+            // select the coherent-history contract required by log reclamation,
+            // rather than inheriting a library default or salvaging arbitrary
+            // later records after a damaged prerequisite batch.
+            sys::rocksdb_options_set_wal_recovery_mode(opts, 2);
+            sys::rocksdb_options_set_unordered_write(opts, 0);
 
             // DELIBERATELY NOT `increase_parallelism` OR
             // `optimize_level_style_compaction`.
@@ -260,6 +292,7 @@ impl RocksBlobs {
             }
 
             Ok(Self {
+                path,
                 db,
                 opts,
                 read: sys::rocksdb_readoptions_create(),
@@ -333,6 +366,31 @@ impl Drop for RocksBlobs {
 }
 
 impl Blobs for RocksBlobs {
+    /// Sum logical lengths of regular files immediately inside the database
+    /// directory, including WAL, SST, MANIFEST and diagnostic files. This does
+    /// not measure allocated filesystem blocks or recurse into subdirectories.
+    /// Compaction may create or remove files during this observation.
+    fn disk_usage_bytes(&self) -> Result<Option<u64>, BlobError> {
+        let entries = std::fs::read_dir(&self.path)
+            .map_err(|error| BlobError(format!("database disk usage: {error}")))?;
+        let mut bytes = 0_u64;
+        for entry in entries {
+            let entry =
+                entry.map_err(|error| BlobError(format!("database disk usage: {error}")))?;
+            let metadata = match entry.metadata() {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(BlobError(format!("database disk usage: {error}"))),
+            };
+            if metadata.is_file() {
+                bytes = bytes
+                    .checked_add(metadata.len())
+                    .ok_or_else(|| BlobError("database disk usage overflow".into()))?;
+            }
+        }
+        Ok(Some(bytes))
+    }
+
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, BlobError> {
         let mut len: usize = 0;
         let mut e = Err0::new();
@@ -403,24 +461,81 @@ impl Blobs for RocksBlobs {
     }
 
     fn for_each_key(&self, f: &mut dyn FnMut(&[u8])) -> Result<(), BlobError> {
-        // SAFETY: `db` and `read` are live; the iterator is destroyed on
-        // every path below.
-        let it = unsafe { sys::rocksdb_create_iterator(self.db, self.read) };
-        // SAFETY: `it` is a valid iterator for the whole block.
+        self.for_each_entry(&mut |key, _| {
+            f(key);
+            Ok(())
+        })
+    }
+
+    fn for_each_entry(
+        &self,
+        f: &mut dyn FnMut(&[u8], &[u8]) -> Result<(), BlobError>,
+    ) -> Result<(), BlobError> {
+        self.for_each_entry_from(b"", usize::MAX, &mut |key, value| {
+            f(key, value)?;
+            Ok(true)
+        })
+    }
+
+    fn for_each_entry_from(
+        &self,
+        start: &[u8],
+        max_entries: usize,
+        visitor: &mut dyn FnMut(&[u8], &[u8]) -> Result<bool, BlobError>,
+    ) -> Result<(), BlobError> {
+        if max_entries == 0 {
+            return Ok(());
+        }
+        // SAFETY: both handles remain live through the database borrow.
+        let raw = unsafe { sys::rocksdb_create_iterator(self.db, self.read) };
+        if raw.is_null() {
+            return Err(BlobError("rocksdb_create_iterator returned null".into()));
+        }
+        let iterator = Entries {
+            raw,
+            _database: self,
+        };
+        // SAFETY: the iterator remains live for the block and Drop releases it
+        // on normal completion, errors, and callback panics. Buffers belong to
+        // the iterator and remain valid until next/seek/destruction. The callback
+        // borrows them only for its call; it cannot retain a borrowed reference.
         unsafe {
-            sys::rocksdb_iter_seek_to_first(it);
-            while sys::rocksdb_iter_valid(it) != 0 as c_uchar {
+            sys::rocksdb_iter_seek(iterator.raw, start.as_ptr().cast::<c_char>(), start.len());
+            let mut visited = 0;
+            while visited < max_entries && sys::rocksdb_iter_valid(iterator.raw) != 0 as c_uchar {
                 let mut klen: usize = 0;
-                let kp = sys::rocksdb_iter_key(it, &mut klen);
-                // The key borrows iterator-owned memory that stays valid
-                // only until the next `next`, so it is handed to `f`
-                // inside the loop and never escapes.
-                f(std::slice::from_raw_parts(kp as *const u8, klen));
-                sys::rocksdb_iter_next(it);
+                let mut vlen: usize = 0;
+                let kp = sys::rocksdb_iter_key(iterator.raw, &mut klen);
+                let vp = sys::rocksdb_iter_value(iterator.raw, &mut vlen);
+                if (kp.is_null() && klen != 0)
+                    || (vp.is_null() && vlen != 0)
+                    || klen > isize::MAX as usize
+                    || vlen > isize::MAX as usize
+                {
+                    return Err(BlobError(
+                        "rocksdb iterator returned an invalid buffer".into(),
+                    ));
+                }
+                // Empty slices do not require a native pointer. This avoids
+                // constructing a Rust slice from a possible null empty buffer.
+                let key = if klen == 0 {
+                    &[]
+                } else {
+                    std::slice::from_raw_parts(kp.cast::<u8>(), klen)
+                };
+                let value = if vlen == 0 {
+                    &[]
+                } else {
+                    std::slice::from_raw_parts(vp.cast::<u8>(), vlen)
+                };
+                visited += 1;
+                if !visitor(key, value)? || visited == max_entries {
+                    break;
+                }
+                sys::rocksdb_iter_next(iterator.raw);
             }
             let mut e = Err0::new();
-            sys::rocksdb_iter_get_error(it, e.as_mut());
-            sys::rocksdb_iter_destroy(it);
+            sys::rocksdb_iter_get_error(iterator.raw, e.as_mut());
             e.check("rocksdb iteration")
         }
     }
