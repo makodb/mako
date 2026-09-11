@@ -6,14 +6,19 @@
 
 use std::env;
 use std::process::Command;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Barrier, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use mrx_core::fakes::MemBlobs;
 use mrx_core::{BlobError, BlobOp, Blobs};
 
-use crate::record::{BackendKey, CommitSeq, Mutation, PreparedCommitRecord, DEFAULT_TABLE_ID};
+use crate::checkpoint;
+use crate::record::{
+    classify_backend_key, BackendKey, CommitRecord, CommitSeq, Mutation, PreparedCommitRecord,
+    DEFAULT_TABLE_ID,
+};
+use crate::writeback::{ApplyCoordinator, CoordinatorApplyOutcome};
 use crate::{Cache, CacheOptions, Error, LocalError, MakoTimestamp, WritebackConfig};
 
 const WAIT_LIMIT: Duration = Duration::from_secs(5);
@@ -76,6 +81,14 @@ impl Blobs for BlockingBlobs {
     }
 
     fn write_batch(&self, operations: &[BlobOp<'_>]) -> Result<(), BlobError> {
+        // Initial format installation precedes transaction admission, so the
+        // transaction-write gate must not prevent constructing an empty cache.
+        if operations.iter().all(|operation| {
+            matches!(operation,
+            BlobOp::Put { key, .. } if *key == checkpoint::FORMAT_KEY)
+        }) {
+            return self.inner.write_batch(operations);
+        }
         let mut gate = self.gate.lock().expect("backend gate poisoned");
         gate.entered = gate
             .entered
@@ -94,6 +107,13 @@ impl Blobs for BlockingBlobs {
 
     fn for_each_key(&self, callback: &mut dyn FnMut(&[u8])) -> Result<(), BlobError> {
         self.inner.for_each_key(callback)
+    }
+
+    fn for_each_entry(
+        &self,
+        callback: &mut dyn FnMut(&[u8], &[u8]) -> Result<(), BlobError>,
+    ) -> Result<(), BlobError> {
+        self.inner.for_each_entry(callback)
     }
 }
 
@@ -167,7 +187,11 @@ fn bounded_writeback_backpressures_sustained_concurrent_writers_then_recovers() 
     let base_sequence = cache.wait_applied().expect("drain overload seed");
     let base_batches = backend.inner.batch_count();
     assert_eq!(base_sequence, WORKERS as u64);
-    assert_eq!(base_batches, WORKERS as u64);
+    assert_eq!(
+        base_batches,
+        WORKERS as u64 + 1,
+        "initial format batch plus seed transactions"
+    );
     backend.block();
 
     let first_commit_ready = Arc::new(Barrier::new(WORKERS + 1));
@@ -320,7 +344,7 @@ fn clean_cache_close_drains_every_acknowledged_transaction() {
         close_result.expect("clean close must drain accepted transactions"),
         ACCEPTED as u64
     );
-    assert_eq!(backend.inner.batch_count(), ACCEPTED as u64);
+    assert_eq!(backend.inner.batch_count(), ACCEPTED as u64 + 1);
 
     let reopened = Cache::from_backend(Arc::clone(&backend), CacheOptions::default())
         .expect("reopen cleanly drained cache");
@@ -354,7 +378,7 @@ fn forced_cache_stop_preserves_applied_prefix_and_discards_only_unapplied_tail()
         .put(b"milestone1/forced/prefix", b"applied")
         .expect("commit applied prefix");
     assert_eq!(cache.wait_applied().expect("apply forced-stop prefix"), 1);
-    assert_eq!(backend.batch_count(), 1);
+    assert_eq!(backend.batch_count(), 2);
 
     // Every later backend attempt fails atomically. Both native transactions
     // are nevertheless visible and acknowledged, so abort_without_flush must
@@ -374,7 +398,7 @@ fn forced_cache_stop_preserves_applied_prefix_and_discards_only_unapplied_tail()
         .expect("forced cache stop must not drain the volatile tail");
     assert_eq!(
         backend.batch_count(),
-        1,
+        2,
         "forced stop applied a transaction from the failing volatile tail"
     );
 
@@ -427,9 +451,7 @@ fn near_exhaustion_child_role() {
         maximum_minus_one,
     )
     .finalize();
-    backend
-        .write_batch(&recovered.backend_ops())
-        .expect("seed complete MAX-1 backend record");
+    seed_checkpoint(&*backend, &[recovered]);
 
     let cache = Cache::from_backend(Arc::clone(&backend), CacheOptions::default())
         .expect("reopen cache at MAX-1");
@@ -466,7 +488,10 @@ fn near_exhaustion_child_role() {
                         .any(|mutation| mutation.key() == b"milestone1/exhaustion/final")
                         .then(|| record.mako_timestamp())
                 }
-                BackendKey::Data { .. } | BackendKey::Foreign => None,
+                BackendKey::Data { .. }
+                | BackendKey::Format
+                | BackendKey::Lane(_)
+                | BackendKey::Foreign => None,
             },
         )
         .expect("find MAX transaction record");
@@ -491,7 +516,7 @@ fn near_exhaustion_child_role() {
         None,
         "timestamp-exhausted transaction became visible"
     );
-    assert_eq!(backend.batch_count(), 2);
+    assert_eq!(backend.batch_count(), 3);
     assert_eq!(cache.close().expect("close exhausted cache"), 2);
 }
 
@@ -518,4 +543,505 @@ fn recovery_near_timestamp_exhaustion_mints_maximum_once_then_fails_closed() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+fn seed_checkpoint(backend: &MemBlobs, records: &[CommitRecord]) {
+    let format = checkpoint::encode_format().expect("encode fixture format");
+    backend
+        .write_batch(&[BlobOp::Put {
+            key: checkpoint::FORMAT_KEY,
+            val: &format,
+        }])
+        .expect("install fixture format");
+    let coordinator = ApplyCoordinator::empty();
+    for record in records {
+        assert!(matches!(
+            coordinator
+                .apply(backend, std::slice::from_ref(record))
+                .unwrap(),
+            CoordinatorApplyOutcome::Applied
+        ));
+    }
+}
+
+fn retained_log_count(backend: &MemBlobs) -> usize {
+    backend
+        .snapshot()
+        .keys()
+        .filter(|key| matches!(classify_backend_key(key), BackendKey::Log(_)))
+        .count()
+}
+
+fn fixture_record(sequence: u64, physical_us: u64, mutations: Vec<Mutation>) -> CommitRecord {
+    PreparedCommitRecord::prepare(mutations, WritebackConfig::default().max_record_bytes)
+        .unwrap()
+        .bind(
+            CommitSeq::new(sequence).unwrap(),
+            MakoTimestamp::new(physical_us, 0, 1).unwrap(),
+        )
+        .finalize()
+}
+
+fn fixture_put(key: &[u8], value: &[u8]) -> Mutation {
+    Mutation::Put {
+        table_id: DEFAULT_TABLE_ID,
+        key: key.to_vec(),
+        value: value.to_vec(),
+    }
+}
+
+#[test]
+fn gc_reclaims_all_history_then_recovers_current_values_tombstones_and_counters() {
+    let backend = Arc::new(MemBlobs::new());
+    let cache = Cache::from_backend(Arc::clone(&backend), options(8)).unwrap();
+    cache.put(b"gc/live", b"old").unwrap();
+    cache.put(b"gc/live", b"current").unwrap();
+    cache.put(b"gc/deleted", b"gone").unwrap();
+    assert!(cache.delete(b"gc/deleted").unwrap());
+    assert_eq!(cache.wait_applied().unwrap(), 4);
+    assert_eq!(retained_log_count(&backend), 4);
+    let before = cache.applied_watermark();
+    assert_eq!(cache.writeback.collect_expired_at(u64::MAX).unwrap(), 4);
+    assert_eq!(retained_log_count(&backend), 0);
+    let gc = cache.status().unwrap().log_gc;
+    assert_eq!(gc.retained_records, 0);
+    assert_eq!(gc.retained_bytes, 0);
+    assert_eq!(gc.reclaimed_records, 4);
+    assert_eq!(cache.close().unwrap(), 4);
+
+    let reopened = Cache::from_backend(Arc::clone(&backend), options(8)).unwrap();
+    assert_eq!(reopened.applied_watermark(), before);
+    assert_eq!(reopened.highest_acknowledged_sequence(), 4);
+    assert_eq!(
+        reopened.get(b"gc/live").unwrap().as_deref(),
+        Some(b"current".as_slice())
+    );
+    assert_eq!(reopened.get(b"gc/deleted").unwrap(), None);
+    assert_eq!(reopened.status().unwrap().log_gc.reclaimed_records, 4);
+    reopened.put(b"gc/after-reopen", b"new").unwrap();
+    assert_eq!(reopened.wait_applied().unwrap(), 5);
+    assert!(reopened.applied_watermark().mako_timestamp() > before.mako_timestamp());
+    assert_eq!(retained_log_count(&backend), 1);
+    assert_eq!(reopened.close().unwrap(), 5);
+}
+
+#[test]
+fn gc_default_retention_uses_strict_five_minute_hlc_age() {
+    let backend = Arc::new(MemBlobs::new());
+    let cache = Cache::from_backend(Arc::clone(&backend), options(8)).unwrap();
+    cache.put(b"retention/boundary", b"retained").unwrap();
+    cache.wait_applied().unwrap();
+    let physical_us = cache
+        .applied_watermark()
+        .mako_timestamp()
+        .unwrap()
+        .physical_us();
+    let boundary = physical_us.checked_add(300_000_000).unwrap();
+    assert_eq!(cache.writeback.collect_expired_at(boundary - 1).unwrap(), 0);
+    assert_eq!(cache.writeback.collect_expired_at(boundary).unwrap(), 0);
+    assert_eq!(retained_log_count(&backend), 1);
+    assert_eq!(cache.writeback.collect_expired_at(boundary + 1).unwrap(), 1);
+    assert_eq!(cache.writeback.collect_expired_at(0).unwrap(), 0);
+    assert_eq!(retained_log_count(&backend), 0);
+    assert_eq!(
+        cache.get(b"retention/boundary").unwrap().as_deref(),
+        Some(b"retained".as_slice())
+    );
+    cache.close().unwrap();
+    let reopened = Cache::from_backend(backend, options(8)).unwrap();
+    assert_eq!(reopened.applied_sequence(), 1);
+    assert_eq!(
+        reopened.get(b"retention/boundary").unwrap().as_deref(),
+        Some(b"retained".as_slice())
+    );
+    reopened.close().unwrap();
+}
+
+#[test]
+fn idle_background_writer_collects_expired_logs_without_new_transactions() {
+    let backend = Arc::new(MemBlobs::new());
+    // Other tests can advance the process HLC far into the future. An old
+    // recovered lane makes this real-timer test independent of that floor and
+    // verifies GC discovers lanes without an initialized foreground queue.
+    seed_checkpoint(
+        &backend,
+        &[fixture_record(
+            1,
+            1_000,
+            vec![fixture_put(b"idle-gc/key", b"value")],
+        )],
+    );
+    let mut cache_options = options(8);
+    cache_options.log_retention = Duration::ZERO;
+    cache_options.gc_interval = Duration::from_millis(1);
+    let cache = Cache::from_backend(Arc::clone(&backend), cache_options).unwrap();
+    assert!(
+        wait_until(|| cache.status().unwrap().log_gc.reclaimed_records == 1),
+        "idle writer never scheduled GC"
+    );
+    assert_eq!(retained_log_count(&backend), 0);
+    assert_eq!(
+        cache.get(b"idle-gc/key").unwrap().as_deref(),
+        Some(b"value".as_slice())
+    );
+    assert_eq!(cache.close().unwrap(), 1);
+    let reopened = Cache::from_backend(backend, options(8)).unwrap();
+    assert_eq!(reopened.applied_sequence(), 1);
+    assert_eq!(
+        reopened.get(b"idle-gc/key").unwrap().as_deref(),
+        Some(b"value".as_slice())
+    );
+    reopened.close().unwrap();
+}
+
+#[test]
+fn gc_recovery_rejects_tagged_lane_maximum_with_wrong_source_position() {
+    let raw_base = 1_u64 << crate::record::LOG_LANE_SHIFT;
+    let metadata = checkpoint::LaneMetadata {
+        applied: 2,
+        reclaimed: 2,
+        max_timestamp: Some(MakoTimestamp::new(3_000, 0, 1).unwrap()),
+        retained_bytes: 0,
+    };
+    let key_record = fixture_record(
+        raw_base | 2,
+        3_000,
+        vec![fixture_put(b"lane-maximum/key", b"value")],
+    );
+    for (local, physical_us) in [(2, 2_000), (1, 3_000)] {
+        // No retained log or other row can detect this contradiction. In a
+        // strictly increasing tagged lane, A owns H and no earlier position can.
+        let encoded = checkpoint::encode_row(
+            MakoTimestamp::new(physical_us, 0, 1).unwrap(),
+            CommitSeq::new(raw_base | local).unwrap(),
+            Some(b"value"),
+        )
+        .unwrap();
+        let backend = Arc::new(MemBlobs::seeded([
+            (
+                checkpoint::FORMAT_KEY.to_vec(),
+                checkpoint::encode_format().unwrap(),
+            ),
+            (checkpoint::lane_key(1), metadata.encode().unwrap()),
+            (key_record.data_keys()[0].clone(), encoded),
+        ]));
+        assert!(
+            matches!(
+                Cache::from_backend(backend, options(8)),
+                Err(Error::BackendStateMismatch)
+            ),
+            "tagged source {local} with physical_us={physical_us} contradicted its lane maximum"
+        );
+    }
+}
+
+#[test]
+fn gc_and_checkpoint_reopen_support_both_native_checksum_policies() {
+    for record_checksum in [crate::RecordChecksum::Crc32c, crate::RecordChecksum::None] {
+        let backend = Arc::new(MemBlobs::new());
+        let config = CacheOptions {
+            record_checksum,
+            ..options(8)
+        };
+        let cache = Cache::from_backend(Arc::clone(&backend), config).unwrap();
+        cache.put(b"checksum/live", b"value").unwrap();
+        cache.put(b"checksum/deleted", b"old").unwrap();
+        let mut transaction = cache.transaction().unwrap();
+        assert!(transaction.remove(b"checksum/deleted").unwrap());
+        transaction.commit().unwrap();
+        assert_eq!(cache.wait_applied().unwrap(), 3);
+        assert_eq!(cache.writeback.collect_expired_at(u64::MAX).unwrap(), 3);
+        assert_eq!(retained_log_count(&backend), 0);
+        assert_eq!(cache.status().unwrap().log_gc.retained_records, 0);
+        cache.close().unwrap();
+
+        let reopened = Cache::from_backend(Arc::clone(&backend), config).unwrap();
+        assert_eq!(
+            reopened.get(b"checksum/live").unwrap().as_deref(),
+            Some(b"value".as_slice())
+        );
+        assert_eq!(reopened.get(b"checksum/deleted").unwrap(), None);
+        assert_eq!(reopened.applied_sequence(), 3);
+        reopened.put(b"checksum/live", b"next").unwrap();
+        assert_eq!(reopened.wait_applied().unwrap(), 4);
+        assert_eq!(reopened.writeback.collect_expired_at(u64::MAX).unwrap(), 1);
+        assert_eq!(reopened.status().unwrap().log_gc.reclaimed_records, 4);
+        reopened.close().unwrap();
+    }
+}
+
+#[test]
+fn recovered_checkpoint_filters_delayed_put_and_delete_after_all_logs_are_gone() {
+    for newer in [
+        fixture_put(b"delayed/key", b"new"),
+        Mutation::Delete {
+            table_id: DEFAULT_TABLE_ID,
+            key: b"delayed/key".to_vec(),
+        },
+    ] {
+        let backend = Arc::new(MemBlobs::new());
+        let format = checkpoint::encode_format().unwrap();
+        backend
+            .write_batch(&[BlobOp::Put {
+                key: checkpoint::FORMAT_KEY,
+                val: &format,
+            }])
+            .unwrap();
+        let high = fixture_record(
+            (1_u64 << crate::record::LOG_LANE_SHIFT) | 1,
+            1_000,
+            vec![newer.clone()],
+        );
+        let data_key = high.data_keys()[0].clone();
+        let coordinator = ApplyCoordinator::empty();
+        coordinator.apply(&*backend, &[high]).unwrap();
+        assert!(matches!(
+            coordinator.gc_step(&*backend, 1_001, 4_096).unwrap(),
+            crate::writeback::GcStep::Progress { records: 1, .. }
+        ));
+        assert_eq!(retained_log_count(&backend), 0);
+        let winning_envelope = backend.get(&data_key).unwrap().unwrap();
+        drop(coordinator);
+
+        // This reconstructs the coordinator's winner index from persisted
+        // checkpoint bytes. No in-memory index is copied into the new cache.
+        let cache = Cache::from_backend(Arc::clone(&backend), options(8)).unwrap();
+        let lane = cache.writeback.lane(1).unwrap();
+        for (physical_us, older) in [
+            (800, fixture_put(b"delayed/key", b"old")),
+            (
+                900,
+                Mutation::Delete {
+                    table_id: DEFAULT_TABLE_ID,
+                    key: b"delayed/key".to_vec(),
+                },
+            ),
+        ] {
+            let mut permit = lane
+                .writeback()
+                .reserve_single(lane.producer(), vec![older])
+                .unwrap();
+            let mut bound = permit
+                .bind(MakoTimestamp::new(physical_us, 0, 1).unwrap())
+                .unwrap();
+            bound.publish().unwrap();
+            cache.wait_applied().unwrap();
+            assert_eq!(
+                backend.get(&data_key).unwrap().as_deref(),
+                Some(winning_envelope.as_slice()),
+                "delayed record changed the recovered winner envelope"
+            );
+        }
+        let metadata = checkpoint::LaneMetadata::decode(
+            &backend.get(&checkpoint::lane_key(2)).unwrap().unwrap(),
+        )
+        .unwrap();
+        assert_eq!((metadata.applied, metadata.reclaimed), (2, 0));
+        assert_eq!(metadata.max_timestamp.unwrap().physical_us(), 900);
+        assert!(
+            metadata.retained_bytes > 0,
+            "all-stale batches still retain their recent logs"
+        );
+        assert_eq!(cache.applied_sequence(), 3);
+        cache.close().unwrap();
+        let reopened = Cache::from_backend(backend, options(8)).unwrap();
+        let expected = match &newer {
+            Mutation::Put { value, .. } => Some(value.clone()),
+            _ => None,
+        };
+        assert_eq!(reopened.get(b"delayed/key").unwrap(), expected);
+        assert_eq!(reopened.applied_sequence(), 3);
+        reopened.close().unwrap();
+    }
+}
+
+#[test]
+fn gc_recovery_rejects_two_timestamps_claiming_one_reclaimed_transaction() {
+    let first = fixture_record(
+        1,
+        1_000,
+        vec![
+            fixture_put(b"identity/a", b"a"),
+            fixture_put(b"identity/b", b"b"),
+        ],
+    );
+    let second = fixture_record(2, 3_000, vec![fixture_put(b"identity/other", b"c")]);
+    let backend = Arc::new(MemBlobs::new());
+    seed_checkpoint(&backend, &[first, second]);
+    let cache = Cache::from_backend(Arc::clone(&backend), options(8)).unwrap();
+    assert_eq!(cache.writeback.collect_expired_at(u64::MAX).unwrap(), 2);
+    cache.close().unwrap();
+    let row_key = backend
+        .snapshot()
+        .keys()
+        .find(|key| {
+            matches!(
+                classify_backend_key(key),
+                BackendKey::Data {
+                    key: b"identity/b",
+                    ..
+                }
+            )
+        })
+        .unwrap()
+        .clone();
+    // Each envelope has a valid CRC. The invalidity is the conflicting source
+    // identity across surviving rows after both source logs have disappeared.
+    let forged = checkpoint::encode_row(
+        MakoTimestamp::new(2_000, 0, 1).unwrap(),
+        CommitSeq::new(1).unwrap(),
+        Some(b"b"),
+    )
+    .unwrap();
+    backend
+        .write_batch(&[BlobOp::Put {
+            key: &row_key,
+            val: &forged,
+        }])
+        .unwrap();
+    let result = Cache::from_backend(backend, options(8));
+    assert!(
+        matches!(result, Err(Error::BackendStateMismatch)),
+        "conflicting row identities were accepted"
+    );
+}
+
+#[test]
+fn gc_recovery_rejects_extra_row_not_written_by_its_retained_source() {
+    let record = fixture_record(1, 1_000, vec![fixture_put(b"source/real", b"value")]);
+    let unrelated = fixture_record(2, 2_000, vec![fixture_put(b"source/extra", b"forged")]);
+    let backend = Arc::new(MemBlobs::new());
+    seed_checkpoint(&backend, std::slice::from_ref(&record));
+    let extra_key = &unrelated.data_keys()[0];
+    let forged =
+        checkpoint::encode_row(record.mako_timestamp(), record.sequence(), Some(b"forged"))
+            .unwrap();
+    backend
+        .write_batch(&[BlobOp::Put {
+            key: extra_key,
+            val: &forged,
+        }])
+        .unwrap();
+    let result = Cache::from_backend(backend, options(8));
+    assert!(
+        matches!(result, Err(Error::BackendStateMismatch)),
+        "extra row outside its source transaction was accepted"
+    );
+}
+
+#[derive(Debug, Default)]
+struct AmbiguousGcBlobs {
+    inner: MemBlobs,
+    fail_gc: AtomicBool,
+    applied_gc: AtomicBool,
+    attempts: Mutex<Vec<Vec<(Vec<u8>, Option<Vec<u8>>)>>>,
+}
+
+impl Blobs for AmbiguousGcBlobs {
+    fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, BlobError> {
+        self.inner.get(key)
+    }
+    fn for_each_key(&self, callback: &mut dyn FnMut(&[u8])) -> Result<(), BlobError> {
+        self.inner.for_each_key(callback)
+    }
+    fn for_each_entry(
+        &self,
+        callback: &mut dyn FnMut(&[u8], &[u8]) -> Result<(), BlobError>,
+    ) -> Result<(), BlobError> {
+        self.inner.for_each_entry(callback)
+    }
+    fn write_batch(&self, operations: &[BlobOp<'_>]) -> Result<(), BlobError> {
+        let is_gc = operations.iter().any(|operation| {
+            matches!(operation,
+            BlobOp::Delete { key } if matches!(classify_backend_key(key), BackendKey::Log(_)))
+        });
+        if is_gc {
+            self.attempts.lock().unwrap().push(
+                operations
+                    .iter()
+                    .map(|operation| match operation {
+                        BlobOp::Put { key, val } => (key.to_vec(), Some(val.to_vec())),
+                        BlobOp::Delete { key } => (key.to_vec(), None),
+                    })
+                    .collect(),
+            );
+            if self.fail_gc.load(Ordering::SeqCst) {
+                if !self.applied_gc.swap(true, Ordering::SeqCst) {
+                    self.inner.write_batch(operations)?;
+                }
+                return Err(BlobError("injected error after GC application".into()));
+            }
+        }
+        self.inner.write_batch(operations)
+    }
+}
+
+#[test]
+fn ambiguous_gc_blocks_later_application_and_retries_identical_checkpoint_bytes() {
+    let backend = Arc::new(AmbiguousGcBlobs::default());
+    let cache = Cache::from_backend(Arc::clone(&backend), options(8)).unwrap();
+    cache.put(b"ambiguous/before", b"checkpointed").unwrap();
+    cache.wait_applied().unwrap();
+    backend.fail_gc.store(true, Ordering::SeqCst);
+    assert!(cache.writeback.collect_expired_at(u64::MAX).is_err());
+    assert_eq!(
+        retained_log_count(&backend.inner),
+        0,
+        "GC applied despite returning an error"
+    );
+    cache.put(b"ambiguous/after", b"queued").unwrap();
+    assert_eq!(cache.highest_acknowledged_sequence(), 2);
+    assert_eq!(cache.applied_sequence(), 1);
+    assert!(cache.status().unwrap().log_gc.pending_retry);
+
+    backend.fail_gc.store(false, Ordering::SeqCst);
+    cache.wait_applied().unwrap();
+    let attempts = backend.attempts.lock().unwrap().clone();
+    assert!(attempts.len() >= 2);
+    assert!(
+        attempts.iter().all(|attempt| *attempt == attempts[0]),
+        "GC retry changed operation bytes"
+    );
+    assert_eq!(
+        cache.status().unwrap().log_gc.reclaimed_records,
+        1,
+        "ambiguous GC was counted twice"
+    );
+    assert_eq!(cache.close().unwrap(), 2);
+    let reopened = Cache::from_backend(backend, options(8)).unwrap();
+    assert_eq!(reopened.applied_sequence(), 2);
+    assert_eq!(
+        reopened.get(b"ambiguous/before").unwrap().as_deref(),
+        Some(b"checkpointed".as_slice())
+    );
+    assert_eq!(
+        reopened.get(b"ambiguous/after").unwrap().as_deref(),
+        Some(b"queued".as_slice())
+    );
+    assert_eq!(reopened.close().unwrap(), 2);
+}
+
+#[test]
+fn stopping_after_ambiguous_gc_recovers_checkpoint_and_drops_only_queued_transactions() {
+    let backend = Arc::new(AmbiguousGcBlobs::default());
+    let cache = Cache::from_backend(Arc::clone(&backend), options(8)).unwrap();
+    cache
+        .put(b"ambiguous-stop/before", b"checkpointed")
+        .unwrap();
+    cache.wait_applied().unwrap();
+    backend.fail_gc.store(true, Ordering::SeqCst);
+    assert!(cache.writeback.collect_expired_at(u64::MAX).is_err());
+    cache.put(b"ambiguous-stop/after", b"volatile").unwrap();
+    cache.abort_without_flush().unwrap();
+    assert_eq!(retained_log_count(&backend.inner), 0);
+    backend.fail_gc.store(false, Ordering::SeqCst);
+    let reopened = Cache::from_backend(backend, options(8)).unwrap();
+    assert_eq!(reopened.applied_sequence(), 1);
+    assert_eq!(
+        reopened.get(b"ambiguous-stop/before").unwrap().as_deref(),
+        Some(b"checkpointed".as_slice())
+    );
+    assert_eq!(reopened.get(b"ambiguous-stop/after").unwrap(), None);
+    assert_eq!(reopened.status().unwrap().log_gc.reclaimed_records, 1);
+    assert_eq!(reopened.close().unwrap(), 1);
 }

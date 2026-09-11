@@ -10,6 +10,7 @@
 
 use std::sync::Arc;
 
+use mako_cache::test_support::cache_from_backend;
 use mako_cache::{ApplyError, Cache, CacheOptions, Error};
 use mako_local::{
     arm_test_cleanup_failure, features, quarantined_worker_count, worker_health,
@@ -23,7 +24,7 @@ const CLEANUP_SCENARIO_ENV: &str = "MAKO_CACHE_CLEANUP_SCENARIO";
 type TestCache = Cache<Arc<MemBlobs>>;
 
 fn open(backend: &Arc<MemBlobs>, options: CacheOptions) -> TestCache {
-    Cache::from_backend(Arc::clone(backend), options).expect("open cleanup-test cache")
+    cache_from_backend(Arc::clone(backend), options).expect("open cleanup-test cache")
 }
 
 fn fresh_quarantined_worker(name: &str, scenario: impl FnOnce() + Send + 'static) {
@@ -56,13 +57,23 @@ fn fresh_quarantined_worker(name: &str, scenario: impl FnOnce() + Send + 'static
         .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
 }
 
+fn assert_only_format_marker(backend: &MemBlobs) {
+    assert_eq!(backend.batch_count(), 1);
+    let snapshot = backend.snapshot();
+    assert_eq!(
+        snapshot.len(),
+        1,
+        "cleanup failure published transaction state"
+    );
+    assert!(snapshot.contains_key(b"\0mako-cache\0\x02F".as_slice()));
+}
+
 fn assert_nothing_published(cache: &TestCache, backend: &MemBlobs) {
     assert_eq!(cache.queued_transactions(), 0);
     assert_eq!(cache.highest_acknowledged_sequence(), 0);
     assert_eq!(cache.applied_sequence(), 0);
     assert_eq!(cache.flush().expect("empty application barrier"), 0);
-    assert_eq!(backend.batch_count(), 0);
-    assert!(backend.snapshot().is_empty());
+    assert_only_format_marker(backend);
     match cache.transaction() {
         Err(Error::Native(LocalError::WorkerPoisoned)) => {}
         Ok(_) => panic!("a quarantined worker admitted another cache transaction"),
@@ -171,8 +182,7 @@ fn ambiguous_commit_pins_the_complete_record() {
         Ok(_) => panic!("a cache-wide unknown outcome allowed a flush barrier"),
         Err(other) => panic!("unexpected post-pin flush result: {other}"),
     }
-    assert_eq!(backend.batch_count(), 0);
-    assert!(backend.snapshot().is_empty());
+    assert_only_format_marker(&backend);
 
     match cache.transaction() {
         Err(Error::Apply(ApplyError::UnknownOutcome { sequence: pinned })) => {
@@ -182,8 +192,7 @@ fn ambiguous_commit_pins_the_complete_record() {
         Err(other) => panic!("unexpected post-pin admission result: {other}"),
     }
     assert!(matches!(cache.close(), Err(Error::Runtime(_))));
-    assert_eq!(backend.batch_count(), 0);
-    assert!(backend.snapshot().is_empty());
+    assert_only_format_marker(&backend);
 }
 
 fn run_isolated_scenario(name: &str) {

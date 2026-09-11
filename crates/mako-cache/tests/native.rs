@@ -2,6 +2,7 @@
 
 use std::sync::{Arc, Barrier};
 
+use mako_cache::test_support::cache_from_backend;
 use mako_cache::{Cache, CacheOptions, Error};
 use mako_local::Error as LocalError;
 use mrx_core::fakes::MemBlobs;
@@ -10,7 +11,7 @@ use mrx_core::{BlobOp, Blobs};
 type TestCache = Cache<Arc<MemBlobs>>;
 
 fn open(backend: &Arc<MemBlobs>) -> TestCache {
-    Cache::from_backend(Arc::clone(backend), CacheOptions::default()).expect("open cache")
+    cache_from_backend(Arc::clone(backend), CacheOptions::default()).expect("open cache")
 }
 
 #[test]
@@ -59,8 +60,8 @@ fn a_multi_key_commit_is_visible_then_flushed_as_one_atomic_backend_batch() {
     assert_eq!(backend.batch_count() - batches_before, 1);
     assert_eq!(
         backend.op_count() - ops_before,
-        4,
-        "one log put and all three data mutations must share the batch"
+        5,
+        "one log, lane metadata, and all three data mutations must share the batch"
     );
 
     let batches_after_flush = backend.batch_count();
@@ -170,8 +171,8 @@ fn existing_delete_then_put_is_one_canonical_put() {
     assert_eq!(backend.batch_count() - batches_before, 1);
     assert_eq!(
         backend.op_count() - ops_before,
-        2,
-        "one log put and one materialized put prove the key was canonicalized"
+        3,
+        "one log, lane metadata, and one materialized put prove the key was canonicalized"
     );
     assert_eq!(
         cache
@@ -284,8 +285,8 @@ fn every_same_key_mutation_pair_has_one_canonical_backend_result() {
                 );
                 assert_eq!(
                     backend.op_count() - ops_before,
-                    u64::from(has_canonical_mutation) * 2,
-                    "a canonical commit contains one log put and one final key mutation"
+                    u64::from(has_canonical_mutation) * 3,
+                    "a canonical commit contains one log, lane metadata, and one final key mutation"
                 );
                 assert_eq!(cache.get(&key).expect("read matrix final value"), expected);
                 recovered.push((key, expected));
@@ -358,8 +359,8 @@ fn same_key_composition_preserves_results_and_abort_publishes_nothing() {
     assert_eq!(backend.batch_count() - batches_before, 1);
     assert_eq!(
         backend.op_count() - ops_before,
-        4,
-        "one log operation plus exactly one final mutation for each of three keys"
+        5,
+        "one log, lane metadata, and exactly one final mutation for each of three keys"
     );
     assert_eq!(
         cache.get(b"same-key/new").expect("read new").as_deref(),
@@ -485,12 +486,14 @@ fn read_only_noops_do_not_log_and_recovery_rejects_invalid_backends() {
     assert_eq!(backend.op_count(), ops);
     cache.close().expect("close valid cache");
 
-    // Locate the public backend row by its value, then corrupt only its
-    // materialized data. The retained commit log must catch the disagreement.
+    // Corrupt the private materialized row envelope while retaining its log.
+    // Recovery must reject the malformed checkpoint before exposing the cache.
     let data_key = backend
         .snapshot()
         .into_iter()
-        .find_map(|(key, value)| (value == b"one").then_some(key))
+        .find_map(|(key, _)| {
+            (key.starts_with(b"\0mako-cache\0\x02D") && key.ends_with(b"existing")).then_some(key)
+        })
         .expect("materialized data key");
     backend
         .write_batch(&[BlobOp::Put {
@@ -498,7 +501,7 @@ fn read_only_noops_do_not_log_and_recovery_rejects_invalid_backends() {
             val: b"tampered",
         }])
         .expect("tamper backend");
-    match Cache::from_backend(Arc::clone(&backend), CacheOptions::default()) {
+    match cache_from_backend(Arc::clone(&backend), CacheOptions::default()) {
         Err(Error::BackendStateMismatch) => {}
         Err(error) => panic!("expected backend-state mismatch, got {error:?}"),
         Ok(cache) => {
@@ -511,7 +514,7 @@ fn read_only_noops_do_not_log_and_recovery_rejects_invalid_backends() {
         b"application-owned-key".to_vec(),
         b"value".to_vec(),
     )]));
-    match Cache::from_backend(foreign, CacheOptions::default()) {
+    match cache_from_backend(foreign, CacheOptions::default()) {
         Err(Error::ForeignBackendKey) => {}
         Err(error) => panic!("expected foreign-key rejection, got {error:?}"),
         Ok(cache) => {
@@ -526,7 +529,7 @@ fn a_tiny_record_budget_still_allows_read_only_commits() {
     let backend = Arc::new(MemBlobs::new());
     let mut options = CacheOptions::default();
     options.writeback.max_record_bytes = 1;
-    let cache = Cache::from_backend(Arc::clone(&backend), options).expect("open tiny-budget cache");
+    let cache = cache_from_backend(Arc::clone(&backend), options).expect("open tiny-budget cache");
 
     let mut read_only = cache.transaction().expect("begin read-only transaction");
     assert_eq!(read_only.get(b"missing").expect("read missing key"), None);
@@ -545,7 +548,11 @@ fn a_tiny_record_budget_still_allows_read_only_commits() {
 
     assert_eq!(cache.highest_acknowledged_sequence(), 0);
     assert_eq!(cache.flush().expect("flush empty queue"), 0);
-    assert_eq!(backend.batch_count(), 0);
+    assert_eq!(
+        backend.batch_count(),
+        1,
+        "only the initial format marker was written"
+    );
     cache.close().expect("close tiny-budget cache");
 }
 

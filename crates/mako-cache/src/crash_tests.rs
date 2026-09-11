@@ -484,6 +484,64 @@ fn recovery_verifier_role() {
     );
 }
 
+fn gc_seed_role() {
+    let path = env::var_os(DB_PATH_ENV).expect("missing GC database path");
+    let cache = Db::open(&path, sync_options()).expect("open GC seed cache");
+    let mut first = cache.transaction().expect("begin GC seed transaction");
+    assert!(first.put(RECOVERY_A, b"old").unwrap());
+    assert!(first.put(RECOVERY_B, b"deleted").unwrap());
+    first.commit().expect("commit GC seed transaction");
+    let mut second = cache
+        .transaction()
+        .expect("begin GC checkpoint transaction");
+    assert!(!second.put(RECOVERY_A, b"new").unwrap());
+    assert!(second.remove(RECOVERY_B).unwrap());
+    assert!(second.put(RECOVERY_C, b"inserted").unwrap());
+    second.commit().expect("commit GC checkpoint transaction");
+    assert_eq!(cache.close().expect("sync GC seed state"), 2);
+}
+
+fn gc_crash_role() {
+    let path = env::var_os(DB_PATH_ENV).expect("missing GC database path");
+    let marker = env::var_os(MARKER_PATH_ENV).expect("missing GC crash marker");
+    let point = Point::from_name(&env::var(POINT_ENV).unwrap()).unwrap();
+    let cache = open_observed_writer(Path::new(&path));
+    failpoint::arm(point, PathBuf::from(marker));
+    cache
+        .writeback
+        .collect_expired_at(u64::MAX)
+        .expect("run crashable GC");
+    panic!("GC did not reach its armed public RocksDB boundary");
+}
+
+fn gc_verifier_role() {
+    let path = env::var_os(DB_PATH_ENV).expect("missing GC database path");
+    let expected = Expected::from_name(&env::var(EXPECTED_ENV).unwrap()).unwrap();
+    let cache = Db::open(&path, sync_options()).expect("recover interrupted GC");
+    assert_eq!(
+        cache.get(RECOVERY_A).unwrap().as_deref(),
+        Some(b"new".as_slice())
+    );
+    assert_eq!(cache.get(RECOVERY_B).unwrap(), None);
+    assert_eq!(
+        cache.get(RECOVERY_C).unwrap().as_deref(),
+        Some(b"inserted".as_slice())
+    );
+    assert_eq!(cache.applied_watermark().sequence(), 2);
+    let previous_hlc = cache.applied_watermark().mako_timestamp().unwrap();
+    let gc = cache.status().expect("read recovered GC status").log_gc;
+    match expected {
+        Expected::Old => assert_eq!((gc.retained_records, gc.reclaimed_records), (2, 0)),
+        Expected::New => assert_eq!((gc.retained_records, gc.reclaimed_records), (0, 2)),
+    }
+    cache
+        .put(RECOVERY_POST_RESTART, b"after-gc")
+        .expect("commit after interrupted GC");
+    assert_eq!(cache.flush().unwrap(), 3);
+    assert!(cache.applied_watermark().mako_timestamp().unwrap() > previous_hlc);
+    assert_eq!(cache.close().unwrap(), 3);
+}
+
 /// One helper entry point is self-executed for both writer and verifier roles.
 #[test]
 fn crash_role() {
@@ -506,6 +564,9 @@ fn crash_role() {
         "recovery-seed" => recovery_seed_role(),
         "recovery-crash" => recovery_crash_role(),
         "recovery-verifier" => recovery_verifier_role(),
+        "gc-seed" => gc_seed_role(),
+        "gc-crash" => gc_crash_role(),
+        "gc-verifier" => gc_verifier_role(),
         other => panic!("unknown crash-test role: {other}"),
     }
 }
@@ -653,6 +714,43 @@ fn recovery_process_crash_matrix_converges_after_restart() {
         assert!(
             verifier.status.success(),
             "recovery verifier failed at {}:\nstdout:\n{}\nstderr:\n{}",
+            point.name(),
+            String::from_utf8_lossy(&verifier.stdout),
+            String::from_utf8_lossy(&verifier.stderr)
+        );
+    }
+}
+
+#[test]
+fn gc_process_crashes_keep_checkpoint_and_frontiers_atomic() {
+    for (point, expected) in [
+        (Point::RocksBatchConstructed, Expected::Old),
+        (Point::RocksBeforeWrite, Expected::Old),
+        (Point::RocksAfterWrite, Expected::New),
+    ] {
+        let scratch = Scratch::new(point);
+        let seed = role_command("gc-seed", &scratch, point, expected)
+            .output()
+            .unwrap();
+        assert!(
+            seed.status.success(),
+            "GC seeder failed: {}",
+            String::from_utf8_lossy(&seed.stderr)
+        );
+        let child = role_command("gc-crash", &scratch, point, expected)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut child = ChildGuard::new(child);
+        wait_for_marker(child.child_mut(), &scratch.marker, point);
+        assert_eq!(child.kill_and_wait().signal(), Some(9));
+        let verifier = role_command("gc-verifier", &scratch, point, expected)
+            .output()
+            .unwrap();
+        assert!(
+            verifier.status.success(),
+            "GC verifier failed at {}:\n{}\n{}",
             point.name(),
             String::from_utf8_lossy(&verifier.stdout),
             String::from_utf8_lossy(&verifier.stderr)

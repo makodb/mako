@@ -4,6 +4,7 @@
 
 use std::sync::{Arc, Barrier, Mutex, MutexGuard};
 
+use mako_cache::test_support::cache_from_backend;
 use mako_cache::{Cache, CacheOptions, Error, RecordChecksum};
 use mrx_core::fakes::MemBlobs;
 
@@ -30,8 +31,7 @@ fn holder_options() -> CacheOptions {
 }
 
 fn open(backend: &Arc<MemBlobs>) -> TestCache {
-    Cache::from_backend(Arc::clone(backend), holder_options())
-        .expect("open concurrent-holder cache")
+    cache_from_backend(Arc::clone(backend), holder_options()).expect("open concurrent-holder cache")
 }
 
 fn worker_key(worker: usize) -> Vec<u8> {

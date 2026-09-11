@@ -4,7 +4,8 @@ use std::env;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use mako_cache::{Cache, CacheOptions};
+use mako_cache::test_support::cache_from_backend;
+use mako_cache::CacheOptions;
 use mako_local::{MakoTimestamp, TestCommitPhase, WorkerHealth};
 use mrx_core::fakes::MemBlobs;
 
@@ -45,7 +46,7 @@ fn native_timestamp_matches_the_persisted_record_and_applied_frontier() {
     OBSERVED_ORIGIN.store(0, Ordering::SeqCst);
     TIMESTAMP_CALLBACKS.store(0, Ordering::SeqCst);
     let backend = Arc::new(MemBlobs::new());
-    let cache = Cache::from_backend(Arc::clone(&backend), CacheOptions::default())
+    let cache = cache_from_backend(Arc::clone(&backend), CacheOptions::default())
         .expect("open timestamp cache");
     mako_local::install_test_commit_observer(observe_timestamp)
         .expect("install timestamp observer");

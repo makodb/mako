@@ -195,7 +195,11 @@ impl RecordingBlobs {
         for (key, value) in self.inner.snapshot() {
             if let BackendKey::Data { table_id, key } = classify_backend_key(&key) {
                 if table_id == DEFAULT_TABLE_ID && key.starts_with(PREFIX) {
-                    state_insert(&mut state, table_id, key.to_vec(), value);
+                    let row = crate::checkpoint::decode_row(&value)
+                        .expect("decode materialized transcript row");
+                    if let Some(value) = row.value {
+                        state_insert(&mut state, table_id, key.to_vec(), value.to_vec());
+                    }
                 }
             }
         }
@@ -205,91 +209,108 @@ impl RecordingBlobs {
     fn decode_attempt(
         operations: &[BlobOp<'_>],
     ) -> Vec<(u64, mako_local::MakoTimestamp, Vec<ModelMutation>)> {
-        let mut decoded = Vec::new();
-        let mut offset = 0;
-        while offset < operations.len() {
-            let (log_key, encoded) = match operations.get(offset) {
-                Some(BlobOp::Put { key, val }) => (*key, *val),
-                Some(BlobOp::Delete { .. }) | None => {
-                    panic!("each cache transaction must begin with its commit-record put")
+        let records = operations
+            .iter()
+            .filter_map(|operation| match operation {
+                BlobOp::Put { key, val }
+                    if matches!(classify_backend_key(key), BackendKey::Log(_)) =>
+                {
+                    Some(
+                        CommitRecord::decode(
+                            key,
+                            val,
+                            CacheOptions::default().writeback.max_record_bytes,
+                        )
+                        .expect("decode recorded backend attempt"),
+                    )
                 }
-            };
-            let record = CommitRecord::decode(
-                log_key,
-                encoded,
-                CacheOptions::default().writeback.max_record_bytes,
-            )
-            .expect("decode recorded backend attempt");
-            offset += 1;
-            let mut materialized = vec![false; record.mutations().len()];
-            while offset < operations.len()
-                && !matches!(
-                    operations[offset],
-                    BlobOp::Put { key, .. }
-                        if matches!(classify_backend_key(key), BackendKey::Log(_))
-                )
-            {
-                let actual = &operations[offset];
-                let matched = record
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        for operation in operations {
+            match operation {
+                BlobOp::Put { key, val } => match classify_backend_key(key) {
+                    BackendKey::Data { .. } => {
+                        let row = crate::checkpoint::decode_row(val)
+                            .expect("decode transcript row envelope");
+                        let record = records
+                            .iter()
+                            .find(|record| record.sequence() == row.sequence)
+                            .expect("materialized row must share a batch with its source log");
+                        assert_eq!(row.timestamp, record.mako_timestamp());
+                        assert!(
+                            record.mutations().iter().zip(record.data_keys()).any(
+                                |(mutation, expected_key)| {
+                                    if *key != expected_key {
+                                        return false;
+                                    }
+                                    match mutation {
+                                        Mutation::Put { value, .. } => {
+                                            row.value == Some(value.as_slice())
+                                        }
+                                        Mutation::Delete { .. } => row.value.is_none(),
+                                    }
+                                }
+                            ),
+                            "materialized row differs from its source transaction"
+                        );
+                    }
+                    BackendKey::Lane(tag) => {
+                        let metadata = crate::checkpoint::LaneMetadata::decode(val)
+                            .expect("decode transcript lane metadata");
+                        if let Some(last) = records.last() {
+                            assert_eq!(crate::checkpoint::lane_tag(last.sequence()).unwrap(), tag);
+                            assert_eq!(
+                                metadata.applied,
+                                last.sequence().get() & crate::record::LOG_LOCAL_MASK
+                            );
+                            assert!(records
+                                .iter()
+                                .all(|record| Some(record.mako_timestamp())
+                                    <= metadata.max_timestamp));
+                        }
+                    }
+                    BackendKey::Format => crate::checkpoint::validate_format(val)
+                        .expect("validate initial format marker"),
+                    BackendKey::Log(_) => {}
+                    BackendKey::Foreign => {
+                        panic!("foreign backend write in application transcript")
+                    }
+                },
+                BlobOp::Delete { key } => {
+                    assert!(
+                        records.is_empty()
+                            && matches!(classify_backend_key(key), BackendKey::Log(_)),
+                        "only GC may physically delete application log keys"
+                    );
+                }
+            }
+        }
+        let decoded = records
+            .iter()
+            .map(|record| {
+                let mutations = record
                     .mutations()
                     .iter()
-                    .zip(record.data_keys())
-                    .enumerate()
-                    .find_map(|(index, (expected, expected_key))| {
-                        if materialized[index] {
-                            return None;
+                    .map(|mutation| match mutation {
+                        Mutation::Put {
+                            table_id,
+                            key,
+                            value,
+                        } => ModelMutation::put(*table_id, key.clone(), value.clone()),
+                        Mutation::Delete { table_id, key } => {
+                            ModelMutation::delete(*table_id, key.clone())
                         }
-                        let identical = match (actual, expected) {
-                            (
-                                BlobOp::Put {
-                                    key: actual_key,
-                                    val: actual_value,
-                                },
-                                Mutation::Put { value, .. },
-                            ) => *actual_key == expected_key && *actual_value == value,
-                            (BlobOp::Delete { key: actual_key }, Mutation::Delete { .. }) => {
-                                *actual_key == expected_key
-                            }
-                            (BlobOp::Put { .. }, Mutation::Delete { .. })
-                            | (BlobOp::Delete { .. }, Mutation::Put { .. }) => false,
-                        };
-                        identical.then_some(index)
-                    });
-                let index = matched.unwrap_or_else(|| {
-                    panic!(
-                        "materialized backend operation differs from every decoded commit mutation: observed {actual:?}, record {record:?}"
-                    )
-                });
-                materialized[index] = true;
-                offset += 1;
-            }
-            let sequence = record.sequence().get();
-            let mutations = record
-                .mutations()
-                .iter()
-                .map(|mutation| match mutation {
-                    Mutation::Put {
-                        table_id,
-                        key,
-                        value,
-                    } => ModelMutation::put(*table_id, key.clone(), value.clone()),
-                    Mutation::Delete { table_id, key } => {
-                        ModelMutation::delete(*table_id, key.clone())
-                    }
-                })
-                .collect();
-            decoded.push((sequence, record.mako_timestamp(), mutations));
-        }
-        assert!(!decoded.is_empty(), "cache backend batch must not be empty");
-        for pair in decoded.windows(2) {
-            let first_sequence = crate::record::CommitSeq::new(pair[0].0)
-                .expect("physical cache sequence is nonzero");
-            let second_sequence = crate::record::CommitSeq::new(pair[1].0)
-                .expect("physical cache sequence is nonzero");
-            let (first_lane, first_local) = crate::record::split_log_sequence(first_sequence)
-                .expect("first physical cache sequence has a valid lane tag");
-            let (second_lane, second_local) = crate::record::split_log_sequence(second_sequence)
-                .expect("second physical cache sequence has a valid lane tag");
+                    })
+                    .collect();
+                (record.sequence().get(), record.mako_timestamp(), mutations)
+            })
+            .collect::<Vec<_>>();
+        for pair in records.windows(2) {
+            let (first_lane, first_local) =
+                crate::record::split_log_sequence(pair[0].sequence()).unwrap();
+            let (second_lane, second_local) =
+                crate::record::split_log_sequence(pair[1].sequence()).unwrap();
             assert_eq!(
                 (second_lane, second_local),
                 (first_lane, first_local + 1),
@@ -327,6 +348,30 @@ fn history_timestamp(timestamp: mako_local::MakoTimestamp) -> HistoryMakoTimesta
     .expect("production Mako timestamp has a nonzero origin")
 }
 
+fn transcript_operations(records: &[CommitRecord]) -> Vec<(Vec<u8>, Vec<u8>)> {
+    let mut operations = Vec::new();
+    let mut metadata = crate::checkpoint::LaneMetadata::default();
+    for record in records {
+        operations.push((record.log_key().to_vec(), record.encoded().to_vec()));
+        metadata.applied = record.sequence().get();
+        metadata.max_timestamp = Some(record.mako_timestamp());
+        metadata.retained_bytes += (record.log_key().len() + record.encoded().len()) as u64;
+        for (mutation, key) in record.mutations().iter().zip(record.data_keys()) {
+            let value = match mutation {
+                Mutation::Put { value, .. } => Some(value.as_slice()),
+                Mutation::Delete { .. } => None,
+            };
+            operations.push((
+                key.clone(),
+                crate::checkpoint::encode_row(record.mako_timestamp(), record.sequence(), value)
+                    .unwrap(),
+            ));
+        }
+    }
+    operations.push((crate::checkpoint::lane_key(0), metadata.encode().unwrap()));
+    operations
+}
+
 #[test]
 fn application_transcript_decodes_every_record_in_a_physical_batch() {
     let records = [
@@ -348,10 +393,11 @@ fn application_transcript_decodes_every_record_in_a_physical_batch() {
             }],
         ),
     ];
-    let mut operations = Vec::new();
-    for record in &records {
-        record.append_backend_ops(&mut operations);
-    }
+    let owned = transcript_operations(&records);
+    let operations = owned
+        .iter()
+        .map(|(key, val)| BlobOp::Put { key, val })
+        .collect::<Vec<_>>();
 
     let decoded = RecordingBlobs::decode_attempt(&operations);
     assert_eq!(
@@ -400,10 +446,11 @@ fn application_transcript_projects_atomic_failure_to_front_then_full_retry() {
             }],
         ),
     ];
-    let mut operations = Vec::new();
-    for record in &records {
-        record.append_backend_ops(&mut operations);
-    }
+    let owned = transcript_operations(&records);
+    let operations = owned
+        .iter()
+        .map(|(key, val)| BlobOp::Put { key, val })
+        .collect::<Vec<_>>();
 
     let clock = Arc::new(LogicalClock::default());
     let backend = RecordingBlobs::new(clock);
@@ -439,7 +486,7 @@ fn application_transcript_projects_atomic_failure_to_front_then_full_retry() {
 }
 
 #[test]
-#[should_panic(expected = "differs from every decoded commit mutation")]
+#[should_panic(expected = "materialized row differs from its source transaction")]
 fn application_transcript_rejects_a_mismatched_materialized_operation() {
     let record = crate::record::PreparedCommitRecord::prepare(
         vec![Mutation::Put {
@@ -455,6 +502,12 @@ fn application_transcript_rejects_a_mismatched_materialized_operation() {
         transcript_timestamp(1),
     )
     .finalize();
+    let wrong_row = crate::checkpoint::encode_row(
+        record.mako_timestamp(),
+        record.sequence(),
+        Some(b"wrong-value"),
+    )
+    .unwrap();
     let operations = [
         BlobOp::Put {
             key: record.log_key(),
@@ -462,7 +515,7 @@ fn application_transcript_rejects_a_mismatched_materialized_operation() {
         },
         BlobOp::Put {
             key: &record.data_keys()[0],
-            val: b"wrong-value",
+            val: &wrong_row,
         },
     ];
 
@@ -486,6 +539,11 @@ impl Blobs for RecordingBlobs {
 
     fn write_batch(&self, operations: &[BlobOp<'_>]) -> Result<(), BlobError> {
         let decoded = Self::decode_attempt(operations);
+        if decoded.is_empty() {
+            // Format initialization and log GC have no logical transaction
+            // effect and must not enroll at the foreground-history gate.
+            return self.inner.write_batch(operations);
+        }
         // Physical commit IDs are dense only within a worker lane. The
         // application oracle still models a single backend application stream,
         // so project each physical ID onto its first-attempt position. Retries
