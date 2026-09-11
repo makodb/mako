@@ -357,6 +357,7 @@ if(DEFINED MAKO_STO_TPCC_NATIVE_TEST
         tests::fixed_mutation_preserves_actions_duplicates_size_and_failure_boundaries
         tests::fixed_put_supports_all_widths_mixed_rows_duplicates_abort_and_scratch_reuse
         tests::fixed_read_visits_all_widths_and_aborts_on_callback_failure
+        tests::fused_new_order_header_reports_registry_exhaustion_as_a_resource_outcome
         tests::insert_many_accounting_failure_aborts_staged_transaction
         tests::last_error_copy_rejects_overlapping_outputs_before_writing
         tests::last_error_copy_validates_scalar_and_output_ranges

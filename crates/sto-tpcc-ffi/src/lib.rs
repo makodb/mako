@@ -6360,6 +6360,12 @@ fn new_order_insert_header(
     match insert_impl(handle, table, key, value)? {
         Status::Ok | Status::Duplicate => Ok(()),
         Status::Retry => Err(Status::Retry),
+        // Ordinary capacity exhaustion is an application-visible resource
+        // outcome, not an integrity failure. Propagate it unchanged so the
+        // closed TPC-C boundary still aborts the attempt, reports usage, emits
+        // `TPCC_RESOURCE_EXHAUSTED phase=run`, and exits 3 instead of raising a
+        // fatal status that the wrapper turns into an uncaught exception.
+        Status::ResourceExhausted => Err(Status::ResourceExhausted),
         status => Err(fatal(format_args!(
             "{operation}: insert returned unexpected status {}",
             status.code()
@@ -6868,6 +6874,70 @@ mod tests {
     const NATIVE_TEST_MAX_THREADS: u32 = 8;
     #[cfg(mtree_native_integration)]
     const NATIVE_TEST_MAX_KEY_LENGTH: u32 = 128;
+
+    #[cfg(mtree_native_integration)]
+    #[test]
+    fn fused_new_order_header_reports_registry_exhaustion_as_a_resource_outcome() {
+        unsafe {
+            let config = StoTpccDbConfig {
+                max_threads: NATIVE_TEST_MAX_THREADS,
+                max_key_length: NATIVE_TEST_MAX_KEY_LENGTH,
+                max_items_per_txn: 16,
+                max_locks_per_txn: 32,
+                max_registry_bytes: 0,
+            };
+            // The retained-record quota admits exactly one row, so the first
+            // fused NewOrder header insert stages a row and the second ends the
+            // attempt with ordinary capacity exhaustion.
+            let table_config = StoTpccTableConfig {
+                max_retained_records: 1,
+                max_retained_key_bytes: 64,
+                max_consumed_record_ids: 8,
+                ..StoTpccTableConfig::default()
+            };
+            let mut db = ptr::null_mut();
+            let mut table = ptr::null_mut();
+            let mut thread = ptr::null_mut();
+            assert_eq!(sto_tpcc_db_create(&config, &mut db), Status::Ok.code());
+            assert_eq!(
+                sto_tpcc_table_create(db, &table_config, &mut table),
+                Status::Ok.code()
+            );
+            assert_eq!(sto_tpcc_thread_create(db, &mut thread), Status::Ok.code());
+            assert_eq!(sto_tpcc_txn_begin(thread), Status::Ok.code());
+
+            let staged = new_order_insert_header(
+                &mut *thread,
+                &*table,
+                b"header-1",
+                b"value",
+                "new-order header",
+            );
+            assert_eq!(staged.err().map(Status::code), None);
+
+            // An exhausted header insert is an ordinary application-visible
+            // resource outcome. Reporting a fatal status here reaches the C++
+            // wrapper as an uncaught exception instead of the
+            // `TPCC_RESOURCE_EXHAUSTED phase=run` shutdown that the closed
+            // TPC-C contract requires.
+            let exhausted = new_order_insert_header(
+                &mut *thread,
+                &*table,
+                b"header-2",
+                b"value",
+                "new-order header",
+            );
+            assert_eq!(
+                exhausted.err().map(Status::code),
+                Some(Status::ResourceExhausted.code())
+            );
+
+            assert_eq!(sto_tpcc_txn_abort(thread), Status::Ok.code());
+            assert_eq!(sto_tpcc_thread_destroy(thread), Status::Ok.code());
+            assert_eq!(sto_tpcc_table_destroy(table), Status::Ok.code());
+            assert_eq!(sto_tpcc_db_destroy(db), Status::Ok.code());
+        }
+    }
 
     #[test]
     fn terminal_capacity_exhaustion_is_fatal_not_retryable() {
