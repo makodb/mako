@@ -40,6 +40,10 @@ const FORCED_COLLISION_ROUNDS: u64 = 64;
 const CHILD_CAPTURE_BYTES: usize = 1024 * 1024;
 const MAKO_LOG_PREFIX: &[u8] = b"\0mako-cache\0\x01L";
 const MAKO_DATA_PREFIX: &[u8] = b"\0mako-cache\0\x01D";
+const MAKO_LOG_PREFIX_V2: &[u8] = b"\0mako-cache\0\x02L";
+const MAKO_DATA_PREFIX_V2: &[u8] = b"\0mako-cache\0\x02D";
+const MAKO_FORMAT_PREFIX_V2: &[u8] = b"\0mako-cache\0\x02F";
+const MAKO_LANE_PREFIX_V2: &[u8] = b"\0mako-cache\0\x02M";
 const WRITEBACK_CPU_ENV: &str = "MAKO_CACHE_BENCH_WRITEBACK_CPU";
 const RECORD_CHECKSUM_ENV: &str = "MAKO_CACHE_BENCH_RECORD_CHECKSUM";
 const MAKO_FOREGROUND_MODE: ForegroundMode = ForegroundMode::Concurrent;
@@ -1179,12 +1183,21 @@ fn inspect_backend(path: &Path, arm: Arm) -> AnyResult<BackendStats> {
         stats.keys += 1;
         stats.key_bytes = stats.key_bytes.saturating_add(key.len() as u64);
         stats.value_bytes = stats.value_bytes.saturating_add(value.len() as u64);
-        if arm == Arm::Mako && key.starts_with(MAKO_LOG_PREFIX) {
+        if arm == Arm::Mako
+            && (key.starts_with(MAKO_LOG_PREFIX) || key.starts_with(MAKO_LOG_PREFIX_V2))
+        {
             stats.log_keys += 1;
             stats.log_key_bytes = stats.log_key_bytes.saturating_add(key.len() as u64);
             stats.log_value_bytes = stats.log_value_bytes.saturating_add(value.len() as u64);
-        } else if arm == Arm::Mako && key.starts_with(MAKO_DATA_PREFIX) {
+        } else if arm == Arm::Mako
+            && (key.starts_with(MAKO_DATA_PREFIX) || key.starts_with(MAKO_DATA_PREFIX_V2))
+        {
             stats.data_keys += 1;
+        } else if arm == Arm::Mako
+            && (key.starts_with(MAKO_FORMAT_PREFIX_V2) || key.starts_with(MAKO_LANE_PREFIX_V2))
+        {
+            // Version-2 checkpoint metadata; counts toward total keys but is
+            // neither a user data row nor a transaction log.
         } else if arm == Arm::Mako {
             return Err("mako-cache backend contained a foreign key".to_owned());
         } else {
