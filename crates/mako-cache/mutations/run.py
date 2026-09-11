@@ -15,6 +15,7 @@ on stdout, and may additionally be written with --report.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import dataclasses
 import hashlib
 import json
@@ -78,10 +79,9 @@ NATIVE_INTEGRATION = lambda name: TestTarget(
 )
 
 
-REPLAY_ANCHOR = """    #[cfg(test)]
-    let mut records_replayed = 0usize;
-    for record in records {
-"""
+ACCEPTANCE_NATIVE = lambda name: TestTarget(
+    ("--lib",), f"milestone1_acceptance_tests::{name}", needs_native=True
+)
 
 
 MUTATIONS: tuple[Mutation, ...] = (
@@ -274,58 +274,38 @@ MUTATIONS: tuple[Mutation, ...] = (
         ),
     ),
     Mutation(
-        name="partial-replay",
-        relative_path="src/lib.rs",
-        anchor=REPLAY_ANCHOR,
-        anchor_sha256="3bd182ec1c7d606ab3d96c7fb4621cfd64235833fc046ee64eddf67867c720f2",
-        replacement="""    #[cfg(test)]
-    let mut records_replayed = 0usize;
-    // MUTANT: silently omit the last committed record during native recovery.
-    for record in records.iter().take(records.len().saturating_sub(1)) {
+        name="checkpoint-load-omits-values",
+        relative_path="src/recovery.rs",
+        anchor="""        let mut txn = local.transaction()?;
+        txn.put(&table, raw, value)?;
+        let report = txn.commit_report();
 """,
-        test=LIB_UNIT_NATIVE(
-            "recovery_replays_each_cache_sequence_exactly_once_in_order"
+        anchor_sha256="7e61f206f2eb2eb168fa25e1025f7994da733b25099b06fe9754bd3b5952cb94",
+        replacement="""        let mut txn = local.transaction()?;
+        // MUTANT: count the current row without loading its value into Silo.
+        let _ = (&table, raw, value);
+        let report = txn.commit_report();
+""",
+        test=ACCEPTANCE_NATIVE(
+            "gc_reclaims_all_history_then_recovers_current_values_tombstones_and_counters"
         ),
-        breaks=(
-            "Recovery exposes a native cache missing a committed suffix while "
-            "claiming the complete backend frontier."
-        ),
+        breaks="Checkpoint startup exposes missing live values after their logs were reclaimed.",
     ),
     Mutation(
-        name="reordered-replay",
-        relative_path="src/lib.rs",
-        anchor=REPLAY_ANCHOR,
-        anchor_sha256="3bd182ec1c7d606ab3d96c7fb4621cfd64235833fc046ee64eddf67867c720f2",
-        replacement="""    #[cfg(test)]
-    let mut records_replayed = 0usize;
-    // MUTANT: apply the dense commit history in reverse order.
-    for record in records.iter().rev() {
+        name="checkpoint-hydrates-tombstones",
+        relative_path="src/recovery.rs",
+        anchor="""        let Some(value) = row.value else {
+            return Ok(());
+        };
 """,
-        test=LIB_UNIT_NATIVE(
-            "recovery_replays_each_cache_sequence_exactly_once_in_order"
-        ),
-        breaks=(
-            "Recovery violates CacheSeq serialization order and can materialize "
-            "an older value or an impossible delete."
-        ),
-    ),
-    Mutation(
-        name="duplicate-replay",
-        relative_path="src/lib.rs",
-        anchor=REPLAY_ANCHOR,
-        anchor_sha256="3bd182ec1c7d606ab3d96c7fb4621cfd64235833fc046ee64eddf67867c720f2",
-        replacement="""    #[cfg(test)]
-    let mut records_replayed = 0usize;
-    // MUTANT: replay the first committed record a second time at the tail.
-    for record in records.iter().chain(records.iter().take(1)) {
+        anchor_sha256="0fd841b62ed4ce30d332dd88f1f2a02e83efc32acbe17e119ef668640ca56b8e",
+        replacement="""        // MUTANT: turn a persisted tombstone into a present empty value.
+        let value = row.value.unwrap_or(&[]);
 """,
-        test=LIB_UNIT_NATIVE(
-            "recovery_replays_each_cache_sequence_exactly_once_in_order"
+        test=ACCEPTANCE_NATIVE(
+            "gc_reclaims_all_history_then_recovers_current_values_tombstones_and_counters"
         ),
-        breaks=(
-            "Recovery applies one committed transaction twice and can overwrite "
-            "the correct final application state."
-        ),
+        breaks="Checkpoint hydration makes a deleted key present in Silo.",
     ),
     Mutation(
         name="wrong-mako-timestamp",
@@ -362,8 +342,8 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         name="missing-recovery-clock-floor",
-        relative_path="src/lib.rs",
-        anchor="""    if let Some(timestamp) = applied_mako_timestamp {
+        relative_path="src/recovery.rs",
+        anchor="""    if let Some(timestamp) = recovered.maximum_timestamp {
         #[cfg(test)]
         crate::failpoint::hit(crate::failpoint::Point::RecoveryBeforeClockFloor);
         mako_local::advance_mako_timestamp_past(timestamp)?;
@@ -371,8 +351,8 @@ MUTATIONS: tuple[Mutation, ...] = (
         crate::failpoint::hit(crate::failpoint::Point::RecoveryAfterClockFloor);
     }
 """,
-        anchor_sha256="b4ebbd5d9c7f81332a4df1623ea159ff1fee03a17b1e8b4d495f84be466d0a33",
-        replacement="""    if let Some(timestamp) = applied_mako_timestamp {
+        anchor_sha256="60812a2b9361d2f1797a0035ea76c92b4c1646ef504827e946b6f25b3eafc71d",
+        replacement="""    if let Some(timestamp) = recovered.maximum_timestamp {
         #[cfg(test)]
         crate::failpoint::hit(crate::failpoint::Point::RecoveryBeforeClockFloor);
         // MUTANT: expose recovery without advancing the process-wide clock.
@@ -389,6 +369,51 @@ MUTATIONS: tuple[Mutation, ...] = (
             "the recovered backend history."
         ),
     ),
+    Mutation(
+        name="gc-includes-exact-cutoff",
+        relative_path="src/writeback.rs",
+        anchor="""                    if record.mako_timestamp().physical_us() >= cutoff_us {
+""",
+        anchor_sha256="e88e14a99a1bfbf65b23461e86ffb4a640df905182e01a75bea362c7b034419d",
+        replacement="""                    // MUTANT: expire a record exactly at the configured age boundary.
+                    if record.mako_timestamp().physical_us() > cutoff_us {
+""",
+        test=WRITEBACK_UNIT("gc_cutoff_is_strict_and_untagged_reversed_hlc_keeps_dense_suffix"),
+        breaks="GC deletes records at the retention boundary instead of retaining them.",
+    ),
+    Mutation(
+        name="gc-loses-reclaimed-metadata",
+        relative_path="src/writeback.rs",
+        anchor="""                let count = operations.len() as u64;
+                operations.push(OwnedOperation::Put(
+                    checkpoint::lane_key(lane as u16),
+                    metadata.encode()?,
+                ));
+""",
+        anchor_sha256="89950aa45819b80f2c8c964050246784b46754e53f31f984a8176437bae131b9",
+        replacement="""                let count = operations.len() as u64;
+                // MUTANT: delete log keys without persisting their reclaimed frontier.
+""",
+        test=WRITEBACK_UNIT("gc_cutoff_is_strict_and_untagged_reversed_hlc_keeps_dense_suffix"),
+        breaks="GC leaves a gap in the retained suffix by omitting its atomic metadata update.",
+    ),
+    Mutation(
+        name="gc-drops-exact-retry-exclusion",
+        relative_path="src/writeback.rs",
+        anchor="""        let first = *sequences.first().expect("nonempty apply batch");
+        if let Some(pending) = &state.pending {
+""",
+        anchor_sha256="5d36963da2ae7dd3e7608a274ce39c8edb17e90814ca2138eedce29e91888106",
+        replacement="""        let first = *sequences.first().expect("nonempty apply batch");
+        // MUTANT: discard ambiguous GC state and let application replace its metadata.
+        if matches!(state.pending.as_ref().map(|pending| &pending.kind), Some(PendingKind::Gc { .. })) {
+            state.pending = None;
+        }
+        if let Some(pending) = &state.pending {
+""",
+        test=WRITEBACK_UNIT("ambiguous_gc_retries_exact_bytes_before_apply_and_counts_once"),
+        breaks="An apply can overwrite lane metadata before the exact ambiguous GC retry completes.",
+    ),
 )
 
 
@@ -400,9 +425,9 @@ def sha256_text(text: str) -> str:
     return sha256_bytes(text.encode("utf-8"))
 
 
-def source_files() -> list[Path]:
-    roots = [ORIGINAL_CRATE / "Cargo.toml", ORIGINAL_CRATE / "build.rs"]
-    for directory in (ORIGINAL_CRATE / "src", ORIGINAL_CRATE / "tests"):
+def source_files(crate: Path = ORIGINAL_CRATE) -> list[Path]:
+    roots = [crate / "Cargo.toml", crate / "build.rs"]
+    for directory in (crate / "src", crate / "tests"):
         if directory.exists():
             roots.extend(path for path in directory.rglob("*") if path.is_file())
     return sorted(path for path in roots if path.exists())
@@ -412,6 +437,18 @@ def source_hashes() -> dict[str, str]:
     return {
         path.relative_to(ORIGINAL_CRATE).as_posix(): sha256_bytes(path.read_bytes())
         for path in source_files()
+    }
+
+
+def dependency_hashes() -> dict[str, str]:
+    # These remain path dependencies of every isolated copy. A storage adapter
+    # change during the run must invalidate the evidence just like a cache edit.
+    crates = ("mrx-core", "mrx-rocks", "mako-history", "mako-local", "mako-local-sys")
+    files = [path for name in crates for path in source_files(ORIGINAL_CRATES / name)]
+    files.append(ORIGINAL_LOCKFILE)
+    return {
+        path.relative_to(ORIGINAL_CRATES).as_posix(): sha256_bytes(path.read_bytes())
+        for path in sorted(files)
     }
 
 
@@ -494,13 +531,66 @@ class TempWorkspace:
 PATH_DEPENDENCY = re.compile(r'(?P<prefix>\bpath\s*=\s*)"(?P<path>[^"]+)"')
 
 
-def rewrite_path_dependencies(manifest: Path) -> list[dict[str, str]]:
+def wrapper_hashes(crate: Path) -> dict[str, str]:
+    """Hash both unchanged Rust FFI crates and their direct native headers.
+
+    A source-path override permits using an existing fingerprinted native build
+    at its original source root. It does not permit substituting wrapper code,
+    ABI headers, or the verifier. Cargo still runs the unchanged mandatory
+    source/configuration/archive fingerprint check for every native build.
+    """
+    root = crate.parent.parent
+    if crate.resolve() != root.joinpath("crates/mako-local").resolve():
+        raise HarnessFailure("native wrapper override must name the proved crates/mako-local directory")
+    files: list[Path] = []
+    for relative in ("crates/mako-local", "crates/mako-local-sys"):
+        directory = root / relative
+        if not directory.joinpath("Cargo.toml").is_file():
+            raise HarnessFailure(f"native wrapper source is incomplete: {directory}")
+        files.extend(
+            path for path in directory.rglob("*") if path.is_file()
+            and not any(part in ("target", ".git", "__pycache__") for part in path.relative_to(directory).parts)
+            and path.suffix != ".pyc"
+        )
+    for relative in (
+        "src/mako/storage/mako_local_abi.h",
+        "src/mako/storage/mako_timestamp.h",
+        "scripts/mako_local_fingerprint.py",
+    ):
+        path = root / relative
+        if not path.is_file():
+            raise HarnessFailure(f"native wrapper input is missing: {path}")
+        files.append(path)
+    return {path.relative_to(root).as_posix(): sha256_bytes(path.read_bytes()) for path in sorted(files)}
+
+
+def verify_wrapper_override(value: str | None) -> tuple[Path | None, dict[str, object] | None]:
+    if value is None:
+        return None, None
+    chosen = Path(value).expanduser().resolve()
+    original = ORIGINAL_CRATES / "mako-local"
+    current = wrapper_hashes(original)
+    alternate = wrapper_hashes(chosen)
+    mismatches = sorted(path for path in set(current) | set(alternate)
+                        if current.get(path) != alternate.get(path))
+    if mismatches:
+        raise HarnessFailure("native wrapper source override is not byte-identical", details=mismatches)
+    return chosen, {
+        "original": str(original), "selected": str(chosen),
+        "tree_sha256": tree_digest(current), "file_sha256": current,
+        "byte_identical": True, "native_fingerprint_required": True,
+    }
+
+
+def rewrite_path_dependencies(manifest: Path, local_source: Path | None = None) -> list[dict[str, str]]:
     source = manifest.read_text(encoding="utf-8")
     rewrites: list[dict[str, str]] = []
 
     def replace(match: re.Match[str]) -> str:
         raw = match.group("path")
         dependency = (ORIGINAL_CRATE / raw).resolve()
+        if local_source is not None and dependency == (ORIGINAL_CRATES / "mako-local").resolve():
+            dependency = local_source
         if not dependency.joinpath("Cargo.toml").is_file():
             raise HarnessFailure(
                 f"path dependency {raw!r} does not resolve to a crate",
@@ -518,7 +608,7 @@ def rewrite_path_dependencies(manifest: Path) -> list[dict[str, str]]:
 
 
 def create_workspace(
-    label: str, keep: bool, temp_root: Path
+    label: str, keep: bool, temp_root: Path, local_source: Path | None = None
 ) -> tuple[TempWorkspace, list[dict[str, str]]]:
     temp_root.mkdir(parents=True, exist_ok=True)
     if keep:
@@ -539,7 +629,7 @@ def create_workspace(
         crate,
         ignore=shutil.ignore_patterns("target", ".git", "__pycache__", "*.pyc"),
     )
-    rewrites = rewrite_path_dependencies(crate / "Cargo.toml")
+    rewrites = rewrite_path_dependencies(crate / "Cargo.toml", local_source)
     (root / "Cargo.toml").write_text(
         """[workspace]
 resolver = "2"
@@ -615,6 +705,11 @@ def command_result(
         "elapsed_seconds": round(elapsed, 3),
         "output_sha256": sha256_text(combined),
         "output_tail": combined[-6000:],
+        # Cargo emits warnings on stderr after libtest's useful stdout when
+        # these streams are captured separately. Preserve both tails so a
+        # failing assertion cannot disappear behind repeated build warnings.
+        "stdout_tail": stdout[-12000:],
+        "stderr_tail": stderr[-6000:],
         "running_test_counts": running_test_counts,
         "failed_test_lines": failed_test_lines,
     }
@@ -783,7 +878,7 @@ def run_baseline(
     require_hooks: bool,
 ) -> dict[str, object]:
     workspace, rewrites = create_workspace(
-        "baseline", args.keep_workdirs, args.resolved_temp_root
+        "baseline", args.keep_workdirs, args.resolved_temp_root, args.resolved_local_source
     )
     try:
         env = cargo_environment(
@@ -829,13 +924,23 @@ def run_baseline(
             "--",
             "--test-threads=1",
         ]
-        print(f"baseline tests:   {command_display(test_command_line)}", file=sys.stderr)
-        test_result = command_result(
-            test_command_line,
-            cwd=workspace.root,
-            env=env,
-            timeout=args.baseline_timeout,
-        )
+        test_runs = []
+        for iteration in range(args.baseline_runs):
+            print(
+                f"baseline tests {iteration + 1}/{args.baseline_runs}: "
+                f"{command_display(test_command_line)}",
+                file=sys.stderr,
+                flush=True,
+            )
+            test_result = command_result(
+                test_command_line,
+                cwd=workspace.root,
+                env=env,
+                timeout=args.baseline_timeout,
+            )
+            test_runs.append(test_result)
+            if test_result["timed_out"] or test_result["returncode"] != 0:
+                break
         status = (
             "green"
             if not test_result["timed_out"] and test_result["returncode"] == 0
@@ -849,6 +954,7 @@ def run_baseline(
             "lock_setup": lock_setup,
             "compile": compile_result,
             "tests": test_result,
+            "test_runs": test_runs,
         }
     finally:
         workspace.close()
@@ -861,7 +967,7 @@ def run_mutation(
     require_hooks: bool,
 ) -> dict[str, object]:
     workspace, rewrites = create_workspace(
-        mutation.name, args.keep_workdirs, args.resolved_temp_root
+        mutation.name, args.keep_workdirs, args.resolved_temp_root, args.resolved_local_source
     )
     base: dict[str, object] = {
         "name": mutation.name,
@@ -1010,9 +1116,21 @@ def parser() -> argparse.ArgumentParser:
             "takes precedence over --mako-build-dir (or MAKO_CACHE_HOOK_BUILD_DIR)"
         ),
     )
+    result.add_argument(
+        "--mako-local-source-dir",
+        help=(
+            "use an existing native build's original mako-local crate path only "
+            "after proving both Rust FFI crates, ABI headers, and verifier are "
+            "byte-identical; native fingerprint verification remains mandatory"
+        ),
+    )
     result.add_argument("--compile-timeout", type=int, default=900)
     result.add_argument("--baseline-timeout", type=int, default=1200)
+    result.add_argument("--baseline-runs", type=int, default=1,
+                        help="repeat the full unmutated baseline; every run must pass")
     result.add_argument("--test-timeout", type=int, default=180)
+    result.add_argument("--jobs", type=int, default=1,
+                        help="independent mutant workspaces to compile/test concurrently; baseline runs first")
     result.add_argument(
         "--temp-root",
         help=(
@@ -1062,9 +1180,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         "original_crate": str(ORIGINAL_CRATE),
         "temp_root": str(args.resolved_temp_root),
         "scope": "applied-to-Rocks; asynchronous and not a Rocks WAL durability claim",
+        "dependency_source_integrity": {"file_sha256": dependency_hashes()},
     }
     exit_code = 2
     try:
+        if args.jobs < 1:
+            raise HarnessFailure("--jobs must be positive")
+        if args.baseline_runs < 1:
+            raise HarnessFailure("--baseline-runs must be positive")
         selected = select_mutations(args.mutations)
         report["selected"] = [mutation.name for mutation in selected]
         if args.list:
@@ -1075,11 +1198,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         validations = validate_definitions(selected)
         report["anchor_validation"] = validations
+        args.resolved_local_source, wrapper_proof = verify_wrapper_override(args.mako_local_source_dir)
+        report["native_wrapper_source"] = wrapper_proof
         if args.check:
             # Exercise the copy/manifest rewrite path too.  This catches a new
             # relative dependency (for example mako-history) before a long run.
             workspace, rewrites = create_workspace(
-                "check", False, args.resolved_temp_root
+                "check", False, args.resolved_temp_root, args.resolved_local_source
             )
             try:
                 report["path_rewrites"] = rewrites
@@ -1107,13 +1232,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             exit_code = 2
             return finish(report, before, started, args.report, exit_code)
 
-        results = []
-        for mutation in selected:
-            result = run_mutation(args, mutation, native_build, require_hooks)
-            results.append(result)
-            print(
-                f"{mutation.name}: {result['status']}", file=sys.stderr, flush=True
-            )
+        completed_results = {}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as workers:
+            futures = {
+                workers.submit(run_mutation, args, mutation, native_build, require_hooks): mutation
+                for mutation in selected
+            }
+            for future in concurrent.futures.as_completed(futures):
+                mutation = futures[future]
+                result = future.result()
+                completed_results[mutation.name] = result
+                print(f"{mutation.name}: {result['status']}", file=sys.stderr, flush=True)
+        results = [completed_results[mutation.name] for mutation in selected]
         report["mutations"] = results
         killed = sum(result["status"] == "killed" for result in results)
         survived = sum(result["status"] == "survived" for result in results)
@@ -1163,6 +1293,38 @@ def finish(
         "file_sha256": before,
     }
     report["source_integrity"] = integrity
+    dependencies = report["dependency_source_integrity"]
+    dependencies_before = dependencies["file_sha256"]
+    dependencies_after = dependency_hashes()
+    dependencies_changed = sorted(
+        path for path in set(dependencies_before) | set(dependencies_after)
+        if dependencies_before.get(path) != dependencies_after.get(path)
+    )
+    dependencies.update(
+        file_count=len(dependencies_before),
+        before_tree_sha256=tree_digest(dependencies_before),
+        after_tree_sha256=tree_digest(dependencies_after),
+        unchanged=not dependencies_changed,
+        changed_paths=dependencies_changed,
+    )
+    if dependencies_changed:
+        report["status"] = "harness_error"
+        report["reason"] = "path-dependency sources changed during the run"
+        intended_exit = 2
+    wrapper_proof = report.get("native_wrapper_source")
+    if wrapper_proof:
+        try:
+            original_now = wrapper_hashes(Path(wrapper_proof["original"]))
+            selected_now = wrapper_hashes(Path(wrapper_proof["selected"]))
+            wrapper_unchanged = original_now == selected_now == wrapper_proof["file_sha256"]
+        except (HarnessFailure, OSError) as error:
+            wrapper_unchanged = False
+            wrapper_proof["integrity_error"] = str(error)
+        wrapper_proof["unchanged_after_run"] = wrapper_unchanged
+        if not wrapper_unchanged:
+            report["status"] = "harness_error"
+            report["reason"] = "native wrapper sources changed during the run"
+            intended_exit = 2
     report["elapsed_seconds"] = round(time.monotonic() - started, 3)
     if changed:
         report["status"] = "harness_error"

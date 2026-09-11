@@ -22,8 +22,8 @@ counts as killed only when all of the following are true:
 3. the mutant compiles successfully before any test is run;
 4. one designated test (selected with libtest `--exact`) executes;
 5. that test fails with its expected `test ... FAILED` signature; and
-6. the original crate's complete manifest/build/source/test hash tree is
-   unchanged at the end.
+6. the original crate's complete manifest/build/source/test hash tree, its
+   in-workspace dependency sources, and the lockfile are unchanged at the end.
 
 A compile failure, timeout, zero-test command, loader error, unrelated test
 failure, changed/missing anchor, or source change is a harness error. A passing
@@ -44,7 +44,7 @@ List contracts or check/run a subset by name:
 
 ```bash
 python3 crates/mako-cache/mutations/run.py --list
-python3 crates/mako-cache/mutations/run.py --check missing-ready-publication partial-replay
+python3 crates/mako-cache/mutations/run.py --check missing-ready-publication checkpoint-load-omits-values
 python3 crates/mako-cache/mutations/run.py early-detached-capacity-discharge
 ```
 
@@ -70,7 +70,24 @@ For a pure-Rust subset with no native build argument, it explicitly selects
 `MAKO_LOCAL_FAKE_ABI=1` so `mako-local` cannot accidentally auto-discover and
 link an unrelated or stale default archive from the source worktree.
 
+An unchanged native engine can be tested from a new Rust-cache checkout by
+passing `--mako-local-source-dir /path/to/original/source/crates/mako-local`.
+The runner first proves byte identity of both Rust FFI crates, their two ABI
+headers, and the native fingerprint verifier against the current checkout.
+Only the `mako-local` path dependency changes. Its mandatory fingerprint check
+still validates source, configuration, compiler, and native archive identity at
+the original build location on every native Cargo invocation. A mismatched
+wrapper or changed proof input fails the gate. The JSON report records every
+proof hash and rechecks it when the run ends.
+
 Progress goes to stderr and the authoritative JSON report goes to stdout.
+`--baseline-runs N` repeats the complete unmutated test suite before any mutant
+runs; every repetition must pass. Separate stdout and stderr tails preserve
+assertion failures even when Cargo emits many warnings.
+`--jobs N` runs up to N independent mutant workspaces concurrently after the
+baseline passes. Targets remain separate and initially empty; report order
+matches the requested mutation order. Set `CARGO_BUILD_JOBS` separately when
+limiting compiler parallelism inside each workspace.
 `--report` writes the same JSON to a file. Use `--keep-workdirs` only when
 debugging; otherwise every copied source/target directory is removed eagerly.
 Workspaces default to
@@ -80,11 +97,14 @@ is preferable.
 
 ## Mutants and scope
 
-The table in `run.py` covers corrupted native-record put replay, early detached
+The 14-entry table in `run.py` covers corrupted native-record put replay, early detached
 capacity discharge, hook-time allocation, a conflict cancellation CacheSeq
 gap, missing and premature Ready publication, an unpinned unknown outcome,
-partial/reordered/duplicate recovery replay, a wrong Mako timestamp, and a
-missing recovered-clock floor. Tests and anchors are intentionally adjacent in
+missing checkpoint hydration, accidental tombstone hydration, a wrong Mako
+timestamp, a missing recovered-clock floor, early GC at the exact age boundary,
+log deletion without atomic reclaimed metadata, and loss of ambiguous-GC retry
+exclusion. The old partial/reordered/duplicate full-history replay mutants were
+replaced because recovery now loads current checkpoint rows. Tests and anchors are adjacent in
 one reviewed table so a renamed or strengthened Phase 1F test is easy to
 re-anchor; `--check` refuses to skip an obsolete row.
 
@@ -94,4 +114,4 @@ advanced. It does **not** mean RocksDB's WAL was synchronously forced to disk.
 This gate makes no claim about an unflushed log tail, torn/internal Rocks WAL,
 forced sync, or SIGKILL inside RocksDB. Those are later durability milestones;
 the present kill contracts cover cache sequencing, publication, quarantine,
-timestamp carriage, replay, and application correctness.
+timestamp carriage, checkpoint recovery, log reclamation, and application correctness.
