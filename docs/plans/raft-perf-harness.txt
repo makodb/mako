@@ -508,11 +508,20 @@
    mistake also defeats the self-skip at commo.cc:121-124, so a candidate
    RequestVotes its own listener.
 
-   The fix is one argument (`site_id_` in place of `loc_id`). It was NOT made:
-   section 12 puts changes to the Raft implementation out of scope, and this
-   harness exists to measure before changing. Raised here instead. The
-   configuration remains declared in run_sweep.sh so the sweep fails loudly on
-   it rather than silently omitting it.
+   The fix is one argument (`site_id_` in place of `loc_id`). It was NOT made
+   as part of this harness work: section 12 puts changes to the Raft
+   implementation out of scope, and this harness exists to measure before
+   changing. It was raised to the owner, who then asked for it, and it lives in
+   its own commit on its own branch so it stays independently reviewable and
+   revertable.
+
+   With that commit applied the matrix is single/1, single/6, multi/1, multi/2
+   and multi/6 all working; a 6-partition per-partition-group run logs zero
+   vote rejections where it previously logged hundreds. On that branch the
+   third D5 configuration is back in run_sweep.sh's CONFIGS, the estimate's
+   failure-cost model is gone, and docs/performance/raft-harness.md describes
+   the defect in the past tense. On THIS branch all three still describe it as
+   live, which is correct here.
 
  DEVIATIONS FROM THE WORK ORDER
 

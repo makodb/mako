@@ -69,20 +69,16 @@ fi
 # the shared recursive mutex that single-group mode puts every partition
 # behind. Sweeping every partition count is deliberately out of scope.
 #
-# NOTE ON multi ABOVE ONE PARTITION: as of 2026-09-11 per-partition group mode
-# does not elect a leader above one partition on this tree — three processes
-# enter an unbounded election storm. That is a pre-existing defect in the Raft
-# implementation, not in this harness (multi at 1 partition works; single at 6
-# works). See docs/performance/raft-harness.md.
-#
-# It is therefore NOT in CONFIGS, which every phase iterates. Carrying it
-# through the rate sweep would add 189 identical two-minute failures and
-# double the wall clock of the whole sweep for no information. It lives in the
-# groups phase instead (GROUPS_MODES below), which exists precisely to compare
-# the two modes: one failure there is the finding, 210 of them are noise.
+# The three cluster shapes, and only these three (harness plan decision D5).
+# "1 partition" is the low-variance regression gate. "6 partitions" is what
+# production runs. The two group modes at six partitions bracket the cost of
+# the shared recursive mutex that single-group mode puts every partition
+# behind. Do not sweep every partition count; three configurations is the
+# agreed scope.
 CONFIGS=(
     "1:single"
     "6:single"
+    "6:multi"
 )
 
 # Entry sizes, bracketing the profile. The middle value is the measured p50 of
@@ -227,9 +223,8 @@ if $QUICK; then
     # leadership budget; the preferred leader normally wins in under 3 s.
     LEADER_WAIT_SEC=$QUICK_LEADER_WAIT_SEC
     # The phases that hold a payload or a partition count fixed must follow
-    # --quick too, or a "kick the tires" run still performs a 6-partition
-    # 286 KB per-partition-group run — the known-failing configuration, at a
-    # full leader-wait timeout each.
+    # --quick too, or a "kick the tires" run still stands up a 6-partition
+    # 286 KB cluster — minutes, not seconds, for a smoke test.
     PAYLOAD_PROFILE=${QUICK_PAYLOADS[0]}
     GROUPS_PARTITIONS=$QUICK_GROUPS_PARTITIONS
     GROUPS_MODES=("${QUICK_GROUPS_MODES[@]}")
@@ -425,20 +420,15 @@ phase_knee() {
 # Runtime estimate. Printed before anything runs, so the operator knows what
 # they started.
 # ---------------------------------------------------------------------------
-# A run costs one of two very different amounts of time, so a flat per-run
-# figure would understate the sweep by about a factor of two. A healthy run is
-# warmup + window + fixed overhead. A run in a configuration that cannot elect
-# a leader — per-partition group mode above one partition, which CONFIGS
-# declares deliberately — pays the whole leadership budget plus teardown of a
-# cluster in an election storm. The +75 was calibrated against the observed
-# 118 s for a 6-partition multi run at leader_wait 30, warmup 2, window 8.
+# Seconds one run costs: warmup + measured window + fixed overhead (process
+# start, election, drain, teardown). Every declared configuration elects
+# normally, so one figure serves them all. If a shape that cannot elect a
+# leader is ever swept deliberately, give it its own cost here: those runs pay
+# the whole leadership budget, and an estimate that understates the sweep by a
+# factor of two is worse than no estimate.
 run_cost_sec() {
     local parts="$1" group="$2"
-    if [ "$group" = "multi" ] && [ "$parts" -gt 1 ]; then
-        echo $(( LEADER_WAIT_SEC + WARMUP_SEC + DURATION_SEC + 75 ))
-    else
-        echo $(( DURATION_SEC + WARMUP_SEC + RUN_OVERHEAD_SEC ))
-    fi
+    echo $(( DURATION_SEC + WARMUP_SEC + RUN_OVERHEAD_SEC ))
 }
 
 # Emits "<runs> <seconds>" for one phase, using exactly the loops the phase
@@ -509,21 +499,6 @@ print_estimate() {
     printf "  %-8s %4d runs  ~%dh%02dm\n" "TOTAL" "$total" \
         $((total_secs / 3600)) $(((total_secs % 3600) / 60))
     echo "  trials per point: $TRIALS   output: $OUTPUT_DIR"
-    # Name the cost rather than burying it in the total.
-    local slow=0 entry parts group
-    for entry in "${CONFIGS[@]}"; do
-        parts="${entry%%:*}"; group="${entry##*:}"
-        if [ "$group" = "multi" ] && [ "$parts" -gt 1 ]; then slow=1; fi
-    done
-    for group in "${GROUPS_MODES[@]}"; do
-        if [ "$group" = "multi" ] && [ "$GROUPS_PARTITIONS" -gt 1 ]; then slow=1; fi
-    done
-    if [ "$slow" -eq 1 ]; then
-        echo "  NOTE: this plan includes per-partition group mode above one partition,"
-        echo "        which does not elect a leader on this tree. Those runs will fail"
-        echo "        after their full leadership budget; the estimate already charges"
-        echo "        them at that rate. See docs/performance/raft-harness.md."
-    fi
     echo ""
 }
 

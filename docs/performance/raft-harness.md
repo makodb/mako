@@ -53,6 +53,45 @@ on ports — every run picks its own randomized base — but they do compete for
 the CPU and loopback bandwidth that the numbers are measuring, so both sets of
 results are wrong in a way nothing in the record reveals.
 
+## Where the output lands
+
+Nothing is committed. Records are measurement output, so they are written
+outside version control and kept or archived deliberately.
+
+| what | where |
+|---|---|
+| `run_sweep.sh` (default) | `raft_perf_output/sweep_<timestamp>/` under the repo root |
+| `run_sweep.sh --output DIR` | `DIR`, **verbatim** — no timestamp is appended, so two sweeps into the same `DIR` share it |
+| `examples/raft_bench.sh --out PATH` | exactly `PATH`, one file |
+| the plots | wherever `-o` says; they are not written automatically |
+
+`/raft_perf_output/` is in `.gitignore`, so a sweep never dirties the tree.
+It is also never cleaned up. A record is ~5 KB and its three replica logs are
+~12 KB, so a full 624-run sweep is a few megabytes of records and roughly
+8 MB of logs — small, but it accumulates one directory per sweep. Prune old
+sweeps yourself.
+
+Inside a sweep directory, one subdirectory per phase (`rate`, `payload`,
+`batch`, `groups`, `knee`), and per run three things:
+
+```
+rate/<commit>-p6-single-pb286208-b1-r190-t2.json    the record
+rate/<commit>-p6-single-pb286208-b1-r190-t2.log     the launcher's output
+rate/<commit>-p6-single-pb286208-b1-r190-t2.logs/   localhost/p1/p2 stdout
+SUMMARY.md                                          run counts, failures, next commands
+```
+
+The filename carries the **commit**, so re-running a sweep into an existing
+directory after a code change adds points rather than overwriting some and
+leaving others stale. `processing.py` also groups on commit (and on host, log
+level, in-flight bound and window length), so a directory holding two commits
+plots as two clearly-labelled series rather than one averaged curve — it says
+so on stderr when that happens.
+
+Re-generate `SUMMARY.md` for an archived sweep with
+`run_sweep.sh --phase summary --output <dir>`; it preserves the original
+commit and start time and recounts from disk rather than stamping today's.
+
 ## What it measures
 
 **Enqueue-to-apply latency**, per entry, on the leader: from the moment
@@ -194,11 +233,13 @@ the number that actually shapes the run.
 
 Decision D5 of the plan. Not a sweep of partition counts; three shapes.
 
-| partitions | group mode | why | where it runs |
-|---|---|---|---|
-| 1 | single | the low-variance regression gate. One Raft group, one worker thread, nothing to contend. | every phase (`CONFIGS`) |
-| 6 | single | what production runs. | every phase (`CONFIGS`) |
-| 6 | multi | brackets the cost of the shared recursive mutex. | the `groups` phase only — see below |
+| partitions | group mode | why |
+|---|---|---|
+| 1 | single | the low-variance regression gate. One Raft group, one worker thread, nothing to contend. |
+| 6 | single | what production runs. |
+| 6 | multi | brackets the cost of the shared recursive mutex. |
+
+All three are in `CONFIGS`, so every phase iterates all three.
 
 Group mode selects how many `RaftServer` instances a process creates.
 
@@ -213,56 +254,6 @@ Group mode selects how many `RaftServer` instances a process creates.
 
 `raft_bench` always passes the mode explicitly rather than inheriting the
 compile-time default, and records what it passed.
-
-### Per-partition group mode does not work above one partition
-
-**As of 2026-09-11 the `6 / multi` row cannot be measured.** Three processes
-enter an unbounded election storm and no partition above 0 ever elects a
-leader. Confirmed matrix: `single`/1 works, `single`/6 works, `multi`/1 works,
-`multi`/2 fails, `multi`/6 fails.
-
-The cause is in the Raft implementation, not in the harness.
-`RaftServer::RequestVoteImpl` passes the **locale** id where a **global site**
-id is required:
-
-- `src/deptran/raft/server.cc:2733` — `const locid_t loc_id = loc_id_;`
-- `src/deptran/raft/server.cc:2803-2804` —
-  `commo()->BroadcastVote(par_id, lst_idx, lst_term, loc_id, term);`
-- `src/deptran/raft/commo.cc:112-117` — that parameter is declared
-  `siteid_t self_id`
-- `src/deptran/raft/commo.cc:143` — `req.site_id = self_id;` puts it on the wire
-- `src/deptran/raft/server.cc:2939-2942` — the receiver rejects any candidate
-  not in `current_config_`
-- `src/deptran/raft/server.cc:1565-1571` — `current_config_` holds **global**
-  site ids, from `Config::SitesByPartitionId`
-
-`Config::LoadSiteYML` (`src/deptran/config.cc:336-366`) increments `site_id`
-globally across every row while resetting `locale_id` to 0 at the top of each
-row, so with three replicas per partition `site_id == 3 * partition + locale`.
-The two id spaces coincide **only for partition 0** — which is exactly why
-single-group mode (whose one worker sits on partition 0) and multi-at-one-
-partition both work. For any partition ≥ 1 the candidate advertises 0, 1 or 2,
-`current_config_` holds `{3p, 3p+1, 3p+2}`, every vote is rejected, and the term
-counter runs away. The observed log line is precisely that rejection:
-
-```
-[RAFT_VOTE] Site 12 rejected malformed/non-voter candidate 0 term 375 last_log_term 0 (voter=false)
-```
-
-The same argument also disables the self-skip at `commo.cc:121-124`, so a
-candidate sends RequestVote to its own listener and rejects itself.
-
-The fix is one argument — `site_id_` in place of `loc_id` at `server.cc:2804`.
-It has **not** been made here: changing the Raft implementation is out of scope
-for this harness (plan section 12 — "this harness exists to measure before
-changing"). It is raised, not fixed.
-
-The configuration is still exercised, in the `groups` phase, which exists for
-exactly this comparison — a sweep that silently omitted it would read as "we
-measured what we could", and the failure is the finding. It is deliberately
-**not** in `CONFIGS`, the list every phase iterates: carrying it through the
-rate sweep would add 189 identical two-minute failures and double the sweep's
-wall clock without adding information. `SUMMARY.md` names the failures.
 
 ## Caveats — do not over-read a number
 
@@ -354,14 +345,9 @@ them there, nowhere else.
   TPC-C Raft entry (286 208 B), and 1 MiB.
 - **`BATCH_SIZES`** — 1 and 400, the value `src/mako/sto/Transaction.cc` passes.
   Expect a flat curve; see the note above on what `batch` does.
-- **`CONFIGS`** — the shapes every phase iterates: 1 partition / single group,
-  and 6 partitions / single group. The third D5 shape, 6 partitions with
-  per-partition groups, is **not** here: it cannot elect a leader on this tree
-  (see above), and carrying it through the rate sweep would add 189 identical
-  two-minute failures and double the sweep's wall clock for no information. It
-  is exercised once per mode in the `groups` phase, which exists for exactly
-  that comparison, so the failure is still reported rather than omitted.
-- **`GROUPS_MODES` / `GROUPS_PARTITIONS`** — the `groups` phase's own axes.
+- **`CONFIGS`** — the three shapes from D5, all of which every phase iterates.
+- **`GROUPS_MODES` / `GROUPS_PARTITIONS`** — the `groups` phase's own axes,
+  which compare the two group modes head to head at one partition count.
 - **`FIXED_RATE_FOR`** — the rate every non-rate phase is held at, *per
   payload*: about 0.85 of that payload's measured unthrottled ceiling
   (10 000 / 190 / 55 entries/sec). One global constant cannot serve three
@@ -385,7 +371,7 @@ Raised rather than started, per plan section 12:
 - A `dbtest` end-to-end cross-check that the standalone numbers predict real
   behaviour. Worth doing, as validation of the instrument.
 - Multi-machine deployment, to recover the network-latency term.
-- Any change to the Raft implementation — including the vote-id defect above
-  and the locking that single-group mode implicates.
+- Any change to the Raft implementation, including the locking that
+  single-group mode implicates.
 - Partition counts beyond 1 and 6.
 - Failure or partition injection.
