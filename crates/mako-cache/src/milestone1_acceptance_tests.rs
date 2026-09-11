@@ -1045,3 +1045,85 @@ fn stopping_after_ambiguous_gc_recovers_checkpoint_and_drops_only_queued_transac
     assert_eq!(reopened.status().unwrap().log_gc.reclaimed_records, 1);
     assert_eq!(reopened.close().unwrap(), 1);
 }
+
+#[test]
+fn gc_stops_at_first_unexpired_record_in_untagged_stream_despite_later_expired_records() {
+    // The untagged stream does not guarantee monotonic HLCs. GC must stop at
+    // the first unexpired record and preserve the dense suffix, even when
+    // later records in lane order are expired.
+    let backend = Arc::new(MemBlobs::new());
+    let coordinator = ApplyCoordinator::empty();
+    // Lane 0 (untagged): sequence 1, 2, 3 with reversed timestamps.
+    for (sequence, physical_us) in [(1, 1_000), (2, 3_000), (3, 2_000)] {
+        let record = fixture_record(
+            sequence,
+            physical_us,
+            vec![fixture_put(b"untagged-gc/key", &sequence.to_be_bytes())],
+        );
+        assert!(matches!(
+            coordinator.apply(&*backend, &[record]).unwrap(),
+            CoordinatorApplyOutcome::Applied
+        ));
+    }
+    // Cutoff at 1,500: record 1 (1,000) is expired, record 2 (3,000) is
+    // unexpired, record 3 (2,000) is expired but after the unexpired one.
+    let step = coordinator
+        .gc_step(&*backend, 1_500, WritebackConfig::default().max_record_bytes)
+        .unwrap();
+    assert!(
+        matches!(step, crate::writeback::GcStep::Progress { records: 1, .. }),
+        "expected exactly one reclaimed record, got {step:?}"
+    );
+    // The dense suffix (2, 3] must remain.
+    assert_eq!(retained_log_count(&backend), 2);
+    let metadata = checkpoint::LaneMetadata::decode(
+        &backend.get(&checkpoint::lane_key(0)).unwrap().unwrap(),
+    )
+    .unwrap();
+    assert_eq!(metadata.reclaimed, 1);
+    assert_eq!(metadata.applied, 3);
+
+    // Recovery must accept the non-monotonic lane and reconstruct the winner.
+    let cache = Cache::from_backend(backend, options(8)).unwrap();
+    assert_eq!(cache.applied_sequence(), 3);
+    assert_eq!(
+        cache.get(b"untagged-gc/key").unwrap().as_deref(),
+        Some(&3_u64.to_be_bytes()[..])
+    );
+    cache.close().unwrap();
+}
+
+#[test]
+fn recovered_empty_database_advances_hlc_and_lane_ids_past_checkpoint_state() {
+    // Apply one transaction, reclaim every log, delete the only key, close.
+    // Reopening must still advance the HLC floor and lane sequence past the
+    // recovered (now empty) state so new writes cannot reuse old identities.
+    let backend = Arc::new(MemBlobs::new());
+    let cache = Cache::from_backend(Arc::clone(&backend), options(8)).unwrap();
+    cache.put(b"empty/sole", b"value").unwrap();
+    cache.wait_applied().unwrap();
+    assert_eq!(cache.writeback.collect_expired_at(u64::MAX).unwrap(), 1);
+    assert!(cache.delete(b"empty/sole").unwrap());
+    cache.wait_applied().unwrap();
+    assert_eq!(cache.writeback.collect_expired_at(u64::MAX).unwrap(), 2);
+    assert_eq!(retained_log_count(&backend), 0);
+    let before_watermark = cache.applied_watermark();
+    let before_sequence = cache.applied_sequence();
+    cache.close().unwrap();
+
+    let reopened = Cache::from_backend(Arc::clone(&backend), options(8)).unwrap();
+    assert_eq!(reopened.applied_sequence(), before_sequence);
+    assert_eq!(reopened.applied_watermark(), before_watermark);
+    assert_eq!(reopened.get(b"empty/sole").unwrap(), None);
+
+    // A new write must receive an HLC strictly greater than the recovered
+    // floor, even though the database contains no live keys or retained logs.
+    reopened.put(b"empty/after", b"new").unwrap();
+    reopened.wait_applied().unwrap();
+    assert!(reopened.applied_watermark().mako_timestamp() > before_watermark.mako_timestamp());
+    assert_eq!(reopened.applied_sequence(), before_sequence + 1);
+
+    // The new transaction's log must start at A + 1, not reuse sequence 1.
+    assert_eq!(retained_log_count(&backend), 1);
+    reopened.close().unwrap();
+}

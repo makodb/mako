@@ -71,13 +71,30 @@ the Rust RocksDB adapter, not the entire installed RocksDB library.
 
 ## Remaining validation
 
-- Update and test the older benchmark inspector for version-2 keys and
-  permanent checkpoint metadata. Its old version-1 assumptions must not reject
-  databases created by the new cache.
+- ~~Update and test the older benchmark inspector for version-2 keys and
+  permanent checkpoint metadata.~~ **Done 2026-09-11.** `inspect_backend` in
+  `crates/mako-cache-bench/src/main.rs` now recognizes version-2 format markers
+  (`\x02F`), lane metadata (`\x02M`), logs (`\x02L`), and data rows (`\x02D`).
+  Foreign-key rejection is preserved for genuinely unknown keys.
 - Finish the sustained before/after 1/4/8/16/32-worker sweep on zoo-002 with
   boost disabled, followed by a full drain and fresh-process verification of
   every accepted run. See the benchmark package's [protocol](../../crates/mako-cache-bench/gc-soak.md)
   and the [performance report](mako-cache-log-gc-performance.md).
+  **This step requires the zoo-002 physical benchmark host.**
+
+## Additional model tests added post-2026-09-09
+
+- `gc_stops_at_first_unexpired_record_in_untagged_stream_despite_later_expired_records`:
+  Creates three records in the untagged lane with reversed timestamps
+  (1,000 → 3,000 → 2,000). GC with cutoff 1,500 deletes exactly the first
+  record and stops at the unexpired second record, preserving the dense
+  suffix. Recovery reconstructs the correct winner from the retained logs.
+
+- `recovered_empty_database_advances_hlc_and_lane_ids_past_checkpoint_state`:
+  Reclaims all logs, deletes the only live key, closes, and reopens.
+  Verifies that new transactions receive HLCs strictly greater than the
+  recovered floor and that lane sequences resume at `A + 1`, even with no
+  live keys or retained logs in the database.
 
 The fifty-minute model proves logical retention does not grow with ten
 retention windows of lifetime updates. It is not a 150-minute physical-disk
