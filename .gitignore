@@ -115,3 +115,7 @@ cmake-build/*
 # Stage 2 raft verification crate build output (the .rs sources ARE committed;
 # the compiled artifacts are not).
 /src/deptran/raft/target/
+
+# Raft performance harness output (scripts/raft_perf/run_sweep.sh writes a
+# timestamped directory of JSON records and plots here by default).
+/raft_perf_output/
