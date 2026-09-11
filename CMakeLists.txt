@@ -1535,6 +1535,21 @@ add_apps(paxos_async_commit_test src/mako/benchmarks/paxos_async_commit_test.cc)
 add_apps(basic src/mako/benchmarks/ut/basic.cc)
 add_apps(rocksdbInterfaceTest examples/rocksdbInterfaceTest.cc)
 
+# raft_bench — standalone Raft performance driver (docs/performance/raft-harness.md).
+# Registered the same way as paxos_async_commit_test above: it is an ordinary
+# app that links `mako` and drives the replication helper. It is deliberately
+# NOT inside the MAKO_USE_RAFT block, because that option only gates the extra
+# Raft example executables; the Raft helper itself is always compiled into
+# `mako` via TXLOG_HELPER_SRC, so the driver measures the production build.
+add_apps(raft_bench src/deptran/raft/raft_bench.cc)
+# Provenance the record cannot otherwise obtain: neither MODE nor
+# CMAKE_BUILD_TYPE is a preprocessor macro, and a number is not interpretable
+# without knowing which build produced it.
+target_compile_definitions(raft_bench PRIVATE
+    RAFT_BENCH_BUILD_FLAVOUR="${MODE}"
+    RAFT_BENCH_CMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}"
+)
+
 # ============================================================================
 # Test Configuration
 # ============================================================================
