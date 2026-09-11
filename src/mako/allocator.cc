@@ -11,6 +11,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include <limits>
+#include <stdexcept>
 #include <sys/mman.h>
 #include <unistd.h>
 #include <numa.h>
@@ -84,6 +86,38 @@ allocator::UseMAdvWillNeed()
   static const std::string s = px ? to_lower(px) : "";
   static const bool use_madv = !(s == "1" || s == "true");
   return use_madv;
+}
+
+// @safe - Pure checked arithmetic; rejects unusable budgets explicitly.
+size_t
+allocator::CheckedPerWorkerCapacity(size_t total_bytes, size_t ncpus,
+                                    size_t hugepage_size, const char *label)
+{
+  const std::string name =
+      label == nullptr ? std::string("allocator capacity") : std::string(label);
+  if (ncpus == 0) {
+    throw std::runtime_error(name + " requires at least one worker thread");
+  }
+  if (hugepage_size == 0) {
+    throw std::runtime_error("huge page size must be nonzero");
+  }
+  const size_t per_worker = total_bytes / ncpus;
+  if (per_worker == 0) {
+    throw std::runtime_error(name + " (" + std::to_string(total_bytes) +
+                             " bytes) is smaller than the worker count (" +
+                             std::to_string(ncpus) + ")");
+  }
+  const size_t remainder = per_worker % hugepage_size;
+  if (remainder == 0) {
+    return per_worker;
+  }
+  const size_t step = hugepage_size - remainder;
+  if (per_worker > std::numeric_limits<size_t>::max() - step) {
+    throw std::runtime_error(
+        name + " cannot be rounded up to a huge page multiple without "
+               "overflowing size_t");
+  }
+  return per_worker + step;
 }
 
 // @unsafe: uses mmap and numa operations

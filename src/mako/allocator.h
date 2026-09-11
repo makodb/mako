@@ -58,6 +58,21 @@ public:
   static const size_t AllocAlignment = 1 << LgAllocAlignment;
   static const size_t MAX_ARENAS = 32;
 
+  // Converts a total per-process allocator budget into the per-worker capacity
+  // that Initialize() expects, rounding up to a whole number of huge pages.
+  //
+  // The conversion is fully checked because Initialize() has no way to report
+  // an unusable capacity: it receives the per-worker size directly, so a zero
+  // worker count, a budget smaller than the worker count, or a rounding step
+  // that would overflow size_t previously produced a zero or wrapped capacity
+  // and reached an allocator failure instead of a diagnosable configuration
+  // error. `label` names the originating setting in the thrown error.
+  //
+  // @safe - Pure checked arithmetic; rejects unusable budgets explicitly.
+  static size_t
+  CheckedPerWorkerCapacity(size_t total_bytes, size_t ncpus,
+                           size_t hugepage_size, const char *label);
+
   static inline std::pair<size_t, size_t>
   ArenaSize(size_t sz)
   {

@@ -166,8 +166,11 @@ static void stopMultiShardTransports() {
   }
 }
 
+static constexpr const char *kAllocatorMemoryEnvironment =
+    "MAKO_TPCC_ALLOCATOR_MEMORY";
+
 static size_t tpcc_allocator_memory_bytes() {
-  static constexpr const char *kEnvironment = "MAKO_TPCC_ALLOCATOR_MEMORY";
+  static constexpr const char *kEnvironment = kAllocatorMemoryEnvironment;
   static constexpr const char *kDefault = "1G";
   const char *configured = getenv(kEnvironment);
   const std::string spec = configured == nullptr ? kDefault : configured;
@@ -216,12 +219,19 @@ static abstract_db* initWithDB() {
   //initialize_rust_wrapper();
 
   // initialize the numa allocator
-  size_t numa_memory = tpcc_allocator_memory_bytes();
+  const size_t numa_memory = tpcc_allocator_memory_bytes();
   if (numa_memory > 0) {
-    const size_t maxpercpu = util::iceil(
-        numa_memory / benchConfig.getNthreads(), ::allocator::GetHugepageSize());
-    numa_memory = maxpercpu * benchConfig.getNthreads();
-    ::allocator::Initialize(benchConfig.getNthreads(), maxpercpu);
+    const size_t nthreads = benchConfig.getNthreads();
+    // Reject an unusable budget before any allocator state exists. The
+    // previous unchecked `iceil(numa_memory / nthreads, hugepage) * nthreads`
+    // could divide by zero, round the per-worker share down to zero when the
+    // budget was smaller than the worker count, or wrap when the rounding
+    // neared size_t; each of those reached an allocator abort instead of a
+    // diagnosable configuration error.
+    const size_t maxpercpu = ::allocator::CheckedPerWorkerCapacity(
+        numa_memory, nthreads, ::allocator::GetHugepageSize(),
+        kAllocatorMemoryEnvironment);
+    ::allocator::Initialize(nthreads, maxpercpu);
   }
 
   // Print system information

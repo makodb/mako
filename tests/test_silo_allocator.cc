@@ -1,6 +1,10 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#include <limits>
+#include <stdexcept>
+#include <string>
+
 #include <gtest/gtest.h>
 #include "mako/allocator.h"
 
@@ -195,3 +199,59 @@ TEST_F(SiloAllocatorTest, Performance_1000Allocations) {
     EXPECT_LT(duration.count(), 100000); // Less than 100ms
 }
 */
+
+// ============================================================================
+// CHECKED PER-WORKER CAPACITY CONVERSION
+//
+// The benchmark initializer converts MAKO_TPCC_ALLOCATOR_MEMORY into the
+// per-worker capacity that allocator::Initialize() consumes. Initialize() has
+// no failure channel, so these cases lock down the rejection of budgets that
+// previously produced a zero-capacity region or a wrapped rounding step and
+// therefore reached an allocator abort instead of a diagnosable configuration
+// error.
+// ============================================================================
+
+TEST(CheckedPerWorkerCapacityTest, RoundsPerWorkerShareUpToAHugePage) {
+    const size_t page = 2 * 1024 * 1024;
+    // 1 GiB over 4 workers is exactly 256 MiB per worker, already a multiple.
+    EXPECT_EQ(allocator::CheckedPerWorkerCapacity(1ULL << 30, 4, page, "TEST"),
+              256ULL * 1024 * 1024);
+    // One byte past a page multiple rounds up to the next whole page.
+    EXPECT_EQ(allocator::CheckedPerWorkerCapacity(page + 1, 1, page, "TEST"),
+              2 * page);
+    // A share smaller than one page still rounds up to exactly one page.
+    EXPECT_EQ(allocator::CheckedPerWorkerCapacity(1, 1, page, "TEST"), page);
+}
+
+TEST(CheckedPerWorkerCapacityTest, RejectsBudgetsThatCannotBeSatisfied) {
+    const size_t page = 2 * 1024 * 1024;
+    // A zero worker count would divide by zero.
+    EXPECT_THROW(allocator::CheckedPerWorkerCapacity(page, 0, page, "TEST"),
+                 std::runtime_error);
+    // A zero page size would divide by zero inside the rounding step.
+    EXPECT_THROW(allocator::CheckedPerWorkerCapacity(page, 4, 0, "TEST"),
+                 std::runtime_error);
+    // Fewer total bytes than workers would give a zero-capacity region.
+    EXPECT_THROW(allocator::CheckedPerWorkerCapacity(3, 4, page, "TEST"),
+                 std::runtime_error);
+    // Rounding a near-SIZE_MAX share would wrap to a tiny capacity.
+    EXPECT_THROW(
+        allocator::CheckedPerWorkerCapacity(std::numeric_limits<size_t>::max(),
+                                            1, page, "TEST"),
+        std::runtime_error);
+}
+
+TEST(CheckedPerWorkerCapacityTest, NamesTheRejectedSetting) {
+    const size_t page = 2 * 1024 * 1024;
+    EXPECT_THROW(allocator::CheckedPerWorkerCapacity(3, 4, page,
+                                                     "MAKO_TPCC_ALLOCATOR_MEMORY"),
+                 std::runtime_error);
+    try {
+        allocator::CheckedPerWorkerCapacity(3, 4, page,
+                                            "MAKO_TPCC_ALLOCATOR_MEMORY");
+        FAIL() << "a budget smaller than the worker count must be rejected";
+    } catch (const std::runtime_error &error) {
+        EXPECT_NE(std::string(error.what()).find("MAKO_TPCC_ALLOCATOR_MEMORY"),
+                  std::string::npos);
+    }
+}
