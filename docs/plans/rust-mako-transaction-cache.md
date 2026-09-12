@@ -911,6 +911,11 @@ distributed path become the default.
 
 ## Milestone 4: native Rust Silo, then remove the C++ seam
 
+The native engine now exists (`crates/sto-core`, `crates/sto-masstree`, see
+[the Rust STO design contract](../architecture/rust-sto.md)); the concrete
+cutover plan for this milestone is
+[mako-cache over Rust STO](mako-cache-over-rust-sto.md).
+
 Implement a native Rust local engine behind the same `mako-local` behavior,
 not directly inside callers:
 
