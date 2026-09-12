@@ -2327,7 +2327,7 @@ if(TARGET sto_tpcc_bench)
             --num-threads 1
             --shard-config "${CMAKE_CURRENT_SOURCE_DIR}/config/mako_sto_tpcc_local.yml"
             --site-name local_s0
-            --runtime 30
+            --runtime 180
             --storage-engine rust
             --slow-exit)
     set_tests_properties(test_sto_tpcc_rust_registry_budget_resource_exhausted
@@ -2335,7 +2335,7 @@ if(TARGET sto_tpcc_bench)
         LABELS "sto;masstree;rust;ffi;lifecycle;tpcc;capacity"
         ENVIRONMENT "MAKO_STO_TPCC_REGISTRY_MEMORY=1G;MAKO_TPCC_WORKLOAD_MIX=100,0,0,0,0"
         RUN_SERIAL TRUE
-        TIMEOUT 240)
+        TIMEOUT 600)
 
     add_test(NAME test_sto_tpcc_rejects_duplicate_local_shards
         COMMAND "${Python3_EXECUTABLE}"

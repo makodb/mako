@@ -1313,6 +1313,7 @@ required = {
     "test_sto_tpcc_rust_load_resource_exhausted",
     "test_sto_tpcc_rust_run_resource_exhausted",
     "test_sto_tpcc_rust_concurrent_resource_exhausted",
+    "test_sto_tpcc_rust_registry_budget_resource_exhausted",
     "test_sto_tpcc_rejects_duplicate_local_shards",
     "test_sto_tpcc_rejects_partial_local_shards",
     "test_sto_tpcc_rejects_rust_distributed_shard",
@@ -1360,6 +1361,10 @@ allowed_environment = {
     ],
     "test_sto_tpcc_rust_concurrent_resource_exhausted": [
         "MAKO_STO_TPCC_MAX_RETAINED_RECORDS=350000",
+        "MAKO_TPCC_WORKLOAD_MIX=100,0,0,0,0"
+    ],
+    "test_sto_tpcc_rust_registry_budget_resource_exhausted": [
+        "MAKO_STO_TPCC_REGISTRY_MEMORY=1G",
         "MAKO_TPCC_WORKLOAD_MIX=100,0,0,0,0"
     ],
     "test_sto_tpcc_cpp_multishard_slow_exit": [
