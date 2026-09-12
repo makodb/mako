@@ -1,0 +1,256 @@
+================================================================================
+ SUPERSEDED IN PART -- READ THIS FIRST                     (added 2026-09-12)
+================================================================================
+ The "refactor first" recommendation below rests on a premise that was later
+ FALSIFIED BY EXPERIMENT: the claim that a direct port could not begin today.
+ It can. The pinned transpiler runs on raft's crate manifest as it stands --
+ 18 files, 0 errors, .cppm output -- and Arc<Mutex<T>> with methods transpiles.
+ With that premise gone the verdict reverses to "mostly a direct port, with a
+ bounded C++ prefix".
+
+ Sections 1 and 2, which count what is actually converted, were measured and
+ still stand. The recommendation in the summary and in section 5 does not.
+ This file is kept because its measurements are useful, not because its
+ conclusion is right. It has not been rewritten.
+
+================================================================================
+ REFACTOR THE C++ FIRST, OR PORT STRAIGHT TO RUST?
+================================================================================
+ Written:  2026-09-11, answering the owner's question directly.
+ Verified: every number below was measured in the tree at 3774ba93/af6e6599.
+ Short answer: refactor first -- but the question is less binary than it looks,
+ because what exists today is not a conversion in progress. See section 1.
+
+================================================================================
+ 1. WHAT IS ACTUALLY CONVERTED -- THE NUMBER THAT MATTERS IS NOT 6%
+================================================================================
+
+ By line, the DSL covers ~6-7%: 26 blocks across 17 carriers, ~751 non-blank
+ generated C++ lines against ~10,900 hand-written ones in src/deptran/raft.
+
+ By FUNCTION it is 1.
+
+   * Exactly one pre-existing C++ function has been replaced by a DSL block:
+     IsPreferredLeaderConfigured (src/deptran/raft/server.cc:563), commit
+     4b2e330b "raft: migrate preferred leader predicate to Rust DSL". It is
+     the only CamelCase name in the whole crate; everything else is
+     snake_case.
+   * The other 145 converted items are NEWLY MINTED predicates that sit
+     ALONGSIDE unchanged C++. The DSL lifted a body expression into a helper
+     and left the function in C++. quorum.hpp's conversion commit (1071481d)
+     added 50 lines and deleted one.
+   * ZERO class member functions have been converted anywhere in
+     src/deptran/raft. Every converted item is a free function.
+   * 25 of the 145 helpers have NO production caller at all -- they exist as a
+     declaration, a definition and some static_asserts, and nothing calls them
+     (e.g. raft_server_random_range_needs_swap, server.h:188/644/723; compare
+     raft_worker_should_enqueue, which is genuinely called at
+     raft_worker.cc:693).
+
+ So the current state is a SCAFFOLDING phase: pure predicates extracted and
+ pinned with static_asserts, around C++ that is otherwise untouched. That is
+ valuable -- it proves the toolchain and freezes semantics -- but it is not
+ 5% of the way to Raft-in-Rust. The real figure is closer to zero, and that
+ is the single most important input to this decision.
+
+================================================================================
+ 2. THE OWNER'S OBSERVATION IS RIGHT, BUT THE CAUSE IS NOT WHAT IT LOOKS LIKE
+================================================================================
+
+ "The whole module Raft is self contained, it can't refer to outside world
+ things." Descriptively true of src/deptran/raft: every parameter is a Rust
+ primitive or a locally-declared enum, the 6 structs are #[repr(C)] POD, there
+ are zero `use` statements, and no GEN region names a single janus/deptran
+ domain type.
+
+ One exception, which the first census missed: snapshot_format.hpp:340-343,
+
+   pub const unsafe fn snapshot_crc32_update_buffer(crc: *mut u32,
+                                                     data: *const u8,
+                                                     size: usize,
+                                                     table: *const u32)
+
+ -- raw pointers, five `unsafe` blocks doing deref and pointer arithmetic, and
+ its C++ caller passes `&crc_`, the address of a private member of class CRC32
+ (snapshot_format.hpp:394-397). So converted DSL code does already write into
+ a C++ object's storage.
+
+ And the constraint is NOT a capability ceiling of the DSL.
+ src/deptran/mako_commands.h:93-99 carries DSL that names domain types
+ directly -- `impl rrr::PayloadMember<janus::MakoCommands> for
+ janus::LogEntry`, and the same for janus::TpcPrepareCommand. (That block is
+ in no manifest: not raft's, not rrr's, not scripts/raft_dsl.sh. Worth
+ adopting or deleting.)
+
+ TWO REASONS THE SELF-CONTAINMENT IS PARTLY AN ARTIFACT OF HOW IT IS COUNTED.
+
+   (a) The domain typedefs are #defines to fixed-width ints, not distinct
+       types. src/deptran/constants.h:6-20 has `#define siteid_t uint16_t`,
+       `#define slotid_t uint64_t`, `#define ballot_t int64_t`, and
+       server.cc:576-578 pins the identity with
+       static_assert(std::is_same_v<siteid_t, uint16_t>). So a converted
+       `leader_site_id: u16` is post-preprocessing THE SAME TYPE as an
+       unconverted `siteid_t` field. The DSL did not avoid a domain type
+       there; there was no distinct name to avoid.
+
+   (b) Self-contained code exists that was NOT converted, which is what
+       actually disproves the causal reading. ReadU32Le
+       (src/deptran/raft/application_log.cc:22-29) is a free function in an
+       anonymous namespace, pure, primitives only, reading bytes through a
+       raw pointer -- the same shape as the CRC32 kernel that WAS converted.
+       application_log.cc has zero DSL blocks. Likewise
+       read_fixed_decimal/write_fixed_decimal in raft_bench.cc, already
+       annotated @safe. And raft-rust-migration.md:250-255 says of
+       replication_helper.cc's duplicate equals_ignore_case that it is
+       "mechanically convertible, but claiming either would expand this
+       tranche into shared-provider ownership. They remain unclaimed."
+       Scope, not capability.
+
+ The real limit is stated in the repo's own tooling, scripts/raft_dsl.sh:11-14:
+
+   "Because there is still no ODR post-pass, a header-resident type with
+    out-of-line methods will not link; conversions are limited to ODR-exempt
+    shapes (pub trait, struct with no impl, const fn) until that is addressed."
+
+ 142 of 146 converted functions are `const fn` -- the tree obeys that rule
+ exactly. `const fn` forces a compile-time-evaluable body, which forces
+ scalars. The self-containment is a CONSEQUENCE of the linkage limit.
+
+ docs/migration/rustycpp/raft-rust-migration.md names a second gap under
+ "Conservative Stage-1 stopping and promotion boundary": the declarations left
+ in C++ "require a representation, API, ownership, or call-graph decision
+ rather than another mechanical source-ownership change", and "Inline mode
+ does not yet apply a Rust-to-exact-C++ type map". AppendEntriesReq depends on
+ janus::Command; snapshot records depend on std::string.
+
+ TWO TOOLCHAIN GAPS, THEN, BOTH INDEPENDENT OF ANY C++ REFACTOR:
+   (i)  the ODR post-pass (raft is schema_version 1; rrr is already 2)
+   (ii) the Rust-to-exact-C++ type map
+
+ AND ONE GATE THAT IS ALREADY GONE. The per-carrier rustc stage that compiled
+ each block as its own dependency-free crate has been REMOVED
+ (scripts/raft_dsl.sh:333-350), and the comment left behind is explicit that
+ it "was also the reason every block had to be a free function over scalars",
+ and that "Per-carrier self-containment is no longer proven." The mechanism
+ that produced the shape is gone; the shape persists out of ordering.
+
+ WHICH IS WHY THE REPO'S OWN PLAN ALREADY SAYS WHAT TO DO NEXT.
+ docs/stage2_raft.txt:544 -- "NOT MORE SCALAR PREDICATES. That category is
+ exhausted". docs/stage2_raft.txt:547-550 -- "two independent gates (Q1b,
+ Q1c) cap what is reachable, and both are DECISIONS rather than work." The
+ recommendation below is that plan's own conclusion, reached independently.
+
+================================================================================
+ 3. THE RECOMMENDATION
+================================================================================
+
+ REFACTOR THE C++ FIRST (option A), for four reasons, in order of weight.
+
+ (1) OPTION B IS NOT AVAILABLE FOR THE PARTS THAT MATTER. "Port straight to
+     Rust" presumes the blockers are translation problems. They are not.
+     There is no Rust for "delete through a borrowed pointer" (B1); you must
+     decide an owner, and that decision is the work whether you make it in C++
+     or in Rust. Making it in C++ keeps a compiling, testable, measurable tree
+     at every step. Making it during a port means making it blind.
+
+ (2) THE C++ WORK IS THE ONLY THING ON THE CRITICAL PATH YOU CONTROL TODAY.
+     Even a perfectly Rust-shaped C++ tree can currently be converted only as
+     `const fn`, because of gap (i). So C++ refactoring and the toolchain work
+     are PARALLEL tracks, and refactoring is the one that does not wait on the
+     transpiler. Option B waits on both gaps before it can start at all.
+
+ (3) PERFORMANCE IS A STANDING REQUIREMENT AND ONLY OPTION A CAN ATTRIBUTE IT.
+     The migration's stated goal is to preserve performance. Under A each
+     refactor is measurable on its own with the harness that now exists
+     (src/deptran/raft/raft_bench.cc, scripts/raft_perf/). Under B the first
+     measurable point is after a large port, and a regression cannot be
+     attributed to anything.
+
+     The current 6% is free by construction and can be set aside: all 142
+     converted predicates are `const fn` -> `constexpr`, and
+     rusty::detail::deref_if_pointer_like (279 uses) is a `constexpr` template
+     resolved by `if constexpr` at compile time (rusty/slice.hpp:601). Codegen
+     risk begins when non-const-fn shapes with real types land -- which is
+     exactly when option A's per-step measurement starts paying.
+
+     One blocker is a performance WIN, not a cost. B2's shared recursive mutex
+     was measured this week at 6 partitions, 286 KB entries, 3 trials:
+
+       single group  190/s offered -> p50 18.4 ms   unthrottled  256/s
+       multi  group  190/s offered -> p50  7.6 ms   unthrottled 1591/s
+
+     ~6x throughput and ~2.4x latency. Whatever replaces that mutex should be
+     justified on its own merits before any Rust is written.
+
+ (4) THE SCAFFOLDING ALREADY BUILT IS WORTH MORE UNDER A THAN UNDER B. 145
+     static_assert-pinned predicates are a semantics freeze. Under A they keep
+     pinning behaviour while the surrounding C++ is restructured. Under B they
+     are discarded with the C++ that hosts them.
+
+================================================================================
+ 4. STEP ZERO, WHICH NEITHER OPTION HAS
+================================================================================
+
+ Neither strategy has a correctness net over the code it would change.
+ test.cc and testconf.cc contain zero references to RaftWorker and reach
+ RaftServer::Start() directly; the whole worker layer -- submit queue,
+ batching, Next() and the watermark callback registry, IsLeader, the
+ single-group stub servers, the heartbeat server -- is untested. This is not
+ theoretical: a real Raft defect (RequestVoteImpl sending the per-partition
+ locale id where a global site id was required, so per-partition group mode
+ could not elect a leader above one partition) sat in the tree and was found
+ this week by a PERFORMANCE harness, not by the tests.
+
+ Refactoring ownership across 23 rep_sched_ sites with no test over that layer
+ is how a silent defect gets introduced. Do coverage first.
+
+================================================================================
+ 5. ORDERED PLAN
+================================================================================
+
+ 0. Baseline. Run ./scripts/raft_perf/run_sweep.sh (~4h51m, machine to
+    itself). You cannot claim "performance maintained" without a before.
+    Archive it beside the code.
+
+ 1. Coverage over the RaftWorker layer. Cheapest useful version: a test that
+    drives add_log_to_nc -> apply and asserts ordering, completeness and
+    no-loss across all partitions, plus a leadership-flap case. This is the
+    gate everything else leans on.
+
+ 2. B1 in C++, using rusty::Box itself rather than a hand-rolled shape, so the
+    type you will port to is the type that compiles now. ~23 rep_sched_ sites
+    plus 15 in server_worker.cc, 25 harness sites behind one accessor. Measure
+    before and after; expect no delta, and say so with numbers.
+
+ 3. In parallel, and not blocked by 1-2: close the ODR post-pass so raft can
+    reach rust-modules.toml schema_version = 2 as rrr already has, and add the
+    Rust-to-exact-C++ type map. Until these land, nothing above `const fn` can
+    be converted no matter how clean the C++ is.
+
+ 4. B2. Note it is PARENT scope: TxLogServer::mtx_ is in the 36-line
+    src/deptran/scheduler.h, shared with Paxos (57 mtx_ uses in
+    raft/server.cc, 24 in paxos/server.cc). This is the one defect where
+    "raft-only" is impossible, and given the 6x measurement it deserves its
+    own design round rather than being folded into a conversion.
+
+ 5. Only then convert in earnest, tranche by tranche, each with a before/after
+    from the harness.
+
+================================================================================
+ 6. THE STRONGEST ARGUMENT AGAINST THIS RECOMMENDATION
+================================================================================
+
+ Refactoring C++ toward a Rust shape without the Rust compiler checking you is
+ guesswork: you can produce C++ that looks Box-shaped and still does not port,
+ paying for the work twice. That is a real risk and it is why step 2 says to
+ use rusty::Box itself -- the tree already ships it
+ (third-party/rusty-cpp/include/rusty/box.hpp), its converting move ctor is
+ gated on std::is_convertible (box.hpp:259-263), and TxLogServer's virtual
+ destructor makes delete-through-base well defined. Refactor with the target
+ type, not toward it, and the guesswork mostly disappears.
+
+ The second-strongest: if the ODR post-pass and the type map are the true
+ critical path, then time spent on C++ refactoring is time not spent on the
+ transpiler. That is why step 3 is explicitly parallel and not sequenced
+ behind 1-2. If there is only one person, do step 3 first.
+================================================================================
