@@ -99,12 +99,29 @@ open(p, 'w').write('\n'.join(out))
 EOF
 }
 
+# The transpiler must EXIST before the loop below, and each rewrite must
+# SUCCEED inside it. Without both checks --check passes vacuously: the loop
+# copies the carrier to a temp file, fails to rewrite it, and then diffs the
+# untouched copy against the original -- which is identical by construction.
+# It then reports no drift and exits 0, having verified nothing. That is worse
+# than no check, because it reads as coverage.
+if [[ ! -x "$TRANSPILER" ]]; then
+  echo "no executable transpiler at '$TRANSPILER'" >&2
+  echo "pass one as \$1, or build it; see docs/storage-interface.md" >&2
+  exit 2
+fi
+
 status=0
 for f in "${FILES[@]}"; do
   if [[ $CHECK -eq 1 ]]; then
     tmp="$(mktemp --suffix=.hh)"
     cp "$f" "$tmp"
-    "$TRANSPILER" inline-rust --rewrite --files "$tmp" >/dev/null
+    if ! "$TRANSPILER" inline-rust --rewrite --files "$tmp" >/dev/null; then
+      echo "FAILED to rewrite $f" >&2
+      status=1
+      rm -f "$tmp"
+      continue
+    fi
     post_pass "$tmp"
     if ! diff -q "$f" "$tmp" >/dev/null; then
       echo "DRIFT: $f (Rust block and committed GEN region disagree)" >&2
@@ -112,7 +129,11 @@ for f in "${FILES[@]}"; do
     fi
     rm -f "$tmp"
   else
-    "$TRANSPILER" inline-rust --rewrite --files "$f" >/dev/null
+    if ! "$TRANSPILER" inline-rust --rewrite --files "$f" >/dev/null; then
+      echo "FAILED to rewrite $f" >&2
+      status=1
+      continue
+    fi
     post_pass "$f"
     echo "regenerated $f"
   fi
