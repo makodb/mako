@@ -47,8 +47,12 @@ void PaxosWorker::SetupBase() {
   verify(rep_frame_ != nullptr);
   rep_frame_->site_info_ = site_info_;
   rep_sched_ = rep_frame_->CreateScheduler();
-  rep_sched_->loc_id_ = site_info_->locale_id;
-  rep_sched_->partition_id_ = site_info_->partition_id_;
+  // One interface call rather than field writes through the base: TxLogServer
+  // no longer HAS fields. site_id_ is deliberately left at its default here,
+  // exactly as before -- Paxos never set it on this path.
+  rep_sched_->SetSiteIdentity(site_info_->locale_id,
+                              static_cast<siteid_t>(-1),
+                              site_info_->partition_id_);
   this->tot_num = config->get_tot_req();
 }
 
@@ -177,7 +181,7 @@ void PaxosWorker::SetupCommo() {
         rep_frame_->CreateCommo(svr_poll_thread_worker_.clone());
     rep_commo_ = dynamic_cast<MultiPaxosCommo*>(communicator);
     verify(rep_commo_ != nullptr);
-    rep_sched_->commo_ = rep_commo_;
+    rep_sched_->SetCommo(rep_commo_);
   }
   // removed commented-out
   // `submit_pool = new SubmitPool();` — `SubmitPool` class deleted.

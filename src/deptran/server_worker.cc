@@ -162,11 +162,21 @@ void ServerWorker::ShutDown() {
     svr_hb_poll_thread_worker_g = rusty::None;
   }
 
-  // The scheduler is owned by RaftFrame::svr_ (a unique_ptr on the frame that
-  // CreateScheduler() returned it from); rep_sched_ only borrows it, so
-  // ServerWorker must not delete it.
-  Log_info("Skipping replication scheduler delete in RAFT_TEST_CORO shutdown");
-  rep_sched_ = nullptr;
+  // The worker is the SOLE owner of the scheduler CreateScheduler() returned:
+  // RaftFrame::svr_ is a borrowed back-reference, not a unique_ptr, so this
+  // delete is the only one. Matches PaxosWorker (paxos_worker.cc:240) and
+  // RaftWorker (raft_worker.cc:564). See cpp-refactor-plan.md B1.
+  if (rep_sched_ != nullptr) {
+    Log_info("Deleting replication scheduler in RAFT_TEST_CORO shutdown");
+    // Drop the frame's borrowed back-reference first; see
+    // RaftFrame::ReleaseScheduler and cpp-refactor-plan.md B1.
+    if (rep_frame_ != nullptr) {
+      rep_frame_->ReleaseScheduler();
+    }
+    // @unsafe { raw delete of an owned pointer at the ownership boundary }
+    delete rep_sched_;
+    rep_sched_ = nullptr;
+  }
   Log_info("ServerWorker shutdown complete.");
 }
 

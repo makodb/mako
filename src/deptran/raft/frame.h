@@ -43,7 +43,24 @@ class RaftFrame : public Frame {
   ~RaftFrame();  // Destructor to clean up owned resources
   std::unique_ptr<RaftCommo> commo_;  // @unsafe - unique_ptr kept for test file compatibility
   /* TODO: have another class for common data */
-  std::unique_ptr<RaftServer> svr_;  // @unsafe - unique_ptr kept for test file compatibility
+  // NON-OWNING. CreateScheduler() hands the only owning reference to the
+  // worker, which deletes it (raft_worker.cc, server_worker.cc); this member
+  // is the borrowed back-reference the RAFT_TEST_CORO harness reaches through.
+  //
+  // It used to be a unique_ptr, which made the frame a SECOND owner of a
+  // pointer the worker already deletes -- a double free that stayed latent
+  // only because no Frame is ever deleted, i.e. the leak was load-bearing.
+  // This matches MultiPaxosFrame, which has never had a frame-side owner
+  // (paxos/frame.cc:30). See docs/migration/raft/cpp-refactor-plan.md B1.
+  // @unsafe - borrowed raw pointer; ownership is the worker's.
+  RaftServer* svr_ = nullptr;
+
+  // Called by the owning worker immediately BEFORE it deletes the scheduler,
+  // so the borrowed back-reference above cannot outlive the object. Without
+  // it the RAFT_TEST_CORO harness's `!frame->svr_` guards would read a stale
+  // non-null pointer and dereference freed memory.
+  // @safe - drops a borrow, owns nothing.
+  void ReleaseScheduler() { svr_ = nullptr; }
   TxLogServer *CreateScheduler() override;
   Communicator *CreateCommo(
       rusty::Option<rusty::Arc<rrr::PollThread>> poll_thread_worker =

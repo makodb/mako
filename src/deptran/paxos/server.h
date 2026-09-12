@@ -24,6 +24,13 @@ struct PaxosData {
 
 class PaxosServer : public TxLogServer {
  public:
+  // The five site fields and the recursive mutex used to arrive by inheriting
+  // TxLogServer's data members. They are declared here now; every body that
+  // reads them is unchanged. See src/deptran/scheduler.h for why.
+  TXLOG_SERVER_SITE_FIELDS()
+  std::recursive_mutex mtx_{};
+  TXLOG_SERVER_SITE_METHODS()
+
   // ----min_active <= max_executed <= max_committed---
   slotid_t min_active_slot_ = 0; // anything before (lt) this slot is freed
   slotid_t max_executed_slot_ = 0;

@@ -1147,6 +1147,19 @@ struct RaftData {
 
 // @unsafe - inherits from non-@interface TxLogServer (individual methods are @safe)
 class RaftServer : public TxLogServer {
+ public:
+  // The five site fields and the mutex used to arrive by inheriting
+  // TxLogServer's data members. They are declared here now; every body that
+  // reads them -- 164 `site_id_`, 20 `partition_id_`, 10 `loc_id_`, 6
+  // `app_next_` and 48 `mtx_` acquisitions -- is unchanged. See
+  // src/deptran/scheduler.h for why, and cpp-refactor-plan.md gate G4.
+  //
+  // mtx_ being Raft's own is the point: it is what lets Tranche 5 replace this
+  // recursive mutex with a single Mutex<RaftState> without touching Paxos.
+  TXLOG_SERVER_SITE_FIELDS()
+  std::recursive_mutex mtx_{};
+  TXLOG_SERVER_SITE_METHODS()
+
  private:
   struct AsyncCallbackLifetime {
     std::mutex mutex;

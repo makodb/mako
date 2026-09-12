@@ -198,14 +198,16 @@ int RaftFrame::RaftLabProcessExitCode() {
 TxLogServer *RaftFrame::CreateScheduler() {
   if(svr_ == nullptr)
   {
+    // The caller -- the worker -- takes ownership. The frame keeps only a
+    // borrowed back-reference for the RAFT_TEST_CORO harness.
     // @unsafe
-    { svr_ = std::make_unique<RaftServer>(); }
+    { svr_ = new RaftServer(); }
   }
   else
   {
     // @unsafe { Log_error is not borrow-checked }
     Log_error("[RAFT] RaftFrame::CreateScheduler called but scheduler already exists");
-    return svr_.get();
+    return svr_;
   }
   // @unsafe
   { Log_debug("create new raft sched loc: {}", this->site_info_->locale_id); }
@@ -221,7 +223,7 @@ TxLogServer *RaftFrame::CreateScheduler() {
   }
 #endif
 
-  return svr_.get();
+  return svr_;
 }
 
 // @unsafe - returns raw pointer to owned member, external calls marked @external [safe]

@@ -694,7 +694,7 @@ RaftServer *RaftTestConfig::GetServer(siteid_t svr) {
       !it->second->svr_) {
     return nullptr;
   }
-  return it->second->svr_.get();
+  return it->second->svr_;
 }
 
 siteid_t RaftTestConfig::mapServerId(siteid_t server_id) const {

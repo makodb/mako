@@ -7,6 +7,7 @@
 #include <rusty/slice.hpp>
 
 #include "raft_worker.h"
+#include "frame.h"   // RaftFrame::ReleaseScheduler at the ownership boundary (B1)
 #include "server.h"
 #include "commo.h"
 #include "application_log.h"
@@ -285,9 +286,11 @@ void RaftWorker::SetupBase() {
 
   // @unsafe
   { // rep_sched_-> and site_info_-> pointer dereferences
-    rep_sched_->loc_id_ = site_info_->locale_id;
-    rep_sched_->site_id_ = site_info_->id;  // CRITICAL: Set site_id!
-    rep_sched_->partition_id_ = site_info_->partition_id_;
+    // One interface call rather than three field writes through the base:
+    // TxLogServer no longer HAS fields. See src/deptran/scheduler.h.
+    rep_sched_->SetSiteIdentity(site_info_->locale_id,
+                                site_info_->id,  // CRITICAL: Set site_id!
+                                site_info_->partition_id_);
   }
 
   if (auto raft_server = dynamic_cast<RaftServer*>(rep_sched_)) {
@@ -371,7 +374,7 @@ void RaftWorker::SetupCommo() {
 
   // @unsafe
   { // rep_sched_-> pointer dereference
-    rep_sched_->commo_ = rep_commo_;
+    rep_sched_->SetCommo(rep_commo_);
   }
 }
 
@@ -561,6 +564,11 @@ void RaftWorker::ShutDown() {
   // Services are now owned by rpc_server_ and deleted with it
 
   if (rep_sched_) {
+    // Drop the frame's borrowed back-reference first; see
+    // RaftFrame::ReleaseScheduler and cpp-refactor-plan.md B1.
+    if (auto* raft_frame = dynamic_cast<RaftFrame*>(rep_frame_)) {
+      raft_frame->ReleaseScheduler();
+    }
     delete rep_sched_;
     rep_sched_ = nullptr;
   }
