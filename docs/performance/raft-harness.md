@@ -18,6 +18,7 @@ document is the manual.
 | `examples/raft_bench.sh` | launcher — stands up three processes, produces one record |
 | `scripts/raft_perf/run_sweep.sh` | sweep driver — many points, one output directory |
 | `scripts/raft_perf/processing.py` | parser — a directory of records into plot-ready series |
+| `scripts/raft_perf/compare.py` | the criterion — two record sets in, regression verdict out |
 | `scripts/raft_perf/lattput.py` | the saturation curve: median latency against throughput |
 | `scripts/raft_perf/plot_latency_cdf.py` | the latency CDF |
 | `docs/plans/raft-perf-profile.txt` | what Mako actually submits to Raft, measured |
@@ -37,6 +38,9 @@ examples/raft_bench.sh --out /tmp/point.json \
 python3 scripts/raft_perf/processing.py raft_perf_output/sweep_*/rate
 python3 scripts/raft_perf/lattput.py raft_perf_output/sweep_*/rate -o /tmp/lattput.png
 python3 scripts/raft_perf/plot_latency_cdf.py raft_perf_output/sweep_*/rate -o /tmp/cdf.png
+
+# Did a change cost anything? Two sweeps, one verdict. Exits 1 on a regression.
+python3 scripts/raft_perf/compare.py before/rate after/rate
 
 # The full sweep. It prints its own runtime estimate first; see it without
 # running anything:
@@ -122,6 +126,93 @@ the callback.
   fault injection and makes no correctness claim.
 - **Durability.** The branch this was built on is memory-only Raft;
   `MAKO_RAFT_SNAPSHOTS` is unset by default, so no snapshotting is in the path.
+
+## Stating whether a change moved the number
+
+This is what the harness is for. The Raft implementation is being converted to
+Rust, and the conversion must be shown not to cost performance. A single
+before number and a single after number cannot show that, because two runs of
+the *same* build differ.
+
+**Every metric is reported with its spread.** `processing.py` prints
+`mean +- sd` across the trials at each point, and under each series a noise
+floor:
+
+```
+=== p1/single/4096B/b1/repeat-throttled ===
+        5000     10       5000.2 +-  0.9       3.606 +-0.132       5.100 +-0.237
+             noise floor: tput CV 0.0%, p50 CV 3.7%  ->  detectable at n=10: ~0.0% / ~3.2%
+```
+
+The last line is the **minimum detectable effect**: `2.8 * CV / sqrt(n)`, the
+usual z-based constant for 5% significance at 80% power. It is the smallest
+change that this many trials can distinguish from noise. A measured delta
+below it is not a small regression — it is no information. Raising `--trials`
+lowers the bar as `1/sqrt(n)`.
+
+**`compare.py` does the comparison.**
+
+```bash
+python3 scripts/raft_perf/compare.py before/rate after/rate
+python3 scripts/raft_perf/compare.py before/rate after/rate --threshold 3
+```
+
+It matches points across the two sets by configuration — deliberately ignoring
+the `[commit=...]` disambiguator that `processing.py` groups on, since the
+commit is exactly what is being compared across — and for each of throughput
+(higher is better), p50 and p99 latency (lower is better) reports the percent
+change beside the pooled noise floor for the trial counts actually used. Each
+comparison gets one of four verdicts:
+
+| verdict | meaning |
+|---|---|
+| `within noise` | the delta is smaller than the noise floor; this run count cannot see it |
+| `better` | moved the good way, beyond the floor |
+| `worse, under threshold` | real but smaller than `--threshold` |
+| `REGRESSION` | worse than `--threshold` *and* beyond the floor |
+
+Points present on only one side are named and skipped rather than silently
+dropped. Exit status is 0 if nothing regressed, 1 if something did, 2 on a
+usage or data error — so it works as a gate.
+
+There are no p-values. With three trials a t-test mostly reports the smallness
+of n; the noise floor states the same thing without the false precision.
+
+### The trap: a throttled point cannot show a throughput regression
+
+At any offered rate below saturation, `applied/s` simply echoes the offered
+rate — that is what throttling means. Its standard deviation across trials is
+near zero, and a conversion that made Raft 20% slower would still show
+`5000.2 +- 0.9` until it became slow enough to miss the pace entirely. The
+throughput CV printed for such a point is tautological, not evidence.
+
+So read the two metrics at different points:
+
+- **Latency regressions** show up at throttled points, where the offered rate
+  is held fixed and the queueing delay is free to move.
+- **Throughput regressions** show up only at the unthrottled point
+  (`offered = 0`, printed as `unthrottled`), where the system is at its
+  ceiling and the ceiling is the measurement.
+
+A comparison that covers only throttled points has not tested throughput at
+all. The sweep's rate phase ends every series with the unthrottled point for
+this reason.
+
+### Conditions the comparison assumes
+
+The two sides must differ in the code and in nothing else. `processing.py`
+enforces what it can — it refuses to average records that disagree on the
+fields in `COMPARABILITY_FIELDS` (payload size, partition count, group mode,
+batch size, log level, outstanding cap, host, commit) — but it cannot see the
+machine's state. In particular:
+
+- Measure both sides on the same machine, with nothing else running. See the
+  warning above about concurrent sweeps.
+- Prefer interleaving before and after over running all of one and then all of
+  the other, if the machine is shared or long-running thermal drift is
+  plausible.
+- Keep `--trials` at 3 or more. `compare.py` flags comparisons that exceed the
+  noise floor but rest on fewer than 3 trials rather than trusting them.
 
 ## Exit codes
 

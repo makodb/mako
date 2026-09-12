@@ -67,12 +67,6 @@ fi
 # "1 partition" is the low-variance regression gate. "6 partitions" is what
 # production runs. The two group modes at six partitions bracket the cost of
 # the shared recursive mutex that single-group mode puts every partition
-# behind. Sweeping every partition count is deliberately out of scope.
-#
-# The three cluster shapes, and only these three (harness plan decision D5).
-# "1 partition" is the low-variance regression gate. "6 partitions" is what
-# production runs. The two group modes at six partitions bracket the cost of
-# the shared recursive mutex that single-group mode puts every partition
 # behind. Do not sweep every partition count; three configurations is the
 # agreed scope.
 CONFIGS=(
