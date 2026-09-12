@@ -439,6 +439,63 @@ run_2shard_replication_simple() {
 }
 
 # ============================================================================
+# Raft lab cluster suite (RaftLabTest, src/deptran/raft/test.cc)
+# ============================================================================
+#
+# This is the ONLY cluster-level correctness suite for RaftServer itself:
+# 25 cases, five embedded replicas in one process, 27 Disconnect calls' worth
+# of leadership flap, snapshot install and a high-frequency apply stress.
+# Until this function existed it was on no CI path at all, because the binary
+# that hosts it needs -DMAKO_USE_RAFT=ON -DRAFT_TEST=ON and no script in the
+# repository set either one. A suite nobody builds is worse than no suite: it
+# reads as coverage.
+#
+# It needs its OWN build directory. -DRAFT_TEST=ON defines RAFT_TEST_CORO,
+# which changes RaftServer's behaviour, so the flags must not be folded into
+# the build every other suite measures and tests.
+run_raft_lab_test() {
+    echo "========================================="
+    echo "Running: ./ci/ci.sh raftLabTest"
+    echo "========================================="
+    local jobs="${CI_BUILD_JOBS:-${CI_MAKE_JOBS:-32}}"
+    local generator="${CMAKE_GENERATOR:-Ninja}"
+    local build_type="${CMAKE_BUILD_TYPE:-Release}"
+    local lab_build_dir="${RAFT_LAB_BUILD_DIR:-${BUILD_DIR}_raftlab}"
+
+    echo "Configuring ${lab_build_dir} with MAKO_USE_RAFT=ON RAFT_TEST=ON"
+    cmake -S . -B "${lab_build_dir}" -G "${generator}" \
+        -DCMAKE_BUILD_TYPE="${build_type}" -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+        -DMAKO_USE_RAFT=ON -DRAFT_TEST=ON
+    cmake --build "${lab_build_dir}" --parallel "${jobs}" --target deptran_server
+
+    local log
+    log="$(mktemp /tmp/raft_lab_test_XXXX.log)"
+    echo "Running the lab suite (log: ${log})"
+    set +e
+    timeout 900 "./${lab_build_dir}/deptran_server" \
+        -f config/raft_lab_test.yml -P localhost > "${log}" 2>&1
+    local status=$?
+    set -e
+
+    local passed
+    passed=$(grep -c '^TEST [0-9]* Passed' "${log}" || true)
+    echo "raftLabTest: ${passed} case(s) passed, deptran_server exited ${status}"
+
+    # Both conditions, deliberately. The exit status is the verdict
+    # (src/deptran/s_main.cc returns RaftFrame::RaftLabProcessExitCode()), and
+    # the marker proves the fiber actually reached its verdict rather than the
+    # process exiting 0 having run nothing.
+    if [ "$status" -ne 0 ] || ! grep -q 'ALL TESTS PASSED' "${log}"; then
+        echo "ERROR: RaftLabTest failed (exit ${status})"
+        echo "--- last 60 lines of ${log} ---"
+        tail -n 60 "${log}"
+        return 1
+    fi
+    rm -f "${log}"
+    return 0
+}
+
+# ============================================================================
 # Raft Replication Tests
 # ============================================================================
 
@@ -733,6 +790,9 @@ case "${1:-}" in
     shard2ReplicationSimpleRaft)
         run_2shard_replication_simple_raft
         ;;
+    raftLabTest)
+        run_raft_lab_test
+        ;;
     rocksdbTests)
         run_rocksdb_tests
         ;;
@@ -775,6 +835,7 @@ case "${1:-}" in
         run_2shard_replication_raft
         run_1shard_replication_simple_raft
         run_2shard_replication_simple_raft
+        run_raft_lab_test
         run_rocksdb_tests
         # run_shard_fault_tolerance  # DISABLED: test script not implemented
         run_multi_shard_single_process
@@ -792,6 +853,7 @@ case "${1:-}" in
         echo "  shard1ReplicationSimple, shard2ReplicationSimple,"
         echo "  shard1ReplicationRaft, shard2ReplicationRaft,"
         echo "  shard1ReplicationSimpleRaft, shard2ReplicationSimpleRaft,"
+        echo "  raftLabTest,"
         echo "  rocksdbTests, multiShardSingleProcess,"
         echo "  shard2SingleProcess, shard2SingleProcessReplication,"
         echo "  rrrTests, cpuThrottlingScaling, clientServer, all"

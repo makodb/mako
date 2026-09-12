@@ -68,6 +68,12 @@ make -j32
 ./docker_build.sh ci shard1ReplicationSimpleRaft
 ./docker_build.sh ci shard2ReplicationSimpleRaft
 
+# RaftLabTest: the 25-case Raft cluster correctness suite (Docker)
+# Configures its OWN build directory with -DMAKO_USE_RAFT=ON -DRAFT_TEST=ON,
+# because RAFT_TEST defines RAFT_TEST_CORO and changes RaftServer's behaviour;
+# it must not be folded into the build the other suites use.
+./docker_build.sh ci raftLabTest
+
 # RocksDB persistence and partitioned queues tests (Docker)
 ./docker_build.sh ci rocksdbTests
 
