@@ -94,7 +94,17 @@ integration level. `fused_new_order_header_reports_registry_exhaustion_as_a_reso
 in `crates/sto-tpcc-ffi` pins it deterministically, and
 `test_sto_tpcc_rust_registry_budget_resource_exhausted` drives the structural
 budget rather than a numeric quota so the integration gate covers this capacity
-source.
+source. That gate uses a 512 MiB budget: one warehouse loads about 67 MiB of
+structural bytes, and the run stops as soon as the budget is spent, so the gate
+finishes in seconds on a release build yet still exhausts well inside its
+runtime bound on the much slower sanitizer lanes.
+
+The log names in this directory are the manual qualification runs above; the
+gate's own invocation lives in `CMakeLists.txt` and is inventory-checked by
+`.github/workflows/ci.yml` and `scripts/ci/run_rust_sto_sanitizer.sh`. That gate uses a 512 MiB budget: one warehouse loads about 67 MiB of
+structural bytes, and the run stops as soon as the budget is spent, so the gate
+finishes in seconds on a release build and still exhausts long before its
+runtime bound on the much slower sanitizer lanes.
 
 ## Scope of these claims
 

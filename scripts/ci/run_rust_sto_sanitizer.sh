@@ -1364,7 +1364,7 @@ allowed_environment = {
         "MAKO_TPCC_WORKLOAD_MIX=100,0,0,0,0"
     ],
     "test_sto_tpcc_rust_registry_budget_resource_exhausted": [
-        "MAKO_STO_TPCC_REGISTRY_MEMORY=1G",
+        "MAKO_STO_TPCC_REGISTRY_MEMORY=512M",
         "MAKO_TPCC_WORKLOAD_MIX=100,0,0,0,0"
     ],
     "test_sto_tpcc_cpp_multishard_slow_exit": [
