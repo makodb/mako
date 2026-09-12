@@ -361,12 +361,69 @@ struct PartitionState {
   std::atomic<long long> stalled_ns{0};
   std::atomic<long long> foreign_applied{0};
 
+  // Log integrity. Every offered entry carries a per-partition sequence
+  // number, numbered from 1, in the header field the apply callback used to
+  // skip over. Reading it back and comparing against the last one seen gives
+  // ordering, no-loss and no-duplicate for this partition's applied stream in
+  // a single pass — on the leader and on every follower, since both register
+  // the same callback.
+  //
+  // Single writer, exactly like the latency samples above: at most one apply
+  // thread touches a given PartitionState, so relaxed is enough and main()
+  // reads them only after that thread has stopped.
+  //
+  // A true loss shows up as gaps > 0 with duplicates == 0. A pure reordering,
+  // which Raft's in-order apply should make impossible, shows up as one gap
+  // and one duplicate; out_of_order counts the breaks either way, so any
+  // non-zero value is a failure regardless of how the three split.
+  std::atomic<uint64_t> last_seq{0};
+  std::atomic<long long> out_of_order{0};
+  std::atomic<long long> gaps{0};
+  std::atomic<long long> duplicates{0};
+  // Leadership probes carry sequence 0 and are outside the ordered stream.
+  std::atomic<long long> probes_applied{0};
+
   // Driver-owned in-flight depth: offered minus applied.
   std::atomic<long long> in_flight{0};
   std::atomic<long long> peak_raft_outstanding{0};
 
   std::atomic<int> end_markers{0};
 };
+
+// Fold one applied entry's sequence number into this partition's integrity
+// counters. Called only from the apply callback, which has a single writer
+// per PartitionState.
+//
+// Sequence 0 is a leadership probe: offer_loop numbers real entries from 1
+// (`++seq` precedes the write at every offer site), while the probe loop
+// writes a literal 0. A probe carries no ordering information, so it is
+// counted and otherwise ignored.
+//
+// Counting only what arrived means a stream that is cut short — the drain
+// window closing on entries still in flight, or an offer rejected when
+// leadership moves — is not reported as loss. That case is what
+// offered_total versus applied_total is for.
+// @safe - relaxed single-writer bookkeeping over plain counters
+void check_sequence(PartitionState* st, uint64_t seq) {
+  if (seq == 0) {
+    st->probes_applied.fetch_add(1, std::memory_order_relaxed);
+    return;
+  }
+  const uint64_t last = st->last_seq.load(std::memory_order_relaxed);
+  const uint64_t expected = last + 1;
+  if (seq != expected) {
+    st->out_of_order.fetch_add(1, std::memory_order_relaxed);
+    if (seq > expected) {
+      st->gaps.fetch_add(static_cast<long long>(seq - expected),
+                         std::memory_order_relaxed);
+    } else {
+      st->duplicates.fetch_add(1, std::memory_order_relaxed);
+    }
+  }
+  if (seq > last) {
+    st->last_seq.store(seq, std::memory_order_relaxed);
+  }
+}
 
 // Measured window, in microseconds since the process epoch. Published by the
 // offer loop before it starts and read by the apply callback. Until it is
@@ -540,6 +597,10 @@ struct Record {
   // not reach its requested rate.
   double offer_stalled_sec = 0.0;
   long long foreign_applied = 0;
+  long long out_of_order = 0;
+  long long gaps = 0;
+  long long duplicates = 0;
+  long long probes_applied = 0;
   long long samples_used = 0;
   long long samples_dropped = 0;
   double latency_mean_us = 0.0;
@@ -606,6 +667,10 @@ bool write_record(const std::string& path, const Record& r) {
   std::fprintf(f, "  \"offer_rejected\": %lld,\n", r.offer_rejected);
   std::fprintf(f, "  \"offer_stalled_sec\": %.6f,\n", r.offer_stalled_sec);
   std::fprintf(f, "  \"foreign_applied\": %lld,\n", r.foreign_applied);
+  std::fprintf(f, "  \"out_of_order\": %lld,\n", r.out_of_order);
+  std::fprintf(f, "  \"gaps\": %lld,\n", r.gaps);
+  std::fprintf(f, "  \"duplicates\": %lld,\n", r.duplicates);
+  std::fprintf(f, "  \"probes_applied\": %lld,\n", r.probes_applied);
   std::fprintf(f, "  \"samples_used\": %lld,\n", r.samples_used);
   std::fprintf(f, "  \"samples_dropped\": %lld,\n", r.samples_dropped);
   std::fprintf(f, "  \"latency_mean_us\": %.3f,\n", r.latency_mean_us);
@@ -917,6 +982,7 @@ int main(int argc, char** argv) {
         st->end_markers.fetch_add(1, std::memory_order_relaxed);
       } else if (len >= kHeaderBytes && log != nullptr &&
                  std::memcmp(log, kMagic, static_cast<size_t>(kMagicBytes)) == 0) {
+        check_sequence(st, read_fixed_decimal(log + kMagicBytes, kSeqBytes));
         const uint64_t stamp =
             read_fixed_decimal(log + kMagicBytes + kSeqBytes, kStampBytes);
         const uint64_t latency_us = apply_us > stamp ? apply_us - stamp : 0;
@@ -1228,6 +1294,10 @@ int main(int argc, char** argv) {
       rec.offer_stalled_sec +=
           static_cast<double>(st.stalled_ns.load(std::memory_order_relaxed)) / 1e9;
       rec.foreign_applied += st.foreign_applied.load(std::memory_order_relaxed);
+      rec.out_of_order += st.out_of_order.load(std::memory_order_relaxed);
+      rec.gaps += st.gaps.load(std::memory_order_relaxed);
+      rec.duplicates += st.duplicates.load(std::memory_order_relaxed);
+      rec.probes_applied += st.probes_applied.load(std::memory_order_relaxed);
       rec.samples_dropped += st.samples_dropped.load(std::memory_order_relaxed);
       const long long peak = st.peak_raft_outstanding.load(std::memory_order_relaxed);
       if (peak > rec.peak_outstanding) {
@@ -1330,6 +1400,50 @@ int main(int argc, char** argv) {
                     opt.out_path.c_str());
         std::fflush(stdout);
       }
+    }
+  }
+
+  // Log integrity, checked for both roles and last, so that no performance
+  // verdict above can overwrite it. A follower verifies the same stream the
+  // leader does — it registers the same callback — which is the only
+  // correctness evidence this driver gathers about replication rather than
+  // about the leader's own local apply.
+  //
+  // This outranks every verdict above it: a number measured over a log that
+  // lost, duplicated or reordered an entry is not a slower number, it is a
+  // wrong one. It is therefore assigned unconditionally, not under
+  // `if (exit_code == 0)`.
+  {
+    long long out_of_order = 0;
+    long long gaps = 0;
+    long long duplicates = 0;
+    long long foreign = 0;
+    for (auto& st : state) {
+      out_of_order += st.out_of_order.load(std::memory_order_relaxed);
+      gaps += st.gaps.load(std::memory_order_relaxed);
+      duplicates += st.duplicates.load(std::memory_order_relaxed);
+      foreign += st.foreign_applied.load(std::memory_order_relaxed);
+    }
+    if (out_of_order > 0 || gaps > 0 || duplicates > 0 || foreign > 0) {
+      std::fprintf(stderr,
+                   "[raft_bench:%s] LOG INTEGRITY VIOLATION: out_of_order=%lld "
+                   "gaps=%lld duplicates=%lld foreign_applied=%lld\n",
+                   opt.proc_name.c_str(), out_of_order, gaps, duplicates, foreign);
+      std::fflush(stderr);
+      exit_code = 8;
+    } else {
+      // Print the clean case too. A follower writes no record, so this line is
+      // the only place its verdict is legible, and the flap test reads it.
+      long long checked = 0;
+      long long probes = 0;
+      for (auto& st : state) {
+        checked += st.applied_total.load(std::memory_order_relaxed);
+        probes += st.probes_applied.load(std::memory_order_relaxed);
+      }
+      std::printf("[raft_bench:%s] log integrity: OK (%lld entries checked, "
+                  "%lld leadership probes)\n",
+                  opt.proc_name.c_str(), checked - probes, probes);
+      std::fflush(stdout);
     }
   }
 

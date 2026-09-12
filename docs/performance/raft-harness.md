@@ -42,6 +42,14 @@ python3 scripts/raft_perf/plot_latency_cdf.py raft_perf_output/sweep_*/rate -o /
 # Did a change cost anything? Two sweeps, one verdict. Exits 1 on a regression.
 python3 scripts/raft_perf/compare.py before/rate after/rate
 
+# Did a change break anything? SIGKILL the leader 5 s into the load and
+# require every survivor to report a gap-free, duplicate-free applied prefix.
+# This produces NO record -- the process that would have written one is the
+# process it kills -- so it is a correctness test, not a measurement point.
+examples/raft_bench.sh --out /tmp/unused.json \
+    --partitions 6 --group-mode multi --payload-bytes 1024 --rate 3000 \
+    --duration-sec 20 --kill-leader-at-sec 5
+
 # The full sweep. It prints its own runtime estimate first; see it without
 # running anything:
 ./scripts/raft_perf/run_sweep.sh --dry-run
@@ -256,6 +264,7 @@ is worse: its own verdict, or the worst of the three replicas'.
 | 5 | the run exceeded its wall-clock budget and was killed |
 | 6 | nothing was applied inside the measured window |
 | 7 | no leader anywhere: this process led nothing and applied nothing |
+| 8 | **log integrity violation** — the applied stream lost, duplicated or reordered an entry, or applied one this harness did not write. A correctness failure, not a slow measurement. |
 
 `scripts/raft_perf/run_sweep.sh` exits 1 if any run failed, and `SUMMARY.md`
 names them.
@@ -310,13 +319,41 @@ One flat JSON object per run, written by the leader only. Every key:
 | `offer_rejected` | offers `add_log_to_nc` refused because leadership was lost. **Non-zero invalidates the point**; the launcher exits 3 and `processing.py` drops the record. |
 | `offer_stalled_sec` | seconds the offer threads spent blocked on `max_outstanding`, summed across partitions. Large relative to `measured_window_sec × partitions` means the run never offered what it was asked to. Past the knee that is the expected result; below it, the bound leaked because Raft accepted entries and then dropped them on a leadership flap, and the point is dead. `processing.py` names such records. |
 | `leadership_changes` | leadership transitions this process was notified of. More than the initial election means the cluster flapped during the run. |
-| `foreign_applied` | applied entries that were not this harness's (Raft's internal no-ops, mostly). Counted, never measured. |
+| `foreign_applied` | applied entries that were not this harness's (Raft's internal no-ops, mostly). Counted, and now also **fatal**: see the integrity block below. |
+| `out_of_order` | breaks in this partition's applied sequence — the number of applied entries whose sequence number was not the previous one plus one. Zero on a correct run. |
+| `gaps` | entries apparently skipped, summed: when an applied sequence number is ahead of the expected one, the shortfall is added here. |
+| `duplicates` | applied entries whose sequence number had already been seen. |
+| `probes_applied` | leadership probes (sequence 0) applied. Outside the ordered stream, counted so the other three are readable against the total. |
 | `samples_used` / `samples_dropped` | retained latency samples, and how many exceeded `--max-samples`. Dropped samples cost percentile resolution only; throughput is counted separately and is always exact. |
 | `latency_mean_us`, `latency_p50_us`, `latency_p90_us`, `latency_p99_us`, `latency_p999_us`, `latency_max_us` | enqueue-to-apply latency, microseconds, over in-window samples. Nearest-rank percentiles over the sorted samples. |
 | `peak_outstanding` | the largest value `get_outstanding_logs()` returned during the run, sampled every 64th offer |
 | `applied_per_sec_per_partition` | `applied_per_sec / partitions`, the analogue of bench.cc's `avg_per_core_persist_throughput` |
 | `min_partition_applied_in_window` / `max_partition_applied_in_window` | the slowest and fastest partition. One straggler among six is invisible in the aggregate and diluted to a sixth of its weight in the pooled percentiles; these two make it legible. |
 | `latency_cdf_us` | percentile → microseconds, 1..99 plus `99.9` and `100`. What the CDF plot draws; the raw samples are not written to disk. This is the **one** nested value in an otherwise flat record — the plan asked for "flat, no nesting", and a hundred `latency_p37_us` keys would be worse. `processing.py` special-cases it. |
+
+### Log integrity: the one thing here that is a correctness check
+
+Every offered entry carries a per-partition sequence number, numbered from 1,
+in the header field the apply callback used to skip over. The callback reads it
+back and compares against the last one it saw, which gives ordering, no-loss
+and no-duplicate for that partition's applied stream in a single pass. Both
+roles run it: a follower registers the same callback, so a follower's verdict
+is evidence about **replication**, not just about the leader's local apply.
+
+`out_of_order`, `gaps`, `duplicates` and `foreign_applied` must all be zero.
+Any non-zero value exits 8 from both the driver and the launcher, and that
+verdict is assigned last so no performance verdict can overwrite it. A number
+measured over a log that lost an entry is not a slower number, it is a wrong
+one.
+
+What it deliberately does NOT catch is truncation at the END of the stream:
+entries still in flight when the drain window closes, or an offer rejected
+when leadership moves, leave no gap between two applied entries. That case is
+what `offered_total` versus `applied_total` is for. The property is exactly
+what makes the same check usable across a leadership flap
+(`examples/raft_bench.sh --kill-leader-at-sec S`), where losing the dead
+leader's uncommitted tail is legitimate and a gap in the committed prefix is
+not.
 
 ### Two keys that mean less than they look like
 

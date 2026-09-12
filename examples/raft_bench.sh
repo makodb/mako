@@ -43,6 +43,7 @@ LABEL=""
 OUT_PATH=""
 LOG_DIR=""
 KEEP_LOGS=0
+KILL_LEADER_AT_SEC=0
 
 usage() {
     cat <<'EOF'
@@ -68,6 +69,11 @@ Usage: examples/raft_bench.sh --out <record.json> [options]
   --label TEXT            free-form label copied into the record
   --log-dir DIR           per-process stdout/stderr (default: a temp dir)
   --keep-logs             keep --log-dir even on success
+  --kill-leader-at-sec S  fault-injection mode: SIGKILL the leader S seconds
+                          after it starts offering, then require that every
+                          surviving replica still reports a clean log. This
+                          produces NO measurement record — it is a correctness
+                          test, not a performance point.
   --build-dir DIR         default: $BUILD_DIR or "build"
   --help
 EOF
@@ -90,6 +96,7 @@ while [[ $# -gt 0 ]]; do
         --label)           LABEL="$2"; shift 2 ;;
         --log-dir)         LOG_DIR="$2"; shift 2 ;;
         --keep-logs)       KEEP_LOGS=1; shift ;;
+        --kill-leader-at-sec) KILL_LEADER_AT_SEC="$2"; shift 2 ;;
         --build-dir)       BUILD_DIR="$2"; shift 2 ;;
         --help|-h)         usage; exit 0 ;;
         *) echo "raft_bench.sh: unknown argument '$1'" >&2; usage >&2; exit 2 ;;
@@ -122,6 +129,7 @@ check_number --warmup-sec "$WARMUP_SEC"
 check_number --max-outstanding "$MAX_OUTSTANDING"
 check_number --leader-wait-sec "$LEADER_WAIT_SEC"
 check_number --log-level "$LOG_LEVEL"
+check_number --kill-leader-at-sec "$KILL_LEADER_AT_SEC"
 case "$GROUP_MODE" in
     single|multi) ;;
     *) echo "raft_bench.sh: --group-mode must be single or multi (got '$GROUP_MODE')" >&2; exit 2 ;;
@@ -220,9 +228,15 @@ mkdir -p "$LOG_DIR"
 
 RECORD_DIR="$(mktemp -d /tmp/raft_bench_rec_XXXX)"
 PIDS=()
+# Parallel to PIDS: PROCS[i] is the --proc name of PIDS[i]. The flap watcher
+# needs both, and pids alone cannot be mapped back to a log file.
+PROCS=()
 
 cleanup() {
     local pid
+    # The flap watcher sleeps; leaving it alive would let it SIGKILL a pid this
+    # run no longer owns after the pid has been recycled.
+    [ -n "${WATCHER_PID:-}" ] && kill -9 "$WATCHER_PID" 2>/dev/null
     for pid in "${PIDS[@]:-}"; do
         [ -n "$pid" ] && kill -TERM "$pid" 2>/dev/null
     done
@@ -271,6 +285,14 @@ run_one() {
         > "${LOG_DIR}/${proc}.log" 2>&1
 }
 
+# One budget covering leadership, warmup, the measured window, the drain and
+# the follower linger, plus slack for process startup. Computed before launch
+# because the flap watcher bounds its own wait by it.
+# awk -v, not string interpolation: the arguments are validated above, but a
+# program built by pasting user text is a hazard that should not exist at all.
+BUDGET=$(awk -v lw="$LEADER_WAIT_SEC" -v w="$WARMUP_SEC" -v d="$DURATION_SEC" \
+    'BEGIN { print int(lw + w + d + 120) }')
+
 echo "raft_bench: partitions=$PARTITIONS payload=${PAYLOAD_BYTES}B batch=$BATCH rate=$RATE"
 echo "raft_bench: warmup=${WARMUP_SEC}s duration=${DURATION_SEC}s group=$GROUP_MODE label='${LABEL}'"
 echo "raft_bench: config=$TOPOLOGY_CONFIG"
@@ -278,18 +300,54 @@ echo "raft_bench: logs=$LOG_DIR"
 
 # Followers first, leader last: localhost must find a quorum waiting so it can
 # win the first election inside the preferred-leader grace window.
-run_one p1 & PIDS+=($!)
+run_one p1 & PIDS+=($!); PROCS+=(p1)
 sleep 2
-run_one p2 & PIDS+=($!)
+run_one p2 & PIDS+=($!); PROCS+=(p2)
 sleep 2
-run_one localhost & PIDS+=($!)
+run_one localhost & PIDS+=($!); PROCS+=(localhost)
 
-# One budget covering leadership, warmup, the measured window, the drain and
-# the follower linger, plus slack for process startup.
-# awk -v, not string interpolation: the arguments are validated above, but a
-# program built by pasting user text is a hazard that should not exist at all.
-BUDGET=$(awk -v lw="$LEADER_WAIT_SEC" -v w="$WARMUP_SEC" -v d="$DURATION_SEC" \
-    'BEGIN { print int(lw + w + d + 120) }')
+# ---------------------------------------------------------------------------
+# Leadership flap (--kill-leader-at-sec).
+#
+# Waits for a process to announce that it is offering load, lets it offer for
+# S seconds, then SIGKILLs it. SIGKILL, not SIGTERM: a clean shutdown proves
+# nothing about what a replica does when the leader vanishes mid-flight.
+#
+# The leader is discovered from the logs rather than assumed to be localhost.
+# The preferred-leader bias above makes localhost win in practice, but a test
+# that kills the wrong process and then asserts the survivors are clean would
+# pass without ever having removed a leader.
+#
+# What the survivors must show afterwards is NO gap and NO duplicate in the
+# prefix they applied. They cannot show completeness: entries the dead leader
+# had accepted but not yet committed are legitimately lost, and entries it
+# committed may still be replicating. Truncation at the end of the stream is
+# invisible to the sequence check by construction, which is exactly why that
+# check is the right assertion here.
+# ---------------------------------------------------------------------------
+KILLED_MARKER="${RECORD_DIR}/killed_leader"
+WATCHER_PID=""
+if awk -v s="$KILL_LEADER_AT_SEC" 'BEGIN { exit !(s > 0) }'; then
+    (
+        watch_deadline=$((SECONDS + BUDGET))
+        while [ "$SECONDS" -lt "$watch_deadline" ]; do
+            for idx in "${!PROCS[@]}"; do
+                if grep -q 'leader; offering load' "${LOG_DIR}/${PROCS[$idx]}.log" 2>/dev/null; then
+                    sleep "$KILL_LEADER_AT_SEC"
+                    echo "${PROCS[$idx]} ${PIDS[$idx]}" > "$KILLED_MARKER"
+                    echo "raft_bench: killing leader ${PROCS[$idx]} (pid ${PIDS[$idx]}) after ${KILL_LEADER_AT_SEC}s of load"
+                    kill -9 "${PIDS[$idx]}" 2>/dev/null
+                    exit 0
+                fi
+            done
+            sleep 0.2
+        done
+        echo "raft_bench: kill-leader watcher timed out; nobody announced leadership" >&2
+        exit 1
+    ) &
+    WATCHER_PID=$!
+fi
+
 echo "raft_bench: waiting up to ${BUDGET}s"
 
 waited=0
@@ -328,14 +386,67 @@ fi
 # 3 leadership lost, 4 partial leadership, 6 nothing applied in the window,
 # 7 no leader anywhere — and a run where any of them fired is not a
 # measurement, even if a record was written.
+KILLED_PID=""
+KILLED_PROC=""
+if [ -s "$KILLED_MARKER" ]; then
+    read -r KILLED_PROC KILLED_PID < "$KILLED_MARKER"
+fi
+
 WORST_CHILD_STATUS=0
 for pid in "${PIDS[@]}"; do
     wait "$pid" 2>/dev/null
     child_status=$?
+    # The process this run deliberately SIGKILLed exits 137 by construction.
+    # Folding that into the worst status would make the flap test fail on the
+    # one thing it set out to do.
+    if [ -n "$KILLED_PID" ] && [ "$pid" = "$KILLED_PID" ]; then
+        continue
+    fi
     if [ "$child_status" -gt "$WORST_CHILD_STATUS" ]; then
         WORST_CHILD_STATUS="$child_status"
     fi
 done
+
+# ---------------------------------------------------------------------------
+# Flap mode verdict. There is no record to check — the process that would have
+# written one is the process we killed — so the assertion is entirely on the
+# survivors: each must have finished its own integrity check and found the
+# prefix it applied to be gap-free and duplicate-free.
+# ---------------------------------------------------------------------------
+if awk -v s="$KILL_LEADER_AT_SEC" 'BEGIN { exit !(s > 0) }'; then
+    [ -n "$WATCHER_PID" ] && wait "$WATCHER_PID" 2>/dev/null
+    if [ -z "$KILLED_PID" ]; then
+        echo "raft_bench: FAILED — flap test killed nobody: no process ever announced" >&2
+        echo "raft_bench: that it was offering load. Logs kept in $LOG_DIR" >&2
+        KEEP_LOGS=1
+        exit 1
+    fi
+    echo "raft_bench: flap test killed leader '$KILLED_PROC'; checking survivors"
+    survivors=0
+    for idx in "${!PROCS[@]}"; do
+        proc="${PROCS[$idx]}"
+        [ "${PIDS[$idx]}" = "$KILLED_PID" ] && continue
+        survivors=$((survivors + 1))
+        if ! grep -q 'log integrity: OK' "${LOG_DIR}/${proc}.log" 2>/dev/null; then
+            echo "raft_bench: FAILED — survivor '$proc' did not report a clean log" >&2
+            echo "--- tail ${LOG_DIR}/${proc}.log ---" >&2
+            tail -n 20 "${LOG_DIR}/${proc}.log" >&2 2>/dev/null
+            KEEP_LOGS=1
+            exit 8
+        fi
+        grep -h 'log integrity: OK' "${LOG_DIR}/${proc}.log"
+    done
+    if [ "$WORST_CHILD_STATUS" -ne 0 ]; then
+        echo "raft_bench: FAILED — a survivor exited with status $WORST_CHILD_STATUS." >&2
+        echo "raft_bench: Logs kept in $LOG_DIR" >&2
+        KEEP_LOGS=1
+        exit "$WORST_CHILD_STATUS"
+    fi
+    echo "raft_bench: flap test PASSED — $survivors survivors applied a gap-free," \
+         "duplicate-free prefix after the leader was SIGKILLed"
+    RUN_OK=1
+    exit 0
+fi
 
 if [ "$TIMED_OUT" -eq 1 ]; then
     # A run that had to be killed is not a measurement, even if the leader
@@ -378,7 +489,22 @@ fi
 mkdir -p "$(dirname "$OUT_PATH")"
 cp "$RECORD" "$OUT_PATH"
 echo "raft_bench: record -> $OUT_PATH"
-grep -E '"(applied_per_sec|latency_p50_us|latency_p99_us|offered_in_window|applied_in_window|offer_rejected|peak_outstanding)"' "$OUT_PATH"
+grep -E '"(applied_per_sec|latency_p50_us|latency_p99_us|offered_in_window|applied_in_window|offer_rejected|peak_outstanding|out_of_order|gaps|duplicates|foreign_applied)"' "$OUT_PATH"
+
+# Log integrity first. The driver already exits 8 for this and WORST_CHILD_STATUS
+# would carry it, but checking the record too names the failure here rather than
+# leaving the sweep to report a bare status number, and it catches the case where
+# the leader wrote a violated record and then died for some other reason.
+for field in out_of_order gaps duplicates foreign_applied; do
+    value="$(sed -n "s/.*\"${field}\": \([0-9]*\).*/\1/p" "$OUT_PATH")"
+    if [ -n "$value" ] && [ "$value" -gt 0 ]; then
+        echo "raft_bench: FAILED — log integrity violation: ${field}=${value}" >&2
+        echo "raft_bench: the replicated log lost, duplicated or reordered an entry;" >&2
+        echo "raft_bench: this is a correctness failure, not a slow measurement." >&2
+        KEEP_LOGS=1
+        exit 8
+    fi
+done
 
 # A run whose leader lost leadership mid-window is not a measurement.
 rejected="$(sed -n 's/.*"offer_rejected": \([0-9]*\).*/\1/p' "$OUT_PATH")"
