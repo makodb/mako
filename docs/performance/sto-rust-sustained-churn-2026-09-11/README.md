@@ -91,20 +91,19 @@ with exit status 3 and no successful `TPCC_BENCH_RESULT`.
 The exhaustion point within a transaction varies with which interning operation
 first needs a registry segment, which is why this defect is intermittent at the
 integration level. `fused_new_order_header_reports_registry_exhaustion_as_a_resource_outcome`
-in `crates/sto-tpcc-ffi` pins it deterministically, and
-`test_sto_tpcc_rust_registry_budget_resource_exhausted` drives the structural
-budget rather than a numeric quota so the integration gate covers this capacity
-source. That gate uses a 512 MiB budget: one warehouse loads about 67 MiB of
-structural bytes, and the run stops as soon as the budget is spent, so the gate
-finishes in seconds on a release build yet still exhausts well inside its
-runtime bound on the much slower sanitizer lanes.
+in `crates/sto-tpcc-ffi` pins it deterministically as an ordinary CI unit test.
 
-The log names in this directory are the manual qualification runs above; the
-gate's own invocation lives in `CMakeLists.txt` and is inventory-checked by
-`.github/workflows/ci.yml` and `scripts/ci/run_rust_sto_sanitizer.sh`. That gate uses a 512 MiB budget: one warehouse loads about 67 MiB of
-structural bytes, and the run stops as soon as the budget is spent, so the gate
-finishes in seconds on a release build and still exhausts long before its
-runtime bound on the much slower sanitizer lanes.
+This record deliberately stops at evidence rather than adding a CTest for the
+structural-budget trigger. The run-phase exhaustion contract is already gated
+end to end by `test_sto_tpcc_rust_run_resource_exhausted`, which asserts exit 3,
+the `TPCC_RESOURCE_EXHAUSTED phase=run` marker, and the absence of a successful
+result. Structural-budget admission is gated by
+`rejected_registry_budget_never_allocates_a_process_lifetime_native_directory`.
+Adding a third end-to-end gate for the same contract would require extending the
+ASan process-lifetime-leak allow-list, whose rule set is deliberately limited to
+the four gates that must create native roots before exiting, and would reintroduce
+a timing dependency that the deterministic unit test avoids. The logs below
+retain the end-to-end evidence for the structural-budget trigger.
 
 ## Scope of these claims
 

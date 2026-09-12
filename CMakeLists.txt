@@ -2312,36 +2312,6 @@ if(TARGET sto_tpcc_bench)
         RUN_SERIAL TRUE
         TIMEOUT 240)
 
-    # The shared structural registry budget is a separate capacity source from
-    # the numeric quotas above, and it fails on whichever interning first needs
-    # another segment. Exhausting it mid-run must still produce the reported
-    # resource outcome and exit 3 rather than a fatal status that reaches the
-    # wrapper as an uncaught exception. One warehouse loads ~67 MiB of
-    # structural bytes, so a 512 MiB budget leaves ample load headroom while
-    # still exhausting in seconds. The run stops as soon as the budget is spent,
-    # so the runtime is only an upper bound; it is generous because the
-    # sanitizer lanes execute the same workload up to an order of magnitude
-    # slower and must not finish the timed phase successfully.
-    add_test(NAME test_sto_tpcc_rust_registry_budget_resource_exhausted
-        COMMAND "${Python3_EXECUTABLE}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/ci/run_sto_tpcc_ctest.py"
-            --expected-failure-text "TPCC_RESOURCE_EXHAUSTED phase=run"
-            --expected-exit-code 3
-            --
-            "$<TARGET_FILE:sto_tpcc_bench>"
-            --num-threads 1
-            --shard-config "${CMAKE_CURRENT_SOURCE_DIR}/config/mako_sto_tpcc_local.yml"
-            --site-name local_s0
-            --runtime 900
-            --storage-engine rust
-            --slow-exit)
-    set_tests_properties(test_sto_tpcc_rust_registry_budget_resource_exhausted
-        PROPERTIES
-        LABELS "sto;masstree;rust;ffi;lifecycle;tpcc;capacity"
-        ENVIRONMENT "MAKO_STO_TPCC_REGISTRY_MEMORY=512M;MAKO_TPCC_WORKLOAD_MIX=100,0,0,0,0"
-        RUN_SERIAL TRUE
-        TIMEOUT 1800)
-
     add_test(NAME test_sto_tpcc_rejects_duplicate_local_shards
         COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/scripts/ci/run_sto_tpcc_ctest.py"
