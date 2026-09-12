@@ -25,5 +25,14 @@ publish = false
 [lib]
 path = "src/lib.rs"
 
+# The same rustc-side facade src/rrr/Cargo.toml:14 depends on. Without it no
+# extracted block can NAME a foreign type -- rusty::Mutex, rusty::Option,
+# rusty::sync::Arc, rusty::ReactorPollThread, rusty::ReactorIntEvent -- and
+# the extracted Rust dies at E0433/E0573 before the emitter is ever consulted.
+# The emitter lowers those names correctly today; this is what lets rustc
+# agree. See docs/migration/raft/cpp-refactor-plan.md gate G1.
+[dependencies]
+rusty = { path = "../../rrr/rusty-rustc" }
+
 [lints.rust]
 unsafe_code = "allow"   # the CRC32 kernel is deliberately unsafe; see its # Safety doc

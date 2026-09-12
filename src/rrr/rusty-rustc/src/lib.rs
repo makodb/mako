@@ -1658,6 +1658,14 @@ pub mod rrr {
                     value = self.ready.wait(value).unwrap();
                 }
             }
+
+            /// Models `IntEvent::wait_timeout` (src/rrr/reactor/reactor.rs:393),
+            /// which the production C++ resolves through the type map. Added
+            /// for src/deptran/raft, whose ReplicationWakeGate waits on an
+            /// IntEvent with a deadline; the model returns immediately because
+            /// direct rustc has no reactor to block on, exactly as `spawn`
+            /// above drops its body.
+            pub fn wait_timeout(&self, _timeout_us: u64) {}
         }
 
         /// # Safety

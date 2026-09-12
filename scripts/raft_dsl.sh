@@ -1,17 +1,25 @@
 #!/usr/bin/env bash
 # Regenerate or verify the Raft inline-Rust DSL carriers.
 #
-# Unlike scripts/regen_storage_dsl.sh, Raft carriers do not receive an ODR or
-# textual post-pass: the pinned transpiler's output is committed byte-for-byte.
-# Check mode validates both the source hash and a fresh rewrite, so edits to
-# either side of a DSL/GEN pair are detected.
+# Raft carriers now receive the same ODR post-pass scripts/regen_storage_dsl.sh
+# applies: within a GEN region, column-0 out-of-line definitions are prefixed
+# with `inline `. Check mode validates the source hash (against copies with
+# that pass undone) and a fresh rewrite (against copies with it applied), so
+# edits to either side of a DSL/GEN pair are still detected.
 #
-# NOTE (Stage 2): the Rust is compiled AS A CRATE, not per carrier. The old
-# per-carrier `rustc` stage was removed -- see the comment where it used to be,
-# in the check loop below. Because there is still no ODR post-pass, a
-# header-resident type with out-of-line methods will not link; conversions are
-# limited to ODR-exempt shapes (pub trait, struct with no impl, const fn) until
-# that is addressed. See docs/stage2_open_questions.md Q1b.
+# NOTE (Stage 2): the Rust is compiled AS A CRATE, not per carrier, and through
+# Cargo rather than bare rustc. The old per-carrier `rustc` stage was removed --
+# see the comment where it used to be, in the check loop below.
+#
+# The two limits that used to confine conversions to ODR-exempt shapes (pub
+# trait, struct with no impl, const fn) are gone: the ODR post-pass above, and
+# the manifest-less `rustc` invocation that could not resolve a single foreign
+# type name. What still stands is the orphan-impl rule -- an `impl` on a
+# hand-written C++ type is stubbed out, so the unit of conversion is a whole
+# type -- and implementation inheritance, which has no Rust spelling. See
+# docs/migration/raft/cpp-refactor-plan.md gates G1-G4, and docs/stage2_raft.txt
+# (the live text for what was docs/stage2_open_questions.md Q1b is
+# docs/stage2_raft.txt:353).
 #
 # Usage:
 #   bash scripts/raft_dsl.sh --check [--transpiler PATH] [FILE ...]
@@ -60,6 +68,84 @@ EXPECTED_BLOCKS=(
 mapfile -t EXPECTED_INVENTORY_FILES < <(
   printf '%s\n' "${EXPECTED_BLOCKS[@]}" | cut -d'|' -f1 | LC_ALL=C sort -u)
 
+
+# ---------------------------------------------------------------------------
+# ODR post-pass (gate G2).
+#
+# Ported verbatim from scripts/regen_storage_dsl.sh:72-100, which has run in
+# production on src/mako/storage/mbta_wrapper.hh (23 inline-prefixed methods)
+# and src/cluster/config_manager.h (~33) since those headers were converted.
+#
+# Within a RUSTYCPP:GEN region, prefix `inline ` onto column-0 out-of-line
+# definitions -- `Ret Owner::name(...)`, `Owner Owner::new_(...)`, and
+# `Owner::~Owner()` from `impl Drop`. Without it a header-resident type with
+# an inherent impl produces `ld: multiple definition of ...` across two TUs,
+# which is why raft conversions have so far been limited to free const fns
+# over scalars. Class bodies and virtuals are indented, and class / template /
+# namespace / comment lines are excluded, so none of them are touched.
+#
+# NOTE: the `\w+::` has NO leading `\b` on purpose -- a `\b` before it makes the
+# pattern fail to match destructors (`Owner::~Owner()`), which then emit a
+# non-inline out-of-line dtor and blow up with a multiple-definition link
+# error in any header included by more than one TU. `^\S` already anchors
+# these to column 0, so dropping `\b` is safe: statements inside bodies are
+# indented and skipped.
+#
+# On the tree as of this commit the pass changes ZERO lines across all 17
+# carriers: every existing block is a free const fn that already emits as
+# constexpr or as an indented class-body member. It is installed now so that
+# the first conversion that needs it does not also have to introduce it.
+odr_post_pass() {
+  "${PYTHON_BIN:-python3}" - "$1" <<'PYEOF'
+import re, sys
+p = sys.argv[1]
+lines = open(p).read().split('\n')
+out, in_gen = [], False
+defpat = re.compile(r'^(?!inline\b|class\b|struct\b|template\b|namespace\b|/\*|//|\})\S.*\w+::~?\w+\s*\(')
+for ln in lines:
+    if ln.startswith('/*RUSTYCPP:GEN-BEGIN'):
+        in_gen = True
+    elif ln.startswith('/*RUSTYCPP:GEN-END'):
+        in_gen = False
+    elif in_gen and defpat.match(ln):
+        ln = 'inline ' + ln
+    out.append(ln)
+open(p, 'w').write('\n'.join(out))
+PYEOF
+}
+
+# Inverse of odr_post_pass, used ONLY to build the copies handed to
+# `inline-rust --check`.
+#
+# That check compares a committed GEN region against what the emitter renders,
+# and the emitter does not render the `inline ` this script adds. Feeding it
+# the committed file directly would therefore report drift for every
+# post-passed definition. Stripping first keeps both gates: the emitter's own
+# source-hash/render check AND the full-file diff below.
+#
+# SHARP EDGE, so it is findable if it ever fires: if the emitter itself ever
+# starts rendering `inline Ret Owner::method(` at column 0, this strips a
+# prefix odr_post_pass did not add, and `inline-rust --check` reports a drift
+# that is not real. The fix then is to drop this strip, not to weaken the
+# post-pass -- the full-file diff below already subsumes what --check proves.
+odr_strip_pass() {
+  "${PYTHON_BIN:-python3}" - "$1" <<'PYEOF'
+import re, sys
+p = sys.argv[1]
+lines = open(p).read().split('\n')
+out, in_gen = [], False
+defpat = re.compile(r'^(?!inline\b|class\b|struct\b|template\b|namespace\b|/\*|//|\})\S.*\w+::~?\w+\s*\(')
+for ln in lines:
+    if ln.startswith('/*RUSTYCPP:GEN-BEGIN'):
+        in_gen = True
+    elif ln.startswith('/*RUSTYCPP:GEN-END'):
+        in_gen = False
+    elif in_gen and ln.startswith('inline ') and defpat.match(ln[len('inline '):]):
+        ln = ln[len('inline '):]
+    out.append(ln)
+open(p, 'w').write('\n'.join(out))
+PYEOF
+}
 
 usage() {
   echo "Usage: bash scripts/raft_dsl.sh --check [--transpiler PATH] [FILE ...]" >&2
@@ -228,6 +314,9 @@ fi
 
 if [[ "${MODE}" == "rewrite" ]]; then
   "${TRANSPILER}" inline-rust --rewrite --files "${FILES[@]}"
+  for file in "${FILES[@]}"; do
+    odr_post_pass "${file}"
+  done
   echo "rewrote ${#FILES[@]} Raft DSL carrier(s)"
   # Regenerate the Stage 2 crate from the blocks we just rewrote, so a
   # --rewrite leaves the tree consistent and a following --check passes.
@@ -289,7 +378,26 @@ if ((NEEDS_MANIFESTLESS_CONTEXT)) &&
 fi
 
 failures=0
-if ! output=$("${TRANSPILER}" inline-rust --check --files "${FILES[@]}" 2>&1); then
+
+# The emitter's own check runs against copies with the ODR post-pass undone,
+# so that `inline ` prefixes this script added are not mistaken for drift.
+# The copies keep their basename and Cargo context for the same reasons the
+# rewrite mirrors below do.
+PRISTINE=()
+for index in "${!FILES[@]}"; do
+  file="${FILES[${index}]}"
+  pristine_dir="${RAFT_DSL_TMPDIR}/pristine/${index}"
+  mkdir -p -- "${pristine_dir}"
+  if manifest=$(nearest_cargo_manifest "${file}"); then
+    ln -s -- "${manifest}" "${pristine_dir}/Cargo.toml"
+  fi
+  pristine="${pristine_dir}/$(basename -- "${file}")"
+  cp -- "${file}" "${pristine}"
+  odr_strip_pass "${pristine}"
+  PRISTINE+=("${pristine}")
+done
+
+if ! output=$("${TRANSPILER}" inline-rust --check --files "${PRISTINE[@]}" 2>&1); then
   echo "DRIFT Raft DSL carriers (source hash or render failure)" >&2
   sed 's/^/    /' <<<"${output}" | head -12 >&2
   exit 1
@@ -318,6 +426,13 @@ if ! output=$("${TRANSPILER}" inline-rust --rewrite --files \
   sed 's/^/    /' <<<"${output}" | head -12 >&2
   exit 1
 fi
+
+# Post-pass the fresh render exactly as --rewrite would, so the comparison
+# below is committed-file versus what `--rewrite` actually produces. Applying
+# it to one side only would report drift on every post-passed definition.
+for regenerated in "${REGENERATED[@]}"; do
+  odr_post_pass "${regenerated}"
+done
 
 for index in "${!FILES[@]}"; do
   file="${FILES[${index}]}"
@@ -380,11 +495,24 @@ if [[ -f "${RAFT_CRATE_MANIFEST}" && ${#FILES[@]} -eq ${#EXPECTED_INVENTORY_FILE
     echo "FAILED Raft crate extraction/drift check" >&2
     failures=$((failures + 1))
   else
-    # Compile the whole crate. -D warnings matches the per-carrier stage.
-    if ! output=$("${RUSTC_BIN}" --edition=2021 --crate-type=lib \
-        --crate-name raft -D warnings \
-        "${RAFT_CRATE_DIR}/src/lib.rs" \
-        -o "${crate_out}/libraft.rlib" 2>&1); then
+    # Compile the whole crate THROUGH CARGO, not through bare rustc.
+    #
+    # Bare rustc reads no manifest, so it resolves no dependency, so no
+    # extracted block could name a foreign type: rusty::Mutex, rusty::Option,
+    # rusty::sync::Arc, rusty::ReactorPollThread and ::janus::Command all died
+    # at E0433/E0573 here, before the emitter was ever consulted. The emitter
+    # lowers every one of those correctly -- this invocation was the gate, and
+    # it is a Mako-local script line, not a toolchain limit. src/rrr has never
+    # had it: scripts/rrr_dsl_check.sh invokes rustc zero times.
+    #
+    # RUSTFLAGS rather than a -D on the command line, because cargo passes the
+    # flag to every crate it builds from this manifest; the per-carrier stage's
+    # `-D warnings` is preserved, not relaxed.
+    #
+    # See docs/migration/raft/cpp-refactor-plan.md gate G1.
+    if ! output=$(cd "${RAFT_CRATE_DIR}" && \
+        RUSTFLAGS="-D warnings" CARGO_TARGET_DIR="${RAFT_CRATE_DIR}/target" \
+        cargo build --quiet --lib 2>&1); then
       echo "FAILED Raft crate does not compile" >&2
       sed 's/^/    /' <<<"${output}" | head -30 >&2
       failures=$((failures + 1))
