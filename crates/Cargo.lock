@@ -204,8 +204,8 @@ name = "mako-cache"
 version = "0.1.0"
 dependencies = [
  "loom",
+ "mako-engine",
  "mako-history",
- "mako-local",
  "mrx-core",
  "mrx-rocks",
  "nix",
@@ -223,6 +223,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "mako-engine"
+version = "0.1.0"
+dependencies = [
+ "mako-engine-api",
+ "mako-local",
+]
+
+[[package]]
+name = "mako-engine-api"
+version = "0.1.0"
+
+[[package]]
 name = "mako-history"
 version = "0.1.0"
 
@@ -230,6 +242,7 @@ version = "0.1.0"
 name = "mako-local"
 version = "0.1.0"
 dependencies = [
+ "mako-engine-api",
  "mako-history",
  "mako-local-sys",
 ]

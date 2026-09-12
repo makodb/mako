@@ -1,0 +1,13 @@
+[package]
+name = "mako-engine-api"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Engine-neutral contract between the Mako transaction cache and a local transaction engine"
+
+[dependencies]
+
+[lints.rust]
+unsafe_code = "deny"

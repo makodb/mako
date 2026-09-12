@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use mako_cache::test_support::cache_from_backend;
 use mako_cache::{ApplyError, Cache, CacheOptions, Error};
-use mako_local::{
+use mako_engine::{
     arm_test_cleanup_failure, features, quarantined_worker_count, worker_health,
     Error as LocalError, TestCleanupBoundary, WorkerHealth,
 };

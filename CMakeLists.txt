@@ -4137,6 +4137,11 @@ if(BUILD_TESTS)
                     ${MAKO_LOCAL_CARGO_ENV}
                     "MAKO_LOCAL_FAKE_ABI=1"
                     "MAKO_LOCAL_REQUIRE_NATIVE=0"
+                    ${CARGO_EXECUTABLE} test --locked -p mako-engine-api --all-targets
+        COMMAND ${CMAKE_COMMAND} -E env
+                    ${MAKO_LOCAL_CARGO_ENV}
+                    "MAKO_LOCAL_FAKE_ABI=1"
+                    "MAKO_LOCAL_REQUIRE_NATIVE=0"
                     ${CARGO_EXECUTABLE} test --locked -p mako-local --lib
             COMMAND ${CMAKE_COMMAND} -E env
                     ${MAKO_LOCAL_CARGO_ENV}

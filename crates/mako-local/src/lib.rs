@@ -32,6 +32,9 @@
 /// Fixed, thread-affine workers and bounded OCC retry policy.
 pub mod worker;
 
+mod engine;
+pub use engine::MakoLocalEngine;
+
 use std::cell::{Cell, UnsafeCell};
 use std::ffi::{c_void, CStr};
 use std::fmt;
@@ -46,6 +49,79 @@ use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, Ordering};
 use std::sync::OnceLock;
 
 use mako_local_sys as sys;
+
+// Engine-neutral vocabulary shared with every local engine. These names stay
+// at their historical `mako_local::` paths so existing callers keep compiling;
+// their definitions live in `mako-engine-api`.
+pub use mako_engine_api::{
+    record_format, CacheOrderMode, CommitDisposition, CommitHolderReport, CommitRecordChecksum,
+    CommitRecordPreflight, CommitRecordReport, CommitRecordTarget, CommitReport, Error, Features,
+    FusedOnePutHolderAttempt, MakoTimestamp, Result, TestCleanupBoundary, TestCommitObserver,
+    TestCommitPhase, WorkerHealth, MAX_KEY_BYTES, MAX_TABLE_NAME_BYTES, MAX_VALUE_BYTES,
+    MAX_WORKERS, TRANSACTION_ITEM_BUDGET,
+};
+
+/// Ownership result of one attempt at this engine's fused one-Put SPSC terminal.
+#[doc(hidden)]
+pub type TrustedFusedOnePutHolderAttempt =
+    FusedOnePutHolderAttempt<TrustedPreselectedUncheckedOnePutHolderOutcome>;
+
+// The contract crate pins every numeric contract value as a literal. The
+// linked C ABI must agree; a drift here is a build error, not a runtime skew.
+const _: () = {
+    assert!(MAX_TABLE_NAME_BYTES == sys::MAKO_LOCAL_MAX_TABLE_NAME_BYTES as usize);
+    assert!(MAX_KEY_BYTES == sys::MAKO_LOCAL_MAX_KEY_BYTES as usize);
+    assert!(MAX_VALUE_BYTES == sys::MAKO_LOCAL_MAX_VALUE_BYTES as usize);
+    assert!(TRANSACTION_ITEM_BUDGET == sys::MAKO_LOCAL_TXN_ITEM_BUDGET as usize);
+    assert!(MAX_WORKERS == sys::MAKO_LOCAL_MAX_WORKERS as usize);
+    assert!(Features::POINT_TRANSACTIONS == sys::MAKO_LOCAL_FEATURE_POINT_TRANSACTIONS);
+    assert!(Features::READ_MY_WRITES == sys::MAKO_LOCAL_FEATURE_READ_MY_WRITES);
+    assert!(Features::OPACITY == sys::MAKO_LOCAL_FEATURE_OPACITY);
+    assert!(Features::TRANSACTIONAL_SCANS == sys::MAKO_LOCAL_FEATURE_TRANSACTIONAL_SCANS);
+    assert!(Features::SCAN_READ_MY_WRITES == sys::MAKO_LOCAL_FEATURE_SCAN_READ_MY_WRITES);
+    assert!(Features::TEST_COMMIT_OBSERVER == sys::MAKO_LOCAL_FEATURE_TEST_COMMIT_OBSERVER);
+    assert!(Features::TEST_CLEANUP_FAILURES == sys::MAKO_LOCAL_FEATURE_TEST_CLEANUP_FAILURES);
+    assert!(Features::TEST_TIMESTAMP_CLOCK == sys::MAKO_LOCAL_FEATURE_TEST_TIMESTAMP_CLOCK);
+    assert!(TestCommitPhase::WritesetLocked as u32 == sys::MAKO_LOCAL_TEST_COMMIT_WRITESET_LOCKED);
+    assert!(
+        TestCommitPhase::MakoTimestampAllocated as u32
+            == sys::MAKO_LOCAL_TEST_COMMIT_MAKO_TIMESTAMP_ALLOCATED
+    );
+    assert!(
+        TestCommitPhase::LocalValidationComplete as u32
+            == sys::MAKO_LOCAL_TEST_COMMIT_LOCAL_VALIDATION_COMPLETE
+    );
+    assert!(
+        TestCommitPhase::PreinstallAccepted as u32 == sys::MAKO_LOCAL_TEST_COMMIT_PREINSTALL_ACCEPTED
+    );
+    assert!(
+        TestCommitPhase::FirstWriteInstalled as u32
+            == sys::MAKO_LOCAL_TEST_COMMIT_FIRST_WRITE_INSTALLED
+    );
+    assert!(
+        TestCommitPhase::AllWritesInstalled as u32 == sys::MAKO_LOCAL_TEST_COMMIT_ALL_WRITES_INSTALLED
+    );
+    assert!(TestCleanupBoundary::Begin as u32 == sys::MAKO_LOCAL_CLEANUP_BOUNDARY_BEGIN);
+    assert!(TestCleanupBoundary::Operation as u32 == sys::MAKO_LOCAL_CLEANUP_BOUNDARY_OPERATION);
+    assert!(TestCleanupBoundary::Commit as u32 == sys::MAKO_LOCAL_CLEANUP_BOUNDARY_COMMIT);
+    assert!(TestCleanupBoundary::Abort as u32 == sys::MAKO_LOCAL_CLEANUP_BOUNDARY_ABORT);
+    assert!(TestCleanupBoundary::Destroy as u32 == sys::MAKO_LOCAL_CLEANUP_BOUNDARY_DESTROY);
+    assert!(record_format::UNCHECKED_ONE_PUT_OVERHEAD_BYTES == 38 + 17);
+};
+
+#[inline]
+fn timestamp_from_raw(raw: sys::mako_timestamp_v1) -> Option<MakoTimestamp> {
+    MakoTimestamp::new(raw.physical_us, raw.logical, raw.origin)
+}
+
+#[inline]
+const fn timestamp_into_raw(timestamp: MakoTimestamp) -> sys::mako_timestamp_v1 {
+    sys::mako_timestamp_v1 {
+        physical_us: timestamp.physical_us(),
+        logical: timestamp.logical(),
+        origin: timestamp.origin(),
+    }
+}
 
 /// Return value of the cache-private callback-free record terminal.
 ///
@@ -529,373 +605,6 @@ mod identity_abi {
     pub(super) unsafe fn require_build_anchor() {}
 }
 
-/// A failure reported by the native local transaction boundary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum Error {
-    /// Optimistic validation or write locking rejected the transaction.
-    Conflict,
-    /// The current worker was not attached to STO.
-    NotAttached,
-    /// A thread-affine transaction was used from another OS thread.
-    WrongThread,
-    /// This OS thread already has one active transaction.
-    TransactionAlreadyActive,
-    /// An operation targeted a transaction that has already ended.
-    TransactionFinished,
-    /// A table from a different local database was supplied.
-    WrongDatabaseOrTable,
-    /// The ABI rejected an invalid pointer or length.
-    InvalidArgument,
-    /// STO's 460 process-lifetime worker slots are exhausted.
-    ThreadLimit,
-    /// A database or native thread resource is still in use.
-    Busy,
-    /// Native allocation, or a fallible allocation needed by this wrapper, failed.
-    OutOfMemory,
-    /// Native state failed or violated an invariant. On commit, visibility may
-    /// consequently be uncertain.
-    Internal,
-    /// Native cleanup could not be proved complete, so this worker is retired.
-    WorkerPoisoned,
-    /// The linked legacy/no-RYW engine cannot compose two writes to one key.
-    DuplicateWrite,
-    /// The transaction exceeded a native item or write-set limit and was aborted.
-    TransactionTooLarge,
-    /// A key or value exceeded a native representation limit.
-    ValueTooLarge,
-    /// The post-validation durability hook rejected the transaction before install.
-    CommitHookRejected,
-    /// Mako's process-wide representable base timestamp space is exhausted.
-    TimestampExhausted,
-    /// A test-only or optional native capability was not compiled in.
-    FeatureUnavailable,
-    /// A transactional scan needs the scan/read-your-writes native feature.
-    TransactionalScansUnavailable,
-    /// A raw chunk scan's caller-owned arena could not hold its first result.
-    ///
-    /// The safe [`Scan`] iterator grows its arena and retries internally, so
-    /// ordinary safe callers should not observe this status.
-    BufferTooSmall,
-    /// Rust declarations and the linked C++ ABI have different versions.
-    AbiMismatch {
-        /// Version compiled into the Rust declarations.
-        expected: u32,
-        /// Version reported by the linked C++ library.
-        found: u32,
-    },
-    /// A scan ABI structure has a different native and Rust layout.
-    AbiLayoutMismatch {
-        /// Structure whose layout did not match.
-        structure: &'static str,
-        /// Size compiled into this crate.
-        expected: usize,
-        /// Size reported by the linked native library.
-        found: usize,
-    },
-    /// The generated Rust status catalog and linked native catalog disagree.
-    AbiStatusCatalogMismatch {
-        /// Status whose canonical identity or diagnostic did not match.
-        status: i32,
-    },
-    /// The linked implementation is not the expected STO/MassTrans engine family.
-    AbiEngineMismatch,
-    /// The linked native build returned a fingerprint with the wrong byte length.
-    AbiBuildFingerprintSizeMismatch {
-        /// Number of SHA-256 bytes required by this crate.
-        expected: usize,
-        /// Number of bytes reported by the native library.
-        found: usize,
-    },
-    /// Current source/configuration and the linked native archive have different identities.
-    AbiBuildFingerprintMismatch,
-    /// The native library returned a status unknown to this crate.
-    UnknownStatus(i32),
-}
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Conflict => write!(f, "local transaction conflict"),
-            Self::NotAttached => write!(f, "worker thread is not attached to STO"),
-            Self::WrongThread => write!(f, "transaction used from a different OS thread"),
-            Self::TransactionAlreadyActive => {
-                write!(f, "this worker already has an active transaction")
-            }
-            Self::TransactionFinished => write!(f, "transaction has already finished"),
-            Self::WrongDatabaseOrTable => write!(f, "table belongs to another database"),
-            Self::InvalidArgument => write!(f, "invalid argument reached the local ABI"),
-            Self::ThreadLimit => write!(
-                f,
-                "STO's 460 process-lifetime thread slots are exhausted; use a fixed worker pool"
-            ),
-            Self::Busy => write!(f, "native resource is busy"),
-            Self::OutOfMemory => write!(f, "native or wrapper allocation failed"),
-            Self::Internal => write!(f, "the local ABI reported an internal failure"),
-            Self::WorkerPoisoned => write!(
-                f,
-                "native transaction cleanup is uncertain and this worker is quarantined"
-            ),
-            Self::DuplicateWrite => write!(
-                f,
-                "the linked engine requires read-your-writes support to mutate one key twice"
-            ),
-            Self::TransactionTooLarge => {
-                write!(
-                    f,
-                    "local transaction exceeded a native size limit and was aborted"
-                )
-            }
-            Self::ValueTooLarge => write!(f, "key or value exceeded a native size limit"),
-            Self::CommitHookRejected => {
-                write!(f, "post-validation commit hook rejected the transaction")
-            }
-            Self::TimestampExhausted => write!(f, "Mako hybrid logical clock exhausted"),
-            Self::FeatureUnavailable => {
-                write!(f, "the requested native feature is unavailable")
-            }
-            Self::TransactionalScansUnavailable => write!(
-                f,
-                "the linked engine does not support transactional scans with read-your-writes"
-            ),
-            Self::BufferTooSmall => write!(f, "transactional scan buffer is too small"),
-            Self::AbiMismatch { expected, found } => write!(
-                f,
-                "mako-local ABI mismatch: Rust expects {expected}, linked C++ reports {found}"
-            ),
-            Self::AbiLayoutMismatch {
-                structure,
-                expected,
-                found,
-            } => write!(
-                f,
-                "mako-local ABI layout mismatch for {structure}: Rust expects {expected} bytes, linked C++ reports {found}"
-            ),
-            Self::AbiStatusCatalogMismatch { status } => write!(
-                f,
-                "mako-local ABI status catalog mismatch at status {status}"
-            ),
-            Self::AbiEngineMismatch => write!(
-                f,
-                "mako-local native engine identity does not match STO/MassTrans"
-            ),
-            Self::AbiBuildFingerprintSizeMismatch { expected, found } => write!(
-                f,
-                "mako-local native build fingerprint has {found} bytes; expected {expected}"
-            ),
-            Self::AbiBuildFingerprintMismatch => write!(
-                f,
-                "mako-local native archive does not match current source, configuration, and toolchain"
-            ),
-            Self::UnknownStatus(status) => {
-                write!(f, "mako-local returned unknown status {status}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for Error {}
-
-/// This crate's result type.
-pub type Result<T> = std::result::Result<T, Error>;
-
-/// Immutable dense-order authority selected for one claimed cache namespace.
-#[doc(hidden)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u32)]
-pub enum CacheOrderMode {
-    /// Native allocates every concurrent dense cache sequence.
-    Concurrent = 1,
-    /// The exclusive Rust producer owns dense allocation for the claim.
-    SingleProducer = 2,
-    /// Independent Rust worker lanes own their local sequences while native
-    /// coordinates HLC allocation with general-commit certification.
-    PerWorker = 3,
-}
-
-/// Mako's 16-byte hybrid logical transaction timestamp.
-///
-/// Timestamp order is the unsigned tuple `(physical_us, logical, origin)`.
-/// It is distinct from the cache commit sequence, consensus position, and
-/// Silo's internal record-version clock. The native allocator currently emits
-/// millisecond-aligned physical values, while the durable representation keeps
-/// microsecond precision for a future clock source.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct MakoTimestamp {
-    physical_us: u64,
-    logical: u32,
-    origin: NonZeroU32,
-}
-
-impl MakoTimestamp {
-    const HOT_LOGICAL_BITS: u32 = 19;
-    const HOT_LOGICAL_MASK: u64 = (1u64 << Self::HOT_LOGICAL_BITS) - 1;
-    const HOT_PHYSICAL_MS_MAX: u64 = (1u64 << 44) - 1;
-
-    /// Construct a timestamp. A live timestamp always has a nonzero allocator
-    /// origin; physical time and the logical counter may independently be zero.
-    pub const fn new(physical_us: u64, logical: u32, origin: u32) -> Option<Self> {
-        match NonZeroU32::new(origin) {
-            Some(origin) => Some(Self {
-                physical_us,
-                logical,
-                origin,
-            }),
-            None => None,
-        }
-    }
-
-    /// Approximate Unix commit time in microseconds.
-    pub const fn physical_us(self) -> u64 {
-        self.physical_us
-    }
-
-    /// Logical order within the physical clock reading.
-    pub const fn logical(self) -> u32 {
-        self.logical
-    }
-
-    /// Nonzero identity of the allocator which minted this timestamp.
-    pub const fn origin(self) -> u32 {
-        self.origin.get()
-    }
-
-    /// Encode the canonical 16-byte wire and disk representation.
-    pub fn to_be_bytes(self) -> [u8; 16] {
-        let mut encoded = [0u8; 16];
-        encoded[..8].copy_from_slice(&self.physical_us.to_be_bytes());
-        encoded[8..12].copy_from_slice(&self.logical.to_be_bytes());
-        encoded[12..].copy_from_slice(&self.origin.get().to_be_bytes());
-        encoded
-    }
-
-    /// Decode the canonical 16-byte wire and disk representation.
-    pub fn from_be_bytes(encoded: [u8; 16]) -> Option<Self> {
-        let physical_us = u64::from_be_bytes(encoded[..8].try_into().ok()?);
-        let logical = u32::from_be_bytes(encoded[8..12].try_into().ok()?);
-        let origin = u32::from_be_bytes(encoded[12..].try_into().ok()?);
-        Self::new(physical_us, logical, origin)
-    }
-
-    #[inline]
-    fn from_raw(raw: sys::mako_timestamp_v1) -> Option<Self> {
-        Self::new(raw.physical_us, raw.logical, raw.origin)
-    }
-
-    #[inline]
-    const fn into_raw(self) -> sys::mako_timestamp_v1 {
-        sys::mako_timestamp_v1 {
-            physical_us: self.physical_us,
-            logical: self.logical,
-            origin: self.origin.get(),
-        }
-    }
-
-    #[inline(always)]
-    const fn from_hot_stamp(stamp: u64, origin: NonZeroU32) -> Option<Self> {
-        if stamp == 0 || stamp > (u64::MAX >> 1) {
-            return None;
-        }
-        let physical_ms = stamp >> Self::HOT_LOGICAL_BITS;
-        let logical = (stamp & Self::HOT_LOGICAL_MASK) as u32;
-        let Some(physical_us) = physical_ms.checked_mul(1_000) else {
-            return None;
-        };
-        Some(Self {
-            physical_us,
-            logical,
-            origin,
-        })
-    }
-
-    #[inline]
-    const fn hot_stamp(self) -> Option<u64> {
-        if self.physical_us % 1_000 != 0 || self.logical as u64 > Self::HOT_LOGICAL_MASK {
-            return None;
-        }
-        let physical_ms = self.physical_us / 1_000;
-        if physical_ms > Self::HOT_PHYSICAL_MS_MAX {
-            return None;
-        }
-        let stamp = (physical_ms << Self::HOT_LOGICAL_BITS) | self.logical as u64;
-        if stamp == 0 {
-            None
-        } else {
-            Some(stamp)
-        }
-    }
-
-    /// Reconstruct a public timestamp from the private local allocator stamp.
-    #[doc(hidden)]
-    pub const fn from_local_stamp(stamp: u64, origin: u32) -> Option<Self> {
-        let Some(origin) = NonZeroU32::new(origin) else {
-            return None;
-        };
-        Self::from_hot_stamp(stamp, origin)
-    }
-
-    /// Return the private local allocator stamp when this timestamp is exactly
-    /// representable by the current millisecond clock.
-    #[doc(hidden)]
-    pub const fn local_stamp(self) -> Option<u64> {
-        self.hot_stamp()
-    }
-}
-
-impl fmt::Display for MakoTimestamp {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}:{}:{}", self.physical_us, self.logical, self.origin)
-    }
-}
-
-/// A test-only synchronous observation point in native local commit.
-///
-/// This type is public solely for fresh-process crash tests and is available at
-/// runtime only when the native library advertises
-/// `MAKO_LOCAL_FEATURE_TEST_COMMIT_OBSERVER`.
-#[doc(hidden)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u32)]
-pub enum TestCommitPhase {
-    /// The complete write set is locked; no Mako timestamp exists yet.
-    WritesetLocked = sys::MAKO_LOCAL_TEST_COMMIT_WRITESET_LOCKED,
-    /// The checked nonzero Mako timestamp has been assigned after validation.
-    MakoTimestampAllocated = sys::MAKO_LOCAL_TEST_COMMIT_MAKO_TIMESTAMP_ALLOCATED,
-    /// Every local validation has succeeded; no Mako timestamp exists yet.
-    LocalValidationComplete = sys::MAKO_LOCAL_TEST_COMMIT_LOCAL_VALIDATION_COMPLETE,
-    /// The preinstall hook accepted, before the first write installation.
-    PreinstallAccepted = sys::MAKO_LOCAL_TEST_COMMIT_PREINSTALL_ACCEPTED,
-    /// The first write was installed and at least one more write remains.
-    FirstWriteInstalled = sys::MAKO_LOCAL_TEST_COMMIT_FIRST_WRITE_INSTALLED,
-    /// Every local write was installed, before commit cleanup and return.
-    AllWritesInstalled = sys::MAKO_LOCAL_TEST_COMMIT_ALL_WRITES_INSTALLED,
-}
-
-impl TestCommitPhase {
-    const fn from_raw(raw: u32) -> Option<Self> {
-        match raw {
-            sys::MAKO_LOCAL_TEST_COMMIT_WRITESET_LOCKED => Some(Self::WritesetLocked),
-            sys::MAKO_LOCAL_TEST_COMMIT_MAKO_TIMESTAMP_ALLOCATED => {
-                Some(Self::MakoTimestampAllocated)
-            }
-            sys::MAKO_LOCAL_TEST_COMMIT_LOCAL_VALIDATION_COMPLETE => {
-                Some(Self::LocalValidationComplete)
-            }
-            sys::MAKO_LOCAL_TEST_COMMIT_PREINSTALL_ACCEPTED => Some(Self::PreinstallAccepted),
-            sys::MAKO_LOCAL_TEST_COMMIT_FIRST_WRITE_INSTALLED => Some(Self::FirstWriteInstalled),
-            sys::MAKO_LOCAL_TEST_COMMIT_ALL_WRITES_INSTALLED => Some(Self::AllWritesInstalled),
-            _ => None,
-        }
-    }
-}
-
-/// Test-only plain function pointer invoked synchronously at native commit
-/// seams. The timestamp is absent at [`TestCommitPhase::WritesetLocked`] and
-/// [`TestCommitPhase::LocalValidationComplete`], then present at allocation
-/// and every later seam.
-#[doc(hidden)]
-pub type TestCommitObserver = fn(TestCommitPhase, Option<MakoTimestamp>);
-
 thread_local! {
     static TEST_COMMIT_OBSERVER: Cell<Option<TestCommitObserver>> = const { Cell::new(None) };
 }
@@ -906,87 +615,6 @@ thread_local! {
     // operation. Remember successful calls so the safe transaction fast path
     // does not cross the ABI merely to repeat that idempotent check.
     static SAFE_WRAPPER_ATTACHED: Cell<bool> = const { Cell::new(false) };
-}
-
-/// Whether a native commit definitely became visible.
-///
-/// This is deliberately separate from handle cleanup. A transaction can be
-/// installed successfully and then encounter a failure while destroying its
-/// small facade handle; a write-back cache must still publish that committed
-/// transaction to its durability log.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[must_use = "commit visibility must be handled before releasing durability coverage"]
-pub enum CommitDisposition {
-    /// Validation succeeded and the transaction's writes are visible.
-    Committed,
-    /// The transaction definitely did not become visible.
-    Aborted(Error),
-    /// The native boundary could not prove whether installation occurred.
-    Unknown(Error),
-}
-
-/// The two independently relevant results of consuming a transaction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[must_use = "commit visibility and handle cleanup are independent outcomes"]
-pub struct CommitReport {
-    /// Whether the transaction became visible.
-    pub disposition: CommitDisposition,
-    /// Whether the now-terminal facade handle was destroyed cleanly.
-    pub cleanup: Result<()>,
-}
-
-/// Integrity mode for a native cache commit record.
-///
-/// CRC32C is the default and produces the v5 format. `None` produces a
-/// self-describing v6 record without a checksum trailer. It
-/// avoids checksum work on the foreground commit path, but replay can then
-/// validate only the record's structure, not arbitrary payload corruption.
-#[doc(hidden)]
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-#[repr(u32)]
-pub enum CommitRecordChecksum {
-    /// Emit v6 without an integrity checksum.
-    None = 0,
-    /// Emit v5 with a CRC-32C trailer.
-    #[default]
-    Crc32c = 1,
-}
-
-/// Exact native sizing for one canonical cache commit record.
-///
-/// This build-private type is returned only for a trusted transaction whose
-/// native write plan has been sealed. The byte count includes the selected
-/// format's complete header and, for CRC32C/v5, its checksum trailer;
-/// `op_count == 0` identifies a logical read-only transaction that must use the
-/// ordinary no-record commit terminal.
-#[doc(hidden)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CommitRecordPreflight {
-    exact_record_bytes: usize,
-    op_count: u32,
-    checksum: CommitRecordChecksum,
-}
-
-impl CommitRecordPreflight {
-    /// Complete encoded record size, including the header and optional CRC.
-    pub const fn exact_record_bytes(self) -> usize {
-        self.exact_record_bytes
-    }
-
-    /// Number of canonical final-effect mutations in the record.
-    pub const fn op_count(self) -> u32 {
-        self.op_count
-    }
-
-    /// Integrity mode sealed into this record plan.
-    pub const fn checksum(self) -> CommitRecordChecksum {
-        self.checksum
-    }
-
-    /// Whether native canonicalization found no externally visible mutation.
-    pub const fn is_empty(self) -> bool {
-        self.op_count == 0
-    }
 }
 
 /// Preallocated storage that exposes bytes only after native completion.
@@ -1014,7 +642,7 @@ impl fmt::Debug for UninitCommitRecord {
 impl UninitCommitRecord {
     /// Allocate the exact writable extent described by `preflight`.
     pub fn try_for(preflight: CommitRecordPreflight) -> Result<Self> {
-        let exact = preflight.exact_record_bytes;
+        let exact = preflight.exact_record_bytes();
         if exact == 0 {
             return Err(Error::Internal);
         }
@@ -1044,7 +672,7 @@ impl UninitCommitRecord {
 
     /// Borrow the complete initialized record, if native finished writing it.
     pub fn written_bytes(&self) -> Option<&[u8]> {
-        if !self.written || self.bytes.len() != self.preflight.exact_record_bytes {
+        if !self.written || self.bytes.len() != self.preflight.exact_record_bytes() {
             return None;
         }
         // SAFETY: `written` is set only after the consuming native terminal's
@@ -1058,7 +686,7 @@ impl UninitCommitRecord {
     ///
     /// `None` fails closed when no valid native completion witness exists.
     pub fn into_written(self) -> Option<Vec<u8>> {
-        if !self.written || self.bytes.len() != self.preflight.exact_record_bytes {
+        if !self.written || self.bytes.len() != self.preflight.exact_record_bytes() {
             return None;
         }
         let mut bytes = ManuallyDrop::new(self.bytes);
@@ -1073,33 +701,13 @@ impl UninitCommitRecord {
     fn mark_written(&mut self, preflight: CommitRecordPreflight) -> bool {
         if self.written
             || self.preflight != preflight
-            || self.bytes.len() != preflight.exact_record_bytes
+            || self.bytes.len() != preflight.exact_record_bytes()
         {
             return false;
         }
         self.written = true;
         true
     }
-}
-
-/// Commit visibility together with native record-binding progress.
-#[doc(hidden)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[must_use = "a bound record must be published or pinned before acknowledgement"]
-pub struct CommitRecordReport {
-    /// Native commit visibility and facade cleanup outcomes.
-    pub commit: CommitReport,
-    /// Whether native's terminal status, bind callback, and 0/1 completion
-    /// witness form one internally consistent result.
-    ///
-    /// A false value is an ABI contract violation, not an ordinary native
-    /// error. When no record was bound, a durability adapter has no ordered
-    /// slot it can pin and must fail-stop the process.
-    pub completion_contract_valid: bool,
-    /// Whether the synchronous acquire callback returned a sequence and storage.
-    pub record_bound: bool,
-    /// Whether native initialized the complete record and issued its witness.
-    pub record_written: bool,
 }
 
 /// Compact result from the cache-private fused one-Put terminal.
@@ -1392,29 +1000,6 @@ impl TrustedPreselectedUncheckedOnePutRecordOutcome {
             record_written: contract_valid && witness_claimed,
         }
     }
-}
-
-/// Native commit visibility together with one preselected holder's progress.
-///
-/// This is the holder-pool counterpart of [`CommitRecordReport`]. A bound
-/// holder is identified by a nonzero accepted Mako timestamp. `holder_sealed`
-/// means native transferred the complete one-Put key/value payload into that
-/// exact holder generation; it does not mean a cache record has already been
-/// encoded.
-#[doc(hidden)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[must_use = "an accepted holder must be published or pinned before acknowledgement"]
-pub struct CommitHolderReport {
-    /// Native commit visibility and facade cleanup outcomes.
-    pub commit: CommitReport,
-    /// Whether native's packed terminal and holder-state words form one
-    /// internally consistent result.
-    pub completion_contract_valid: bool,
-    /// Whether native accepted this exact preselected generation into Mako's
-    /// commit order.
-    pub holder_bound: bool,
-    /// Whether native sealed the complete key/value payload in the holder.
-    pub holder_sealed: bool,
 }
 
 /// Compact result from the cache-private callback-free holder terminal.
@@ -1819,45 +1404,6 @@ impl TrustedSpscOnePutHolderControl {
     }
 }
 
-/// Ownership result of one attempt at the fused one-Put SPSC terminal.
-///
-/// Only the two `Untouched` variants retain the native transaction. Every
-/// other variant means native consumed it, including malformed same-build ABI
-/// results; this distinction prevents a later Rust Drop from touching a freed
-/// native facade.
-#[doc(hidden)]
-#[derive(Debug)]
-#[must_use = "the fused terminal result owns transaction and queue progress"]
-pub enum TrustedFusedOnePutHolderAttempt {
-    /// Native committed and Release-published ACK as the canonical tail.
-    Published,
-    /// The transaction is still active and needs the general commit path.
-    UntouchedGeneral,
-    /// The transaction is active, but the queue needs a cold capacity refresh.
-    UntouchedSlow {
-        /// Exact unchecked-v6 record extent rederived by native.
-        exact_record_bytes: NonZeroU32,
-    },
-    /// Native committed behind a fail-stop barrier; Rust advanced the local cursor.
-    CommittedUnpublished {
-        /// Accepted Mako serialization timestamp.
-        timestamp: MakoTimestamp,
-        /// Exact unchecked-v6 record extent retained for cold pinning.
-        exact_record_bytes: NonZeroU32,
-    },
-    /// Native consumed the transaction with a non-ordinary terminal outcome.
-    ConsumedOutcome {
-        /// Full compact terminal result for fail-closed cold decoding.
-        outcome: TrustedPreselectedUncheckedOnePutHolderOutcome,
-        /// Exact unchecked-v6 record extent retained for possible pinning.
-        exact_record_bytes: NonZeroU32,
-    },
-    /// An explicit untouched result had malformed metadata; the handle is live.
-    UntouchedMalformed,
-    /// Any malformed non-untouched result; the handle is conservatively consumed.
-    ConsumedMalformed,
-}
-
 /// Exact-generation borrowed view of one sealed native one-Put holder.
 ///
 /// Slice borrows are tied to this value. Releasing the generation consumes the
@@ -1939,128 +1485,12 @@ fn checked_holder_span(pointer: *const u8, len: usize) -> Result<NonNull<u8>> {
     }
 }
 
-/// Raw writable storage for the allocation-free native record terminal.
-///
-/// This is a build-private optimization seam. It deliberately carries no Rust
-/// lifetime: native writes the record after the binding callback returns, while
-/// the same synchronous terminal call is still active. Callers must therefore
-/// uphold the lifetime and aliasing contract of [`Self::from_raw_parts`].
-#[doc(hidden)]
-#[derive(Debug, Clone, Copy)]
-pub struct CommitRecordTarget {
-    sequence: NonZeroU64,
-    bytes: NonNull<u8>,
-    exact_record_bytes: usize,
-}
-
-impl CommitRecordTarget {
-    /// Describe storage into which native may initialize one complete record.
-    ///
-    /// # Safety
-    ///
-    /// `bytes` must remain allocated, stable, and exclusively writable for
-    /// `exact_record_bytes` bytes until the synchronous record terminal that
-    /// receives this target returns. This includes
-    /// [`Transaction::commit_report_with_record_target`],
-    /// [`Transaction::commit_report_with_unchecked_one_put_record_target`], and
-    /// [`Transaction::commit_trusted_unchecked_one_put_record_target`], as well
-    /// as the callback-free preselected terminal. The storage may be
-    /// uninitialized on entry, and any callback that returns this target must
-    /// not unwind.
-    ///
-    /// For a terminal returning [`CommitRecordReport`], the storage must not be
-    /// read as initialized unless its completion contract is valid and
-    /// `record_written` is true. For the trusted fused terminal, an
-    /// [`TrustedUncheckedOnePutRecordOutcome::is_committed`] result of `true`
-    /// provides that witness. Otherwise the caller must first use
-    /// [`TrustedUncheckedOnePutRecordOutcome::into_report`] and apply the same
-    /// valid-contract plus `record_written` rule.
-    pub unsafe fn from_raw_parts(
-        sequence: NonZeroU64,
-        bytes: NonNull<u8>,
-        exact_record_bytes: usize,
-    ) -> Self {
-        Self {
-            sequence,
-            bytes,
-            exact_record_bytes,
-        }
-    }
-}
-
-/// Maximum table-name length accepted by ABI revision 1.
-pub const MAX_TABLE_NAME_BYTES: usize = sys::MAKO_LOCAL_MAX_TABLE_NAME_BYTES as usize;
-/// Maximum key length accepted by ABI revision 1.
-pub const MAX_KEY_BYTES: usize = sys::MAKO_LOCAL_MAX_KEY_BYTES as usize;
-/// Maximum value length accepted by ABI revision 1.
-pub const MAX_VALUE_BYTES: usize = sys::MAKO_LOCAL_MAX_VALUE_BYTES as usize;
-/// Weighted native item budget for one revision-1 transaction.
-pub const TRANSACTION_ITEM_BUDGET: usize = sys::MAKO_LOCAL_TXN_ITEM_BUDGET as usize;
-
 const UNCHECKED_ONE_PUT_RECORD_OVERHEAD_BYTES: usize = 38 + 17;
-/// Maximum number of OS workers that may attach to STO in one process.
-///
-/// Worker identifiers are process-lifetime resources and are not recycled.
-pub const MAX_WORKERS: usize = sys::MAKO_LOCAL_MAX_WORKERS as usize;
-
-/// Compile-time behavior exposed by the linked C++ STO build.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Features(u64);
-
-impl Features {
-    /// Local point reads and writes inside atomic transactions are available.
-    pub const fn point_transactions(self) -> bool {
-        self.0 & sys::MAKO_LOCAL_FEATURE_POINT_TRANSACTIONS != 0
-    }
-
-    /// Reads in a transaction are guaranteed to observe its earlier writes.
-    pub const fn read_my_writes(self) -> bool {
-        self.0 & sys::MAKO_LOCAL_FEATURE_READ_MY_WRITES != 0
-    }
-
-    /// The native engine was built with STO opacity checks enabled.
-    pub const fn opacity(self) -> bool {
-        self.0 & sys::MAKO_LOCAL_FEATURE_OPACITY != 0
-    }
-
-    /// Transactional forward and reverse chunk scans are available.
-    pub const fn transactional_scans(self) -> bool {
-        self.0 & sys::MAKO_LOCAL_FEATURE_TRANSACTIONAL_SCANS != 0
-    }
-
-    /// Transactional scans observe earlier writes from the same transaction.
-    pub const fn scan_read_my_writes(self) -> bool {
-        self.0 & sys::MAKO_LOCAL_FEATURE_SCAN_READ_MY_WRITES != 0
-    }
-
-    /// Test-only synchronous local commit crash-seam observation is compiled in.
-    pub const fn test_commit_observer(self) -> bool {
-        self.0 & sys::MAKO_LOCAL_FEATURE_TEST_COMMIT_OBSERVER != 0
-    }
-
-    /// Deterministic native cleanup-failure injection is compiled in for tests.
-    #[doc(hidden)]
-    pub const fn test_cleanup_failures(self) -> bool {
-        self.0 & sys::MAKO_LOCAL_FEATURE_TEST_CLEANUP_FAILURES != 0
-    }
-
-    /// The process-global physical-clock override is compiled in for tests.
-    #[doc(hidden)]
-    pub const fn test_timestamp_clock(self) -> bool {
-        self.0 & sys::MAKO_LOCAL_FEATURE_TEST_TIMESTAMP_CLOCK != 0
-    }
-
-    /// Raw ABI feature bits, including future bits unknown to this crate.
-    pub const fn bits(self) -> u64 {
-        self.0
-    }
-}
-
 /// Return capabilities of the linked native engine after verifying its ABI.
 pub fn features() -> Result<Features> {
     verify_abi()?;
     // SAFETY: pure ABI identity accessor.
-    Ok(Features(unsafe { abi::mako_local_feature_bits() }))
+    Ok(Features::from_bits(unsafe { abi::mako_local_feature_bits() }))
 }
 
 /// Install a test-only synchronous commit observer on the current attached
@@ -2106,23 +1536,6 @@ pub fn clear_test_commit_observer() -> Result<()> {
     Ok(())
 }
 
-/// Native cleanup boundary targeted by the deterministic test failpoint.
-#[doc(hidden)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u32)]
-pub enum TestCleanupBoundary {
-    /// Cleanup after transaction startup fails.
-    Begin = sys::MAKO_LOCAL_CLEANUP_BOUNDARY_BEGIN,
-    /// Cleanup after a point or scan operation fails.
-    Operation = sys::MAKO_LOCAL_CLEANUP_BOUNDARY_OPERATION,
-    /// Cleanup after commit fails.
-    Commit = sys::MAKO_LOCAL_CLEANUP_BOUNDARY_COMMIT,
-    /// Explicit or drop-driven abort cleanup fails.
-    Abort = sys::MAKO_LOCAL_CLEANUP_BOUNDARY_ABORT,
-    /// Final facade destruction fails.
-    Destroy = sys::MAKO_LOCAL_CLEANUP_BOUNDARY_DESTROY,
-}
-
 /// Arm a one-shot native cleanup failure on the current worker.
 #[doc(hidden)]
 pub fn arm_test_cleanup_failure(boundary: TestCleanupBoundary) -> Result<()> {
@@ -2137,18 +1550,6 @@ pub fn clear_test_cleanup_failure() -> Result<()> {
     verify_abi()?;
     // SAFETY: scalar-only idempotent test control.
     status(unsafe { abi::mako_local_test_clear_cleanup_failure() })
-}
-
-/// Health of the current OS worker's native transaction runtime.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[must_use = "poisoned workers must be retired"]
-pub enum WorkerHealth {
-    /// This worker has not been attached to the local STO runtime.
-    NotAttached,
-    /// The worker is attached and remains safe for transactions.
-    Healthy,
-    /// Cleanup is uncertain and the worker must be retired permanently.
-    Poisoned,
 }
 
 /// Query the current OS worker's native transaction health.
@@ -2541,7 +1942,7 @@ fn commit_disposition_error(code: i32) -> CommitDisposition {
 /// could mint.
 pub fn advance_mako_timestamp_past(observed: MakoTimestamp) -> Result<()> {
     verify_abi()?;
-    let raw = observed.into_raw();
+    let raw = timestamp_into_raw(observed);
     // SAFETY: `raw` remains readable for this synchronous process-global
     // monotonic operation.
     status(unsafe { abi::mako_local_advance_mako_timestamp_past(&raw) })
@@ -3494,11 +2895,7 @@ impl<'db> Transaction<'db> {
             return None;
         }
         self.unchecked_one_put_record_bytes
-            .map(|exact_record_bytes| CommitRecordPreflight {
-                exact_record_bytes: exact_record_bytes.get() as usize,
-                op_count: 1,
-                checksum: CommitRecordChecksum::None,
-            })
+            .map(|exact_record_bytes| CommitRecordPreflight::from_parts(exact_record_bytes.get() as usize, 1, CommitRecordChecksum::None))
     }
 
     /// Return only the compact unchecked-v6 extent for the cache-private
@@ -3593,11 +2990,7 @@ impl<'db> Transaction<'db> {
         {
             return self.fail_closed(Error::Internal);
         }
-        let preflight = CommitRecordPreflight {
-            exact_record_bytes,
-            op_count,
-            checksum,
-        };
+        let preflight = CommitRecordPreflight::from_parts(exact_record_bytes, op_count, checksum);
         self.record_preflight = Some(preflight);
         Ok(preflight)
     }
@@ -3693,7 +3086,7 @@ impl<'db> Transaction<'db> {
             || preflight.is_empty()
             || record.preflight != preflight
             || record.written
-            || record.bytes.len() != preflight.exact_record_bytes
+            || record.bytes.len() != preflight.exact_record_bytes()
         {
             return self.reject_record_commit(Error::InvalidArgument);
         }
@@ -4017,14 +3410,14 @@ impl<'db> Transaction<'db> {
     where
         F: FnOnce(MakoTimestamp, CommitRecordPreflight) -> Option<CommitRecordTarget>,
     {
-        let expected_record_bytes = u32::try_from(candidate.exact_record_bytes)
+        let expected_record_bytes = u32::try_from(candidate.exact_record_bytes())
             .ok()
             .and_then(NonZeroU32::new);
         if self.fast_bound_table.is_none()
             || self.record_preflight.is_some()
             || candidate.is_empty()
-            || candidate.op_count != 1
-            || candidate.checksum != CommitRecordChecksum::None
+            || candidate.op_count() != 1
+            || candidate.checksum() != CommitRecordChecksum::None
             || expected_record_bytes != self.unchecked_one_put_record_bytes
         {
             return self.reject_record_commit(Error::InvalidArgument);
@@ -4042,7 +3435,7 @@ impl<'db> Transaction<'db> {
                 record_written: false,
             };
         }
-        debug_assert_eq!(expected_record_bytes as usize, candidate.exact_record_bytes);
+        debug_assert_eq!(expected_record_bytes as usize, candidate.exact_record_bytes());
         // SAFETY: every trusted precondition below was checked above, and this
         // method carries the same callback/storage contract.
         unsafe {
@@ -4133,12 +3526,12 @@ impl<'db> Transaction<'db> {
         debug_assert!(self.active);
         debug_assert!(self.raw.is_some());
         debug_assert!(!candidate.is_empty());
-        debug_assert_eq!(candidate.op_count, 1);
-        debug_assert_eq!(candidate.checksum, CommitRecordChecksum::None);
-        debug_assert_ne!(candidate.exact_record_bytes, 0);
-        debug_assert!(candidate.exact_record_bytes <= u32::MAX as usize);
+        debug_assert_eq!(candidate.op_count(), 1);
+        debug_assert_eq!(candidate.checksum(), CommitRecordChecksum::None);
+        debug_assert_ne!(candidate.exact_record_bytes(), 0);
+        debug_assert!(candidate.exact_record_bytes() <= u32::MAX as usize);
         debug_assert_eq!(
-            NonZeroU32::new(candidate.exact_record_bytes as u32),
+            NonZeroU32::new(candidate.exact_record_bytes() as u32),
             self.unchecked_one_put_record_bytes
         );
 
@@ -4162,7 +3555,7 @@ impl<'db> Transaction<'db> {
         let packed = unsafe {
             fast_abi::mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_record_and_destroy(
                 raw.as_ptr(),
-                candidate.exact_record_bytes as u32,
+                candidate.exact_record_bytes() as u32,
                 next_bound.as_ptr(),
                 unhealthy.as_ptr().cast::<u8>(),
                 Some(native_ordered_one_put_record_target_bind_trampoline::<F>),
@@ -4221,12 +3614,12 @@ impl<'db> Transaction<'db> {
         debug_assert!(self.active);
         debug_assert!(self.raw.is_some());
         debug_assert!(!candidate.is_empty());
-        debug_assert_eq!(candidate.op_count, 1);
-        debug_assert_eq!(candidate.checksum, CommitRecordChecksum::None);
-        debug_assert_ne!(candidate.exact_record_bytes, 0);
-        debug_assert!(candidate.exact_record_bytes <= u32::MAX as usize);
+        debug_assert_eq!(candidate.op_count(), 1);
+        debug_assert_eq!(candidate.checksum(), CommitRecordChecksum::None);
+        debug_assert_ne!(candidate.exact_record_bytes(), 0);
+        debug_assert!(candidate.exact_record_bytes() <= u32::MAX as usize);
         debug_assert_eq!(
-            NonZeroU32::new(candidate.exact_record_bytes as u32),
+            NonZeroU32::new(candidate.exact_record_bytes() as u32),
             self.unchecked_one_put_record_bytes
         );
 
@@ -4238,7 +3631,7 @@ impl<'db> Transaction<'db> {
         let result = unsafe {
             fast_abi::mako_rust_fast_txn_commit_native_ordered_unchecked_one_put_arena_and_destroy(
                 raw.as_ptr(),
-                candidate.exact_record_bytes as u32,
+                candidate.exact_record_bytes() as u32,
                 std::ptr::from_ref(control),
             )
         };
@@ -4292,12 +3685,12 @@ impl<'db> Transaction<'db> {
         debug_assert!(self.active);
         debug_assert!(self.raw.is_some());
         debug_assert!(!candidate.is_empty());
-        debug_assert_eq!(candidate.op_count, 1);
-        debug_assert_eq!(candidate.checksum, CommitRecordChecksum::None);
-        debug_assert_ne!(candidate.exact_record_bytes, 0);
-        debug_assert!(candidate.exact_record_bytes <= u32::MAX as usize);
+        debug_assert_eq!(candidate.op_count(), 1);
+        debug_assert_eq!(candidate.checksum(), CommitRecordChecksum::None);
+        debug_assert_ne!(candidate.exact_record_bytes(), 0);
+        debug_assert!(candidate.exact_record_bytes() <= u32::MAX as usize);
         debug_assert_eq!(
-            NonZeroU32::new(candidate.exact_record_bytes as u32),
+            NonZeroU32::new(candidate.exact_record_bytes() as u32),
             self.unchecked_one_put_record_bytes
         );
 
@@ -4311,7 +3704,7 @@ impl<'db> Transaction<'db> {
         let result = unsafe {
             fast_abi::mako_rust_fast_txn_commit_trusted_native_ordered_unchecked_one_put_holder_and_destroy(
                 raw.as_ptr(),
-                candidate.exact_record_bytes as u32,
+                candidate.exact_record_bytes() as u32,
                 std::ptr::from_ref(control),
             )
         };
@@ -4407,13 +3800,13 @@ impl<'db> Transaction<'db> {
         debug_assert!(self.active);
         debug_assert!(self.raw.is_some());
         debug_assert!(!candidate.is_empty());
-        debug_assert_eq!(candidate.op_count, 1);
-        debug_assert_eq!(candidate.checksum, CommitRecordChecksum::None);
-        debug_assert_ne!(candidate.exact_record_bytes, 0);
-        debug_assert!(candidate.exact_record_bytes <= u32::MAX as usize);
-        debug_assert_eq!(target.exact_record_bytes, candidate.exact_record_bytes);
+        debug_assert_eq!(candidate.op_count(), 1);
+        debug_assert_eq!(candidate.checksum(), CommitRecordChecksum::None);
+        debug_assert_ne!(candidate.exact_record_bytes(), 0);
+        debug_assert!(candidate.exact_record_bytes() <= u32::MAX as usize);
+        debug_assert_eq!(target.exact_record_bytes(), candidate.exact_record_bytes());
         debug_assert_eq!(
-            NonZeroU32::new(candidate.exact_record_bytes as u32),
+            NonZeroU32::new(candidate.exact_record_bytes() as u32),
             self.unchecked_one_put_record_bytes
         );
 
@@ -4428,10 +3821,10 @@ impl<'db> Transaction<'db> {
         let result = unsafe {
             fast_abi::mako_rust_fast_txn_commit_preselected_unchecked_one_put_record_single_producer_and_destroy(
                 raw.as_ptr(),
-                candidate.exact_record_bytes as u32,
-                target.sequence.get(),
-                target.bytes.as_ptr(),
-                target.exact_record_bytes,
+                candidate.exact_record_bytes() as u32,
+                target.sequence().get(),
+                target.bytes().as_ptr(),
+                target.exact_record_bytes(),
             )
         };
         TrustedPreselectedUncheckedOnePutRecordOutcome {
@@ -4477,12 +3870,12 @@ impl<'db> Transaction<'db> {
         debug_assert!(self.active);
         debug_assert!(self.raw.is_some());
         debug_assert!(!candidate.is_empty());
-        debug_assert_eq!(candidate.op_count, 1);
-        debug_assert_eq!(candidate.checksum, CommitRecordChecksum::None);
-        debug_assert_ne!(candidate.exact_record_bytes, 0);
-        debug_assert!(candidate.exact_record_bytes <= u32::MAX as usize);
+        debug_assert_eq!(candidate.op_count(), 1);
+        debug_assert_eq!(candidate.checksum(), CommitRecordChecksum::None);
+        debug_assert_ne!(candidate.exact_record_bytes(), 0);
+        debug_assert!(candidate.exact_record_bytes() <= u32::MAX as usize);
         debug_assert_eq!(
-            NonZeroU32::new(candidate.exact_record_bytes as u32),
+            NonZeroU32::new(candidate.exact_record_bytes() as u32),
             self.unchecked_one_put_record_bytes
         );
 
@@ -4490,7 +3883,7 @@ impl<'db> Transaction<'db> {
         // generation invariants required by the compact primitive below.
         unsafe {
             self.commit_trusted_preselected_single_producer_unchecked_one_put_holder_bytes(
-                NonZeroU32::new_unchecked(candidate.exact_record_bytes as u32),
+                NonZeroU32::new_unchecked(candidate.exact_record_bytes() as u32),
                 pool,
                 sequence,
             )
@@ -4903,12 +4296,12 @@ impl<'db> Transaction<'db> {
         debug_assert!(self.active);
         debug_assert!(self.raw.is_some());
         debug_assert!(!candidate.is_empty());
-        debug_assert_eq!(candidate.op_count, 1);
-        debug_assert_eq!(candidate.checksum, CommitRecordChecksum::None);
-        debug_assert_ne!(candidate.exact_record_bytes, 0);
-        debug_assert!(candidate.exact_record_bytes <= u32::MAX as usize);
+        debug_assert_eq!(candidate.op_count(), 1);
+        debug_assert_eq!(candidate.checksum(), CommitRecordChecksum::None);
+        debug_assert_ne!(candidate.exact_record_bytes(), 0);
+        debug_assert!(candidate.exact_record_bytes() <= u32::MAX as usize);
         debug_assert_eq!(
-            NonZeroU32::new(candidate.exact_record_bytes as u32),
+            NonZeroU32::new(candidate.exact_record_bytes() as u32),
             self.unchecked_one_put_record_bytes
         );
 
@@ -4934,7 +4327,7 @@ impl<'db> Transaction<'db> {
             unsafe {
                 fast_abi::mako_rust_fast_txn_commit_unchecked_one_put_record_single_producer_and_destroy(
                     raw.as_ptr(),
-                    candidate.exact_record_bytes as u32,
+                    candidate.exact_record_bytes() as u32,
                     Some(unchecked_one_put_record_target_bind_trampoline::<F>),
                     std::ptr::from_mut(&mut state).cast::<c_void>(),
                     &mut record_written,
@@ -4946,7 +4339,7 @@ impl<'db> Transaction<'db> {
             unsafe {
                 fast_abi::mako_rust_fast_txn_commit_unchecked_one_put_record_and_destroy(
                     raw.as_ptr(),
-                    candidate.exact_record_bytes as u32,
+                    candidate.exact_record_bytes() as u32,
                     Some(unchecked_one_put_record_target_bind_trampoline::<F>),
                     std::ptr::from_mut(&mut state).cast::<c_void>(),
                     &mut record_written,
@@ -5139,7 +4532,7 @@ where
         return 0;
     };
     // SAFETY: native lends one readable timestamp for the synchronous call.
-    let Some(timestamp) = MakoTimestamp::from_raw(unsafe { raw_timestamp.read() }) else {
+    let Some(timestamp) = timestamp_from_raw(unsafe { raw_timestamp.read() }) else {
         return 0;
     };
     if catch_unwind(AssertUnwindSafe(|| hook(timestamp))).unwrap_or(false) {
@@ -5190,7 +4583,7 @@ where
     else {
         return 0;
     };
-    if exact_record_bytes != state.preflight.exact_record_bytes {
+    if exact_record_bytes != state.preflight.exact_record_bytes() {
         return 0;
     }
     // SAFETY: the caller's exclusive record borrow spans the complete native
@@ -5265,7 +4658,7 @@ where
     else {
         return 0;
     };
-    if exact_record_bytes != state.preflight.exact_record_bytes {
+    if exact_record_bytes != state.preflight.exact_record_bytes() {
         return 0;
     }
     let Some(hook) = state.hook.take() else {
@@ -5276,7 +4669,7 @@ where
     let Some(target) = hook(timestamp, state.preflight) else {
         return 0;
     };
-    if target.exact_record_bytes != exact_record_bytes {
+    if target.exact_record_bytes() != exact_record_bytes {
         return 0;
     }
 
@@ -5285,9 +4678,9 @@ where
     // native serialization which follows this callback.
     // SAFETY: required outputs were checked above.
     unsafe {
-        sequence_out.write(target.sequence.get());
-        record_bytes_out.write(target.bytes.as_ptr());
-        record_capacity_out.write(target.exact_record_bytes);
+        sequence_out.write(target.sequence().get());
+        record_bytes_out.write(target.bytes().as_ptr());
+        record_capacity_out.write(target.exact_record_bytes());
     }
     state.bound = true;
     1
@@ -5326,7 +4719,7 @@ where
     // invokes the callback synchronously at most once, and supplies the
     // validated non-null context promised by this unsafe terminal's contract.
     let state = unsafe { &mut *context.cast::<RecordTargetBindHook<F>>() };
-    debug_assert_eq!(exact_record_bytes, state.preflight.exact_record_bytes);
+    debug_assert_eq!(exact_record_bytes, state.preflight.exact_record_bytes());
 
     // SAFETY: native allocates a valid nonzero hot stamp before invoking this
     // trusted hook. The debug assertion above diagnoses a mismatched build.
@@ -5342,15 +4735,15 @@ where
         // necessary on this fail-closed path.
         return 0;
     };
-    debug_assert_eq!(target.exact_record_bytes, exact_record_bytes);
+    debug_assert_eq!(target.exact_record_bytes(), exact_record_bytes);
 
     // SAFETY: the hidden terminal supplies writable non-null output pointers,
     // and the unsafe caller guarantees this target is the exact stable extent
     // reserved for the candidate through the synchronous native terminal.
     unsafe {
-        sequence_out.write(target.sequence.get());
-        record_bytes_out.write(target.bytes.as_ptr());
-        record_capacity_out.write(target.exact_record_bytes);
+        sequence_out.write(target.sequence().get());
+        record_bytes_out.write(target.bytes().as_ptr());
+        record_capacity_out.write(target.exact_record_bytes());
     }
     state.bound = true;
     1
@@ -5389,7 +4782,7 @@ where
     let Some(ordered_sequence) = NonZeroU64::new(raw_sequence) else {
         return 0;
     };
-    if exact_record_bytes != state.preflight.exact_record_bytes {
+    if exact_record_bytes != state.preflight.exact_record_bytes() {
         return 0;
     }
     // SAFETY: this private callback is invoked once for the live state.
@@ -5397,7 +4790,7 @@ where
     let Some(target) = hook(timestamp, state.preflight, ordered_sequence) else {
         return 0;
     };
-    if target.sequence != ordered_sequence || target.exact_record_bytes != exact_record_bytes {
+    if target.sequence() != ordered_sequence || target.exact_record_bytes() != exact_record_bytes {
         // The callback may already have adopted the native-assigned dense
         // generation. Returning a retryable rejection would risk releasing
         // that obligation during unwinding, so terminate fail-closed.
@@ -5407,9 +4800,9 @@ where
     // SAFETY: the target contract guarantees writable output pointers and a
     // stable exact arena extent through native serialization.
     unsafe {
-        sequence_in_out.write(target.sequence.get());
-        record_bytes_out.write(target.bytes.as_ptr());
-        record_capacity_out.write(target.exact_record_bytes);
+        sequence_in_out.write(target.sequence().get());
+        record_bytes_out.write(target.bytes().as_ptr());
+        record_capacity_out.write(target.exact_record_bytes());
     }
     state.bound = true;
     1
@@ -5433,7 +4826,7 @@ unsafe extern "C" fn test_commit_observer_trampoline(
             None
         } else {
             // SAFETY: native lends the timestamp for this synchronous callback.
-            MakoTimestamp::from_raw(unsafe { raw_timestamp.read() })
+            timestamp_from_raw(unsafe { raw_timestamp.read() })
         };
         let _ = catch_unwind(AssertUnwindSafe(|| observer(phase, timestamp)));
     });
@@ -5571,11 +4964,7 @@ mod tests {
         }
 
         CALLS.store(0, std::sync::atomic::Ordering::Relaxed);
-        let preflight = CommitRecordPreflight {
-            exact_record_bytes: 64,
-            op_count: 1,
-            checksum: CommitRecordChecksum::None,
-        };
+        let preflight = CommitRecordPreflight::from_parts(64, 1, CommitRecordChecksum::None);
         let mut state = NativeOrderedRecordTargetBindHook {
             hook: Some(count_call as Hook),
             preflight,
@@ -5592,7 +4981,7 @@ mod tests {
             native_ordered_one_put_record_target_bind_trampoline::<Hook>(
                 (&mut state as *mut NativeOrderedRecordTargetBindHook<Hook>).cast(),
                 0,
-                preflight.exact_record_bytes,
+                preflight.exact_record_bytes(),
                 &mut sequence,
                 &mut record_bytes,
                 &mut record_capacity,
@@ -5678,12 +5067,12 @@ mod tests {
         }
         assert_eq!(TestCommitPhase::from_raw(0), None);
         assert_eq!(TestCommitPhase::from_raw(u32::MAX), None);
-        assert!(Features(sys::MAKO_LOCAL_FEATURE_TEST_COMMIT_OBSERVER).test_commit_observer());
-        assert!(!Features(0).test_commit_observer());
-        assert!(Features(sys::MAKO_LOCAL_FEATURE_TEST_CLEANUP_FAILURES).test_cleanup_failures());
-        assert!(!Features(0).test_cleanup_failures());
-        assert!(Features(sys::MAKO_LOCAL_FEATURE_TEST_TIMESTAMP_CLOCK).test_timestamp_clock());
-        assert!(!Features(0).test_timestamp_clock());
+        assert!(Features::from_bits(sys::MAKO_LOCAL_FEATURE_TEST_COMMIT_OBSERVER).test_commit_observer());
+        assert!(!Features::from_bits(0).test_commit_observer());
+        assert!(Features::from_bits(sys::MAKO_LOCAL_FEATURE_TEST_CLEANUP_FAILURES).test_cleanup_failures());
+        assert!(!Features::from_bits(0).test_cleanup_failures());
+        assert!(Features::from_bits(sys::MAKO_LOCAL_FEATURE_TEST_TIMESTAMP_CLOCK).test_timestamp_clock());
+        assert!(!Features::from_bits(0).test_timestamp_clock());
         assert_eq!(
             TestCleanupBoundary::Begin as u32,
             sys::MAKO_LOCAL_CLEANUP_BOUNDARY_BEGIN

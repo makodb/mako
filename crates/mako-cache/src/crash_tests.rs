@@ -43,8 +43,8 @@ const RECOVERY_TIMESTAMP_FLOOR_US: u64 = 2_000_000_000_000_000;
 const CHILD_TIMEOUT: Duration = Duration::from_secs(30);
 const CHILD_WATCHDOG: Duration = Duration::from_secs(60);
 
-fn recovery_timestamp_floor() -> mako_local::MakoTimestamp {
-    mako_local::MakoTimestamp::new(RECOVERY_TIMESTAMP_FLOOR_US, 0, 1)
+fn recovery_timestamp_floor() -> mako_engine::MakoTimestamp {
+    mako_engine::MakoTimestamp::new(RECOVERY_TIMESTAMP_FLOOR_US, 0, 1)
         .expect("recovery test timestamp floor has a nonzero origin")
 }
 
@@ -185,16 +185,16 @@ fn open_observed_writer(path: &Path) -> Db {
 }
 
 fn observe_native_commit(
-    phase: mako_local::TestCommitPhase,
-    _mako_timestamp: Option<mako_local::MakoTimestamp>,
+    phase: mako_engine::TestCommitPhase,
+    _mako_timestamp: Option<mako_engine::MakoTimestamp>,
 ) {
     let point = match phase {
-        mako_local::TestCommitPhase::WritesetLocked => Point::NativeWritesetLocked,
-        mako_local::TestCommitPhase::MakoTimestampAllocated => Point::NativeTimestampAllocated,
-        mako_local::TestCommitPhase::LocalValidationComplete => Point::NativeValidationComplete,
-        mako_local::TestCommitPhase::PreinstallAccepted => Point::NativePreinstallAccepted,
-        mako_local::TestCommitPhase::FirstWriteInstalled => Point::NativeFirstWriteInstalled,
-        mako_local::TestCommitPhase::AllWritesInstalled => Point::NativeAllWritesInstalled,
+        mako_engine::TestCommitPhase::WritesetLocked => Point::NativeWritesetLocked,
+        mako_engine::TestCommitPhase::MakoTimestampAllocated => Point::NativeTimestampAllocated,
+        mako_engine::TestCommitPhase::LocalValidationComplete => Point::NativeValidationComplete,
+        mako_engine::TestCommitPhase::PreinstallAccepted => Point::NativePreinstallAccepted,
+        mako_engine::TestCommitPhase::FirstWriteInstalled => Point::NativeFirstWriteInstalled,
+        mako_engine::TestCommitPhase::AllWritesInstalled => Point::NativeAllWritesInstalled,
     };
     // This callback intentionally rendezvous-parks while native write locks
     // are held. The parent always SIGKILLs the fresh helper process; it never
@@ -207,12 +207,12 @@ fn install_native_observer(point: Point) {
         return;
     }
     assert!(
-        mako_local::features()
+        mako_engine::features()
             .expect("read native crash-hook capability")
             .test_commit_observer(),
         "native crash case requires MAKO_LOCAL_TEST_HOOKS"
     );
-    mako_local::install_test_commit_observer(observe_native_commit)
+    mako_engine::install_test_commit_observer(observe_native_commit)
         .expect("install native commit observer");
 }
 
@@ -220,7 +220,7 @@ fn clear_native_observer(point: Point) {
     if !point.requires_native_observer() {
         return;
     }
-    mako_local::clear_test_commit_observer().expect("clear native commit observer");
+    mako_engine::clear_test_commit_observer().expect("clear native commit observer");
 }
 
 fn required_path(variable: &str) -> PathBuf {
@@ -297,7 +297,7 @@ fn recovery_seed_role() {
     let db_path = required_path(DB_PATH_ENV);
     let cache = Db::open(&db_path, sync_options()).expect("open recovery seed cache");
     let recovery_timestamp_floor = recovery_timestamp_floor();
-    mako_local::advance_mako_timestamp_past(recovery_timestamp_floor)
+    mako_engine::advance_mako_timestamp_past(recovery_timestamp_floor)
         .expect("raise seed process Mako timestamp");
 
     let mut first = cache
@@ -618,7 +618,7 @@ fn wait_for_marker(child: &mut Child, marker: &Path, point: Point) {
 
 #[test]
 fn process_crash_matrix_recovers_only_whole_transactions() {
-    let native_observer = mako_local::features()
+    let native_observer = mako_engine::features()
         .expect("read native crash-hook capability")
         .test_commit_observer();
     let require_native_observer = env::var_os(REQUIRE_NATIVE_HOOKS_ENV).is_some();

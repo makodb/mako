@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use mako_cache::test_support::cache_from_backend;
 use mako_cache::CacheOptions;
-use mako_local::{MakoTimestamp, TestCommitPhase, WorkerHealth};
+use mako_engine::{MakoTimestamp, TestCommitPhase, WorkerHealth};
 use mrx_core::fakes::MemBlobs;
 
 const REQUIRE_NATIVE_HOOKS_ENV: &str = "MAKO_CACHE_REQUIRE_NATIVE_CRASH_HOOKS";
@@ -28,7 +28,7 @@ fn observe_timestamp(phase: TestCommitPhase, mako_timestamp: Option<MakoTimestam
 
 #[test]
 fn native_timestamp_matches_the_persisted_record_and_applied_frontier() {
-    let features = mako_local::features().expect("read native capabilities");
+    let features = mako_engine::features().expect("read native capabilities");
     if !features.test_commit_observer() {
         assert!(
             env::var_os(REQUIRE_NATIVE_HOOKS_ENV).is_none(),
@@ -37,7 +37,7 @@ fn native_timestamp_matches_the_persisted_record_and_applied_frontier() {
         return;
     }
     assert_eq!(
-        mako_local::worker_health().expect("read initial worker health"),
+        mako_engine::worker_health().expect("read initial worker health"),
         WorkerHealth::NotAttached
     );
 
@@ -48,13 +48,13 @@ fn native_timestamp_matches_the_persisted_record_and_applied_frontier() {
     let backend = Arc::new(MemBlobs::new());
     let cache = cache_from_backend(Arc::clone(&backend), CacheOptions::default())
         .expect("open timestamp cache");
-    mako_local::install_test_commit_observer(observe_timestamp)
+    mako_engine::install_test_commit_observer(observe_timestamp)
         .expect("install timestamp observer");
 
     cache
         .put(b"timestamp/exact", b"carried-verbatim")
         .expect("commit observed transaction");
-    mako_local::clear_test_commit_observer().expect("clear timestamp observer");
+    mako_engine::clear_test_commit_observer().expect("clear timestamp observer");
     assert_eq!(TIMESTAMP_CALLBACKS.load(Ordering::SeqCst), 1);
     let native_timestamp = MakoTimestamp::new(
         OBSERVED_PHYSICAL_US.load(Ordering::SeqCst),

@@ -33,7 +33,7 @@ use std::mem::{ManuallyDrop, MaybeUninit};
 use std::num::NonZeroU64;
 use std::ptr::NonNull;
 
-use mako_local::MakoTimestamp;
+use mako_engine::MakoTimestamp;
 use mrx_core::BlobOp;
 
 /// The table used by the first, single-table cache API.
@@ -202,7 +202,7 @@ pub(crate) fn classify_backend_key(key: &[u8]) -> BackendKey<'_> {
             return BackendKey::Foreign;
         }
         let tag = u16::from_be_bytes(suffix.try_into().expect("length checked"));
-        return if usize::from(tag) <= mako_local::MAX_WORKERS {
+        return if usize::from(tag) <= mako_engine::MAX_WORKERS {
             BackendKey::Lane(tag)
         } else {
             BackendKey::Foreign
@@ -1470,7 +1470,7 @@ mod tests {
             Some((None, LOG_LOCAL_MASK))
         );
 
-        for slot in [0, 1, mako_local::MAX_WORKERS - 1] {
+        for slot in [0, 1, mako_engine::MAX_WORKERS - 1] {
             let base = worker_log_base(slot).unwrap();
             assert_eq!(split_log_sequence(seq(base + 1)), Some((Some(slot), 1)));
             assert_eq!(

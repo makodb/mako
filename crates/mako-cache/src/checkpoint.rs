@@ -5,7 +5,7 @@
 //! checksums, including when native transaction payload checksums are disabled.
 //! These encodings are constructed by the background writer.
 
-use mako_local::MakoTimestamp;
+use mako_engine::MakoTimestamp;
 use mrx_core::BlobError;
 
 use crate::record::{
@@ -216,14 +216,14 @@ pub(crate) fn lane_key(tag: u16) -> Vec<u8> {
 
 pub(crate) fn lane_tag(sequence: CommitSeq) -> Result<u16, BlobError> {
     let tag = (sequence.get() >> LOG_LANE_SHIFT) as u16;
-    if usize::from(tag) > mako_local::MAX_WORKERS || sequence.get() & LOG_LOCAL_MASK == 0 {
+    if usize::from(tag) > mako_engine::MAX_WORKERS || sequence.get() & LOG_LOCAL_MASK == 0 {
         return Err(invalid("unknown lane or zero local sequence"));
     }
     Ok(tag)
 }
 
 pub(crate) fn log_key(tag: u16, local: u64) -> Result<Vec<u8>, BlobError> {
-    if usize::from(tag) > mako_local::MAX_WORKERS || local == 0 || local > LOG_LOCAL_MASK {
+    if usize::from(tag) > mako_engine::MAX_WORKERS || local == 0 || local > LOG_LOCAL_MASK {
         return Err(invalid("unknown lane or out-of-range local sequence"));
     }
     let sequence =
@@ -417,7 +417,7 @@ mod tests {
     #[test]
     fn checkpoint_keys_are_disjoint_and_reject_legacy_layout() {
         assert_eq!(classify_backend_key(FORMAT_KEY), BackendKey::Format);
-        for tag in [0, 1, mako_local::MAX_WORKERS as u16] {
+        for tag in [0, 1, mako_engine::MAX_WORKERS as u16] {
             assert_eq!(classify_backend_key(&lane_key(tag)), BackendKey::Lane(tag));
             let key = log_key(tag, 1).unwrap();
             let BackendKey::Log(sequence) = classify_backend_key(&key) else {
@@ -430,9 +430,9 @@ mod tests {
         }
         assert!(log_key(0, 0).is_err());
         assert!(log_key(0, LOG_LOCAL_MASK + 1).is_err());
-        assert!(log_key(mako_local::MAX_WORKERS as u16 + 1, 1).is_err());
+        assert!(log_key(mako_engine::MAX_WORKERS as u16 + 1, 1).is_err());
         assert_eq!(
-            classify_backend_key(&lane_key(mako_local::MAX_WORKERS as u16 + 1)),
+            classify_backend_key(&lane_key(mako_engine::MAX_WORKERS as u16 + 1)),
             BackendKey::Foreign
         );
         assert!(lane_tag(CommitSeq::new(1 << LOG_LANE_SHIFT).unwrap()).is_err());

@@ -354,7 +354,7 @@ mod tests {
     use std::sync::atomic::AtomicUsize;
     use std::sync::{mpsc, Arc};
 
-    use mako_local::MakoTimestamp;
+    use mako_engine::MakoTimestamp;
     use mrx_core::fakes::MemBlobs;
     use mrx_core::{BlobError, BlobOp};
 

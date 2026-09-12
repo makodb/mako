@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use mako_local::{CommitDisposition, LocalDb, MakoTimestamp};
+use mako_engine::{CommitDisposition, LocalDb, MakoTimestamp};
 use mrx_core::{BlobError, BlobOp, Blobs};
 
 use crate::checkpoint::{self, LaneMetadata, Row};
@@ -91,7 +91,7 @@ pub(crate) fn recover<B: Blobs>(
     let mut recovered = RecoveredWriteback::empty();
     let mut saw_key = false;
     let mut saw_format = false;
-    let mut seen_lanes = vec![false; mako_local::MAX_WORKERS + 1];
+    let mut seen_lanes = vec![false; mako_engine::MAX_WORKERS + 1];
 
     // First pass establishes all lane coverage before interpreting rows or
     // logs. This also rejects an unknown key anywhere in the namespace.
@@ -345,7 +345,7 @@ pub(crate) fn recover<B: Blobs>(
     if let Some(timestamp) = recovered.maximum_timestamp {
         #[cfg(test)]
         crate::failpoint::hit(crate::failpoint::Point::RecoveryBeforeClockFloor);
-        mako_local::advance_mako_timestamp_past(timestamp)?;
+        mako_engine::advance_mako_timestamp_past(timestamp)?;
         #[cfg(test)]
         crate::failpoint::hit(crate::failpoint::Point::RecoveryAfterClockFloor);
     }

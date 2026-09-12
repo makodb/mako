@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use mako_local::MakoTimestamp;
+use mako_engine::MakoTimestamp;
 use mrx_core::{BlobError, Blobs};
 
 use crate::checkpoint::LaneMetadata;
@@ -35,9 +35,9 @@ pub(crate) struct RecoveredWriteback {
 impl RecoveredWriteback {
     pub(crate) fn empty() -> Self {
         Self {
-            metadata: vec![LaneMetadata::default(); mako_local::MAX_WORKERS + 1],
+            metadata: vec![LaneMetadata::default(); mako_engine::MAX_WORKERS + 1],
             legacy: LaneRecovery::default(),
-            lanes: vec![LaneRecovery::default(); mako_local::MAX_WORKERS],
+            lanes: vec![LaneRecovery::default(); mako_engine::MAX_WORKERS],
             latest: HashMap::new(),
             record_count: 0,
             maximum_timestamp: None,
@@ -144,7 +144,7 @@ impl<B: Blobs + 'static> WritebackSet<B> {
             legacy_recovery: recovered.legacy,
             recovered_record_count: recovered.record_count,
             recovered_maximum_timestamp: recovered.maximum_timestamp,
-            lanes: (0..mako_local::MAX_WORKERS)
+            lanes: (0..mako_engine::MAX_WORKERS)
                 .map(|_| OnceLock::new())
                 .collect::<Vec<_>>()
                 .into_boxed_slice(),

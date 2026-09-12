@@ -208,7 +208,7 @@ impl RecordingBlobs {
 
     fn decode_attempt(
         operations: &[BlobOp<'_>],
-    ) -> Vec<(u64, mako_local::MakoTimestamp, Vec<ModelMutation>)> {
+    ) -> Vec<(u64, mako_engine::MakoTimestamp, Vec<ModelMutation>)> {
         let records = operations
             .iter()
             .filter_map(|operation| match operation {
@@ -334,12 +334,12 @@ fn transcript_record(sequence: u64, logical: u32, mutations: Vec<Mutation>) -> C
     .finalize()
 }
 
-fn transcript_timestamp(logical: u32) -> mako_local::MakoTimestamp {
-    mako_local::MakoTimestamp::new(1_700_000_000_000_000, logical, 1)
+fn transcript_timestamp(logical: u32) -> mako_engine::MakoTimestamp {
+    mako_engine::MakoTimestamp::new(1_700_000_000_000_000, logical, 1)
         .expect("transcript timestamp has a nonzero origin")
 }
 
-fn history_timestamp(timestamp: mako_local::MakoTimestamp) -> HistoryMakoTimestamp {
+fn history_timestamp(timestamp: mako_engine::MakoTimestamp) -> HistoryMakoTimestamp {
     HistoryMakoTimestamp::new(
         timestamp.physical_us(),
         timestamp.logical(),

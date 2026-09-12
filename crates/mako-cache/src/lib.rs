@@ -49,7 +49,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
-use mako_local::{CommitDisposition, LocalDb};
+use mako_engine::{CommitDisposition, LocalDb};
 use mrx_core::{BlobError, Blobs};
 use mrx_rocks::RocksBlobs;
 
@@ -80,7 +80,7 @@ mod application_history_tests;
 #[cfg(all(test, have_mako))]
 mod milestone1_acceptance_tests;
 
-pub use mako_local::{CommitRecordChecksum as RecordChecksum, Error as LocalError, MakoTimestamp};
+pub use mako_engine::{CommitRecordChecksum as RecordChecksum, Error as LocalError, MakoTimestamp};
 pub use mrx_rocks::Durability;
 pub use record::{CommitSeq, RecordError};
 pub use writeback::{
@@ -173,7 +173,7 @@ struct CommitFence {
 
 impl CommitFence {
     fn new() -> Self {
-        let writers = (0..mako_local::MAX_WORKERS)
+        let writers = (0..mako_engine::MAX_WORKERS)
             .map(|_| CommitWriterSlot::new())
             .collect::<Vec<_>>()
             .into_boxed_slice();
@@ -192,7 +192,7 @@ impl CommitFence {
             }
             let allocated = NEXT_COMMIT_FENCE_THREAD_SLOT
                 .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
-                    (next < mako_local::MAX_WORKERS).then_some(next + 1)
+                    (next < mako_engine::MAX_WORKERS).then_some(next + 1)
                 })
                 .map_err(|_| LocalError::ThreadLimit)?;
             thread_slot.set(allocated);
@@ -913,7 +913,7 @@ impl<B: Blobs + 'static> Cache<B> {
     #[allow(unsafe_code)]
     fn from_backend(backend: B, options: CacheOptions) -> Result<Self, Error> {
         validate_gc_options(options)?;
-        let features = mako_local::features()?;
+        let features = mako_engine::features()?;
         if options.require_read_my_writes
             && (!features.read_my_writes() || !features.scan_read_my_writes())
         {
@@ -927,8 +927,8 @@ impl<B: Blobs + 'static> Cache<B> {
         // Claim before recovery mutates process-local tables or exposes work.
         // Native enforces the documented one-cache-namespace process model.
         let cache_order_mode = match options.foreground_mode {
-            ForegroundMode::Concurrent => mako_local::CacheOrderMode::PerWorker,
-            ForegroundMode::SingleProducer => mako_local::CacheOrderMode::SingleProducer,
+            ForegroundMode::Concurrent => mako_engine::CacheOrderMode::PerWorker,
+            ForegroundMode::SingleProducer => mako_engine::CacheOrderMode::SingleProducer,
         };
         // SAFETY: construction exclusively owns the fresh facade and fixes
         // foreground mode for the complete Cache lifetime.
@@ -1151,7 +1151,7 @@ impl<B: Blobs + 'static> Cache<B> {
             acknowledged_transactions: self.writeback.highest_acknowledged(),
             queued_transactions: self.writeback.queue_len(),
             log_gc,
-            quarantined_workers: mako_local::quarantined_worker_count()?,
+            quarantined_workers: mako_engine::quarantined_worker_count()?,
         })
     }
 
@@ -1352,8 +1352,8 @@ impl<'cache> TransactionForeground<'cache> {
 pub struct Transaction<'db, B: Blobs + 'static> {
     cache: &'db Cache<B>,
     writeback: &'db Writeback<Arc<B>>,
-    table: mako_local::Table<'db>,
-    native: Option<mako_local::Transaction<'db>>,
+    table: mako_engine::Table<'db>,
+    native: Option<mako_engine::Transaction<'db>>,
     foreground: TransactionForeground<'db>,
 }
 
@@ -1363,7 +1363,7 @@ pub struct Transaction<'db, B: Blobs + 'static> {
 /// upper)`. Items own their key and value bytes. The iterator exclusively
 /// borrows its transaction until it is consumed or dropped.
 pub struct Scan<'txn, 'db> {
-    inner: mako_local::Scan<'txn, 'db>,
+    inner: mako_engine::Scan<'txn, 'db>,
 }
 
 impl Iterator for Scan<'_, '_> {
@@ -1377,7 +1377,7 @@ impl Iterator for Scan<'_, '_> {
 }
 
 impl<'db, B: Blobs + 'static> Transaction<'db, B> {
-    fn native_mut(&mut self) -> &mut mako_local::Transaction<'db> {
+    fn native_mut(&mut self) -> &mut mako_engine::Transaction<'db> {
         self.native
             .as_mut()
             .expect("cache transaction already consumed")
@@ -1520,16 +1520,16 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
     fn finish_single_producer_fused_cold(
         mut self,
         producer: &writeback::SingleProducerState,
-        mut attempt: mako_local::TrustedFusedOnePutHolderAttempt,
+        mut attempt: mako_engine::TrustedFusedOnePutHolderAttempt,
         writer_fence_active: bool,
     ) -> Result<(), Error> {
         loop {
             match attempt {
-                mako_local::TrustedFusedOnePutHolderAttempt::Published => std::process::abort(),
-                mako_local::TrustedFusedOnePutHolderAttempt::UntouchedGeneral => {
+                mako_engine::TrustedFusedOnePutHolderAttempt::Published => std::process::abort(),
+                mako_engine::TrustedFusedOnePutHolderAttempt::UntouchedGeneral => {
                     return self.commit_general_inner(writer_fence_active);
                 }
-                mako_local::TrustedFusedOnePutHolderAttempt::UntouchedSlow {
+                mako_engine::TrustedFusedOnePutHolderAttempt::UntouchedSlow {
                     exact_record_bytes,
                 } => {
                     if let Err(error) = self.cache.writeback.ensure_no_unknown() {
@@ -1583,7 +1583,7 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
                         }
                     }
                 }
-                mako_local::TrustedFusedOnePutHolderAttempt::CommittedUnpublished {
+                mako_engine::TrustedFusedOnePutHolderAttempt::CommittedUnpublished {
                     timestamp,
                     exact_record_bytes,
                 } => {
@@ -1598,7 +1598,7 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
                     )?;
                     return Ok(());
                 }
-                mako_local::TrustedFusedOnePutHolderAttempt::ConsumedOutcome {
+                mako_engine::TrustedFusedOnePutHolderAttempt::ConsumedOutcome {
                     outcome,
                     exact_record_bytes,
                 } => {
@@ -1615,8 +1615,8 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
                     )?;
                     return Ok(());
                 }
-                mako_local::TrustedFusedOnePutHolderAttempt::UntouchedMalformed
-                | mako_local::TrustedFusedOnePutHolderAttempt::ConsumedMalformed => {
+                mako_engine::TrustedFusedOnePutHolderAttempt::UntouchedMalformed
+                | mako_engine::TrustedFusedOnePutHolderAttempt::ConsumedMalformed => {
                     // Ownership is known, but same-build lifecycle metadata is
                     // not. Continuing could either reuse an accepted holder or
                     // touch a consumed facade; terminate fail-closed.
@@ -1865,8 +1865,8 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
 fn finish_trusted_one_put_concurrent<'cache, 'db, B: Blobs + 'static>(
     cache: &'cache Cache<B>,
     writeback: &'cache Writeback<Arc<B>>,
-    native: mako_local::Transaction<'db>,
-    preflight: mako_local::CommitRecordPreflight,
+    native: mako_engine::Transaction<'db>,
+    preflight: mako_engine::CommitRecordPreflight,
     permit: writeback::NativeArenaPermit<'cache, B>,
     worker_slot: usize,
 ) -> Result<(), Error> {
@@ -2103,7 +2103,7 @@ fn finish_trusted_one_put_concurrent<'cache, 'db, B: Blobs + 'static>(
 #[inline(always)]
 fn finish_trusted_one_put_holder_single<'cache, 'db, B: Blobs + 'static>(
     writeback: &'cache Writeback<Arc<B>>,
-    native: mako_local::Transaction<'db>,
+    native: mako_engine::Transaction<'db>,
     exact_record_bytes: NonZeroU32,
     producer: &'cache writeback::SingleProducerState,
     sequence: NonZeroU64,
@@ -2174,7 +2174,7 @@ fn finish_holder_outcome_cold<B: Blobs + 'static>(
     producer: &writeback::SingleProducerState,
     sequence: NonZeroU64,
     exact_record_bytes: NonZeroU32,
-    outcome: mako_local::TrustedPreselectedUncheckedOnePutHolderOutcome,
+    outcome: mako_engine::TrustedPreselectedUncheckedOnePutHolderOutcome,
 ) -> Result<(), Error> {
     let Some(timestamp) = outcome.accepted_timestamp() else {
         let report = outcome.into_report();
@@ -2224,7 +2224,7 @@ fn finish_anomalous_accepted_holder<B, F>(
 ) -> Result<(), Error>
 where
     B: Blobs + 'static,
-    F: FnOnce() -> mako_local::CommitHolderReport,
+    F: FnOnce() -> mako_engine::CommitHolderReport,
 {
     let sequence = if sealed {
         // SAFETY: `sealed` is the raw native completion witness paired with the
@@ -2264,8 +2264,8 @@ where
 #[allow(unsafe_code)]
 fn finish_trusted_one_put_arena_single<'cache, 'db, B: Blobs + 'static>(
     cache: &'cache Cache<B>,
-    native: mako_local::Transaction<'db>,
-    preflight: mako_local::CommitRecordPreflight,
+    native: mako_engine::Transaction<'db>,
+    preflight: mako_engine::CommitRecordPreflight,
     mut permit: writeback::NativeArenaPermit<'cache, B>,
 ) -> Result<(), Error> {
     #[cfg(test)]
@@ -2390,7 +2390,7 @@ fn finish_trusted_one_put_arena_single<'cache, 'db, B: Blobs + 'static>(
     }
 }
 
-fn finish_read_only(native: mako_local::Transaction<'_>) -> Result<(), Error> {
+fn finish_read_only(native: mako_engine::Transaction<'_>) -> Result<(), Error> {
     let report = native.commit_report();
     match report.disposition {
         CommitDisposition::Committed => report.cleanup.map_err(Error::Native),
@@ -2408,7 +2408,7 @@ fn finish_read_only(native: mako_local::Transaction<'_>) -> Result<(), Error> {
 /// Returning the preparation error is correct only when native cleanup is
 /// known complete. A cleanup failure quarantines the worker and is the more
 /// severe result, matching mako-local's own fail-closed preflight behavior.
-fn abort_after_precommit_failure(native: mako_local::Transaction<'_>, preparation: Error) -> Error {
+fn abort_after_precommit_failure(native: mako_engine::Transaction<'_>, preparation: Error) -> Error {
     match native.abort() {
         Ok(()) => preparation,
         Err(cleanup) => Error::Native(cleanup),
@@ -2416,7 +2416,7 @@ fn abort_after_precommit_failure(native: mako_local::Transaction<'_>, preparatio
 }
 
 #[cold]
-fn enforce_record_completion_contract(report: &mako_local::CommitRecordReport) {
+fn enforce_record_completion_contract(report: &mako_engine::CommitRecordReport) {
     if !report.completion_contract_valid && !report.record_bound {
         // Native consumed the transaction handle but returned a malformed
         // terminal result without invoking the only callback that could
@@ -2429,7 +2429,7 @@ fn enforce_record_completion_contract(report: &mako_local::CommitRecordReport) {
 }
 
 #[cold]
-fn enforce_unaccepted_holder_completion_contract(report: &mako_local::CommitHolderReport) {
+fn enforce_unaccepted_holder_completion_contract(report: &mako_engine::CommitHolderReport) {
     if !report.completion_contract_valid
         || report.holder_bound
         || report.holder_sealed
@@ -2446,7 +2446,7 @@ fn enforce_unaccepted_holder_completion_contract(report: &mako_local::CommitHold
 
 fn finish_unwritten_bound<B: Blobs>(
     reservation: &mut writeback::BoundReservation<'_, B>,
-    record_report: mako_local::CommitRecordReport,
+    record_report: mako_engine::CommitRecordReport,
 ) -> Error {
     assert!(record_report.record_bound);
     assert!(!record_report.record_written);
@@ -2484,7 +2484,7 @@ fn finish_unwritten_bound<B: Blobs>(
 
 fn finish_unwritten_native_arena<B: Blobs>(
     reservation: &mut writeback::NativeArenaBoundReservation<'_, B>,
-    record_report: mako_local::CommitRecordReport,
+    record_report: mako_engine::CommitRecordReport,
 ) -> Error {
     assert!(record_report.record_bound);
     assert!(!record_report.record_written);
@@ -2678,8 +2678,8 @@ mod tests {
     fn unbound_native_record_contract_violation_aborts_process() {
         const ROLE: &str = "MAKO_CACHE_UNBOUND_RECORD_CONTRACT_VIOLATION_ROLE";
         if std::env::var_os(ROLE).is_some() {
-            enforce_record_completion_contract(&mako_local::CommitRecordReport {
-                commit: mako_local::CommitReport {
+            enforce_record_completion_contract(&mako_engine::CommitRecordReport {
+                commit: mako_engine::CommitReport {
                     disposition: CommitDisposition::Unknown(LocalError::Internal),
                     cleanup: Err(LocalError::Internal),
                 },
@@ -2708,8 +2708,8 @@ mod tests {
     fn unaccepted_native_holder_contract_violation_aborts_process() {
         const ROLE: &str = "MAKO_CACHE_UNACCEPTED_HOLDER_CONTRACT_VIOLATION_ROLE";
         if std::env::var_os(ROLE).is_some() {
-            enforce_unaccepted_holder_completion_contract(&mako_local::CommitHolderReport {
-                commit: mako_local::CommitReport {
+            enforce_unaccepted_holder_completion_contract(&mako_engine::CommitHolderReport {
+                commit: mako_engine::CommitReport {
                     disposition: CommitDisposition::Unknown(LocalError::Internal),
                     cleanup: Err(LocalError::Internal),
                 },
@@ -2768,8 +2768,8 @@ mod tests {
                     writeback.ensure_no_unknown(),
                     Err(ApplyError::UnknownOutcome { sequence }) if sequence.get() == 1
                 ));
-                mako_local::CommitHolderReport {
-                    commit: mako_local::CommitReport {
+                mako_engine::CommitHolderReport {
+                    commit: mako_engine::CommitReport {
                         disposition: CommitDisposition::Unknown(LocalError::Internal),
                         cleanup: Err(LocalError::Internal),
                     },
@@ -2865,8 +2865,8 @@ mod tests {
             Writeback::new(Arc::new(MemBlobs::new()), 0, WritebackConfig::default()).unwrap();
         let error = finish_unwritten_bound(
             &mut reservation(&writeback),
-            mako_local::CommitRecordReport {
-                commit: mako_local::CommitReport {
+            mako_engine::CommitRecordReport {
+                commit: mako_engine::CommitReport {
                     disposition: CommitDisposition::Aborted(LocalError::CommitHookRejected),
                     cleanup: Ok(()),
                 },
@@ -2892,8 +2892,8 @@ mod tests {
             Writeback::new(Arc::new(MemBlobs::new()), 0, WritebackConfig::default()).unwrap();
         let error = finish_unwritten_bound(
             &mut reservation(&malformed),
-            mako_local::CommitRecordReport {
-                commit: mako_local::CommitReport {
+            mako_engine::CommitRecordReport {
+                commit: mako_engine::CommitReport {
                     disposition: CommitDisposition::Unknown(LocalError::Internal),
                     cleanup: Err(LocalError::Internal),
                 },
@@ -2922,8 +2922,8 @@ mod tests {
             Writeback::new(Arc::new(MemBlobs::new()), 0, WritebackConfig::default()).unwrap();
         let error = finish_unwritten_bound(
             &mut reservation(&impossible_conflict),
-            mako_local::CommitRecordReport {
-                commit: mako_local::CommitReport {
+            mako_engine::CommitRecordReport {
+                commit: mako_engine::CommitReport {
                     disposition: CommitDisposition::Aborted(LocalError::Conflict),
                     cleanup: Ok(()),
                 },
@@ -4113,14 +4113,14 @@ mod tests {
             return;
         }
 
-        if !mako_local::features().unwrap().test_cleanup_failures() {
+        if !mako_engine::features().unwrap().test_cleanup_failures() {
             return;
         }
 
         std::thread::spawn(|| {
             use std::sync::Arc;
 
-            use mako_local::{
+            use mako_engine::{
                 arm_test_cleanup_failure, worker_health, TestCleanupBoundary, WorkerHealth,
             };
             use mrx_core::fakes::MemBlobs;

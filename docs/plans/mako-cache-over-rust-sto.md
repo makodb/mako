@@ -1,8 +1,8 @@
 # Rust cache over Rust STO: the engine cutover
 
-Status: plan, 2026-09-12. Starting revision is the merge commit `7de836393`
-(`worktree-masstree-rocks` + `codex/sto-rust`). Nothing below is
-implemented. This is Milestone 4 of
+Status: in progress, 2026-09-12. Starting revision is the merge commit
+`7de836393` (`worktree-masstree-rocks` + `codex/sto-rust`). Phase 0 is
+implemented; Phases 1 to 4 are not. This is Milestone 4 of
 [the transaction-cache roadmap](rust-mako-transaction-cache.md) made concrete
 now that a native Rust STO exists; it also discharges the one deferred item
 the [Rust STO design contract](../architecture/rust-sto.md) calls "upper
@@ -13,8 +13,8 @@ the [Rust STO design contract](../architecture/rust-sto.md) calls "upper
 Make `mako-cache` drive `sto-core` directly, with no C ABI between them, by
 introducing one engine-neutral Rust trait that both the existing
 `mako-local` (C ABI to C++ STO) engine and a new `mako-engine-sto` engine
-implement. The cache is made generic over that trait first, with zero
-behavior change and the current engine as the only implementation. The Rust
+implement. The cache is moved onto that contract first, with zero behavior
+change and the current engine as the only implementation. The Rust
 STO engine is then built behind the same trait, proven against the C ABI
 engine with the existing differential corpus, history oracle, crash matrix,
 mutation campaign, and zoo-002 performance sweep, and only then becomes the
@@ -107,7 +107,36 @@ honest in the API.
 
 ## Phase 0: the engine seam (refactor, no behavior change)
 
-Goal: `Cache<B: Blobs, E: LocalEngine>` with `mako-local` as the only `E`.
+Status: implemented. Goal: one engine-neutral contract with `mako-local` as
+the first implementation.
+
+Decision taken while implementing: the engine is selected at compile time
+through a facade crate rather than by a type parameter on `Cache`. Two facts
+drove this. The hot commit path threads raw control pointers and outcome
+words through the wrapper types, so a generic parameter would have had to
+reach through `Cache`, `Writeback`, `WritebackSet`, `SingleProducerState`,
+and the record path, some 11,000 lines, for no semantic gain. And the
+cache-order namespace and Mako clock are process-global, so two engines can
+never coexist in one process anyway. The layout is:
+
+- `crates/mako-engine-api`: the contract. Every shared value type
+  (`MakoTimestamp`, commit reports and dispositions, `Error`, `Features`,
+  `CacheOrderMode`, limits, test-hook enums, the record framing constants,
+  `CommitRecordTarget`, `FusedOnePutHolderAttempt<Outcome>`) plus the traits
+  `LocalEngine`, `EngineDb`, `EngineTransaction`, `HolderPool`, `HolderView`,
+  the three control-block traits, and the three outcome traits. Numeric
+  contract values are literals; a native facade pins them against its ABI
+  with compile-time asserts.
+- `crates/mako-engine`: the facade `mako-cache` compiles against. Feature
+  `c-abi` (default) re-exports `mako-local`'s types under fixed names.
+  Exactly one backend feature may be enabled.
+- `crates/mako-local`: re-exports the shared types from the contract crate
+  at its historical paths and implements the traits by delegation
+  (`MakoLocalEngine`).
+- `crates/mako-cache`: refers to every engine name through `mako_engine`
+  and carries no `mako_local` dependency.
+
+The original plan text follows for the parts that still apply.
 
 1. New crate `crates/mako-engine` holding the traits and the shared value
    types the cache already uses: `MakoTimestamp`, `CacheSeq`/lane packing,

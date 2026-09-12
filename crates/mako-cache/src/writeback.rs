@@ -33,8 +33,8 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use crate::checkpoint::{self, LaneMetadata};
-use mako_local::{CommitRecordTarget, MakoTimestamp, TrustedOnePutHolderPool};
-use mrx_core::{BlobError, Blobs, BoundedEntryVisitor};
+use mako_engine::{CommitRecordTarget, MakoTimestamp, TrustedOnePutHolderPool};
+use mrx_core::{BlobError, Blobs};
 #[cfg(test)]
 use std::cell::RefCell;
 
@@ -155,7 +155,7 @@ const PACKED_OCCUPANCY_CREDIT_HOARD_DIVISOR: usize = 8;
 const CONCURRENT_ACKNOWLEDGEMENT_SPINS: usize = 64;
 
 fn packed_occupancy_credit_batch_size(capacity: usize) -> usize {
-    let all_worker_share = mako_local::MAX_WORKERS
+    let all_worker_share = mako_engine::MAX_WORKERS
         .max(1)
         .saturating_mul(PACKED_OCCUPANCY_CREDIT_HOARD_DIVISOR);
     (capacity / all_worker_share.max(1)).clamp(1, PACKED_OCCUPANCY_CREDIT_BATCH_MAX)
@@ -506,7 +506,7 @@ impl ApplyCoordinator {
     pub(crate) fn empty() -> Self {
         Self::recovered(
             HashMap::new(),
-            vec![LaneMetadata::default(); mako_local::MAX_WORKERS + 1],
+            vec![LaneMetadata::default(); mako_engine::MAX_WORKERS + 1],
         )
     }
 
@@ -514,7 +514,7 @@ impl ApplyCoordinator {
         latest: HashMap<Vec<u8>, MakoTimestamp>,
         lanes: Vec<LaneMetadata>,
     ) -> Self {
-        assert_eq!(lanes.len(), mako_local::MAX_WORKERS + 1);
+        assert_eq!(lanes.len(), mako_engine::MAX_WORKERS + 1);
         let snapshot = LogGcStatus {
             retained_records: lanes.iter().map(|lane| lane.applied - lane.reclaimed).sum(),
             retained_bytes: lanes.iter().map(|lane| lane.retained_bytes).sum(),
@@ -2542,7 +2542,7 @@ pub(crate) struct SingleProducerState {
     capacity_limit: AtomicU64,
     next_sequence: AtomicU64,
     maximum_sequence: u64,
-    fused_holder_control: mako_local::TrustedSpscOnePutHolderControl,
+    fused_holder_control: mako_engine::TrustedSpscOnePutHolderControl,
 }
 
 impl SingleProducerState {
@@ -2551,7 +2551,7 @@ impl SingleProducerState {
         next_sequence: u64,
         capacity: u64,
         maximum_sequence: u64,
-        fused_holder_control: mako_local::TrustedSpscOnePutHolderControl,
+        fused_holder_control: mako_engine::TrustedSpscOnePutHolderControl,
     ) -> Self {
         debug_assert!(applied < maximum_sequence);
         debug_assert!(next_sequence <= maximum_sequence);
@@ -2564,7 +2564,7 @@ impl SingleProducerState {
     }
 
     #[inline(always)]
-    pub(crate) fn fused_holder_control(&self) -> &mako_local::TrustedSpscOnePutHolderControl {
+    pub(crate) fn fused_holder_control(&self) -> &mako_engine::TrustedSpscOnePutHolderControl {
         &self.fused_holder_control
     }
 
@@ -3000,7 +3000,7 @@ impl<B: Blobs> Writeback<B> {
         config: WritebackConfig,
         single_producer: bool,
     ) -> Result<Self, ConfigError> {
-        let mut lanes = vec![LaneMetadata::default(); mako_local::MAX_WORKERS + 1];
+        let mut lanes = vec![LaneMetadata::default(); mako_engine::MAX_WORKERS + 1];
         if applied_seed.sequence != 0 {
             // Standalone queue tests can seed only a position. A real recovered
             // cache instead supplies validated checkpoint metadata to the shared
@@ -3105,7 +3105,7 @@ impl<B: Blobs> Writeback<B> {
         let packed_occupancy_credits_by_worker = if single_producer {
             Vec::new().into_boxed_slice()
         } else {
-            (0..mako_local::MAX_WORKERS)
+            (0..mako_engine::MAX_WORKERS)
                 .map(|_| CacheLineAtomicUsize::new(0))
                 .collect::<Vec<_>>()
                 .into_boxed_slice()
@@ -3137,7 +3137,7 @@ impl<B: Blobs> Writeback<B> {
             unhealthy_sequence,
             acknowledgement_waiters: CacheLineAtomicUsize::new(0),
             acknowledged: CacheLineAtomicU64::new(applied_seed.sequence),
-            trusted_caller_ack_by_worker: (0..mako_local::MAX_WORKERS)
+            trusted_caller_ack_by_worker: (0..mako_engine::MAX_WORKERS)
                 .map(|_| CacheLineAtomicU64::new(applied_seed.sequence))
                 .collect::<Vec<_>>()
                 .into_boxed_slice(),
@@ -3303,7 +3303,7 @@ impl<B: Blobs> Writeback<B> {
     #[inline(always)]
     pub(crate) unsafe fn native_ordered_arena_control(
         &self,
-    ) -> mako_local::TrustedNativeOrderedArenaControl {
+    ) -> mako_engine::TrustedNativeOrderedArenaControl {
         debug_assert!(!self.single_producer);
         debug_assert!(self.publication_cells.len().is_power_of_two());
         let publication_stride = u32::try_from(std::mem::size_of::<PublicationCell>())
@@ -3316,7 +3316,7 @@ impl<B: Blobs> Writeback<B> {
         // lifetime, their exact layouts are asserted above, and the terminal
         // borrows every pointer only for its synchronous call.
         unsafe {
-            mako_local::TrustedNativeOrderedArenaControl::from_raw_parts(
+            mako_engine::TrustedNativeOrderedArenaControl::from_raw_parts(
                 self.next_bound.as_ptr(),
                 self.unhealthy.as_ptr().cast::<u8>(),
                 self.publication_cells.as_ptr().cast_mut().cast::<u8>(),
@@ -3342,7 +3342,7 @@ impl<B: Blobs> Writeback<B> {
     #[inline(always)]
     pub(crate) unsafe fn native_ordered_holder_control(
         &self,
-    ) -> mako_local::TrustedNativeOrderedHolderControl {
+    ) -> mako_engine::TrustedNativeOrderedHolderControl {
         debug_assert!(!self.single_producer);
         let publication_stride = u32::try_from(std::mem::size_of::<PublicationCell>())
             .expect("the native publication stride fits u32");
@@ -3355,7 +3355,7 @@ impl<B: Blobs> Writeback<B> {
         // SAFETY: queue construction gives the pool and publication ring the
         // same power-of-two capacity and stable allocation lifetime.
         unsafe {
-            mako_local::TrustedNativeOrderedHolderControl::new(
+            mako_engine::TrustedNativeOrderedHolderControl::new(
                 self.native_holder_pool
                     .as_ref()
                     .expect("every queue owns a native holder pool"),
@@ -3435,7 +3435,7 @@ impl<B: Blobs> Writeback<B> {
         // terminal. The physical power-of-two holder ring covers at least the
         // logical configured capacity used by native's fullness predicate.
         let fused_holder_control = unsafe {
-            mako_local::TrustedSpscOnePutHolderControl::new(
+            mako_engine::TrustedSpscOnePutHolderControl::new(
                 self.native_holder_pool
                     .as_ref()
                     .expect("single-producer queue owns a native holder pool"),
@@ -6924,6 +6924,7 @@ fn wait_timeout_recover<'a, T>(
 
 #[cfg(test)]
 mod tests {
+    use mrx_core::BoundedEntryVisitor;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{mpsc, Arc, Barrier};
     use std::time::Instant;
@@ -7739,7 +7740,7 @@ mod tests {
 
     #[test]
     fn packed_occupancy_credit_batch_is_bounded_and_scalar_for_small_queues() {
-        let all_worker_share = mako_local::MAX_WORKERS * PACKED_OCCUPANCY_CREDIT_HOARD_DIVISOR;
+        let all_worker_share = mako_engine::MAX_WORKERS * PACKED_OCCUPANCY_CREDIT_HOARD_DIVISOR;
         assert_eq!(packed_occupancy_credit_batch_size(1), 1);
         assert_eq!(packed_occupancy_credit_batch_size(all_worker_share), 1);
         assert_eq!(packed_occupancy_credit_batch_size(all_worker_share * 2), 2);
@@ -7759,7 +7760,7 @@ mod tests {
             all_worker_share * 64,
         ] {
             let batch = packed_occupancy_credit_batch_size(capacity);
-            let maximum_idle = mako_local::MAX_WORKERS * (batch - 1);
+            let maximum_idle = mako_engine::MAX_WORKERS * (batch - 1);
             assert!(
                 maximum_idle <= capacity / PACKED_OCCUPANCY_CREDIT_HOARD_DIVISOR,
                 "capacity {capacity} batch {batch} can hoard {maximum_idle} idle rights"

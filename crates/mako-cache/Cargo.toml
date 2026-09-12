@@ -30,7 +30,7 @@ name = "timestamp"
 required-features = ["test-support"]
 
 [dependencies]
-mako-local = { path = "../mako-local" }
+mako-engine = { path = "../mako-engine" }
 mrx-core = { path = "../mrx-core" }
 mrx-rocks = { path = "../mrx-rocks" }
 

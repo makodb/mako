@@ -7,7 +7,7 @@
 
 use std::time::Duration;
 
-use mako_local::MakoTimestamp;
+use mako_engine::MakoTimestamp;
 use mrx_core::fakes::MemBlobs;
 use mrx_core::Blobs;
 

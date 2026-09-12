@@ -239,7 +239,7 @@ fn transactional_scans_reflect_staged_writes_and_survive_rocks_reopen() {
 #[test]
 fn required_read_your_writes_follows_the_native_feature_bit() {
     let scratch = Scratch::new("required-ryw");
-    let features = mako_local::features().expect("read native features");
+    let features = mako_engine::features().expect("read native features");
     let supports_read_your_writes = features.read_my_writes() && features.scan_read_my_writes();
     let mut options = Options::default();
     options.cache.require_read_my_writes = true;
@@ -261,7 +261,7 @@ fn required_read_your_writes_follows_the_native_feature_bit() {
 #[test]
 fn required_opacity_follows_the_native_feature_bit() {
     let scratch = Scratch::new("required-opacity");
-    let supports_opacity = mako_local::features()
+    let supports_opacity = mako_engine::features()
         .expect("read native features")
         .opacity();
     let mut options = Options::default();
