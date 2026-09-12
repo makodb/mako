@@ -320,6 +320,8 @@ def build_series(records, x_field=X_FIELD):
         row[3] = median-trial p99 latency, ms
         row[4] = median-trial CDF, {fraction: ms}
         row[5] = throughput spread across repetitions (population stddev)
+        row[6] = dispersion dict: per-metric mean and population sd across
+                 trials, for throughput, p50, p99 and mean latency
 
     Grouping is on comparability_key, NOT on the display key. Where two
     incomparable groups would render to the same display key — a sweep re-run
@@ -377,6 +379,14 @@ def build_series(records, x_field=X_FIELD):
                 tputs = [t["applied_per_sec"] for t in trials]
                 tput, idx = median(tputs)
                 pick = trials[idx]
+                # Dispersion ACROSS TRIALS, per metric. Row slots 1 and 3 stay
+                # the median trial's p50/p99 so that latency, throughput and
+                # the CDF all describe the same run; these are the error bars
+                # that turn a before/after pair into a comparison. Without
+                # them a latency delta has nothing to be measured against.
+                p50s = [t["latency_p50_us"] / 1000.0 for t in trials]
+                p99s = [t["latency_p99_us"] / 1000.0 for t in trials]
+                means = [t["latency_mean_us"] / 1000.0 for t in trials]
                 rows.append([
                     x,
                     pick["latency_p50_us"] / 1000.0,
@@ -384,6 +394,17 @@ def build_series(records, x_field=X_FIELD):
                     pick["latency_p99_us"] / 1000.0,
                     cdf_ms(pick),
                     spread(tputs),
+                    {                       # row[6]: dispersion, added 2026-09-12
+                        "trials": len(trials),
+                        "tput_mean": sum(tputs) / len(tputs),
+                        "tput_sd": spread(tputs),
+                        "p50_mean": sum(p50s) / len(p50s),
+                        "p50_sd": spread(p50s),
+                        "p99_mean": sum(p99s) / len(p99s),
+                        "p99_sd": spread(p99s),
+                        "lat_mean_mean": sum(means) / len(means),
+                        "lat_mean_sd": spread(means),
+                    },
                 ])
                 row_meta.append({
                     "x": x,
@@ -420,17 +441,45 @@ def load_series(root, x_field=X_FIELD, skip_rejected=True):
 
 
 def _format_table(series, meta):
+    """Every number with its dispersion across trials, so a reader can see at
+    a glance whether a difference between two of these tables means anything."""
     lines = []
     for key in sorted(series):
         lines.append("")
         lines.append("=== %s ===" % key)
-        lines.append("%12s %6s %14s %12s %10s %10s"
-                     % ("offered/s", "trials", "applied/s", "spread", "p50 ms", "p99 ms"))
-        for row, rm in zip(series[key], meta[key]):
+        lines.append("%12s %6s %20s %18s %18s"
+                     % ("offered/s", "trials", "applied/s", "p50 ms", "p99 ms"))
+        for row in series[key]:
+            d = row[6]
             x_label = "unthrottled" if row[0] == 0 else str(row[0])
-            lines.append("%12s %6d %14.1f %12.1f %10.3f %10.3f"
-                         % (x_label, rm["trials"], row[2], row[5], row[1], row[3]))
+            lines.append("%12s %6d %12.1f +-%5.1f %11.3f +-%5.3f %11.3f +-%5.3f"
+                         % (x_label, d["trials"],
+                            d["tput_mean"], d["tput_sd"],
+                            d["p50_mean"], d["p50_sd"],
+                            d["p99_mean"], d["p99_sd"]))
+        # Relative noise is what decides whether a delta is real, so give it
+        # directly rather than making the reader divide.
+        worst = max((d for d in (r[6] for r in series[key])),
+                    key=lambda d: _cv(d["p50_mean"], d["p50_sd"]), default=None)
+        if worst and worst["trials"] > 1:
+            lines.append("%12s  noise floor: tput CV %.1f%%, p50 CV %.1f%%  ->  "
+                         "detectable at n=%d: ~%.1f%% / ~%.1f%%"
+                         % ("", _cv(worst["tput_mean"], worst["tput_sd"]),
+                            _cv(worst["p50_mean"], worst["p50_sd"]),
+                            worst["trials"],
+                            _mde(worst["tput_mean"], worst["tput_sd"], worst["trials"]),
+                            _mde(worst["p50_mean"], worst["p50_sd"], worst["trials"])))
     return "\n".join(lines)
+
+
+def _cv(mean, sd):
+    return 100.0 * sd / mean if mean else 0.0
+
+
+def _mde(mean, sd, n):
+    """Minimum detectable effect, percent, for comparing two means of n runs.
+    2.8 is the usual z-based constant for 5% significance at 80% power."""
+    return 2.8 * _cv(mean, sd) / (n ** 0.5) if n else 0.0
 
 
 def main(argv=None):
