@@ -1,0 +1,11 @@
+error[E0599]: no method named `with_item` found for mutable reference `&mut TerminalReadTransaction<'_>` in the current scope
+  --> tests/ui/terminal_read_typestate.rs:12:25
+   |
+12 |     let _ = transaction.with_item(resource, key, |_| Ok::<(), AccessError>(()));
+   |                         ^^^^^^^^^ method not found in `&mut TerminalReadTransaction<'_>`
+
+error[E0599]: no method named `with_item` found for mutable reference `&mut TerminalReadTransaction<'_, TerminalReadReady>` in the current scope
+  --> tests/ui/terminal_read_typestate.rs:20:25
+   |
+20 |     let _ = transaction.with_item(resource, key, |_| Ok::<(), AccessError>(()));
+   |                         ^^^^^^^^^ method not found in `&mut TerminalReadTransaction<'_, TerminalReadReady>`

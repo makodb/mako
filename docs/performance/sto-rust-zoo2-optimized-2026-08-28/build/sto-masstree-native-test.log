@@ -1,0 +1,17 @@
+   Compiling rustversion v1.0.23
+   Compiling sto-masstree v0.0.0 (/home/users/shuai/mako/.claude/worktrees/sto-rust/crates/sto-masstree)
+   Compiling arc-swap v1.9.2
+   Compiling sto-core v0.0.0 (/home/users/shuai/mako/.claude/worktrees/sto-rust/crates/sto-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.11s
+     Running tests/native_integration.rs (/var/tmp/mako-sto-bench-20260827.J2TZj6/rust-target-final-6936abb30000-fatlto/debug/deps/native_integration-1d8372128f6d0a10)
+
+running 6 tests
+test eager_contiguous_registry_native_read_write_round_trip ... ok
+test fixed_point_batch_capacity_error_dooms_and_clears_results ... ok
+test fixed_point_batch_handles_binary_hits_misses_and_reuses_storage ... ok
+test point_session_closes_on_miss_and_scan_and_reopens_after_each_boundary ... ok
+test native_point_commit_read_and_abort_round_trip ... ok
+test native_transactional_scan_resumes_and_rejects_a_phantom ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+

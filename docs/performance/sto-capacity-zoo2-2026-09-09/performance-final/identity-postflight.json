@@ -1,0 +1,66 @@
+{
+  "active_benchmark_processes_at_start": [],
+  "checks": [
+    {
+      "actual_sha256": "b2d484ffb6c80fe31cd03e09119e3885300516c1587218984ec5b9aedba8f716",
+      "expected_sha256": "b2d484ffb6c80fe31cd03e09119e3885300516c1587218984ec5b9aedba8f716",
+      "label": "launch0-old-binary",
+      "matches": true,
+      "path": "/var/tmp/sto-owner-gate-2770f9d0-20260907T1910Z.BOCOx1/candidate-pgo/sto_tpcc_bench"
+    },
+    {
+      "actual_sha256": "3e32ba7d47a6de1b080d14cdc4955d04ecee0ece32a969a2dcfdf3925a2e31fe",
+      "expected_sha256": "3e32ba7d47a6de1b080d14cdc4955d04ecee0ece32a969a2dcfdf3925a2e31fe",
+      "label": "launch0-new-binary",
+      "matches": true,
+      "path": "/var/tmp/sto-capacity-20260909.kKklOX/pgo-final-atomic-output/sto_tpcc_bench"
+    },
+    {
+      "actual_sha256": "3324428f7b8767c74d93041f500126e6b5721f0d7eb05fbc6b907b6a9d9c9a24",
+      "expected_sha256": "3324428f7b8767c74d93041f500126e6b5721f0d7eb05fbc6b907b6a9d9c9a24",
+      "label": "launch0-configuration",
+      "matches": true,
+      "path": "/home/users/shuai/mako/.claude/worktrees/sto-rust/config/mako_sto_tpcc_local.yml"
+    },
+    {
+      "actual_sha256": "4aca8d7e118bc565286b0b5f87cd0cca4bd24fa2314c85761fa825e8c0ba5e51",
+      "expected_sha256": "4aca8d7e118bc565286b0b5f87cd0cca4bd24fa2314c85761fa825e8c0ba5e51",
+      "label": "launch0-live-runner",
+      "matches": true,
+      "path": "/home/users/shuai/mako/.claude/worktrees/sto-rust/scripts/run_sto_tpcc_compare.py"
+    },
+    {
+      "actual_sha256": "4aca8d7e118bc565286b0b5f87cd0cca4bd24fa2314c85761fa825e8c0ba5e51",
+      "expected_sha256": "4aca8d7e118bc565286b0b5f87cd0cca4bd24fa2314c85761fa825e8c0ba5e51",
+      "label": "launch0-archived-runner",
+      "matches": true,
+      "path": "/var/tmp/sto-capacity-20260909.kKklOX/performance-final-atomic-4g/runner-20260909T084339Z.py"
+    },
+    {
+      "actual_sha256": "402af5c22414e52b67f1f1c2710a2f93375b82cdc29c9a4f9be92fb9ff265055",
+      "expected_sha256": "402af5c22414e52b67f1f1c2710a2f93375b82cdc29c9a4f9be92fb9ff265055",
+      "label": "launch0-archived-controller",
+      "matches": true,
+      "path": "/var/tmp/sto-capacity-20260909.kKklOX/performance-final-atomic-4g/orchestrator-20260909T084339Z.py"
+    },
+    {
+      "actual_sha256": "7d29c5077d9a62b9bdce4c4b1a7f1c7eecc206fc7cc92138e8b921321a579b87",
+      "expected_sha256": "7d29c5077d9a62b9bdce4c4b1a7f1c7eecc206fc7cc92138e8b921321a579b87",
+      "label": "unchanged-Rust-PGO-archive",
+      "matches": true,
+      "path": "/var/tmp/sto-capacity-20260909.kKklOX/pgo-batched/cargo-use/release/libsto_tpcc_ffi.a"
+    },
+    {
+      "actual_sha256": "c14043bbd29a8f74459bb2ed1bfcb98917313ee508fd4c2a7f2a9412dadea62b",
+      "expected_sha256": "c14043bbd29a8f74459bb2ed1bfcb98917313ee508fd4c2a7f2a9412dadea62b",
+      "label": "unchanged-Rust-merged-profile",
+      "matches": true,
+      "path": "/var/tmp/sto-capacity-20260909.kKklOX/pgo-batched/merged.profdata"
+    }
+  ],
+  "finished_at_utc": "2026-09-09T09:29:02.134410+00:00",
+  "launch_metadata_count": 1,
+  "qualification": "This postflight ran after the complete30-sample marker and process-exit check. It read and hashed all inputs without modifying them. File identity was checked at launch/relink and again here; no continuous filesystem-monitoring claim is made.",
+  "started_at_utc": "2026-09-09T09:29:01.832328+00:00",
+  "status": "passed"
+}

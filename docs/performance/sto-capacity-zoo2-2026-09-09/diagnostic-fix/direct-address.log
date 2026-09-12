@@ -1,0 +1,3 @@
+command: /dev/shm/sto-output-regression.2V57O6/test_benchmark_output-address
+Passed 100 bounded capacity diagnostics with concurrent shutdown logging
+exit_status=0

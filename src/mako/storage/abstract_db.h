@@ -13,6 +13,10 @@
 #include "../str_arena.h"
 
 class mbta_sharded_ordered_index;
+class TxnTpccPaymentCapability;
+class TxnTpccNewOrderCapability;
+class TxnTpccDeliveryCapability;
+class TxnTpccStockLevelCapability;
 
 /**
  * Abstract interface for a DB. This is to facilitate writing
@@ -96,9 +100,13 @@ public:
    * Initializes a new txn object the space pointed to by buf
    *
    * Transaction flags from the retired original-Silo/NDB engine are not
-   * supported. Production STO/MassTrans callers must pass zero.
+   * supported. Current C++ STO/MassTrans callers must pass zero.
    * TxnProfileHint is backend-neutral metadata; the current mbta wrapper
    * does not use it to alter transaction behavior.
+   *
+   * The return is backend-defined. mbta_wrapper starts ambient thread-local
+   * state and returns nullptr by design; callers must not require a non-null
+   * native result.
    *
    * [buf, buf + sizeof_txn_object(txn_flags)) is a valid ptr
    */
@@ -131,7 +139,7 @@ public:
   /**
    * don't send requests to Paxos groups
    * @param txn
-   * @return
+   * @return backend-defined commit result
    */
   virtual bool commit_txn_no_paxos(void *txn) = 0;
 
@@ -145,11 +153,17 @@ public:
    * maintain a hash ma from table_id to abstract_ordered_index(mbta_ordered_index)
    *
    * @param table_id
-   * @return
+   * @return Backend-defined pointer, or nullptr when the ID is unknown. The
+   *         concrete backend defines ownership and lifetime.
    */
   virtual abstract_ordered_index *
   get_index_by_table_id(unsigned short table_id) = 0;
 
+  /**
+   * Historical size-hint open surface. Ownership is backend-defined and callers
+   * must handle nullptr. The current mbta_wrapper retires this overload and
+   * always returns nullptr.
+   */
   virtual abstract_ordered_index *
   open_index(const std::string &name,
              size_t value_size_hint,
@@ -162,9 +176,18 @@ public:
   virtual void preallocate_open_index() = 0;
   virtual void init() = 0;
 
+  /**
+   * Find or open one per-shard table. Pointer ownership is backend-defined;
+   * nullptr is an ordinary capacity, topology, or backend failure.
+   */
   virtual abstract_ordered_index *
   open_index(const std::string &name, int shard_index = -1) = 0;
 
+  /**
+   * Find or open one logical table across configured shards. Overrides may
+   * return nullptr; callers must check it. The base implementation is
+   * unsupported.
+   */
   virtual mbta_sharded_ordered_index *
   open_sharded_index(const std::string &name) {
     NDB_UNIMPLEMENTED("open_sharded_index");
@@ -176,6 +199,63 @@ public:
   virtual void shard_serialize_util(uint32_t timestamp)  = 0;
   virtual void shard_unlock(bool committed) = 0;
   virtual void shard_reset() = 0;
+
+  /**
+   * Returns an optional fixed-width point-read extension for an index opened
+   * by this database. The default keeps every existing backend on its literal
+   * scalar path. Implementations may use a zero-cost static downcast because
+   * callers must pass an index returned by this same abstract_db instance.
+   *
+   * Keep additive capability and lifecycle hooks at the tail so existing
+   * virtual method slots retain their order when this interface is rebuilt.
+   */
+  virtual TxnFixedReadCapability *
+  txn_fixed_read_capability(abstract_ordered_index *) noexcept {
+    return nullptr;
+  }
+
+  virtual TxnFixedModifyCapability *
+  txn_fixed_modify_capability(abstract_ordered_index *) noexcept {
+    return nullptr;
+  }
+
+  virtual TxnFixedPutCapability *
+  txn_fixed_put_capability(abstract_ordered_index *) noexcept {
+    return nullptr;
+  }
+
+  virtual TxnInsertBatchCapability *
+  txn_insert_batch_capability() noexcept {
+    return nullptr;
+  }
+
+  virtual TxnTpccPaymentCapability *
+  txn_tpcc_payment_capability() noexcept {
+    return nullptr;
+  }
+
+  virtual TxnTpccNewOrderCapability *
+  txn_tpcc_new_order_capability() noexcept {
+    return nullptr;
+  }
+
+  virtual TxnTpccDeliveryCapability *
+  txn_tpcc_delivery_capability() noexcept {
+    return nullptr;
+  }
+
+  virtual TxnTpccStockLevelCapability *
+  txn_tpcc_stock_level_capability() noexcept {
+    return nullptr;
+  }
+
+  // Called once after a successful load and its synchronization barriers,
+  // before benchmark workers are created. Recovery and no-load runs skip it.
+  virtual void on_load_complete() {}
+
+  // Called while workers are quiescent. Backends with bounded resources may
+  // report usage and configured limits without adding transaction-path work.
+  virtual void report_capacity_usage(const char *phase) const { (void)phase; }
 };
 
 #endif /* _ABSTRACT_DB_H_ */

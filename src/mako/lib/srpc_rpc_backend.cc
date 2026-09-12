@@ -14,6 +14,7 @@
 #include "srpc_rpc_backend.h"
 #include "lib/assert.h"
 #include "lib/common.h"
+#include "lib/fasttransport.h"
 #include "lib/message.h"
 #include "lib/helper_queue.h"
 #include "thread.h"
@@ -31,10 +32,6 @@ void TransportBackendService::__dispatch__(srpc::i32 rpc_id, rusty::Box<srpc::Re
                                            srpc::WeakServerConnection weak_sconn) {
     SrpcRpcBackend::RequestHandler(static_cast<uint8_t>(rpc_id), std::move(req), weak_sconn, backend_);
 }
-
-// External callbacks registered by bench.cc and dbtest.cc
-extern std::function<int(int,int)> bench_callback_;
-extern std::function<int(int,int)> dbtest_callback_;
 
 // Constructor
 SrpcRpcBackend::SrpcRpcBackend(const transport::Configuration& config,
@@ -178,12 +175,15 @@ rusty::Option<rusty::Arc<srpc::Client>> SrpcRpcBackend::GetOrCreateClient(uint8_
     // Handle shard failure scenarios
     auto session_key = std::make_tuple(LOCALHOST_CENTER_INT, shard_idx, server_id);
 
-    if (sync_util::sync_logger::failed_shard_index >= 0) {
+    const int failed_shard_index =
+        sync_util::sync_logger::failed_shard_index.load(
+            std::memory_order_relaxed);
+    if (failed_shard_index >= 0) {
         if (cluster_role_ == LEARNER_CENTER_INT)
             clusterRoleSentTo = LOCALHOST_CENTER_INT;
 
         if (cluster_role_ == LOCALHOST_CENTER_INT) {
-            if (shard_idx == sync_util::sync_logger::failed_shard_index) {
+            if (shard_idx == failed_shard_index) {
                 session_key = std::make_tuple(LEARNER_CENTER_INT, shard_idx, server_id);
                 clusterRoleSentTo = LEARNER_CENTER_INT;
             }
@@ -531,14 +531,11 @@ void SrpcRpcBackend::RunEventLoop() {
             void* req_handle_ptr;
             size_t msg_size = 0;
 
-            // Fetch responses from helper thread queue
-            while (!server_queue->is_req_buffer_empty()) {
-                // Check stop flag before processing each response
-                if (stop_) {
-                    break;
-                }
-
-                server_queue->fetch_one_req(&req_handle_ptr, msg_size);
+            // Fetch and test under HelperQueue's mutex. Reading the count and
+            // then fetching in separate critical sections races the producer
+            // and does twice the synchronization work.
+            while (!stop_ &&
+                   server_queue->fetch_one_req(&req_handle_ptr, msg_size)) {
 
                 // Cast back to void* key and lookup SrpcRequestHandle
                 void* key = reinterpret_cast<void*>(req_handle_ptr);
@@ -664,15 +661,11 @@ void SrpcRpcBackend::Stop() {
     }
     Notice("SrpcRpcBackend::Stop: Closed %zu client connections", clients_to_close.size());
 
-    // Clean up any remaining pending requests in the map
-    {
-        std::lock_guard<std::mutex> guard(srpc_request_map_lock_);
-        size_t remaining = srpc_request_map_.size();
-        if (remaining > 0) {
-            Notice("SrpcRpcBackend::Stop: Cleaning up %zu remaining pending requests", remaining);
-            srpc_request_map_.clear();
-        }
-    }
+    // A helper may already have fetched an opaque SrpcRequestHandle pointer.
+    // Signaling its queue does not join that helper, so deleting pending map
+    // entries here would invalidate a handle still being processed. The
+    // owner joins helpers before destroying this backend; retain the entries
+    // until then.
 
     // @unsafe { std::atomic load for statistics - not borrow-checked }
     auto resp_size = msg_size_resp_sent_.load(std::memory_order_relaxed);
@@ -769,11 +762,9 @@ void SrpcRpcBackend::RequestHandler(uint8_t req_type, rusty::Box<srpc::Request> 
         bool is_datacenter_failure = ctrl_req.targert_server_id == 10000;
 
         if (is_datacenter_failure) {
-            if (dbtest_callback_)
-                dbtest_callback_(ctrl_req.control, ctrl_req.value);
+            invoke_fasttransport_for_dbtest(ctrl_req.control, ctrl_req.value);
         } else {
-            if (bench_callback_)
-                bench_callback_(ctrl_req.control, ctrl_req.value);
+            invoke_fasttransport_for_bench(ctrl_req.control, ctrl_req.value);
         }
 
         get_int_response_t resp;

@@ -2,6 +2,8 @@
 #ifndef _LIB_SHARDCLIENT_H_
 #define _LIB_SHARDCLIENT_H_
 
+#include <atomic>
+
 #include "lib/fasttransport.h"
 #include "lib/client.h"
 #include "lib/promise.h"
@@ -15,6 +17,7 @@ namespace mako
     {
     public:
         ShardClient(std::string file, string cluster, int shardIndex, int par_id);
+        ~ShardClient();
         int remoteGet(int remote_table_id, std::string key, std::string &value);
         int remoteScan(int remote_table_id, std::string start_key, std::string end_key, std::string &value);
 
@@ -54,7 +57,7 @@ namespace mako
         void setBlocking(bool);
         bool getBreakTimeout();
         bool isBreakTimeout;
-        bool isBlocking;
+        std::atomic<bool> isBlocking;
         bool stopped;
     protected:
         transport::Configuration config;

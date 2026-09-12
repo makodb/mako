@@ -1,0 +1,34 @@
+-- Using Homebrew libc++ from /home/users/shuai/.linuxbrew/opt/llvm@22/lib
+-- Auto-detected LIBCLANG_PATH=/home/users/shuai/.linuxbrew/opt/llvm@21/lib (Homebrew clang 21)
+-- RustyCpp parallel jobs: 128
+-- Rusty C++ Checker submodule found at: /home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp
+-- Checker will be built on demand at: /home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/target/release/rusty-cpp-checker
+-- rusty-cpp toolchain: Clang (/home/users/shuai/.linuxbrew/opt/llvm@22/bin/clang++)
+-- Default runtime Raft group mode: single (override with --raft-groups or MAKO_RAFT_GROUP_MODE)
+-- Generated Masstree config.h via CMake: /var/tmp/mako-sto-bench-20260827.J2TZj6/build/generated/masstree/config.h
+-- Reuse fiber enabled
+-- GoogleTest configured from vendored source: /home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/googletest/googletest
+-- Skipping test_masstree_legacy_scan: missing log.hh
+-- Test targets configured:
+--   Masstree Tests:
+--     - test_masstree: Core Masstree b-tree regression tests
+--   Silo/STO Tests:
+--     - test_silo_varint: Varint encoding/decoding (22 tests)
+--     - test_silo_rcu_thread: RCU memory management (9 tests)
+--     - test_silo_allocator_tuple: Allocator + Tuple integration (18 tests)
+--     - test_sto_transaction: STO Transaction RCU (13 tests)
+--     - test_sto_transaction_real: STO Transaction integration tests
+-- Additional perf binaries:
+--   - masstree_perf: On-demand Masstree throughput benchmark (JSON output)
+-- 
+-- Run all tests with: make run_tests
+-- Run Silo/STO tests: make run_silo_sto_tests
+-- Or individually: make test && ctest
+-- Configuring done (1.2s)
+CMake Warning (dev) in CMakeLists.txt:
+  CMake's support for `import std;` in C++23 and newer is experimental.  It
+  is meant only for experimentation and feedback to CMake developers.
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+-- Generating done (0.7s)
+-- Build files have been written to: /var/tmp/mako-sto-bench-20260827.J2TZj6/build

@@ -42,6 +42,7 @@ Welcome to the Mako documentation.
   - [Client-Server Roadmap](architecture/client-server-roadmap.md)
 - **[Multi-Shard Single Process](architecture/multi-shard.md)** - Running multiple shards in one process
 - **[Design Principles](architecture/design-principles.md)** - Core design philosophy and principles
+- **[Rust STO Design](architecture/rust-sto.md)** - Living design and implementation contract for native Rust STO and the Masstree C ABI
 - **[Speculative 2PC](architecture/speculative-2pc.md)** - Speculative two-phase commit protocol
 - **[Paxos](architecture/paxos.md)** - Paxos benchmarking commands
 
@@ -99,6 +100,7 @@ Welcome to the Mako documentation.
 ## Performance
 
 - **[Profiling & Plotting](performance/profiling.md)** - CPU profiling, memory analysis, and plotting
+- **[Rust STO TPC-C PGO](performance/sto-tpcc-rust-pgo.md)** - Reproducible two-pass Rust-staticlib PGO build
 - **[CPU Throttling](performance/cpu_throttling.md)** - CPU throttling for scaling tests
   - [CPU Limiting Plan](performance/cpu_limiting_plan.md)
 
@@ -232,4 +234,4 @@ Legacy documentation kept for reference:
 
 ---
 
-*Last updated: April 2026*
+*Last updated: August 2026*

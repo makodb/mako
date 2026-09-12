@@ -1,0 +1,15 @@
+Test project /var/tmp/mako-sto-bench-20260827.J2TZj6/build
+    Start  1: test_mtree_abi_c11_header
+1/2 Test  #1: test_mtree_abi_c11_header ........   Passed    0.03 sec
+    Start 41: test_mtree_abi
+2/2 Test #41: test_mtree_abi ...................   Passed    0.41 sec
+
+100% tests passed, 0 tests failed out of 2
+
+Label Time Summary:
+abi         =   0.44 sec*proc (2 tests)
+c11         =   0.03 sec*proc (1 test)
+masstree    =   0.44 sec*proc (2 tests)
+silo        =   0.41 sec*proc (1 test)
+
+Total Test time (real) =   0.46 sec

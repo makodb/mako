@@ -3,7 +3,7 @@
 # Default: Uses native platform (ARM64 on Mac M4, AMD64 on Windows/Linux x86_64)
 # To force AMD64: docker build --build-arg FORCE_AMD64=true -f Dockerfile.ubuntu24 -t mako-build:ubuntu24 .
 #
-FROM ubuntu:24.04
+FROM ubuntu:24.04@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517
 
 # Avoid interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
@@ -28,21 +28,46 @@ RUN git config --global --add safe.directory /workspace
 COPY apt_packages.sh /tmp/apt_packages.sh
 RUN bash /tmp/apt_packages.sh && rm /tmp/apt_packages.sh
 
-# Install Rust toolchain from official static tarballs.
+# Install Rust and rust-src from official static tarballs. The compile-fail
+# snapshots include standard-library spans and require matching sources.
 # This avoids rustup runtime issues seen in some restricted Docker environments.
-ARG RUST_VERSION=1.91.0
+ARG RUST_VERSION=1.95.0
 RUN set -eux; \
     arch="$(dpkg --print-architecture)"; \
     case "${arch}" in \
-      amd64) rust_target="x86_64-unknown-linux-gnu" ;; \
-      arm64) rust_target="aarch64-unknown-linux-gnu" ;; \
+      amd64) \
+        rust_target="x86_64-unknown-linux-gnu"; \
+        rust_sha256="a47ac940abd12399d59ad15c877e7113fa35f2b9ec7e6a8a045d4fd8b9741dea" \
+        ;; \
+      arm64) \
+        rust_target="aarch64-unknown-linux-gnu"; \
+        rust_sha256="3b9385d3144ac57616befa0ccbac524f857ba1b4ab074226e73a24d43568a98e" \
+        ;; \
       *) echo "Unsupported architecture: ${arch}" >&2; exit 1 ;; \
     esac; \
+    rust_src_sha256="98548815569318eb60afe7189ace6bca4ba6e4ae59a54f111d276ab78d6ddd10"; \
     rust_tarball="rust-${RUST_VERSION}-${rust_target}.tar.gz"; \
-    curl -LO "https://static.rust-lang.org/dist/${rust_tarball}"; \
+    rust_src_tarball="rust-src-${RUST_VERSION}.tar.gz"; \
+    curl --proto '=https' --tlsv1.2 -fL --retry 3 \
+      --output "${rust_tarball}" \
+      "https://static.rust-lang.org/dist/${rust_tarball}"; \
+    curl --proto '=https' --tlsv1.2 -fL --retry 3 \
+      --output "${rust_src_tarball}" \
+      "https://static.rust-lang.org/dist/${rust_src_tarball}"; \
+    printf '%s  %s\n' "${rust_sha256}" "${rust_tarball}" \
+      | sha256sum --check --strict; \
+    printf '%s  %s\n' "${rust_src_sha256}" "${rust_src_tarball}" \
+      | sha256sum --check --strict; \
     tar xzf "${rust_tarball}"; \
+    tar xzf "${rust_src_tarball}"; \
     "./rust-${RUST_VERSION}-${rust_target}/install.sh" --prefix=/opt/rust; \
-    rm -rf "rust-${RUST_VERSION}-${rust_target}" "${rust_tarball}"
+    "./rust-src-${RUST_VERSION}/install.sh" --prefix=/opt/rust; \
+    test -r /opt/rust/lib/rustlib/src/rust/library/core/src/marker.rs; \
+    rm -rf \
+      "rust-${RUST_VERSION}-${rust_target}" \
+      "rust-src-${RUST_VERSION}" \
+      "${rust_tarball}" \
+      "${rust_src_tarball}"
 ENV PATH="/opt/rust/bin:${PATH}"
 
 # Pre-create build directory

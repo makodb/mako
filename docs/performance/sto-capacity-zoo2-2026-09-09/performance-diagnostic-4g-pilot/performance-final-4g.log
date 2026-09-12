@@ -1,0 +1,21 @@
+BLOCK 2026-09-09T08:10:11.108039+00:00 {'repetition': 0, 'threads': 16, 'variant': 'new', 'engines': ['cpp', 'rust'], 'pair_id': 'r00-c01-16t-new'}
+[guard] r00-c01-16t-new attempt=1 waiting for the next LXD restart after NRestarts=46935
+[guard] r00-c01-16t-new attempt=1 aligned after 12.119s at NRestarts=46936
+[guard] r00-c01-16t-new attempt=1 same-restart quiet-window=1 rejected: a selected CPU was below 95% idle
+[1] cpp TPC-C threads=warehouses=16 repetition=0 pair_attempt=1
+[guard] r00-c01-16t-new attempt=1 waiting for the next LXD restart after NRestarts=46936
+[guard] r00-c01-16t-new attempt=1 aligned after 22.926s at NRestarts=46937
+[guard] r00-c01-16t-new attempt=1 same-restart quiet-window=1 rejected: a selected CPU was below 95% idle
+[2] rust TPC-C threads=warehouses=16 repetition=0 pair_attempt=1
+BLOCK 2026-09-09T08:13:49.801272+00:00 {'repetition': 0, 'threads': 16, 'variant': 'old', 'engines': ['rust', 'cpp'], 'pair_id': 'r00-c01-16t-old'}
+[guard] r00-c01-16t-old attempt=1 waiting for the next LXD restart after NRestarts=46939
+[guard] r00-c01-16t-old attempt=1 aligned after 49.281s at NRestarts=46940
+[guard] r00-c01-16t-old attempt=1 same-restart quiet-window=1 rejected: a selected CPU was below 95% idle
+[3] rust TPC-C threads=warehouses=16 repetition=0 pair_attempt=1
+[guard] r00-c01-16t-old attempt=1 waiting for the next LXD restart after NRestarts=46942
+[guard] r00-c01-16t-old attempt=1 aligned after 46.645s at NRestarts=46943
+[guard] r00-c01-16t-old attempt=1 same-restart quiet-window=1 rejected: a selected CPU was below 95% idle
+[4] cpp TPC-C threads=warehouses=16 repetition=0 pair_attempt=1
+PROGRESS {"complete_blocks": 1, "cpp_new_over_old": {"max_percent": 99.30180649917111, "median_percent": 99.30180649917111, "min_percent": 99.30180649917111, "ratios": [0.9930180649917111]}, "median_throughput": {"new_cpp": 651606.31399957, "new_rust": 827341.2239123137, "old_cpp": 656187.77439362, "old_rust": 848775.9904054579}, "new_rust_over_cpp": {"max_percent": 126.96949156831832, "median_percent": 126.96949156831832, "min_percent": 126.96949156831832, "ratios": [1.2696949156831832]}, "normalized_rust_new_over_old_percent": [98.15997274888107], "old_rust_over_cpp": {"max_percent": 129.3495586975554, "median_percent": 129.3495586975554, "min_percent": 129.3495586975554, "ratios": [1.293495586975554]}, "rust_new_over_old": {"max_percent": 97.47462619873298, "median_percent": 97.47462619873298, "min_percent": 97.47462619873298, "ratios": [0.9747462619873297]}, "threads": 16}
+BLOCK 2026-09-09T08:18:32.421816+00:00 {'repetition': 0, 'threads': 1, 'variant': 'old', 'engines': ['cpp', 'rust'], 'pair_id': 'r00-c02-1t-old'}
+[guard] r00-c02-1t-old attempt=1 waiting for the next LXD restart after NRestarts=46943

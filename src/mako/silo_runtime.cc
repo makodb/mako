@@ -33,8 +33,6 @@ thread_local SiloRuntime* tl_silo_runtime = nullptr;
 
 // Static member initialization
 std::atomic<int> SiloRuntime::s_next_runtime_id_{0};
-rusty::Arc<SiloRuntime> SiloRuntime::s_global_default_{nullptr};
-std::mutex SiloRuntime::s_global_mutex_;
 
 // Event counter for allocator usage
 static event_counter evt_silo_runtime_region_usage("silo_runtime_region_usage_bytes");
@@ -42,10 +40,7 @@ static event_counter evt_silo_runtime_region_usage("silo_runtime_region_usage_by
 // @safe
 SiloRuntime::SiloRuntime()
     : runtime_id_(s_next_runtime_id_.fetch_add(1, std::memory_order_relaxed)),
-      // @unsafe {
-      // MasstreeContext is non-copyable/non-movable, so use raw pointer constructor
-      masstree_ctx_(new MasstreeContext()) {
-      // }
+      masstree_ctx_(rusty::Box<MasstreeContext>::emplace()) {
     // MasstreeContext is created inline and owned by this SiloRuntime
 }
 
@@ -71,9 +66,8 @@ void SiloRuntime::BindCurrentThread(SiloRuntime* runtime) {
     // }
 
     // Also bind the MasstreeContext for this runtime
-    if (runtime) {
-        MasstreeContext::BindCurrentThread(runtime->masstree_ctx_.get());
-    }
+    MasstreeContext::BindCurrentThread(
+        runtime ? runtime->masstree_ctx_.get() : nullptr);
 }
 
 // @safe
@@ -89,20 +83,11 @@ SiloRuntime* SiloRuntime::Current() {
 // @unsafe - Returns raw pointer for legacy compatibility
 // @lifetime: &'static
 SiloRuntime* SiloRuntime::GlobalDefault() {
-    // Fast path: already initialized
-    if (s_global_default_) {
-        return s_global_default_.as_ptr();
-    }
-
-    // Slow path: thread-safe lazy initialization
-    std::lock_guard<std::mutex> lock(s_global_mutex_);
-
-    // Double-check after acquiring lock
-    if (!s_global_default_) {
-        s_global_default_ = Create();
-    }
-
-    return s_global_default_.as_ptr();
+    // Function-local initialization is thread-safe.  Keep the Arc owner alive
+    // for the process lifetime: a runtime may own detached background threads,
+    // so static teardown must not reclaim it while those threads still run.
+    static const auto* const owner = new rusty::Arc<SiloRuntime>(Create());
+    return owner->as_ptr();
 }
 
 // =========================================================================
@@ -172,27 +157,30 @@ retry:
 // =========================================================================
 
 static size_t GetHugepageSize() {
-    static size_t sz = 0;
-    if (sz) return sz;
+    // Function-local initialization is synchronized by the C++ runtime.  The
+    // old mutable cache allowed two allocator users to race on the first call.
+    static const size_t sz = [] {
+        constexpr size_t default_size = 2 * 1024 * 1024;
+        FILE *f = fopen("/proc/meminfo", "r");
+        if (!f)
+            return default_size;
 
-    FILE *f = fopen("/proc/meminfo", "r");
-    if (!f) return 2 * 1024 * 1024;  // Default 2MB
-
-    char *linep = nullptr;
-    size_t n = 0;
-    static const char *key = "Hugepagesize:";
-    static const int keylen = strlen(key);
-
-    while (getline(&linep, &n, f) > 0) {
-        if (strstr(linep, key) == linep) {
-            sz = atol(linep + keylen) * 1024;
-            break;
+        char *linep = nullptr;
+        size_t n = 0;
+        static const char *key = "Hugepagesize:";
+        static const size_t keylen = strlen(key);
+        size_t detected = 0;
+        while (getline(&linep, &n, f) > 0) {
+            if (strstr(linep, key) == linep) {
+                detected = static_cast<size_t>(atol(linep + keylen)) * 1024;
+                break;
+            }
         }
-    }
-    free(linep);
-    fclose(f);
+        free(linep);
+        fclose(f);
 
-    if (!sz) sz = 2 * 1024 * 1024;  // Default 2MB
+        return detected ? detected : default_size;
+    }();
     return sz;
 }
 
@@ -408,8 +396,6 @@ void SiloRuntime::FaultRegion(size_t cpu) {
     static const size_t hugepgsize = GetHugepageSize();
     ALWAYS_ASSERT(cpu < alloc_.ncpus);
     regionctx &pc = *alloc_.regions[cpu];
-    if (pc.region_faulted)
-        return;
     lock_guard<std::mutex> l1(pc.fault_lock);
     lock_guard<spinlock> l(pc.lock);
     if (pc.region_faulted)
@@ -463,12 +449,16 @@ void SiloRuntime::FaultRegion(size_t cpu) {
 void SiloRuntime::DumpStats() {
     std::cerr << "[SiloRuntime " << runtime_id_ << "] ncpus=" << alloc_.ncpus << std::endl;
     for (size_t i = 0; i < alloc_.ncpus; i++) {
-        const bool f = alloc_.regions[i]->region_faulted;
-        const size_t remaining =
-            intptr_t(alloc_.regions[i]->region_end) -
-            intptr_t(alloc_.regions[i]->region_begin);
+        regionctx& pc = *alloc_.regions[i];
+        bool faulted;
+        size_t remaining;
+        {
+            lock_guard<spinlock> lock(pc.lock);
+            faulted = pc.region_faulted;
+            remaining = intptr_t(pc.region_end) - intptr_t(pc.region_begin);
+        }
         std::cerr << "[SiloRuntime " << runtime_id_ << "] cpu=" << i
-                  << " fully_faulted?=" << f
+                  << " fully_faulted?=" << faulted
                   << " remaining=" << remaining << " bytes" << std::endl;
     }
 }
@@ -478,15 +468,18 @@ void SiloRuntime::DumpStats() {
 // =========================================================================
 
 ticker& SiloRuntime::get_ticker() {
-    if (ticker_) {
-        return *ticker_;
-    }
+    ticker* instance = ticker_ptr_.load(std::memory_order_acquire);
+    if (instance)
+        return *instance;
 
     std::lock_guard<std::mutex> lock(ticker_mutex_);
-    if (!ticker_) {
+    instance = ticker_ptr_.load(std::memory_order_relaxed);
+    if (!instance) {
         ticker_ = std::make_unique<ticker>();
+        instance = ticker_.get();
+        ticker_ptr_.store(instance, std::memory_order_release);
     }
-    return *ticker_;
+    return *instance;
 }
 
 // =========================================================================
@@ -494,13 +487,16 @@ ticker& SiloRuntime::get_ticker() {
 // =========================================================================
 
 rcu& SiloRuntime::get_rcu() {
-    if (rcu_) {
-        return *rcu_;
-    }
+    rcu* instance = rcu_ptr_.load(std::memory_order_acquire);
+    if (instance)
+        return *instance;
 
     std::lock_guard<std::mutex> lock(rcu_mutex_);
-    if (!rcu_) {
+    instance = rcu_ptr_.load(std::memory_order_relaxed);
+    if (!instance) {
         rcu_ = std::make_unique<rcu>(this);
+        instance = rcu_.get();
+        rcu_ptr_.store(instance, std::memory_order_release);
     }
-    return *rcu_;
+    return *instance;
 }

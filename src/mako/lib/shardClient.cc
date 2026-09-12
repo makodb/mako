@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdlib.h>
+#include <memory>
 
 #include "lib/fasttransport.h"
 #include "lib/promise.h"
@@ -32,25 +33,37 @@ namespace mako
         std::string local_uri = config.shard(shardIndex, clusterRole).host;
         int id=par_id;
         // 0. initialize transport
-        transport = new FastTransport(file,
-                                      local_uri, // local_uri
-                                      cluster,
-                                      1, 0,       // nr_req_types (for client, setup to 0)
-                                      0,       // physPort
-                                      0, // shardIndex % 2 // numa node
-                                      shardIndex,
-                                      id);
+        auto transport_owner = std::make_unique<FastTransport>(
+            file,
+            local_uri, // local_uri
+            cluster,
+            1, 0,      // nr_req_types (for client, setup to 0)
+            0,         // physPort
+            0,         // shardIndex % 2 // numa node
+            shardIndex,
+            id);
 
         // 1. initialize Client
-        client = new mako::Client(config.configFile,
-                                    transport,
-                                    0); // 0 => generate a random client-id
+        auto client_owner = std::make_unique<mako::Client>(
+            config.configFile,
+            transport_owner.get(),
+            0); // 0 => generate a random client-id
 
         tid=0;
         int_received.resize(TThread::get_nshards());
         stopped = false;
         isBreakTimeout = false;
-        isBlocking = true; // If there is a timeout, we can't abort it, we should retry it util it is successful.
+        isBlocking.store(true, std::memory_order_relaxed); // If there is a timeout, we can't abort it, we should retry it util it is successful.
+        transport = transport_owner.release();
+        client = client_owner.release();
+    }
+
+    ShardClient::~ShardClient() {
+        stop();
+        delete client;
+        client = nullptr;
+        delete static_cast<FastTransport *>(transport);
+        transport = nullptr;
     }
 
     void ShardClient::stop() {
@@ -69,7 +82,7 @@ namespace mako
     }
 
     void ShardClient::setBlocking(bool pd=false) {
-        isBlocking=pd;
+        isBlocking.store(pd, std::memory_order_relaxed);
     }
 
     bool ShardClient::getBreakTimeout() {
@@ -198,7 +211,10 @@ namespace mako
                 timeout);
         value = promise.GetValue();
         int ret = promise.GetReply();
-        if (ret>0){
+        // Only an explicit participant ABORT proves that the remote helper
+        // already discarded its transaction. A timeout or transport error is
+        // ambiguous and still requires the coordinator's ABORT broadcast.
+        if (ret == ErrorCode::ABORT) {
             TThread::trans_nosend_abort |= (1 << dstShardIndex);
         }
         return ret;
@@ -236,7 +252,9 @@ namespace mako
         //Warning("remoteGET: key:%s,table_id:%d,key_len:%d",mako::printStringAsBit(key).c_str(),table_id,key.length());
         value = promise.GetValue();
         int ret = promise.GetReply();
-        if (ret>0){
+        // Match remoteScan: suppress a later ABORT RPC only when the server
+        // confirms that it already aborted this participant.
+        if (ret == ErrorCode::ABORT) {
             TThread::trans_nosend_abort |= (1 << dstShardIndex);
         }
         return ret;

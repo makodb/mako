@@ -281,6 +281,9 @@ When using this format with `dbtest`, pass `--site-name` so the process can map 
 - `--sync-dir`
 - `--replication` (`paxos` or `raft`)
 - `--startup-timeout-sec` (optional fail-fast guard for replicated localhost startup)
+- `--runtime` (benchmark duration in seconds, from 1 through 86400)
+- `--storage-engine` (`cpp` or `rust`; availability is target-specific below)
+- `--slow-exit` (run the benchmark's orderly teardown path)
 - `--is-config-node`
 - `--config-node-addr`
 - `--config-db-path`
@@ -290,10 +293,13 @@ When using this format with `dbtest`, pass `--site-name` so the process can map 
 
 Note: `dbtest` does not currently expose a standard `--help` output.
 
-There is intentionally no storage-backend option. Every `dbtest` path uses
-STO `Transaction` with MassTrans through `mbta_wrapper`; the original Silo/NDB
-transaction engine is retired and guarded against compilation. Paxos and Raft
-select replication only. `SiloRuntime` remains live runtime support.
+The ordinary `dbtest` target accepts only `--storage-engine cpp`; it rejects
+`rust` and directs comparison runs to the separately built `sto_tpcc_bench`
+target. `sto_tpcc_bench` accepts `cpp` or `rust`, but its Rust adapter supports
+exactly one local, non-replicated shard. It has no remote indexes or distributed
+commit path. Paxos and Raft therefore remain C++-only. The original Silo/NDB
+transaction engine is retired; `SiloRuntime` remains allocator, RCU, and
+Masstree runtime support for the C++ path.
 
 ## Transport Backends
 

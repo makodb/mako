@@ -38,12 +38,16 @@ target_include_directories(masstree PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/..
     ${MASSTREE_CONFIG_INCLUDE_DIR}
 )
-# Inherit the project's standard compile options plus the forced
-# include of the generated masstree/config.h. The flag is set in the
-# root CMakeLists; if it's empty here (older builds) the option list
-# just becomes whatever was already added globally.
+# Force-include the generated Masstree config in each ordinary source without
+# attaching that option to the target. Target-level options also apply to
+# CMake's synthetic `std.cppm` compilation, where injecting a header before
+# the leading `module;` declaration is ill-formed. These sources themselves
+# import `std`, so the target must retain the project's CXX_MODULE_STD default.
 if(DEFINED MASSTREE_FORCE_INCLUDE_FLAG)
-    target_compile_options(masstree PUBLIC ${MASSTREE_FORCE_INCLUDE_FLAG})
+    foreach(_MASSTREE_SOURCE IN LISTS MASSTREE_LIB_SOURCES)
+        set_property(SOURCE "${_MASSTREE_SOURCE}" APPEND PROPERTY
+            COMPILE_OPTIONS ${MASSTREE_FORCE_INCLUDE_FLAG})
+    endforeach()
 endif()
 
 # ----------------------------------------------------------------------
@@ -64,8 +68,8 @@ function(_mako_add_masstree_legacy_test TARGET_NAME)
     )
     target_compile_options(${TARGET_NAME} PRIVATE
         ${TEST_COMPILE_OPTIONS}
-        ${MASSTREE_FORCE_INCLUDE_FLAG}
     )
+    mako_force_include_masstree_config(${ARGN})
     target_link_libraries(${TARGET_NAME} pthread)
     add_test(NAME ${TARGET_NAME} COMMAND ${TARGET_NAME})
     set_tests_properties(${TARGET_NAME} PROPERTIES

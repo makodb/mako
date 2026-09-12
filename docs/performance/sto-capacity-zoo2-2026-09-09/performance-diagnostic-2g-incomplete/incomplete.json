@@ -1,0 +1,213 @@
+{
+  "accepted_sample_keys": [
+    {
+      "engine": "cpp",
+      "repetition": 0,
+      "run_order": 1,
+      "threads": 16,
+      "throughput_txn_s": 645953.8351928836,
+      "variant": "new"
+    },
+    {
+      "engine": "rust",
+      "repetition": 0,
+      "run_order": 2,
+      "threads": 16,
+      "throughput_txn_s": 831398.5351754401,
+      "variant": "new"
+    },
+    {
+      "engine": "rust",
+      "repetition": 0,
+      "run_order": 3,
+      "threads": 16,
+      "throughput_txn_s": 850068.010387041,
+      "variant": "old"
+    },
+    {
+      "engine": "cpp",
+      "repetition": 0,
+      "run_order": 4,
+      "threads": 16,
+      "throughput_txn_s": 655178.0633780845,
+      "variant": "old"
+    },
+    {
+      "engine": "cpp",
+      "repetition": 0,
+      "run_order": 5,
+      "threads": 1,
+      "throughput_txn_s": 40760.149575877134,
+      "variant": "old"
+    },
+    {
+      "engine": "rust",
+      "repetition": 0,
+      "run_order": 6,
+      "threads": 1,
+      "throughput_txn_s": 58285.074512003106,
+      "variant": "old"
+    },
+    {
+      "engine": "rust",
+      "repetition": 0,
+      "run_order": 7,
+      "threads": 1,
+      "throughput_txn_s": 57297.34433442451,
+      "variant": "new"
+    },
+    {
+      "engine": "cpp",
+      "repetition": 0,
+      "run_order": 8,
+      "threads": 1,
+      "throughput_txn_s": 40425.57428838356,
+      "variant": "new"
+    },
+    {
+      "engine": "cpp",
+      "repetition": 1,
+      "run_order": 9,
+      "threads": 1,
+      "throughput_txn_s": 40465.89881693309,
+      "variant": "new"
+    },
+    {
+      "engine": "rust",
+      "repetition": 1,
+      "run_order": 10,
+      "threads": 1,
+      "throughput_txn_s": 57621.08079230225,
+      "variant": "new"
+    },
+    {
+      "engine": "rust",
+      "repetition": 1,
+      "run_order": 11,
+      "threads": 1,
+      "throughput_txn_s": 58212.272820033184,
+      "variant": "old"
+    },
+    {
+      "engine": "cpp",
+      "repetition": 1,
+      "run_order": 12,
+      "threads": 1,
+      "throughput_txn_s": 40724.678636442724,
+      "variant": "old"
+    }
+  ],
+  "accepted_samples": 12,
+  "configured_native_allocator_bytes": 2147483648,
+  "configured_rust_registry_budget_bytes": 8589934592,
+  "failed_engine": "rust",
+  "failed_repetition": 1,
+  "failed_returncode": -6,
+  "failed_variant": "old",
+  "failed_workers": 16,
+  "failure_diagnostic": "SiloRuntime[0]::AllocateUnmanagedWithLock: OOM",
+  "failure_phase": "measurement",
+  "failure_stderr": "logs-20260909T075837Z/014-r01-c02-16t-old-attempt01-rust.stderr.log",
+  "native_allocator_explanation": "The configured native region is divided across workers. AllocateUnmanagedWithLock aborts when an individual region is exhausted. The diagnostic identifies the runtime, not the specific region, and does not prove total process memory exhaustion. No operating-system OOM diagnosis is claimed.",
+  "qualification": "The controller stopped on the first terminal measurement failure. No silent retry, partial-pair acceptance, or mixing with 4G-native measurements. A fresh 4G-native protocol runs both binaries and engines consistently in performance-final-4g.",
+  "regions": [
+    {
+      "begin": "0x7b8cd4a00000",
+      "cpu": 0,
+      "end": "0x7b8cdca00000",
+      "size_bytes": 134217728
+    },
+    {
+      "begin": "0x7b8cdca00000",
+      "cpu": 1,
+      "end": "0x7b8ce4a00000",
+      "size_bytes": 134217728
+    },
+    {
+      "begin": "0x7b8ce4a00000",
+      "cpu": 2,
+      "end": "0x7b8ceca00000",
+      "size_bytes": 134217728
+    },
+    {
+      "begin": "0x7b8ceca00000",
+      "cpu": 3,
+      "end": "0x7b8cf4a00000",
+      "size_bytes": 134217728
+    },
+    {
+      "begin": "0x7b8cf4a00000",
+      "cpu": 4,
+      "end": "0x7b8cfca00000",
+      "size_bytes": 134217728
+    },
+    {
+      "begin": "0x7b8cfca00000",
+      "cpu": 5,
+      "end": "0x7b8d04a00000",
+      "size_bytes": 134217728
+    },
+    {
+      "begin": "0x7b8d04a00000",
+      "cpu": 6,
+      "end": "0x7b8d0ca00000",
+      "size_bytes": 134217728
+    },
+    {
+      "begin": "0x7b8d0ca00000",
+      "cpu": 7,
+      "end": "0x7b8d14a00000",
+      "size_bytes": 134217728
+    },
+    {
+      "begin": "0x7b8d14a00000",
+      "cpu": 8,
+      "end": "0x7b8d1ca00000",
+      "size_bytes": 134217728
+    },
+    {
+      "begin": "0x7b8d1ca00000",
+      "cpu": 9,
+      "end": "0x7b8d24a00000",
+      "size_bytes": 134217728
+    },
+    {
+      "begin": "0x7b8d24a00000",
+      "cpu": 10,
+      "end": "0x7b8d2ca00000",
+      "size_bytes": 134217728
+    },
+    {
+      "begin": "0x7b8d2ca00000",
+      "cpu": 11,
+      "end": "0x7b8d34a00000",
+      "size_bytes": 134217728
+    },
+    {
+      "begin": "0x7b8d34a00000",
+      "cpu": 12,
+      "end": "0x7b8d3ca00000",
+      "size_bytes": 134217728
+    },
+    {
+      "begin": "0x7b8d3ca00000",
+      "cpu": 13,
+      "end": "0x7b8d44a00000",
+      "size_bytes": 134217728
+    },
+    {
+      "begin": "0x7b8d44a00000",
+      "cpu": 14,
+      "end": "0x7b8d4ca00000",
+      "size_bytes": 134217728
+    },
+    {
+      "begin": "0x7b8d4ca00000",
+      "cpu": 15,
+      "end": "0x7b8d54a00000",
+      "size_bytes": 134217728
+    }
+  ],
+  "sealed_at_utc": "2026-09-09T08:12:00.947932+00:00",
+  "status": "incomplete_terminal_baseline_native_allocator_oom"
+}

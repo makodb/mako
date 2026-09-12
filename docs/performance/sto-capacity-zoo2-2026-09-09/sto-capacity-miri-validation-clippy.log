@@ -1,0 +1,28 @@
+   Compiling serde_core v1.0.229
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.24
+   Compiling masstree v0.0.0 (/home/users/shuai/mako/.claude/worktrees/sto-rust/crates/masstree)
+   Compiling zmij v1.0.23
+   Compiling target-triple v1.0.1
+   Compiling serde_json v1.0.151
+    Checking winnow v1.0.4
+    Checking mtree-sys v0.0.0 (/home/users/shuai/mako/.claude/worktrees/sto-rust/crates/mtree-sys)
+   Compiling serde v1.0.229
+    Checking memchr v2.8.3
+    Checking toml_writer v1.1.2+spec-1.1.0
+    Checking itoa v1.0.18
+    Checking glob v0.3.4
+    Checking termcolor v1.4.1
+   Compiling sto-masstree v0.0.0 (/home/users/shuai/mako/.claude/worktrees/sto-rust/crates/sto-masstree)
+    Checking mako-history v0.0.0 (/home/users/shuai/mako/.claude/worktrees/sto-rust/crates/mako-history)
+    Checking sto-core v0.0.0 (/home/users/shuai/mako/.claude/worktrees/sto-rust/crates/sto-core)
+    Checking toml_parser v1.1.3+spec-1.1.0
+   Compiling syn v3.0.4
+    Checking sto-test-datatypes v0.0.0 (/home/users/shuai/mako/.claude/worktrees/sto-rust/crates/sto-test-datatypes)
+    Checking serde_spanned v1.1.1
+    Checking toml_datetime v1.1.1+spec-1.1.0
+    Checking toml v1.1.4+spec-1.1.0
+   Compiling serde_derive v1.0.229
+    Checking trybuild v1.0.120
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 12.80s

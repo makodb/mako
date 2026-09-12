@@ -1,0 +1,52 @@
+Internal ctest changing into directory: /dev/shm/sto-capacity-asan-20260909-v4
+Test project /dev/shm/sto-capacity-asan-20260909-v4
+      Start  2: test_sto_tpcc_cpp_wrapper_smoke
+ 1/14 Test  #2: test_sto_tpcc_cpp_wrapper_smoke .................   Passed    0.10 sec
+      Start  3: test_sto_tpcc_cpp_wrapper_scan_smoke
+ 2/14 Test  #3: test_sto_tpcc_cpp_wrapper_scan_smoke ............   Passed    0.10 sec
+      Start  6: test_sto_tpcc_rust_startup_resource_exhausted
+ 3/14 Test  #6: test_sto_tpcc_rust_startup_resource_exhausted ...   Passed    0.14 sec
+      Start  7: test_sto_tpcc_rust_load_resource_exhausted
+ 4/14 Test  #7: test_sto_tpcc_rust_load_resource_exhausted ......   Passed    0.19 sec
+      Start  8: test_sto_tpcc_rejects_duplicate_local_shards
+ 5/14 Test  #8: test_sto_tpcc_rejects_duplicate_local_shards ....   Passed    0.14 sec
+      Start  9: test_sto_tpcc_rejects_partial_local_shards
+ 6/14 Test  #9: test_sto_tpcc_rejects_partial_local_shards ......   Passed    0.15 sec
+      Start 10: test_sto_tpcc_rejects_rust_distributed_shard
+ 7/14 Test #10: test_sto_tpcc_rejects_rust_distributed_shard ....   Passed    0.15 sec
+      Start 11: test_sto_tpcc_rejects_rust_replication
+ 8/14 Test #11: test_sto_tpcc_rejects_rust_replication ..........   Passed    0.14 sec
+      Start 12: test_sto_tpcc_rejects_rust_worker_limit
+ 9/14 Test #12: test_sto_tpcc_rejects_rust_worker_limit .........   Passed    0.15 sec
+      Start 14: test_sto_tpcc_ffi_c11_header
+10/14 Test #14: test_sto_tpcc_ffi_c11_header ....................   Passed    0.02 sec
+      Start 15: test_srpc_epoll_platform
+11/14 Test #15: test_srpc_epoll_platform ........................   Passed    0.03 sec
+      Start 54: SiloVarintTests
+12/14 Test #54: SiloVarintTests .................................   Passed    0.05 sec
+      Start 63: test_mtree_abi
+13/14 Test #63: test_mtree_abi ..................................   Passed    1.78 sec
+      Start 64: test_mako_value_metadata
+14/14 Test #64: test_mako_value_metadata ........................   Passed    0.03 sec
+
+100% tests passed, 0 tests failed out of 14
+
+Label Time Summary:
+abi              =   1.78 sec*proc (1 test)
+c11              =   0.02 sec*proc (1 test)
+capacity         =   0.33 sec*proc (2 tests)
+configuration    =   0.73 sec*proc (5 tests)
+epoll            =   0.03 sec*proc (1 test)
+ffi              =   3.08 sec*proc (12 tests)
+lifecycle        =   1.06 sec*proc (7 tests)
+masstree         =   3.06 sec*proc (11 tests)
+metadata         =   0.03 sec*proc (1 test)
+replay           =   0.03 sec*proc (1 test)
+rust             =   3.16 sec*proc (14 tests)
+serializer       =   0.05 sec*proc (1 test)
+silo             =   1.83 sec*proc (2 tests)
+srpc             =   0.03 sec*proc (1 test)
+sto              =   1.35 sec*proc (12 tests)
+tpcc             =   1.06 sec*proc (7 tests)
+
+Total Test time (real) =   3.17 sec

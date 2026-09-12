@@ -3,6 +3,13 @@
 **Date**: 2026-04-13
 **Purpose**: Assess each component's production-readiness and identify gaps to drive future development.
 
+> **Historical snapshot:** This report predates the native Rust STO work and the
+> current sanitizer disposition. Its percentages and “production-ready” labels
+> are not current release qualification. See the
+> [Rust STO design contract](architecture/rust-sto.md) and
+> [Masstree sanitizer findings](masstree-sanitizer-findings.md) for the current
+> bounded profile and known exclusions.
+
 ---
 
 ## Executive Summary

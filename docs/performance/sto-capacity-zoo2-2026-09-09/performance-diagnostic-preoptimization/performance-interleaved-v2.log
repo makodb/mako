@@ -1,0 +1,30 @@
+BLOCK 2026-09-09T06:43:36.455999+00:00 {'repetition': 0, 'threads': 4, 'variant': 'old', 'engines': ['cpp', 'rust'], 'pair_id': 'r00-c00-4t-old'}
+[guard] r00-c00-4t-old attempt=1 waiting for the next LXD restart after NRestarts=46854
+[guard] r00-c00-4t-old attempt=1 aligned after 17.687s at NRestarts=46855
+[1] cpp TPC-C threads=warehouses=4 repetition=0 pair_attempt=1
+[2] rust TPC-C threads=warehouses=4 repetition=0 pair_attempt=1
+BLOCK 2026-09-09T06:44:40.594568+00:00 {'repetition': 0, 'threads': 4, 'variant': 'new', 'engines': ['rust', 'cpp'], 'pair_id': 'r00-c00-4t-new'}
+[guard] r00-c00-4t-new attempt=1 waiting for the next LXD restart after NRestarts=46855
+[guard] r00-c00-4t-new attempt=1 aligned after 17.665s at NRestarts=46856
+[guard] r00-c00-4t-new attempt=1 restart-window attempt=1 skipped: a selected CPU was below 95% idle
+[guard] r00-c00-4t-new attempt=1 waiting for the next LXD restart after NRestarts=46856
+[guard] r00-c00-4t-new attempt=1 aligned after 61.436s at NRestarts=46857
+[3] rust TPC-C threads=warehouses=4 repetition=0 pair_attempt=1
+[4] cpp TPC-C threads=warehouses=4 repetition=0 pair_attempt=1
+PROGRESS {"complete_blocks": 1, "cpp_new_over_old": {"max_percent": 99.41597053969777, "median_percent": 99.41597053969777, "min_percent": 99.41597053969777, "ratios": [0.9941597053969776]}, "median_throughput": {"new_cpp": 168218.27902912593, "new_rust": 212469.35652415076, "old_cpp": 169206.49480754678, "old_rust": 217815.58436490304}, "new_rust_over_cpp": {"max_percent": 126.30574854909973, "median_percent": 126.30574854909973, "min_percent": 126.30574854909973, "ratios": [1.2630574854909973]}, "normalized_rust_new_over_old_percent": [98.1185668984676], "old_rust_over_cpp": {"max_percent": 128.72767361125446, "median_percent": 128.72767361125446, "min_percent": 128.72767361125446, "ratios": [1.2872767361125446]}, "rust_new_over_old": {"max_percent": 97.54552556175419, "median_percent": 97.54552556175419, "min_percent": 97.54552556175419, "ratios": [0.9754552556175419]}, "threads": 4}
+BLOCK 2026-09-09T06:46:48.228539+00:00 {'repetition': 0, 'threads': 16, 'variant': 'new', 'engines': ['cpp', 'rust'], 'pair_id': 'r00-c01-16t-new'}
+[guard] r00-c01-16t-new attempt=1 waiting for the next LXD restart after NRestarts=46857
+[guard] r00-c01-16t-new attempt=1 aligned after 17.932s at NRestarts=46858
+[guard] r00-c01-16t-new attempt=1 restart-window attempt=1 skipped: a selected CPU was below 95% idle
+[guard] r00-c01-16t-new attempt=1 waiting for the next LXD restart after NRestarts=46858
+[guard] r00-c01-16t-new attempt=1 aligned after 61.697s at NRestarts=46859
+[5] cpp TPC-C threads=warehouses=16 repetition=0 pair_attempt=1
+[6] rust TPC-C threads=warehouses=16 repetition=0 pair_attempt=1
+[guard] rejected both r00-c01-16t-new samples from attempt 1: rust_lxd_restart_count_changed, lxd_restart_count_changed
+[guard] r00-c01-16t-new attempt=2 waiting for the next LXD restart after NRestarts=46861
+[guard] r00-c01-16t-new attempt=2 aligned after 21.102s at NRestarts=46862
+[guard] r00-c01-16t-new attempt=2 restart-window attempt=1 skipped: a selected CPU was below 95% idle
+[guard] r00-c01-16t-new attempt=2 waiting for the next LXD restart after NRestarts=46862
+[guard] r00-c01-16t-new attempt=2 aligned after 61.687s at NRestarts=46863
+[guard] r00-c01-16t-new attempt=2 restart-window attempt=2 skipped: a selected CPU was below 95% idle
+[guard] r00-c01-16t-new attempt=2 waiting for the next LXD restart after NRestarts=46863

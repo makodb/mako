@@ -1,0 +1,13 @@
+   Compiling masstree v0.0.0 (/home/users/shuai/mako/.claude/worktrees/sto-rust/crates/masstree)
+   Compiling mtree-sys v0.0.0 (/home/users/shuai/mako/.claude/worktrees/sto-rust/crates/mtree-sys)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.40s
+     Running tests/native_integration.rs (/var/tmp/mako-sto-bench-20260827.J2TZj6/rust-target-final-6936abb30000-fatlto/debug/deps/native_integration-26dad28bb6ae6253)
+
+running 4 tests
+test one_shot_fixed_reads_reuse_results_and_end_native_guards ... ok
+test copied_scan_bounds_directions_and_resumption_round_trip ... ok
+test scoped_reads_end_before_insert_and_drop_during_unwind ... ok
+test negotiated_point_directory_round_trip_and_cross_worker_read ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

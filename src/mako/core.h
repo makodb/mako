@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <new>
 #include <sys/types.h>
 #include "macros.h"
 #include "util.h"
@@ -86,6 +87,16 @@ public:
    * SiloRuntime::try_register_current_thread() for graceful init.
    */
   static int try_current_core_id();
+
+  /**
+   * Constant-time, non-lazy proof that this thread still has exactly the
+   * assignment established by an owning runtime.  Unlike
+   * try_current_core_id(), this does not rediscover the current runtime; the
+   * caller has already proved the runtime identity and supplies its ID.
+   */
+  static inline bool matches_current_assignment(int runtime_id, int core_id) {
+    return tl_runtime_id == runtime_id && tl_core_id == core_id;
+  }
 
   // actual number of CPUs online for the system
   static unsigned num_cpus_online();
@@ -175,15 +186,23 @@ protected:
     return (const util::aligned_padded_elem<T, Pedantic> *) &bytes_[0];
   }
 
-  char bytes_[sizeof(util::aligned_padded_elem<T, Pedantic>) * NMAXCORES];
+  alignas(util::aligned_padded_elem<T, Pedantic>)
+      unsigned char bytes_[sizeof(util::aligned_padded_elem<T, Pedantic>) *
+                           NMAXCORES];
 };
 
 namespace private_ {
   template <typename T>
-  struct buf {
-    char bytes_[sizeof(T)];
-    inline T * cast() { return (T *) &bytes_[0]; }
-    inline const T * cast() const { return (T *) &bytes_[0]; }
+  struct alignas(T) buf {
+    unsigned char bytes_[sizeof(T)];
+    inline T * cast()
+    {
+      return std::launder(reinterpret_cast<T *>(&bytes_[0]));
+    }
+    inline const T * cast() const
+    {
+      return std::launder(reinterpret_cast<const T *>(&bytes_[0]));
+    }
   };
 }
 

@@ -1,0 +1,92 @@
++ cd /home/users/shuai/mako/.claude/worktrees/sto-rust
++ date -u
+Wed Sep  9 07:17:38 UTC 2026
++ sha256sum crates/sto-masstree/src/lib.rs crates/sto-masstree/src/registry_growth_tests.rs
+240a75173b6ee618243c53ed5bf543dd42b9a3ef033b06a9b358cc58d7bf492c  crates/sto-masstree/src/lib.rs
+f8d0ed43e27e241cbfc9d08391ff81ea676d51c8464a4feee822f0f617963e7c  crates/sto-masstree/src/registry_growth_tests.rs
++ rustup run nightly-2026-08-12 rustc -Vv
+rustc 1.99.0-nightly (3d6c19bb9 2026-08-11)
+binary: rustc
+commit-hash: 3d6c19bb9ab4798ecfb2ee943df01a811720fc27
+commit-date: 2026-08-11
+host: x86_64-unknown-linux-gnu
+release: 1.99.0-nightly
+LLVM version: 23.1.0
++ cargo +nightly-2026-08-12 miri --version
+miri 0.1.0 (3d6c19bb9a 2026-08-11)
++ env -u MIRIFLAGS -u MAKO_MTREE_NATIVE_INTEGRATION -u MAKO_MTREE_NATIVE_LIB_DIRS -u MAKO_MTREE_NATIVE_LIBS TMPDIR=/dev/shm CARGO_TARGET_DIR=/dev/shm/mako-capacity-prepaid-miri cargo +nightly-2026-08-12 miri test --manifest-path crates/Cargo.toml -p sto-masstree --lib --all-features --locked --offline registry_growth_tests -- --test-threads=1
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.13s
+     Running unittests src/lib.rs (/dev/shm/mako-capacity-prepaid-miri/miri/x86_64-unknown-linux-gnu/debug/build/sto-masstree/8dbfadd5bf50047d/out/sto_masstree-8dbfadd5bf50047d)
+
+running 13 tests
+test registry_growth_tests::cached_resolved_token_keeps_its_value_and_budget_after_directory_growth ... warning: integer-to-pointer cast
+   --> sto-masstree/src/direct_record.rs:187:21
+    |
+187 |         let entry = ptr::with_exposed_provenance::<RegistryEntry>(address);
+    |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ integer-to-pointer cast
+    |
+    = help: this program is using integer-to-pointer casts or (equivalently) `ptr::with_exposed_provenance`, which means that Miri might miss pointer bugs in this program
+    = help: see https://doc.rust-lang.org/nightly/std/ptr/fn.with_exposed_provenance.html for more details on that operation
+    = help: to ensure that Miri does not miss bugs in your program, use Strict Provenance APIs (https://doc.rust-lang.org/nightly/std/ptr/index.html#strict-provenance, https://crates.io/crates/sptr) instead
+    = help: you can then set `MIRIFLAGS=-Zmiri-strict-provenance` to ensure you are not relying on `with_exposed_provenance` semantics
+    = help: alternatively, `MIRIFLAGS=-Zmiri-permissive-provenance` disables this warning
+    = note: this is on thread `registry_growth`
+    = note: stack backtrace:
+            0: direct_record::resolve
+                at sto-masstree/src/direct_record.rs:187:21: 187:75
+            1: Registry::resolve_direct_access
+                at sto-masstree/src/lib.rs:7496:22: 7496:57
+            2: TableShared::resolve_directory_access
+                at sto-masstree/src/lib.rs:6322:53: 6322:99
+            3: Table::with_key_record_lookup::<bool, {closure@sto-masstree/src/lib.rs:3367:70: 3367:72}, {closure@sto-masstree/src/lib.rs:3382:63: 3382:83}>::{closure#1}
+                at sto-masstree/src/lib.rs:4385:30: 4385:72
+            4: sto_core::transaction::with_resolved_item_inner_validated::<TableAdapter, RecordAccess<'_>, bool, {closure@sto-masstree/src/lib.rs:4373:13: 4373:15}, {closure@sto-masstree/src/lib.rs:4383:13: 4383:15}, {closure@sto-masstree/src/lib.rs:3382:63: 3382:83}>
+                at sto-core/src/transaction.rs:1665:9: 1665:17
+            5: sto_core::Transaction::<'_>::with_resolved_item::<TableAdapter, RecordAccess<'_>, bool, {closure@sto-masstree/src/lib.rs:4373:13: 4373:15}, {closure@sto-masstree/src/lib.rs:4383:13: 4383:15}, {closure@sto-masstree/src/lib.rs:3382:63: 3382:83}>::{closure#0}
+                at sto-core/src/transaction.rs:1384:13: 1384:91
+            6: sto_core::Transaction::<'_>::with_resolved_item::<TableAdapter, RecordAccess<'_>, bool, {closure@sto-masstree/src/lib.rs:4373:13: 4373:15}, {closure@sto-masstree/src/lib.rs:4383:13: 4383:15}, {closure@sto-masstree/src/lib.rs:3382:63: 3382:83}>
+                at sto-core/src/transaction.rs:1379:22: 1385:13
+            7: Table::with_key_record_lookup::<bool, {closure@sto-masstree/src/lib.rs:3367:70: 3367:72}, {closure@sto-masstree/src/lib.rs:3382:63: 3382:83}>
+                at sto-masstree/src/lib.rs:4371:9: 4389:10
+            8: Table::put_presence_inner_with_lookup::<&[u8; 6], {closure@sto-masstree/src/lib.rs:3367:70: 3367:72}>
+                at sto-masstree/src/lib.rs:3382:9: 3386:11
+            9: Table::put_presence_inner::<&[u8; 6]>
+                at sto-masstree/src/lib.rs:3367:9: 3369:11
+            10: registry_growth_tests::cached_resolved_token_keeps_its_value_and_budget_after_directory_growth
+                at sto-masstree/src/registry_growth_tests.rs:512:5: 513:67
+            11: registry_growth_tests::cached_resolved_token_keeps_its_value_and_budget_after_directory_growth::{closure#0}
+                at sto-masstree/src/registry_growth_tests.rs:499:77: 499:77
+
+ok
+test registry_growth_tests::concurrent_growth_fits_the_exact_budget_without_duplicate_arenas ... ok
+test registry_growth_tests::detached_lock_keeps_only_its_live_arena_and_target_charged ... ok
+test registry_growth_tests::empty_eager_registry_preserves_its_owner_only_budget ... ok
+test registry_growth_tests::failed_batch_growth_does_not_consume_ids_or_retained_quota ... ok
+test registry_growth_tests::failed_directory_arena_and_lock_allocations_release_every_temporary_charge ... ok
+test registry_growth_tests::growth_preserves_borrowed_records_and_direct_tokens_across_buckets ... warning: integer-to-pointer cast
+   --> sto-masstree/src/direct_record.rs:175:21
+    |
+175 |         let entry = ptr::with_exposed_provenance::<StableRegistryEntry>(address);
+    |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ integer-to-pointer cast
+    |
+    = note: this is on thread `registry_growth`
+    = note: stack backtrace:
+            0: direct_record::resolve
+                at sto-masstree/src/direct_record.rs:175:21: 175:81
+            1: Registry::resolve_direct_access
+                at sto-masstree/src/lib.rs:7496:22: 7496:57
+            2: registry_growth_tests::growth_preserves_borrowed_records_and_direct_tokens_across_buckets
+                at sto-masstree/src/registry_growth_tests.rs:269:28: 269:71
+            3: registry_growth_tests::growth_preserves_borrowed_records_and_direct_tokens_across_buckets::{closure#0}
+                at sto-masstree/src/registry_growth_tests.rs:257:72: 257:72
+
+ok
+test registry_growth_tests::maximum_id_quota_allocates_only_a_small_sparse_root ... ok
+test registry_growth_tests::prepaid_charge_rejects_oversplits_and_releases_empty_balances_once ... ok
+test registry_growth_tests::prepaid_charge_splits_release_exact_bytes_in_every_drop_order ... ok
+test registry_growth_tests::prepaid_partial_construction_failure_releases_every_charge ... ok
+test registry_growth_tests::registry_id_table_constructor_enforces_its_shared_budget ... ok
+test registry_growth_tests::shared_budget_can_be_reused_after_another_table_releases_its_allocations ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 192 filtered out; finished in 12.90s
+

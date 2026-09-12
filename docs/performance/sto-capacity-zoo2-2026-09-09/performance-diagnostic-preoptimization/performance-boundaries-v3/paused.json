@@ -1,0 +1,8 @@
+{
+  "accepted_samples": 8,
+  "limitations": "One repetition per cell. Candidate sixteen-worker pair used zero settling delay; other accepted pairs used three seconds. Ratios do not establish regression or equivalence. Preliminary artifacts, not final optimized candidate results.",
+  "paused_at_utc": "2026-09-09T07:12:05.029433+00:00",
+  "reason": "Stopped at pair boundary after the first old/new blocks at one and sixteen workers to optimize shared-budget charging and rebuild candidate PGO.",
+  "status": "paused_preoptimization",
+  "validation": "Eight unique expected samples; matching binary hashes, CPU masks, workload and memory settings; all accepted measurement journal windows and competitor checks empty."
+}
