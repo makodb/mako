@@ -35,9 +35,12 @@ class TransItem {
     static constexpr TransItem::flags_type minsert_bit = user0_bit;
     static constexpr TransItem::flags_type mdelete_bit = user0_bit<<1;
 
-    TransItem() = default;
-    TransItem(TObject* owner, void* k)
-        : s_(reinterpret_cast<ownerstore_type>(owner)), key_(k) {
+    TransItem() noexcept
+        : s_(0), key_(nullptr), rdata_(nullptr), wdata_(nullptr) {
+    }
+    TransItem(TObject* owner, void* k) noexcept
+        : s_(reinterpret_cast<ownerstore_type>(owner)), key_(k),
+          rdata_(nullptr), wdata_(nullptr) {
     }
 
     // @unsafe: uses reinterpret_cast
@@ -199,9 +202,12 @@ class TransItem {
     }
 
 private:
-    // @unsafe: resets packed owner and raw transaction-buffer pointers while
-    // preserving this live object's allocation-owning string.
-    void reinitialize(TObject* owner, void* key) noexcept {
+    // Transaction-set arrays contain live TransItem objects for their entire
+    // allocation lifetime. Reuse a slot by resetting its members instead of
+    // placement-constructing over its live std::string. clear() retains at
+    // most the peak key capacity for that slot and releases it at array
+    // destruction; repeated transactions cannot orphan allocations.
+    void reset(TObject* owner, void* key) noexcept {
         s_ = reinterpret_cast<ownerstore_type>(owner);
         key_ = key;
         rdata_ = nullptr;

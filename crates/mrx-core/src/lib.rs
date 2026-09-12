@@ -276,7 +276,7 @@ pub trait Blobs: Send + Sync {
     /// on callback errors and unwinding panics.
     fn for_each_entry(
         &self,
-        f: &mut dyn FnMut(&[u8], &[u8]) -> Result<(), BlobError>,
+        f: &mut EntryVisitor<'_>,
     ) -> Result<(), BlobError> {
         let mut keys = Vec::new();
         self.for_each_key(&mut |key| keys.push(key.to_vec()))?;
@@ -304,7 +304,7 @@ pub trait Blobs: Send + Sync {
         &self,
         start: &[u8],
         max_entries: usize,
-        visitor: &mut dyn FnMut(&[u8], &[u8]) -> Result<bool, BlobError>,
+        visitor: &mut BoundedEntryVisitor<'_>,
     ) -> Result<(), BlobError> {
         if max_entries == 0 {
             return Ok(());
@@ -358,7 +358,7 @@ impl<T: Blobs + ?Sized> Blobs for std::sync::Arc<T> {
     }
     fn for_each_entry(
         &self,
-        f: &mut dyn FnMut(&[u8], &[u8]) -> Result<(), BlobError>,
+        f: &mut EntryVisitor<'_>,
     ) -> Result<(), BlobError> {
         (**self).for_each_entry(f)
     }
@@ -366,7 +366,7 @@ impl<T: Blobs + ?Sized> Blobs for std::sync::Arc<T> {
         &self,
         start: &[u8],
         max_entries: usize,
-        visitor: &mut dyn FnMut(&[u8], &[u8]) -> Result<bool, BlobError>,
+        visitor: &mut BoundedEntryVisitor<'_>,
     ) -> Result<(), BlobError> {
         (**self).for_each_entry_from(start, max_entries, visitor)
     }
@@ -391,6 +391,12 @@ pub enum BlobOp<'a> {
         key: &'a [u8],
     },
 }
+
+/// Callback shape of [`Blobs::for_each_entry`]: visits one `(key, value)` row.
+pub type EntryVisitor<'a> = dyn FnMut(&[u8], &[u8]) -> Result<(), BlobError> + 'a;
+
+/// Callback shape of [`Blobs::for_each_entry_from`]: `Ok(false)` stops early.
+pub type BoundedEntryVisitor<'a> = dyn FnMut(&[u8], &[u8]) -> Result<bool, BlobError> + 'a;
 
 /// A failure from the durable store.
 #[derive(Debug, Clone)]
@@ -559,7 +565,7 @@ mod tests {
             }
             fn for_each_entry(
                 &self,
-                f: &mut dyn FnMut(&[u8], &[u8]) -> Result<(), BlobError>,
+                f: &mut EntryVisitor<'_>,
             ) -> Result<(), BlobError> {
                 f(b"key", b"value")
             }
@@ -567,7 +573,7 @@ mod tests {
                 &self,
                 start: &[u8],
                 max_entries: usize,
-                visitor: &mut dyn FnMut(&[u8], &[u8]) -> Result<bool, BlobError>,
+                visitor: &mut BoundedEntryVisitor<'_>,
             ) -> Result<(), BlobError> {
                 assert_eq!(start, b"key");
                 assert_eq!(max_entries, 7);

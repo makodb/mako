@@ -9,7 +9,7 @@ publish = false
 
 [dependencies]
 mrx-core = { path = "../mrx-core" }
-mtree-sys = { path = "../mtree-sys" }
+mtx-sys = { path = "../mtx-sys" }
 # See crates/Cargo.toml: profiles live at the workspace root.
 
 [dev-dependencies]

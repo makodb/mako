@@ -2,32 +2,31 @@
 
 #include "masstree/kvthread.hh"
 #include "masstree/masstree_context.h"
+#include "silo_runtime.h"
 #include "sto/Interface.hh"
 #include "sto/Transaction.hh"
 
 #include <atomic>
 #include <mutex>
-#include <pthread.h>
 
 namespace mako::silo {
 namespace {
 
-std::atomic<int> next_thread_id{0};
-thread_local int current_thread_id = -1;
 thread_local int current_runtime = 0;
 std::once_flag epoch_once;
 std::atomic<bool> epoch_ready{false};
 
+// Every STO participant shares the process-global Silo runtime's Masstree
+// epoch domain. DB::Open, the replay pool, the Rust STO bridge, and the
+// Rust-facing local ABI all bind this same context, so a reclamation scan
+// sees every reader of every MassTrans table.
 MasstreeContext *sto_masstree_context() {
-  // Every MassTrans threadinfo must be in one reclamation domain. A context
-  // per adapter/runtime lets a reclaimer ignore active readers in another
-  // context. This process-lifetime context deliberately unifies them.
-  static auto *context = new MasstreeContext();
-  return context;
+  return SiloRuntime::GlobalDefault()->masstree_context();
 }
 
 }  // namespace
 
+// @safe: thread-local bookkeeping only.
 bool claim_thread_runtime(thread_runtime runtime) noexcept {
   const int requested =
       runtime == thread_runtime::native_mako
@@ -37,32 +36,34 @@ bool claim_thread_runtime(thread_runtime runtime) noexcept {
   return current_runtime == requested;
 }
 
+// @unsafe: TThread::assign_stable_id throws when the fixed tinfo space is
+// exhausted; translate that into the documented -1 result.
 int try_allocate_thread_id() noexcept {
-  if (current_thread_id >= 0) return current_thread_id;
-  const int id = next_thread_id.fetch_add(1, std::memory_order_acq_rel);
-  if (id >= MAX_THREADS) return -1;
-  current_thread_id = id;
-  return id;
+  // TThread::assign_stable_id owns the one process-wide TThread::id counter.
+  // Native Mako, the replay pool, the Rust STO bridge, and the local ABI all
+  // draw from it, so two adapters can never hand out the same tinfo slot.
+  // IDs are intentionally never reused: per-thread RCU state can outlive the
+  // OS thread that created it.
+  try {
+    return TThread::assign_stable_id();
+  } catch (...) {
+    return -1;
+  }
 }
 
+// @unsafe: binds Masstree thread-local context and starts a detached thread.
 bool ensure_epoch_runtime() noexcept {
   try {
     auto *context = sto_masstree_context();
     MasstreeContext::BindCurrentThread(context);
     std::call_once(epoch_once, [context] {
       // This is MassTrans::static_init(), centralised so native Mako and the
-      // C ABI cannot race to replace the callback or start two advancers.
-      Transaction::epoch_advance_callback = [context](unsigned) {
+      // Rust-facing local ABI install one callback and start one advancer.
+      Transaction::set_epoch_advance_callback([context](unsigned) {
         globalepoch++;
         context->increment_epoch(2);
-      };
-
-      pthread_t advancer;
-      if (pthread_create(&advancer, nullptr, Transaction::epoch_advancer,
-                         nullptr) != 0) {
-        return;
-      }
-      pthread_detach(advancer);
+      });
+      Transaction::start_epoch_advancer();
       epoch_ready.store(true, std::memory_order_release);
     });
   } catch (...) {

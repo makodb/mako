@@ -1,0 +1,7 @@
+error: lifetime may not live long enough
+ --> tests/ui/unique_item_keys.rs:4:5
+  |
+3 | fn escape(keys: &[()]) -> UniqueItemKeys<'static, ()> {
+  |                 - let's call the lifetime of this reference `'1`
+4 |     UniqueItemKeys::try_new(keys).unwrap()
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ returning this value requires that `'1` must outlive `'static`

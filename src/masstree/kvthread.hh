@@ -309,6 +309,11 @@ class threadinfo {
         // reclaimer that observes zero may therefore ignore this participant.
         store_gc_epoch(0, std::memory_order_release);
     }
+    // @safe - Reports whether this participant currently protects Masstree
+    // reads without exposing the epoch representation.
+    bool rcu_active() const noexcept {
+        return load_gc_epoch(std::memory_order_acquire) != 0;
+    }
     // @unsafe { May call hard_rcu_quiesce which frees memory }
     void rcu_quiesce() {
         rcu_start();
@@ -317,10 +322,15 @@ class threadinfo {
         if (limbo_epoch_ && (current - limbo_epoch_) > 2)
             hard_rcu_quiesce();
     }
+    // Drain this participant's complete callback queue during owner-thread
+    // teardown. The caller must have finished all protected reads and must not
+    // register another callback concurrently. This waits for a full grace
+    // period and returns with the participant inactive.
+    void rcu_drain();
     typedef ::mrcu_callback mrcu_callback;
     // @unsafe { record_rcu is not borrow-checked }
     void rcu_register(rusty::MutPtr<mrcu_callback> cb) {
-        record_rcu(cb, memtag_rcu_callback);
+        record_rcu(cb, memtag_mrcu_callback);
     }
 
     // thread management
@@ -367,6 +377,8 @@ class threadinfo {
     };
 
     enum { pool_max_nlines = 20 };
+    static_assert((memtag_mrcu_callback & memtag_pool_mask) > pool_max_nlines,
+                  "RCU callback tag must not overlap a pooled allocation tag");
     void* pool_[pool_max_nlines];
 
     limbo_group* limbo_head_;
@@ -385,7 +397,7 @@ class threadinfo {
         if ((tag & memtag_pool_mask) == 0) {
             p = memdebug::check_free_after_rcu(p, tag);
             ::free(p);
-        } else if (tag == memtag_rcu_callback)
+        } else if (tag == memtag_mrcu_callback)
             (*static_cast<mrcu_callback*>(p))(*this);
         else {
             p = memdebug::check_free_after_rcu(p, tag);

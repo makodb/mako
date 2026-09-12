@@ -44,7 +44,7 @@ fn main() {
     //
     // ORDER MATTERS, and it is the usual static-archive rule rather than
     // anything specific to this project: an archive only resolves symbols
-    // that are already undefined when the linker reaches it. mtree_abi.cc
+    // that are already undefined when the linker reaches it. mtx_abi.cc
     // (in libmako) pulls in masstree and srpc, so those must come after.
     for (lib, rel) in native_link_archives() {
         let path = build.join(rel);

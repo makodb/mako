@@ -11,7 +11,7 @@ use std::sync::{mpsc, Arc, Barrier, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use mrx_core::fakes::MemBlobs;
-use mrx_core::{BlobError, BlobOp, Blobs};
+use mrx_core::{BlobError, BlobOp, Blobs, EntryVisitor};
 
 use crate::checkpoint;
 use crate::record::{
@@ -111,7 +111,7 @@ impl Blobs for BlockingBlobs {
 
     fn for_each_entry(
         &self,
-        callback: &mut dyn FnMut(&[u8], &[u8]) -> Result<(), BlobError>,
+        callback: &mut EntryVisitor<'_>,
     ) -> Result<(), BlobError> {
         self.inner.for_each_entry(callback)
     }
@@ -946,7 +946,7 @@ impl Blobs for AmbiguousGcBlobs {
     }
     fn for_each_entry(
         &self,
-        callback: &mut dyn FnMut(&[u8], &[u8]) -> Result<(), BlobError>,
+        callback: &mut EntryVisitor<'_>,
     ) -> Result<(), BlobError> {
         self.inner.for_each_entry(callback)
     }

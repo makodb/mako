@@ -108,8 +108,13 @@ class CheckedInCanaryTests(unittest.TestCase):
             "SCAFFOLD=20 noncomment lines (10 DSL fences + 10 other)",
             output,
         )
-        # Re-measured 2026-08-18 when the rusty-cpp pin moved
-        # ebb51610 -> fa7dd9d9 and the src/srpc DSL blocks were regenerated.
+        # Re-measured 2026-09-06 after the Linux epoll DSL stopped forming a
+        # reference to the packed epoll_data_t member. Six new Rust lines and
+        # four generated C++ lines implement the fully initialized aggregate
+        # event factory used by both ADD and MOD.
+        #
+        # Earlier, the 2026-08-18 rusty-cpp pin move from ebb51610 to
+        # fa7dd9d9 changed the wider regeneration census as follows:
         # dsl 8943 -> 8942: the rusty::HashSet Serialize body lost its
         # `let kv = e.unwrap();` line (std_port's set iterator yields the
         # element, not a (T, monostate) pair).
@@ -127,7 +132,7 @@ class CheckedInCanaryTests(unittest.TestCase):
         # `Box<Shim> -> Box<Base>` upcast in the reactor and channel code.
         # Adopting that model is its own migration.
         self.assertIn(
-            "payload census:   dsl=52  generated=61 "
+            "payload census:   dsl=58  generated=65 "
             "nonblank/non-// lines",
             output,
         )

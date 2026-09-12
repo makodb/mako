@@ -360,9 +360,18 @@ fn validate_observation(
         || matches!(
             (operation, observation),
             (Operation::Get { .. }, Observation::Get(_))
-                | (Operation::Put { .. }, Observation::Put { .. })
-                | (Operation::Insert { .. }, Observation::Insert { .. })
-                | (Operation::Remove { .. }, Observation::Remove { .. })
+                | (
+                    Operation::Put { .. },
+                    Observation::Put { .. } | Observation::PutWithPrevious { .. }
+                )
+                | (
+                    Operation::Insert { .. },
+                    Observation::Insert { .. } | Observation::InsertWithPrevious { .. }
+                )
+                | (
+                    Operation::Remove { .. },
+                    Observation::Remove { .. } | Observation::RemoveWithPrevious { .. }
+                )
                 | (Operation::Scan { .. }, Observation::Scan(_))
         );
     if matches {
@@ -921,6 +930,19 @@ fn evaluate(candidate: &Candidate<'_>, base: &State) -> Result<State, String> {
                 }
                 view.insert(state_key, value.clone());
             }
+            (Operation::Put { table, key, value }, Observation::PutWithPrevious { previous }) => {
+                let state_key = StateKey::new(*table, key.clone());
+                let expected = view.get(&state_key).cloned();
+                if &expected != previous {
+                    return Err(format!(
+                        "operation {index} PUT table {table} key {} expected previous {}, observed previous {}",
+                        hex(key),
+                        optional_bytes(&expected),
+                        optional_bytes(previous)
+                    ));
+                }
+                view.insert(state_key, value.clone());
+            }
             (Operation::Insert { table, key, value }, Observation::Insert { inserted }) => {
                 let state_key = StateKey::new(*table, key.clone());
                 let expected = !view.contains_key(&state_key);
@@ -934,6 +956,24 @@ fn evaluate(candidate: &Candidate<'_>, base: &State) -> Result<State, String> {
                     view.insert(state_key, value.clone());
                 }
             }
+            (
+                Operation::Insert { table, key, value },
+                Observation::InsertWithPrevious { previous },
+            ) => {
+                let state_key = StateKey::new(*table, key.clone());
+                let expected = view.get(&state_key).cloned();
+                if &expected != previous {
+                    return Err(format!(
+                        "operation {index} INSERT table {table} key {} expected previous {}, observed previous {}",
+                        hex(key),
+                        optional_bytes(&expected),
+                        optional_bytes(previous)
+                    ));
+                }
+                if expected.is_none() {
+                    view.insert(state_key, value.clone());
+                }
+            }
             (Operation::Remove { table, key }, Observation::Remove { existed }) => {
                 let state_key = StateKey::new(*table, key.clone());
                 let expected = view.contains_key(&state_key);
@@ -941,6 +981,19 @@ fn evaluate(candidate: &Candidate<'_>, base: &State) -> Result<State, String> {
                     return Err(format!(
                         "operation {index} REMOVE table {table} key {} expected existed={expected}, observed existed={existed}",
                         hex(key)
+                    ));
+                }
+                view.remove(&state_key);
+            }
+            (Operation::Remove { table, key }, Observation::RemoveWithPrevious { previous }) => {
+                let state_key = StateKey::new(*table, key.clone());
+                let expected = view.get(&state_key).cloned();
+                if &expected != previous {
+                    return Err(format!(
+                        "operation {index} REMOVE table {table} key {} expected previous {}, observed previous {}",
+                        hex(key),
+                        optional_bytes(&expected),
+                        optional_bytes(previous)
                     ));
                 }
                 view.remove(&state_key);

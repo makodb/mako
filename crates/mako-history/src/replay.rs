@@ -133,8 +133,22 @@ fn render_observation(observation: Option<&Observation>) -> String {
         Some(Observation::Get(None)) => "get missing".to_owned(),
         Some(Observation::Get(Some(value))) => format!("get {}", hex(value)),
         Some(Observation::Put { created }) => format!("put created={created}"),
+        Some(Observation::PutWithPrevious { previous }) => {
+            format!(
+                "put previous={}",
+                render_optional_bytes(previous.as_deref())
+            )
+        }
         Some(Observation::Insert { inserted }) => format!("insert inserted={inserted}"),
+        Some(Observation::InsertWithPrevious { previous }) => format!(
+            "insert previous={}",
+            render_optional_bytes(previous.as_deref())
+        ),
         Some(Observation::Remove { existed }) => format!("remove existed={existed}"),
+        Some(Observation::RemoveWithPrevious { previous }) => format!(
+            "remove previous={}",
+            render_optional_bytes(previous.as_deref())
+        ),
         Some(Observation::Scan(rows)) => {
             let rows = rows
                 .iter()
@@ -145,6 +159,10 @@ fn render_observation(observation: Option<&Observation>) -> String {
         }
         Some(Observation::Conflict) => "conflict".to_owned(),
     }
+}
+
+fn render_optional_bytes(value: Option<&[u8]>) -> String {
+    value.map(hex).unwrap_or_else(|| "missing".to_owned())
 }
 
 fn render_terminal_outcome(outcome: TerminalOutcome) -> &'static str {

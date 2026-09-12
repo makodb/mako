@@ -1,0 +1,1001 @@
+20260909-09:02.46-834084(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:02.46-834231(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:02.46-834264(us) 2430726 * handle_new_config_format (dbtest.cc:368):    Site local_s0: shard=0, replica_idx=0, is_leader=1, cluster=localhost
+SiloRuntime[0]::InitializeAllocator()
+  hugepgsize: 2097152
+  mmap() region [0x7e4041000000, 0x7e4141200000)
+  runtime0 cpu0 owns [0x7e4041000000, 0x7e4051000000)
+  runtime0 cpu1 owns [0x7e4051000000, 0x7e4061000000)
+  runtime0 cpu2 owns [0x7e4061000000, 0x7e4071000000)
+  runtime0 cpu3 owns [0x7e4071000000, 0x7e4081000000)
+  runtime0 cpu4 owns [0x7e4081000000, 0x7e4091000000)
+  runtime0 cpu5 owns [0x7e4091000000, 0x7e40a1000000)
+  runtime0 cpu6 owns [0x7e40a1000000, 0x7e40b1000000)
+  runtime0 cpu7 owns [0x7e40b1000000, 0x7e40c1000000)
+  runtime0 cpu8 owns [0x7e40c1000000, 0x7e40d1000000)
+  runtime0 cpu9 owns [0x7e40d1000000, 0x7e40e1000000)
+  runtime0 cpu10 owns [0x7e40e1000000, 0x7e40f1000000)
+  runtime0 cpu11 owns [0x7e40f1000000, 0x7e4101000000)
+  runtime0 cpu12 owns [0x7e4101000000, 0x7e4111000000)
+  runtime0 cpu13 owns [0x7e4111000000, 0x7e4121000000)
+  runtime0 cpu14 owns [0x7e4121000000, 0x7e4131000000)
+  runtime0 cpu15 owns [0x7e4131000000, 0x7e4141000000)
+Database Benchmark:
+  pid: 2430726
+settings:
+  num-cpus    : 128
+  num-threads : 16
+  shardIndex  : 0
+  paxos_proc_name  : localhost
+  nshards     : 1
+  is_micro    : 0
+  is_replicated : 0
+  storage_engine : rust
+  var-encode  : yes
+  allocator   : jemalloc
+system properties:
+  tuple_prefetch          : no
+  btree_node_prefetch     : yes
+tpcc settings:
+  cross_partition_transactions : 1
+  read_only_snapshots          : 1
+  partition_locks              : 0
+  separate_tree_per_partition  : 1
+  new_order_remote_item_pct    : 1
+  new_order_fast_id_gen        : 1
+  uniform_item_dist            : 0
+  order_status_scan_hack       : 0
+  workload_mix                 : [45, 43, 4, 4, 4]
+20260909-09:02.46-891740(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:02.46-891825(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:02.46-892249(us) 2430726 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20260909-09:02.46-892375(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:02.46-892458(us) 2430726 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31021 (listening on 0.0.0.0:31021)
+20260909-09:02.46-892485(us) 2430726 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31021
+20260909-09:02.46-892510(us) 2430726 * RunEventLoop    (srpc_rpc_backend.cc:516): SrpcRpcBackend::RunEventLoop: Starting event loop
+20260909-09:02.46-892546(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:02.46-892935(us) 2430726 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20260909-09:02.46-893059(us) 2430726 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31022 (listening on 0.0.0.0:31022)
+20260909-09:02.46-893083(us) 2430726 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31022
+20260909-09:02.46-893102(us) 2430726 * RunEventLoop    (srpc_rpc_backend.cc:516): SrpcRpcBackend::RunEventLoop: Starting event loop
+20260909-09:02.46-895698(us) 2430726 ! run             (bench.cc:519):     # of loaders size:6
+20260909-09:02.46-897388(us) 2430726 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=0, shard_index=0, getShardIndex=0, loader=1
+20260909-09:02.46-897436(us) 2430726 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=1, shard_index=0, getShardIndex=0, loader=1
+20260909-09:02.46-897741(us) 2430726 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=2, shard_index=0, getShardIndex=0, loader=1
+20260909-09:02.46-897914(us) 2430726 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=3, shard_index=0, getShardIndex=0, loader=1
+PinToWarehouseId(): coreid=4 pinned to whse=1 (partid=0)
+20260909-09:02.46-898245(us) 2430726 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=4, shard_index=0, getShardIndex=0, loader=1
+20260909-09:02.46-898413(us) 2430726 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=5, shard_index=0, getShardIndex=0, loader=1
+PinToWarehouseId(): coreid=3 pinned to whse=1 (partid=0)
+PinToWarehouseId(): coreid=4 pinned to whse=2 (partid=1)
+num batches: 30
+PinToWarehouseId(): coreid=5 pinned to whse=1 (partid=0)
+PinToWarehouseId(): coreid=4 pinned to whse=3 (partid=2)
+PinToWarehouseId(): coreid=6 pinned to whse=1 (partid=0)
+PinToWarehouseId(): coreid=4 pinned to whse=4 (partid=3)
+PinToWarehouseId(): coreid=4 pinned to whse=5 (partid=4)
+PinToWarehouseId(): coreid=4 pinned to whse=6 (partid=5)
+PinToWarehouseId(): coreid=4 pinned to whse=7 (partid=6)
+PinToWarehouseId(): coreid=4 pinned to whse=8 (partid=7)
+PinToWarehouseId(): coreid=4 pinned to whse=9 (partid=8)
+PinToWarehouseId(): coreid=4 pinned to whse=10 (partid=9)
+PinToWarehouseId(): coreid=4 pinned to whse=11 (partid=10)
+PinToWarehouseId(): coreid=4 pinned to whse=12 (partid=11)
+PinToWarehouseId(): coreid=4 pinned to whse=13 (partid=12)
+PinToWarehouseId(): coreid=4 pinned to whse=14 (partid=13)
+PinToWarehouseId(): coreid=4 pinned to whse=15 (partid=14)
+PinToWarehouseId(): coreid=4 pinned to whse=16 (partid=15)
+[INFO] finished loading district
+[INFO]   * average district record length: 99 bytes
+[INFO] finished loading warehouse
+[INFO]   * average warehouse record length: 97 bytes
+[INFO] finished loading item
+[INFO]   * average item record length: 84.1739 bytes
+PinToWarehouseId(): coreid=6 pinned to whse=2 (partid=1)
+PinToWarehouseId(): coreid=5 pinned to whse=2 (partid=1)
+PinToWarehouseId(): coreid=6 pinned to whse=3 (partid=2)
+PinToWarehouseId(): coreid=5 pinned to whse=3 (partid=2)
+PinToWarehouseId(): coreid=6 pinned to whse=4 (partid=3)
+PinToWarehouseId(): coreid=6 pinned to whse=5 (partid=4)
+PinToWarehouseId(): coreid=5 pinned to whse=4 (partid=3)
+PinToWarehouseId(): coreid=3 pinned to whse=2 (partid=1)
+PinToWarehouseId(): coreid=6 pinned to whse=6 (partid=5)
+PinToWarehouseId(): coreid=5 pinned to whse=5 (partid=4)
+PinToWarehouseId(): coreid=6 pinned to whse=7 (partid=6)
+PinToWarehouseId(): coreid=6 pinned to whse=8 (partid=7)
+PinToWarehouseId(): coreid=5 pinned to whse=6 (partid=5)
+PinToWarehouseId(): coreid=6 pinned to whse=9 (partid=8)
+PinToWarehouseId(): coreid=5 pinned to whse=7 (partid=6)
+PinToWarehouseId(): coreid=6 pinned to whse=10 (partid=9)
+PinToWarehouseId(): coreid=3 pinned to whse=3 (partid=2)
+PinToWarehouseId(): coreid=6 pinned to whse=11 (partid=10)
+PinToWarehouseId(): coreid=5 pinned to whse=8 (partid=7)
+PinToWarehouseId(): coreid=6 pinned to whse=12 (partid=11)
+PinToWarehouseId(): coreid=5 pinned to whse=9 (partid=8)
+PinToWarehouseId(): coreid=6 pinned to whse=13 (partid=12)
+PinToWarehouseId(): coreid=6 pinned to whse=14 (partid=13)
+PinToWarehouseId(): coreid=5 pinned to whse=10 (partid=9)
+PinToWarehouseId(): coreid=6 pinned to whse=15 (partid=14)
+PinToWarehouseId(): coreid=3 pinned to whse=4 (partid=3)
+PinToWarehouseId(): coreid=5 pinned to whse=11 (partid=10)
+PinToWarehouseId(): coreid=6 pinned to whse=16 (partid=15)
+[INFO] finished loading order
+[INFO]   * average order_line record length: 11.2927 bytes
+[INFO]   * average oorder record length: 7.9446 bytes
+[INFO]   * average new_order record length: 12 bytes
+PinToWarehouseId(): coreid=5 pinned to whse=12 (partid=11)
+PinToWarehouseId(): coreid=5 pinned to whse=13 (partid=12)
+PinToWarehouseId(): coreid=5 pinned to whse=14 (partid=13)
+PinToWarehouseId(): coreid=3 pinned to whse=5 (partid=4)
+PinToWarehouseId(): coreid=5 pinned to whse=15 (partid=14)
+PinToWarehouseId(): coreid=5 pinned to whse=16 (partid=15)
+[INFO] finished loading customer
+[INFO]   * average customer record length: 153.983 bytes 
+PinToWarehouseId(): coreid=3 pinned to whse=6 (partid=5)
+PinToWarehouseId(): coreid=3 pinned to whse=7 (partid=6)
+PinToWarehouseId(): coreid=3 pinned to whse=8 (partid=7)
+PinToWarehouseId(): coreid=3 pinned to whse=9 (partid=8)
+PinToWarehouseId(): coreid=3 pinned to whse=10 (partid=9)
+PinToWarehouseId(): coreid=3 pinned to whse=11 (partid=10)
+PinToWarehouseId(): coreid=3 pinned to whse=12 (partid=11)
+PinToWarehouseId(): coreid=3 pinned to whse=13 (partid=12)
+PinToWarehouseId(): coreid=3 pinned to whse=14 (partid=13)
+PinToWarehouseId(): coreid=3 pinned to whse=15 (partid=14)
+PinToWarehouseId(): coreid=3 pinned to whse=16 (partid=15)
+[INFO] finished loading stock
+[INFO]   * average stock record length: 8 bytes
+timed region dataloading took 22116.4 ms
+DB size: 2392.86 MB
+[0, 0, 0] txns persisted in loading phase
+20260909-09:03.09-12227(us) 2430726 ! run             (bench.cc:578):     # of nthreads:16
+starting benchmark...
+tpcc: worker id 128 => warehouses [1, 2)
+tpcc: worker id 129 => warehouses [2, 3)
+tpcc: worker id 130 => warehouses [3, 4)
+tpcc: worker id 131 => warehouses [4, 5)
+tpcc: worker id 132 => warehouses [5, 6)
+tpcc: worker id 133 => warehouses [6, 7)
+tpcc: worker id 134 => warehouses [7, 8)
+tpcc: worker id 135 => warehouses [8, 9)
+tpcc: worker id 136 => warehouses [9, 10)
+tpcc: worker id 137 => warehouses [10, 11)
+tpcc: worker id 138 => warehouses [11, 12)
+tpcc: worker id 139 => warehouses [12, 13)
+tpcc: worker id 140 => warehouses [13, 14)
+tpcc: worker id 141 => warehouses [14, 15)
+tpcc: worker id 142 => warehouses [15, 16)
+tpcc: worker id 143 => warehouses [16, 17)
+20260909-09:03.09-21847(us) 2430726 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=6, shard_index=0, getShardIndex=0, loader=0
+20260909-09:03.09-22045(us) 2430726 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=7, shard_index=0, getShardIndex=0, loader=0
+20260909-09:03.09-22141(us) 2430726 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=8, shard_index=0, getShardIndex=0, loader=0
+20260909-09:03.09-22253(us) 2430726 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=9, shard_index=0, getShardIndex=0, loader=0
+20260909-09:03.09-22476(us) 2430726 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=10, shard_index=0, getShardIndex=0, loader=0
+20260909-09:03.09-22773(us) 2430726 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=11, shard_index=0, getShardIndex=0, loader=0
+20260909-09:03.09-22874(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-22949(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-23002(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-23064(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-23111(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-23196(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-23243(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-23324(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-23477(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-23529(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-23631(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-23664(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-23707(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-23742(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-23781(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-23844(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-23885(us) 2430726 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20260909-09:03.09-23922(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-23959(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-24004(us) 2430726 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31000 (listening on 0.0.0.0:31000)
+20260909-09:03.09-24034(us) 2430726 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31000
+20260909-09:03.09-24069(us) 2430726 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20260909-09:03.09-24109(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-24160(us) 2430726 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=12, shard_index=0, getShardIndex=0, loader=0
+20260909-09:03.09-24201(us) 2430726 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31001 (listening on 0.0.0.0:31001)
+20260909-09:03.09-24234(us) 2430726 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31001
+20260909-09:03.09-24269(us) 2430726 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=14, shard_index=0, getShardIndex=0, loader=0
+20260909-09:03.09-24325(us) 2430726 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=13, shard_index=0, getShardIndex=0, loader=0
+20260909-09:03.09-24387(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-24434(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-24489(us) 2430726 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20260909-09:03.09-24562(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-24608(us) 2430726 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=15, shard_index=0, getShardIndex=0, loader=0
+20260909-09:03.09-24678(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-24720(us) 2430726 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31002 (listening on 0.0.0.0:31002)
+20260909-09:03.09-24759(us) 2430726 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31002
+20260909-09:03.09-24794(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-24828(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-24898(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-25002(us) 2430726 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20260909-09:03.09-25053(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-25106(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-25139(us) 2430726 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31003 (listening on 0.0.0.0:31003)
+20260909-09:03.09-25165(us) 2430726 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31003
+20260909-09:03.09-25201(us) 2430726 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20260909-09:03.09-25252(us) 2430726 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=16, shard_index=0, getShardIndex=0, loader=0
+20260909-09:03.09-25305(us) 2430726 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31005 (listening on 0.0.0.0:31005)
+20260909-09:03.09-25333(us) 2430726 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31005
+20260909-09:03.09-25421(us) 2430726 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20260909-09:03.09-25520(us) 2430726 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31004 (listening on 0.0.0.0:31004)
+20260909-09:03.09-25543(us) 2430726 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31004
+20260909-09:03.09-25604(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-25640(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-25685(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-25714(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-25767(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-25796(us) 2430726 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=18, shard_index=0, getShardIndex=0, loader=0
+20260909-09:03.09-25848(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-25891(us) 2430726 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=17, shard_index=0, getShardIndex=0, loader=0
+20260909-09:03.09-25931(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-25975(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-26013(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-26108(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-26160(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-26256(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-26300(us) 2430726 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=19, shard_index=0, getShardIndex=0, loader=0
+20260909-09:03.09-26520(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-26592(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-26664(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-26707(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-26855(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-26911(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-26949(us) 2430726 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=20, shard_index=0, getShardIndex=0, loader=0
+20260909-09:03.09-27005(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-27047(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-27092(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-27130(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-27164(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-27308(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-27348(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-27375(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-27408(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-27438(us) 2430726 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=21, shard_index=0, getShardIndex=0, loader=0
+20260909-09:03.09-27627(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-27661(us) 2430726 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20260909-09:03.09-27704(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-27736(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-27776(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-27815(us) 2430726 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20260909-09:03.09-27852(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-27884(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-27912(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-27941(us) 2430726 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31008 (listening on 0.0.0.0:31008)
+20260909-09:03.09-27965(us) 2430726 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31008
+20260909-09:03.09-27988(us) 2430726 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31009 (listening on 0.0.0.0:31009)
+20260909-09:03.09-28011(us) 2430726 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31009
+20260909-09:03.09-28033(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-28066(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-28097(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-28145(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-45099(us) 2430726 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20260909-09:03.09-45168(us) 2430726 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31007 (listening on 0.0.0.0:31007)
+20260909-09:03.09-45184(us) 2430726 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31007
+20260909-09:03.09-45218(us) 2430726 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20260909-09:03.09-45298(us) 2430726 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31010 (listening on 0.0.0.0:31010)
+20260909-09:03.09-45332(us) 2430726 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31010
+20260909-09:03.09-45417(us) 2430726 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20260909-09:03.09-45474(us) 2430726 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31006 (listening on 0.0.0.0:31006)
+20260909-09:03.09-45492(us) 2430726 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31006
+20260909-09:03.09-45541(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-45571(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-45614(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-45641(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-45891(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-45950(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-45998(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-46053(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-46075(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-46115(us) 2430726 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20260909-09:03.09-46141(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-46179(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-46206(us) 2430726 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31011 (listening on 0.0.0.0:31011)
+20260909-09:03.09-46228(us) 2430726 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31011
+20260909-09:03.09-46322(us) 2430726 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20260909-09:03.09-46397(us) 2430726 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31014 (listening on 0.0.0.0:31014)
+20260909-09:03.09-46417(us) 2430726 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31014
+20260909-09:03.09-46465(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-46499(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-46545(us) 2430726 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20260909-09:03.09-46614(us) 2430726 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31013 (listening on 0.0.0.0:31013)
+20260909-09:03.09-46631(us) 2430726 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31013
+20260909-09:03.09-46678(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-46710(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-46759(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-46793(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-47022(us) 2430726 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20260909-09:03.09-47093(us) 2430726 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31012 (listening on 0.0.0.0:31012)
+20260909-09:03.09-47113(us) 2430726 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31012
+20260909-09:03.09-47169(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-47194(us) 2430726 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20260909-09:03.09-47219(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-47266(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-47416(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-47451(us) 2430726 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31015 (listening on 0.0.0.0:31015)
+20260909-09:03.09-47473(us) 2430726 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31015
+20260909-09:03.09-47496(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-47759(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-47801(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-47843(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-47876(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-48201(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-48240(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-48267(us) 2430726 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-09:03.09-48313(us) 2430726 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-09:03.09-51847(us) 2430726 ! run             (bench.cc:645):     TPCC_BENCH_MEASURE_START
+20260909-09:03.09-51884(us) 2430726 ! run             (bench.cc:653):     start the running time, runTime:10
+20260909-09:03.09-51916(us) 2430726 ! run             (bench.cc:665):     runtime time left:10000 ms, bool:1
+20260909-09:03.10-60546(us) 2430726 ! run             (bench.cc:665):     runtime time left:9000 ms, bool:1
+20260909-09:03.11-68577(us) 2430726 ! run             (bench.cc:665):     runtime time left:8000 ms, bool:1
+20260909-09:03.12-76043(us) 2430726 ! run             (bench.cc:665):     runtime time left:7000 ms, bool:1
+20260909-09:03.13-82783(us) 2430726 ! run             (bench.cc:665):     runtime time left:6000 ms, bool:1
+20260909-09:03.14-89990(us) 2430726 ! run             (bench.cc:665):     runtime time left:5000 ms, bool:1
+20260909-09:03.15-96730(us) 2430726 ! run             (bench.cc:665):     runtime time left:4000 ms, bool:1
+20260909-09:03.16-104458(us) 2430726 ! run             (bench.cc:665):     runtime time left:3000 ms, bool:1
+20260909-09:03.17-111246(us) 2430726 ! run             (bench.cc:665):     runtime time left:2000 ms, bool:1
+20260909-09:03.18-117993(us) 2430726 ! run             (bench.cc:665):     runtime time left:1000 ms, bool:1
+20260909-09:03.19-128278(us) 2430726 ! run             (bench.cc:678):     runtime_plus:0
+[SHUTDOWN] Setting running=false to stop database worker threads
+[SHUTDOWN] Calling first stop() to stop client transports
+20260909-09:03.19-128356(us) 2430726 * PrintStats      (srpc_rpc_backend.cc:686): SrpcRpcBackend request stats: msg_size_req_sent: 0 bytes, counter: 0, avg: 0.000000
+20260909-09:03.19-128426(us) 2430726 * PrintStats      (srpc_rpc_backend.cc:686): SrpcRpcBackend request stats: msg_size_req_sent: 0 bytes, counter: 0, avg: 0.000000
+20260909-09:03.19-128485(us) 2430726 * PrintStats      (srpc_rpc_backend.cc:686): SrpcRpcBackend request stats: msg_size_req_sent: 0 bytes, counter: 0, avg: 0.000000
+20260909-09:03.19-128559(us) 2430726 * PrintStats      (srpc_rpc_backend.cc:686): SrpcRpcBackend request stats: msg_size_req_sent: 0 bytes, counter: 0, avg: 0.000000
+20260909-09:03.19-128615(us) 2430726 ! stop            (bench.cc:496):     stop all rpc clients. set stop=false
+20260909-09:03.19-128638(us) 2430726 * Stop            (srpc_rpc_backend.cc:593): SrpcRpcBackend::Stop: BEGIN - Setting stop flag
+20260909-09:03.19-128656(us) 2430726 * Stop            (srpc_rpc_backend.cc:596): SrpcRpcBackend::Stop: Waiting for event loop to exit...
+20260909-09:03.19-128671(us) 2430726 * Stop            (srpc_rpc_backend.cc:612): SrpcRpcBackend::Stop: Event loop exited successfully
+20260909-09:03.19-128687(us) 2430726 * Stop            (srpc_rpc_backend.cc:616): SrpcRpcBackend::Stop: Signaling 0 request queues to stop
+20260909-09:03.19-128704(us) 2430726 * Stop            (srpc_rpc_backend.cc:624): SrpcRpcBackend::Stop: Signaling 0 response queues to stop
+20260909-09:03.19-128718(us) 2430726 * Stop            (srpc_rpc_backend.cc:635): SrpcRpcBackend::Stop: Server cleanup deferred to destructor
+20260909-09:03.19-128734(us) 2430726 * Stop            (srpc_rpc_backend.cc:638): SrpcRpcBackend::Stop: Closing client connections
+20260909-09:03.19-128751(us) 2430726 * Stop            (srpc_rpc_backend.cc:642): SrpcRpcBackend::Stop: Found 0 client connections to close
+20260909-09:03.19-128767(us) 2430726 * Stop            (srpc_rpc_backend.cc:662): SrpcRpcBackend::Stop: Closed 0 client connections
+20260909-09:03.19-128786(us) 2430726 * Stop            (srpc_rpc_backend.cc:675): SrpcRpcBackend stats: msg_size_resp_sent: 0 bytes, counter: 0, avg: 0.000000
+20260909-09:03.19-128809(us) 2430726 * Stop            (srpc_rpc_backend.cc:676): SrpcRpcBackend::Stop: END
+20260909-09:03.19-128825(us) 2430726 * Stop            (srpc_rpc_backend.cc:593): SrpcRpcBackend::Stop: BEGIN - Setting stop flag
+20260909-09:03.19-128852(us) 2430726 * Stop            (srpc_rpc_backend.cc:596): SrpcRpcBackend::Stop: Waiting for event loop to exit...
+20260909-09:03.19-128867(us) 2430726 * Stop            (srpc_rpc_backend.cc:612): SrpcRpcBackend::Stop: Event loop exited successfully
+20260909-09:03.19-128879(us) 2430726 * Stop            (srpc_rpc_backend.cc:616): SrpcRpcBackend::Stop: Signaling 0 request queues to stop
+20260909-09:03.19-128894(us) 2430726 * Stop            (srpc_rpc_backend.cc:624): SrpcRpcBackend::Stop: Signaling 0 response queues to stop
+20260909-09:03.19-128909(us) 2430726 * Stop            (srpc_rpc_backend.cc:635): SrpcRpcBackend::Stop: Server cleanup deferred to destructor
+20260909-09:03.19-128923(us) 2430726 * Stop            (srpc_rpc_backend.cc:638): SrpcRpcBackend::Stop: Closing client connections
+20260909-09:03.19-128943(us) 2430726 * Stop            (srpc_rpc_backend.cc:642): SrpcRpcBackend::Stop: Found 0 client connections to close
+20260909-09:03.19-128958(us) 2430726 * Stop            (srpc_rpc_backend.cc:662): SrpcRpcBackend::Stop: Closed 0 client connections
+20260909-09:03.19-128975(us) 2430726 * Stop            (srpc_rpc_backend.cc:675): SrpcRpcBackend stats: msg_size_resp_sent: 0 bytes, counter: 0, avg: 0.000000
+20260909-09:03.19-128991(us) 2430726 * Stop            (srpc_rpc_backend.cc:676): SrpcRpcBackend::Stop: END
+20260909-09:03.19-129008(us) 2430726 * Stop            (srpc_rpc_backend.cc:593): SrpcRpcBackend::Stop: BEGIN - Setting stop flag
+20260909-09:03.19-129024(us) 2430726 * Stop            (srpc_rpc_backend.cc:596): SrpcRpcBackend::Stop: Waiting for event loop to exit...
+20260909-09:03.19-129042(us) 2430726 * Stop            (srpc_rpc_backend.cc:612): SrpcRpcBackend::Stop: Event loop exited successfully
+20260909-09:03.19-129058(us) 2430726 * Stop            (srpc_rpc_backend.cc:616): SrpcRpcBackend::Stop: Signaling 0 request queues to stop
+20260909-09:03.19-129074(us) 2430726 * Stop            (srpc_rpc_backend.cc:624): SrpcRpcBackend::Stop: Signaling 0 response queues to stop
+20260909-09:03.19-129087(us) 2430726 * Stop            (srpc_rpc_backend.cc:635): SrpcRpcBackend::Stop: Server cleanup deferred to destructor
+20260909-09:03.19-129101(us) 2430726 * Stop            (srpc_rpc_backend.cc:638): SrpcRpcBackend::Stop: Closing client connections
+20260909-09:03.19-129120(us) 2430726 * Stop            (srpc_rpc_backend.cc:642): SrpcRpcBackend::Stop: Found 0 client connections to close
+20260909-09:03.19-129136(us) 2430726 * Stop            (srpc_rpc_backend.cc:662): SrpcRpcBackend::Stop: Closed 0 client connections
+20260909-09:03.19-129157(us) 2430726 * Stop            (srpc_rpc_backend.cc:675): SrpcRpcBackend stats: msg_size_resp_sent: 0 bytes, counter: 0, avg: 0.000000
+20260909-09:03.19-129175(us) 2430726 * Stop            (srpc_rpc_backend.cc:676): SrpcRpcBackend::Stop: END
+20260909-09:03.19-129192(us) 2430726 * Stop            (srpc_rpc_backend.cc:593): SrpcRpcBackend::Stop: BEGIN - Setting stop flag
+20260909-09:03.19-129211(us) 2430726 * Stop            (srpc_rpc_backend.cc:596): SrpcRpcBackend::Stop: Waiting for event loop to exit...
+20260909-09:03.19-129227(us) 2430726 * Stop            (srpc_rpc_backend.cc:612): SrpcRpcBackend::Stop: Event loop exited successfully
+20260909-09:03.19-129243(us) 2430726 * Stop            (srpc_rpc_backend.cc:616): SrpcRpcBackend::Stop: Signaling 0 request queues to stop
+20260909-09:03.19-129262(us) 2430726 * Stop            (srpc_rpc_backend.cc:624): SrpcRpcBackend::Stop: Signaling 0 response queues to stop
+20260909-09:03.19-129278(us) 2430726 * Stop            (srpc_rpc_backend.cc:635): SrpcRpcBackend::Stop: Server cleanup deferred to destructor
+20260909-09:03.19-129294(us) 2430726 * Stop            (srpc_rpc_backend.cc:638): SrpcRpcBackend::Stop: Closing client connections
+20260909-09:03.19-129306(us) 2430726 * Stop            (srpc_rpc_backend.cc:642): SrpcRpcBackend::Stop: Found 0 client connections to close
+20260909-09:03.19-129321(us) 2430726 * Stop            (srpc_rpc_backend.cc:662): SrpcRpcBackend::Stop: Closed 0 client connections
+20260909-09:03.19-129337(us) 2430726 * Stop            (srpc_rpc_backend.cc:675): SrpcRpcBackend stats: msg_size_resp_sent: 0 bytes, counter: 0, avg: 0.000000
+20260909-09:03.19-129354(us) 2430726 * Stop            (srpc_rpc_backend.cc:676): SrpcRpcBackend::Stop: END
+20260909-09:03.19-129370(us) 2430726 * Stop            (srpc_rpc_backend.cc:593): SrpcRpcBackend::Stop: BEGIN - Setting stop flag
+20260909-09:03.19-129384(us) 2430726 * Stop            (srpc_rpc_backend.cc:596): SrpcRpcBackend::Stop: Waiting for event loop to exit...
+20260909-09:03.19-129400(us) 2430726 * Stop            (srpc_rpc_backend.cc:612): SrpcRpcBackend::Stop: Event loop exited successfully
+20260909-09:03.19-129415(us) 2430726 * Stop            (srpc_rpc_backend.cc:616): SrpcRpcBackend::Stop: Signaling 0 request queues to stop
+20260909-09:03.19-129431(us) 2430726 * Stop            (srpc_rpc_backend.cc:624): SrpcRpcBackend::Stop: Signaling 0 response queues to stop
+20260909-09:03.19-129446(us) 2430726 * Stop            (srpc_rpc_backend.cc:635): SrpcRpcBackend::Stop: Server cleanup deferred to destructor
+20260909-09:03.19-129462(us) 2430726 * Stop            (srpc_rpc_backend.cc:638): SrpcRpcBackend::Stop: Closing client connections
+20260909-09:03.19-129477(us) 2430726 * Stop            (srpc_rpc_backend.cc:642): SrpcRpcBackend::Stop: Found 0 client connections to close
+20260909-09:03.19-129496(us) 2430726 * Stop            (srpc_rpc_backend.cc:662): SrpcRpcBackend::Stop: Closed 0 client connections
+20260909-09:03.19-129514(us) 2430726 * Stop            (srpc_rpc_backend.cc:675): SrpcRpcBackend stats: msg_size_resp_sent: 0 bytes, counter: 0, avg: 0.000000
+20260909-09:03.19-129533(us) 2430726 * Stop            (srpc_rpc_backend.cc:676): SrpcRpcBackend::Stop: END
+20260909-09:03.19-129550(us) 2430726 * Stop            (srpc_rpc_backend.cc:593): SrpcRpcBackend::Stop: BEGIN - Setting stop flag
+20260909-09:03.19-129566(us) 2430726 * Stop            (srpc_rpc_backend.cc:596): SrpcRpcBackend::Stop: Waiting for event loop to exit...
+20260909-09:03.19-129581(us) 2430726 * Stop            (srpc_rpc_backend.cc:612): SrpcRpcBackend::Stop: Event loop exited successfully
+20260909-09:03.19-129597(us) 2430726 * Stop            (srpc_rpc_backend.cc:616): SrpcRpcBackend::Stop: Signaling 0 request queues to stop
+20260909-09:03.19-129612(us) 2430726 * Stop            (srpc_rpc_backend.cc:624): SrpcRpcBackend::Stop: Signaling 0 response queues to stop
+20260909-09:03.19-129628(us) 2430726 * Stop            (srpc_rpc_backend.cc:635): SrpcRpcBackend::Stop: Server cleanup deferred to destructor
+20260909-09:03.19-129643(us) 2430726 * Stop            (srpc_rpc_backend.cc:638): SrpcRpcBackend::Stop: Closing client connections
+20260909-09:03.19-129660(us) 2430726 * Stop            (srpc_rpc_backend.cc:642): SrpcRpcBackend::Stop: Found 0 client connections to close
+20260909-09:03.19-129676(us) 2430726 * Stop            (srpc_rpc_backend.cc:662): SrpcRpcBackend::Stop: Closed 0 client connections
+20260909-09:03.19-129691(us) 2430726 * Stop            (srpc_rpc_backend.cc:675): SrpcRpcBackend stats: msg_size_resp_sent: 0 bytes, counter: 0, avg: 0.000000
+20260909-09:03.19-129710(us) 2430726 * Stop            (srpc_rpc_backend.cc:676): SrpcRpcBackend::Stop: END
+20260909-09:03.19-129729(us) 2430726 * Stop            (srpc_rpc_backend.cc:593): SrpcRpcBackend::Stop: BEGIN - Setting stop flag
+20260909-09:03.19-129744(us) 2430726 * Stop            (srpc_rpc_backend.cc:596): SrpcRpcBackend::Stop: Waiting for event loop to exit...
+20260909-09:03.19-129759(us) 2430726 * Stop            (srpc_rpc_backend.cc:612): SrpcRpcBackend::Stop: Event loop exited successfully
+20260909-09:03.19-129775(us) 2430726 * Stop            (srpc_rpc_backend.cc:616): SrpcRpcBackend::Stop: Signaling 0 request queues to stop
+20260909-09:03.19-129790(us) 2430726 * Stop            (srpc_rpc_backend.cc:624): SrpcRpcBackend::Stop: Signaling 0 response queues to stop
+20260909-09:03.19-129806(us) 2430726 * Stop            (srpc_rpc_backend.cc:635): SrpcRpcBackend::Stop: Server cleanup deferred to destructor
+20260909-09:03.19-129820(us) 2430726 * Stop            (srpc_rpc_backend.cc:638): SrpcRpcBackend::Stop: Closing client connections
+20260909-09:03.19-129845(us) 2430726 * Stop            (srpc_rpc_backend.cc:642): SrpcRpcBackend::Stop: Found 0 client connections to close
+20260909-09:03.19-129861(us) 2430726 * Stop            (srpc_rpc_backend.cc:662): SrpcRpcBackend::Stop: Closed 0 client connections
+20260909-09:03.19-129879(us) 2430726 * Stop            (srpc_rpc_backend.cc:675): SrpcRpcBackend stats: msg_size_resp_sent: 0 bytes, counter: 0, avg: 0.000000
+20260909-09:03.19-129895(us) 2430726 * Stop            (srpc_rpc_backend.cc:676): SrpcRpcBackend::Stop: END
+20260909-09:03.19-129909(us) 2430726 * Stop            (srpc_rpc_backend.cc:593): SrpcRpcBackend::Stop: BEGIN - Setting stop flag
+20260909-09:03.19-129925(us) 2430726 * Stop            (srpc_rpc_backend.cc:596): SrpcRpcBackend::Stop: Waiting for event loop to exit...
+20260909-09:03.19-129940(us) 2430726 * Stop            (srpc_rpc_backend.cc:612): SrpcRpcBackend::Stop: Event loop exited successfully
+20260909-09:03.19-129956(us) 2430726 * Stop            (srpc_rpc_backend.cc:616): SrpcRpcBackend::Stop: Signaling 0 request queues to stop
+20260909-09:03.19-129976(us) 2430726 * Stop            (srpc_rpc_backend.cc:624): SrpcRpcBackend::Stop: Signaling 0 response queues to stop
+20260909-09:03.19-129991(us) 2430726 * Stop            (srpc_rpc_backend.cc:635): SrpcRpcBackend::Stop: Server cleanup deferred to destructor
+20260909-09:03.19-130007(us) 2430726 * Stop            (srpc_rpc_backend.cc:638): SrpcRpcBackend::Stop: Closing client connections
+20260909-09:03.19-130025(us) 2430726 * Stop            (srpc_rpc_backend.cc:642): SrpcRpcBackend::Stop: Found 0 client connections to close
+20260909-09:03.19-130041(us) 2430726 * Stop            (srpc_rpc_backend.cc:662): SrpcRpcBackend::Stop: Closed 0 client connections
+20260909-09:03.19-130056(us) 2430726 * Stop            (srpc_rpc_backend.cc:675): SrpcRpcBackend stats: msg_size_resp_sent: 0 bytes, counter: 0, avg: 0.000000
+20260909-09:03.19-130072(us) 2430726 * Stop            (srpc_rpc_backend.cc:676): SrpcRpcBackend::Stop: END
+20260909-09:03.19-130089(us) 2430726 * Stop            (srpc_rpc_backend.cc:593): SrpcRpcBackend::Stop: BEGIN - Setting stop flag
+20260909-09:03.19-130105(us) 2430726 * Stop            (srpc_rpc_backend.cc:596): SrpcRpcBackend::Stop: Waiting for event loop to exit...
+20260909-09:03.19-130123(us) 2430726 * Stop            (srpc_rpc_backend.cc:612): SrpcRpcBackend::Stop: Event loop exited successfully
+20260909-09:03.19-130139(us) 2430726 * Stop            (srpc_rpc_backend.cc:616): SrpcRpcBackend::Stop: Signaling 0 request queues to stop
+20260909-09:03.19-130158(us) 2430726 * Stop            (srpc_rpc_backend.cc:624): SrpcRpcBackend::Stop: Signaling 0 response queues to stop
+20260909-09:03.19-130173(us) 2430726 * Stop            (srpc_rpc_backend.cc:635): SrpcRpcBackend::Stop: Server cleanup deferred to destructor
+20260909-09:03.19-130188(us) 2430726 * Stop            (srpc_rpc_backend.cc:638): SrpcRpcBackend::Stop: Closing client connections
+20260909-09:03.19-130204(us) 2430726 * Stop            (srpc_rpc_backend.cc:642): SrpcRpcBackend::Stop: Found 0 client connections to close
+20260909-09:03.19-130220(us) 2430726 * Stop            (srpc_rpc_backend.cc:662): SrpcRpcBackend::Stop: Closed 0 client connections
+20260909-09:03.19-130236(us) 2430726 * Stop            (srpc_rpc_backend.cc:675): SrpcRpcBackend stats: msg_size_resp_sent: 0 bytes, counter: 0, avg: 0.000000
+20260909-09:03.19-130251(us) 2430726 * Stop            (srpc_rpc_backend.cc:676): SrpcRpcBackend::Stop: END
+20260909-09:03.19-130265(us) 2430726 * Stop            (srpc_rpc_backend.cc:593): SrpcRpcBackend::Stop: BEGIN - Setting stop flag
+20260909-09:03.19-130285(us) 2430726 * Stop            (srpc_rpc_backend.cc:596): SrpcRpcBackend::Stop: Waiting for event loop to exit...
+20260909-09:03.19-130301(us) 2430726 * Stop            (srpc_rpc_backend.cc:612): SrpcRpcBackend::Stop: Event loop exited successfully
+20260909-09:03.19-130315(us) 2430726 * Stop            (srpc_rpc_backend.cc:616): SrpcRpcBackend::Stop: Signaling 0 request queues to stop
+20260909-09:03.19-130330(us) 2430726 * Stop            (srpc_rpc_backend.cc:624): SrpcRpcBackend::Stop: Signaling 0 response queues to stop
+20260909-09:03.19-130345(us) 2430726 * Stop            (srpc_rpc_backend.cc:635): SrpcRpcBackend::Stop: Server cleanup deferred to destructor
+20260909-09:03.19-130364(us) 2430726 * Stop            (srpc_rpc_backend.cc:638): SrpcRpcBackend::Stop: Closing client connections
+20260909-09:03.19-130380(us) 2430726 * Stop            (srpc_rpc_backend.cc:642): SrpcRpcBackend::Stop: Found 0 client connections to close
+20260909-09:03.19-130397(us) 2430726 * Stop            (srpc_rpc_backend.cc:662): SrpcRpcBackend::Stop: Closed 0 client connections
+20260909-09:03.19-130413(us) 2430726 * Stop            (srpc_rpc_backend.cc:675): SrpcRpcBackend stats: msg_size_resp_sent: 0 bytes, counter: 0, avg: 0.000000
+20260909-09:03.19-130429(us) 2430726 * Stop            (srpc_rpc_backend.cc:676): SrpcRpcBackend::Stop: END
+20260909-09:03.19-130445(us) 2430726 * Stop            (srpc_rpc_backend.cc:593): SrpcRpcBackend::Stop: BEGIN - Setting stop flag
+20260909-09:03.19-130463(us) 2430726 * Stop            (srpc_rpc_backend.cc:596): SrpcRpcBackend::Stop: Waiting for event loop to exit...
+20260909-09:03.19-130478(us) 2430726 * Stop            (srpc_rpc_backend.cc:612): SrpcRpcBackend::Stop: Event loop exited successfully
+20260909-09:03.19-130494(us) 2430726 * Stop            (srpc_rpc_backend.cc:616): SrpcRpcBackend::Stop: Signaling 0 request queues to stop
+20260909-09:03.19-130510(us) 2430726 * Stop            (srpc_rpc_backend.cc:624): SrpcRpcBackend::Stop: Signaling 0 response queues to stop
+20260909-09:03.19-130525(us) 2430726 * Stop            (srpc_rpc_backend.cc:635): SrpcRpcBackend::Stop: Server cleanup deferred to destructor
+20260909-09:03.19-130540(us) 2430726 * Stop            (srpc_rpc_backend.cc:638): SrpcRpcBackend::Stop: Closing client connections
+20260909-09:03.19-130555(us) 2430726 * Stop            (srpc_rpc_backend.cc:642): SrpcRpcBackend::Stop: Found 0 client connections to close
+20260909-09:03.19-130571(us) 2430726 * Stop            (srpc_rpc_backend.cc:662): SrpcRpcBackend::Stop: Closed 0 client connections
+20260909-09:03.19-130586(us) 2430726 * Stop            (srpc_rpc_backend.cc:675): SrpcRpcBackend stats: msg_size_resp_sent: 0 bytes, counter: 0, avg: 0.000000
+20260909-09:03.19-130601(us) 2430726 * Stop            (srpc_rpc_backend.cc:676): SrpcRpcBackend::Stop: END
+20260909-09:03.19-130618(us) 2430726 * Stop            (srpc_rpc_backend.cc:593): SrpcRpcBackend::Stop: BEGIN - Setting stop flag
+20260909-09:03.19-130634(us) 2430726 * Stop            (srpc_rpc_backend.cc:596): SrpcRpcBackend::Stop: Waiting for event loop to exit...
+20260909-09:03.19-130650(us) 2430726 * Stop            (srpc_rpc_backend.cc:612): SrpcRpcBackend::Stop: Event loop exited successfully
+20260909-09:03.19-130665(us) 2430726 * Stop            (srpc_rpc_backend.cc:616): SrpcRpcBackend::Stop: Signaling 0 request queues to stop
+20260909-09:03.19-130681(us) 2430726 * Stop            (srpc_rpc_backend.cc:624): SrpcRpcBackend::Stop: Signaling 0 response queues to stop
+20260909-09:03.19-130697(us) 2430726 * Stop            (srpc_rpc_backend.cc:635): SrpcRpcBackend::Stop: Server cleanup deferred to destructor
+20260909-09:03.19-130712(us) 2430726 * Stop            (srpc_rpc_backend.cc:638): SrpcRpcBackend::Stop: Closing client connections
+20260909-09:03.19-130731(us) 2430726 * Stop            (srpc_rpc_backend.cc:642): SrpcRpcBackend::Stop: Found 0 client connections to close
+20260909-09:03.19-130749(us) 2430726 * Stop            (srpc_rpc_backend.cc:662): SrpcRpcBackend::Stop: Closed 0 client connections
+20260909-09:03.19-130765(us) 2430726 * Stop            (srpc_rpc_backend.cc:675): SrpcRpcBackend stats: msg_size_resp_sent: 0 bytes, counter: 0, avg: 0.000000
+20260909-09:03.19-130783(us) 2430726 * Stop            (srpc_rpc_backend.cc:676): SrpcRpcBackend::Stop: END
+20260909-09:03.19-130801(us) 2430726 * Stop            (srpc_rpc_backend.cc:593): SrpcRpcBackend::Stop: BEGIN - Setting stop flag
+20260909-09:03.19-130817(us) 2430726 * Stop            (srpc_rpc_backend.cc:596): SrpcRpcBackend::Stop: Waiting for event loop to exit...
+20260909-09:03.19-130864(us) 2430726 * Stop            (srpc_rpc_backend.cc:612): SrpcRpcBackend::Stop: Event loop exited successfully
+20260909-09:03.19-130879(us) 2430726 * Stop            (srpc_rpc_backend.cc:616): SrpcRpcBackend::Stop: Signaling 0 request queues to stop
+20260909-09:03.19-130895(us) 2430726 * Stop            (srpc_rpc_backend.cc:624): SrpcRpcBackend::Stop: Signaling 0 response queues to stop
+20260909-09:03.19-130912(us) 2430726 * Stop            (srpc_rpc_backend.cc:635): SrpcRpcBackend::Stop: Server cleanup deferred to destructor
+20260909-09:03.19-130928(us) 2430726 * Stop            (srpc_rpc_backend.cc:638): SrpcRpcBackend::Stop: Closing client connections
+20260909-09:03.19-130944(us) 2430726 * Stop            (srpc_rpc_backend.cc:642): SrpcRpcBackend::Stop: Found 0 client connections to close
+20260909-09:03.19-130958(us) 2430726 * Stop            (srpc_rpc_backend.cc:662): SrpcRpcBackend::Stop: Closed 0 client connections
+20260909-09:03.19-130972(us) 2430726 * Stop            (srpc_rpc_backend.cc:675): SrpcRpcBackend stats: msg_size_resp_sent: 0 bytes, counter: 0, avg: 0.000000
+20260909-09:03.19-130989(us) 2430726 * Stop            (srpc_rpc_backend.cc:676): SrpcRpcBackend::Stop: END
+20260909-09:03.19-131006(us) 2430726 * Stop            (srpc_rpc_backend.cc:593): SrpcRpcBackend::Stop: BEGIN - Setting stop flag
+20260909-09:03.19-131022(us) 2430726 * Stop            (srpc_rpc_backend.cc:596): SrpcRpcBackend::Stop: Waiting for event loop to exit...
+20260909-09:03.19-131038(us) 2430726 * Stop            (srpc_rpc_backend.cc:612): SrpcRpcBackend::Stop: Event loop exited successfully
+20260909-09:03.19-131053(us) 2430726 * Stop            (srpc_rpc_backend.cc:616): SrpcRpcBackend::Stop: Signaling 0 request queues to stop
+20260909-09:03.19-131069(us) 2430726 * Stop            (srpc_rpc_backend.cc:624): SrpcRpcBackend::Stop: Signaling 0 response queues to stop
+20260909-09:03.19-131084(us) 2430726 * Stop            (srpc_rpc_backend.cc:635): SrpcRpcBackend::Stop: Server cleanup deferred to destructor
+20260909-09:03.19-131102(us) 2430726 * Stop            (srpc_rpc_backend.cc:638): SrpcRpcBackend::Stop: Closing client connections
+20260909-09:03.19-131118(us) 2430726 * Stop            (srpc_rpc_backend.cc:642): SrpcRpcBackend::Stop: Found 0 client connections to close
+20260909-09:03.19-131134(us) 2430726 * Stop            (srpc_rpc_backend.cc:662): SrpcRpcBackend::Stop: Closed 0 client connections
+20260909-09:03.19-131150(us) 2430726 * Stop            (srpc_rpc_backend.cc:675): SrpcRpcBackend stats: msg_size_resp_sent: 0 bytes, counter: 0, avg: 0.000000
+20260909-09:03.19-131166(us) 2430726 * Stop            (srpc_rpc_backend.cc:676): SrpcRpcBackend::Stop: END
+20260909-09:03.19-131182(us) 2430726 * Stop            (srpc_rpc_backend.cc:593): SrpcRpcBackend::Stop: BEGIN - Setting stop flag
+20260909-09:03.19-131198(us) 2430726 * Stop            (srpc_rpc_backend.cc:596): SrpcRpcBackend::Stop: Waiting for event loop to exit...
+20260909-09:03.19-131213(us) 2430726 * Stop            (srpc_rpc_backend.cc:612): SrpcRpcBackend::Stop: Event loop exited successfully
+20260909-09:03.19-131231(us) 2430726 * Stop            (srpc_rpc_backend.cc:616): SrpcRpcBackend::Stop: Signaling 0 request queues to stop
+20260909-09:03.19-131247(us) 2430726 * Stop            (srpc_rpc_backend.cc:624): SrpcRpcBackend::Stop: Signaling 0 response queues to stop
+20260909-09:03.19-131265(us) 2430726 * Stop            (srpc_rpc_backend.cc:635): SrpcRpcBackend::Stop: Server cleanup deferred to destructor
+20260909-09:03.19-131281(us) 2430726 * Stop            (srpc_rpc_backend.cc:638): SrpcRpcBackend::Stop: Closing client connections
+20260909-09:03.19-131296(us) 2430726 * Stop            (srpc_rpc_backend.cc:642): SrpcRpcBackend::Stop: Found 0 client connections to close
+20260909-09:03.19-131312(us) 2430726 * Stop            (srpc_rpc_backend.cc:662): SrpcRpcBackend::Stop: Closed 0 client connections
+20260909-09:03.19-131328(us) 2430726 * Stop            (srpc_rpc_backend.cc:675): SrpcRpcBackend stats: msg_size_resp_sent: 0 bytes, counter: 0, avg: 0.000000
+20260909-09:03.19-131344(us) 2430726 * Stop            (srpc_rpc_backend.cc:676): SrpcRpcBackend::Stop: END
+20260909-09:03.19-131357(us) 2430726 * PrintStats      (srpc_rpc_backend.cc:686): SrpcRpcBackend request stats: msg_size_req_sent: 0 bytes, counter: 0, avg: 0.000000
+20260909-09:03.19-131406(us) 2430726 * PrintStats      (srpc_rpc_backend.cc:686): SrpcRpcBackend request stats: msg_size_req_sent: 0 bytes, counter: 0, avg: 0.000000
+20260909-09:03.19-131454(us) 2430726 * PrintStats      (srpc_rpc_backend.cc:686): SrpcRpcBackend request stats: msg_size_req_sent: 0 bytes, counter: 0, avg: 0.000000
+20260909-09:03.19-131490(us) 2430726 * PrintStats      (srpc_rpc_backend.cc:686): SrpcRpcBackend request stats: msg_size_req_sent: 0 bytes, counter: 0, avg: 0.000000
+20260909-09:03.19-131532(us) 2430726 * PrintStats      (srpc_rpc_backend.cc:686): SrpcRpcBackend request stats: msg_size_req_sent: 0 bytes, counter: 0, avg: 0.000000
+20260909-09:03.19-131570(us) 2430726 * PrintStats      (srpc_rpc_backend.cc:686): SrpcRpcBackend request stats: msg_size_req_sent: 0 bytes, counter: 0, avg: 0.000000
+20260909-09:03.19-131695(us) 2430726 * PrintStats      (srpc_rpc_backend.cc:686): SrpcRpcBackend request stats: msg_size_req_sent: 0 bytes, counter: 0, avg: 0.000000
+20260909-09:03.19-131743(us) 2430726 * PrintStats      (srpc_rpc_backend.cc:686): SrpcRpcBackend request stats: msg_size_req_sent: 0 bytes, counter: 0, avg: 0.000000
+20260909-09:03.19-131806(us) 2430726 * PrintStats      (srpc_rpc_backend.cc:686): SrpcRpcBackend request stats: msg_size_req_sent: 0 bytes, counter: 0, avg: 0.000000
+20260909-09:03.19-131841(us) 2430726 * PrintStats      (srpc_rpc_backend.cc:686): SrpcRpcBackend request stats: msg_size_req_sent: 0 bytes, counter: 0, avg: 0.000000
+20260909-09:03.19-131876(us) 2430726 * PrintStats      (srpc_rpc_backend.cc:686): SrpcRpcBackend request stats: msg_size_req_sent: 0 bytes, counter: 0, avg: 0.000000
+20260909-09:03.19-131925(us) 2430726 * PrintStats      (srpc_rpc_backend.cc:686): SrpcRpcBackend request stats: msg_size_req_sent: 0 bytes, counter: 0, avg: 0.000000
+20260909-09:03.19-131973(us) 2430726 * Stop            (srpc_rpc_backend.cc:593): SrpcRpcBackend::Stop: BEGIN - Setting stop flag
+20260909-09:03.19-131994(us) 2430726 * Stop            (srpc_rpc_backend.cc:596): SrpcRpcBackend::Stop: Waiting for event loop to exit...
+20260909-09:03.19-132007(us) 2430726 * Stop            (srpc_rpc_backend.cc:612): SrpcRpcBackend::Stop: Event loop exited successfully
+20260909-09:03.19-132020(us) 2430726 * Stop            (srpc_rpc_backend.cc:616): SrpcRpcBackend::Stop: Signaling 0 request queues to stop
+20260909-09:03.19-132032(us) 2430726 * Stop            (srpc_rpc_backend.cc:624): SrpcRpcBackend::Stop: Signaling 0 response queues to stop
+20260909-09:03.19-132046(us) 2430726 * Stop            (srpc_rpc_backend.cc:635): SrpcRpcBackend::Stop: Server cleanup deferred to destructor
+20260909-09:03.19-132063(us) 2430726 * Stop            (srpc_rpc_backend.cc:638): SrpcRpcBackend::Stop: Closing client connections
+20260909-09:03.19-132079(us) 2430726 * Stop            (srpc_rpc_backend.cc:642): SrpcRpcBackend::Stop: Found 0 client connections to close
+20260909-09:03.19-132093(us) 2430726 * Stop            (srpc_rpc_backend.cc:662): SrpcRpcBackend::Stop: Closed 0 client connections
+20260909-09:03.19-132106(us) 2430726 * Stop            (srpc_rpc_backend.cc:675): SrpcRpcBackend stats: msg_size_resp_sent: 0 bytes, counter: 0, avg: 0.000000
+20260909-09:03.19-132120(us) 2430726 * Stop            (srpc_rpc_backend.cc:676): SrpcRpcBackend::Stop: END
+[SHUTDOWN] First stop() completed
+[SHUTDOWN] Joining 16 worker threads
+[SHUTDOWN] Joining worker 0
+20260909-09:03.20-128551(us) 2430726 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+20260909-09:03.20-128595(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+20260909-09:03.20-128617(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:116): SrpcRpcBackend::Shutdown: Server pointer is valid, deleting...
+20260909-09:03.20-128645(us) 2430726 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+20260909-09:03.20-128679(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+20260909-09:03.20-128703(us) 2430726 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+20260909-09:03.20-128741(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+20260909-09:03.20-128760(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:116): SrpcRpcBackend::Shutdown: Server pointer is valid, deleting...
+20260909-09:03.20-128785(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:120): SrpcRpcBackend::Shutdown: Server deleted successfully
+20260909-09:03.20-128802(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+20260909-09:03.20-128825(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:136): SrpcRpcBackend::Shutdown: poll_thread_worker_ is valid, calling shutdown()
+20260909-09:03.20-128894(us) 2430726 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+20260909-09:03.20-128935(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+20260909-09:03.20-128963(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:116): SrpcRpcBackend::Shutdown: Server pointer is valid, deleting...
+20260909-09:03.20-129001(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:120): SrpcRpcBackend::Shutdown: Server deleted successfully
+20260909-09:03.20-129022(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+20260909-09:03.20-129046(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:136): SrpcRpcBackend::Shutdown: poll_thread_worker_ is valid, calling shutdown()
+20260909-09:03.20-129079(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:116): SrpcRpcBackend::Shutdown: Server pointer is valid, deleting...
+20260909-09:03.20-129123(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:120): SrpcRpcBackend::Shutdown: Server deleted successfully
+20260909-09:03.20-129144(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+20260909-09:03.20-129162(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:136): SrpcRpcBackend::Shutdown: poll_thread_worker_ is valid, calling shutdown()
+20260909-09:03.20-129188(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:120): SrpcRpcBackend::Shutdown: Server deleted successfully
+20260909-09:03.20-129229(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+20260909-09:03.20-129252(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:136): SrpcRpcBackend::Shutdown: poll_thread_worker_ is valid, calling shutdown()
+20260909-09:03.20-129610(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:138): SrpcRpcBackend::Shutdown: poll_thread_worker_->shutdown() completed
+20260909-09:03.20-129649(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:140): SrpcRpcBackend::Shutdown: poll_thread_worker_ reset to None
+20260909-09:03.20-129663(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+20260909-09:03.20-129677(us) 2430726 * ~SrpcRpcBackend (srpc_rpc_backend.cc:52): SrpcRpcBackend::~SrpcRpcBackend: START destructor
+20260909-09:03.20-129694(us) 2430726 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+20260909-09:03.20-129718(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+20260909-09:03.20-129731(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:129): SrpcRpcBackend::Shutdown: Server pointer is null, skipping deletion
+20260909-09:03.20-129748(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+20260909-09:03.20-129762(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:142): SrpcRpcBackend::Shutdown: poll_thread_worker_ is null, skipping shutdown
+20260909-09:03.20-129775(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+20260909-09:03.20-129791(us) 2430726 * ~SrpcRpcBackend (srpc_rpc_backend.cc:54): SrpcRpcBackend::~SrpcRpcBackend: Shutdown() completed
+20260909-09:03.20-129850(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:138): SrpcRpcBackend::Shutdown: poll_thread_worker_->shutdown() completed
+20260909-09:03.20-129879(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:140): SrpcRpcBackend::Shutdown: poll_thread_worker_ reset to None
+20260909-09:03.20-129894(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+20260909-09:03.20-129908(us) 2430726 * ~SrpcRpcBackend (srpc_rpc_backend.cc:52): SrpcRpcBackend::~SrpcRpcBackend: START destructor
+20260909-09:03.20-129930(us) 2430726 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+20260909-09:03.20-129948(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+20260909-09:03.20-129968(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:129): SrpcRpcBackend::Shutdown: Server pointer is null, skipping deletion
+20260909-09:03.20-129986(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+20260909-09:03.20-130006(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:142): SrpcRpcBackend::Shutdown: poll_thread_worker_ is null, skipping shutdown
+20260909-09:03.20-130023(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+20260909-09:03.20-130036(us) 2430726 * ~SrpcRpcBackend (srpc_rpc_backend.cc:54): SrpcRpcBackend::~SrpcRpcBackend: Shutdown() completed
+20260909-09:03.20-130192(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:138): SrpcRpcBackend::Shutdown: poll_thread_worker_->shutdown() completed
+20260909-09:03.20-130230(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:140): SrpcRpcBackend::Shutdown: poll_thread_worker_ reset to None
+20260909-09:03.20-130245(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+20260909-09:03.20-130258(us) 2430726 * ~SrpcRpcBackend (srpc_rpc_backend.cc:52): SrpcRpcBackend::~SrpcRpcBackend: START destructor
+20260909-09:03.20-130272(us) 2430726 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+20260909-09:03.20-130285(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+20260909-09:03.20-130298(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:129): SrpcRpcBackend::Shutdown: Server pointer is null, skipping deletion
+20260909-09:03.20-130319(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+20260909-09:03.20-130334(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:142): SrpcRpcBackend::Shutdown: poll_thread_worker_ is null, skipping shutdown
+20260909-09:03.20-130352(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+20260909-09:03.20-130364(us) 2430726 * ~SrpcRpcBackend (srpc_rpc_backend.cc:54): SrpcRpcBackend::~SrpcRpcBackend: Shutdown() completed
+20260909-09:03.20-130946(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:138): SrpcRpcBackend::Shutdown: poll_thread_worker_->shutdown() completed
+20260909-09:03.20-130989(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:140): SrpcRpcBackend::Shutdown: poll_thread_worker_ reset to None
+20260909-09:03.20-131009(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+20260909-09:03.20-131029(us) 2430726 * ~SrpcRpcBackend (srpc_rpc_backend.cc:52): SrpcRpcBackend::~SrpcRpcBackend: START destructor
+20260909-09:03.20-131052(us) 2430726 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+20260909-09:03.20-131083(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+20260909-09:03.20-131102(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:129): SrpcRpcBackend::Shutdown: Server pointer is null, skipping deletion
+20260909-09:03.20-131122(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+20260909-09:03.20-131146(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:142): SrpcRpcBackend::Shutdown: poll_thread_worker_ is null, skipping shutdown
+20260909-09:03.20-131170(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+20260909-09:03.20-131191(us) 2430726 * ~SrpcRpcBackend (srpc_rpc_backend.cc:54): SrpcRpcBackend::~SrpcRpcBackend: Shutdown() completed
+20260909-09:03.20-131547(us) 2430726 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+20260909-09:03.20-131581(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+20260909-09:03.20-131597(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:116): SrpcRpcBackend::Shutdown: Server pointer is valid, deleting...
+20260909-09:03.20-131619(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:120): SrpcRpcBackend::Shutdown: Server deleted successfully
+20260909-09:03.20-131634(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+20260909-09:03.20-131656(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:136): SrpcRpcBackend::Shutdown: poll_thread_worker_ is valid, calling shutdown()
+20260909-09:03.20-131678(us) 2430726 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+20260909-09:03.20-131704(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+20260909-09:03.20-131721(us) 2430726 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+20260909-09:03.20-131768(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+20260909-09:03.20-131800(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:116): SrpcRpcBackend::Shutdown: Server pointer is valid, deleting...
+20260909-09:03.20-131839(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:116): SrpcRpcBackend::Shutdown: Server pointer is valid, deleting...
+20260909-09:03.20-131864(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:120): SrpcRpcBackend::Shutdown: Server deleted successfully
+20260909-09:03.20-131882(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+20260909-09:03.20-131897(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:136): SrpcRpcBackend::Shutdown: poll_thread_worker_ is valid, calling shutdown()
+20260909-09:03.20-131945(us) 2430726 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+20260909-09:03.20-131978(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+20260909-09:03.20-132000(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:116): SrpcRpcBackend::Shutdown: Server pointer is valid, deleting...
+20260909-09:03.20-132019(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:120): SrpcRpcBackend::Shutdown: Server deleted successfully
+20260909-09:03.20-132068(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+20260909-09:03.20-132093(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:136): SrpcRpcBackend::Shutdown: poll_thread_worker_ is valid, calling shutdown()
+20260909-09:03.20-132152(us) 2430726 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+20260909-09:03.20-132187(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:138): SrpcRpcBackend::Shutdown: poll_thread_worker_->shutdown() completed
+20260909-09:03.20-132216(us) 2430726 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+20260909-09:03.20-132269(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+20260909-09:03.20-132294(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:116): SrpcRpcBackend::Shutdown: Server pointer is valid, deleting...
+20260909-09:03.20-132320(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:120): SrpcRpcBackend::Shutdown: Server deleted successfully
+20260909-09:03.20-132355(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+20260909-09:03.20-132380(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:136): SrpcRpcBackend::Shutdown: poll_thread_worker_ is valid, calling shutdown()
+20260909-09:03.20-132414(us) 2430726 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+20260909-09:03.20-132452(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+20260909-09:03.20-132479(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:116): SrpcRpcBackend::Shutdown: Server pointer is valid, deleting...
+20260909-09:03.20-132505(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:120): SrpcRpcBackend::Shutdown: Server deleted successfully
+20260909-09:03.20-132523(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+20260909-09:03.20-132539(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:136): SrpcRpcBackend::Shutdown: poll_thread_worker_ is valid, calling shutdown()
+20260909-09:03.20-132572(us) 2430726 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+20260909-09:03.20-132603(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+20260909-09:03.20-132624(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:116): SrpcRpcBackend::Shutdown: Server pointer is valid, deleting...
+20260909-09:03.20-132651(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:138): SrpcRpcBackend::Shutdown: poll_thread_worker_->shutdown() completed
+20260909-09:03.20-132712(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:140): SrpcRpcBackend::Shutdown: poll_thread_worker_ reset to None
+20260909-09:03.20-132737(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+20260909-09:03.20-132764(us) 2430726 * ~SrpcRpcBackend (srpc_rpc_backend.cc:52): SrpcRpcBackend::~SrpcRpcBackend: START destructor
+20260909-09:03.20-132785(us) 2430726 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+20260909-09:03.20-132800(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+20260909-09:03.20-132814(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:129): SrpcRpcBackend::Shutdown: Server pointer is null, skipping deletion
+20260909-09:03.20-132827(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+20260909-09:03.20-132851(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:142): SrpcRpcBackend::Shutdown: poll_thread_worker_ is null, skipping shutdown
+20260909-09:03.20-132865(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+20260909-09:03.20-132879(us) 2430726 * ~SrpcRpcBackend (srpc_rpc_backend.cc:54): SrpcRpcBackend::~SrpcRpcBackend: Shutdown() completed
+20260909-09:03.20-132984(us) 2430726 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+20260909-09:03.20-133014(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+20260909-09:03.20-133029(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:116): SrpcRpcBackend::Shutdown: Server pointer is valid, deleting...
+20260909-09:03.20-133047(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:120): SrpcRpcBackend::Shutdown: Server deleted successfully
+20260909-09:03.20-133064(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+20260909-09:03.20-133081(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:136): SrpcRpcBackend::Shutdown: poll_thread_worker_ is valid, calling shutdown()
+20260909-09:03.20-133104(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:120): SrpcRpcBackend::Shutdown: Server deleted successfully
+20260909-09:03.20-133138(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+20260909-09:03.20-133157(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:136): SrpcRpcBackend::Shutdown: poll_thread_worker_ is valid, calling shutdown()
+20260909-09:03.20-133179(us) 2430726 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+20260909-09:03.20-133222(us) 2430726 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+20260909-09:03.20-133283(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+20260909-09:03.20-133315(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:116): SrpcRpcBackend::Shutdown: Server pointer is valid, deleting...
+20260909-09:03.20-133350(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:120): SrpcRpcBackend::Shutdown: Server deleted successfully
+20260909-09:03.20-133375(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+20260909-09:03.20-133391(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:136): SrpcRpcBackend::Shutdown: poll_thread_worker_ is valid, calling shutdown()
+20260909-09:03.20-133424(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+20260909-09:03.20-133462(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:116): SrpcRpcBackend::Shutdown: Server pointer is valid, deleting...
+20260909-09:03.20-133489(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:120): SrpcRpcBackend::Shutdown: Server deleted successfully
+20260909-09:03.20-133511(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+20260909-09:03.20-133526(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:136): SrpcRpcBackend::Shutdown: poll_thread_worker_ is valid, calling shutdown()
+20260909-09:03.20-133568(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:120): SrpcRpcBackend::Shutdown: Server deleted successfully
+20260909-09:03.20-133623(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+20260909-09:03.20-133652(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:136): SrpcRpcBackend::Shutdown: poll_thread_worker_ is valid, calling shutdown()
+20260909-09:03.20-133687(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+20260909-09:03.20-133733(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:138): SrpcRpcBackend::Shutdown: poll_thread_worker_->shutdown() completed
+20260909-09:03.20-133761(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:138): SrpcRpcBackend::Shutdown: poll_thread_worker_->shutdown() completed
+20260909-09:03.20-133790(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:140): SrpcRpcBackend::Shutdown: poll_thread_worker_ reset to None
+20260909-09:03.20-133809(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+20260909-09:03.20-133825(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:140): SrpcRpcBackend::Shutdown: poll_thread_worker_ reset to None
+20260909-09:03.20-133851(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+20260909-09:03.20-133866(us) 2430726 * ~SrpcRpcBackend (srpc_rpc_backend.cc:52): SrpcRpcBackend::~SrpcRpcBackend: START destructor
+20260909-09:03.20-133881(us) 2430726 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+20260909-09:03.20-133904(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+20260909-09:03.20-133921(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:129): SrpcRpcBackend::Shutdown: Server pointer is null, skipping deletion
+20260909-09:03.20-133937(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+20260909-09:03.20-133952(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:142): SrpcRpcBackend::Shutdown: poll_thread_worker_ is null, skipping shutdown
+20260909-09:03.20-133968(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+20260909-09:03.20-133984(us) 2430726 * ~SrpcRpcBackend (srpc_rpc_backend.cc:54): SrpcRpcBackend::~SrpcRpcBackend: Shutdown() completed
+20260909-09:03.20-134012(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:116): SrpcRpcBackend::Shutdown: Server pointer is valid, deleting...
+20260909-09:03.20-134049(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:120): SrpcRpcBackend::Shutdown: Server deleted successfully
+20260909-09:03.20-134079(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+20260909-09:03.20-134114(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:136): SrpcRpcBackend::Shutdown: poll_thread_worker_ is valid, calling shutdown()
+20260909-09:03.20-134149(us) 2430726 * ~SrpcRpcBackend (srpc_rpc_backend.cc:52): SrpcRpcBackend::~SrpcRpcBackend: START destructor
+20260909-09:03.20-134172(us) 2430726 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+20260909-09:03.20-134192(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+20260909-09:03.20-134214(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:129): SrpcRpcBackend::Shutdown: Server pointer is null, skipping deletion
+20260909-09:03.20-134232(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+20260909-09:03.20-134256(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:142): SrpcRpcBackend::Shutdown: poll_thread_worker_ is null, skipping shutdown
+20260909-09:03.20-134274(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+20260909-09:03.20-134290(us) 2430726 * ~SrpcRpcBackend (srpc_rpc_backend.cc:54): SrpcRpcBackend::~SrpcRpcBackend: Shutdown() completed
+20260909-09:03.20-134314(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:138): SrpcRpcBackend::Shutdown: poll_thread_worker_->shutdown() completed
+20260909-09:03.20-134351(us) 2430726 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+20260909-09:03.20-134399(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:140): SrpcRpcBackend::Shutdown: poll_thread_worker_ reset to None
+20260909-09:03.20-134424(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+20260909-09:03.20-134441(us) 2430726 * ~SrpcRpcBackend (srpc_rpc_backend.cc:52): SrpcRpcBackend::~SrpcRpcBackend: START destructor
+20260909-09:03.20-134463(us) 2430726 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+20260909-09:03.20-134481(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+20260909-09:03.20-134497(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:129): SrpcRpcBackend::Shutdown: Server pointer is null, skipping deletion
+20260909-09:03.20-134530(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+20260909-09:03.20-134547(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:142): SrpcRpcBackend::Shutdown: poll_thread_worker_ is null, skipping shutdown
+20260909-09:03.20-134565(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+20260909-09:03.20-134586(us) 2430726 * ~SrpcRpcBackend (srpc_rpc_backend.cc:54): SrpcRpcBackend::~SrpcRpcBackend: Shutdown() completed
+20260909-09:03.20-134619(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:138): SrpcRpcBackend::Shutdown: poll_thread_worker_->shutdown() completed
+20260909-09:03.20-134684(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+20260909-09:03.20-134717(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:116): SrpcRpcBackend::Shutdown: Server pointer is valid, deleting...
+20260909-09:03.20-134749(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:140): SrpcRpcBackend::Shutdown: poll_thread_worker_ reset to None
+20260909-09:03.20-134795(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+20260909-09:03.20-134827(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:138): SrpcRpcBackend::Shutdown: poll_thread_worker_->shutdown() completed
+20260909-09:03.20-134871(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:140): SrpcRpcBackend::Shutdown: poll_thread_worker_ reset to None
+20260909-09:03.20-134905(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+20260909-09:03.20-134923(us) 2430726 * ~SrpcRpcBackend (srpc_rpc_backend.cc:52): SrpcRpcBackend::~SrpcRpcBackend: START destructor
+20260909-09:03.20-134948(us) 2430726 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+20260909-09:03.20-134971(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+20260909-09:03.20-134990(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:129): SrpcRpcBackend::Shutdown: Server pointer is null, skipping deletion
+20260909-09:03.20-135021(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+20260909-09:03.20-135040(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:142): SrpcRpcBackend::Shutdown: poll_thread_worker_ is null, skipping shutdown
+20260909-09:03.20-135058(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+20260909-09:03.20-135073(us) 2430726 * ~SrpcRpcBackend (srpc_rpc_backend.cc:54): SrpcRpcBackend::~SrpcRpcBackend: Shutdown() completed
+20260909-09:03.20-135103(us) 2430726 * ~SrpcRpcBackend (srpc_rpc_backend.cc:52): SrpcRpcBackend::~SrpcRpcBackend: START destructor
+20260909-09:03.20-135130(us) 2430726 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+20260909-09:03.20-135156(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+20260909-09:03.20-135191(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:129): SrpcRpcBackend::Shutdown: Server pointer is null, skipping deletion
+20260909-09:03.20-135215(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+20260909-09:03.20-135240(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:142): SrpcRpcBackend::Shutdown: poll_thread_worker_ is null, skipping shutdown
+20260909-09:03.20-135262(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:138): SrpcRpcBackend::Shutdown: poll_thread_worker_->shutdown() completed
+20260909-09:03.20-135291(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:138): SrpcRpcBackend::Shutdown: poll_thread_worker_->shutdown() completed
+20260909-09:03.20-135340(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:120): SrpcRpcBackend::Shutdown: Server deleted successfully
+20260909-09:03.20-135360(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+20260909-09:03.20-135377(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:136): SrpcRpcBackend::Shutdown: poll_thread_worker_ is valid, calling shutdown()
+20260909-09:03.20-135403(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:138): SrpcRpcBackend::Shutdown: poll_thread_worker_->shutdown() completed
+20260909-09:03.20-135455(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:140): SrpcRpcBackend::Shutdown: poll_thread_worker_ reset to None
+20260909-09:03.20-135481(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+20260909-09:03.20-135504(us) 2430726 * ~SrpcRpcBackend (srpc_rpc_backend.cc:52): SrpcRpcBackend::~SrpcRpcBackend: START destructor
+20260909-09:03.20-135524(us) 2430726 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+20260909-09:03.20-135551(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+20260909-09:03.20-135571(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:129): SrpcRpcBackend::Shutdown: Server pointer is null, skipping deletion
+20260909-09:03.20-135589(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+20260909-09:03.20-135608(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:142): SrpcRpcBackend::Shutdown: poll_thread_worker_ is null, skipping shutdown
+20260909-09:03.20-135625(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+20260909-09:03.20-135643(us) 2430726 * ~SrpcRpcBackend (srpc_rpc_backend.cc:54): SrpcRpcBackend::~SrpcRpcBackend: Shutdown() completed
+20260909-09:03.20-135667(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:138): SrpcRpcBackend::Shutdown: poll_thread_worker_->shutdown() completed
+20260909-09:03.20-135702(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:140): SrpcRpcBackend::Shutdown: poll_thread_worker_ reset to None
+20260909-09:03.20-135724(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+20260909-09:03.20-135743(us) 2430726 * ~SrpcRpcBackend (srpc_rpc_backend.cc:52): SrpcRpcBackend::~SrpcRpcBackend: START destructor
+20260909-09:03.20-135760(us) 2430726 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+20260909-09:03.20-135775(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+20260909-09:03.20-135794(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:129): SrpcRpcBackend::Shutdown: Server pointer is null, skipping deletion
+20260909-09:03.20-135812(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+20260909-09:03.20-135842(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:142): SrpcRpcBackend::Shutdown: poll_thread_worker_ is null, skipping shutdown
+20260909-09:03.20-135858(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+20260909-09:03.20-135884(us) 2430726 * ~SrpcRpcBackend (srpc_rpc_backend.cc:54): SrpcRpcBackend::~SrpcRpcBackend: Shutdown() completed
+20260909-09:03.20-135912(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:140): SrpcRpcBackend::Shutdown: poll_thread_worker_ reset to None
+20260909-09:03.20-135949(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+20260909-09:03.20-135981(us) 2430726 * ~SrpcRpcBackend (srpc_rpc_backend.cc:52): SrpcRpcBackend::~SrpcRpcBackend: START destructor
+20260909-09:03.20-136012(us) 2430726 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+20260909-09:03.20-136039(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+20260909-09:03.20-136065(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:129): SrpcRpcBackend::Shutdown: Server pointer is null, skipping deletion
+20260909-09:03.20-136095(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+20260909-09:03.20-136125(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:142): SrpcRpcBackend::Shutdown: poll_thread_worker_ is null, skipping shutdown
+20260909-09:03.20-136153(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+20260909-09:03.20-136184(us) 2430726 * ~SrpcRpcBackend (srpc_rpc_backend.cc:54): SrpcRpcBackend::~SrpcRpcBackend: Shutdown() completed
+20260909-09:03.20-136217(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+20260909-09:03.20-136240(us) 2430726 * ~SrpcRpcBackend (srpc_rpc_backend.cc:54): SrpcRpcBackend::~SrpcRpcBackend: Shutdown() completed
+[SHUTDOWN] Worker 020260909-09:03.20-136271(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:140): SrpcRpcBackend::Shutdown: poll_thread_worker_ reset to None
+ joined
+[SHUTDOWN] Joining worker 1
+20260909-09:03.20-136298(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+20260909-09:03.20-136348(us) 2430726 * ~SrpcRpcBackend (srpc_rpc_backend.cc:52): SrpcRpcBackend::~SrpcRpcBackend: START destructor
+20260909-09:03.20-136375(us) 2430726 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+[SHUTDOWN] Worker 20260909-09:03.20-136412(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+1 joined20260909-09:03.20-136444(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:129): SrpcRpcBackend::Shutdown: Server pointer is null, skipping deletion
+
+[SHUTDOWN] Joining worker 2
+20260909-09:03.20-136474(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+20260909-09:03.20-136514(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:142): SrpcRpcBackend::Shutdown: poll_thread_worker_ is null, skipping shutdown
+20260909-09:03.20-136536(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+20260909-09:03.20-136556(us) 2430726 * ~SrpcRpcBackend (srpc_rpc_backend.cc:54): SrpcRpcBackend::~SrpcRpcBackend: Shutdown() completed
+20260909-09:03.20-136582(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:140): SrpcRpcBackend::Shutdown: poll_thread_worker_ reset to None
+20260909-09:03.20-136602(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+20260909-09:03.20-136617(us) 2430726 * ~SrpcRpcBackend (srpc_rpc_backend.cc:52): SrpcRpcBackend::~SrpcRpcBackend: START destructor
+20260909-09:03.20-136639(us) 2430726 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+20260909-09:03.20-136662(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+20260909-09:03.20-136681(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:129): SrpcRpcBackend::Shutdown: Server pointer is null, skipping deletion
+[SHUTDOWN] Worker 20260909-09:03.20-136711(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+20260909-09:03.20-136731(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:142): SrpcRpcBackend::Shutdown: poll_thread_worker_ is null, skipping shutdown
+2 joined
+[SHUTDOWN] Joining worker 20260909-09:03.20-136759(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+3
+20260909-09:03.20-136786(us) 2430726 * ~SrpcRpcBackend (srpc_rpc_backend.cc:54): SrpcRpcBackend::~SrpcRpcBackend: Shutdown() completed
+20260909-09:03.20-137137(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:138): SrpcRpcBackend::Shutdown: poll_thread_worker_->shutdown() completed
+20260909-09:03.20-137181(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:140): SrpcRpcBackend::Shutdown: poll_thread_worker_ reset to None
+20260909-09:03.20-137203(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+20260909-09:03.20-137225(us) 2430726 * ~SrpcRpcBackend (srpc_rpc_backend.cc:52): SrpcRpcBackend::~SrpcRpcBackend: START destructor
+20260909-09:03.20-137241(us) 2430726 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+20260909-09:03.20-137264(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+20260909-09:03.20-137282(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:129): SrpcRpcBackend::Shutdown: Server pointer is null, skipping deletion
+20260909-09:03.20-137302(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+[SHUTDOWN] Worker 320260909-09:03.20-137319(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:142): SrpcRpcBackend::Shutdown: poll_thread_worker_ is null, skipping shutdown
+20260909-09:03.20-137339(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+ joined
+[SHUTDOWN] Joining worker 20260909-09:03.20-137358(us) 2430726 * ~SrpcRpcBackend (srpc_rpc_backend.cc:54): SrpcRpcBackend::~SrpcRpcBackend: Shutdown() completed
+4
+[SHUTDOWN] Worker 4 joined
+[SHUTDOWN] Joining worker 5
+[SHUTDOWN] Worker 5 joined
+[SHUTDOWN] Joining worker 6
+[SHUTDOWN] Worker 6 joined
+[SHUTDOWN] Joining worker 7
+[SHUTDOWN] Worker 7 joined
+[SHUTDOWN] Joining worker 8
+[SHUTDOWN] Worker 8 joined
+[SHUTDOWN] Joining worker 9
+[SHUTDOWN] Worker 9 joined
+[SHUTDOWN] Joining worker 10
+[SHUTDOWN] Worker 10 joined
+[SHUTDOWN] Joining worker 11
+[SHUTDOWN] Worker 11 joined
+[SHUTDOWN] Joining worker 12
+[SHUTDOWN] Worker 12 joined
+[SHUTDOWN] Joining worker 13
+[SHUTDOWN] Worker 13 joined
+[SHUTDOWN] Joining worker 14
+[SHUTDOWN] Worker 14 joined
+[SHUTDOWN] Joining worker 15
+[SHUTDOWN] Worker 15 joined
+[SHUTDOWN] All workers joined
+[SHUTDOWN] Calling stop_rpc_server()
+[STOP_SERVER] Stopping 2 server transports
+[STOP_SERVER] Stopping server transport 0
+20260909-09:03.20-138294(us) 2430726 * Stop            (srpc_rpc_backend.cc:593): SrpcRpcBackend::Stop: BEGIN - Setting stop flag
+20260909-09:03.20-138316(us) 2430726 * Stop            (srpc_rpc_backend.cc:596): SrpcRpcBackend::Stop: Waiting for event loop to exit...
+20260909-09:03.20-138340(us) 2430726 * RunEventLoop    (srpc_rpc_backend.cc:577): SrpcRpcBackend::RunEventLoop: Stop flag detected, exiting event loop
+20260909-09:03.20-138368(us) 2430726 * RunEventLoop    (srpc_rpc_backend.cc:581): SrpcRpcBackend::RunEventLoop: Exited cleanly
+20260909-09:03.20-138382(us) 2430726 * rpc_server      (rpc_setup.cc:126): the rpc_server is terminated on shardIdx:0, alpha:0!
+20260909-09:03.20-148399(us) 2430726 * Stop            (srpc_rpc_backend.cc:612): SrpcRpcBackend::Stop: Event loop exited successfully
+20260909-09:03.20-148430(us) 2430726 * Stop            (srpc_rpc_backend.cc:616): SrpcRpcBackend::Stop: Signaling 0 request queues to stop
+20260909-09:03.20-148444(us) 2430726 * Stop            (srpc_rpc_backend.cc:624): SrpcRpcBackend::Stop: Signaling 0 response queues to stop
+20260909-09:03.20-148457(us) 2430726 * Stop            (srpc_rpc_backend.cc:635): SrpcRpcBackend::Stop: Server cleanup deferred to destructor
+20260909-09:03.20-148470(us) 2430726 * Stop            (srpc_rpc_backend.cc:638): SrpcRpcBackend::Stop: Closing client connections
+20260909-09:03.20-148483(us) 2430726 * Stop            (srpc_rpc_backend.cc:642): SrpcRpcBackend::Stop: Found 0 client connections to close
+20260909-09:03.20-148496(us) 2430726 * Stop            (srpc_rpc_backend.cc:662): SrpcRpcBackend::Stop: Closed 0 client connections
+20260909-09:03.20-148509(us) 2430726 * Stop            (srpc_rpc_backend.cc:675): SrpcRpcBackend stats: msg_size_resp_sent: 0 bytes, counter: 0, avg: 0.000000
+20260909-09:03.20-148533(us) 2430726 * Stop            (srpc_rpc_backend.cc:676): SrpcRpcBackend::Stop: END
+[STOP_SERVER] Server transport 0 stopped
+[STOP_SERVER] Stopping server transport 1
+20260909-09:03.20-148561(us) 2430726 * Stop            (srpc_rpc_backend.cc:593): SrpcRpcBackend::Stop: BEGIN - Setting stop flag
+20260909-09:03.20-148574(us) 2430726 * Stop            (srpc_rpc_backend.cc:596): SrpcRpcBackend::Stop: Waiting for event loop to exit...
+20260909-09:03.20-148694(us) 2430726 * RunEventLoop    (srpc_rpc_backend.cc:577): SrpcRpcBackend::RunEventLoop: Stop flag detected, exiting event loop
+20260909-09:03.20-148724(us) 2430726 * RunEventLoop    (srpc_rpc_backend.cc:581): SrpcRpcBackend::RunEventLoop: Exited cleanly
+20260909-09:03.20-148738(us) 2430726 * rpc_server      (rpc_setup.cc:126): the rpc_server is terminated on shardIdx:0, alpha:1!
+20260909-09:03.20-158688(us) 2430726 * Stop            (srpc_rpc_backend.cc:612): SrpcRpcBackend::Stop: Event loop exited successfully
+20260909-09:03.20-158726(us) 2430726 * Stop            (srpc_rpc_backend.cc:616): SrpcRpcBackend::Stop: Signaling 0 request queues to stop
+20260909-09:03.20-158744(us) 2430726 * Stop            (srpc_rpc_backend.cc:624): SrpcRpcBackend::Stop: Signaling 0 response queues to stop
+20260909-09:03.20-158760(us) 2430726 * Stop            (srpc_rpc_backend.cc:635): SrpcRpcBackend::Stop: Server cleanup deferred to destructor
+20260909-09:03.20-158777(us) 2430726 * Stop            (srpc_rpc_backend.cc:638): SrpcRpcBackend::Stop: Closing client connections
+20260909-09:03.20-158793(us) 2430726 * Stop            (srpc_rpc_backend.cc:642): SrpcRpcBackend::Stop: Found 0 client connections to close
+20260909-09:03.20-158809(us) 2430726 * Stop            (srpc_rpc_backend.cc:662): SrpcRpcBackend::Stop: Closed 0 client connections
+20260909-09:03.20-158825(us) 2430726 * Stop            (srpc_rpc_backend.cc:675): SrpcRpcBackend stats: msg_size_resp_sent: 0 bytes, counter: 0, avg: 0.000000
+20260909-09:03.20-158857(us) 2430726 * Stop            (srpc_rpc_backend.cc:676): SrpcRpcBackend::Stop: END
+[STOP_SERVER] Server transport 1 stopped
+20260909-09:03.20-159207(us) 2430726 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+20260909-09:03.20-159228(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+20260909-09:03.20-159244(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:116): SrpcRpcBackend::Shutdown: Server pointer is valid, deleting...
+20260909-09:03.20-159273(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:120): SrpcRpcBackend::Shutdown: Server deleted successfully
+20260909-09:03.20-159291(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+20260909-09:03.20-159307(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:136): SrpcRpcBackend::Shutdown: poll_thread_worker_ is valid, calling shutdown()
+20260909-09:03.20-160641(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:138): SrpcRpcBackend::Shutdown: poll_thread_worker_->shutdown() completed
+20260909-09:03.20-160701(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:140): SrpcRpcBackend::Shutdown: poll_thread_worker_ reset to None
+20260909-09:03.20-160725(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+20260909-09:03.20-160749(us) 2430726 * ~SrpcRpcBackend (srpc_rpc_backend.cc:52): SrpcRpcBackend::~SrpcRpcBackend: START destructor
+20260909-09:03.20-160773(us) 2430726 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+20260909-09:03.20-160796(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+20260909-09:03.20-160817(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:129): SrpcRpcBackend::Shutdown: Server pointer is null, skipping deletion
+20260909-09:03.20-160855(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+20260909-09:03.20-160874(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:142): SrpcRpcBackend::Shutdown: poll_thread_worker_ is null, skipping shutdown
+20260909-09:03.20-160899(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+20260909-09:03.20-160922(us) 2430726 * ~SrpcRpcBackend (srpc_rpc_backend.cc:54): SrpcRpcBackend::~SrpcRpcBackend: Shutdown() completed
+20260909-09:03.20-160982(us) 2430726 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+20260909-09:03.20-161004(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+20260909-09:03.20-161024(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:116): SrpcRpcBackend::Shutdown: Server pointer is valid, deleting...
+20260909-09:03.20-161052(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:120): SrpcRpcBackend::Shutdown: Server deleted successfully
+20260909-09:03.20-161074(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+20260909-09:03.20-161092(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:136): SrpcRpcBackend::Shutdown: poll_thread_worker_ is valid, calling shutdown()
+20260909-09:03.20-161907(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:138): SrpcRpcBackend::Shutdown: poll_thread_worker_->shutdown() completed
+20260909-09:03.20-161947(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:140): SrpcRpcBackend::Shutdown: poll_thread_worker_ reset to None
+20260909-09:03.20-161972(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+20260909-09:03.20-161995(us) 2430726 * ~SrpcRpcBackend (srpc_rpc_backend.cc:52): SrpcRpcBackend::~SrpcRpcBackend: START destructor
+20260909-09:03.20-162016(us) 2430726 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+20260909-09:03.20-162040(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+20260909-09:03.20-162061(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:129): SrpcRpcBackend::Shutdown: Server pointer is null, skipping deletion
+20260909-09:03.20-162085(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+20260909-09:03.20-162106(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:142): SrpcRpcBackend::Shutdown: poll_thread_worker_ is null, skipping shutdown
+20260909-09:03.20-162132(us) 2430726 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+20260909-09:03.20-162155(us) 2430726 * ~SrpcRpcBackend (srpc_rpc_backend.cc:54): SrpcRpcBackend::~SrpcRpcBackend: Shutdown() completed
+[STOP_SERVER] All server transports stopped
+[SHUTDOWN] stop_rpc_server() completed
+[SHUTDOWN] Calling second stop()
+20260909-09:03.20-162224(us) 2430726 ! stop            (bench.cc:496):     stop all rpc clients. set stop=false
+[SHUTDOWN] Second stop() completed
+20260909-09:03.20-162249(us) 2430726 ! run             (bench.cc:731):     TPCC_BENCH_MEASURE_END
+[SHUTDOWN] Calling do_txn_finish()
+[SHUTDOWN] do_txn_finish() completed
+--- n_commits per partition ---
+ par_id: 0, n_commits: 529283
+ par_id: 1, n_commits: 484017
+ par_id: 2, n_commits: 535490
+ par_id: 3, n_commits: 547256
+ par_id: 4, n_commits: 522428
+ par_id: 5, n_commits: 543567
+ par_id: 6, n_commits: 543779
+ par_id: 7, n_commits: 550999
+ par_id: 8, n_commits: 538216
+ par_id: 9, n_commits: 481280
+ par_id: 10, n_commits: 529258
+ par_id: 11, n_commits: 552591
+ par_id: 12, n_commits: 569071
+ par_id: 13, n_commits: 561237
+ par_id: 14, n_commits: 486143
+ par_id: 15, n_commits: 541430
+--- benchmark statistics ---
+runtime: 10.1106 sec
+memory delta: 5134.71 MB
+n_commits: 8516045
+latency_numer_us: 156165973
+latency_numer_us_remote: 0
+memory delta rate: 507.855 MB/sec
+logical memory delta: 540.031 MB
+logical memory delta rate: 53.4125 MB/sec
+agg_nosync_throughput: 842308 ops/sec
+avg_nosync_per_core_throughput: 52644.3 ops/sec/core
+agg_throughput: 842290 ops/sec
+avg_per_core_throughput: 52643.1 ops/sec/core
+agg_persist_throughput: 842290 ops/sec
+avg_per_core_persist_throughput: 52643.1 ops/sec/core
+avg_latency: 0.0183379 ms
+avg_persist_latency: 0 ms
+agg_abort_rate: 84.1692 aborts/sec
+avg_per_core_abort_rate: 5.26057 aborts/sec/core
+  NewOrder_local_commit_latency: 0.0220767 ms
+  NewOrder_local_abort_latency: 0.0863262 ms
+  NewOrder_local_abort_ratio: 0.000146109
+  Payment_local_commit_latency: 0.00747677 ms
+  Payment_local_abort_latency: 0.0454348 ms
+  Payment_local_abort_ratio: 4.9149e-06
+  Delivery_local_commit_latency: 0.0805684 ms
+  Delivery_local_abort_latency: 0 ms
+  Delivery_local_abort_ratio: 0
+  OrderStatus_local_commit_latency: 0.0101088 ms
+  OrderStatus_local_abort_latency: 0.0307815 ms
+  OrderStatus_local_abort_ratio: 5.89364e-06
+  StockLevel_local_commit_latency: 0.0512719 ms
+  StockLevel_local_abort_latency: 0.0950121 ms
+  StockLevel_local_abort_ratio: 0.000794297
+  NewOrder_remote_ratio: 0 %
+  NewOrder_remote_abort_ratio: 0 %
+  NewOrder_remote_commit_latency: 0 ms
+  NewOrder_remote_abort_latency: 0 ms
+  Payment_remote_ratio: 0 %
+  Payment_remote_abort_ratio: 0 %
+  Payment_remote_commit_latency: 0 ms
+  Payment_remote_abort_latency: 0 ms
+--- system counters (for benchmark) ---
+--- perf counters (if enabled, for benchmark) ---
+--- allocator stats ---
+[SiloRuntime 0] ncpus=16
+[SiloRuntime 0] cpu=0 fully_faulted?=0 remaining=150994944 bytes
+[SiloRuntime 0] cpu=1 fully_faulted?=0 remaining=157286400 bytes
+[SiloRuntime 0] cpu=2 fully_faulted?=0 remaining=148897792 bytes
+[SiloRuntime 0] cpu=3 fully_faulted?=0 remaining=148897792 bytes
+[SiloRuntime 0] cpu=4 fully_faulted?=0 remaining=153092096 bytes
+[SiloRuntime 0] cpu=5 fully_faulted?=0 remaining=150994944 bytes
+[SiloRuntime 0] cpu=6 fully_faulted?=0 remaining=148897792 bytes
+[SiloRuntime 0] cpu=7 fully_faulted?=0 remaining=148897792 bytes
+[SiloRuntime 0] cpu=8 fully_faulted?=0 remaining=150994944 bytes
+[SiloRuntime 0] cpu=9 fully_faulted?=0 remaining=159383552 bytes
+[SiloRuntime 0] cpu=10 fully_faulted?=0 remaining=153092096 bytes
+[SiloRuntime 0] cpu=11 fully_faulted?=0 remaining=148897792 bytes
+[SiloRuntime 0] cpu=12 fully_faulted?=0 remaining=146800640 bytes
+[SiloRuntime 0] cpu=13 fully_faulted?=0 remaining=146800640 bytes
+[SiloRuntime 0] cpu=14 fully_faulted?=0 remaining=159383552 bytes
+[SiloRuntime 0] cpu=15 fully_faulted?=0 remaining=132120576 bytes
+---------------------------------------
+--- system counters for n_commits ---
+[STOP_SERVER] Stopping 0 server transports
+[STOP_SERVER] All server transports stopped

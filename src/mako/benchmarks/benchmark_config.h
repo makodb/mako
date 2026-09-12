@@ -10,6 +10,7 @@
 #include <fstream>
 #include <filesystem>
 #include <chrono>
+#include <memory>
 #include <unistd.h>
 #include "lib/configuration.h"
 #include "lib/common.h"
@@ -77,6 +78,7 @@ class BenchmarkConfig {
           backoff_aborted_transaction_(0),
           use_hashtable_(0),
           is_micro_(0), // if run micro-based workload
+          is_replicated_(0),
           end_received_(0),
           end_received_leader_(0),
           replay_batch_(0),
@@ -90,14 +92,16 @@ class BenchmarkConfig {
       size_t shardIndex_;
       std::string cluster_;
       int clusterRole_;
+      std::unique_ptr<transport::Configuration> owned_config_;
       transport::Configuration* config_;
-      volatile bool running_;
-      volatile int control_mode_;
+      std::atomic<bool> running_;
+      std::atomic<bool> resource_exhausted_{false};
+      std::atomic<int> control_mode_;
       int verbose_;
       uint64_t txn_flags_;
       double scale_factor_;
       uint64_t runtime_;
-      volatile int runtime_plus_;
+      std::atomic<int> runtime_plus_;
       uint64_t ops_per_worker_;
       int run_mode_;
       int enable_parallel_loading_;
@@ -120,6 +124,11 @@ class BenchmarkConfig {
       // CPU throttling configuration
       double cpu_limit_percent_;      // 0.0-100.0, 0 = no limit
       uint32_t throttle_cycle_ms_;    // Duty cycle period in ms
+
+      // Selected by matched storage-comparison binaries. Ordinary dbtest
+      // builds accept only the native C++ default.
+      std::string storage_engine_{"cpp"};
+      bool emit_tpcc_result_{false};
 
       // Watermark tracking for latency measurements
       std::vector<std::pair<uint32_t, uint32_t>> advanceWatermarkTracker_;
@@ -167,13 +176,30 @@ class BenchmarkConfig {
       const std::string& getCluster() const { return cluster_; }
       int getClusterRole() const { return clusterRole_; }
       transport::Configuration* getConfig() const { return config_; }
-      bool isRunning() const { return running_; }
-      int getControlMode() const { return control_mode_; }
+      bool isRunning() const {
+        return running_.load(std::memory_order_acquire);
+      }
+      bool hasResourceExhaustion() const {
+        return resource_exhausted_.load(std::memory_order_acquire);
+      }
+      // Return true only to the first reporting thread. A capacity failure
+      // stops every worker and is never counted as a retryable conflict.
+      bool requestResourceExhaustion() {
+        const bool first = !resource_exhausted_.exchange(
+            true, std::memory_order_acq_rel);
+        running_.store(false, std::memory_order_release);
+        return first;
+      }
+      int getControlMode() const {
+        return control_mode_.load(std::memory_order_acquire);
+      }
       int getVerbose() const { return verbose_; }
       uint64_t getTxnFlags() const { return txn_flags_; }
       double getScaleFactor() const { return scale_factor_; }
       uint64_t getRuntime() const { return runtime_; }
-      int getRuntimePlus() const { return runtime_plus_; }
+      int getRuntimePlus() const {
+        return runtime_plus_.load(std::memory_order_acquire);
+      }
       uint64_t getOpsPerWorker() const { return ops_per_worker_; }
       int getRunMode() const { return run_mode_; }
       int getEnableParallelLoading() const { return enable_parallel_loading_; }
@@ -188,6 +214,8 @@ class BenchmarkConfig {
       int getIsMicro() const { return is_micro_; }
       // @safe
       int getIsReplicated() const { return is_replicated_; }
+      const std::string& getStorageEngine() const { return storage_engine_; }
+      bool getEmitTpccResult() const { return emit_tpcc_result_; }
       // @unsafe: returns std::string by value
       std::string getPaxosProcName() const { return paxos_proc_name_; }
       // @safe
@@ -222,14 +250,25 @@ class BenchmarkConfig {
       static void clearThreadLocalShardIndex() { tl_shard_index_ = -1; }
       void setCluster(const std::string& c) { cluster_ = c; }
       void setClusterRole(int role) { clusterRole_ = role; }
-      void setConfig(transport::Configuration* cfg) { config_ = cfg; }
-      void setRunning(bool r) { running_ = r; }
-      void setControlMode(int mode) { control_mode_ = mode; }
+      void setConfig(transport::Configuration* cfg) {
+        owned_config_.reset();
+        config_ = cfg;
+      }
+      void setOwnedConfig(std::unique_ptr<transport::Configuration> cfg) {
+        owned_config_ = std::move(cfg);
+        config_ = owned_config_.get();
+      }
+      void setRunning(bool r) { running_.store(r, std::memory_order_release); }
+      void setControlMode(int mode) {
+        control_mode_.store(mode, std::memory_order_release);
+      }
       void setVerbose(int v) { verbose_ = v; }
       void setTxnFlags(uint64_t flags) { txn_flags_ = flags; }
       void setScaleFactor(double sf) { scale_factor_ = sf; }
       void setRuntime(uint64_t rt) { runtime_ = rt; }
-      void setRuntimePlus(int rtp) { runtime_plus_ = rtp; }
+      void setRuntimePlus(int rtp) {
+        runtime_plus_.store(rtp, std::memory_order_release);
+      }
       void setOpsPerWorker(uint64_t ops) { ops_per_worker_ = ops; }
       void setRunMode(int mode) { run_mode_ = mode; }
       void setEnableParallelLoading(int enable) { enable_parallel_loading_ = enable; }
@@ -241,6 +280,8 @@ class BenchmarkConfig {
       void setUseHashtable(int use) { use_hashtable_ = use; }
       void setIsMicro(int micro) { is_micro_ = micro; }
       void setIsReplicated(int replicated) { is_replicated_ = replicated; }
+      void setStorageEngine(const std::string& engine) { storage_engine_ = engine; }
+      void setEmitTpccResult(bool emit) { emit_tpcc_result_ = emit; }
       void setPaxosProcName(std::string paxos_proc_name) { paxos_proc_name_ = paxos_proc_name; setCluster(paxos_proc_name); setClusterRole(mako::convertCluster(paxos_proc_name));}
       void setPaxosConfigFile(const std::vector<std::string>& paxos_config_file) { paxos_config_file_ = paxos_config_file; }
       

@@ -1,0 +1,7 @@
+command: /usr/bin/cmake --build /dev/shm/sto-output-regression.2V57O6/cmake --target test_benchmark_output --parallel 2
+[0/2] Re-checking globbed directories...
+[1/5] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/tests/test_benchmark_output.cc for CXX dependencies
+[2/5] Generating CXX dyndep file CMakeFiles/test_benchmark_output.dir/CXX.dd
+[3/5] Building CXX object CMakeFiles/test_benchmark_output.dir/tests/test_benchmark_output.cc.o
+[4/5] Linking CXX executable test_benchmark_output
+exit_status=0

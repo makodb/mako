@@ -40,5 +40,5 @@ std::atomic<uint32_t> sync_util::sync_logger::noops_cnt{0};
 std::atomic<uint32_t> sync_util::sync_logger::noops_cnt_hole{0};
 int sync_util::sync_logger::exchange_refresh_cnt = 0;
 std::atomic<bool> sync_util::sync_logger::exchange_running{true};
-int sync_util::sync_logger::failed_shard_index = -1;
-uint32_t sync_util::sync_logger::failed_shard_ts = -1;
+std::atomic<int> sync_util::sync_logger::failed_shard_index{-1};
+std::atomic<uint32_t> sync_util::sync_logger::failed_shard_ts{UINT32_MAX};

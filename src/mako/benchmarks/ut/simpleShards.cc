@@ -35,8 +35,6 @@ public:
     }
 
     void init() {
-        scoped_db_thread_ctx ctx(db, true);
-        mbta_table::thread_init();
         abstract_ordered_index *checking = simple_tpcc_worker::OpenTablesForTablespace(db, "checking") ;
         abstract_ordered_index *saving = simple_tpcc_worker::OpenTablesForTablespace(db, "saving") ;
         open_tables["checking"] = checking;
@@ -103,7 +101,6 @@ public:
                           mako::HelperQueue *queue_response,
                           map<int, abstract_ordered_index *> open_tables) {
         scoped_db_thread_ctx ctx(db, true);  // invoke thread_init
-        TThread::set_id(2);
         TThread::set_mode(1);
         TThread::enable_multiverison();
         TThread::set_nshards(config->nshards);
@@ -204,17 +201,18 @@ int main(int argv, char **args) {
     abstract_db *db = new mbta_wrapper;
     config = new transport::Configuration("./config/local-shards2-warehouses1.yml");
     cluster="localhost";
-    auto worker = new simple_tpcc_worker(db) ;
-    worker->init();
-    worker->load();
+    scoped_db_thread_ctx thread_context(db, true);
+    simple_tpcc_worker worker(db);
+    worker.init();
+    worker.load();
 
     if (is_client) {
-        worker->client();
+        worker.client();
         //worker->print_stats();
     } else {
-        worker->setup_rpc_server();
-        worker->setup_helper();
-        worker->validate();
+        worker.setup_rpc_server();
+        worker.setup_helper();
+        worker.validate();
         //worker->print_stats();
     }
     return 0;

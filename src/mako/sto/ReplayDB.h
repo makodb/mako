@@ -4,6 +4,7 @@
 #include <iostream>
 #include <vector>
 #include "storage/abstract_db.h"
+#include "sto/replay_record.h"
 
 // Single timestamp system commit info
 struct CommitInfo {
@@ -15,12 +16,18 @@ struct CommitInfo {
  * @brief: decode buffer and then replay records
  *
  */
-size_t treplay_in_same_thread_opt_mbta_v2(size_t par_id, char *buffer, size_t len, abstract_db* db, int nshards);
+size_t replay_validated_mbta_v2(const mako::ReplayLogView& log,
+                                abstract_db* db);
+size_t treplay_in_same_thread_opt_mbta_v2(size_t par_id,
+                                         const char *buffer,
+                                         size_t len,
+                                         abstract_db* db,
+                                         int nshards);
 
 /**
  * @brief Get the latest commit info from buffer (single timestamp system)
  *
  */
-CommitInfo get_latest_commit_info(char *buffer, size_t len);
+CommitInfo get_latest_commit_info(const char *buffer, size_t len);
 
 #endif

@@ -20,6 +20,8 @@
 #endif
 #include <vector>
 #include <cstring> // for memcpy
+#include <exception>
+#include <stdexcept>
 #include "deptran/s_main.h"
 #include "sto/Interface.hh"
 #include "sto/sync_util.hh"
@@ -368,6 +370,15 @@ class Transaction {
 public:
     static constexpr unsigned tset_initial_capacity = 512;
 
+    // The transaction-set directory is fixed-size. Capacity exhaustion is a
+    // terminal outcome for the current attempt, not an OCC conflict: retrying
+    // the same operation cannot make the item set smaller.
+    class CapacityExhausted : public std::length_error {
+    public:
+        CapacityExhausted()
+            : std::length_error("STO transaction item capacity exhausted") {}
+    };
+
     static constexpr unsigned hash_size = 1024;
     static constexpr unsigned hash_step = 5;
     using epoch_type = TRcuSet::epoch_type;
@@ -524,7 +535,10 @@ private:
     static std::atomic<TransactionTid::type> _TID;
 public:
 
-    static std::function<void(threadinfo_t::epoch_type)> epoch_advance_callback;
+    using epoch_advance_callback_type =
+        std::function<void(threadinfo_t::epoch_type)>;
+    static void set_epoch_advance_callback(
+        epoch_advance_callback_type callback);
 
     static txp_counters txp_counters_combined() {
         txp_counters out;
@@ -547,7 +561,10 @@ public:
             tinfo[i].p_.reset();
     }
 
-    static void* epoch_advancer(void*);
+    // Start the process-wide epoch advancer. Function-local static ownership
+    // makes concurrent calls idempotent and joins the worker during process
+    // teardown; callers cannot create an unmanaged second worker.
+    static void start_epoch_advancer();
     template <typename T>
     static void rcu_delete(T* x) {
         auto& thr = tinfo[TThread::id()];
@@ -587,6 +604,9 @@ public:
 
 
 private:
+    static void epoch_advancer_loop();
+    static epoch_advance_callback_type epoch_advance_callback;
+
     static constexpr unsigned tset_chunk = 512;
     static constexpr unsigned tset_max_capacity = 32768;
 
@@ -659,6 +679,7 @@ private:
         }
 #endif
         any_writes_ = any_nonopaque_ = may_duplicate_items_ = false;
+        participant_phase_ = TThread::mode() == 1 ? p_collecting : p_none;
         first_write_ = 0;
         start_tid_ = commit_tid_ = 0;
         tid_unique_ = 0;
@@ -689,10 +710,14 @@ private:
 
     // @unsafe: reuses one live transaction-set slot containing packed pointers.
     TransItem* allocate_item(const TObject* obj, void* xkey) {  // weihshen, allocate an item
+        if (tset_size_ == tset_max_capacity) {
+            silent_abort();
+            throw CapacityExhausted();
+        }
         if (tset_size_ && tset_size_ % tset_chunk == 0)
             refresh_tset_chunk();
         ++tset_size_;
-        tset_next_->reinitialize(const_cast<TObject*>(obj), xkey);
+        tset_next_->reset(const_cast<TObject*>(obj), xkey);
 #if TRANSACTION_HASHTABLE
         unsigned hi = hash(obj, xkey);
 # if TRANSACTION_HASHTABLE > 1
@@ -820,8 +845,24 @@ private:
 
 public:
     void silent_abort() {
-        if (in_progress())
-            stop(false, nullptr, 0);
+        // Mode 1 reports in_progress() even while logically idle. Stop only a
+        // transaction that has actually started, so duplicate abort/teardown
+        // cannot invoke cleanup and the RCU end callback twice.
+        if (state_ < s_aborted) {
+            // Once a participant has received the install decision, 2PC can
+            // no longer roll it back. Complete its committed cleanup even if
+            // the worker unwinds before the normal shard_unlock() call.
+            if (participant_phase_ == p_installing) {
+                Warning("STO participant abort entered during INSTALL: "
+                        "state=%u writes=%d items=%u thread=%d",
+                        static_cast<unsigned>(state_), any_writes_,
+                        tset_size_, TThread::id());
+                std::terminate();
+            } else if (participant_phase_ == p_installed)
+                shard_unlock(true);
+            else
+                stop(false, nullptr, 0);
+        }
     }
 
     void abort() {
@@ -836,9 +877,9 @@ public:
                     const commit_validation_gate* validation_gate = nullptr);
     bool shard_try_lock_last_writeset();
     int shard_validate();
-    void shard_install(uint32_t timestamp);
+    void shard_install(uint32_t timestamp) noexcept;
     void shard_serialize_util(uint32_t timestamp);
-    void shard_unlock(bool committed);
+    void shard_unlock(bool committed) noexcept;
 
     void commit() {
         if (!try_commit())
@@ -853,18 +894,24 @@ public:
         return TThread::mode() == 1 || state_ < s_aborted;
     }
 
+    // Mode 1 deliberately reports in_progress() between participant RPCs.
+    // This predicate exposes the actual start()/stop() state for lifecycle
+    // code that must invoke the transaction-end callback exactly once.
+    bool has_active_state() const noexcept {
+        return state_ < s_aborted;
+    }
+
     // @safe - True iff the transaction has accumulated read/write-set
     // items. Distinguishes an IDLE participant thread (in_progress by
     // mode-1 convention, but empty — safe to borrow for a one-op txn)
     // from one that is mid-2PC with staged state (must not be
     // clobbered). Used by the non-txn write handlers.
     //
-    // The in_progress() conjunct matters: after a mode-0 commit,
-    // tset_size_ keeps its final count until the next
-    // start_transaction resets it — a committed txn's leftovers are
-    // not staged state.
+    // The active-state conjunct matters in every mode: tset_size_ keeps its
+    // final count until the next start_transaction(), including after a mode-1
+    // participant completes through shard_unlock().
     bool has_staged_items() {
-        return in_progress() && tset_size_ != 0;
+        return has_active_state() && tset_size_ != 0;
     }
 
     // opacity checking
@@ -903,6 +950,43 @@ public:
             if (item.has_read() || n == (1 << STO_SPIN_BOUND_WRITE)) {
 #  if STO_DEBUG_ABORTS
                 abort_version_ = TransactionTid::atomic_load(vers);
+#  endif
+                return false;
+            }
+# endif
+            relax_fence();
+        }
+#endif
+    }
+
+    // Dedicated lock path for MassTrans's raw version cell. Every access to
+    // that cell uses TransactionTid's atomic helpers, while the legacy STO
+    // wrappers keep their existing representation and lock path.
+    bool try_lock_atomic(TransItem& item, TransactionTid::type& vers) {
+#if STO_SORT_WRITESET
+        (void) item;
+        TransactionTid::lock_atomic(vers, threadid_);
+        return true;
+#else
+        unsigned n = 0;
+        while (1) {
+            if (TransactionTid::try_lock_atomic(vers, threadid_))
+                return true;
+            ++n;
+# if STO_SPIN_EXPBACKOFF
+            if (item.has_read() || n == STO_SPIN_BOUND_WRITE) {
+#  if STO_DEBUG_ABORTS
+                abort_version_ = TransactionTid::load_atomic(vers);
+#  endif
+                return false;
+            }
+            if (n > 3)
+                for (unsigned x = 1 << std::min(15U, n - 2); x; --x)
+                    relax_fence();
+# else
+            if (item.has_read() || n == (1 << STO_SPIN_BOUND_WRITE)) {
+#  if STO_DEBUG_ABORTS
+                abort_version_ = TransactionTid::load_atomic(vers);
 #  endif
                 return false;
             }
@@ -1025,9 +1109,15 @@ public:
     static bool try_allocate_mako_timestamp(uint64_t& result) noexcept;
 
     // Temporary allocator for the old distributed u32 protocol. Local cache
-    // commits never call it.
+    // commits never call it. Zero is invalid/uninitialized;
+    // max_mako_timestamp + 1 represents permanent exhaustion.
     static bool try_allocate_legacy_distributed_timestamp(
         uint32_t& result) noexcept;
+
+    // Atomically reserve a legacy distributed timestamp strictly greater than
+    // lower_bound. Concurrent callers receive distinct values.
+    static bool try_allocate_legacy_distributed_timestamp_after(
+        uint32_t lower_bound, uint32_t& result) noexcept;
 
     // Advance Mako's next-to-return clock past `observed`. This is the
     // install-side catch-up operation and may exhaust the clock when the
@@ -1046,20 +1136,29 @@ public:
 
     bool try_assign_mako_timestamp(uint64_t& result) const noexcept;
 
-    bool updateSingleTimestamp() const {
+    bool updateSingleTimestamp(bool& exhausted) const {
         assert(state_ == s_committing_locked || state_ == s_committing);
-	    if(!tid_unique_ &&
-           !try_allocate_legacy_distributed_timestamp(tid_unique_))
+        if (!tid_unique_ &&
+            !try_allocate_legacy_distributed_timestamp(tid_unique_)) {
+            const uint32_t current =
+                sync_util::sync_logger::legacy_distributed_timestamp_state
+                    .load(std::memory_order_relaxed);
+            exhausted = current == 0 || current > max_mako_timestamp;
             return false;
+        }
 
         if (TThread::writeset_shard_bits>0/*||TThread::readset_shard_bits>0*/) {
             // Get single timestamp from remote shards
             uint32_t remote_timestamp = 0;
             if (TThread::sclient == nullptr ||
                 TThread::sclient->remoteGetTimestamp(remote_timestamp) != 0 ||
-                remote_timestamp == 0 ||
-                remote_timestamp > max_mako_timestamp)
+                remote_timestamp == 0)
                 return false;
+            if (remote_timestamp > max_mako_timestamp) {
+                observe_legacy_distributed_timestamp(remote_timestamp);
+                exhausted = true;
+                return false;
+            }
             // Use the max timestamp
             if (remote_timestamp > tid_unique_) {
                 tid_unique_ = remote_timestamp;
@@ -1103,6 +1202,16 @@ public:
 
     class Abort {};
 
+    // The timestamp is encoded as base * 10 + term in a u32 on Mako's wire
+    // path. Exhaustion is permanent for the process and must not be reported
+    // as an ordinary OCC conflict, since retry loops can never make progress.
+    class TimestampExhausted : public std::runtime_error {
+    public:
+        TimestampExhausted()
+            : std::runtime_error(
+                  "Mako logical timestamp exhausted; restart is required") {}
+    };
+
     uint32_t local_random() const {
         lrng_state_ = lrng_state_ * 1664525 + 1013904223;
         return lrng_state_;
@@ -1134,6 +1243,12 @@ private:
         s_in_progress = 0, s_opacity_check = 1, s_committing = 2,
         s_committing_locked = 3, s_aborted = 4, s_committed = 5
     };
+    enum participant_phase : uint8_t {
+        p_none = 0,
+        p_collecting,
+        p_installing,
+        p_installed
+    };
 
     uint32_t start_time;
     int threadid_;
@@ -1144,6 +1259,7 @@ private:
     bool any_nonopaque_;
     bool may_duplicate_items_;
     bool is_test_;
+    participant_phase participant_phase_;
     TransItem* tset_next_;
     unsigned tset_size_;
     mutable tid_type start_tid_;
@@ -1163,6 +1279,7 @@ private:
 
     void hard_check_opacity(TransItem* item, TransactionTid::type t);
     void stop(bool committed, unsigned* writes, unsigned nwrites);
+    void finish(bool committed) noexcept;
 
     friend class TransProxy;
     friend class TransItem;
@@ -1211,11 +1328,16 @@ public:
 
     static void abort_without_throw() {
         // Check if we need to do remote abort before aborting locally
-        bool needs_remote_abort = in_progress() &&
+        bool needs_remote_abort = TThread::txn &&
+            TThread::txn->has_active_state() &&
             (TThread::writeset_shard_bits>0||TThread::readset_shard_bits>0);
         Sto::silent_abort();
-        if (needs_remote_abort)
+        if (needs_remote_abort) {
+            ALWAYS_ASSERT(TThread::sclient != nullptr);
             TThread::sclient->remoteAbort();
+            TThread::writeset_shard_bits = 0;
+            TThread::readset_shard_bits = 0;
+        }
     }
 
     static void silent_abort() {
@@ -1420,7 +1542,7 @@ inline TransProxy& TransProxy::add_read(T rdata) {
 }
 
 inline TransProxy& TransProxy::add_extra(std::string extra) {
-    item().extra = extra ;
+    item().extra = std::move(extra);
     return *this;
 }
 

@@ -76,7 +76,7 @@
 // insert_if_absent as `index`, but already compiled into libmako.a, so
 // running both says whether this file's own instantiation of the
 // masstree templates is representative.
-#include "mako/storage/mtree_abi.h"
+#include "mako/storage/mtx_abi.h"
 
 #include <stdint.h>
 #include <stdio.h>

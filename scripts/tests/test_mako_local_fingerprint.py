@@ -495,6 +495,26 @@ class FingerprintTests(unittest.TestCase):
                 Counter({"duplicate.o": 2, "known.o": 1, "unlisted.o": 1}),
             )
 
+    def test_cmake_std_module_objects_are_stripped_before_composition_check(self) -> None:
+        members = ["known.o", "std.cppm.o", "dir/std.compat.cppm.o", "std_helper.o"]
+        self.assertEqual(
+            fingerprint.strip_cmake_std_module_members(members),
+            ["known.o", "std_helper.o"],
+        )
+        # Only the two CMake-generated module units are exempt; a project
+        # object that merely mentions std stays subject to the inventory.
+        with self.assertRaisesRegex(
+            fingerprint.FingerprintError, r"unexpected: std_helper\.o"
+        ):
+            fingerprint.compare_archive_members(
+                Path("/build/libmako.a"),
+                Counter({"known.o": 1}),
+                Counter(
+                    Path(m).name
+                    for m in fingerprint.strip_cmake_std_module_members(members)
+                ),
+            )
+
     def test_archive_content_rejects_same_names_with_different_bytes(self) -> None:
         archive = Path("/build/libmako.a")
         selected = fingerprint.ObjectContent.from_bytes("same.o", b"selected")

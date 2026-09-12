@@ -23,7 +23,7 @@ DEFAULT_TRANSPILER = (
     "third-party/rusty-cpp/target/release/rusty-cpp-transpiler"
 )
 RUSTY_CPP_SUBMODULE = "third-party/rusty-cpp"
-REQUIRED_RUSTY_CPP_COMMIT = "a1f8fef85e8d43bb00f85f8ef32e5ecc69408642"
+REQUIRED_RUSTY_CPP_COMMIT = "20707e98a371fee772729ae0a6b516e2d360ddd7"
 EXTRACTION_DRIVER = "scripts/extract_srpc_rust.py"
 # Crate-relative, like every other label the extraction driver owns: it
 # resolves against `extraction.crate_root(root)` (the vendored srpc tree at
@@ -8801,6 +8801,10 @@ PLATFORM_IMPL_SYMBOLS = {
     "srpc.epoll_wrapper": frozenset(
         {
             ("T", "srpc::epoll_add_impl@srpc.epoll_wrapper(int, int, int)"),
+            (
+                "T",
+                "srpc::epoll_event_with_fd@srpc.epoll_wrapper(int, unsigned int)",
+            ),
             ("T", "srpc::epoll_event_zeroed@srpc.epoll_wrapper()"),
             ("T", "srpc::epoll_open@srpc.epoll_wrapper()"),
             ("T", "srpc::epoll_remove_impl@srpc.epoll_wrapper(int, int)"),
@@ -8811,7 +8815,7 @@ PLATFORM_IMPL_SYMBOLS = {
         }
     ),
 }
-EXPECTED_TOTAL_PLATFORM_SYMBOLS = 5
+EXPECTED_TOTAL_PLATFORM_SYMBOLS = 6
 
 
 class GateError(RuntimeError):

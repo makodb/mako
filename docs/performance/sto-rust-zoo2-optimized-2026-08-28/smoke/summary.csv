@@ -1,0 +1,5 @@
+engine,scenario,threads,repetitions,median_txn_per_sec,median_ops_per_sec,min_ops_per_sec,max_ops_per_sec,median_abort_percent
+cpp-sto-masstree,read10,1,1,605704.204,6057042.035,6057042.035,6057042.035,0.000000
+rust-sto-masstree,read10,1,1,482680.712,4826807.117,4826807.117,4826807.117,0.000000
+cpp-sto-masstree,rw50_10,1,1,398802.971,3988029.712,3988029.712,3988029.712,0.000000
+rust-sto-masstree,rw50_10,1,1,309593.165,3095931.651,3095931.651,3095931.651,0.000000

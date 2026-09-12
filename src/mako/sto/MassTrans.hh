@@ -20,6 +20,7 @@
 #include <rusty/function.hpp>
 #include "common.hh"
 #include "stdlib.h"
+#include <type_traits>
 
 #define RCU 1
 #define ABORT_ON_WRITE_READ_CONFLICT 0
@@ -33,6 +34,12 @@
 template <typename V, typename Box = versioned_value_struct<V>, bool Opacity = true>
 class MassTrans : public TObject {
 public:
+  // Mako's multiversion representation is specific to versioned_str_struct:
+  // it stores timestamp metadata in a packed string footer. Ordinary Box
+  // implementations do not have that layout or its data/length API.
+  static constexpr bool supports_packed_multiversion =
+      std::is_base_of_v<versioned_str_struct, Box>;
+
 #if !RCU
   typedef debug_threadinfo threadinfo;
 #endif
@@ -49,8 +56,8 @@ public:
   typedef typename std::conditional<Opacity, TVersion, TNonopaqueVersion>::type tversion_type;
 
   static __thread threadinfo_type mythreadinfo;
-  unsigned long long int table_id = 0;
-  bool is_remote = false;
+  unsigned long long int table_id{0};
+  bool is_remote{false};
   std::string table_name_;
 
 protected:
@@ -85,10 +92,10 @@ public:
   }
 
   static void static_init() {
-    Transaction::epoch_advance_callback = [] (unsigned) {
+    Transaction::set_epoch_advance_callback([] (unsigned) {
       // just advance blindly because of the way Masstree uses epochs
       globalepoch++;
-    };
+    });
   }
 
   const std::string& get_table_name() const { return table_name_; }
@@ -112,6 +119,7 @@ public:
   }
 
   static void thread_init() {
+    ensure_supported_runtime_mode();
 #if !RCU
     mythreadinfo.ti = new threadinfo;
     return;
@@ -125,6 +133,11 @@ public:
       Panic("the id is so large, %d-%d", MAX_THREADS, TThread::id());
     }
     Transaction::tinfo[TThread::id()].trans_start_callback = [] () {
+      const auto transaction_epoch =
+          Transaction::global_epochs.global_epoch.load(
+              std::memory_order_acquire);
+      mythreadinfo.ti->context()->advance_epoch_to_at_least(
+          transaction_epoch);
       mythreadinfo.ti->rcu_start();
     };
     Transaction::tinfo[TThread::id()].trans_end_callback = [] () {
@@ -135,6 +148,7 @@ public:
 
   template <typename ValType>
   bool transGet(Str key, ValType& retval, threadinfo_type& ti = mythreadinfo) {
+    ensure_supported_runtime_mode();
     // if false:
     //   1) not found a key
     //   2) found a key, but updated by other writes 
@@ -174,8 +188,12 @@ public:
         return false;
       }
       item.observe(tversion_type(elem_vers));
-      if (TThread::is_multiversion())
-        return MultiVersionValue::mvGET(retval, (char*)e->data(), TThread::txn->get_current_term(), sync_util::sync_logger::hist_timestamp);
+      if constexpr (supports_packed_multiversion) {
+        if (TThread::is_multiversion())
+          return MultiVersionValue::mvGET(
+              retval, TThread::txn->get_current_term(),
+              sync_util::sync_logger::hist_timestamp);
+      }
     } else {
       //Warning("Not found a value");
       ensureNotFound(lp.node(), lp.full_version_value());
@@ -185,11 +203,12 @@ public:
 
   template <typename K>
   bool transDelete(const K& key, threadinfo_type& ti = mythreadinfo) {
+    ensure_supported_runtime_mode();
     auto lp = unlocked_cursor_type::from_mutable_str(table_, key);
     bool found = lp.find_unlocked(*ti.ti);
     if (found) {
       versioned_value *e = lp.value();
-      Version v = TransactionTid::atomic_load(e->version());
+      Version v = load_version(e->version());
       fence();
       auto item = t_item(e);
       item.add_extra(key) ;
@@ -217,8 +236,35 @@ public:
       if (readMyWritesEnabled() && has_delete(item)) {
         return false;
       }
+      // A resurrection owns a committed physical tombstone, not a freshly
+      // allocated row. Deleting it in the same transaction is a logical
+      // cancellation that must preserve the tombstone and its history.
+      if (has_resurrection(item)) {
+        item.template add_write<key_write_value_type>(key)
+            .add_flags(delete_bit);
+        return true;
+      }
 #endif
-      item.observe(tversion_type(v));
+      if constexpr (supports_packed_multiversion) {
+        if (TThread::is_multiversion()) {
+          // A multi-version delete leaves a physical tombstone in Masstree.
+          // Determine logical visibility before staging another delete; the
+          // cursor's `found` bit alone only describes physical presence.
+          value_type visible_value;
+          Version observed_version;
+          if (!atomicRead(e, observed_version, visible_value))
+            return false;
+          item.observe(tversion_type(observed_version));
+          if (!MultiVersionValue::mvGET(
+                  visible_value, TThread::txn->get_current_term(),
+                  sync_util::sync_logger::hist_timestamp))
+            return false;
+        } else {
+          item.observe(tversion_type(v));
+        }
+      } else {
+        item.observe(tversion_type(v));
+      }
       // same as inserts we need to Store (copy) key so we can lookup to remove later
       item.template add_write<key_write_value_type>(key).add_flags(delete_bit);
       return found;
@@ -283,6 +329,11 @@ private:
       return compar(storageValue(value), private_value);
     }
 #endif
+    // A foreign invalid row is a record conflict for the comparator too.
+    if (!validityCheck(item, e)) {
+      Sto::abort();
+      return false;
+    }
 
     value_type published_value;
     Version published_version;
@@ -296,6 +347,17 @@ private:
     return compar(storageValue(value), published_value);
   }
 
+  template <typename ValueType>
+  static size_t packed_value_size(const ValueType& value) {
+    if constexpr (requires { value.value()->size(); }) {
+      return value.value()->size();
+    } else if constexpr (requires { value.size(); }) {
+      return value.size();
+    } else {
+      return static_cast<size_t>(value.length());
+    }
+  }
+
   template <bool INSERT, bool SET, typename StringType, typename ValueType>
   bool trans_write(
       const StringType& key, const ValueType& value,
@@ -305,6 +367,14 @@ private:
       Transaction::canonical_write_view* canonical_write_out = nullptr) {
     if (canonical_write_out != nullptr)
       *canonical_write_out = Transaction::canonical_write_view{};
+    ensure_supported_runtime_mode();
+    if constexpr (supports_packed_multiversion) {
+      if (!MultiVersionValue::validPackedSize(
+              packed_value_size(value), TThread::is_multiversion())) {
+        Sto::abort_without_throw();
+        throw std::length_error("invalid packed MassTrans value size");
+      }
+    }
     // optimization to do an unlocked lookup first
     if (SET) {
       auto lp = unlocked_cursor_type::from_mutable_str(table_, key);
@@ -472,6 +542,7 @@ protected:
                       bool begin_inclusive, bool end_inclusive,
                       ValueAllocator *va,
                       size_t *remaining_items, threadinfo_type& ti) {
+    ensure_supported_runtime_mode();
     bool budget_exhausted = false;
     auto reserve_item = [&] (auto key) {
       if (!remaining_items)
@@ -502,6 +573,12 @@ protected:
       if (budget_exhausted || !reserve_item(e))
         return false;
       auto item = this->t_read_only_item(e);
+      if (!validityCheck(item, e)) {
+        // A foreign invalid row (relocation or single-version delete in
+        // flight) is a record conflict, not a successful early stop.
+        Sto::abort_without_throw();
+        propagate_atomic_read_conflict();
+      }
 #if READ_MY_WRITES
       if (readMyWritesEnabled()) {
         // Inserts are already linked into Masstree as private invalid entries,
@@ -530,22 +607,25 @@ protected:
         propagate_atomic_read_conflict();
       item.observe(tversion_type(v));
 
-      if (!TThread::is_multiversion())
-        return callback(key, val);
+      if constexpr (supports_packed_multiversion) {
+        if (!TThread::is_multiversion())
+          return callback(key, val);
 
-      // key and val are both only guaranteed until callback returns
-      bool ret = MultiVersionValue::mvGET(val,
-                                          (char*)e->data(),
-                                          TThread::txn->get_current_term(), 
-                                          sync_util::sync_logger::hist_timestamp);
-      if (ret){
-        return callback(key, val);
-      }else {
-        deleted_cnt++;
-        if (deleted_cnt>10){
-          return false; // TODO, it's better to keep new_order id for taking over
+        // key and val are both only guaranteed until callback returns
+        bool ret = MultiVersionValue::mvGET(val,
+                                            TThread::txn->get_current_term(),
+                                            sync_util::sync_logger::hist_timestamp);
+        if (ret){
+          return callback(key, val);
+        }else {
+          deleted_cnt++;
+          if (deleted_cnt>10){
+            return false; // TODO, it's better to keep new_order id for taking over
+          }
+          return true;//skip the deleted items
         }
-        return true;//skip the deleted items
+      } else {
+        return callback(key, val);
       }
     };
 
@@ -579,6 +659,7 @@ protected:
                        bool begin_inclusive, bool end_inclusive,
                        ValueAllocator *va,
                        size_t *remaining_items, threadinfo_type& ti) {
+    ensure_supported_runtime_mode();
     bool budget_exhausted = false;
     auto reserve_item = [&] (auto key) {
       if (!remaining_items)
@@ -607,6 +688,10 @@ protected:
       if (budget_exhausted || !reserve_item(e))
         return false;
       auto item = this->t_read_only_item(e);
+      if (!validityCheck(item, e)) {
+        Sto::abort_without_throw();
+        propagate_atomic_read_conflict();
+      }
 #if READ_MY_WRITES
       if (readMyWritesEnabled()) {
         // Match the forward overlay exactly; direction only changes tree
@@ -631,21 +716,24 @@ protected:
         propagate_atomic_read_conflict();
       item.observe(tversion_type(v));
 
-      if (!TThread::is_multiversion())
-        return callback(key, val);
+      if constexpr (supports_packed_multiversion) {
+        if (!TThread::is_multiversion())
+          return callback(key, val);
 
-      bool ret = MultiVersionValue::mvGET(val,
-                                          (char*)e->data(),
-                                          TThread::txn->get_current_term(), 
-                                          sync_util::sync_logger::hist_timestamp);
-      if (ret)
-        return callback(key, val);
-      else {
-        deleted_cnt++;
-        if (deleted_cnt>10){
-          return false; // TODO, it's better to keep new_order id for taking over
+        bool ret = MultiVersionValue::mvGET(val,
+                                            TThread::txn->get_current_term(),
+                                            sync_util::sync_logger::hist_timestamp);
+        if (ret)
+          return callback(key, val);
+        else {
+          deleted_cnt++;
+          if (deleted_cnt>10){
+            return false; // TODO, it's better to keep new_order id for taking over
+          }
+          return true;//skip the deleted items
         }
-        return true;//skip the deleted items
+      } else {
+        return callback(key, val);
       }
     };
 
@@ -730,15 +818,44 @@ protected:
     Valuecallback valuecallback_;
   };
 
+  // Every public one-operation helper owns the ambient STO attempt it starts.
+  // If staging or a user scan callback throws, abort before unwinding so the
+  // next operation cannot inherit locks or an active transaction. Commit-time
+  // publication failures are fail-stop in Transaction::try_commit().
+  class one_op_transaction {
+  public:
+    one_op_transaction() {
+      Sto::start_transaction();
+      active_ = true;
+    }
+
+    one_op_transaction(const one_op_transaction&) = delete;
+    one_op_transaction& operator=(const one_op_transaction&) = delete;
+
+    ~one_op_transaction() noexcept {
+      if (active_ && TThread::txn != nullptr &&
+          TThread::txn->has_active_state()) {
+        TThread::txn->silent_abort();
+      }
+    }
+
+    void commit() {
+      TThread::txn->commit();
+      active_ = false;
+    }
+
+  private:
+    bool active_ = false;
+  };
+
 public:
 
   // Non-transactional API (Masstree-shape; see
   // docs/storage-interface.md). Each op below is per-key
   // atomic: it does NOT participate in a caller's transaction.
-  // put/get/insert/scan/rscan wrap a one-op OCC transaction (safe
-  // under concurrent OCC readers/writers); remove (further down) is
-  // a direct raw write — the asymmetry is accepted and documented in
-  // the plan doc.
+  // put/get/insert/erase/scan/rscan wrap a one-op OCC transaction and
+  // are safe under concurrent OCC readers and writers. The physical removal
+  // primitive is private and used only after the transaction decision.
   // VT is templated (like transPut) so callers can pass StringWrapper
   // for zero-copy packing as well as plain value_type.
   // Returns true iff the key was newly inserted (Masstree's insert
@@ -747,17 +864,20 @@ public:
   template <typename VT = value_type>
   bool put(Str key, const VT& value, threadinfo_type& ti = mythreadinfo) {
     // @unsafe: Sto uses thread-local global transaction state.
-    Sto::start_transaction();
+    one_op_transaction transaction;
     auto existed = transPut(key, value, ti);
-    Sto::commit();
+    // start_transaction() established the non-null active transaction. Calling
+    // it directly avoids Sto::commit()'s shutdown-only conditional path, which
+    // must not turn a self-contained operation into a silent no-op.
+    transaction.commit();
     return !existed;
   }
 
   bool get(Str key, value_type& value, threadinfo_type& ti = mythreadinfo) {
     // @unsafe: Sto uses thread-local global transaction state.
-    Sto::start_transaction();
+    one_op_transaction transaction;
     auto ret = transGet(key, value, ti);
-    Sto::commit();
+    transaction.commit();
     return ret;
   }
 
@@ -766,10 +886,22 @@ public:
   template <typename VT = value_type>
   bool insert(Str key, const VT& value, threadinfo_type& ti = mythreadinfo) {
     // @unsafe: Sto uses thread-local global transaction state.
-    Sto::start_transaction();
+    one_op_transaction transaction;
     auto existed = transInsert(key, value, ti);
-    Sto::commit();
+    transaction.commit();
     return !existed;
+  }
+
+  // Delete one key in a self-contained OCC transaction. Returns true iff the
+  // key existed. The commit path performs size accounting and replication;
+  // the private physical primitive remains uncounted and is used only after a
+  // transaction decision has already been made.
+  bool erase(Str key, threadinfo_type& ti = mythreadinfo) {
+    // @unsafe: Sto uses thread-local global transaction state.
+    one_op_transaction transaction;
+    auto found = transDelete(key, ti);
+    transaction.commit();
+    return found;
   }
 
   // Forward range scan over [begin, end). Callback is invoked per
@@ -777,18 +909,18 @@ public:
   void scan(Str begin, Str end, RangeCallback callback, ValueAllocator *va = nullptr,
             threadinfo_type& ti = mythreadinfo) {
     // @unsafe: Sto uses thread-local global transaction state.
-    Sto::start_transaction();
+    one_op_transaction transaction;
     transQuery(begin, end, std::move(callback), va, ti);
-    Sto::commit();
+    transaction.commit();
   }
 
   // Reverse range scan; same contract as scan but descending order.
   void rscan(Str begin, Str end, RangeCallback callback, ValueAllocator *va = nullptr,
              threadinfo_type& ti = mythreadinfo) {
     // @unsafe: Sto uses thread-local global transaction state.
-    Sto::start_transaction();
+    one_op_transaction transaction;
     transRQuery(begin, end, std::move(callback), va, ti);
-    Sto::commit();
+    transaction.commit();
   }
 
   // implementation of TObject methods
@@ -802,7 +934,7 @@ public:
 
     bool lock(TransItem& item, Transaction& txn) override {
         versioned_value* vv = item.key<versioned_value*>();
-        return txn.try_lock(item, vv->version());
+        return txn.try_lock_atomic(item, vv->version());
     }
   bool check(TransItem& item, Transaction&) override {
     if (has_internode_key(item)) {
@@ -835,19 +967,22 @@ public:
   // until that profile-guided layout is part of the production toolchain.
   __attribute__((aligned(64)))
   void install(TransItem& item, Transaction& t) override {
+    ensure_supported_runtime_mode();
     assert(!has_internode_key(item));
     versioned_value* e = item.key<versioned_value*>();
     assert(is_locked(TransactionTid::atomic_load(
         e->version(), std::memory_order_relaxed)));
     bool isInsert = has_insert(item), isDelete = has_delete(item);
+    bool isResurrection = has_resurrection(item);
 
     if (isDelete) { // delete
-      // Update count at commit time.
+      // Update the aggregate count at commit time. The record is locked, but
+      // transactions changing other records can reach this counter in parallel.
       // insert-then-delete cancels out (net change = 0); plain delete decrements.
-      if (!isInsert) {
+      if (!isInsert && !isResurrection) {
         size_count_.fetch_sub(1, std::memory_order_relaxed);
       }
-      if (!TThread::is_multiversion()) {
+      if (!TThread::is_multiversion() || isInsert) {
         if (!isInsert) { // update
           assert(!(TransactionTid::atomic_load(
               e->version(), std::memory_order_relaxed) & invalid_bit));
@@ -856,51 +991,78 @@ public:
         }
 
         key_write_value_type& s = item.template write_value<key_write_value_type>();
-        bool success = remove(Str(s));
+        bool success = remove_physical(Str(s));
         // no one should be able to remove since we hold the lock
         (void)success;
         assert(success);
         return;
       }
 
-      string v=string(1+mako::EXTRA_BITS_FOR_VALUE, 'B');
-      MultiVersionValue::mvInstall(isInsert, isDelete,
-                                   v,
-                                   e,
-                                   TThread::txn->get_current_term());
-      e->set_length(v.length());
+      if constexpr (supports_packed_multiversion) {
+        string v=string(1+mako::EXTRA_BITS_FOR_VALUE, 'B');
+        MultiVersionValue::mvInstall(isInsert, isDelete,
+                                     v,
+                                     e,
+                                     TThread::txn->get_current_term(),
+                                     *mythreadinfo.ti);
+      }
+      // A physical MV tombstone remains addressable, so invalid_bit cannot
+      // publish the deletion as it does in single-version mode. Advance the
+      // OCC version while the row lock is held: transactions that observed
+      // the formerly present row must fail validation before they can apply a
+      // second size decrement or resurrect it as an ordinary update.
+      if (Opacity)
+        TransactionTid::set_version_atomic(
+            e->version(), t.commit_tid(), TThread::id());
+      else
+        TransactionTid::inc_nonopaque_version_atomic(
+            e->version(), TThread::id());
       return;
     }  // end of deletion
 
     if (!isInsert) { // update
         write_value_type& v = item.template write_value<write_value_type>();
-        if (!TThread::is_multiversion()) {
+        if constexpr (!supports_packed_multiversion) {
           e->set_value(v);
-          RESET_NODE_BY_E(e)
         } else {
-          MultiVersionValue::mvInstall(isInsert, isDelete,
-                                     v,
-                                     e,
-                                     TThread::txn->get_current_term());
-          e->set_length(v.length());
+          if (!TThread::is_multiversion()) {
+            // Single-version rows are updated in place through atomic byte
+            // stores; readers copy through the fence-paired atomic path.
+            e->set_value(v);
+            RESET_NODE_BY_E(e)
+          } else {
+            MultiVersionValue::mvInstall(isInsert, isDelete,
+                                       v,
+                                       e,
+                                       TThread::txn->get_current_term(),
+                                       *mythreadinfo.ti);
+          }
         }
     }
-    if (Opacity)  // false
-      TransactionTid::set_version(e->version(), t.commit_tid());
-    else if (isInsert) {  // insert
+    if (isInsert || isResurrection)
       size_count_.fetch_add(1, std::memory_order_relaxed);
-      Version v = TransactionTid::atomic_load(
-          e->version(), std::memory_order_relaxed) & ~invalid_bit;
-      fence();
-      TransactionTid::atomic_store(e->version(), v);
-      if (TThread::is_multiversion())
+
+    // MV metadata belongs to the inserted packed value regardless of whether
+    // the OCC version uses opaque or nonopaque publication.
+    if constexpr (supports_packed_multiversion) {
+      if (isInsert && TThread::is_multiversion())
         MultiVersionValue::mvInstall(isInsert, isDelete,
                                     "",
                                     e,
-                                    TThread::txn->get_current_term());
+                                    TThread::txn->get_current_term(),
+                                    *mythreadinfo.ti);
+    }
+
+    if (Opacity)  // false in the supported production profile
+      TransactionTid::set_version_atomic(
+          e->version(), t.commit_tid(), TThread::id());
+    else if (isInsert) {  // insert
+      Version v = load_version(e->version()) & ~invalid_bit;
+      fence();
+      store_version(e->version(), v);
     } else // update
-      TransactionTid::inc_nonopaque_version(e->version());
-      //RESET_NODE_BY_E(e)
+      TransactionTid::inc_nonopaque_version_atomic(
+          e->version(), TThread::id());
   }
 
   void unlock(TransItem& item) override {
@@ -913,21 +1075,30 @@ public:
         key_write_value_type& stdstr = item.template write_value<key_write_value_type>();
         // does not copy
         Str s(stdstr);
-        bool success = remove(s);
+        bool success = remove_physical(s);
         (void)success;
         assert(success);
     }
   }
 
-  bool remove(const Str& key, threadinfo_type& ti = mythreadinfo) {
+private:
+  // Physical tree cleanup after an OCC decision. This bypasses validation,
+  // version publication, replication, and size accounting, so it must never
+  // be exposed as a public data operation.
+  bool remove_physical(const Str& key, threadinfo_type& ti = mythreadinfo) {
+    ensure_supported_runtime_mode();
     auto lp = cursor_type::from_mutable_str(table_, key);
     // finish() requires the original-node metadata initialized by
     // find_insert(), including when this operation only removes a row.
     bool found = lp.find_insert(*ti.ti);
     // Only deallocate when the key exists: on a miss the cursor's
     // value slot is uninitialized and dereferencing it is UB.
-    if (found)
+    if (found) {
+      if constexpr (supports_packed_multiversion) {
+        MultiVersionValue::retirePublishedValue(lp.value(), *ti.ti);
+      }
       lp.value()->deallocate_rcu(*ti.ti);
+    }
     lp.finish(found ? -1 : 0, *ti.ti);
     return found;
   }
@@ -935,10 +1106,13 @@ public:
 protected:
   bool readMyWritesEnabled() const {
 #if READ_MY_WRITES
-    // This milestone covers local single-version Silo. Native Mako's remote
-    // proxies and replicated multiversion participants have different staging
-    // and lock-transfer protocols and must retain their prior behavior.
-    return !is_remote && !TThread::is_multiversion();
+    // Own-write composition (read/overwrite/delete of this transaction's own
+    // staged insert, update, or delete) is supported on every local table:
+    // single-version rows through the RYW overlay and relocation logic,
+    // multiversion rows through immutable private-row publication. Native
+    // Mako's remote proxies have a different staging and lock-transfer
+    // protocol and keep the abort-on-own-invalid-row behavior.
+    return !is_remote;
 #else
     return false;
 #endif
@@ -954,6 +1128,11 @@ protected:
   // use that same backing value without materializing a temporary string.
   static const std::string& storageValue(const StringWrapper& value) {
     return *value.value();
+  }
+
+  static void ensure_supported_runtime_mode() {
+    if constexpr (!supports_packed_multiversion)
+      always_assert(!TThread::is_multiversion());
   }
 
   // called once we've checked our own writes for a found put()
@@ -1052,11 +1231,22 @@ protected:
       item = Sto::new_item(this, new_location);
 #endif
     }
-#if READ_MY_WRITES
-    if (readMyWritesEnabled() && has_insert(item)) {
-      new_location->set_value(storage_value);
+    if (has_insert(item)) {
+      if constexpr (supports_packed_multiversion) {
+        if (TThread::is_multiversion()) {
+          // Multiversion inserts publish immutable replacements so a repeated
+          // write may grow the private row without relocating it.
+          MultiVersionValue::publishImmutableValue(
+              value_type(value), new_location, *mythreadinfo.ti, false);
+        } else {
+          // The private single-version row is owned by this transaction;
+          // resizeIfNeeded above already sized it for storage_value.
+          new_location->set_value(storage_value);
+        }
+      } else {
+        new_location->set_value(value_type(value));
+      }
     } else
-#endif
     {
       item.template add_write<write_value_type>(value); // write_value_type value0 = (write_value_type)value;
 
@@ -1092,7 +1282,38 @@ protected:
       }
       return false;
     }
+    if (has_resurrection(item)) {
+      // The staged resurrection is logically present to later operations in
+      // this transaction. Put overwrites it; Insert preserves it.
+      if (SET)
+        reallyHandlePutFound(item, e, key, value);
+      return true;
+    }
 #endif
+    if constexpr (supports_packed_multiversion) {
+      if (TThread::is_multiversion()) {
+        value_type visible_value;
+        Version observed_version;
+        if (!atomicRead(e, observed_version, visible_value))
+          return false;
+        item.observe(tversion_type(observed_version));
+        const bool logically_present = MultiVersionValue::mvGET(
+            visible_value, TThread::txn->get_current_term(),
+            sync_util::sync_logger::hist_timestamp);
+        if (!logically_present) {
+          if constexpr (!INSERT) {
+            return false;
+          } else {
+            // Treat this as an update for serialization and abort cleanup: the
+            // committed tombstone remains owned by the table. The dedicated
+            // flag supplies logical-insert size accounting at install.
+            reallyHandlePutFound(item, e, key, value);
+            item.add_flags(resurrection_bit);
+            return false;
+          }
+        }
+      }
+    }
     if (SET) {
       reallyHandlePutFound(item, e, key, value);
     }
@@ -1162,13 +1383,16 @@ protected:
   static bool has_delete(const TransItem& item) {
       return item.flags() & delete_bit;
   }
+  static bool has_resurrection(const TransItem& item) {
+      return item.flags() & resurrection_bit;
+  }
   static bool has_invalidate(const TransItem& item) {
       return item.flags() & delete_bit;
   }
 
   bool validityCheck(const TransItem& item, versioned_value *e) const {
     bool v =  //likely(has_insert(item)) || !(e->version & invalid_bit);
-      likely(!(TransactionTid::atomic_load(e->version()) & invalid_bit)) ||
+      likely(!(load_version(e->version()) & invalid_bit)) ||
       (readMyWritesEnabled() && has_insert(item));
     //Warning("validityCheck:%d,%d",!(e->version() & invalid_bit), has_insert(item));
     return v;
@@ -1180,6 +1404,8 @@ protected:
 
   static constexpr TransItem::flags_type insert_bit = TransItem::user0_bit;
   static constexpr TransItem::flags_type delete_bit = TransItem::user0_bit<<1;
+  static constexpr TransItem::flags_type resurrection_bit =
+      TransItem::user0_bit<<2;
 
 private:
   // @unsafe - pointer tagging stores the internode marker in the low alignment bit.
@@ -1212,6 +1438,18 @@ protected:
     return is_inter(item.key<versioned_value*>());
   }
 
+  static Version load_version(
+      const Version& version,
+      std::memory_order order = std::memory_order_acquire) {
+    return TransactionTid::load_atomic(version, order);
+  }
+
+  static void store_version(
+      Version& version, Version value,
+      std::memory_order order = std::memory_order_release) {
+    TransactionTid::store_atomic(version, value, order);
+  }
+
   static void check_opacity(Version& v) {
     Version v2 = TransactionTid::atomic_load(v);
     fence();
@@ -1222,7 +1460,7 @@ protected:
     return TransactionTid::is_locked(v);
   }
   static void lock(Version *v) {
-    TransactionTid::lock(*v);
+    TransactionTid::lock_atomic(*v, TThread::id());
 #if 0
     while (1) {
       Version cur = *v;
@@ -1234,7 +1472,7 @@ protected:
 #endif
   }
   static void unlock(Version *v) {
-    TransactionTid::unlock(*v);
+    TransactionTid::unlock_atomic(*v, TThread::id());
 #if 0
     assert(is_locked(*v));
     Version cur = *v;
@@ -1269,25 +1507,80 @@ protected:
   }
 
   static bool atomicRead(versioned_value *e, Version& vers, value_type& val) {
-    Version before;
-    do {
-      before = TransactionTid::atomic_load(e->version());
-      if (is_locked(before) || (before & invalid_bit)) {
-        Sto::abort_without_throw();
-        TThread::transget_without_throw = true;
-        return false;
+    if constexpr (supports_packed_multiversion) {
+      if (TThread::is_multiversion()) {
+        // Multiversion rows publish immutable heads. read_value only samples
+        // the atomically published pointer/length pair; the version is
+        // re-validated around the copy. Masstree RCU keeps a retired head
+        // alive while a writer publishes its replacement.
+        while (true) {
+          const Version before = load_version(e->version());
+          if (is_locked(before)) {
+            Sto::abort_without_throw();
+            TThread::transget_without_throw = true;
+            return false;
+          }
+
+          fence();
+          const auto snapshot = e->read_value();
+          fence();
+          const Version sampled = load_version(e->version());
+          if (sampled != before) {
+            continue;
+          }
+
+          assign_val(val, snapshot);
+          fence();
+          const Version after_copy = load_version(e->version());
+          if (after_copy == sampled) {
+            vers = after_copy;
+            return true;
+          }
+        }
       }
 
-      fence();
-      // versioned_str_struct copies its published length and bytes through
-      // atomic_ref. The generic fallback retains the historical behavior for
-      // non-boundary boxes; Item 4's local profile always uses versioned_str.
-      if (!assign_published_value(val, e, before))
-        continue;
-      fence();
-      vers = TransactionTid::atomic_load(e->version());
-      fence();
-    } while (vers != before);
+      // Single-version rows are overwritten in place through atomic byte
+      // stores; copy them through the fence-paired atomic reader. The generic
+      // fallback retains the historical behavior for non-string boxes.
+      Version before;
+      do {
+        before = TransactionTid::atomic_load(e->version());
+        if (is_locked(before) || (before & invalid_bit)) {
+          Sto::abort_without_throw();
+          TThread::transget_without_throw = true;
+          return false;
+        }
+
+        fence();
+        if (!assign_published_value(val, e, before))
+          continue;
+        fence();
+        vers = TransactionTid::atomic_load(e->version());
+        fence();
+      } while (vers != before);
+      return true;
+    }
+
+    // Generic boxes do not have immutable pointer publication. Take their
+    // row lock for the copy so C++ readers and writers never overlap on a
+    // non-atomic payload object.
+    if (!TransactionTid::try_lock_atomic(e->version(), TThread::id())) {
+      Sto::abort_without_throw();
+      TThread::transget_without_throw = true;
+      return false;
+    }
+    const Version locked =
+        load_version(e->version(), std::memory_order_relaxed);
+    const Version observed =
+        locked & ~(TransactionTid::lock_bit | TransactionTid::threadid_mask);
+    try {
+      assign_val(val, e->read_value());
+    } catch (...) {
+      unlock(&e->version());
+      throw;
+    }
+    unlock(&e->version());
+    vers = observed;
     return true;
   }
 

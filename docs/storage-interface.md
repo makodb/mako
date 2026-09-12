@@ -16,11 +16,13 @@ transpiler-lowered pure-virtual C++ classes:
   implements: `get / put / insert / remove / scan / rscan` (+ `size`,
   `clear`, `get_table_id`, `get_is_remote`). Each op is
   self-contained and immediately visible; on STO/MassTrans-backed tables it is
-  an internal one-op OCC transaction, so writes replicate through the
-  normal commit path. `put` returns "newly inserted"; `insert` is
-  put-if-absent; `remove` returns "existed" (and is a direct raw
-  write on mbta — a documented asymmetry). Must not be called from a
-  thread with an open transaction.
+  an internal one-op OCC transaction and uses that backend's normal commit
+  machinery. The trait alone does not certify distributed or replicated
+  publication. `put` returns "newly inserted"; `insert` is
+  put-if-absent; `remove` returns "existed". Must not be called from a
+  thread with an open transaction. The owned attempt is aborted during stack
+  unwinding, including when a scan callback throws, before the exception
+  escapes the operation.
 - **`TxnOrderedIndex: OrderedIndex`** — the transactional ops, all
   prefixed: `tx_get / tx_put / tx_insert / tx_remove / tx_scan /
   tx_rscan / tx_scan_remote_one`, taking the opaque txn handle from
@@ -55,13 +57,29 @@ no `using`-declarations and may carry defaults.
 | class | layer | authored | notes |
 |---|---|---|---|
 | `masstree_ordered_index` | plain Masstree (L1) | DSL struct | implements `OrderedIndex` ONLY — "no transactions" is a type fact. Owns value buffers in the RCU arena (`[u32 len][bytes]`), frees RCU-deferred, every op pins a `scoped_rcu_region`. |
-| `mbta_ordered_index` | STO/MassTrans | DSL struct (`mbta_wrapper.hh`) | remote/local dispatch in the DSL; per-verb C++ kernels own the exception boundary (`STD_OP` catch of `Transaction::Abort`, non-txn retry loops, RPC retries) and the `UPDATE_VS` bookkeeping. MassTrans (non-movable) sits behind a raw pointer; build via `mbta_index_build(name, table_id, is_remote)`. |
+| `mbta_ordered_index` | STO/MassTrans | DSL struct (`mbta_wrapper.hh`) | remote/local dispatch in the DSL; per-verb C++ kernels own the exception boundary (`STD_OP` translation, conflict-only non-txn retry loops, RPC retries) and the `UPDATE_VS` bookkeeping. Terminal failures such as timestamp exhaustion are not retryable conflicts. MassTrans (non-movable) sits behind a raw pointer; build via `mbta_index_build(name, table_id, is_remote)`. |
 | `mbta_sharded_ordered_index` | Mako routing | DSL struct | FNV-1a per-key routing over `abstract_ordered_index*` shards; txn'd range reads visit every shard; non-txn scans are local-shard-only. |
 
 Backends are chosen at construction; callers hold the narrowest
 interface they need (`OrderedIndex*` for KV consumers,
 `abstract_ordered_index*` where txn'd + 2PC roles are both required,
 e.g. `ShardReceiver::open_tables_table_id`).
+
+## Bounded facade and catalog profile
+
+The RocksDB-shaped local `mako::DB` facade selects only the C++
+STO/MassTrans backend. Rust STO is exposed through the closed
+`sto_tpcc_bench` / `sto-tpcc-ffi` comparison adapter, which supports exactly one
+local, non-replicated shard; it is not an `IDatabase` backend.
+
+`mbta_wrapper` has a fixed catalog budget of `NUM_TABLES_PER_SHARD` (currently
+200) logical names. Opening one logical sharded table consumes one ID on every
+configured shard, and IDs are not reclaimed. Callers must treat a null open
+result as ordinary capacity or backend failure. In sharded or replicated use,
+every process must construct the complete identical schema in deterministic
+order before helper, transport-serving, or worker threads start. The legacy
+table-update hook is safe only under external quiescence; live schema mutation
+has no synchronized cross-process ID protocol and is unsupported.
 
 ## Authoring & regenerating the DSL blocks
 

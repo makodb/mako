@@ -1,8 +1,11 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdlib.h>
+#include <errno.h>
 #include <sched.h>
 #include <unistd.h>
+
+#include <iomanip>
 #if defined(__linux__)
 #include <sys/sysinfo.h>
 #else
@@ -42,17 +45,70 @@ using namespace util;
 
 // par_id ==> shardClient
 std::unordered_map<int, mako::ShardClient*> shardClientAll;
+std::mutex shardClientAllMutex;
 // par_id ==> txn
 std::unordered_map<int, Transaction*> shardTxnAll;
 
+namespace {
+
+// Multi-shard runs execute one bench_runner per shard concurrently.  Build the
+// machine record off-stream, then publish the complete, short line with one
+// write(2).  POSIX guarantees that writes no larger than 512 bytes cannot
+// interleave on a pipe, which is the CTest and comparison-runner capture path.
+// A chained iostream insertion is only synchronized per insertion and allowed
+// two shard records (and stderr diagnostics) to corrupt each other.
+void emit_tpcc_result_line(std::string line) {
+  // The human-readable statistics immediately before this record do not all
+  // end in a newline.  Delimit the machine record in the same atomic write so
+  // a concurrent shard cannot leave the prefix attached to diagnostic text.
+  line.insert(line.begin(), '\n');
+  line.push_back('\n');
+  ALWAYS_ASSERT(line.size() <= 512);
+
+  std::lock_guard<std::mutex> lock(mako::benchmark_output_mutex());
+  std::cout.flush();
+
+  ssize_t written;
+  do {
+    written = write(STDOUT_FILENO, line.data(), line.size());
+  } while (written < 0 && errno == EINTR);
+  ALWAYS_ASSERT(written == static_cast<ssize_t>(line.size()));
+}
+
+class scoped_shard_client_registration {
+public:
+  scoped_shard_client_registration(int partition_id,
+                                    mako::ShardClient *client)
+      : partition_id_(partition_id), client_(client) {
+    ALWAYS_ASSERT(client_ != nullptr);
+    std::lock_guard<std::mutex> lock(shardClientAllMutex);
+    const auto [entry, inserted] =
+        shardClientAll.emplace(partition_id_, client_);
+    ALWAYS_ASSERT(inserted || entry->second == client_);
+  }
+
+  ~scoped_shard_client_registration() {
+    std::lock_guard<std::mutex> lock(shardClientAllMutex);
+    const auto entry = shardClientAll.find(partition_id_);
+    if (entry != shardClientAll.end() && entry->second == client_)
+      shardClientAll.erase(entry);
+  }
+
+private:
+  int partition_id_;
+  mako::ShardClient *client_;
+};
+
+} // namespace
+
 
 static void arr2str(vector<uint64_t> arr) {
-  cerr << "[";
+  mako::benchmark_cerr() << "[";
   for (size_t i = 0; i < arr.size(); i++) {
-    cerr << arr[i] << " ";
+    mako::benchmark_cerr() << arr[i] << " ";
   }
-  cerr << "]";
-  cerr << endl;
+  mako::benchmark_cerr() << "]";
+  mako::benchmark_cerr() << endl;
 }
 
 template <typename T>
@@ -81,6 +137,40 @@ map_agg(map<K, V> &agg, const map<K, V> &m)
   for (typename map<K, V>::const_iterator it = m.begin();
        it != m.end(); ++it)
     agg[it->first] += it->second;
+}
+
+static map<string, uint64_t>
+clear_and_close_benchmark_indexes(
+    abstract_db *db,
+    map<string, abstract_ordered_index *> &open_tables)
+{
+  // The database decides whether open_index transfers ownership or returns a
+  // borrowed facade. close_index is the common release operation.
+  ALWAYS_ASSERT(db != nullptr);
+  map<string, uint64_t> agg_stats;
+  for (auto &entry : open_tables) {
+    ALWAYS_ASSERT(entry.second != nullptr);
+    try {
+      map_agg(agg_stats, entry.second->clear());
+    } catch (const oi_clear_unsupported &) {
+      // Closing the facade is still required and is the only teardown
+      // operation implemented by the legacy MassTrans adapter.
+    }
+    db->close_index(entry.second);
+  }
+  open_tables.clear();
+  return agg_stats;
+}
+
+void
+bench_runner::clear_and_close_open_tables()
+{
+  const map<string, uint64_t> agg_stats =
+      clear_and_close_benchmark_indexes(db, open_tables);
+  if (BenchmarkConfig::getInstance().getVerbose()) {
+    for (auto &p : agg_stats)
+      mako::benchmark_cerr() << p.first << " : " << p.second << endl;
+  }
 }
 
 // returns <free_bytes, total_bytes>
@@ -140,19 +230,39 @@ static event_avg_counter evt_avg_abort_spins("avg_abort_spins");
 void
 bench_worker::run()
 {
+  bool startup_barrier_entered = false;
+  try {
+    run_body(startup_barrier_entered);
+  } catch (const storage_resource_exhausted &error) {
+    report_benchmark_resource_exhaustion("run", error);
+    if (!startup_barrier_entered) {
+      // A failed thread_init or setup still participates in startup so the
+      // runner can release all workers and then join them without hanging.
+      barrier_a->count_down();
+      barrier_b->wait_for();
+    }
+  }
+}
+
+void
+bench_worker::run_body(bool &startup_barrier_entered)
+{
   // this is only reserved for leader cluster
   // on other alive leader servers
   auto& benchConfig = BenchmarkConfig::getInstance();
-  register_fasttransport_for_bench([&](int control, int value) {
+  register_fasttransport_for_bench([](int control, int value) {
+    auto& benchConfig = BenchmarkConfig::getInstance();
     Warning("receive a control in register_fasttransport_for_bench: %d, EpochInms: %llu", control, getEpochInms());
     switch (control) {
 #if defined(FAIL_NEW_VERSION)
       case 0: {
-        benchConfig.setControlMode(4);
         // If a transaction sent to a failed shard, we put it into the queue
-        sync_util::sync_logger::failed_shard_index = value%10;
-        sync_util::sync_logger::failed_shard_ts = value/10;
+        sync_util::sync_logger::failed_shard_index.store(
+            value % 10, std::memory_order_relaxed);
+        sync_util::sync_logger::failed_shard_ts.store(
+            value / 10, std::memory_order_relaxed);
         sync_util::sync_logger::setShardWBlind(value/10, value%10);
+        benchConfig.setControlMode(4);
 
         string log = "no-ops:" + to_string(get_epoch());
         for(int i = 0; i < benchConfig.getNthreads(); i++){
@@ -163,13 +273,14 @@ bench_worker::run()
         benchConfig.setRuntimePlus(benchConfig.getRuntime()); // another runtime
 
         // Unpaused previous blocked threads if any
-        for (int par_id=0;par_id<benchConfig.getNthreads();par_id++){
-           auto it = shardClientAll.find(par_id);
-           if (it != shardClientAll.end() && it->second != nullptr) {
-             it->second->setBlocking(false);
-           } else {
-             Warning("ShardClient for par_id=%d is nullptr in setBlocking, skipping", par_id);
-           }
+        {
+          std::lock_guard<std::mutex> lock(shardClientAllMutex);
+          for (auto &[par_id, client] : shardClientAll) {
+            if (client != nullptr)
+              client->setBlocking(false);
+            else
+              Warning("ShardClient for par_id=%d is nullptr in setBlocking, skipping", par_id);
+          }
         }
         break;
       }
@@ -184,7 +295,9 @@ bench_worker::run()
           std::string w_i = mako::NFSSync::get_key("fvw_"+std::to_string(i), 
                                                       benchConfig.getConfig()->shard(0, clusterRoleLocal).host.c_str(), 
                                                       benchConfig.getConfig()->mports[clusterRoleLocal]);
-          std::cout<<"get fvw, " << clusterRoleLocal << ", fvw_"+std::to_string(i)<<":"<<w_i<<std::endl;
+          mako::benchmark_cout() << "get fvw, " << clusterRoleLocal
+                                 << ", fvw_" + std::to_string(i) << ":"
+                                 << w_i << std::endl;
           fvw[i] = std::stoi(w_i);
         }
 
@@ -195,13 +308,15 @@ bench_worker::run()
 #else
       case 0: {
         // 1. pause database worker threads and abort all current transactions if any
-        control_mode = 1;
         // for (int par_id=0;par_id<nthreads;par_id++){
         //   shardClientAll[par_id]->setBreakTimeout(true);
         // }
         // 3. config update
-        sync_util::sync_logger::failed_shard_index = value%10;
-        sync_util::sync_logger::failed_shard_ts = value/10;
+        sync_util::sync_logger::failed_shard_index.store(
+            value % 10, std::memory_order_relaxed);
+        sync_util::sync_logger::failed_shard_ts.store(
+            value / 10, std::memory_order_relaxed);
+        benchConfig.setControlMode(1);
         break;
       }
       case 1: { // receive a PREPARE
@@ -240,7 +355,7 @@ bench_worker::run()
   // std::cout << "we are using jemalloc? " << (mallctl != nullptr) << std::endl;
   #endif
   #ifndef JEMALLOC_NO_RENAME
-  std::cout << "No JEMALLOC_NO_RENAME" << std::endl;
+  mako::benchmark_cout() << "No JEMALLOC_NO_RENAME" << std::endl;
   #endif
 
   // Bind this worker thread to the appropriate SiloRuntime FIRST
@@ -268,16 +383,16 @@ bench_worker::run()
   // XXX(stephentu): so many nasty hacks here. should actually
   // fix some of this stuff one day
   // In multi-shard mode, use local worker ID for core assignment
-  unsigned local_worker_id = worker_id % benchConfig.getNthreads();
   if (set_core_id)
-    coreid::set_core_id(local_worker_id);
+    coreid::set_core_id(worker_id);
 
   {
     scoped_rcu_region r; // register this thread in rcu region
   }
   scoped_db_thread_ctx ctx(db, false);
   on_run_setup();
-  shardClientAll[TThread::getGlobalPartitionID()]=TThread::sclient;
+  scoped_shard_client_registration client_registration(
+      TThread::getGlobalPartitionID(), TThread::sclient);
 
   const workload_desc_vec workload = get_workload();
   //    i (0-5): local commits: A
@@ -289,6 +404,7 @@ bench_worker::run()
   //    i+30: remote shard commits - nano - Tc
   //    i+35: remote shard aborts - nano - Td
   txn_counts.resize(40);
+  startup_barrier_entered = true;
   barrier_a->count_down();
   barrier_b->wait_for();
 
@@ -298,12 +414,16 @@ bench_worker::run()
       benchConfig.getThrottleCycleMs()
   );
   if (throttler.is_enabled()) {
-    std::cout << "Worker " << worker_id << " CPU throttling enabled: "
-              << throttler.get_cpu_percent() << "% with "
-              << throttler.get_cycle_ms() << "ms cycle" << std::endl;
+    mako::benchmark_cout() << "Worker " << worker_id
+                           << " CPU throttling enabled: "
+                           << throttler.get_cpu_percent() << "% with "
+                           << throttler.get_cycle_ms() << "ms cycle"
+                           << std::endl;
   }
 
-  while (benchConfig.isRunning() && (benchConfig.getRunMode() != RUNMODE_OPS || ntxn_commits < benchConfig.getOpsPerWorker())) {
+  while (benchConfig.isRunning() &&
+         (benchConfig.getRunMode() != RUNMODE_OPS ||
+          get_ntxn_commits() < benchConfig.getOpsPerWorker())) {
     throttler.begin_work();  // Start work timing
     double d = r.next_uniform();
     for (size_t i = 0; i < workload.size(); i++) {
@@ -317,7 +437,11 @@ bench_worker::run()
         // }
         auto tl = t.lap_nano();
         if (likely(ret.first)) {
+#if defined(COCO)
+          ntxn_commits.fetch_add(1, std::memory_order_relaxed);
+#else
           ++ntxn_commits;
+#endif
           if (ret.second % 10 == 1)
             latency_numer_us_remote += tl/1000.0;
           else
@@ -388,14 +512,12 @@ bench_runner::get_open_tables() {
 void
 bench_runner::stop() { // invoke inside run function; stop all ShardClient instances
   Warning("stop all rpc clients. set stop=false");
-  auto& benchConfig = BenchmarkConfig::getInstance();
-  for (int par_id=0;par_id<benchConfig.getNthreads();par_id++){
-   auto it = shardClientAll.find(par_id);
-   if (it != shardClientAll.end() && it->second != nullptr) {
-     it->second->stop();
-   } else {
-     Warning("ShardClient for par_id=%d is nullptr, skipping stop()", par_id);
-   }
+  std::lock_guard<std::mutex> lock(shardClientAllMutex);
+  for (auto &[par_id, client] : shardClientAll) {
+    if (client != nullptr)
+      client->stop();
+    else
+      Warning("ShardClient for par_id=%d is nullptr, skipping stop()", par_id);
   }
 }
 
@@ -410,7 +532,7 @@ bench_runner::run()
     // spin_barrier b(loaders.size());
     const pair<uint64_t, uint64_t> mem_info_before = get_system_memory_info();
     {
-      scoped_timer t("dataloading", BenchmarkConfig::getInstance().getVerbose());
+      timer dataload_timer;
       size_t N=loaders.size();
       Warning("# of loaders size:%d",N);
       auto& benchConfig = BenchmarkConfig::getInstance();
@@ -427,26 +549,43 @@ bench_runner::run()
           if (i<N){
             loaders.at(i)->join();
             //Warning("start thread-(DONE):%d",i);
-          } 
+          }
         }
+        if (benchConfig.hasResourceExhaustion())
+          break;
+      }
+      if (BenchmarkConfig::getInstance().getVerbose()) {
+        const double elapsed_ms = dataload_timer.lap() / 1000.0;
+        mako::benchmark_cerr() << "timed region dataloading took "
+                               << elapsed_ms << " ms" << endl;
       }
     }
     
+    if (BenchmarkConfig::getInstance().hasResourceExhaustion()) {
+      db->report_capacity_usage("load_failed");
+      stop();
+      mako::stop_rpc_server();
+      // Every started loader was joined above. Runner destruction releases
+      // the unused worker barriers.
+      delete_pointers(loaders);
+      return;
+    }
     const pair<uint64_t, uint64_t> mem_info_after = get_system_memory_info();
     const int64_t delta = int64_t(mem_info_before.first) - int64_t(mem_info_after.first); // free mem
     const double delta_mb = double(delta)/1048576.0;
     if (BenchmarkConfig::getInstance().getVerbose())
-      cerr << "DB size: " << delta_mb << " MB" << endl;
+      mako::benchmark_cerr() << "DB size: " << delta_mb << " MB" << endl;
   }
 
   db->do_txn_epoch_sync(); // also waits for worker threads to be persisted
   {
     const auto persisted_info = db->get_ntxn_persisted();
     if (get<0>(persisted_info) != get<1>(persisted_info))
-      cerr << "ERROR: " << persisted_info << endl;
+      mako::benchmark_cerr() << "ERROR: " << persisted_info << endl;
     //ALWAYS_ASSERT(get<0>(persisted_info) == get<1>(persisted_info));
     if (BenchmarkConfig::getInstance().getVerbose())
-      cerr << persisted_info << " txns persisted in loading phase" << endl;
+      mako::benchmark_cerr() << persisted_info
+                             << " txns persisted in loading phase" << endl;
   }
   db->reset_ntxn_persisted();
 
@@ -459,7 +598,7 @@ bench_runner::run()
     if (get<0>(persisted_info) != 0 ||
         get<1>(persisted_info) != 0 ||
         get<2>(persisted_info) != 0.0) {
-      cerr << persisted_info << endl;
+      mako::benchmark_cerr() << persisted_info << endl;
       ALWAYS_ASSERT(false);
     }
   }
@@ -475,13 +614,15 @@ bench_runner::run()
       //cerr << "table " << it->first << " size " << s << endl;
       table_sizes_before[it->first] = s;
     }
-    cerr << "starting benchmark..." << endl;
+    mako::benchmark_cerr() << "starting benchmark..." << endl;
   }
 
   const pair<uint64_t, uint64_t> mem_info_before = get_system_memory_info();
 
   if (f_mode == 0) {
-    std::cout << "--------------Finish loading data and wait for others completing load phase ------------" << std::endl;
+    mako::benchmark_cout()
+        << "--------------Finish loading data and wait for others completing load phase ------------"
+        << std::endl;
     auto& cfg = BenchmarkConfig::getInstance();
     mako::NFSSync::set_key("load_phase_"+std::to_string(cfg.getShardIndex()), "DONE", cfg.getConfig()->shard(0, cfg.getClusterRole()).host.c_str(), cfg.getConfig()->mports[cfg.getClusterRole()]);
 
@@ -494,18 +635,35 @@ bench_runner::run()
 
     if (cfg.getIsReplicated()) {
       std::string log(mako::ADVANCER_MARKER_NUM, 'a');
-      std::cout << "[ADVANCER-SEND] Leader sending ADVANCER_MARKER to "
-                << BenchmarkConfig::getInstance().getNthreads() << " partitions" << std::endl;
+      mako::benchmark_cout()
+          << "[ADVANCER-SEND] Leader sending ADVANCER_MARKER to "
+          << BenchmarkConfig::getInstance().getNthreads() << " partitions"
+          << std::endl;
       for(int i=0;i<BenchmarkConfig::getInstance().getNthreads();i++) {
         add_log_to_nc(log.c_str(), log.size(), i); // notify others start a advancer
-        std::cout << "[ADVANCER-SEND] Sent ADVANCER_MARKER to partition " << i << std::endl;
+        mako::benchmark_cout()
+            << "[ADVANCER-SEND] Sent ADVANCER_MARKER to partition " << i
+            << std::endl;
       }
     }
+
+    try {
+      db->on_load_complete();
+    } catch (const storage_resource_exhausted &error) {
+      report_benchmark_resource_exhaustion("load", error);
+      db->report_capacity_usage("load_failed");
+      stop();
+      mako::stop_rpc_server();
+      delete_pointers(loaders);
+      return;
+    }
+    db->report_capacity_usage("load_complete");
   }
   const vector<bench_worker *> workers = make_workers();
   ALWAYS_ASSERT(!workers.empty());
   Transaction::clear_stats();
   int idx=0;
+  worker_barriers_in_use_ = true;
   for (vector<bench_worker *>::const_iterator it = workers.begin();
        it != workers.end(); ++it) {
         int core_id = BenchmarkConfig::getInstance().getShardIndex() * 64 + idx;
@@ -520,16 +678,23 @@ bench_runner::run()
   // This ensures all shards have completed thread_init() before any start transactions
   BenchmarkConfig::getInstance().waitMultiShardBarrier();
 
+  // These timestamped markers let the comparison runner distinguish the
+  // measured transaction interval from database loading and slow process
+  // teardown. Keep START before timer construction/worker release and END
+  // after workers join and the elapsed interval is captured.
+  Warning("TPCC_BENCH_MEASURE_START");
   util::timer t, t_nosync;  // timing starts
   barrier_b.count_down(); // bombs away!
+#if defined(COCO)
   std::vector<std::pair<uint64_t, uint32_t>> samplingTPUT;
+#endif
   auto& benchConfig = BenchmarkConfig::getInstance();
   if (benchConfig.getRunMode() == RUNMODE_TIME) {
     Warning("start the running time, runTime:%d", benchConfig.getRuntime());
     int interval = 10; // 10 ms
     int repeats = 1000/interval;
     int runtime_loop = benchConfig.getRuntime() * repeats;
-    while (runtime_loop>0) {
+    while (runtime_loop>0 && !benchConfig.hasResourceExhaustion()) {
       if (benchConfig.getShardIndex()==0 &&
             benchConfig.getRuntime() * repeats - runtime_loop >= repeats * 5 &&
             benchConfig.getCluster().compare("localhost")==0) { // 5 seconds, kill it on leader{0}
@@ -539,24 +704,31 @@ bench_runner::run()
       if (runtime_loop % repeats == 0) 
         Warning("runtime time left:%d ms, bool:%d",runtime_loop * interval, runtime_loop>0);
       if (runtime_loop % repeats == 0) 
-        std::cout<<std::flush;
+        mako::benchmark_cout() << std::flush;
       runtime_loop--;
       std::this_thread::sleep_for(std::chrono::milliseconds(interval));
-      uint32_t n_commits = 0 ;
-      for (size_t j = 0; j < BenchmarkConfig::getInstance().getNthreads(); j++) { n_commits += workers[j]->get_ntxn_commits(); }
+#if defined(COCO)
+      uint32_t n_commits = 0;
+      for (size_t j = 0; j < benchConfig.getNthreads(); ++j)
+        n_commits += workers[j]->get_ntxn_commits();
       samplingTPUT.push_back({getEpochInms(), n_commits});
+#endif
       //cerr << "Time: " << getEpochInms() << ", n_commits: " << n_commits << endl;
     }
     Warning("runtime_plus:%d",benchConfig.getRuntimePlus());
     runtime_loop = benchConfig.getRuntimePlus() * repeats;
-    while (runtime_loop>0 && benchConfig.getRuntimePlus()>0) { // runtime_plus can be used to terminate the process
+    while (runtime_loop>0 && benchConfig.getRuntimePlus()>0 &&
+           !benchConfig.hasResourceExhaustion()) { // runtime_plus can be used to terminate the process
       std::this_thread::sleep_for(std::chrono::milliseconds(interval));
       if (runtime_loop % repeats == 0) 
         Warning("runtime time left:%d ms, bool:%d",runtime_loop * interval, runtime_loop>0);
       runtime_loop--;
-      uint32_t n_commits = 0 ;
-      for (size_t j = 0; j < BenchmarkConfig::getInstance().getNthreads(); j++) { n_commits += workers[j]->get_ntxn_commits(); }
+#if defined(COCO)
+      uint32_t n_commits = 0;
+      for (size_t j = 0; j < benchConfig.getNthreads(); ++j)
+        n_commits += workers[j]->get_ntxn_commits();
       samplingTPUT.push_back({getEpochInms(), n_commits});
+#endif
       //cerr << "Time: " << getEpochInms() << ", n_commits: " << n_commits << endl;
     }
   }
@@ -567,43 +739,60 @@ bench_runner::run()
    sync_util::sync_logger::client_control2(3, benchConfig.getShardIndex());
   }
   if (benchConfig.getRunMode() == RUNMODE_TIME) {
-    cerr << "[SHUTDOWN] Setting running=false to stop database worker threads" << endl;
+    mako::benchmark_cerr()
+        << "[SHUTDOWN] Setting running=false to stop database worker threads"
+        << endl;
     benchConfig.setRunning(false);  // stop database worker threads
   }
-  cerr << "[SHUTDOWN] Calling first stop() to stop client transports" << endl;
+  mako::benchmark_cerr()
+      << "[SHUTDOWN] Calling first stop() to stop client transports" << endl;
   stop(); // stop rpc clients (unblocks outstanding RPCs)
-  cerr << "[SHUTDOWN] First stop() completed" << endl;
+  mako::benchmark_cerr() << "[SHUTDOWN] First stop() completed" << endl;
   __sync_synchronize();
 
-  cerr << "[SHUTDOWN] Joining " << BenchmarkConfig::getInstance().getNthreads() << " worker threads" << endl;
+  mako::benchmark_cerr() << "[SHUTDOWN] Joining "
+                         << BenchmarkConfig::getInstance().getNthreads()
+                         << " worker threads" << endl;
   for (size_t i = 0; i < BenchmarkConfig::getInstance().getNthreads(); i++) {
-     cerr << "[SHUTDOWN] Joining worker " << i << endl;
+     mako::benchmark_cerr() << "[SHUTDOWN] Joining worker " << i << endl;
      workers[i]->join();
-     cerr << "[SHUTDOWN] Worker " << i << " joined" << endl;
+     mako::benchmark_cerr() << "[SHUTDOWN] Worker " << i << " joined" << endl;
   }
-  cerr << "[SHUTDOWN] All workers joined" << endl;
+  mako::benchmark_cerr() << "[SHUTDOWN] All workers joined" << endl;
 
   // Stop server transports AFTER workers exit to ensure they can finish processing
-  cerr << "[SHUTDOWN] Calling stop_rpc_server()" << endl;
+  mako::benchmark_cerr() << "[SHUTDOWN] Calling stop_rpc_server()" << endl;
   mako::stop_rpc_server();
-  cerr << "[SHUTDOWN] stop_rpc_server() completed" << endl;
+  mako::benchmark_cerr() << "[SHUTDOWN] stop_rpc_server() completed" << endl;
 
-  cerr << "[SHUTDOWN] Calling second stop()" << endl;
+  mako::benchmark_cerr() << "[SHUTDOWN] Calling second stop()" << endl;
   stop(); // ensure transports are torn down after workers exit
-  cerr << "[SHUTDOWN] Second stop() completed" << endl;
-  const unsigned long elapsed_nosync = t_nosync.lap()-1e6; // take 1 second off due to sleep(1) within bench_worker::run()
-  cerr << "[SHUTDOWN] Calling do_txn_finish()" << endl;
+  mako::benchmark_cerr() << "[SHUTDOWN] Second stop() completed" << endl;
+  const unsigned long measured_nosync = t_nosync.lap();
+  const unsigned long elapsed_nosync = measured_nosync > 1'000'000
+      ? measured_nosync - 1'000'000 : 0; // normal workers sleep(1) on exit
+  Warning("TPCC_BENCH_MEASURE_END");
+  if (benchConfig.hasResourceExhaustion()) {
+    db->report_capacity_usage("run_failed");
+    // The run was stopped by resource policy, so it has no successful
+    // throughput result. All worker contexts have ended before cleanup.
+    delete_pointers(loaders);
+    delete_pointers(workers);
+    return;
+  }
+  mako::benchmark_cerr() << "[SHUTDOWN] Calling do_txn_finish()" << endl;
   db->do_txn_finish(); // waits for all worker txns to persist
-  cerr << "[SHUTDOWN] do_txn_finish() completed" << endl;
+  mako::benchmark_cerr() << "[SHUTDOWN] do_txn_finish() completed" << endl;
   //  usleep(100000);
   size_t n_commits = 0;
   size_t n_aborts = 0;
   uint64_t latency_numer_us = 0;
   uint64_t latency_numer_us_remote = 0;
-  cerr << "--- n_commits per partition ---" << endl;
+  mako::benchmark_cerr() << "--- n_commits per partition ---" << endl;
   for (size_t i = 0; i < BenchmarkConfig::getInstance().getNthreads(); i++) {
     n_commits += workers[i]->get_ntxn_commits();
-    cerr << " par_id: " << i << ", n_commits: " << workers[i]->get_ntxn_commits() << endl;
+    mako::benchmark_cerr() << " par_id: " << i << ", n_commits: "
+                           << workers[i]->get_ntxn_commits() << endl;
     n_aborts += workers[i]->get_ntxn_aborts();
     latency_numer_us += workers[i]->get_latency_numer_us();
     latency_numer_us_remote += workers[i]->get_latency_numer_us_remote();
@@ -615,7 +804,7 @@ bench_runner::run()
   if (sync_util::sync_logger::hist_timestamp_vec.find(0) != sync_util::sync_logger::hist_timestamp_vec.end()) { 
     auto w = sync_util::sync_logger::hist_timestamp_vec[0][0];
     // w -> timestamp * 10 + epoch
-    cerr << "--- failed shard: " << w << endl;
+    mako::benchmark_cerr() << "--- failed shard: " << w << endl;
     // time in ms; <tput; good tput>; we do this analysis only up to the failure dection point
     unordered_map<uint64_t, std::pair<uint64_t, uint64_t>> merged_rollback_tracker;
     for (size_t i = 0; i < BenchmarkConfig::getInstance().getNthreads(); i++) {
@@ -639,8 +828,9 @@ bench_runner::run()
     });
 
     for (const auto& entry : vec) {
-        std::cout << "Key: " << entry.first
-                  << ", Value: (" << entry.second.first << ", " << entry.second.second << ")\n";
+        mako::benchmark_cout()
+            << "Key: " << entry.first << ", Value: (" << entry.second.first
+            << ", " << entry.second.second << ")\n";
     }
   }
 #endif
@@ -652,6 +842,7 @@ bench_runner::run()
   const unsigned long elapsed = t.lap()-1e6; // lap() must come after do_txn_finish(),
                                          // because do_txn_finish() potentially
                                          // waits a bit
+  db->report_capacity_usage("run_complete");
   const auto safe_div = [](double numer, double denom) -> double {
     return denom > 0.0 ? numer / denom : 0.0;
   };
@@ -701,6 +892,7 @@ bench_runner::run()
     const double delta_mb = double(delta)/1048576.0;
     const double size_delta_mb = double(size_delta)/1048576.0;
     map<string, counter_data> ctrs = event_counter::get_all_counters();
+    auto diagnostics = mako::benchmark_cerr();
 
     // cerr << "--- table statistics ---" << endl;
     // for (map<string, abstract_ordered_index *>::iterator it = open_tables.begin();
@@ -715,36 +907,36 @@ bench_runner::run()
     //     cerr << " (+" << delta << " records)" << endl;
     // }
 #ifdef ENABLE_BENCH_TXN_COUNTERS
-    cerr << "--- txn counter statistics ---" << endl;
+    diagnostics << "--- txn counter statistics ---" << endl;
     {
       // take from thread 0 for now
       abstract_db::txn_counter_map agg = workers[0]->get_local_txn_counters();
       for (auto &p : agg) {
-        cerr << p.first << ":" << endl;
+        diagnostics << p.first << ":" << endl;
         for (auto &q : p.second)
-          cerr << "  " << q.first << " : " << q.second << endl;
+          diagnostics << "  " << q.first << " : " << q.second << endl;
       }
     }
 #endif
-    cerr << "--- benchmark statistics ---" << endl;
-    cerr << "runtime: " << elapsed_sec << " sec" << endl;
-    cerr << "memory delta: " << delta_mb  << " MB" << endl;
-    cerr << "n_commits: " << n_commits << endl;
-    cerr << "latency_numer_us: " << latency_numer_us << endl;
-    cerr << "latency_numer_us_remote: " << latency_numer_us_remote << endl;
-    cerr << "memory delta rate: " << (delta_mb / elapsed_sec)  << " MB/sec" << endl;
-    cerr << "logical memory delta: " << size_delta_mb << " MB" << endl;
-    cerr << "logical memory delta rate: " << (size_delta_mb / elapsed_sec) << " MB/sec" << endl;
-    cerr << "agg_nosync_throughput: " << agg_nosync_throughput << " ops/sec" << endl;
-    cerr << "avg_nosync_per_core_throughput: " << avg_nosync_per_core_throughput << " ops/sec/core" << endl;
-    cerr << "agg_throughput: " << agg_throughput << " ops/sec" << endl;
-    cerr << "avg_per_core_throughput: " << avg_per_core_throughput << " ops/sec/core" << endl;
-    cerr << "agg_persist_throughput: " << agg_persist_throughput << " ops/sec" << endl;
-    cerr << "avg_per_core_persist_throughput: " << avg_per_core_persist_throughput << " ops/sec/core" << endl;
-    cerr << "avg_latency: " << avg_latency_ms << " ms" << endl;
-    cerr << "avg_persist_latency: " << avg_persist_latency_ms << " ms" << endl;
-    cerr << "agg_abort_rate: " << agg_abort_rate << " aborts/sec" << endl;
-    cerr << "avg_per_core_abort_rate: " << avg_per_core_abort_rate << " aborts/sec/core" << endl;
+    diagnostics << "--- benchmark statistics ---" << endl;
+    diagnostics << "runtime: " << elapsed_sec << " sec" << endl;
+    diagnostics << "memory delta: " << delta_mb  << " MB" << endl;
+    diagnostics << "n_commits: " << n_commits << endl;
+    diagnostics << "latency_numer_us: " << latency_numer_us << endl;
+    diagnostics << "latency_numer_us_remote: " << latency_numer_us_remote << endl;
+    diagnostics << "memory delta rate: " << (delta_mb / elapsed_sec)  << " MB/sec" << endl;
+    diagnostics << "logical memory delta: " << size_delta_mb << " MB" << endl;
+    diagnostics << "logical memory delta rate: " << (size_delta_mb / elapsed_sec) << " MB/sec" << endl;
+    diagnostics << "agg_nosync_throughput: " << agg_nosync_throughput << " ops/sec" << endl;
+    diagnostics << "avg_nosync_per_core_throughput: " << avg_nosync_per_core_throughput << " ops/sec/core" << endl;
+    diagnostics << "agg_throughput: " << agg_throughput << " ops/sec" << endl;
+    diagnostics << "avg_per_core_throughput: " << avg_per_core_throughput << " ops/sec/core" << endl;
+    diagnostics << "agg_persist_throughput: " << agg_persist_throughput << " ops/sec" << endl;
+    diagnostics << "avg_per_core_persist_throughput: " << avg_per_core_persist_throughput << " ops/sec/core" << endl;
+    diagnostics << "avg_latency: " << avg_latency_ms << " ms" << endl;
+    diagnostics << "avg_persist_latency: " << avg_persist_latency_ms << " ms" << endl;
+    diagnostics << "agg_abort_rate: " << agg_abort_rate << " aborts/sec" << endl;
+    diagnostics << "avg_per_core_abort_rate: " << avg_per_core_abort_rate << " aborts/sec/core" << endl;
     //cerr << "txn breakdown: " << format_list(agg_txn_counts.begin(), agg_txn_counts.end()) << endl;
 
     string txn_w1[] = {"NewOrder", "Payment", "Delivery", "OrderStatus", "StockLevel"};
@@ -755,12 +947,15 @@ bench_runner::run()
         const double local_aborts = double(agg_txn_counts[txn_w1[i]+"_Local_abort"]);
         const double local_commit_nano = double(agg_txn_counts[txn_w1[i]+"_Local_NANO"]);
         const double local_abort_nano = double(agg_txn_counts[txn_w1[i]+"_Local_NANO_abort"]);
-        cerr << "  " << txn_w1[i] << "_local_commit_latency: "
-             << safe_div(local_commit_nano, local_commits) / 1000000.0 << " ms" << endl;
-        cerr << "  " << txn_w1[i] << "_local_abort_latency: "
-             << safe_div(local_abort_nano, local_aborts) / 1000000.0 << " ms" << endl;
-        cerr << "  " << txn_w1[i] << "_local_abort_ratio: "
-             << safe_div(local_aborts, local_commits + local_aborts) << endl;
+        diagnostics << "  " << txn_w1[i] << "_local_commit_latency: "
+                    << safe_div(local_commit_nano, local_commits) / 1000000.0
+                    << " ms" << endl;
+        diagnostics << "  " << txn_w1[i] << "_local_abort_latency: "
+                    << safe_div(local_abort_nano, local_aborts) / 1000000.0
+                    << " ms" << endl;
+        diagnostics << "  " << txn_w1[i] << "_local_abort_ratio: "
+                    << safe_div(local_aborts, local_commits + local_aborts)
+                    << endl;
       }
     }
 
@@ -775,26 +970,29 @@ bench_runner::run()
         const double remote_abort_nano = double(agg_txn_counts[txn_w1[i]+"_Remote_NANO_abort"]);
         const double remote_total = remote_commits + remote_aborts;
         const double txn_total = local_commits + local_aborts + remote_total;
-        cerr << "  " << txn_ratio[i] << "_remote_ratio: "
-             << 100 * safe_div(remote_total, txn_total) << " %"<< endl;
-        cerr << "  " << txn_ratio[i] << "_remote_abort_ratio: "
-             << 100 * safe_div(remote_aborts, remote_total) << " %" << endl;
-        cerr << "  " << txn_w1[i] << "_remote_commit_latency: "
-             << safe_div(remote_commit_nano, remote_commits) / 1000000.0 << " ms" << endl;
-        cerr << "  " << txn_w1[i] << "_remote_abort_latency: "
-             << safe_div(remote_abort_nano, remote_aborts) / 1000000.0 << " ms" << endl;
+        diagnostics << "  " << txn_ratio[i] << "_remote_ratio: "
+                    << 100 * safe_div(remote_total, txn_total) << " %" << endl;
+        diagnostics << "  " << txn_ratio[i] << "_remote_abort_ratio: "
+                    << 100 * safe_div(remote_aborts, remote_total) << " %"
+                    << endl;
+        diagnostics << "  " << txn_w1[i] << "_remote_commit_latency: "
+                    << safe_div(remote_commit_nano, remote_commits) / 1000000.0
+                    << " ms" << endl;
+        diagnostics << "  " << txn_w1[i] << "_remote_abort_latency: "
+                    << safe_div(remote_abort_nano, remote_aborts) / 1000000.0
+                    << " ms" << endl;
       }
     }
 
-    cerr << "--- system counters (for benchmark) ---" << endl;
+    diagnostics << "--- system counters (for benchmark) ---" << endl;
     for (map<string, counter_data>::iterator it = ctrs.begin();
          it != ctrs.end(); ++it)
-      cerr << it->first << ": " << it->second << endl;
-    cerr << "--- perf counters (if enabled, for benchmark) ---" << endl;
+      diagnostics << it->first << ": " << it->second << endl;
+    diagnostics << "--- perf counters (if enabled, for benchmark) ---" << endl;
     PERF_EXPR(scopedperf::perfsum_base::printall());
-    cerr << "--- allocator stats ---" << endl;
+    diagnostics << "--- allocator stats ---" << endl;
     ::allocator::DumpStats();
-    cerr << "---------------------------------------" << endl;
+    diagnostics << "---------------------------------------" << endl;
 
 #ifdef USE_JEMALLOC
     // cerr << "dumping heap profile..." << endl;
@@ -807,15 +1005,61 @@ bench_runner::run()
 #endif
   }
 
-  cerr << "--- system counters for n_commits ---" << endl;
+  mako::benchmark_cerr() << "--- system counters for n_commits ---" << endl;
 #if defined(COCO)
   for (int i = 0; i < samplingTPUT.size(); i++) {
-    cerr << "Time: " << samplingTPUT[i].first << ", n_commits: " << samplingTPUT[i].second << endl;
+    mako::benchmark_cerr() << "Time: " << samplingTPUT[i].first
+                           << ", n_commits: " << samplingTPUT[i].second
+                           << endl;
   }
-  std::cout<<"DONE"<<std::endl;
+  mako::benchmark_cout() << "DONE" << std::endl;
 #endif
 
-  cout.flush();
+  if (BenchmarkConfig::getInstance().getEmitTpccResult()) {
+    // Stable machine-readable record consumed by the paired TPC-C runner.
+    // The no-sync interval excludes the deliberate one-second worker shutdown
+    // sleep and is the actual workload measurement interval.
+    std::ostringstream result;
+    result << std::setprecision(17) << "TPCC_BENCH_RESULT {"
+        << "\"schema_version\":1,"
+        << "\"engine\":\"" << BenchmarkConfig::getInstance().getStorageEngine()
+        << "\","
+        << "\"threads\":" << workers.size() << ","
+        << "\"warehouses\":"
+        << static_cast<size_t>(
+               BenchmarkConfig::getInstance().getScaleFactor())
+        << ","
+        << "\"configured_seconds\":"
+        << BenchmarkConfig::getInstance().getRuntime() << ","
+        << "\"measured_seconds\":" << elapsed_nosync_sec << ","
+        << "\"commits\":" << n_commits << ","
+        << "\"aborts\":" << n_aborts << ","
+        << "\"attempts\":" << (n_commits + n_aborts) << ","
+        << "\"throughput_txn_s\":" << agg_nosync_throughput << ","
+        << "\"mix\":{"
+        << "\"NewOrder\":"
+        << (agg_txn_counts["NewOrder_Local"] +
+            agg_txn_counts["NewOrder_Remote"])
+        << ","
+        << "\"Payment\":"
+        << (agg_txn_counts["Payment_Local"] + agg_txn_counts["Payment_Remote"])
+        << ","
+        << "\"Delivery\":"
+        << (agg_txn_counts["Delivery_Local"] +
+            agg_txn_counts["Delivery_Remote"])
+        << ","
+        << "\"OrderStatus\":"
+        << (agg_txn_counts["OrderStatus_Local"] +
+            agg_txn_counts["OrderStatus_Remote"])
+        << ","
+        << "\"StockLevel\":"
+        << (agg_txn_counts["StockLevel_Local"] +
+            agg_txn_counts["StockLevel_Remote"])
+        << "}}";
+    emit_tpcc_result_line(std::move(result).str());
+  }
+
+  mako::benchmark_cout().flush();
 
   for (map<string, abstract_ordered_index *>::iterator it = open_tables.begin();
        it != open_tables.end(); ++it) {
@@ -825,18 +1069,9 @@ bench_runner::run()
   if (!BenchmarkConfig::getInstance().getSlowExit())
     return;
 
-  map<string, uint64_t> agg_stats;
-  for (map<string, abstract_ordered_index *>::iterator it = open_tables.begin();
-       it != open_tables.end(); ++it) {
-    map_agg(agg_stats, it->second->clear());
-    delete it->second;
-  }
-  if (BenchmarkConfig::getInstance().getVerbose()) {
-    for (auto &p : agg_stats)
-      cerr << p.first << " : " << p.second << endl;
-
-  }
-  open_tables.clear();
+  const auto &config = BenchmarkConfig::getInstance().getConfig();
+  if (!config || !config->multi_shard_mode)
+    clear_and_close_open_tables();
 
   delete_pointers(loaders);
   delete_pointers(workers);
@@ -891,5 +1126,6 @@ void
 bench_worker::print_stats() const
 {
   for (int i=0; i<sampling_remote_calls.size(); i++)
-    std::cout << "[work_id:" << worker_id << "]:" << sampling_remote_calls[i] << std::endl;
+    mako::benchmark_cout() << "[work_id:" << worker_id << "]:"
+                           << sampling_remote_calls[i] << std::endl;
 }

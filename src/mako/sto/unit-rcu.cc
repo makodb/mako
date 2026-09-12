@@ -74,9 +74,7 @@ int main(int argc, char* argv[]) {
     pthread_t tids[nthreads];
     for (uintptr_t i = 0; i < nthreads; ++i)
         pthread_create(&tids[i], NULL, tracker_run, reinterpret_cast<void*>(i));
-    pthread_t advancer;
-    pthread_create(&advancer, NULL, Transaction::epoch_advancer, NULL);
-    pthread_detach(advancer);
+    Transaction::start_epoch_advancer();
 
     while (Transaction::global_epochs.global_epoch.load(
                std::memory_order_seq_cst) < nepochs + 1)

@@ -1,4 +1,5 @@
-# Workspace for the Rust cache.
+# Workspace for Mako's native Rust components: the Masstree/RocksDB cache
+# (mrx-*, mako-cache, mako-local) and the native Rust STO (sto-*).
 #
 # One workspace so the crates share a lockfile and a target directory, and
 # so `cargo test` at this level covers all of them. It is rooted at
@@ -14,17 +15,23 @@ members = [
     "mako-history",
     "mako-local",
     "mako-local-sys",
+    "masstree",
     "mrx",
     "mrx-ffi",
     "mrx-core",
     "mrx-masstree",
     "mrx-rocks",
     "mtree-sys",
+    "mtx-sys",
+    "sto-core",
+    "sto-masstree",
+    "sto-test-datatypes",
+    "sto-tpcc-ffi",
 ]
 
 [workspace.package]
 edition = "2021"
-rust-version = "1.91"
+rust-version = "1.95"
 license = "MIT"
 publish = false
 

@@ -5,6 +5,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <limits>
+#include <mutex>
+#include <thread>
 
 #include "Transaction.hh"
 #include "MassTrans.hh"
@@ -28,13 +30,15 @@ void register_sync_util(std::function<int()> cb) {
 Transaction::testing_type Transaction::testing;
 threadinfo_t Transaction::tinfo[MAX_THREADS];
 __thread int TThread::the_id;
+__thread int TThread::assigned_stable_id = -1;
+std::atomic<int> TThread::next_stable_id{0};
 __thread int TThread::nshards;
 __thread int TThread::shard_index;
 __thread int TThread::pid;
 __thread int TThread::the_mode;
 __thread int TThread::the_num_rpc_server;
 __thread int TThread::the_is_micro;
-__thread int TThread::the_counter;
+__thread uint32_t TThread::the_counter;
 __thread int TThread::the_role;
 __thread int TThread::warehouses;
 __thread int TThread::the_debug_bit;
@@ -51,12 +55,12 @@ __thread int TThread::skipBeforeRemotePayment;
 __thread unsigned int TThread::readset_shard_bits;
 __thread unsigned int TThread::writeset_shard_bits;
 Transaction::epoch_state __attribute__((aligned(128))) Transaction::global_epochs = {
-    1, 0, TransactionTid::increment_value, true
+    1, 0, TransactionTid::increment_value, false
 };
 __thread Transaction *TThread::txn = nullptr;
 __thread mako::ShardClient *TThread::sclient = nullptr;
 __thread HashWrapper *TThread::tprops = nullptr;
-std::function<void(threadinfo_t::epoch_type)> Transaction::epoch_advance_callback;
+Transaction::epoch_advance_callback_type Transaction::epoch_advance_callback;
 namespace {
 thread_local bool local_transaction_cleanup_in_progress = false;
 
@@ -459,6 +463,28 @@ static void __attribute__((used)) check_static_assertions() {
                   "threadinfo occupies isolated 128-byte cache slots");
 }
 
+// @safe: atomically allocates after a transaction's read dependency
+bool Transaction::try_allocate_legacy_distributed_timestamp_after(
+    uint32_t lower_bound, uint32_t& result) noexcept {
+    result = 0;
+    if (lower_bound >= max_mako_timestamp)
+        return false;
+
+    const uint32_t minimum = lower_bound + 1;
+    auto& clock = sync_util::sync_logger::legacy_distributed_timestamp_state;
+    uint32_t current = clock.load(std::memory_order_acquire);
+    while (current != 0 && current <= max_mako_timestamp) {
+        const uint32_t candidate = std::max(current, minimum);
+        if (clock.compare_exchange_weak(current, candidate + 1,
+                                        std::memory_order_acq_rel,
+                                        std::memory_order_acquire)) {
+            result = candidate;
+            return true;
+        }
+    }
+    return false;
+}
+
 // @safe
 void Transaction::initialize() {
     // Complete RDTSCP calibration before foreground transaction timing.
@@ -467,6 +493,7 @@ void Transaction::initialize() {
     hash_base_ = 32768;
     tset_size_ = 0;
     lrng_state_ = 12897;
+    participant_phase_ = p_none;
     for (unsigned i = 0; i != tset_initial_capacity / tset_chunk; ++i)
         tset_[i] = &tset0_[i * tset_chunk];
     for (unsigned i = tset_initial_capacity / tset_chunk; i != arraysize(tset_); ++i)
@@ -476,10 +503,12 @@ void Transaction::initialize() {
 Transaction::~Transaction() {
     if (in_progress())
         silent_abort();
-    TransItem* live = tset0_;
-    for (unsigned i = 0; i != arraysize(tset_); ++i, live += tset_chunk)
-        if (live != tset_[i])
-            delete[] tset_[i];
+    // The initial chunks alias tset0_. Every later non-null chunk was
+    // allocated by refresh_tset_chunk(). Indexing avoids pointer arithmetic
+    // beyond the end of tset0_, which is undefined even without dereference.
+    for (unsigned i = tset_initial_capacity / tset_chunk;
+         i != arraysize(tset_); ++i)
+        delete[] tset_[i];
 }
 
 // @safe
@@ -491,11 +520,54 @@ void Transaction::refresh_tset_chunk() {
     tset_next_ = tset_[tset_size_ / tset_chunk];
 }
 
-// @unsafe: uses fetch_and_add, usleep, and global epoch manipulation
-void* Transaction::epoch_advancer(void*) {
-    static int num_epoch_advancers = 0;
-    if (fetch_and_add(&num_epoch_advancers, 1) != 0)
-        std::cerr << "WARNING: more than one epoch_advancer thread\n";
+namespace {
+
+std::mutex epoch_advance_callback_mutex;
+
+class epoch_advancer_owner {
+public:
+    using entry_type = void (*)();
+
+    explicit epoch_advancer_owner(entry_type entry) {
+        Transaction::global_epochs.run.store(true, std::memory_order_release);
+        try {
+            worker_ = std::thread(entry);
+        } catch (...) {
+            Transaction::global_epochs.run.store(false,
+                                                  std::memory_order_release);
+            throw;
+        }
+    }
+
+    epoch_advancer_owner(const epoch_advancer_owner&) = delete;
+    epoch_advancer_owner& operator=(const epoch_advancer_owner&) = delete;
+
+    ~epoch_advancer_owner() {
+        Transaction::global_epochs.run.store(false, std::memory_order_release);
+        if (worker_.joinable())
+            worker_.join();
+    }
+
+private:
+    std::thread worker_;
+};
+
+} // namespace
+
+void Transaction::set_epoch_advance_callback(
+    epoch_advance_callback_type callback) {
+    std::lock_guard<std::mutex> lock(epoch_advance_callback_mutex);
+    epoch_advance_callback = std::move(callback);
+}
+
+// @safe: C++ guarantees thread-safe, one-shot initialization of local statics
+void Transaction::start_epoch_advancer() {
+    static epoch_advancer_owner owner(&Transaction::epoch_advancer_loop);
+    (void)owner;
+}
+
+// @unsafe: uses usleep and global epoch manipulation
+void Transaction::epoch_advancer_loop() {
 
     // don't bother epoch'ing til things have picked up
     usleep(100000);
@@ -518,13 +590,16 @@ void* Transaction::epoch_advancer(void*) {
             Transaction::_TID.load(std::memory_order_acquire),
             std::memory_order_relaxed);
 
-        if (epoch_advance_callback)
-            epoch_advance_callback(next_epoch);
+        epoch_advance_callback_type callback;
+        {
+            std::lock_guard<std::mutex> lock(epoch_advance_callback_mutex);
+            callback = epoch_advance_callback;
+        }
+        if (callback)
+            callback(next_epoch);
 
         usleep(100000);
     }
-    fetch_and_add(&num_epoch_advancers, -1);
-    return NULL;
 }
 
 // @safe
@@ -651,10 +726,11 @@ void Transaction::stop(bool committed, unsigned* writeset, unsigned nwriteset) {
                 it->owner()->cleanup(*it, committed);
         }
     } else {
-        // in participant, we never invoke try_commit,
-        // and no good way to set state_ = s_committing_locked; as try_commit do
-        // so, we skip it blindly for participant
-        if ((TThread::mode() == 1 && nwriteset>0) || state_ == s_committing_locked) {
+        // Participants do not run try_commit(), so they do not retain the
+        // coordinator's writeset array/count. On abort, inspect every staged
+        // item and release whichever locks the participant acquired.
+        if ((TThread::mode() == 1 && !committed) ||
+            state_ == s_committing_locked) {
             for (unsigned tidx = tset_size_; tidx != first_write_; ) {
                 --tidx;
                 if (likely(tidx < tset_initial_capacity))
@@ -677,6 +753,14 @@ void Transaction::stop(bool committed, unsigned* writeset, unsigned nwriteset) {
     }
 
 after_unlock:
+    finish(committed);
+}
+
+// Finish a transaction whose item-specific unlock and cleanup work is done.
+// Participant shard_unlock() uses this directly because it owns that cleanup
+// loop rather than the coordinator writeset layout consumed by stop().
+void Transaction::finish(bool committed) noexcept {
+    assert(state_ < s_aborted);
     // TODO: this will probably mess up with nested transactions
     threadinfo_t& thr = tinfo[TThread::id()];
     if (thr.trans_end_callback)
@@ -684,6 +768,7 @@ after_unlock:
     // XXX should reset trans_end_callback after calling it...
     state_ = s_aborted + committed;
     local_transaction_cleanup_in_progress = false;
+    participant_phase_ = p_none;
 }
 
 // @safe
@@ -701,6 +786,7 @@ bool Transaction::shard_try_lock_last_writeset() {
                 return false;
             }
             it->__or_flags(TransItem::lock_bit);
+            state_ = s_committing_locked;
             break;
         }
         if (tidx == 0) break;
@@ -751,9 +837,31 @@ uint8_t Transaction::get_current_term() const {
     return current_term_;
 }
 
-// @unsafe: invokes TObject::install on transaction-owned items
-void Transaction::shard_install(uint32_t timestamp) {
+// @unsafe: uses __sync_fetch_and_add and TObject::install
+void Transaction::shard_install(uint32_t timestamp) noexcept {
     assert(TThread::id() == threadid_);
+    assert(state_ < s_aborted);
+
+    // Receipt of INSTALL is the participant's irreversible 2PC commit
+    // decision. Record it before publishing any item so teardown cannot run
+    // abort cleanup over an already-installed MassTrans row.
+    if (participant_phase_ != p_collecting) {
+        Warning("STO participant INSTALL phase violation: phase=%u state=%u "
+                "writes=%d items=%u thread=%d",
+                static_cast<unsigned>(participant_phase_),
+                static_cast<unsigned>(state_), any_writes_, tset_size_,
+                TThread::id());
+        std::terminate();
+    }
+    if (any_writes_ && state_ != s_committing_locked) {
+        Warning("STO participant INSTALL lock violation: phase=%u state=%u "
+                "writes=%d items=%u thread=%d",
+                static_cast<unsigned>(participant_phase_),
+                static_cast<unsigned>(state_), any_writes_, tset_size_,
+                TThread::id());
+        std::terminate();
+    }
+    participant_phase_ = p_installing;
 
     // Update max timestamp from readset
     TThread::txn->maxTimestampReadSet = MAX(TThread::txn->maxTimestampReadSet, timestamp);
@@ -764,39 +872,79 @@ void Transaction::shard_install(uint32_t timestamp) {
     observe_legacy_distributed_timestamp(tid_unique_);
 
     TransItem* it = nullptr;
-    if (tset_size_ == 0) return;
-    for (unsigned tidx = tset_size_-1; tidx >= 0; --tidx) {
-        auto base = tset_[tidx / tset_chunk];
-        it = base + tidx % tset_chunk;
-        if (it->has_write()) {
-            it->owner()->install(*it, *this);
+    try {
+        if (tset_size_ != 0) {
+            for (unsigned tidx = tset_size_-1; tidx >= 0; --tidx) {
+                auto base = tset_[tidx / tset_chunk];
+                it = base + tidx % tset_chunk;
+                if (it->has_write()) {
+                    it->owner()->install(*it, *this);
+                }
+                if (tidx == 0) break;
+            }
         }
-        if (tidx == 0) break;
+    } catch (...) {
+        // INSTALL is the irreversible 2PC decision. There is no sound local
+        // rollback after a prefix has been published, and the generic TObject
+        // interface does not provide a resumable install operation. Fail-stop
+        // with locks retained rather than expose a partial commit as success.
+        Warning("STO participant INSTALL publication failed: phase=%u "
+                "state=%u writes=%d items=%u thread=%d",
+                static_cast<unsigned>(participant_phase_),
+                static_cast<unsigned>(state_), any_writes_, tset_size_,
+                TThread::id());
+        std::terminate();
     }
+    participant_phase_ = p_installed;
 }
 
 // @unsafe: calls TObject::unlock and TObject::cleanup
-void Transaction::shard_unlock(bool committed) {
+void Transaction::shard_unlock(bool committed) noexcept {
     assert(TThread::id() == threadid_);
+    assert(state_ < s_aborted);
+    if (participant_phase_ == p_installing) {
+        Warning("STO participant cleanup entered during INSTALL: state=%u "
+                "writes=%d items=%u thread=%d",
+                static_cast<unsigned>(state_), any_writes_, tset_size_,
+                TThread::id());
+        std::terminate();
+    }
+
+    // An install decision cannot subsequently be downgraded to abort, and a
+    // caller cannot claim commit before INSTALL. Keep both protocol checks in
+    // optimized builds, where assert() is absent.
+    if (participant_phase_ == p_installed)
+        committed = true;
+    else if (committed) {
+        Warning("STO participant committed cleanup without INSTALL: phase=%u "
+                "state=%u writes=%d items=%u thread=%d",
+                static_cast<unsigned>(participant_phase_),
+                static_cast<unsigned>(state_), any_writes_, tset_size_,
+                TThread::id());
+        std::terminate();
+    }
 
     TransItem* it = nullptr;
-    if (tset_size_ == 0) return;
-    for (unsigned tidx = tset_size_-1; tidx >= 0; --tidx) {
-        auto base = tset_[tidx / tset_chunk];
-        it = base + tidx % tset_chunk;
-        if (it->needs_unlock()) {
-            it->owner()->unlock(*it);
+    if (tset_size_ != 0) {
+        for (unsigned tidx = tset_size_-1; tidx >= 0; --tidx) {
+            auto base = tset_[tidx / tset_chunk];
+            it = base + tidx % tset_chunk;
+            if (it->needs_unlock()) {
+                it->owner()->unlock(*it);
+                it->clear_needs_unlock();
+            }
+            if (tidx == 0) break;
         }
-        if (tidx == 0) break;
-    }
-    for (unsigned tidx = tset_size_-1; tidx >= 0; --tidx) {
-        auto base = tset_[tidx / tset_chunk];
-        it = base + tidx % tset_chunk;
-        if (it->has_write()) {
-            it->owner()->cleanup(*it, committed);
+        for (unsigned tidx = tset_size_-1; tidx >= 0; --tidx) {
+            auto base = tset_[tidx / tset_chunk];
+            it = base + tidx % tset_chunk;
+            if (it->has_write()) {
+                it->owner()->cleanup(*it, committed);
+            }
+            if (tidx == 0) break;
         }
-        if (tidx == 0) break;
     }
+    finish(committed);
 }
 
 // @unsafe: decodes the three MassTrans write layouts from one borrowed
@@ -979,8 +1127,11 @@ bool Transaction::try_commit(bool no_paxos,
 
     state_ = s_committing;
 
-    unsigned writeset[tset_size_];
+    unsigned writeset[tset_size_ ? tset_size_ : 1];
     unsigned nwriteset = 0;
+    bool timestamp_exhausted = false;
+    bool irreversible_decision = false;
+    bool needs_mako_timestamp = false;
     // Single watermark timestamp instead of vector
     uint32_t watermarkTimestamp = 0;
     writeset[0] = tset_size_;
@@ -1003,7 +1154,8 @@ bool Transaction::try_commit(bool no_paxos,
             if (hasInsertOp(it)) {  // key_write_value_type
                 key = (*it).write_value<std::string>();
                 versioned_str_struct *vvx = (*it).key<versioned_str_struct *>();
-                val = std::string(vvx->data(), vvx->length());
+                const auto snapshot = vvx->read_value();
+                val.assign(snapshot.data(), snapshot.length());
             } else {
                 key = it->extra;
                 val = (*it).template write_value<std::string>();
@@ -1108,22 +1260,39 @@ bool Transaction::try_commit(bool no_paxos,
     fence();
 #endif
 
-    if (!no_paxos){
+    needs_mako_timestamp =
+        BenchmarkConfig::getInstance().getIsReplicated() ||
+        TThread::writeset_shard_bits != 0 ||
+        TThread::readset_shard_bits != 0 || maxTimestampReadSet != 0;
+    if (!no_paxos && needs_mako_timestamp) {
         // Update single timestamp system
-        if (!updateSingleTimestamp()) {
+        if (!updateSingleTimestamp(timestamp_exhausted)) {
             if (failure)
                 *failure = preinstall_failure::timestamp_exhausted;
             goto abort;
         }
-        // Merge with max timestamp from read set. Legacy or corrupt values
-        // outside the checked base domain must not reach u32 term encoding.
+        // Legacy or corrupt read-set values outside the checked base domain
+        // must not reach u32 term encoding.
         if (maxTimestampReadSet > max_mako_timestamp) {
+            observe_legacy_distributed_timestamp(maxTimestampReadSet);
+            timestamp_exhausted = true;
             if (failure)
                 *failure = preinstall_failure::timestamp_exhausted;
             goto abort;
         }
-        if (maxTimestampReadSet > tid_unique_) {
-            tid_unique_ = maxTimestampReadSet;
+        // A dependent commit must be strictly newer than every version it
+        // observed. Reserving through the shared clock also prevents two
+        // local coordinators from independently selecting read_max + 1.
+        if (maxTimestampReadSet >= tid_unique_ &&
+            !try_allocate_legacy_distributed_timestamp_after(
+                maxTimestampReadSet, tid_unique_)) {
+            // Persist the exhausted sentinel even when the dependency itself,
+            // rather than the old clock value, reached the wire-format limit.
+            observe_legacy_distributed_timestamp(maxTimestampReadSet);
+            timestamp_exhausted = true;
+            if (failure)
+                *failure = preinstall_failure::timestamp_exhausted;
+            goto abort;
         }
 
 #if defined(TRACKING_ROLLBACK)
@@ -1280,13 +1449,30 @@ bool Transaction::try_commit(bool no_paxos,
     if (nwriteset && !ordered_hook_already_accepted)
         observe_local_mako_timestamp_stamp(mako_timestamp_stamp_);
 
+    // A remote/read-set maximum may have raised the selected legacy timestamp
+    // above this coordinator's ticket. Floor the next-to-return clock before
+    // either phase-3 write-set layout installs data.
+    if (nwriteset)
+        observe_legacy_distributed_timestamp(tid_unique_);
+
+    // Phase 3 begins the irreversible commit decision. No exception or
+    // ordinary abort may run rollback cleanup after any item can be visible.
+    try {
+    irreversible_decision = nwriteset != 0;
+
     //phase3
 #if STO_SORT_WRITESET
     for (unsigned tidx = first_write_; tidx != tset_size_; ++tidx) {
         it = &tset_[tidx / tset_chunk][tidx % tset_chunk];
         if (it->has_write()) {
             TXP_INCREMENT(txp_total_w);
-            it->owner()->install(*it, *this);
+            try {
+                it->owner()->install(*it, *this);
+            } catch (...) {
+                // Publishing any prefix makes rollback unsound. Match the
+                // participant INSTALL policy and fail-stop with locks held.
+                std::terminate();
+            }
 #if defined(MAKO_LOCAL_TEST_HOOKS)
             ++installed_write_count;
             if (installed_write_count == 1 && nwriteset > 1 &&
@@ -1309,7 +1495,13 @@ bool Transaction::try_commit(bool no_paxos,
                 it = &tset_[*idxit / tset_chunk][*idxit % tset_chunk];
             TXP_INCREMENT(txp_total_w);
             // to ensure invalid-bit to be reset in transPut for remote tables on the coordinator shard
-            it->owner()->install(*it, *this);
+            try {
+                it->owner()->install(*it, *this);
+            } catch (...) {
+                // Publishing any prefix makes rollback unsound. Match the
+                // participant INSTALL policy and fail-stop with locks held.
+                std::terminate();
+            }
 #if defined(MAKO_LOCAL_TEST_HOOKS)
             ++installed_write_count;
             if (installed_write_count == 1 && nwriteset > 1 &&
@@ -1323,32 +1515,16 @@ bool Transaction::try_commit(bool no_paxos,
         if (TThread::writeset_shard_bits > 0||TThread::readset_shard_bits>0) {
             if (TThread::sclient == nullptr) {
                 if (!no_paxos) {
-                    Warning("Missing ShardClient for remoteInstall in paxos path; aborting transaction");
+                    Warning("Missing ShardClient after commit decision; failing stop");
                     goto abort;
                 }
             } else {
-#if defined(FAIL_NEW_VERSION)
-            int retry_c = 0;
-            while (1) {
-                try {
-                    retry_c += 1;
-                    TThread::sclient->remoteInstall(tid_unique_);
-                    break;
-                } catch (int n) {
-			break;
-                    if (n==1002) { 
-                        // There is a timeout on partial INSTALL, we retry instead of abort for correctness.
-                        // Mako can't solve "blocking" issue in 2PC.
-                        //std::cout<<"timeout in remoteInstall; retry attempts: " << retry_c <<std::endl;
-                        if (!TThread::sclient->isBlocking) {
-                            break;
-                        }
-                    }
-                }
-            }
-#else
-            TThread::sclient->remoteInstall(tid_unique_);
-#endif
+            // Any non-success after INSTALL is indeterminate: some remote
+            // participants may already have committed. Fail-stop instead of
+            // returning a false abort and inviting an unsafe retry.
+            if (TThread::sclient->remoteInstall(tid_unique_) !=
+                mako::ErrorCode::SUCCESS)
+                std::terminate();
             }
         }
     }
@@ -1384,13 +1560,22 @@ bool Transaction::try_commit(bool no_paxos,
         }
     }
 
+    } catch (...) {
+        if (irreversible_decision)
+            std::terminate();
+        throw;
+    }
+
     stop(true, writeset, nwriteset);
+    irreversible_decision = false;
     // if (TThread::writeset_shard_bits > 0) {
     //     TThread::sclient->remoteUnLock();
     // }
     return true;
 
 abort:
+    if (irreversible_decision)
+        std::terminate();
     TXP_INCREMENT(txp_commit_time_aborts);
     stop(false, nullptr, 0);
     // On an ordinary abort, keep the gate until stop has released every write
@@ -1400,6 +1585,8 @@ abort:
     if ((TThread::writeset_shard_bits > 0 || TThread::readset_shard_bits > 0) && TThread::sclient != nullptr) {
         TThread::sclient->remoteAbort();
     }
+    if (timestamp_exhausted)
+        throw TimestampExhausted();
     return false;
 }
 
@@ -1483,12 +1670,13 @@ inline void Transaction::serialize_util(unsigned nwriteset, bool on_remote, int 
         // 5. copy the length of value and content of value
         if (hasInsertOp(it)) {
             versioned_str_struct *vvx = (*it).key<versioned_str_struct *>();
-            assert(vvx->length() > mako::EXTRA_BITS_FOR_VALUE);
-            len_of_V = vvx->length() - mako::EXTRA_BITS_FOR_VALUE;
+            const auto snapshot = vvx->read_value();
+            assert(snapshot.length() >= mako::EXTRA_BITS_FOR_VALUE);
+            len_of_V = snapshot.length() - mako::EXTRA_BITS_FOR_VALUE;
             memcpy(array + w, (char *) &len_of_V, sizeof(unsigned short));
             w += sizeof(unsigned short);
 
-            memcpy(array + w, (char *) vvx->data(), len_of_V);
+            memcpy(array + w, (char *) snapshot.data(), len_of_V);
             w += len_of_V;
         } else {
             std::string vvx = "";

@@ -71,10 +71,6 @@ public:
         : db_(db), worker_id_(worker_id), original_worker_id_(worker_id) {
     }
 
-    void initialize() {
-        db_->InitThread();
-    }
-
     void test_basic_transactions() {
         printf("\n--- Testing Basic Transactions Thread:%ld ---\n", std::this_thread::get_id());
 
@@ -624,19 +620,19 @@ void run_worker_tests(mako::IDatabase *db, int worker_id,
     // Add thread ID to distinguish workers
     printf("[Worker %d] Starting on thread %ld\n", worker_id, std::this_thread::get_id());
 
-    auto worker = new TransactionWorker(db, worker_id);
-    worker->initialize();
+    mako::ScopedDatabaseThreadContext thread_context(*db);
+    TransactionWorker worker(db, worker_id);
 
     // Ensure all workers complete initialization before proceeding
     barrier_ready->count_down();
     barrier_start->wait_for();
 
     // Run all tests
-    worker->test_basic_transactions();
-    worker->test_single_key_contention();
-    worker->test_overlapping_keys();
-    worker->test_cross_shard_contention();
-    worker->test_read_write_contention();
+    worker.test_basic_transactions();
+    worker.test_single_key_contention();
+    worker.test_overlapping_keys();
+    worker.test_cross_shard_contention();
+    worker.test_read_write_contention();
 
     printf("[Worker %d] Completed\n", worker_id);
 }

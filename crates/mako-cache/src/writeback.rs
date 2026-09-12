@@ -34,7 +34,7 @@ use std::time::{Duration, Instant};
 
 use crate::checkpoint::{self, LaneMetadata};
 use mako_local::{CommitRecordTarget, MakoTimestamp, TrustedOnePutHolderPool};
-use mrx_core::{BlobError, Blobs};
+use mrx_core::{BlobError, Blobs, BoundedEntryVisitor};
 #[cfg(test)]
 use std::cell::RefCell;
 
@@ -7312,7 +7312,7 @@ mod tests {
             &self,
             start: &[u8],
             max_entries: usize,
-            visitor: &mut dyn FnMut(&[u8], &[u8]) -> Result<bool, BlobError>,
+            visitor: &mut BoundedEntryVisitor<'_>,
         ) -> Result<(), BlobError> {
             let mut visited = 0;
             let scan_limit = if self.truncate_scan.load(Ordering::Relaxed) {

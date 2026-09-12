@@ -17,12 +17,17 @@
 
 namespace mako {
 
-// Launch helper threads for all remote warehouses across shards.
+// Launch helper threads for all remote warehouses across shards. open_tables
+// must already contain the complete deterministic schema and remain immutable
+// until every helper has stopped.
 void setup_helper(
   abstract_db *db,
   const std::map<int, abstract_ordered_index *> &open_tables);
 
-// Add or update a table mapping for already running helper threads.
+// Legacy quiescence-only schema hook. The table catalog must be complete
+// before setup_helper(), RPC serving, or worker execution begins. Calling this
+// while helpers can read their maps is unsupported; dynamic replicated schema
+// needs a separate cross-process ID and synchronization protocol.
 void setup_update_table(int table_id, abstract_ordered_index *table);
 
 // Signal helper threads to stop processing requests.
@@ -34,9 +39,6 @@ void setup_rpc_server();
 // Stop all RPC servers previously started by setup_rpc_server().
 void stop_rpc_server();
 
-// Initialize per thread
-void initialize_per_thread(abstract_db *db) ;
-
 // Start TCP server for remote client connections.
 // The TCP server listens on the specified port and routes client API
 // requests (BeginTxn, Commit, Put, Get, etc.) to the ShardReceiver handlers.
@@ -44,7 +46,8 @@ void initialize_per_thread(abstract_db *db) ;
 // @return true if started successfully
 bool setup_client_tcp_server(int port = 31000);
 
-// Start TCP server with explicit database and table mappings.
+// Start TCP server with explicit database and table mappings. open_tables must
+// be complete and remain immutable until the server has stopped.
 // Use this overload in single-shard mode where no helper servers exist.
 // @param db - Database handle for transaction processing
 // @param open_tables - Table ID to index mappings

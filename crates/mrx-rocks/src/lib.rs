@@ -18,7 +18,7 @@ use std::ffi::{c_char, c_uchar, CStr, CString};
 use std::path::{Path, PathBuf};
 use std::ptr;
 
-use mrx_core::{BlobError, BlobOp, Blobs};
+use mrx_core::{BlobError, BlobOp, Blobs, BoundedEntryVisitor, EntryVisitor};
 
 mod sys {
     #![allow(non_camel_case_types)]
@@ -469,7 +469,7 @@ impl Blobs for RocksBlobs {
 
     fn for_each_entry(
         &self,
-        f: &mut dyn FnMut(&[u8], &[u8]) -> Result<(), BlobError>,
+        f: &mut EntryVisitor<'_>,
     ) -> Result<(), BlobError> {
         self.for_each_entry_from(b"", usize::MAX, &mut |key, value| {
             f(key, value)?;
@@ -481,7 +481,7 @@ impl Blobs for RocksBlobs {
         &self,
         start: &[u8],
         max_entries: usize,
-        visitor: &mut dyn FnMut(&[u8], &[u8]) -> Result<bool, BlobError>,
+        visitor: &mut BoundedEntryVisitor<'_>,
     ) -> Result<(), BlobError> {
         if max_entries == 0 {
             return Ok(());

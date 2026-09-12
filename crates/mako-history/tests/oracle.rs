@@ -105,6 +105,85 @@ fn legal_serial_history_models_ryw_scans_and_binary_bytes() {
 }
 
 #[test]
+fn exact_previous_value_observations_are_checked() {
+    let mut initial = State::new();
+    state_insert(&mut initial, TABLE, b"k", b"old");
+
+    let mut transaction = Transaction::new(1, Interval::completed(1, 2));
+    transaction
+        .push(TimedOperation::completed(
+            3,
+            4,
+            Operation::put(TABLE, b"k", b"new"),
+            Observation::PutWithPrevious {
+                previous: Some(b"old".to_vec()),
+            },
+        ))
+        .push(TimedOperation::completed(
+            5,
+            6,
+            Operation::insert(TABLE, b"k", b"ignored"),
+            Observation::InsertWithPrevious {
+                previous: Some(b"new".to_vec()),
+            },
+        ))
+        .push(TimedOperation::completed(
+            7,
+            8,
+            Operation::remove(TABLE, b"k"),
+            Observation::RemoveWithPrevious {
+                previous: Some(b"new".to_vec()),
+            },
+        ))
+        .push(TimedOperation::completed(
+            9,
+            10,
+            Operation::insert(TABLE, b"k", b"final"),
+            Observation::InsertWithPrevious { previous: None },
+        ))
+        .push(TimedOperation::completed(
+            11,
+            12,
+            Operation::remove(TABLE, b"missing"),
+            Observation::RemoveWithPrevious { previous: None },
+        ));
+    commit(&mut transaction, 13, 14);
+
+    let mut final_state = State::new();
+    state_insert(&mut final_state, TABLE, b"k", b"final");
+    let mut history = History::new(initial);
+    history
+        .set_observed_final_state(final_state)
+        .push(transaction);
+    check_strict_serializability(&history, options()).unwrap();
+    assert!(history.to_replay_text().contains("previous=0x6f6c64"));
+
+    for (index, corrupted_observation) in [
+        Observation::PutWithPrevious {
+            previous: Some(b"wrong".to_vec()),
+        },
+        Observation::InsertWithPrevious {
+            previous: Some(b"wrong".to_vec()),
+        },
+        Observation::RemoveWithPrevious {
+            previous: Some(b"wrong".to_vec()),
+        },
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut corrupted = history.clone();
+        corrupted.transactions[0].operations[index].observation = Some(corrupted_observation);
+        assert_eq!(
+            check_strict_serializability(&corrupted, options())
+                .unwrap_err()
+                .kind,
+            CheckFailureKind::NoLegalSerialization
+        );
+    }
+}
+
+#[test]
 fn commit_response_order_is_not_serialization_order() {
     let mut first = Transaction::new(1, Interval::completed(1, 2));
     first.push(TimedOperation::completed(

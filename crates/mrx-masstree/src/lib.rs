@@ -7,7 +7,7 @@
 //!
 //! # Threads are a capped, permanent resource
 //!
-//! [`mtx_thread_attach`](mtree_sys::mtx_thread_attach) allocates a core
+//! [`mtx_thread_attach`](mtx_sys::mtx_thread_attach) allocates a core
 //! ID from a 512-entry per-runtime space, and IDs are **never recycled**:
 //! a dead thread's slot and its deferred-free queue stay allocated
 //! forever. So this crate attaches lazily and caches the fact in a
@@ -32,7 +32,7 @@ use std::cell::Cell;
 use std::fmt;
 
 use mrx_core::{EntryWord, KeyIndex};
-use mtree_sys as sys;
+use mtx_sys as sys;
 
 /// A failure from the C ABI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -130,7 +130,7 @@ impl MasstreeIndex {
     ///
     /// The version check alone would not be enough: struct layout drift
     /// is what a version bump misses, and it corrupts silently, so
-    /// [`mtree_sys::assert_abi_matches`] checks the size of `mtx_kv` too.
+    /// [`mtx_sys::assert_abi_matches`] checks the size of `mtx_kv` too.
     pub fn new() -> Result<Self, IndexError> {
         sys::assert_abi_matches().map_err(IndexError::AbiMismatch)?;
         attach_thread()?;

@@ -11,6 +11,12 @@
 > [local boundary gates](mako-local-boundary-gates.md). That accepted library
 > component does not make the networked or distributed Mako service
 > production-ready.
+> **Historical snapshot:** This report predates the native Rust STO work and the
+> current sanitizer disposition. Its percentages and “production-ready” labels
+> are not current release qualification. See the
+> [Rust STO design contract](architecture/rust-sto.md) and
+> [Masstree sanitizer findings](masstree-sanitizer-findings.md) for the current
+> bounded profile and known exclusions.
 
 ---
 

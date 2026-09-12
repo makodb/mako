@@ -45,7 +45,7 @@ convert slices to pointers, check status codes, and copy results out.
 | crate | what it is |
 |---|---|
 | `mrx-core` | the cache. Traits for the two backends, fakes for both, the mutation harness |
-| `mtree-sys` | raw declarations for the `mtx_*` C ABI. No logic |
+| `mtx-sys` | raw declarations for the `mtx_*` C ABI. No logic |
 | `mrx-masstree` | `KeyIndex` over masstree |
 | `mrx-rocks` | `Blobs` over RocksDB's C API |
 | `mrx` | the assembled cache: `Db`, `WriteBatch`, `Iter` |

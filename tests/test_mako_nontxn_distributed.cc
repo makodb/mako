@@ -26,6 +26,7 @@
 #include "lib/common.h"
 #include "lib/server.h"
 #include "lib/shardClient.h"
+#include "lib/transport_request_handle.h"
 #include "rocks_interface/client_tcp_server.h"
 #include "rocks_interface/local_table.hh"
 #include "rocks_interface/remote_db.hh"
@@ -53,6 +54,47 @@ mbta_wrapper* g_db = nullptr;
 mbta_ordered_index* g_client_tbl = nullptr;  // is_remote=true  → RPC path
 mbta_ordered_index* g_server_tbl = nullptr;  // is_remote=false → local store
 
+class QueuedGetRequest final : public mako::TransportRequestHandle {
+public:
+    QueuedGetRequest(uint32_t request_number, uint16_t table_id,
+                     const std::string& key) {
+        EXPECT_LE(key.size(), mako::max_key_length);
+        request_.req_nr = request_number;
+        request_.table_id = table_id;
+        request_.len = static_cast<uint16_t>(key.size());
+        std::memcpy(request_.key, key.data(), key.size());
+    }
+
+    uint8_t GetRequestType() const override { return mako::getReqType; }
+    char* GetRequestBuffer() override {
+        return reinterpret_cast<char*>(&request_);
+    }
+    char* GetResponseBuffer() override {
+        return reinterpret_cast<char*>(&response_);
+    }
+    void* GetOpaqueHandle() override { return this; }
+    void EnqueueResponse(size_t response_size) override {
+        response_size_ = response_size;
+        transaction_active_at_response_ =
+            TThread::txn != nullptr && TThread::txn->has_active_state();
+        ++response_count_;
+    }
+
+    const mako::get_response_t& response() const { return response_; }
+    size_t response_size() const { return response_size_; }
+    size_t response_count() const { return response_count_; }
+    bool transaction_active_at_response() const {
+        return transaction_active_at_response_;
+    }
+
+private:
+    mako::get_request_t request_{};
+    mako::get_response_t response_{};
+    size_t response_size_ = 0;
+    size_t response_count_ = 0;
+    bool transaction_active_at_response_ = false;
+};
+
 std::string config_path() {
     const char* candidates[] = {
 #ifdef MAKO_SOURCE_DIR
@@ -69,6 +111,14 @@ std::string config_path() {
     }
     ADD_FAILURE() << "config yml not found from cwd";
     return candidates[0];
+}
+
+void set_server_table_multiversion_mode() {
+#if defined(DISABLE_MULTI_VERSION)
+    TThread::disable_multiversion();
+#else
+    TThread::enable_multiverison();
+#endif
 }
 
 // Binds the fake (UDP) transport to shard 1's URI, wires the helper
@@ -107,7 +157,7 @@ void helper_server_thread(transport::Configuration* config,
                           std::map<int, abstract_ordered_index*> open_tables) {
     scoped_db_thread_ctx ctx(db, true, 1);
     TThread::set_mode(1);
-    TThread::enable_multiverison();
+    set_server_table_multiversion_mode();
     TThread::set_shard_index(kServerShard);
     TThread::set_pid(kParId);
     TThread::set_nshards(config->nshards);
@@ -124,6 +174,18 @@ void helper_server_thread(transport::Configuration* config,
 class MakoNontxnDistributed : public ::testing::Test {
 protected:
     static void SetUpTestSuite() {
+        // The detached server/helper threads are process-lifetime fixtures.
+        // On --gtest_repeat, reuse them and only recreate this iteration's
+        // main-thread client, which TearDownTestSuite releases below.
+        if (g_config != nullptr) {
+            ASSERT_EQ(TThread::sclient, nullptr);
+            TThread::sclient = new mako::ShardClient(g_config->configFile,
+                                                     "localhost",
+                                                     kClientShard,
+                                                     kParId);
+            return;
+        }
+
         std::string path = config_path();
         g_config = new transport::Configuration(path);
         BenchmarkConfig::getInstance().setConfig(g_config);
@@ -143,6 +205,9 @@ protected:
             // thread_init).
             scoped_db_thread_ctx ctx(g_db, /*loader=*/true);
         }
+        // MV deletes leave physical tombstones. Direct verification through
+        // g_server_tbl must interpret them in the same mode as the helper.
+        set_server_table_multiversion_mode();
 
         // The same logical table from the two role perspectives.
         g_client_tbl = mbta_index_build("nontxn_dist", kRemoteTableId,
@@ -167,6 +232,13 @@ protected:
                                                  "localhost",
                                                  kClientShard,
                                                  kParId);
+    }
+
+    static void TearDownTestSuite() {
+        EXPECT_TRUE(TThread::txn == nullptr ||
+                    !TThread::txn->has_active_state());
+        delete TThread::sclient;
+        TThread::sclient = nullptr;
     }
 };
 
@@ -337,6 +409,52 @@ TEST_F(MakoNontxnDistributed, L7RemoteTableNontxn) {
     rdb->Disconnect();
     delete rdb;
     tcp->Stop();
+}
+
+TEST_F(MakoNontxnDistributed,
+       HelperResetsInactiveParticipantBetweenQueuedRequests) {
+    mako::HelperQueue request_queue(0, true);
+    mako::HelperQueue response_queue(0, false);
+    QueuedGetRequest missing(
+        1001, kRemoteTableId,
+        "__helper_reset_inactive_participant_missing_1001__");
+    QueuedGetRequest following(1002, 0, "mock-value");
+
+    ASSERT_TRUE(request_queue.add_one_req(
+        missing.GetOpaqueHandle(), sizeof(mako::get_request_t)));
+    ASSERT_TRUE(request_queue.add_one_req(
+        following.GetOpaqueHandle(), sizeof(mako::get_request_t)));
+    // Run() must still drain requests that were queued before shutdown.
+    request_queue.request_stop();
+
+    std::thread helper([&] {
+        scoped_db_thread_ctx ctx(g_db, true, 1);
+        TThread::set_mode(1);
+        set_server_table_multiversion_mode();
+        TThread::set_shard_index(kServerShard);
+        TThread::set_pid(kParId);
+        TThread::set_nshards(g_config->nshards);
+
+        mako::ShardServer server(g_config->configFile,
+                                 kServerShard, kClientShard, kParId);
+        std::map<int, abstract_ordered_index*> tables;
+        tables[kRemoteTableId] = g_server_tbl;
+        server.Register(g_db, &request_queue, &response_queue, tables);
+        server.Run();
+    });
+    helper.join();
+
+    ASSERT_EQ(missing.response_count(), 1U);
+    EXPECT_EQ(missing.response().status,
+              static_cast<int>(mako::ErrorCode::ABORT));
+    EXPECT_FALSE(missing.transaction_active_at_response());
+
+    ASSERT_EQ(following.response_count(), 1U);
+    EXPECT_EQ(following.response().status,
+              static_cast<int>(mako::ErrorCode::SUCCESS));
+    EXPECT_TRUE(following.transaction_active_at_response());
+    EXPECT_GT(following.response_size(),
+              sizeof(mako::get_response_t) - mako::max_value_length);
 }
 
 }  // namespace

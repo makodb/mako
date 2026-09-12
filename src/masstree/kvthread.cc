@@ -30,6 +30,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <mutex>
+#include <thread>
 #include <sys/mman.h>
 #if HAVE_SUPERPAGE && !NOSUPERPAGE
 #include <sys/types.h>
@@ -106,23 +107,30 @@ void threadinfo::hard_rcu_quiesce() {
     limbo_element *lb = &lg->e_[lg->head_];
     limbo_element *le = &lg->e_[lg->tail_];
 
-    if (lb != le && (int64_t) (lb->epoch_ - min_epoch) < 0) {
+    if (lb != le
+        && mrcu_signed_epoch_type(lb->epoch_ - min_epoch) < 0) {
         while (1) {
             free_rcu(lb->ptr_, lb->tag_);
             mark(tc_gc);
 
             ++lb;
+            // A callback may register a follow-up callback on this same
+            // queue. Refresh the tail before deciding that the group ended,
+            // otherwise the new entry would be skipped and discarded.
+            le = &lg->e_[lg->tail_];
 
-            if (lb == le && lg == limbo_tail_) {
-                lg->head_ = lg->tail_;
-                break;
-            } else if (lb == le) {
+            while (lb == le && lg != limbo_tail_) {
                 assert(lg->tail_ == lg->capacity && lg->next_);
                 lg->head_ = lg->tail_ = 0;
                 lg = lg->next_;
                 lb = &lg->e_[lg->head_];
                 le = &lg->e_[lg->tail_];
-            } else if (lb->epoch_ < min_epoch) {
+            }
+            if (lb == le) {
+                lg->head_ = lg->tail_;
+                break;
+            }
+            if (mrcu_signed_epoch_type(lb->epoch_ - min_epoch) >= 0) {
                 lg->head_ = lb - lg->e_;
                 break;
             }
@@ -144,6 +152,53 @@ void threadinfo::hard_rcu_quiesce() {
     }
 
     limbo_epoch_ = (lb == le ? 0 : lb->epoch_);
+}
+
+// @unsafe - owner-thread shutdown barrier over raw epoch participants and
+// callback pointers. The caller guarantees no concurrent registration on
+// this threadinfo.
+void threadinfo::rcu_drain() {
+    // The owner has completed its last protected access. Publish quiescence
+    // before advancing the context so this participant cannot pin its own
+    // grace period.
+    store_gc_epoch(0, std::memory_order_release);
+
+    while (limbo_epoch_ != 0) {
+        context_->increment_epoch(2);
+        const mrcu_epoch_type drain_epoch = context_->get_epoch();
+
+        // A reader at drain_epoch or later started after the grace-period
+        // boundary and cannot hold a pointer retired before this call. Wait
+        // only for older active readers; inactive participants publish zero.
+        bool grace_period_complete;
+        do {
+            grace_period_complete = true;
+            for (rusty::MutPtr<threadinfo> ti = context_->get_allthreads();
+                 ti; ti = ti->next()) {
+                const mrcu_epoch_type epoch =
+                    ti->load_gc_epoch(std::memory_order_seq_cst);
+                if (epoch != 0
+                    && mrcu_signed_epoch_type(epoch - drain_epoch) < 0) {
+                    grace_period_complete = false;
+                    break;
+                }
+            }
+            if (!grace_period_complete)
+                std::this_thread::yield();
+        } while (!grace_period_complete);
+
+        // Participate at the boundary while hard_rcu_quiesce computes the
+        // minimum. Follow-up callbacks registered by a callback have the
+        // current epoch and remain queued for the next grace-period round.
+        store_gc_epoch(drain_epoch, std::memory_order_seq_cst);
+        try {
+            hard_rcu_quiesce();
+        } catch (...) {
+            store_gc_epoch(0, std::memory_order_release);
+            throw;
+        }
+        store_gc_epoch(0, std::memory_order_release);
+    }
 }
 
 // @unsafe - compares raw void* pointers and calls fprintf() for debug output

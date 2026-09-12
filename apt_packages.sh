@@ -1,4 +1,7 @@
 #!/bin/bash
+
+set -euo pipefail
+
 # Package installation script for Ubuntu 24.04 (Noble Numbat)
 #
 # For Ubuntu 22.04, uncomment the following GCC PPA and LLVM repo lines:
@@ -18,7 +21,7 @@ export DEBIAN_FRONTEND=noninteractive
 sudo apt-get update
 
 # Build tools
-sudo apt-get --assume-yes install make automake cmake ninja-build pkg-config autoconf curl
+sudo apt-get --assume-yes install make automake cmake ninja-build pkg-config autoconf curl dpkg-dev
 
 # Ensure CMake >= 3.30 for C++23 import std/module support.
 # Ubuntu 24.04 apt currently provides 3.28.x, which is too old for this repo.
@@ -28,7 +31,7 @@ sudo apt-get --assume-yes install make automake cmake ninja-build pkg-config aut
 # and every C++20-module target fails ("__CMAKE::CXX23 target not provided").
 # Keep this in lockstep with the local/dev CMake and the UUID.
 REQUIRED_CMAKE_VERSION="4.3.3"
-BOOTSTRAP_CMAKE_VERSION="${BOOTSTRAP_CMAKE_VERSION:-4.3.3}"
+BOOTSTRAP_CMAKE_VERSION="4.3.3"
 
 version_ge() {
     # Returns success when $1 >= $2.
@@ -44,8 +47,14 @@ if ! version_ge "$current_cmake_version" "$REQUIRED_CMAKE_VERSION"; then
     echo "Installing newer CMake (have ${current_cmake_version}, need >= ${REQUIRED_CMAKE_VERSION})..."
 
     case "$(uname -m)" in
-        x86_64|amd64) cmake_arch="x86_64" ;;
-        aarch64|arm64) cmake_arch="aarch64" ;;
+        x86_64|amd64)
+            cmake_arch="x86_64"
+            cmake_sha256="927b2368a946c37269c3a66225ab00544e756459cdd0b5d0da438694fb9ff802"
+            ;;
+        aarch64|arm64)
+            cmake_arch="aarch64"
+            cmake_sha256="9ea38356dbd3e32e51029a3e09a0f2f8e117ef4fbcaad7a21ffb36409bbd5cb4"
+            ;;
         *)
             echo "Unsupported architecture for CMake bootstrap: $(uname -m)"
             exit 1
@@ -56,7 +65,13 @@ if ! version_ge "$current_cmake_version" "$REQUIRED_CMAKE_VERSION"; then
     cmake_url="https://github.com/Kitware/CMake/releases/download/v${BOOTSTRAP_CMAKE_VERSION}/${cmake_tar}"
     tmp_dir="$(mktemp -d)"
 
-    curl -fsSL "$cmake_url" -o "${tmp_dir}/${cmake_tar}"
+    curl --proto '=https' --tlsv1.2 -fL --retry 3 \
+        "$cmake_url" -o "${tmp_dir}/${cmake_tar}"
+    if ! printf '%s  %s\n' "${cmake_sha256}" "${tmp_dir}/${cmake_tar}" \
+            | sha256sum --check --strict; then
+        echo "CMake bootstrap checksum verification failed" >&2
+        exit 1
+    fi
     sudo rm -rf "/opt/cmake-${BOOTSTRAP_CMAKE_VERSION}"
     sudo mkdir -p "/opt/cmake-${BOOTSTRAP_CMAKE_VERSION}"
     sudo tar -xzf "${tmp_dir}/${cmake_tar}" --strip-components=1 -C "/opt/cmake-${BOOTSTRAP_CMAKE_VERSION}"
@@ -119,14 +134,15 @@ sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-22 
 sudo update-alternatives --install /usr/bin/llvm-config llvm-config /usr/bin/llvm-config-22 200 || true
 
 # apt.llvm.org's libc++-22-dev splits the layout: libc++.modules.json lands
-# in /lib/x86_64-linux-gnu/ while the .cppm files live in
+# in the host's /lib/<multiarch>/ directory while the .cppm files live in
 # /usr/lib/llvm-22/share/libc++/v1/. The JSON's relative `source-path`
 # entries (`../share/libc++/v1/std.cppm`) resolve against the JSON's
 # directory, producing /lib/share/libc++/v1/std.cppm — which doesn't exist
 # — and CMake's CXX_MODULE_STD discovery aborts ("Cannot find source file").
 # Rewrite the relative paths to absolute so discovery works regardless of
 # where clang -print-file-name finds the JSON.
-MODULES_JSON="/lib/x86_64-linux-gnu/libc++.modules.json"
+DEB_HOST_MULTIARCH="$(dpkg-architecture -qDEB_HOST_MULTIARCH)"
+MODULES_JSON="/lib/${DEB_HOST_MULTIARCH}/libc++.modules.json"
 if [ -f "${MODULES_JSON}" ]; then
     sudo sed -i 's|"\.\./share/libc++/v1|"/usr/lib/llvm-22/share/libc++/v1|g' "${MODULES_JSON}"
     echo "Patched ${MODULES_JSON} to use absolute source paths."

@@ -53,8 +53,8 @@ namespace sync_util {
         static std::atomic<uint32_t> noops_cnt_hole;
         static int exchange_refresh_cnt;
         static std::atomic<bool> exchange_running;
-        static int failed_shard_index;
-        static uint32_t failed_shard_ts;
+        static std::atomic<int> failed_shard_index;
+        static std::atomic<uint32_t> failed_shard_ts;
         
         static void Init(int shardIdx_X, int nshards_X, int nthreads_X, bool is_leader_X,
                          string cluster_X,

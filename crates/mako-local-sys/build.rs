@@ -550,7 +550,7 @@ fn parse_definitions(region: &str) -> Result<BTreeMap<String, i32>, String> {
             .next()
             .ok_or_else(|| format!("status definition `{symbol}` has no value"))?;
         let trailing = fields.collect::<Vec<_>>().join(" ");
-        if !trailing.is_empty() && !(trailing.starts_with("/*") && trailing.ends_with("*/")) {
+        if !trailing.is_empty() && (!trailing.starts_with("/*") || !trailing.ends_with("*/")) {
             return Err(format!(
                 "status definition `{symbol}` has unsupported trailing text: {trailing}"
             ));

@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, RwLock};
 
-use crate::{BlobError, BlobOp, Blobs, EntryWord, KeyIndex};
+use crate::{BlobError, BlobOp, Blobs, BoundedEntryVisitor, EntryVisitor, EntryWord, KeyIndex};
 
 /// A `BTreeMap`-backed [`KeyIndex`].
 #[derive(Debug, Default)]
@@ -207,7 +207,7 @@ impl Blobs for MemBlobs {
 
     fn for_each_entry(
         &self,
-        f: &mut dyn FnMut(&[u8], &[u8]) -> Result<(), BlobError>,
+        f: &mut EntryVisitor<'_>,
     ) -> Result<(), BlobError> {
         self.for_each_entry_from(b"", usize::MAX, &mut |key, value| {
             f(key, value)?;
@@ -219,7 +219,7 @@ impl Blobs for MemBlobs {
         &self,
         start: &[u8],
         max_entries: usize,
-        visitor: &mut dyn FnMut(&[u8], &[u8]) -> Result<bool, BlobError>,
+        visitor: &mut BoundedEntryVisitor<'_>,
     ) -> Result<(), BlobError> {
         use std::ops::Bound::{Excluded, Included, Unbounded};
         let mut previous: Option<Vec<u8>> = None;

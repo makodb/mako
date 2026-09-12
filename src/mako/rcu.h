@@ -280,12 +280,11 @@ public:
   // Uses the owning runtime's ticker, or the global ticker for s_instance
   ticker& get_ticker() const;
 
-  // pin the current thread to CPU.
-  //
-  // this CPU number corresponds to the ones exposed by
-  // sched.h. note that we currently pin to the numa node
-  // associated with the cpu. memory allocation, however, is
-  // CPU-specific
+  // Restrict the current thread to the selected CPU's NUMA node without
+  // widening the affinity mask in effect before this thread's first call.
+  // Callers must establish that mask before pinning and must not change it
+  // concurrently. The allocator arena remains CPU-specific, and a later call
+  // may move the thread to another node allowed by the initial mask.
   void pin_current_thread(size_t cpu);
 
   void fault_region();

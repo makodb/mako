@@ -229,15 +229,30 @@ pub enum Observation {
         /// Whether the key was absent immediately before this operation.
         created: bool,
     },
+    /// Result of a [`Operation::Put`] API that returns the exact prior value.
+    PutWithPrevious {
+        /// Transaction-visible value immediately before the put.
+        previous: Option<Vec<u8>>,
+    },
     /// Result of [`Operation::Insert`].
     Insert {
         /// Whether the value was staged because the key was absent.
         inserted: bool,
     },
+    /// Result of a [`Operation::Insert`] API that returns an existing value.
+    InsertWithPrevious {
+        /// Existing transaction-visible value, or `None` when insertion won.
+        previous: Option<Vec<u8>>,
+    },
     /// Result of [`Operation::Remove`].
     Remove {
         /// Whether a live value existed immediately before removal.
         existed: bool,
+    },
+    /// Result of a [`Operation::Remove`] API that returns the removed value.
+    RemoveWithPrevious {
+        /// Transaction-visible value removed by this operation, if any.
+        previous: Option<Vec<u8>>,
     },
     /// Exact result of [`Operation::Scan`].
     Scan(Vec<Row>),

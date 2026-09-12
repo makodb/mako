@@ -1,8 +1,13 @@
 #pragma once
-#include <atomic>
-#include <string>
+
 #include "string_base.hh"
+#include <atomic>
+#include <cstdint>
+#include <limits>
 #include <new>
+#include <stdexcept>
+#include <string>
+#include <type_traits>
 
 static_assert(std::atomic_ref<char>::is_always_lock_free,
               "MassTrans string payload bytes must be lock-free atomics");
@@ -23,6 +28,18 @@ template <typename Stuff>
 class stuffed_str {
 public:
   typedef Stuff stuff_type;
+
+  struct value_snapshot {
+    char* data;
+    uint32_t size;
+  };
+
+  static_assert(std::is_trivially_copyable_v<Stuff>,
+                "published stuffed values must be trivially copyable");
+  static_assert(std::atomic_ref<Stuff>::is_always_lock_free,
+                "published stuffed values must be lock-free");
+  static_assert(alignof(Stuff) >= std::atomic_ref<Stuff>::required_alignment,
+                "published stuffed value has insufficient alignment");
 
 #if defined(MAKO_LOCAL_TEST_HOOKS)
   using test_copy_midpoint_hook = void (*)(void*) noexcept;
@@ -50,22 +67,50 @@ public:
 
   template <typename Malloc = StandardMalloc>
   static stuffed_str* make(const char *str, int len, int capacity, const Stuff& val, Malloc m = Malloc()) {
-    // TODO: it might be better if we just take the max of size_for() and capacity
-    assert(size_for(len) <= capacity);
+    if (len < 0 || capacity < 0 ||
+        !valid_initial_value_size(static_cast<size_t>(len)) ||
+        size_for(len) > capacity) {
+      throw std::length_error("stuffed_str allocation size is out of range");
+    }
     //    printf("%d from %lu\n", alloc_size, len + sizeof(stuffed_str));
     auto vs = (stuffed_str*)m(capacity);
+    if (vs == nullptr) {
+      throw std::bad_alloc();
+    }
     new (vs) stuffed_str(val, len, capacity - sizeof(stuffed_str), str);
     return vs;
   }
 
   template <typename Malloc = StandardMalloc>
   static stuffed_str* make(const std::string& s, const Stuff& val, Malloc m = Malloc()) {
-    return make(s.data(), s.length(), size_for(s.length()), val, m);
+    if (!valid_initial_value_size(s.size())) {
+      throw std::length_error("stuffed_str value size is out of range");
+    }
+    const int len = static_cast<int>(s.size());
+    return make(s.data(), len, size_for(len), val, m);
   }
 
   template <typename Str, typename Malloc = StandardMalloc>
   static stuffed_str* make(const lcdf::String_base<Str>& s, const Stuff& val, Malloc m = Malloc()) {
+    if (s.length() < 0 ||
+        !valid_initial_value_size(static_cast<size_t>(s.length()))) {
+      throw std::length_error("stuffed_str value size is out of range");
+    }
     return make(s.data(), s.length(), size_for(s.length()), val, m);
+  }
+
+  static constexpr size_t max_initial_value_size() noexcept {
+    // pad() rounds large allocations to a power of two and size_for() returns
+    // int. Keep the padded capacity at the largest positive power of two that
+    // int can represent.
+    constexpr size_t max_capacity =
+        size_t{1} << (std::numeric_limits<int>::digits - 1);
+    static_assert(sizeof(stuffed_str) < max_capacity);
+    return max_capacity - sizeof(stuffed_str);
+  }
+
+  static constexpr bool valid_initial_value_size(size_t len) noexcept {
+    return len <= max_initial_value_size();
   }
 
   static unsigned pad(unsigned v)
@@ -87,7 +132,13 @@ public:
   }
 
   static inline int size_for(int len) {
-    return pad(len + sizeof(stuffed_str));
+    if (len < 0 ||
+        !valid_initial_value_size(static_cast<size_t>(len))) {
+      throw std::length_error("stuffed_str value size is out of range");
+    }
+    const unsigned total = static_cast<unsigned>(len) +
+        static_cast<unsigned>(sizeof(stuffed_str));
+    return static_cast<int>(pad(total));
   }
 
   bool needs_resize(int len) {
@@ -102,9 +153,10 @@ public:
     if (likely(!needs_resize(len))) {
       return this;
     }
-    std::string snapshot;
-    copy_payload_atomic(snapshot);
-    return stuffed_str::make(snapshot.data(), static_cast<int>(snapshot.size()), len,
+    std::string snapshot_bytes;
+    copy_payload_atomic(snapshot_bytes);
+    return stuffed_str::make(snapshot_bytes.data(),
+                             static_cast<int>(snapshot_bytes.size()), len,
                              load_stuff(), m);
   }
 
@@ -129,12 +181,44 @@ public:
     return stuffed_str::make(str, len, size_for(len), load_stuff(), m);
   }
 
+  // Publish a fully initialized immutable packed-value buffer. Store the
+  // length first and the pointer last so an acquire load of the new pointer
+  // also observes its matching length. A reader that sampled the old pointer
+  // while this runs validates the enclosing OCC version before dereferencing
+  // the pair.
+  void publish_value(char* p, int len) {
+    assert(p != nullptr);
+    assert(len >= 0);
+    store_size(static_cast<uint32_t>(len), std::memory_order_release);
+    store_data(p, std::memory_order_release);
+  }
+
+  value_snapshot snapshot() const {
+    // Pointer first pairs with publish_value's pointer-last publication. The
+    // enclosing OCC version check rejects an old-pointer/new-length sample.
+    char* const p = load_data(std::memory_order_acquire);
+    const uint32_t size = load_size(std::memory_order_acquire);
+    return {p, size};
+  }
+
   void modifyData(char* p){
     store_data(p, std::memory_order_release);
   }
 
-  char *data() {
+  char *data() const {
     return load_data(std::memory_order_acquire);
+  }
+
+  // The flexible-array storage belongs to this stuffed_str allocation even
+  // when multiversion mode redirects data() to a heap-backed newer value.
+  // Reclamation needs this stable ownership boundary to avoid freeing buf_
+  // or leaking a heap node that was truncated by an earlier reclaim cycle.
+  char *embedded_data() {
+    return buf_;
+  }
+
+  const char *embedded_data() const {
+    return buf_;
   }
   
   int length() const {
@@ -215,6 +299,8 @@ private:
 #endif
 
   uint32_t load_size(std::memory_order order) const {
+    assert(reinterpret_cast<uintptr_t>(&size_) %
+               std::atomic_ref<uint32_t>::required_alignment == 0);
     return std::atomic_ref<uint32_t>(const_cast<uint32_t&>(size_)).load(order);
   }
 
@@ -223,6 +309,8 @@ private:
   }
 
   char* load_data(std::memory_order order) const {
+    assert(reinterpret_cast<uintptr_t>(&flex_buf_) %
+               std::atomic_ref<char*>::required_alignment == 0);
     return std::atomic_ref<char*>(const_cast<char*&>(flex_buf_)).load(order);
   }
 
@@ -231,6 +319,8 @@ private:
   }
 
   Stuff load_stuff() const {
+    assert(reinterpret_cast<uintptr_t>(&stuff_) %
+               std::atomic_ref<Stuff>::required_alignment == 0);
     return std::atomic_ref<Stuff>(const_cast<Stuff&>(stuff_))
         .load(std::memory_order_acquire);
   }

@@ -1,0 +1,12 @@
+
+ Performance counter stats for process id '692651':
+
+          45532.68 msec task-clock                       #   45.296 CPUs utilized
+      141949930807      cycles                           #    3.118 GHz
+       19010509730      instructions                     #    0.13  insn per cycle
+        1200812550      cache-references                 #   26.373 M/sec
+         111885952      cache-misses                     #    9.32% of all cache refs
+            444836      context-switches                 #    9.770 K/sec
+              7928      cpu-migrations                   #  174.117 /sec
+
+       1.005224111 seconds time elapsed

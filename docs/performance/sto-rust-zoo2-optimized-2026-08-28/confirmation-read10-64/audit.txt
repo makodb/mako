@@ -1,0 +1,10 @@
+repetition cpp_Mops rust_Mops rust/cpp%
+0             237.085   245.421    103.52
+1             241.549   243.891    100.97
+2             220.044   245.454    111.55
+3             224.672   245.938    109.47
+4             224.592   246.320    109.67
+cpp median=224.672 Mops/s cv=4.01%
+rust median=245.454 Mops/s cv=0.38%
+median paired rust/cpp=109.47%
+paired ratio spread=10.48%

@@ -34,31 +34,49 @@ namespace srpc {
 fn epoll_event_zeroed() -> epoll_event {
     Default::default()
 }
+
+// Constructing the packed Linux event as an aggregate lets the compiler place
+// epoll_data_t at the platform ABI's actual offset without ever forming a
+// reference to that potentially unaligned union member.
+fn epoll_event_with_fd(fd: i32, events: u32) -> epoll_event {
+    let mut data: epoll_data_t = Default::default();
+    data.fd = fd;
+    epoll_event {
+        events,
+        data,
+    }
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=epoll_platform_linux.1 version=1 rust_sha256=e64905dc19cf2e4c70b5c2c9c842261ea81bf4a1d83452b4c94e286130ca71bf*/
+/*RUSTYCPP:GEN-BEGIN id=epoll_platform_linux.1 version=1 rust_sha256=8d4be9e03978fcb39f3cdd6c4d19a05d4ffbb153cc2d68d8d0a33c63be176ab7*/
 epoll_event epoll_event_zeroed();
+epoll_event epoll_event_with_fd(int32_t fd, uint32_t events);
 
 epoll_event epoll_event_zeroed() {
     return rusty::default_like<epoll_event>();
+}
+
+epoll_event epoll_event_with_fd(int32_t fd, uint32_t events) {
+    epoll_data_t data = rusty::default_like<epoll_data_t>();
+    data.fd = std::move(fd);
+    return epoll_event{.events = std::move(events), .data = std::move(data)};
 }
 /*RUSTYCPP:GEN-END id=epoll_platform_linux.1*/
 
 // The Linux epoll_ctl(ADD) body — registration flags, EEXIST
 // del-then-re-add retry, and the EBADF teardown-race tolerance — as
-// DSL over the zeroed-event factory. The DEL retry passes &ev instead
-// of the legacy nullptr; the kernel ignores the payload for DEL, so
+// DSL over the fully initialized event factory. The DEL retry passes &ev
+// instead of the legacy nullptr; the kernel ignores the payload for DEL, so
 // either is correct. (The original reason -- "the DSL has no
 // null-pointer spelling" -- is no longer true: `core::ptr::null_mut()`
 // lowers to `rusty::ptr::null_mut()`. Passing &ev is kept because it is
 // clearer, not because null is unavailable.)
 #if RUSTYCPP_RUST
 fn epoll_add_impl(poll_fd: i32, fd: i32, poll_mode: i32) -> i32 {
-    let mut ev = epoll_event_zeroed();
-    ev.data.fd = fd;
-    ev.events = EPOLLET | EPOLLIN | EPOLLRDHUP;
+    let mut events: u32 = EPOLLET | EPOLLIN | EPOLLRDHUP;
     if (poll_mode & PollMode::WRITE) != 0 {
-        ev.events |= EPOLLOUT;
+        events |= EPOLLOUT;
     }
+    let mut ev = epoll_event_with_fd(fd, events);
     let mut result = unsafe { epoll_ctl(poll_fd, EPOLL_CTL_ADD, fd, &mut ev) };
     if result != 0 && errno == EEXIST {
         unsafe { epoll_ctl(poll_fd, EPOLL_CTL_DEL, fd, &mut ev); }
@@ -74,16 +92,15 @@ fn epoll_add_impl(poll_fd: i32, fd: i32, poll_mode: i32) -> i32 {
     0
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=epoll.add_impl version=1 rust_sha256=b20e5efeefea7bb5cc54005d442f48ce5122f245f51d413b0c42c754c53878fa*/
+/*RUSTYCPP:GEN-BEGIN id=epoll.add_impl version=1 rust_sha256=bf553f3a39e820e118c0eb779dd8a5df9637d8e9994ecc97bba5b0a10f15dc9c*/
 int32_t epoll_add_impl(int32_t poll_fd, int32_t fd, int32_t poll_mode);
 
 int32_t epoll_add_impl(int32_t poll_fd, int32_t fd, int32_t poll_mode) {
-    auto ev = epoll_event_zeroed();
-    [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.fd); }) { return (__r.fd); } else if constexpr (requires { (__r.fd_field); }) { return (__r.fd_field); } else if constexpr (requires { ((*__r).fd); }) { return ((*__r).fd); } else { return ((*__r).fd_field); } }([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.data); }) { return (__r.data); } else if constexpr (requires { (__r.data_field); }) { return (__r.data_field); } else if constexpr (requires { ((*__r).data); }) { return ((*__r).data); } else { return ((*__r).data_field); } }(ev)) = std::move(fd);
-    [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.events); }) { return (__r.events); } else if constexpr (requires { (__r.events_field); }) { return (__r.events_field); } else if constexpr (requires { ((*__r).events); }) { return ((*__r).events); } else { return ((*__r).events_field); } }(ev) = (rusty::detail::deref_if_pointer_like(EPOLLET) | rusty::detail::deref_if_pointer_like(EPOLLIN)) | rusty::detail::deref_if_pointer_like(EPOLLRDHUP);
+    uint32_t events = (rusty::detail::deref_if_pointer_like(EPOLLET) | rusty::detail::deref_if_pointer_like(EPOLLIN)) | rusty::detail::deref_if_pointer_like(EPOLLRDHUP);
     if (((rusty::detail::deref_if_pointer_like(poll_mode) & PollMode::WRITE)) != static_cast<int32_t>(0)) {
-        rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.events); }) { return (__r.events); } else if constexpr (requires { (__r.events_field); }) { return (__r.events_field); } else if constexpr (requires { ((*__r).events); }) { return ((*__r).events); } else { return ((*__r).events_field); } }(ev)) |= EPOLLOUT;
+        events |= EPOLLOUT;
     }
+    auto ev = epoll_event_with_fd(std::move(fd), std::move(events));
     auto result = epoll_ctl(std::move(poll_fd), EPOLL_CTL_ADD, std::move(fd), &ev);
     if ((rusty::detail::deref_if_pointer_like(result) != 0) && (rusty::detail::deref_if_pointer_like(errno) == rusty::detail::deref_if_pointer_like(EEXIST))) {
         // @unsafe
@@ -138,15 +155,14 @@ int32_t epoll_remove_impl(int32_t poll_fd, int32_t fd) {
 // named-but-unused C++ parameter does not warn, verified under -Wall).
 #if RUSTYCPP_RUST
 fn epoll_update_impl(poll_fd: i32, fd: i32, new_mode: i32, old_mode: i32) -> i32 {
-    let mut ev = epoll_event_zeroed();
-    ev.data.fd = fd;
-    ev.events = EPOLLET | EPOLLRDHUP;
+    let mut events: u32 = EPOLLET | EPOLLRDHUP;
     if (new_mode & PollMode::READ) != 0 {
-        ev.events |= EPOLLIN;
+        events |= EPOLLIN;
     }
     if (new_mode & PollMode::WRITE) != 0 {
-        ev.events |= EPOLLOUT;
+        events |= EPOLLOUT;
     }
+    let mut ev = epoll_event_with_fd(fd, events);
     let rc = unsafe { epoll_ctl(poll_fd, EPOLL_CTL_MOD, fd, &mut ev) };
     if rc != 0 {
         let err: i32 = errno;
@@ -158,19 +174,18 @@ fn epoll_update_impl(poll_fd: i32, fd: i32, new_mode: i32, old_mode: i32) -> i32
     0
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=epoll.update_body version=1 rust_sha256=6085e4a717dd73e91409795df2ae858d779595b7358cda614b969a1933b3ad74*/
+/*RUSTYCPP:GEN-BEGIN id=epoll.update_body version=1 rust_sha256=f0508ae10695d4d189d623abfe90bd4294a18bb5af4943a90e6bf60c3c6e2cb9*/
 int32_t epoll_update_impl(int32_t poll_fd, int32_t fd, int32_t new_mode, int32_t old_mode);
 
 int32_t epoll_update_impl(int32_t poll_fd, int32_t fd, int32_t new_mode, int32_t old_mode) {
-    auto ev = epoll_event_zeroed();
-    [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.fd); }) { return (__r.fd); } else if constexpr (requires { (__r.fd_field); }) { return (__r.fd_field); } else if constexpr (requires { ((*__r).fd); }) { return ((*__r).fd); } else { return ((*__r).fd_field); } }([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.data); }) { return (__r.data); } else if constexpr (requires { (__r.data_field); }) { return (__r.data_field); } else if constexpr (requires { ((*__r).data); }) { return ((*__r).data); } else { return ((*__r).data_field); } }(ev)) = std::move(fd);
-    [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.events); }) { return (__r.events); } else if constexpr (requires { (__r.events_field); }) { return (__r.events_field); } else if constexpr (requires { ((*__r).events); }) { return ((*__r).events); } else { return ((*__r).events_field); } }(ev) = rusty::detail::deref_if_pointer_like(EPOLLET) | rusty::detail::deref_if_pointer_like(EPOLLRDHUP);
+    uint32_t events = rusty::detail::deref_if_pointer_like(EPOLLET) | rusty::detail::deref_if_pointer_like(EPOLLRDHUP);
     if (((rusty::detail::deref_if_pointer_like(new_mode) & PollMode::READ)) != static_cast<int32_t>(0)) {
-        rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.events); }) { return (__r.events); } else if constexpr (requires { (__r.events_field); }) { return (__r.events_field); } else if constexpr (requires { ((*__r).events); }) { return ((*__r).events); } else { return ((*__r).events_field); } }(ev)) |= EPOLLIN;
+        events |= EPOLLIN;
     }
     if (((rusty::detail::deref_if_pointer_like(new_mode) & PollMode::WRITE)) != static_cast<int32_t>(0)) {
-        rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.events); }) { return (__r.events); } else if constexpr (requires { (__r.events_field); }) { return (__r.events_field); } else if constexpr (requires { ((*__r).events); }) { return ((*__r).events); } else { return ((*__r).events_field); } }(ev)) |= EPOLLOUT;
+        events |= EPOLLOUT;
     }
+    auto ev = epoll_event_with_fd(std::move(fd), std::move(events));
     const auto rc = epoll_ctl(std::move(poll_fd), EPOLL_CTL_MOD, std::move(fd), &ev);
     if (rusty::detail::deref_if_pointer_like(rc) != 0) {
         const int32_t err = errno;

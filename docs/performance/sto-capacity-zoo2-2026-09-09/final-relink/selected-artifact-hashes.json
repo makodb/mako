@@ -1,0 +1,83 @@
+{
+  "files": {
+    "artifact-hashes.json": {
+      "sha256": "d9888a814551a747bb4424038dbae7d92bbb0e8cb059b152194329165f63714e",
+      "size_bytes": 28693
+    },
+    "commands.json": {
+      "sha256": "4dce7a036bd794de68da4fdb9555effaf5fdc6986697c55cee1596e17c68715e",
+      "size_bytes": 14148
+    },
+    "ctest-boundaries.log": {
+      "sha256": "09d0ab389ec0955fb6dd4e92400b79b46bf6f96519c66d95e7f121beeb422152",
+      "size_bytes": 5817
+    },
+    "ctest-descriptor.json": {
+      "sha256": "8aa6a5f718dcb06cd1f2916b9c4473ead37473a71f9f794186becdbe5c08175d",
+      "size_bytes": 36121
+    },
+    "driver.py": {
+      "sha256": "489f459bfa9558f86bcf07141420a62450d5ebb3cc5be17664aea1d910bfe5a0",
+      "size_bytes": 14934
+    },
+    "final-native-compile-command-comparison.json": {
+      "sha256": "8bb6101e244a32d0cb9529170d367c73eb81eeb554c5108daa5ca93c9370b11c",
+      "size_bytes": 782
+    },
+    "growth-180s.log": {
+      "sha256": "86033a5779141163f458378ec0f204ca7729a16d277042e462e6d2a40baaca5d",
+      "size_bytes": 56586
+    },
+    "native-link-input-changes.json": {
+      "sha256": "6b206e6a87c9775bcf0c82f5cfee64dda07bb1d08cb7d8c2fda6d3867a268825",
+      "size_bytes": 1249
+    },
+    "native-link-inputs-sha256-after.json": {
+      "sha256": "07461d70ff6822141152bc931a7774a2a1c28ed800ba87e679dc6e6da951dfe7",
+      "size_bytes": 4019
+    },
+    "native-link-inputs-sha256-before.json": {
+      "sha256": "07461d70ff6822141152bc931a7774a2a1c28ed800ba87e679dc6e6da951dfe7",
+      "size_bytes": 4019
+    },
+    "provenance.json": {
+      "sha256": "e8a010b27f503eaf9315fe97e4a16cf76c9be8ce8714c1c5c359958cc0c11c31",
+      "size_bytes": 3453
+    },
+    "rust-source-sha256-captured.json": {
+      "sha256": "ede3206bc9eaaf8c3c212067b8db98163d1f7482965e1492963632f936d12eb6",
+      "size_bytes": 13986
+    },
+    "rust-source-sha256-current.json": {
+      "sha256": "ede3206bc9eaaf8c3c212067b8db98163d1f7482965e1492963632f936d12eb6",
+      "size_bytes": 13986
+    },
+    "test_sto_tpcc_rust_concurrent_resource_exhausted-relinked.log": {
+      "sha256": "7fe9313cb65ff37c738a954430703d6c3f4a7b0b4b0a337684f5de4ce67fb212",
+      "size_bytes": 74205
+    },
+    "test_sto_tpcc_rust_load_resource_exhausted-relinked.log": {
+      "sha256": "3ede23e5a03d37698d1f79b306a494345e947d6ea52a82f345b1a47a5db83f35",
+      "size_bytes": 19767
+    },
+    "test_sto_tpcc_rust_run_resource_exhausted-relinked.log": {
+      "sha256": "4da74833c8d79d91439b1200baa9641002d44c80dd9e5ee4d0be8c5b8b071be1",
+      "size_bytes": 33279
+    },
+    "test_sto_tpcc_rust_startup_resource_exhausted-relinked.log": {
+      "sha256": "9215041fd25885e567dea1abd1247f6f2badf068f14d937f19962b8817fd56fd",
+      "size_bytes": 1873
+    }
+  },
+  "scope": "Only the 17 retained raw files listed here; remote binaries, archives, and other uncopied build artifacts are not locally verified.",
+  "source_reference_hashes": {
+    ".github/workflows/ci.yml": "8cbee458bccc812e60183ede4f092c6e853e0286d03c17e9713d10d789588a2e",
+    "CMakeLists.txt": "ae8bedb5ced4ca69e271da81f030d8f91c5b332bd79233656590f99fb5cfd6c0",
+    "scripts/ci/run_rust_sto_sanitizer.sh": "c5d4d0d546163b4f6caf77642059c82fe39dae1a33693e620dd5f87ce1144e24",
+    "scripts/ci/run_sto_tpcc_ctest.py": "b89417ecff0a8281a43f2acef8d7709a27258b16498e5f2517331de0c63f0e6f",
+    "src/mako/benchmarks/bench.h": "2f533d9ba9ffcd90a22b3156abee436bf584fdf8c09cc8b7c53b1f244cd3ee96",
+    "src/mako/benchmarks/benchmark_output.h": "87c49cadf59caccb5ce2d6296770f560ba63330bd47e3329f3493bde5c8f3b27",
+    "tests/test_benchmark_output.cc": "7bb5dfacdc80c8dda6fb53035c0add0b7bea64ec09d02192add071f4482c012c"
+  },
+  "source_revision": "a3ad9a110727f5ecc937cbeee23fe40152df719f"
+}

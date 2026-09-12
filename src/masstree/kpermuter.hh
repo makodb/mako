@@ -125,7 +125,8 @@ template <int width> class kpermuter {
     }
     // @safe - pure bit arithmetic
     value_type value_from(int i) const {
-        return x_ >> ((i + 1) << 2);
+        const int shift = (i + 1) << 2;
+        return shift >= int(sizeof(value_type) * 8) ? value_type(0) : x_ >> shift;
     }
 
     // @unsafe - uses C-style cast (value_type)

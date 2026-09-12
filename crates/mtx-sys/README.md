@@ -1,4 +1,4 @@
-# `mtree-sys` — the masstree C ABI bridge
+# `mtx-sys` — the masstree C ABI bridge
 
 Raw FFI declarations for the `mtx_*` C ABI over `concurrent_btree`
 (`mbtree<masstree_params>`). Nothing above this crate is allowed to know

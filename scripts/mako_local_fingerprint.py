@@ -838,6 +838,22 @@ def hash_expected_archive_objects(
     return result
 
 
+# CMake materializes `import std;` (CMAKE_CXX_MODULE_STD) by compiling the
+# toolchain's libc++ `std.cppm` / `std.compat.cppm` module units. CMake 3.31
+# archives those two objects into every consuming static library, while
+# CMake >= 4.3 keeps them in one shared `__cmake_cxx_std_23` target. They are
+# toolchain-generated, appear in no compile database, and carry no project
+# content, so the composition and byte checks ignore exactly these two names.
+CMAKE_STD_MODULE_OBJECTS = frozenset({"std.cppm.o", "std.compat.cppm.o"})
+
+
+def strip_cmake_std_module_members(members: Sequence[str]) -> list[str]:
+    return [
+        member for member in members
+        if Path(member).name not in CMAKE_STD_MODULE_OBJECTS
+    ]
+
+
 def list_archive_members(archiver: Path, archive: Path) -> list[str]:
     if not archive.is_file():
         raise FingerprintError(f"required native archive does not exist: {archive}")
@@ -979,7 +995,9 @@ def verify_archive_composition(source_root: Path, build_dir: Path) -> None:
     listed: dict[str, list[str]] = {}
     for relative, members in expected.items():
         archive = build_dir / relative
-        listed[relative] = list_archive_members(archiver, archive)
+        listed[relative] = strip_cmake_std_module_members(
+            list_archive_members(archiver, archive)
+        )
         compare_archive_members(
             archive,
             members,
