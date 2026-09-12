@@ -1,0 +1,30 @@
+
+=== p1/single/286208B/b1/batch ===
+   offered/s trials            applied/s             p50 ms             p99 ms
+         190      3        190.0 +-  0.0       9.755 +-0.229      14.119 +-0.778
+              noise floor: tput CV 0.0%, p50 CV 2.3%  ->  detectable at n=3: ~0.0% / ~3.8%
+
+=== p1/single/286208B/b400/batch ===
+   offered/s trials            applied/s             p50 ms             p99 ms
+         190      3        190.0 +-  0.0       9.743 +-0.033      13.900 +-0.499
+              noise floor: tput CV 0.0%, p50 CV 0.3%  ->  detectable at n=3: ~0.0% / ~0.6%
+
+=== p6/multi/286208B/b1/batch ===
+   offered/s trials            applied/s             p50 ms             p99 ms
+         190      3        190.0 +-  0.0       7.478 +-0.042       8.961 +-0.231
+              noise floor: tput CV 0.0%, p50 CV 0.6%  ->  detectable at n=3: ~0.0% / ~0.9%
+
+=== p6/multi/286208B/b400/batch ===
+   offered/s trials            applied/s             p50 ms             p99 ms
+         190      3        190.0 +-  0.0       7.479 +-0.017       9.083 +-0.066
+              noise floor: tput CV 0.0%, p50 CV 0.2%  ->  detectable at n=3: ~0.0% / ~0.4%
+
+=== p6/single/286208B/b1/batch ===
+   offered/s trials            applied/s             p50 ms             p99 ms
+         190      3        190.0 +-  0.0      18.823 +-0.114      30.716 +-0.546
+              noise floor: tput CV 0.0%, p50 CV 0.6%  ->  detectable at n=3: ~0.0% / ~1.0%
+
+=== p6/single/286208B/b400/batch ===
+   offered/s trials            applied/s             p50 ms             p99 ms
+         190      3        190.0 +-  0.0      19.208 +-0.167      33.000 +-0.788
+              noise floor: tput CV 0.0%, p50 CV 0.9%  ->  detectable at n=3: ~0.0% / ~1.4%

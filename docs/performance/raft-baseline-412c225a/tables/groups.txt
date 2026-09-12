@@ -1,0 +1,19 @@
+processing: 6 record(s) spent most of their window blocked on the in-flight bound. Past saturation this is expected; otherwise the bound leaked on a leadership flap and the point is dead:
+  raft_perf_output/baseline-412c225a/groups/412c225a-p6-multi-pb286208-b1-r0-t1.json
+  raft_perf_output/baseline-412c225a/groups/412c225a-p6-multi-pb286208-b1-r0-t2.json
+  raft_perf_output/baseline-412c225a/groups/412c225a-p6-multi-pb286208-b1-r0-t3.json
+  raft_perf_output/baseline-412c225a/groups/412c225a-p6-single-pb286208-b1-r0-t1.json
+  raft_perf_output/baseline-412c225a/groups/412c225a-p6-single-pb286208-b1-r0-t2.json
+  raft_perf_output/baseline-412c225a/groups/412c225a-p6-single-pb286208-b1-r0-t3.json
+
+=== p6/multi/286208B/b1/groups ===
+   offered/s trials            applied/s             p50 ms             p99 ms
+ unthrottled      3       1543.0 +- 27.3     993.608 +-20.039    1535.277 +-36.776
+         190      3        190.0 +-  0.0       7.512 +-0.015       9.510 +-0.362
+              noise floor: tput CV 1.8%, p50 CV 2.0%  ->  detectable at n=3: ~2.9% / ~3.3%
+
+=== p6/single/286208B/b1/groups ===
+   offered/s trials            applied/s             p50 ms             p99 ms
+ unthrottled      3        239.8 +- 25.7    6294.634 +-620.599    7376.927 +-404.579
+         190      3        190.1 +-  0.2      19.469 +-0.351      32.631 +-1.407
+              noise floor: tput CV 10.7%, p50 CV 9.9%  ->  detectable at n=3: ~17.3% / ~15.9%

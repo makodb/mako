@@ -1,0 +1,41 @@
+processing: 20 record(s) spent most of their window blocked on the in-flight bound. Past saturation this is expected; otherwise the bound leaked on a leadership flap and the point is dead:
+  raft_perf_output/baseline-412c225a/repeat/412c225a-repeat-prod-saturated-t1.json
+  raft_perf_output/baseline-412c225a/repeat/412c225a-repeat-prod-saturated-t10.json
+  raft_perf_output/baseline-412c225a/repeat/412c225a-repeat-prod-saturated-t2.json
+  raft_perf_output/baseline-412c225a/repeat/412c225a-repeat-prod-saturated-t3.json
+  raft_perf_output/baseline-412c225a/repeat/412c225a-repeat-prod-saturated-t4.json
+  raft_perf_output/baseline-412c225a/repeat/412c225a-repeat-prod-saturated-t5.json
+  raft_perf_output/baseline-412c225a/repeat/412c225a-repeat-prod-saturated-t6.json
+  raft_perf_output/baseline-412c225a/repeat/412c225a-repeat-prod-saturated-t7.json
+  raft_perf_output/baseline-412c225a/repeat/412c225a-repeat-prod-saturated-t8.json
+  raft_perf_output/baseline-412c225a/repeat/412c225a-repeat-prod-saturated-t9.json
+  raft_perf_output/baseline-412c225a/repeat/412c225a-repeat-saturated-t1.json
+  raft_perf_output/baseline-412c225a/repeat/412c225a-repeat-saturated-t10.json
+  raft_perf_output/baseline-412c225a/repeat/412c225a-repeat-saturated-t2.json
+  raft_perf_output/baseline-412c225a/repeat/412c225a-repeat-saturated-t3.json
+  raft_perf_output/baseline-412c225a/repeat/412c225a-repeat-saturated-t4.json
+  raft_perf_output/baseline-412c225a/repeat/412c225a-repeat-saturated-t5.json
+  raft_perf_output/baseline-412c225a/repeat/412c225a-repeat-saturated-t6.json
+  raft_perf_output/baseline-412c225a/repeat/412c225a-repeat-saturated-t7.json
+  raft_perf_output/baseline-412c225a/repeat/412c225a-repeat-saturated-t8.json
+  raft_perf_output/baseline-412c225a/repeat/412c225a-repeat-saturated-t9.json
+
+=== p1/single/4096B/b1/repeat-saturated ===
+   offered/s trials            applied/s             p50 ms             p99 ms
+ unthrottled     10      12275.0 +-241.5     332.003 +-8.303     360.209 +-13.956
+              noise floor: tput CV 2.0%, p50 CV 2.5%  ->  detectable at n=10: ~1.7% / ~2.2%
+
+=== p1/single/4096B/b1/repeat-throttled ===
+   offered/s trials            applied/s             p50 ms             p99 ms
+        5000     10       5000.1 +-  0.5       3.560 +-0.100       5.000 +-0.122
+              noise floor: tput CV 0.0%, p50 CV 2.8%  ->  detectable at n=10: ~0.0% / ~2.5%
+
+=== p6/multi/286208B/b1/repeat-prod-saturated ===
+   offered/s trials            applied/s             p50 ms             p99 ms
+ unthrottled     10       1600.1 +- 55.1     946.659 +-36.423    1373.892 +-113.034
+              noise floor: tput CV 3.4%, p50 CV 3.8%  ->  detectable at n=10: ~3.0% / ~3.4%
+
+=== p6/multi/286208B/b1/repeat-prod-throttled ===
+   offered/s trials            applied/s             p50 ms             p99 ms
+         190     10        190.0 +-  0.0       7.493 +-0.073       9.156 +-0.438
+              noise floor: tput CV 0.0%, p50 CV 1.0%  ->  detectable at n=10: ~0.0% / ~0.9%

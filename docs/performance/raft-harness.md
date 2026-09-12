@@ -190,13 +190,39 @@ So read the two metrics at different points:
 
 - **Latency regressions** show up at throttled points, where the offered rate
   is held fixed and the queueing delay is free to move.
-- **Throughput regressions** show up only at the unthrottled point
-  (`offered = 0`, printed as `unthrottled`), where the system is at its
-  ceiling and the ceiling is the measurement.
+- **Throughput regressions** show up only at or above the knee. A comparison
+  that covers only throttled points below the knee has not tested throughput
+  at all.
 
-A comparison that covers only throttled points has not tested throughput at
-all. The sweep's rate phase ends every series with the unthrottled point for
-this reason.
+### Capacity is the maximum over the sweep, not the unthrottled point
+
+It is tempting to treat the unthrottled point (`offered = 0`) as "the
+ceiling", since nothing is holding the offer rate back. The baseline data
+shows that this is false for every single-group configuration measured:
+
+| configuration | unthrottled | best paced | at offered |
+|---|---|---|---|
+| p1/single/4096B | 12 357/s | 13 100/s | 14 900/s |
+| p1/single/286208B | 279/s | 340/s | 338/s |
+| p1/single/1048576B | 68/s | 80/s | 81/s |
+| p6/single/4096B | 12 254/s | 12 657/s | 13 100/s |
+| p6/single/286208B | 248/s | 283/s | 281/s |
+| p6/single/1048576B | 54/s | 69/s | 65/s |
+
+Removing the pace does not reach capacity — it overshoots into congestion
+collapse. Offering without limit fills the in-flight bound, the queue depth
+explodes (p50 rises to seconds), and *less* work completes per second than
+when the load is paced just above the knee. The unthrottled point understates
+capacity by 3-29% here.
+
+So the throughput number to compare is **the maximum mean `applied/s` across
+all points of a series**, unthrottled included, not the unthrottled point
+alone. Where that maximum lands also matters: if it is the top paced rate of
+the array rather than an interior point, the array never reached saturation
+and the series has no measured ceiling at all — only a lower bound. That is
+the present state of all three per-partition (`multi`) configurations, whose
+`RATES` arrays were calibrated in single-group mode and stop well below what
+per-partition groups can deliver.
 
 ### Conditions the comparison assumes
 
