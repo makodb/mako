@@ -61,17 +61,17 @@ public:
     // Epoch management
     // @safe - Rusty atomic load wrapper
     mrcu_epoch_type get_epoch() const {
-        return epoch_.load(rusty::sync::atomic::Ordering::Acquire);
+        return epoch_.load(rusty::sync::atomic::Ordering::SeqCst);
     }
 
     // @safe - Rusty atomic store wrapper
     void set_epoch(mrcu_epoch_type e) {
-        epoch_.store(e, rusty::sync::atomic::Ordering::Release);
+        epoch_.store(e, rusty::sync::atomic::Ordering::SeqCst);
     }
 
     // @safe - Rusty atomic fetch_add wrapper
     void increment_epoch(mrcu_epoch_type delta = 2) {
-        epoch_.fetch_add(delta, rusty::sync::atomic::Ordering::AcqRel);
+        epoch_.fetch_add(delta, rusty::sync::atomic::Ordering::SeqCst);
     }
 
     // @unsafe { Returns volatile reference for legacy code patterns, bypasses safety }

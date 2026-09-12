@@ -133,6 +133,10 @@ Welcome to the Mako documentation.
 
 ## Development Plans
 
+### Rust transaction cache
+
+- **[Silo-to-Mako transaction-cache roadmap](plans/rust-mako-transaction-cache.md)** — keep C++ Silo behind a C ABI first, add local transactional durability, port distributed Mako, then replace the local engine with native Rust.
+
 ### Config Node System
 
 - **[Overview](plans/config-node/overview.md)** - Configuration persistence master plan

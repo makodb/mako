@@ -31,7 +31,17 @@ namespace sync_util {
         static bool is_leader;
         static string cluster;
         static transport::Configuration *config;
-        static int local_replica_id; // local server incremental id
+        // The local-cache HLC stores a 63-bit 44/19 stamp plus the general
+        // validation gate in bit zero. Dense cache positions are deliberately
+        // separate because physical record order is not serialization order.
+        alignas(128) static std::atomic<uint64_t> mako_hlc_state;
+        alignas(128) static std::atomic<uint64_t> cache_sequence_state;
+
+        // Transitional authority for the distributed u32 `timestamp * 10 +
+        // term` protocol. Local cache commits never use this clock. The global
+        // distributed-timestamp migration removes it.
+        alignas(128) static std::atomic<uint32_t>
+            legacy_distributed_timestamp_state;
 
         // https://en.cppreference.com/w/cpp/thread/condition_variable
         static bool toLeader;

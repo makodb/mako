@@ -3,6 +3,15 @@
 **Date**: 2026-04-13
 **Purpose**: Assess each component's production-readiness and identify gaps to drive future development.
 
+> **Historical snapshot.** This report describes the distributed C++ service
+> as it stood on the date above. Its whole-service conclusion remains valid,
+> but its RocksDB-integration and sanitizer inventories predate the separate
+> revision-1 single-machine Rust cache library. See the current
+> [Milestone 1 acceptance record](mako-cache-milestone1-acceptance.md) and
+> [local boundary gates](mako-local-boundary-gates.md). That accepted library
+> component does not make the networked or distributed Mako service
+> production-ready.
+
 ---
 
 ## Executive Summary
@@ -198,6 +207,14 @@ The OCC engine and speculative 2PC are the production path. Other protocols shou
 
 **Status: 20% — Not Production-Ready**
 
+This section is historical and applies to the legacy distributed server path.
+The later Milestone 1 local library now materializes transaction records and
+winning key/value mutations asynchronously into RocksDB. On reopen it validates
+the retained commit records, replays whole transactions into local MassTrans,
+and advances the process HLC floor. That library still uses volatile ACK,
+`sync=false`, one process-local namespace, resident values, and retained logs;
+it is not wired into this distributed server.
+
 ### What Exists
 
 - `RocksDBPersistence` class wrapping RocksDB C API.
@@ -308,6 +325,12 @@ The Redis interface is a thin protocol wrapper, not a Redis replacement. To be u
 ## 9. Testing & CI
 
 **Status: 80% — Production-Ready**
+
+This heading is the April assessment of the test subsystem, not a current
+production-readiness claim for the whole service. The later local-library gate
+adds ASan, LSan, UBSan, TSan, Miri, mutation, ABI-conformance, and controlled
+performance evidence. The inventory and gaps below remain the historical
+April snapshot.
 
 ### Strengths
 

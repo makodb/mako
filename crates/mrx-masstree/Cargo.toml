@@ -1,0 +1,26 @@
+[package]
+name = "mrx-masstree"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.91"
+description = "KeyIndex over masstree, through the mtx_* C ABI"
+license = "MIT"
+publish = false
+
+[dependencies]
+mrx-core = { path = "../mrx-core" }
+mtree-sys = { path = "../mtree-sys" }
+# See crates/Cargo.toml: profiles live at the workspace root.
+
+[dev-dependencies]
+# For write_scaling's `full_rocks` rung ONLY. The ladder's `full` mode
+# runs the store over `MemBlobs`, i.e. with no durable store at all,
+# while the C++ ladder's `full` runs over real RocksDB -- so the two
+# ladders' top rungs were never the same experiment. `full_rocks` is the
+# same harness with RocksDB underneath, which is what makes the
+# difference measurable instead of arguable.
+#
+# This is a dev-dependency CYCLE (mrx depends on mrx-masstree). Cargo
+# allows it: dev-dependencies are not part of the library's own build
+# graph.
+mrx = { path = "../mrx" }

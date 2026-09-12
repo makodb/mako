@@ -228,6 +228,9 @@ jobs:
       - name: Compile
         run: ./ci/ci.sh compile
 
+      - name: Run tests - Mako local ABI boundary gates
+        run: ./ci/ci.sh makoLocalAbiGates
+
       - name: Run tests - SRPC unit tests
         run: ./ci/ci.sh srpcTests
 
@@ -288,3 +291,113 @@ jobs:
       - name: Cleanup
         if: always()
         run: ./ci/ci.sh cleanup
+
+  mako-local-sanitizers:
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/makodb/mako-ci-ubuntu24:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer: [asan, ubsan, tsan]
+    env:
+      BUILD_DIR: build-mako-local-${{ matrix.sanitizer }}
+      CMAKE_BUILD_TYPE: RelWithDebInfo
+      CMAKE_GENERATOR: Ninja
+      CI_MAKE_JOBS: "4"
+      MAKO_LOCAL_SANITIZER: ${{ matrix.sanitizer }}
+      MAKO_NO_GDB: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install pinned Rust TSan toolchain
+        if: matrix.sanitizer == 'tsan'
+        run: |
+          tsan_cargo_home=/tmp/mako-local-tsan-cargo
+          tsan_rustup_home=/tmp/mako-local-tsan-rustup
+          stable_sysroot=$(rustc --print sysroot)
+          toolchain=$(bash ./scripts/run_mako_local_miri.sh --print-toolchain)
+          CARGO_HOME="${tsan_cargo_home}" \
+          RUSTUP_HOME="${tsan_rustup_home}" \
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+              | CARGO_HOME="${tsan_cargo_home}" \
+                RUSTUP_HOME="${tsan_rustup_home}" \
+                sh -s -- -y --profile minimal --default-toolchain none
+          CARGO_HOME="${tsan_cargo_home}" \
+          RUSTUP_HOME="${tsan_rustup_home}" \
+            "${tsan_cargo_home}/bin/rustup" toolchain install "${toolchain}" \
+            --profile minimal --component rust-src --component rustfmt
+          CARGO_HOME="${tsan_cargo_home}" \
+          RUSTUP_HOME="${tsan_rustup_home}" \
+            "${tsan_cargo_home}/bin/rustup" toolchain link \
+              mako-ci-stable "${stable_sysroot}"
+          CARGO_HOME="${tsan_cargo_home}" \
+          RUSTUP_HOME="${tsan_rustup_home}" \
+            "${tsan_cargo_home}/bin/rustup" default mako-ci-stable
+          echo "CARGO_HOME=${tsan_cargo_home}" >> "${GITHUB_ENV}"
+          echo "RUSTUP_HOME=${tsan_rustup_home}" >> "${GITHUB_ENV}"
+          echo "${tsan_cargo_home}/bin" >> "${GITHUB_PATH}"
+
+      - name: Run mako-local ${{ matrix.sanitizer }} boundary gate
+        run: ./ci/ci.sh makoLocalSanitizerGates
+
+  mako-local-hooks:
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/makodb/mako-ci-ubuntu24:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    timeout-minutes: 120
+    env:
+      BUILD_DIR: build-mako-local-hooks
+      CMAKE_BUILD_TYPE: RelWithDebInfo
+      CMAKE_GENERATOR: Ninja
+      CI_MAKE_JOBS: "4"
+      MAKO_NO_GDB: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Run hook-enabled cleanup/quarantine boundary gate
+        run: ./ci/ci.sh makoLocalHookGates
+
+  mako-local-miri:
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/makodb/mako-ci-ubuntu24:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    timeout-minutes: 30
+    env:
+      CARGO_HOME: /tmp/mako-local-miri-cargo
+      CARGO_TARGET_DIR: /tmp/mako-local-miri-target
+      RUSTUP_HOME: /tmp/mako-local-miri-rustup
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install the pinned Miri toolchain
+        run: |
+          toolchain=$(bash ./scripts/run_mako_local_miri.sh --print-toolchain)
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain none
+          "${CARGO_HOME}/bin/rustup" toolchain install "${toolchain}" \
+            --profile minimal --component miri --component rustfmt \
+            --component rust-src
+          echo "${CARGO_HOME}/bin" >> "${GITHUB_PATH}"
+
+      - name: Run fake-ABI ownership tests under Miri
+        run: ./ci/ci.sh makoLocalMiriGate

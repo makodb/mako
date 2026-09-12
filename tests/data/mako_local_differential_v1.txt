@@ -1,0 +1,71 @@
+mako-local-differential-v1
+script crafted
+table 0 31001 7072696d617279
+table 1 31002 7365636f6e64617279
+begin
+get 0 6d697373696e67
+put 0 - -
+get 0 -
+put 0 00 ff00
+get 0 00
+insert 0 00 6c6f7374
+insert 0 61 31
+put 0 62 32
+put 1 61 7461626c652d74776f
+scan 0 - 63
+rscan 0 - 63
+commit
+begin
+get 0 61
+put 0 61 67726f776e2d76616c7565
+get 0 61
+remove 0 61
+get 0 61
+insert 0 61 7265626f726e
+get 0 61
+remove 0 6d697373696e67
+scan 0 - *
+commit
+begin
+put 0 61626f72746564 6e6f
+remove 0 62
+put 1 626164 6e6f
+abort
+begin
+get 0 61626f72746564
+get 0 62
+get 1 626164
+scan 1 - *
+commit
+begin
+put 0 ff 00ff00
+put 0 6100 6e756c
+put 0 610000 646f75626c652d6e756c
+put 1 - 70726573656e742d656d7074792d6b6579
+scan 0 61 62
+rscan 0 61 62
+commit
+end
+script bounds
+table 0 31003 626f756e6473
+begin
+put 0 10 61
+put 0 20 62
+put 0 30 63
+put 0 40 64
+put 0 50 65
+commit
+begin
+scan 0 20 50
+rscan 0 20 50
+scan 0 20 20
+rscan 0 20 20
+scan 0 30 *
+rscan 0 30 *
+commit
+begin
+remove 0 30
+put 0 30 -
+get 0 30
+commit
+end

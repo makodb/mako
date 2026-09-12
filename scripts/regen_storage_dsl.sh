@@ -22,10 +22,20 @@ FILES=(
   src/mako/storage/abstract_ordered_index.h
   src/mako/storage/mbta_sharded_ordered_index.hh
   src/mako/storage/masstree_ordered_index.hh
+  # Masstree-as-write-back-cache over RocksDB (docs/masstree-rocks-cache.md);
+  # DSL owns the OrderedIndex shape + per-op policy, mrx_* kernels own the
+  # RCU/tree/rocksdb/threading surgery.
+  src/mako/storage/masstree_rocks_index.hh
   src/mako/storage/mbta_wrapper.hh
-  # Cluster metadata port authored in the DSL (namespaced trait —
-  # generates cleanly under the a4bcff5f transpiler).
-  src/cluster/kv_store.h
+  # KvStore: EXCLUDED from regen, same cause as remote_kv_store.h below.
+  # Since src/cluster became a C++23 module, regenerating this file emits a
+  # SECOND definition of KvStore alongside the module-linkage one, and the
+  # build fails with "redefinition of 'KvStore'" plus "cannot export
+  # redeclaration ... since the previous declaration has module linkage" for
+  # each KvStoreAdapter alias. The committed GEN block is correct and
+  # hand-maintained. Re-enable only with a transpiler that resolves imported
+  # traits.
+  # src/cluster/kv_store.h
   # Sharding-policy value types (copyable aggregates + inherent-impl
   # methods; KeyExtractor stays hand-C++ for its `type` keyword field).
   src/cluster/sharding_policy.h

@@ -1,0 +1,20 @@
+# Static CMake archives linked by mako-local, in consumer-before-provider order.
+# Paths are relative to MAKO_BUILD_DIR. This file is consumed by Cargo, CMake,
+# and the native content-fingerprint verifier; keep it as the single authority.
+mako libmako.a
+cluster libcluster.a
+masstree src/masstree/libmasstree.a
+srpc src/srpc/libsrpc.a
+rusty third-party/rusty-cpp/librusty.a
+rusty_async third-party/rusty-cpp/librusty_async.a
+binary_heap_port third-party/rusty-cpp/libbinary_heap_port.a
+vec_deque_port third-party/rusty-cpp/libvec_deque_port.a
+linked_list_port third-party/rusty-cpp/liblinked_list_port.a
+cell_port third-party/rusty-cpp/libcell_port.a
+string_port third-party/rusty-cpp/libstring_port.a
+arc_port third-party/rusty-cpp/libarc_port.a
+std_port third-party/rusty-cpp/libstd_port.a
+std_port_hashbrown third-party/rusty-cpp/libstd_port_hashbrown.a
+btree_port third-party/rusty-cpp/libbtree_port.a
+rc_port third-party/rusty-cpp/librc_port.a
+vec_port third-party/rusty-cpp/libvec_port.a

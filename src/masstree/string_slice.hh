@@ -145,25 +145,25 @@ template <typename T> struct string_slice {
         @param b second string
         @param len number of characters in @a a and @a b
         @return true iff the two strings' first @a len characters are equal
-        @pre It is safe to access characters in the ranges
-          [@a a - size + 1, @a a + size) and [@a b - size + 1, @a b + size).
+        @pre It is safe to access the first @a len characters of @a a and @a b.
 
         Always returns the same result as "memcmp(@a a, @a b, @a len) == 0",
         but can be faster on some machines. */
-    // @unsafe - performs raw unaligned reads from caller buffers
+    // @unsafe - compares raw caller buffers
     static bool equals_sloppy(const char *a, const char *b, int len) {
+        if (unlikely(len <= 0))
+            return true;
 #if HAVE_UNALIGNED_ACCESS
         if (len <= size) {
-            typename mass::make_unsigned<T>::type delta
-                = *reinterpret_cast<const T *>(a)
-                ^ *reinterpret_cast<const T *>(b);
-            if (unlikely(len <= 0))
-                return true;
-# if WORDS_BIGENDIAN
-            return (delta >> (8 * (size - len))) == 0;
-# else
-            return (delta << (8 * (size - len))) == 0;
-# endif
+            // Callers outside Masstree (including the public C ABI) own only
+            // the declared key bytes and need not provide suffix padding.
+            // Exact-length memcpy keeps short and unaligned keys defined;
+            // compilers still lower the full-width case to one native load.
+            typename mass::make_unsigned<T>::type av = 0;
+            typename mass::make_unsigned<T>::type bv = 0;
+            memcpy(&av, a, static_cast<size_t>(len));
+            memcpy(&bv, b, static_cast<size_t>(len));
+            return av == bv;
         }
 #endif
         return memcmp(a, b, len) == 0;

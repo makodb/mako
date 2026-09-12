@@ -1,0 +1,20 @@
+[package]
+name = "mrx-ffi"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.91"
+description = "The mrxdb_* C ABI over the Rust cache"
+license = "MIT"
+publish = false
+
+[lib]
+name = "mrxffi"
+# staticlib so CMake drives the final link, exactly as it does for every
+# other archive in this project. A cdylib would put the Rust std into a
+# second shared object alongside the one the rest of the build already
+# links.
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+mrx = { path = "../mrx" }
+# See crates/Cargo.toml: profiles live at the workspace root.

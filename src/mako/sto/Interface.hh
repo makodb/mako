@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <stdint.h>
 #include <assert.h>
 #include <iostream>
@@ -177,6 +178,40 @@ class TransactionTid {
 public:
     typedef uint64_t type;
     typedef int64_t signed_type;
+
+    // Version words predate std::atomic and are embedded in layout-sensitive
+    // STO values. atomic_ref provides layout-preserving atomic access; callers
+    // must route every shared access to the same word through these helpers.
+    static type atomic_load(
+        const type& v,
+        std::memory_order order = std::memory_order_acquire) noexcept {
+        // atomic_ref<const T>::load is not implemented by every supported
+        // libc++; this cast is read-only and the referenced version storage is
+        // mutable for its full lifetime.
+        return std::atomic_ref<type>(const_cast<type&>(v)).load(order);
+    }
+    static void atomic_store(
+        type& v, type value,
+        std::memory_order order = std::memory_order_release) noexcept {
+        std::atomic_ref<type>(v).store(value, order);
+    }
+    static type atomic_fetch_or(
+        type& v, type value,
+        std::memory_order order = std::memory_order_acq_rel) noexcept {
+        return std::atomic_ref<type>(v).fetch_or(value, order);
+    }
+    static bool atomic_compare_exchange(
+        type& v, type& expected, type desired,
+        std::memory_order success = std::memory_order_acquire,
+        std::memory_order failure = std::memory_order_relaxed) noexcept {
+        return std::atomic_ref<type>(v).compare_exchange_strong(
+            expected, desired, success, failure);
+    }
+
+    static_assert(std::atomic_ref<type>::is_always_lock_free,
+                  "STO requires lock-free 64-bit version words");
+    static_assert(alignof(type) >= std::atomic_ref<type>::required_alignment,
+                  "STO version words must satisfy atomic_ref alignment");
     //    000  111  111  111
 // #if defined(FAIL_NEW_VERSION)
 //     static constexpr type threadid_mask = type(0xFF); // <= 255
@@ -199,8 +234,10 @@ public:
     // TODO: probably remove these once RBTree stops referencing them.
     static void lock_read(type& v) {
         while (1) {
-            type vv = v;
-            if (!(vv & lock_bit) && bool_cmpxchg(&v, vv, vv+1))
+            type vv = atomic_load(v, std::memory_order_relaxed);
+            type expected = vv;
+            if (!(vv & lock_bit)
+                && atomic_compare_exchange(v, expected, vv + 1))
                 break;
             relax_fence();
         }
@@ -208,8 +245,10 @@ public:
     }
     static void lock_write(type& v) {
         while (1) {
-            type vv = v;
-            if ((vv & threadid_mask) == 0 && !(vv & lock_bit) && bool_cmpxchg(&v, vv, vv | lock_bit))
+            type vv = atomic_load(v, std::memory_order_relaxed);
+            type expected = vv;
+            if ((vv & threadid_mask) == 0 && !(vv & lock_bit)
+                && atomic_compare_exchange(v, expected, vv | lock_bit))
                 break;
             relax_fence();
         }
@@ -218,18 +257,19 @@ public:
     // for use with lock_write() and lock_read() (should probably be a different class altogether...)
     // it could theoretically be useful to have an opacity-safe reader-writer lock (which this is not currently)
     static void inc_write_version(type& v) {
-        assert(is_locked(v));
-        type new_v = (v + increment_value);
-        release_fence();
-        v = new_v;
+        const type current = atomic_load(v, std::memory_order_relaxed);
+        assert(is_locked(current));
+        atomic_store(v, current + increment_value);
     }
     static void unlock_read(type& v) {
-        auto prev = __sync_fetch_and_add(&v, -1);
+        auto prev = std::atomic_ref<type>(v).fetch_sub(
+            1, std::memory_order_release);
         (void)prev;
         assert(prev > 0);
     }
     static void unlock_write(type& v) {
-        v = v & ~lock_bit;
+        const type current = atomic_load(v, std::memory_order_relaxed);
+        atomic_store(v, current & ~lock_bit);
     }
 
 
@@ -252,12 +292,15 @@ public:
     }
 
     static bool try_lock(type& v) {
-        type vv = v;
-        return bool_cmpxchg(&v, vv & ~lock_bit, vv | lock_bit | TThread::id());
+        const type vv = atomic_load(v, std::memory_order_relaxed);
+        type expected = vv & ~lock_bit;
+        return atomic_compare_exchange(
+            v, expected, vv | lock_bit | TThread::id());
     }
     static bool try_lock(type& v, int here) {
-        type vv = v;
-        return bool_cmpxchg(&v, vv & ~lock_bit, vv | lock_bit | here);
+        const type vv = atomic_load(v, std::memory_order_relaxed);
+        type expected = vv & ~lock_bit;
+        return atomic_compare_exchange(v, expected, vv | lock_bit | here);
     }
 
     static bool try_lock(type& v, int here, uint8_t term) {
@@ -298,67 +341,59 @@ public:
         acquire_fence();
     }
     static void unlock(type& v) {
-        assert(is_locked_here(v));
-        type new_v = v & ~(lock_bit | threadid_mask);
-        release_fence();
-        v = new_v;
+        const type current = atomic_load(v, std::memory_order_relaxed);
+        assert(is_locked_here(current));
+        atomic_store(v, current & ~(lock_bit | threadid_mask));
     }
     static void unlock(type& v, int here) {
         (void) here;
-        assert(is_locked_here(v, here));
-        type new_v = v & ~(lock_bit | threadid_mask);
-        release_fence();
-        v = new_v;
+        const type current = atomic_load(v, std::memory_order_relaxed);
+        assert(is_locked_here(current, here));
+        atomic_store(v, current & ~(lock_bit | threadid_mask));
     }
     static type unlocked(type v) {
       return v & ~(lock_bit | threadid_mask);
     }
 
     static void set_version(type& v, type new_v) {
-        assert(is_locked_here(v));
+        assert(is_locked_here(atomic_load(v, std::memory_order_relaxed)));
         assert(!(new_v & (lock_bit | threadid_mask)));
         new_v |= lock_bit | TThread::id();
-        release_fence();
-        v = new_v;
+        atomic_store(v, new_v);
     }
     static void set_version(type& v, type new_v, int here) {
-        assert(is_locked_here(v, here));
+        assert(is_locked_here(atomic_load(v, std::memory_order_relaxed), here));
         assert(!(new_v & (lock_bit | threadid_mask)));
         new_v |= lock_bit | here;
-        release_fence();
-        v = new_v;
+        atomic_store(v, new_v);
     }
     static void set_version_locked(type& v, type new_v) {
-        assert(is_locked_here(v));
+        assert(is_locked_here(atomic_load(v, std::memory_order_relaxed)));
         assert(is_locked_here(new_v));
-        release_fence();
-        v = new_v;
+        atomic_store(v, new_v);
     }
     static void set_version_locked(type& v, type new_v, int here) {
         (void) here;
-        assert(is_locked_here(v, here));
+        assert(is_locked_here(atomic_load(v, std::memory_order_relaxed), here));
         assert(is_locked_here(new_v, here));
-        release_fence();
-        v = new_v;
+        atomic_store(v, new_v);
     }
     static void set_version_unlock(type& v, type new_v) {
-        assert(is_locked_here(v));
+        assert(is_locked_here(atomic_load(v, std::memory_order_relaxed)));
         assert(!is_locked(new_v) || is_locked_here(new_v));
         new_v &= ~(lock_bit | threadid_mask);
-        release_fence();
-        v = new_v;
+        atomic_store(v, new_v);
     }
     static void set_version_unlock(type& v, type new_v, int here) {
         (void) here;
-        assert(is_locked_here(v, here));
+        assert(is_locked_here(atomic_load(v, std::memory_order_relaxed), here));
         assert(!is_locked(new_v) || is_locked_here(new_v, here));
         new_v &= ~(lock_bit | threadid_mask);
-        release_fence();
-        v = new_v;
+        atomic_store(v, new_v);
     }
 
     static void set_nonopaque(type& v) {
-        v |= nonopaque_bit;
+        atomic_fetch_or(v, nonopaque_bit);
     }
     static type next_nonopaque_version(type v) {
         return (v + increment_value) | nonopaque_bit;
@@ -367,10 +402,9 @@ public:
         return ((v + increment_value) & ~(increment_value - 1)) | nonopaque_bit;
     }
     static void inc_nonopaque_version(type& v) {
-        assert(is_locked_here(v));
-        type new_v = (v + increment_value) | nonopaque_bit;
-        release_fence();
-        v = new_v;
+        const type current = atomic_load(v, std::memory_order_relaxed);
+        assert(is_locked_here(current));
+        atomic_store(v, (current + increment_value) | nonopaque_bit);
     }
 
     static bool check_version(type cur_vers, type old_vers) {

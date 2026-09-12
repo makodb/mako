@@ -1,0 +1,41 @@
+# Workspace for the Rust cache.
+#
+# One workspace so the crates share a lockfile and a target directory, and
+# so `cargo test` at this level covers all of them. It is rooted at
+# `crates/` rather than the repository root deliberately: the repository
+# root is a CMake project, and putting a Cargo.toml there would make every
+# unrelated Rust artefact in the tree (rust-lib, third-party) a member by
+# accident.
+[workspace]
+resolver = "2"
+members = [
+    "mako-cache",
+    "mako-cache-bench",
+    "mako-history",
+    "mako-local",
+    "mako-local-sys",
+    "mrx",
+    "mrx-ffi",
+    "mrx-core",
+    "mrx-masstree",
+    "mrx-rocks",
+    "mtree-sys",
+]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.91"
+license = "MIT"
+publish = false
+
+# See mrx-core: mixing an LTO staticlib with the existing non-LTO rust-lib
+# archive fails to link with duplicate std symbols. Reproduced, not
+# theorised.
+[profile.release]
+lto = false
+panic = "abort"
+codegen-units = 1
+opt-level = 3
+
+[profile.dev]
+lto = false

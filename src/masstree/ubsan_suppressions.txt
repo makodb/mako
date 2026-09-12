@@ -4,11 +4,11 @@
 #
 #   export UBSAN_OPTIONS="suppressions=$(realpath src/masstree/ubsan_suppressions.txt):halt_on_error=1:print_stacktrace=1"
 #
-# The two issues below are pre-existing in upstream Masstree code.
+# The three issue classes below are pre-existing in upstream Masstree code.
 # They are tolerated on x86 but technically undefined behavior per
-# the C++ memory model. Fixes are well-scoped (mask the shift at
-# width == 64; use memcpy for the unaligned load) but kept out of
-# this commit so the sanitizer infrastructure can land independently.
+# the C++ memory model. The remaining fixes are well-scoped (mask the shift at
+# width == 64; use memcpy for the unaligned loads) but are tracked separately
+# from this boundary gate.
 #
 # Findings:
 #
@@ -17,7 +17,9 @@
 #      Fix: clamp via `n == 64 ? ~value_type(0) : (value_type(1) << n) - 1`.
 #
 # 2. string_slice.hh — multiple unaligned 8-byte loads of `uint64_t`.
-#      Lines: 52, 83, 87, 158, 159 (and possibly more under more workloads).
+#      Lines: 52, 83, 87 (and possibly more under more workloads). The former
+#      equality loads at 158/159 now use exact-length memcpy because the public
+#      C ABI cannot require caller-owned key buffers to have suffix padding.
 #      Pattern: reinterpret_cast<const uint64_t*>(p) where p may be
 #      unaligned. Fix: memcpy into a local uint64_t — compilers
 #      compile this to the same single load on x86.

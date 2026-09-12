@@ -1,0 +1,247 @@
+{
+  "date_utc": "2026-09-02",
+  "host": "zoo-002",
+  "scope": "write-only foreground acknowledgement throughput from 1 through 32 workers; RocksDB writeback is asynchronous and the queued tail is not drained before teardown",
+  "source": {
+    "git_head": "16e4b3bb2117825d39ee51fede4f7eed70d5117f",
+    "native_build_fingerprint": "ad6a6be8730145b85aee1d9f4c771172fdcdac3d46dd76794b32317ae7b534a2",
+    "pure_binary_sha256": "164934353d8d417ed7f7540f8052aa371a7b5ee9022443ba83691b387fa836f2",
+    "raw_binary_sha256": "9b5eb361db7934ebc83a54fb07e75cd4e45426da6bc290e9c58ec19955836dc8",
+    "cache_binary_sha256": "4d791a55a6bb1554503fd4116258ec533899b2026aa18d5dc89a0f15bb5b391b",
+    "cache_harness_source_sha256": "5092819103050cd9849427bd3f5b895c6070ceec9a1d9d4faaddcd6725960d3a",
+    "sweep_runner_sha256": "34a46024b1d28632f75c30a19d77c69c0ce2a6e30d17f323c72b21268d543114",
+    "cache_harness_change": "benchmark-only generalization of queue capacity to 4194304 slots per worker; W4 remains exactly 16777216 slots and production code is unchanged"
+  },
+  "protocol": {
+    "allocator": "jemalloc via LD_PRELOAD; MALLOC_CONF unset",
+    "worker_counts": [1, 4, 8, 16, 32],
+    "worker_cpus": "0..workers-1",
+    "helper_affinity": "33-63",
+    "writeback_cpu": 32,
+    "warmup_per_worker": 65536,
+    "transaction_ramp_per_worker": 1048576,
+    "measured_per_worker": 2097152,
+    "key_bytes": 8,
+    "value_bytes": 128,
+    "window_keys_per_worker": 256,
+    "queue_capacity_per_worker": 4194304,
+    "record_checksum": "none",
+    "rocks_wal_enabled": true,
+    "rocks_sync": false,
+    "writeback_batch_records": 64,
+    "teardown": "abort_without_flush_after_invariant_checks",
+    "repetitions_per_cell": 5,
+    "rotation": "worker-count Latin rotation with arm rotation within every worker count",
+    "pmu_scope": "per-worker-thread measured region",
+    "pmu_running_ratio_min": 0.995
+  },
+  "artifacts": {
+    "thread_sweep": "/home/users/shuai/mako/.codex-w4/thread-sweep-20260902.yHFJwu/results/thread-sweep-20260902T150312Z-dc77i07h",
+    "w4_raw_followup": "/home/users/shuai/mako/.codex-w4/thread-sweep-20260902.yHFJwu/results/w4-three-arm-20260902T152153Z-ikoxqbmz"
+  },
+  "results": {
+    "1": {
+      "pure_cpp": {
+        "ack_tx_per_s": [3751365.697, 3730379.747, 3770990.917, 3684995.509, 3677277.632],
+        "median_ack_tx_per_s": 3730379.747,
+        "rate_cv_pct": 1.099054980162632,
+        "median_cycles_per_commit": 894.115514,
+        "median_instructions_per_commit": 2266.364660,
+        "speedup_from_w1": 1.0,
+        "linear_scaling_efficiency_pct": 100.0
+      },
+      "raw_c_abi": {
+        "ack_tx_per_s": [3598874.522, 3614018.673, 3593779.124, 3561743.177, 3588887.922],
+        "median_ack_tx_per_s": 3593779.124,
+        "rate_cv_pct": 0.5317646238753835,
+        "median_cycles_per_commit": 925.738395,
+        "median_instructions_per_commit": 2394.363700,
+        "speedup_from_w1": 1.0,
+        "linear_scaling_efficiency_pct": 100.0
+      },
+      "rust_cache": {
+        "ack_tx_per_s": [2017913.913, 2008932.076, 2011609.686, 1984826.034, 2030146.208],
+        "median_ack_tx_per_s": 2011609.686,
+        "rate_cv_pct": 0.8261018529344516,
+        "median_cycles_per_commit": 1341.778133,
+        "median_instructions_per_commit": 3260.850542,
+        "speedup_from_w1": 1.0,
+        "linear_scaling_efficiency_pct": 100.0,
+        "maximum_queue_occupancy_pct": 71.176
+      },
+      "ratios_pct": {
+        "raw_vs_pure": 96.3382,
+        "cache_vs_raw": 55.9748,
+        "cache_vs_pure": 53.9251
+      }
+    },
+    "4": {
+      "pure_cpp": {
+        "ack_tx_per_s": [14713926.856, 14778976.821, 14645580.289, 14763062.376, 14847368.179],
+        "median_ack_tx_per_s": 14763062.376,
+        "rate_cv_pct": 0.5106847367826348,
+        "median_cycles_per_commit": 898.098609,
+        "median_instructions_per_commit": 2282.102907,
+        "speedup_from_w1": 3.9575,
+        "linear_scaling_efficiency_pct": 98.94
+      },
+      "raw_c_abi": {
+        "ack_tx_per_s": [13962441.773, 14084648.955, 14029122.796, 9862562.966, 14030882.879],
+        "median_ack_tx_per_s": 14029122.796,
+        "rate_cv_pct": 14.11858044593379,
+        "median_cycles_per_commit": 945.530353,
+        "median_instructions_per_commit": 2410.102064,
+        "speedup_from_w1": 3.9037,
+        "linear_scaling_efficiency_pct": 97.59
+      },
+      "rust_cache": {
+        "ack_tx_per_s": [7317035.810, 7350481.774, 7311213.931, 7300295.478, 7365659.558],
+        "median_ack_tx_per_s": 7317035.810,
+        "rate_cv_pct": 0.37916156035502363,
+        "median_cycles_per_commit": 1491.525020,
+        "median_instructions_per_commit": 3276.622270,
+        "speedup_from_w1": 3.6374,
+        "linear_scaling_efficiency_pct": 90.94,
+        "maximum_queue_occupancy_pct": 74.140
+      },
+      "ratios_pct": {
+        "raw_vs_pure": 95.0285,
+        "cache_vs_raw": 52.1560,
+        "cache_vs_pure": 49.5631
+      }
+    },
+    "8": {
+      "pure_cpp": {
+        "ack_tx_per_s": [29043256.674, 29220044.550, 29344375.646, 29445823.606, 29354293.416],
+        "median_ack_tx_per_s": 29344375.646,
+        "rate_cv_pct": 0.5312434084008469,
+        "median_cycles_per_commit": 893.391490,
+        "median_instructions_per_commit": 2290.589731,
+        "speedup_from_w1": 7.8663,
+        "linear_scaling_efficiency_pct": 98.33
+      },
+      "raw_c_abi": {
+        "ack_tx_per_s": [28229507.745, 28188398.818, 27652240.278, 27659213.687, 28182004.639],
+        "median_ack_tx_per_s": 28182004.639,
+        "rate_cv_pct": 1.067323570359654,
+        "median_cycles_per_commit": 939.573190,
+        "median_instructions_per_commit": 2418.588493,
+        "speedup_from_w1": 7.8419,
+        "linear_scaling_efficiency_pct": 98.02
+      },
+      "rust_cache": {
+        "ack_tx_per_s": [10671215.902, 10428471.492, 10479335.100, 10565065.974, 10556247.250],
+        "median_ack_tx_per_s": 10556247.250,
+        "rate_cv_pct": 0.8776510154104404,
+        "median_cycles_per_commit": 2172.276404,
+        "median_instructions_per_commit": 3285.106016,
+        "speedup_from_w1": 5.2477,
+        "linear_scaling_efficiency_pct": 65.60,
+        "maximum_queue_occupancy_pct": 74.564
+      },
+      "ratios_pct": {
+        "raw_vs_pure": 96.0389,
+        "cache_vs_raw": 37.4574,
+        "cache_vs_pure": 35.9737
+      }
+    },
+    "16": {
+      "pure_cpp": {
+        "ack_tx_per_s": [56738655.122, 56853574.019, 56887624.160, 56395863.193, 56286714.545],
+        "median_ack_tx_per_s": 56738655.122,
+        "rate_cv_pct": 0.4842170343139709,
+        "median_cycles_per_commit": 927.842804,
+        "median_instructions_per_commit": 2350.377376,
+        "speedup_from_w1": 15.2099,
+        "linear_scaling_efficiency_pct": 95.06
+      },
+      "raw_c_abi": {
+        "ack_tx_per_s": [54445733.344, 53422515.466, 54460160.321, 54209520.930, 53684351.322],
+        "median_ack_tx_per_s": 54209520.930,
+        "rate_cv_pct": 0.8666796617042682,
+        "median_cycles_per_commit": 971.384674,
+        "median_instructions_per_commit": 2478.375445,
+        "speedup_from_w1": 15.0843,
+        "linear_scaling_efficiency_pct": 94.28
+      },
+      "rust_cache": {
+        "ack_tx_per_s": [19717423.936, 19552168.025, 19859252.294, 19910880.783, 19911203.844],
+        "median_ack_tx_per_s": 19859252.294,
+        "rate_cv_pct": 0.7825217130454892,
+        "median_cycles_per_commit": 2286.157743,
+        "median_instructions_per_commit": 3344.899603,
+        "speedup_from_w1": 9.8723,
+        "linear_scaling_efficiency_pct": 61.70,
+        "maximum_queue_occupancy_pct": 74.989
+      },
+      "ratios_pct": {
+        "raw_vs_pure": 95.5425,
+        "cache_vs_raw": 36.6343,
+        "cache_vs_pure": 35.0013
+      }
+    },
+    "32": {
+      "pure_cpp": {
+        "ack_tx_per_s": [105071034.898, 104630789.549, 105006154.832, 104225636.646, 105694216.793],
+        "median_ack_tx_per_s": 105006154.832,
+        "rate_cv_pct": 0.5209816518790125,
+        "median_cycles_per_commit": 927.731474,
+        "median_instructions_per_commit": 2360.376618,
+        "speedup_from_w1": 28.1489,
+        "linear_scaling_efficiency_pct": 87.97
+      },
+      "raw_c_abi": {
+        "ack_tx_per_s": [98043122.570, 98584276.735, 99290317.140, 99420597.439, 98855510.015],
+        "median_ack_tx_per_s": 98855510.015,
+        "rate_cv_pct": 0.563435955333793,
+        "median_cycles_per_commit": 978.018231,
+        "median_instructions_per_commit": 2488.375563,
+        "speedup_from_w1": 27.5074,
+        "linear_scaling_efficiency_pct": 85.96
+      },
+      "rust_cache": {
+        "ack_tx_per_s": [27974571.992, 27869174.045, 28029543.507, 28034381.700, 27765687.565],
+        "median_ack_tx_per_s": 27974571.992,
+        "rate_cv_pct": 0.4135396655002614,
+        "median_cycles_per_commit": 3279.307051,
+        "median_instructions_per_commit": 3354.938133,
+        "speedup_from_w1": 13.9066,
+        "linear_scaling_efficiency_pct": 43.46,
+        "maximum_queue_occupancy_pct": 75.000
+      },
+      "ratios_pct": {
+        "raw_vs_pure": 94.1426,
+        "cache_vs_raw": 28.2984,
+        "cache_vs_pure": 26.6409
+      }
+    }
+  },
+  "w4_raw_followup": {
+    "ack_tx_per_s": [9786087.685, 14074550.001, 13902277.138, 13934389.285, 14220059.887],
+    "median_ack_tx_per_s": 13934389.285,
+    "rate_cv_pct": 14.43756770299631,
+    "median_cycles_per_commit": 944.628283,
+    "median_instructions_per_commit": 2410.102028,
+    "interpretation": "The follow-up median is within 0.68% of the sweep median and also contains one externally slowed sample. The primary table retains the rotated sweep median and flags the dispersion."
+  },
+  "validation": {
+    "accepted_samples": 75,
+    "cells": 15,
+    "accepted_samples_per_cell": 5,
+    "minimum_pmu_running_ratio": 1.0,
+    "all_conflicts_zero": true,
+    "all_commit_checksum_sequence_and_queue_invariants_passed": true,
+    "all_queue_occupancies_below_capacity": true,
+    "rejected_attempts": 16,
+    "preflight_rejections": 3,
+    "completed_run_rejections": 13,
+    "rejection_causes": "twelve LXD PID-set changes, one high-LXD-load sample, and no benchmark-program or data-invariant failure"
+  },
+  "interpretation": {
+    "raw_abi": "Raw C ABI retains 94.14% to 96.34% of direct C++ throughput across the sweep.",
+    "cache_scaling": "Cache throughput rises monotonically from 2.012 to 27.975 Mtxn/s, but W1-relative linear efficiency falls from 90.94% at W4 to 43.46% at W32.",
+    "counter_evidence": "Cache instructions per commit rise only 2.89% from W1 to W32 while cycles per commit rise 144.40%; the scaling loss is dominated by concurrency stalls, coherence, or serialization rather than a growing instruction path.",
+    "w4_raw_variability": "One W4 raw sample in the sweep ran at 9.863 Mtxn/s while the other four ran at 13.962 to 14.085 Mtxn/s. A raw-only follow-up reproduced both the approximately 14 Mtxn/s band and one slow sample.",
+    "not_a_durability_measurement": "Acknowledgement does not wait for RocksDB apply or fsync; queued records are deliberately abandoned after invariant checks."
+  }
+}

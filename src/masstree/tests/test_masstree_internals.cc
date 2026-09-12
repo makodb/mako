@@ -33,6 +33,21 @@ import rusty;
 // Provide globalepoch definition for this test file
 volatile mrcu_epoch_type globalepoch = 1;
 
+namespace {
+
+std::atomic<unsigned> rcu_callback_runs{0};
+
+class CountingRcuCallback final : public mrcu_callback {
+public:
+    void operator()(threadinfo& ti) override {
+        ++rcu_callback_runs;
+        this->~CountingRcuCallback();
+        ti.deallocate(this, sizeof(*this), memtag_masstree_gc);
+    }
+};
+
+} // namespace
+
 class MasstreeInternalsTest : public ::testing::Test {
 protected:
     void SetUp() override {
@@ -220,6 +235,30 @@ TEST_F(MasstreeInternalsTest, RcuDeferredDeallocation) {
     }
 
     ti->rcu_stop();
+}
+
+// The RCU callback discriminator is stored in the same limbo queue as normal
+// allocation tags. Exercise both registration and the callback reclamation
+// branch so strict enum UBSan validates the complete sentinel round trip.
+TEST_F(MasstreeInternalsTest, RcuCallbackRegistrationAndReclamation) {
+    threadinfo* ti = threadinfo::make(threadinfo::TI_PROCESS, 5001);
+    ASSERT_NE(ti, nullptr);
+
+    void* storage = ti->allocate(sizeof(CountingRcuCallback),
+                                 memtag_masstree_gc);
+    ASSERT_NE(storage, nullptr);
+    auto* callback = new(storage) CountingRcuCallback;
+    const unsigned runs_before = rcu_callback_runs.load();
+
+    ti->rcu_start();
+    ti->rcu_register(callback);
+    for (int i = 0; i < 5; ++i) {
+        ctx_->increment_epoch(2);
+        ti->rcu_quiesce();
+    }
+    ti->rcu_stop();
+
+    EXPECT_EQ(rcu_callback_runs.load(), runs_before + 1);
 }
 
 // Test 9: Thread Purposes

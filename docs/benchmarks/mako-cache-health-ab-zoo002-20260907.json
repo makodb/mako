@@ -1,0 +1,635 @@
+{
+  "schema_version": 1,
+  "date_utc": "2026-09-07",
+  "scope": {
+    "comparison": "incremental writeback health and retry hardening against the existing HLC implementation",
+    "baseline_commit": "a71dba6820ea2c03435b13abdb2674bc1550d114",
+    "candidate_commit": "85495f8ddf9c0c6a8672eefb43b9f584d8527607",
+    "claim": "The candidate passes the predeclared incremental performance limits for this cache write-ACK protocol.",
+    "excluded_claim": "This result does not establish absolute performance, durability, network-service readiness, distributed-transaction readiness, or production readiness."
+  },
+  "artifacts": {
+    "host_path": "/var/tmp/thread-sweep-20260907T181053Z-oip241dp",
+    "started_utc": "2026-09-07T18:10:53Z",
+    "resumed_utc": "2026-09-07T18:28:15Z",
+    "summary_completed_utc": "2026-09-07T19:10:40Z",
+    "accepted_samples": 60,
+    "accepted_samples_per_worker_arm": 5,
+    "rejected_attempts": {
+      "preflight": 49,
+      "run": 40,
+      "total": 89
+    },
+    "files": {
+      "summary.json": "0fc254cb80db2d6c829e1686c68f68e1788d7d877489564e3883600f3d730be1",
+      "environment.txt": "4a3ab03d79a3828c8cac7006f5089f27bfe4ce5e025d7ce9723ac753c23f6809",
+      "binaries.sha256": "db50f04febfa25e27838ead125490cc7c434ab752120d2be3b9ddea25362f5f4",
+      "commands.txt": "c5c6ec7e12a7a69f3f9b485033e32493cdcec7b8a8b29e9a77082f1873f7bdcb",
+      "rejections.txt": "567481012fd67c8ae418ad7463494e334c49e2140995aa3f58840148481bbcb9",
+      "runner.py": "372e545874a1d2e91582013a8af4752931ed0f610347dda4824246ca5263c8de",
+      "runner-resume-20260907T182815Z.py": "372e545874a1d2e91582013a8af4752931ed0f610347dda4824246ca5263c8de"
+    },
+    "tree_digest": {
+      "file_count": 885,
+      "byte_count": 5026926,
+      "sha256": "e973a3ff9aa7bacdd047b397ca5e32d96d59fd14b892ee38a8021663e664ccc2",
+      "algorithm": "Sort every regular file by relative POSIX path. Hash each path and content after prefixing each with its unsigned 8-byte big-endian length."
+    }
+  },
+  "builds": {
+    "baseline": {
+      "name": "hlc",
+      "commit": "a71dba6820ea2c03435b13abdb2674bc1550d114",
+      "binary": "/var/tmp/mako-r1-85495f8dd-perf-build-20260908-v3/target-hlc/release/mako-mt-current",
+      "binary_sha256": "e089888e9d99b25b8600ce0b1e2a9d36abcd7c85954f8c686e4e8ce02a512465",
+      "cargo_manifest_sha256": "c97f5bd34a63b276ee2ebfc9228d2f8d153230d222f73e0515dad52040dda6c2"
+    },
+    "candidate": {
+      "name": "candidate",
+      "commit": "85495f8ddf9c0c6a8672eefb43b9f584d8527607",
+      "binary": "/var/tmp/mako-r1-85495f8dd-perf-build-20260908-v3/target-candidate-v3/release/mako-mt-current",
+      "binary_sha256": "9dab410ca350c809e59511abda0e027076ec15551cee5d35debd91654c01efb1",
+      "cargo_manifest_sha256": "d717c3c4926257217c5371cb7a619a89623cbeb57decf6ce12793928d0892103",
+      "source_tree_sha256": {
+        "mako-cache": "b67c9eda369fd0529adc54ba7c96daf12ee8428188b244dd1ffdab695c8f13b3",
+        "mrx-core": "ecd3e93597216937929fe88dad04d912144cee8d4a1e978996df5881dcdbfe24",
+        "mrx-rocks": "5af45a2ede5571e9b46cb9e610d78e8e6f5a864bd4faf88555d3357e0630d95d"
+      },
+      "overlay_source_tree_sha256": {
+        "mako-cache": "b67c9eda369fd0529adc54ba7c96daf12ee8428188b244dd1ffdab695c8f13b3",
+        "mrx-core": "ecd3e93597216937929fe88dad04d912144cee8d4a1e978996df5881dcdbfe24",
+        "mrx-rocks": "5af45a2ede5571e9b46cb9e610d78e8e6f5a864bd4faf88555d3357e0630d95d"
+      }
+    },
+    "shared": {
+      "build_context_manifest": "/var/tmp/mako-r1-85495f8dd-perf-build-20260908-v3/binaries-v3.sha256",
+      "build_context_manifest_sha256": "2458e988d1dd28b87bb2913f0acbf113b1ef72a47b31b06ddeb7d5394ed61230",
+      "harness_source_sha256": "e31fed7c411c1010ea050c8e5a9a64d15840aada594de11fa3355966e6aadb06",
+      "phase_helper_archive_sha256": "660aeeebde77121daaec795a4d47fb36892b948bf572c2113c6cc344a8888a0f",
+      "cargo_lock_sha256": "144901fad1584a67e4d93c7e4767f74175f26238b5d00192fb14c036c999221b",
+      "native_build_fingerprint": "0d171176bce8e4f470ec206d60c021f3a747ae6e168b71841abbac3132cc2356",
+      "native_library_sha256": "3ccc0f8d1d5ac9992e468324374ef65335dbeeb8271cbccf8106a6b66f5dd45a",
+      "native_build_identity_source_sha256": "2f1374dc0d7afd4d3c2e11381bc4bdd8f611c113c9155a20d56488356bd743e4",
+      "cmake": "4.3.3",
+      "cmake_generator": "Ninja",
+      "clang": "22.1.8",
+      "rust": "1.97.1",
+      "cpp_effective_optimization": "-O2 -g -march=native",
+      "rust_release_profile": "opt-level=3, codegen-units=1, lto=false, panic=abort",
+      "sto_rmw": true,
+      "opacity": false,
+      "native_test_hooks": false
+    }
+  },
+  "host": {
+    "hostname": "zoo-002",
+    "kernel": "Linux 6.8.0-137-generic x86_64",
+    "cpu": "AMD EPYC 7702P 64-Core Processor",
+    "sockets": 1,
+    "physical_cores": 64,
+    "smt_threads": 128,
+    "sample_policy": {
+      "boost": "disabled and checked before and after every sample",
+      "governor": "performance on every worker CPU and the writeback CPU",
+      "minimum_idle_pct": 95.0,
+      "lxd_cpu_limit_pct": 5.0
+    },
+    "restoration": {
+      "verified_utc": "2026-09-07T19:16:38Z",
+      "boost": "disabled",
+      "governor": "userspace on all 128 logical CPUs",
+      "restored": true
+    }
+  },
+  "protocol": {
+    "protocols": [
+      "mako-mt-ramp-v1",
+      "mako-mt-ramp-sweep-v1"
+    ],
+    "arm": "concurrent cache write ACK",
+    "workload": "write",
+    "worker_counts": [
+      1,
+      4,
+      8,
+      16,
+      24,
+      32
+    ],
+    "repetitions": 5,
+    "rotation": "Latin rotation by worker count, with arm rotation inside each worker count",
+    "worker_cpus": "0..workers-1",
+    "helper_affinity": "33-63",
+    "writeback_cpu": 32,
+    "warmup_per_worker": 65536,
+    "transaction_ramp_per_worker": 1048576,
+    "measured_per_worker": 2097152,
+    "key_bytes": 8,
+    "value_bytes": 128,
+    "window_keys_per_worker": 256,
+    "cache_queue_capacity_per_worker": 4194304,
+    "cache_queue_capacity": "workers * 4194304",
+    "capacity_backpressure_possible": false,
+    "cache_record_checksum": "none",
+    "rocks_durability": "Wal",
+    "rocks_wal_enabled": true,
+    "rocks_sync": false,
+    "writeback_batch_records": 64,
+    "allocator": "jemalloc through LD_PRELOAD=/lib/x86_64-linux-gnu/libjemalloc.so.2",
+    "malloc_conf": "unset",
+    "pmu_scope": "per-thread measured region only",
+    "pmu_reference_cycles_supported": false,
+    "minimum_pmu_running_ratio": 0.995,
+    "ack_accounting": "acknowledged - applied = queued + in_flight",
+    "in_flight_range": "0..writeback_batch_records",
+    "teardown": "Arc::try_unwrap(db).abort_without_flush() after invariant checks",
+    "lxd_validity_window": "process start through the final worker phase-counter marker",
+    "lxd_accounting": "10 ms process polling with systemd invocation coverage and conservative exit bounds"
+  },
+  "predeclared_acceptance": {
+    "primary_metric": "median of five paired phase-cycle regressions per worker count",
+    "maximum_cell_cycle_regression_pct": 5.0,
+    "maximum_geomean_cycle_regression_pct": 3.0,
+    "geomean_input": "the six worker-count paired-median cycle ratios",
+    "result": "pass"
+  },
+  "result": {
+    "pass": true,
+    "maximum_cell_cycle_regression_pct": 3.1030429712,
+    "maximum_cell_workers": 8,
+    "geomean_paired_cycle_regression_pct": 1.7983142083,
+    "maximum_absolute_paired_median_instruction_delta_pct": 0.0061404406,
+    "interpretation": "The incremental hardening stays below both predeclared cycle limits and adds no material instruction count in this protocol.",
+    "workers": {
+      "1": {
+        "baseline": {
+          "ack_tx_per_s": [
+            1205137.969,
+            1201079.199,
+            1200137.051,
+            1197121.531,
+            1202985.895
+          ],
+          "cycles_per_commit": [
+            1358.134153,
+            1363.861167,
+            1364.579958,
+            1368.015768,
+            1359.100164
+          ],
+          "instructions_per_commit": [
+            3186.918266,
+            3186.916111,
+            3186.922029,
+            3186.920161,
+            3186.920801
+          ],
+          "average_ghz": [
+            1.637681182,
+            1.638588607,
+            1.638497147,
+            1.638163389,
+            1.635734632
+          ],
+          "median_ack_tx_per_s": 1201079.199,
+          "median_cycles_per_commit": 1363.861167,
+          "median_instructions_per_commit": 3186.920161,
+          "rate_cv_pct": 0.25122759416663365
+        },
+        "candidate": {
+          "ack_tx_per_s": [
+            1195752.943,
+            1195960.077,
+            1189581.512,
+            1186323.193,
+            1199664.682
+          ],
+          "cycles_per_commit": [
+            1371.693934,
+            1370.98496,
+            1376.638826,
+            1387.756989,
+            1365.785015
+          ],
+          "instructions_per_commit": [
+            3186.917032,
+            3186.918249,
+            3186.920229,
+            3186.918384,
+            3186.916422
+          ],
+          "average_ghz": [
+            1.640761975,
+            1.640383786,
+            1.642060726,
+            1.647030885,
+            1.639213991
+          ],
+          "median_ack_tx_per_s": 1195752.943,
+          "median_cycles_per_commit": 1371.693934,
+          "median_instructions_per_commit": 3186.918249,
+          "rate_cv_pct": 0.45119052745294275
+        },
+        "paired_median": {
+          "throughput_delta_pct": -0.7787511672,
+          "cycle_regression_pct": 0.8837054897,
+          "instruction_delta_pct": -0.0000557592
+        }
+      },
+      "4": {
+        "baseline": {
+          "ack_tx_per_s": [
+            4633195.97,
+            4648518.045,
+            4654724.625,
+            4665307.977,
+            4665774.284
+          ],
+          "cycles_per_commit": [
+            1408.109749,
+            1397.761002,
+            1402.0834,
+            1402.527347,
+            1395.448829
+          ],
+          "instructions_per_commit": [
+            3204.262672,
+            3204.320568,
+            3204.269004,
+            3204.311186,
+            3204.322863
+          ],
+          "average_ghz": [
+            1.645337905,
+            1.633043786,
+            1.636593182,
+            1.638489896,
+            1.63314948
+          ],
+          "median_ack_tx_per_s": 4654724.625,
+          "median_cycles_per_commit": 1402.0834,
+          "median_instructions_per_commit": 3204.311186,
+          "rate_cv_pct": 0.2900362029886669
+        },
+        "candidate": {
+          "ack_tx_per_s": [
+            4622091.351,
+            4598755.178,
+            4611261.599,
+            4640820.372,
+            4595544.204
+          ],
+          "cycles_per_commit": [
+            1413.274369,
+            1415.352381,
+            1414.060887,
+            1403.240087,
+            1418.359014
+          ],
+          "instructions_per_commit": [
+            3204.338537,
+            3204.356275,
+            3204.416395,
+            3204.43227,
+            3204.359003
+          ],
+          "average_ghz": [
+            1.647957457,
+            1.641949182,
+            1.63831292,
+            1.637214679,
+            1.640667079
+          ],
+          "median_ack_tx_per_s": 4611261.599,
+          "median_cycles_per_commit": 1414.060887,
+          "median_instructions_per_commit": 3204.359003,
+          "rate_cv_pct": 0.4003727626119091
+        },
+        "paired_median": {
+          "throughput_delta_pct": -0.9337400062,
+          "cycle_regression_pct": 0.8542635196,
+          "instruction_delta_pct": 0.0023676274
+        }
+      },
+      "8": {
+        "baseline": {
+          "ack_tx_per_s": [
+            8397746.188,
+            8708620.101,
+            8698675.444,
+            8712251.707,
+            8499558.388
+          ],
+          "cycles_per_commit": [
+            1513.783529,
+            1501.144072,
+            1510.991991,
+            1506.646103,
+            1522.940074
+          ],
+          "instructions_per_commit": [
+            3211.686648,
+            3211.691355,
+            3211.674575,
+            3211.715712,
+            3211.671229
+          ],
+          "average_ghz": [
+            1.597848799,
+            1.646424167,
+            1.650476033,
+            1.65143312,
+            1.651885815
+          ],
+          "median_ack_tx_per_s": 8698675.444,
+          "median_cycles_per_commit": 1510.991991,
+          "median_instructions_per_commit": 3211.686648,
+          "rate_cv_pct": 1.695116922163235
+        },
+        "candidate": {
+          "ack_tx_per_s": [
+            8603713.476,
+            8418647.684,
+            8411644.652,
+            8246270.822,
+            8511293.707
+          ],
+          "cycles_per_commit": [
+            1540.260733,
+            1564.044969,
+            1566.401113,
+            1553.397979,
+            1541.706738
+          ],
+          "instructions_per_commit": [
+            3211.845295,
+            3211.888567,
+            3211.748045,
+            3211.937406,
+            3211.892195
+          ],
+          "average_ghz": [
+            1.668352987,
+            1.661478965,
+            1.663079875,
+            1.659963282,
+            1.656468097
+          ],
+          "median_ack_tx_per_s": 8418647.684,
+          "median_cycles_per_commit": 1553.397979,
+          "median_instructions_per_commit": 3211.888567,
+          "rate_cv_pct": 1.5750927337233003
+        },
+        "paired_median": {
+          "throughput_delta_pct": -3.2997068789,
+          "cycle_regression_pct": 3.1030429712,
+          "instruction_delta_pct": 0.0061404406
+        }
+      },
+      "16": {
+        "baseline": {
+          "ack_tx_per_s": [
+            15563335.811,
+            15464729.816,
+            15561021.931,
+            15524620.775,
+            15653699.284
+          ],
+          "cycles_per_commit": [
+            1704.914312,
+            1719.407298,
+            1713.823429,
+            1710.688435,
+            1704.54659
+          ],
+          "instructions_per_commit": [
+            3271.258866,
+            3271.262592,
+            3271.356608,
+            3271.322602,
+            3271.255977
+          ],
+          "average_ghz": [
+            1.683769678,
+            1.679740984,
+            1.679318941,
+            1.676842115,
+            1.678128655
+          ],
+          "median_ack_tx_per_s": 15561021.931,
+          "median_cycles_per_commit": 1710.688435,
+          "median_instructions_per_commit": 3271.262592,
+          "rate_cv_pct": 0.44203634421744437
+        },
+        "candidate": {
+          "ack_tx_per_s": [
+            15319321.139,
+            15214434.229,
+            15221950.612,
+            14829567.363,
+            15110292.727
+          ],
+          "cycles_per_commit": [
+            1746.582685,
+            1755.833948,
+            1737.349076,
+            1769.023351,
+            1755.299571
+          ],
+          "instructions_per_commit": [
+            3271.330404,
+            3271.282682,
+            3271.339497,
+            3271.43119,
+            3271.266636
+          ],
+          "average_ghz": [
+            1.689611689,
+            1.686092909,
+            1.680845621,
+            1.687281603,
+            1.682659105
+          ],
+          "median_ack_tx_per_s": 15214434.229,
+          "median_cycles_per_commit": 1755.299571,
+          "median_instructions_per_commit": 3271.330404,
+          "rate_cv_pct": 1.2430606778460256
+        },
+        "paired_median": {
+          "throughput_delta_pct": -2.1789784791,
+          "cycle_regression_pct": 2.4440156732,
+          "instruction_delta_pct": 0.000614136
+        }
+      },
+      "24": {
+        "baseline": {
+          "ack_tx_per_s": [
+            19531029.652,
+            19426380.523,
+            19478772.703,
+            19471581.914,
+            19410688.419
+          ],
+          "cycles_per_commit": [
+            2105.829343,
+            2108.646985,
+            2106.124924,
+            2107.048968,
+            2104.845422
+          ],
+          "instructions_per_commit": [
+            3271.218033,
+            3271.23044,
+            3271.224443,
+            3271.221376,
+            3271.225834
+          ],
+          "average_ghz": [
+            1.723348693,
+            1.722467509,
+            1.723026653,
+            1.723244416,
+            1.716747456
+          ],
+          "median_ack_tx_per_s": 19471581.914,
+          "median_cycles_per_commit": 2106.124924,
+          "median_instructions_per_commit": 3271.224443,
+          "rate_cv_pct": 0.24405177868079272
+        },
+        "candidate": {
+          "ack_tx_per_s": [
+            19243390.784,
+            19216669.917,
+            19180624.316,
+            19193569.352,
+            19224903.299
+          ],
+          "cycles_per_commit": [
+            2141.037385,
+            2144.103267,
+            2143.35093,
+            2145.462181,
+            2140.681291
+          ],
+          "instructions_per_commit": [
+            3271.21669,
+            3271.233252,
+            3271.231018,
+            3271.227502,
+            3271.234353
+          ],
+          "average_ghz": [
+            1.728983879,
+            1.727938919,
+            1.727913967,
+            1.727984393,
+            1.724709705
+          ],
+          "median_ack_tx_per_s": 19216669.917,
+          "median_cycles_per_commit": 2143.35093,
+          "median_instructions_per_commit": 3271.231018,
+          "rate_cv_pct": 0.1300673609206428
+        },
+        "paired_median": {
+          "throughput_delta_pct": -1.4277862129,
+          "cycle_regression_pct": 1.7025416036,
+          "instruction_delta_pct": 0.0001872695
+        }
+      },
+      "32": {
+        "baseline": {
+          "ack_tx_per_s": [
+            20228148.001,
+            20217818.808,
+            20213814.774,
+            20220600.299,
+            20271015.769
+          ],
+          "cycles_per_commit": [
+            2802.489852,
+            2802.373145,
+            2801.768936,
+            2801.663685,
+            2788.844999
+          ],
+          "instructions_per_commit": [
+            3281.029329,
+            3281.030913,
+            3281.028226,
+            3281.028381,
+            3281.03168
+          ],
+          "average_ghz": [
+            1.777543665,
+            1.777182413,
+            1.776099851,
+            1.777022123,
+            1.77250442
+          ],
+          "median_ack_tx_per_s": 20220600.299,
+          "median_cycles_per_commit": 2801.768936,
+          "median_instructions_per_commit": 3281.029329,
+          "rate_cv_pct": 0.11550410213401197
+        },
+        "candidate": {
+          "ack_tx_per_s": [
+            19922702.518,
+            19922269.635,
+            19907784.395,
+            19929590.733,
+            19889851.399
+          ],
+          "cycles_per_commit": [
+            2855.608087,
+            2853.410846,
+            2852.532091,
+            2846.835138,
+            2850.796164
+          ],
+          "instructions_per_commit": [
+            3281.041726,
+            3281.028607,
+            3281.030827,
+            3281.032915,
+            3281.034758
+          ],
+          "average_ghz": [
+            1.782436016,
+            1.781254978,
+            1.780125904,
+            1.779341226,
+            1.778321191
+          ],
+          "median_ack_tx_per_s": 19922269.635,
+          "median_cycles_per_commit": 2852.532091,
+          "median_instructions_per_commit": 3281.032915,
+          "rate_cv_pct": 0.07971408778115116
+        },
+        "paired_median": {
+          "throughput_delta_pct": -1.5100022156,
+          "cycle_regression_pct": 1.8212314477,
+          "instruction_delta_pct": 0.000093812
+        }
+      }
+    }
+  },
+  "validity": {
+    "all_60_canonical_samples_revalidated": true,
+    "all_conflicts_zero": true,
+    "all_ack_queue_capacity_checks_passed": true,
+    "minimum_phase_pmu_running_ratio": 1.0,
+    "minimum_preflight_idle_pct": 95.02,
+    "maximum_accepted_preflight_lxd_cpu_pct": 0.9986060520543739,
+    "maximum_accepted_phase_lxd_cpu_pct": 0.6651013583743577,
+    "accepted_average_ghz_range": [
+      1.597848799,
+      1.782436016
+    ],
+    "accepted_in_flight_range": [
+      0,
+      0
+    ],
+    "rejection_policy": "Reject before execution when boost, governors, idle CPUs, disallowed processes, or lifecycle-aware LXD accounting fail. Reject a completed run when counters, queue accounting, PMU availability, phase markers, or LXD accounting fail.",
+    "qualification": "The high rejection count reflects strict host-interference screening. Only the 60 accepted canonical samples contribute to the reported arrays and pass result."
+  }
+}

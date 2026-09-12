@@ -18,7 +18,14 @@ std::vector<std::atomic<uint32_t>> sync_util::sync_logger::disk_timestamp_(80);
 #endif
 std::atomic<uint32_t> sync_util::sync_logger::single_watermark_(0);
 int sync_util::sync_logger::nshards = 0;
-int sync_util::sync_logger::local_replica_id = 0;
+// Local HLC has no published timestamp and its validation gate is clear.
+// Cache sequence zero is the empty recovered prefix. The legacy distributed
+// u32 clock remains separate until that wire protocol migrates.
+alignas(128) std::atomic<uint64_t> sync_util::sync_logger::mako_hlc_state{0};
+alignas(128) std::atomic<uint64_t>
+    sync_util::sync_logger::cache_sequence_state{0};
+alignas(128) std::atomic<uint32_t>
+    sync_util::sync_logger::legacy_distributed_timestamp_state{1};
 std::chrono::time_point<std::chrono::high_resolution_clock> sync_util::sync_logger::last_update = std::chrono::high_resolution_clock::now();
 int sync_util::sync_logger::nthreads = 0;
 bool sync_util::sync_logger::worker_running = false;

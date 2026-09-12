@@ -1,0 +1,875 @@
+# Mako cache Milestone 1 acceptance
+
+Status: **MILESTONE 1 SINGLE-MACHINE LIBRARY ACCEPTED WITH A PERFORMANCE
+WAIVER**.
+
+Release candidate `e282a44b2f638c5e3521fa75f1e203d6411b5cfb` closes the
+revision-1 correctness, hook, mutation, conformance, sanitizer, Miri, health,
+lifecycle, and incremental-performance gates. Its health and retry hardening
+landed in `85495f8ddf9c0c6a8672eefb43b9f584d8527607`; the release follow-up
+finalizes ABI capability negotiation and public contract wording without
+changing the production write path measured below. The earlier HLC-introduction
+comparison still fails its predeclared performance limits; that result is
+preserved below and accepted only through the explicit, scoped waiver in this
+record.
+
+This is acceptance of the embeddable single-machine cache library under its
+volatile-ACK, asynchronous RocksDB contract. It is not acceptance of a
+production network service, durable acknowledgements, bounded resident data or
+log history, multiple cache namespaces, or distributed transactions.
+
+The accepted implementation reports C ABI revision 1 and uses v5 and v6 cache
+records with the 16-byte HLC timestamp. The
+[revision-1 ABI contract](reference/mako-local-abi-v1.md) is normative. Later
+sections preserve production, hook-enabled, mutation, and comparative results
+for frozen pre-HLC candidates. Their counts, fingerprints, reports, and
+measurements remain historical evidence and do not substitute for the
+current-candidate evidence here.
+
+## Current revision-1 verification
+
+The frozen revision-1 implementation completed these gates:
+
+- The hook-enabled native suite passed 123 of 123 tests. The production-default
+  profile passed 93 of 94 tests and intentionally skipped the one test that
+  requires the commit-observer hook.
+- `mako-cache` passed 165 unit tests, 23 integration tests, and three doctests.
+- The native-backed `mako-local` library, integration, and documentation suites
+  passed. The fake-ABI suites also passed.
+- `mako-history` passed 25 application tests and 12 base transaction-oracle
+  tests.
+- The release Cargo check passed.
+- The strict native fingerprint, symbol, C11, and C++ conformance gates passed.
+  The production fingerprint is
+  `d43a6c238ba7c621705de0716f0f007da7d10f170a82c3ff28237019980effba`.
+- The canonical `./ci/ci.sh makoLocalHookGates` entry point passed, including
+  all 12 mutation cases with zero survivors or harness errors. The hook-enabled
+  fingerprint is
+  `f0c964a3c475562ec7247f3f9a537e8e80e5fd3cbbd81f10bb66324b117d7b47`.
+- ASan/LSan, strict TSan with the reviewed STO/MassTrans suppressions, and
+  UBSan each passed their native boundary suites with no unsuppressed
+  diagnostic. These gates exercise the native boundary and wrapper; they are
+  not a claim that sanitizer instrumentation covered the Rust cache health
+  implementation.
+- Pinned Miri passed all 18 fake-ABI ownership tests without undefined
+  behavior.
+
+All current gate transcripts were produced from a clean detached checkout of
+`e282a44b2f638c5e3521fa75f1e203d6411b5cfb`, which remained clean after the
+runs. Their SHA-256 identities are:
+
+- production ABI/conformance:
+  `6e75cdad4d1424775fbd38435aa8157366a7903819b5df25373cd7c08ecac972`.
+- canonical hook gate:
+  `fc8e5fe9c524e536f1b5e206928a4aa3615b6f9432e55d0e09f9c246acda3b73`.
+- ASan/LSan:
+  `8e59551b5df6296b8c953f6b0fb80e4d329502146474bcfcca8922e410cff8ea`.
+- UBSan:
+  `492eb0b68a1610bd2a6c1e57715c8dd1f268d8e1e1087a2047dd4338198fe0ff`.
+- strict TSan:
+  `6648d1f9e302aa24565eda8f4751a14af425957eb6592323df16968f8ebba886`.
+- pinned Miri:
+  `5698fd63752095167a0ab60c618046bfb0efa4c2cccca3d1a8d9bd88cb229826`.
+- mutation report:
+  `10f23a955d9ed312d92ad5a339f3f59265a38270d0f3fb521a2d1385e40ea065`.
+
+The exact release rerun killed all 12 timestamp mutants, with zero survivors
+and zero harness errors. Its before-and-after source tree remained unchanged at
+`d86522d90b110b931ae6f5f915c2cb4bab75d5452d34fbfa294d4e502c83e603`.
+During development, the first full run killed 11 mutants and exposed a weak
+recovery-floor oracle. The test
+`recovery_advances_mako_timestamp_past_the_recovered_maximum` was strengthened
+with a future but representable HLC. A focused rerun then killed
+`missing-recovery-clock-floor`.
+
+The health-hardening suite additionally verifies coherent coordinator
+retry/failure telemetry within each status snapshot, exact full-batch retry
+after ambiguous RocksDB errors and unwind-build backend panics, cross-lane
+exclusion until that retry resolves, active failure-sequence accounting,
+backend-stall visibility while status remains responsive, and successful
+drain/join behavior. Runtime liveness and queue progress are sampled separately
+and may conservatively disagree while a composite status value is assembled.
+In the workspace release profile, `panic = "abort"`: ordinary RocksDB errors
+still use exact retry, while a panic terminates the process for
+supervisor-driven recovery.
+
+These results close the scoped functional, safety, mutation, and lifecycle
+verification. Phase 1G eviction and all distributed work remain deferred.
+
+### Historical HLC-introduction performance result and waiver
+
+The controlled `zoo-002` comparison used the concurrent cache write-ACK path,
+disabled CPU boost, pinned workers, asynchronous RocksDB writeback with WAL
+enabled and `sync=false`, and per-thread PMU counters. It compared the HLC
+revision `a71dba682` with its immediate parent `e22d937a1`. Three complete
+paired repetitions covered 1, 4, 8, 16, 24, and 32 workers:
+
+| Workers | Old Mtxn/s | HLC Mtxn/s | Paired throughput | Paired cycles/txn |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 1.263 | 1.197 | -5.18% | +6.65% |
+| 4 | 4.939 | 4.587 | -7.12% | +8.68% |
+| 8 | 8.755 | 8.549 | -2.35% | +2.80% |
+| 16 | 15.592 | 14.707 | -5.67% | +4.14% |
+| 24 | 19.259 | 19.078 | -0.91% | +0.83% |
+| 32 | 19.657 | 19.939 | +1.63% | -1.34% |
+
+The maximum cell regression is 8.68%, above the 5% limit. The geometric mean
+of paired cycle ratios regresses 3.57%, above the 3% limit. The result is
+therefore a failed measurement, not a pass. The HLC arm also executes about
+128 to 130 more instructions per commit at every worker count.
+
+The planned five-repetition acceptance sweep could not be completed because
+the host's snap LXD daemon entered a persistent restart loop. A lifecycle-aware
+probe subsequently observed about 1.8 aggregate CPU cores and more than 80
+short-lived `lxd` processes in one 45-second interval, work that the original
+two-snapshot screen could not account for. Consequently these three complete
+repetitions are decisive rejection evidence, but they cannot establish
+acceptance for a future optimized candidate. Recorded arrays, build hashes,
+protocol details, and qualifications are in the
+[machine-readable HLC comparison](benchmarks/mako-cache-hlc-ab-zoo002-20260907.json),
+SHA-256 `924574abf93fbcdc3430301a440835ff9a768fdf012c76433a374acbc96794d5`.
+
+The failed result is waived for Milestone 1 by owner **Shuai Mu** on
+**2026-09-07**. The rationale is that the HLC is required for stable replay and
+the planned distributed timestamp protocol; the measured cost was explicitly
+accepted for this first single-machine library. The waiver applies only to the
+incremental HLC cost in the volatile write-ACK benchmark. It does not waive a
+correctness, safety, durability, or service-integration gate. Before a
+distributed or network-service production cutover, repeat this A/B protocol on
+a clean dedicated host and either meet the original limits or record a new
+release decision after profiling the physical-time sampling/conversion path.
+
+### Final health-hardening performance result
+
+The final five-repetition `zoo-002` sweep compared health-hardening candidate
+`85495f8dd` with the HLC baseline `a71dba682` at 1, 4, 8, 16, 24, and 32
+workers. It used the same concurrent cache write-ACK path, WAL enabled with
+`sync=false`, disabled boost, exact affinity, per-thread PMU counters, a
+lifecycle-aware LXD interference screen, and rotated arm order. The
+predeclared limits were at most 5% paired cycle regression in any cell and at
+most 3% geometric-mean regression across cells. Release follow-up `e282a44b2`
+adds test-clock feature negotiation and revises diagnostics and documentation;
+it does not alter this production write path.
+
+| Workers | Candidate throughput vs HLC | Candidate cycles/txn |
+| ---: | ---: | ---: |
+| 1 | 99.22% | +0.88% |
+| 4 | 99.07% | +0.85% |
+| 8 | 96.70% | +3.10% |
+| 16 | 97.82% | +2.44% |
+| 24 | 98.57% | +1.70% |
+| 32 | 98.49% | +1.82% |
+
+The maximum cell regression was 3.10% and the geometric-mean regression was
+1.80%, so this incremental gate passed. Instructions per transaction were
+effectively unchanged. The complete accepted arrays, protocol, binary and
+runner identities, rejection accounting, and artifact hashes are in the
+[machine-readable health comparison](benchmarks/mako-cache-health-ab-zoo002-20260907.json).
+Its SHA-256 is
+`d405824c2bab58cbdd7ffa228496920c7ebacde1f27cb419d0b5195f3decc1da`.
+
+## Current per-worker lane design
+
+Concurrent workers no longer share one dense publication sequence. Each
+process-lifetime cache worker slot lazily owns one SPSC lane. A physical log ID
+stores the one-based lane tag in its upper 16 bits and a dense lane-local
+sequence in its lower 48 bits. Upper-zero IDs identify the untagged dense stream
+used by current SingleProducer mode and accepted during recovery. Physical IDs
+order records only within one lane. The Mako timestamp remains the logical
+transaction order used for replay and last-writer-wins decisions.
+
+One background runtime polls initialized lanes in round-robin order. A shared
+apply coordinator serializes RocksDB calls, retains every transaction log, and
+materializes a key mutation only when its Mako timestamp is newer than the
+coordinator's recorded winner for that key. Batches from different lanes may
+therefore reach RocksDB out of timestamp order without letting a stale value or
+delete win.
+
+A successful `wait_applied()` snapshots each initialized lane and drains every
+captured frontier. The public acknowledged and applied sequence values are
+aggregate record counts. `AppliedWatermark::mako_timestamp()` is the greatest
+applied timestamp. These values do not describe a contiguous global
+serialization prefix and do not claim disk sync. A post-bind unknown outcome
+or permanent record failure latches cache-wide fail-stop state, retains the
+affected lane's obligation, and rejects work in every lane.
+
+The current recovery contract depends on retaining all commit logs, including
+deletes, so reopen can reconstruct the per-key timestamp index. Log pruning is
+deferred until materialized values and tombstones persist their winning
+timestamps. Recovery of an acknowledged but unapplied memory tail, and of an
+applied RocksDB tail not synced by `sync=false`, is also deferred.
+
+The release surface is a library component. A service host must recover the
+database before reporting ready, use a fixed pool of long-lived STO workers,
+and poll `Db::status()` while serving. `Degraded` identifies active retry or a
+backend call older than its stall threshold; `Unhealthy` identifies a stopped
+writer or latched fail-stop state. Readiness must also include
+`pool.metrics().healthy_workers > 0`: `quarantined_workers`
+is process-wide, informational, and does not affect cache health. The host must
+stop admission before shutdown, join request workers, release all shared
+database owners, and call `Db::close()`. A successful close drains and joins
+the writer but does not fsync the WAL. An error after the synchronous retry
+budget, or a supervisor timeout around a hung RocksDB call, is a failed
+shutdown and requires restart/recovery; the consuming close cannot be retried
+on that instance. Status remains available while a RocksDB call is hung, so an
+external supervisor can enforce that deadline. `Drop` is not the production
+shutdown protocol. No current network server embeds this component; a
+standalone local Rust host and the legacy distributed-server cutover remain
+later integration work.
+
+## Historical pre-HLC per-worker validation
+
+For the frozen pre-HLC source, the production native ABI suite passed 91 tests
+with one intentional hook-only skip. Its native-backed Rust suite passed 153
+library tests and 21 integration/Loom tests. The fake-ABI `mako-local` suite
+passed 18 tests, and all three `mako-cache` doctests passed. These are historical
+counts. An independent review of that candidate found no remaining issue in
+cross-lane fail-stop, barriers, uncertain-batch retry, log-ID recovery,
+timestamp arbitration, watermarks, or read-only ordering.
+
+The canonical hook-enabled gate for that candidate also passed on `zoo-005`:
+
+```bash
+BUILD_DIR=/build-mako-local-hooks \
+  CMAKE_BUILD_TYPE=RelWithDebInfo CMAKE_GENERATOR=Ninja CI_MAKE_JOBS=4 \
+  MAKO_NO_GDB=1 \
+  ./ci/ci.sh makoLocalHookGates
+```
+
+It passed all 111 native ABI tests, 153 cache library tests, 23 cache
+integration/Loom tests, three cache doctests, all four CTest targets, and the
+12-mutant campaign with every mutant killed. The hook-enabled native build
+fingerprint is
+`c05a4ab2b89694e7b331cae7ed72b6554ce2f2196a08086fb4bbfd0903a70847`.
+The persistent complete log is
+`/home/users/shuai/mako/.codex-hook-gates/per-worker-20260905/hook-gate-canonical-green.log`,
+SHA-256 `fb07cfdf78624c15d026679d3a45f1426bb91888822c90f960281c64648cab9a`.
+The mutation report beside it has SHA-256
+`5d2f1f09d608bbe53aac7b945620c50d9451e7ce89bbfe14996b985b02ee7049`.
+
+The historical comparative `zoo-002` run used workers on CPUs 0-3, helper
+threads on CPUs 33-63, and writeback on CPU 32. Each cold-cache repetition used
+65,536 warmup, 1,048,576 ramp, and 2,097,152 measured transactions per worker,
+with eight-byte keys, 128-byte values, 256 disjoint keys per worker, checksum
+disabled, RocksDB WAL enabled with `sync=false`, and 4,194,304 queue slots per
+initialized lane. These are foreground acknowledgement results: teardown
+checks the queue invariants and then deliberately abandons the unapplied tail.
+
+Five-repetition medians are:
+
+| Workers | Path | ACK Mtxn/s | Cycles/txn | Instructions/txn | Rate CV |
+| ---: | --- | ---: | ---: | ---: | ---: |
+| 1 | Raw fast C ABI | 3.546 | 940.184 | 2,394.364 | 0.397% |
+| 1 | Per-worker Rust cache | 2.102 | 1,287.836 | 3,061.912 | 0.609% |
+| 4 | Raw fast C ABI | 14.014 | 944.361 | 2,410.102 | 0.856% |
+| 4 | Per-worker Rust cache | 8.221 | 1,310.894 | 3,077.669 | 0.527% |
+
+The cache retains 73.00% of raw cycle-normalized throughput at W1 and 72.04%
+at W4. Its fixed foreground cost is 347.7-366.5 cycles and 667.5 instructions
+per commit. The cache samples ran near 2.70 GHz while the raw control ran near
+3.33 GHz, so wall throughput retains only 59.27% and 58.66%; cycles and
+instructions are the primary comparison.
+
+The important result for that historical revision is scaling. W1 to W4 cache
+efficiency is 97.79%, compared with 98.80% for the raw ABI and 90.94% for the
+superseded global queue. Against that prior queue, the new cache reduces W1
+cycles by 4.02% and W4 cycles by 12.11%; acknowledgement throughput rises 4.47%
+and 12.35%, respectively. The nearly identical instruction delta at W1 and W4
+shows that the shared dense publication protocol no longer adds work as writers
+are introduced. This revision fixes the scaling-specific contention; it does
+not meet the separate 95% raw-ABI target for the remaining per-commit cache
+work.
+
+All 20 historically accepted samples had zero conflicts, a PMU running ratio
+of 1.0, exact commit/checksum/acknowledgement counts, and exact
+`acknowledged - applied = queued + in_flight` accounting. Two preflight samples
+were rejected for host conditions and passed on their second attempt; no timed
+run was rejected. The complete samples and identities are in the
+[machine-readable per-worker report](benchmarks/mako-cache-per-worker-w1w4-zoo002-20260905.json),
+SHA-256 `5e09cacf9613053fd52ace965b6f0862e1858a13dcdc33b357870daa5358c505`.
+The frozen source identity is
+`8bfeff490e715eeffe84b159dac5a170ddcc3d182c9da5f047605ab43e469a45`;
+the production benchmark native build fingerprint is
+`6c48a3e2f904d9781d1e5c8a7af0448de24bebf900712eeb25952cfc8af65a74`.
+
+## Historical detached holder fast path
+
+Candidate `153e14c78fc1a1ea6efa68713b5bda8b87d6ce44` moves the
+checksum-none, single-producer, one-Put acknowledgement path off record
+construction and RocksDB replay:
+
+1. Rust passes the unique producer's persistent SPSC control and a
+   capacity-limit snapshot to the fused C++ terminal. It retains the stable
+   local next-sequence cursor for cold-result decoding.
+2. C++ checks capacity, selects the next dense generation and its masked
+   holder, acquires the STO write locks, performs final read and predicate
+   validation, allocates the Mako timestamp, installs and cleans up the transaction,
+   transfers the staged `std::string` value into that holder, and publishes the
+   acknowledgement witness.
+3. The foreground returns after the dense acknowledgement prefix reaches the
+   transaction. It does not encode a commit record or call RocksDB.
+4. The sole serialized consumer, normally the named `mako-writeback` OS thread,
+   reads the holder, encodes the record, applies the transaction and log entry
+   in one RocksDB `WriteBatch`, releases the holder generation, and advances
+   the applied watermark. `wait_applied()` and shutdown can help execute that
+   same serialized drain. The normal thread can be pinned to a CPU outside the
+   foreground affinity set.
+
+These measurements used the then-current checksummed v3 records and unchecked
+v4 records. The HLC cutover replaces them with v5 and v6 respectively, and
+rejects the old formats rather than mixing timestamp representations. V6 still
+performs structural validation but cannot detect arbitrary payload corruption,
+so disabling CRC remains an intentional durability tradeoff.
+
+### Matched one-worker hot-path result
+
+The controlled one-worker `zoo-002` run used CPU 0, writeback CPU 16, checksum
+`none`, a 1,048,576-entry queue, 1,048,576 warmup transactions, and 262,144
+measured transactions. Values are three-run medians from exact perf intervals:
+
+| Path | Cycles/txn | Instructions/txn | Branches/txn | Cycle-normalized throughput |
+| --- | ---: | ---: | ---: | ---: |
+| Raw STO/Masstree C ABI | 1,022.488 | 2,563.285 | 482.943 | 100.00% |
+| Fused C++ holder terminal | 1,051.967 | 2,642.406 | 488.970 | 97.20% |
+| Full Rust cache acknowledgement gate | 1,077.375 | 2,673.446 | 495.175 | 94.91% |
+
+The full cache gate is therefore within the requested roughly 95% of raw C ABI
+throughput by cycles. It retains 97.64% of the fused native terminal. Wall-time
+samples were frequency-sensitive, so cycles, instructions, and branches are
+the primary comparison rather than tuning to a fraction of one percent. The
+source also records PGO as future work; this result does not depend on PGO.
+
+### Final concurrent scaling run
+
+The retained
+[final scaling report](benchmarks/mako-cache-scaling-zoo002-20260830-detached-holder.json)
+has SHA-256
+`98ac3e5a4b3781c76dc31e076179907849aa3977e44737ce29e4fff8930707ff`.
+It records exact Git HEAD `153e14c78`, a clean worktree, Rust 1.95.0, native
+fingerprint
+`e1a0e042b0ebf3a493a729f4dde29b91282cc2e5d1141500894e0e2bb601f6b3`,
+foreground CPUs 0-31, writeback CPU 32, and checksum `none`. All 84 unique
+sample/recovery pairs and an independent accounting audit passed.
+
+This matrix deliberately uses `ForegroundMode::Concurrent` for every row so
+one binary can cover 1 through 32 workers. Its W1 row therefore does not use
+the exclusive single-producer fast path measured above. Throughput is median
+thousands of transactions per second across seven repetitions. `Applied`
+includes the immediate asynchronous drain. Foreground CPU throughput divides
+commits by summed workload-thread CPU time and excludes the writeback thread;
+it is a diagnostic, not aggregate wall throughput.
+
+| Workers | Read ACK | Read applied | Write ACK | Write applied | Write foreground CPU |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 759.3 | 759.3 | 640.0 | 93.2 | 643.9 |
+| 2 | 1,256.2 | 1,256.1 | 625.4 | 134.5 | 324.8 |
+| 4 | 1,668.3 | 1,668.2 | 706.3 | 145.8 | 193.4 |
+| 8 | 1,390.1 | 1,390.1 | 698.5 | 141.1 | 115.5 |
+| 16 | 1,631.7 | 1,631.7 | 747.8 | 136.1 | 82.4 |
+| 32 | 1,858.1 | 1,858.1 | 255.8 | 104.7 | 9.7 |
+
+Against the retained pre-rewrite run, write throughput changed as follows:
+
+| Workers | Old ACK | Final ACK | Gain | Old applied | Final applied | Gain |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 119.9 | 640.0 | 5.337x | 44.8 | 93.2 | 2.082x |
+| 2 | 106.6 | 625.4 | 5.869x | 46.7 | 134.5 | 2.882x |
+| 4 | 35.5 | 706.3 | 19.885x | 24.2 | 145.8 | 6.019x |
+| 8 | 20.1 | 698.5 | 34.760x | 15.8 | 141.1 | 8.942x |
+| 16 | 11.1 | 747.8 | 67.544x | 9.7 | 136.1 | 14.094x |
+| 32 | 7.2 | 255.8 | 35.504x | 6.6 | 104.7 | 15.884x |
+
+Read ACK changed between -1.48% and +7.36%, consistent with a write-specific
+optimization. W32 write ACK still drops from W16 and remains the next
+foreground contention target. The dedicated writer and foreground CPU metric
+make that limitation visible without charging background replay CPU to a
+workload worker.
+
+Functional evidence for that candidate includes 142/142 native-backed
+`mako-cache` unit
+tests, 23/23 integration and Loom tests, 18/18 `mako-local` fake-ABI unit tests,
+the hooks-off C++ suite with 87 passes and one expected hook-only skip, and the
+canonical Goal-0 source gate. The combined required-native ASan/UBSan boundary
+gate also passes. The prior pinned-Miri, benchmark, and supporting-crate
+evidence remains applicable. Independent holder hot-path unsafe-code reviews
+reported no actionable finding.
+
+## Four-worker hot-path follow-up
+
+The 2026-09-01 follow-up isolates four disjoint writers on `zoo-002`. Workers
+run on CPUs 0-3, helper threads on 33-63, and writeback on CPU 32. These are
+distinct physical cores 0-3, 33-63, and 32 on socket 0; writeback does not share
+an SMT core with a worker. Each cold-cache repetition performs 65,536 warmup
+transactions and a 1,048,576-transaction untimed ramp per worker, followed by
+2,097,152 measured transactions per worker. The queue has 16,777,216 entries,
+keys are eight bytes, values are 128 bytes, worker key windows are disjoint,
+CRC is disabled, and RocksDB writeback uses WAL with `sync=false`. All five
+repetitions in every arm committed exactly 8,388,608 measured transactions
+with zero conflicts and passed PMU and host-interference checks. The cache arms
+also passed acknowledgement, queue, and capacity accounting.
+
+Cycles and instructions are the primary comparison because the machine ran
+the in-memory controls near 3.33 GHz and the cache arms at lower frequencies.
+The C++ and raw-C-ABI controls both used the same jemalloc process mapping via
+`LD_PRELOAD`; the prior cache row named `glibc` deliberately preserves the old
+Rust-link mismatch.
+
+| Path | Cycles/txn | Instructions/txn | ACK Mtxn/s |
+| --- | ---: | ---: | ---: |
+| Direct C++ STO/Masstree | 888.630 | 2,279.102 | 14.867 |
+| Raw fast C ABI | 922.260 | 2,407.102 | 14.363 |
+| Prior cache, glibc-linked Rust | 1,665.325 | 3,541.406 | 5.645 |
+| Prior cache, allocator-matched jemalloc | 1,651.115 | 3,385.262 | 6.807 |
+| Retained packed-order stack, jemalloc | 1,580.986 | 3,370.625 | 7.054 |
+
+The raw C ABI facade is 3.78% more cycles than direct C++, so the native facade
+itself is no longer the material gap. This control does not include Rust
+wrapper dispatch. Matching the configured allocator removes 0.85% of cycles
+and 4.41% of instructions from the prior cache. Prefetching the packed order
+word before restricted validation and skipping the redundant post-accept
+clock observation remove another 4.25% of cycles against the
+allocator-matched prior code. Together they reduce cycles by 5.06% and
+instructions by 4.82% from the old glibc-linked cache. The optimized cold
+cache remains 71.43% more cycles than raw C ABI; this follow-up improves that
+gap but does not claim it has disappeared.
+
+The allocator change is also a build-contract correction. CMake now resolves
+one process allocator and propagates it through the static `mako` target to all
+native consumers. It emits a fingerprinted contract containing the selected
+mode, shared-library identity, SONAME, and byte hash; Cargo validates the same
+contract before linking Rust. This prevents future C++/Rust comparisons from
+silently using different allocators. A non-system allocator directory is
+propagated as a link search path, while a final downstream executable remains
+responsible for carrying its runtime search path when the allocator is outside
+the system loader configuration.
+
+### First generation versus holder reuse
+
+The authoritative cold protocol intentionally never wraps its 16-million-entry
+holder ring, so every measured transaction first-touches one 128-byte holder
+and acquires a fresh value allocation. A separate diagnostic used a
+4,194,304-entry ring, committed and fully drained one complete generation,
+then measured below capacity after a short ramp:
+
+| Holder state | Cycles/txn | Instructions/txn | ACK Mtxn/s |
+| --- | ---: | ---: | ---: |
+| Cold first generation | 1,580.986 | 3,370.625 | 7.054 |
+| Reused generation | 1,451.385 | 3,190.044 | 9.131 |
+
+Reuse removes 8.20% of cycles and 5.36% of instructions. The roughly 130-cycle
+first-generation cost explains about 19.7% of the cold cache's remaining gap
+over raw C ABI. For this fixed 128-byte-value workload it is not a sustained
+default-production cost: the production holder capacity defaults to 1,024, so
+holders and their value allocations are reused after the first short lap. The
+reused diagnostic is still not promoted to the authoritative result because
+it uses a different capacity and measured count.
+
+At that historical revision, profiling left the combined timestamp/order CAS,
+BOUND/READY publication,
+holder metadata and string-ownership rotation, foreground acknowledgement and
+capacity claims, and background log ownership as the sustained cache-specific
+work. An independent `zoo-005` prototype that deferred holder materialization
+until after MassTrans installation passed 106/106 native ABI tests but
+regressed four-worker throughput by 2.57%, so it is deliberately not retained.
+Full arena encoding, hard-coded whole-ring prewarming, post-CAS holder
+prefetch, and a cached MassTrans late-order variant likewise failed their
+measured acceptance gates. PGO remains documented future work rather than a
+dependency of these results.
+
+The complete five-repetition arrays, protocols, available binary and wrapper
+hashes, deltas, and artifact paths are in the
+[machine-readable follow-up](benchmarks/mako-cache-w4-hotpath-20260901.json),
+SHA-256 `fdcbb2b25b8cb4a86871df9a85f7c889f3fcc131e5c4de4c82c01dde4375dcf6`.
+The released base-candidate binary hash was not available locally and is
+marked as such rather than reconstructed.
+
+### Second four-worker optimization pass
+
+A second pass retained the same transaction and acknowledgement contract while
+removing work that was not part of it. The C++ terminal now borrows its
+same-call descriptor instead of copying 48 bytes, and the cache uses a separate
+hidden trusted terminal whose omitted layout checks are proved by the safe Rust
+caller. The checked C ABI keeps its full release validation. The foreground
+path retains the exact BOUND publication pointer through READY instead of
+looking it up again. The concurrent queue no longer allocates or initializes
+the single-producer descriptor ring that it cannot use.
+
+The two dense hot arrays are now advised for transparent huge pages before
+their first touch: Rust's publication ring and C++'s stable holder vector. The
+advice covers only complete allocator-owned pages and is best effort. The
+benchmark does not set global `MALLOC_CONF`, so this does not rely on jemalloc
+advising unrelated mappings. A live process observation found 3,143,680 KiB of
+anonymous huge pages and 4,065,104 KiB RSS. Removing the unused concurrent
+descriptor ring reduced RSS by roughly one GiB from the preceding build.
+
+The final five-repetition medians are:
+
+| Path | Cycles/txn | Instructions/txn | ACK Mtxn/s |
+| --- | ---: | ---: | ---: |
+| Direct C++ STO/Masstree | 893.410 | 2,282.103 | 14.848 |
+| Raw fast C ABI, clean control rerun | 935.164 | 2,410.102 | 14.198 |
+| Cache before this pass | 1,605.047 | 3,373.624 | 7.004 |
+| Cache after this pass | 1,523.897 | 3,276.635 | 7.290 |
+
+Against the immediately preceding cache build, acknowledgement throughput is
+4.09% higher, cycles per commit are 5.06% lower, and instructions per commit
+are 2.87% lower. The final cache retains 51.35% of raw-C-ABI throughput. It
+still costs 588.7 extra cycles and 866.5 extra instructions per commit, so the
+95% target is not met at four workers. The final profile attributes the
+remaining gap primarily to required holder binding/publication and packed
+ordering. A specialized after-gate callback added about one instruction per
+transaction without improving cycles and was rejected. PGO remains a possible
+future whole-program optimization, not a requirement of this implementation.
+
+All paths used four disjoint workers, the same CPU placement, 65,536 warmup and
+1,048,576 ramp transactions per worker, and 2,097,152 measured transactions per
+worker. Every accepted cache sample committed exactly 8,388,608 transactions
+with zero conflicts and exact acknowledgement/queue watermarks. This is a
+foreground acknowledgement benchmark: RocksDB WAL is enabled with
+`sync=false`, writeback runs asynchronously on CPU 32, and teardown deliberately
+does not drain the queued tail. It is not a RocksDB apply or durability result.
+The rotated comparison had two externally slowed raw samples, so the raw row
+comes from an immediate five-repetition raw-only rerun using the identical
+binary and protocol; its rate CV was 0.91%.
+
+Exact samples, hashes, deltas, memory observations, and retained zoo-2 paths
+are in the [final four-worker report](benchmarks/mako-cache-w4-final-20260901.json),
+SHA-256 `012bb86b82e79eb0141d29258b9bdefdc22030c952e2313245a50f6a47673c8f`.
+
+### Post-optimization thread sweep
+
+The final cache path was also measured at 1, 4, 8, 16, and 32 workers on
+`zoo-002`. The comparison uses the same disjoint write-only transaction,
+CPU placement, allocator, 65,536-transaction warmup, 1,048,576-transaction
+ramp, and 2,097,152 measured transactions per worker as the four-worker gate.
+The benchmark-only cache harness sizes the publication queue at 4,194,304
+slots per worker, preserving the exact prior W4 capacity while preventing
+capacity backpressure at larger worker counts.
+
+Five-repetition medians are:
+
+| Workers | Direct C++ Mtxn/s | Raw C ABI Mtxn/s | Rust cache Mtxn/s | Cache/raw | Cache linear efficiency |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 3.730 | 3.594 | 2.012 | 55.97% | 100.00% |
+| 4 | 14.763 | 14.029 | 7.317 | 52.16% | 90.94% |
+| 8 | 29.344 | 28.182 | 10.556 | 37.46% | 65.60% |
+| 16 | 56.739 | 54.210 | 19.859 | 36.63% | 61.70% |
+| 32 | 105.006 | 98.856 | 27.975 | 28.30% | 43.46% |
+
+Raw C ABI retains 94.14% to 96.34% of direct C++ throughput. The cache is
+stable through W4, then loses scaling at W8 and above. Cache instructions per
+transaction rise only 2.89%, from 3,260.851 at W1 to 3,354.938 at W32, while
+cycles rise 144.40%, from 1,341.778 to 3,279.307. This points to concurrency
+stalls, coherence traffic, or serialization rather than a growing instruction
+path. No accepted sample reached queue capacity, so foreground capacity waits
+do not explain the loss.
+
+All 75 accepted samples passed an independent audit with zero conflicts,
+exact commit/checksum/sequence/queue accounting, and a PMU running ratio of
+1.0. The W4 raw cell has one 9.863 Mtxn/s slow sample and four samples between
+13.962 and 14.085 Mtxn/s, giving it a 14.12% CV. A separate five-sample raw
+control produced a 13.934 Mtxn/s median and independently reproduced both the
+normal band and an occasional slow sample. The robust W4 medians agree within
+0.68%.
+
+This remains a foreground acknowledgement result. It does not wait for
+RocksDB apply or fsync, and teardown abandons the queued tail after invariant
+checks. Exact samples, hashes, ratios, validation results, and retained
+artifact paths are in the
+[thread-sweep report](benchmarks/mako-cache-thread-sweep-zoo002-20260902.json),
+SHA-256 `e6a1325a24bea3c98b82e4e4749b4128def2270fe163722452438f83be319b12`.
+
+## Previous native-record and bounded-batching validation
+
+The 2026-08-29 rewrite keeps STO/MassTrans/Masstree in C++, but moves commit-
+record construction to STO's canonical write set. Rust preallocates one exact-
+size buffer. After the complete write set is locked, a short per-database ticket
+turn orders `MakoTimestamp` allocation, final validation, and dense `CacheSeq`
+binding. Native code then retires that turn, serializes and checksums directly
+into the buffer while retaining the write locks, and installs the transaction.
+Rust attaches the witnessed bytes in constant time and acknowledges only across
+a dense Ready prefix.
+
+The background path validates and materializes records, then applies a
+contiguous prefix in one atomic RocksDB `WriteBatch`, bounded by 64 records and
+1 MiB of encoded record bytes by default. Transaction boundaries and order are
+preserved inside that physical batch. `wait_applied()` never processes beyond
+the acknowledgement snapshot it captured. A permanent structural record error
+latches the earliest failing sequence and fail-stops later work; allocation and
+backend failures remain retryable. Neither acknowledgement nor the applied
+watermark claims disk synchronization.
+
+The frozen production snapshot had source-tree digest
+`191d0ef64732ae67fb16d2d944c5f48ffa7afd9e5f5bc18a48346d13ee91fb80`
+at Git HEAD `c4fe90fb418618f751771fc1f854618ba001cde4`. The source-drift guard
+matched before and after every fresh build and after the benchmark. The final
+patch adds only validation artifacts, documentation, and test-only mutation
+cleanup after that run; no measured production source changed. The fresh
+hooks-off native fingerprint was
+`a7b05a47436b86b764c7b3f8078f986d4125e5bdf6c2e803a9cd54e11b95fb55`.
+
+Functional evidence for that rewrite includes the 66/66 hook-enabled native ABI suite,
+the 56/56 fresh hooks-off zoo-2 ABI suite, the complete required-native
+`mako-local` suite, all 96 `mako-cache` tests, 38/38 focused writeback tests,
+100/100 point and 100/100 predicate ordering runs, 13/13 Miri fake-ABI tests,
+and a [12/12 isolated mutation report](benchmarks/mako-cache-mutations-20260829-final.json)
+(SHA-256 `c6d791e0e476d6a3d1396486700fc7be533e9f7e45ed3613889af55cb4bb1d69`)
+with zero survivors or harness errors. Strict Clippy, package-scoped formatting,
+symbol, fingerprint, crash, history, recovery, and independent implementation-
+audit gates are also clean.
+
+### Focused before/after scaling run
+
+The retained [pre-rewrite report](benchmarks/mako-cache-scaling-zoo002-20260828-current-v1.json)
+(SHA-256 `0d3bbb0b40a30e993ea10de6dde396c5538a1def6e15c7a9a039fb63d5c27fcc`)
+and [native-record rewrite report](benchmarks/mako-cache-scaling-zoo002-20260829-frozen-thin-log.json)
+(SHA-256 `25237bdcf5b39bd17bc7c1664545c0cde5f6024463e31063a491d356df3e24c3`)
+record the same `zoo-002` host, Git HEAD, Rust toolchain, scaling profile, CPU
+set 0-31, transaction size, and seven-repetition protocol. Both reports mark
+their worktrees dirty, and the older run did not retain a whole-tree digest;
+therefore this is a controlled comparison of the two archived executions, not
+a claim that the exact old dirty source tree is reconstructible from the
+repository. Native manifests inspected during validation established matching
+CMake 4.3.4, Clang 22.1.8, Release, `-march=native`, `STO_RMW=ON`,
+`OPACITY=OFF`, and hooks-off settings. The JSON report-time load averages were
+`1.61 1.64 1.93` before the rewrite and `7.40 5.78 4.00` after it; the latter
+was sampled after the matrix and includes its decaying self-load. The rewrite
+report contains exactly 84 unique, validated samples: read and write at 1, 2,
+4, 8, 16, and 32 workers. All expected commits, recovery checksums, record/key
+counts, ACK-plus-drain arithmetic, and independently recomputed medians match.
+
+Throughput below is thousands of transactions per second; ratios are
+rewrite/pre-rewrite. Read applied throughput is included even though it is
+effectively identical to ACK for this workload.
+
+| Workload | Workers | Old ACK | Rewrite ACK | Ratio | Old applied | Rewrite applied | Ratio |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| read | 1 | 725.1 | 685.1 | 0.945x | 725.1 | 685.1 | 0.945x |
+| read | 2 | 1,180.4 | 1,159.5 | 0.982x | 1,180.3 | 1,159.4 | 0.982x |
+| read | 4 | 1,682.5 | 1,653.5 | 0.983x | 1,682.4 | 1,653.4 | 0.983x |
+| read | 8 | 1,411.0 | 1,445.0 | 1.024x | 1,410.9 | 1,445.0 | 1.024x |
+| read | 16 | 1,519.9 | 1,491.1 | 0.981x | 1,519.9 | 1,491.1 | 0.981x |
+| read | 32 | 1,769.9 | 1,712.7 | 0.968x | 1,769.9 | 1,712.7 | 0.968x |
+| write | 1 | 119.9 | 384.9 | 3.210x | 44.8 | 87.3 | 1.950x |
+| write | 2 | 106.6 | 507.0 | 4.758x | 46.7 | 104.6 | 2.241x |
+| write | 4 | 35.5 | 438.2 | 12.339x | 24.2 | 135.2 | 5.583x |
+| write | 8 | 20.1 | 386.6 | 19.236x | 15.8 | 132.0 | 8.367x |
+| write | 16 | 11.1 | 444.6 | 40.155x | 9.7 | 126.3 | 13.081x |
+| write | 32 | 7.2 | 57.3 | 7.951x | 6.6 | 56.9 | 8.634x |
+
+The rewrite is write-path-specific: read ACK changes range from -5.5% to
++2.4%. Write ACK improves 3.21x at one worker and 40.16x at 16 workers, while
+applied throughput improves 1.95x and 13.08x at those endpoints. W32 still
+drops sharply in absolute throughput from W16, despite remaining about 8x over
+the old implementation. Its ACK and applied rates converge and drain time is
+only 6-31 ms, pointing toward a high-concurrency foreground/native/dense-ACK
+bottleneck rather than a RocksDB backlog. W4-W16 ACK samples also have roughly
+9-14% coefficient of variation. Both limitations remain explicit profiling
+work, not hidden by the improvement.
+
+## Historical candidate and retained evidence
+
+For historical candidate `6574cf47c`, PASS means that the functional and
+contract gates are green and that the
+complete comparative measurement ran under a fully recorded, resumable
+protocol with its correctness and accounting invariants independently checked.
+No performance SLA was declared before the run, so PASS does not mean that
+Mako beat either baseline. The run exposed the serious concurrent-write
+scaling cost that drove the native-record rewrite; the rewrite's W32 collapse
+remains the next profiling target.
+
+- Implementation candidate:
+  `6574cf47c3233f208d5b2e68790e411c2ea3debe`
+  (`mako-cache: complete milestone 1 contract`). The benchmark recorded a
+  clean candidate worktree.
+- Machine-readable report:
+  [mako-cache-milestone1-zoo-002.json](benchmarks/mako-cache-milestone1-zoo-002.json),
+  1,516,365 bytes,
+  SHA-256 `b0298c614fad1bcb8cafd5df60a61ea500c8e95b616d5646b97baa5c843111e0`.
+- Native build fingerprint:
+  `fbe93635a0bf87e53233da237e7769305f07a1eed51808710aeced31bbb9bcfd`.
+- Benchmark executable: FNV-1a64 `0d207a0798d214ee`; SHA-256
+  `fc7ab869757fada9aecb1da626be3a37ddbf76a04e864dc3d5264caf1ed82257`.
+- Host: `zoo-002`, Linux `6.8.0-137-generic`, AMD EPYC 7702P (64 physical,
+  128 logical CPUs). The run was pinned to physical cores 0-15; the recorded
+  load average was `2.07 2.34 2.55`.
+- Toolchains: CMake 3.31.6, Homebrew Clang/libc++ 21.1.8, and Rust 1.97.1.
+  The native tree was Release, `STO_RMW=ON`, `OPACITY=OFF`, and
+  `MAKO_LOCAL_TEST_HOOKS=OFF`.
+
+The exact measurement invocation, from the repository root on `zoo-002`, was:
+
+```bash
+taskset -c 0-15 env \
+  MAKO_BUILD_DIR="$PWD/build_milestone1_zoo2_final" \
+  MAKO_LOCAL_REQUIRE_NATIVE=1 \
+  CARGO_TARGET_DIR="$PWD/build_milestone1_zoo2_final/cargo-target-benchmark" \
+  "$PWD/build_milestone1_zoo2_final/cargo-target-benchmark/release/mako-cache-bench" run \
+  --profile acceptance \
+  --data-root /tmp \
+  --output "$PWD/docs/benchmarks/mako-cache-milestone1-zoo-002.json" \
+  --checkpoint "$PWD/build_milestone1_zoo2_final/mako-m1-zoo2.acceptance.checkpoint"
+```
+
+The run used local `/tmp` database directories rather than the NFS-backed
+source tree. It completed all 1,260 sample/recovery pairs and exited zero. Its
+synced checkpoint contains the matching identity header and all 1,260 result
+records, so an interruption would have resumed only missing pairs.
+
+## Matrix and measurement contract
+
+The acceptance profile contains 180 configurations and seven repetitions of
+each configuration:
+
+- arms: transactional `mako-cache`, the existing `mrx` point cache, and raw
+  RocksDB through `mrx-rocks`;
+- workloads: read, write, and read/modify/write;
+- transaction sizes: 1, 4, 16, and 64;
+- workers: 1, 4, and 16;
+- low contention everywhere, plus high contention for the multiworker rows.
+
+Each sample and recovery observation runs in fresh child processes. Target
+commits per worker are `max(256, 8192 / transaction_size)` and warmup commits
+are `max(64, 2048 / transaction_size)`. The asynchronous arms share a
+`2^18`-mutation capacity budget: MRX counts mutation tickets, while Mako counts
+`ceil(2^18 / transaction_size)` whole-transaction records. Seed and warmup are
+drained before timing.
+
+`ack` ends when foreground calls return. `applied` adds the immediate
+post-interval writeback barrier; that barrier is not a per-transaction
+applied-latency percentile. RocksDB uses WAL with `sync=false`, and no WAL sync
+is requested. The harness issues no explicit memtable flush during timing;
+automatic RocksDB background flush/compaction was neither disabled nor
+instrumented and is part of this default-profile measurement. This qualifies
+the finalized JSON's shorthand rather than altering the hashed artifact.
+Recovery is warm-cache open and open-plus-validation after the harness's
+uniform explicit post-timing flush.
+
+Only size-one read/write rows have a common point-operation contract. Mako is
+the OCC reference for transactional rows. MRX multi-key/RMW rows are labeled
+`weaker_nonatomic_no_occ_baseline`; raw RocksDB is labeled
+`weaker_atomic_batch_no_occ_baseline` for writes and
+`weaker_nonsnapshot_no_occ_baseline` for RMW. Those weaker rows provide
+context, not equivalent-transaction speedups.
+
+## Independent invariant gate
+
+The finalized JSON passed two independent runs of a separate
+schema-and-arithmetic validator. It checked all 1,260 unique sample coordinates
+and all 180 unique seven-sample summaries, rejected duplicate JSON keys, and
+recomputed every published median. It also checked, per sample:
+
+- target, warmup, commit, keyspace, and queue-capacity formulas;
+- `ack + drain = applied`, positive and ordered latency/recovery percentiles,
+  and every derived rate and amplification value;
+- mutation bytes, RocksDB logical/allocated bytes, Mako commit-record counts,
+  backend key counts, and the absence of commit-log bytes in both baselines;
+- zero baseline conflicts and positive aggregate Mako conflicts in every
+  configured high-contention write/RMW group;
+- exact read/write checksums and exact serializable RMW checksums for Mako;
+  weaker high-contention RMW checksums were required only to remain within the
+  valid lossy-update bound.
+
+The implementation candidate also passed the fresh Release native profile:
+CTest `MakoLocal` 7/7, the complete required-native `mako-local` and
+`mako-cache` suites (including 57 cache unit tests and the crash matrices), the
+four integrated Milestone 1 overload/shutdown/exhaustion tests, 13/13 Miri
+fake-ABI tests, 7/7 doctests, and 13/13 benchmark tests. Focused strict Clippy
+was green. The broader pre-existing all-target Clippy command still reports an
+unrelated Rust 1.97 lint at `mako-local/tests/overhead.rs:386`.
+
+## Representative common point-contract results
+
+All values below are medians of seven repetitions. Throughput is millions of
+transactions per second, latency is retry-inclusive, recovery is warm-cache,
+and `log amp` is unreclaimed commit-record key/value bytes divided by all
+seeded, warmup, and measured user-mutation bytes.
+
+Mako's read-only log amplification comes from the seeded commit records; the
+timed reads themselves do not generate commit records.
+
+| Scenario | Arm | ACK Mtxn/s | Applied Mtxn/s | Abort % | p50 us | p99 us | Open ms | Open + validate ms | Log amp |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| read / low / W1 | Mako | 1.253 | 1.253 | 0 | 0.640 | 1.510 | 133.655 | 133.984 | 1.131 |
+| read / low / W1 | MRX | 2.008 | 2.008 | 0 | 0.290 | 0.790 | 147.802 | 149.438 | 0 |
+| read / low / W1 | Rocks | 0.328 | 0.328 | 0 | 2.800 | 4.780 | 147.959 | 149.599 | 0 |
+| read / low / W16 | Mako | 1.633 | 1.633 | 0 | 6.000 | 45.472 | 189.060 | 193.501 | 1.131 |
+| read / low / W16 | MRX | 7.633 | 7.633 | 0 | 0.330 | 0.810 | 157.711 | 184.893 | 0 |
+| read / low / W16 | Rocks | 3.168 | 3.168 | 0 | 2.070 | 5.750 | 131.632 | 158.090 | 0 |
+| write / low / W1 | Mako | 0.117 | 0.046 | 0 | 7.970 | 19.091 | 239.236 | 239.412 | 1.498 |
+| write / low / W1 | MRX | 0.892 | 0.737 | 0 | 0.830 | 1.610 | 163.578 | 165.279 | 0 |
+| write / low / W1 | Rocks | 0.119 | 0.119 | 0 | 6.800 | 19.751 | 135.421 | 137.059 | 0 |
+| write / low / W16 | Mako | 0.011 | 0.010 | 0 | 106.465 | 17,941.967 | 1,668.665 | 1,671.130 | 1.498 |
+| write / low / W16 | MRX | 5.162 | 3.680 | 0 | 0.940 | 2.070 | 165.351 | 192.232 | 0 |
+| write / low / W16 | Rocks | 0.211 | 0.211 | 0 | 80.053 | 145.606 | 148.500 | 174.745 | 0 |
+| write / high / W16 | Mako | 0.013 | 0.011 | 58.006 | 92.495 | 19,253.048 | 1,537.006 | 1,537.016 | 1.507 |
+| write / high / W16 | MRX | 1.617 | 1.617 | 0 | 1.650 | 118.705 | 140.587 | 140.610 | 0 |
+| write / high / W16 | Rocks | 0.202 | 0.202 | 0 | 77.884 | 128.776 | 127.908 | 127.978 | 0 |
+
+Because these rows share a point contract, ratios are meaningful here:
+
+| Scenario | Mako/MRX ACK | Mako/Rocks ACK | Mako/MRX applied | Mako/Rocks applied |
+| --- | ---: | ---: | ---: | ---: |
+| read / low / W1 | 0.6240x | 3.8165x | 0.6239x | 3.8162x |
+| read / low / W16 | 0.2140x | 0.5155x | 0.2140x | 0.5155x |
+| write / low / W1 | 0.1307x | 0.9805x | 0.0630x | 0.3909x |
+| write / low / W16 | 0.0021x | 0.0522x | 0.0026x | 0.0456x |
+| write / high / W16 | 0.0079x | 0.0634x | 0.0070x | 0.0563x |
+
+The important historical performance result is the collapse in Mako's concurrent point
+write throughput, even without conflicts. The W16 result is stable across
+repetitions: ACK maximum/minimum is 1.022x and p99 spans 17.42-19.39 ms, so it
+is not one noisy sample. That diagnosis applies only to the historical
+candidate. The rewrite replaces the linear pending-record lookup with dense
+queue-token indexing, constructs records directly in native STO, and batches
+contiguous records. Later global-queue scaling results are reported above;
+these historical W16 values must not be read as current performance.
+
+## Representative transactional context (semantically non-equivalent baselines)
+
+These rows must not be interpreted as speedups. `OCC` means
+`transactional_occ_reference`, `non-atomic` means
+`weaker_nonatomic_no_occ_baseline`, `atomic batch` means
+`weaker_atomic_batch_no_occ_baseline`, and `nonsnapshot` means
+`weaker_nonsnapshot_no_occ_baseline`.
+
+| Scenario | Arm | Semantics | ACK Mtxn/s | Applied Mtxn/s | Abort % | p99 us | Open + validate ms | Log amp | Median checksum / strong |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| write / low / T16 / W16 | Mako | OCC | 0.131 | 0.013 | 0 | 371.677 | 610.107 | 1.148 | 4,096 / 4,096 |
+| write / low / T16 / W16 | MRX | non-atomic | 0.452 | 0.211 | 0 | 32.061 | 185.997 | 0 | 4,096 / 4,096 |
+| write / low / T16 / W16 | Rocks | atomic batch | 0.029 | 0.029 | 0 | 780.256 | 163.085 | 0 | 4,096 / 4,096 |
+| RMW / low / T16 / W16 | Mako | OCC | 0.142 | 0.013 | 0 | 281.473 | 603.438 | 1.148 | 163,840 / 163,840 |
+| RMW / low / T16 / W16 | MRX | non-atomic | 0.379 | 0.209 | 0 | 37.432 | 184.795 | 0 | 163,840 / 163,840 |
+| RMW / low / T16 / W16 | Rocks | nonsnapshot | 0.028 | 0.028 | 0 | 821.288 | 170.936 | 0 | 163,840 / 163,840 |
+| RMW / high / T16 / W16 | Mako | OCC | 0.033 | 0.013 | 96.085 | 2,069.147 | 562.359 | 1.149 | 163,840 / 163,840 |
+| RMW / high / T16 / W16 | MRX | non-atomic | 0.243 | 0.243 | 0 | 487.013 | 156.389 | 0 | 18,336 / 163,840 |
+| RMW / high / T16 / W16 | Rocks | nonsnapshot | 0.027 | 0.027 | 0 | 1,183.845 | 146.401 | 0 | 10,311 / 163,840 |
+
+The high-contention RMW checksum is the semantic distinction in concrete
+form: Mako preserves all 163,840 increments through OCC retries, while both
+weaker baselines lose updates. Their throughput numbers are therefore context,
+not measurements of an equivalent transaction implementation.
+
+## Acceptance conclusion and deferred scope
+
+The pre-HLC per-worker lane revision passed its production, hook-enabled, Rust,
+mutation, and comparative gates for the single-machine asynchronous scope. The
+result remains useful evidence for the lane design but does not substitute for
+the current revision-1 run. Release candidate `e282a44b2` subsequently passed
+the functional, canonical hook, mutation, safety, and health/lifecycle gates;
+its `85495f8dd` ancestor passed the final incremental-performance gate recorded
+at the top of this document. The HLC introduction still has a failed
+performance measurement and an explicit scoped waiver; it has not been
+relabeled as a passing gate.
+
+Milestone 1 acceptance deliberately does not claim:
+
+- cross-host reproducibility beyond the documented host-local `zoo-002` runs
+  (including the historical 1,260-sample seven-repetition matrix);
+- recovery of an acknowledged but unapplied memory tail or an applied but
+  unsynced RocksDB tail;
+- durable ACK or durable applied state (`sync=false` remains intentional);
+- per-transaction applied latency from the phase-level drain measurement;
+- bounded resident values or reclaimed commit-record history (Phase 1G);
+- more than one recovered cache namespace in a process; or
+- distributed routing, sharding, 2PC, replication, or failure recovery.

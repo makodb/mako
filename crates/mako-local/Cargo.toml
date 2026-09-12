@@ -1,0 +1,14 @@
+[package]
+name = "mako-local"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.91"
+description = "Safe Rust transactions over Mako's C++ STO/MassTrans engine"
+license = "MIT"
+publish = false
+
+[dependencies]
+mako-local-sys = { path = "../mako-local-sys" }
+
+[dev-dependencies]
+mako-history = { path = "../mako-history" }

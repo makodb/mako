@@ -8,6 +8,12 @@
 /third-party/fragile/
 /.apas
 /target-docker
+.task-target/
+.task-tmp/
+crates/.task-tmp/
+crates/build_item4_hooks/
+crates/crates/
+crates/target-*/
 /target
 /.cargo-docker
 .lock-waf*
@@ -92,6 +98,7 @@ experiment_*.sh
 nfs_sync_*
 out-perf.masstree/*
 *.json
+!docs/dev/mako-cache-log-gc-performance.json
 /tmp
 /log
 /archive

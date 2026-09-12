@@ -1,0 +1,20 @@
+# Reviewed process-lifetime allocations in the revision-0 local boundary.
+#
+# STO creates one transaction arena for each attached worker and retains it for
+# that worker's lifetime. The boundary deliberately has no RCU-safe detach or
+# epoch teardown yet, so short-lived test threads leave these arenas reachable
+# only through retired TLS state at process exit.
+leak:Sto::transaction
+
+# Revision 0 also defines table/epoch state as process-lifetime. db_close ends
+# admissions and handle use but cannot destroy a MassTrans table until a tested
+# RCU quiescence protocol exists. Suppress only allocations whose stack crosses
+# the public table-open entry point; unrelated engine leaks remain fatal.
+leak:mako_local_table_open
+
+# The differential gate's direct-C++ control deliberately bypasses the C ABI,
+# so its process-lifetime MassTrans allocations do not cross the public
+# table-open frame above.  Match only that test runner's constructor; this is
+# the same table/epoch ownership root, while leaks from any other direct caller
+# remain findings.
+leak:DirectRunner::DirectRunner

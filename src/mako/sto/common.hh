@@ -1,5 +1,7 @@
 #pragma once
 
+#include <atomic>
+
 #include "masstree.hh"
 #include "kvthread.hh"
 #include "masstree_tcursor.hh"
@@ -14,6 +16,11 @@
 #include "stuffed_str.hh"
 
 typedef stuffed_str<uint64_t> versioned_str;
+static_assert(std::atomic_ref<uint64_t>::is_always_lock_free,
+              "MassTrans requires lock-free 64-bit version words");
+static_assert(alignof(versioned_str) >=
+                  std::atomic_ref<uint64_t>::required_alignment,
+              "versioned_str must align its leading version word for atomic_ref");
 
 struct versioned_str_struct : public versioned_str {
   typedef Masstree::Str value_type;
@@ -47,6 +54,15 @@ struct versioned_str_struct : public versioned_str {
   value_type read_value() {
     return Masstree::Str(this->data(), this->length());
   }
+
+  void copy_value_atomic(std::string& out) const {
+    this->copy_payload_atomic(out);
+  }
+
+  bool copy_value_atomic(std::string& out,
+                         version_type expected_version) const {
+    return this->copy_payload_atomic(out, expected_version);
+  }
   
   inline version_type& version() {
     return stuff();
@@ -56,3 +72,8 @@ struct versioned_str_struct : public versioned_str {
     ti.deallocate_rcu(this, this->capacity() + sizeof(versioned_str_struct), memtag_value);
   }
 };
+
+static_assert(sizeof(versioned_str_struct) == sizeof(versioned_str),
+              "versioned_str_struct must not add packed-allocation state");
+static_assert(alignof(versioned_str_struct) == alignof(versioned_str),
+              "versioned_str_struct must preserve packed-allocation alignment");
