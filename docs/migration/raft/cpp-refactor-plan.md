@@ -5,6 +5,11 @@ no memory of the conversation that produced it. Everything here was re-verified
 against the tree on that date; where an older document disagrees, this one is
 right and says why.
 
+> **This plan has been executed through Tranche 4.** What was done, what it
+> proved, and the four places this document turned out to be incomplete are
+> recorded in [`cpp-refactor-progress.md`](cpp-refactor-progress.md). Tranches
+> 5 and 6 remain. Read that file alongside this one.
+
 ## 0. Read this first
 
 Three documents overlap. Their standing:
@@ -14,6 +19,7 @@ Three documents overlap. Their standing:
 | `docs/migration/cpp-to-rust-pre-check-list.txt` | the aspect vocabulary (LIF/OWN/TYP/ERR/CON/LIB/TST). Stable, use it for naming. |
 | `docs/migration/raft/cpp-to-rust-precheck-raft.txt` | the blocker inventory B1–B7. Substance is sound; **every `server.cc` line above 2802 is stale by +18** (commit `3774ba93` inserted 18 lines at :2803). Below 2802 and all of `server.h` are exact. |
 | `docs/migration/raft/strategy-recommendation.txt` | superseded by this file for ordering. Its measurements are mostly right; its critical path is wrong. |
+| `docs/migration/raft/cpp-refactor-progress.md` | what actually happened when this plan was executed. Authoritative for the current state of tranches 0-4. |
 
 ## 1. Goals, in priority order
 

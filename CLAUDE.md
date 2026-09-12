@@ -157,7 +157,11 @@ is `RrrRequestHandle`.
 
 ### Key Classes and Components
 - `Coordinator`: Coordinates distributed transactions across shards (protocol-specific subclasses like `CoordinatorMultiPaxos`)
-- `TxLogServer`: Shared base for the Paxos and Raft replication servers
+- `TxLogServer`: The replication-engine INTERFACE implemented by the Paxos and
+  Raft servers (`src/deptran/scheduler.h`). It holds no state: it was six
+  shared data members until the Tranche 6 work in
+  `docs/migration/raft/cpp-refactor-progress.md` moved them down into the two
+  concrete servers, because implementation inheritance has no Rust spelling.
 - `Communicator`: Manages RPC communication between nodes
 - `Frame`: Protocol-specific transaction processing logic
 - `Masstree`: High-performance in-memory index structure (Mako)
