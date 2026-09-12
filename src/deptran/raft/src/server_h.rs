@@ -410,18 +410,6 @@ pub const fn raft_server_append_reject_floor() -> u64 {
     1
 }
 
-// @safe - pure packed callback-gate admission decision.
-pub const fn raft_server_callback_gate_is_open(state: u64,
-                                                drain_bit: u64) -> bool {
-    (state & drain_bit) == 0
-}
-
-// @safe - pure packed callback-gate borrower count extraction.
-pub const fn raft_server_callback_gate_count(state: u64,
-                                              count_mask: u64) -> u64 {
-    state & count_mask
-}
-
 pub const fn raft_server_start_was_rejected(result: RaftStartResult) -> bool {
     (result as i32) == (RaftStartResult::REJECTED as i32)
 }

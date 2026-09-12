@@ -50,6 +50,7 @@ EXPECTED_BLOCKS=(
   "src/deptran/raft/raft_worker.cc|raft_worker.scalar_decisions"
   "src/deptran/raft/rocksdb_log_storage.hpp|raft_rocksdb_log.scalar_decisions"
   "src/deptran/raft/server.cc|raft_server.preferred_leader_predicate"
+  "src/deptran/raft/server.cc|raft_server.replication_wake_gate"
   "src/deptran/raft/server.h|raft_server.commit_status"
   "src/deptran/raft/server.h|raft_server.scalar_decisions"
   "src/deptran/raft/service.cc|raft_service.scalar_decisions"

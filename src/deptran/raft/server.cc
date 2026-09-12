@@ -5,6 +5,9 @@
 #include <math.h>
 #include <rusty/slice.hpp>
 #include <rusty/mutex.hpp>
+// rusty::clone, which the generated ReplicationWakeGate methods call to copy an
+// Option<Arc<...>> out from under its mutex guard.
+#include <rusty/move.hpp>
 #include <rusty/sync/atomic.hpp>
 
 #include "server.h"
@@ -12,6 +15,7 @@
 #include "frame.h"
 #include "../legacy_raft_log_payload.h"
 #include "../tpc_command.h"
+#include "rust_facade_types.h"
 #include "memory_snapshot_manager.hpp"
 #include "quorum.hpp"
 
@@ -83,340 +87,421 @@ import std;
 
 namespace janus {
 
-// @unsafe - Small reactor bridge.  Cross-thread callers touch only rusty
-// atomics and mutex-protected handles; the IntEvent operations themselves are
-// confined to the bound PollThread owner.
-class ReplicationWakeGate final {
- public:
-  // @safe - Initializes Rust-style synchronization primitives.
-  ReplicationWakeGate()
-      : owner_(rusty::None),
-        waiter_(rusty::None),
-        election_waiter_(rusty::None),
-        pending_(false),
-        waiter_armed_(false),
-        election_waiter_armed_(false),
-        wake_job_queued_(false),
-        shutdown_job_queued_(false),
-        accepting_(true) {}
+// ReplicationWakeGate: the first src/deptran/raft conversion that is not a
+// scalar predicate, and the first that proves `impl` at all. See
+// docs/migration/raft/cpp-refactor-plan.md tranche 3.
+//
+// The two wait entry points are SPLIT rather than moved wholesale, for one
+// reason: creating an `IntEvent` calls the reactor factory
+// `::rrr::create_sp_int_event`, which the DSL cannot name. The rustc facade
+// exposes it only as `rusty::rrr::reactor::create_sp_int_event`, and inline
+// mode has no `--type-map` to rewrite that path, so spelling it would require
+// a nested `rusty::rrr::reactor` namespace in C++ merely to hold a factory.
+// Instead the two wait entry points take the event as a PARAMETER and
+// RaftServer creates it -- `WaitForReplicationOrHeartbeat` and
+// `WaitForElectionTimeoutOrShutdown` in this file, which are the C++ kernels
+// CLAUDE.md describes: the DSL owns the shape, C++ owns the surgery.
+//
+// The fast path is preserved exactly. `begin_wait_for_work` returns
+// Some(answer) when it could decide without a waiter and None when the caller
+// must arm one, so no event is allocated on the path that today allocates
+// none. That split is the only behavioural seam in the conversion; every
+// other body below is a statement-for-statement transcription.
+//
+// TWO THINGS THE DSL GIVES UP HERE, recorded so neither reads as a decision:
+//   * `final` and `private` have no DSL spelling, so the two Disarm* helpers
+//     are public and the type is open. Both are still called only from this
+//     file.
+//   * a C++ constructor becomes `fn new` -> `ReplicationWakeGate::new_()`,
+//     because the DSL has no default member initializers. The owning Arc is
+//     therefore built with `Arc::make_with`, the entry point rusty-cpp
+//     documents for a non-movable payload built by a factory (arc.hpp:170-184)
+//     -- ReplicationWakeGate holds AtomicBools and so has no move constructor.
+#if RUSTYCPP_RUST
+pub struct ReplicationWakeGate {
+    owner_: rusty::Mutex<rusty::Option<rusty::sync::Arc<rusty::ReactorPollThread>>>,
+    waiter_: rusty::Mutex<rusty::Option<rusty::sync::Arc<rusty::ReactorIntEvent>>>,
+    election_waiter_: rusty::Mutex<rusty::Option<rusty::sync::Arc<rusty::ReactorIntEvent>>>,
+    pending_: rusty::sync::atomic::AtomicBool,
+    waiter_armed_: rusty::sync::atomic::AtomicBool,
+    election_waiter_armed_: rusty::sync::atomic::AtomicBool,
+    wake_job_queued_: rusty::sync::atomic::AtomicBool,
+    shutdown_job_queued_: rusty::sync::atomic::AtomicBool,
+    accepting_: rusty::sync::atomic::AtomicBool,
+}
 
-  // @unsafe - Mutex unwrap is the audited RustyCpp lock boundary.
-  void BindOwner(rusty::Arc<rrr::PollThread> owner) const {
-    auto guard = owner_.lock().unwrap();
-    *guard = rusty::Some(std::move(owner));
-    accepting_.store(true, rusty::sync::atomic::Ordering::Release);
-  }
+// A DECISION, not a deferral, so no TODO: clippy asks for `impl Default`
+// alongside `fn new`, but a trait impl here would emit a second C++
+// construction path into the generated struct that no C++ caller uses, and
+// the owning `Arc::make_with` call in RaftServer's constructor names `new_()`
+// explicitly. The Rust-only ergonomic is not worth the extra emitted surface.
+#[allow(clippy::new_without_default)]
+impl ReplicationWakeGate {
+    pub fn new() -> ReplicationWakeGate {
+        ReplicationWakeGate {
+            owner_: rusty::Mutex::new(rusty::None),
+            waiter_: rusty::Mutex::new(rusty::None),
+            election_waiter_: rusty::Mutex::new(rusty::None),
+            pending_: rusty::sync::atomic::AtomicBool::new(false),
+            waiter_armed_: rusty::sync::atomic::AtomicBool::new(false),
+            election_waiter_armed_: rusty::sync::atomic::AtomicBool::new(false),
+            wake_job_queued_: rusty::sync::atomic::AtomicBool::new(false),
+            shutdown_job_queued_: rusty::sync::atomic::AtomicBool::new(false),
+            accepting_: rusty::sync::atomic::AtomicBool::new(true),
+        }
+    }
 
-  // @safe - Publishes level-triggered work from any thread.
-  bool Publish() const {
-    pending_.store(true, rusty::sync::atomic::Ordering::Release);
-    return accepting_.load(rusty::sync::atomic::Ordering::Acquire);
-  }
+    pub fn bind_owner(&self, owner: rusty::sync::Arc<rusty::ReactorPollThread>) {
+        let mut guard = self.owner_.lock().unwrap();
+        *guard = rusty::Some(owner);
+        self.accepting_.store(true, rusty::sync::atomic::Ordering::Release);
+    }
 
-  // @safe - Begins shutdown while retaining a pending level for an armed wait.
-  void Close() const {
-    accepting_.store(false, rusty::sync::atomic::Ordering::Release);
-    pending_.store(true, rusty::sync::atomic::Ordering::Release);
-  }
+    pub fn publish(&self) -> bool {
+        self.pending_.store(true, rusty::sync::atomic::Ordering::Release);
+        self.accepting_.load(rusty::sync::atomic::Ordering::Acquire)
+    }
 
-  // @unsafe - Mutex unwrap is the audited RustyCpp lock boundary.
-  void ClearOwner() const {
-    auto guard = owner_.lock().unwrap();
+    pub fn close(&self) {
+        self.accepting_.store(false, rusty::sync::atomic::Ordering::Release);
+        self.pending_.store(true, rusty::sync::atomic::Ordering::Release);
+    }
+
+    pub fn clear_owner(&self) {
+        let mut guard = self.owner_.lock().unwrap();
+        *guard = rusty::None;
+    }
+
+    pub fn accepting(&self) -> bool {
+        self.accepting_.load(rusty::sync::atomic::Ordering::Acquire)
+    }
+
+    pub fn reserve_wake_owner(
+        &self,
+    ) -> rusty::Option<rusty::sync::Arc<rusty::ReactorPollThread>> {
+        if !self.waiter_armed_.load(rusty::sync::atomic::Ordering::Acquire) {
+            return rusty::None;
+        }
+        let guard = self.owner_.lock().unwrap();
+        if self.wake_job_queued_.swap(true, rusty::sync::atomic::Ordering::AcqRel) {
+            return rusty::None;
+        }
+        if (*guard).is_none() {
+            self.wake_job_queued_.store(false, rusty::sync::atomic::Ordering::Release);
+            return rusty::None;
+        }
+        (*guard).clone()
+    }
+
+    pub fn reserve_shutdown_wake_owner(
+        &self,
+    ) -> rusty::Option<rusty::sync::Arc<rusty::ReactorPollThread>> {
+        if !self.waiter_armed_.load(rusty::sync::atomic::Ordering::Acquire)
+            && !self
+                .election_waiter_armed_
+                .load(rusty::sync::atomic::Ordering::Acquire)
+        {
+            return rusty::None;
+        }
+        let guard = self.owner_.lock().unwrap();
+        if self
+            .shutdown_job_queued_
+            .swap(true, rusty::sync::atomic::Ordering::AcqRel)
+        {
+            return rusty::None;
+        }
+        if (*guard).is_none() {
+            self.shutdown_job_queued_
+                .store(false, rusty::sync::atomic::Ordering::Release);
+            return rusty::None;
+        }
+        (*guard).clone()
+    }
+
+    // TODO(raft-dsl): drop this allow once the emitter lowers an `if let`
+    // binding of an Option<Arc<T>> THROUGH the Arc. Clippy's suggested
+    // `if let rusty::Some(event) = &waiter { event.set(1) }` is the better
+    // Rust, and it transpiles, but the binding is emitted as `event.set(1)`
+    // on a `rusty::Arc<rrr::IntEvent>` -- a dot, not an arrow -- which does
+    // not compile. `as_ref().unwrap()` is emitted as `->set(1)`, which is
+    // what the hand-written C++ this replaces already did, but ONLY when the
+    // local carries an explicit type; an inferred `let` emits `const auto`
+    // and the dot comes back. Hence the annotations below, which are
+    // load-bearing rather than documentation. Verify by switching the two
+    // bodies back to `if let` and rebuilding src/deptran/raft.
+    #[allow(clippy::unnecessary_unwrap)]
+    pub fn wake_on_owner(&self) {
+        if !self.waiter_armed_.load(rusty::sync::atomic::Ordering::Acquire) {
+            self.wake_job_queued_.store(false, rusty::sync::atomic::Ordering::Release);
+            return;
+        }
+        // The guard is a temporary of this statement, so waiter_ is unlocked
+        // again before the set() below: set() may make the heartbeat fiber
+        // runnable, and that fiber takes waiter_ in DisarmWaiter.
+        let waiter: rusty::Option<rusty::sync::Arc<rusty::ReactorIntEvent>> =
+            (*self.waiter_.lock().unwrap()).clone();
+        if waiter.is_some() {
+            waiter.as_ref().unwrap().set(1);
+        }
+    }
+
+    // See the TODO on wake_on_owner for why this is not `if let`.
+    #[allow(clippy::unnecessary_unwrap)]
+    pub fn wake_shutdown_on_owner(&self) {
+        // Both guards are statement temporaries; neither lock is held across
+        // the set() calls below, for the reason given in wake_on_owner.
+        let heartbeat_waiter: rusty::Option<rusty::sync::Arc<rusty::ReactorIntEvent>> =
+            (*self.waiter_.lock().unwrap()).clone();
+        let election_waiter: rusty::Option<rusty::sync::Arc<rusty::ReactorIntEvent>> =
+            (*self.election_waiter_.lock().unwrap()).clone();
+        if heartbeat_waiter.is_some() {
+            heartbeat_waiter.as_ref().unwrap().set(1);
+        }
+        if election_waiter.is_some() {
+            election_waiter.as_ref().unwrap().set(1);
+        }
+    }
+
+    pub fn begin_wait_for_work(&self) -> rusty::Option<bool> {
+        if !self.accepting_.load(rusty::sync::atomic::Ordering::Acquire) {
+            return rusty::Some(false);
+        }
+        if self.pending_.swap(false, rusty::sync::atomic::Ordering::AcqRel) {
+            return rusty::Some(self.accepting_.load(rusty::sync::atomic::Ordering::Acquire));
+        }
+        rusty::None
+    }
+
+    pub fn finish_wait_for_work(
+        &self,
+        waiter: rusty::sync::Arc<rusty::ReactorIntEvent>,
+        timeout_us: u64,
+    ) -> bool {
+        waiter.set(0);
+        {
+            let mut guard = self.waiter_.lock().unwrap();
+            *guard = rusty::Some(waiter.clone());
+        }
+        self.waiter_armed_.store(true, rusty::sync::atomic::Ordering::Release);
+        if self.pending_.swap(false, rusty::sync::atomic::Ordering::AcqRel) {
+            self.disarm_waiter();
+            return self.accepting_.load(rusty::sync::atomic::Ordering::Acquire);
+        }
+        waiter.wait_timeout(timeout_us);
+        self.pending_.swap(false, rusty::sync::atomic::Ordering::AcqRel);
+        self.disarm_waiter();
+        self.accepting_.load(rusty::sync::atomic::Ordering::Acquire)
+    }
+
+    pub fn wait_for_election_timeout(
+        &self,
+        waiter: rusty::sync::Arc<rusty::ReactorIntEvent>,
+        timeout_us: u64,
+    ) -> bool {
+        waiter.set(0);
+        {
+            let mut guard = self.election_waiter_.lock().unwrap();
+            *guard = rusty::Some(waiter.clone());
+        }
+        self.election_waiter_armed_
+            .store(true, rusty::sync::atomic::Ordering::Release);
+        if !self.accepting_.load(rusty::sync::atomic::Ordering::Acquire) {
+            self.disarm_election_waiter();
+            return false;
+        }
+        waiter.wait_timeout(timeout_us);
+        self.disarm_election_waiter();
+        self.accepting_.load(rusty::sync::atomic::Ordering::Acquire)
+    }
+
+    pub fn disarm_waiter(&self) {
+        self.waiter_armed_.store(false, rusty::sync::atomic::Ordering::Release);
+        {
+            let mut guard = self.waiter_.lock().unwrap();
+            *guard = rusty::None;
+        }
+        self.wake_job_queued_.store(false, rusty::sync::atomic::Ordering::Release);
+    }
+
+    pub fn disarm_election_waiter(&self) {
+        self.election_waiter_armed_
+            .store(false, rusty::sync::atomic::Ordering::Release);
+        let mut guard = self.election_waiter_.lock().unwrap();
+        *guard = rusty::None;
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_server.replication_wake_gate version=1 rust_sha256=0cfb2f750ce062bf97302a95b6754f707202bebb2a61d5b5189dd77cc8b1e959*/
+struct ReplicationWakeGate;
+
+struct ReplicationWakeGate {
+    rusty::Mutex<rusty::Option<rusty::Arc<rusty::ReactorPollThread>>> owner_;
+    rusty::Mutex<rusty::Option<rusty::Arc<rusty::ReactorIntEvent>>> waiter_;
+    rusty::Mutex<rusty::Option<rusty::Arc<rusty::ReactorIntEvent>>> election_waiter_;
+    rusty::sync::atomic::AtomicBool pending_;
+    rusty::sync::atomic::AtomicBool waiter_armed_;
+    rusty::sync::atomic::AtomicBool election_waiter_armed_;
+    rusty::sync::atomic::AtomicBool wake_job_queued_;
+    rusty::sync::atomic::AtomicBool shutdown_job_queued_;
+    rusty::sync::atomic::AtomicBool accepting_;
+
+    static ReplicationWakeGate new_();
+    void bind_owner(rusty::Arc<rusty::ReactorPollThread> owner) const;
+    bool publish() const;
+    void close() const;
+    void clear_owner() const;
+    bool accepting() const;
+    rusty::Option<rusty::Arc<rusty::ReactorPollThread>> reserve_wake_owner() const;
+    rusty::Option<rusty::Arc<rusty::ReactorPollThread>> reserve_shutdown_wake_owner() const;
+    void wake_on_owner() const;
+    void wake_shutdown_on_owner() const;
+    rusty::Option<bool> begin_wait_for_work() const;
+    bool finish_wait_for_work(rusty::Arc<rusty::ReactorIntEvent> waiter, uint64_t timeout_us) const;
+    bool wait_for_election_timeout(rusty::Arc<rusty::ReactorIntEvent> waiter, uint64_t timeout_us) const;
+    void disarm_waiter() const;
+    void disarm_election_waiter() const;
+};
+
+
+inline ReplicationWakeGate ReplicationWakeGate::new_() {
+    return ReplicationWakeGate{.owner_ = rusty::Mutex<rusty::Option<rusty::Arc<rusty::ReactorPollThread>>>::new_(rusty::None), .waiter_ = rusty::Mutex<rusty::Option<rusty::Arc<rusty::ReactorIntEvent>>>::new_(rusty::None), .election_waiter_ = rusty::Mutex<rusty::Option<rusty::Arc<rusty::ReactorIntEvent>>>::new_(rusty::None), .pending_ = rusty::sync::atomic::AtomicBool::new_(false), .waiter_armed_ = rusty::sync::atomic::AtomicBool::new_(false), .election_waiter_armed_ = rusty::sync::atomic::AtomicBool::new_(false), .wake_job_queued_ = rusty::sync::atomic::AtomicBool::new_(false), .shutdown_job_queued_ = rusty::sync::atomic::AtomicBool::new_(false), .accepting_ = rusty::sync::atomic::AtomicBool::new_(true)};
+}
+
+inline void ReplicationWakeGate::bind_owner(rusty::Arc<rusty::ReactorPollThread> owner) const {
+    auto guard = this->owner_.lock().unwrap();
+    *guard = rusty::Option<rusty::Arc<rusty::ReactorPollThread>>(std::move(owner));
+    this->accepting_.store(true, rusty::sync::atomic::Ordering::Release);
+}
+
+inline bool ReplicationWakeGate::publish() const {
+    this->pending_.store(true, rusty::sync::atomic::Ordering::Release);
+    return this->accepting_.load(rusty::sync::atomic::Ordering::Acquire);
+}
+
+inline void ReplicationWakeGate::close() const {
+    this->accepting_.store(false, rusty::sync::atomic::Ordering::Release);
+    this->pending_.store(true, rusty::sync::atomic::Ordering::Release);
+}
+
+inline void ReplicationWakeGate::clear_owner() const {
+    auto guard = this->owner_.lock().unwrap();
     *guard = rusty::None;
-  }
+}
 
-  // @unsafe - Atomically reserves one owner job, then clones the owner handle
-  // under its RustyCpp mutex.  No RaftServer lock is acquired here.
-  rusty::Option<rusty::Arc<rrr::PollThread>> ReserveWakeOwner() const {
-    if (!waiter_armed_.load(rusty::sync::atomic::Ordering::Acquire)) {
-      return rusty::None;
-    }
+inline bool ReplicationWakeGate::accepting() const {
+    return this->accepting_.load(rusty::sync::atomic::Ordering::Acquire);
+}
 
-    auto guard = owner_.lock().unwrap();
-    // Reserve while holding owner_: Close may clear the stored owner only
-    // after QueueReplicationWake returns.  Thus a concurrent publisher either
-    // leaves a queued-job reservation backed by an owner clone, or Close gets
-    // to enqueue the shutdown wake itself.
-    if (wake_job_queued_.swap(
-            true, rusty::sync::atomic::Ordering::AcqRel)) {
-      return rusty::None;
+inline rusty::Option<rusty::Arc<rusty::ReactorPollThread>> ReplicationWakeGate::reserve_wake_owner() const {
+    if (rusty::detail::rust_not(this->waiter_armed_.load(rusty::sync::atomic::Ordering::Acquire))) {
+        return rusty::None;
     }
-    if (guard->is_none()) {
-      wake_job_queued_.store(
-          false, rusty::sync::atomic::Ordering::Release);
-      return rusty::None;
+    auto guard = this->owner_.lock().unwrap();
+    if (this->wake_job_queued_.swap(true, rusty::sync::atomic::Ordering::AcqRel)) {
+        return rusty::None;
     }
-    return guard->clone();
-  }
+    if (((*guard)).is_none()) {
+        this->wake_job_queued_.store(false, rusty::sync::atomic::Ordering::Release);
+        return rusty::None;
+    }
+    return rusty::clone(((*guard)));
+}
 
-  // @unsafe - Reserves the one shutdown job while holding owner_, closing the
-  // race between a concurrent publisher's owner clone and ClearOwner().
-  rusty::Option<rusty::Arc<rrr::PollThread>>
-  ReserveShutdownWakeOwner() const {
-    if (!waiter_armed_.load(rusty::sync::atomic::Ordering::Acquire) &&
-        !election_waiter_armed_.load(
-            rusty::sync::atomic::Ordering::Acquire)) {
-      return rusty::None;
+inline rusty::Option<rusty::Arc<rusty::ReactorPollThread>> ReplicationWakeGate::reserve_shutdown_wake_owner() const {
+    if (rusty::detail::rust_not(this->waiter_armed_.load(rusty::sync::atomic::Ordering::Acquire)) && rusty::detail::rust_not(this->election_waiter_armed_.load(rusty::sync::atomic::Ordering::Acquire))) {
+        return rusty::None;
     }
+    auto guard = this->owner_.lock().unwrap();
+    if (this->shutdown_job_queued_.swap(true, rusty::sync::atomic::Ordering::AcqRel)) {
+        return rusty::None;
+    }
+    if (((*guard)).is_none()) {
+        this->shutdown_job_queued_.store(false, rusty::sync::atomic::Ordering::Release);
+        return rusty::None;
+    }
+    return rusty::clone(((*guard)));
+}
 
-    auto guard = owner_.lock().unwrap();
-    if (shutdown_job_queued_.swap(
-            true, rusty::sync::atomic::Ordering::AcqRel)) {
-      return rusty::None;
+inline void ReplicationWakeGate::wake_on_owner() const {
+    if (rusty::detail::rust_not(this->waiter_armed_.load(rusty::sync::atomic::Ordering::Acquire))) {
+        this->wake_job_queued_.store(false, rusty::sync::atomic::Ordering::Release);
+        return;
     }
-    if (guard->is_none()) {
-      shutdown_job_queued_.store(
-          false, rusty::sync::atomic::Ordering::Release);
-      return rusty::None;
-    }
-    return guard->clone();
-  }
-
-  // @unsafe - Runs only on the bound PollThread.  Clone the event before set:
-  // set may make the heartbeat fiber runnable, and that fiber clears waiter_.
-  void WakeOnOwner() const {
-    if (!waiter_armed_.load(rusty::sync::atomic::Ordering::Acquire)) {
-      wake_job_queued_.store(
-          false, rusty::sync::atomic::Ordering::Release);
-      return;
-    }
-
-    rusty::Option<rusty::Arc<IntEvent>> waiter = rusty::None;
-    {
-      auto guard = waiter_.lock().unwrap();
-      waiter = guard->clone();
-    }
+    const rusty::Option<rusty::Arc<rusty::ReactorIntEvent>> waiter = rusty::clone(((*this->waiter_.lock().unwrap())));
     if (waiter.is_some()) {
-      waiter.as_ref().unwrap()->set(1);
+        waiter.as_ref().unwrap()->set(1);
     }
-  }
+}
 
-  // @unsafe - Runs only on the bound PollThread.  Shutdown has a separate job
-  // reservation so a normal replication wake cannot mask the election wake.
-  void WakeShutdownOnOwner() const {
-    rusty::Option<rusty::Arc<IntEvent>> heartbeat_waiter = rusty::None;
-    rusty::Option<rusty::Arc<IntEvent>> election_waiter = rusty::None;
-    {
-      auto guard = waiter_.lock().unwrap();
-      heartbeat_waiter = guard->clone();
-    }
-    {
-      auto guard = election_waiter_.lock().unwrap();
-      election_waiter = guard->clone();
-    }
+inline void ReplicationWakeGate::wake_shutdown_on_owner() const {
+    const rusty::Option<rusty::Arc<rusty::ReactorIntEvent>> heartbeat_waiter = rusty::clone(((*this->waiter_.lock().unwrap())));
+    const rusty::Option<rusty::Arc<rusty::ReactorIntEvent>> election_waiter = rusty::clone(((*this->election_waiter_.lock().unwrap())));
     if (heartbeat_waiter.is_some()) {
-      heartbeat_waiter.as_ref().unwrap()->set(1);
+        heartbeat_waiter.as_ref().unwrap()->set(1);
     }
     if (election_waiter.is_some()) {
-      election_waiter.as_ref().unwrap()->set(1);
+        election_waiter.as_ref().unwrap()->set(1);
     }
-  }
+}
 
-  // @unsafe - Must run on the bound PollThread.  The two pending exchanges
-  // bracket waiter publication, so a publisher can never fall between the
-  // fast-path check and arming the IntEvent.
-  bool WaitForWork(uint64_t timeout_us) const {
-    if (!accepting_.load(rusty::sync::atomic::Ordering::Acquire)) {
-      return false;
+inline rusty::Option<bool> ReplicationWakeGate::begin_wait_for_work() const {
+    if (rusty::detail::rust_not(this->accepting_.load(rusty::sync::atomic::Ordering::Acquire))) {
+        return rusty::Option<bool>(false);
     }
-    if (pending_.swap(false, rusty::sync::atomic::Ordering::AcqRel)) {
-      return accepting_.load(rusty::sync::atomic::Ordering::Acquire);
+    if (this->pending_.swap(false, rusty::sync::atomic::Ordering::AcqRel)) {
+        return rusty::Option<bool>(this->accepting_.load(rusty::sync::atomic::Ordering::Acquire));
     }
+    return rusty::None;
+}
 
-    auto waiter = create_sp_int_event(1);
+inline bool ReplicationWakeGate::finish_wait_for_work(rusty::Arc<rusty::ReactorIntEvent> waiter, uint64_t timeout_us) const {
     waiter->set(0);
     {
-      auto guard = waiter_.lock().unwrap();
-      *guard = rusty::Some(waiter.clone());
+        auto guard = this->waiter_.lock().unwrap();
+        *guard = rusty::Option<rusty::Arc<rusty::ReactorIntEvent>>(rusty::clone(waiter));
     }
-    waiter_armed_.store(true, rusty::sync::atomic::Ordering::Release);
-
-    if (pending_.swap(false, rusty::sync::atomic::Ordering::AcqRel)) {
-      DisarmWaiter();
-      return accepting_.load(rusty::sync::atomic::Ordering::Acquire);
+    this->waiter_armed_.store(true, rusty::sync::atomic::Ordering::Release);
+    if (this->pending_.swap(false, rusty::sync::atomic::Ordering::AcqRel)) {
+        this->disarm_waiter();
+        return this->accepting_.load(rusty::sync::atomic::Ordering::Acquire);
     }
+    waiter->wait_timeout(std::move(timeout_us));
+    this->pending_.swap(false, rusty::sync::atomic::Ordering::AcqRel);
+    this->disarm_waiter();
+    return this->accepting_.load(rusty::sync::atomic::Ordering::Acquire);
+}
 
-    waiter->wait_timeout(timeout_us);
-    // Consume the work represented by this completed wait before disarming.
-    // A publisher that races after this exchange either sees the armed waiter
-    // (and queues/wakes it) or sees it disarmed; in both cases its pending bit
-    // remains latched for the next round. Disarming first would leave a window
-    // where a publisher sees waiter_armed_ == false and this exchange erases
-    // its otherwise-unqueued notification.
-    pending_.swap(false, rusty::sync::atomic::Ordering::AcqRel);
-    DisarmWaiter();
-    return accepting_.load(rusty::sync::atomic::Ordering::Acquire);
-  }
-
-  // @unsafe - Owner-thread-only interruptible election delay.  Close is
-  // rechecked after publishing the waiter to prevent a lost shutdown wake.
-  bool WaitForElectionTimeout(uint64_t timeout_us) const {
-    if (!accepting_.load(rusty::sync::atomic::Ordering::Acquire)) {
-      return false;
-    }
-
-    auto waiter = create_sp_int_event(1);
+inline bool ReplicationWakeGate::wait_for_election_timeout(rusty::Arc<rusty::ReactorIntEvent> waiter, uint64_t timeout_us) const {
     waiter->set(0);
     {
-      auto guard = election_waiter_.lock().unwrap();
-      *guard = rusty::Some(waiter.clone());
+        auto guard = this->election_waiter_.lock().unwrap();
+        *guard = rusty::Option<rusty::Arc<rusty::ReactorIntEvent>>(rusty::clone(waiter));
     }
-    election_waiter_armed_.store(
-        true, rusty::sync::atomic::Ordering::Release);
-
-    if (!accepting_.load(rusty::sync::atomic::Ordering::Acquire)) {
-      DisarmElectionWaiter();
-      return false;
+    this->election_waiter_armed_.store(true, rusty::sync::atomic::Ordering::Release);
+    if (rusty::detail::rust_not(this->accepting_.load(rusty::sync::atomic::Ordering::Acquire))) {
+        this->disarm_election_waiter();
+        return false;
     }
+    waiter->wait_timeout(std::move(timeout_us));
+    this->disarm_election_waiter();
+    return this->accepting_.load(rusty::sync::atomic::Ordering::Acquire);
+}
 
-    waiter->wait_timeout(timeout_us);
-    DisarmElectionWaiter();
-    return accepting_.load(rusty::sync::atomic::Ordering::Acquire);
-  }
-
- private:
-  // @unsafe - Owner-thread-only waiter teardown under its RustyCpp mutex.
-  void DisarmWaiter() const {
-    waiter_armed_.store(false, rusty::sync::atomic::Ordering::Release);
+inline void ReplicationWakeGate::disarm_waiter() const {
+    this->waiter_armed_.store(false, rusty::sync::atomic::Ordering::Release);
     {
-      auto guard = waiter_.lock().unwrap();
-      *guard = rusty::None;
+        auto guard = this->waiter_.lock().unwrap();
+        *guard = rusty::None;
     }
-    // Keep the reservation set through IntEvent::set and until the owner
-    // disarms.  A saturated submit burst therefore queues at most one wake job
-    // for this wait rather than one job per entry.
-    wake_job_queued_.store(
-        false, rusty::sync::atomic::Ordering::Release);
-  }
+    this->wake_job_queued_.store(false, rusty::sync::atomic::Ordering::Release);
+}
 
-  // @unsafe - Owner-thread-only election waiter teardown.
-  void DisarmElectionWaiter() const {
-    election_waiter_armed_.store(
-        false, rusty::sync::atomic::Ordering::Release);
-    auto guard = election_waiter_.lock().unwrap();
+inline void ReplicationWakeGate::disarm_election_waiter() const {
+    this->election_waiter_armed_.store(false, rusty::sync::atomic::Ordering::Release);
+    auto guard = this->election_waiter_.lock().unwrap();
     *guard = rusty::None;
-  }
-
-  rusty::Mutex<rusty::Option<rusty::Arc<rrr::PollThread>>> owner_;
-  rusty::Mutex<rusty::Option<rusty::Arc<IntEvent>>> waiter_;
-  rusty::Mutex<rusty::Option<rusty::Arc<IntEvent>>> election_waiter_;
-  rusty::sync::atomic::AtomicBool pending_;
-  rusty::sync::atomic::AtomicBool waiter_armed_;
-  rusty::sync::atomic::AtomicBool election_waiter_armed_;
-  rusty::sync::atomic::AtomicBool wake_job_queued_;
-  rusty::sync::atomic::AtomicBool shutdown_job_queued_;
-  rusty::sync::atomic::AtomicBool accepting_;
-};
-
-namespace {
-
-constexpr uint64_t kInstallSnapshotCallbackDrainBit = uint64_t{1} << 63;
-constexpr uint64_t kInstallSnapshotCallbackCountMask =
-    ~kInstallSnapshotCallbackDrainBit;
-
-static_assert(raft_server_callback_gate_is_open(
-    0, kInstallSnapshotCallbackDrainBit));
-static_assert(!raft_server_callback_gate_is_open(
-    kInstallSnapshotCallbackDrainBit,
-    kInstallSnapshotCallbackDrainBit));
-static_assert(raft_server_callback_gate_count(
-                  kInstallSnapshotCallbackDrainBit | 3,
-                  kInstallSnapshotCallbackCountMask) == 3);
-
-}  // namespace
-
-// @unsafe - Independently owned lifetime gate for fire-and-forget snapshot
-// futures. A callback increments the packed borrower count before loading the
-// raw server pointer. Close linearizes against that increment, clears the
-// pointer, and lets shutdown wait only for callbacks that can touch the server.
-class InstallSnapshotCallbackGate final {
- public:
-  // @unsafe - Publishes a server pointer whose lifetime is drained by Close.
-  explicit InstallSnapshotCallbackGate(RaftServer* server)
-      : server_(server), state_(0) {}
-
-  // @unsafe - Returns a borrowed pointer protected by one packed-state count.
-  // The caller must invoke Release after its final server access.
-  RaftServer* TryAcquire() const {
-    auto admitted = state_.fetch_update(
-        rusty::sync::atomic::Ordering::AcqRel,
-        rusty::sync::atomic::Ordering::Acquire,
-        [](uint64_t state) -> rusty::Option<uint64_t> {
-          if (!raft_server_callback_gate_is_open(
-                  state, kInstallSnapshotCallbackDrainBit)) {
-            return rusty::None;
-          }
-          verify(raft_server_callback_gate_count(
-                     state, kInstallSnapshotCallbackCountMask) <
-                 kInstallSnapshotCallbackCountMask);
-          return rusty::Some(state + 1);
-        });
-    if (admitted.is_err()) {
-      return nullptr;
-    }
-
-    RaftServer* server =
-        server_.load(rusty::sync::atomic::Ordering::Acquire);
-    if (server == nullptr) {
-      Release();
-    }
-    return server;
-  }
-
-  // @unsafe - Release-publishes completion of all server accesses.
-  void Release() const {
-    const uint64_t previous = state_.fetch_sub(
-        1, rusty::sync::atomic::Ordering::Release);
-    verify(raft_server_callback_gate_count(
-               previous, kInstallSnapshotCallbackCountMask) > 0);
-  }
-
-  // @safe - Closes future admission before clearing the raw pointer.
-  void Close() const {
-    state_.fetch_or(kInstallSnapshotCallbackDrainBit,
-                    rusty::sync::atomic::Ordering::AcqRel);
-    server_.store(nullptr, rusty::sync::atomic::Ordering::Release);
-  }
-
-  // @safe - Acquire-load used by the shutdown completion barrier.
-  uint64_t ActiveCallbacks() const {
-    return raft_server_callback_gate_count(
-        state_.load(rusty::sync::atomic::Ordering::Acquire),
-        kInstallSnapshotCallbackCountMask);
-  }
-
- private:
-  rusty::sync::atomic::AtomicPtr<RaftServer> server_;
-  rusty::sync::atomic::AtomicU64 state_;
-};
-
-// @unsafe - Stack RAII proof for one callback invocation. The owned gate Arc
-// remains valid even when the future itself outlives RaftServer.
-class InstallSnapshotCallbackLease final {
- public:
-  explicit InstallSnapshotCallbackLease(
-      rusty::Arc<InstallSnapshotCallbackGate> gate)
-      : gate_(std::move(gate)), server_(gate_->TryAcquire()) {}
-
-  ~InstallSnapshotCallbackLease() {
-    if (server_ != nullptr) {
-      server_ = nullptr;
-      gate_->Release();
-    }
-  }
-
-  InstallSnapshotCallbackLease(
-      const InstallSnapshotCallbackLease&) = delete;
-  InstallSnapshotCallbackLease& operator=(
-      const InstallSnapshotCallbackLease&) = delete;
-
-  // @safe - Valid only for this RAII object's lexical lifetime.
-  RaftServer* get() const { return server_; }
-
- private:
-  rusty::Arc<InstallSnapshotCallbackGate> gate_;
-  RaftServer* server_;
-};
+}
+/*RUSTYCPP:GEN-END id=raft_server.replication_wake_gate*/
 
 namespace {
 
@@ -424,7 +509,7 @@ namespace {
 // only the gate Arc, never a RaftServer pointer.
 void QueueReplicationWake(
     const rusty::Arc<ReplicationWakeGate>& replication_wake_gate) {
-  auto owner = replication_wake_gate->ReserveWakeOwner();
+  auto owner = replication_wake_gate->reserve_wake_owner();
   if (owner.is_none()) {
     return;
   }
@@ -432,7 +517,7 @@ void QueueReplicationWake(
   auto gate_for_job = replication_wake_gate.clone();
   auto wake_job = rusty::Arc<OneTimeJob>::new_(
       OneTimeJob::new_([gate_for_job]() {
-        gate_for_job->WakeOnOwner();
+        gate_for_job->wake_on_owner();
       }));
   owner.as_ref().unwrap()->add(rusty::Arc<Job>(wake_job));
 }
@@ -441,7 +526,7 @@ void QueueReplicationWake(
 // the gate Arc, never the RaftServer whose loops it wakes.
 void QueueReplicationShutdownWake(
     const rusty::Arc<ReplicationWakeGate>& replication_wake_gate) {
-  auto owner = replication_wake_gate->ReserveShutdownWakeOwner();
+  auto owner = replication_wake_gate->reserve_shutdown_wake_owner();
   if (owner.is_none()) {
     return;
   }
@@ -449,7 +534,7 @@ void QueueReplicationShutdownWake(
   auto gate_for_job = replication_wake_gate.clone();
   auto wake_job = rusty::Arc<OneTimeJob>::new_(
       OneTimeJob::new_([gate_for_job]() {
-        gate_for_job->WakeShutdownOnOwner();
+        gate_for_job->wake_shutdown_on_owner();
       }));
   owner.as_ref().unwrap()->add(rusty::Arc<Job>(wake_job));
 }
@@ -1168,9 +1253,8 @@ void RaftServer::LogTermChange(const char* reason,
 
 RaftServer::RaftServer()
   : timer_(rusty::Box<Timer>::make(Timer())),  // Initialize Box in member initializer list
-    replication_wake_gate_(rusty::Arc<ReplicationWakeGate>::make()),
-    install_snapshot_callback_gate_(
-        rusty::Arc<InstallSnapshotCallbackGate>::make(this))
+    replication_wake_gate_(rusty::Arc<ReplicationWakeGate>::make_with(
+        []() { return ReplicationWakeGate::new_(); }))
 {
   async_callback_lifetime_->server = this;
   // Keep the immutable kind-4 compatibility factory registered as soon as a
@@ -1185,33 +1269,52 @@ RaftServer::RaftServer()
 // @unsafe - Binds the gate before the owner starts HeartbeatLoop.
 void RaftServer::BindReplicationWakeOwner(
     rusty::Arc<rrr::PollThread> owner) {
-  replication_wake_gate_->BindOwner(std::move(owner));
+  replication_wake_gate_->bind_owner(std::move(owner));
 }
 
 // @unsafe - Any-thread publication followed by a gate-only PollThread job.
 void RaftServer::RequestReplication() {
-  if (!replication_wake_gate_->Publish()) {
+  if (!replication_wake_gate_->publish()) {
     return;
   }
   QueueReplicationWake(replication_wake_gate_);
 }
 
 // @unsafe - Called only by HeartbeatLoop on its bound PollThread.
+//
+// The gate's own fast path lives in begin_wait_for_work(): Some(answer) when
+// it could decide without arming a waiter, None when it could not. Everything
+// this function adds is the one thing the DSL cannot spell -- calling the
+// reactor factory create_sp_int_event -- and it is called ONLY on the slow
+// path, so a round that finds work already pending still allocates nothing.
 bool RaftServer::WaitForReplicationOrHeartbeat(uint64_t timeout_us) {
-  return replication_wake_gate_->WaitForWork(timeout_us);
+  auto decided = replication_wake_gate_->begin_wait_for_work();
+  if (decided.is_some()) {
+    return decided.unwrap();
+  }
+  return replication_wake_gate_->finish_wait_for_work(
+      create_sp_int_event(1), timeout_us);
 }
 
 // @unsafe - Called only by the election fiber on the bound PollThread.
+//
+// Same split, and the accepting() check stays ahead of the factory call for
+// the same reason it did when this was one function: a closed gate must not
+// allocate an event it will never wait on.
 bool RaftServer::WaitForElectionTimeoutOrShutdown(uint64_t timeout_us) {
-  return replication_wake_gate_->WaitForElectionTimeout(timeout_us);
+  if (!replication_wake_gate_->accepting()) {
+    return false;
+  }
+  return replication_wake_gate_->wait_for_election_timeout(
+      create_sp_int_event(1), timeout_us);
 }
 
 // @unsafe - Close ordering is intentional: make new submissions inert, queue
 // one owner-thread wake for an armed waiter, then drop the owner's gate handle.
 void RaftServer::CloseReplicationWakeGate() {
-  replication_wake_gate_->Close();
+  replication_wake_gate_->close();
   QueueReplicationShutdownWake(replication_wake_gate_);
-  replication_wake_gate_->ClearOwner();
+  replication_wake_gate_->clear_owner();
 }
 
 // @unsafe - Reactor-fiber completion barrier used before deleting a live
@@ -1224,17 +1327,12 @@ void RaftServer::PrepareForShutdown() {
     stop_.store(true, rusty::sync::atomic::Ordering::Release);
     looping_.store(false, rusty::sync::atomic::Ordering::Release);
   }
-  // Outbound snapshot futures may outlive HeartbeatLoop. Close their
-  // independently owned pointer gate before waiting on any runtime activity;
-  // late completions then observe nullptr without capturing this server.
-  install_snapshot_callback_gate_->Close();
   CloseReplicationWakeGate();
 
   while (heartbeat_loop_running_.load(
              rusty::sync::atomic::Ordering::Acquire) ||
          election_loop_running_.load(
-             rusty::sync::atomic::Ordering::Acquire) ||
-         install_snapshot_callback_gate_->ActiveCallbacks() != 0) {
+             rusty::sync::atomic::Ordering::Acquire)) {
     if (Fiber::current_fiber().is_some()) {
       Fiber::sleep(1000);
     } else {
@@ -1255,9 +1353,11 @@ void RaftServer::PrepareForShutdown() {
 
 // @unsafe - Election timeout calculation (Time::now and RandomGenerator::rand marked safe via @external)
 uint64_t RaftServer::GetElectionTimeout() {
-  // Keep the configured identity stable for the entire decision. This method
-  // is also called from paths that already own mtx_, hence the recursive lock.
-  std::lock_guard<std::recursive_mutex> lock(mtx_);
+  // Must be called with mtx_ held. The one caller repo-wide is resetTimer(),
+  // which takes mtx_ before reaching here, so the recursive re-acquisition
+  // that used to sit on this line was a no-op. The configured identity is
+  // still stable for the whole decision -- it is the caller's lock that makes
+  // it so. Tranche 4b.
   uint64_t current_time = Time::now(true);
   const uint64_t grace_period_us = GetPreferredLeaderGracePeriodUs();
   bool in_grace_period = (current_time - startup_timestamp_) < grace_period_us;
@@ -1672,8 +1772,14 @@ siteid_t RaftServer::GetLeaderHint() {
 }
 
 // @unsafe - Leadership state transition (callbacks and logging wrapped in @unsafe blocks)
+// Must be called with mtx_ held. Every caller reaches here from inside
+// RequestVoteImpl, OnAppendEntries, OnRequestVote (via doVote),
+// OnInstallSnapshot or stepDown, all of which hold mtx_. The sole exception is
+// the RAFT_TEST_CORO line in RaftServer's own constructor, where no other
+// thread can observe the object yet. The recursive re-acquisition removed from
+// this line was therefore always a no-op -- one of the 24 nested acquisitions
+// docs/migration/raft/cpp-refactor-plan.md tranche 4b enumerates.
 void RaftServer::setIsLeader(bool isLeader) {
-  std::lock_guard<std::recursive_mutex> lock(mtx_);
   bool prev_is_leader = is_leader_;
 #ifdef RAFT_LEADER_ELECTION_DEBUG
   Log_info("[RAFT_STATE] setIsLeader invoked site {} (loc {}) term {}: prev_is_leader={} new_is_leader={}",
@@ -2664,13 +2770,11 @@ RaftServer::~RaftServer() {
   // on a reactor fiber before its destructor runs.
   stop_.store(true, rusty::sync::atomic::Ordering::Release);
   looping_.store(false, rusty::sync::atomic::Ordering::Release);
-  install_snapshot_callback_gate_->Close();
   CloseReplicationWakeGate();
   verify(!heartbeat_loop_running_.load(
       rusty::sync::atomic::Ordering::Acquire));
   verify(!election_loop_running_.load(
       rusty::sync::atomic::Ordering::Acquire));
-  verify(install_snapshot_callback_gate_->ActiveCallbacks() == 0);
 
   {
     std::lock_guard<std::mutex> lifetime_lock(async_callback_lifetime_->mutex);

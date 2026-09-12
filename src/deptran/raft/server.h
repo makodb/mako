@@ -48,8 +48,7 @@
 // }
 
 namespace janus {
-class ReplicationWakeGate;
-class InstallSnapshotCallbackGate;
+struct ReplicationWakeGate;
 
 // PreparedStateMachineSnapshotInstall is an owned, abort-on-destruction
 // transaction. Prepare callbacks must fully validate and durably stage an
@@ -536,18 +535,6 @@ pub const fn raft_server_append_reject_floor() -> u64 {
     1
 }
 
-// @safe - pure packed callback-gate admission decision.
-pub const fn raft_server_callback_gate_is_open(state: u64,
-                                                drain_bit: u64) -> bool {
-    (state & drain_bit) == 0
-}
-
-// @safe - pure packed callback-gate borrower count extraction.
-pub const fn raft_server_callback_gate_count(state: u64,
-                                              count_mask: u64) -> u64 {
-    state & count_mask
-}
-
 pub const fn raft_server_start_was_rejected(result: RaftStartResult) -> bool {
     (result as i32) == (RaftStartResult::REJECTED as i32)
 }
@@ -633,7 +620,7 @@ pub const fn raft_server_leader_rpc_sender_is_authoritative(
            (!has_known_leader || known_leader_matches_sender))))
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.scalar_decisions version=1 rust_sha256=ac708680cee4d26f3030cb0575f70837795f874cffcf7f09e9268d14f94a4668*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.scalar_decisions version=1 rust_sha256=e9548046e1f48ce9cd332b67efe3765859ebf264e278b0c06088a2bd718a5185*/
 constexpr uint16_t RAFT_SERVER_INVALID_SITE_ID = static_cast<uint16_t>(65535);
 constexpr bool raft_server_log_index_at_or_below(uint64_t index, uint64_t boundary);
 constexpr bool raft_server_log_index_above(uint64_t index, uint64_t boundary);
@@ -691,8 +678,6 @@ constexpr bool raft_server_append_reject_can_decrement(uint64_t next_index);
 constexpr uint64_t raft_server_append_reject_halved(uint64_t next_index);
 constexpr uint64_t raft_server_append_reject_decremented(uint64_t next_index);
 constexpr uint64_t raft_server_append_reject_floor();
-constexpr bool raft_server_callback_gate_is_open(uint64_t state, uint64_t drain_bit);
-constexpr uint64_t raft_server_callback_gate_count(uint64_t state, uint64_t count_mask);
 constexpr bool raft_server_command_is_internal_noop(int32_t command_kind, int32_t noop_kind);
 constexpr uint64_t raft_server_retention_window_normalize(uint64_t window);
 constexpr uint64_t raft_server_retention_cutoff(uint64_t execute_index, uint64_t retention_window);
@@ -906,12 +891,6 @@ constexpr uint64_t raft_server_append_reject_decremented(uint64_t next_index) {
 }
 constexpr uint64_t raft_server_append_reject_floor() {
     return static_cast<uint64_t>(1);
-}
-constexpr bool raft_server_callback_gate_is_open(uint64_t state, uint64_t drain_bit) {
-    return ((rusty::detail::deref_if_pointer_like(state) & rusty::detail::deref_if_pointer_like(drain_bit))) == static_cast<uint64_t>(0);
-}
-constexpr uint64_t raft_server_callback_gate_count(uint64_t state, uint64_t count_mask) {
-    return rusty::detail::deref_if_pointer_like(state) & rusty::detail::deref_if_pointer_like(count_mask);
 }
 constexpr bool raft_server_start_was_rejected(RaftStartResult result) {
     return ((static_cast<int32_t>(result))) == ((static_cast<int32_t>(RaftStartResult_REJECTED())));
@@ -1311,11 +1290,6 @@ class RaftServer : public TxLogServer {
   // created, signalled, waited, and cleared exclusively by that owner thread.
   rusty::Arc<ReplicationWakeGate> replication_wake_gate_;
 
-  // Outbound InstallSnapshot futures can complete after HeartbeatLoop exits.
-  // They capture only this independently owned gate, never a RaftServer raw
-  // pointer. Shutdown closes its pointer admission and drains active borrowers.
-  rusty::Arc<InstallSnapshotCallbackGate> install_snapshot_callback_gate_;
-
   // @unsafe - Reactor bridge; schedules a gate-only job on the bound owner.
   void RequestReplication();
   // @unsafe - Owner-thread-only wait on the gate's IntEvent.
@@ -1356,11 +1330,16 @@ class RaftServer : public TxLogServer {
   // Config::GetConfig()->GetPartitionSize().
   std::set<siteid_t> current_config_;          // Active replica set (site IDs)
 
-  // @unsafe - Locks mtx_ before reading the dynamically configurable
-  // preferred-leader identity. The mutex is recursive because consensus paths
-  // commonly call this helper while already holding mtx_.
+  // Reads the dynamically configurable preferred-leader identity.
+  //
+  // Must be called with mtx_ held. The one caller repo-wide is
+  // GetElectionTimeout(), which is itself called only from resetTimer(), which
+  // takes mtx_ -- so the inner re-acquisition this used to take was a no-op on
+  // the recursive mutex, and removing it states the precondition as a type-
+  // adjacent comment rather than re-checking it at runtime. See
+  // docs/migration/raft/cpp-refactor-plan.md tranche 4b.
+  // @unsafe - Must be called with mtx_ held (caller's responsibility).
   bool AmIPreferredLeader() {
-    std::lock_guard<std::recursive_mutex> lock(mtx_);
     return raft_server_site_is_preferred_leader(
         site_id_, preferred_leader_site_id_);
   }
@@ -1687,7 +1666,9 @@ class RaftServer : public TxLogServer {
                                  uint64_t* index,
                                  slotid_t slot_id = -1,
                                  ballot_t ballot = 1) {
-    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    // Must be called with mtx_ held. Both callers -- setIsLeader() and
+    // StartImpl() -- take it before reaching here; the re-acquisition this
+    // replaces was a no-op on the recursive mutex. Tranche 4b.
     // @unsafe
     {
       *index = lastLogIndex ;
@@ -1952,16 +1933,6 @@ class RaftServer : public TxLogServer {
       Log_info("[LEADERSHIP-TRANSFER] Site {}: Preferred leader set to {}",
                site_id_, site_id);
     }
-  }
-
-  /**
-   * Get the current preferred leader site ID
-   * @return Preferred leader site ID, or INVALID_SITEID if none
-   */
-  // @unsafe - Locks mtx_ before reading the dynamically configurable identity.
-  siteid_t GetPreferredLeader() {
-    std::lock_guard<std::recursive_mutex> lock(mtx_);
-    return preferred_leader_site_id_;
   }
 
   /**
