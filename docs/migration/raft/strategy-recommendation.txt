@@ -1,17 +1,32 @@
 ================================================================================
- SUPERSEDED IN PART -- READ THIS FIRST                     (added 2026-09-12)
+ STATUS: SUPERSEDED FOR ORDERING             (revised 2026-09-12, HEAD c879dae8)
 ================================================================================
- The "refactor first" recommendation below rests on a premise that was later
- FALSIFIED BY EXPERIMENT: the claim that a direct port could not begin today.
- It can. The pinned transpiler runs on raft's crate manifest as it stands --
- 18 files, 0 errors, .cppm output -- and Arc<Mutex<T>> with methods transpiles.
- With that premise gone the verdict reverses to "mostly a direct port, with a
- bounded C++ prefix".
+ The ORDERING in this document is wrong and has been replaced by
+ docs/migration/raft/cpp-refactor-plan.md. Read that for what to do.
 
- Sections 1 and 2, which count what is actually converted, were measured and
- still stand. The recommendation in the summary and in section 5 does not.
- This file is kept because its measurements are useful, not because its
- conclusion is right. It has not been rewritten.
+ What changed. This file argued "refactor the C++ first" on four reasons, two
+ of which rested on the premise that a direct port could not begin today. That
+ premise was falsified by probing the pinned emitter (77c3ad5a): crate mode
+ runs on raft's manifest as it stands (18 files, 0 errors, .cppm out), and a
+ struct with an inherent impl, rusty::Mutex<rusty::Option<T>>, a non-const
+ rusty::Box<T> factory and a ::janus::Command field all transpile, compile and
+ run. Section 3's reasons (1) and (2) are therefore withdrawn.
+
+ More importantly, section 2's central claim -- that two toolchain gaps cap
+ expressiveness and are "independent of any C++ refactor" -- is true only in
+ the sense that BOTH ARE ALREADY SOLVED INSIDE THIS REPOSITORY, and neither
+ needs transpiler work. See the replacement plan, gates G1 and G2.
+
+ The real wall is one this document never names: the emitter stubs out an
+ `impl` on a hand-written C++ class (`#if 0 // patcher: orphan-impl block
+ stubbed`), so THE UNIT OF CONVERSION IS A WHOLE TYPE, NEVER A METHOD. No
+ amount of C++ refactoring makes one RaftServer method convertible.
+
+ What survives, and is worth reading below: section 1's census (with the
+ corrections applied inline), and section 4's observation that there is no
+ correctness net over the worker layer -- which is now known to be worse than
+ stated, since RAFT_TEST is OFF and no script turns it on, so the Raft test
+ suite is built by nothing.
 
 ================================================================================
  REFACTOR THE C++ FIRST, OR PORT STRAIGHT TO RUST?
@@ -25,17 +40,23 @@
  1. WHAT IS ACTUALLY CONVERTED -- THE NUMBER THAT MATTERS IS NOT 6%
 ================================================================================
 
- By line, the DSL covers ~6-7%: 26 blocks across 17 carriers, ~751 non-blank
- generated C++ lines against ~10,900 hand-written ones in src/deptran/raft.
+ [CORRECTED 2026-09-12] By line the DSL covers 795 non-blank generated C++
+ lines against 14,392 hand-written ones in src/deptran/raft -- 5.03% overall,
+ or 6.91% counting only the production slice (7,673 lines). The "~751 against
+ ~10,900" below was wrong in both terms. 26 blocks across 17 carriers is right.
 
- By FUNCTION it is 1.
+ By FUNCTION it is 3, not 1 -- plus 11 types.
 
-   * Exactly one pre-existing C++ function has been replaced by a DSL block:
-     IsPreferredLeaderConfigured (src/deptran/raft/server.cc:563), commit
-     4b2e330b "raft: migrate preferred leader predicate to Rust DSL". It is
-     the only CamelCase name in the whole crate; everything else is
-     snake_case.
-   * The other 145 converted items are NEWLY MINTED predicates that sit
+   * THREE pre-existing C++ functions have been replaced by DSL blocks:
+     IsPreferredLeaderConfigured (commit 4b2e330b), and equals_ignore_case
+     (raft_main_helper.cc:154, three live production callers) together with
+     is_raft_group_mode_arg (raft_main_helper.cc:256, one live caller), whose
+     C++ bodies were deleted in commit b0760cd9. raft_main_helper.cc is
+     carrier 17 of the 17 counted above, so it cannot be excluded by scope.
+   * ELEVEN pre-existing C++ TYPES were also replaced -- 6 structs and 5
+     enums. The "by function" framing hides them entirely.
+   * IsPreferredLeaderConfigured is still the only CamelCase name.
+   * The other 143 converted items are NEWLY MINTED predicates that sit
      ALONGSIDE unchanged C++. The DSL lifted a body expression into a helper
      and left the function in C++. quorum.hpp's conversion commit (1071481d)
      added 50 lines and deleted one.
@@ -46,6 +67,9 @@
      (e.g. raft_server_random_range_needs_swap, server.h:188/644/723; compare
      raft_worker_should_enqueue, which is genuinely called at
      raft_worker.cc:693).
+
+ [CORRECTED] 143 of 146 are `const fn`, not 142. 25 helpers have no caller
+ anywhere, which is right as written.
 
  So the current state is a SCAFFOLDING phase: pure predicates extracted and
  pinned with static_asserts, around C++ that is otherwise untouched. That is
@@ -144,16 +168,27 @@
  3. THE RECOMMENDATION
 ================================================================================
 
- REFACTOR THE C++ FIRST (option A), for four reasons, in order of weight.
+ REFACTOR THE C++ FIRST (option A). Written as four reasons; TWO ARE NOW
+ WITHDRAWN. Reasons (3) and (4) stand, and the posture they support --
+ refactor first -- is still the owner's decision. But see
+ docs/migration/raft/cpp-refactor-plan.md: the first moves turn out to be
+ tooling, not C++, and they are cheap.
 
- (1) OPTION B IS NOT AVAILABLE FOR THE PARTS THAT MATTER. "Port straight to
+ (1) [WITHDRAWN 2026-09-12 -- the premise is false. Crate mode runs on
+     raft's manifest today, and non-trivial shapes transpile and run.]
+     OPTION B IS NOT AVAILABLE FOR THE PARTS THAT MATTER. "Port straight to
      Rust" presumes the blockers are translation problems. They are not.
      There is no Rust for "delete through a borrowed pointer" (B1); you must
      decide an owner, and that decision is the work whether you make it in C++
      or in Rust. Making it in C++ keeps a compiling, testable, measurable tree
      at every step. Making it during a port means making it blind.
 
- (2) THE C++ WORK IS THE ONLY THING ON THE CRITICAL PATH YOU CONTROL TODAY.
+ (2) [WITHDRAWN 2026-09-12 -- backwards. The toolchain work is the part you
+     control today: both gaps are already solved elsewhere in this repo
+     (src/rrr/Cargo.toml:14 and scripts/regen_storage_dsl.sh:72-100), and
+     neither needs the transpiler changed. The C++ refactor is what waits,
+     because of the orphan-impl limit.]
+     THE C++ WORK IS THE ONLY THING ON THE CRITICAL PATH YOU CONTROL TODAY.
      Even a perfectly Rust-shaped C++ tree can currently be converted only as
      `const fn`, because of gap (i). So C++ refactoring and the toolchain work
      are PARALLEL tracks, and refactoring is the one that does not wait on the
@@ -173,14 +208,20 @@
      risk begins when non-const-fn shapes with real types land -- which is
      exactly when option A's per-step measurement starts paying.
 
-     One blocker is a performance WIN, not a cost. B2's shared recursive mutex
-     was measured this week at 6 partitions, 286 KB entries, 3 trials:
+     One blocker is a performance WIN, not a cost. The group-mode difference
+     is now measured properly and committed as a baseline
+     (docs/performance/raft-baseline-412c225a/, 624 runs, 0 failed), at 6
+     partitions and 286 KB entries:
 
-       single group  190/s offered -> p50 18.4 ms   unthrottled  256/s
-       multi  group  190/s offered -> p50  7.6 ms   unthrottled 1591/s
+       single group  190/s offered -> p50 19.5 ms   capacity  283/s (81 MB/s)
+       multi  group  190/s offered -> p50  7.5 ms   capacity >=1588/s (454 MB/s)
 
-     ~6x throughput and ~2.4x latency. Whatever replaces that mutex should be
-     justified on its own merits before any Rust is written.
+     2.6x latency and at least 5.6x throughput. NOTE the capacity figures are
+     maxima over the whole rate sweep, not the unthrottled point: unpaced
+     offering drives single-group into congestion collapse and UNDERSTATES it
+     by 3-29%. The multi figure is a lower bound -- its rate array never
+     reached saturation. Whatever replaces that mutex should be justified on
+     its own merits before any Rust is written.
 
  (4) THE SCAFFOLDING ALREADY BUILT IS WORTH MORE UNDER A THAN UNDER B. 145
      static_assert-pinned predicates are a semantics freeze. Under A they keep
@@ -208,9 +249,12 @@
  5. ORDERED PLAN
 ================================================================================
 
- 0. Baseline. Run ./scripts/raft_perf/run_sweep.sh (~4h51m, machine to
-    itself). You cannot claim "performance maintained" without a before.
-    Archive it beside the code.
+ 0. [DONE 2026-09-12] Baseline. Run at commit 412c225a, 624 runs plus 40
+    repeatability runs, 0 failed, archived at
+    docs/performance/raft-baseline-412c225a/ with the records, tables and
+    plots. Reference point: p50 7.503 ms +-0.106 at p6/multi/286208B offered
+    190/s, noise floor 1.0%. Compare against it with
+    scripts/raft_perf/compare.py.
 
  1. Coverage over the RaftWorker layer. Cheapest useful version: a test that
     drives add_log_to_nc -> apply and asserts ordering, completeness and
@@ -235,6 +279,16 @@
 
  5. Only then convert in earnest, tranche by tranche, each with a before/after
     from the harness.
+
+ [SUPERSEDED 2026-09-12] Steps 1-5 above are the wrong order. The replacement
+ is docs/migration/raft/cpp-refactor-plan.md, which sequences: the correctness
+ net first (it is worse than section 4 says -- RAFT_TEST is OFF and no script
+ turns it on, so the Raft suite is built by nothing); then the two script-level
+ toolchain fixes that unlock non-scalar types and header carriers; then the
+ first real conversion, ReplicationWakeGate (server.cc:89-309), which clears
+ every gate by construction; then the free deletions; and only then B2 and the
+ inheritance work. B1 is demoted -- it blocks exactly four functions, and the
+ cheap fix is to copy Paxos rather than adopt rusty::Box.
 
 ================================================================================
  6. THE STRONGEST ARGUMENT AGAINST THIS RECOMMENDATION
