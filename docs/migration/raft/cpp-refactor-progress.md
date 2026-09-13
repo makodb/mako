@@ -627,6 +627,18 @@ all.
 the `rusty::Box` refactor was correct and cost about six production edits,
 touching no Paxos file.
 
+## Where to go next
+
+[`heartbeat-first-conversion-plan.md`](heartbeat-first-conversion-plan.md) is
+the step-by-step plan for converting `RaftServer`, derived from measuring the
+class rather than from reading the original plan. Its central finding: the class
+is not uniformly tangled. 30 of its 46 stateful functions touch zero or one
+state cluster; only seven entangle four or more, and those seven are the
+protocol entry points plus `HeartbeatLoop`. The route is to lift the decisions
+out of `HeartbeatLoop` as pure types (sans-I/O), leaving the two RPC sends in
+C++ -- which satisfies G3 by construction, because a lifted state machine is a
+new whole type.
+
 ## How to re-run the evidence
 
 ```bash
