@@ -213,6 +213,18 @@ misfills, so this is mandatory, not cosmetic), and struct fields whose
 names are Rust keywords (e.g. `type`) must be renamed or that type stays
 C++.
 
+**`#[cpp_inherit]` requires `use rusty::cpp_inherit;` in the same DSL
+block, and fails SILENTLY without it.** The attribute is authenticated
+through the marker crate (`transpiler/src/codegen/predicates.rs:921-936`).
+Unauthenticated, inline mode emits the struct with NO base class and no
+diagnostic, and crate mode emits adapter classes instead of direct
+inheritance. Both compile; the type simply stops implementing its
+interface. `src/mako/storage/mbta_wrapper.hh` predates this requirement
+and carries no import, so it must keep being regenerated with the
+`a4bcff5f` transpiler `scripts/regen_storage_dsl.sh` pins, NOT the
+`77c3ad5a` pin the Raft and rrr gates enforce, or it silently loses
+`: public FullOrderedIndex`.
+
 Everything below still applies — to the C++ that remains (bridges,
 kernels, and not-yet-converted files):
 
