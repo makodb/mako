@@ -30,6 +30,25 @@ class Communicator;
 // and what remains here is a genuine interface: pure virtuals covering exactly
 // what a worker does through a base pointer, and nothing else.
 //
+// THE MUTEX WAS NOT A MISTAKE, so do not read its removal as a correction of
+// one. It was added in April 2016 (6651e5b78, "lock guard in multipaxos sched")
+// to a base that was genuinely stateful -- it owned dtxns_, mdb_txns_,
+// executors_, mdb_txn_mgr_, mode_ and recorder_ -- alongside the lock_guards
+// that commit added to MultiPaxosSched's handlers. The lock lived with the data
+// it protected, in the class that owned it. Correct.
+//
+// What changed is everything around it: transaction execution, MemDB ownership,
+// epoch management and the retired Jetpack plane all left this hierarchy, and
+// the mutex outlived every member it was introduced to guard. By then it was a
+// lock in a class with no state, shared by declaration between two derived
+// types whose state is mutually unrelated.
+//
+// The recursion is residue of the same decay: recursive_mutex supports a
+// handler locking on entry and then calling other locking methods, which is
+// what Raft's 24 nested re-acquisitions still are. With the lock owned by the
+// type whose state it guards, a plain non-recursive Mutex<RaftState> becomes
+// feasible.
+//
 // THE MUTEX IS GONE FROM HERE TOO, deliberately. `mtx_` was a
 // std::recursive_mutex shared by both engines by inheritance -- 48 acquisitions
 // in Raft, 4 in Paxos. Each server now owns its own, which is what lets Raft
