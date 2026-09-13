@@ -1488,6 +1488,23 @@ impl<'entry, A: TransactionalResource> Entry<'entry, A> {
         Ok(())
     }
 
+    /// Replaces an existing ordinary read observation with an adapter-derived
+    /// successor.
+    ///
+    /// This exists for adapters whose observation is a table-wide counter
+    /// that the observing transaction itself advances (a first-time key
+    /// publication under a scan's directory generation): the adapter accounts
+    /// for its own advance so that validation still fails on every foreign
+    /// change. The item must currently hold an ordinary read observation.
+    #[inline]
+    pub fn replace_read(&mut self, observation: A::Observation) -> Result<(), AccessError> {
+        if !matches!(self.observation, ObservationState::Read(_)) {
+            return Err(InvalidUse::IllegalItemState.into());
+        }
+        *self.observation = ObservationState::Read(observation);
+        Ok(())
+    }
+
     /// Records the first optimistic predicate for this logical item.
     #[inline]
     pub fn record_predicate(&mut self, predicate: A::Predicate) -> Result<(), AccessError> {

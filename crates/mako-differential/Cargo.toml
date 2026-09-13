@@ -1,0 +1,15 @@
+[package]
+name = "mako-differential"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Shared corpus, generic engine replay, and subprocess helpers for the local-engine differential tests"
+
+[dependencies]
+mako-engine-api = { path = "../mako-engine-api" }
+mako-history = { path = "../mako-history" }
+
+[lints.rust]
+unsafe_code = "forbid"

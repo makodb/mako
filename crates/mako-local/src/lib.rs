@@ -92,14 +92,16 @@ const _: () = {
             == sys::MAKO_LOCAL_TEST_COMMIT_LOCAL_VALIDATION_COMPLETE
     );
     assert!(
-        TestCommitPhase::PreinstallAccepted as u32 == sys::MAKO_LOCAL_TEST_COMMIT_PREINSTALL_ACCEPTED
+        TestCommitPhase::PreinstallAccepted as u32
+            == sys::MAKO_LOCAL_TEST_COMMIT_PREINSTALL_ACCEPTED
     );
     assert!(
         TestCommitPhase::FirstWriteInstalled as u32
             == sys::MAKO_LOCAL_TEST_COMMIT_FIRST_WRITE_INSTALLED
     );
     assert!(
-        TestCommitPhase::AllWritesInstalled as u32 == sys::MAKO_LOCAL_TEST_COMMIT_ALL_WRITES_INSTALLED
+        TestCommitPhase::AllWritesInstalled as u32
+            == sys::MAKO_LOCAL_TEST_COMMIT_ALL_WRITES_INSTALLED
     );
     assert!(TestCleanupBoundary::Begin as u32 == sys::MAKO_LOCAL_CLEANUP_BOUNDARY_BEGIN);
     assert!(TestCleanupBoundary::Operation as u32 == sys::MAKO_LOCAL_CLEANUP_BOUNDARY_OPERATION);
@@ -1490,7 +1492,14 @@ const UNCHECKED_ONE_PUT_RECORD_OVERHEAD_BYTES: usize = 38 + 17;
 pub fn features() -> Result<Features> {
     verify_abi()?;
     // SAFETY: pure ABI identity accessor.
-    Ok(Features::from_bits(unsafe { abi::mako_local_feature_bits() }))
+    let mut bits = unsafe { abi::mako_local_feature_bits() };
+    // The C++ observer reports every phase, including the mid-install seam
+    // between the first and last installed write; that Rust-only capability
+    // bit lives above the C feature bits.
+    if bits & Features::TEST_COMMIT_OBSERVER != 0 {
+        bits |= Features::TEST_COMMIT_MID_INSTALL_OBSERVER;
+    }
+    Ok(Features::from_bits(bits))
 }
 
 /// Install a test-only synchronous commit observer on the current attached
@@ -2895,7 +2904,13 @@ impl<'db> Transaction<'db> {
             return None;
         }
         self.unchecked_one_put_record_bytes
-            .map(|exact_record_bytes| CommitRecordPreflight::from_parts(exact_record_bytes.get() as usize, 1, CommitRecordChecksum::None))
+            .map(|exact_record_bytes| {
+                CommitRecordPreflight::from_parts(
+                    exact_record_bytes.get() as usize,
+                    1,
+                    CommitRecordChecksum::None,
+                )
+            })
     }
 
     /// Return only the compact unchecked-v6 extent for the cache-private
@@ -3435,7 +3450,10 @@ impl<'db> Transaction<'db> {
                 record_written: false,
             };
         }
-        debug_assert_eq!(expected_record_bytes as usize, candidate.exact_record_bytes());
+        debug_assert_eq!(
+            expected_record_bytes as usize,
+            candidate.exact_record_bytes()
+        );
         // SAFETY: every trusted precondition below was checked above, and this
         // method carries the same callback/storage contract.
         unsafe {
@@ -5067,11 +5085,20 @@ mod tests {
         }
         assert_eq!(TestCommitPhase::from_raw(0), None);
         assert_eq!(TestCommitPhase::from_raw(u32::MAX), None);
-        assert!(Features::from_bits(sys::MAKO_LOCAL_FEATURE_TEST_COMMIT_OBSERVER).test_commit_observer());
+        assert!(
+            Features::from_bits(sys::MAKO_LOCAL_FEATURE_TEST_COMMIT_OBSERVER)
+                .test_commit_observer()
+        );
         assert!(!Features::from_bits(0).test_commit_observer());
-        assert!(Features::from_bits(sys::MAKO_LOCAL_FEATURE_TEST_CLEANUP_FAILURES).test_cleanup_failures());
+        assert!(
+            Features::from_bits(sys::MAKO_LOCAL_FEATURE_TEST_CLEANUP_FAILURES)
+                .test_cleanup_failures()
+        );
         assert!(!Features::from_bits(0).test_cleanup_failures());
-        assert!(Features::from_bits(sys::MAKO_LOCAL_FEATURE_TEST_TIMESTAMP_CLOCK).test_timestamp_clock());
+        assert!(
+            Features::from_bits(sys::MAKO_LOCAL_FEATURE_TEST_TIMESTAMP_CLOCK)
+                .test_timestamp_clock()
+        );
         assert!(!Features::from_bits(0).test_timestamp_clock());
         assert_eq!(
             TestCleanupBoundary::Begin as u32,

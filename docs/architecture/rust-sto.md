@@ -2581,11 +2581,17 @@ two covering observations:
 The directory generation is an unordered, prepared-free read. It has no
 transactional intent or lock. Existing tombstone resurrection, live removal,
 and value replacement do not change physical structure and are covered by the
-corresponding record observations. A new physical key anywhere in the table
-invalidates every earlier scan, even if the key is outside that scan's bounds or
-the inserting transaction later aborts. These safe false conflicts are the v1
-price for avoiding table-wide liveness intents and locks; this remains a
-conservative baseline, not a claim of MassTrans-equivalent precision.
+corresponding record observations. A new physical key published by another
+transaction anywhere in the table invalidates every earlier scan, even if the
+key is outside that scan's bounds or the inserting transaction later aborts.
+A publication by the observing transaction itself does not: the adapter moves
+that transaction's own directory (and trusted-scan) observation forward by one
+per own publication, through `Entry::replace_read`, because "scan, then read
+or write a key that does not exist yet" must be able to commit. Own
+publications are counted exactly, so any foreign publication in the window
+still fails validation. These safe false conflicts are the v1 price for
+avoiding table-wide liveness intents and locks; this remains a conservative
+baseline, not a claim of MassTrans-equivalent precision.
 
 ## 12. Opacity profiles
 

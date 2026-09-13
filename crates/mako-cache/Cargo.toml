@@ -8,6 +8,14 @@ license = "MIT"
 publish = false
 
 [features]
+# Exactly one local engine is compiled in. The default is the C ABI facade
+# over the C++ STO/MassTrans engine; `engine-sto` selects the native Rust STO.
+# Build the latter with `--no-default-features --features engine-sto`.
+default = ["engine-c-abi"]
+engine-c-abi = ["mako-engine/c-abi"]
+engine-sto = ["mako-engine/sto"]
+# Test-only observers and simulated cleanup failures of the Rust STO engine.
+engine-sto-test-hooks = ["engine-sto", "mako-engine/sto-test-hooks"]
 # Test-only backend injection and structural probes. This permits retained
 # writable backend handles for fault tests and must stay disabled in production.
 # Production builds contain no test probes or commit-path conditional branches.
@@ -30,7 +38,7 @@ name = "timestamp"
 required-features = ["test-support"]
 
 [dependencies]
-mako-engine = { path = "../mako-engine" }
+mako-engine = { path = "../mako-engine", default-features = false }
 mrx-core = { path = "../mrx-core" }
 mrx-rocks = { path = "../mrx-rocks" }
 

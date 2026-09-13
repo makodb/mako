@@ -162,7 +162,10 @@ mod tests {
     #[test]
     fn be_bytes_round_trip_and_reject_zero_origin() {
         let timestamp = MakoTimestamp::new(123_456, 9, 3).unwrap();
-        assert_eq!(MakoTimestamp::from_be_bytes(timestamp.to_be_bytes()), Some(timestamp));
+        assert_eq!(
+            MakoTimestamp::from_be_bytes(timestamp.to_be_bytes()),
+            Some(timestamp)
+        );
         assert_eq!(MakoTimestamp::new(1, 1, 0), None);
     }
 }

@@ -756,6 +756,7 @@ pub struct TableConfig {
     max_scan_physical_records: usize,
     trusted_scan_value_generation: bool,
     bounded_atomic_values: bool,
+    blocking_structural_admission: bool,
 }
 
 impl TableConfig {
@@ -774,6 +775,7 @@ impl TableConfig {
             max_scan_physical_records: 1_000_000,
             trusted_scan_value_generation: false,
             bounded_atomic_values: false,
+            blocking_structural_admission: false,
         }
     }
 
@@ -863,6 +865,20 @@ impl TableConfig {
         self
     }
 
+    /// Make a first-time key publication wait for structural admission
+    /// instead of failing with `HiddenLockBusy`.
+    ///
+    /// By default two concurrent inserters of distinct keys can abort each
+    /// other, because admission is a nonblocking `try_write`. A caller whose
+    /// contract forbids such spurious conflicts (Mako's local cache engine)
+    /// opts into a blocking wait. The gate is held only across directory
+    /// publication, never across a transaction lock, so waiting cannot
+    /// deadlock; a scan visitor must still not publish into the same table.
+    pub const fn with_blocking_structural_admission(mut self, enabled: bool) -> Self {
+        self.blocking_structural_admission = enabled;
+        self
+    }
+
     pub const fn max_retained_records(self) -> u64 {
         self.max_retained_records
     }
@@ -910,6 +926,10 @@ impl TableConfig {
 
     pub const fn bounded_atomic_values(self) -> bool {
         self.bounded_atomic_values
+    }
+
+    pub const fn blocking_structural_admission(self) -> bool {
+        self.blocking_structural_admission
     }
 }
 
@@ -4411,7 +4431,8 @@ impl Table {
         ) -> Result<R, AccessError>,
     ) -> Result<R, AccessError> {
         let shared = self.shared();
-        txn.with_resolved_item(
+        let published = std::cell::Cell::new(false);
+        let result = txn.with_resolved_item(
             &self.record_resource,
             || {
                 let found = lookup()?;
@@ -4425,11 +4446,48 @@ impl Table {
             },
             || {
                 let record_id = shared.intern_missing(worker, key)?;
+                published.set(true);
                 let access = shared.resolve_directory_access(record_id)?;
                 Ok((TableKey::Record(record_id), access))
             },
             operation,
-        )
+        )?;
+        if published.get() {
+            self.account_own_publication(txn)?;
+        }
+        Ok(result)
+    }
+
+    /// A first-time key publication by this transaction advanced this
+    /// table's directory generation (and, for trusted scans, its scan
+    /// generation) by exactly one. A scan this transaction performed earlier
+    /// observed the older value; move that observation forward by one so its
+    /// validation still fails on every foreign publication but not on the
+    /// transaction's own. Without this, "scan, then read or write a key that
+    /// does not exist yet" could never commit.
+    fn account_own_publication(
+        &self,
+        txn: &mut Transaction<'_, Active>,
+    ) -> Result<(), AccessError> {
+        if txn.has_items_for(&self.directory_resource) {
+            let directory = self.directory_resource.adapter();
+            txn.with_item(
+                &self.directory_resource,
+                TableKey::DirectoryGeneration,
+                |entry| directory.advance_own_directory_observation(entry),
+            )?;
+        }
+        if self.shared().registry.config.trusted_scan_value_generation
+            && txn.has_items_for(&self.scan_resource)
+        {
+            let scan = self.scan_resource.adapter();
+            txn.with_item(
+                &self.scan_resource,
+                TableKey::DirectoryGeneration,
+                |entry| scan.advance_own_directory_observation(entry),
+            )?;
+        }
+        Ok(())
     }
 
     #[inline(always)]
@@ -5971,7 +6029,10 @@ impl TableShared {
             .inspect_err(|error| self.note_access_error(error))?;
         #[cfg(test)]
         self.directory.pause_after_candidate_reservation();
-        let structural = match self.structural.try_write() {
+        let structural = match self
+            .structural
+            .admit_publication(self.registry.config.blocking_structural_admission())
+        {
             Ok(guard) => guard,
             Err(error) => {
                 self.note_access_error(&error);
@@ -6131,7 +6192,10 @@ impl TableShared {
             };
         }
 
-        let structural = match self.structural.try_write() {
+        let structural = match self
+            .structural
+            .admit_publication(self.registry.config.blocking_structural_admission())
+        {
             Ok(guard) => guard,
             Err(error) => {
                 self.note_access_error(&error);
@@ -6499,6 +6563,18 @@ impl StructuralGate {
         self.lock
             .write()
             .map_err(|_| table_fault("Masstree structural gate is poisoned"))
+    }
+
+    /// Exclusive admission for a first-time publication: nonblocking by
+    /// default, blocking when the table opted in. Blocking waits only for
+    /// other publishers and in-flight scan chunks, none of which wait on a
+    /// transaction lock.
+    fn admit_publication(&self, blocking: bool) -> Result<RwLockWriteGuard<'_, ()>, AccessError> {
+        if blocking {
+            self.write()
+        } else {
+            self.try_write()
+        }
     }
 
     fn try_write(&self) -> Result<RwLockWriteGuard<'_, ()>, AccessError> {
@@ -10976,6 +11052,30 @@ impl TableAdapter {
             generation: observed,
         }))?;
         Ok(observed)
+    }
+
+    /// Account for one publication the observing transaction itself made.
+    fn advance_own_directory_observation(
+        &self,
+        entry: &mut Entry<'_, Self>,
+    ) -> Result<(), AccessError> {
+        if !self.role.is_generation() || *entry.local() != self.role {
+            return Err(self.type_mismatch(AdapterPhase::Execute).into());
+        }
+        match entry.observation() {
+            ObservationRef::Read(TableObservation::Directory(observation)) => {
+                let advanced = DirectoryObservation {
+                    generation: observation.generation.wrapping_add(1),
+                };
+                entry.replace_read(TableObservation::Directory(advanced))
+            }
+            // No observation yet, or one upgraded at commit: nothing to move.
+            ObservationRef::Unobserved | ObservationRef::UpgradedPredicate(_) => Ok(()),
+            ObservationRef::Read(TableObservation::Record(_)) | ObservationRef::Predicate(_) => {
+                self.table.poison();
+                Err(table_fault("directory observation state is inconsistent"))
+            }
+        }
     }
 
     fn observe_trusted_scan_generation(
@@ -18445,6 +18545,94 @@ mod tests {
     }
 
     #[test]
+    fn blocking_structural_admission_waits_for_the_scan_seam_instead_of_conflicting() {
+        let (runtime, table) =
+            runtime_and_table(TableConfig::default().with_blocking_structural_admission(true));
+        let scan_guard = table.shared().try_scan_structure().unwrap();
+        let released = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let publisher = {
+            let runtime = Arc::clone(&runtime);
+            let table = table.clone();
+            let released = Arc::clone(&released);
+            std::thread::spawn(move || {
+                let mut worker = runtime.attach().unwrap();
+                let mut txn = worker.begin().unwrap();
+                let outcome = table.get_inner(&mut txn, None, b"waits");
+                // The publisher may only return after the scan seam let go.
+                let seam_was_released = released.load(Ordering::Acquire);
+                committed(txn.commit());
+                (outcome.map(|value| value.is_none()), seam_was_released)
+            })
+        };
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert!(
+            !publisher.is_finished(),
+            "the publisher must wait for admission"
+        );
+        released.store(true, Ordering::Release);
+        drop(scan_guard);
+        let (outcome, seam_was_released) = publisher.join().unwrap();
+        assert_eq!(outcome, Ok(true));
+        assert!(seam_was_released);
+        assert_eq!(table.usage().retained_records(), 1);
+    }
+
+    #[test]
+    fn a_transaction_may_scan_then_publish_new_keys_in_the_same_table() {
+        let (runtime, table) = runtime_and_table(TableConfig::default());
+        {
+            let mut worker = runtime.attach().unwrap();
+            let mut txn = worker.begin().unwrap();
+            table.put_inner(&mut txn, None, b"seed", b"v").unwrap();
+            committed(txn.commit());
+        }
+        let mut worker = runtime.attach().unwrap();
+        let mut txn = worker.begin().unwrap();
+        let rows = table
+            .scan_inner(&mut txn, None, ScanRequest::new(ScanDirection::Forward, 16))
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        // A read miss publishes a candidate; so does the insert. Both advance
+        // the directory generation this transaction observed.
+        assert_eq!(table.get_inner(&mut txn, None, b"missing").unwrap(), None);
+        assert_eq!(
+            table.insert_inner(&mut txn, None, b"new", b"n").unwrap(),
+            InsertOutcome::Inserted
+        );
+        let rows = table
+            .scan_inner(&mut txn, None, ScanRequest::new(ScanDirection::Forward, 16))
+            .unwrap();
+        assert_eq!(rows.len(), 2);
+        committed(txn.commit());
+
+        // A foreign publication between the scan and commit still conflicts.
+        let mut txn = worker.begin().unwrap();
+        let rows = table
+            .scan_inner(&mut txn, None, ScanRequest::new(ScanDirection::Forward, 16))
+            .unwrap();
+        assert_eq!(rows.len(), 2);
+        std::thread::scope(|scope| {
+            let runtime = Arc::clone(&runtime);
+            let table = table.clone();
+            scope.spawn(move || {
+                let mut other = runtime.attach().unwrap();
+                let mut foreign = other.begin().unwrap();
+                table
+                    .put_inner(&mut foreign, None, b"foreign", b"f")
+                    .unwrap();
+                committed(foreign.commit());
+            });
+        });
+        table.put_inner(&mut txn, None, b"own", b"o").unwrap();
+        assert_eq!(
+            txn.commit(),
+            Ok(CommitOutcome::Aborted(AbortReason::Conflict(
+                Conflict::ReadValidation
+            )))
+        );
+    }
+
+    #[test]
     fn concurrent_first_misses_retain_one_winner_and_consume_both_candidates() {
         let runtime = Runtime::new(RuntimeConfig::default()).unwrap();
         let miss_barrier = Arc::new(Barrier::new(2));
@@ -20204,7 +20392,10 @@ mod tests {
     }
 
     #[test]
-    fn scan_then_own_first_miss_conservatively_self_conflicts() {
+    fn scan_then_own_first_miss_accounts_for_the_transactions_own_publication() {
+        // A transaction's own first-time publication advances the directory
+        // generation it observed through an earlier scan; the observation is
+        // moved forward with it, so only a foreign publication conflicts.
         let (runtime, table) = runtime_and_table(TableConfig::default());
         let mut worker = runtime.attach().unwrap();
         seed(&table, &mut worker, &[(b"a", b"A")]);
@@ -20226,13 +20417,16 @@ mod tests {
             table.shared().directory_generation.load(Ordering::Acquire),
             generation + 1
         );
-        assert_eq!(
-            transaction.commit().unwrap(),
-            CommitOutcome::Aborted(AbortReason::Conflict(Conflict::ReadValidation))
-        );
+        committed(transaction.commit());
 
         let mut verify = worker.begin().unwrap();
-        assert_eq!(table.get_inner(&mut verify, None, b"b"), Ok(None));
+        assert_eq!(
+            table
+                .get_inner(&mut verify, None, b"b")
+                .unwrap()
+                .map(|value| value.as_ref().to_vec()),
+            Some(b"B".to_vec())
+        );
         committed(verify.commit());
     }
 

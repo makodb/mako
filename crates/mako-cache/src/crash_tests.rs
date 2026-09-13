@@ -618,9 +618,9 @@ fn wait_for_marker(child: &mut Child, marker: &Path, point: Point) {
 
 #[test]
 fn process_crash_matrix_recovers_only_whole_transactions() {
-    let native_observer = mako_engine::features()
-        .expect("read native crash-hook capability")
-        .test_commit_observer();
+    let capabilities = mako_engine::features().expect("read native crash-hook capability");
+    let native_observer = capabilities.test_commit_observer();
+    let mid_install_observer = capabilities.test_commit_mid_install_observer();
     let require_native_observer = env::var_os(REQUIRE_NATIVE_HOOKS_ENV).is_some();
     assert!(
         native_observer || !require_native_observer,
@@ -636,6 +636,11 @@ fn process_crash_matrix_recovers_only_whole_transactions() {
         // Rust/Rocks points still run there; a dedicated hook-enabled native
         // profile runs the six lock-held cases as well.
         if point.requires_native_observer() && !native_observer {
+            continue;
+        }
+        // An engine whose core installs every write without a per-write seam
+        // cannot park between the first and last install.
+        if point == Point::NativeFirstWriteInstalled && !mid_install_observer {
             continue;
         }
         let scratch = Scratch::new(point);

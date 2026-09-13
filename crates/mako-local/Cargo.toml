@@ -13,4 +13,5 @@ mako-local-sys = { path = "../mako-local-sys" }
 
 [dev-dependencies]
 mako-clock = { path = "../mako-clock", features = ["test-hooks"] }
+mako-differential = { path = "../mako-differential" }
 mako-history = { path = "../mako-history" }

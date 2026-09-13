@@ -230,16 +230,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "mako-differential"
+version = "0.1.0"
+dependencies = [
+ "mako-engine-api",
+ "mako-history",
+]
+
+[[package]]
 name = "mako-engine"
 version = "0.1.0"
 dependencies = [
  "mako-engine-api",
+ "mako-engine-sto",
  "mako-local",
 ]
 
 [[package]]
 name = "mako-engine-api"
 version = "0.1.0"
+
+[[package]]
+name = "mako-engine-sto"
+version = "0.1.0"
+dependencies = [
+ "mako-clock",
+ "mako-differential",
+ "mako-engine-api",
+ "masstree",
+ "sto-core",
+ "sto-masstree",
+]
 
 [[package]]
 name = "mako-history"
@@ -250,6 +271,7 @@ name = "mako-local"
 version = "0.1.0"
 dependencies = [
  "mako-clock",
+ "mako-differential",
  "mako-engine-api",
  "mako-history",
  "mako-local-sys",

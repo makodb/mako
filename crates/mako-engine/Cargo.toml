@@ -13,7 +13,12 @@ description = "Compile-time selected local transaction engine behind the mako-en
 default = ["c-abi"]
 # C ABI facade over the C++ STO/MassTrans engine (`mako-local`).
 c-abi = ["dep:mako-local"]
+# Native Rust STO engine (`mako-engine-sto` over sto-core and sto-masstree).
+sto = ["dep:mako-engine-sto"]
+# Test-only observers and simulated cleanup failures of the Rust STO engine.
+sto-test-hooks = ["mako-engine-sto?/test-hooks"]
 
 [dependencies]
 mako-engine-api = { path = "../mako-engine-api" }
+mako-engine-sto = { path = "../mako-engine-sto", optional = true }
 mako-local = { path = "../mako-local", optional = true }

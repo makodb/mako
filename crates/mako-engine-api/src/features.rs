@@ -24,6 +24,10 @@ impl Features {
     pub const TEST_CLEANUP_FAILURES: u64 = 1 << 6;
     /// The process-global physical-clock override is compiled in for tests.
     pub const TEST_TIMESTAMP_CLOCK: u64 = 1 << 7;
+    /// The test commit observer also reports `FirstWriteInstalled` between
+    /// the first and last installed write. Engines whose core installs every
+    /// write without a per-write seam advertise the observer without this bit.
+    pub const TEST_COMMIT_MID_INSTALL_OBSERVER: u64 = 1 << 8;
 
     /// Wrap raw capability bits reported by an engine.
     pub const fn from_bits(bits: u64) -> Self {
@@ -70,6 +74,11 @@ impl Features {
     #[doc(hidden)]
     pub const fn test_timestamp_clock(self) -> bool {
         self.0 & Self::TEST_TIMESTAMP_CLOCK != 0
+    }
+
+    /// Whether the test observer reports the mid-install seam.
+    pub const fn test_commit_mid_install_observer(self) -> bool {
+        self.0 & Self::TEST_COMMIT_MID_INSTALL_OBSERVER != 0
     }
 
     /// Raw feature bits, including future bits unknown to this crate.

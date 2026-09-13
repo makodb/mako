@@ -1,8 +1,8 @@
 # Rust cache over Rust STO: the engine cutover
 
 Status: in progress, 2026-09-12. Starting revision is the merge commit
-`7de836393` (`worktree-masstree-rocks` + `codex/sto-rust`). Phases 0 and 1 are
-implemented; Phases 2 to 4 are not. This is Milestone 4 of
+`7de836393` (`worktree-masstree-rocks` + `codex/sto-rust`). Phases 0 to 2 are
+implemented; Phases 3 and 4 are not. This is Milestone 4 of
 [the transaction-cache roadmap](rust-mako-transaction-cache.md) made concrete
 now that a native Rust STO exists; it also discharges the one deferred item
 the [Rust STO design contract](../architecture/rust-sto.md) calls "upper
@@ -222,6 +222,91 @@ Size: small.
 
 ## Phase 2: `mako-engine-sto`
 
+Status: implemented as `crates/mako-engine-sto`, selected by the `sto`
+feature of `mako-engine` and the `engine-sto` feature of `mako-cache`
+(`cargo test -p mako-cache --no-default-features --features
+engine-sto-test-hooks,test-support`). What was built, and where it departs
+from the sketch below:
+
+- `LocalDb` owns one `sto_core::Runtime`, the process Masstree runtime, an
+  append-only table registry, the FIFO ticket of the legacy record terminal,
+  and the process-wide namespace claim. Workers are process-lifetime: the
+  first use of a database on a thread attaches and leaks one `WorkerContext`
+  and one Masstree `Worker`, so `MAX_WORKERS` bounds threads exactly as the
+  C++ thread ids do. `Transaction` is `!Send`; one active transaction per
+  thread per database, as in C++.
+- The wrapper's operation log is the canonical write set: keys in first-touch
+  order (reads and scanned rows included, so record order matches the C++
+  `TransItem` walk), final effect per key, `existed_before` from the first
+  observation. Item budget charges are the C++ ones (get 1, write 4 + one per
+  8 key bytes, remove 1, scans per row).
+- One `CommitHook` driver runs every record terminal: `reserve_upper_metadata`
+  enters the general gate (HLC, or FIFO ticket then HLC for unclaimed and
+  single-producer facades), `pre_install` mints the stamp, binds the sink,
+  leaves the gate, serializes, and returns; a validation abort leaves the gate
+  only when the driver drops after `sto-core` released every lock. The
+  restricted profile is `can_order_record_after_validation` recomputed from
+  the log (one update of an existing key, observed only through its own
+  lock, no predicates): no gate, `(timestamp, sequence)` pair after
+  validation, spinning on `GeneralLocked`. Every C++ terminal shape exists:
+  general and one-put record targets, native-ordered record target, arena,
+  holder (with FREE to BOUND to READY cell publication), preselected
+  single-producer record and holder, per-worker holder, and the fused SPSC
+  holder terminal with its `Untouched`/`Consumed` control codes.
+- Records are encoded in Rust (`record.rs`, CRC-32C included) with the exact
+  v5/v6 framing; a one-put v6 record is byte-identical to the C++ output.
+- Outcome types carry the same fail-closed decode rules as `mako-local`'s,
+  over `(disposition, cleanup)` reports instead of packed C status words.
+  `sto-core`'s definite outcomes are preserved: a poisoned commit with a known
+  outcome reports that outcome with `cleanup = Err(WorkerPoisoned)`.
+
+Decisions taken here:
+
+1. Quarantine model. `sto-core` poisons its whole runtime; this engine
+   quarantines the calling worker (thread-local poison, global count) and
+   maps every later `Poisoned` begin or attach on that runtime to
+   `WorkerPoisoned`, so a poisoned runtime retires each worker as it next
+   touches the database. Conservative, and the cache's cleanup gates pass on
+   it.
+2. `sto-masstree` change (for the Rust STO owners to review):
+   `TableConfig::with_blocking_structural_admission(true)` makes a
+   first-time key publication wait for structural admission
+   (`RwLock::write`) instead of failing with `HiddenLockBusy`. The default is
+   unchanged, so `structural_scan_seam_never_blocks_a_miss_publisher` still
+   holds for other users. The engine opts in: two inserters of distinct keys
+   used to abort each other, which the cache's contract forbids (the C++
+   engine never conflicts there), and `concurrent_holder` hung on it half
+   the time. The gate is held only across directory publication, never
+   across a transaction lock, so waiting cannot deadlock.
+3. `Features::TEST_COMMIT_MID_INSTALL_OBSERVER` (bit 8) says the test
+   observer reports `FirstWriteInstalled`. The C ABI engine sets it with its
+   observer; this engine cannot (sto-core installs every write inside its
+   core), so the crash matrix skips that one point on engines without it.
+4. The physical clock stays `SystemTime`; RDTSCP is deferred to the perf
+   sweep.
+5. `sto-core`/`sto-masstree` change (for review): a transaction's own
+   first-time key publication (any miss: get, put, insert, remove of a key
+   that does not exist yet) used to invalidate its own earlier scan of the
+   same table, because the scan's predicate is the table-wide directory
+   generation and every publication advances it. The fourth-executor
+   differential caught it on the first seeded script. `sto-masstree` now
+   moves the transaction's own directory (and trusted scan) observation
+   forward by one per own publication, through a new
+   `sto_core::Entry::replace_read`, so validation still fails on every
+   foreign publication but not on the transaction's own. Fixed-key batch
+   publication (`fixed-u64`) does not account this way; the cache does not
+   use it.
+
+Gates in place: `crates/mako-engine-sto/tests/native.rs` (11 end-to-end
+tests over every terminal against the native Masstree); the complete
+`mako-cache` library and integration suites built with `engine-sto`
+(200 of 202 library tests and every integration suite; the two failures are the pre-existing G4 cases
+that also fail on the C ABI engine); `mako-engine-sto/tests/differential.rs`,
+the fourth executor of the shared corpus (`crates/mako-differential`),
+compared against the C ABI executor with only the `features` lines masked.
+The engine's test binaries need the CMake archives; run them with the
+`MAKO_MTREE_NATIVE_*` environment the `rust_sto_integration` target sets.
+
 Implement `LocalEngine` over `sto-core` + `sto-masstree` + `masstree` +
 `mako-clock`.
 
@@ -297,6 +382,17 @@ thousand lines) plus tests.
 
 ## Phase 3: prove equivalence
 
+Status: in progress. Done with Phase 2: item 1's fourth executor
+(`crates/mako-differential` holds the corpus, parser, generators, and a
+replay generic over `EngineDb`; `mako-local/tests/differential.rs` now uses
+it for the three-way gate, and `mako-engine-sto/tests/differential.rs` runs
+the Rust engine against the C ABI driver on the same corpus, injected-op
+tripwire included; it found the own-publication scan conflict on its first
+run). Item 3's acceptance suite and crash matrix run on the Rust engine as
+part of the cache suites (`run_mako_engine_sto_tests`), the crash matrix
+minus the mid-install point. Remaining: the composition-matrix and
+scan-bounds corpus extension, item 2, cross-engine reopen, items 4 to 6.
+
 1. Differential corpus. Add the Rust engine as a fourth executor to
    `crates/mako-local/tests/differential.rs` (direct C++, raw C ABI, safe
    Rust over C ABI, Rust engine) and byte-compare transcripts on
@@ -326,6 +422,14 @@ thousand lines) plus tests.
    at the end of Phase 3.
 
 ## Phase 4: cutover and removal
+
+Precondition found during Phase 2: two `mako-cache` library tests fail on
+both engines and on the pre-merge tree
+(`gc_stops_at_first_unexpired_record_in_untagged_stream_despite_later_expired_records`,
+`recovered_empty_database_advances_hlc_and_lane_ids_past_checkpoint_state`);
+the existing CI never ran the cache library suite. `run_mako_engine_sto_tests`
+skips exactly those two by name. Fix them (or retire them with a reason)
+before the default engine switches.
 
 1. Default `E = mako-engine-sto` in `mako-cache-bench` and the acceptance
    docs; keep `mako-local` selectable for one compatibility release.

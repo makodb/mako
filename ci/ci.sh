@@ -298,7 +298,8 @@ run_mako_local_abi_gates() {
         test_mako_local_abi \
         test_mako_local_abi_c11 \
         test_mako_local_abi_cpp_conformance \
-        run_mako_local_rust_tests
+        run_mako_local_rust_tests \
+        run_mako_engine_sto_tests
     local boundary_test
     for boundary_test in \
         MakoLocalAbiTests \
