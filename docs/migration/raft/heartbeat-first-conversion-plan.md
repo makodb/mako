@@ -516,11 +516,42 @@ comparisons already go through DSL predicates
 manipulation at `server.cc:2461-2462`, `2506-2519`, `2667-2678` and `2732-2734`
 into them. No behaviour changes; the same sets get the same elements.
 
-**The conversion.** A DSL `pub struct` with `rusty::BTreeSet<u16>` fields and
-five methods. `rusty::BTreeSet` is a real rusty runtime type, so it emits as
-itself and needs no alias — UNTESTED, and the check is one transpiler run.
-Converting `std::set` → `rusty::BTreeSet` here is the opportunistic container
-migration CLAUDE.md asks for, confined to one type.
+**The conversion.** A DSL `pub struct` with five methods.
+
+**On the container: MEASURED by experiment, and my original estimate here was
+wrong in three ways.** This section previously said `rusty::BTreeSet` "is a real
+rusty runtime type, so it emits as itself and needs no alias — UNTESTED, and the
+check is one transpiler run". Running it:
+
+| claim | verdict |
+|---|---|
+| emits verbatim as `rusty::BTreeSet<uint16_t>`, no alias | **true** |
+| it is a header type like `rusty::Mutex` | **false** — it is a C++20 module. `rusty.hpp:79` says the headers no longer provide it; `rusty.cppm:184` aliases `::btree_port::btree::set::BTreeSet` into namespace `rusty` |
+| nothing else is needed | **false** — the TU must `import rusty;` |
+| mixing `import rusty;` with `#include <rusty/*.hpp>` will be trouble | **false** — server.cc already does `import std;`, and adding `import rusty;` alongside the rusty headers compiled cleanly |
+| "the check is one transpiler run" | **false** — it was four build cycles |
+
+`rusty::BTreeSet` does carry everything this type needs: `insert`, `remove`,
+`contains`, `len`, `clear`.
+
+**A general tax, discovered three times now.** The emitter freely generates calls
+to free functions in namespace `rusty` and gives no indication which header
+declares them. Each one costs a build cycle to find:
+
+```
+rusty::clone     -> #include <rusty/move.hpp>
+rusty::len       -> #include <rusty/array.hpp>
+rusty::contains  -> #include <rusty/array.hpp>
+```
+
+The diagnostic is good (`missing '#include "rusty/array.hpp"'`) but arrives one
+at a time. Budget for it in every step that touches a rusty container.
+
+**Whether the container migration belongs in this step is an open question.**
+Extracting the type and swapping `std::set` for `rusty::BTreeSet` are separable,
+and bundling them means a performance or behaviour change cannot be attributed
+to one or the other. The extraction is the point; the container swap is
+opportunistic. Recommend splitting unless there is a reason not to.
 
 **Verify.** `raftLabTest` exercises read-index confirmation; log integrity and
 the flap test cover the loop. Perf: throttled point only — this is not on the
