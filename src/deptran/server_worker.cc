@@ -46,7 +46,7 @@ void ServerWorker::SetupBase() {
   // RaftLab installs its agreement oracle only after all communicators exist.
   // Keep recovery fail-closed in the meantime: an unexpected replay must stop
   // startup instead of invoking an empty std::function.
-  rep_sched_->RegLearnerAction(
+  rep_sched_->reg_learner_action(
       [](slotid_t, janus::Command) -> int {
         throw std::runtime_error(
             "RaftLab learner callback not installed yet");

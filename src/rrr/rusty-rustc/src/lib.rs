@@ -55,6 +55,26 @@ impl<F> Default for CallbackWrapper<F> {
     }
 }
 
+/// Rustc-only opaque models of the two deptran types named by the
+/// `TxLogServer` interface (`src/deptran/scheduler.h`).
+///
+/// The C++ side restores the real spellings with two aliases declared next to
+/// the interface, exactly as `src/rrr/rust-type-map.toml` does for crate mode;
+/// inline mode has no `--type-map`, so the aliases live in the carrier.
+/// Canonical Rust only passes these by pointer or moves them through without
+/// inspecting them.
+#[repr(C)]
+pub struct Communicator {
+    _opaque: [u8; 0],
+}
+
+/// Model of `std::function<int(int, Command)>`, the learner callback a worker
+/// registers on a replication server.
+#[repr(C)]
+pub struct LearnerAction {
+    _opaque: [u8; 0],
+}
+
 /// Opaque rustc-only models of the native pthread types used by the
 /// canonical threading wrapper. The checked C++ type map restores the native
 /// typedef spellings; canonical Rust only passes pointers to these values.

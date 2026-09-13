@@ -99,3 +99,12 @@ output = "src/deptran/raft/src/testconf_cc.rs"
 cpp_module = "raft.raft_main_helper_cc"
 source = "src/deptran/raft_main_helper.cc"
 output = "src/deptran/raft/src/raft_main_helper_cc.rs"
+
+# Not under src/deptran/raft, like raft_main_helper.cc above. scheduler.h holds
+# the TxLogServer interface, which BOTH engines implement -- it is carried by
+# this manifest only because deptran has no manifest of its own. If Paxos ever
+# grows DSL blocks, that is the point to split this out.
+[[module]]
+cpp_module = "raft.scheduler_h"
+source = "src/deptran/scheduler.h"
+output = "src/deptran/raft/src/scheduler_h.rs"

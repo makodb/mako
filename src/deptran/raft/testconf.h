@@ -50,7 +50,7 @@ class RaftTestConfig {
  private:
   static std::map<siteid_t, RaftFrame*> replicas;
   // take janus::Command (matching the
-  // RegLearnerAction signature change in deptran/scheduler.h).
+  // reg_learner_action signature change in deptran/scheduler.h).
   static std::map<siteid_t,
                   std::function<int(slotid_t, janus::Command)>>
       commit_callbacks;

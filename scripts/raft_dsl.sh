@@ -63,6 +63,7 @@ EXPECTED_BLOCKS=(
   "src/deptran/raft_main_helper.cc|raft_main.argument_casefold"
   "src/deptran/raft_main_helper.cc|raft_main.group_mode"
   "src/deptran/raft_main_helper.cc|raft_main.group_mode_argument_predicate"
+  "src/deptran/scheduler.h|deptran_scheduler.tx_log_server"
 )
 # Distinct carrier paths named by EXPECTED_BLOCKS -- used to decide whether a
 # run covers the whole graph (and therefore whether to verify the crate).
@@ -235,7 +236,11 @@ fi
 FULL_INVENTORY=0
 if ((${#FILES[@]} == 0)); then
   FULL_INVENTORY=1
-  SEARCH_ROOTS=(src/deptran/raft src/deptran/raft_main_helper.cc)
+  # scheduler.h holds the TxLogServer interface both engines implement. It is
+  # named explicitly, like raft_main_helper.cc, because it is not under
+  # src/deptran/raft -- see the note in src/deptran/raft/rust-modules.toml.
+  SEARCH_ROOTS=(src/deptran/raft src/deptran/raft_main_helper.cc
+                src/deptran/scheduler.h)
   if [[ -d src/deptran/fpga_raft ]]; then
     SEARCH_ROOTS=(src/deptran/fpga_raft "${SEARCH_ROOTS[@]}")
   fi
@@ -264,7 +269,7 @@ for index in "${!FILES[@]}"; do
   FILES[${index}]="${FILES[${index}]#./}"
   file="${FILES[${index}]}"
   case "${file}" in
-    src/deptran/fpga_raft/*|src/deptran/raft/*|src/deptran/raft_main_helper.cc) ;;
+    src/deptran/fpga_raft/*|src/deptran/raft/*|src/deptran/raft_main_helper.cc|src/deptran/scheduler.h) ;;
     *)
       echo "refusing non-Raft carrier: ${file}" >&2
       exit 2

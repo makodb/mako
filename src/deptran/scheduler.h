@@ -55,27 +55,70 @@ class Communicator;
 // replace its recursive mutex with a single Mutex<RaftState> without touching
 // Paxos (Tranche 5).
 //
+// The learner callback, at namespace scope rather than as a member typedef of
+// TxLogServer: a DSL `pub trait` cannot declare a nested type, and nothing
+// outside this header ever spelled it `TxLogServer::LearnerAction`.
+using LearnerAction = std::function<int(int, Command)>;
+
+}  // namespace janus
+
+// Inline-mode type map for the interface below, the same mechanism
+// src/deptran/raft/rust_facade_types.h uses and for the same reason: the
+// emitter carries a Rust path into C++ verbatim, and inline mode has no
+// `--type-map` to rewrite it. The canonical Rust names these two as
+// `rusty::Communicator` and `rusty::LearnerAction` (modelled opaquely in
+// src/rrr/rusty-rustc/src/lib.rs); these aliases are the C++ half.
+//
+// Aliases, deliberately, rather than a `use rusty::*;` glob in the DSL block.
+// The glob emits `using namespace rusty;` INSIDE `namespace janus`, and this
+// header is included by every replication translation unit -- pulling all of
+// rusty into janus name lookup that widely is not worth saving two lines.
+namespace rusty {
+using Communicator = ::janus::Communicator;
+using LearnerAction = ::janus::LearnerAction;
+}  // namespace rusty
+
+namespace janus {
+
 // @interface - pure virtuals and a virtual destructor only; no state.
+//
+// The three methods are the ONLY things a worker does through a base pointer,
+// enumerated from the call sites rather than guessed: raft_worker.cc:288-290,
+// 374,444 and paxos_worker.cc:50-51,180,553. Everything else the workers want,
+// they dynamic_cast for.
+//
+// locid_t/parid_t/siteid_t are #defines for uint32_t/uint32_t/uint16_t
+// (constants.h:13-18), so the emitted uint32_t/uint16_t below are
+// byte-identical to the previous hand-written signatures after preprocessing,
+// and both engines' overrides still match.
+#if RUSTYCPP_RUST
+pub trait TxLogServer {
+    fn set_site_identity(&mut self, loc_id: u32, site_id: u16, partition_id: u32);
+    fn set_commo(&mut self, commo: *mut rusty::Communicator);
+    fn reg_learner_action(&mut self, learner_action: rusty::LearnerAction);
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=deptran_scheduler.tx_log_server version=1 rust_sha256=477f1bdffafaade87ca2ea1a2b24182fff8d75a520bead0e63b7303c23eca4b2*/
+class TxLogServer;
+
 class TxLogServer {
- public:
-  using LearnerAction = std::function<int(int, Command)>;
-
-  TxLogServer() = default;
-  virtual ~TxLogServer();
-
-  TxLogServer(const TxLogServer&) = delete;
-  TxLogServer& operator=(const TxLogServer&) = delete;
-
-  // The four things a worker does through this pointer. Enumerated from the
-  // call sites rather than guessed: raft_worker.cc:288-290,374,444 and
-  // paxos_worker.cc:50-51,180,553. Everything else the workers want, they
-  // dynamic_cast for.
-  virtual void SetSiteIdentity(locid_t loc_id,
-                               siteid_t site_id,
-                               parid_t partition_id) = 0;
-  virtual void SetCommo(Communicator* commo) = 0;
-  virtual void RegLearnerAction(LearnerAction learner_action) = 0;
+public:
+    virtual ~TxLogServer() noexcept(false) {}
+    virtual void set_site_identity(uint32_t loc_id, uint16_t site_id, uint32_t partition_id) = 0;
+    virtual void set_commo(rusty::Communicator* commo) = 0;
+    virtual void reg_learner_action(rusty::LearnerAction learner_action) = 0;
+    TxLogServer(const TxLogServer&) = delete;
+    TxLogServer& operator=(const TxLogServer&) = delete;
+    TxLogServer(TxLogServer&&) = delete;
+    TxLogServer& operator=(TxLogServer&&) = delete;
+protected:
+    TxLogServer() = default;
 };
+
+template <class U> class TxLogServerAdapter;
+template <class U> class TxLogServerAdapterRef;
+template <class U> class TxLogServerAdapterRefMut;
+/*RUSTYCPP:GEN-END id=deptran_scheduler.tx_log_server*/
 
 // The five fields that used to sit in TxLogServer, as a macro rather than a
 // base class or a member struct.
@@ -99,14 +142,14 @@ class TxLogServer {
 
 // The bodies of the three interface methods, identical in both engines.
 #define TXLOG_SERVER_SITE_METHODS()                                  \
-  void SetSiteIdentity(locid_t loc_id, siteid_t site_id,             \
+  void set_site_identity(locid_t loc_id, siteid_t site_id,             \
                        parid_t partition_id) override {              \
     loc_id_ = loc_id;                                                \
     site_id_ = site_id;                                              \
     partition_id_ = partition_id;                                    \
   }                                                                  \
-  void SetCommo(Communicator* commo) override { commo_ = commo; }    \
-  void RegLearnerAction(LearnerAction learner_action) override {     \
+  void set_commo(Communicator* commo) override { commo_ = commo; }    \
+  void reg_learner_action(LearnerAction learner_action) override {     \
     app_next_ = std::move(learner_action);                           \
   }
 

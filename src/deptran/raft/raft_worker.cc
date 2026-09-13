@@ -33,7 +33,7 @@ import std;
 //   Config::GetConfig: [safe, () -> *]
 //   janus::Config::get_tot_req: [safe, (&'a) -> int]
 //   janus::Frame::CreateScheduler: [safe, (&'a mut) -> *]
-//   janus::TxLogServer::RegLearnerAction: [safe, (&'a mut, ...) -> void]
+//   janus::TxLogServer::reg_learner_action: [safe, (&'a mut, ...) -> void]
 //   rusty::Option::clone: [safe, (&'a) -> owned]
 //   memcpy: [safe, (void*, const void*, size_t) -> void*]
 //   std::string::assign: [safe, (&'a mut, ...) -> &'a mut]
@@ -288,7 +288,7 @@ void RaftWorker::SetupBase() {
   { // rep_sched_-> and site_info_-> pointer dereferences
     // One interface call rather than three field writes through the base:
     // TxLogServer no longer HAS fields. See src/deptran/scheduler.h.
-    rep_sched_->SetSiteIdentity(site_info_->locale_id,
+    rep_sched_->set_site_identity(site_info_->locale_id,
                                 site_info_->id,  // CRITICAL: Set site_id!
                                 site_info_->partition_id_);
   }
@@ -374,7 +374,7 @@ void RaftWorker::SetupCommo() {
 
   // @unsafe
   { // rep_sched_-> pointer dereference
-    rep_sched_->SetCommo(rep_commo_);
+    rep_sched_->set_commo(rep_commo_);
   }
 }
 
@@ -444,7 +444,7 @@ bool RaftWorker::PrepareForStartup(
     // This is the only helper-side write to TxLogServer::app_next_. It occurs
     // before EnsureSetup(), so recovery observes either the complete callback
     // registry or no learner at all.
-    rep_sched_->RegLearnerAction(std::move(learner));
+    rep_sched_->reg_learner_action(std::move(learner));
     learner_callback_bound_ = true;
   }
   return true;

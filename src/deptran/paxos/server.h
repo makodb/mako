@@ -96,7 +96,7 @@ class PaxosServer : public TxLogServer {
   /**
    * Replay committed entries after recovery.
    * Called after app_next_ callback is registered to apply recovered entries.
-   * Must be called AFTER RegLearnerAction() sets up the callback.
+   * Must be called AFTER reg_learner_action() sets up the callback.
    */
   // @unsafe - Calls app_next_ which may have side effects
   void ReplayCommittedEntries();

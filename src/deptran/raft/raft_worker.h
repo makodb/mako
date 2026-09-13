@@ -245,7 +245,7 @@ public:
 
   // Application callback (called from RaftServer::applyLogs)
   // @unsafe - uses shared_ptr, dynamic_pointer_cast, raw pointers, malloc/memcpy
-  // take janus::Command (matches RegLearnerAction
+  // take janus::Command (matches reg_learner_action
   // signature in deptran/scheduler.h).  Body unwraps via `md.inner()` /
   // `marshallable_cast<T>(md)` overload as needed.
   int Next(slotid_t slot, janus::Command md);

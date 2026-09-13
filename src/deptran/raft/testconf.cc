@@ -153,7 +153,7 @@ void RaftTestConfig::SetLearnerAction(void) {
     // Replace the fail-closed startup placeholder without a data race.
     std::lock_guard<std::mutex> apply_lock(
         RaftServer::LabAccess::state_machine_apply_mtx(*frame->svr_));
-    frame->svr_->RegLearnerAction(RaftTestConfig::commit_callbacks[svr]);
+    frame->svr_->reg_learner_action(RaftTestConfig::commit_callbacks[svr]);
   }
 }
 
