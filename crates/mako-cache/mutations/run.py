@@ -346,12 +346,12 @@ MUTATIONS: tuple[Mutation, ...] = (
         anchor="""    if let Some(timestamp) = recovered.maximum_timestamp {
         #[cfg(test)]
         crate::failpoint::hit(crate::failpoint::Point::RecoveryBeforeClockFloor);
-        mako_local::advance_mako_timestamp_past(timestamp)?;
+        mako_engine::advance_mako_timestamp_past(timestamp)?;
         #[cfg(test)]
         crate::failpoint::hit(crate::failpoint::Point::RecoveryAfterClockFloor);
     }
 """,
-        anchor_sha256="60812a2b9361d2f1797a0035ea76c92b4c1646ef504827e946b6f25b3eafc71d",
+        anchor_sha256="c8a583353e4b2f7b63232783cfe21183e8c15fe20eedb7324208b8604be70fec",
         replacement="""    if let Some(timestamp) = recovered.maximum_timestamp {
         #[cfg(test)]
         crate::failpoint::hit(crate::failpoint::Point::RecoveryBeforeClockFloor);

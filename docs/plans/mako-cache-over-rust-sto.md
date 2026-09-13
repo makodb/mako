@@ -1,8 +1,8 @@
 # Rust cache over Rust STO: the engine cutover
 
 Status: in progress, 2026-09-12. Starting revision is the merge commit
-`7de836393` (`worktree-masstree-rocks` + `codex/sto-rust`). Phase 0 is
-implemented; Phases 1 to 4 are not. This is Milestone 4 of
+`7de836393` (`worktree-masstree-rocks` + `codex/sto-rust`). Phases 0 and 1 are
+implemented; Phases 2 to 4 are not. This is Milestone 4 of
 [the transaction-cache roadmap](rust-mako-transaction-cache.md) made concrete
 now that a native Rust STO exists; it also discharges the one deferred item
 the [Rust STO design contract](../architecture/rust-sto.md) calls "upper
@@ -183,6 +183,25 @@ Size: medium. Mostly mechanical, but `lib.rs` (4,165 LOC) and the record
 paths in `writeback.rs` are touched throughout.
 
 ## Phase 1: `mako-clock`, the HLC and cache-order namespace in Rust
+
+Status: implemented. `crates/mako-clock` is `forbid(unsafe_code)` and mirrors
+`Transaction.cc` rule for rule: `Clock` holds the packed `(stamp << 1) | gate`
+word and the dense sequence word; `try_allocate_timestamp`,
+`try_allocate_restricted_timestamp` (returns `GeneralLocked`),
+`try_allocate_sequence`, `try_allocate_order_pair` (timestamp first),
+`enter_general`/`leave_general` plus an RAII `GeneralGate`,
+`order_validation_prefix` (acquire `fetch_add(0)`), `reseed_sequence`,
+`observe_stamp`, and `advance_past`. `global()` is the process-wide instance;
+tests build private clocks. The physical source is `SystemTime` in
+milliseconds with a `test-hooks` feature override (RDTSCP is deferred until a
+benchmark asks for it). Gates in place: 21 unit tests ported from the C++
+timestamp tests; `crates/mako-clock/mutations/run.py` (12 clock-rule mutants,
+all killed, also wired as the `run_mako_clock_mutation_tests` CMake target);
+and `crates/mako-local/tests/clock_differential.rs`, which drives the native
+clock through the C ABI and the Rust clock through the same recovery floors
+and commits and requires identical timestamps bit for bit, ending at the
+final mintable stamp and exhaustion on both sides. The `mako-clock` unit
+tests run inside `run_mako_local_rust_tests`.
 
 Port `Transaction.cc`'s clock as a small safe crate: `allocate_hlc_stamp`
 (44/19 packing, `max(physical, previous + 1)`), the general gate bit with

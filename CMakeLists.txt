@@ -4138,6 +4138,11 @@ if(BUILD_TESTS)
                     "MAKO_LOCAL_FAKE_ABI=1"
                     "MAKO_LOCAL_REQUIRE_NATIVE=0"
                     ${CARGO_EXECUTABLE} test --locked -p mako-engine-api --all-targets
+            COMMAND ${CMAKE_COMMAND} -E env
+                    ${MAKO_LOCAL_CARGO_ENV}
+                    "MAKO_LOCAL_FAKE_ABI=1"
+                    "MAKO_LOCAL_REQUIRE_NATIVE=0"
+                    ${CARGO_EXECUTABLE} test --locked -p mako-clock --all-features --all-targets
         COMMAND ${CMAKE_COMMAND} -E env
                     ${MAKO_LOCAL_CARGO_ENV}
                     "MAKO_LOCAL_FAKE_ABI=1"
@@ -4282,6 +4287,27 @@ if(BUILD_TESTS)
             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/crates
             DEPENDS mako
             COMMENT "Running Rust transaction-cache tests"
+            VERBATIM
+        )
+
+        # The mako-clock mutation runner needs no native archive: every
+        # mutant is a safe-Rust clock rule and its designated unit test
+        # kills it in an isolated workspace. The report lands in the build
+        # tree, never the source worktree.
+        add_custom_target(run_mako_clock_mutation_tests
+            COMMAND ${CMAKE_COMMAND} -E env
+                    ${MAKO_RUST_TOOLCHAIN_ENV}
+                    ${CARGO_EXECUTABLE} fetch --locked
+                    --manifest-path "${CMAKE_SOURCE_DIR}/crates/Cargo.toml"
+            COMMAND ${CMAKE_COMMAND} -E env
+                    ${MAKO_RUST_TOOLCHAIN_ENV}
+                    "${MAKO_LOCAL_PYTHON_EXECUTABLE}"
+                    "${CMAKE_SOURCE_DIR}/crates/mako-clock/mutations/run.py"
+                    --cargo "${CARGO_EXECUTABLE}"
+                    --temp-root "${CMAKE_BINARY_DIR}/mako-clock-mutation-work"
+                    --report "${CMAKE_BINARY_DIR}/mako-clock-mutations.json"
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            COMMENT "Running isolated mako-clock HLC mutation gate"
             VERBATIM
         )
 

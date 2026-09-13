@@ -12,4 +12,5 @@ mako-engine-api = { path = "../mako-engine-api" }
 mako-local-sys = { path = "../mako-local-sys" }
 
 [dev-dependencies]
+mako-clock = { path = "../mako-clock", features = ["test-hooks"] }
 mako-history = { path = "../mako-history" }

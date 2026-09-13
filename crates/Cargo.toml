@@ -12,6 +12,7 @@ resolver = "2"
 members = [
     "mako-cache",
     "mako-cache-bench",
+    "mako-clock",
     "mako-engine",
     "mako-engine-api",
     "mako-history",

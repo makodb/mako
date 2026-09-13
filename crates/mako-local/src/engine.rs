@@ -21,8 +21,9 @@ use mako_engine_api::{
 use crate::{
     LocalDb, Scan, Table, Transaction, TrustedNativeOrderedArenaControl,
     TrustedNativeOrderedHolderControl, TrustedNativeOrderedOnePutRecordOutcome,
-    TrustedOnePutHolderPool, TrustedOnePutHolderView, TrustedPreselectedUncheckedOnePutHolderOutcome,
-    TrustedPreselectedUncheckedOnePutRecordOutcome, TrustedSpscOnePutHolderControl,
+    TrustedOnePutHolderPool, TrustedOnePutHolderView,
+    TrustedPreselectedUncheckedOnePutHolderOutcome, TrustedPreselectedUncheckedOnePutRecordOutcome,
+    TrustedSpscOnePutHolderControl,
 };
 
 /// The C ABI engine: safe Rust over `mako_local_*` to C++ STO/MassTrans.
@@ -181,7 +182,11 @@ impl<'db> EngineTransaction<'db> for Transaction<'db> {
         F: FnOnce(MakoTimestamp, CommitRecordPreflight) -> Option<CommitRecordTarget>,
     {
         // SAFETY: forwarded unchanged.
-        unsafe { Transaction::commit_report_with_unchecked_one_put_record_target(self, candidate, acquire) }
+        unsafe {
+            Transaction::commit_report_with_unchecked_one_put_record_target(
+                self, candidate, acquire,
+            )
+        }
     }
     unsafe fn commit_trusted_native_ordered_unchecked_one_put_record_target<F>(
         self,
@@ -206,7 +211,11 @@ impl<'db> EngineTransaction<'db> for Transaction<'db> {
         control: &TrustedNativeOrderedArenaControl,
     ) -> TrustedNativeOrderedOnePutRecordOutcome {
         // SAFETY: forwarded unchanged.
-        unsafe { Transaction::commit_trusted_native_ordered_unchecked_one_put_arena(self, candidate, control) }
+        unsafe {
+            Transaction::commit_trusted_native_ordered_unchecked_one_put_arena(
+                self, candidate, control,
+            )
+        }
     }
     unsafe fn commit_trusted_native_ordered_unchecked_one_put_holder(
         self,
@@ -214,7 +223,11 @@ impl<'db> EngineTransaction<'db> for Transaction<'db> {
         control: &TrustedNativeOrderedHolderControl,
     ) -> TrustedNativeOrderedOnePutRecordOutcome {
         // SAFETY: forwarded unchanged.
-        unsafe { Transaction::commit_trusted_native_ordered_unchecked_one_put_holder(self, candidate, control) }
+        unsafe {
+            Transaction::commit_trusted_native_ordered_unchecked_one_put_holder(
+                self, candidate, control,
+            )
+        }
     }
     unsafe fn commit_trusted_preselected_single_producer_unchecked_one_put_record_target(
         self,
@@ -237,7 +250,10 @@ impl<'db> EngineTransaction<'db> for Transaction<'db> {
         // SAFETY: forwarded unchanged.
         unsafe {
             Transaction::commit_trusted_preselected_single_producer_unchecked_one_put_holder_bytes(
-                self, exact_record_bytes, pool, sequence,
+                self,
+                exact_record_bytes,
+                pool,
+                sequence,
             )
         }
     }
@@ -250,7 +266,10 @@ impl<'db> EngineTransaction<'db> for Transaction<'db> {
         // SAFETY: forwarded unchanged.
         unsafe {
             Transaction::commit_trusted_preselected_per_worker_unchecked_one_put_holder_bytes(
-                self, exact_record_bytes, control, sequence,
+                self,
+                exact_record_bytes,
+                control,
+                sequence,
             )
         }
     }
@@ -325,7 +344,13 @@ impl SpscHolderControl for TrustedSpscOnePutHolderControl {
     ) -> Self {
         // SAFETY: forwarded unchanged.
         unsafe {
-            TrustedSpscOnePutHolderControl::new(pool, acknowledged, unhealthy, capacity, max_record_bytes)
+            TrustedSpscOnePutHolderControl::new(
+                pool,
+                acknowledged,
+                unhealthy,
+                capacity,
+                max_record_bytes,
+            )
         }
     }
     fn max_record_bytes(&self) -> u32 {

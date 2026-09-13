@@ -223,6 +223,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "mako-clock"
+version = "0.1.0"
+dependencies = [
+ "mako-engine-api",
+]
+
+[[package]]
 name = "mako-engine"
 version = "0.1.0"
 dependencies = [
@@ -242,6 +249,7 @@ version = "0.1.0"
 name = "mako-local"
 version = "0.1.0"
 dependencies = [
+ "mako-clock",
  "mako-engine-api",
  "mako-history",
  "mako-local-sys",
