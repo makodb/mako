@@ -728,6 +728,184 @@ pub fn append_chunk_script(output: &mut String) {
     output.push_str("end\n");
 }
 
+/// Append the exhaustive same-key composition matrix from
+/// `tests/test_silo_nontxn_api.cc`: every ordered triple of
+/// {get, put-small, put-large, insert-small, insert-large, remove} on a key
+/// that is initially absent (`same_key_composition_absent`) or present
+/// (`same_key_composition_present`), committed or aborted, with a point
+/// read after every operation so the transcript pins both the operation's
+/// result and read-your-writes. 432 transactions per script, one key each;
+/// two scripts keep the final full-table scan inside the item budget.
+pub fn append_composition_script(output: &mut String) {
+    const OPERATIONS: [&str; 6] = [
+        "get",
+        "put-small",
+        "put-large",
+        "insert-small",
+        "insert-large",
+        "remove",
+    ];
+    let small = encode_hex(b"small");
+    let large = encode_hex(&vec![b'L'; 512]);
+    for initially_present in [false, true] {
+        let suffix = if initially_present {
+            "present"
+        } else {
+            "absent"
+        };
+        writeln!(output, "script same_key_composition_{suffix}").unwrap();
+        writeln!(
+            output,
+            "table 0 {} {}",
+            32001 + u64::from(initially_present),
+            encode_hex(format!("composition-{suffix}").as_bytes())
+        )
+        .unwrap();
+        let keys: Vec<String> = (0..432)
+            .map(|ordinal| format!("composition-{ordinal}"))
+            .collect();
+        if initially_present {
+            // Seed in committed batches that stay under the 512-credit item
+            // budget (a put costs four credits plus one per eight key bytes).
+            for batch in keys.chunks(60) {
+                output.push_str("begin\n");
+                for key in batch {
+                    writeln!(
+                        output,
+                        "put 0 {} {}",
+                        encode_hex(key.as_bytes()),
+                        encode_hex(b"initial")
+                    )
+                    .unwrap();
+                }
+                output.push_str("commit\n");
+            }
+        }
+        let mut sequence = 0usize;
+        for commit in [false, true] {
+            for first in OPERATIONS {
+                for second in OPERATIONS {
+                    for third in OPERATIONS {
+                        let key = encode_hex(keys[sequence].as_bytes());
+                        sequence += 1;
+                        output.push_str("begin\n");
+                        for operation in [first, second, third] {
+                            match operation {
+                                "get" => writeln!(output, "get 0 {key}").unwrap(),
+                                "put-small" => writeln!(output, "put 0 {key} {small}").unwrap(),
+                                "put-large" => writeln!(output, "put 0 {key} {large}").unwrap(),
+                                "insert-small" => {
+                                    writeln!(output, "insert 0 {key} {small}").unwrap()
+                                }
+                                "insert-large" => {
+                                    writeln!(output, "insert 0 {key} {large}").unwrap()
+                                }
+                                "remove" => writeln!(output, "remove 0 {key}").unwrap(),
+                                _ => unreachable!(),
+                            }
+                            writeln!(output, "get 0 {key}").unwrap();
+                        }
+                        output.push_str(if commit { "commit\n" } else { "abort\n" });
+                    }
+                }
+            }
+        }
+        output.push_str("end\n");
+    }
+}
+
+/// Append the scan-bounds script: binary edge keys, inclusive and exclusive
+/// bounds landing on and between keys, empty and inverted ranges, both
+/// directions, and staged inserts and removes inside the scanned range.
+pub fn append_bounds_script(output: &mut String) {
+    output.push_str("script scan_bounds\n");
+    output.push_str("table 0 32002 626f756e6473\n");
+    let keys: [&[u8]; 9] = [
+        b"",
+        b"\x00",
+        b"\x00\x00",
+        b"a",
+        b"a\x00",
+        b"a\xff",
+        b"b",
+        b"\xfe",
+        b"\xff",
+    ];
+    output.push_str("begin\n");
+    for (ordinal, key) in keys.iter().enumerate() {
+        writeln!(
+            output,
+            "put 0 {} {}",
+            encode_hex(key),
+            encode_hex(format!("v{ordinal}").as_bytes())
+        )
+        .unwrap();
+    }
+    output.push_str("commit\n");
+    let bounds: [(&[u8], Option<&[u8]>); 12] = [
+        (b"", None),
+        (b"", Some(b"")),
+        (b"", Some(b"\x00")),
+        (b"\x00", Some(b"a")),
+        (b"a", Some(b"a")),
+        (b"a", Some(b"a\x00")),
+        (b"a", Some(b"b")),
+        (b"a\x00", Some(b"a\xff")),
+        (b"b", Some(b"a")),
+        (b"\xfe", None),
+        (b"\xff", None),
+        (b"\xff\x00", None),
+    ];
+    for direction in ["scan", "rscan"] {
+        output.push_str("begin\n");
+        for (lower, upper) in bounds {
+            writeln!(
+                output,
+                "{direction} 0 {} {}",
+                encode_hex(lower),
+                upper.map_or_else(|| "*".to_owned(), encode_hex)
+            )
+            .unwrap();
+        }
+        output.push_str("commit\n");
+    }
+    // Staged mutations inside and at the edges of the range.
+    output.push_str("begin\n");
+    writeln!(output, "remove 0 {}", encode_hex(b"a")).unwrap();
+    writeln!(
+        output,
+        "put 0 {} {}",
+        encode_hex(b"a\x01"),
+        encode_hex(b"staged")
+    )
+    .unwrap();
+    writeln!(
+        output,
+        "insert 0 {} {}",
+        encode_hex(b"b\x00"),
+        encode_hex(b"edge")
+    )
+    .unwrap();
+    writeln!(
+        output,
+        "scan 0 {} {}",
+        encode_hex(b"a"),
+        encode_hex(b"b\x00")
+    )
+    .unwrap();
+    writeln!(
+        output,
+        "rscan 0 {} {}",
+        encode_hex(b"a"),
+        encode_hex(b"b\x01")
+    )
+    .unwrap();
+    writeln!(output, "scan 0 - *").unwrap();
+    output.push_str("abort\n");
+    output.push_str("begin\nscan 0 - *\nrscan 0 - *\ncommit\n");
+    output.push_str("end\n");
+}
+
 /// Assert that the default corpus still covers every verb and shape the
 /// differential is meant to exercise.
 pub fn assert_default_coverage(corpus: &Corpus) {
@@ -839,6 +1017,8 @@ pub fn generated_corpus(fixture: &str) -> Result<String, String> {
     let mut corpus = fixture.trim_end().to_owned();
     corpus.push('\n');
     append_chunk_script(&mut corpus);
+    append_composition_script(&mut corpus);
+    append_bounds_script(&mut corpus);
     let seeds = match std::env::var(SEED_ENV) {
         Ok(seed) => vec![seed
             .parse()
@@ -1086,6 +1266,41 @@ mod tests {
             .any(
                 |operation| matches!(operation, Operation::Put { value, .. } if value.contains(&0))
             ));
+    }
+
+    #[test]
+    fn composition_and_bounds_scripts_parse_with_the_expected_shape() {
+        let mut corpus = format!("{CORPUS_HEADER}\n");
+        append_composition_script(&mut corpus);
+        append_bounds_script(&mut corpus);
+        let parsed = parse_corpus(&corpus).expect("composition and bounds scripts parse");
+        assert_eq!(parsed.scripts.len(), 3);
+        let absent = &parsed.scripts[0];
+        assert_eq!(absent.name, "same_key_composition_absent");
+        assert_eq!(absent.transactions.len(), 432);
+        assert!(absent
+            .transactions
+            .iter()
+            .all(|transaction| transaction.operations.len() == 6));
+        let present = &parsed.scripts[1];
+        let seed_batches = 432usize.div_ceil(60);
+        assert_eq!(present.transactions.len(), seed_batches + 432);
+        assert_eq!(
+            present.transactions[..seed_batches]
+                .iter()
+                .map(|transaction| transaction.operations.len())
+                .sum::<usize>(),
+            432
+        );
+        assert_eq!(
+            present.transactions[seed_batches..]
+                .iter()
+                .filter(|transaction| transaction.terminal == Terminal::Abort)
+                .count(),
+            216
+        );
+        let bounds = &parsed.scripts[2];
+        assert_eq!(bounds.transactions.len(), 5);
     }
 
     #[test]
