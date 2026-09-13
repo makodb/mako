@@ -15,14 +15,25 @@ that turned out to be false when probed, and this session added two of its own.
 
 `RaftServer` cannot be converted method-by-method — gate G3 stubs out any
 `impl` on a C++-owned type — so the instinctive plan of "convert the small
-functions first" does not work. But it does not need to be converted at all in
-one piece. Its 64 data members fall into seven cohesive clusters, and **30 of
-its 46 stateful functions touch zero or one cluster**. Only seven functions
-entangle four or more, and those seven are exactly the protocol entry points
-plus `HeartbeatLoop`. That is the shape of a protocol implementation whose
-state machine and I/O driver have grown together, and the mature way to take it
-apart is the **sans-I/O split**: lift the decisions out as pure types the DSL
-can own, leave the I/O in C++ kernels, and let the loop shrink to orchestration.
+functions first" does not work. But it does not need to be converted in one
+piece either. Three measurements change the shape of the problem:
+
+1. Its 64 data members fall into seven cohesive clusters, and **30 of its 46
+   stateful functions touch zero or one cluster**. Only seven entangle four or
+   more, and those seven are exactly the protocol entry points plus
+   `HeartbeatLoop`.
+2. **All of consensus runs on one poll thread**, as cooperative fibers, with
+   three steady-state suspension points and three cross-thread edges. The
+   recursive mutex is defending those three edges, not forty-eight races.
+3. `src/rrr` has already made this migration and its three inheritance patterns
+   — trait, one-field Shim, accessor trait — are in production in this
+   repository and directly reusable.
+
+Together these say: lift the decisions out of `HeartbeatLoop` as pure types the
+DSL can own — **which need no locks at all**, because they run on one thread —
+leave the two RPC sends in C++ kernels, and let the loop shrink to
+orchestration. That is the **sans-I/O split**, and G3 is satisfied by
+construction, because a lifted state machine is a new whole type.
 
 ## 1. The measured structure
 
@@ -165,7 +176,235 @@ matters more than the pedigree:
 The alignment is not a coincidence. G3 forces conversion at type granularity;
 sans-I/O is the discipline that produces types worth converting.
 
-## 4. Other approaches, and why they are not the plan
+## 3.5 The concurrency model: what is actually non-deterministic
+
+This section exists because the obvious reading of the code — 48 `mtx_`
+acquisitions, a recursive mutex, fibers, threads — suggests pervasive
+concurrency, and that reading is wrong. The consensus path is a **cooperative,
+single-threaded state machine** with three suspension points and three
+cross-thread edges. Knowing exactly where the non-determinism enters is what
+makes the rest of this plan tractable, and it is what makes deterministic
+testing possible later.
+
+### One poll thread runs all of consensus
+
+MEASURED, by following the handles:
+
+```
+raft_worker.cc:337   svr_poll_thread_worker_ = PollThread::create()
+raft_worker.cc:343     -> rpc_server_          (hosts Vote/AppendEntries/InstallSnapshot)
+raft_worker.cc:372     -> CreateCommo(clone)   (so commo()->PollThread() is the same thread)
+server.cc:1623         -> BindReplicationWakeOwner(commo()->PollThread())
+server.cc:1683/1702    -> Fiber::create_run(HeartbeatLoop), Fiber::create_run(StartElectionTimer)
+```
+
+`rrr::PollThread` is **one OS thread** — `reactor.rs:2076` holds a single
+`join_handle_` and one `poll_thread_id_bits_`, and `create()` "spawns the worker
+thread", singular.
+
+So `HeartbeatLoop`, `StartElectionTimer`, and every RPC handler run as fibers on
+the *same* thread. `service.h:38` confirms the handler model: "The rrr codegen
+wraps each one in a `Fiber::create_run`".
+
+The second poll thread, `svr_hb_poll_thread_worker_g`
+(`raft_worker.cc:495`), is a red herring: it hosts `ServerControlServiceImpl`,
+the benchmark/CI control plane. It never touches Raft state.
+
+### Fibers are cooperative, so the code runs to completion
+
+A fiber is not preempted. Between suspension points, a Raft operation is atomic
+with respect to every other Raft operation on that thread. If `stepDown()` is
+running, nothing else runs; if an RPC handler is mid-flight, it finishes.
+
+MEASURED — every suspension point in production `server.cc`, with its owner:
+
+```
+line 290,312,468,485   ReplicationWakeGate        wait_timeout   <- the heartbeat-interval wait
+line 2687              HeartbeatLoop              Fiber::sleep
+line 2941              RequestVoteImpl            wait_timeout   <- waiting for a vote quorum
+line 1337,1342         PrepareForShutdown         sleep          (shutdown only)
+line 1578              StartApplyThread           sleep          (startup only)
+line 1683-1709         SetupInternal              create_run x4  (startup only)
+line 3160,3212         StartElectionTimer         create_run, sleep
+```
+
+Discounting startup and shutdown, the **steady-state consensus path has three
+suspension points**: the wake gate's interval wait, one `Fiber::sleep` inside
+`HeartbeatLoop`, and one `wait_timeout` in `RequestVoteImpl`.
+
+### The three cross-thread edges
+
+MEASURED. Everything that touches Raft state from *off* the poll thread:
+
+| edge | who | how it reaches state |
+|---|---|---|
+| **submit** | a client/worker thread | `RaftWorker::Submit` (`raft_worker.cc:776`) calls `raft_server->Start(...)` **inline**, not via a hop; `StartImpl` takes `mtx_` |
+| **apply** | `apply_thread_`, a `std::thread` | pops `apply_queue_` under `apply_queue_mtx_`, applies under `state_machine_apply_mtx_`, and reaches `mtx_` through exactly two functions: `PublishAppliedIndex` and `MaybeCreateSnapshot` |
+| **lifecycle** | worker / test threads | `PrepareForShutdown`, `Disconnect` |
+
+That is the entire non-deterministic surface. Three edges.
+
+### What follows from this
+
+**The mutex defends three edges, not forty-eight races.** Of the 23 functions
+that take `mtx_`, the consensus ones — `HeartbeatLoop` (5), `RequestVoteImpl`
+(2), `StartElectionTimer` (2), the three RPC handlers (1 each) — all run on the
+*same* thread and therefore never contend with one another. They are defending
+against the submit edge and the apply edge only. This is the strongest available
+evidence that the 24 nested re-acquisitions are safe to remove: most of them are
+not synchronising anything.
+
+**The wake gate is already the model answer for one edge.** `ReplicationWakeGate`
+exists precisely because submit happens on a foreign thread and the loop waits
+on the poll thread. It converts a shared-state problem into a message-passing
+one: publish a flag, queue a job onto the owner `PollThread`, let the owner act.
+INFERRED: the apply edge could be given the same treatment, and the apply queue
+is already half of it.
+
+**The sans-I/O core needs no locks at all.** If the state machine only ever runs
+on the poll thread, a lifted decision type is single-threaded by construction —
+no `Mutex<RaftState>`, no interior mutability, plain `&mut self`. The lock stays
+at the *edges*, guarding the handoff, not inside the core. That is a materially
+simpler target than the one this plan's predecessor described.
+
+**Deterministic simulation testing becomes reachable.** Given one thread, three
+suspension points and three edges, the execution schedule is a small, seedable
+object: the order in which the poll thread delivers events plus the choice at
+each suspension point. This is the property FoundationDB and TigerBeetle exploit,
+and `madsim` provides in Rust. UNTESTED here, and not a near-term step, but it
+is worth not designing it away — every edge converted from shared state to a
+queued message makes the schedule more explicit and the simulation more faithful.
+
+## 4. How `rrr` solved inheritance, with its actual code
+
+`src/rrr` is the only part of this repository that has completed the migration,
+so its answers are precedent rather than theory. MEASURED: 15 `#[cpp_inherit]`
+uses across 7 files. They fall into three patterns, and Mako needs all three.
+
+### Pattern 1 — interface inheritance becomes `pub trait` + `#[cpp_inherit]`
+
+The base is declared as a trait with **no state**, in its own module, and
+implementors attach it with an empty impl:
+
+```rust
+// src/rrr/reactor/reactor.rs:217
+pub trait EventPollable {
+    fn test(&self) -> bool;
+    fn is_ready(&self) -> bool;
+    fn status(&self) -> EventStatus;
+    ...
+}
+
+// six implementors: IntEvent, NeverEvent, TimeoutEvent, WaitAny, WaitAll, QuorumEvent
+#[cpp_inherit]
+impl EventPollable for IntEvent {
+    fn test(&self) -> bool { event_test_impl(self) }
+    ...
+}
+```
+
+emitting `export struct IntEvent : public EventPollable` in
+`rrr.reactor.cppm`. Polymorphism travels as `Box<dyn Trait>` / `Rc<dyn Trait>`,
+which the type map lowers to a C++ base pointer —
+`rust-type-map.toml:5` maps `LegacyChannelConnectionBase` to
+`rrr::ChannelConnectionBase`, and `fiber_channel.rs:42` declares
+`type LegacyChannelConnectionBase = dyn ChannelConnectionBase;`.
+
+**Mako already has this**, as of `5b5825659`: `TxLogServer` is a `pub trait` and
+both engines implement it. The one difference is that rrr declares the trait in a
+*different module* from its implementors and this works fine in crate mode; in
+inline mode the same thing needs the glob-import rule recorded in
+[`cpp-refactor-progress.md`](cpp-refactor-progress.md).
+
+### Pattern 2 — implementation reuse becomes a one-field Shim
+
+When the thing being adapted is a real object with its own state, rrr does **not**
+make that object inherit. It puts the inheritance in a separate, trivial type:
+
+```rust
+// src/rrr/rpc/tcp_channel.rs:238
+struct TcpChannelShim {
+    conn_: Arc<TcpConnection>,          // composition: holds the real object
+}
+
+#[cpp_inherit]
+impl ChannelConnectionBase for TcpChannelShim {   // inherits ONLY the interface
+    unsafe fn send_frame(&mut self, frame: &ChannelFrame) -> ChannelError {
+        unsafe { self.conn_.send_frame(frame) }   // forwards
+    }
+    fn flush(&mut self) { self.conn_.flush() }
+}
+
+Box::new(TcpChannelShim { conn_: conn })          // trait object == C++ base pointer
+```
+
+MEASURED — **all eight shims have exactly one field**:
+
+```
+TcpChannelShim           conn_: Arc<TcpConnection>
+TcpPollableShim          conn_: Arc<TcpConnection>
+TcpListenerChannelShim   listener_: Arc<TcpListener>
+TcpListenerPollableShim  listener_: Arc<TcpListener>
+TcpFactoryShim           factory_: Arc<TcpFactory>
+InMemoryChannelShim      conn_: Arc<InMemoryChannel>
+InMemoryListenerShim     listener_: Arc<InMemoryListener>
+InMemoryFactoryShim      factory_: Arc<InMemoryFactory>
+```
+
+The real implementations — `TcpConnection`, `TcpListener`, `InMemoryChannel` —
+inherit **nothing**. They are plain structs. The shim absorbs the inheritance so
+the implementation does not have to.
+
+**Why this matters for Mako.** `RaftServer` currently implements `TxLogServer`
+directly. Under this pattern it would not: a one-field `RaftServerShim` would
+carry the interface and forward, leaving `RaftServer` a plain struct with no base
+at all. That removes one constraint from the eventual big conversion, and it is
+the difference between "convert a type that must also satisfy an interface" and
+"convert a type".
+
+### Pattern 3 — shared base *state* becomes duplicated fields plus an accessor trait
+
+This is the one that answers the question C++ programmers actually ask: if the
+base held data, where does it go? rrr's answer is to **duplicate the fields into
+every implementor** and recover the shared *code* through a trait of accessors
+plus generic free functions.
+
+MEASURED — `IntEvent`, `TimeoutEvent` and `QuorumEvent` have 7, 7 and 18 fields
+respectively, and all three begin with the same ones (`status_: Cell<EventStatus>`,
+`owner_thread_: rusty::thread::ThreadId`, ...). That is the old C++ `Event`
+base's state, copied three times. Then:
+
+```rust
+// src/rrr/reactor/reactor.rs:229
+trait EventCore: EventPollable {          // supertrait: an EventCore is an EventPollable
+    fn core_status(&self) -> &Cell<EventStatus>;
+    fn core_owner_thread(&self) -> rusty::thread::ThreadId;
+    fn core_state(&self) -> &EventState;
+    fn core_state_mut(&mut self) -> &mut EventState;
+    fn core_self(&self) -> &Weak<dyn EventPollable>;
+    fn core_self_mut(&mut self) -> &mut Weak<dyn EventPollable>;
+    fn core_is_composite(&self) -> bool;
+}
+
+fn event_core_set_self<W: EventCore>(ev: &mut W, p: Weak<dyn EventPollable>) {
+    *ev.core_self_mut() = p;
+}
+fn event_core_wakeup_time<W: EventCore>(ev: &W) -> u64 {
+    ev.core_state().wakeup_time_.get()
+}
+```
+
+MEASURED: 30 call sites use that shared behaviour. **Shared code without shared
+storage** — which is exactly what C++ implementation inheritance provides and
+Rust does not.
+
+**This is the pattern to adopt for `TXLOG_SERVER_SITE_FIELDS`.** Tranche 6
+duplicated `TxLogServer`'s six fields into both engines — the same choice rrr
+made — but did it with a **C preprocessor macro**. The macro is a C++-only
+device that must be deleted at conversion time. `EventCore` is the form that
+survives into Rust. See Step 0 below.
+
+## 5. Other approaches, and why they are not the plan
 
 Considered and rejected, with reasons, so they are not re-proposed:
 
@@ -203,12 +442,50 @@ it converts no logic and would touch every function in the class at once — the
 opposite of incremental. Do it opportunistically inside each extracted type
 instead.
 
-## 5. The plan
+## 6. The plan
 
 Each step is: a C++ refactor that is behaviour-preserving and verifiable with
 the existing net, followed by a DSL conversion of the type that refactor
 created. Each step is independently committable and independently revertible.
 No step requires the next one to be worthwhile.
+
+### Step 0 — replace `TXLOG_SERVER_SITE_FIELDS` with an accessor trait
+
+**Why before everything else.** It is small, it is already load-bearing, and it
+is the only piece of this migration currently written in a form that cannot
+survive into Rust.
+
+Tranche 6 duplicated `TxLogServer`'s six fields into `RaftServer` and
+`PaxosServer` through two C preprocessor macros in `scheduler.h`. Duplicating
+was the right call — rrr made the same choice for `EventState` — but the macro
+is a C++-only device. `rrr`'s Pattern 3 is the form that converts:
+
+```rust
+// the shape to move toward, modelled on reactor.rs:229
+pub trait ReplicationSite: TxLogServer {
+    fn site(&self) -> &ReplicationSiteContext;
+    fn site_mut(&mut self) -> &mut ReplicationSiteContext;
+}
+
+fn replication_site_id<W: ReplicationSite>(s: &W) -> u16 { s.site().site_id_ }
+```
+
+Each engine declares a `ReplicationSiteContext` member and implements two
+accessors; the shared behaviour becomes free functions generic over the trait.
+Note the supertrait bound `: TxLogServer`, which is exactly how `EventCore`
+relates to `EventPollable`.
+
+**The cost this trades against.** The macro was chosen precisely to avoid
+renaming 164 `site_id_`, 20 `partition_id_`, 10 `loc_id_` and 6 `app_next_` uses
+to `site_.site_id_` and so on. An accessor trait reintroduces that rename —
+~200 mechanical edits. It is worth paying once, deliberately, rather than
+discovering at conversion time that the macro has to be unwound anyway. But it is
+the single largest mechanical diff in this plan, and it produces no behaviour
+change whatsoever, which makes it a good candidate for a commit of its own.
+
+**Verify.** Compilation is nearly the whole test; every rename is checked by the
+compiler. Then the standard suite. No performance run needed: field access
+through an inlined accessor on a member struct is the same load.
 
 ### Step 1 — `HeartbeatAuthority` (the read-index quorum evidence)
 
@@ -337,6 +614,13 @@ remains into:
 - **`HeartbeatDecision`** — given the four state types and the current term,
   produce a description of what to send: per-peer, either a heartbeat, an
   entry batch, or a snapshot. Pure. DSL-owned.
+
+  **And lock-free.** Per §3.5, everything in this core runs on the single poll
+  thread, so it needs no `Mutex`, no interior mutability, and no
+  `Cell`/`RefCell` — plain `&mut self`. The locking stays at the three edges,
+  guarding the handoff. This is the point where the concurrency model pays off:
+  the core is not "a state machine behind a mutex", it is a single-threaded
+  state machine, and the mutex was only ever protecting the edges.
 - **the driver** — take that description and call `SendAppendEntries2` /
   `SendInstallSnapshot`, poll the futures, hand replies back. C++, `@unsafe`,
   two RPC calls.
@@ -356,14 +640,39 @@ temporary comparison shim in the C++ driver.
 same decide/apply split applies. `RequestVoteImpl` (221 lines) goes with
 `OnRequestVote`.
 
-### Step 7 — what is left
+### Step 7 — what is left, and the Shim that makes it easier
 
 `RaftServer` becomes a shell: the lifecycle flags, the owned component types,
 and the thread/fiber plumbing. At that point the question "can `RaftServer`
 itself be a DSL struct?" is worth re-asking, because its field count and field
 *types* will both have collapsed. Not before.
 
-## 6. Verification, per step
+**And when it is asked, apply rrr's Pattern 2.** `RaftServer` currently
+implements `TxLogServer` directly, which means converting it requires converting
+a type that must *also* satisfy an interface. rrr's shims show the alternative:
+
+```rust
+struct RaftServerShim { inner_: Arc<RaftServer> }   // one field, like all eight rrr shims
+
+#[cpp_inherit]
+impl TxLogServer for RaftServerShim {
+    fn set_commo(&mut self, commo: *mut rusty::Communicator) {
+        self.inner_.set_commo(commo)                 // forwards
+    }
+    ...
+}
+```
+
+`RaftServer` then inherits nothing and is a plain struct — strictly easier to
+convert, and the interface obligation lives in a three-method forwarder. The
+workers' `TxLogServer*` becomes a pointer to the shim, which is exactly how
+`Box<dyn ChannelConnectionBase>` already works in rrr.
+
+INFERRED, not measured: this is worth doing only if the interface obligation is
+actually in the way. If `RaftServer` converts cleanly while implementing
+`TxLogServer` directly, the shim is a layer of indirection for nothing.
+
+## 7. Verification, per step
 
 Non-negotiable, because every step touches consensus:
 
@@ -386,7 +695,7 @@ run), and **the Raft production path through `dbtest`** (`shard1ReplicationRaft`
 and siblings) has not been run either. Both matter here because Steps 1-5 change
 the leader's replication path.
 
-## 7. What could go wrong
+## 8. What could go wrong
 
 **The recursive mutex.** Steps 1-4 each move state out of `mtx_`'s protection
 into a type. That is safe only while the type is still reached under the same
