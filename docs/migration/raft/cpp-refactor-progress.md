@@ -530,66 +530,69 @@ verified nothing. That is the same failure mode as the dormant `RAFT_TEST`: it
 reads as coverage. The script now refuses to run without an executable
 transpiler and fails on a rewrite error.
 
-## Multi-file DSL: inline mode cannot express a cross-carrier type reference
+## Multi-file DSL: cross-carrier references DO work, with one rule
 
-This is the constraint that shapes everything still to come, and it was found by
-asking whether a DSL block in one carrier can name a type declared by a DSL
-block in another.
+Superseding an earlier version of this section, which said inline mode could not
+express a cross-carrier type reference. It can. The earlier conclusion came from
+testing one spelling and generalising from it.
 
-It cannot. A block containing
+**The rule: reference the bare name, and import it with a GLOB.**
 
 ```rust
-use crate::messages_hpp::AppendEntriesReply;
+use crate::messages_hpp::*;          // satisfies rustc; emits inert C++
+
+pub struct XUser {
+    last_: AppendEntriesReply,       // bare -> emits bare
+}
 ```
 
 emits
 
 ```cpp
-using ::messages_hpp::AppendEntriesReply;
-...
-    messages_hpp::AppendEntriesReply last_;
+namespace messages_hpp {}
+using namespace messages_hpp;
+
+struct XUser {
+    AppendEntriesReply last_;        // correct C++, resolved by ordinary lookup
+};
 ```
 
-The Rust module path is carried through as a C++ namespace. `messages_hpp` is
-not a C++ namespace in Mako, so the result does not compile. The Rust side is
-fine -- the seventeen extracted modules have been a real module graph since
-Tranche 1 -- but the C++ side of inline mode has no module system to map onto.
+The two generated lines are an empty namespace and a using-directive over it --
+inert, and verified to compile. The type reference itself is a bare name, which
+ordinary C++ lookup resolves to the real type because the carrier already
+includes the header that declares it.
 
-`src/rrr` solves exactly this with `--flat-import-namespace rrr`, which rewrites
-`crate::<child>::<Name>` to `rrr::<Name>`. `inline-rust` has no such flag; its
-options are `--check`, `--rewrite`, `--emit-rust`, `--block-id` and `--files`.
-The per-item `cpp_import_namespace` marker does not fill the gap either: its
-diagnostics in `transpiler/src/inline_rust.rs:918-990` require the carrier to
-be a C++20 named module with an `export namespace` and a module-import zone.
-Raft's carriers are plain `.cc`/`.h`/`.hpp` files.
+**What does NOT work, and why the earlier conclusion was wrong.** A NAMED import
 
-**Consequence.** Every conversion so far has been a single self-contained type,
-which is why this never bit. `RaftServer` is not: it names `AppendEntriesReq`
-and `AppendEntriesReply` (messages.hpp), `RaftQuorum` (quorum.hpp), the snapshot
-manager and the log storage. Converting it means naming types that live in other
-carriers, so the mode question has to be settled first.
+```rust
+use crate::messages_hpp::AppendEntriesReply;
+```
 
-### Two routes, one of them cheap to test
+makes the emitter qualify every use: `using ::messages_hpp::AppendEntriesReply;`
+and `messages_hpp::AppendEntriesReply last_;`. `messages_hpp` is a Rust module
+name, derived mechanically from the carrier basename. It is not a C++ namespace
+anywhere in Mako, so that does not compile.
 
-**A. Flatten the extraction to a single Rust module.** If every carrier's blocks
-landed in one module rather than seventeen, a cross-carrier reference would need
-no path at all: the bare name resolves in Rust and the emitter emits the bare
-name, which is the correct C++ because the carrier already includes the header.
-This is a change to `scripts/raft_crate_extract.py` and the manifest, not to the
-toolchain, and the census the plan quotes -- 250 top-level DSL items, zero
-duplicate names across carriers -- says the flat namespace would not collide.
+The fix for THAT is not to invent one. Adding
+`namespace messages_hpp = ::janus::raft;` does compile -- it was tested -- but it
+fabricates a C++ namespace whose only purpose is to absorb an artifact of the
+Rust module layout, needs one alias per carrier, and leaves generated code full
+of a qualifier that appears nowhere else in the codebase. Rejected on those
+grounds. The glob form needs no such thing.
 
-UNVERIFIED. It is a hypothesis with a cheap test, not a finding. Test it before
-believing it.
+`#[cpp_name]` is not an escape hatch either: the emitter accepts it only on a
+crate-file root free function (`cpp_name is supported only on a crate-file root
+free function`), not on a type alias or a use.
 
-**B. Move raft to crate mode**, which is how rrr already does this and where
-`--flat-import-namespace` lives. The spike shows crate mode runs on raft's
-manifest unchanged (18 files, 0 errors), and would additionally need the three
-input files rrr has and raft lacks.
+**Consequence.** The C++ side of a cross-carrier reference needs NO
+infrastructure: no type map, no namespace shim, no extraction change. The only
+thing the module structure was ever obstructing is rustc resolution in the
+verification crate, and a glob import settles that. `RaftServer` naming
+`AppendEntriesReq`, `RaftQuorum` and the snapshot manager is therefore not
+blocked by this.
 
-A is worth trying first purely because it is small and would answer whether
-inline mode can carry the big conversion at all. If it cannot, B is the answer
-and the spike has already de-risked it.
+A flat single-module extraction would also work and would drop even the two
+inert lines, but it is now an optimisation rather than a prerequisite.
 
 ## What is left
 
