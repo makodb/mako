@@ -2139,6 +2139,20 @@ void RaftServer::HeartbeatLoop() {
       // ========================================================================
       // PHASE 1: Send all AppendEntries RPCs in PARALLEL (non-blocking)
       // ========================================================================
+      // The cursor is used for ITERATION ONLY; every read and write of a
+      // follower's next index below goes through next_index_[site_id], which
+      // is the same slot (site_id is it->first, so the key provably exists).
+      //
+      // This is not style. The body calls commo()->SendInstallSnapshot INSIDE
+      // the lock_guard scope, and that call's completion callback takes the
+      // SAME recursive mutex and writes next_index_[site_id]. Recursive means
+      // a callback that completes synchronously re-enters and mutates the map
+      // while a dereferenced cursor into it is live -- the aliasing hazard
+      // recorded as OWN-03 in docs/migration/raft/cpp-to-rust-precheck-raft.txt
+      // and as the one genuine item of Tranche 5 in cpp-refactor-plan.md.
+      // Holding no dereferenced cursor across that call is also what makes the
+      // loop expressible in Rust at all: `&mut` into a map cannot be held
+      // across a call that takes `&mut` to the same map.
       for (auto it = next_index_.begin(); it != next_index_.end(); it++) {
         auto site_id = it->first;
         if (site_id == site_id_) {
@@ -2162,21 +2176,21 @@ void RaftServer::HeartbeatLoop() {
         bool skip_follower = false;
         {
           std::lock_guard<std::recursive_mutex> lock(mtx_);
-          if (it->second == 0) {
+          if (next_index_[site_id] == 0) {
             Log_warn("[APPEND_ENTRIES] Repairing wrapped next_index for "
                      "follower {} at leader last index {}",
                      site_id, lastLogIndex);
-            it->second = raft_server_log_index_has_successor(lastLogIndex)
+            next_index_[site_id] = raft_server_log_index_has_successor(lastLogIndex)
                 ? raft_server_follower_next_index(lastLogIndex)
                 : lastLogIndex;
           }
-          prevLogIndex = it->second - 1;
+          prevLogIndex = next_index_[site_id] - 1;
           if (prevLogIndex > lastLogIndex) {
             Log_info("[APPEND_ENTRIES] ERROR: prevLogIndex ({}) > lastLogIndex ({}), fixing next_index", prevLogIndex, lastLogIndex);
-            it->second = raft_server_log_index_has_successor(lastLogIndex)
+            next_index_[site_id] = raft_server_log_index_has_successor(lastLogIndex)
                 ? raft_server_follower_next_index(lastLogIndex)
                 : lastLogIndex;
-            prevLogIndex = it->second - 1;
+            prevLogIndex = next_index_[site_id] - 1;
           }
           // Until a payload is selected, this is a heartbeat and proves only
           // the prefix named by prevLogIndex.
@@ -2185,12 +2199,12 @@ void RaftServer::HeartbeatLoop() {
           if (prevLogIndex > lastLogIndex) {
             Log_info("[APPEND_ENTRIES] WARNING: Cannot send AppendEntries to follower {}: prevLogIndex ({}) > lastLogIndex ({}), skipping",
                      site_id, prevLogIndex, lastLogIndex);
-            it->second = 1;
+            next_index_[site_id] = 1;
             skip_follower = true;
-          } else if (it->second < min_active_slot_ && snapshot_manager_) {
+          } else if (next_index_[site_id] < min_active_slot_ && snapshot_manager_) {
             // @unsafe - Follower is too far behind (log compacted), send InstallSnapshot
             Log_info("[HEARTBEAT-SNAPSHOT] Site {}: Follower {} next_index={} < min_active_slot_={}, sending InstallSnapshot",
-                     site_id_, site_id, it->second, min_active_slot_);
+                     site_id_, site_id, next_index_[site_id], min_active_slot_);
             janus::raft::SnapshotMetadata snap_meta;
             std::string snap_data;
             if (snapshot_manager_->LoadLatestSnapshot(&snap_meta, &snap_data)) {
@@ -2284,19 +2298,19 @@ void RaftServer::HeartbeatLoop() {
             if (!skip_follower) {
 #ifndef RAFT_BATCH_OPTIMIZATION
               Log_debug("[BATCH_CHECK] site={} follower={} next_index={} min_active_slot_={} lastLogIndex={}",
-                       site_id_, site_id, it->second, min_active_slot_, lastLogIndex);
-              if (it->second <= lastLogIndex) {
+                       site_id_, site_id, next_index_[site_id], min_active_slot_, lastLogIndex);
+              if (next_index_[site_id] <= lastLogIndex) {
                 if (!raft_server_append_entry_count_fits(prevLogIndex, 1)) {
                   Log_error("[HEARTBEAT-SEND] Log index exhausted after {}, "
                             "skipping follower {}",
                             prevLogIndex, site_id);
                   skip_follower = true;
                 } else {
-                  auto cur_log = raft_logs_.find(it->second);
+                  auto cur_log = raft_logs_.find(next_index_[site_id]);
                   if (cur_log == raft_logs_.end() || !cur_log->second ||
                       !cur_log->second->log_.has_value()) {
                     Log_error("[HEARTBEAT-SEND] Missing log entry {}, skipping follower {}",
-                              it->second, site_id);
+                              next_index_[site_id], site_id);
                     skip_follower = true;
                   } else {
                     const auto& curInstance = cur_log->second;
@@ -2310,7 +2324,7 @@ void RaftServer::HeartbeatLoop() {
                     // inner shared_ptr's raw pointer; the kind tag is
                     // a more useful identifier anyway.
                     Log_debug("[APPEND_SEND] site={} sending entry {} to follower {} cmd_kind={}",
-                        site_id_, it->second, site_id, cmd.kind_);
+                        site_id_, next_index_[site_id], site_id, cmd.kind_);
                   }
                 }
               }
@@ -2319,9 +2333,9 @@ void RaftServer::HeartbeatLoop() {
 #ifdef RAFT_BATCH_OPTIMIZATION
               vector<rusty::Arc<TpcCommitCommand>> batch_buffer_;
               const uint64_t max_batch_entries = GetAppendEntriesBatchMaxEntries();
-              const uint64_t batch_start_idx = it->second;
+              const uint64_t batch_start_idx = next_index_[site_id];
               Log_debug("[BATCH_CHECK] site={} follower={} next_index={} min_active_slot_={} lastLogIndex={}",
-                       site_id_, site_id, it->second, min_active_slot_, lastLogIndex);
+                       site_id_, site_id, next_index_[site_id], min_active_slot_, lastLogIndex);
               if (!raft_server_append_entry_count_fits(prevLogIndex, 1)) {
                 Log_error("[HEARTBEAT-BATCH] Log index exhausted after {}, "
                           "skipping follower {}",
