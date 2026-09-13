@@ -215,3 +215,58 @@ impl ReplicationWakeGate {
 fn IsPreferredLeaderConfigured(preferred_leader_site_id: u16) -> bool {
     preferred_leader_site_id != u16::MAX
 }
+
+pub struct HeartbeatAuthority {
+    term_: u64,
+    config_size_: usize,
+    voters_: rusty::BTreeSet<u16>,
+    outstanding_: rusty::BTreeSet<u16>,
+}
+
+#[allow(clippy::new_without_default)]
+impl HeartbeatAuthority {
+    // A generation begins with this site already counted as a voter: a leader
+    // is evidence for its own authority.
+    pub fn new(term: u64, config_size: usize, self_site: u16) -> HeartbeatAuthority {
+        let mut voters = rusty::BTreeSet::new();
+        voters.insert(self_site);
+        HeartbeatAuthority {
+            term_: term,
+            config_size_: config_size,
+            voters_: voters,
+            outstanding_: rusty::BTreeSet::new(),
+        }
+    }
+
+    pub fn term(&self) -> u64 {
+        self.term_
+    }
+
+    pub fn config_size(&self) -> usize {
+        self.config_size_
+    }
+
+    pub fn voter_count(&self) -> usize {
+        self.voters_.len()
+    }
+
+    // One physical RPC exists per follower per generation, but these stay sets
+    // so a future transport cannot double-count a voter.
+    pub fn launch(&mut self, site: u16) {
+        self.outstanding_.insert(site);
+    }
+
+    pub fn retire(&mut self, site: u16) {
+        self.outstanding_.remove(&site);
+    }
+
+    pub fn record_vote(&mut self, site: u16) {
+        self.voters_.insert(site);
+    }
+
+    // Every RPC launched in this generation has completed. No later event can
+    // add evidence to it.
+    pub fn all_completed(&self) -> bool {
+        self.outstanding_.is_empty()
+    }
+}

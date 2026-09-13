@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
+#include <rusty/array.hpp>   // rusty::len over the authority's BTreeSets
 #include <rusty/slice.hpp>
 #include <rusty/mutex.hpp>
 // rusty::clone, which the generated ReplicationWakeGate methods call to copy an
@@ -20,6 +21,7 @@
 #include "quorum.hpp"
 
 import std;
+import rusty;   // rusty::BTreeSet is a btree_port C++20 module, not a header
 
 // @external: {
 //   rrr::RandomGenerator::rand_double: [safe, (double, double) -> double]
@@ -2013,11 +2015,132 @@ struct PendingAppendEntries {
 // snapshot that produced it. Slow synchronous followers may reply after the
 // HeartbeatLoop has advanced to a later generation, so retain each generation
 // until its launched RPCs have either completed or proved a quorum.
+//
+// The EVIDENCE -- who has voted, who is still outstanding, for which term and
+// against how large a config -- is a DSL-owned type. The membership snapshot
+// stays C++: it is compared against current_config_, a std::set, which a
+// rusty::BTreeSet cannot be compared with. The quorum predicates stay where
+// they are in quorum.hpp and are called on this type's accessors, rather than
+// being duplicated into it.
+#if RUSTYCPP_RUST
+pub struct HeartbeatAuthority {
+    term_: u64,
+    config_size_: usize,
+    voters_: rusty::BTreeSet<u16>,
+    outstanding_: rusty::BTreeSet<u16>,
+}
+
+#[allow(clippy::new_without_default)]
+impl HeartbeatAuthority {
+    // A generation begins with this site already counted as a voter: a leader
+    // is evidence for its own authority.
+    pub fn new(term: u64, config_size: usize, self_site: u16) -> HeartbeatAuthority {
+        let mut voters = rusty::BTreeSet::new();
+        voters.insert(self_site);
+        HeartbeatAuthority {
+            term_: term,
+            config_size_: config_size,
+            voters_: voters,
+            outstanding_: rusty::BTreeSet::new(),
+        }
+    }
+
+    pub fn term(&self) -> u64 {
+        self.term_
+    }
+
+    pub fn config_size(&self) -> usize {
+        self.config_size_
+    }
+
+    pub fn voter_count(&self) -> usize {
+        self.voters_.len()
+    }
+
+    // One physical RPC exists per follower per generation, but these stay sets
+    // so a future transport cannot double-count a voter.
+    pub fn launch(&mut self, site: u16) {
+        self.outstanding_.insert(site);
+    }
+
+    pub fn retire(&mut self, site: u16) {
+        self.outstanding_.remove(&site);
+    }
+
+    pub fn record_vote(&mut self, site: u16) {
+        self.voters_.insert(site);
+    }
+
+    // Every RPC launched in this generation has completed. No later event can
+    // add evidence to it.
+    pub fn all_completed(&self) -> bool {
+        self.outstanding_.is_empty()
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_authority version=1 rust_sha256=24f71afc2d3fa77b204063d16cfc93163fc92971106b3417afb36611f91d44e8*/
+struct HeartbeatAuthority;
+
+struct HeartbeatAuthority {
+    uint64_t term_;
+    size_t config_size_;
+    rusty::BTreeSet<uint16_t> voters_;
+    rusty::BTreeSet<uint16_t> outstanding_;
+
+    static HeartbeatAuthority new_(uint64_t term, size_t config_size, uint16_t self_site);
+    uint64_t term() const;
+    size_t config_size() const;
+    size_t voter_count() const;
+    void launch(uint16_t site);
+    void retire(uint16_t site);
+    void record_vote(uint16_t site);
+    bool all_completed() const;
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
+};
+
+
+inline HeartbeatAuthority HeartbeatAuthority::new_(uint64_t term, size_t config_size, uint16_t self_site) {
+    auto voters = rusty::BTreeSet<uint16_t>::new_();
+    voters.insert(std::move(self_site));
+    return HeartbeatAuthority{.term_ = std::move(term), .config_size_ = std::move(config_size), .voters_ = std::move(voters), .outstanding_ = rusty::BTreeSet<uint16_t>::new_()};
+}
+
+inline uint64_t HeartbeatAuthority::term() const {
+    return this->term_;
+}
+
+inline size_t HeartbeatAuthority::config_size() const {
+    return this->config_size_;
+}
+
+inline size_t HeartbeatAuthority::voter_count() const {
+    return rusty::len(this->voters_);
+}
+
+inline void HeartbeatAuthority::launch(uint16_t site) {
+    this->outstanding_.insert(std::move(site));
+}
+
+inline void HeartbeatAuthority::retire(uint16_t site) {
+    this->outstanding_.remove(site);
+}
+
+inline void HeartbeatAuthority::record_vote(uint16_t site) {
+    this->voters_.insert(std::move(site));
+}
+
+inline bool HeartbeatAuthority::all_completed() const {
+    return rusty::is_empty(this->outstanding_);
+}
+/*RUSTYCPP:GEN-END id=raft_server.heartbeat_authority*/
+
 struct PendingHeartbeatAuthority {
-  uint64_t term;
+  // Membership snapshot: stays std::set because it is compared against
+  // current_config_ with operator==.
   std::set<siteid_t> config;
-  std::set<siteid_t> voters;
-  std::set<siteid_t> outstanding;
+  HeartbeatAuthority evidence;
 };
 
 // @unsafe - Heartbeat loop mutates shared state, performs RPCs, and uses raw pointers.
@@ -2127,8 +2250,10 @@ void RaftServer::HeartbeatLoop() {
       }
 
       auto [authority_it, authority_inserted] = authority_rounds.emplace(
-          round_id, PendingHeartbeatAuthority{
-                        term, round_config, {site_id_}, {}});
+          round_id,
+          PendingHeartbeatAuthority{
+              round_config,
+              HeartbeatAuthority::new_(term, round_config.size(), site_id_)});
       // heartbeat_round_ never wraps. The only possible duplicate is the
       // deliberately fail-closed UINT64_MAX saturation generation.
       if (!authority_inserted) {
@@ -2459,7 +2584,7 @@ void RaftServer::HeartbeatLoop() {
 
         pending_rpcs.emplace(site_id, std::move(pending));
         if (authority_inserted && round_config.count(site_id) > 0) {
-          authority_it->second.outstanding.insert(site_id);
+          authority_it->second.evidence.launch(site_id);
         }
       }
 
@@ -2506,8 +2631,8 @@ void RaftServer::HeartbeatLoop() {
             auto pending_authority = authority_rounds.find(pending.sent_round);
             if (pending_authority != authority_rounds.end()) {
               auto &authority = pending_authority->second;
-              authority.outstanding.erase(pending.follower_id);
-              if (authority.term == pending.sent_term &&
+              authority.evidence.retire(pending.follower_id);
+              if (authority.evidence.term() == pending.sent_term &&
                   authority.config.count(pending.follower_id) > 0 &&
                   raft_server_read_index_reply_confirms_authority(
                       response_available, IsLeader(), pending.sent_term,
@@ -2516,7 +2641,7 @@ void RaftServer::HeartbeatLoop() {
                 // One physical RPC exists per follower in a generation. Keep
                 // a set so a future transport implementation still cannot
                 // double-count one voter.
-                authority.voters.insert(pending.follower_id);
+                authority.evidence.record_vote(pending.follower_id);
               }
             }
 
@@ -2670,9 +2795,9 @@ void RaftServer::HeartbeatLoop() {
           const auto& authority = current_authority->second;
           current_round_has_authority =
               raft::raft_quorum_count_reached(
-                  authority.voters.size(),
+                  authority.evidence.voter_count(),
                   raft::raft_quorum_majority_count(
-                      authority.config.size()));
+                      authority.evidence.config_size()));
         }
         if (stop_response_processing || !waiting_for_current_round ||
             current_round_has_authority) {
@@ -2733,27 +2858,30 @@ void RaftServer::HeartbeatLoop() {
                authority_it != authority_rounds.end();) {
             auto& authority = authority_it->second;
             const bool context_is_current =
-                IsLeader() && currentTerm == authority.term &&
+                IsLeader() && currentTerm == authority.evidence.term() &&
                 current_config_ == authority.config;
             if (!context_is_current ||
-                (read_quorum_confirmed_term_ == authority.term &&
+                (read_quorum_confirmed_term_ == authority.evidence.term() &&
                  authority_it->first <= read_quorum_confirmed_round_)) {
               authority_it = authority_rounds.erase(authority_it);
               continue;
             }
 
             const size_t authority_quorum =
-                raft::raft_quorum_majority_count(authority.config.size());
+                raft::raft_quorum_majority_count(
+                    authority.evidence.config_size());
             if (raft::raft_quorum_count_reached(
-                    authority.voters.size(), authority_quorum)) {
-              read_quorum_confirmed_term_ = authority.term;
+                    authority.evidence.voter_count(), authority_quorum)) {
+              read_quorum_confirmed_term_ = authority.evidence.term();
               read_quorum_confirmed_round_ = authority_it->first;
               Log_debug("[READ-INDEX] site={} confirmed round={} term={} "
                         "with {}/{} voters",
-                        site_id_, authority_it->first, authority.term,
-                        authority.voters.size(), authority.config.size());
+                        site_id_, authority_it->first,
+                        authority.evidence.term(),
+                        authority.evidence.voter_count(),
+                        authority.evidence.config_size());
               authority_it = authority_rounds.erase(authority_it);
-            } else if (authority.outstanding.empty()) {
+            } else if (authority.evidence.all_completed()) {
               // Every RPC launched in this generation completed without a
               // quorum. No later event can add evidence to it.
               authority_it = authority_rounds.erase(authority_it);

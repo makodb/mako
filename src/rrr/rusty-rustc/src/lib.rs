@@ -817,6 +817,12 @@ impl<T> Default for BTreeSet<T> {
 }
 
 impl<T> BTreeSet<T> {
+    /// The port spells this `new_()` in C++ (btree_port). Added alongside the
+    /// existing `Default` impl so a DSL block can construct one directly.
+    pub fn new() -> Self {
+        Self { values: Vec::new() }
+    }
+
     pub fn len(&self) -> usize {
         self.values.len()
     }
@@ -835,6 +841,28 @@ impl<T> BTreeSet<T> {
 
     pub fn iter(&self) -> ::std::slice::Iter<'_, T> {
         self.values.iter()
+    }
+}
+
+/// Membership operations, which need equality. The C++ port
+/// (btree_port.btree.set) declares `bool remove(const Q&)` and
+/// `bool contains(const Q&) const`; these model the same contract for direct
+/// rustc. The backing Vec is a loose model -- it does not dedupe or order --
+/// which is sufficient for type checking and is never the production
+/// implementation.
+impl<T: PartialEq> BTreeSet<T> {
+    pub fn remove(&mut self, value: &T) -> bool {
+        match self.values.iter().position(|v| v == value) {
+            Some(index) => {
+                self.values.remove(index);
+                true
+            }
+            None => false,
+        }
+    }
+
+    pub fn contains(&self, value: &T) -> bool {
+        self.values.iter().any(|v| v == value)
     }
 }
 
