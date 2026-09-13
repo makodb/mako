@@ -494,3 +494,83 @@ pub const fn raft_server_leader_rpc_sender_is_authoritative(
           (!local_is_leader &&
            (!has_known_leader || known_leader_matches_sender))))
 }
+
+// SCREAMING_CASE variants match the surrounding C++ enum convention and the
+// existing DSL enums in snapshot_format.hpp, which carries this same allow.
+#[allow(non_camel_case_types)]
+#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Eq, PartialEq))]
+#[repr(i32)]
+pub enum BackoffKind {
+    FAST = 0,
+    TERM_CONFLICT = 1,
+    EXPONENTIAL = 2,
+    LINEAR = 3,
+    FLOOR = 4,
+}
+
+#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Default, Eq, PartialEq))]
+#[repr(C)]
+pub struct FollowerProgress {
+    pub next_: u64,
+    pub match_: u64,
+}
+
+#[allow(clippy::new_without_default)]
+impl FollowerProgress {
+    pub fn new(next: u64, matched: u64) -> FollowerProgress {
+        FollowerProgress { next_: next, match_: matched }
+    }
+
+    pub fn next_index(&self) -> u64 {
+        self.next_
+    }
+
+    pub fn match_index(&self) -> u64 {
+        self.match_
+    }
+
+    pub fn set_next_index(&mut self, value: u64) {
+        self.next_ = value;
+    }
+
+    // The five-way backoff ladder taken when a follower rejects AppendEntries.
+    // Returns which rung was used so the caller can log it; the arithmetic
+    // itself is identical to the inline version it replaces.
+    pub fn back_off_after_reject(&mut self, follower_last_log_index: u64) -> BackoffKind {
+        if follower_last_log_index > 0
+            && (follower_last_log_index + 1) < self.next_
+        {
+            self.next_ = follower_last_log_index + 1;
+            return BackoffKind::FAST;
+        }
+        if follower_last_log_index > 0
+            && (follower_last_log_index + 1) == self.next_
+            && self.next_ > 1
+        {
+            self.next_ -= 1;
+            return BackoffKind::TERM_CONFLICT;
+        }
+        if self.next_ > 10 {
+            self.next_ /= 2;
+            return BackoffKind::EXPONENTIAL;
+        }
+        if self.next_ > 1 {
+            self.next_ -= 1;
+            return BackoffKind::LINEAR;
+        }
+        self.next_ = 1;
+        BackoffKind::FLOOR
+    }
+
+    // A successful AppendEntries proves the exact payload end and no more.
+    // Both indices are monotonic: a late reply can never move them backwards.
+    pub fn accept_through(&mut self, acknowledged_through: u64, has_successor: bool,
+                          follower_next: u64) {
+        if acknowledged_through > self.match_ {
+            self.match_ = acknowledged_through;
+        }
+        if has_successor && follower_next > self.next_ {
+            self.next_ = follower_next;
+        }
+    }
+}

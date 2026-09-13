@@ -1816,16 +1816,14 @@ void RaftServer::setIsLeader(bool isLeader) {
       if (peer_id == site_id_) {
         continue;
       }
-      match_index_[peer_id] = 0;
-      next_index_[peer_id] = lastLogIndex + 1;
+      progress_[peer_id] = FollowerProgress::new_(lastLogIndex + 1, 0);
       Log_debug("loc_id_={} match_index_[{}]={}, next_index_[{}]={}",
-                loc_id_, peer_id, match_index_[peer_id],
-                peer_id, next_index_[peer_id]);
+                loc_id_, peer_id, progress_[peer_id].match_index(),
+                peer_id, progress_[peer_id].next_index());
     }
     const size_t expected = replication_targets.size() -
         static_cast<size_t>(replication_targets.count(site_id_) > 0);
-    verify(match_index_.size() == expected);
-    verify(next_index_.size() == expected);
+    verify(progress_.size() == expected);
   }
 
 
@@ -2159,13 +2157,11 @@ void RaftServer::HeartbeatLoop() {
     if (peer_id == site_id_) {
       continue;
     }
-    match_index_[peer_id] = 0;
-    next_index_[peer_id] = 1;
+    progress_[peer_id] = FollowerProgress::new_(1, 0);
   }
   const size_t expected = replication_targets.size() -
       static_cast<size_t>(replication_targets.count(site_id_) > 0);
-  verify(match_index_.size() == expected);
-  verify(next_index_.size() == expected);
+  verify(progress_.size() == expected);
 
   Log_debug("heartbeat loop init from site: {}", site_id_);
   looping_.store(true, rusty::sync::atomic::Ordering::Release);
@@ -2225,9 +2221,10 @@ void RaftServer::HeartbeatLoop() {
         verify(nservers > 0 && round_config.count(site_id_) == 1);
 
         std::vector<uint64_t> matchedIndices{};
-        for (auto it = match_index_.begin(); it != match_index_.end(); it++) {
-          matchedIndices.push_back(it->second);
-          Log_debug("[COMMIT-CALC] match_index_[{}] = {}", it->first, it->second);
+        for (auto it = progress_.begin(); it != progress_.end(); it++) {
+          matchedIndices.push_back(it->second.match_index());
+          Log_debug("[COMMIT-CALC] match_index_[{}] = {}", it->first,
+                    it->second.match_index());
         }
         Log_debug("[COMMIT-CALC] nservers={}, matchedIndices.size()={}", nservers, matchedIndices.size());
         verify(matchedIndices.size() == nservers - 1);
@@ -2265,12 +2262,12 @@ void RaftServer::HeartbeatLoop() {
       // PHASE 1: Send all AppendEntries RPCs in PARALLEL (non-blocking)
       // ========================================================================
       // The cursor is used for ITERATION ONLY; every read and write of a
-      // follower's next index below goes through next_index_[site_id], which
+      // follower's next index below goes through progress_[site_id].next_index(), which
       // is the same slot (site_id is it->first, so the key provably exists).
       //
       // This is not style. The body calls commo()->SendInstallSnapshot INSIDE
       // the lock_guard scope, and that call's completion callback takes the
-      // SAME recursive mutex and writes next_index_[site_id]. Recursive means
+      // SAME recursive mutex and writes progress_[site_id].next_index(). Recursive means
       // a callback that completes synchronously re-enters and mutates the map
       // while a dereferenced cursor into it is live -- the aliasing hazard
       // recorded as OWN-03 in docs/migration/raft/cpp-to-rust-precheck-raft.txt
@@ -2278,7 +2275,7 @@ void RaftServer::HeartbeatLoop() {
       // Holding no dereferenced cursor across that call is also what makes the
       // loop expressible in Rust at all: `&mut` into a map cannot be held
       // across a call that takes `&mut` to the same map.
-      for (auto it = next_index_.begin(); it != next_index_.end(); it++) {
+      for (auto it = progress_.begin(); it != progress_.end(); it++) {
         auto site_id = it->first;
         if (site_id == site_id_) {
           continue;
@@ -2301,21 +2298,23 @@ void RaftServer::HeartbeatLoop() {
         bool skip_follower = false;
         {
           std::lock_guard<std::recursive_mutex> lock(mtx_);
-          if (next_index_[site_id] == 0) {
+          if (progress_[site_id].next_index() == 0) {
             Log_warn("[APPEND_ENTRIES] Repairing wrapped next_index for "
                      "follower {} at leader last index {}",
                      site_id, lastLogIndex);
-            next_index_[site_id] = raft_server_log_index_has_successor(lastLogIndex)
-                ? raft_server_follower_next_index(lastLogIndex)
-                : lastLogIndex;
+            progress_[site_id].set_next_index(
+                raft_server_log_index_has_successor(lastLogIndex)
+                    ? raft_server_follower_next_index(lastLogIndex)
+                    : lastLogIndex);
           }
-          prevLogIndex = next_index_[site_id] - 1;
+          prevLogIndex = progress_[site_id].next_index() - 1;
           if (prevLogIndex > lastLogIndex) {
             Log_info("[APPEND_ENTRIES] ERROR: prevLogIndex ({}) > lastLogIndex ({}), fixing next_index", prevLogIndex, lastLogIndex);
-            next_index_[site_id] = raft_server_log_index_has_successor(lastLogIndex)
-                ? raft_server_follower_next_index(lastLogIndex)
-                : lastLogIndex;
-            prevLogIndex = next_index_[site_id] - 1;
+            progress_[site_id].set_next_index(
+                raft_server_log_index_has_successor(lastLogIndex)
+                    ? raft_server_follower_next_index(lastLogIndex)
+                    : lastLogIndex);
+            prevLogIndex = progress_[site_id].next_index() - 1;
           }
           // Until a payload is selected, this is a heartbeat and proves only
           // the prefix named by prevLogIndex.
@@ -2324,12 +2323,12 @@ void RaftServer::HeartbeatLoop() {
           if (prevLogIndex > lastLogIndex) {
             Log_info("[APPEND_ENTRIES] WARNING: Cannot send AppendEntries to follower {}: prevLogIndex ({}) > lastLogIndex ({}), skipping",
                      site_id, prevLogIndex, lastLogIndex);
-            next_index_[site_id] = 1;
+            progress_[site_id].set_next_index(1);
             skip_follower = true;
-          } else if (next_index_[site_id] < min_active_slot_ && snapshot_manager_) {
+          } else if (progress_[site_id].next_index() < min_active_slot_ && snapshot_manager_) {
             // @unsafe - Follower is too far behind (log compacted), send InstallSnapshot
             Log_info("[HEARTBEAT-SNAPSHOT] Site {}: Follower {} next_index={} < min_active_slot_={}, sending InstallSnapshot",
-                     site_id_, site_id, next_index_[site_id], min_active_slot_);
+                     site_id_, site_id, progress_[site_id].next_index(), min_active_slot_);
             janus::raft::SnapshotMetadata snap_meta;
             std::string snap_data;
             if (snapshot_manager_->LoadLatestSnapshot(&snap_meta, &snap_data)) {
@@ -2384,17 +2383,16 @@ void RaftServer::HeartbeatLoop() {
                                server->site_id_);
                       return;
                     }
-                    server->match_index_[site_id] = std::max(
-                        server->match_index_[site_id], snap_last_idx);
-                    server->next_index_[site_id] = std::max(
-                        server->next_index_[site_id],
+                    server->progress_[site_id].accept_through(
+                        snap_last_idx,
+                        raft_server_log_index_has_successor(snap_last_idx),
                         raft_server_log_index_has_successor(snap_last_idx)
                             ? raft_server_follower_next_index(snap_last_idx)
                             : snap_last_idx);
                     Log_info("[HEARTBEAT-SNAPSHOT] Site {}: Updated follower {}: next_index={} match_index={}",
                              server->site_id_, site_id,
-                             server->next_index_[site_id],
-                             server->match_index_[site_id]);
+                             server->progress_[site_id].next_index(),
+                             server->progress_[site_id].match_index());
                   });
               skip_follower = true;  // Skip normal AppendEntries for this follower
             } else {
@@ -2423,19 +2421,19 @@ void RaftServer::HeartbeatLoop() {
             if (!skip_follower) {
 #ifndef RAFT_BATCH_OPTIMIZATION
               Log_debug("[BATCH_CHECK] site={} follower={} next_index={} min_active_slot_={} lastLogIndex={}",
-                       site_id_, site_id, next_index_[site_id], min_active_slot_, lastLogIndex);
-              if (next_index_[site_id] <= lastLogIndex) {
+                       site_id_, site_id, progress_[site_id].next_index(), min_active_slot_, lastLogIndex);
+              if (progress_[site_id].next_index() <= lastLogIndex) {
                 if (!raft_server_append_entry_count_fits(prevLogIndex, 1)) {
                   Log_error("[HEARTBEAT-SEND] Log index exhausted after {}, "
                             "skipping follower {}",
                             prevLogIndex, site_id);
                   skip_follower = true;
                 } else {
-                  auto cur_log = raft_logs_.find(next_index_[site_id]);
+                  auto cur_log = raft_logs_.find(progress_[site_id].next_index());
                   if (cur_log == raft_logs_.end() || !cur_log->second ||
                       !cur_log->second->log_.has_value()) {
                     Log_error("[HEARTBEAT-SEND] Missing log entry {}, skipping follower {}",
-                              next_index_[site_id], site_id);
+                              progress_[site_id].next_index(), site_id);
                     skip_follower = true;
                   } else {
                     const auto& curInstance = cur_log->second;
@@ -2449,7 +2447,7 @@ void RaftServer::HeartbeatLoop() {
                     // inner shared_ptr's raw pointer; the kind tag is
                     // a more useful identifier anyway.
                     Log_debug("[APPEND_SEND] site={} sending entry {} to follower {} cmd_kind={}",
-                        site_id_, next_index_[site_id], site_id, cmd.kind_);
+                        site_id_, progress_[site_id].next_index(), site_id, cmd.kind_);
                   }
                 }
               }
@@ -2458,9 +2456,9 @@ void RaftServer::HeartbeatLoop() {
 #ifdef RAFT_BATCH_OPTIMIZATION
               vector<rusty::Arc<TpcCommitCommand>> batch_buffer_;
               const uint64_t max_batch_entries = GetAppendEntriesBatchMaxEntries();
-              const uint64_t batch_start_idx = next_index_[site_id];
+              const uint64_t batch_start_idx = progress_[site_id].next_index();
               Log_debug("[BATCH_CHECK] site={} follower={} next_index={} min_active_slot_={} lastLogIndex={}",
-                       site_id_, site_id, next_index_[site_id], min_active_slot_, lastLogIndex);
+                       site_id_, site_id, progress_[site_id].next_index(), min_active_slot_, lastLogIndex);
               if (!raft_server_append_entry_count_fits(prevLogIndex, 1)) {
                 Log_error("[HEARTBEAT-BATCH] Log index exhausted after {}, "
                           "skipping follower {}",
@@ -2682,10 +2680,10 @@ void RaftServer::HeartbeatLoop() {
                         "same-term leadership ended",
                         pending.follower_id);
             } else {
-              auto next_index_it = next_index_.find(pending.follower_id);
-              auto match_index_it = match_index_.find(pending.follower_id);
-              if (next_index_it == next_index_.end() ||
-                  match_index_it == match_index_.end()) {
+              // One lookup where there used to be two: the merged map cannot
+              // have a follower present in one table and absent from the other.
+              auto progress_it = progress_.find(pending.follower_id);
+              if (progress_it == progress_.end()) {
                 // Defensive guard: this target has no replication indices,
                 // which is the state of a server that is not leading this
                 // follower. Higher-term evidence was handled above; only the
@@ -2695,48 +2693,49 @@ void RaftServer::HeartbeatLoop() {
                     "follower {}",
                     pending.follower_id);
               } else {
-                auto &next_index = next_index_it->second;
-                auto &match_index = match_index_it->second;
+                auto &progress = progress_it->second;
 
                 if (resp.status == 0) {
-                  // case 2: AppendEntries rejected - log inconsistency
-                  if (resp.last_log_index > 0 &&
-                      (resp.last_log_index + 1) < next_index) {
-                    uint64_t old_next = next_index;
-                    next_index = resp.last_log_index + 1;
-                    Log_info("[LOG-RECONCILE] Site {}: Fast backoff for "
-                             "follower {}: next_index {} -> {} (gap: {}, "
-                             "follower reported last: {})",
-                             site_id_, pending.follower_id, old_next,
-                             next_index, old_next - next_index,
-                             resp.last_log_index);
-                  } else if (resp.last_log_index > 0 &&
-                             (resp.last_log_index + 1) == next_index &&
-                             next_index > 1) {
-                    // Follower has prevLogIndex but still rejected, which
-                    // indicates a term conflict. Step one slot further back so
-                    // the next AppendEntries can overwrite conflict.
-                    uint64_t old_next = next_index;
-                    next_index--;
-                    Log_info("[LOG-RECONCILE] Site {}: Term-conflict backoff "
-                             "for follower {}: next_index {} -> {}",
-                             site_id_, pending.follower_id, old_next,
-                             next_index);
-                  } else if (next_index > 10) {
-                    uint64_t old_next = next_index;
-                    next_index = next_index / 2;
-                    Log_info("[LOG-RECONCILE] Site {}: Exponential backoff for "
-                             "follower {}: next_index {} -> {} (halved)",
-                             site_id_, pending.follower_id, old_next,
-                             next_index);
-                  } else if (next_index > 1) {
-                    next_index--;
-                    Log_debug("[LOG-RECONCILE] Site {}: Linear backoff for "
-                              "follower {}: next_index {} -> {}",
-                              site_id_, pending.follower_id, next_index + 1,
-                              next_index);
-                  } else {
-                    next_index = 1;
+                  // case 2: AppendEntries rejected - log inconsistency.
+                  // The five-rung ladder is FollowerProgress::back_off_after_reject;
+                  // it reports which rung it took so the diagnostics below stay
+                  // as specific as they were when the branches were inline.
+                  const uint64_t old_next = progress.next_index();
+                  const BackoffKind rung =
+                      progress.back_off_after_reject(resp.last_log_index);
+                  const uint64_t new_next = progress.next_index();
+                  switch (rung) {
+                    case BackoffKind::FAST:
+                      Log_info("[LOG-RECONCILE] Site {}: Fast backoff for "
+                               "follower {}: next_index {} -> {} (gap: {}, "
+                               "follower reported last: {})",
+                               site_id_, pending.follower_id, old_next,
+                               new_next, old_next - new_next,
+                               resp.last_log_index);
+                      break;
+                    case BackoffKind::TERM_CONFLICT:
+                      // Follower has prevLogIndex but still rejected, which
+                      // indicates a term conflict. One slot further back lets
+                      // the next AppendEntries overwrite the conflict.
+                      Log_info("[LOG-RECONCILE] Site {}: Term-conflict backoff "
+                               "for follower {}: next_index {} -> {}",
+                               site_id_, pending.follower_id, old_next,
+                               new_next);
+                      break;
+                    case BackoffKind::EXPONENTIAL:
+                      Log_info("[LOG-RECONCILE] Site {}: Exponential backoff for "
+                               "follower {}: next_index {} -> {} (halved)",
+                               site_id_, pending.follower_id, old_next,
+                               new_next);
+                      break;
+                    case BackoffKind::LINEAR:
+                      Log_debug("[LOG-RECONCILE] Site {}: Linear backoff for "
+                                "follower {}: next_index {} -> {}",
+                                site_id_, pending.follower_id, old_next,
+                                new_next);
+                      break;
+                    case BackoffKind::FLOOR:
+                      break;
                   }
                 } else if (resp.last_log_index < pending.sent_end_index) {
                   // AppendEntries acceptance is atomic: success must cover
@@ -2759,13 +2758,10 @@ void RaftServer::HeartbeatLoop() {
                   // Successful responses are monotonic and prove no index
                   // beyond the exact payload end. In particular, a heartbeat
                   // cannot adopt an unknown follower suffix.
-                  match_index = std::max(match_index, acknowledged_through);
-                  if (raft_server_log_index_has_successor(
-                          acknowledged_through)) {
-                    next_index = std::max(
-                        next_index,
-                        raft_server_follower_next_index(acknowledged_through));
-                  }
+                  progress.accept_through(
+                      acknowledged_through,
+                      raft_server_log_index_has_successor(acknowledged_through),
+                      raft_server_follower_next_index(acknowledged_through));
                   Log_debug(
                       "[APPEND_RPC] Leader {} accepted follower {} proof: "
                       "kind={} reported={} sent_end={} acknowledged={} "
@@ -2773,7 +2769,8 @@ void RaftServer::HeartbeatLoop() {
                       site_id_, pending.follower_id,
                       pending.cmd.has_value() ? "entries" : "heartbeat",
                       resp.last_log_index, pending.sent_end_index,
-                      acknowledged_through, next_index, match_index);
+                      acknowledged_through, progress.next_index(),
+                      progress.match_index());
                 }
               }
             }
@@ -2832,8 +2829,8 @@ void RaftServer::HeartbeatLoop() {
         {
           std::lock_guard<std::recursive_mutex> lock(mtx_);
           std::vector<uint64_t> finalMatchedIndices{};
-          for (auto it = match_index_.begin(); it != match_index_.end(); it++) {
-            finalMatchedIndices.push_back(it->second);
+          for (auto it = progress_.begin(); it != progress_.end(); it++) {
+            finalMatchedIndices.push_back(it->second.match_index());
           }
           std::sort(finalMatchedIndices.begin(), finalMatchedIndices.end());
           uint64_t finalCommitIndex = finalMatchedIndices[(nservers - 1) / 2];

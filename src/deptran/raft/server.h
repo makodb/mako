@@ -10,6 +10,7 @@
 #include <exception>
 #include <condition_variable>
 #include <memory>
+#include <rusty/move.hpp>   // rusty::clone in the generated FollowerProgress
 #include <rusty/box.hpp>
 #include <rusty/arc.hpp>
 #include <rusty/condvar.hpp>
@@ -1147,6 +1148,183 @@ struct RaftData {
 
 
 // @unsafe - inherits from non-@interface TxLogServer (individual methods are @safe)
+// Per-follower replication progress.
+//
+// next_index_ and match_index_ were two std::maps keyed identically, always
+// initialised together and asserted to have equal size. They are now ONE map of
+// a DSL-owned value type, which removes the "find both, check both" dance at
+// the reply site and makes the index arithmetic a method rather than five
+// inline branches.
+//
+// The map itself stays C++: rusty::BTreeMap's rustc facade has no new(), no
+// remove() and no mutable get, so converting the container would cost more
+// facade work than this step is worth. The VALUE is what carries the logic.
+#if RUSTYCPP_RUST
+// SCREAMING_CASE variants match the surrounding C++ enum convention and the
+// existing DSL enums in snapshot_format.hpp, which carries this same allow.
+#[allow(non_camel_case_types)]
+#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Eq, PartialEq))]
+#[repr(i32)]
+pub enum BackoffKind {
+    FAST = 0,
+    TERM_CONFLICT = 1,
+    EXPONENTIAL = 2,
+    LINEAR = 3,
+    FLOOR = 4,
+}
+
+#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Default, Eq, PartialEq))]
+#[repr(C)]
+pub struct FollowerProgress {
+    pub next_: u64,
+    pub match_: u64,
+}
+
+#[allow(clippy::new_without_default)]
+impl FollowerProgress {
+    pub fn new(next: u64, matched: u64) -> FollowerProgress {
+        FollowerProgress { next_: next, match_: matched }
+    }
+
+    pub fn next_index(&self) -> u64 {
+        self.next_
+    }
+
+    pub fn match_index(&self) -> u64 {
+        self.match_
+    }
+
+    pub fn set_next_index(&mut self, value: u64) {
+        self.next_ = value;
+    }
+
+    // The five-way backoff ladder taken when a follower rejects AppendEntries.
+    // Returns which rung was used so the caller can log it; the arithmetic
+    // itself is identical to the inline version it replaces.
+    pub fn back_off_after_reject(&mut self, follower_last_log_index: u64) -> BackoffKind {
+        if follower_last_log_index > 0
+            && (follower_last_log_index + 1) < self.next_
+        {
+            self.next_ = follower_last_log_index + 1;
+            return BackoffKind::FAST;
+        }
+        if follower_last_log_index > 0
+            && (follower_last_log_index + 1) == self.next_
+            && self.next_ > 1
+        {
+            self.next_ -= 1;
+            return BackoffKind::TERM_CONFLICT;
+        }
+        if self.next_ > 10 {
+            self.next_ /= 2;
+            return BackoffKind::EXPONENTIAL;
+        }
+        if self.next_ > 1 {
+            self.next_ -= 1;
+            return BackoffKind::LINEAR;
+        }
+        self.next_ = 1;
+        BackoffKind::FLOOR
+    }
+
+    // A successful AppendEntries proves the exact payload end and no more.
+    // Both indices are monotonic: a late reply can never move them backwards.
+    pub fn accept_through(&mut self, acknowledged_through: u64, has_successor: bool,
+                          follower_next: u64) {
+        if acknowledged_through > self.match_ {
+            self.match_ = acknowledged_through;
+        }
+        if has_successor && follower_next > self.next_ {
+            self.next_ = follower_next;
+        }
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_server.follower_progress version=1 rust_sha256=4e0f73c39e7b28e1a3d75afe88a915459c5127df8dcfe08ea097a6b8da241ac3*/
+enum class BackoffKind : int32_t;
+constexpr BackoffKind BackoffKind_FAST();
+constexpr BackoffKind BackoffKind_TERM_CONFLICT();
+constexpr BackoffKind BackoffKind_EXPONENTIAL();
+constexpr BackoffKind BackoffKind_LINEAR();
+constexpr BackoffKind BackoffKind_FLOOR();
+struct FollowerProgress;
+
+enum class BackoffKind : int32_t {
+    FAST = 0,
+    TERM_CONFLICT = 1,
+    EXPONENTIAL = 2,
+    LINEAR = 3,
+    FLOOR = 4
+};
+inline constexpr BackoffKind BackoffKind_FAST() { return BackoffKind::FAST; }
+inline constexpr BackoffKind BackoffKind_TERM_CONFLICT() { return BackoffKind::TERM_CONFLICT; }
+inline constexpr BackoffKind BackoffKind_EXPONENTIAL() { return BackoffKind::EXPONENTIAL; }
+inline constexpr BackoffKind BackoffKind_LINEAR() { return BackoffKind::LINEAR; }
+inline constexpr BackoffKind BackoffKind_FLOOR() { return BackoffKind::FLOOR; }
+
+struct FollowerProgress {
+    uint64_t next_;
+    uint64_t match_;
+
+    static FollowerProgress new_(uint64_t next, uint64_t matched);
+    uint64_t next_index() const;
+    uint64_t match_index() const;
+    void set_next_index(uint64_t value);
+    BackoffKind back_off_after_reject(uint64_t follower_last_log_index);
+    void accept_through(uint64_t acknowledged_through, bool has_successor, uint64_t follower_next);
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
+};
+
+
+inline FollowerProgress FollowerProgress::new_(uint64_t next, uint64_t matched) {
+    return FollowerProgress{.next_ = std::move(next), .match_ = std::move(matched)};
+}
+
+inline uint64_t FollowerProgress::next_index() const {
+    return this->next_;
+}
+
+inline uint64_t FollowerProgress::match_index() const {
+    return this->match_;
+}
+
+inline void FollowerProgress::set_next_index(uint64_t value) {
+    this->next_ = std::move(value);
+}
+
+inline BackoffKind FollowerProgress::back_off_after_reject(uint64_t follower_last_log_index) {
+    if ((rusty::detail::deref_if_pointer_like(follower_last_log_index) > 0) && (((rusty::detail::deref_if_pointer_like(follower_last_log_index) + 1)) < rusty::detail::deref_if_pointer_like(this->next_))) {
+        this->next_ = rusty::detail::deref_if_pointer_like(follower_last_log_index) + static_cast<uint64_t>(1);
+        return rusty::clone(BackoffKind_FAST());
+    }
+    if (((rusty::detail::deref_if_pointer_like(follower_last_log_index) > 0) && (((rusty::detail::deref_if_pointer_like(follower_last_log_index) + static_cast<uint64_t>(1))) == rusty::detail::deref_if_pointer_like(this->next_))) && (rusty::detail::deref_if_pointer_like(this->next_) > 1)) {
+        this->next_ -= 1;
+        return rusty::clone(BackoffKind_TERM_CONFLICT());
+    }
+    if (rusty::detail::deref_if_pointer_like(this->next_) > 10) {
+        this->next_ /= 2;
+        return rusty::clone(BackoffKind_EXPONENTIAL());
+    }
+    if (rusty::detail::deref_if_pointer_like(this->next_) > 1) {
+        this->next_ -= 1;
+        return rusty::clone(BackoffKind_LINEAR());
+    }
+    this->next_ = static_cast<uint64_t>(1);
+    return rusty::clone(rusty::clone(BackoffKind_FLOOR()));
+}
+
+inline void FollowerProgress::accept_through(uint64_t acknowledged_through, bool has_successor, uint64_t follower_next) {
+    if (rusty::detail::deref_if_pointer_like(acknowledged_through) > rusty::detail::deref_if_pointer_like(this->match_)) {
+        this->match_ = std::move(acknowledged_through);
+    }
+    if (rusty::detail::deref_if_pointer_like(has_successor) && (rusty::detail::deref_if_pointer_like(follower_next) > rusty::detail::deref_if_pointer_like(this->next_))) {
+        this->next_ = std::move(follower_next);
+    }
+}
+/*RUSTYCPP:GEN-END id=raft_server.follower_progress*/
+
 class RaftServer : public TxLogServer {
  public:
   // The five site fields and the mutex used to arrive by inheriting
@@ -1240,8 +1418,11 @@ class RaftServer : public TxLogServer {
 
   // ============================================================================
 
-  std::map<siteid_t, uint64_t> match_index_{};
-  std::map<siteid_t, uint64_t> next_index_{};
+  // One map of FollowerProgress, replacing the two identically-keyed maps
+  // match_index_ and next_index_. They were always initialised together and
+  // asserted to have equal size; merging removes the "find both, check both"
+  // dance at the reply site. The value type is DSL-owned; see server.cc.
+  std::map<siteid_t, FollowerProgress> progress_{};
   // Heartbeat quorum proof, guarded by mtx_. HeartbeatLoop stamps every round
   // with heartbeat_round_ and records the newest round that a quorum of the
   // membership configuration confirmed in the current term.
