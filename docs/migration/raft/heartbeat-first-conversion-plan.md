@@ -592,6 +592,52 @@ n=6 each, per the measurement discipline in
 **Unlocks.** Removes OWN-03, the one aliasing hazard with no Rust spelling, by
 deleting the construct rather than avoiding it.
 
+### Steps 1 and 2 as executed — corrections to what is written above
+
+Both are done and committed (`313be117f`, `4a5969ada`). Four corrections, so the
+estimates below are read with the right expectations:
+
+**Step 2's shape was wrong.** The dense ordinal `Vec` described below was not
+built. `rusty::BTreeMap`'s rustc facade is thinner than `BTreeSet`'s -- no
+`new()`, no `remove()`, no mutable `get` -- and the dense rewrite needs a stable
+site-to-ordinal mapping that does not exist. What was built instead: merge the
+two identically-keyed maps into one `std::map<siteid_t, FollowerProgress>` where
+the VALUE is DSL-owned and carries the arithmetic. The container stays C++. That
+is smaller, and it fixes a real smell (two maps that had to be looked up in
+pairs).
+
+**A DSL type used as a data member must be declared in the member's header.**
+`std::map<siteid_t, FollowerProgress>` needs a complete type, so the block moved
+from `server.cc` to `server.h`. This made the Tranche 2 ODR post-pass matter for
+the first time: six `inline` prefixes, without which a header-resident DSL type
+with methods is a multiple-definition link error.
+
+**Every carrier pays its own header tax.** The emitter generates calls to free
+functions in namespace `rusty` and does not indicate which header declares them.
+Four instances so far, and `server.cc` already having an include does nothing for
+`server.h`:
+
+```
+rusty::clone     -> <rusty/move.hpp>     (server.cc, then again server.h)
+rusty::len       -> <rusty/array.hpp>
+rusty::contains  -> <rusty/array.hpp>
+```
+
+**The rustc facade lags the real port.** `rusty-rustc`'s `BTreeSet` model had no
+`new()` and no `remove()`; `IntEvent` had no `wait_timeout()`. Each is a small
+additive edit to `src/rrr/rusty-rustc`, and it will recur for every container
+method a conversion is the first to use.
+
+**And the headline: `HeartbeatLoop` did not shrink.** 741 lines before Step 1,
+759 after Step 2. Extraction moves state and arithmetic out but leaves the
+orchestration, the logging and the lock scopes behind -- the `switch (rung)` with
+its five `Log_info` calls costs about what the five inline branches cost. The
+plan's premise that the loop shrinks to orchestration is only realised at Step 5,
+where the decisions become a pure function and the driver becomes a short match.
+Steps 1-4 pay the cost; Step 5 collects the benefit. That is worth knowing before
+committing to the full sequence, and it is an argument for going at Step 5
+earlier rather than in order.
+
 ### Step 3 — `CommitDecision` (PHASE 0 and PHASE 3)
 
 **Why third.** Both phases compute the same thing from the same inputs, and it
@@ -719,12 +765,37 @@ Non-negotiable, because every step touches consensus:
   floor while staying under the 5% threshold, and three changes this session
   read above the floor at n=3 and fell back inside it at n=6
 
-Two gaps that exist today and should be closed before, not after, this work
-begins: **Paxos has been modified and never tested** (`simplePaxos`,
-`shard1Replication`, `shard2Replication` and the Simple variants have not been
-run), and **the Raft production path through `dbtest`** (`shard1ReplicationRaft`
-and siblings) has not been run either. Both matter here because Steps 1-5 change
-the leader's replication path.
+### The two gaps, now closed
+
+This section previously recorded two gaps to close "before, not after" this work
+begins -- and then Steps 1 and 2 were executed anyway, which was the wrong order.
+They are closed now. All seven suites pass, processes exiting cleanly in every
+case, which matters because a double free from the B1 ownership change surfaces
+at teardown rather than as a test assertion:
+
+| suite | engine | path |
+|---|---|---|
+| `simplePaxos` | Paxos | smoke |
+| `shard1Replication` | Paxos | `dbtest`, 3 replicas, TPC-C |
+| `shard2Replication` | Paxos | `dbtest`, 2 shards |
+| `shard1ReplicationRaft` | Raft | `dbtest` via **RaftWorker** |
+| `shard2ReplicationRaft` | Raft | `dbtest`, 2 shards |
+| `shard1ReplicationSimpleRaft` | Raft | simple transaction |
+| `shard2ReplicationSimpleRaft` | Raft | simple transaction, 2 shards |
+
+Two things this evidenced that were previously only assumed. **Paxos works**: its
+base interface, five fields, mutex and four call sites had been changed with
+compilation as the sole evidence, including the
+`set_site_identity(locale_id, -1, partition_id)` substitution for what used to
+leave `site_id_` at its default. And **B1's production delete path works**: every
+prior Raft verification ran through `ServerWorker`, the embedded lab harness,
+whereas these run through `RaftWorker` (`raft_worker.cc:564`), where the worker
+deletes the scheduler and `ReleaseScheduler()` clears the frame's back-reference.
+That code had never executed under test.
+
+**Run all seven after any step that touches the replication path.** `raftLabTest`
+alone is not sufficient: it exercises a different worker from the one production
+uses.
 
 ## 8. What could go wrong
 
