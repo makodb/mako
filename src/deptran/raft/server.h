@@ -21,6 +21,7 @@
 #include <type_traits>
 #include <utility>
 #include "snapshot_manager.hpp"
+#include <mutex>   // std::recursive_mutex mtx_, declared below
 
 // @external: {
 //   Log_info: [safe, (...) -> void],

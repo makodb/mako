@@ -7,6 +7,7 @@
 #include "../paxos_worker.h"
 #include "deptran/raft/log_storage.hpp"
 #include "deptran/raft/snapshot_manager.hpp"
+#include <mutex>   // std::recursive_mutex mtx_, declared below
 
 namespace janus {
 

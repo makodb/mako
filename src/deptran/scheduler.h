@@ -1,7 +1,6 @@
 #pragma once
 
 #include <functional>
-#include <mutex>
 #include <utility>
 
 #include "constants.h"
