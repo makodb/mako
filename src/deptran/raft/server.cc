@@ -2001,20 +2001,261 @@ void RaftServer::applyLogs() {
 // This struct holds context for each pending AppendEntries RPC.
 // Used to send RPCs in parallel and process responses without blocking.
 // The response field uses shared_ptr to ensure memory validity when callback fires.
-struct PendingAppendEntries {
-  siteid_t follower_id;
-  shared_ptr<AppendEntriesResponse> response;  // shared_ptr ensures callback memory safety
-  // migrated from
-  // `shared_ptr<Marshallable>` to `janus::Command`.  Empty Command
-  // (has_value() == false) signals heartbeat.
-  janus::Command cmd;
-  uint64_t sent_term;  // term when RPC was sent
-  uint64_t sent_round;  // local heartbeat round; never sent on the wire
-  // Inclusive end of the exact prefix proved by this RPC's wire payload.
-  // A heartbeat proves only prevLogIndex; raw and batched payloads extend it
-  // by their encoded entry count.
-  uint64_t sent_end_index;
+// The in-flight AppendEntries table, owned by Rust.
+//
+// FIRST OPAQUE CARRY OF WIRE TYPES. PendingAppend holds the RPC's
+// shared_ptr<AppendEntriesResponse> and its janus::Command, neither of which
+// has a DSL spelling. Rust holds both and hands them back; it cannot construct
+// or dereference either, because the rustc facade models them as zero-sized
+// opaque structs (rusty-rustc/src/lib.rs). "Carried, never followed" is
+// therefore checkable rather than a convention.
+//
+// ONE SLOT PER FOLLOWER, indexed by the same ordinal PeerTable uses. The
+// invariant that at most one AppendEntries is in flight per follower used to
+// be emergent -- one entry in a std::map keyed by site -- and is now
+// structural: there is one slot and it is either occupied or not.
+//
+// A NOTE ON Option AND unwrap(), which is a live hazard in this runtime.
+// rusty::Option has two unwrap overloads: `const T& unwrap() const` returns a
+// reference, while the non-const `T unwrap()` MOVES OUT and clears the Option
+// (option.hpp:293-314). A `match` inside a `&mut self` method would bind the
+// second and silently empty the slot on what reads like an inspection. Every
+// read below is `&self`, so the emitter reaches for std::as_const and gets the
+// reference overload; mutation is whole-slot assignment only, never
+// match-and-modify. Keep it that way.
+#if RUSTYCPP_RUST
+pub struct PendingAppend {
+    follower_: u16,
+    sent_term_: u64,
+    sent_round_: u64,
+    // Inclusive end of the exact prefix proved by this RPC's wire payload. A
+    // heartbeat proves only prevLogIndex; raw and batched payloads extend it
+    // by their encoded entry count.
+    sent_end_index_: u64,
+    response_: rusty::RaftResponsePtr,
+    // Empty Command (has_value() == false) signals a heartbeat.
+    cmd_: rusty::RaftCommand,
+}
+
+impl PendingAppend {
+    pub fn new(follower: u16, sent_term: u64, sent_round: u64,
+               sent_end_index: u64, response: rusty::RaftResponsePtr,
+               cmd: rusty::RaftCommand) -> PendingAppend {
+        PendingAppend {
+            follower_: follower,
+            sent_term_: sent_term,
+            sent_round_: sent_round,
+            sent_end_index_: sent_end_index,
+            response_: response,
+            cmd_: cmd,
+        }
+    }
+}
+
+pub struct PendingTable {
+    slots_: rusty::Vec<rusty::Option<PendingAppend>>,
+}
+
+#[allow(clippy::new_without_default)]
+impl PendingTable {
+    pub fn new() -> PendingTable {
+        PendingTable { slots_: rusty::Vec::new() }
+    }
+
+    // One slot per follower, all empty. Called wherever the peer table is
+    // sized, so the two always agree on what an ordinal means.
+    pub fn resize(&mut self, peers: usize) {
+        self.slots_.clear();
+        let mut i: usize = 0;
+        while i < peers {
+            self.slots_.push(rusty::None);
+            i += 1;
+        }
+    }
+
+    // Drops every in-flight context. Used on leadership loss and on a term
+    // change, so a prior epoch's RPC can never occupy a slot.
+    pub fn abandon(&mut self) {
+        let peers = self.slots_.len();
+        self.resize(peers);
+    }
+
+    pub fn len(&self) -> usize {
+        self.slots_.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.slots_.is_empty()
+    }
+
+    pub fn occupied(&self, ordinal: usize) -> bool {
+        self.slots_[ordinal].is_some()
+    }
+
+    pub fn place(&mut self, ordinal: usize, pending: PendingAppend) {
+        self.slots_[ordinal] = rusty::Some(pending);
+    }
+
+    pub fn release(&mut self, ordinal: usize) {
+        self.slots_[ordinal] = rusty::None;
+    }
+
+    pub fn follower(&self, ordinal: usize) -> u16 {
+        if self.slots_[ordinal].is_none() {
+            return 0;
+        }
+        self.slots_[ordinal].as_ref().unwrap().follower_
+    }
+
+    pub fn sent_term(&self, ordinal: usize) -> u64 {
+        if self.slots_[ordinal].is_none() {
+            return 0;
+        }
+        self.slots_[ordinal].as_ref().unwrap().sent_term_
+    }
+
+    pub fn sent_round(&self, ordinal: usize) -> u64 {
+        if self.slots_[ordinal].is_none() {
+            return 0;
+        }
+        self.slots_[ordinal].as_ref().unwrap().sent_round_
+    }
+
+    pub fn sent_end_index(&self, ordinal: usize) -> u64 {
+        if self.slots_[ordinal].is_none() {
+            return 0;
+        }
+        self.slots_[ordinal].as_ref().unwrap().sent_end_index_
+    }
+
+    // Both of these hand a carried C++ value back to C++. The reference is
+    // safe because the method is &self: the emitter binds the const unwrap
+    // overload, which returns a reference into the live Option rather than a
+    // moved-out temporary.
+    // Callers check occupied() first; unwrap is the assertion of that.
+    pub fn response(&self, ordinal: usize) -> &rusty::RaftResponsePtr {
+        &self.slots_[ordinal].as_ref().unwrap().response_
+    }
+
+    // Callers check occupied() first; unwrap is the assertion of that.
+    pub fn cmd(&self, ordinal: usize) -> &rusty::RaftCommand {
+        &self.slots_[ordinal].as_ref().unwrap().cmd_
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_server.pending_table version=1 rust_sha256=5054676e845496033d7e41a846b5bb2eda6087d1d53c43e46fc6a80743e09190*/
+struct PendingAppend;
+struct PendingTable;
+
+struct PendingAppend {
+    uint16_t follower_;
+    uint64_t sent_term_;
+    uint64_t sent_round_;
+    uint64_t sent_end_index_;
+    rusty::RaftResponsePtr response_;
+    rusty::RaftCommand cmd_;
+
+    static PendingAppend new_(uint16_t follower, uint64_t sent_term, uint64_t sent_round, uint64_t sent_end_index, rusty::RaftResponsePtr response, rusty::RaftCommand cmd);
 };
+
+struct PendingTable {
+    rusty::Vec<rusty::Option<PendingAppend>> slots_;
+
+    static PendingTable new_();
+    void resize(size_t peers);
+    void abandon();
+    size_t len() const;
+    bool is_empty() const;
+    bool occupied(size_t ordinal) const;
+    void place(size_t ordinal, PendingAppend pending);
+    void release(size_t ordinal);
+    uint16_t follower(size_t ordinal) const;
+    uint64_t sent_term(size_t ordinal) const;
+    uint64_t sent_round(size_t ordinal) const;
+    uint64_t sent_end_index(size_t ordinal) const;
+    const rusty::RaftResponsePtr& response(size_t ordinal) const;
+    const rusty::RaftCommand& cmd(size_t ordinal) const;
+};
+
+
+inline PendingAppend PendingAppend::new_(uint16_t follower, uint64_t sent_term, uint64_t sent_round, uint64_t sent_end_index, rusty::RaftResponsePtr response, rusty::RaftCommand cmd) {
+    return PendingAppend{.follower_ = std::move(follower), .sent_term_ = std::move(sent_term), .sent_round_ = std::move(sent_round), .sent_end_index_ = std::move(sent_end_index), .response_ = std::move(response), .cmd_ = std::move(cmd)};
+}
+
+inline PendingTable PendingTable::new_() {
+    return PendingTable{.slots_ = rusty::Vec<rusty::Option<PendingAppend>>::new_()};
+}
+
+inline void PendingTable::resize(size_t peers) {
+    this->slots_.clear();
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(peers)) {
+        this->slots_.push(rusty::None);
+        i += 1;
+    }
+}
+
+inline void PendingTable::abandon() {
+    auto peers = rusty::len(this->slots_);
+    this->resize(std::move(peers));
+}
+
+inline size_t PendingTable::len() const {
+    return rusty::len(this->slots_);
+}
+
+inline bool PendingTable::is_empty() const {
+    return rusty::is_empty(this->slots_);
+}
+
+inline bool PendingTable::occupied(size_t ordinal) const {
+    return this->slots_[ordinal].is_some();
+}
+
+inline void PendingTable::place(size_t ordinal, PendingAppend pending) {
+    this->slots_[ordinal] = rusty::Option<PendingAppend>(std::move(pending));
+}
+
+inline void PendingTable::release(size_t ordinal) {
+    this->slots_[ordinal] = rusty::None;
+}
+
+inline uint16_t PendingTable::follower(size_t ordinal) const {
+    if (this->slots_[ordinal].is_none()) {
+        return static_cast<uint16_t>(0);
+    }
+    return this->slots_[ordinal].as_ref().unwrap().follower_;
+}
+
+inline uint64_t PendingTable::sent_term(size_t ordinal) const {
+    if (this->slots_[ordinal].is_none()) {
+        return static_cast<uint64_t>(0);
+    }
+    return this->slots_[ordinal].as_ref().unwrap().sent_term_;
+}
+
+inline uint64_t PendingTable::sent_round(size_t ordinal) const {
+    if (this->slots_[ordinal].is_none()) {
+        return static_cast<uint64_t>(0);
+    }
+    return this->slots_[ordinal].as_ref().unwrap().sent_round_;
+}
+
+inline uint64_t PendingTable::sent_end_index(size_t ordinal) const {
+    if (this->slots_[ordinal].is_none()) {
+        return static_cast<uint64_t>(0);
+    }
+    return this->slots_[ordinal].as_ref().unwrap().sent_end_index_;
+}
+
+inline const rusty::RaftResponsePtr& PendingTable::response(size_t ordinal) const {
+    return this->slots_[ordinal].as_ref().unwrap().response_;
+}
+
+inline const rusty::RaftCommand& PendingTable::cmd(size_t ordinal) const {
+    return this->slots_[ordinal].as_ref().unwrap().cmd_;
+}
+/*RUSTYCPP:GEN-END id=raft_server.pending_table*/
 
 // Heartbeat quorum evidence belongs to the exact generation and membership
 // snapshot that produced it. Slow synchronous followers may reply after the
@@ -2161,6 +2402,18 @@ using janus::raft_server_read_index_reply_confirms_authority;
 }  // namespace server_h
 
 namespace janus {
+
+// PHASE 2 binds one of these per slot per poll pass so the loop body keeps the
+// field spellings it had when `pending` was a map value. It borrows: the
+// carried Command reference is owned by the table's slot, which outlives the
+// pass because only this loop releases slots and it does so after its last use.
+struct PendingView {
+  siteid_t follower_id;
+  uint64_t sent_term;
+  uint64_t sent_round;
+  uint64_t sent_end_index;
+  const janus::Command& cmd;
+};
 
 // The read-index authority ledger, owned by Rust.
 //
@@ -2920,7 +3173,7 @@ struct HeartbeatRoundState {
   // persist an entry; retaining its context lets a later round consume that
   // acknowledgement instead of queueing duplicate writes and discarding every
   // late success.
-  std::map<siteid_t, std::unique_ptr<PendingAppendEntries>> pending_rpcs;
+  PendingTable pending_rpcs{PendingTable::new_()};
   AuthorityLedger authority_rounds{AuthorityLedger::new_()};
   std::optional<uint64_t> pending_leader_term;
   // PHASE 0 establishes every field of this each round, so it needs no reset;
@@ -2990,7 +3243,7 @@ bool RaftServer::HeartbeatPhase0(HeartbeatRoundState& state,
       {
         std::lock_guard<std::recursive_mutex> lock(mtx_);
         if (!IsLeader()) {
-          pending_rpcs.clear();
+          pending_rpcs.abandon();
           authority_rounds.abandon();
           pending_leader_term.reset();
           // Was `continue`; the Rust driver starts the next round when this
@@ -2999,12 +3252,18 @@ bool RaftServer::HeartbeatPhase0(HeartbeatRoundState& state,
         }
 
         round.begin(currentTerm, heartbeat_round_);
+        // Sized here rather than in the prologue because the round state is
+        // the loop's, not the server's. Idempotent: resize() only runs when the
+        // two tables disagree, so in-flight slots survive every later round.
+        if (pending_rpcs.len() != peers_.len()) {
+          pending_rpcs.resize(peers_.len());
+        }
         if (!pending_leader_term.has_value() ||
             *pending_leader_term != round.term()) {
           // Leadership may be lost and regained between two observations by
           // this fiber. Never let a prior term's physical RPC occupy a slot or
           // collide with the new leader epoch's round counter reset.
-          pending_rpcs.clear();
+          pending_rpcs.abandon();
           authority_rounds.abandon();
           pending_leader_term = round.term();
         }
@@ -3096,7 +3355,7 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
         if (!IsLeader()) {
           break;  // Stop sending if we lost leadership
         }
-        if (pending_rpcs.count(site_id) > 0) {
+        if (pending_rpcs.occupied(ord)) {
           continue;
         }
 
@@ -3371,16 +3630,10 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
         }
 
         // Create pending RPC context
-        auto pending = std::make_unique<PendingAppendEntries>();
-        pending->follower_id = site_id;
-        pending->cmd = cmd;
-        pending->sent_term = round.term();
-        pending->sent_round = round.round_id();
-        pending->sent_end_index = sent_end_index;
-
-        // Send RPC (non-blocking - just initiates the async call)
-        // Response is allocated with shared_ptr - callback captures it to ensure memory validity
-        pending->response = commo()->SendAppendEntries2(site_id,
+        // Send RPC (non-blocking - just initiates the async call). The
+        // response is a shared_ptr the transport's callback also holds, which
+        // is what keeps it alive; the table carries it opaquely.
+        auto sent_response = commo()->SendAppendEntries2(site_id,
                                               partition_id,
                                               -1,
                                               -1,
@@ -3393,7 +3646,9 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
                                               cmd,
                                               cmdLogTerm);
 
-        pending_rpcs.emplace(site_id, std::move(pending));
+        pending_rpcs.place(ord, PendingAppend::new_(
+            site_id, round.term(), round.round_id(), sent_end_index,
+            std::move(sent_response), cmd));
         if (round.authority_inserted() && round.is_member(site_id)) {
           // Was `authority_it->second`, a std::map iterator created in PHASE 0
           // and dereferenced here, after the RPC sends. Nothing between the two
@@ -3429,20 +3684,29 @@ void RaftServer::HeartbeatPhase2(HeartbeatRoundState& state,
       while (!stop_response_processing) {
         bool waiting_for_current_round = false;
 
-        for (auto pending_it = pending_rpcs.begin();
-             pending_it != pending_rpcs.end();) {
+        for (size_t pending_ord = 0; pending_ord < pending_rpcs.len();
+             pending_ord++) {
           if (!IsLeader()) {
             stop_response_processing = true;
             break;
           }
+          if (!pending_rpcs.occupied(pending_ord)) {
+            continue;
+          }
 
-          auto &pending = *pending_it->second;
-          auto &resp = *pending.response;
+          // Bound once per slot per poll pass, not per use: every read below
+          // is the same shape it was when `pending` was a map value.
+          const PendingView pending{
+              pending_rpcs.follower(pending_ord),
+              pending_rpcs.sent_term(pending_ord),
+              pending_rpcs.sent_round(pending_ord),
+              pending_rpcs.sent_end_index(pending_ord),
+              pending_rpcs.cmd(pending_ord)};
+          auto &resp = *pending_rpcs.response(pending_ord);
           if (!resp.completed.load(std::memory_order_acquire)) {
             if (pending.sent_round == round.round_id()) {
               waiting_for_current_round = true;
             }
-            ++pending_it;
             continue;
           }
 
@@ -3594,7 +3858,7 @@ void RaftServer::HeartbeatPhase2(HeartbeatRoundState& state,
           }
 
           const bool completed_previous_round = pending.sent_round != round.round_id();
-          pending_it = pending_rpcs.erase(pending_it);
+          pending_rpcs.release(pending_ord);
           retry_released_follower =
               retry_released_follower || completed_previous_round;
           if (stepped_down) {
@@ -3620,7 +3884,7 @@ void RaftServer::HeartbeatPhase2(HeartbeatRoundState& state,
             static_cast<uint64_t>(std::max<int64_t>(remaining_us, 1)))));
       }
       if (stop_response_processing) {
-        pending_rpcs.clear();
+        pending_rpcs.abandon();
         authority_rounds.abandon();
       } else if (retry_released_follower) {
         // A completion from an older round opened a per-follower slot after

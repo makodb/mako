@@ -52,6 +52,7 @@ EXPECTED_BLOCKS=(
   "src/deptran/raft/server.cc|raft_server.preferred_leader_predicate"
   "src/deptran/raft/server.cc|raft_server.replication_wake_gate"
   "src/deptran/raft/server.cc|raft_server.heartbeat_authority"
+  "src/deptran/raft/server.cc|raft_server.pending_table"
   "src/deptran/raft/server.cc|raft_server.authority_ledger"
   "src/deptran/raft/server.cc|raft_server.heartbeat_round_scope"
   "src/deptran/raft/server.h|raft_server.follower_progress"

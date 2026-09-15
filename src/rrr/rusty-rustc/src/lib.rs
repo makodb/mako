@@ -354,6 +354,21 @@ pub struct ReactorFiber {
     yields: Cell<u64>,
 }
 
+/// Opaque carriers for two C++ types the Raft DSL holds but never inspects:
+/// `std::shared_ptr<janus::AppendEntriesResponse>` and `janus::Command`.
+/// Production C++ resolves both through the aliases in
+/// src/deptran/raft/rust_facade_types.h; here they exist only so a DSL body
+/// can name a field type and move it. They are deliberately opaque -- Rust
+/// cannot construct or dereference either, which is what makes "carried, never
+/// followed" checkable rather than a convention.
+pub struct RaftResponsePtr {
+    _opaque: [u8; 0],
+}
+
+pub struct RaftCommand {
+    _opaque: [u8; 0],
+}
+
 pub type ReactorIntEvent = rrr::reactor::IntEvent;
 pub type ReactorPollThread = rrr::reactor::PollThread;
 pub type RustcSocketAddrV4 = ::std::net::SocketAddrV4;

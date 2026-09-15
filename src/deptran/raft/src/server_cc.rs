@@ -216,6 +216,125 @@ fn IsPreferredLeaderConfigured(preferred_leader_site_id: u16) -> bool {
     preferred_leader_site_id != u16::MAX
 }
 
+pub struct PendingAppend {
+    follower_: u16,
+    sent_term_: u64,
+    sent_round_: u64,
+    // Inclusive end of the exact prefix proved by this RPC's wire payload. A
+    // heartbeat proves only prevLogIndex; raw and batched payloads extend it
+    // by their encoded entry count.
+    sent_end_index_: u64,
+    response_: rusty::RaftResponsePtr,
+    // Empty Command (has_value() == false) signals a heartbeat.
+    cmd_: rusty::RaftCommand,
+}
+
+impl PendingAppend {
+    pub fn new(follower: u16, sent_term: u64, sent_round: u64,
+               sent_end_index: u64, response: rusty::RaftResponsePtr,
+               cmd: rusty::RaftCommand) -> PendingAppend {
+        PendingAppend {
+            follower_: follower,
+            sent_term_: sent_term,
+            sent_round_: sent_round,
+            sent_end_index_: sent_end_index,
+            response_: response,
+            cmd_: cmd,
+        }
+    }
+}
+
+pub struct PendingTable {
+    slots_: rusty::Vec<rusty::Option<PendingAppend>>,
+}
+
+#[allow(clippy::new_without_default)]
+impl PendingTable {
+    pub fn new() -> PendingTable {
+        PendingTable { slots_: rusty::Vec::new() }
+    }
+
+    // One slot per follower, all empty. Called wherever the peer table is
+    // sized, so the two always agree on what an ordinal means.
+    pub fn resize(&mut self, peers: usize) {
+        self.slots_.clear();
+        let mut i: usize = 0;
+        while i < peers {
+            self.slots_.push(rusty::None);
+            i += 1;
+        }
+    }
+
+    // Drops every in-flight context. Used on leadership loss and on a term
+    // change, so a prior epoch's RPC can never occupy a slot.
+    pub fn abandon(&mut self) {
+        let peers = self.slots_.len();
+        self.resize(peers);
+    }
+
+    pub fn len(&self) -> usize {
+        self.slots_.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.slots_.is_empty()
+    }
+
+    pub fn occupied(&self, ordinal: usize) -> bool {
+        self.slots_[ordinal].is_some()
+    }
+
+    pub fn place(&mut self, ordinal: usize, pending: PendingAppend) {
+        self.slots_[ordinal] = rusty::Some(pending);
+    }
+
+    pub fn release(&mut self, ordinal: usize) {
+        self.slots_[ordinal] = rusty::None;
+    }
+
+    pub fn follower(&self, ordinal: usize) -> u16 {
+        if self.slots_[ordinal].is_none() {
+            return 0;
+        }
+        self.slots_[ordinal].as_ref().unwrap().follower_
+    }
+
+    pub fn sent_term(&self, ordinal: usize) -> u64 {
+        if self.slots_[ordinal].is_none() {
+            return 0;
+        }
+        self.slots_[ordinal].as_ref().unwrap().sent_term_
+    }
+
+    pub fn sent_round(&self, ordinal: usize) -> u64 {
+        if self.slots_[ordinal].is_none() {
+            return 0;
+        }
+        self.slots_[ordinal].as_ref().unwrap().sent_round_
+    }
+
+    pub fn sent_end_index(&self, ordinal: usize) -> u64 {
+        if self.slots_[ordinal].is_none() {
+            return 0;
+        }
+        self.slots_[ordinal].as_ref().unwrap().sent_end_index_
+    }
+
+    // Both of these hand a carried C++ value back to C++. The reference is
+    // safe because the method is &self: the emitter binds the const unwrap
+    // overload, which returns a reference into the live Option rather than a
+    // moved-out temporary.
+    // Callers check occupied() first; unwrap is the assertion of that.
+    pub fn response(&self, ordinal: usize) -> &rusty::RaftResponsePtr {
+        &self.slots_[ordinal].as_ref().unwrap().response_
+    }
+
+    // Callers check occupied() first; unwrap is the assertion of that.
+    pub fn cmd(&self, ordinal: usize) -> &rusty::RaftCommand {
+        &self.slots_[ordinal].as_ref().unwrap().cmd_
+    }
+}
+
 pub struct HeartbeatAuthority {
     term_: u64,
     config_size_: usize,
