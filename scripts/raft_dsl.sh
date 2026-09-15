@@ -452,6 +452,28 @@ for index in "${!FILES[@]}"; do
     failures=$((failures + 1))
   fi
 
+  # SILENT STATEMENT LOSS. The transpiler does not fail on constructs it
+  # cannot lower; it emits a marker and drops the statement, exits 0, and both
+  # this gate and the C++ build stay green while the behaviour is simply gone.
+  # Two such markers exist and both fire on plausible authoring mistakes:
+  #
+  #   // TODO: <name>!(...)      an unknown macro. `Log_debug!("x {}", v);`
+  #                              produces exactly this and the log call
+  #                              disappears -- MEASURED, not hypothetical.
+  #   #if 0  // patcher:         an `impl` on a hand-written C++ type, which
+  #                              the orphan-impl rule stubs out wholesale.
+  #
+  # Neither is ever a legitimate thing to commit inside a GEN region, so scan
+  # the generated side and fail on either. This is the only check here that
+  # catches a body silently doing less than its Rust says.
+  if lost=$(awk -v src="${file}" '/RUSTYCPP:GEN-BEGIN/{g=1} g&&/\/\/ TODO:|#if 0  \/\/ patcher:/{print "  "src":"FNR": "$0} /RUSTYCPP:GEN-END/{g=0}' "${regenerated}") && [ -n "${lost}" ]; then
+    echo "FAILED ${file}: transpiler dropped a statement inside a GEN region" >&2
+    echo "${lost}" >&2
+    echo "  an unknown macro or an impl on a C++ type was silently discarded;" >&2
+    echo "  rewrite that construct rather than committing the marker" >&2
+    failures=$((failures + 1))
+  fi
+
   # The per-carrier `rustc` compile that used to sit here has been REMOVED.
   #
   # It compiled each carrier's extracted Rust as its own standalone crate
