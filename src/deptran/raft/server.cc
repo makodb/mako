@@ -1254,8 +1254,7 @@ void RaftServer::LogTermChange(const char* reason,
 }
 
 RaftServer::RaftServer()
-  : timer_(rusty::Box<Timer>::make(Timer())),  // Initialize Box in member initializer list
-    replication_wake_gate_(rusty::Arc<ReplicationWakeGate>::make_with(
+  : replication_wake_gate_(rusty::Arc<ReplicationWakeGate>::make_with(
         []() { return ReplicationWakeGate::new_(); }))
 {
   async_callback_lifetime_->server = this;
@@ -2194,12 +2193,6 @@ struct HeartbeatRoundState {
 void RaftServer::HeartbeatPrologue() {
   heartbeat_loop_running_.store(
       true, rusty::sync::atomic::Ordering::Release);
-  // @unsafe
-  {
-  auto hb_timer = new Timer();
-  hb_timer->start();
-  }
-
   std::set<siteid_t> replication_targets = current_config_;
   peer_sites_.clear();
   for (const auto peer_id : replication_targets) {

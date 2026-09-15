@@ -78,8 +78,6 @@ class PreparedStateMachineSnapshotInstall {
 };
 
 #define INVALID_SITEID  ((siteid_t)-1)
-#define NUM_BATCH_TIMER_RESET  (100)
-#define SEC_BATCH_TIMER_RESET  (1)
 
 static_assert(std::is_same_v<int, int32_t>);
 
@@ -2145,7 +2143,6 @@ class RaftServer : public TxLogServer {
   uint64_t read_quorum_confirmed_round_ = 0;
   // @unsafe - uses raw pointer parameter for thread signaling
   void timer_thread(bool *vote) ;
-  rusty::Box<Timer> timer_;  // Owned timer, auto-cleaned on destruction
   // Election timing is one mutex-protected campaign. A reset samples exactly
   // one timeout and advances the generation; the timer must never redraw the
   // random timeout on each poll or start a campaign from an expired snapshot
@@ -2179,11 +2176,18 @@ class RaftServer : public TxLogServer {
   bool in_applying_logs_ = false ;
   std::atomic<bool> apply_pending_{false};  // Tracks if new work arrived while applying logs
 #ifdef RAFT_TEST_CORO
+  // UNWIRED. This is RaftServer's own member, not Config's: Config parses a
+  // real failover flag from YAML (`method: none` -> false, config.cc:544) and
+  // exposes get_failover(), but nothing here reads it and nothing assigns
+  // this one, so it is a compile-time true and its guards are no-op branches.
+  // Left in place deliberately -- deleting it removes the hook for running
+  // Raft without elections, and wiring it to Config would CHANGE BEHAVIOUR: a
+  // `method: none` deployment would stop starting the election timer, where
+  // today it starts regardless. That is a product decision, not a cleanup.
   bool failover_{true} ;
 #else
   bool failover_{true} ;
 #endif
-  atomic<int64_t> counter_{0};
   const char *filename = "/db/data.txt";
 
   rusty::sync::atomic::AtomicBool looping_{false};
@@ -2366,22 +2370,6 @@ class RaftServer : public TxLogServer {
   void StartApplyThread();
   void EnqueueCommittedEntries(slotid_t old_commit, slotid_t new_commit);
 
-  // @unsafe - timer and atomic operations include atomics/mutexes
-  void resetTimerBatch()
-  {
-    // Log_info("!!!!!!! if (!failover_)");
-    if (!failover_) return ;
-    auto cur_count = counter_++;
-    if (cur_count > NUM_BATCH_TIMER_RESET ) {
-      // @unsafe
-      {
-      if (timer_->elapsed() > SEC_BATCH_TIMER_RESET) {
-        resetTimer("batch timer adjustment");
-      }
-      }
-      counter_.store(0);
-    }
-  }
   // @unsafe - const char* parameter type requires unsafe context
   void resetTimer(const char* reason = "unspecified") {
     // @unsafe
@@ -2404,9 +2392,6 @@ class RaftServer : public TxLogServer {
                  last_heartbeat_time_ - prev_time, election_timeout_us_,
                  election_timer_generation_);
       }
-    }
-    if (failover_) {
-      timer_->start() ;
     }
   }
 
