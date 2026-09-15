@@ -298,6 +298,33 @@ pub const fn raft_server_commit_index_clamp(candidate_index: u64,
     }
 }
 
+// The commit index a leader may advance to, given its followers' match
+// indices already sorted ascending. Both heartbeat phases computed this
+// inline and identically; this is the one spelling.
+//
+// `sorted_match_indices` excludes the leader, whose own match index is always
+// the largest, so the majority position among all `nservers` replicas is at
+// (nservers - 1) / 2 of the nservers - 1 follower values. A single-replica
+// partition has no followers at all: the leader alone is the majority, so the
+// candidate is everything it has appended. Indexing without that guard reads
+// element [0] of an empty slice.
+//
+// The caller still applies the current-term rule, which needs a log lookup
+// this function cannot do.
+pub const fn raft_server_commit_index_candidate(sorted_match_indices: &[u64],
+                                                 nservers: usize,
+                                                 last_log_index: u64) -> u64 {
+    let mut candidate = last_log_index;
+    if nservers > 1 {
+        candidate = sorted_match_indices[(nservers - 1) / 2];
+    }
+    if candidate > last_log_index {
+        last_log_index
+    } else {
+        candidate
+    }
+}
+
 pub const fn raft_server_read_index_round_can_advance(round: u64) -> bool {
     round != u64::MAX
 }

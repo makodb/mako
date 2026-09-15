@@ -425,6 +425,33 @@ pub const fn raft_server_commit_index_clamp(candidate_index: u64,
     }
 }
 
+// The commit index a leader may advance to, given its followers' match
+// indices already sorted ascending. Both heartbeat phases computed this
+// inline and identically; this is the one spelling.
+//
+// `sorted_match_indices` excludes the leader, whose own match index is always
+// the largest, so the majority position among all `nservers` replicas is at
+// (nservers - 1) / 2 of the nservers - 1 follower values. A single-replica
+// partition has no followers at all: the leader alone is the majority, so the
+// candidate is everything it has appended. Indexing without that guard reads
+// element [0] of an empty slice.
+//
+// The caller still applies the current-term rule, which needs a log lookup
+// this function cannot do.
+pub const fn raft_server_commit_index_candidate(sorted_match_indices: &[u64],
+                                                 nservers: usize,
+                                                 last_log_index: u64) -> u64 {
+    let mut candidate = last_log_index;
+    if nservers > 1 {
+        candidate = sorted_match_indices[(nservers - 1) / 2];
+    }
+    if candidate > last_log_index {
+        last_log_index
+    } else {
+        candidate
+    }
+}
+
 pub const fn raft_server_read_index_round_can_advance(round: u64) -> bool {
     round != u64::MAX
 }
@@ -622,7 +649,7 @@ pub const fn raft_server_leader_rpc_sender_is_authoritative(
            (!has_known_leader || known_leader_matches_sender))))
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.scalar_decisions version=1 rust_sha256=e9548046e1f48ce9cd332b67efe3765859ebf264e278b0c06088a2bd718a5185*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.scalar_decisions version=1 rust_sha256=1abeaaec27d017af385d4f2326552bb62ebb5895c074e7e11be08df99d97d2f5*/
 constexpr uint16_t RAFT_SERVER_INVALID_SITE_ID = static_cast<uint16_t>(65535);
 constexpr bool raft_server_log_index_at_or_below(uint64_t index, uint64_t boundary);
 constexpr bool raft_server_log_index_above(uint64_t index, uint64_t boundary);
@@ -664,6 +691,7 @@ constexpr uint64_t raft_server_append_result_last_index(uint64_t old_last_index,
 constexpr uint64_t raft_server_append_sent_end(uint64_t previous_index, uint64_t entry_count);
 constexpr uint64_t raft_server_append_acknowledged_through(uint64_t reported_index, uint64_t sent_end_index, uint64_t leader_last_index);
 constexpr uint64_t raft_server_commit_index_clamp(uint64_t candidate_index, uint64_t last_log_index);
+constexpr uint64_t raft_server_commit_index_candidate(std::span<const uint64_t> sorted_match_indices, size_t nservers, uint64_t last_log_index);
 constexpr bool raft_server_read_index_round_can_advance(uint64_t round);
 constexpr bool raft_server_read_index_reply_confirms_authority(bool response_available, bool is_leader, uint64_t sent_term, uint64_t response_term, uint64_t current_term, uint64_t sent_round, uint64_t active_round);
 constexpr bool raft_server_log_entry_is_current_term(int64_t entry_term, uint64_t current_term);
@@ -830,6 +858,17 @@ constexpr uint64_t raft_server_commit_index_clamp(uint64_t candidate_index, uint
         return std::move(last_log_index);
     } else {
         return std::move(candidate_index);
+    }
+}
+constexpr uint64_t raft_server_commit_index_candidate(std::span<const uint64_t> sorted_match_indices, size_t nservers, uint64_t last_log_index) {
+    auto candidate = std::move(last_log_index);
+    if (rusty::detail::deref_if_pointer_like(nservers) > 1) {
+        candidate = sorted_match_indices[((rusty::detail::deref_if_pointer_like(nservers) - 1)) / 2];
+    }
+    if (rusty::detail::deref_if_pointer_like(candidate) > rusty::detail::deref_if_pointer_like(last_log_index)) {
+        return std::move(last_log_index);
+    } else {
+        return std::move(candidate);
     }
 }
 constexpr bool raft_server_read_index_round_can_advance(uint64_t round) {
@@ -1058,6 +1097,27 @@ static_assert(raft_server_append_acknowledged_through(20, 10, 15) == 10);
 static_assert(raft_server_append_acknowledged_through(8, 10, 15) == 8);
 static_assert(raft_server_append_acknowledged_through(20, 15, 9) == 9);
 static_assert(raft_server_commit_index_clamp(9, 7) == 7);
+// @safe - compile-time only; raft_server_commit_index_candidate takes a span,
+// which cannot be spelled as a bare static_assert argument, so its cases run
+// through this constexpr helper instead.
+constexpr bool raft_server_commit_index_candidate_selftest() {
+  const uint64_t three_way[] = {3, 7};
+  const uint64_t five_way[] = {3, 7, 9, 11};
+  return
+      // 3 replicas: majority position 1 of the 2 follower values.
+      raft_server_commit_index_candidate(
+          std::span<const uint64_t>(three_way, 2), 3, 100) == 7 &&
+      // 5 replicas: majority position 2 of the 4 follower values.
+      raft_server_commit_index_candidate(
+          std::span<const uint64_t>(five_way, 4), 5, 100) == 9 &&
+      // The candidate never exceeds the leader's own last log index.
+      raft_server_commit_index_candidate(
+          std::span<const uint64_t>(three_way, 2), 3, 5) == 5 &&
+      // Single replica: no followers, so the leader's whole log is committable.
+      raft_server_commit_index_candidate(
+          std::span<const uint64_t>(), 1, 42) == 42;
+}
+static_assert(raft_server_commit_index_candidate_selftest());
 static_assert(raft_server_compaction_safe_index(12, 10, 8) == 8);
 static_assert(raft_server_compaction_safe_index(7, 10, 8) == 7);
 static_assert(raft_server_compaction_safe_index(9, 8, 10) == 8);
