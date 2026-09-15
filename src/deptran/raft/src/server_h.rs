@@ -711,3 +711,35 @@ unsafe extern "C" {
     fn raft_election_request_vote(server: *mut core::ffi::c_void, generation: u64);
     fn raft_election_set_running(server: *mut core::ffi::c_void, running: bool);
 }
+
+pub struct HeartbeatDriver {
+    server_: *mut core::ffi::c_void,
+    round_: *mut core::ffi::c_void,
+}
+
+impl HeartbeatDriver {
+    pub fn new(server: *mut core::ffi::c_void,
+               round: *mut core::ffi::c_void) -> HeartbeatDriver {
+        HeartbeatDriver { server_: server, round_: round }
+    }
+
+    pub fn run(&self) {
+        unsafe { raft_heartbeat_prologue(self.server_) };
+        while unsafe { raft_heartbeat_looping(self.server_) } {
+            // False means the round hit shutdown while waiting for work; the
+            // C++ spelled that as `break` when this was one function.
+            if !unsafe { raft_heartbeat_round(self.server_, self.round_) } {
+                break;
+            }
+        }
+        unsafe { raft_heartbeat_epilogue(self.server_) };
+    }
+}
+
+unsafe extern "C" {
+    fn raft_heartbeat_prologue(server: *mut core::ffi::c_void);
+    fn raft_heartbeat_looping(server: *mut core::ffi::c_void) -> bool;
+    fn raft_heartbeat_round(server: *mut core::ffi::c_void,
+                            round: *mut core::ffi::c_void) -> bool;
+    fn raft_heartbeat_epilogue(server: *mut core::ffi::c_void);
+}

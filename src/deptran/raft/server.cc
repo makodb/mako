@@ -2142,7 +2142,35 @@ struct PendingHeartbeatAuthority {
 };
 
 // @unsafe - Heartbeat loop mutates shared state, performs RPCs, and uses raw pointers.
-void RaftServer::HeartbeatLoop() {
+// ============================================================================
+// HEARTBEAT LOOP: the C++ half of the DSL-owned HeartbeatDriver
+//
+// The loop and the lifecycle are Rust, in the raft_server.heartbeat_driver
+// block in server.h. What stays here is the round body -- moved verbatim, not
+// rewritten -- plus the prologue and epilogue. Splitting the round into its
+// four phases is the next tranche; doing it in the same change as the loop
+// extraction would have put the phase boundaries and the loop boundary at
+// risk together, and the phases carry twenty inner break/continue statements
+// whose meaning depends on exactly which loop encloses them.
+// ============================================================================
+
+// The three loop-carried locals, which outlive a round but not the loop. They
+// stay C++ because unique_ptr<PendingAppendEntries> and the wire types inside
+// PendingHeartbeatAuthority have no DSL spelling; the Rust driver carries this
+// object as an opaque handle and never looks inside it.
+struct HeartbeatRoundState {
+  // Keep at most one AppendEntries RPC in flight per follower. A synchronous
+  // follower may legitimately take longer than one heartbeat interval to
+  // persist an entry; retaining its context lets a later round consume that
+  // acknowledgement instead of queueing duplicate writes and discarding every
+  // late success.
+  std::map<siteid_t, std::unique_ptr<PendingAppendEntries>> pending_rpcs;
+  std::map<uint64_t, PendingHeartbeatAuthority> authority_rounds;
+  std::optional<uint64_t> pending_leader_term;
+};
+
+// @unsafe - timer allocation, progress_ initialisation, atomic stores
+void RaftServer::HeartbeatPrologue() {
   heartbeat_loop_running_.store(
       true, rusty::sync::atomic::Ordering::Release);
   // @unsafe
@@ -2151,7 +2179,6 @@ void RaftServer::HeartbeatLoop() {
   hb_timer->start();
   }
 
-  parid_t partition_id = partition_id_;
   std::set<siteid_t> replication_targets = current_config_;
   for (const auto peer_id : replication_targets) {
     if (peer_id == site_id_) {
@@ -2165,22 +2192,46 @@ void RaftServer::HeartbeatLoop() {
 
   Log_debug("heartbeat loop init from site: {}", site_id_);
   looping_.store(true, rusty::sync::atomic::Ordering::Release);
-  // Keep at most one AppendEntries RPC in flight per follower. A synchronous
-  // follower may legitimately take longer than one heartbeat interval to
-  // persist an entry; retaining its context lets a later round consume that
-  // acknowledgement instead of queueing duplicate writes and discarding every
-  // late success.
-  std::map<siteid_t, std::unique_ptr<PendingAppendEntries>> pending_rpcs;
-  std::map<uint64_t, PendingHeartbeatAuthority> authority_rounds;
-  std::optional<uint64_t> pending_leader_term;
-  while (looping_.load(rusty::sync::atomic::Ordering::Acquire)) {
+}
+
+// @safe - acquire load, exactly as the old loop condition read it
+bool RaftServer::HeartbeatLooping() const {
+  return looping_.load(rusty::sync::atomic::Ordering::Acquire);
+}
+
+// @safe - two release stores
+void RaftServer::HeartbeatEpilogue() {
+  looping_.store(false, rusty::sync::atomic::Ordering::Release);
+  heartbeat_loop_running_.store(
+      false, rusty::sync::atomic::Ordering::Release);
+}
+
+// @unsafe - one heartbeat round: locks, RPC sends, reply polling, commit.
+//
+// This is the former while-body, unchanged except for its two OUTER-level
+// exits, which a function must spell differently from a loop:
+//   the wait's `break`            -> return false  (stop looping)
+//   PHASE 0's !IsLeader `continue`-> return true   (skip to the next round)
+// Both were confirmed to be outer-level by brace depth, with no loop between
+// them and the round block. Every other break and continue in here belongs to
+// an inner loop and is untouched.
+bool RaftServer::HeartbeatRound(HeartbeatRoundState& round) {
+  // Was a prologue local. partition_id_ is written once during Setup and
+  // never mutated, so copying it per round holds the same value the per-loop
+  // copy did.
+  const parid_t partition_id = partition_id_;
+  auto& pending_rpcs = round.pending_rpcs;
+  auto& authority_rounds = round.authority_rounds;
+  auto& pending_leader_term = round.pending_leader_term;
     uint64_t term = 0;
     uint64_t round_id = 0;
     size_t nservers = 0;
     std::set<siteid_t> round_config;
     {
       if (!WaitForReplicationOrHeartbeat(heartbeat_interval_us_)) {
-        break;
+        // Was `break` out of the while; the Rust driver stops when this
+        // returns false.
+        return false;
       }
 
       // ========================================================================
@@ -2193,7 +2244,9 @@ void RaftServer::HeartbeatLoop() {
           pending_rpcs.clear();
           authority_rounds.clear();
           pending_leader_term.reset();
-          continue;
+          // Was `continue`; the Rust driver starts the next round when this
+          // returns true.
+          return true;
         }
 
         term = currentTerm;
@@ -2903,10 +2956,51 @@ void RaftServer::HeartbeatLoop() {
         }
       }
     }
-	}
-  looping_.store(false, rusty::sync::atomic::Ordering::Release);
-  heartbeat_loop_running_.store(
-      false, rusty::sync::atomic::Ordering::Release);
+  return true;
+}
+
+// The extern "C" trampolines the DSL block declares. Each casts an opaque
+// handle back exactly once, and this is the only place either cast happens.
+extern "C" {
+
+// @unsafe { opaque handle cast }
+static inline RaftServer* raft_heartbeat_server(rusty::ffi::c_void* server) {
+  return static_cast<RaftServer*>(server);
+}
+
+// @unsafe { opaque handle cast }
+static inline HeartbeatRoundState* raft_heartbeat_state(
+    rusty::ffi::c_void* round) {
+  return static_cast<HeartbeatRoundState*>(round);
+}
+
+void raft_heartbeat_prologue(rusty::ffi::c_void* server) {
+  raft_heartbeat_server(server)->HeartbeatPrologue();
+}
+
+bool raft_heartbeat_looping(rusty::ffi::c_void* server) {
+  return raft_heartbeat_server(server)->HeartbeatLooping();
+}
+
+bool raft_heartbeat_round(rusty::ffi::c_void* server,
+                          rusty::ffi::c_void* round) {
+  return raft_heartbeat_server(server)->HeartbeatRound(
+      *raft_heartbeat_state(round));
+}
+
+void raft_heartbeat_epilogue(rusty::ffi::c_void* server) {
+  raft_heartbeat_server(server)->HeartbeatEpilogue();
+}
+
+}  // extern "C"
+
+// @unsafe - hands two opaque handles to the Rust driver and runs it
+void RaftServer::HeartbeatLoop() {
+  HeartbeatRoundState round;
+  const HeartbeatDriver driver = HeartbeatDriver::new_(
+      static_cast<rusty::ffi::c_void*>(this),
+      static_cast<rusty::ffi::c_void*>(&round));
+  driver.run();
 }
 
 // @unsafe - thread join and timer cleanup require manual resource management

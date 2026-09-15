@@ -1655,6 +1655,88 @@ inline bool ElectionTimerLoop::await_vote_settled() const {
 }
 /*RUSTYCPP:GEN-END id=raft_server.election_timer*/
 
+// The heartbeat loop, owned by Rust.
+//
+// Same shape as ElectionTimerLoop above and for the same reason: the outer
+// while, the lifecycle and the continuation decision are Rust; everything
+// that touches shared RaftServer state is a C++ kernel behind an opaque
+// handle. Two handles here rather than one, because the round-carried state
+// (the pending-RPC table, the authority generations, the leader-term latch)
+// outlives a round but not the loop, and holds unique_ptr and wire types that
+// have no DSL spelling. Rust carries it and hands it back; it never looks in.
+#if RUSTYCPP_RUST
+pub struct HeartbeatDriver {
+    server_: *mut core::ffi::c_void,
+    round_: *mut core::ffi::c_void,
+}
+
+impl HeartbeatDriver {
+    pub fn new(server: *mut core::ffi::c_void,
+               round: *mut core::ffi::c_void) -> HeartbeatDriver {
+        HeartbeatDriver { server_: server, round_: round }
+    }
+
+    pub fn run(&self) {
+        unsafe { raft_heartbeat_prologue(self.server_) };
+        while unsafe { raft_heartbeat_looping(self.server_) } {
+            // False means the round hit shutdown while waiting for work; the
+            // C++ spelled that as `break` when this was one function.
+            if !unsafe { raft_heartbeat_round(self.server_, self.round_) } {
+                break;
+            }
+        }
+        unsafe { raft_heartbeat_epilogue(self.server_) };
+    }
+}
+
+unsafe extern "C" {
+    fn raft_heartbeat_prologue(server: *mut core::ffi::c_void);
+    fn raft_heartbeat_looping(server: *mut core::ffi::c_void) -> bool;
+    fn raft_heartbeat_round(server: *mut core::ffi::c_void,
+                            round: *mut core::ffi::c_void) -> bool;
+    fn raft_heartbeat_epilogue(server: *mut core::ffi::c_void);
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_driver version=1 rust_sha256=1ba01f9bc28112b940f95639932fd5bd1eefd50589dfc4db3315b191b2ab9b71*/
+struct HeartbeatDriver;
+
+struct HeartbeatDriver {
+    rusty::ffi::c_void* server_;
+    rusty::ffi::c_void* round_;
+
+    static HeartbeatDriver new_(rusty::ffi::c_void* server, rusty::ffi::c_void* round);
+    void run() const;
+};
+
+extern "C" {
+    void raft_heartbeat_prologue(rusty::ffi::c_void* server);
+    bool raft_heartbeat_looping(rusty::ffi::c_void* server);
+    bool raft_heartbeat_round(rusty::ffi::c_void* server, rusty::ffi::c_void* round);
+    void raft_heartbeat_epilogue(rusty::ffi::c_void* server);
+}
+
+
+inline HeartbeatDriver HeartbeatDriver::new_(rusty::ffi::c_void* server, rusty::ffi::c_void* round) {
+    return HeartbeatDriver{.server_ = server, .round_ = round};
+}
+
+inline void HeartbeatDriver::run() const {
+    // @unsafe
+    {
+        raft_heartbeat_prologue(this->server_);
+    }
+    while (raft_heartbeat_looping(this->server_)) {
+        if (!raft_heartbeat_round(this->server_, this->round_)) {
+            break;
+        }
+    }
+    // @unsafe
+    {
+        raft_heartbeat_epilogue(this->server_);
+    }
+}
+/*RUSTYCPP:GEN-END id=raft_server.heartbeat_driver*/
+
 class RaftServer : public TxLogServer {
  public:
   // ==========================================================================
@@ -1686,6 +1768,23 @@ class RaftServer : public TxLogServer {
   void ElectionLoopRequestVote(uint64_t generation);
   // @safe - release store on an atomic
   void ElectionLoopSetRunning(bool running);
+
+  // ==========================================================================
+  // HEARTBEAT LOOP KERNELS
+  //
+  // The C++ half of the DSL-owned HeartbeatDriver declared above. The round
+  // body is still one kernel; splitting it into the four phases is the next
+  // tranche.
+  // ==========================================================================
+
+  // @unsafe - timer allocation, progress_ initialisation, atomic stores
+  void HeartbeatPrologue();
+  // @safe - acquire load
+  bool HeartbeatLooping() const;
+  // @unsafe - one full round: locks, RPC sends, reply polling, commit
+  bool HeartbeatRound(struct HeartbeatRoundState& round);
+  // @safe - two release stores
+  void HeartbeatEpilogue();
 
   // The five site fields and the mutex used to arrive by inheriting
   // TxLogServer's data members. They are declared here now; every body that
