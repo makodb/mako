@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
+#include <rusty/rusty.hpp>   // rusty::addr_of_temp for the by-reference DSL args
 #include <rusty/array.hpp>
 #include <rusty/winnow_stream.hpp>   // rusty::contains for BTreeSet, per the compiler diagnostic   // rusty::len over the authority's BTreeSets
 #include <rusty/slice.hpp>
@@ -2140,12 +2141,590 @@ inline bool HeartbeatAuthority::all_completed() const {
 }
 /*RUSTYCPP:GEN-END id=raft_server.heartbeat_authority*/
 
-struct PendingHeartbeatAuthority {
-  // Membership snapshot: stays std::set because it is compared against
-  // current_config_ with operator==.
-  std::set<siteid_t> config;
-  HeartbeatAuthority evidence;
+}  // namespace janus
+
+// Cross-carrier DSL calls, inline-mode shims.
+//
+// A DSL body that says `use crate::quorum_hpp::raft_quorum_majority_count`
+// emits `using ::quorum_hpp::raft_quorum_majority_count` -- the emitter turns
+// the crate module path into a C++ namespace path, and inline mode has no
+// type map to rewrite it. These two namespaces supply the names it reaches
+// for, exactly as rust_facade_types.h supplies the rusty:: reactor names.
+// Aliases only; the definitions stay where they are.
+namespace quorum_hpp {
+using janus::raft::raft_quorum_majority_count;
+using janus::raft::raft_quorum_count_reached;
+}  // namespace quorum_hpp
+
+namespace server_h {
+using janus::raft_server_read_index_reply_confirms_authority;
+}  // namespace server_h
+
+namespace janus {
+
+// The read-index authority ledger, owned by Rust.
+//
+// Was std::map<uint64_t, PendingHeartbeatAuthority>. A map bought nothing: the
+// generations are few (bounded by rounds with replies still outstanding), they
+// are created in ascending round order and scanned in that order, and every
+// lookup was by a round id the caller already had. So it is a rusty::Vec with
+// the round id as a field -- the same substitution PeerTable made, and for the
+// same reason: rusty::BTreeMap's rustc model is not a faithful map.
+//
+// The membership snapshot is now a rusty::BTreeSet<u16> rather than a
+// std::set, which is what lets the whole type be DSL. Its comparison against
+// the current membership keeps FULL strength -- it is set equality, not a size
+// check -- but it is expressed as length plus containment over a sorted slice
+// rather than with `==`. That is deliberate: the rustc facade models BTreeSet
+// as a Vec (rusty-rustc/src/lib.rs:817), so a derived `==` there would be
+// ORDER-sensitive while the real C++ btree_port `==` is set equality. Using
+// only len() and contains(), which are faithful on both sides, keeps the gate
+// checking what production does. Same reason the config is admitted member by
+// member instead of cloned: the facade's BTreeSet implements neither Clone nor
+// PartialEq, and adding them would be adding unfaithful ones.
+#if RUSTYCPP_RUST
+use crate::quorum_hpp::raft_quorum_majority_count;
+use crate::quorum_hpp::raft_quorum_count_reached;
+use crate::server_h::raft_server_read_index_reply_confirms_authority;
+
+pub struct AuthorityGeneration {
+    round_id_: u64,
+    config_: rusty::BTreeSet<u16>,
+    evidence_: HeartbeatAuthority,
+}
+
+impl AuthorityGeneration {
+    pub fn round_id(&self) -> u64 {
+        self.round_id_
+    }
+
+    pub fn term(&self) -> u64 {
+        self.evidence_.term()
+    }
+
+    pub fn voter_count(&self) -> usize {
+        self.evidence_.voter_count()
+    }
+
+    pub fn config_size(&self) -> usize {
+        self.evidence_.config_size()
+    }
+
+    // Quorum is asked of the generation's OWN config size, not the current
+    // one: a delayed reply is evidence against the membership that launched
+    // it.
+    pub fn has_quorum(&self) -> bool {
+        let quorum = raft_quorum_majority_count(self.evidence_.config_size());
+        raft_quorum_count_reached(self.evidence_.voter_count(), quorum)
+    }
+
+    pub fn all_completed(&self) -> bool {
+        self.evidence_.all_completed()
+    }
+
+    // Set equality against the launching membership, spelled with len() and
+    // contains() so it means the same thing under the Vec-backed rustc model
+    // as under the real C++ btree. `sites` is the current config, sorted and
+    // duplicate-free, which is what a std::set iteration yields.
+    pub fn config_matches(&self, sites: &[u16]) -> bool {
+        if self.config_.len() != sites.len() {
+            return false;
+        }
+        let mut i: usize = 0;
+        while i < sites.len() {
+            if !self.config_.contains(&sites[i]) {
+                return false;
+            }
+            i += 1;
+        }
+        true
+    }
+}
+
+// The context one reply carries. Grouped into a value rather than passed as
+// seven parameters, which clippy rejects and which reads worse at the call
+// site: PHASE 2 is describing one event, not supplying seven unrelated
+// arguments.
+#[repr(C)]
+pub struct AuthorityReply {
+    sent_round_: u64,
+    follower_: u16,
+    sent_term_: u64,
+    response_term_: u64,
+    current_term_: u64,
+    is_leader_: bool,
+    response_available_: bool,
+}
+
+impl AuthorityReply {
+    pub fn new(sent_round: u64, follower: u16, sent_term: u64,
+               response_term: u64, current_term: u64, is_leader: bool,
+               response_available: bool) -> AuthorityReply {
+        AuthorityReply {
+            sent_round_: sent_round,
+            follower_: follower,
+            sent_term_: sent_term,
+            response_term_: response_term,
+            current_term_: current_term,
+            is_leader_: is_leader,
+            response_available_: response_available,
+        }
+    }
+
+    pub fn sent_round(&self) -> u64 { self.sent_round_ }
+    pub fn follower(&self) -> u16 { self.follower_ }
+    pub fn sent_term(&self) -> u64 { self.sent_term_ }
+    pub fn response_term(&self) -> u64 { self.response_term_ }
+    pub fn current_term(&self) -> u64 { self.current_term_ }
+    pub fn is_leader(&self) -> bool { self.is_leader_ }
+    pub fn response_available(&self) -> bool { self.response_available_ }
+}
+
+// The outcome of one settlement pass: at most one generation is published.
+#[repr(C)]
+pub struct AuthorityOutcome {
+    confirmed_: bool,
+    term_: u64,
+    round_id_: u64,
+    voter_count_: usize,
+    config_size_: usize,
+}
+
+impl AuthorityOutcome {
+    pub fn confirmed(&self) -> bool { self.confirmed_ }
+    pub fn term(&self) -> u64 { self.term_ }
+    pub fn round_id(&self) -> u64 { self.round_id_ }
+    pub fn voter_count(&self) -> usize { self.voter_count_ }
+    pub fn config_size(&self) -> usize { self.config_size_ }
+}
+
+pub struct AuthorityLedger {
+    generations_: rusty::Vec<AuthorityGeneration>,
+}
+
+#[allow(clippy::new_without_default)]
+impl AuthorityLedger {
+    pub fn new() -> AuthorityLedger {
+        AuthorityLedger { generations_: rusty::Vec::new() }
+    }
+
+    // Dropped wholesale on leadership loss or a term change, so a prior
+    // epoch's evidence can never be counted against the new one.
+    pub fn abandon(&mut self) {
+        self.generations_.clear();
+    }
+
+    // Opens a generation over the membership that launched it. Returns false
+    // if this round id is already present, which can only be the deliberately
+    // fail-closed UINT64_MAX saturation generation; the caller asserts that.
+    pub fn open(&mut self, round_id: u64, config: &[u16],
+                evidence: HeartbeatAuthority) -> bool {
+        if self.index_of(round_id) < self.generations_.len() {
+            return false;
+        }
+        let mut snapshot = rusty::BTreeSet::new();
+        let mut i: usize = 0;
+        while i < config.len() {
+            snapshot.insert(config[i]);
+            i += 1;
+        }
+        self.generations_.push(AuthorityGeneration {
+            round_id_: round_id,
+            config_: snapshot,
+            evidence_: evidence,
+        });
+        true
+    }
+
+    // Returns generations_.len() when absent. An index, never a reference, so
+    // nothing can dangle across an RPC send or a re-entrant callback.
+    pub fn index_of(&self, round_id: u64) -> usize {
+        let n = self.generations_.len();
+        let mut i: usize = 0;
+        while i < n {
+            if self.generations_[i].round_id_ == round_id {
+                return i;
+            }
+            i += 1;
+        }
+        n
+    }
+
+    pub fn len(&self) -> usize {
+        self.generations_.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.generations_.is_empty()
+    }
+
+    pub fn launch(&mut self, round_id: u64, site: u16) -> bool {
+        let index = self.index_of(round_id);
+        if index >= self.generations_.len() {
+            return false;
+        }
+        self.generations_[index].evidence_.launch(site);
+        true
+    }
+
+    pub fn has_quorum(&self, round_id: u64) -> bool {
+        let index = self.index_of(round_id);
+        if index >= self.generations_.len() {
+            return false;
+        }
+        self.generations_[index].has_quorum()
+    }
+
+    // One reply arrives. The RPC is retired unconditionally, and counted as a
+    // vote only if it proves this exact generation: same term, a follower that
+    // was in the launching membership, and the reply predicate agreeing.
+    pub fn record_reply(&mut self, reply: &AuthorityReply) {
+        let index = self.index_of(reply.sent_round());
+        if index >= self.generations_.len() {
+            return;
+        }
+        self.generations_[index].evidence_.retire(reply.follower());
+        let matches_term =
+            self.generations_[index].evidence_.term() == reply.sent_term();
+        let was_member =
+            self.generations_[index].config_.contains(&reply.follower());
+        if matches_term && was_member &&
+            raft_server_read_index_reply_confirms_authority(
+                reply.response_available(), reply.is_leader(),
+                reply.sent_term(), reply.response_term(),
+                reply.current_term(), reply.sent_round(),
+                self.generations_[index].round_id_) {
+            self.generations_[index].evidence_.record_vote(reply.follower());
+        }
+    }
+
+    // Publishes at most one generation and retires every generation that can
+    // no longer contribute. Generations are held in ascending round order, and
+    // the running confirmation is consulted as it advances, so the highest
+    // round reaching quorum wins -- the same outcome the ascending std::map
+    // scan produced.
+    pub fn settle(&mut self, is_leader: bool, current_term: u64,
+                  current_config: &[u16],
+                  confirmed_term: u64, confirmed_round: u64)
+                  -> AuthorityOutcome {
+        let mut outcome = AuthorityOutcome {
+            confirmed_: false,
+            term_: 0,
+            round_id_: 0,
+            voter_count_: 0,
+            config_size_: 0,
+        };
+        let mut running_term = confirmed_term;
+        let mut running_round = confirmed_round;
+        let mut i: usize = 0;
+        while i < self.generations_.len() {
+            let context_is_current = is_leader &&
+                current_term == self.generations_[i].evidence_.term() &&
+                self.generations_[i].config_matches(current_config);
+            let already_published = running_term ==
+                self.generations_[i].evidence_.term() &&
+                self.generations_[i].round_id_ <= running_round;
+            if !context_is_current || already_published {
+                self.generations_.remove(i);
+                continue;
+            }
+            if self.generations_[i].has_quorum() {
+                running_term = self.generations_[i].evidence_.term();
+                running_round = self.generations_[i].round_id_;
+                outcome = AuthorityOutcome {
+                    confirmed_: true,
+                    term_: running_term,
+                    round_id_: running_round,
+                    voter_count_: self.generations_[i].evidence_.voter_count(),
+                    config_size_: self.generations_[i].evidence_.config_size(),
+                };
+                self.generations_.remove(i);
+                continue;
+            }
+            if self.generations_[i].all_completed() {
+                // Every RPC launched in this generation completed without a
+                // quorum. No later event can add evidence to it.
+                self.generations_.remove(i);
+                continue;
+            }
+            i += 1;
+        }
+        outcome
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_server.authority_ledger version=1 rust_sha256=bbe598cb9d39b4dcd1b0d51ca2196527534d2be11e58bf3667aec827116132f1*/
+struct AuthorityGeneration;
+struct AuthorityReply;
+struct AuthorityOutcome;
+struct AuthorityLedger;
+
+using ::quorum_hpp::raft_quorum_majority_count;
+
+using ::quorum_hpp::raft_quorum_count_reached;
+
+using ::server_h::raft_server_read_index_reply_confirms_authority;
+
+struct AuthorityGeneration {
+    uint64_t round_id_;
+    rusty::BTreeSet<uint16_t> config_;
+    HeartbeatAuthority evidence_;
+
+    uint64_t round_id() const;
+    uint64_t term() const;
+    size_t voter_count() const;
+    size_t config_size() const;
+    bool has_quorum() const;
+    bool all_completed() const;
+    bool config_matches(std::span<const uint16_t> sites) const;
 };
+
+struct AuthorityReply {
+    uint64_t sent_round_;
+    uint16_t follower_;
+    uint64_t sent_term_;
+    uint64_t response_term_;
+    uint64_t current_term_;
+    bool is_leader_;
+    bool response_available_;
+
+    static AuthorityReply new_(uint64_t sent_round, uint16_t follower, uint64_t sent_term, uint64_t response_term, uint64_t current_term, bool is_leader, bool response_available);
+    uint64_t sent_round() const;
+    uint16_t follower() const;
+    uint64_t sent_term() const;
+    uint64_t response_term() const;
+    uint64_t current_term() const;
+    bool is_leader() const;
+    bool response_available() const;
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
+};
+
+struct AuthorityOutcome {
+    bool confirmed_;
+    uint64_t term_;
+    uint64_t round_id_;
+    size_t voter_count_;
+    size_t config_size_;
+
+    bool confirmed() const;
+    uint64_t term() const;
+    uint64_t round_id() const;
+    size_t voter_count() const;
+    size_t config_size() const;
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
+};
+
+struct AuthorityLedger {
+    rusty::Vec<AuthorityGeneration> generations_;
+
+    static AuthorityLedger new_();
+    void abandon();
+    bool open(uint64_t round_id, std::span<const uint16_t> config, HeartbeatAuthority evidence);
+    size_t index_of(uint64_t round_id) const;
+    size_t len() const;
+    bool is_empty() const;
+    bool launch(uint64_t round_id, uint16_t site);
+    bool has_quorum(uint64_t round_id) const;
+    void record_reply(const AuthorityReply& reply);
+    AuthorityOutcome settle(bool is_leader, uint64_t current_term, std::span<const uint16_t> current_config, uint64_t confirmed_term, uint64_t confirmed_round);
+};
+
+
+inline uint64_t AuthorityGeneration::round_id() const {
+    return this->round_id_;
+}
+
+inline uint64_t AuthorityGeneration::term() const {
+    return this->evidence_.term();
+}
+
+inline size_t AuthorityGeneration::voter_count() const {
+    return this->evidence_.voter_count();
+}
+
+inline size_t AuthorityGeneration::config_size() const {
+    return this->evidence_.config_size();
+}
+
+inline bool AuthorityGeneration::has_quorum() const {
+    const auto quorum = raft_quorum_majority_count(this->evidence_.config_size());
+    return raft_quorum_count_reached(this->evidence_.voter_count(), std::move(quorum));
+}
+
+inline bool AuthorityGeneration::all_completed() const {
+    return this->evidence_.all_completed();
+}
+
+inline bool AuthorityGeneration::config_matches(std::span<const uint16_t> sites) const {
+    if (rusty::len(this->config_) != rusty::len(sites)) {
+        return false;
+    }
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::len(sites)) {
+        if (rusty::detail::rust_not(rusty::contains(this->config_, &sites[i]))) {
+            return false;
+        }
+        i += 1;
+    }
+    return true;
+}
+
+inline AuthorityReply AuthorityReply::new_(uint64_t sent_round, uint16_t follower, uint64_t sent_term, uint64_t response_term, uint64_t current_term, bool is_leader, bool response_available) {
+    return AuthorityReply{.sent_round_ = std::move(sent_round), .follower_ = std::move(follower), .sent_term_ = std::move(sent_term), .response_term_ = std::move(response_term), .current_term_ = std::move(current_term), .is_leader_ = std::move(is_leader), .response_available_ = std::move(response_available)};
+}
+
+inline uint64_t AuthorityReply::sent_round() const {
+    return this->sent_round_;
+}
+
+inline uint16_t AuthorityReply::follower() const {
+    return this->follower_;
+}
+
+inline uint64_t AuthorityReply::sent_term() const {
+    return this->sent_term_;
+}
+
+inline uint64_t AuthorityReply::response_term() const {
+    return this->response_term_;
+}
+
+inline uint64_t AuthorityReply::current_term() const {
+    return this->current_term_;
+}
+
+inline bool AuthorityReply::is_leader() const {
+    return this->is_leader_;
+}
+
+inline bool AuthorityReply::response_available() const {
+    return this->response_available_;
+}
+
+inline bool AuthorityOutcome::confirmed() const {
+    return this->confirmed_;
+}
+
+inline uint64_t AuthorityOutcome::term() const {
+    return this->term_;
+}
+
+inline uint64_t AuthorityOutcome::round_id() const {
+    return this->round_id_;
+}
+
+inline size_t AuthorityOutcome::voter_count() const {
+    return this->voter_count_;
+}
+
+inline size_t AuthorityOutcome::config_size() const {
+    return this->config_size_;
+}
+
+inline AuthorityLedger AuthorityLedger::new_() {
+    return AuthorityLedger{.generations_ = rusty::Vec<AuthorityGeneration>::new_()};
+}
+
+inline void AuthorityLedger::abandon() {
+    this->generations_.clear();
+}
+
+inline bool AuthorityLedger::open(uint64_t round_id, std::span<const uint16_t> config, HeartbeatAuthority evidence) {
+    if (this->index_of(std::move(round_id)) < rusty::len(this->generations_)) {
+        return false;
+    }
+    auto snapshot = rusty::BTreeSet<uint16_t>::new_();
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::len(config)) {
+        snapshot.insert(config[i]);
+        i += 1;
+    }
+    this->generations_.push(AuthorityGeneration{.round_id_ = std::move(round_id), .config_ = std::move(snapshot), .evidence_ = std::move(evidence)});
+    return true;
+}
+
+inline size_t AuthorityLedger::index_of(uint64_t round_id) const {
+    auto n = rusty::len(this->generations_);
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
+        if (rusty::detail::deref_if_pointer_like(this->generations_[i].round_id_) == rusty::detail::deref_if_pointer_like(round_id)) {
+            return std::move(i);
+        }
+        i += 1;
+    }
+    return std::move(n);
+}
+
+inline size_t AuthorityLedger::len() const {
+    return rusty::len(this->generations_);
+}
+
+inline bool AuthorityLedger::is_empty() const {
+    return rusty::is_empty(this->generations_);
+}
+
+inline bool AuthorityLedger::launch(uint64_t round_id, uint16_t site) {
+    const auto index = this->index_of(std::move(round_id));
+    if (rusty::detail::deref_if_pointer_like(index) >= rusty::len(this->generations_)) {
+        return false;
+    }
+    this->generations_[index].evidence_.launch(std::move(site));
+    return true;
+}
+
+inline bool AuthorityLedger::has_quorum(uint64_t round_id) const {
+    const auto index = this->index_of(std::move(round_id));
+    if (rusty::detail::deref_if_pointer_like(index) >= rusty::len(this->generations_)) {
+        return false;
+    }
+    return this->generations_[index].has_quorum();
+}
+
+inline void AuthorityLedger::record_reply(const AuthorityReply& reply) {
+    const auto index = this->index_of(reply.sent_round());
+    if (rusty::detail::deref_if_pointer_like(index) >= rusty::len(this->generations_)) {
+        return;
+    }
+    this->generations_[index].evidence_.retire(reply.follower());
+    const auto matches_term = this->generations_[index].evidence_.term() == reply.sent_term();
+    const auto was_member = rusty::contains(this->generations_[index].config_, rusty::addr_of_temp(reply.follower()));
+    if ((rusty::detail::deref_if_pointer_like(matches_term) && rusty::detail::deref_if_pointer_like(was_member)) && raft_server_read_index_reply_confirms_authority(reply.response_available(), reply.is_leader(), reply.sent_term(), reply.response_term(), reply.current_term(), reply.sent_round(), this->generations_[index].round_id_)) {
+        this->generations_[index].evidence_.record_vote(reply.follower());
+    }
+}
+
+inline AuthorityOutcome AuthorityLedger::settle(bool is_leader, uint64_t current_term, std::span<const uint16_t> current_config, uint64_t confirmed_term, uint64_t confirmed_round) {
+    auto outcome = AuthorityOutcome{.confirmed_ = false, .term_ = static_cast<uint64_t>(0), .round_id_ = static_cast<uint64_t>(0), .voter_count_ = static_cast<size_t>(0), .config_size_ = static_cast<size_t>(0)};
+    auto running_term = std::move(confirmed_term);
+    auto running_round = std::move(confirmed_round);
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::len(this->generations_)) {
+        const auto context_is_current = (rusty::detail::deref_if_pointer_like(is_leader) && (rusty::detail::deref_if_pointer_like(current_term) == this->generations_[i].evidence_.term())) && this->generations_[i].config_matches(current_config);
+        const auto already_published = (rusty::detail::deref_if_pointer_like(running_term) == this->generations_[i].evidence_.term()) && (rusty::detail::deref_if_pointer_like(this->generations_[i].round_id_) <= rusty::detail::deref_if_pointer_like(running_round));
+        if (rusty::detail::rust_not(context_is_current) || rusty::detail::deref_if_pointer_like(already_published)) {
+            this->generations_.remove(std::move(i));
+            continue;
+        }
+        if (this->generations_[i].has_quorum()) {
+            running_term = this->generations_[i].evidence_.term();
+            running_round = this->generations_[i].round_id_;
+            outcome = AuthorityOutcome{.confirmed_ = true, .term_ = std::move(running_term), .round_id_ = std::move(running_round), .voter_count_ = this->generations_[i].evidence_.voter_count(), .config_size_ = this->generations_[i].evidence_.config_size()};
+            this->generations_.remove(std::move(i));
+            continue;
+        }
+        if (this->generations_[i].all_completed()) {
+            this->generations_.remove(std::move(i));
+            continue;
+        }
+        i += 1;
+    }
+    return std::move(outcome);
+}
+/*RUSTYCPP:GEN-END id=raft_server.authority_ledger*/
 
 // @unsafe - Heartbeat loop mutates shared state, performs RPCs, and uses raw pointers.
 // ============================================================================
@@ -2342,7 +2921,7 @@ struct HeartbeatRoundState {
   // acknowledgement instead of queueing duplicate writes and discarding every
   // late success.
   std::map<siteid_t, std::unique_ptr<PendingAppendEntries>> pending_rpcs;
-  std::map<uint64_t, PendingHeartbeatAuthority> authority_rounds;
+  AuthorityLedger authority_rounds{AuthorityLedger::new_()};
   std::optional<uint64_t> pending_leader_term;
   // PHASE 0 establishes every field of this each round, so it needs no reset;
   // when PHASE 0 declines the round, phases 1-3 never read it.
@@ -2412,7 +2991,7 @@ bool RaftServer::HeartbeatPhase0(HeartbeatRoundState& state,
         std::lock_guard<std::recursive_mutex> lock(mtx_);
         if (!IsLeader()) {
           pending_rpcs.clear();
-          authority_rounds.clear();
+          authority_rounds.abandon();
           pending_leader_term.reset();
           // Was `continue`; the Rust driver starts the next round when this
           // returns true.
@@ -2426,7 +3005,7 @@ bool RaftServer::HeartbeatPhase0(HeartbeatRoundState& state,
           // this fiber. Never let a prior term's physical RPC occupy a slot or
           // collide with the new leader epoch's round counter reset.
           pending_rpcs.clear();
-          authority_rounds.clear();
+          authority_rounds.abandon();
           pending_leader_term = round.term();
         }
         if (raft_server_read_index_round_can_advance(heartbeat_round_)) {
@@ -2469,19 +3048,18 @@ bool RaftServer::HeartbeatPhase0(HeartbeatRoundState& state,
         round.publish_commit_index(commitIndex);
       }
 
-      auto [authority_it, authority_inserted] = authority_rounds.emplace(
-          round.round_id(),
-          PendingHeartbeatAuthority{
-              current_config_,
-              HeartbeatAuthority::new_(round.term(), round.nservers(), site_id_)});
-      // A structured binding cannot name a member, so publish it to the round
-      // scope for PHASE 1 to read.
-      round.set_authority_inserted(authority_inserted);
+      // Sorted, duplicate-free, which is what a std::set iteration yields and
+      // what the ledger's set-equality check expects.
+      const std::vector<siteid_t> round_members(current_config_.begin(),
+                                                current_config_.end());
+      round.set_authority_inserted(authority_rounds.open(
+          round.round_id(), round_members,
+          HeartbeatAuthority::new_(round.term(), round.nservers(), site_id_)));
       // heartbeat_round_ never wraps. The only possible duplicate is the
-      // deliberately fail-closed UINT64_MAX saturation generation.
+      // deliberately fail-closed UINT64_MAX saturation generation, which open()
+      // declines rather than overwriting.
       if (!round.authority_inserted()) {
         verify(round.round_id() == UINT64_MAX);
-        authority_rounds.erase(authority_it);
       }
   return true;
 }
@@ -2823,9 +3401,7 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
           // is the same element -- but a cursor held across a phase boundary and
           // across a synchronous completion callback is the hazard class commit
           // 4427129a9 removed for next_index_, so look it up by key.
-          const auto launched = authority_rounds.find(round.round_id());
-          verify(launched != authority_rounds.end());
-          launched->second.evidence.launch(site_id);
+          verify(authority_rounds.launch(round.round_id(), site_id));
         }
       }
 }
@@ -2876,22 +3452,14 @@ void RaftServer::HeartbeatPhase2(HeartbeatRoundState& state,
             const bool response_available =
                 !(resp.status == false && resp.term == 0 &&
                   resp.last_log_index == 0);
-            auto pending_authority = authority_rounds.find(pending.sent_round);
-            if (pending_authority != authority_rounds.end()) {
-              auto &authority = pending_authority->second;
-              authority.evidence.retire(pending.follower_id);
-              if (authority.evidence.term() == pending.sent_term &&
-                  authority.config.count(pending.follower_id) > 0 &&
-                  raft_server_read_index_reply_confirms_authority(
-                      response_available, IsLeader(), pending.sent_term,
-                      resp.term, currentTerm, pending.sent_round,
-                      pending_authority->first)) {
-                // One physical RPC exists per follower in a generation. Keep
-                // a set so a future transport implementation still cannot
-                // double-count one voter.
-                authority.evidence.record_vote(pending.follower_id);
-              }
-            }
+            // Retire the RPC and, if it proves this exact generation, count
+            // the vote. One physical RPC exists per follower per generation,
+            // but the evidence stays a set so a future transport still cannot
+            // double-count a voter.
+            const AuthorityReply reply = AuthorityReply::new_(
+                pending.sent_round, pending.follower_id, pending.sent_term,
+                resp.term, currentTerm, IsLeader(), response_available);
+            authority_rounds.record_reply(reply);
 
             if (!response_available) {
               // RPC failed or no response - do nothing
@@ -3035,16 +3603,8 @@ void RaftServer::HeartbeatPhase2(HeartbeatRoundState& state,
           }
         }
 
-        bool current_round_has_authority = false;
-        const auto current_authority = authority_rounds.find(round.round_id());
-        if (current_authority != authority_rounds.end()) {
-          const auto& authority = current_authority->second;
-          current_round_has_authority =
-              raft::raft_quorum_count_reached(
-                  authority.evidence.voter_count(),
-                  raft::raft_quorum_majority_count(
-                      authority.evidence.config_size()));
-        }
+        const bool current_round_has_authority =
+            authority_rounds.has_quorum(round.round_id());
         if (stop_response_processing || !waiting_for_current_round ||
             current_round_has_authority) {
           break;
@@ -3061,7 +3621,7 @@ void RaftServer::HeartbeatPhase2(HeartbeatRoundState& state,
       }
       if (stop_response_processing) {
         pending_rpcs.clear();
-        authority_rounds.clear();
+        authority_rounds.abandon();
       } else if (retry_released_follower) {
         // A completion from an older round opened a per-follower slot after
         // Phase 1. Prompt another round instead of waiting a full interval.
@@ -3106,40 +3666,22 @@ void RaftServer::HeartbeatPhase3(HeartbeatRoundState& state,
           // Publish authority only after commit recalculation. A delayed reply
           // remains evidence for the exact term, generation, and membership
           // snapshot that launched it; never relabel it as the current round.
-          for (auto authority_it = authority_rounds.begin();
-               authority_it != authority_rounds.end();) {
-            auto& authority = authority_it->second;
-            const bool context_is_current =
-                IsLeader() && currentTerm == authority.evidence.term() &&
-                current_config_ == authority.config;
-            if (!context_is_current ||
-                (read_quorum_confirmed_term_ == authority.evidence.term() &&
-                 authority_it->first <= read_quorum_confirmed_round_)) {
-              authority_it = authority_rounds.erase(authority_it);
-              continue;
-            }
-
-            const size_t authority_quorum =
-                raft::raft_quorum_majority_count(
-                    authority.evidence.config_size());
-            if (raft::raft_quorum_count_reached(
-                    authority.evidence.voter_count(), authority_quorum)) {
-              read_quorum_confirmed_term_ = authority.evidence.term();
-              read_quorum_confirmed_round_ = authority_it->first;
-              Log_debug("[READ-INDEX] site={} confirmed round={} term={} "
-                        "with {}/{} voters",
-                        site_id_, authority_it->first,
-                        authority.evidence.term(),
-                        authority.evidence.voter_count(),
-                        authority.evidence.config_size());
-              authority_it = authority_rounds.erase(authority_it);
-            } else if (authority.evidence.all_completed()) {
-              // Every RPC launched in this generation completed without a
-              // quorum. No later event can add evidence to it.
-              authority_it = authority_rounds.erase(authority_it);
-            } else {
-              ++authority_it;
-            }
+          // The whole scan is AuthorityLedger::settle: it retires every
+          // generation that can no longer contribute and returns the highest
+          // one that reached quorum, which is the same generation the ascending
+          // std::map walk used to leave in read_quorum_confirmed_round_.
+          const std::vector<siteid_t> settle_members(current_config_.begin(),
+                                                     current_config_.end());
+          const AuthorityOutcome outcome = authority_rounds.settle(
+              IsLeader(), currentTerm, settle_members,
+              read_quorum_confirmed_term_, read_quorum_confirmed_round_);
+          if (outcome.confirmed()) {
+            read_quorum_confirmed_term_ = outcome.term();
+            read_quorum_confirmed_round_ = outcome.round_id();
+            Log_debug("[READ-INDEX] site={} confirmed round={} term={} "
+                      "with {}/{} voters",
+                      site_id_, outcome.round_id(), outcome.term(),
+                      outcome.voter_count(), outcome.config_size());
           }
         }
 
