@@ -270,3 +270,78 @@ impl HeartbeatAuthority {
         self.outstanding_.is_empty()
     }
 }
+
+pub struct HeartbeatRoundScope {
+    term_: u64,
+    round_id_: u64,
+    config_: rusty::BTreeSet<u16>,
+    current_commit_index_: u64,
+    authority_inserted_: bool,
+}
+
+#[allow(clippy::new_without_default)]
+impl HeartbeatRoundScope {
+    pub fn new() -> HeartbeatRoundScope {
+        HeartbeatRoundScope {
+            term_: 0,
+            round_id_: 0,
+            config_: rusty::BTreeSet::new(),
+            current_commit_index_: 0,
+            authority_inserted_: false,
+        }
+    }
+
+    // Opens a round. Term, generation and membership are latched together so
+    // no later phase can observe a half-established scope, and the previous
+    // round's membership is dropped rather than accumulated.
+    pub fn begin(&mut self, term: u64, round_id: u64) {
+        self.term_ = term;
+        self.round_id_ = round_id;
+        self.config_.clear();
+        self.current_commit_index_ = 0;
+        self.authority_inserted_ = false;
+    }
+
+    pub fn admit(&mut self, site: u16) {
+        self.config_.insert(site);
+    }
+
+    pub fn term(&self) -> u64 {
+        self.term_
+    }
+
+    pub fn round_id(&self) -> u64 {
+        self.round_id_
+    }
+
+    // The replica count this round was launched against, membership snapshot
+    // included, which is what every quorum decision divides by.
+    pub fn nservers(&self) -> usize {
+        self.config_.len()
+    }
+
+    pub fn is_member(&self, site: u16) -> bool {
+        self.config_.contains(&site)
+    }
+
+    // The commit index the round puts on the wire. Published by PHASE 0 after
+    // it recalculates, read by PHASE 1 when it builds each AppendEntries.
+    pub fn publish_commit_index(&mut self, index: u64) {
+        self.current_commit_index_ = index;
+    }
+
+    pub fn commit_index(&self) -> u64 {
+        self.current_commit_index_
+    }
+
+    // Whether this round owns a fresh authority generation. False only in the
+    // deliberately fail-closed UINT64_MAX saturation case, where PHASE 1 must
+    // not record evidence against a reused generation.
+    pub fn set_authority_inserted(&mut self, inserted: bool) {
+        self.authority_inserted_ = inserted;
+    }
+
+    pub fn authority_inserted(&self) -> bool {
+        self.authority_inserted_
+    }
+}

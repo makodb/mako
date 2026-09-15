@@ -3,7 +3,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
-#include <rusty/array.hpp>   // rusty::len over the authority's BTreeSets
+#include <rusty/array.hpp>
+#include <rusty/winnow_stream.hpp>   // rusty::contains for BTreeSet, per the compiler diagnostic   // rusty::len over the authority's BTreeSets
 #include <rusty/slice.hpp>
 #include <rusty/mutex.hpp>
 // rusty::clone, which the generated ReplicationWakeGate methods call to copy an
@@ -2162,14 +2163,173 @@ struct PendingHeartbeatAuthority {
 // The values that outlive a phase but not a round. PHASE 0 establishes all of
 // them; PHASE 1, 2 and 3 read them. They were stack locals while the round was
 // one function, and naming them is what a phase split costs.
+// The round scope, owned by Rust.
+//
+// Every read and write of this state now goes through a method: the C++ phases
+// cannot poke a field. That matters more here than it did for the loops,
+// because this is the first Raft type whose `&mut self` is a TRUE statement
+// rather than one the model cannot back. HeartbeatRoundState is reachable only
+// from the heartbeat fiber -- SendAppendEntries2's completion callback
+// captures [response, site_id] and nothing else (commo.cc:50), the
+// InstallSnapshot callback aliases RaftServer rather than the round, and
+// PHASE 2's pending_rpcs iterator closes before the only suspension point --
+// so exclusive mutable access is genuinely exclusive, and a borrow check over
+// it is checking something real.
+//
+// nservers is GONE as a field. It was only ever assigned
+// round_config.size(), so it is now derived by nservers(), which removes the
+// possibility of the two disagreeing.
+#if RUSTYCPP_RUST
+pub struct HeartbeatRoundScope {
+    term_: u64,
+    round_id_: u64,
+    config_: rusty::BTreeSet<u16>,
+    current_commit_index_: u64,
+    authority_inserted_: bool,
+}
+
+#[allow(clippy::new_without_default)]
+impl HeartbeatRoundScope {
+    pub fn new() -> HeartbeatRoundScope {
+        HeartbeatRoundScope {
+            term_: 0,
+            round_id_: 0,
+            config_: rusty::BTreeSet::new(),
+            current_commit_index_: 0,
+            authority_inserted_: false,
+        }
+    }
+
+    // Opens a round. Term, generation and membership are latched together so
+    // no later phase can observe a half-established scope, and the previous
+    // round's membership is dropped rather than accumulated.
+    pub fn begin(&mut self, term: u64, round_id: u64) {
+        self.term_ = term;
+        self.round_id_ = round_id;
+        self.config_.clear();
+        self.current_commit_index_ = 0;
+        self.authority_inserted_ = false;
+    }
+
+    pub fn admit(&mut self, site: u16) {
+        self.config_.insert(site);
+    }
+
+    pub fn term(&self) -> u64 {
+        self.term_
+    }
+
+    pub fn round_id(&self) -> u64 {
+        self.round_id_
+    }
+
+    // The replica count this round was launched against, membership snapshot
+    // included, which is what every quorum decision divides by.
+    pub fn nservers(&self) -> usize {
+        self.config_.len()
+    }
+
+    pub fn is_member(&self, site: u16) -> bool {
+        self.config_.contains(&site)
+    }
+
+    // The commit index the round puts on the wire. Published by PHASE 0 after
+    // it recalculates, read by PHASE 1 when it builds each AppendEntries.
+    pub fn publish_commit_index(&mut self, index: u64) {
+        self.current_commit_index_ = index;
+    }
+
+    pub fn commit_index(&self) -> u64 {
+        self.current_commit_index_
+    }
+
+    // Whether this round owns a fresh authority generation. False only in the
+    // deliberately fail-closed UINT64_MAX saturation case, where PHASE 1 must
+    // not record evidence against a reused generation.
+    pub fn set_authority_inserted(&mut self, inserted: bool) {
+        self.authority_inserted_ = inserted;
+    }
+
+    pub fn authority_inserted(&self) -> bool {
+        self.authority_inserted_
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_round_scope version=1 rust_sha256=471413f5eef290803349503ece1900ec296fd20ee4d902ab54aa950540cbf816*/
+struct HeartbeatRoundScope;
+
 struct HeartbeatRoundScope {
-  uint64_t term = 0;
-  uint64_t round_id = 0;
-  size_t nservers = 0;
-  std::set<siteid_t> round_config{};
-  uint64_t current_commit_index = 0;
-  bool authority_inserted = false;
+    uint64_t term_;
+    uint64_t round_id_;
+    rusty::BTreeSet<uint16_t> config_;
+    uint64_t current_commit_index_;
+    bool authority_inserted_;
+
+    static HeartbeatRoundScope new_();
+    void begin(uint64_t term, uint64_t round_id);
+    void admit(uint16_t site);
+    uint64_t term() const;
+    uint64_t round_id() const;
+    size_t nservers() const;
+    bool is_member(uint16_t site) const;
+    void publish_commit_index(uint64_t index);
+    uint64_t commit_index() const;
+    void set_authority_inserted(bool inserted);
+    bool authority_inserted() const;
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
 };
+
+
+inline HeartbeatRoundScope HeartbeatRoundScope::new_() {
+    return HeartbeatRoundScope{.term_ = static_cast<uint64_t>(0), .round_id_ = static_cast<uint64_t>(0), .config_ = rusty::BTreeSet<uint16_t>::new_(), .current_commit_index_ = static_cast<uint64_t>(0), .authority_inserted_ = false};
+}
+
+inline void HeartbeatRoundScope::begin(uint64_t term, uint64_t round_id) {
+    this->term_ = std::move(term);
+    this->round_id_ = std::move(round_id);
+    this->config_.clear();
+    this->current_commit_index_ = static_cast<uint64_t>(0);
+    this->authority_inserted_ = false;
+}
+
+inline void HeartbeatRoundScope::admit(uint16_t site) {
+    this->config_.insert(std::move(site));
+}
+
+inline uint64_t HeartbeatRoundScope::term() const {
+    return this->term_;
+}
+
+inline uint64_t HeartbeatRoundScope::round_id() const {
+    return this->round_id_;
+}
+
+inline size_t HeartbeatRoundScope::nservers() const {
+    return rusty::len(this->config_);
+}
+
+inline bool HeartbeatRoundScope::is_member(uint16_t site) const {
+    return rusty::contains(this->config_, &site);
+}
+
+inline void HeartbeatRoundScope::publish_commit_index(uint64_t index) {
+    this->current_commit_index_ = std::move(index);
+}
+
+inline uint64_t HeartbeatRoundScope::commit_index() const {
+    return this->current_commit_index_;
+}
+
+inline void HeartbeatRoundScope::set_authority_inserted(bool inserted) {
+    this->authority_inserted_ = std::move(inserted);
+}
+
+inline bool HeartbeatRoundScope::authority_inserted() const {
+    return this->authority_inserted_;
+}
+/*RUSTYCPP:GEN-END id=raft_server.heartbeat_round_scope*/
 
 // The three loop-carried locals, which outlive a round but not the loop. They
 // stay C++ because unique_ptr<PendingAppendEntries> and the wire types inside
@@ -2186,7 +2346,7 @@ struct HeartbeatRoundState {
   std::optional<uint64_t> pending_leader_term;
   // PHASE 0 establishes every field of this each round, so it needs no reset;
   // when PHASE 0 declines the round, phases 1-3 never read it.
-  HeartbeatRoundScope scope{};
+  HeartbeatRoundScope scope{HeartbeatRoundScope::new_()};
 };
 
 // @unsafe - timer allocation, progress_ initialisation, atomic stores
@@ -2259,15 +2419,15 @@ bool RaftServer::HeartbeatPhase0(HeartbeatRoundState& state,
           return true;
         }
 
-        round.term = currentTerm;
+        round.begin(currentTerm, heartbeat_round_);
         if (!pending_leader_term.has_value() ||
-            *pending_leader_term != round.term) {
+            *pending_leader_term != round.term()) {
           // Leadership may be lost and regained between two observations by
           // this fiber. Never let a prior term's physical RPC occupy a slot or
           // collide with the new leader epoch's round counter reset.
           pending_rpcs.clear();
           authority_rounds.clear();
-          pending_leader_term = round.term;
+          pending_leader_term = round.term();
         }
         if (raft_server_read_index_round_can_advance(heartbeat_round_)) {
           ++heartbeat_round_;
@@ -2277,21 +2437,21 @@ bool RaftServer::HeartbeatPhase0(HeartbeatRoundState& state,
           Log_error("[READ-INDEX] site={} heartbeat round saturated in term {}",
                     site_id_, currentTerm);
         }
-        round.round_id = heartbeat_round_;
-        round.round_config = current_config_;
-        round.nservers = round.round_config.size();
-        verify(round.nservers > 0 && round.round_config.count(site_id_) == 1);
+        for (const auto member : current_config_) {
+          round.admit(member);
+        }
+        verify(round.nservers() > 0 && round.is_member(site_id_));
 
         for (size_t ord = 0; ord < peers_.len(); ord++) {
           Log_debug("[COMMIT-CALC] match_index_[{}] = {}", peer_sites_[ord],
                     peers_.match_index(ord));
         }
-        Log_debug("[COMMIT-CALC] nservers={}, matchedIndices.size()={}", round.nservers, peers_.len());
-        verify(peers_.len() == round.nservers - 1);
+        Log_debug("[COMMIT-CALC] nservers={}, matchedIndices.size()={}", round.nservers(), peers_.len());
+        verify(peers_.len() == round.nservers() - 1);
         const uint64_t newCommitIndex =
-            peers_.majority_match_index(round.nservers, lastLogIndex);
+            peers_.majority_match_index(round.nservers(), lastLogIndex);
         Log_debug("[COMMIT-CALC] newCommitIndex={} (majority position {} of {} followers), currentCommitIndex={}",
-                  newCommitIndex, (round.nservers - 1) / 2, peers_.len(),
+                  newCommitIndex, (round.nservers() - 1) / 2, peers_.len(),
                   commitIndex);
 
         // The && is load-bearing, not stylistic. GetRaftInstance default-inserts
@@ -2306,21 +2466,21 @@ bool RaftServer::HeartbeatPhase0(HeartbeatRoundState& state,
           commitIndex = newCommitIndex;
           EnqueueCommittedEntries(old_commit, commitIndex);
         }
-        round.current_commit_index = commitIndex;
+        round.publish_commit_index(commitIndex);
       }
 
       auto [authority_it, authority_inserted] = authority_rounds.emplace(
-          round.round_id,
+          round.round_id(),
           PendingHeartbeatAuthority{
-              round.round_config,
-              HeartbeatAuthority::new_(round.term, round.round_config.size(), site_id_)});
+              current_config_,
+              HeartbeatAuthority::new_(round.term(), round.nservers(), site_id_)});
       // A structured binding cannot name a member, so publish it to the round
       // scope for PHASE 1 to read.
-      round.authority_inserted = authority_inserted;
+      round.set_authority_inserted(authority_inserted);
       // heartbeat_round_ never wraps. The only possible duplicate is the
       // deliberately fail-closed UINT64_MAX saturation generation.
-      if (!round.authority_inserted) {
-        verify(round.round_id == UINT64_MAX);
+      if (!round.authority_inserted()) {
+        verify(round.round_id() == UINT64_MAX);
         authority_rounds.erase(authority_it);
       }
   return true;
@@ -2636,8 +2796,8 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
         auto pending = std::make_unique<PendingAppendEntries>();
         pending->follower_id = site_id;
         pending->cmd = cmd;
-        pending->sent_term = round.term;
-        pending->sent_round = round.round_id;
+        pending->sent_term = round.term();
+        pending->sent_round = round.round_id();
         pending->sent_end_index = sent_end_index;
 
         // Send RPC (non-blocking - just initiates the async call)
@@ -2648,22 +2808,22 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
                                               -1,
                                               IsLeader(),
                                               site_id_,
-                                              round.term,
+                                              round.term(),
                                               prevLogIndex,
                                               prevLogTerm,
-                                              round.current_commit_index,
+                                              round.commit_index(),
                                               cmd,
                                               cmdLogTerm);
 
         pending_rpcs.emplace(site_id, std::move(pending));
-        if (round.authority_inserted && round.round_config.count(site_id) > 0) {
+        if (round.authority_inserted() && round.is_member(site_id)) {
           // Was `authority_it->second`, a std::map iterator created in PHASE 0
           // and dereferenced here, after the RPC sends. Nothing between the two
           // points mutates authority_rounds, so the iterator was valid and this
           // is the same element -- but a cursor held across a phase boundary and
           // across a synchronous completion callback is the hazard class commit
           // 4427129a9 removed for next_index_, so look it up by key.
-          const auto launched = authority_rounds.find(round.round_id);
+          const auto launched = authority_rounds.find(round.round_id());
           verify(launched != authority_rounds.end());
           launched->second.evidence.launch(site_id);
         }
@@ -2703,7 +2863,7 @@ void RaftServer::HeartbeatPhase2(HeartbeatRoundState& state,
           auto &pending = *pending_it->second;
           auto &resp = *pending.response;
           if (!resp.completed.load(std::memory_order_acquire)) {
-            if (pending.sent_round == round.round_id) {
+            if (pending.sent_round == round.round_id()) {
               waiting_for_current_round = true;
             }
             ++pending_it;
@@ -2865,7 +3025,7 @@ void RaftServer::HeartbeatPhase2(HeartbeatRoundState& state,
             }
           }
 
-          const bool completed_previous_round = pending.sent_round != round.round_id;
+          const bool completed_previous_round = pending.sent_round != round.round_id();
           pending_it = pending_rpcs.erase(pending_it);
           retry_released_follower =
               retry_released_follower || completed_previous_round;
@@ -2876,7 +3036,7 @@ void RaftServer::HeartbeatPhase2(HeartbeatRoundState& state,
         }
 
         bool current_round_has_authority = false;
-        const auto current_authority = authority_rounds.find(round.round_id);
+        const auto current_authority = authority_rounds.find(round.round_id());
         if (current_authority != authority_rounds.end()) {
           const auto& authority = current_authority->second;
           current_round_has_authority =
@@ -2930,9 +3090,9 @@ void RaftServer::HeartbeatPhase3(HeartbeatRoundState& state,
           // (server.cc:1671) and never mutated, and progress_ is never erased,
           // so this size is invariant across the round. Assert it as PHASE 0
           // does rather than trusting the two phases to stay in step.
-          verify(peers_.len() == round.nservers - 1);
+          verify(peers_.len() == round.nservers() - 1);
           const uint64_t finalCommitIndex =
-              peers_.majority_match_index(round.nservers, lastLogIndex);
+              peers_.majority_match_index(round.nservers(), lastLogIndex);
           if (raft_server_log_index_above(finalCommitIndex, commitIndex) &&
               raft_server_log_entry_is_current_term(
                   GetRaftInstance(finalCommitIndex)->term, currentTerm)) {
