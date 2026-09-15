@@ -1676,14 +1676,24 @@ impl HeartbeatDriver {
         HeartbeatDriver { server_: server, round_: round }
     }
 
+    // decide -> emit -> collect -> decide, which is the shape the C++
+    // already had as four comment-delimited phases. It is now the shape of
+    // the Rust that sequences them.
     pub fn run(&self) {
         unsafe { raft_heartbeat_prologue(self.server_) };
         while unsafe { raft_heartbeat_looping(self.server_) } {
-            // False means the round hit shutdown while waiting for work; the
-            // C++ spelled that as `break` when this was one function.
-            if !unsafe { raft_heartbeat_round(self.server_, self.round_) } {
+            // The wake gate returns false on shutdown rather than on timeout.
+            if !unsafe { raft_heartbeat_wait(self.server_) } {
                 break;
             }
+            // PHASE 0 declines the round when leadership is not held. The C++
+            // spelled that `continue`.
+            if !unsafe { raft_heartbeat_phase0(self.server_, self.round_) } {
+                continue;
+            }
+            unsafe { raft_heartbeat_phase1(self.server_, self.round_) };
+            unsafe { raft_heartbeat_phase2(self.server_, self.round_) };
+            unsafe { raft_heartbeat_phase3(self.server_, self.round_) };
         }
         unsafe { raft_heartbeat_epilogue(self.server_) };
     }
@@ -1692,12 +1702,19 @@ impl HeartbeatDriver {
 unsafe extern "C" {
     fn raft_heartbeat_prologue(server: *mut core::ffi::c_void);
     fn raft_heartbeat_looping(server: *mut core::ffi::c_void) -> bool;
-    fn raft_heartbeat_round(server: *mut core::ffi::c_void,
-                            round: *mut core::ffi::c_void) -> bool;
+    fn raft_heartbeat_wait(server: *mut core::ffi::c_void) -> bool;
+    fn raft_heartbeat_phase0(server: *mut core::ffi::c_void,
+                             round: *mut core::ffi::c_void) -> bool;
+    fn raft_heartbeat_phase1(server: *mut core::ffi::c_void,
+                             round: *mut core::ffi::c_void);
+    fn raft_heartbeat_phase2(server: *mut core::ffi::c_void,
+                             round: *mut core::ffi::c_void);
+    fn raft_heartbeat_phase3(server: *mut core::ffi::c_void,
+                             round: *mut core::ffi::c_void);
     fn raft_heartbeat_epilogue(server: *mut core::ffi::c_void);
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_driver version=1 rust_sha256=1ba01f9bc28112b940f95639932fd5bd1eefd50589dfc4db3315b191b2ab9b71*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_driver version=1 rust_sha256=d45c8272767dbc00023a8d7680890f9c5d788b549fe36e71c5fb7cae1d0d95df*/
 struct HeartbeatDriver;
 
 struct HeartbeatDriver {
@@ -1711,7 +1728,11 @@ struct HeartbeatDriver {
 extern "C" {
     void raft_heartbeat_prologue(rusty::ffi::c_void* server);
     bool raft_heartbeat_looping(rusty::ffi::c_void* server);
-    bool raft_heartbeat_round(rusty::ffi::c_void* server, rusty::ffi::c_void* round);
+    bool raft_heartbeat_wait(rusty::ffi::c_void* server);
+    bool raft_heartbeat_phase0(rusty::ffi::c_void* server, rusty::ffi::c_void* round);
+    void raft_heartbeat_phase1(rusty::ffi::c_void* server, rusty::ffi::c_void* round);
+    void raft_heartbeat_phase2(rusty::ffi::c_void* server, rusty::ffi::c_void* round);
+    void raft_heartbeat_phase3(rusty::ffi::c_void* server, rusty::ffi::c_void* round);
     void raft_heartbeat_epilogue(rusty::ffi::c_void* server);
 }
 
@@ -1726,8 +1747,23 @@ inline void HeartbeatDriver::run() const {
         raft_heartbeat_prologue(this->server_);
     }
     while (raft_heartbeat_looping(this->server_)) {
-        if (!raft_heartbeat_round(this->server_, this->round_)) {
+        if (!raft_heartbeat_wait(this->server_)) {
             break;
+        }
+        if (!raft_heartbeat_phase0(this->server_, this->round_)) {
+            continue;
+        }
+        // @unsafe
+        {
+            raft_heartbeat_phase1(this->server_, this->round_);
+        }
+        // @unsafe
+        {
+            raft_heartbeat_phase2(this->server_, this->round_);
+        }
+        // @unsafe
+        {
+            raft_heartbeat_phase3(this->server_, this->round_);
         }
     }
     // @unsafe
@@ -1781,8 +1817,21 @@ class RaftServer : public TxLogServer {
   void HeartbeatPrologue();
   // @safe - acquire load
   bool HeartbeatLooping() const;
-  // @unsafe - one full round: locks, RPC sends, reply polling, commit
-  bool HeartbeatRound(struct HeartbeatRoundState& round);
+  // @unsafe - suspends on the wake gate; false means shutdown
+  bool HeartbeatWait();
+  // @unsafe - advances the read-index round and recomputes the commit index;
+  // false means leadership is not held, so phases 1-3 are skipped
+  bool HeartbeatPhase0(struct HeartbeatRoundState& state,
+                       struct HeartbeatRoundScope& round);
+  // @unsafe - builds and sends AppendEntries / InstallSnapshot per follower
+  void HeartbeatPhase1(struct HeartbeatRoundState& state,
+                       struct HeartbeatRoundScope& round);
+  // @unsafe - polls replies through one round deadline and processes them
+  void HeartbeatPhase2(struct HeartbeatRoundState& state,
+                       struct HeartbeatRoundScope& round);
+  // @unsafe - recomputes the commit index and publishes read-index authority
+  void HeartbeatPhase3(struct HeartbeatRoundState& state,
+                       struct HeartbeatRoundScope& round);
   // @safe - two release stores
   void HeartbeatEpilogue();
 

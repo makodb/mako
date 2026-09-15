@@ -723,14 +723,24 @@ impl HeartbeatDriver {
         HeartbeatDriver { server_: server, round_: round }
     }
 
+    // decide -> emit -> collect -> decide, which is the shape the C++
+    // already had as four comment-delimited phases. It is now the shape of
+    // the Rust that sequences them.
     pub fn run(&self) {
         unsafe { raft_heartbeat_prologue(self.server_) };
         while unsafe { raft_heartbeat_looping(self.server_) } {
-            // False means the round hit shutdown while waiting for work; the
-            // C++ spelled that as `break` when this was one function.
-            if !unsafe { raft_heartbeat_round(self.server_, self.round_) } {
+            // The wake gate returns false on shutdown rather than on timeout.
+            if !unsafe { raft_heartbeat_wait(self.server_) } {
                 break;
             }
+            // PHASE 0 declines the round when leadership is not held. The C++
+            // spelled that `continue`.
+            if !unsafe { raft_heartbeat_phase0(self.server_, self.round_) } {
+                continue;
+            }
+            unsafe { raft_heartbeat_phase1(self.server_, self.round_) };
+            unsafe { raft_heartbeat_phase2(self.server_, self.round_) };
+            unsafe { raft_heartbeat_phase3(self.server_, self.round_) };
         }
         unsafe { raft_heartbeat_epilogue(self.server_) };
     }
@@ -739,7 +749,14 @@ impl HeartbeatDriver {
 unsafe extern "C" {
     fn raft_heartbeat_prologue(server: *mut core::ffi::c_void);
     fn raft_heartbeat_looping(server: *mut core::ffi::c_void) -> bool;
-    fn raft_heartbeat_round(server: *mut core::ffi::c_void,
-                            round: *mut core::ffi::c_void) -> bool;
+    fn raft_heartbeat_wait(server: *mut core::ffi::c_void) -> bool;
+    fn raft_heartbeat_phase0(server: *mut core::ffi::c_void,
+                             round: *mut core::ffi::c_void) -> bool;
+    fn raft_heartbeat_phase1(server: *mut core::ffi::c_void,
+                             round: *mut core::ffi::c_void);
+    fn raft_heartbeat_phase2(server: *mut core::ffi::c_void,
+                             round: *mut core::ffi::c_void);
+    fn raft_heartbeat_phase3(server: *mut core::ffi::c_void,
+                             round: *mut core::ffi::c_void);
     fn raft_heartbeat_epilogue(server: *mut core::ffi::c_void);
 }
