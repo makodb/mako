@@ -55,6 +55,7 @@ EXPECTED_BLOCKS=(
   "src/deptran/raft/server.h|raft_server.follower_progress"
   "src/deptran/raft/server.h|raft_server.commit_status"
   "src/deptran/raft/server.h|raft_server.scalar_decisions"
+  "src/deptran/raft/server.h|raft_server.election_timer"
   "src/deptran/raft/service.cc|raft_service.scalar_decisions"
   "src/deptran/raft/snapshot_manager.hpp|raft_snapshot.metadata_decisions"
   "src/deptran/raft/snapshot_format.hpp|raft_snapshot.crc32_scalar_step"

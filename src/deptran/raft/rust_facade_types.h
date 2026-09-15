@@ -24,6 +24,7 @@
 //
 //     ReactorIntEvent   = "IntEvent"
 //     ReactorPollThread = "PollThread"
+//     ReactorFiber      = "Fiber"
 //
 // so the two modes agree on the mapping and only differ in where it is
 // written down. If raft ever moves to crate mode (schema_version = 2 in
@@ -44,5 +45,6 @@ namespace rusty {
 
 using ReactorPollThread = ::rrr::PollThread;
 using ReactorIntEvent = ::rrr::IntEvent;
+using ReactorFiber = ::rrr::Fiber;
 
 }  // namespace rusty

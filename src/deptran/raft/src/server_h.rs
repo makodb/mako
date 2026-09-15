@@ -601,3 +601,113 @@ impl FollowerProgress {
         }
     }
 }
+
+// One locked gather's worth of election state. Plain copies, so the loop can
+// branch on them after the lock is released, exactly as the C++ did.
+// repr(C) is mandatory, not decorative: raft_election_gather returns this
+// across an extern "C" boundary, so Rust's layout must be the C++ struct's.
+#[repr(C)]
+pub struct ElectionTick {
+    time_elapsed_: u64,
+    election_timeout_: u64,
+    heartbeat_time_: u64,
+    generation_: u64,
+    term_: u64,
+    vote_for_: u16,
+    fired_: bool,
+}
+
+#[allow(clippy::too_many_arguments)]
+impl ElectionTick {
+    pub fn new(time_elapsed: u64, election_timeout: u64, heartbeat_time: u64,
+               generation: u64, term: u64, vote_for: u16, fired: bool) -> ElectionTick {
+        ElectionTick {
+            time_elapsed_: time_elapsed,
+            election_timeout_: election_timeout,
+            heartbeat_time_: heartbeat_time,
+            generation_: generation,
+            term_: term,
+            vote_for_: vote_for,
+            fired_: fired,
+        }
+    }
+
+    pub fn fired(&self) -> bool { self.fired_ }
+    pub fn generation(&self) -> u64 { self.generation_ }
+    pub fn time_elapsed(&self) -> u64 { self.time_elapsed_ }
+    pub fn election_timeout(&self) -> u64 { self.election_timeout_ }
+    pub fn heartbeat_time(&self) -> u64 { self.heartbeat_time_ }
+    pub fn term(&self) -> u64 { self.term_ }
+    pub fn vote_for(&self) -> u16 { self.vote_for_ }
+}
+
+pub struct ElectionTimerLoop {
+    server_: *mut core::ffi::c_void,
+    wait_int_us_: u64,
+}
+
+impl ElectionTimerLoop {
+    pub fn new(server: *mut core::ffi::c_void, wait_int_us: u64) -> ElectionTimerLoop {
+        ElectionTimerLoop { server_: server, wait_int_us_: wait_int_us }
+    }
+
+    // The body of the fiber. Structurally identical to the C++ it replaces:
+    // wait a randomised sub-interval, gather under the lock, and if the
+    // timeout fired, campaign and then wait out the vote before looping.
+    pub fn run(&self) {
+        unsafe { raft_election_log_start(self.server_) };
+        while !unsafe { raft_election_stopped(self.server_) } {
+            let delay = unsafe { raft_election_random_delay(self.server_) };
+            // Unlike a plain sleep this is interrupted by shutdown, so a
+            // false return means "stop", not "timed out".
+            if !unsafe { raft_election_wait(self.server_, delay) } {
+                break;
+            }
+            let tick = unsafe { raft_election_gather(self.server_) };
+            if tick.fired() {
+                unsafe { raft_election_log_fired(self.server_, &tick) };
+                // Re-check before campaigning: RequestVote reaches through a
+                // vtable that a concurrent destructor may already have
+                // collapsed.
+                if unsafe { raft_election_stopped(self.server_) } {
+                    break;
+                }
+                unsafe { raft_election_request_vote(self.server_, tick.generation()) };
+                if !self.await_vote_settled() {
+                    break;
+                }
+            }
+        }
+        unsafe { raft_election_set_running(self.server_, false) };
+    }
+
+    // Returns true when voting finished normally, false when shutdown cut it
+    // short. The C++ spelled both as `break` out of the inner loop and let the
+    // outer `while (!stop_)` sort them out; naming the two outcomes is the one
+    // place this reads differently from the original, and the observable
+    // behaviour is the same.
+    fn await_vote_settled(&self) -> bool {
+        loop {
+            if !unsafe { raft_election_is_voting(self.server_) } {
+                return true;
+            }
+            rusty::ReactorFiber::sleep(self.wait_int_us_);
+            if unsafe { raft_election_stopped(self.server_) } {
+                return false;
+            }
+        }
+    }
+}
+
+// The C++ side. Each takes the opaque handle and casts it back exactly once.
+unsafe extern "C" {
+    fn raft_election_stopped(server: *mut core::ffi::c_void) -> bool;
+    fn raft_election_is_voting(server: *mut core::ffi::c_void) -> bool;
+    fn raft_election_random_delay(server: *mut core::ffi::c_void) -> u64;
+    fn raft_election_wait(server: *mut core::ffi::c_void, timeout_us: u64) -> bool;
+    fn raft_election_gather(server: *mut core::ffi::c_void) -> ElectionTick;
+    fn raft_election_log_start(server: *mut core::ffi::c_void);
+    fn raft_election_log_fired(server: *mut core::ffi::c_void, tick: &ElectionTick);
+    fn raft_election_request_vote(server: *mut core::ffi::c_void, generation: u64);
+    fn raft_election_set_running(server: *mut core::ffi::c_void, running: bool);
+}

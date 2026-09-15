@@ -3282,73 +3282,145 @@ void RaftServer::OnRequestVote(const slotid_t& lst_log_idx,
 
 }
 
+// ============================================================================
+// ELECTION TIMER: the C++ half of the DSL-owned ElectionTimerLoop
+//
+// The loop itself -- the while, the campaign branch, the vote wait -- is Rust,
+// in the raft_server.election_timer block in server.h. What is left here is
+// the set of operations that cannot cross the boundary. Read them as the
+// bodies of the lock scopes and external calls that used to be inline in the
+// fiber lambda; nothing about the lock discipline changed.
+// ============================================================================
+
+// @safe - acquire load, exactly as the inline loop condition read it
+bool RaftServer::ElectionLoopStopped() const {
+  return stop_.load(rusty::sync::atomic::Ordering::Acquire);
+}
+
+// @unsafe - takes mtx_ to read req_voting_
+bool RaftServer::ElectionLoopVoting() {
+  std::lock_guard<std::recursive_mutex> lock(mtx_);
+  return req_voting_;
+}
+
+// @unsafe - RandomGenerator is external
+uint64_t RaftServer::ElectionLoopRandomDelay() const {
+  return RandomGenerator::rand(heartbeat_interval_us_ * 2,
+                               heartbeat_interval_us_ * 4);
+}
+
+// @unsafe - suspends this fiber; unlike a plain Fiber::sleep this is
+// interrupted by shutdown, so false means stop rather than timed out.
+bool RaftServer::ElectionLoopWait(uint64_t timeout_us) {
+  return WaitForElectionTimeoutOrShutdown(timeout_us);
+}
+
+// @unsafe - takes mtx_ and reads the whole election cluster in one scope, so
+// the Rust loop can branch on copies after the lock is released.
+ElectionTick RaftServer::ElectionLoopGather() {
+  std::lock_guard<std::recursive_mutex> lock(mtx_);
+  const uint64_t time_now = Time::now(true);
+  const uint64_t heartbeat_time = last_heartbeat_time_;
+  const uint64_t time_elapsed = time_now - heartbeat_time;
+  const uint64_t election_timeout = election_timeout_us_;
+  return ElectionTick::new_(
+      time_elapsed, election_timeout, heartbeat_time,
+      election_timer_generation_, currentTerm,
+      static_cast<uint16_t>(vote_for_),
+      raft_server_election_timeout_has_fired(is_leader_, time_elapsed,
+                                             election_timeout));
+}
+
+// @unsafe { rrr logging macro }
+void RaftServer::ElectionLoopLogStart() const {
+  Log_debug("start timer for election");
+}
+
+// @unsafe { rrr logging macro }
+void RaftServer::ElectionLoopLogFired(const ElectionTick& tick) const {
+  Log_info("[ELECTION_TIMER] Site {}: TIMEOUT FIRED - starting election (elapsed={} > timeout={})",
+           site_id_, tick.time_elapsed(), tick.election_timeout());
+  Log_info("[ELECTION_START] Site {}: TRIGGERING REQUESTVOTE - time_elapsed={} > timeout={} last_hb={} current_term={} vote_for={}",
+           site_id_, tick.time_elapsed(), tick.election_timeout(),
+           tick.heartbeat_time(), tick.term(), tick.vote_for());
+}
+
+// @unsafe - dispatches through the vtable; the Rust loop re-checks stop_
+// immediately before calling, because a collapsed vtable after destruction is
+// the hazard this guards.
+void RaftServer::ElectionLoopRequestVote(uint64_t generation) {
+  RequestVoteFromElectionTimer(generation);
+}
+
+// @safe - release store on an atomic
+void RaftServer::ElectionLoopSetRunning(bool running) {
+  election_loop_running_.store(running, rusty::sync::atomic::Ordering::Release);
+}
+
+// The extern "C" trampolines the DSL block declares. Each casts the opaque
+// handle back exactly once. This is the only place the cast happens, which is
+// what makes "Rust never dereferences the server" a checkable property rather
+// than a convention.
+extern "C" {
+
+// @unsafe { opaque handle cast }
+static inline RaftServer* raft_election_server(rusty::ffi::c_void* server) {
+  return static_cast<RaftServer*>(server);
+}
+
+bool raft_election_stopped(rusty::ffi::c_void* server) {
+  return raft_election_server(server)->ElectionLoopStopped();
+}
+
+bool raft_election_is_voting(rusty::ffi::c_void* server) {
+  return raft_election_server(server)->ElectionLoopVoting();
+}
+
+uint64_t raft_election_random_delay(rusty::ffi::c_void* server) {
+  return raft_election_server(server)->ElectionLoopRandomDelay();
+}
+
+bool raft_election_wait(rusty::ffi::c_void* server, uint64_t timeout_us) {
+  return raft_election_server(server)->ElectionLoopWait(timeout_us);
+}
+
+ElectionTick raft_election_gather(rusty::ffi::c_void* server) {
+  return raft_election_server(server)->ElectionLoopGather();
+}
+
+void raft_election_log_start(rusty::ffi::c_void* server) {
+  raft_election_server(server)->ElectionLoopLogStart();
+}
+
+void raft_election_log_fired(rusty::ffi::c_void* server,
+                             const ElectionTick& tick) {
+  raft_election_server(server)->ElectionLoopLogFired(tick);
+}
+
+void raft_election_request_vote(rusty::ffi::c_void* server,
+                                uint64_t generation) {
+  raft_election_server(server)->ElectionLoopRequestVote(generation);
+}
+
+void raft_election_set_running(rusty::ffi::c_void* server, bool running) {
+  raft_election_server(server)->ElectionLoopSetRunning(running);
+}
+
+}  // extern "C"
+
 // @unsafe - Calls undeclared Fiber::create_run()
 void RaftServer::StartElectionTimer() {
-  election_loop_running_.store(
-      true, rusty::sync::atomic::Ordering::Release);
+  ElectionLoopSetRunning(true);
   // @unsafe
   { resetTimer("start election timer"); }
 
-  Fiber::create_run([this]() {
-    Log_debug("start timer for election") ;
-
-    while (!stop_.load(rusty::sync::atomic::Ordering::Acquire)) {
-      // Sleep for a portion of the timeout before checking.  Unlike a plain
-      // Fiber::sleep, this owner-thread event is interrupted by shutdown.
-      const uint64_t election_delay = RandomGenerator::rand(
-          heartbeat_interval_us_ * 2, heartbeat_interval_us_ * 4);
-      if (!WaitForElectionTimeoutOrShutdown(election_delay)) {
-        break;
-      }
-
-      bool timeout_fired = false;
-      uint64_t time_elapsed = 0;
-      uint64_t election_timeout = 0;
-      uint64_t heartbeat_time = 0;
-      uint64_t timer_generation = 0;
-      uint64_t timer_term = 0;
-      siteid_t timer_vote_for = INVALID_SITEID;
-      {
-        std::lock_guard<std::recursive_mutex> lock(mtx_);
-        const uint64_t time_now = Time::now(true);
-        heartbeat_time = last_heartbeat_time_;
-        time_elapsed = time_now - heartbeat_time;
-        election_timeout = election_timeout_us_;
-        timer_generation = election_timer_generation_;
-        timer_term = currentTerm;
-        timer_vote_for = vote_for_;
-        timeout_fired = raft_server_election_timeout_has_fired(
-            is_leader_, time_elapsed, election_timeout);
-      }
-
-      if (timeout_fired) {
-        Log_info("[ELECTION_TIMER] Site {}: TIMEOUT FIRED - starting election (elapsed={} > timeout={})",
-                 site_id_, time_elapsed, election_timeout);
-
-        Log_info("[ELECTION_START] Site {}: TRIGGERING REQUESTVOTE - time_elapsed={} > timeout={} last_hb={} current_term={} vote_for={}",
-                 site_id_, time_elapsed, election_timeout, heartbeat_time,
-                 timer_term, timer_vote_for);
-        // CRITICAL: Check stop_ before calling RequestVote() to prevent
-        // calling through collapsed vtable after object destruction
-        if (stop_.load(rusty::sync::atomic::Ordering::Acquire)) break;
-        RequestVoteFromElectionTimer(timer_generation);
-        for (;;) {
-          bool voting = false;
-          {
-            std::lock_guard<std::recursive_mutex> lock(mtx_);
-            voting = req_voting_;
-          }
-          if (!voting) {
-            break;
-          }
-          Fiber::sleep(wait_int_);
-          if (stop_.load(rusty::sync::atomic::Ordering::Acquire)) break;
-        }
-      }
-    }
-    election_loop_running_.store(
-        false, rusty::sync::atomic::Ordering::Release);
-  });
+  // Everything that used to be in this lambda now lives in the Rust loop. The
+  // lambda captures the loop by value -- it is two words, an opaque pointer
+  // and an interval -- so nothing here outlives the fiber.
+  const ElectionTimerLoop loop = ElectionTimerLoop::new_(
+      static_cast<rusty::ffi::c_void*>(this),
+      static_cast<uint64_t>(wait_int_));
+  Fiber::create_run([loop]() { loop.run(); });
 }
 
 // @unsafe - external calls marked @external [safe], pointer ops in @unsafe blocks

@@ -546,6 +546,14 @@ impl ReactorFiber {
     {
         None
     }
+
+    /// Model of `rrr::Fiber::sleep`. Production C++ suspends the calling fiber
+    /// for the given number of microseconds and lets the reactor run others;
+    /// the model records the request so a direct-rustc check can assert on the
+    /// sleep pattern without blocking.
+    pub fn sleep(microseconds: u64) {
+        REACTOR_SLEEP_CALLS.with(|calls| calls.borrow_mut().push(microseconds));
+    }
 }
 
 /// Rust-only model of the `rrr.reactor` module's `BoxEvent<T>` template.
