@@ -1812,18 +1812,24 @@ void RaftServer::setIsLeader(bool isLeader) {
 
   if (isLeader && failover_) {
     std::set<siteid_t> replication_targets = current_config_;
+    // Rebuilt rather than appended to: setIsLeader runs once per leadership
+    // acquisition, and the ordinals must not accumulate across terms.
+    peer_sites_.clear();
     for (const auto peer_id : replication_targets) {
       if (peer_id == site_id_) {
         continue;
       }
-      progress_[peer_id] = FollowerProgress::new_(lastLogIndex + 1, 0);
+      peer_sites_.push_back(peer_id);
+    }
+    peers_.reset(peer_sites_.size(), lastLogIndex + 1);
+    for (size_t ord = 0; ord < peers_.len(); ord++) {
       Log_debug("loc_id_={} match_index_[{}]={}, next_index_[{}]={}",
-                loc_id_, peer_id, progress_[peer_id].match_index(),
-                peer_id, progress_[peer_id].next_index());
+                loc_id_, peer_sites_[ord], peers_.match_index(ord),
+                peer_sites_[ord], peers_.next_index(ord));
     }
     const size_t expected = replication_targets.size() -
         static_cast<size_t>(replication_targets.count(site_id_) > 0);
-    verify(progress_.size() == expected);
+    verify(peers_.len() == expected);
   }
 
 
@@ -2195,15 +2201,17 @@ void RaftServer::HeartbeatPrologue() {
   }
 
   std::set<siteid_t> replication_targets = current_config_;
+  peer_sites_.clear();
   for (const auto peer_id : replication_targets) {
     if (peer_id == site_id_) {
       continue;
     }
-    progress_[peer_id] = FollowerProgress::new_(1, 0);
+    peer_sites_.push_back(peer_id);
   }
+  peers_.reset(peer_sites_.size(), 1);
   const size_t expected = replication_targets.size() -
       static_cast<size_t>(replication_targets.count(site_id_) > 0);
-  verify(progress_.size() == expected);
+  verify(peers_.len() == expected);
 
   Log_debug("heartbeat loop init from site: {}", site_id_);
   looping_.store(true, rusty::sync::atomic::Ordering::Release);
@@ -2281,20 +2289,16 @@ bool RaftServer::HeartbeatPhase0(HeartbeatRoundState& state,
         round.nservers = round.round_config.size();
         verify(round.nservers > 0 && round.round_config.count(site_id_) == 1);
 
-        std::vector<uint64_t> matchedIndices{};
-        for (auto it = progress_.begin(); it != progress_.end(); it++) {
-          matchedIndices.push_back(it->second.match_index());
-          Log_debug("[COMMIT-CALC] match_index_[{}] = {}", it->first,
-                    it->second.match_index());
+        for (size_t ord = 0; ord < peers_.len(); ord++) {
+          Log_debug("[COMMIT-CALC] match_index_[{}] = {}", peer_sites_[ord],
+                    peers_.match_index(ord));
         }
-        Log_debug("[COMMIT-CALC] nservers={}, matchedIndices.size()={}", round.nservers, matchedIndices.size());
-        verify(matchedIndices.size() == round.nservers - 1);
-        // Sorting an empty range is a no-op, so this needs no size guard.
-        std::sort(matchedIndices.begin(), matchedIndices.end());
-        const uint64_t newCommitIndex = raft_server_commit_index_candidate(
-            matchedIndices, round.nservers, lastLogIndex);
+        Log_debug("[COMMIT-CALC] nservers={}, matchedIndices.size()={}", round.nservers, peers_.len());
+        verify(peers_.len() == round.nservers - 1);
+        const uint64_t newCommitIndex =
+            peers_.majority_match_index(round.nservers, lastLogIndex);
         Log_debug("[COMMIT-CALC] newCommitIndex={} (majority position {} of {} followers), currentCommitIndex={}",
-                  newCommitIndex, (round.nservers - 1) / 2, matchedIndices.size(),
+                  newCommitIndex, (round.nservers - 1) / 2, peers_.len(),
                   commitIndex);
 
         // The && is load-bearing, not stylistic. GetRaftInstance default-inserts
@@ -2340,12 +2344,12 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
       // PHASE 1: Send all AppendEntries RPCs in PARALLEL (non-blocking)
       // ========================================================================
       // The cursor is used for ITERATION ONLY; every read and write of a
-      // follower's next index below goes through progress_[site_id].next_index(), which
+      // follower's next index below goes through peers_.next_index(ord), which
       // is the same slot (site_id is it->first, so the key provably exists).
       //
       // This is not style. The body calls commo()->SendInstallSnapshot INSIDE
       // the lock_guard scope, and that call's completion callback takes the
-      // SAME recursive mutex and writes progress_[site_id].next_index(). Recursive means
+      // SAME recursive mutex and writes peers_.next_index(ord). Recursive means
       // a callback that completes synchronously re-enters and mutates the map
       // while a dereferenced cursor into it is live -- the aliasing hazard
       // recorded as OWN-03 in docs/migration/raft/cpp-to-rust-precheck-raft.txt
@@ -2353,8 +2357,8 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
       // Holding no dereferenced cursor across that call is also what makes the
       // loop expressible in Rust at all: `&mut` into a map cannot be held
       // across a call that takes `&mut` to the same map.
-      for (auto it = progress_.begin(); it != progress_.end(); it++) {
-        auto site_id = it->first;
+      for (size_t ord = 0; ord < peers_.len(); ord++) {
+        const siteid_t site_id = peer_sites_[ord];
         if (site_id == site_id_) {
           continue;
         }
@@ -2376,23 +2380,23 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
         bool skip_follower = false;
         {
           std::lock_guard<std::recursive_mutex> lock(mtx_);
-          if (progress_[site_id].next_index() == 0) {
+          if (peers_.next_index(ord) == 0) {
             Log_warn("[APPEND_ENTRIES] Repairing wrapped next_index for "
                      "follower {} at leader last index {}",
                      site_id, lastLogIndex);
-            progress_[site_id].set_next_index(
+            peers_.set_next_index(ord, 
                 raft_server_log_index_has_successor(lastLogIndex)
                     ? raft_server_follower_next_index(lastLogIndex)
                     : lastLogIndex);
           }
-          prevLogIndex = progress_[site_id].next_index() - 1;
+          prevLogIndex = peers_.next_index(ord) - 1;
           if (prevLogIndex > lastLogIndex) {
             Log_info("[APPEND_ENTRIES] ERROR: prevLogIndex ({}) > lastLogIndex ({}), fixing next_index", prevLogIndex, lastLogIndex);
-            progress_[site_id].set_next_index(
+            peers_.set_next_index(ord, 
                 raft_server_log_index_has_successor(lastLogIndex)
                     ? raft_server_follower_next_index(lastLogIndex)
                     : lastLogIndex);
-            prevLogIndex = progress_[site_id].next_index() - 1;
+            prevLogIndex = peers_.next_index(ord) - 1;
           }
           // Until a payload is selected, this is a heartbeat and proves only
           // the prefix named by prevLogIndex.
@@ -2401,12 +2405,12 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
           if (prevLogIndex > lastLogIndex) {
             Log_info("[APPEND_ENTRIES] WARNING: Cannot send AppendEntries to follower {}: prevLogIndex ({}) > lastLogIndex ({}), skipping",
                      site_id, prevLogIndex, lastLogIndex);
-            progress_[site_id].set_next_index(1);
+            peers_.set_next_index(ord, 1);
             skip_follower = true;
-          } else if (progress_[site_id].next_index() < min_active_slot_ && snapshot_manager_) {
+          } else if (peers_.next_index(ord) < min_active_slot_ && snapshot_manager_) {
             // @unsafe - Follower is too far behind (log compacted), send InstallSnapshot
             Log_info("[HEARTBEAT-SNAPSHOT] Site {}: Follower {} next_index={} < min_active_slot_={}, sending InstallSnapshot",
-                     site_id_, site_id, progress_[site_id].next_index(), min_active_slot_);
+                     site_id_, site_id, peers_.next_index(ord), min_active_slot_);
             janus::raft::SnapshotMetadata snap_meta;
             std::string snap_data;
             if (snapshot_manager_->LoadLatestSnapshot(&snap_meta, &snap_data)) {
@@ -2419,7 +2423,7 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
                   send_term, site_id_,
                   snap_last_idx, snap_last_term,
                   snap_data,
-                  [callback_lifetime, site_id, snap_last_idx, send_term](uint64_t follower_term) {
+                  [callback_lifetime, site_id, ord, snap_last_idx, send_term](uint64_t follower_term) {
                     std::lock_guard<std::mutex> lifetime_lock(
                         callback_lifetime->mutex);
                     auto* server = callback_lifetime->server;
@@ -2461,7 +2465,7 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
                                server->site_id_);
                       return;
                     }
-                    server->progress_[site_id].accept_through(
+                    server->peers_.accept_through(ord,
                         snap_last_idx,
                         raft_server_log_index_has_successor(snap_last_idx),
                         raft_server_log_index_has_successor(snap_last_idx)
@@ -2469,8 +2473,8 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
                             : snap_last_idx);
                     Log_info("[HEARTBEAT-SNAPSHOT] Site {}: Updated follower {}: next_index={} match_index={}",
                              server->site_id_, site_id,
-                             server->progress_[site_id].next_index(),
-                             server->progress_[site_id].match_index());
+                             server->peers_.next_index(ord),
+                             server->peers_.match_index(ord));
                   });
               skip_follower = true;  // Skip normal AppendEntries for this follower
             } else {
@@ -2499,19 +2503,19 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
             if (!skip_follower) {
 #ifndef RAFT_BATCH_OPTIMIZATION
               Log_debug("[BATCH_CHECK] site={} follower={} next_index={} min_active_slot_={} lastLogIndex={}",
-                       site_id_, site_id, progress_[site_id].next_index(), min_active_slot_, lastLogIndex);
-              if (progress_[site_id].next_index() <= lastLogIndex) {
+                       site_id_, site_id, peers_.next_index(ord), min_active_slot_, lastLogIndex);
+              if (peers_.next_index(ord) <= lastLogIndex) {
                 if (!raft_server_append_entry_count_fits(prevLogIndex, 1)) {
                   Log_error("[HEARTBEAT-SEND] Log index exhausted after {}, "
                             "skipping follower {}",
                             prevLogIndex, site_id);
                   skip_follower = true;
                 } else {
-                  auto cur_log = raft_logs_.find(progress_[site_id].next_index());
+                  auto cur_log = raft_logs_.find(peers_.next_index(ord));
                   if (cur_log == raft_logs_.end() || !cur_log->second ||
                       !cur_log->second->log_.has_value()) {
                     Log_error("[HEARTBEAT-SEND] Missing log entry {}, skipping follower {}",
-                              progress_[site_id].next_index(), site_id);
+                              peers_.next_index(ord), site_id);
                     skip_follower = true;
                   } else {
                     const auto& curInstance = cur_log->second;
@@ -2525,7 +2529,7 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
                     // inner shared_ptr's raw pointer; the kind tag is
                     // a more useful identifier anyway.
                     Log_debug("[APPEND_SEND] site={} sending entry {} to follower {} cmd_kind={}",
-                        site_id_, progress_[site_id].next_index(), site_id, cmd.kind_);
+                        site_id_, peers_.next_index(ord), site_id, cmd.kind_);
                   }
                 }
               }
@@ -2534,9 +2538,9 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
 #ifdef RAFT_BATCH_OPTIMIZATION
               vector<rusty::Arc<TpcCommitCommand>> batch_buffer_;
               const uint64_t max_batch_entries = GetAppendEntriesBatchMaxEntries();
-              const uint64_t batch_start_idx = progress_[site_id].next_index();
+              const uint64_t batch_start_idx = peers_.next_index(ord);
               Log_debug("[BATCH_CHECK] site={} follower={} next_index={} min_active_slot_={} lastLogIndex={}",
-                       site_id_, site_id, progress_[site_id].next_index(), min_active_slot_, lastLogIndex);
+                       site_id_, site_id, peers_.next_index(ord), min_active_slot_, lastLogIndex);
               if (!raft_server_append_entry_count_fits(prevLogIndex, 1)) {
                 Log_error("[HEARTBEAT-BATCH] Log index exhausted after {}, "
                           "skipping follower {}",
@@ -2775,8 +2779,8 @@ void RaftServer::HeartbeatPhase2(HeartbeatRoundState& state,
             } else {
               // One lookup where there used to be two: the merged map cannot
               // have a follower present in one table and absent from the other.
-              auto progress_it = progress_.find(pending.follower_id);
-              if (progress_it == progress_.end()) {
+              const size_t resp_ord = PeerOrdinal(pending.follower_id);
+              if (resp_ord == peers_.len()) {
                 // Defensive guard: this target has no replication indices,
                 // which is the state of a server that is not leading this
                 // follower. Higher-term evidence was handled above; only the
@@ -2786,17 +2790,16 @@ void RaftServer::HeartbeatPhase2(HeartbeatRoundState& state,
                     "follower {}",
                     pending.follower_id);
               } else {
-                auto &progress = progress_it->second;
 
                 if (resp.status == 0) {
                   // case 2: AppendEntries rejected - log inconsistency.
                   // The five-rung ladder is FollowerProgress::back_off_after_reject;
                   // it reports which rung it took so the diagnostics below stay
                   // as specific as they were when the branches were inline.
-                  const uint64_t old_next = progress.next_index();
+                  const uint64_t old_next = peers_.next_index(resp_ord);
                   const BackoffKind rung =
-                      progress.back_off_after_reject(resp.last_log_index);
-                  const uint64_t new_next = progress.next_index();
+                      peers_.back_off_after_reject(resp_ord, resp.last_log_index);
+                  const uint64_t new_next = peers_.next_index(resp_ord);
                   switch (rung) {
                     case BackoffKind::FAST:
                       Log_info("[LOG-RECONCILE] Site {}: Fast backoff for "
@@ -2851,7 +2854,7 @@ void RaftServer::HeartbeatPhase2(HeartbeatRoundState& state,
                   // Successful responses are monotonic and prove no index
                   // beyond the exact payload end. In particular, a heartbeat
                   // cannot adopt an unknown follower suffix.
-                  progress.accept_through(
+                  peers_.accept_through(resp_ord, 
                       acknowledged_through,
                       raft_server_log_index_has_successor(acknowledged_through),
                       raft_server_follower_next_index(acknowledged_through));
@@ -2862,8 +2865,8 @@ void RaftServer::HeartbeatPhase2(HeartbeatRoundState& state,
                       site_id_, pending.follower_id,
                       pending.cmd.has_value() ? "entries" : "heartbeat",
                       resp.last_log_index, pending.sent_end_index,
-                      acknowledged_through, progress.next_index(),
-                      progress.match_index());
+                      acknowledged_through, peers_.next_index(resp_ord),
+                      peers_.match_index(resp_ord));
                 }
               }
             }
@@ -2928,19 +2931,15 @@ void RaftServer::HeartbeatPhase3(HeartbeatRoundState& state,
         bool commit_advanced_after_send = false;
         {
           std::lock_guard<std::recursive_mutex> lock(mtx_);
-          std::vector<uint64_t> finalMatchedIndices{};
-          for (auto it = progress_.begin(); it != progress_.end(); it++) {
-            finalMatchedIndices.push_back(it->second.match_index());
-          }
+
           // nservers is the value latched in PHASE 0. Reusing it here is
           // sound only because current_config_ is written once during Setup
           // (server.cc:1671) and never mutated, and progress_ is never erased,
           // so this size is invariant across the round. Assert it as PHASE 0
           // does rather than trusting the two phases to stay in step.
-          verify(finalMatchedIndices.size() == round.nservers - 1);
-          std::sort(finalMatchedIndices.begin(), finalMatchedIndices.end());
-          const uint64_t finalCommitIndex = raft_server_commit_index_candidate(
-              finalMatchedIndices, round.nservers, lastLogIndex);
+          verify(peers_.len() == round.nservers - 1);
+          const uint64_t finalCommitIndex =
+              peers_.majority_match_index(round.nservers, lastLogIndex);
           if (raft_server_log_index_above(finalCommitIndex, commitIndex) &&
               raft_server_log_entry_is_current_term(
                   GetRaftInstance(finalCommitIndex)->term, currentTerm)) {

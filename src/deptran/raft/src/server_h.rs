@@ -311,12 +311,12 @@ pub const fn raft_server_commit_index_clamp(candidate_index: u64,
 //
 // The caller still applies the current-term rule, which needs a log lookup
 // this function cannot do.
-pub const fn raft_server_commit_index_candidate(sorted_match_indices: &[u64],
+pub const fn raft_server_commit_index_candidate(selected_match: u64,
                                                  nservers: usize,
                                                  last_log_index: u64) -> u64 {
     let mut candidate = last_log_index;
     if nservers > 1 {
-        candidate = sorted_match_indices[(nservers - 1) / 2];
+        candidate = selected_match;
     }
     if candidate > last_log_index {
         last_log_index
@@ -599,6 +599,122 @@ impl FollowerProgress {
         if has_successor && follower_next > self.next_ {
             self.next_ = follower_next;
         }
+    }
+}
+
+// The whole peer-progress cluster, owned by one type instead of scattered
+// across a std::map keyed by site id.
+//
+// WHY A DENSE VECTOR. The replica set is fixed for the process lifetime:
+// current_config_ has exactly one write, at server.cc:1671 inside Setup, and
+// progress_'s key set was established once from it. Every follower therefore
+// has a stable ordinal, and the map was paying a comparison and a cursor for
+// what is an array index. The original plan proposed this shape and then
+// abandoned it, recording that "the dense rewrite needs a stable
+// site-to-ordinal mapping that does not exist" -- which that single-write
+// measurement shows is not so.
+//
+// It also removes the map cursor as a category. Every access is by ordinal,
+// computed fresh at each use, so there is no iterator to hold across an RPC
+// send or a synchronous completion callback -- the hazard commit 4427129a9
+// fixed by hand for next_index_, now unspellable.
+//
+// rusty::Vec specifically, not rusty::BTreeMap: Vec's rustc model is a
+// re-export of std::vec::Vec and its C++ side is the real vec_port, so both
+// sides are faithful. BTreeMap's rustc model is not -- its insert is a plain
+// push with no key replacement and its get returns the first match
+// (src/rrr/rusty-rustc/src/lib.rs:907) -- so a DSL type owning one would be
+// verified against semantics production does not have.
+pub struct PeerTable {
+    progress_: rusty::Vec<FollowerProgress>,
+}
+
+#[allow(clippy::new_without_default)]
+impl PeerTable {
+    pub fn new() -> PeerTable {
+        PeerTable { progress_: rusty::Vec::new() }
+    }
+
+    // One slot per follower, in ordinal order. Mirrors the two places the map
+    // used to be filled.
+    pub fn reset(&mut self, peers: usize, next_index: u64) {
+        self.progress_.clear();
+        let mut i: usize = 0;
+        while i < peers {
+            self.progress_.push(FollowerProgress::new(next_index, 0));
+            i += 1;
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.progress_.len()
+    }
+
+    // Required by clippy alongside len(). A leader always has followers in
+    // this table unless the partition is single-replica, which is exactly the
+    // case the commit-index selector special-cases.
+    pub fn is_empty(&self) -> bool {
+        self.progress_.is_empty()
+    }
+
+    pub fn next_index(&self, ordinal: usize) -> u64 {
+        self.progress_[ordinal].next_index()
+    }
+
+    pub fn set_next_index(&mut self, ordinal: usize, value: u64) {
+        self.progress_[ordinal].set_next_index(value);
+    }
+
+    pub fn match_index(&self, ordinal: usize) -> u64 {
+        self.progress_[ordinal].match_index()
+    }
+
+    // The committable index this table's evidence supports.
+    //
+    // Both heartbeat phases used to build a std::vector of match indices,
+    // std::sort it, and index (nservers - 1) / 2. The table owns those values,
+    // so it can answer directly -- and it does so by RANK SELECTION rather
+    // than sorting, because a DSL body has no working spelling for .sort():
+    // the emitter lowers every receiver shape to rusty::sort, which is defined
+    // only in the non-exported global module fragment of the transpiled ports
+    // and is declared by no header. Selection is O(n^2) where sorting is
+    // O(n log n), which is free at the replica counts this system runs (3 or
+    // 5) and is on the per-round path, not the per-entry path.
+    //
+    // Ties are broken by ordinal so the result matches a stable sort exactly.
+    pub fn majority_match_index(&self, nservers: usize, last_log_index: u64) -> u64 {
+        let target = (nservers - 1) / 2;
+        let n = self.progress_.len();
+        let mut selected: u64 = 0;
+        let mut i: usize = 0;
+        while i < n {
+            let value = self.progress_[i].match_index();
+            let mut rank: usize = 0;
+            let mut j: usize = 0;
+            while j < n {
+                let other = self.progress_[j].match_index();
+                if other < value || (other == value && j < i) {
+                    rank += 1;
+                }
+                j += 1;
+            }
+            if rank == target {
+                selected = value;
+            }
+            i += 1;
+        }
+        raft_server_commit_index_candidate(selected, nservers, last_log_index)
+    }
+
+    pub fn back_off_after_reject(&mut self, ordinal: usize,
+                                 follower_last_log_index: u64) -> BackoffKind {
+        self.progress_[ordinal].back_off_after_reject(follower_last_log_index)
+    }
+
+    pub fn accept_through(&mut self, ordinal: usize, acknowledged_through: u64,
+                          has_successor: bool, follower_next: u64) {
+        self.progress_[ordinal].accept_through(acknowledged_through,
+                                               has_successor, follower_next);
     }
 }
 

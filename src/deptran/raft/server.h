@@ -15,6 +15,7 @@
 #include <rusty/arc.hpp>
 #include <rusty/condvar.hpp>
 #include <rusty/num.hpp>
+#include <rusty/array.hpp>   // rusty::len / rusty::is_empty in PeerTable
 #include <rusty/ffi.hpp>   // rusty::ffi::c_void, the election loop opaque handle
 // The rusty:: aliases for the rrr reactor types. server.cc has included this
 // since the wake gate landed; the election timer block below is the first DSL
@@ -23,6 +24,7 @@
 // which then shadows ::rusty for every lookup in the file. Its own ordering
 // rule -- after the header that imports rrr.reactor -- is satisfied by
 // commo.h above.
+import rusty;   // rusty::Vec is a vec_port C++20 module, not a header
 #include "rust_facade_types.h"
 #include <rusty/option.hpp>
 #include <rusty/slice.hpp>
@@ -447,12 +449,12 @@ pub const fn raft_server_commit_index_clamp(candidate_index: u64,
 //
 // The caller still applies the current-term rule, which needs a log lookup
 // this function cannot do.
-pub const fn raft_server_commit_index_candidate(sorted_match_indices: &[u64],
+pub const fn raft_server_commit_index_candidate(selected_match: u64,
                                                  nservers: usize,
                                                  last_log_index: u64) -> u64 {
     let mut candidate = last_log_index;
     if nservers > 1 {
-        candidate = sorted_match_indices[(nservers - 1) / 2];
+        candidate = selected_match;
     }
     if candidate > last_log_index {
         last_log_index
@@ -658,7 +660,7 @@ pub const fn raft_server_leader_rpc_sender_is_authoritative(
            (!has_known_leader || known_leader_matches_sender))))
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.scalar_decisions version=1 rust_sha256=1abeaaec27d017af385d4f2326552bb62ebb5895c074e7e11be08df99d97d2f5*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.scalar_decisions version=1 rust_sha256=8e54f19b32eed746dae72aa4e79d36fcd983f175b6e61c4a78e2e940b04da648*/
 constexpr uint16_t RAFT_SERVER_INVALID_SITE_ID = static_cast<uint16_t>(65535);
 constexpr bool raft_server_log_index_at_or_below(uint64_t index, uint64_t boundary);
 constexpr bool raft_server_log_index_above(uint64_t index, uint64_t boundary);
@@ -700,7 +702,7 @@ constexpr uint64_t raft_server_append_result_last_index(uint64_t old_last_index,
 constexpr uint64_t raft_server_append_sent_end(uint64_t previous_index, uint64_t entry_count);
 constexpr uint64_t raft_server_append_acknowledged_through(uint64_t reported_index, uint64_t sent_end_index, uint64_t leader_last_index);
 constexpr uint64_t raft_server_commit_index_clamp(uint64_t candidate_index, uint64_t last_log_index);
-constexpr uint64_t raft_server_commit_index_candidate(std::span<const uint64_t> sorted_match_indices, size_t nservers, uint64_t last_log_index);
+constexpr uint64_t raft_server_commit_index_candidate(uint64_t selected_match, size_t nservers, uint64_t last_log_index);
 constexpr bool raft_server_read_index_round_can_advance(uint64_t round);
 constexpr bool raft_server_read_index_reply_confirms_authority(bool response_available, bool is_leader, uint64_t sent_term, uint64_t response_term, uint64_t current_term, uint64_t sent_round, uint64_t active_round);
 constexpr bool raft_server_log_entry_is_current_term(int64_t entry_term, uint64_t current_term);
@@ -869,10 +871,10 @@ constexpr uint64_t raft_server_commit_index_clamp(uint64_t candidate_index, uint
         return std::move(candidate_index);
     }
 }
-constexpr uint64_t raft_server_commit_index_candidate(std::span<const uint64_t> sorted_match_indices, size_t nservers, uint64_t last_log_index) {
+constexpr uint64_t raft_server_commit_index_candidate(uint64_t selected_match, size_t nservers, uint64_t last_log_index) {
     auto candidate = std::move(last_log_index);
     if (rusty::detail::deref_if_pointer_like(nservers) > 1) {
-        candidate = sorted_match_indices[((rusty::detail::deref_if_pointer_like(nservers) - 1)) / 2];
+        candidate = std::move(selected_match);
     }
     if (rusty::detail::deref_if_pointer_like(candidate) > rusty::detail::deref_if_pointer_like(last_log_index)) {
         return std::move(last_log_index);
@@ -1106,27 +1108,13 @@ static_assert(raft_server_append_acknowledged_through(20, 10, 15) == 10);
 static_assert(raft_server_append_acknowledged_through(8, 10, 15) == 8);
 static_assert(raft_server_append_acknowledged_through(20, 15, 9) == 9);
 static_assert(raft_server_commit_index_clamp(9, 7) == 7);
-// @safe - compile-time only; raft_server_commit_index_candidate takes a span,
-// which cannot be spelled as a bare static_assert argument, so its cases run
-// through this constexpr helper instead.
-constexpr bool raft_server_commit_index_candidate_selftest() {
-  const uint64_t three_way[] = {3, 7};
-  const uint64_t five_way[] = {3, 7, 9, 11};
-  return
-      // 3 replicas: majority position 1 of the 2 follower values.
-      raft_server_commit_index_candidate(
-          std::span<const uint64_t>(three_way, 2), 3, 100) == 7 &&
-      // 5 replicas: majority position 2 of the 4 follower values.
-      raft_server_commit_index_candidate(
-          std::span<const uint64_t>(five_way, 4), 5, 100) == 9 &&
-      // The candidate never exceeds the leader's own last log index.
-      raft_server_commit_index_candidate(
-          std::span<const uint64_t>(three_way, 2), 3, 5) == 5 &&
-      // Single replica: no followers, so the leader's whole log is committable.
-      raft_server_commit_index_candidate(
-          std::span<const uint64_t>(), 1, 42) == 42;
-}
-static_assert(raft_server_commit_index_candidate_selftest());
+// The clamp policy is now scalar, so it tests as plain static_asserts like its
+// 67 siblings. The majority SELECTION moved onto PeerTable, which owns a
+// rusty::Vec and so cannot be constant-evaluated; raftLabTest covers it.
+static_assert(raft_server_commit_index_candidate(7, 3, 100) == 7);
+static_assert(raft_server_commit_index_candidate(9, 5, 100) == 9);
+static_assert(raft_server_commit_index_candidate(7, 3, 5) == 5);
+static_assert(raft_server_commit_index_candidate(0, 1, 42) == 42);
 static_assert(raft_server_compaction_safe_index(12, 10, 8) == 8);
 static_assert(raft_server_compaction_safe_index(7, 10, 8) == 7);
 static_assert(raft_server_compaction_safe_index(9, 8, 10) == 8);
@@ -1308,8 +1296,124 @@ impl FollowerProgress {
         }
     }
 }
+
+// The whole peer-progress cluster, owned by one type instead of scattered
+// across a std::map keyed by site id.
+//
+// WHY A DENSE VECTOR. The replica set is fixed for the process lifetime:
+// current_config_ has exactly one write, at server.cc:1671 inside Setup, and
+// progress_'s key set was established once from it. Every follower therefore
+// has a stable ordinal, and the map was paying a comparison and a cursor for
+// what is an array index. The original plan proposed this shape and then
+// abandoned it, recording that "the dense rewrite needs a stable
+// site-to-ordinal mapping that does not exist" -- which that single-write
+// measurement shows is not so.
+//
+// It also removes the map cursor as a category. Every access is by ordinal,
+// computed fresh at each use, so there is no iterator to hold across an RPC
+// send or a synchronous completion callback -- the hazard commit 4427129a9
+// fixed by hand for next_index_, now unspellable.
+//
+// rusty::Vec specifically, not rusty::BTreeMap: Vec's rustc model is a
+// re-export of std::vec::Vec and its C++ side is the real vec_port, so both
+// sides are faithful. BTreeMap's rustc model is not -- its insert is a plain
+// push with no key replacement and its get returns the first match
+// (src/rrr/rusty-rustc/src/lib.rs:907) -- so a DSL type owning one would be
+// verified against semantics production does not have.
+pub struct PeerTable {
+    progress_: rusty::Vec<FollowerProgress>,
+}
+
+#[allow(clippy::new_without_default)]
+impl PeerTable {
+    pub fn new() -> PeerTable {
+        PeerTable { progress_: rusty::Vec::new() }
+    }
+
+    // One slot per follower, in ordinal order. Mirrors the two places the map
+    // used to be filled.
+    pub fn reset(&mut self, peers: usize, next_index: u64) {
+        self.progress_.clear();
+        let mut i: usize = 0;
+        while i < peers {
+            self.progress_.push(FollowerProgress::new(next_index, 0));
+            i += 1;
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.progress_.len()
+    }
+
+    // Required by clippy alongside len(). A leader always has followers in
+    // this table unless the partition is single-replica, which is exactly the
+    // case the commit-index selector special-cases.
+    pub fn is_empty(&self) -> bool {
+        self.progress_.is_empty()
+    }
+
+    pub fn next_index(&self, ordinal: usize) -> u64 {
+        self.progress_[ordinal].next_index()
+    }
+
+    pub fn set_next_index(&mut self, ordinal: usize, value: u64) {
+        self.progress_[ordinal].set_next_index(value);
+    }
+
+    pub fn match_index(&self, ordinal: usize) -> u64 {
+        self.progress_[ordinal].match_index()
+    }
+
+    // The committable index this table's evidence supports.
+    //
+    // Both heartbeat phases used to build a std::vector of match indices,
+    // std::sort it, and index (nservers - 1) / 2. The table owns those values,
+    // so it can answer directly -- and it does so by RANK SELECTION rather
+    // than sorting, because a DSL body has no working spelling for .sort():
+    // the emitter lowers every receiver shape to rusty::sort, which is defined
+    // only in the non-exported global module fragment of the transpiled ports
+    // and is declared by no header. Selection is O(n^2) where sorting is
+    // O(n log n), which is free at the replica counts this system runs (3 or
+    // 5) and is on the per-round path, not the per-entry path.
+    //
+    // Ties are broken by ordinal so the result matches a stable sort exactly.
+    pub fn majority_match_index(&self, nservers: usize, last_log_index: u64) -> u64 {
+        let target = (nservers - 1) / 2;
+        let n = self.progress_.len();
+        let mut selected: u64 = 0;
+        let mut i: usize = 0;
+        while i < n {
+            let value = self.progress_[i].match_index();
+            let mut rank: usize = 0;
+            let mut j: usize = 0;
+            while j < n {
+                let other = self.progress_[j].match_index();
+                if other < value || (other == value && j < i) {
+                    rank += 1;
+                }
+                j += 1;
+            }
+            if rank == target {
+                selected = value;
+            }
+            i += 1;
+        }
+        raft_server_commit_index_candidate(selected, nservers, last_log_index)
+    }
+
+    pub fn back_off_after_reject(&mut self, ordinal: usize,
+                                 follower_last_log_index: u64) -> BackoffKind {
+        self.progress_[ordinal].back_off_after_reject(follower_last_log_index)
+    }
+
+    pub fn accept_through(&mut self, ordinal: usize, acknowledged_through: u64,
+                          has_successor: bool, follower_next: u64) {
+        self.progress_[ordinal].accept_through(acknowledged_through,
+                                               has_successor, follower_next);
+    }
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.follower_progress version=1 rust_sha256=4e0f73c39e7b28e1a3d75afe88a915459c5127df8dcfe08ea097a6b8da241ac3*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.follower_progress version=1 rust_sha256=3e9645ed30a8ca98ee0047674c33da994be4d39c9cb7c33c98d3fb74461c1f8f*/
 enum class BackoffKind : int32_t;
 constexpr BackoffKind BackoffKind_FAST();
 constexpr BackoffKind BackoffKind_TERM_CONFLICT();
@@ -1317,6 +1421,7 @@ constexpr BackoffKind BackoffKind_EXPONENTIAL();
 constexpr BackoffKind BackoffKind_LINEAR();
 constexpr BackoffKind BackoffKind_FLOOR();
 struct FollowerProgress;
+struct PeerTable;
 
 enum class BackoffKind : int32_t {
     FAST = 0,
@@ -1341,6 +1446,24 @@ struct FollowerProgress {
     void set_next_index(uint64_t value);
     BackoffKind back_off_after_reject(uint64_t follower_last_log_index);
     void accept_through(uint64_t acknowledged_through, bool has_successor, uint64_t follower_next);
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
+};
+
+struct PeerTable {
+    rusty::Vec<FollowerProgress> progress_;
+
+    static PeerTable new_();
+    void reset(size_t peers, uint64_t next_index);
+    size_t len() const;
+    bool is_empty() const;
+    uint64_t next_index(size_t ordinal) const;
+    void set_next_index(size_t ordinal, uint64_t value);
+    uint64_t match_index(size_t ordinal) const;
+    uint64_t majority_match_index(size_t nservers, uint64_t last_log_index) const;
+    BackoffKind back_off_after_reject(size_t ordinal, uint64_t follower_last_log_index);
+    void accept_through(size_t ordinal, uint64_t acknowledged_through, bool has_successor, uint64_t follower_next);
     // Rust derives Send/Sync from the field types; C++ cannot see them.
     static constexpr bool is_send = true;
     static constexpr bool is_sync = true;
@@ -1391,6 +1514,71 @@ inline void FollowerProgress::accept_through(uint64_t acknowledged_through, bool
     if (rusty::detail::deref_if_pointer_like(has_successor) && (rusty::detail::deref_if_pointer_like(follower_next) > rusty::detail::deref_if_pointer_like(this->next_))) {
         this->next_ = std::move(follower_next);
     }
+}
+
+inline PeerTable PeerTable::new_() {
+    return PeerTable{.progress_ = rusty::Vec<FollowerProgress>::new_()};
+}
+
+inline void PeerTable::reset(size_t peers, uint64_t next_index) {
+    this->progress_.clear();
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(peers)) {
+        this->progress_.push(FollowerProgress::new_(std::move(next_index), static_cast<uint64_t>(0)));
+        i += 1;
+    }
+}
+
+inline size_t PeerTable::len() const {
+    return rusty::len(this->progress_);
+}
+
+inline bool PeerTable::is_empty() const {
+    return rusty::is_empty(this->progress_);
+}
+
+inline uint64_t PeerTable::next_index(size_t ordinal) const {
+    return this->progress_[ordinal].next_index();
+}
+
+inline void PeerTable::set_next_index(size_t ordinal, uint64_t value) {
+    this->progress_[ordinal].set_next_index(std::move(value));
+}
+
+inline uint64_t PeerTable::match_index(size_t ordinal) const {
+    return this->progress_[ordinal].match_index();
+}
+
+inline uint64_t PeerTable::majority_match_index(size_t nservers, uint64_t last_log_index) const {
+    const auto target = ((rusty::detail::deref_if_pointer_like(nservers) - 1)) / 2;
+    const auto n = rusty::len(this->progress_);
+    uint64_t selected = static_cast<uint64_t>(0);
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
+        auto value = this->progress_[i].match_index();
+        size_t rank = static_cast<size_t>(0);
+        size_t j = static_cast<size_t>(0);
+        while (rusty::detail::deref_if_pointer_like(j) < rusty::detail::deref_if_pointer_like(n)) {
+            const auto other = this->progress_[j].match_index();
+            if ((rusty::detail::deref_if_pointer_like(other) < rusty::detail::deref_if_pointer_like(value)) || (((rusty::detail::deref_if_pointer_like(other) == rusty::detail::deref_if_pointer_like(value)) && (rusty::detail::deref_if_pointer_like(j) < rusty::detail::deref_if_pointer_like(i))))) {
+                rank += 1;
+            }
+            j += 1;
+        }
+        if (rusty::detail::deref_if_pointer_like(rank) == rusty::detail::deref_if_pointer_like(target)) {
+            selected = std::move(value);
+        }
+        i += 1;
+    }
+    return raft_server_commit_index_candidate(std::move(selected), std::move(nservers), std::move(last_log_index));
+}
+
+inline BackoffKind PeerTable::back_off_after_reject(size_t ordinal, uint64_t follower_last_log_index) {
+    return this->progress_[ordinal].back_off_after_reject(std::move(follower_last_log_index));
+}
+
+inline void PeerTable::accept_through(size_t ordinal, uint64_t acknowledged_through, bool has_successor, uint64_t follower_next) {
+    this->progress_[ordinal].accept_through(std::move(acknowledged_through), std::move(has_successor), std::move(follower_next));
 }
 /*RUSTYCPP:GEN-END id=raft_server.follower_progress*/
 
@@ -1817,6 +2005,20 @@ class RaftServer : public TxLogServer {
   void HeartbeatPrologue();
   // @safe - acquire load
   bool HeartbeatLooping() const;
+  // @safe - linear scan of a fixed, tiny table (replica counts are 3 or 5).
+  // Returns peers_.len() when the site is not a follower of this leader,
+  // which is the "removed follower" case PHASE 2 guards against. Deliberately
+  // returns an ordinal rather than a reference: an ordinal cannot dangle
+  // across an RPC send or a re-entrant completion callback.
+  size_t PeerOrdinal(siteid_t site) const {
+    for (size_t ord = 0; ord < peer_sites_.size(); ord++) {
+      if (peer_sites_[ord] == site) {
+        return ord;
+      }
+    }
+    return peers_.len();
+  }
+
   // @unsafe - suspends on the wake gate; false means shutdown
   bool HeartbeatWait();
   // @unsafe - advances the read-index round and recomputes the commit index;
@@ -1930,7 +2132,11 @@ class RaftServer : public TxLogServer {
   // match_index_ and next_index_. They were always initialised together and
   // asserted to have equal size; merging removes the "find both, check both"
   // dance at the reply site. The value type is DSL-owned; see server.cc.
-  std::map<siteid_t, FollowerProgress> progress_{};
+  // Peer progress, indexed by ordinal. peer_sites_ is the ordinal -> site id
+  // map, fixed at the same moment peers_ is sized; both come from
+  // current_config_, which is written once during Setup.
+  PeerTable peers_{PeerTable::new_()};
+  std::vector<siteid_t> peer_sites_{};
   // Heartbeat quorum proof, guarded by mtx_. HeartbeatLoop stamps every round
   // with heartbeat_round_ and records the newest round that a quorum of the
   // membership configuration confirmed in the current term.
