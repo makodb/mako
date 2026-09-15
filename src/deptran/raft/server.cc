@@ -2187,7 +2187,6 @@ void RaftServer::HeartbeatLoop() {
       // PHASE 0: Calculate commit index ONCE per heartbeat round (not per-follower)
       // ========================================================================
       uint64_t current_commit_index = 0;
-      uint64_t current_last_log_index = 0;
       {
         std::lock_guard<std::recursive_mutex> lock(mtx_);
         if (!IsLeader()) {
@@ -2228,22 +2227,36 @@ void RaftServer::HeartbeatLoop() {
         }
         Log_debug("[COMMIT-CALC] nservers={}, matchedIndices.size()={}", nservers, matchedIndices.size());
         verify(matchedIndices.size() == nservers - 1);
-        std::sort(matchedIndices.begin(), matchedIndices.end());
-        uint64_t newCommitIndex = matchedIndices[(nservers - 1) / 2];
+        // A single-replica partition has no followers, so matchedIndices is
+        // empty and the majority is the leader alone: everything it has
+        // appended is committable, subject to the current-term rule below.
+        // Without this branch the median reads element [0] of an empty vector,
+        // which the verify above cannot catch because at nservers == 1 it
+        // passes vacuously (0 == 0). config/1c1s1p.yml and config/1c1s.yml
+        // both declare such a partition.
+        uint64_t newCommitIndex = lastLogIndex;
+        if (nservers > 1) {
+          std::sort(matchedIndices.begin(), matchedIndices.end());
+          newCommitIndex = matchedIndices[(nservers - 1) / 2];
+        }
         Log_debug("[COMMIT-CALC] newCommitIndex={} (median at index {}), currentCommitIndex={}", newCommitIndex, (nservers - 1) / 2, commitIndex);
 
-        if (newCommitIndex > lastLogIndex) {
-          newCommitIndex = lastLogIndex;
-        }
+        newCommitIndex =
+            raft_server_commit_index_clamp(newCommitIndex, lastLogIndex);
 
-        if (newCommitIndex > commitIndex && (GetRaftInstance(newCommitIndex)->term == currentTerm)) {
+        // The && is load-bearing, not stylistic. GetRaftInstance default-inserts
+        // into raft_logs_ and can lower min_active_slot_, so the term lookup
+        // must not be evaluated for a candidate that already failed the index
+        // test. PHASE 3 fuses the same pair for the same reason.
+        if (raft_server_log_index_above(newCommitIndex, commitIndex) &&
+            raft_server_log_entry_is_current_term(
+                GetRaftInstance(newCommitIndex)->term, currentTerm)) {
           uint64_t old_commit = commitIndex;
           Log_debug("newCommitIndex {}", newCommitIndex);
           commitIndex = newCommitIndex;
           EnqueueCommittedEntries(old_commit, commitIndex);
         }
         current_commit_index = commitIndex;
-        current_last_log_index = lastLogIndex;
       }
 
       auto [authority_it, authority_inserted] = authority_rounds.emplace(
@@ -2832,12 +2845,22 @@ void RaftServer::HeartbeatLoop() {
           for (auto it = progress_.begin(); it != progress_.end(); it++) {
             finalMatchedIndices.push_back(it->second.match_index());
           }
-          std::sort(finalMatchedIndices.begin(), finalMatchedIndices.end());
-          uint64_t finalCommitIndex = finalMatchedIndices[(nservers - 1) / 2];
-          if (raft_server_log_index_above(finalCommitIndex, lastLogIndex)) {
-            finalCommitIndex =
-                raft_server_commit_index_clamp(finalCommitIndex, lastLogIndex);
+          // nservers is the value latched in PHASE 0. Reusing it here is
+          // sound only because current_config_ is written once during Setup
+          // (server.cc:1671) and never mutated, and progress_ is never erased,
+          // so this size is invariant across the round. Assert it as PHASE 0
+          // does rather than trusting the two phases to stay in step.
+          verify(finalMatchedIndices.size() == nservers - 1);
+          // Single-replica partition: see the PHASE 0 comment above.
+          uint64_t finalCommitIndex = lastLogIndex;
+          if (nservers > 1) {
+            std::sort(finalMatchedIndices.begin(), finalMatchedIndices.end());
+            finalCommitIndex = finalMatchedIndices[(nservers - 1) / 2];
           }
+          // The clamp is total and self-guarding, so the `if (above)` wrapper
+          // that used to surround it was pointwise redundant.
+          finalCommitIndex =
+              raft_server_commit_index_clamp(finalCommitIndex, lastLogIndex);
           if (raft_server_log_index_above(finalCommitIndex, commitIndex) &&
               raft_server_log_entry_is_current_term(
                   GetRaftInstance(finalCommitIndex)->term, currentTerm)) {
