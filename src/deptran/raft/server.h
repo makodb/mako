@@ -1063,7 +1063,7 @@ static_assert(raft_server_retention_window_normalize(UINT64_MAX) == UINT64_MAX);
 static_assert(raft_server_retention_cutoff(5, 5) == 0);
 static_assert(raft_server_retention_cutoff(4, 5) == 0);
 static_assert(raft_server_retention_cutoff(6, 5) == 1);
-// Raft currently compares signed ballot_t values with uint64_t currentTerm.
+// Raft currently compares signed ballot_t values with uint64_t state_.current_term_.
 // These casts make the existing C++ usual-arithmetic-conversion semantics
 // explicit, including the historical negative-term edge case.
 static_assert(!raft_server_vote_term_is_stale(static_cast<uint64_t>(-1), 0));
@@ -1524,6 +1524,16 @@ pub struct RaftConsensusState {
     heartbeat_round_: u64,
     read_quorum_confirmed_term_: u64,
     read_quorum_confirmed_round_: u64,
+    // Log store: the term the server is in, and the three indices that bound
+    // the log. NOTE the historical naming -- these four are the only members
+    // in the class without a trailing underscore.
+    current_term_: u64,
+    last_log_index_: u64,
+    commit_index_: u64,
+    execute_index_: u64,
+    // Snapshot boundary.
+    snapidx_: u64,
+    snapterm_: i64,
 }
 
 #[allow(clippy::new_without_default)]
@@ -1548,11 +1558,17 @@ impl RaftConsensusState {
             heartbeat_round_: 0,
             read_quorum_confirmed_term_: 0,
             read_quorum_confirmed_round_: 0,
+            current_term_: 0,
+            last_log_index_: 0,
+            commit_index_: 0,
+            execute_index_: 0,
+            snapidx_: 0,
+            snapterm_: 0,
         }
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.consensus_state version=1 rust_sha256=b4d38a4153d87662c9b9c7903b6d1f6e8e7bf6902b1288b9d2ef9b8809d8b754*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.consensus_state version=1 rust_sha256=79739de35a925ac6cebe565e3bbb934cf91ea2d58f473901a198c7dc46143985*/
 struct RaftConsensusState;
 
 struct RaftConsensusState {
@@ -1572,6 +1588,12 @@ struct RaftConsensusState {
     uint64_t heartbeat_round_;
     uint64_t read_quorum_confirmed_term_;
     uint64_t read_quorum_confirmed_round_;
+    uint64_t current_term_;
+    uint64_t last_log_index_;
+    uint64_t commit_index_;
+    uint64_t execute_index_;
+    uint64_t snapidx_;
+    int64_t snapterm_;
 
     static RaftConsensusState new_();
     // Rust derives Send/Sync from the field types; C++ cannot see them.
@@ -1581,7 +1603,7 @@ struct RaftConsensusState {
 
 
 inline RaftConsensusState RaftConsensusState::new_() {
-    return RaftConsensusState{.election_term_ = static_cast<int64_t>(0), .election_timeout_us_ = static_cast<uint64_t>(0), .election_timer_generation_ = static_cast<uint64_t>(0), .vote_for_ = std::numeric_limits<uint16_t>::max(), .min_active_slot_ = static_cast<uint64_t>(1), .snapshot_threshold_ = static_cast<uint64_t>(10000), .snapshot_callback_owner_token_ = static_cast<uint64_t>(0), .next_snapshot_callback_owner_token_ = static_cast<uint64_t>(1), .is_leader_ = false, .req_voting_ = false, .election_in_progress_ = false, .current_leader_id_ = std::numeric_limits<uint16_t>::max(), .last_heartbeat_time_ = static_cast<uint64_t>(0), .heartbeat_round_ = static_cast<uint64_t>(0), .read_quorum_confirmed_term_ = static_cast<uint64_t>(0), .read_quorum_confirmed_round_ = static_cast<uint64_t>(0)};
+    return RaftConsensusState{.election_term_ = static_cast<int64_t>(0), .election_timeout_us_ = static_cast<uint64_t>(0), .election_timer_generation_ = static_cast<uint64_t>(0), .vote_for_ = std::numeric_limits<uint16_t>::max(), .min_active_slot_ = static_cast<uint64_t>(1), .snapshot_threshold_ = static_cast<uint64_t>(10000), .snapshot_callback_owner_token_ = static_cast<uint64_t>(0), .next_snapshot_callback_owner_token_ = static_cast<uint64_t>(1), .is_leader_ = false, .req_voting_ = false, .election_in_progress_ = false, .current_leader_id_ = std::numeric_limits<uint16_t>::max(), .last_heartbeat_time_ = static_cast<uint64_t>(0), .heartbeat_round_ = static_cast<uint64_t>(0), .read_quorum_confirmed_term_ = static_cast<uint64_t>(0), .read_quorum_confirmed_round_ = static_cast<uint64_t>(0), .current_term_ = static_cast<uint64_t>(0), .last_log_index_ = static_cast<uint64_t>(0), .commit_index_ = static_cast<uint64_t>(0), .execute_index_ = static_cast<uint64_t>(0), .snapidx_ = static_cast<uint64_t>(0), .snapterm_ = static_cast<int64_t>(0)};
 }
 /*RUSTYCPP:GEN-END id=raft_server.consensus_state*/
 
@@ -2082,7 +2104,7 @@ class RaftServer : public TxLogServer {
   // ============================================================================
   std::shared_ptr<janus::raft::SnapshotManager> snapshot_manager_;  // Optional snapshot manager
   // Apply-thread trigger mirrors. The state-machine hot path must not race on
-  // snapshot_manager_, snapidx_, or state_.snapshot_threshold_; it reads only these
+  // snapshot_manager_, state_.snapidx_, or state_.snapshot_threshold_; it reads only these
   // atomics and lets MaybeCreateSnapshot() revalidate under the full lock
   // order before doing any work.
   rusty::sync::atomic::AtomicBool snapshot_manager_configured_{false};
@@ -2161,8 +2183,6 @@ class RaftServer : public TxLogServer {
   std::condition_variable startup_cv_;
   bool startup_finished_ = false;
   bool startup_succeeded_ = false;
-  slotid_t snapidx_ = 0 ;
-  ballot_t snapterm_ = 0 ;
   int32_t wait_int_ = 100000 ;
   std::atomic_bool disconnected_{false};
   bool in_applying_logs_ = false ;
@@ -2270,24 +2290,24 @@ class RaftServer : public TxLogServer {
       // @unsafe
       {
         *vote_granted = vote ;
-        *reply_term = currentTerm ;
+        *reply_term = state_.current_term_ ;
       }
 #ifdef RAFT_LEADER_ELECTION_DEBUG
       siteid_t prev_vote_for = state_.vote_for_;
       Log_info("[RAFT_VOTE] server {} (loc {}) vote={} candidate={} can_term={} cur_term={} prev_vote_for={} is_leader={} lst_idx={} lst_term={}",
-               site_id_, loc_id_, vote, can_id, can_term, currentTerm, prev_vote_for, state_.is_leader_, lst_log_idx, lst_log_term);
+               site_id_, loc_id_, vote, can_id, can_term, state_.current_term_, prev_vote_for, state_.is_leader_, lst_log_idx, lst_log_term);
 #endif
 
-      if (raft_server_signed_term_is_newer(can_term, currentTerm))
+      if (raft_server_signed_term_is_newer(can_term, state_.current_term_))
       {
-          const uint64_t prev_term = currentTerm;
+          const uint64_t prev_term = state_.current_term_;
           const bool was_leader = state_.is_leader_;
           // A RequestVote proves only that a candidate exists, not that Raft
           // has elected it. Do not keep advertising the previous epoch's
           // leader while processing the higher-term request.
           state_.current_leader_id_ = raft_server_leader_hint_after_transition(
               false, false, site_id_, can_id);
-          currentTerm = can_term ;
+          state_.current_term_ = can_term ;
           // @unsafe
           {
             state_.vote_for_ = INVALID_SITEID;  // Reset vote when advancing to new term
@@ -2303,8 +2323,8 @@ class RaftServer : public TxLogServer {
           state_.election_in_progress_ = false;
 
           // Publish the newly observed term, never the pre-transition value.
-          *reply_term = currentTerm;
-          LogTermChange("vote request carried newer term", prev_term, currentTerm, can_id);
+          *reply_term = state_.current_term_;
+          LogTermChange("vote request carried newer term", prev_term, state_.current_term_, can_id);
       }
 
       if(vote)
@@ -2313,7 +2333,7 @@ class RaftServer : public TxLogServer {
           state_.vote_for_ = can_id ;
 
 #ifdef RAFT_LEADER_ELECTION_DEBUG
-          Log_info("[RAFT_VOTE] server {} recorded vote_for={} at term={}", site_id_, state_.vote_for_, currentTerm);
+          Log_info("[RAFT_VOTE] server {} recorded vote_for={} at term={}", site_id_, state_.vote_for_, state_.current_term_);
 #endif
           // Reset timeout
           // doVote runs only from OnRequestVote, which holds mtx_.
@@ -2343,11 +2363,11 @@ class RaftServer : public TxLogServer {
   std::deque<QueuedApplyEntry> apply_queue_;
 
   // Release-published after app_next_ returns. New synchronous client waits
-  // use this mirror instead of racing on the legacy executeIndex field.
+  // use this mirror instead of racing on the legacy state_.execute_index_ field.
   rusty::sync::atomic::AtomicU64 appliedIndexForWait_{0};
 
   // @unsafe - Caller owns state_machine_apply_mtx_; locks mtx_ before
-  // publishing the legacy executeIndex field and its atomic mirror.
+  // publishing the legacy state_.execute_index_ field and its atomic mirror.
   void PublishAppliedIndex(uint64_t index);
   // @unsafe - CALLER MUST HOLD mtx_
   void PublishAppliedIndexLocked(uint64_t index);
@@ -2432,8 +2452,8 @@ class RaftServer : public TxLogServer {
     static bool& election_in_progress(RaftServer& s) { return s.state_.election_in_progress_; }
 
     // --- snapshot boundary ---
-    static slotid_t& snapidx(RaftServer& s) { return s.snapidx_; }
-    static ballot_t& snapterm(RaftServer& s) { return s.snapterm_; }
+    static slotid_t& snapidx(RaftServer& s) { return s.state_.snapidx_; }
+    static ballot_t& snapterm(RaftServer& s) { return s.state_.snapterm_; }
     static std::shared_ptr<janus::raft::SnapshotManager>& snapshot_manager(RaftServer& s) { return s.snapshot_manager_; }
 
     // --- private methods the harness drives directly ---
@@ -2447,10 +2467,6 @@ class RaftServer : public TxLogServer {
 
   /* NOTE: I think I should move these to the RaftData class */
   /* TODO: talk to Shuai about it */
-  uint64_t lastLogIndex = 0;
-  uint64_t currentTerm = 0;
-  uint64_t commitIndex = 0;
-  uint64_t executeIndex = 0;
   map<slotid_t, shared_ptr<RaftData>> raft_logs_{};
 
   // @unsafe - Binds the cross-thread wake gate to HeartbeatLoop's PollThread.
@@ -2523,7 +2539,7 @@ class RaftServer : public TxLogServer {
     // @unsafe
     {
       *is_leader = IsLeaderLocked();
-      *term = currentTerm;
+      *term = state_.current_term_;
     }
   }
 
@@ -2555,19 +2571,19 @@ class RaftServer : public TxLogServer {
     // replaces was a no-op on the recursive mutex. Tranche 4b.
     // @unsafe
     {
-      *index = lastLogIndex ;
+      *index = state_.last_log_index_ ;
     }
-    lastLogIndex += 1;
-    auto instance = GetRaftInstance(lastLogIndex);
+    state_.last_log_index_ += 1;
+    auto instance = GetRaftInstance(state_.last_log_index_);
     instance->log_ = cmd;
-		instance->prevTerm = currentTerm;
-    instance->term = currentTerm;
+		instance->prevTerm = state_.current_term_;
+    instance->term = state_.current_term_;
 		instance->slot_id = slot_id;
 		instance->ballot = ballot;
 
     // @unsafe
     {
-      *term = currentTerm ;
+      *term = state_.current_term_ ;
     }
     return RaftStartResult::APPENDED;
   }
@@ -2721,7 +2737,7 @@ class RaftServer : public TxLogServer {
    * Receives a full snapshot from the leader when this follower is too far
    * behind to catch up via AppendEntries. Replaces the follower's state machine
    * state, updates snapshot metadata, discards old log entries, and advances
-   * commitIndex/executeIndex.
+   * state_.commit_index_/state_.execute_index_.
    *
    * @param term - Leader's current term
    * @param leader_id - Leader's site ID

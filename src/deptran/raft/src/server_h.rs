@@ -688,6 +688,16 @@ pub struct RaftConsensusState {
     heartbeat_round_: u64,
     read_quorum_confirmed_term_: u64,
     read_quorum_confirmed_round_: u64,
+    // Log store: the term the server is in, and the three indices that bound
+    // the log. NOTE the historical naming -- these four are the only members
+    // in the class without a trailing underscore.
+    current_term_: u64,
+    last_log_index_: u64,
+    commit_index_: u64,
+    execute_index_: u64,
+    // Snapshot boundary.
+    snapidx_: u64,
+    snapterm_: i64,
 }
 
 #[allow(clippy::new_without_default)]
@@ -712,6 +722,12 @@ impl RaftConsensusState {
             heartbeat_round_: 0,
             read_quorum_confirmed_term_: 0,
             read_quorum_confirmed_round_: 0,
+            current_term_: 0,
+            last_log_index_: 0,
+            commit_index_: 0,
+            execute_index_: 0,
+            snapidx_: 0,
+            snapterm_: 0,
         }
     }
 }

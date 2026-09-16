@@ -956,7 +956,7 @@ int get_outstanding_logs(uint32_t par_id) {
     return -1;
   }
   return static_cast<int>(worker->n_tot.load()) -
-         static_cast<int>(raft_server->commitIndex);
+         static_cast<int>(raft_server->state_.commit_index_);
 }
 
 // shutdown_paxos drains workers, tears down configs, and mirrors the Paxos helper API.
