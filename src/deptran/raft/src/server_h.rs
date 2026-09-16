@@ -59,30 +59,6 @@ pub const fn raft_server_campaign_can_start(is_leader: bool,
     !is_leader && !election_in_progress
 }
 
-pub const fn raft_server_random_range_needs_swap(minimum: u64,
-                                                  maximum: u64) -> bool {
-    maximum < minimum
-}
-
-pub const fn raft_server_random_range_is_single_point(minimum: u64,
-                                                       maximum: u64) -> bool {
-    maximum == minimum
-}
-
-pub const fn raft_server_random_range_cap(range: u64, maximum: u64) -> u64 {
-    if range > maximum {
-        maximum
-    } else {
-        range
-    }
-}
-
-pub const fn raft_server_election_in_startup_grace_period(now: u64,
-                                                           started_at: u64,
-                                                           grace_period: u64) -> bool {
-    now.wrapping_sub(started_at) < grace_period
-}
-
 pub const fn raft_server_vote_term_is_stale(candidate_term: u64,
                                              current_term: u64) -> bool {
     candidate_term < current_term
@@ -219,12 +195,6 @@ pub const fn raft_server_append_prefix_is_compacted_miss(previous_index: u64,
         previous_index != snapshot_index
 }
 
-pub const fn raft_server_append_index_is_acceptable(previous_index: u64,
-                                                     last_log_index: u64,
-                                                     compacted_prefix_miss: bool) -> bool {
-    previous_index <= last_log_index && !compacted_prefix_miss
-}
-
 pub const fn raft_server_append_previous_term_is_acceptable(previous_index: u64,
                                                              local_previous_term: u64,
                                                              leader_previous_term: u64) -> bool {
@@ -350,24 +320,11 @@ pub const fn raft_server_log_entry_is_current_term(entry_term: i64,
     entry_term as u64 == current_term
 }
 
-pub const fn raft_server_snapshot_index_is_available(execute_index: u64) -> bool {
-    execute_index != 0
-}
-
 pub const fn raft_server_snapshot_is_due(snapshot_index: u64,
                                           execute_index: u64,
                                           threshold: u64) -> bool {
     snapshot_index < execute_index &&
         (execute_index - snapshot_index) > threshold
-}
-
-pub const fn raft_server_compaction_index_clamp(candidate_index: u64,
-                                                 commit_index: u64) -> u64 {
-    if candidate_index > commit_index {
-        commit_index
-    } else {
-        candidate_index
-    }
 }
 
 pub const fn raft_server_compaction_safe_index(candidate_index: u64,
@@ -473,16 +430,6 @@ pub const fn raft_server_retention_cutoff(execute_index: u64,
     } else {
         0
     }
-}
-
-pub const fn raft_server_leadership_transition_to_leader(new_is_leader: bool,
-                                                          previous_is_leader: bool) -> bool {
-    new_is_leader && !previous_is_leader
-}
-
-pub const fn raft_server_leadership_transition_to_follower(new_is_leader: bool,
-                                                            previous_is_leader: bool) -> bool {
-    !new_is_leader && previous_is_leader
 }
 
 pub const fn raft_server_observed_higher_term(observed_term: u64,

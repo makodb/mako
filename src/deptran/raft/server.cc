@@ -14,7 +14,6 @@
 #include <rusty/sync/atomic.hpp>
 
 #include "server.h"
-// #include "paxos_worker.h"
 #include "frame.h"
 #include "../legacy_raft_log_payload.h"
 #include "../tpc_command.h"
@@ -1094,13 +1093,6 @@ bool RaftServer::ClearStateMachineSnapshotCallbacks(
   return true;
 }
 
-// @unsafe - Serializes state-machine bytes with their applied index. The lock
-// order matches replay and InstallSnapshot: apply gate before Raft state.
-void RaftServer::CreateSnapshot() {
-  std::lock_guard<std::mutex> apply_lock(state_machine_apply_mtx_);
-  std::lock_guard<std::recursive_mutex> lock(mtx_);
-  (void)CreateSnapshotLocked();
-}
 
 // @unsafe - Slow path for the atomic apply-thread hint. Rechecking the
 // canonical fields under both locks makes stale hints harmless.
@@ -1678,7 +1670,10 @@ bool RaftServer::SetupInternal() {
   StartApplyThread();
   rpc_ready_.store(true, rusty::sync::atomic::Ordering::Release);
 
-#ifdef RAFT_TEST_CORO
+// Unconditional. This was written twice, once under #ifdef
+// RAFT_TEST_CORO and once under #ifndef, with CHARACTER-IDENTICAL
+// bodies -- so it always ran, and editing one arm without the other
+// was a standing trap.
   if (heartbeat_) {
 		Log_debug("starting heartbeat loop at site {}", site_id_);
     heartbeat_loop_running_.store(
@@ -1695,26 +1690,6 @@ bool RaftServer::SetupInternal() {
       });
     }
 	}
-#endif
-
-#ifndef RAFT_TEST_CORO
-  if (heartbeat_) {
-		Log_debug("starting heartbeat loop at site {}", site_id_);
-    heartbeat_loop_running_.store(
-        true, rusty::sync::atomic::Ordering::Release);
-    Fiber::create_run([this](){
-      this->HeartbeatLoop();
-    });
-    // Start election timeout loop
-    if (failover_) {
-      election_loop_running_.store(
-          true, rusty::sync::atomic::Ordering::Release);
-      Fiber::create_run([this](){
-        StartElectionTimer();
-      });
-    }
-	}
-#endif
 
   // Election timer will be started in Start() method when first command is submitted
   return true;
@@ -1915,76 +1890,6 @@ void RaftServer::setIsLeader(bool isLeader) {
   }
 }
 
-// @unsafe - Applies committed logs (callbacks wrapped in @unsafe blocks)
-void RaftServer::applyLogs() {
-  // Log commit state for debugging
-  Log_info("[APPLY-LOGS] site={} commitIndex={} executeIndex={}",
-           site_id_, commitIndex, executeIndex);
-
-  // Only mark pending if there's actually new work to apply
-  if (executeIndex < commitIndex) {
-    apply_pending_.store(true, std::memory_order_release);
-  }
-
-  // If already applying, return - the current apply loop will pick up our work
-  if (in_applying_logs_) {
-    return;
-  }
-
-  in_applying_logs_ = true;
-
-  // Keep applying logs until no more pending work arrives
-  // This ensures we never drop work even under heavy load
-  do {
-    // Clear the pending flag before processing
-    apply_pending_.store(false, std::memory_order_release);
-
-    // Apply all committed logs
-    for (slotid_t id = executeIndex + 1; id <= commitIndex; id++) {
-      auto next_instance = GetRaftInstance(id);
-      if (next_instance && next_instance->log_.has_value()) {
-        // @unsafe
-        {
-        if (!raft_server_command_is_internal_noop(
-                next_instance->log_.kind_, TpcNoopCommand::static_kind())) {
-          Log_info("[APPLY-LOGS] site={} applying index={}", site_id_, id);
-          app_next_(id, next_instance->log_);  // Pass both id and log (signature requires 2 args)
-        }
-        PublishAppliedIndex(id);
-        }
-      } else {
-        Log_info("[APPLY-LOGS] site={} SKIP index={} (no instance or log)", site_id_, id);
-        break;
-      }
-    }
-
-    // Check if new work arrived while we were applying
-    // If so, loop again to process it
-  } while (apply_pending_.load(std::memory_order_acquire));
-
-  in_applying_logs_ = false;
-
-  // Legacy apply path uses the same race-free trigger mirrors. The current
-  // queue-based runtime does not call applyLogs(), but keeping this path
-  // aligned prevents a future caller from reintroducing unlocked config reads.
-  if (snapshot_manager_configured_.load(
-          rusty::sync::atomic::Ordering::Acquire) &&
-      raft_server_snapshot_is_due(
-          snapshot_trigger_index_.load(
-              rusty::sync::atomic::Ordering::Acquire),
-          GetAppliedIndex(),
-          snapshot_trigger_threshold_.load(
-              rusty::sync::atomic::Ordering::Acquire))) {
-    MaybeCreateSnapshot();
-  }
-
-  // Route legacy cleanup through the same snapshot-aware, ordered compactor.
-  const slotid_t cutoff = raft_server_retention_cutoff(
-      executeIndex, log_retention_window_);
-  if (cutoff > 0) {
-    CompactLog(cutoff - 1);
-  }
-}
 
 // @unsafe - external calls marked @external [safe], core replication loop
 // TODO: Revisit borrow checker errors in this function.
@@ -4069,11 +3974,6 @@ ballot_t RaftServer::ElectionLastLogTermLocked() const {
   return last_log->second->term;
 }
 
-// @unsafe - external calls marked @external [safe], mutex/pointer ops in @unsafe blocks
-bool RaftServer::RequestVote() {
-  return RequestVoteImpl(/*timer_guarded=*/false,
-                         /*expected_generation=*/0);
-}
 
 bool RaftServer::RequestVoteFromElectionTimer(
     uint64_t expected_generation) {
@@ -4092,7 +3992,6 @@ bool RaftServer::RequestVoteImpl(bool timer_guarded,
     return false;
   }
 
-  // for(int i = 0; i < 1000; i++) Log_info("not calling the wrong method");
 
   const parid_t par_id = partition_id_;
   const locid_t loc_id = loc_id_;
@@ -4265,7 +4164,6 @@ bool RaftServer::RequestVoteImpl(bool timer_guarded,
 #endif
 
     if(IsLeader()) {
-	  	//for(int i = 0; i < 100; i++) Log_info("wait wait wait");
       Log_debug("vote accepted {} curterm {}", loc_id, currentTerm);
   		req_voting_ = false ;
 			return true;
@@ -4547,24 +4445,6 @@ RaftStartResult RaftServer::StartImpl(const janus::Command& cmd,
   {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
 
-  // #ifndef RAFT_TEST_CORO
-  // if (!heartbeat_setup_) {
-  //   heartbeat_setup_ = true;
-  //   if (heartbeat_) {
-  //     Log_debug("starting heartbeat loop at site {}", site_id_);
-  //     Fiber::create_run([this](){
-  //       this->HeartbeatLoop(); 
-  //     });
-  //     // Start election timeout loop
-  //     Log_info("!!!!!!! if (failover_)");
-  //     if (failover_) {
-  //       Fiber::create_run([this](){
-  //         StartElectionTimer(); 
-  //       });
-  //     }
-  //   }
-  // }
-  // #endif
   if (!IsLeader()) {
     // @unsafe
     {
@@ -4751,13 +4631,6 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
       req_voting_ = false;
       election_in_progress_ = false;
 
-      // // Update follower's view to track the current leader
-      // if (!IsLeader() && leaderSiteId != INVALID_SITEID) {
-      //     int n_replicas = Config::GetConfig()->GetPartitionSize(partition_id_);
-      //     Log_info("[RAFT_VIEW_FOLLOWER] Server {} observed leader change {}->{} term={} prev_term={}",
-      //              site_id_, prev_leader, leaderSiteId, leaderCurrentTerm, currentTerm);
-      // }
-
       // ==================================================================
       // SPECULATIVE REPLICATION: Append to memory and respond immediately.
       // ==================================================================
@@ -4901,17 +4774,6 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
     lock.unlock();
 }
 
-// @unsafe - Removes command from log (external calls wrapped in @unsafe blocks)
-void RaftServer::removeCmd(slotid_t slot) {
-  auto it = raft_logs_.find(slot);
-  if (it == raft_logs_.end()) {
-    return;
-  }
-
-  // Committed log replay and callback execution may overlap with log cleanup.
-  // Only evict the log entry here; transaction destruction is handled elsewhere.
-  raft_logs_.erase(it);
-}
 
 // @unsafe - Stores callback for later invocation
 void RaftServer::RegisterLeaderChangeCallback(std::function<void(bool)> cb) {
@@ -5276,23 +5138,7 @@ void RaftServer::stepDown() {
 // MEMBERSHIP CONFIGURATION
 // ============================================================================
 
-// @safe - Read-only computation on member field
-size_t RaftServer::GetQuorumSize() const {
-  size_t config_size = 0;
-  // @unsafe
-  { config_size = current_config_.size(); }
-  return config_size / 2 + 1;
-}
 
-// @safe - Read-only accessor
-// @lifetime: (&'a) -> &'a
-const std::set<siteid_t>& RaftServer::GetCurrentConfig() const {
-  return current_config_;
-}
 
-std::set<siteid_t> RaftServer::GetCurrentConfigSnapshot() {
-  std::lock_guard<std::recursive_mutex> lock(mtx_);
-  return current_config_;
-}
 
 } // namespace janus

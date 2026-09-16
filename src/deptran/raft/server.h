@@ -195,30 +195,6 @@ pub const fn raft_server_campaign_can_start(is_leader: bool,
     !is_leader && !election_in_progress
 }
 
-pub const fn raft_server_random_range_needs_swap(minimum: u64,
-                                                  maximum: u64) -> bool {
-    maximum < minimum
-}
-
-pub const fn raft_server_random_range_is_single_point(minimum: u64,
-                                                       maximum: u64) -> bool {
-    maximum == minimum
-}
-
-pub const fn raft_server_random_range_cap(range: u64, maximum: u64) -> u64 {
-    if range > maximum {
-        maximum
-    } else {
-        range
-    }
-}
-
-pub const fn raft_server_election_in_startup_grace_period(now: u64,
-                                                           started_at: u64,
-                                                           grace_period: u64) -> bool {
-    now.wrapping_sub(started_at) < grace_period
-}
-
 pub const fn raft_server_vote_term_is_stale(candidate_term: u64,
                                              current_term: u64) -> bool {
     candidate_term < current_term
@@ -355,12 +331,6 @@ pub const fn raft_server_append_prefix_is_compacted_miss(previous_index: u64,
         previous_index != snapshot_index
 }
 
-pub const fn raft_server_append_index_is_acceptable(previous_index: u64,
-                                                     last_log_index: u64,
-                                                     compacted_prefix_miss: bool) -> bool {
-    previous_index <= last_log_index && !compacted_prefix_miss
-}
-
 pub const fn raft_server_append_previous_term_is_acceptable(previous_index: u64,
                                                              local_previous_term: u64,
                                                              leader_previous_term: u64) -> bool {
@@ -486,24 +456,11 @@ pub const fn raft_server_log_entry_is_current_term(entry_term: i64,
     entry_term as u64 == current_term
 }
 
-pub const fn raft_server_snapshot_index_is_available(execute_index: u64) -> bool {
-    execute_index != 0
-}
-
 pub const fn raft_server_snapshot_is_due(snapshot_index: u64,
                                           execute_index: u64,
                                           threshold: u64) -> bool {
     snapshot_index < execute_index &&
         (execute_index - snapshot_index) > threshold
-}
-
-pub const fn raft_server_compaction_index_clamp(candidate_index: u64,
-                                                 commit_index: u64) -> u64 {
-    if candidate_index > commit_index {
-        commit_index
-    } else {
-        candidate_index
-    }
 }
 
 pub const fn raft_server_compaction_safe_index(candidate_index: u64,
@@ -611,16 +568,6 @@ pub const fn raft_server_retention_cutoff(execute_index: u64,
     }
 }
 
-pub const fn raft_server_leadership_transition_to_leader(new_is_leader: bool,
-                                                          previous_is_leader: bool) -> bool {
-    new_is_leader && !previous_is_leader
-}
-
-pub const fn raft_server_leadership_transition_to_follower(new_is_leader: bool,
-                                                            previous_is_leader: bool) -> bool {
-    !new_is_leader && previous_is_leader
-}
-
 pub const fn raft_server_observed_higher_term(observed_term: u64,
                                                current_term: u64) -> bool {
     observed_term > current_term
@@ -658,7 +605,7 @@ pub const fn raft_server_leader_rpc_sender_is_authoritative(
            (!has_known_leader || known_leader_matches_sender))))
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.scalar_decisions version=1 rust_sha256=8e54f19b32eed746dae72aa4e79d36fcd983f175b6e61c4a78e2e940b04da648*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.scalar_decisions version=1 rust_sha256=b0882f35b3a23aff7b3f7fff82ee98b0db0f4c7612c3bca4629dc519e46acee7*/
 constexpr uint16_t RAFT_SERVER_INVALID_SITE_ID = static_cast<uint16_t>(65535);
 constexpr bool raft_server_log_index_at_or_below(uint64_t index, uint64_t boundary);
 constexpr bool raft_server_log_index_above(uint64_t index, uint64_t boundary);
@@ -666,10 +613,6 @@ constexpr bool raft_server_site_is_preferred_leader(uint16_t site_id, uint16_t p
 constexpr bool raft_server_election_timeout_has_fired(bool is_leader, uint64_t elapsed, uint64_t timeout);
 constexpr bool raft_server_timer_campaign_is_current(bool is_leader, uint64_t observed_generation, uint64_t current_generation, uint64_t elapsed, uint64_t timeout);
 constexpr bool raft_server_campaign_can_start(bool is_leader, bool election_in_progress);
-constexpr bool raft_server_random_range_needs_swap(uint64_t minimum, uint64_t maximum);
-constexpr bool raft_server_random_range_is_single_point(uint64_t minimum, uint64_t maximum);
-constexpr uint64_t raft_server_random_range_cap(uint64_t range, uint64_t maximum);
-constexpr bool raft_server_election_in_startup_grace_period(uint64_t now, uint64_t started_at, uint64_t grace_period);
 constexpr bool raft_server_vote_term_is_stale(uint64_t candidate_term, uint64_t current_term);
 constexpr bool raft_server_vote_is_already_granted_to_other(uint64_t candidate_term, uint64_t current_term, uint16_t voted_for, uint16_t candidate_id);
 constexpr bool raft_server_vote_is_idempotent(uint64_t candidate_term, uint64_t current_term, uint16_t voted_for, uint16_t candidate_id);
@@ -689,7 +632,6 @@ constexpr bool raft_server_apply_epoch_is_current(uint64_t entry_epoch, uint64_t
 constexpr bool raft_server_log_index_has_successor(uint64_t index);
 constexpr bool raft_server_append_term_is_acceptable(uint64_t leader_term, uint64_t follower_term);
 constexpr bool raft_server_append_prefix_is_compacted_miss(uint64_t previous_index, uint64_t minimum_active_slot, uint64_t snapshot_index);
-constexpr bool raft_server_append_index_is_acceptable(uint64_t previous_index, uint64_t last_log_index, bool compacted_prefix_miss);
 constexpr bool raft_server_append_previous_term_is_acceptable(uint64_t previous_index, uint64_t local_previous_term, uint64_t leader_previous_term);
 constexpr bool raft_server_append_is_acceptable(bool term_ok, bool index_ok, bool previous_term_ok);
 constexpr bool raft_server_append_command_is_batch(int32_t command_kind, int32_t batch_kind);
@@ -704,9 +646,7 @@ constexpr uint64_t raft_server_commit_index_candidate(uint64_t selected_match, s
 constexpr bool raft_server_read_index_round_can_advance(uint64_t round);
 constexpr bool raft_server_read_index_reply_confirms_authority(bool response_available, bool is_leader, uint64_t sent_term, uint64_t response_term, uint64_t current_term, uint64_t sent_round, uint64_t active_round);
 constexpr bool raft_server_log_entry_is_current_term(int64_t entry_term, uint64_t current_term);
-constexpr bool raft_server_snapshot_index_is_available(uint64_t execute_index);
 constexpr bool raft_server_snapshot_is_due(uint64_t snapshot_index, uint64_t execute_index, uint64_t threshold);
-constexpr uint64_t raft_server_compaction_index_clamp(uint64_t candidate_index, uint64_t commit_index);
 constexpr uint64_t raft_server_compaction_safe_index(uint64_t candidate_index, uint64_t commit_index, uint64_t snapshot_index);
 constexpr uint64_t raft_server_snapshot_progress_clamp(uint64_t candidate_index, uint64_t commit_index, uint64_t upper_bound);
 constexpr uint64_t raft_server_follower_next_index(uint64_t last_log_index);
@@ -720,8 +660,6 @@ constexpr uint64_t raft_server_append_reject_floor();
 constexpr bool raft_server_command_is_internal_noop(int32_t command_kind, int32_t noop_kind);
 constexpr uint64_t raft_server_retention_window_normalize(uint64_t window);
 constexpr uint64_t raft_server_retention_cutoff(uint64_t execute_index, uint64_t retention_window);
-constexpr bool raft_server_leadership_transition_to_leader(bool new_is_leader, bool previous_is_leader);
-constexpr bool raft_server_leadership_transition_to_follower(bool new_is_leader, bool previous_is_leader);
 constexpr bool raft_server_observed_higher_term(uint64_t observed_term, uint64_t current_term);
 constexpr bool raft_server_signed_term_is_newer(int64_t observed_term, uint64_t current_term);
 constexpr uint16_t raft_server_leader_hint_after_transition(bool is_leader, bool has_known_leader, uint16_t self_id, uint16_t known_leader_id);
@@ -743,22 +681,6 @@ constexpr bool raft_server_timer_campaign_is_current(bool is_leader, uint64_t ob
 }
 constexpr bool raft_server_campaign_can_start(bool is_leader, bool election_in_progress) {
     return !is_leader && !election_in_progress;
-}
-constexpr bool raft_server_random_range_needs_swap(uint64_t minimum, uint64_t maximum) {
-    return rusty::detail::deref_if_pointer_like(maximum) < rusty::detail::deref_if_pointer_like(minimum);
-}
-constexpr bool raft_server_random_range_is_single_point(uint64_t minimum, uint64_t maximum) {
-    return rusty::detail::deref_if_pointer_like(maximum) == rusty::detail::deref_if_pointer_like(minimum);
-}
-constexpr uint64_t raft_server_random_range_cap(uint64_t range, uint64_t maximum) {
-    if (rusty::detail::deref_if_pointer_like(range) > rusty::detail::deref_if_pointer_like(maximum)) {
-        return std::move(maximum);
-    } else {
-        return std::move(range);
-    }
-}
-constexpr bool raft_server_election_in_startup_grace_period(uint64_t now, uint64_t started_at, uint64_t grace_period) {
-    return rusty::wrapping_sub(now, static_cast<std::remove_cvref_t<decltype(now)>>(std::move(started_at))) < rusty::detail::deref_if_pointer_like(grace_period);
 }
 constexpr bool raft_server_vote_term_is_stale(uint64_t candidate_term, uint64_t current_term) {
     return rusty::detail::deref_if_pointer_like(candidate_term) < rusty::detail::deref_if_pointer_like(current_term);
@@ -823,9 +745,6 @@ constexpr bool raft_server_append_term_is_acceptable(uint64_t leader_term, uint6
 constexpr bool raft_server_append_prefix_is_compacted_miss(uint64_t previous_index, uint64_t minimum_active_slot, uint64_t snapshot_index) {
     return ((rusty::detail::deref_if_pointer_like(previous_index) != static_cast<uint64_t>(0)) && (rusty::detail::deref_if_pointer_like(previous_index) < rusty::detail::deref_if_pointer_like(minimum_active_slot))) && (rusty::detail::deref_if_pointer_like(previous_index) != rusty::detail::deref_if_pointer_like(snapshot_index));
 }
-constexpr bool raft_server_append_index_is_acceptable(uint64_t previous_index, uint64_t last_log_index, bool compacted_prefix_miss) {
-    return (rusty::detail::deref_if_pointer_like(previous_index) <= rusty::detail::deref_if_pointer_like(last_log_index)) && !compacted_prefix_miss;
-}
 constexpr bool raft_server_append_previous_term_is_acceptable(uint64_t previous_index, uint64_t local_previous_term, uint64_t leader_previous_term) {
     return (rusty::detail::deref_if_pointer_like(previous_index) == static_cast<uint64_t>(0)) || (rusty::detail::deref_if_pointer_like(local_previous_term) == rusty::detail::deref_if_pointer_like(leader_previous_term));
 }
@@ -889,18 +808,8 @@ constexpr bool raft_server_read_index_reply_confirms_authority(bool response_ava
 constexpr bool raft_server_log_entry_is_current_term(int64_t entry_term, uint64_t current_term) {
     return (static_cast<uint64_t>(entry_term)) == rusty::detail::deref_if_pointer_like(current_term);
 }
-constexpr bool raft_server_snapshot_index_is_available(uint64_t execute_index) {
-    return rusty::detail::deref_if_pointer_like(execute_index) != static_cast<uint64_t>(0);
-}
 constexpr bool raft_server_snapshot_is_due(uint64_t snapshot_index, uint64_t execute_index, uint64_t threshold) {
     return (rusty::detail::deref_if_pointer_like(snapshot_index) < rusty::detail::deref_if_pointer_like(execute_index)) && (((rusty::detail::deref_if_pointer_like(execute_index) - rusty::detail::deref_if_pointer_like(snapshot_index))) > rusty::detail::deref_if_pointer_like(threshold));
-}
-constexpr uint64_t raft_server_compaction_index_clamp(uint64_t candidate_index, uint64_t commit_index) {
-    if (rusty::detail::deref_if_pointer_like(candidate_index) > rusty::detail::deref_if_pointer_like(commit_index)) {
-        return std::move(commit_index);
-    } else {
-        return std::move(candidate_index);
-    }
 }
 constexpr uint64_t raft_server_compaction_safe_index(uint64_t candidate_index, uint64_t commit_index, uint64_t snapshot_index) {
     auto committed = (rusty::detail::deref_if_pointer_like(candidate_index) < rusty::detail::deref_if_pointer_like(commit_index) ? candidate_index : commit_index);
@@ -964,12 +873,6 @@ constexpr uint64_t raft_server_retention_cutoff(uint64_t execute_index, uint64_t
     } else {
         return static_cast<uint64_t>(0);
     }
-}
-constexpr bool raft_server_leadership_transition_to_leader(bool new_is_leader, bool previous_is_leader) {
-    return rusty::detail::deref_if_pointer_like(new_is_leader) && !previous_is_leader;
-}
-constexpr bool raft_server_leadership_transition_to_follower(bool new_is_leader, bool previous_is_leader) {
-    return !new_is_leader && rusty::detail::deref_if_pointer_like(previous_is_leader);
 }
 constexpr bool raft_server_observed_higher_term(uint64_t observed_term, uint64_t current_term) {
     return rusty::detail::deref_if_pointer_like(observed_term) > rusty::detail::deref_if_pointer_like(current_term);
@@ -2110,10 +2013,6 @@ class RaftServer : public TxLogServer {
       uint64_t last_included_index,
       uint64_t last_included_term);
 
-  // @unsafe - External snapshot entry point. Acquires the state-machine apply
-  // gate before mtx_ so the serialized bytes and executeIndex describe the
-  // same applied prefix.
-  void CreateSnapshot();
 
   // @unsafe - Requires state_machine_apply_mtx_ and mtx_ in that order.
   // Split out so the apply trigger and RaftLabTest's LabAccess-driven manager
@@ -2141,8 +2040,6 @@ class RaftServer : public TxLogServer {
   uint64_t heartbeat_round_ = 0;
   uint64_t read_quorum_confirmed_term_ = 0;
   uint64_t read_quorum_confirmed_round_ = 0;
-  // @unsafe - uses raw pointer parameter for thread signaling
-  void timer_thread(bool *vote) ;
   // Election timing is one mutex-protected campaign. A reset samples exactly
   // one timeout and advances the generation; the timer must never redraw the
   // random timeout on each poll or start a campaign from an expired snapshot
@@ -2165,7 +2062,6 @@ class RaftServer : public TxLogServer {
   bool startup_finished_ = false;
   bool startup_succeeded_ = false;
   siteid_t vote_for_ = INVALID_SITEID ;
-  bool init_ = false ;
   bool is_leader_ = false ;
   siteid_t current_leader_id_ = INVALID_SITEID ;  // Last known leader (self if leader, sender of AppendEntries otherwise)
   slotid_t snapidx_ = 0 ;
@@ -2175,20 +2071,18 @@ class RaftServer : public TxLogServer {
   bool req_voting_ = false ;
   bool in_applying_logs_ = false ;
   std::atomic<bool> apply_pending_{false};  // Tracks if new work arrived while applying logs
-#ifdef RAFT_TEST_CORO
-  // UNWIRED. This is RaftServer's own member, not Config's: Config parses a
-  // real failover flag from YAML (`method: none` -> false, config.cc:544) and
-  // exposes get_failover(), but nothing here reads it and nothing assigns
-  // this one, so it is a compile-time true and its guards are no-op branches.
-  // Left in place deliberately -- deleting it removes the hook for running
-  // Raft without elections, and wiring it to Config would CHANGE BEHAVIOUR: a
+  // UNWIRED, and unconditional -- the two #ifdef RAFT_TEST_CORO arms declared
+  // it identically, so the conditional said nothing.
+  //
+  // This is RaftServer's own member, not Config's: Config parses a real
+  // failover flag from YAML (`method: none` -> false, config.cc:544) and
+  // exposes get_failover(), but nothing here reads it and nothing assigns this
+  // one, so it is a compile-time true and its guards are no-op branches. Left
+  // in place deliberately -- deleting it removes the hook for running Raft
+  // without elections, and wiring it to Config would CHANGE BEHAVIOUR: a
   // `method: none` deployment would stop starting the election timer, where
   // today it starts regardless. That is a product decision, not a cleanup.
   bool failover_{true} ;
-#else
-  bool failover_{true} ;
-#endif
-  const char *filename = "/db/data.txt";
 
   rusty::sync::atomic::AtomicBool looping_{false};
   rusty::sync::atomic::AtomicBool heartbeat_loop_running_{false};
@@ -2214,7 +2108,6 @@ class RaftServer : public TxLogServer {
   // @unsafe - Caller holds mtx_; performs a non-mutating absolute-slot lookup.
   ballot_t ElectionLastLogTermLocked() const;
 
-  enum { STOPPED, RUNNING } status_;
 	std::function<void(bool)> leader_change_cb_{};
 
   // ============================================================================
@@ -2259,8 +2152,6 @@ class RaftServer : public TxLogServer {
 
   // ============================================================================
 
-  // @safe - external calls marked @external, mutex/pointer ops in @unsafe blocks
-	bool RequestVote() ;
   // Timer-only entry retains the reset generation observed at expiry. The
   // first RequestVote state lock revalidates it immediately before term++.
   bool RequestVoteFromElectionTimer(uint64_t expected_generation);
@@ -2334,11 +2225,8 @@ class RaftServer : public TxLogServer {
           resetTimer("granted vote");
       }
 
-      n_vote_++ ;
   }
 
-  // @safe - shared_ptr/callback operations wrapped in @unsafe blocks in implementation
-  void applyLogs();
 
   std::thread apply_thread_;
   std::atomic<bool> apply_thread_running_{false};
@@ -2395,13 +2283,6 @@ class RaftServer : public TxLogServer {
     }
   }
 
-  // @safe - random number generation (external call wrapped in @unsafe block)
-  double randDuration()
-  {
-    // election timeout between 0.4 and 0.7 seconds
-    // @unsafe { RandomGenerator is external }
-    return RandomGenerator::rand_double(0.4, 0.7) ;
-  }
 
   /**
    * Get dynamic election timeout based on preferred replica role and grace period
@@ -2455,10 +2336,6 @@ class RaftServer : public TxLogServer {
 #endif
 
   slotid_t min_active_slot_ = 1; // anything before (lt) this slot is freed
-  slotid_t max_executed_slot_ = 0;
-  slotid_t max_committed_slot_ = 0;
-  map<slotid_t, shared_ptr<RaftData>> logs_{};
-  int n_vote_ = 0;
   int n_prepare_ = 0;
   int n_accept_ = 0;
   int n_commit_ = 0;
@@ -2470,7 +2347,6 @@ class RaftServer : public TxLogServer {
   uint64_t commitIndex = 0;
   uint64_t executeIndex = 0;
   map<slotid_t, shared_ptr<RaftData>> raft_logs_{};
-//  vector<shared_ptr<RaftData>> raft_logs_{};
 
   // @unsafe - Binds the cross-thread wake gate to HeartbeatLoop's PollThread.
   // Must run before HeartbeatLoop starts (Setup does so).
@@ -2582,24 +2458,6 @@ class RaftServer : public TxLogServer {
     return RaftStartResult::APPENDED;
   }
 
-  // @unsafe - map access and shared_ptr mutation
-  shared_ptr<RaftData> GetInstance(slotid_t id) {
-    verify(id >= min_active_slot_ || lastLogIndex == 0);
-    auto& sp_instance = logs_[id];
-    if(!sp_instance)
-      sp_instance = std::make_shared<RaftData>();
-    return sp_instance;
-  }
-
- /* shared_ptr<RaftData> GetRaftInstance(slotid_t id) {
-    if ( id <= raft_logs_.size() )
-    {
-        return raft_logs_[id-1] ;
-    }
-    auto sp_instance = std::make_shared<RaftData>();
-    raft_logs_.push_back(sp_instance) ;
-    return sp_instance;
-  }*/
 
   // @unsafe - map access and shared_ptr mutation
    shared_ptr<RaftData> GetRaftInstance(slotid_t id) {
@@ -2761,24 +2619,8 @@ class RaftServer : public TxLogServer {
   // MEMBERSHIP CONFIGURATION PUBLIC API
   // ============================================================================
 
-  /**
-   * Get the current quorum size based on current_config_.
-   * @return Majority size: current_config_.size() / 2 + 1
-   */
-  // @safe - Read-only computation on member field
-  size_t GetQuorumSize() const;
 
-  /**
-   * Get the current membership configuration.
-   * @return Reference to the active replica set
-   */
-  // @safe - Read-only accessor
-  // @lifetime: (&'a) -> &'a
-  const std::set<siteid_t>& GetCurrentConfig() const;
 
-  // Returns a membership copy under the Raft mutex for cross-component
-  // recovery quorum construction.
-  std::set<siteid_t> GetCurrentConfigSnapshot();
 
   // Gates inbound and outbound test traffic without moving transport state.
   void Disconnect(const bool disconnect = true);
@@ -2796,8 +2638,6 @@ class RaftServer : public TxLogServer {
   // @safe
   bool IsDisconnected();
 
-  // @safe - external calls marked @external
-  void removeCmd(slotid_t slot);
 
   // ============================================================================
   // PUBLIC API: Preferred Replica System - Election timeout bias
@@ -2836,14 +2676,6 @@ class RaftServer : public TxLogServer {
   // @unsafe - Locks mtx_ before reading role/leader identity.
   siteid_t GetLeaderHint();
 
-  /**
-   * Get the last log index.
-   * @return lastLogIndex value
-   */
-  // @safe - Read-only accessor
-  uint64_t GetLastLogIndex() const {
-    return lastLogIndex;
-  }
 
   /**
    * Step down as leader.
