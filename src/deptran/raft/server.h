@@ -33,7 +33,7 @@ import rusty;   // rusty::Vec is a vec_port C++20 module, not a header
 #include <type_traits>
 #include <utility>
 #include "snapshot_manager.hpp"
-#include <mutex>   // std::recursive_mutex mtx_, declared below
+#include <mutex>   // std::mutex mtx_, declared below
 
 // @external: {
 //   Log_info: [safe, (...) -> void],
@@ -1950,7 +1950,7 @@ class RaftServer : public TxLogServer {
   // mtx_ being Raft's own is the point: it is what lets Tranche 5 replace this
   // recursive mutex with a single Mutex<RaftState> without touching Paxos.
   TXLOG_SERVER_SITE_FIELDS()
-  std::recursive_mutex mtx_{};
+  std::mutex mtx_{};
   TXLOG_SERVER_SITE_METHODS()
 
  private:
@@ -2225,7 +2225,8 @@ class RaftServer : public TxLogServer {
           Log_info("[RAFT_VOTE] server {} recorded vote_for={} at term={}", site_id_, vote_for_, currentTerm);
 #endif
           // Reset timeout
-          resetTimer("granted vote");
+          // doVote runs only from OnRequestVote, which holds mtx_.
+          resetTimerLocked("granted vote");
       }
 
   }
@@ -2257,15 +2258,26 @@ class RaftServer : public TxLogServer {
   // @unsafe - Caller owns state_machine_apply_mtx_; locks mtx_ before
   // publishing the legacy executeIndex field and its atomic mirror.
   void PublishAppliedIndex(uint64_t index);
+  // @unsafe - CALLER MUST HOLD mtx_
+  void PublishAppliedIndexLocked(uint64_t index);
 
   void StartApplyThread();
   void EnqueueCommittedEntries(slotid_t old_commit, slotid_t new_commit);
 
   // @unsafe - const char* parameter type requires unsafe context
+  // Acquiring entry point. See resetTimerLocked for the body.
   void resetTimer(const char* reason = "unspecified") {
     // @unsafe
     {
-      std::lock_guard<std::recursive_mutex> lock(mtx_);
+      std::lock_guard<std::mutex> lock(mtx_);
+      resetTimerLocked(reason);
+    }
+  }
+
+  // CALLER MUST HOLD mtx_.
+  void resetTimerLocked(const char* reason = "unspecified") {
+    // @unsafe
+    {
       const char* why = reason ? reason : "unspecified";
       auto prev_time = last_heartbeat_time_;
       last_heartbeat_time_ = Time::now(true);
@@ -2380,13 +2392,22 @@ class RaftServer : public TxLogServer {
   void EnsureSetup();
 
   // @unsafe - Locks mtx_ before reading the role published by setIsLeader().
-  bool IsLeader() {
-    // Defensive check: if we're shutting down (looping_=false),
-    // return false to prevent accessing member variables during destruction
+  // CALLER MUST HOLD mtx_. The looping_ check is an atomic, so it needs no
+  // lock and stays here: it is the guard against reading members during
+  // destruction.
+  bool IsLeaderLocked() const {
     if (!looping_.load(rusty::sync::atomic::Ordering::Acquire)) {
       return false;
     }
-    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    return is_leader_ ;
+  }
+
+  // Acquiring entry point, for callers that do not already hold mtx_.
+  bool IsLeader() {
+    if (!looping_.load(rusty::sync::atomic::Ordering::Acquire)) {
+      return false;
+    }
+    std::lock_guard<std::mutex> lock(mtx_);
     return is_leader_ ;
   }
   
@@ -2408,10 +2429,10 @@ class RaftServer : public TxLogServer {
 
   // @unsafe - output pointer writes and mutex operations
   void GetState(bool *is_leader, uint64_t *term) {
-    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    std::lock_guard<std::mutex> lock(mtx_);
     // @unsafe
     {
-      *is_leader = IsLeader();
+      *is_leader = IsLeaderLocked();
       *term = currentTerm;
     }
   }
@@ -2548,7 +2569,17 @@ class RaftServer : public TxLogServer {
    * @return Number of entries removed
    */
   // @unsafe - In-memory log compaction under mtx_.
+  // @unsafe - CALLER MUST HOLD mtx_ (the *Locked accessors exist so test code
+  // and internal callers that already hold the lock do not re-acquire it,
+  // which a non-recursive mutex cannot tolerate)
+  uint64_t GetSnapshotIndexLocked() const;
+  uint64_t GetSnapshotTermLocked() const;
+  void SetSnapshotThresholdLocked(uint64_t threshold);
+  void SetSnapshotManagerLocked(
+      std::shared_ptr<janus::raft::SnapshotManager> manager);
   size_t CompactLog(slotid_t up_to_index);
+  // @unsafe - CALLER MUST HOLD mtx_
+  size_t CompactLogLocked(slotid_t up_to_index);
 
   /**
    * Set the snapshot threshold (number of entries between snapshots).
@@ -2661,7 +2692,7 @@ class RaftServer : public TxLogServer {
    */
   // @unsafe - Log_info plus mutex operations
   void SetPreferredLeader(siteid_t site_id) {
-    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    std::lock_guard<std::mutex> lock(mtx_);
 
     siteid_t old_preferred = preferred_leader_site_id_;
     preferred_leader_site_id_ = site_id;
