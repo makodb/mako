@@ -1514,6 +1514,16 @@ pub struct RaftConsensusState {
     snapshot_threshold_: u64,
     snapshot_callback_owner_token_: u64,
     next_snapshot_callback_owner_token_: u64,
+    // Leadership, and the campaign in progress.
+    is_leader_: bool,
+    req_voting_: bool,
+    election_in_progress_: bool,
+    current_leader_id_: u16,
+    last_heartbeat_time_: u64,
+    // Read-index evidence: the round counter and the newest confirmed proof.
+    heartbeat_round_: u64,
+    read_quorum_confirmed_term_: u64,
+    read_quorum_confirmed_round_: u64,
 }
 
 #[allow(clippy::new_without_default)]
@@ -1530,11 +1540,19 @@ impl RaftConsensusState {
             snapshot_threshold_: 10000,
             snapshot_callback_owner_token_: 0,
             next_snapshot_callback_owner_token_: 1,
+            is_leader_: false,
+            req_voting_: false,
+            election_in_progress_: false,
+            current_leader_id_: u16::MAX,
+            last_heartbeat_time_: 0,
+            heartbeat_round_: 0,
+            read_quorum_confirmed_term_: 0,
+            read_quorum_confirmed_round_: 0,
         }
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.consensus_state version=1 rust_sha256=ef050e558aae4cd290f48b8e684ea7b8365f801feb0f6eea96c5dcee967bdad1*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.consensus_state version=1 rust_sha256=b4d38a4153d87662c9b9c7903b6d1f6e8e7bf6902b1288b9d2ef9b8809d8b754*/
 struct RaftConsensusState;
 
 struct RaftConsensusState {
@@ -1546,6 +1564,14 @@ struct RaftConsensusState {
     uint64_t snapshot_threshold_;
     uint64_t snapshot_callback_owner_token_;
     uint64_t next_snapshot_callback_owner_token_;
+    bool is_leader_;
+    bool req_voting_;
+    bool election_in_progress_;
+    uint16_t current_leader_id_;
+    uint64_t last_heartbeat_time_;
+    uint64_t heartbeat_round_;
+    uint64_t read_quorum_confirmed_term_;
+    uint64_t read_quorum_confirmed_round_;
 
     static RaftConsensusState new_();
     // Rust derives Send/Sync from the field types; C++ cannot see them.
@@ -1555,7 +1581,7 @@ struct RaftConsensusState {
 
 
 inline RaftConsensusState RaftConsensusState::new_() {
-    return RaftConsensusState{.election_term_ = static_cast<int64_t>(0), .election_timeout_us_ = static_cast<uint64_t>(0), .election_timer_generation_ = static_cast<uint64_t>(0), .vote_for_ = std::numeric_limits<uint16_t>::max(), .min_active_slot_ = static_cast<uint64_t>(1), .snapshot_threshold_ = static_cast<uint64_t>(10000), .snapshot_callback_owner_token_ = static_cast<uint64_t>(0), .next_snapshot_callback_owner_token_ = static_cast<uint64_t>(1)};
+    return RaftConsensusState{.election_term_ = static_cast<int64_t>(0), .election_timeout_us_ = static_cast<uint64_t>(0), .election_timer_generation_ = static_cast<uint64_t>(0), .vote_for_ = std::numeric_limits<uint16_t>::max(), .min_active_slot_ = static_cast<uint64_t>(1), .snapshot_threshold_ = static_cast<uint64_t>(10000), .snapshot_callback_owner_token_ = static_cast<uint64_t>(0), .next_snapshot_callback_owner_token_ = static_cast<uint64_t>(1), .is_leader_ = false, .req_voting_ = false, .election_in_progress_ = false, .current_leader_id_ = std::numeric_limits<uint16_t>::max(), .last_heartbeat_time_ = static_cast<uint64_t>(0), .heartbeat_round_ = static_cast<uint64_t>(0), .read_quorum_confirmed_term_ = static_cast<uint64_t>(0), .read_quorum_confirmed_round_ = static_cast<uint64_t>(0)};
 }
 /*RUSTYCPP:GEN-END id=raft_server.consensus_state*/
 
@@ -1953,7 +1979,7 @@ class RaftServer : public TxLogServer {
 
   // @safe - relaxed atomic read, no lock needed (the C++ read it the same way)
   bool ElectionLoopStopped() const;
-  // @unsafe - takes mtx_ to read req_voting_
+  // @unsafe - takes mtx_ to read state_.req_voting_
   bool ElectionLoopVoting();
   // @unsafe - RandomGenerator is external
   uint64_t ElectionLoopRandomDelay() const;
@@ -2115,16 +2141,12 @@ class RaftServer : public TxLogServer {
   PeerTable peers_{PeerTable::new_()};
   std::vector<siteid_t> peer_sites_{};
   // Heartbeat quorum proof, guarded by mtx_. HeartbeatLoop stamps every round
-  // with heartbeat_round_ and records the newest round that a quorum of the
+  // with state_.heartbeat_round_ and records the newest round that a quorum of the
   // membership configuration confirmed in the current term.
-  uint64_t heartbeat_round_ = 0;
-  uint64_t read_quorum_confirmed_term_ = 0;
-  uint64_t read_quorum_confirmed_round_ = 0;
   // Election timing is one mutex-protected campaign. A reset samples exactly
   // one timeout and advances the generation; the timer must never redraw the
   // random timeout on each poll or start a campaign from an expired snapshot
   // after a concurrent heartbeat reset.
-  uint64_t last_heartbeat_time_ = 0;
   // @safe - logging calls wrapped in @unsafe blocks in implementation
   void LogTermChange(const char* reason, uint64_t old_term, uint64_t new_term, siteid_t source = INVALID_SITEID);
   rusty::sync::atomic::AtomicBool stop_{false};
@@ -2139,13 +2161,10 @@ class RaftServer : public TxLogServer {
   std::condition_variable startup_cv_;
   bool startup_finished_ = false;
   bool startup_succeeded_ = false;
-  bool is_leader_ = false ;
-  siteid_t current_leader_id_ = INVALID_SITEID ;  // Last known leader (self if leader, sender of AppendEntries otherwise)
   slotid_t snapidx_ = 0 ;
   ballot_t snapterm_ = 0 ;
   int32_t wait_int_ = 100000 ;
   std::atomic_bool disconnected_{false};
-  bool req_voting_ = false ;
   bool in_applying_logs_ = false ;
   std::atomic<bool> apply_pending_{false};  // Tracks if new work arrived while applying logs
   // UNWIRED, and unconditional -- the two #ifdef RAFT_TEST_CORO arms declared
@@ -2198,9 +2217,8 @@ class RaftServer : public TxLogServer {
   siteid_t preferred_leader_site_id_ = INVALID_SITEID;     // Site ID of preferred leader
   uint64_t startup_timestamp_ = 0;                          // When server started (for grace period)
 
-  // The campaign that owns req_voting_; a delayed vote result applies only to
+  // The campaign that owns state_.req_voting_; a delayed vote result applies only to
   // this exact term.
-  bool election_in_progress_ = false;
 
   // ============================================================================
   // MEMBERSHIP CONFIGURATION
@@ -2257,17 +2275,17 @@ class RaftServer : public TxLogServer {
 #ifdef RAFT_LEADER_ELECTION_DEBUG
       siteid_t prev_vote_for = state_.vote_for_;
       Log_info("[RAFT_VOTE] server {} (loc {}) vote={} candidate={} can_term={} cur_term={} prev_vote_for={} is_leader={} lst_idx={} lst_term={}",
-               site_id_, loc_id_, vote, can_id, can_term, currentTerm, prev_vote_for, is_leader_, lst_log_idx, lst_log_term);
+               site_id_, loc_id_, vote, can_id, can_term, currentTerm, prev_vote_for, state_.is_leader_, lst_log_idx, lst_log_term);
 #endif
 
       if (raft_server_signed_term_is_newer(can_term, currentTerm))
       {
           const uint64_t prev_term = currentTerm;
-          const bool was_leader = is_leader_;
+          const bool was_leader = state_.is_leader_;
           // A RequestVote proves only that a candidate exists, not that Raft
           // has elected it. Do not keep advertising the previous epoch's
           // leader while processing the higher-term request.
-          current_leader_id_ = raft_server_leader_hint_after_transition(
+          state_.current_leader_id_ = raft_server_leader_hint_after_transition(
               false, false, site_id_, can_id);
           currentTerm = can_term ;
           // @unsafe
@@ -2281,8 +2299,8 @@ class RaftServer : public TxLogServer {
           } else {
             setIsLeader(false);
           }
-          req_voting_ = false;
-          election_in_progress_ = false;
+          state_.req_voting_ = false;
+          state_.election_in_progress_ = false;
 
           // Publish the newly observed term, never the pre-transition value.
           *reply_term = currentTerm;
@@ -2352,8 +2370,8 @@ class RaftServer : public TxLogServer {
     // @unsafe
     {
       const char* why = reason ? reason : "unspecified";
-      auto prev_time = last_heartbeat_time_;
-      last_heartbeat_time_ = Time::now(true);
+      auto prev_time = state_.last_heartbeat_time_;
+      state_.last_heartbeat_time_ = Time::now(true);
       state_.election_timeout_us_ = GetElectionTimeout();
       if (state_.election_timer_generation_ ==
           std::numeric_limits<uint64_t>::max()) {
@@ -2364,8 +2382,8 @@ class RaftServer : public TxLogServer {
       // Log only important timer resets (elections, votes), not routine heartbeats
       if (strcmp(why, "granted vote") == 0 || strcmp(why, "start election timer") == 0) {
         Log_info("[TIMER_RESET] Site {}: reset timer ({}) - prev_hb_time={} new_hb_time={} delta={} timeout={} generation={}",
-                 site_id_, why, prev_time, last_heartbeat_time_,
-                 last_heartbeat_time_ - prev_time, state_.election_timeout_us_,
+                 site_id_, why, prev_time, state_.last_heartbeat_time_,
+                 state_.last_heartbeat_time_ - prev_time, state_.election_timeout_us_,
                  state_.election_timer_generation_);
       }
     }
@@ -2407,11 +2425,11 @@ class RaftServer : public TxLogServer {
     static std::mutex& state_machine_apply_mtx(RaftServer& s) { return s.state_machine_apply_mtx_; }
 
     // --- role / election state inspected by tests ---
-    static bool& is_leader(RaftServer& s) { return s.is_leader_; }
+    static bool& is_leader(RaftServer& s) { return s.state_.is_leader_; }
     static siteid_t& vote_for(RaftServer& s) { return s.state_.vote_for_; }
-    static siteid_t& current_leader_id(RaftServer& s) { return s.current_leader_id_; }
-    static bool& req_voting(RaftServer& s) { return s.req_voting_; }
-    static bool& election_in_progress(RaftServer& s) { return s.election_in_progress_; }
+    static siteid_t& current_leader_id(RaftServer& s) { return s.state_.current_leader_id_; }
+    static bool& req_voting(RaftServer& s) { return s.state_.req_voting_; }
+    static bool& election_in_progress(RaftServer& s) { return s.state_.election_in_progress_; }
 
     // --- snapshot boundary ---
     static slotid_t& snapidx(RaftServer& s) { return s.snapidx_; }
@@ -2471,7 +2489,7 @@ class RaftServer : public TxLogServer {
     if (!looping_.load(rusty::sync::atomic::Ordering::Acquire)) {
       return false;
     }
-    return is_leader_ ;
+    return state_.is_leader_ ;
   }
 
   // Acquiring entry point, for callers that do not already hold mtx_.
@@ -2480,7 +2498,7 @@ class RaftServer : public TxLogServer {
       return false;
     }
     std::lock_guard<std::mutex> lock(mtx_);
-    return is_leader_ ;
+    return state_.is_leader_ ;
   }
   
   // @safe - leadership state transition (callbacks and logging wrapped in @unsafe blocks)

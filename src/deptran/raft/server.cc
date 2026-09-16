@@ -1776,10 +1776,10 @@ bool RaftServer::IsDisconnected() {
 // @unsafe - Synchronizes with role/leader publication through the Raft mutex.
 siteid_t RaftServer::GetLeaderHint() {
   std::lock_guard<std::mutex> lock(mtx_);
-  if (is_leader_) {
+  if (state_.is_leader_) {
     return site_id_;
   }
-  return current_leader_id_;
+  return state_.current_leader_id_;
 }
 
 // @unsafe - Leadership state transition (callbacks and logging wrapped in @unsafe blocks)
@@ -1791,7 +1791,7 @@ siteid_t RaftServer::GetLeaderHint() {
 // this line was therefore always a no-op -- one of the 24 nested acquisitions
 // docs/migration/raft/cpp-refactor-plan.md tranche 4b enumerates.
 void RaftServer::setIsLeader(bool isLeader) {
-  bool prev_is_leader = is_leader_;
+  bool prev_is_leader = state_.is_leader_;
 #ifdef RAFT_LEADER_ELECTION_DEBUG
   Log_info("[RAFT_STATE] setIsLeader invoked site {} (loc {}) term {}: prev_is_leader={} new_is_leader={}",
            site_id_, loc_id_, currentTerm, prev_is_leader, isLeader);
@@ -1814,9 +1814,9 @@ void RaftServer::setIsLeader(bool isLeader) {
     // A heartbeat proof belongs to exactly one leadership term. Reset the
     // local generation before publishing this server as leader so delayed or
     // historical acknowledgements cannot prove a quorum in the new term.
-    heartbeat_round_ = 0;
-    read_quorum_confirmed_term_ = 0;
-    read_quorum_confirmed_round_ = 0;
+    state_.heartbeat_round_ = 0;
+    state_.read_quorum_confirmed_term_ = 0;
+    state_.read_quorum_confirmed_round_ = 0;
   }
 
   if (isLeader && failover_) {
@@ -1830,20 +1830,20 @@ void RaftServer::setIsLeader(bool isLeader) {
   }
 
 
-  // This 2 lines MUST put BEFORE is_leader_ = isLeader ! otherwise they will become 0
-  bool become_new_leader = isLeader && (!is_leader_);
-  bool become_new_follower = (!isLeader) && is_leader_;
+  // This 2 lines MUST put BEFORE state_.is_leader_ = isLeader ! otherwise they will become 0
+  bool become_new_leader = isLeader && (!state_.is_leader_);
+  bool become_new_follower = (!isLeader) && state_.is_leader_;
 
   // Update the leader state
-  is_leader_ = isLeader;
+  state_.is_leader_ = isLeader;
 
   // Becoming leader establishes self as the known leader. Becoming a follower
   // deliberately preserves a hint learned from AppendEntries/InstallSnapshot;
   // transitions without a known leader clear it at their call sites.
-  current_leader_id_ = raft_server_leader_hint_after_transition(
+  state_.current_leader_id_ = raft_server_leader_hint_after_transition(
       isLeader,
-      !isLeader && current_leader_id_ != INVALID_SITEID,
-      site_id_, current_leader_id_);
+      !isLeader && state_.current_leader_id_ != INVALID_SITEID,
+      site_id_, state_.current_leader_id_);
 
   // Only log on actual transitions, not no-op calls
   if (become_new_leader || become_new_follower) {
@@ -1883,14 +1883,14 @@ void RaftServer::setIsLeader(bool isLeader) {
     // CRITICAL FIX: Reset election timer when becoming follower
     // ============================================================================
     // This prevents instant elections after recovery/resume. When a node resumes
-    // from SIGSTOP/pause, last_heartbeat_time_ is stale (from before pause).
+    // from SIGSTOP/pause, state_.last_heartbeat_time_ is stale (from before pause).
     // Resetting it here ensures the election timer counts from NOW, giving the
     // current leader time to send heartbeats before this node starts an election.
     // This is standard Raft behavior: followers reset their timer when stepping down.
     // setIsLeader is caller-holds; see the enumeration above.
     resetTimerLocked("became follower");
     Log_info("[RAFT_TIMER] Site {} reset election timer when becoming follower (last_hb now={})",
-             site_id_, last_heartbeat_time_);
+             site_id_, state_.last_heartbeat_time_);
 
     // When transitioning from leader to non-leader
     Log_info("[RAFT_VIEW] Server {} stepping down as leader for partition {}", site_id_, partition_id_);
@@ -3201,7 +3201,7 @@ bool RaftServer::HeartbeatPhase0(HeartbeatRoundState& state,
           return true;
         }
 
-        round.begin(currentTerm, heartbeat_round_);
+        round.begin(currentTerm, state_.heartbeat_round_);
         // Sized here rather than in the prologue because the round state is
         // the loop's, not the server's. Idempotent: resize() only runs when the
         // two tables disagree, so in-flight slots survive every later round.
@@ -3217,8 +3217,8 @@ bool RaftServer::HeartbeatPhase0(HeartbeatRoundState& state,
           authority_rounds.abandon();
           pending_leader_term = round.term();
         }
-        if (raft_server_read_index_round_can_advance(heartbeat_round_)) {
-          ++heartbeat_round_;
+        if (raft_server_read_index_round_can_advance(state_.heartbeat_round_)) {
+          ++state_.heartbeat_round_;
         } else {
           // Saturation is fail-closed for new reads: the round never wraps, so
           // no post-baseline proof can be forged from an old generation.
@@ -3264,7 +3264,7 @@ bool RaftServer::HeartbeatPhase0(HeartbeatRoundState& state,
       round.set_authority_inserted(authority_rounds.open(
           round.round_id(), round_members,
           HeartbeatAuthority::new_(round.term(), round.nservers(), site_id_)));
-      // heartbeat_round_ never wraps. The only possible duplicate is the
+      // state_.heartbeat_round_ never wraps. The only possible duplicate is the
       // deliberately fail-closed UINT64_MAX saturation generation, which open()
       // declines rather than overwriting.
       if (!round.authority_inserted()) {
@@ -3411,12 +3411,12 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
                       // A follower's higher term does not identify the leader
                       // of that term. Retire the previous leader hint before
                       // publishing follower state.
-                      server->current_leader_id_ =
+                      server->state_.current_leader_id_ =
                           raft_server_leader_hint_after_transition(
                               false, false, server->site_id_, site_id);
                       server->stepDown();
-                      server->req_voting_ = false;
-                      server->election_in_progress_ = false;
+                      server->state_.req_voting_ = false;
+                      server->state_.election_in_progress_ = false;
                       return;
                     }
                     if (server->currentTerm != send_term) {
@@ -3710,11 +3710,11 @@ void RaftServer::HeartbeatPhase2(HeartbeatRoundState& state,
               LogTermChange("AppendEntries response carried newer term",
                             previous_term, currentTerm, pending.follower_id);
               // The responding follower proves a newer term, not its leader.
-              current_leader_id_ = raft_server_leader_hint_after_transition(
+              state_.current_leader_id_ = raft_server_leader_hint_after_transition(
                   false, false, site_id_, pending.follower_id);
               stepDown();
-              req_voting_ = false;
-              election_in_progress_ = false;
+              state_.req_voting_ = false;
+              state_.election_in_progress_ = false;
               stepped_down = true;
             } else if (currentTerm != pending.sent_term) {
               Log_debug("[APPEND_RPC] Ignoring follower {} response from stale "
@@ -3902,15 +3902,15 @@ void RaftServer::HeartbeatPhase3(HeartbeatRoundState& state,
           // The whole scan is AuthorityLedger::settle: it retires every
           // generation that can no longer contribute and returns the highest
           // one that reached quorum, which is the same generation the ascending
-          // std::map walk used to leave in read_quorum_confirmed_round_.
+          // std::map walk used to leave in state_.read_quorum_confirmed_round_.
           const std::vector<siteid_t> settle_members(current_config_.begin(),
                                                      current_config_.end());
           const AuthorityOutcome outcome = authority_rounds.settle(
               IsLeaderLocked(), currentTerm, settle_members,
-              read_quorum_confirmed_term_, read_quorum_confirmed_round_);
+              state_.read_quorum_confirmed_term_, state_.read_quorum_confirmed_round_);
           if (outcome.confirmed()) {
-            read_quorum_confirmed_term_ = outcome.term();
-            read_quorum_confirmed_round_ = outcome.round_id();
+            state_.read_quorum_confirmed_term_ = outcome.term();
+            state_.read_quorum_confirmed_round_ = outcome.round_id();
             Log_debug("[READ-INDEX] site={} confirmed round={} term={} "
                       "with {}/{} voters",
                       site_id_, outcome.round_id(), outcome.term(),
@@ -4073,21 +4073,21 @@ bool RaftServer::RequestVoteImpl(bool timer_guarded,
   {
     std::lock_guard<std::mutex> lock(mtx_);
     if (stop_.load(rusty::sync::atomic::Ordering::Acquire)) {
-      req_voting_ = false;
+      state_.req_voting_ = false;
       return false;
     }
     // RequestVoteImpl is the sole campaign admission point. Its entrants can
     // overlap while one of them is yielding, so callers must not reserve
-    // req_voting_ before entering this critical section.
+    // state_.req_voting_ before entering this critical section.
     if (!raft_server_campaign_can_start(
-            is_leader_, election_in_progress_)) {
+            state_.is_leader_, state_.election_in_progress_)) {
       return false;
     }
     if (timer_guarded) {
       const uint64_t now = Time::now(true);
-      const uint64_t elapsed = now - last_heartbeat_time_;
+      const uint64_t elapsed = now - state_.last_heartbeat_time_;
       if (!raft_server_timer_campaign_is_current(
-              is_leader_, expected_generation,
+              state_.is_leader_, expected_generation,
               state_.election_timer_generation_, elapsed,
               state_.election_timeout_us_)) {
         return false;
@@ -4106,14 +4106,14 @@ bool RaftServer::RequestVoteImpl(bool timer_guarded,
     // A candidate has no elected leader evidence in its new term. In
     // particular, it must not redirect clients to the leader from the term it
     // just left.
-    current_leader_id_ = raft_server_leader_hint_after_transition(
-        false, false, site_id_, current_leader_id_);
+    state_.current_leader_id_ = raft_server_leader_hint_after_transition(
+        false, false, site_id_, state_.current_leader_id_);
 
-    // Atomically publish ownership of req_voting_ and the election term before
+    // Atomically publish ownership of state_.req_voting_ and the election term before
     // broadcasting so no second caller can campaign concurrently.
-    election_in_progress_ = true;
+    state_.election_in_progress_ = true;
     state_.election_term_ = currentTerm;
-    req_voting_ = true;
+    state_.req_voting_ = true;
     term = currentTerm;
 
     LogTermChange("starting election", prev_local_term, currentTerm);
@@ -4152,8 +4152,8 @@ bool RaftServer::RequestVoteImpl(bool timer_guarded,
   }
   std::unique_lock<std::mutex> lock1(mtx_);
   if (stop_.load(rusty::sync::atomic::Ordering::Acquire)) {
-    election_in_progress_ = false;
-    req_voting_ = false;
+    state_.election_in_progress_ = false;
+    state_.req_voting_ = false;
     return false;
   }
   // A higher term dominates every election outcome, including TIMEOUT and a
@@ -4163,23 +4163,23 @@ bool RaftServer::RequestVoteImpl(bool timer_guarded,
   const ElectionCompletionAction completion_action =
       static_cast<ElectionCompletionAction>(
           raft_server_election_completion_action(
-              election_in_progress_, state_.election_term_, term, currentTerm,
+              state_.election_in_progress_, state_.election_term_, term, currentTerm,
               observed_response_term));
   if (completion_action ==
       ElectionCompletionAction::ADVANCE_HIGHER_TERM) {
     const uint64_t previous_term = currentTerm;
     currentTerm = static_cast<uint64_t>(observed_response_term);
     state_.vote_for_ = INVALID_SITEID;
-    current_leader_id_ = raft_server_leader_hint_after_transition(
-        false, false, site_id_, current_leader_id_);
+    state_.current_leader_id_ = raft_server_leader_hint_after_transition(
+        false, false, site_id_, state_.current_leader_id_);
 
-    if (is_leader_) {
+    if (state_.is_leader_) {
       stepDown();
     } else {
       setIsLeader(false);
     }
-    election_in_progress_ = false;
-    req_voting_ = false;
+    state_.election_in_progress_ = false;
+    state_.req_voting_ = false;
 
     LogTermChange("observed higher term from RequestVote replies",
                   previous_term, currentTerm);
@@ -4196,7 +4196,7 @@ bool RaftServer::RequestVoteImpl(bool timer_guarded,
     Log_info("[RAFT_ELECTION] server {} ignoring stale election result: "
              "result_term={} local_term={} election_term={} active={}",
              site_id_, term, currentTerm, state_.election_term_,
-             election_in_progress_);
+             state_.election_in_progress_);
 #endif
     return false;
   }
@@ -4208,12 +4208,12 @@ bool RaftServer::RequestVoteImpl(bool timer_guarded,
   if (sp_quorum->yes()) {
     verify(currentTerm >= term);
 
-    election_in_progress_ = false;
-    req_voting_ = false;
+    state_.election_in_progress_ = false;
+    state_.req_voting_ = false;
 
     if (stop_.load(rusty::sync::atomic::Ordering::Acquire) ||
         currentTerm != term) {
-      req_voting_ = false;
+      state_.req_voting_ = false;
       return false;
     }
 
@@ -4229,7 +4229,7 @@ bool RaftServer::RequestVoteImpl(bool timer_guarded,
 
     if(IsLeaderLocked()) {
       Log_debug("vote accepted {} curterm {}", loc_id, currentTerm);
-  		req_voting_ = false ;
+  		state_.req_voting_ = false ;
 			return true;
     } else {
       Log_debug("vote rejected {} curterm {}, do rollback", loc_id, currentTerm);
@@ -4244,10 +4244,10 @@ bool RaftServer::RequestVoteImpl(bool timer_guarded,
     Log_info("[RAFT_ELECTION] server {} lost election term {} (yes={} no={}) highest_term={}",
              site_id_, term, sp_quorum->q().n_voted_yes_.get(), sp_quorum->q().n_voted_no_.get(), sp_quorum->Term());
 #endif
-    if (election_in_progress_ && state_.election_term_ == term) {
-      election_in_progress_ = false;
+    if (state_.election_in_progress_ && state_.election_term_ == term) {
+      state_.election_in_progress_ = false;
     }
-  	req_voting_ = false ;
+  	state_.req_voting_ = false ;
 		return false;
   } else {
     Log_debug("vote timeout {}", loc_id);
@@ -4255,10 +4255,10 @@ bool RaftServer::RequestVoteImpl(bool timer_guarded,
     Log_info("[RAFT_ELECTION] server {} election timed out term {} (yes={} no={})",
              site_id_, term, sp_quorum->q().n_voted_yes_.get(), sp_quorum->q().n_voted_no_.get());
 #endif
-    if (election_in_progress_ && state_.election_term_ == term) {
-      election_in_progress_ = false;
+    if (state_.election_in_progress_ && state_.election_term_ == term) {
+      state_.election_in_progress_ = false;
     }
-  	req_voting_ = false ;
+  	state_.req_voting_ = false ;
 		return false;
   }
 }
@@ -4374,10 +4374,10 @@ bool RaftServer::ElectionLoopStopped() const {
   return stop_.load(rusty::sync::atomic::Ordering::Acquire);
 }
 
-// @unsafe - takes mtx_ to read req_voting_
+// @unsafe - takes mtx_ to read state_.req_voting_
 bool RaftServer::ElectionLoopVoting() {
   std::lock_guard<std::mutex> lock(mtx_);
-  return req_voting_;
+  return state_.req_voting_;
 }
 
 // @unsafe - RandomGenerator is external
@@ -4397,14 +4397,14 @@ bool RaftServer::ElectionLoopWait(uint64_t timeout_us) {
 ElectionTick RaftServer::ElectionLoopGather() {
   std::lock_guard<std::mutex> lock(mtx_);
   const uint64_t time_now = Time::now(true);
-  const uint64_t heartbeat_time = last_heartbeat_time_;
+  const uint64_t heartbeat_time = state_.last_heartbeat_time_;
   const uint64_t time_elapsed = time_now - heartbeat_time;
   const uint64_t election_timeout = state_.election_timeout_us_;
   return ElectionTick::new_(
       time_elapsed, election_timeout, heartbeat_time,
       state_.election_timer_generation_, currentTerm,
       static_cast<uint16_t>(state_.vote_for_),
-      raft_server_election_timeout_has_fired(is_leader_, time_elapsed,
+      raft_server_election_timeout_has_fired(state_.is_leader_, time_elapsed,
                                              election_timeout));
 }
 
@@ -4579,18 +4579,18 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
       leaderSiteId != invalid && leaderSiteId != site_id_ &&
       current_config_.count(leaderSiteId) != 0;
   const bool sender_is_self = leaderSiteId == site_id_;
-  const bool has_known_leader = current_leader_id_ != invalid;
+  const bool has_known_leader = state_.current_leader_id_ != invalid;
   const bool known_leader_matches_sender =
-      current_leader_id_ == leaderSiteId;
+      state_.current_leader_id_ == leaderSiteId;
   if (!sender_is_current_voter || leader_term_is_stale ||
       !raft_server_leader_rpc_sender_is_authoritative(
-          leader_has_higher_term, is_leader_, sender_is_self,
+          leader_has_higher_term, state_.is_leader_, sender_is_self,
           has_known_leader, known_leader_matches_sender)) {
     Log_warn("[APPEND_REJECT] Site {} rejecting unauthoritative "
              "AppendEntries sender {} term {} (local_term={} leader={} "
              "known_leader={} voter={})",
              site_id_, leaderSiteId, leaderCurrentTerm, currentTerm,
-             is_leader_, current_leader_id_, sender_is_current_voter);
+             state_.is_leader_, state_.current_leader_id_, sender_is_current_voter);
     *followerAppendOK = 0;
     *followerCurrentTerm = currentTerm;
     *followerLastLogIndex = lastLogIndex;
@@ -4657,24 +4657,24 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
           state_.vote_for_ = INVALID_SITEID;  // Reset vote when advancing to new term
           // Publish the accepted leader before a possible leader-change
           // callback observes the follower transition.
-          current_leader_id_ = raft_server_leader_hint_after_transition(
+          state_.current_leader_id_ = raft_server_leader_hint_after_transition(
               false, true, site_id_, leaderSiteId);
 
           LogTermChange("AppendEntries leader term is newer", prev_term, currentTerm, leaderSiteId);
           Log_debug("server {}, set to be follower", loc_id_ ) ;
-          if (is_leader_) {
+          if (state_.is_leader_) {
             // Use the central transition so no leadership state survives an
             // accepted competing leader epoch.
             stepDown();
           } else {
             setIsLeader(false);
           }
-          req_voting_ = false;
-          election_in_progress_ = false;
+          state_.req_voting_ = false;
+          state_.election_in_progress_ = false;
       }
       // Refresh the validated leader hint for current-term contact too. A
       // higher-term sender was already published before its role transition.
-      current_leader_id_ = raft_server_leader_hint_after_transition(
+      state_.current_leader_id_ = raft_server_leader_hint_after_transition(
           false, true, site_id_, leaderSiteId);
       // @unsafe
       { resetTimerLocked("AppendEntries from current-term leader"); }
@@ -4687,13 +4687,13 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
       // Any accepted leader RPC establishes follower state even when it is in
       // our current term. Cancel an outstanding election before its delayed
       // result can promote this server after the accepted AppendEntries.
-      if (is_leader_) {
+      if (state_.is_leader_) {
         stepDown();
       } else {
         setIsLeader(false);
       }
-      req_voting_ = false;
-      election_in_progress_ = false;
+      state_.req_voting_ = false;
+      state_.election_in_progress_ = false;
 
       // ==================================================================
       // SPECULATIVE REPLICATION: Append to memory and respond immediately.
@@ -4910,17 +4910,17 @@ void RaftServer::OnInstallSnapshot(const uint64_t term,
   const bool leader_has_higher_term =
       raft_server_observed_higher_term(term, currentTerm);
   const bool sender_is_self = leader_site == site_id_;
-  const bool has_known_leader = current_leader_id_ != invalid;
+  const bool has_known_leader = state_.current_leader_id_ != invalid;
   const bool known_leader_matches_sender =
-      current_leader_id_ == leader_site;
+      state_.current_leader_id_ == leader_site;
   if (!sender_is_current_voter ||
       !raft_server_leader_rpc_sender_is_authoritative(
-          leader_has_higher_term, is_leader_, sender_is_self,
+          leader_has_higher_term, state_.is_leader_, sender_is_self,
           has_known_leader, known_leader_matches_sender)) {
     Log_warn("[INSTALL-SNAPSHOT] Site {} rejected unauthoritative leader {} "
              "in term {} (local_term={} leader={} known_leader={} voter={})",
-             site_id_, leader_id, term, currentTerm, is_leader_,
-             current_leader_id_, sender_is_current_voter);
+             site_id_, leader_id, term, currentTerm, state_.is_leader_,
+             state_.current_leader_id_, sender_is_current_voter);
     return;
   }
 
@@ -4940,20 +4940,20 @@ void RaftServer::OnInstallSnapshot(const uint64_t term,
 
   // InstallSnapshot comes from a known leader. Publish its identity before a
   // possible leader-to-follower callback observes the role transition.
-  current_leader_id_ = raft_server_leader_hint_after_transition(
+  state_.current_leader_id_ = raft_server_leader_hint_after_transition(
       false, true, site_id_, leader_site);
 
   // Any accepted leader RPC, including one in our current term, establishes
   // follower state. Cancel the outstanding election as well as leadership;
   // RequestVote's delayed-success path revalidates this ownership before it
   // can promote the server again.
-  if (is_leader_) {
+  if (state_.is_leader_) {
     stepDown();
   } else {
     setIsLeader(false);
   }
-  req_voting_ = false;
-  election_in_progress_ = false;
+  state_.req_voting_ = false;
+  state_.election_in_progress_ = false;
 
   if (leader_has_higher_term) {
     LogTermChange("InstallSnapshot carried newer term", previous_term,
@@ -5187,8 +5187,8 @@ void RaftServer::stepDown() {
   // A late higher-term response can arrive after this server has already
   // entered a new candidacy. Demotion is terminal for that election as well
   // as for the old leadership epoch.
-  req_voting_ = false;
-  election_in_progress_ = false;
+  state_.req_voting_ = false;
+  state_.election_in_progress_ = false;
 
   // Reset election timer
   // Important: Give other servers time to elect a new leader

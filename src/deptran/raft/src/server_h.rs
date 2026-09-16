@@ -678,6 +678,16 @@ pub struct RaftConsensusState {
     snapshot_threshold_: u64,
     snapshot_callback_owner_token_: u64,
     next_snapshot_callback_owner_token_: u64,
+    // Leadership, and the campaign in progress.
+    is_leader_: bool,
+    req_voting_: bool,
+    election_in_progress_: bool,
+    current_leader_id_: u16,
+    last_heartbeat_time_: u64,
+    // Read-index evidence: the round counter and the newest confirmed proof.
+    heartbeat_round_: u64,
+    read_quorum_confirmed_term_: u64,
+    read_quorum_confirmed_round_: u64,
 }
 
 #[allow(clippy::new_without_default)]
@@ -694,6 +704,14 @@ impl RaftConsensusState {
             snapshot_threshold_: 10000,
             snapshot_callback_owner_token_: 0,
             next_snapshot_callback_owner_token_: 1,
+            is_leader_: false,
+            req_voting_: false,
+            election_in_progress_: false,
+            current_leader_id_: u16::MAX,
+            last_heartbeat_time_: 0,
+            heartbeat_round_: 0,
+            read_quorum_confirmed_term_: 0,
+            read_quorum_confirmed_round_: 0,
         }
     }
 }
