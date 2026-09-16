@@ -1143,6 +1143,216 @@ inline const rusty::RaftCommand& RaftEntry::cmd() const {
 }
 /*RUSTYCPP:GEN-END id=raft_server.log_entry*/
 
+// The Raft log itself, owned by Rust.
+//
+// A dense vector plus the index of its first element, not a map.
+//
+// WHY DENSE. The log is contiguous by construction, and always has been. Only
+// two paths insert. SetLocalAppend writes at last_log_index_ + 1. The
+// AppendEntries overwrite loop writes a run whose first index is the first
+// entry that is missing or term-conflicting -- which is either one past the
+// local tail, or an index the same statement has just truncated back to.
+// Every erase is a whole prefix or a whole suffix.
+//
+// That is an argument, not a measurement, so the conversion asserts it rather
+// than assuming it: RaftLog::append returns the index it wrote and both call
+// sites verify() it is the index they intended, so a gap aborts instead of
+// appearing. VerifyLogExtents (transitional, below) additionally asserts that
+// the two hand-maintained extents still agree with the container, on every
+// path that mutates the log.
+//
+// WHY IT MATTERS. min_active_slot_ and last_log_index_ are a second and a
+// third copy of the log's extents, advanced by hand at six write sites and
+// never once checked against the container. They become base() and
+// base() + len() - 1, and then cannot disagree with it, because they are no
+// longer stored.
+//
+// rusty::Vec specifically: it re-exports std::vec::Vec on the rustc side and
+// is the real vec_port on the C++ side, so both are faithful. See PeerTable's
+// note above for why rusty::BTreeMap is not an option.
+#if RUSTYCPP_RUST
+#[repr(C)]
+pub struct RaftLog {
+    base_: u64,
+    entries_: rusty::Vec<RaftEntry>,
+}
+
+#[allow(clippy::new_without_default)]
+impl RaftLog {
+    pub fn new() -> RaftLog {
+        RaftLog { base_: 1, entries_: rusty::Vec::new() }
+    }
+
+    // Index of the first entry still held. Was min_active_slot_.
+    pub fn base(&self) -> u64 {
+        self.base_
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries_.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries_.is_empty()
+    }
+
+    // Index of the last entry held, or base() - 1 when empty. Was
+    // last_log_index_.
+    pub fn last_index(&self) -> u64 {
+        self.base_ + (self.entries_.len() as u64) - 1
+    }
+
+    // Named `holds`, not `contains`: the emitter rewrites a method called
+    // `contains` into a free rusty::contains() call, which does not exist for
+    // this type. Measured against the pinned transpiler.
+    pub fn holds(&self, index: u64) -> bool {
+        index >= self.base_ && index - self.base_ < (self.entries_.len() as u64)
+    }
+
+    // The only read path, and it hands out a borrow rather than a handle.
+    pub fn get(&self, index: u64) -> rusty::Option<&RaftEntry> {
+        if !self.holds(index) {
+            return rusty::None;
+        }
+        rusty::Some(&self.entries_[(index - self.base_) as usize])
+    }
+
+    // The only write path. Appends at last_index() + 1 and returns it: an
+    // entry cannot be placed at an arbitrary index, so a gap is unspellable.
+    pub fn append(&mut self, entry: RaftEntry) -> u64 {
+        self.entries_.push(entry);
+        self.last_index()
+    }
+
+    // Discard [index, end) -- Raft's conflict rule. A no-op past the tail,
+    // which is the ordinary extend case.
+    pub fn truncate_from(&mut self, index: u64) {
+        if index <= self.base_ {
+            self.entries_.clear();
+            return;
+        }
+        let keep = index - self.base_;
+        if keep < (self.entries_.len() as u64) {
+            self.entries_.truncate(keep as usize);
+        }
+    }
+
+    // Discard [base, index] -- snapshot compaction. Returns how many went.
+    pub fn compact_through(&mut self, index: u64) -> usize {
+        if index < self.base_ {
+            return 0;
+        }
+        let mut drop_count = index - self.base_ + 1;
+        if drop_count > (self.entries_.len() as u64) {
+            drop_count = self.entries_.len() as u64;
+        }
+        // split_off, not a clone-rebuild: the surviving suffix MOVES. A
+        // rebuild would need RaftEntry: Clone, which would need
+        // rusty::RaftCommand: Clone, which the rustc facade does not provide
+        // -- and it would bump a refcount per surviving entry on a path whose
+        // whole point is to reclaim memory.
+        let tail = self.entries_.split_off(drop_count as usize);
+        self.entries_ = tail;
+        self.base_ = index + 1;
+        drop_count as usize
+    }
+
+    // Drop everything and restart the index space at `base`. The follower
+    // path after an InstallSnapshot that supersedes the whole local log.
+    pub fn reset(&mut self, base: u64) {
+        self.entries_.clear();
+        self.base_ = base;
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_server.log_container version=1 rust_sha256=2132023888edd5b3c5bd685e3c506e53cf86bf955f5589caa6db00b5327f966c*/
+struct RaftLog;
+
+struct RaftLog {
+    uint64_t base_;
+    rusty::Vec<RaftEntry> entries_;
+
+    static RaftLog new_();
+    uint64_t base() const;
+    size_t len() const;
+    bool is_empty() const;
+    uint64_t last_index() const;
+    bool holds(uint64_t index) const;
+    rusty::Option<const RaftEntry&> get(uint64_t index) const;
+    uint64_t append(RaftEntry entry);
+    void truncate_from(uint64_t index);
+    size_t compact_through(uint64_t index);
+    void reset(uint64_t base);
+};
+
+
+inline RaftLog RaftLog::new_() {
+    return RaftLog{.base_ = static_cast<uint64_t>(1), .entries_ = rusty::Vec<RaftEntry>::new_()};
+}
+
+inline uint64_t RaftLog::base() const {
+    return this->base_;
+}
+
+inline size_t RaftLog::len() const {
+    return rusty::len(this->entries_);
+}
+
+inline bool RaftLog::is_empty() const {
+    return rusty::is_empty(this->entries_);
+}
+
+inline uint64_t RaftLog::last_index() const {
+    return (rusty::detail::deref_if_pointer_like(this->base_) + ((static_cast<uint64_t>(rusty::len(this->entries_))))) - static_cast<uint64_t>(1);
+}
+
+inline bool RaftLog::holds(uint64_t index) const {
+    return (rusty::detail::deref_if_pointer_like(index) >= rusty::detail::deref_if_pointer_like(this->base_)) && ((rusty::detail::deref_if_pointer_like(index) - rusty::detail::deref_if_pointer_like(this->base_)) < ((static_cast<uint64_t>(rusty::len(this->entries_)))));
+}
+
+inline rusty::Option<const RaftEntry&> RaftLog::get(uint64_t index) const {
+    if (!this->holds(std::move(index))) {
+        return rusty::None;
+    }
+    return rusty::Option<const RaftEntry&>(this->entries_[static_cast<size_t>((rusty::detail::deref_if_pointer_like(index) - rusty::detail::deref_if_pointer_like(this->base_)))]);
+}
+
+inline uint64_t RaftLog::append(RaftEntry entry) {
+    this->entries_.push(std::move(entry));
+    return this->last_index();
+}
+
+inline void RaftLog::truncate_from(uint64_t index) {
+    if (rusty::detail::deref_if_pointer_like(index) <= rusty::detail::deref_if_pointer_like(this->base_)) {
+        this->entries_.clear();
+        return;
+    }
+    const auto keep = rusty::detail::deref_if_pointer_like(index) - rusty::detail::deref_if_pointer_like(this->base_);
+    if (rusty::detail::deref_if_pointer_like(keep) < ((static_cast<uint64_t>(rusty::len(this->entries_))))) {
+        this->entries_.truncate(static_cast<size_t>(keep));
+    }
+}
+
+inline size_t RaftLog::compact_through(uint64_t index) {
+    if (rusty::detail::deref_if_pointer_like(index) < rusty::detail::deref_if_pointer_like(this->base_)) {
+        return static_cast<size_t>(0);
+    }
+    auto drop_count = (rusty::detail::deref_if_pointer_like(index) - rusty::detail::deref_if_pointer_like(this->base_)) + static_cast<uint64_t>(1);
+    if (rusty::detail::deref_if_pointer_like(drop_count) > ((static_cast<uint64_t>(rusty::len(this->entries_))))) {
+        drop_count = static_cast<uint64_t>(rusty::len(this->entries_));
+    }
+    auto tail = this->entries_.split_off(static_cast<size_t>(drop_count));
+    this->entries_ = std::move(tail);
+    this->base_ = rusty::detail::deref_if_pointer_like(index) + static_cast<uint64_t>(1);
+    return static_cast<size_t>(drop_count);
+}
+
+inline void RaftLog::reset(uint64_t base) {
+    this->entries_.clear();
+    this->base_ = std::move(base);
+}
+/*RUSTYCPP:GEN-END id=raft_server.log_container*/
+
 #ifdef RAFT_TEST_CORO
 #define HEARTBEAT_INTERVAL 100000
 #else
@@ -2510,7 +2720,7 @@ class RaftServer : public TxLogServer {
   int n_accept_ = 0;
   int n_commit_ = 0;
 
-  map<slotid_t, shared_ptr<RaftEntry>> raft_logs_{};
+  RaftLog raft_log_{RaftLog::new_()};
 
   // @unsafe - Binds the cross-thread wake gate to HeartbeatLoop's PollThread.
   // Must run before HeartbeatLoop starts (Setup does so).
@@ -2622,8 +2832,10 @@ class RaftServer : public TxLogServer {
     // three fields that used to receive them here were read nowhere.
     (void)slot_id;
     (void)ballot;
-    PutRaftInstance(state_.last_log_index_,
-                    RaftEntry::new_(state_.current_term_, cmd));
+    const uint64_t appended = raft_log_.append(
+        RaftEntry::new_(state_.current_term_, cmd));
+    verify(appended == state_.last_log_index_);
+    VerifyLogExtents();
 
     // @unsafe
     {
@@ -2633,35 +2845,43 @@ class RaftServer : public TxLogServer {
   }
 
 
-  // Non-inserting lookup: nullptr when the slot is absent.
+  // TRANSITIONAL. state_.min_active_slot_ and state_.last_log_index_ are still
+  // maintained by hand, but the container now knows both for itself. This
+  // asserts they agree, at every point where a log mutation has finished and
+  // both representations should be quiescent.
   //
-  // This is the only read path into the log. Its predecessor default-inserted,
-  // which made it the one thing in this file that could open a gap in the log,
-  // and silently defeated every `if (!instance)` written against it because it
-  // could never return null.
-  // @unsafe - const map lookup; caller must hold mtx_
-  shared_ptr<const RaftEntry> FindRaftInstance(slotid_t id) const {
-    const auto it = raft_logs_.find(id);
-    if (it == raft_logs_.end()) {
+  // It exists to turn the next step -- deleting those two fields in favour of
+  // base() and last_index() -- from an assumption into something the suites
+  // prove. It goes away with them.
+  //
+  // @unsafe - caller must hold mtx_
+  void VerifyLogExtents() const {
+    if (raft_log_.base() != state_.min_active_slot_ ||
+        raft_log_.last_index() != state_.last_log_index_) {
+      Log_error("[LOGEXTENT] base={} min_active={} last_index={} last_log={} "
+                "len={}",
+                raft_log_.base(), state_.min_active_slot_,
+                raft_log_.last_index(), state_.last_log_index_,
+                static_cast<uint64_t>(raft_log_.len()));
+    }
+    verify(raft_log_.base() == state_.min_active_slot_);
+    verify(raft_log_.last_index() == state_.last_log_index_);
+  }
+
+  // Unwraps RaftLog::get's borrow into a pointer for the C++ callers.
+  //
+  // Sound because every caller reads a field out of the result before the
+  // next statement that could touch the log -- audited one by one, and the
+  // reason RaftLog::get can return a borrow instead of a refcounted handle.
+  // The Rust side never sees this pointer.
+  // @unsafe - borrow flattened to a pointer; caller must hold mtx_
+  const RaftEntry* FindRaftInstance(slotid_t id) const {
+    const auto found = raft_log_.get(id);
+    if (found.is_none()) {
       return nullptr;
     }
-    return it->second;
+    return &found.unwrap();
   }
-
-  // The ONE way an entry enters the log. It takes a fully-formed RaftEntry
-  // rather than handing back a blank one to fill in, so there is no window in
-  // which a slot holds a half-built entry, and no caller that can reach an
-  // entry already in the log in order to change it -- RaftEntry exposes no
-  // mutator at all.
-  // @unsafe - map insert; caller must hold mtx_
-  void PutRaftInstance(slotid_t id, RaftEntry entry) {
-    if (id < state_.min_active_slot_ && id != 0) {
-      Log_info("[RAFT_LOG] expanding state_.min_active_slot_ from {} to {}", state_.min_active_slot_, id);
-      state_.min_active_slot_ = id;
-    }
-    raft_logs_[id] = std::make_shared<RaftEntry>(std::move(entry));
-  }
-
 
   RaftServer();
   // @unsafe - thread join and timer cleanup require manual resource management

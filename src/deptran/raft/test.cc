@@ -1351,6 +1351,22 @@ int RaftLabTest::testSnapshotThresholdConfigurable(void) {
 // Test 58: Same-term InstallSnapshot at/below commit is a successful no-op
 // =============================================================================
 // @unsafe - test function that exercises OnInstallSnapshot
+// Base, length, and every term, in order. Strictly stronger than the
+// shared_ptr-identity map comparison this replaces, which could not see an
+// entry mutated in place.
+static std::vector<uint64_t> RaftLogFingerprint(const janus::RaftLog& log) {
+  std::vector<uint64_t> fp;
+  fp.push_back(log.base());
+  fp.push_back(static_cast<uint64_t>(log.len()));
+  for (size_t i = 0; i < log.len(); ++i) {
+    const auto entry = log.get(log.base() + static_cast<uint64_t>(i));
+    fp.push_back(entry.is_some()
+                     ? static_cast<uint64_t>(entry.unwrap().term())
+                     : 0);
+  }
+  return fp;
+}
+
 int RaftLabTest::testInstallSnapshotBasic(void) {
   Init2(58, "InstallSnapshot stale index is a no-op");
 
@@ -1472,7 +1488,7 @@ int RaftLabTest::testInstallSnapshotBasic(void) {
   // A validation rejection must not publish bytes, compact the log, or
   // fail-stop a healthy follower because the prepare contract forbids live
   // state-machine mutation.
-  std::map<slotid_t, std::shared_ptr<RaftEntry>> rejected_logs_before;
+  std::vector<uint64_t> rejected_logs_before;
   uint64_t rejected_snapidx_before = 0;
   uint64_t rejected_snapterm_before = 0;
   uint64_t rejected_commit_before = 0;
@@ -1482,7 +1498,7 @@ int RaftLabTest::testInstallSnapshotBasic(void) {
   uint64_t rejected_local_progress = 0;
   {
     std::lock_guard<std::mutex> lock(server->mtx_);
-    rejected_logs_before = server->raft_logs_;
+    rejected_logs_before = RaftLogFingerprint(server->raft_log_);
     rejected_snapidx_before = RaftServer::LabAccess::snapidx(*server);
     rejected_snapterm_before = RaftServer::LabAccess::snapterm(*server);
     rejected_commit_before = server->state_.commit_index_;
@@ -1540,7 +1556,8 @@ int RaftLabTest::testInstallSnapshotBasic(void) {
                 server->state_.execute_index_ == rejected_execute_before &&
                 server->state_.last_log_index_ == rejected_last_log_before &&
                 server->state_.min_active_slot_ == rejected_min_active_before &&
-                server->raft_logs_ == rejected_logs_before,
+                RaftLogFingerprint(server->raft_log_) ==
+                    rejected_logs_before,
             "Rejected Prepare mutated the in-memory snapshot/log boundary");
   }
 

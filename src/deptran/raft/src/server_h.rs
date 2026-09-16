@@ -490,6 +490,100 @@ impl RaftEntry {
     }
 }
 
+#[repr(C)]
+pub struct RaftLog {
+    base_: u64,
+    entries_: rusty::Vec<RaftEntry>,
+}
+
+#[allow(clippy::new_without_default)]
+impl RaftLog {
+    pub fn new() -> RaftLog {
+        RaftLog { base_: 1, entries_: rusty::Vec::new() }
+    }
+
+    // Index of the first entry still held. Was min_active_slot_.
+    pub fn base(&self) -> u64 {
+        self.base_
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries_.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries_.is_empty()
+    }
+
+    // Index of the last entry held, or base() - 1 when empty. Was
+    // last_log_index_.
+    pub fn last_index(&self) -> u64 {
+        self.base_ + (self.entries_.len() as u64) - 1
+    }
+
+    // Named `holds`, not `contains`: the emitter rewrites a method called
+    // `contains` into a free rusty::contains() call, which does not exist for
+    // this type. Measured against the pinned transpiler.
+    pub fn holds(&self, index: u64) -> bool {
+        index >= self.base_ && index - self.base_ < (self.entries_.len() as u64)
+    }
+
+    // The only read path, and it hands out a borrow rather than a handle.
+    pub fn get(&self, index: u64) -> rusty::Option<&RaftEntry> {
+        if !self.holds(index) {
+            return rusty::None;
+        }
+        rusty::Some(&self.entries_[(index - self.base_) as usize])
+    }
+
+    // The only write path. Appends at last_index() + 1 and returns it: an
+    // entry cannot be placed at an arbitrary index, so a gap is unspellable.
+    pub fn append(&mut self, entry: RaftEntry) -> u64 {
+        self.entries_.push(entry);
+        self.last_index()
+    }
+
+    // Discard [index, end) -- Raft's conflict rule. A no-op past the tail,
+    // which is the ordinary extend case.
+    pub fn truncate_from(&mut self, index: u64) {
+        if index <= self.base_ {
+            self.entries_.clear();
+            return;
+        }
+        let keep = index - self.base_;
+        if keep < (self.entries_.len() as u64) {
+            self.entries_.truncate(keep as usize);
+        }
+    }
+
+    // Discard [base, index] -- snapshot compaction. Returns how many went.
+    pub fn compact_through(&mut self, index: u64) -> usize {
+        if index < self.base_ {
+            return 0;
+        }
+        let mut drop_count = index - self.base_ + 1;
+        if drop_count > (self.entries_.len() as u64) {
+            drop_count = self.entries_.len() as u64;
+        }
+        // split_off, not a clone-rebuild: the surviving suffix MOVES. A
+        // rebuild would need RaftEntry: Clone, which would need
+        // rusty::RaftCommand: Clone, which the rustc facade does not provide
+        // -- and it would bump a refcount per surviving entry on a path whose
+        // whole point is to reclaim memory.
+        let tail = self.entries_.split_off(drop_count as usize);
+        self.entries_ = tail;
+        self.base_ = index + 1;
+        drop_count as usize
+    }
+
+    // Drop everything and restart the index space at `base`. The follower
+    // path after an InstallSnapshot that supersedes the whole local log.
+    pub fn reset(&mut self, base: u64) {
+        self.entries_.clear();
+        self.base_ = base;
+    }
+}
+
 // SCREAMING_CASE variants match the surrounding C++ enum convention and the
 // existing DSL enums in snapshot_format.hpp, which carries this same allow.
 #[allow(non_camel_case_types)]
