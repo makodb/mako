@@ -787,8 +787,6 @@ pub struct RaftConsensusState {
     election_timeout_us_: u64,
     election_timer_generation_: u64,
     vote_for_: u16,
-    // Log-store boundary.
-    min_active_slot_: u64,
     // Snapshot configuration and callback ownership.
     snapshot_threshold_: u64,
     snapshot_callback_owner_token_: u64,
@@ -807,7 +805,6 @@ pub struct RaftConsensusState {
     // the log. NOTE the historical naming -- these four are the only members
     // in the class without a trailing underscore.
     current_term_: u64,
-    last_log_index_: u64,
     commit_index_: u64,
     execute_index_: u64,
     // Snapshot boundary.
@@ -825,7 +822,6 @@ impl RaftConsensusState {
             // INVALID_SITEID is (siteid_t)-1 and siteid_t is uint16_t.
             vote_for_: u16::MAX,
             // Anything before this slot has been freed by compaction.
-            min_active_slot_: 1,
             snapshot_threshold_: 10000,
             snapshot_callback_owner_token_: 0,
             next_snapshot_callback_owner_token_: 1,
@@ -838,7 +834,6 @@ impl RaftConsensusState {
             read_quorum_confirmed_term_: 0,
             read_quorum_confirmed_round_: 0,
             current_term_: 0,
-            last_log_index_: 0,
             commit_index_: 0,
             execute_index_: 0,
             snapidx_: 0,

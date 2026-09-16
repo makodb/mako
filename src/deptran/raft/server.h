@@ -1157,15 +1157,15 @@ inline const rusty::RaftCommand& RaftEntry::cmd() const {
 // That is an argument, not a measurement, so the conversion asserts it rather
 // than assuming it: RaftLog::append returns the index it wrote and both call
 // sites verify() it is the index they intended, so a gap aborts instead of
-// appearing. VerifyLogExtents (transitional, below) additionally asserts that
-// the two hand-maintained extents still agree with the container, on every
-// path that mutates the log.
+// appearing.
 //
-// WHY IT MATTERS. min_active_slot_ and last_log_index_ are a second and a
+// WHY IT MATTERS. min_active_slot_ and last_log_index_ WERE a second and a
 // third copy of the log's extents, advanced by hand at six write sites and
-// never once checked against the container. They become base() and
-// base() + len() - 1, and then cannot disagree with it, because they are no
-// longer stored.
+// never once checked against the container. They are base() and
+// base() + len() - 1 now, and cannot disagree with it, because they are no
+// longer stored. A transitional assertion carried both representations
+// through raftLabTest's 25 cases and shard1ReplicationSimpleRaft and found
+// they never once disagreed, which is what let the fields go.
 //
 // rusty::Vec specifically: it re-exports std::vec::Vec on the rustc side and
 // is the real vec_port on the C++ side, so both are faithful. See PeerTable's
@@ -1763,8 +1763,6 @@ pub struct RaftConsensusState {
     election_timeout_us_: u64,
     election_timer_generation_: u64,
     vote_for_: u16,
-    // Log-store boundary.
-    min_active_slot_: u64,
     // Snapshot configuration and callback ownership.
     snapshot_threshold_: u64,
     snapshot_callback_owner_token_: u64,
@@ -1783,7 +1781,6 @@ pub struct RaftConsensusState {
     // the log. NOTE the historical naming -- these four are the only members
     // in the class without a trailing underscore.
     current_term_: u64,
-    last_log_index_: u64,
     commit_index_: u64,
     execute_index_: u64,
     // Snapshot boundary.
@@ -1801,7 +1798,6 @@ impl RaftConsensusState {
             // INVALID_SITEID is (siteid_t)-1 and siteid_t is uint16_t.
             vote_for_: u16::MAX,
             // Anything before this slot has been freed by compaction.
-            min_active_slot_: 1,
             snapshot_threshold_: 10000,
             snapshot_callback_owner_token_: 0,
             next_snapshot_callback_owner_token_: 1,
@@ -1814,7 +1810,6 @@ impl RaftConsensusState {
             read_quorum_confirmed_term_: 0,
             read_quorum_confirmed_round_: 0,
             current_term_: 0,
-            last_log_index_: 0,
             commit_index_: 0,
             execute_index_: 0,
             snapidx_: 0,
@@ -1823,7 +1818,7 @@ impl RaftConsensusState {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.consensus_state version=1 rust_sha256=79739de35a925ac6cebe565e3bbb934cf91ea2d58f473901a198c7dc46143985*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.consensus_state version=1 rust_sha256=42e53307ce4bdd5c68ba98c998e2a1315321f50735f6a39a9df793f5eb81d438*/
 struct RaftConsensusState;
 
 struct RaftConsensusState {
@@ -1831,7 +1826,6 @@ struct RaftConsensusState {
     uint64_t election_timeout_us_;
     uint64_t election_timer_generation_;
     uint16_t vote_for_;
-    uint64_t min_active_slot_;
     uint64_t snapshot_threshold_;
     uint64_t snapshot_callback_owner_token_;
     uint64_t next_snapshot_callback_owner_token_;
@@ -1844,7 +1838,6 @@ struct RaftConsensusState {
     uint64_t read_quorum_confirmed_term_;
     uint64_t read_quorum_confirmed_round_;
     uint64_t current_term_;
-    uint64_t last_log_index_;
     uint64_t commit_index_;
     uint64_t execute_index_;
     uint64_t snapidx_;
@@ -1858,7 +1851,7 @@ struct RaftConsensusState {
 
 
 inline RaftConsensusState RaftConsensusState::new_() {
-    return RaftConsensusState{.election_term_ = static_cast<int64_t>(0), .election_timeout_us_ = static_cast<uint64_t>(0), .election_timer_generation_ = static_cast<uint64_t>(0), .vote_for_ = std::numeric_limits<uint16_t>::max(), .min_active_slot_ = static_cast<uint64_t>(1), .snapshot_threshold_ = static_cast<uint64_t>(10000), .snapshot_callback_owner_token_ = static_cast<uint64_t>(0), .next_snapshot_callback_owner_token_ = static_cast<uint64_t>(1), .is_leader_ = false, .req_voting_ = false, .election_in_progress_ = false, .current_leader_id_ = std::numeric_limits<uint16_t>::max(), .last_heartbeat_time_ = static_cast<uint64_t>(0), .heartbeat_round_ = static_cast<uint64_t>(0), .read_quorum_confirmed_term_ = static_cast<uint64_t>(0), .read_quorum_confirmed_round_ = static_cast<uint64_t>(0), .current_term_ = static_cast<uint64_t>(0), .last_log_index_ = static_cast<uint64_t>(0), .commit_index_ = static_cast<uint64_t>(0), .execute_index_ = static_cast<uint64_t>(0), .snapidx_ = static_cast<uint64_t>(0), .snapterm_ = static_cast<int64_t>(0)};
+    return RaftConsensusState{.election_term_ = static_cast<int64_t>(0), .election_timeout_us_ = static_cast<uint64_t>(0), .election_timer_generation_ = static_cast<uint64_t>(0), .vote_for_ = std::numeric_limits<uint16_t>::max(), .snapshot_threshold_ = static_cast<uint64_t>(10000), .snapshot_callback_owner_token_ = static_cast<uint64_t>(0), .next_snapshot_callback_owner_token_ = static_cast<uint64_t>(1), .is_leader_ = false, .req_voting_ = false, .election_in_progress_ = false, .current_leader_id_ = std::numeric_limits<uint16_t>::max(), .last_heartbeat_time_ = static_cast<uint64_t>(0), .heartbeat_round_ = static_cast<uint64_t>(0), .read_quorum_confirmed_term_ = static_cast<uint64_t>(0), .read_quorum_confirmed_round_ = static_cast<uint64_t>(0), .current_term_ = static_cast<uint64_t>(0), .commit_index_ = static_cast<uint64_t>(0), .execute_index_ = static_cast<uint64_t>(0), .snapidx_ = static_cast<uint64_t>(0), .snapterm_ = static_cast<int64_t>(0)};
 }
 /*RUSTYCPP:GEN-END id=raft_server.consensus_state*/
 
@@ -2822,11 +2815,9 @@ class RaftServer : public TxLogServer {
     // Must be called with mtx_ held. Both callers -- setIsLeader() and
     // StartImpl() -- take it before reaching here; the re-acquisition this
     // replaces was a no-op on the recursive mutex. Tranche 4b.
-    // @unsafe
-    {
-      *index = state_.last_log_index_ ;
-    }
-    state_.last_log_index_ += 1;
+    // The pre-append tail, which is what this out-parameter has always
+    // reported -- the new entry lands at *index + 1.
+    *index = raft_log_.last_index();
     // slot_id and ballot are accepted for signature compatibility with the
     // Paxos-shaped callers; RaftEntry has no field for either, because the
     // three fields that used to receive them here were read nowhere.
@@ -2834,8 +2825,7 @@ class RaftServer : public TxLogServer {
     (void)ballot;
     const uint64_t appended = raft_log_.append(
         RaftEntry::new_(state_.current_term_, cmd));
-    verify(appended == state_.last_log_index_);
-    VerifyLogExtents();
+    verify(appended == *index + 1);
 
     // @unsafe
     {
@@ -2844,29 +2834,6 @@ class RaftServer : public TxLogServer {
     return RaftStartResult::APPENDED;
   }
 
-
-  // TRANSITIONAL. state_.min_active_slot_ and state_.last_log_index_ are still
-  // maintained by hand, but the container now knows both for itself. This
-  // asserts they agree, at every point where a log mutation has finished and
-  // both representations should be quiescent.
-  //
-  // It exists to turn the next step -- deleting those two fields in favour of
-  // base() and last_index() -- from an assumption into something the suites
-  // prove. It goes away with them.
-  //
-  // @unsafe - caller must hold mtx_
-  void VerifyLogExtents() const {
-    if (raft_log_.base() != state_.min_active_slot_ ||
-        raft_log_.last_index() != state_.last_log_index_) {
-      Log_error("[LOGEXTENT] base={} min_active={} last_index={} last_log={} "
-                "len={}",
-                raft_log_.base(), state_.min_active_slot_,
-                raft_log_.last_index(), state_.last_log_index_,
-                static_cast<uint64_t>(raft_log_.len()));
-    }
-    verify(raft_log_.base() == state_.min_active_slot_);
-    verify(raft_log_.last_index() == state_.last_log_index_);
-  }
 
   // Unwraps RaftLog::get's borrow into a pointer for the C++ callers.
   //
