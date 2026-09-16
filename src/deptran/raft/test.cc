@@ -1472,7 +1472,7 @@ int RaftLabTest::testInstallSnapshotBasic(void) {
   // A validation rejection must not publish bytes, compact the log, or
   // fail-stop a healthy follower because the prepare contract forbids live
   // state-machine mutation.
-  std::map<slotid_t, std::shared_ptr<RaftData>> rejected_logs_before;
+  std::map<slotid_t, std::shared_ptr<RaftEntry>> rejected_logs_before;
   uint64_t rejected_snapidx_before = 0;
   uint64_t rejected_snapterm_before = 0;
   uint64_t rejected_commit_before = 0;

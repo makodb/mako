@@ -888,9 +888,9 @@ bool RaftServer::InitializeSnapshotManager() {
   const auto boundary = raft_logs_.find(recovered_snapshot_index);
   const bool has_boundary =
       boundary != raft_logs_.end() && boundary->second != nullptr &&
-      boundary->second->log_.has_value();
+      boundary->second->cmd().has_value();
   const uint64_t local_boundary_term =
-      has_boundary ? boundary->second->term : 0;
+      has_boundary ? boundary->second->term() : 0;
   const bool boundary_matches = raft_server_snapshot_boundary_matches(
       has_boundary, local_boundary_term, recovered_snapshot_term);
   const bool has_recovered_suffix = raft_server_log_index_above(
@@ -1163,12 +1163,12 @@ bool RaftServer::CreateSnapshotLocked() {
   if (raft_server_snapshot_term_uses_boundary(snap_index, state_.snapidx_)) {
     // The boundary entry is intentionally absent after compaction. Its term is
     // carried by snapshot metadata; do not recreate the entry or rewind
-    // state_.min_active_slot_ through GetRaftInstance().
+    // state_.min_active_slot_ through PutRaftInstance().
     snap_term = state_.snapterm_;
   } else {
     const auto instance = raft_logs_.find(snap_index);
     if (instance != raft_logs_.end() && instance->second != nullptr) {
-      snap_term = instance->second->term;
+      snap_term = instance->second->term();
     } else {
       // A missing historical term cannot be inferred from state_.current_term_: doing
       // so would forge the snapshot boundary tuple and could make a follower
@@ -1408,13 +1408,13 @@ uint64_t RaftServer::GetElectionTimeout() {
 // Called from OnAppendEntries (already under mtx_) when state_.commit_index_ advances.
 void RaftServer::EnqueueCommittedEntries(slotid_t old_commit, slotid_t new_commit) {
   // apply_queue_ now holds Command — direct copy from
-  // RaftData::log_ (also Command after prep2).
+  // RaftEntry::cmd_ (also Command after prep2).
   std::vector<std::pair<slotid_t, Command>> batch;
   slotid_t first_missing = 0;
   for (slotid_t id = old_commit + 1; id <= new_commit; id++) {
     auto it = raft_logs_.find(id);
-    if (it != raft_logs_.end() && it->second && it->second->log_.has_value()) {
-      batch.emplace_back(id, it->second->log_);
+    if (it != raft_logs_.end() && it->second && it->second->cmd().has_value()) {
+      batch.emplace_back(id, it->second->cmd());
     } else {
       first_missing = id;
       break;  // Gap in log — stop here
@@ -3243,7 +3243,7 @@ bool RaftServer::HeartbeatPhase0(HeartbeatRoundState& state,
                   state_.commit_index_);
 
         // The && no longer has to be load-bearing. It was, while this called
-        // GetRaftInstance: that default-inserts and can lower
+        // GetRaftInstance: that default-inserted and could lower
         // state_.min_active_slot_, so the term lookup had to be kept away from
         // a candidate that failed the index test. FindRaftInstance does not
         // mutate, so the pairing is now ordinary short-circuiting.
@@ -3258,7 +3258,7 @@ bool RaftServer::HeartbeatPhase0(HeartbeatRoundState& state,
                commit_candidate != nullptr);
         if (commit_candidate != nullptr &&
             raft_server_log_entry_is_current_term(
-                commit_candidate->term, state_.current_term_)) {
+                commit_candidate->term(), state_.current_term_)) {
           uint64_t old_commit = state_.commit_index_;
           Log_debug("newCommitIndex {}", newCommitIndex);
           state_.commit_index_ = newCommitIndex;
@@ -3459,7 +3459,7 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
               // Keep using snapshot boundary metadata after compaction.
               prevLogTerm = state_.snapterm_;
             } else {
-              // Was GetRaftInstance, which default-inserts and therefore
+              // Was GetRaftInstance, which default-inserted and therefore
               // can never return null -- so the check below was dead, and a
               // genuinely missing prevLogIndex silently fabricated an empty
               // entry with term 0 and sent prevLogTerm = 0 rather than
@@ -3470,7 +3470,7 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
                           prevLogIndex, site_id);
                 skip_follower = true;
               } else {
-                prevLogTerm = instance->term;
+                prevLogTerm = instance->term();
               }
             }
 
@@ -3487,7 +3487,7 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
                 } else {
                   auto cur_log = raft_logs_.find(peers_.next_index(ord));
                   if (cur_log == raft_logs_.end() || !cur_log->second ||
-                      !cur_log->second->log_.has_value()) {
+                      !cur_log->second->cmd().has_value()) {
                     Log_error("[HEARTBEAT-SEND] Missing log entry {}, skipping follower {}",
                               peers_.next_index(ord), site_id);
                     skip_follower = true;
@@ -3495,8 +3495,8 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
                     const auto& curInstance = cur_log->second;
                     // cmd is Command; assign directly from
                     // curInstance->log_ (also Command).
-                    cmd = curInstance->log_;
-                    cmdLogTerm = curInstance->term;
+                    cmd = curInstance->cmd();
+                    cmdLogTerm = curInstance->term();
                     sent_end_index =
                         raft_server_append_sent_end(prevLogIndex, 1);
                     // 2 step 1: debug log no longer needs the
@@ -3538,7 +3538,7 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
                      batch_buffer_.size() < max_batch_entries;) {
                   auto cur_log = raft_logs_.find(idx);
                   if (cur_log == raft_logs_.end() || !cur_log->second ||
-                      !cur_log->second->log_.has_value()) {
+                      !cur_log->second->cmd().has_value()) {
                     Log_error("[HEARTBEAT-BATCH] Missing log entry {} for follower {}; "
                               "refusing to compress a hole",
                               idx, site_id);
@@ -3546,25 +3546,25 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
                     break;
                   }
                   const auto& curInstance = cur_log->second;
-                  // curInstance->log_ is Command; the
+                  // curInstance->cmd() is Command; the
                   // `marshallable_cast<T>(SerializableEnvelope&)`
                   // overload (in serializable_envelope.hpp) handles
                   // this directly.
                   auto curCmd =
-                      marshallable_cast<TpcCommitCommand>(curInstance->log_);
+                      marshallable_cast<TpcCommitCommand>(curInstance->cmd());
                   if (curCmd.is_none()) {
                     if (batch_buffer_.empty()) {
                       Log_info("[BATCH_SKIP] site={} idx={}: log entry is not "
                                "TpcCommitCommand (kind={}), using raw log",
-                               site_id_, idx, curInstance->log_.kind_);
-                      cmd = curInstance->log_;
-                      cmdLogTerm = curInstance->term;
+                               site_id_, idx, curInstance->cmd().kind_);
+                      cmd = curInstance->cmd();
+                      cmdLogTerm = curInstance->term();
                       sent_end_index =
                           raft_server_append_sent_end(prevLogIndex, 1);
                     } else {
                       Log_info("[BATCH_STOP] site={} idx={}: ending batch before "
                                "non-TpcCommitCommand kind={}",
-                               site_id_, idx, curInstance->log_.kind_);
+                               site_id_, idx, curInstance->cmd().kind_);
                     }
                     break;
                   }
@@ -3594,7 +3594,7 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
                   {
                     auto stamped = rusty::Arc<TpcCommitCommand>::make(
                         *curCmd.as_ref().unwrap());
-                    stamped.get_mut().unwrap().term = curInstance->term;
+                    stamped.get_mut().unwrap().term = curInstance->term();
                     batch_buffer_.push_back(std::move(stamped));
                   }
                   if (!raft_server_log_index_has_successor(idx)) {
@@ -3936,7 +3936,7 @@ void RaftServer::HeartbeatPhase3(HeartbeatRoundState& state,
                  final_candidate != nullptr);
           if (final_candidate != nullptr &&
               raft_server_log_entry_is_current_term(
-                  final_candidate->term, state_.current_term_)) {
+                  final_candidate->term(), state_.current_term_)) {
             uint64_t old_commit = state_.commit_index_;
             Log_debug("[PHASE3-COMMIT] Advancing state_.commit_index_ {} -> {}", state_.commit_index_, finalCommitIndex);
             state_.commit_index_ = finalCommitIndex;
@@ -4083,7 +4083,7 @@ ballot_t RaftServer::ElectionLastLogTermLocked() const {
   auto last_log = raft_logs_.find(state_.last_log_index_);
   verify(last_log != raft_logs_.end());
   verify(last_log->second != nullptr);
-  return last_log->second->term;
+  return last_log->second->term();
 }
 
 
@@ -4689,7 +4689,7 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
       // leaderPrevLogIndex -- discovering that is the whole point, and what
       // drives the leader's backtracking.
       //
-      // This used GetRaftInstance, which default-inserts, so an absent entry
+      // This used GetRaftInstance, which default-inserted, so an absent entry
       // was FABRICATED with term 0 and then compared against
       // leaderPrevLogTerm. The `prev_instance ? ... : 0` below was dead for
       // the same reason: that function cannot return null. Within the
@@ -4702,7 +4702,7 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
       // local_prev_term = 0 without mutating the log, and the mismatch is
       // reported rather than manufactured.
       auto prev_instance = FindRaftInstance(leaderPrevLogIndex);
-      local_prev_term = prev_instance ? prev_instance->term : 0;
+      local_prev_term = prev_instance ? prev_instance->term() : 0;
   }
   bool prev_term_ok = (leaderPrevLogIndex == 0 || local_prev_term == leaderPrevLogTerm);
 
@@ -4764,7 +4764,7 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
       // ==================================================================
 
       // Decode the complete wire payload before mutating the local log.
-      std::vector<std::pair<slotid_t, std::shared_ptr<RaftData>>>
+      std::vector<std::pair<slotid_t, std::shared_ptr<RaftEntry>>>
           incoming_entries;
       const uint64_t old_last_log_index = state_.last_log_index_;
       const uint64_t accepted_through = cmd.has_value()
@@ -4774,9 +4774,8 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
 
       if (cmd.has_value()) {
 #ifndef RAFT_BATCH_OPTIMIZATION
-        auto incoming = std::make_shared<RaftData>();
-        incoming->log_ = cmd;
-        incoming->term = leaderNextLogTerm;
+        auto incoming = std::make_shared<RaftEntry>(
+            RaftEntry::new_(leaderNextLogTerm, cmd));
         incoming_entries.push_back({accepted_through, incoming});
 #endif
 #ifdef RAFT_BATCH_OPTIMIZATION
@@ -4789,18 +4788,16 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
             ++cnt;
             const uint64_t index = raft_server_append_sent_end(
                 leaderPrevLogIndex, cnt);
-            auto incoming = std::make_shared<RaftData>();
-            incoming->log_ = c.clone();
-            incoming->term = c->term;
+            auto incoming = std::make_shared<RaftEntry>(
+                RaftEntry::new_(c->term, c.clone()));
             incoming_entries.push_back({index, std::move(incoming)});
           }
         } else {
           // Batch optimization is a wire optimization, not a restriction on
           // the Raft log's command type. Application commands travel as one
           // raw entry with their explicit wire term.
-          auto incoming = std::make_shared<RaftData>();
-          incoming->log_ = cmd;
-          incoming->term = leaderNextLogTerm;
+          auto incoming = std::make_shared<RaftEntry>(
+              RaftEntry::new_(leaderNextLogTerm, cmd));
           incoming_entries.push_back({accepted_through,
                                       std::move(incoming)});
         }
@@ -4820,10 +4817,10 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
         const auto local = raft_logs_.find(index);
         const bool local_exists =
             local != raft_logs_.end() && local->second != nullptr &&
-            local->second->log_.has_value();
-        const uint64_t local_term = local_exists ? local->second->term : 0;
+            local->second->cmd().has_value();
+        const uint64_t local_term = local_exists ? local->second->term() : 0;
         if (raft_server_append_entry_conflicts(
-                local_exists, local_term, incoming->term)) {
+                local_exists, local_term, incoming->term())) {
           have_first_write = true;
           first_write_index = index;
           truncate_suffix = index <= old_last_log_index;
@@ -5080,14 +5077,14 @@ void RaftServer::OnInstallSnapshot(const uint64_t term,
 
   // Complete every fallible observation used by the retention decision before
   // the application loader can replace external state. Use find(), not
-  // GetRaftInstance(), and require a decoded command so a synthesized empty
-  // RaftData can never prove the snapshot boundary.
+  // PutRaftInstance(), and require a decoded command so a synthesized empty
+  // RaftEntry can never prove the snapshot boundary.
   const auto boundary = raft_logs_.find(last_included_index);
   const bool has_boundary =
       boundary != raft_logs_.end() && boundary->second != nullptr &&
-      boundary->second->log_.has_value();
+      boundary->second->cmd().has_value();
   const ballot_t local_boundary_term =
-      has_boundary ? boundary->second->term : 0;
+      has_boundary ? boundary->second->term() : 0;
   const bool retain_suffix = raft_server_snapshot_boundary_matches(
       has_boundary, local_boundary_term, last_included_term);
   const slotid_t previous_last_log_index = state_.last_log_index_;

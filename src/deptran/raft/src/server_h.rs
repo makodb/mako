@@ -469,6 +469,27 @@ pub const fn raft_server_leader_rpc_sender_is_authoritative(
            (!has_known_leader || known_leader_matches_sender))))
 }
 
+#[repr(C)]
+pub struct RaftEntry {
+    term_: i64,
+    cmd_: rusty::RaftCommand,
+}
+
+impl RaftEntry {
+    pub fn new(term: i64, cmd: rusty::RaftCommand) -> RaftEntry {
+        RaftEntry { term_: term, cmd_: cmd }
+    }
+
+    pub fn term(&self) -> i64 {
+        self.term_
+    }
+
+    // Handed back to C++, never followed from Rust.
+    pub fn cmd(&self) -> &rusty::RaftCommand {
+        &self.cmd_
+    }
+}
+
 // SCREAMING_CASE variants match the surrounding C++ enum convention and the
 // existing DSL enums in snapshot_format.hpp, which carries this same allow.
 #[allow(non_camel_case_types)]

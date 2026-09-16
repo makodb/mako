@@ -1074,29 +1074,74 @@ static_assert(raft_server_signed_term_is_newer(1, 0));
 static_assert(raft_server_log_entry_is_current_term(
     -1, static_cast<uint64_t>(-1)));
 
-// @safe - data struct with shared_ptr fields (shared_ptr marked @external)
+// One log entry, owned by Rust.
 //
-// polymorphic command fields
-// (`accepted_cmd_` / `committed_cmd_` / `log_`) migrated from
-// `shared_ptr<Marshallable>` to `janus::Command`.  Internal storage
-// inside Command remains `shared_ptr<Marshallable>` (boundary calls
-// to APIs still taking `shared_ptr<Marshallable>` use
-// `cmd.inner_marshallable()`).  Wire format unchanged.  See
-// `docs/dev/l10-unblock-plan.md`.
-struct RaftData {
-  ballot_t max_ballot_seen_ = 0;
-  ballot_t max_ballot_accepted_ = 0;
-  Command accepted_cmd_{};
-  Command committed_cmd_{};
+// Was nine fields; seven were dead. max_ballot_seen_, max_ballot_accepted_,
+// accepted_cmd_ and committed_cmd_ had ZERO uses in raft -- a tree-wide grep
+// appears to show them live, but every hit is PaxosData (paxos/server.h:18),
+// a separate struct that happens to share the field names. prevTerm, slot_id
+// and ballot were written once each in SetLocalAppend and read nowhere.
+//
+// What is left is one scalar and one opaque carrier, each read at 13 sites in
+// server.cc. The payload crosses as rusty::RaftCommand -- held, moved, handed
+// to a kernel, never dereferenced from Rust -- which is the same opaque carry
+// PendingTable already uses for this exact type.
+//
+// The payload's internal storage is still a shared_ptr<Marshallable>; calls
+// to APIs that take one go through cmd().inner_marshallable(). Wire format
+// unchanged -- see docs/dev/l10-unblock-plan.md.
+//
+// Deliberately NO method returning &mut: an entry is written when it is
+// constructed and never afterwards. That is what makes "modify an existing
+// entry" unspellable rather than merely discouraged, and it is why the
+// send-time term stamp had to become a copy first (d295a4842).
+#if RUSTYCPP_RUST
+#[repr(C)]
+pub struct RaftEntry {
+    term_: i64,
+    cmd_: rusty::RaftCommand,
+}
 
-  ballot_t term;
-  Command log_{};
+impl RaftEntry {
+    pub fn new(term: i64, cmd: rusty::RaftCommand) -> RaftEntry {
+        RaftEntry { term_: term, cmd_: cmd }
+    }
 
-	//for retries
-	ballot_t prevTerm;
-	slotid_t slot_id;
-	ballot_t ballot;
+    pub fn term(&self) -> i64 {
+        self.term_
+    }
+
+    // Handed back to C++, never followed from Rust.
+    pub fn cmd(&self) -> &rusty::RaftCommand {
+        &self.cmd_
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_server.log_entry version=1 rust_sha256=98590c5f9b9334a9d3e73f09aff14969c2e5630711aef7b90e94e297cdc87453*/
+struct RaftEntry;
+
+struct RaftEntry {
+    int64_t term_;
+    rusty::RaftCommand cmd_;
+
+    static RaftEntry new_(int64_t term, rusty::RaftCommand cmd);
+    int64_t term() const;
+    const rusty::RaftCommand& cmd() const;
 };
+
+
+inline RaftEntry RaftEntry::new_(int64_t term, rusty::RaftCommand cmd) {
+    return RaftEntry{.term_ = std::move(term), .cmd_ = std::move(cmd)};
+}
+
+inline int64_t RaftEntry::term() const {
+    return this->term_;
+}
+
+inline const rusty::RaftCommand& RaftEntry::cmd() const {
+    return this->cmd_;
+}
+/*RUSTYCPP:GEN-END id=raft_server.log_entry*/
 
 #ifdef RAFT_TEST_CORO
 #define HEARTBEAT_INTERVAL 100000
@@ -2465,9 +2510,7 @@ class RaftServer : public TxLogServer {
   int n_accept_ = 0;
   int n_commit_ = 0;
 
-  /* NOTE: I think I should move these to the RaftData class */
-  /* TODO: talk to Shuai about it */
-  map<slotid_t, shared_ptr<RaftData>> raft_logs_{};
+  map<slotid_t, shared_ptr<RaftEntry>> raft_logs_{};
 
   // @unsafe - Binds the cross-thread wake gate to HeartbeatLoop's PollThread.
   // Must run before HeartbeatLoop starts (Setup does so).
@@ -2574,12 +2617,13 @@ class RaftServer : public TxLogServer {
       *index = state_.last_log_index_ ;
     }
     state_.last_log_index_ += 1;
-    auto instance = GetRaftInstance(state_.last_log_index_);
-    instance->log_ = cmd;
-		instance->prevTerm = state_.current_term_;
-    instance->term = state_.current_term_;
-		instance->slot_id = slot_id;
-		instance->ballot = ballot;
+    // slot_id and ballot are accepted for signature compatibility with the
+    // Paxos-shaped callers; RaftEntry has no field for either, because the
+    // three fields that used to receive them here were read nowhere.
+    (void)slot_id;
+    (void)ballot;
+    PutRaftInstance(state_.last_log_index_,
+                    RaftEntry::new_(state_.current_term_, cmd));
 
     // @unsafe
     {
@@ -2589,16 +2633,14 @@ class RaftServer : public TxLogServer {
   }
 
 
-  // @unsafe - map access and shared_ptr mutation
   // Non-inserting lookup: nullptr when the slot is absent.
   //
-  // GetRaftInstance below default-inserts, which makes it the one thing in
-  // this file that can create a gap in the log -- and it silently defeats
-  // every `if (!instance)` check written against it, because it can never
-  // return null. Callers that EXPECT an entry should use this; only a caller
-  // that intends to CREATE one should use GetRaftInstance.
+  // This is the only read path into the log. Its predecessor default-inserted,
+  // which made it the one thing in this file that could open a gap in the log,
+  // and silently defeated every `if (!instance)` written against it because it
+  // could never return null.
   // @unsafe - const map lookup; caller must hold mtx_
-  shared_ptr<RaftData> FindRaftInstance(slotid_t id) const {
+  shared_ptr<const RaftEntry> FindRaftInstance(slotid_t id) const {
     const auto it = raft_logs_.find(id);
     if (it == raft_logs_.end()) {
       return nullptr;
@@ -2606,16 +2648,19 @@ class RaftServer : public TxLogServer {
     return it->second;
   }
 
-   shared_ptr<RaftData> GetRaftInstance(slotid_t id) {
+  // The ONE way an entry enters the log. It takes a fully-formed RaftEntry
+  // rather than handing back a blank one to fill in, so there is no window in
+  // which a slot holds a half-built entry, and no caller that can reach an
+  // entry already in the log in order to change it -- RaftEntry exposes no
+  // mutator at all.
+  // @unsafe - map insert; caller must hold mtx_
+  void PutRaftInstance(slotid_t id, RaftEntry entry) {
     if (id < state_.min_active_slot_ && id != 0) {
       Log_info("[RAFT_LOG] expanding state_.min_active_slot_ from {} to {}", state_.min_active_slot_, id);
       state_.min_active_slot_ = id;
     }
-    auto& sp_instance = raft_logs_[id];
-    if(!sp_instance)
-      sp_instance = std::make_shared<RaftData>();
-    return sp_instance;
-   }
+    raft_logs_[id] = std::make_shared<RaftEntry>(std::move(entry));
+  }
 
 
   RaftServer();

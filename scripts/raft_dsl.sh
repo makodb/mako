@@ -61,6 +61,7 @@ EXPECTED_BLOCKS=(
   "src/deptran/raft/server.h|raft_server.scalar_decisions"
   "src/deptran/raft/server.h|raft_server.election_timer"
   "src/deptran/raft/server.h|raft_server.heartbeat_driver"
+  "src/deptran/raft/server.h|raft_server.log_entry"
   "src/deptran/raft/service.cc|raft_service.scalar_decisions"
   "src/deptran/raft/snapshot_manager.hpp|raft_snapshot.metadata_decisions"
   "src/deptran/raft/snapshot_format.hpp|raft_snapshot.crc32_scalar_step"
