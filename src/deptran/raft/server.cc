@@ -3336,14 +3336,33 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
                     if (server == nullptr) {
                       return;
                     }
-                    // @unsafe - callback modifies shared state under lock
-                    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+                    // THE LOCK IS TAKEN BELOW THIS CHECK, NOT ABOVE IT, and
+                    // that placement is load-bearing.
+                    //
+                    // This callback runs in TWO contexts. Normally the reactor
+                    // invokes it when the reply lands, with mtx_ not held. But
+                    // RaftCommo::SendInstallSnapshot invokes it INLINE, on the
+                    // caller's stack, when PeerForSite returns null
+                    // (commo.cc:167-170) -- and that caller is PHASE 1, which
+                    // holds mtx_. A recursive_mutex tolerates the re-entry; a
+                    // plain std::mutex would self-deadlock, which is what
+                    // blocked demoting it.
+                    //
+                    // The inline path always passes follower_term == 0, so it
+                    // takes the branch below and returns having touched no
+                    // state at all. Acquiring after the check means the
+                    // synchronous context never reaches the lock, and every
+                    // path that does reach it is the asynchronous one. site_id_
+                    // is written once during Setup, so reading it for the log
+                    // needs no lock.
                     if (!raft_server_install_snapshot_reply_is_available(
                             follower_term)) {
                       Log_warn("[HEARTBEAT-SNAPSHOT] Site {}: Follower {} snapshot response unavailable; retaining replication indices",
                                server->site_id_, site_id);
                       return;
                     }
+                    // @unsafe - callback modifies shared state under lock
+                    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
                     if (raft_server_observed_higher_term(
                             follower_term, server->currentTerm)) {
                       Log_info("[HEARTBEAT-SNAPSHOT] Site {}: Follower {} has higher term {} > {}, stepping down",
