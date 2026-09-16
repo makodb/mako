@@ -3242,13 +3242,23 @@ bool RaftServer::HeartbeatPhase0(HeartbeatRoundState& state,
                   newCommitIndex, (round.nservers() - 1) / 2, peers_.len(),
                   state_.commit_index_);
 
-        // The && is load-bearing, not stylistic. GetRaftInstance default-inserts
-        // into raft_logs_ and can lower state_.min_active_slot_, so the term lookup
-        // must not be evaluated for a candidate that already failed the index
-        // test. PHASE 3 fuses the same pair for the same reason.
-        if (raft_server_log_index_above(newCommitIndex, state_.commit_index_) &&
+        // The && no longer has to be load-bearing. It was, while this called
+        // GetRaftInstance: that default-inserts and can lower
+        // state_.min_active_slot_, so the term lookup had to be kept away from
+        // a candidate that failed the index test. FindRaftInstance does not
+        // mutate, so the pairing is now ordinary short-circuiting.
+        //
+        // The candidate is <= last_log_index_ and > commit_index_, so the
+        // entry provably exists; verify says so rather than leaving a null
+        // dereference to express it.
+        const auto commit_candidate =
+            raft_server_log_index_above(newCommitIndex, state_.commit_index_)
+                ? FindRaftInstance(newCommitIndex) : nullptr;
+        verify(!raft_server_log_index_above(newCommitIndex, state_.commit_index_) ||
+               commit_candidate != nullptr);
+        if (commit_candidate != nullptr &&
             raft_server_log_entry_is_current_term(
-                GetRaftInstance(newCommitIndex)->term, state_.current_term_)) {
+                commit_candidate->term, state_.current_term_)) {
           uint64_t old_commit = state_.commit_index_;
           Log_debug("newCommitIndex {}", newCommitIndex);
           state_.commit_index_ = newCommitIndex;
@@ -3449,9 +3459,14 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
               // Keep using snapshot boundary metadata after compaction.
               prevLogTerm = state_.snapterm_;
             } else {
-              auto instance = GetRaftInstance(prevLogIndex);
+              // Was GetRaftInstance, which default-inserts and therefore
+              // can never return null -- so the check below was dead, and a
+              // genuinely missing prevLogIndex silently fabricated an empty
+              // entry with term 0 and sent prevLogTerm = 0 rather than
+              // skipping the follower. FindRaftInstance makes the check live.
+              auto instance = FindRaftInstance(prevLogIndex);
               if (!instance) {
-                Log_error("[HEARTBEAT-SEND] [CRITICAL] GetRaftInstance({}) returned NULL! Skipping follower {}",
+                Log_error("[HEARTBEAT-SEND] [CRITICAL] log entry {} is absent! Skipping follower {}",
                           prevLogIndex, site_id);
                 skip_follower = true;
               } else {
@@ -3912,9 +3927,16 @@ void RaftServer::HeartbeatPhase3(HeartbeatRoundState& state,
           verify(peers_.len() == round.nservers() - 1);
           const uint64_t finalCommitIndex =
               peers_.majority_match_index(round.nservers(), state_.last_log_index_);
-          if (raft_server_log_index_above(finalCommitIndex, state_.commit_index_) &&
+          // Same shape as PHASE 0 above: non-mutating lookup, and the entry
+          // provably exists when the index test passes.
+          const auto final_candidate =
+              raft_server_log_index_above(finalCommitIndex, state_.commit_index_)
+                  ? FindRaftInstance(finalCommitIndex) : nullptr;
+          verify(!raft_server_log_index_above(finalCommitIndex, state_.commit_index_) ||
+                 final_candidate != nullptr);
+          if (final_candidate != nullptr &&
               raft_server_log_entry_is_current_term(
-                  GetRaftInstance(finalCommitIndex)->term, state_.current_term_)) {
+                  final_candidate->term, state_.current_term_)) {
             uint64_t old_commit = state_.commit_index_;
             Log_debug("[PHASE3-COMMIT] Advancing state_.commit_index_ {} -> {}", state_.commit_index_, finalCommitIndex);
             state_.commit_index_ = finalCommitIndex;
@@ -4663,7 +4685,23 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
       // Snapshot boundary is still valid even when log entries are compacted.
       local_prev_term = state_.snapterm_;
   } else if (leaderPrevLogIndex <= this->state_.last_log_index_ && !compacted_prefix_miss) {
-      auto prev_instance = GetRaftInstance(leaderPrevLogIndex);
+      // THE LOG-MATCHING CHECK. A follower legitimately may not hold
+      // leaderPrevLogIndex -- discovering that is the whole point, and what
+      // drives the leader's backtracking.
+      //
+      // This used GetRaftInstance, which default-inserts, so an absent entry
+      // was FABRICATED with term 0 and then compared against
+      // leaderPrevLogTerm. The `prev_instance ? ... : 0` below was dead for
+      // the same reason: that function cannot return null. Within the
+      // <= last_log_index_ guard and the compacted-prefix check a gap should
+      // not arise, so this is not a known live divergence -- but the
+      // correctness of the check rested on "there are no gaps", while the
+      // function used to perform it was the only thing able to create one.
+      //
+      // FindRaftInstance does not insert, so absence now falls through to
+      // local_prev_term = 0 without mutating the log, and the mismatch is
+      // reported rather than manufactured.
+      auto prev_instance = FindRaftInstance(leaderPrevLogIndex);
       local_prev_term = prev_instance ? prev_instance->term : 0;
   }
   bool prev_term_ok = (leaderPrevLogIndex == 0 || local_prev_term == leaderPrevLogTerm);

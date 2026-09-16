@@ -2590,6 +2590,22 @@ class RaftServer : public TxLogServer {
 
 
   // @unsafe - map access and shared_ptr mutation
+  // Non-inserting lookup: nullptr when the slot is absent.
+  //
+  // GetRaftInstance below default-inserts, which makes it the one thing in
+  // this file that can create a gap in the log -- and it silently defeats
+  // every `if (!instance)` check written against it, because it can never
+  // return null. Callers that EXPECT an entry should use this; only a caller
+  // that intends to CREATE one should use GetRaftInstance.
+  // @unsafe - const map lookup; caller must hold mtx_
+  shared_ptr<RaftData> FindRaftInstance(slotid_t id) const {
+    const auto it = raft_logs_.find(id);
+    if (it == raft_logs_.end()) {
+      return nullptr;
+    }
+    return it->second;
+  }
+
    shared_ptr<RaftData> GetRaftInstance(slotid_t id) {
     if (id < state_.min_active_slot_ && id != 0) {
       Log_info("[RAFT_LOG] expanding state_.min_active_slot_ from {} to {}", state_.min_active_slot_, id);
