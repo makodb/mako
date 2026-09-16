@@ -3553,9 +3553,35 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
                     }
                     break;
                   }
-                  // @unsafe { sanctioned writeback through the shared payload — see server_atomic_* precedent }
-                  { auto& mut_cmd = *const_cast<TpcCommitCommand*>(curCmd.as_ref().unwrap().get()); mut_cmd.term = curInstance->term; }
-                  batch_buffer_.push_back(curCmd.unwrap());
+                  // STAMP A COPY, NEVER THE STORED ENTRY.
+                  //
+                  // The batched wire format carries each entry's term inside
+                  // its TpcCommitCommand -- the receiver reads it back at
+                  // server.cc:4730 to set the entry's term -- and the command
+                  // is created with term 0 (raft_worker.cc:741), so something
+                  // has to stamp it. This used to const_cast the payload of
+                  // the entry in raft_logs_ and write through it: a mutation
+                  // of committed, already-replicated, shared state, performed
+                  // lazily at send time.
+                  //
+                  // It was idempotent, because a committed entry's term never
+                  // changes, so it was not a live bug. But it is the only
+                  // place in the file that modifies an existing log entry, and
+                  // a log that can be modified after commit cannot state its
+                  // own invariants -- so it has no spelling in a Rust-owned
+                  // RaftLog, whose entries are reachable only as &RaftEntry.
+                  //
+                  // Copying is cheap and does not touch the payload:
+                  // TpcCommitCommand is two scalars, an int, and two Arcs, so
+                  // the copy bumps refcounts and leaves the LogEntry bytes
+                  // shared.
+                  // @unsafe { factory-fresh Arc, uniquely owned mutation window }
+                  {
+                    auto stamped = rusty::Arc<TpcCommitCommand>::make(
+                        *curCmd.as_ref().unwrap());
+                    stamped.get_mut().unwrap().term = curInstance->term;
+                    batch_buffer_.push_back(std::move(stamped));
+                  }
                   if (!raft_server_log_index_has_successor(idx)) {
                     break;
                   }
