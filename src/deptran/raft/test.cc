@@ -1402,7 +1402,7 @@ int RaftLabTest::testInstallSnapshotBasic(void) {
     old_commit_index = server->commitIndex;
     old_execute_index = server->executeIndex;
     old_last_log_index = server->lastLogIndex;
-    old_min_active_slot = server->min_active_slot_;
+    old_min_active_slot = server->state_.min_active_slot_;
     follower_term = server->currentTerm;
   }
 
@@ -1446,7 +1446,7 @@ int RaftLabTest::testInstallSnapshotBasic(void) {
     Assert2(server->commitIndex == old_commit_index &&
                 server->executeIndex == old_execute_index &&
                 server->lastLogIndex == old_last_log_index &&
-                server->min_active_slot_ == old_min_active_slot,
+                server->state_.min_active_slot_ == old_min_active_slot,
             "Stale snapshot mutated log/apply indices");
     Assert2(!server->IsLeaderLocked(),
             "Accepted same-term leader contact must leave receiver a follower");
@@ -1488,7 +1488,7 @@ int RaftLabTest::testInstallSnapshotBasic(void) {
     rejected_commit_before = server->commitIndex;
     rejected_execute_before = server->executeIndex;
     rejected_last_log_before = server->lastLogIndex;
-    rejected_min_active_before = server->min_active_slot_;
+    rejected_min_active_before = server->state_.min_active_slot_;
     rejected_local_progress = std::max(
         {server->commitIndex, server->executeIndex,
          server->GetAppliedIndex(), RaftServer::LabAccess::snapidx(*server), server->lastLogIndex});
@@ -1539,7 +1539,7 @@ int RaftLabTest::testInstallSnapshotBasic(void) {
                 server->commitIndex == rejected_commit_before &&
                 server->executeIndex == rejected_execute_before &&
                 server->lastLogIndex == rejected_last_log_before &&
-                server->min_active_slot_ == rejected_min_active_before &&
+                server->state_.min_active_slot_ == rejected_min_active_before &&
                 server->raft_logs_ == rejected_logs_before,
             "Rejected Prepare mutated the in-memory snapshot/log boundary");
   }
@@ -1899,7 +1899,7 @@ int RaftLabTest::testHeartbeatTriggersInstallSnapshot(void) {
       std::lock_guard<std::mutex> lock(leader_server->mtx_);
       leader_execute_index = leader_server->executeIndex;
       leader_snap_idx = leader_server->GetSnapshotIndexLocked();
-      leader_min_active = leader_server->min_active_slot_;
+      leader_min_active = leader_server->state_.min_active_slot_;
     }
     auto candidate = managers[leader]->GetLatestSnapshot();
     if (candidate.is_some()) {
@@ -2276,7 +2276,7 @@ int RaftLabTest::testLongPartitionRecovery(void) {
       std::lock_guard<std::mutex> lock(leader_server->mtx_);
       leader_execute_index = leader_server->executeIndex;
       leader_snap_idx = leader_server->GetSnapshotIndexLocked();
-      leader_min_active = leader_server->min_active_slot_;
+      leader_min_active = leader_server->state_.min_active_slot_;
     }
     auto candidate = test_mgrs[leader]->GetLatestSnapshot();
     if (candidate.is_some()) {
@@ -2314,7 +2314,7 @@ int RaftLabTest::testLongPartitionRecovery(void) {
           seeded_snapshot_indices[leader], first_partition_index,
           leader_snap_idx);
   Assert2(leader_min_active > 1,
-          "Leader min_active_slot_ should be > 1 after compaction, got %lu",
+          "Leader state_.min_active_slot_ should be > 1 after compaction, got %lu",
           leader_min_active);
 
   // Capture the disconnected boundary before opening the network. Otherwise

@@ -56,6 +56,7 @@ EXPECTED_BLOCKS=(
   "src/deptran/raft/server.cc|raft_server.authority_ledger"
   "src/deptran/raft/server.cc|raft_server.heartbeat_round_scope"
   "src/deptran/raft/server.h|raft_server.follower_progress"
+  "src/deptran/raft/server.h|raft_server.consensus_state"
   "src/deptran/raft/server.h|raft_server.commit_status"
   "src/deptran/raft/server.h|raft_server.scalar_decisions"
   "src/deptran/raft/server.h|raft_server.election_timer"

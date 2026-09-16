@@ -665,6 +665,39 @@ impl PeerTable {
     }
 }
 
+#[repr(C)]
+pub struct RaftConsensusState {
+    // Election cluster.
+    election_term_: i64,
+    election_timeout_us_: u64,
+    election_timer_generation_: u64,
+    vote_for_: u16,
+    // Log-store boundary.
+    min_active_slot_: u64,
+    // Snapshot configuration and callback ownership.
+    snapshot_threshold_: u64,
+    snapshot_callback_owner_token_: u64,
+    next_snapshot_callback_owner_token_: u64,
+}
+
+#[allow(clippy::new_without_default)]
+impl RaftConsensusState {
+    pub fn new() -> RaftConsensusState {
+        RaftConsensusState {
+            election_term_: 0,
+            election_timeout_us_: 0,
+            election_timer_generation_: 0,
+            // INVALID_SITEID is (siteid_t)-1 and siteid_t is uint16_t.
+            vote_for_: u16::MAX,
+            // Anything before this slot has been freed by compaction.
+            min_active_slot_: 1,
+            snapshot_threshold_: 10000,
+            snapshot_callback_owner_token_: 0,
+            next_snapshot_callback_owner_token_: 1,
+        }
+    }
+}
+
 // One locked gather's worth of election state. Plain copies, so the loop can
 // branch on them after the lock is released, exactly as the C++ did.
 // repr(C) is mandatory, not decorative: raft_election_gather returns this

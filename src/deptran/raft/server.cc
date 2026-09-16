@@ -879,7 +879,7 @@ bool RaftServer::InitializeSnapshotManager() {
   const uint64_t previous_snapshot_index = snapidx_;
   const uint64_t previous_snapshot_term = snapterm_;
   const uint64_t previous_last_log_index = lastLogIndex;
-  const uint64_t previous_min_active_slot = min_active_slot_;
+  const uint64_t previous_min_active_slot = state_.min_active_slot_;
 
   // Reconstruct Figure 13's suffix decision from the old boundary when it is
   // still present.  A live reinitialization would use its exact existing
@@ -935,14 +935,14 @@ bool RaftServer::InitializeSnapshotManager() {
   }
   commitIndex = raft_server_snapshot_progress_clamp(
       commitIndex, snapidx_, lastLogIndex);
-  min_active_slot_ = std::max(min_active_slot_, snapidx_ + 1);
+  state_.min_active_slot_ = std::max(state_.min_active_slot_, snapidx_ + 1);
 
   if (currentTerm < snapterm_) {
     Log_warn("[RAFT-SNAPSHOT] Site {} advancing recovered term {} -> {} "
              "to cover snapshot boundary",
              site_id_, currentTerm, snapterm_);
     currentTerm = snapterm_;
-    vote_for_ = INVALID_SITEID;
+    state_.vote_for_ = INVALID_SITEID;
   }
 
   verify(commitIndex <= lastLogIndex);
@@ -960,7 +960,7 @@ bool RaftServer::InitializeSnapshotManager() {
   Log_info("[RAFT-SNAPSHOT] Restored snapshot for site {}: index={} term={} "
            "size={} commit={} last={} min_active={} retain_suffix={}",
            site_id_, snapidx_, snapterm_, metadata.size_bytes,
-           commitIndex, lastLogIndex, min_active_slot_, retain_suffix);
+           commitIndex, lastLogIndex, state_.min_active_slot_, retain_suffix);
 
   Log_info("[RAFT-SNAPSHOT] Initialized for site {} partition {}: interval={}",
            site_id_, partition_id_, snapshot_interval);
@@ -1007,7 +1007,7 @@ void RaftServer::SetSnapshotThreshold(uint64_t threshold) {
 
 // CALLER MUST HOLD mtx_.
 void RaftServer::SetSnapshotThresholdLocked(uint64_t threshold) {
-  snapshot_threshold_ = threshold;
+  state_.snapshot_threshold_ = threshold;
   snapshot_trigger_threshold_.store(
       threshold, rusty::sync::atomic::Ordering::Release);
 }
@@ -1078,8 +1078,8 @@ size_t RaftServer::CompactLogLocked(slotid_t up_to_index) {
   }
 
   // up_to_index was proven to have a representable successor above.
-  if (up_to_index + 1 > min_active_slot_) {
-    min_active_slot_ = up_to_index + 1;
+  if (up_to_index + 1 > state_.min_active_slot_) {
+    state_.min_active_slot_ = up_to_index + 1;
   }
 
   Log_info("[RAFT-COMPACT] Site {}: Compacted in-memory entries through {} "
@@ -1093,13 +1093,13 @@ uint64_t RaftServer::SetStateMachineSnapshotCallbacks(
     std::function<std::unique_ptr<PreparedStateMachineSnapshotInstall>(
         const std::string&, uint64_t)> prepare_cb) {
   std::lock_guard<std::mutex> lock(mtx_);
-  if (next_snapshot_callback_owner_token_ == 0) {
-    next_snapshot_callback_owner_token_ = 1;
+  if (state_.next_snapshot_callback_owner_token_ == 0) {
+    state_.next_snapshot_callback_owner_token_ = 1;
   }
-  const uint64_t owner_token = next_snapshot_callback_owner_token_++;
+  const uint64_t owner_token = state_.next_snapshot_callback_owner_token_++;
   create_sm_snapshot_cb_ = std::move(create_cb);
   prepare_sm_snapshot_cb_ = std::move(prepare_cb);
-  snapshot_callback_owner_token_ = owner_token;
+  state_.snapshot_callback_owner_token_ = owner_token;
   return owner_token;
 }
 
@@ -1110,13 +1110,13 @@ bool RaftServer::ClearStateMachineSnapshotCallbacks(
   }
 
   std::lock_guard<std::mutex> lock(mtx_);
-  if (snapshot_callback_owner_token_ != callback_owner_token) {
+  if (state_.snapshot_callback_owner_token_ != callback_owner_token) {
     return false;
   }
 
   create_sm_snapshot_cb_ = {};
   prepare_sm_snapshot_cb_ = {};
-  snapshot_callback_owner_token_ = 0;
+  state_.snapshot_callback_owner_token_ = 0;
   return true;
 }
 
@@ -1128,7 +1128,7 @@ void RaftServer::MaybeCreateSnapshot() {
   std::lock_guard<std::mutex> lock(mtx_);
   if (!snapshot_manager_ ||
       !raft_server_snapshot_is_due(
-          snapidx_, executeIndex, snapshot_threshold_)) {
+          snapidx_, executeIndex, state_.snapshot_threshold_)) {
     return;
   }
   (void)CreateSnapshotLocked();
@@ -1163,7 +1163,7 @@ bool RaftServer::CreateSnapshotLocked() {
   if (raft_server_snapshot_term_uses_boundary(snap_index, snapidx_)) {
     // The boundary entry is intentionally absent after compaction. Its term is
     // carried by snapshot metadata; do not recreate the entry or rewind
-    // min_active_slot_ through GetRaftInstance().
+    // state_.min_active_slot_ through GetRaftInstance().
     snap_term = snapterm_;
   } else {
     const auto instance = raft_logs_.find(snap_index);
@@ -3243,7 +3243,7 @@ bool RaftServer::HeartbeatPhase0(HeartbeatRoundState& state,
                   commitIndex);
 
         // The && is load-bearing, not stylistic. GetRaftInstance default-inserts
-        // into raft_logs_ and can lower min_active_slot_, so the term lookup
+        // into raft_logs_ and can lower state_.min_active_slot_, so the term lookup
         // must not be evaluated for a candidate that already failed the index
         // test. PHASE 3 fuses the same pair for the same reason.
         if (raft_server_log_index_above(newCommitIndex, commitIndex) &&
@@ -3347,10 +3347,10 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
                      site_id, prevLogIndex, lastLogIndex);
             peers_.set_next_index(ord, 1);
             skip_follower = true;
-          } else if (peers_.next_index(ord) < min_active_slot_ && snapshot_manager_) {
+          } else if (peers_.next_index(ord) < state_.min_active_slot_ && snapshot_manager_) {
             // @unsafe - Follower is too far behind (log compacted), send InstallSnapshot
-            Log_info("[HEARTBEAT-SNAPSHOT] Site {}: Follower {} next_index={} < min_active_slot_={}, sending InstallSnapshot",
-                     site_id_, site_id, peers_.next_index(ord), min_active_slot_);
+            Log_info("[HEARTBEAT-SNAPSHOT] Site {}: Follower {} next_index={} < state_.min_active_slot_={}, sending InstallSnapshot",
+                     site_id_, site_id, peers_.next_index(ord), state_.min_active_slot_);
             janus::raft::SnapshotMetadata snap_meta;
             std::string snap_data;
             if (snapshot_manager_->LoadLatestSnapshot(&snap_meta, &snap_data)) {
@@ -3404,7 +3404,7 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
                                server->currentTerm);
                       const uint64_t previous_term = server->currentTerm;
                       server->currentTerm = follower_term;
-                      server->vote_for_ = INVALID_SITEID;
+                      server->state_.vote_for_ = INVALID_SITEID;
                       server->LogTermChange(
                           "InstallSnapshot reply carried newer term",
                           previous_term, server->currentTerm, site_id);
@@ -3461,8 +3461,8 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
 
             if (!skip_follower) {
 #ifndef RAFT_BATCH_OPTIMIZATION
-              Log_debug("[BATCH_CHECK] site={} follower={} next_index={} min_active_slot_={} lastLogIndex={}",
-                       site_id_, site_id, peers_.next_index(ord), min_active_slot_, lastLogIndex);
+              Log_debug("[BATCH_CHECK] site={} follower={} next_index={} state_.min_active_slot_={} lastLogIndex={}",
+                       site_id_, site_id, peers_.next_index(ord), state_.min_active_slot_, lastLogIndex);
               if (peers_.next_index(ord) <= lastLogIndex) {
                 if (!raft_server_append_entry_count_fits(prevLogIndex, 1)) {
                   Log_error("[HEARTBEAT-SEND] Log index exhausted after {}, "
@@ -3498,8 +3498,8 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
               vector<rusty::Arc<TpcCommitCommand>> batch_buffer_;
               const uint64_t max_batch_entries = GetAppendEntriesBatchMaxEntries();
               const uint64_t batch_start_idx = peers_.next_index(ord);
-              Log_debug("[BATCH_CHECK] site={} follower={} next_index={} min_active_slot_={} lastLogIndex={}",
-                       site_id_, site_id, peers_.next_index(ord), min_active_slot_, lastLogIndex);
+              Log_debug("[BATCH_CHECK] site={} follower={} next_index={} state_.min_active_slot_={} lastLogIndex={}",
+                       site_id_, site_id, peers_.next_index(ord), state_.min_active_slot_, lastLogIndex);
               if (!raft_server_append_entry_count_fits(prevLogIndex, 1)) {
                 Log_error("[HEARTBEAT-BATCH] Log index exhausted after {}, "
                           "skipping follower {}",
@@ -3511,11 +3511,11 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
                   : raft_server_append_sent_end(prevLogIndex, 1);
               if (!skip_follower &&
                   (batch_start_idx != first_encoded_index ||
-                   batch_start_idx < min_active_slot_)) {
+                   batch_start_idx < state_.min_active_slot_)) {
                 Log_error("[HEARTBEAT-BATCH] Non-contiguous source for follower {}: "
                           "prev={} start={} min_active={}; refusing to compress a hole",
                           site_id, prevLogIndex, batch_start_idx,
-                          min_active_slot_);
+                          state_.min_active_slot_);
                 skip_follower = true;
               } else if (!skip_follower) {
                 for (uint64_t idx = batch_start_idx;
@@ -3706,7 +3706,7 @@ void RaftServer::HeartbeatPhase2(HeartbeatRoundState& state,
                   "carried higher term {} > {}",
                   site_id_, pending.follower_id, resp.term, currentTerm);
               currentTerm = resp.term;
-              vote_for_ = INVALID_SITEID;
+              state_.vote_for_ = INVALID_SITEID;
               LogTermChange("AppendEntries response carried newer term",
                             previous_term, currentTerm, pending.follower_id);
               // The responding follower proves a newer term, not its leader.
@@ -4088,8 +4088,8 @@ bool RaftServer::RequestVoteImpl(bool timer_guarded,
       const uint64_t elapsed = now - last_heartbeat_time_;
       if (!raft_server_timer_campaign_is_current(
               is_leader_, expected_generation,
-              election_timer_generation_, elapsed,
-              election_timeout_us_)) {
+              state_.election_timer_generation_, elapsed,
+              state_.election_timeout_us_)) {
         return false;
       }
     }
@@ -4099,10 +4099,10 @@ bool RaftServer::RequestVoteImpl(bool timer_guarded,
     // than immediately reusing the already-expired follower deadline.
     resetTimerLocked("starting election campaign");
     prev_term = currentTerm;
-    prev_vote_for = vote_for_;
+    prev_vote_for = state_.vote_for_;
     auto prev_local_term = currentTerm;
     currentTerm++ ;
-    vote_for_ = site_id_;  // Vote for ourselves when starting election
+    state_.vote_for_ = site_id_;  // Vote for ourselves when starting election
     // A candidate has no elected leader evidence in its new term. In
     // particular, it must not redirect clients to the leader from the term it
     // just left.
@@ -4112,7 +4112,7 @@ bool RaftServer::RequestVoteImpl(bool timer_guarded,
     // Atomically publish ownership of req_voting_ and the election term before
     // broadcasting so no second caller can campaign concurrently.
     election_in_progress_ = true;
-    election_term_ = currentTerm;
+    state_.election_term_ = currentTerm;
     req_voting_ = true;
     term = currentTerm;
 
@@ -4134,7 +4134,7 @@ bool RaftServer::RequestVoteImpl(bool timer_guarded,
   // receiver admits a candidate only if current_config_ contains it and
   // current_config_ is filled from Config::SitesByPartitionId()'s site.id
   // (server.cc:1565-1571, 2939-2942), and this candidate has just recorded
-  // vote_for_ = site_id_ above, which the grant path compares against can_id.
+  // state_.vote_for_ = site_id_ above, which the grant path compares against can_id.
   //
   // Passing loc_id_ here was correct only for partition 0. Config::LoadSiteYML
   // increments site_id globally across replica-group rows while resetting
@@ -4163,13 +4163,13 @@ bool RaftServer::RequestVoteImpl(bool timer_guarded,
   const ElectionCompletionAction completion_action =
       static_cast<ElectionCompletionAction>(
           raft_server_election_completion_action(
-              election_in_progress_, election_term_, term, currentTerm,
+              election_in_progress_, state_.election_term_, term, currentTerm,
               observed_response_term));
   if (completion_action ==
       ElectionCompletionAction::ADVANCE_HIGHER_TERM) {
     const uint64_t previous_term = currentTerm;
     currentTerm = static_cast<uint64_t>(observed_response_term);
-    vote_for_ = INVALID_SITEID;
+    state_.vote_for_ = INVALID_SITEID;
     current_leader_id_ = raft_server_leader_hint_after_transition(
         false, false, site_id_, current_leader_id_);
 
@@ -4195,7 +4195,7 @@ bool RaftServer::RequestVoteImpl(bool timer_guarded,
 #ifdef RAFT_LEADER_ELECTION_DEBUG
     Log_info("[RAFT_ELECTION] server {} ignoring stale election result: "
              "result_term={} local_term={} election_term={} active={}",
-             site_id_, term, currentTerm, election_term_,
+             site_id_, term, currentTerm, state_.election_term_,
              election_in_progress_);
 #endif
     return false;
@@ -4244,7 +4244,7 @@ bool RaftServer::RequestVoteImpl(bool timer_guarded,
     Log_info("[RAFT_ELECTION] server {} lost election term {} (yes={} no={}) highest_term={}",
              site_id_, term, sp_quorum->q().n_voted_yes_.get(), sp_quorum->q().n_voted_no_.get(), sp_quorum->Term());
 #endif
-    if (election_in_progress_ && election_term_ == term) {
+    if (election_in_progress_ && state_.election_term_ == term) {
       election_in_progress_ = false;
     }
   	req_voting_ = false ;
@@ -4255,7 +4255,7 @@ bool RaftServer::RequestVoteImpl(bool timer_guarded,
     Log_info("[RAFT_ELECTION] server {} election timed out term {} (yes={} no={})",
              site_id_, term, sp_quorum->q().n_voted_yes_.get(), sp_quorum->q().n_voted_no_.get());
 #endif
-    if (election_in_progress_ && election_term_ == term) {
+    if (election_in_progress_ && state_.election_term_ == term) {
       election_in_progress_ = false;
     }
   	req_voting_ = false ;
@@ -4309,10 +4309,10 @@ void RaftServer::OnRequestVote(const slotid_t& lst_log_idx,
   // and allows voting if we haven't voted yet in this term
   // @unsafe
   {
-  if( can_term == cur_term && vote_for_ != INVALID_SITEID && vote_for_ != can_id )
+  if( can_term == cur_term && state_.vote_for_ != INVALID_SITEID && state_.vote_for_ != can_id )
   {
     Log_debug("site {} vote NO for {} (already voted for {} in term {})",
-              site_id_, can_id, vote_for_, cur_term);
+              site_id_, can_id, state_.vote_for_, cur_term);
     doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, false) ;
     return ;
   }
@@ -4332,7 +4332,7 @@ void RaftServer::OnRequestVote(const slotid_t& lst_log_idx,
   // If we already voted for this same candidate in this term, vote YES again
   // only when the retry still satisfies log freshness.
   if (raft_server_vote_is_idempotent(
-          static_cast<uint64_t>(can_term), cur_term, vote_for_, can_id) &&
+          static_cast<uint64_t>(can_term), cur_term, state_.vote_for_, can_id) &&
       candidate_log_is_current)
   {
     Log_debug("site {} vote YES for {} (already voted for them in term {}, idempotent)",
@@ -4399,11 +4399,11 @@ ElectionTick RaftServer::ElectionLoopGather() {
   const uint64_t time_now = Time::now(true);
   const uint64_t heartbeat_time = last_heartbeat_time_;
   const uint64_t time_elapsed = time_now - heartbeat_time;
-  const uint64_t election_timeout = election_timeout_us_;
+  const uint64_t election_timeout = state_.election_timeout_us_;
   return ElectionTick::new_(
       time_elapsed, election_timeout, heartbeat_time,
-      election_timer_generation_, currentTerm,
-      static_cast<uint16_t>(vote_for_),
+      state_.election_timer_generation_, currentTerm,
+      static_cast<uint16_t>(state_.vote_for_),
       raft_server_election_timeout_has_fired(is_leader_, time_elapsed,
                                              election_timeout));
 }
@@ -4627,7 +4627,7 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
       leaderCurrentTerm, this->currentTerm);
   const bool compacted_prefix_miss =
       (leaderPrevLogIndex != 0 &&
-       leaderPrevLogIndex < min_active_slot_ &&
+       leaderPrevLogIndex < state_.min_active_slot_ &&
        leaderPrevLogIndex != snapidx_);
   bool index_ok = (leaderPrevLogIndex <= this->lastLogIndex) && !compacted_prefix_miss;
   uint64_t local_prev_term = 0;
@@ -4654,7 +4654,7 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
               leaderCurrentTerm, this->currentTerm)) {
           auto prev_term = currentTerm;
           currentTerm = leaderCurrentTerm;
-          vote_for_ = INVALID_SITEID;  // Reset vote when advancing to new term
+          state_.vote_for_ = INVALID_SITEID;  // Reset vote when advancing to new term
           // Publish the accepted leader before a possible leader-change
           // callback observes the follower transition.
           current_leader_id_ = raft_server_leader_hint_after_transition(
@@ -4934,7 +4934,7 @@ void RaftServer::OnInstallSnapshot(const uint64_t term,
     currentTerm = term;
     // @unsafe
     {
-    vote_for_ = INVALID_SITEID;
+    state_.vote_for_ = INVALID_SITEID;
     }
   }
 
@@ -4993,7 +4993,7 @@ void RaftServer::OnInstallSnapshot(const uint64_t term,
     return;
   }
   if (!raft_server_log_index_has_successor(last_included_index)) {
-    // min_active_slot_ requires S + 1. Reaching UINT64_MAX exhausts the Raft
+    // state_.min_active_slot_ requires S + 1. Reaching UINT64_MAX exhausts the Raft
     // log index space, so reject the payload without wrapping the value.
     Log_error("[INSTALL-SNAPSHOT] Site {}: Cannot install terminal snapshot "
               "index {}; no successor index is representable",
@@ -5121,9 +5121,9 @@ void RaftServer::OnInstallSnapshot(const uint64_t term,
     }
   }
 
-  // Update min_active_slot_ to reflect compacted log
-  if (last_included_index + 1 > min_active_slot_) {
-    min_active_slot_ = last_included_index + 1;
+  // Update state_.min_active_slot_ to reflect compacted log
+  if (last_included_index + 1 > state_.min_active_slot_) {
+    state_.min_active_slot_ = last_included_index + 1;
   }
 
   // ============================================================================
