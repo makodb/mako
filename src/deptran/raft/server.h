@@ -1920,6 +1920,9 @@ class RaftServer : public TxLogServer {
     return peers_.len();
   }
 
+  // @unsafe - rebuilds the ordinal peer tables; CALLER MUST HOLD mtx_
+  void RebuildPeerTables(uint64_t next_index);
+
   // @unsafe - suspends on the wake gate; false means shutdown
   bool HeartbeatWait();
   // @unsafe - advances the read-index round and recomputes the commit index;

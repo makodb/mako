@@ -1787,25 +1787,13 @@ void RaftServer::setIsLeader(bool isLeader) {
   }
 
   if (isLeader && failover_) {
-    std::set<siteid_t> replication_targets = current_config_;
-    // Rebuilt rather than appended to: setIsLeader runs once per leadership
-    // acquisition, and the ordinals must not accumulate across terms.
-    peer_sites_.clear();
-    for (const auto peer_id : replication_targets) {
-      if (peer_id == site_id_) {
-        continue;
-      }
-      peer_sites_.push_back(peer_id);
-    }
-    peers_.reset(peer_sites_.size(), lastLogIndex + 1);
+    // Every caller of setIsLeader already holds mtx_ (server.cc:1754-1759).
+    RebuildPeerTables(lastLogIndex + 1);
     for (size_t ord = 0; ord < peers_.len(); ord++) {
       Log_debug("loc_id_={} match_index_[{}]={}, next_index_[{}]={}",
                 loc_id_, peer_sites_[ord], peers_.match_index(ord),
                 peer_sites_[ord], peers_.next_index(ord));
     }
-    const size_t expected = replication_targets.size() -
-        static_cast<size_t>(replication_targets.count(site_id_) > 0);
-    verify(peers_.len() == expected);
   }
 
 
@@ -3086,11 +3074,19 @@ struct HeartbeatRoundState {
   HeartbeatRoundScope scope{HeartbeatRoundScope::new_()};
 };
 
-// @unsafe - timer allocation, progress_ initialisation, atomic stores
-void RaftServer::HeartbeatPrologue() {
-  heartbeat_loop_running_.store(
-      true, rusty::sync::atomic::Ordering::Release);
-  std::set<siteid_t> replication_targets = current_config_;
+// Rebuilds the ordinal peer tables from current_config_.
+//
+// MUST BE CALLED WITH mtx_ HELD. Deliberately does not take the lock itself:
+// setIsLeader's callers already hold it, and re-acquiring would add one more
+// nested acquisition to the 24 that Step C of
+// docs/migration/raft/heartbeat-first-conversion-plan.md has to remove.
+//
+// Rebuilt rather than appended to: the two callers each run once per
+// leadership acquisition or loop start, and ordinals must not accumulate
+// across terms. The two tables are sized together so an ordinal means the
+// same thing in both.
+void RaftServer::RebuildPeerTables(uint64_t next_index) {
+  const std::set<siteid_t>& replication_targets = current_config_;
   peer_sites_.clear();
   for (const auto peer_id : replication_targets) {
     if (peer_id == site_id_) {
@@ -3098,10 +3094,25 @@ void RaftServer::HeartbeatPrologue() {
     }
     peer_sites_.push_back(peer_id);
   }
-  peers_.reset(peer_sites_.size(), 1);
+  peers_.reset(peer_sites_.size(), next_index);
   const size_t expected = replication_targets.size() -
       static_cast<size_t>(replication_targets.count(site_id_) > 0);
   verify(peers_.len() == expected);
+}
+
+// @unsafe - timer allocation, peer-table rebuild under mtx_, atomic stores
+void RaftServer::HeartbeatPrologue() {
+  heartbeat_loop_running_.store(
+      true, rusty::sync::atomic::Ordering::Release);
+  {
+    // Taken explicitly. setIsLeader does this rebuild holding mtx_ and this
+    // did not, which was safe only because both run as fibers on the one poll
+    // thread with no suspension in between -- an accident, not a design, and
+    // one that Step B's Mutex<T> grouping would have turned into a real
+    // inconsistency.
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    RebuildPeerTables(1);
+  }
 
   Log_debug("heartbeat loop init from site: {}", site_id_);
   looping_.store(true, rusty::sync::atomic::Ordering::Release);
