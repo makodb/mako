@@ -10,6 +10,8 @@
 #include <exception>
 #include <condition_variable>
 #include <memory>
+#include <thread>
+#include <atomic>
 #include <rusty/move.hpp>   // rusty::clone in the generated FollowerProgress
 #include <rusty/box.hpp>
 #include <rusty/arc.hpp>
@@ -2329,6 +2331,66 @@ inline void HeartbeatDriver::run() const {
 }
 /*RUSTYCPP:GEN-END id=raft_server.heartbeat_driver*/
 
+// A std::mutex that remembers which thread holds it, so re-entering it
+// aborts with a message instead of hanging.
+//
+// WHY THIS IS WORTH AN ATOMIC PER ACQUISITION. mtx_ was a recursive_mutex
+// until the Tranche 5 demotion. Re-entry used to be legal; now it is a
+// self-deadlock -- the thread waits for a lock only it can release. Every
+// path INSIDE RaftServer was checked then, and a static walk still finds no
+// function holding mtx_ that reaches another taking it.
+//
+// The gap is the two application-provided callbacks. CreateSnapshotLocked
+// and PrepareStateMachineSnapshotLocked invoke embedder code with mtx_
+// held, so a callback that calls back into this server deadlocks. No test
+// can catch it: the only in-tree callbacks are pure. Without this, the
+// symptom is a silent hang with no stack and no log line. With it, the
+// symptom names the bug.
+//
+// Satisfies BasicLockable and Lockable, so std::lock_guard and
+// std::unique_lock work on it unchanged.
+class RaftCheckedMutex {
+ public:
+  void lock() {
+    const std::thread::id self = std::this_thread::get_id();
+    if (owner_.load(std::memory_order_relaxed) == self) {
+      ReportReentry();
+    }
+    inner_.lock();
+    owner_.store(self, std::memory_order_relaxed);
+  }
+
+  bool try_lock() {
+    const std::thread::id self = std::this_thread::get_id();
+    if (owner_.load(std::memory_order_relaxed) == self) {
+      ReportReentry();
+    }
+    if (!inner_.try_lock()) {
+      return false;
+    }
+    owner_.store(self, std::memory_order_relaxed);
+    return true;
+  }
+
+  void unlock() {
+    owner_.store(std::thread::id{}, std::memory_order_relaxed);
+    inner_.unlock();
+  }
+
+ private:
+  // @unsafe { writes to stderr and aborts }
+  [[noreturn]] static void ReportReentry();
+
+  std::mutex inner_{};
+  std::atomic<std::thread::id> owner_{};
+};
+
+// If thread::id is not lock-free, std::atomic<> falls back to an internal
+// lock and this check would cost far more than intended. Fail the build
+// rather than quietly pay for it.
+static_assert(std::atomic<std::thread::id>::is_always_lock_free,
+              "RaftCheckedMutex assumes a lock-free atomic<thread::id>");
+
 class RaftServer : public TxLogServer {
  public:
   // ==========================================================================
@@ -2417,7 +2479,7 @@ class RaftServer : public TxLogServer {
   // mtx_ being Raft's own is the point: it is what lets Tranche 5 replace this
   // recursive mutex with a single Mutex<RaftState> without touching Paxos.
   TXLOG_SERVER_SITE_FIELDS()
-  std::mutex mtx_{};
+  RaftCheckedMutex mtx_{};
 
   // The consensus cluster mtx_ guards, now one Rust-owned value instead of
   // eight bare members. Reached as state_.field by C++ that has not converted.
@@ -2723,7 +2785,7 @@ class RaftServer : public TxLogServer {
   void resetTimer(const char* reason = "unspecified") {
     // @unsafe
     {
-      std::lock_guard<std::mutex> lock(mtx_);
+      std::lock_guard<RaftCheckedMutex> lock(mtx_);
       resetTimerLocked(reason);
     }
   }
@@ -2854,7 +2916,7 @@ class RaftServer : public TxLogServer {
     if (!looping_.load(rusty::sync::atomic::Ordering::Acquire)) {
       return false;
     }
-    std::lock_guard<std::mutex> lock(mtx_);
+    std::lock_guard<RaftCheckedMutex> lock(mtx_);
     return state_.is_leader_ ;
   }
   
@@ -2876,7 +2938,7 @@ class RaftServer : public TxLogServer {
 
   // @unsafe - output pointer writes and mutex operations
   void GetState(bool *is_leader, uint64_t *term) {
-    std::lock_guard<std::mutex> lock(mtx_);
+    std::lock_guard<RaftCheckedMutex> lock(mtx_);
     // @unsafe
     {
       *is_leader = IsLeaderLocked();
@@ -3164,7 +3226,7 @@ class RaftServer : public TxLogServer {
    */
   // @unsafe - Log_info plus mutex operations
   void SetPreferredLeader(siteid_t site_id) {
-    std::lock_guard<std::mutex> lock(mtx_);
+    std::lock_guard<RaftCheckedMutex> lock(mtx_);
 
     siteid_t old_preferred = preferred_leader_site_id_;
     preferred_leader_site_id_ = site_id;

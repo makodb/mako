@@ -120,7 +120,7 @@ bool RaftLabTest::InstallAndSeedSnapshotManager(
 
   std::lock_guard<std::mutex> apply_lock(
       RaftServer::LabAccess::state_machine_apply_mtx(*server));
-  std::lock_guard<std::mutex> lock(server->mtx_);
+  std::lock_guard<RaftCheckedMutex> lock(server->mtx_);
 
   if (RaftServer::LabAccess::snapidx(*server) > 0) {
     // A compacted boundary is meaningful only together with its exact state
@@ -1176,7 +1176,7 @@ int RaftLabTest::testCreateSnapshotBasic(void) {
   auto test_mgr = std::make_shared<janus::raft::MemorySnapshotManager>();
   auto original_threshold = server->GetSnapshotThreshold();
   {
-    std::lock_guard<std::mutex> lock(server->mtx_);
+    std::lock_guard<RaftCheckedMutex> lock(server->mtx_);
     server->SetSnapshotManagerLocked(test_mgr);
     // Set a low threshold so we can trigger a snapshot easily.
     server->SetSnapshotThresholdLocked(5);
@@ -1216,7 +1216,7 @@ int RaftLabTest::testCreateSnapshotBasic(void) {
   // The snapshot now backs a compacted live prefix.  Restore only the runtime
   // threshold; keep the manager and its snapshot available for future catch-up.
   {
-    std::lock_guard<std::mutex> lock(server->mtx_);
+    std::lock_guard<RaftCheckedMutex> lock(server->mtx_);
     server->SetSnapshotThresholdLocked(original_threshold);
   }
   Log_info("[CREATE-SNAPSHOT-BASIC-TEST] Retaining live in-memory snapshot manager");
@@ -1262,7 +1262,7 @@ int RaftLabTest::testCreateSnapshotAndCompaction(void) {
   bool snapshot_ready = false;
   for (int attempt = 0; attempt < 200 && !snapshot_ready; ++attempt) {
     {
-      std::lock_guard<std::mutex> lock(server->mtx_);
+      std::lock_guard<RaftCheckedMutex> lock(server->mtx_);
       snap_idx = server->GetSnapshotIndexLocked();
     }
     auto candidate = test_mgr->GetLatestSnapshot();
@@ -1300,7 +1300,7 @@ int RaftLabTest::testCreateSnapshotAndCompaction(void) {
   // The snapshot now backs a compacted live prefix.  Restore only the runtime
   // threshold; keep the manager and its snapshot available for future catch-up.
   {
-    std::lock_guard<std::mutex> lock(server->mtx_);
+    std::lock_guard<RaftCheckedMutex> lock(server->mtx_);
     server->SetSnapshotThresholdLocked(original_threshold);
   }
   Log_info("[CREATE-SNAPSHOT-COMPACTION-TEST] Retaining live in-memory snapshot manager");
@@ -1412,7 +1412,7 @@ int RaftLabTest::testInstallSnapshotBasic(void) {
               &seeded_snapshot_index),
           "Could not atomically seed Test58 replacement snapshot manager");
   {
-    std::lock_guard<std::mutex> lock(server->mtx_);
+    std::lock_guard<RaftCheckedMutex> lock(server->mtx_);
     old_snapidx = server->GetSnapshotIndexLocked();
     old_snapterm = server->GetSnapshotTermLocked();
     old_commit_index = server->state_.commit_index_;
@@ -1452,7 +1452,7 @@ int RaftLabTest::testInstallSnapshotBasic(void) {
           follower_term, reply_term);
 
   {
-    std::lock_guard<std::mutex> lock(server->mtx_);
+    std::lock_guard<RaftCheckedMutex> lock(server->mtx_);
     Assert2(server->GetSnapshotIndexLocked() == old_snapidx,
             "Stale snapshot changed snapidx from %lu to %lu",
             old_snapidx, server->GetSnapshotIndexLocked());
@@ -1497,7 +1497,7 @@ int RaftLabTest::testInstallSnapshotBasic(void) {
   uint64_t rejected_min_active_before = 0;
   uint64_t rejected_local_progress = 0;
   {
-    std::lock_guard<std::mutex> lock(server->mtx_);
+    std::lock_guard<RaftCheckedMutex> lock(server->mtx_);
     rejected_logs_before = RaftLogFingerprint(server->raft_log_);
     rejected_snapidx_before = RaftServer::LabAccess::snapidx(*server);
     rejected_snapterm_before = RaftServer::LabAccess::snapterm(*server);
@@ -1549,7 +1549,7 @@ int RaftLabTest::testInstallSnapshotBasic(void) {
           "Clean Prepare rejection incorrectly fail-stopped the follower");
 
   {
-    std::lock_guard<std::mutex> lock(server->mtx_);
+    std::lock_guard<RaftCheckedMutex> lock(server->mtx_);
     Assert2(RaftServer::LabAccess::snapidx(*server) == rejected_snapidx_before &&
                 RaftServer::LabAccess::snapterm(*server) == rejected_snapterm_before &&
                 server->state_.commit_index_ == rejected_commit_before &&
@@ -1634,7 +1634,7 @@ int RaftLabTest::testInstallSnapshotRejectsStaleTerm(void) {
   bool before_req_voting = false;
   bool before_election_in_progress = false;
   {
-    std::lock_guard<std::mutex> lock(server->mtx_);
+    std::lock_guard<RaftCheckedMutex> lock(server->mtx_);
     before_snapidx = RaftServer::LabAccess::snapidx(*server);
     before_snapterm = RaftServer::LabAccess::snapterm(*server);
     before_commitIndex = server->state_.commit_index_;
@@ -1669,7 +1669,7 @@ int RaftLabTest::testInstallSnapshotRejectsStaleTerm(void) {
 
   // Verify follower state is UNCHANGED through one synchronized observation.
   {
-    std::lock_guard<std::mutex> lock(server->mtx_);
+    std::lock_guard<RaftCheckedMutex> lock(server->mtx_);
     Assert2(RaftServer::LabAccess::snapidx(*server) == before_snapidx,
             "snapidx should be unchanged (%lu), got %lu",
             before_snapidx, RaftServer::LabAccess::snapidx(*server));
@@ -1712,7 +1712,7 @@ int RaftLabTest::testInstallSnapshotRejectsStaleTerm(void) {
           "Same-term future-boundary rejection must report unavailable (0), got %lu",
           future_boundary_reply_term);
   {
-    std::lock_guard<std::mutex> lock(server->mtx_);
+    std::lock_guard<RaftCheckedMutex> lock(server->mtx_);
     Assert2(server->state_.current_term_ == follower_term &&
                 RaftServer::LabAccess::snapidx(*server) == before_snapidx &&
                 static_cast<uint64_t>(RaftServer::LabAccess::snapterm(*server)) ==
@@ -1756,7 +1756,7 @@ int RaftLabTest::testInstallSnapshotRejectsStaleTerm(void) {
           "Unrepresentable snapshot leader must report unavailable (0), got %lu",
           unrepresentable_reply_term);
   {
-    std::lock_guard<std::mutex> lock(server->mtx_);
+    std::lock_guard<RaftCheckedMutex> lock(server->mtx_);
     Assert2(server->state_.current_term_ == follower_term &&
                 RaftServer::LabAccess::snapidx(*server) == before_snapidx &&
                 static_cast<uint64_t>(RaftServer::LabAccess::snapterm(*server)) ==
@@ -1842,7 +1842,7 @@ int RaftLabTest::testHeartbeatTriggersInstallSnapshot(void) {
     for (int i = 0; i < NSERVERS; ++i) {
       auto server = config_->GetServer(i);
       if (server == nullptr) continue;
-      std::lock_guard<std::mutex> lock(server->mtx_);
+      std::lock_guard<RaftCheckedMutex> lock(server->mtx_);
       server->SetSnapshotThresholdLocked(original_thresholds[i]);
     }
   });
@@ -1850,7 +1850,7 @@ int RaftLabTest::testHeartbeatTriggersInstallSnapshot(void) {
   uint64_t follower_snap_before = 0;
   uint64_t follower_last_before = 0;
   {
-    std::lock_guard<std::mutex> lock(follower_server->mtx_);
+    std::lock_guard<RaftCheckedMutex> lock(follower_server->mtx_);
     follower_snap_before = follower_server->GetSnapshotIndexLocked();
     follower_last_before = follower_server->raft_log_.last_index();
   }
@@ -1913,7 +1913,7 @@ int RaftLabTest::testHeartbeatTriggersInstallSnapshot(void) {
        attempt < 300 && !leader_snapshot_ready;
        ++attempt) {
     {
-      std::lock_guard<std::mutex> lock(leader_server->mtx_);
+      std::lock_guard<RaftCheckedMutex> lock(leader_server->mtx_);
       leader_execute_index = leader_server->state_.execute_index_;
       leader_snap_idx = leader_server->GetSnapshotIndexLocked();
       leader_min_active = leader_server->raft_log_.base();
@@ -1997,7 +1997,7 @@ int RaftLabTest::testHeartbeatTriggersInstallSnapshot(void) {
        attempt < 100 && follower_snap_after < required_snapshot_floor;
        ++attempt) {
     Fiber::sleep(HEARTBEAT_INTERVAL);
-    std::lock_guard<std::mutex> lock(follower_server->mtx_);
+    std::lock_guard<RaftCheckedMutex> lock(follower_server->mtx_);
     follower_snap_after = follower_server->GetSnapshotIndexLocked();
   }
   Assert2(follower_snap_after >= required_snapshot_floor &&
@@ -2202,7 +2202,7 @@ int RaftLabTest::testLongPartitionRecovery(void) {
     auto mgr = std::make_shared<janus::raft::MemorySnapshotManager>();
     test_mgrs[i] = mgr;
     {
-      std::lock_guard<std::mutex> lock(server->mtx_);
+      std::lock_guard<RaftCheckedMutex> lock(server->mtx_);
       original_thresholds[i] = server->GetSnapshotThreshold();
       original_retention_windows[i] = server->GetLogRetentionWindow();
     }
@@ -2210,7 +2210,7 @@ int RaftLabTest::testLongPartitionRecovery(void) {
                 server, mgr, 5, &seeded_snapshot_indices[i]),
             "Could not atomically seed Test69 server %d snapshot manager", i);
     {
-      std::lock_guard<std::mutex> lock(server->mtx_);
+      std::lock_guard<RaftCheckedMutex> lock(server->mtx_);
       server->SetLogRetentionWindow(10);
     }
   }
@@ -2290,7 +2290,7 @@ int RaftLabTest::testLongPartitionRecovery(void) {
        attempt < 300 && !leader_snapshot_ready;
        ++attempt) {
     {
-      std::lock_guard<std::mutex> lock(leader_server->mtx_);
+      std::lock_guard<RaftCheckedMutex> lock(leader_server->mtx_);
       leader_execute_index = leader_server->state_.execute_index_;
       leader_snap_idx = leader_server->GetSnapshotIndexLocked();
       leader_min_active = leader_server->raft_log_.base();
@@ -2344,7 +2344,7 @@ int RaftLabTest::testLongPartitionRecovery(void) {
   uint64_t follower_snap_before = 0;
   uint64_t follower_last_before = 0;
   {
-    std::lock_guard<std::mutex> lock(follower_server->mtx_);
+    std::lock_guard<RaftCheckedMutex> lock(follower_server->mtx_);
     follower_snap_before = follower_server->GetSnapshotIndexLocked();
     follower_last_before = follower_server->raft_log_.last_index();
   }
@@ -2373,7 +2373,7 @@ int RaftLabTest::testLongPartitionRecovery(void) {
        attempt < 100 && follower_snap_idx < required_snapshot_floor;
        ++attempt) {
     Fiber::sleep(HEARTBEAT_INTERVAL);
-    std::lock_guard<std::mutex> lock(follower_server->mtx_);
+    std::lock_guard<RaftCheckedMutex> lock(follower_server->mtx_);
     follower_snap_idx = follower_server->GetSnapshotIndexLocked();
   }
   Log_info("TEST 69: Follower snapshot index={} (required_floor={}, "
@@ -2409,7 +2409,7 @@ int RaftLabTest::testLongPartitionRecovery(void) {
   for (int i = 0; i < NSERVERS; i++) {
     auto server = config_->GetServer(i);
     if (server == nullptr) continue;
-    std::lock_guard<std::mutex> lock(server->mtx_);
+    std::lock_guard<RaftCheckedMutex> lock(server->mtx_);
     if (original_thresholds[i] != 0) {
       server->SetSnapshotThresholdLocked(original_thresholds[i]);
     }
@@ -2487,7 +2487,7 @@ int RaftLabTest::testHighFrequencyApply(void) {
   uint64_t current_term = 0;
   {
     // @unsafe { locking server mutex }
-    std::lock_guard<std::mutex> lock(server->mtx_);
+    std::lock_guard<RaftCheckedMutex> lock(server->mtx_);
     current_term = server->state_.current_term_;
   }
 

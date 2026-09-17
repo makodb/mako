@@ -90,6 +90,26 @@ import rusty;   // rusty::BTreeSet is a btree_port C++20 module, not a header
 
 namespace janus {
 
+// @unsafe { writes to stderr and aborts }
+void RaftCheckedMutex::ReportReentry() {
+  std::fprintf(
+      stderr,
+      "\n[RAFT-FATAL] re-entrant acquisition of RaftServer::mtx_ on one "
+      "thread.\n"
+      "  This is a deadlock. mtx_ is a plain mutex, not a recursive one, so "
+      "the\n"
+      "  thread would wait forever for a lock only it can release.\n"
+      "  The usual cause is a state-machine snapshot callback that calls "
+      "back\n"
+      "  into the same RaftServer. Both callbacks registered through\n"
+      "  SetStateMachineSnapshotCallbacks run with mtx_ held and must not "
+      "reach\n"
+      "  any method that takes it -- GetAppliedIndex, GetSnapshotIndex, "
+      "IsLeader,\n"
+      "  Start, and so on. See the contract on that method.\n\n");
+  std::abort();
+}
+
 // ReplicationWakeGate: the first src/deptran/raft conversion that is not a
 // scalar predicate, and the first that proves `impl` at all. See
 // docs/migration/raft/cpp-refactor-plan.md tranche 3.
@@ -769,7 +789,7 @@ bool RaftServer::InitializeSnapshotManager() {
                         strcmp(snapshot_flag, "true") == 0));
 
   if (!should_enable) {
-    std::lock_guard<std::mutex> lock(mtx_);
+    std::lock_guard<RaftCheckedMutex> lock(mtx_);
     const bool has_orphaned_compacted_suffix =
         state_.snapidx_ == 0 && !raft_log_.is_empty() &&
         raft_log_.base() > 1;
@@ -808,7 +828,7 @@ bool RaftServer::InitializeSnapshotManager() {
   }
 
   std::lock_guard<std::mutex> apply_lock(state_machine_apply_mtx_);
-  std::lock_guard<std::mutex> lock(mtx_);
+  std::lock_guard<RaftCheckedMutex> lock(mtx_);
 
   // Memory-only Raft has no on-disk snapshot store. A manager injected through
   // SetSnapshotManager() before Setup keeps the latest snapshot it holds and
@@ -978,7 +998,7 @@ bool RaftServer::InitializeSnapshotManager() {
 
 void RaftServer::SetSnapshotManager(
     std::shared_ptr<janus::raft::SnapshotManager> manager) {
-  std::lock_guard<std::mutex> lock(mtx_);
+  std::lock_guard<RaftCheckedMutex> lock(mtx_);
   SetSnapshotManagerLocked(std::move(manager));
 }
 
@@ -993,12 +1013,12 @@ void RaftServer::SetSnapshotManagerLocked(
 
 std::shared_ptr<janus::raft::SnapshotManager>
 RaftServer::GetSnapshotManager() {
-  std::lock_guard<std::mutex> lock(mtx_);
+  std::lock_guard<RaftCheckedMutex> lock(mtx_);
   return snapshot_manager_;
 }
 
 void RaftServer::SetSnapshotThreshold(uint64_t threshold) {
-  std::lock_guard<std::mutex> lock(mtx_);
+  std::lock_guard<RaftCheckedMutex> lock(mtx_);
   SetSnapshotThresholdLocked(threshold);
 }
 
@@ -1019,7 +1039,7 @@ bool RaftServer::HasSnapshot() {
 
 // @unsafe - Returns the last snapshotted log index under mtx_.
 uint64_t RaftServer::GetSnapshotIndex() {
-  std::lock_guard<std::mutex> lock(mtx_);
+  std::lock_guard<RaftCheckedMutex> lock(mtx_);
   return GetSnapshotIndexLocked();
 }
 
@@ -1030,7 +1050,7 @@ uint64_t RaftServer::GetSnapshotIndexLocked() const {
 
 // @unsafe - Returns the snapshot boundary term under mtx_.
 uint64_t RaftServer::GetSnapshotTerm() {
-  std::lock_guard<std::mutex> lock(mtx_);
+  std::lock_guard<RaftCheckedMutex> lock(mtx_);
   return GetSnapshotTermLocked();
 }
 
@@ -1042,7 +1062,7 @@ uint64_t RaftServer::GetSnapshotTermLocked() const {
 // @unsafe - In-memory log compaction behind the snapshot boundary.
 // Acquiring entry point, for callers that do not already hold mtx_.
 size_t RaftServer::CompactLog(slotid_t up_to_index) {
-  std::lock_guard<std::mutex> lock(mtx_);
+  std::lock_guard<RaftCheckedMutex> lock(mtx_);
   return CompactLogLocked(up_to_index);
 }
 
@@ -1082,7 +1102,7 @@ uint64_t RaftServer::SetStateMachineSnapshotCallbacks(
     std::function<std::string(uint64_t)> create_cb,
     std::function<std::unique_ptr<PreparedStateMachineSnapshotInstall>(
         const std::string&, uint64_t)> prepare_cb) {
-  std::lock_guard<std::mutex> lock(mtx_);
+  std::lock_guard<RaftCheckedMutex> lock(mtx_);
   if (state_.next_snapshot_callback_owner_token_ == 0) {
     state_.next_snapshot_callback_owner_token_ = 1;
   }
@@ -1099,7 +1119,7 @@ bool RaftServer::ClearStateMachineSnapshotCallbacks(
     return false;
   }
 
-  std::lock_guard<std::mutex> lock(mtx_);
+  std::lock_guard<RaftCheckedMutex> lock(mtx_);
   if (state_.snapshot_callback_owner_token_ != callback_owner_token) {
     return false;
   }
@@ -1115,7 +1135,7 @@ bool RaftServer::ClearStateMachineSnapshotCallbacks(
 // canonical fields under both locks makes stale hints harmless.
 void RaftServer::MaybeCreateSnapshot() {
   std::lock_guard<std::mutex> apply_lock(state_machine_apply_mtx_);
-  std::lock_guard<std::mutex> lock(mtx_);
+  std::lock_guard<RaftCheckedMutex> lock(mtx_);
   if (!snapshot_manager_ ||
       !raft_server_snapshot_is_due(
           state_.snapidx_, state_.execute_index_, state_.snapshot_threshold_)) {
@@ -1334,7 +1354,7 @@ void RaftServer::CloseReplicationWakeGate() {
 void RaftServer::PrepareForShutdown() {
   {
     // Linearize admission closure with every RPC/local mutation under mtx_.
-    std::lock_guard<std::mutex> admission_lock(mtx_);
+    std::lock_guard<RaftCheckedMutex> admission_lock(mtx_);
     rpc_ready_.store(false, rusty::sync::atomic::Ordering::Release);
     stop_.store(true, rusty::sync::atomic::Ordering::Release);
     looping_.store(false, rusty::sync::atomic::Ordering::Release);
@@ -1441,7 +1461,7 @@ void RaftServer::EnqueueCommittedEntries(slotid_t old_commit, slotid_t new_commi
 // lock order and keeps the legacy state_.execute_index_ field synchronized with
 // consensus readers.
 void RaftServer::PublishAppliedIndex(uint64_t index) {
-  std::lock_guard<std::mutex> lock(mtx_);
+  std::lock_guard<RaftCheckedMutex> lock(mtx_);
   PublishAppliedIndexLocked(index);
 }
 
@@ -1585,7 +1605,7 @@ void RaftServer::StartApplyThread() {
         if (std::chrono::duration_cast<std::chrono::seconds>(now - last_log_time).count() >= 5) {
           uint64_t commit_index_snapshot = 0;
           {
-            std::lock_guard<std::mutex> lock(mtx_);
+            std::lock_guard<RaftCheckedMutex> lock(mtx_);
             commit_index_snapshot = state_.commit_index_;
           }
           Log_info("[APPLY-THREAD] Site {}: IDLE state_.execute_index_={} state_.commit_index_={} queue_size={} applied_total={}",
@@ -1752,7 +1772,7 @@ bool RaftServer::WaitForStartup() {
 }
 
 void RaftServer::Disconnect(const bool disconnect) {
-  std::lock_guard<std::mutex> lock(mtx_);
+  std::lock_guard<RaftCheckedMutex> lock(mtx_);
   verify(disconnected_.load(std::memory_order_acquire) != disconnect);
   commo()->SetNetworkEnabled(!disconnect);
   disconnected_.store(disconnect, std::memory_order_release);
@@ -1765,7 +1785,7 @@ bool RaftServer::IsDisconnected() {
 
 // @unsafe - Synchronizes with role/leader publication through the Raft mutex.
 siteid_t RaftServer::GetLeaderHint() {
-  std::lock_guard<std::mutex> lock(mtx_);
+  std::lock_guard<RaftCheckedMutex> lock(mtx_);
   if (state_.is_leader_) {
     return site_id_;
   }
@@ -3971,7 +3991,7 @@ void RaftServer::HeartbeatPrologue() {
     // thread with no suspension in between -- an accident, not a design, and
     // one that Step B's Mutex<T> grouping would have turned into a real
     // inconsistency.
-    std::lock_guard<std::mutex> lock(mtx_);
+    std::lock_guard<RaftCheckedMutex> lock(mtx_);
     RebuildPeerTables(1);
   }
 
@@ -4023,7 +4043,7 @@ bool RaftServer::HeartbeatPhase0(HeartbeatRoundState& state,
   const std::vector<siteid_t> round_members(current_config_.begin(),
                                             current_config_.end());
   {
-    std::lock_guard<std::mutex> lock(mtx_);
+    std::lock_guard<RaftCheckedMutex> lock(mtx_);
     const bool leader = IsLeaderLocked();
     if (leader && heartbeat_round_saturated(state_.heartbeat_round_)) {
       Log_error("[READ-INDEX] site={} heartbeat round saturated in term {}",
@@ -4110,7 +4130,7 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
         uint64_t sent_end_index = 0;
         bool skip_follower = false;
         {
-          std::lock_guard<std::mutex> lock(mtx_);
+          std::lock_guard<RaftCheckedMutex> lock(mtx_);
           if (peers_.next_index(ord) == 0) {
             Log_warn("[APPEND_ENTRIES] Repairing wrapped next_index for "
                      "follower {} at leader last index {}",
@@ -4187,7 +4207,7 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
                       return;
                     }
                     // @unsafe - callback modifies shared state under lock
-                    std::lock_guard<std::mutex> lock(server->mtx_);
+                    std::lock_guard<RaftCheckedMutex> lock(server->mtx_);
                     if (raft_server_observed_higher_term(
                             follower_term, server->state_.current_term_)) {
                       Log_info("[HEARTBEAT-SNAPSHOT] Site {}: Follower {} has higher term {} > {}, stepping down",
@@ -4502,7 +4522,7 @@ void RaftServer::HeartbeatPhase2(HeartbeatRoundState& state,
 
           bool stepped_down = false;
           {
-            std::lock_guard<std::mutex> lock(mtx_);
+            std::lock_guard<RaftCheckedMutex> lock(mtx_);
             // What the reply MEANS is heartbeat_apply_append_reply, a DSL
             // body. It reads the wire response as three scalars -- the rrr
             // object itself never crosses -- and returns what the caller
@@ -4653,7 +4673,7 @@ void RaftServer::HeartbeatPhase3(HeartbeatRoundState& state,
   }
   bool commit_advanced_after_send = false;
   {
-    std::lock_guard<std::mutex> lock(mtx_);
+    std::lock_guard<RaftCheckedMutex> lock(mtx_);
     const std::vector<siteid_t> settle_members(current_config_.begin(),
                                                current_config_.end());
     const Phase3Outcome outcome = heartbeat_phase3_locked(
@@ -4825,7 +4845,7 @@ bool RaftServer::RequestVoteImpl(bool timer_guarded,
   }
 
   {
-    std::lock_guard<std::mutex> lock(mtx_);
+    std::lock_guard<RaftCheckedMutex> lock(mtx_);
     if (stop_.load(rusty::sync::atomic::Ordering::Acquire)) {
       state_.req_voting_ = false;
       return false;
@@ -4904,7 +4924,7 @@ bool RaftServer::RequestVoteImpl(bool timer_guarded,
       par_id, lst_idx, lst_term, site_id_, term);
   sp_quorum->wait_timeout(1000000);
   }
-  std::unique_lock<std::mutex> lock1(mtx_);
+  std::unique_lock<RaftCheckedMutex> lock1(mtx_);
   if (stop_.load(rusty::sync::atomic::Ordering::Acquire)) {
     state_.election_in_progress_ = false;
     state_.req_voting_ = false;
@@ -5024,7 +5044,7 @@ void RaftServer::OnRequestVote(const slotid_t& lst_log_idx,
                                const ballot_t& can_term,
                                ballot_t *reply_term,
                                bool_t *vote_granted) {
-  std::lock_guard<std::mutex> lock(mtx_);
+  std::lock_guard<RaftCheckedMutex> lock(mtx_);
   Log_debug("raft receives vote from candidate: {:x}", can_id);
 
   if (stop_.load(rusty::sync::atomic::Ordering::Acquire)) {
@@ -5130,7 +5150,7 @@ bool RaftServer::ElectionLoopStopped() const {
 
 // @unsafe - takes mtx_ to read state_.req_voting_
 bool RaftServer::ElectionLoopVoting() {
-  std::lock_guard<std::mutex> lock(mtx_);
+  std::lock_guard<RaftCheckedMutex> lock(mtx_);
   return state_.req_voting_;
 }
 
@@ -5149,7 +5169,7 @@ bool RaftServer::ElectionLoopWait(uint64_t timeout_us) {
 // @unsafe - takes mtx_ and reads the whole election cluster in one scope, so
 // the Rust loop can branch on copies after the lock is released.
 ElectionTick RaftServer::ElectionLoopGather() {
-  std::lock_guard<std::mutex> lock(mtx_);
+  std::lock_guard<RaftCheckedMutex> lock(mtx_);
   const uint64_t time_now = Time::now(true);
   const uint64_t heartbeat_time = state_.last_heartbeat_time_;
   const uint64_t time_elapsed = time_now - heartbeat_time;
@@ -5261,7 +5281,7 @@ RaftStartResult RaftServer::StartImpl(const janus::Command& cmd,
                                       slotid_t slot_id,
                                       ballot_t ballot) {
   {
-  std::lock_guard<std::mutex> lock(mtx_);
+  std::lock_guard<RaftCheckedMutex> lock(mtx_);
 
   if (!IsLeaderLocked()) {
     // @unsafe
@@ -5315,7 +5335,7 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
                                  uint64_t *followerAppendOK,
                                  uint64_t *followerCurrentTerm,
                                  uint64_t *followerLastLogIndex) {
-  std::unique_lock<std::mutex> lock(mtx_);
+  std::unique_lock<RaftCheckedMutex> lock(mtx_);
 
   if (stop_.load(rusty::sync::atomic::Ordering::Acquire)) {
     *followerAppendOK = 0;
@@ -5625,7 +5645,7 @@ void RaftServer::OnInstallSnapshot(const uint64_t term,
   // Snapshot state-machine replacement must not overlap entry application or
   // recovery replay. The global order is apply gate -> Raft state -> queue.
   std::lock_guard<std::mutex> apply_lock(state_machine_apply_mtx_);
-  std::lock_guard<std::mutex> lock(mtx_);
+  std::lock_guard<RaftCheckedMutex> lock(mtx_);
 
   // @unsafe
   { *term_out = 0; }
