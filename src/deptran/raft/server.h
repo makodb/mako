@@ -2977,6 +2977,29 @@ class RaftServer : public TxLogServer {
    * @param create_cb Returns serialized state machine snapshot data
    * @param prepare_cb Validates and stages serialized state-machine bytes. The
    * returned transaction must leave the live image unchanged until Commit().
+   *
+   * RE-ENTRANCY CONTRACT -- BOTH CALLBACKS RUN WITH mtx_ HELD, AND NEITHER
+   * MAY CALL BACK INTO THIS RaftServer.
+   *
+   * The two invocation paths are:
+   *   MaybeCreateSnapshot -> CreateSnapshotLocked -> create_cb
+   *   OnInstallSnapshot   -> PrepareStateMachineSnapshotLocked -> prepare_cb
+   * and both hold mtx_ across the call. A callback that reaches any method
+   * taking mtx_ -- GetAppliedIndex, GetSnapshotIndex, IsLeader, Start, ... --
+   * SELF-DEADLOCKS.
+   *
+   * This did not used to be true. mtx_ was a recursive_mutex until the
+   * Tranche 5 demotion, which tolerated exactly this re-entry; the plain
+   * std::mutex does not. Every path INSIDE RaftServer was checked when it was
+   * demoted, and a static walk confirms no function holding mtx_ reaches
+   * another that takes it. These two std::function hooks are the only escapes
+   * from that analysis, because what they call is the embedder's code.
+   *
+   * Note also that create_cb runs on the APPLY THREAD, not the poll thread.
+   *
+   * The in-tree registrations (src/deptran/raft/test.cc) are pure and never
+   * re-enter, so raftLabTest and the replication suites cannot exercise a
+   * violation of this contract. Their passing is not evidence for it.
    */
   // Returns a unique owner token. Replacing callbacks invalidates the previous
   // owner's token, so its eventual destructor cannot clear the new owner.
