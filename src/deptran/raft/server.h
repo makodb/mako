@@ -1870,8 +1870,8 @@ pub struct RaftConsensusState {
     last_heartbeat_time_: u64,
     // Read-index evidence: the round counter and the newest confirmed proof.
     pub heartbeat_round_: u64,
-    read_quorum_confirmed_term_: u64,
-    read_quorum_confirmed_round_: u64,
+    pub read_quorum_confirmed_term_: u64,
+    pub read_quorum_confirmed_round_: u64,
     // Log store: the term the server is in, and the three indices that bound
     // the log. NOTE the historical naming -- these four are the only members
     // in the class without a trailing underscore.
@@ -1913,7 +1913,7 @@ impl RaftConsensusState {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.consensus_state version=1 rust_sha256=f4a5550b55e4ed98fe78e2bb12532841cdce8045a74c98c09b6b9e0b9ac5556f*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.consensus_state version=1 rust_sha256=5a54b435c3115a410405061853422af36c8f7a340443d6cdca89b67c408359b3*/
 struct RaftConsensusState;
 
 struct RaftConsensusState {

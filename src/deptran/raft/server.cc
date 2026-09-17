@@ -3057,6 +3057,123 @@ impl HeartbeatRoundScope {
 // a free function does -- `use crate::server_h::X` on the Rust side, and the
 // emitter writes the name unqualified, which resolves because both blocks
 // sit in namespace janus. No shim namespace is needed for types.
+// The commit-index advance, which PHASE 0 and PHASE 3 perform identically:
+// PHASE 0 before the round's RPCs go out, PHASE 3 after their replies have
+// been processed. It was the same fifteen lines twice.
+//
+// Returns the range the caller must hand to EnqueueCommittedEntries. The
+// caller does the enqueue because that is the apply queue, i.e. I/O; the
+// decision is here.
+#[repr(C)]
+pub struct CommitAdvance {
+    advanced_: bool,
+    from_: u64,
+    to_: u64,
+}
+
+impl CommitAdvance {
+    pub fn advanced(&self) -> bool {
+        self.advanced_
+    }
+
+    pub fn from_index(&self) -> u64 {
+        self.from_
+    }
+
+    pub fn to_index(&self) -> u64 {
+        self.to_
+    }
+}
+
+pub fn raft_commit_advance(
+    consensus: &mut RaftConsensusState,
+    peers: &PeerTable,
+    log: &RaftLog,
+    nservers: usize,
+) -> CommitAdvance {
+    // nservers is the value latched in PHASE 0. Reusing it in PHASE 3 is
+    // sound only because current_config_ has exactly one write, during
+    // Setup, and progress_ is never erased, so the size is invariant across
+    // the round. Assert it rather than trusting the phases to stay in step.
+    if peers.len() != nservers - 1 {
+        panic!("peer table and round membership disagree");
+    }
+    let candidate_index = peers.majority_match_index(nservers, log.last_index());
+    if !raft_server_log_index_above(candidate_index, consensus.commit_index_) {
+        return CommitAdvance { advanced_: false, from_: 0, to_: 0 };
+    }
+    // The candidate is <= last_index() and > commit_index_, so the entry
+    // provably exists. This says so rather than leaving a null dereference
+    // to express it.
+    let candidate = log.get(candidate_index);
+    if candidate.is_none() {
+        panic!("committable index is absent from the log");
+    }
+    if !raft_server_log_entry_is_current_term(
+        candidate.unwrap().term(),
+        consensus.current_term_,
+    ) {
+        // Raft commits a prior-term entry only via one from the current term.
+        return CommitAdvance { advanced_: false, from_: 0, to_: 0 };
+    }
+    let from = consensus.commit_index_;
+    consensus.commit_index_ = candidate_index;
+    CommitAdvance { advanced_: true, from_: from, to_: candidate_index }
+}
+
+// PHASE 3 of the heartbeat round: the whole locked section. Recomputes the
+// commit index now that this round's replies have been processed, then
+// publishes read-index authority -- deliberately in that order, because a
+// delayed reply is evidence for the exact term, generation and membership
+// snapshot that launched it and must never be relabelled as the current
+// round.
+//
+// Both halves were already Rust in their parts: raft_commit_advance above
+// and AuthorityLedger::settle. This is the body that joins them.
+#[repr(C)]
+pub struct Phase3Outcome {
+    commit_: CommitAdvance,
+    confirmed_: bool,
+}
+
+impl Phase3Outcome {
+    pub fn commit(&self) -> &CommitAdvance {
+        &self.commit_
+    }
+
+    // True when a read-index generation reached quorum this round, in which
+    // case the confirmed term and round have already been stored.
+    pub fn confirmed(&self) -> bool {
+        self.confirmed_
+    }
+}
+
+pub fn heartbeat_phase3_locked(
+    consensus: &mut RaftConsensusState,
+    peers: &PeerTable,
+    log: &RaftLog,
+    ledger: &mut AuthorityLedger,
+    nservers: usize,
+    members: &[u16],
+    is_leader: bool,
+) -> Phase3Outcome {
+    let commit = raft_commit_advance(consensus, peers, log, nservers);
+    let outcome = ledger.settle(
+        is_leader,
+        consensus.current_term_,
+        members,
+        consensus.read_quorum_confirmed_term_,
+        consensus.read_quorum_confirmed_round_,
+    );
+    let mut confirmed = false;
+    if outcome.confirmed() {
+        consensus.read_quorum_confirmed_term_ = outcome.term();
+        consensus.read_quorum_confirmed_round_ = outcome.round_id();
+        confirmed = true;
+    }
+    Phase3Outcome { commit_: commit, confirmed_: confirmed }
+}
+
 #[repr(C)]
 pub struct Phase0Outcome {
     restart_: bool,
@@ -3153,40 +3270,14 @@ pub fn heartbeat_phase0_locked(
     if round.nservers() == 0 || !round.is_member(site_id) {
         panic!("heartbeat round admitted no quorum containing this site");
     }
-    if peers.len() != round.nservers() - 1 {
-        panic!("peer table and round membership disagree");
-    }
-
-    let new_commit_index = peers.majority_match_index(round.nservers(), log.last_index());
-
-    // The candidate is <= last_index() and > commit_index_, so the entry
-    // provably exists. This says so rather than leaving a null dereference
-    // to express it.
-    let mut advanced = false;
-    let mut from = 0u64;
-    let mut to = 0u64;
-    if raft_server_log_index_above(new_commit_index, consensus.commit_index_) {
-        let candidate = log.get(new_commit_index);
-        if candidate.is_none() {
-            panic!("committable index is absent from the log");
-        }
-        if raft_server_log_entry_is_current_term(
-            candidate.unwrap().term(),
-            consensus.current_term_,
-        ) {
-            from = consensus.commit_index_;
-            consensus.commit_index_ = new_commit_index;
-            to = consensus.commit_index_;
-            advanced = true;
-        }
-    }
+    let advance = raft_commit_advance(consensus, peers, log, round.nservers());
     round.publish_commit_index(consensus.commit_index_);
 
     Phase0Outcome {
         restart_: false,
-        commit_advanced_: advanced,
-        commit_from_: from,
-        commit_to_: to,
+        commit_advanced_: advance.advanced(),
+        commit_from_: advance.from_index(),
+        commit_to_: advance.to_index(),
     }
 }
 
@@ -3197,8 +3288,10 @@ pub fn heartbeat_round_saturated(round_counter: u64) -> bool {
     !raft_server_read_index_round_can_advance(round_counter)
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_round_scope version=1 rust_sha256=cad43896ba4823b8ba8c7e46b8507deb80d7ff673a820fd14ac5676a88440b84*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_round_scope version=1 rust_sha256=f2ef138166c66edaa4f32e7cb80f6e5e60144bf2405cf2b86303c48b1658951a*/
 struct HeartbeatRoundScope;
+struct CommitAdvance;
+struct Phase3Outcome;
 struct Phase0Outcome;
 bool heartbeat_round_saturated(uint64_t round_counter);
 
@@ -3225,6 +3318,30 @@ struct HeartbeatRoundScope {
     static constexpr bool is_sync = true;
 };
 
+struct CommitAdvance {
+    bool advanced_;
+    uint64_t from_;
+    uint64_t to_;
+
+    bool advanced() const;
+    uint64_t from_index() const;
+    uint64_t to_index() const;
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
+};
+
+struct Phase3Outcome {
+    CommitAdvance commit_;
+    bool confirmed_;
+
+    const CommitAdvance& commit() const;
+    bool confirmed() const;
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
+};
+
 struct Phase0Outcome {
     bool restart_;
     bool commit_advanced_;
@@ -3239,6 +3356,40 @@ struct Phase0Outcome {
     static constexpr bool is_send = true;
     static constexpr bool is_sync = true;
 };
+
+CommitAdvance raft_commit_advance(RaftConsensusState& consensus, const PeerTable& peers, const RaftLog& log, size_t nservers) {
+    RaftConsensusState* consensus_shadow1 = &consensus;
+    if (rusty::len(peers) != (rusty::detail::deref_if_pointer_like(nservers) - 1)) {
+        rusty::panic::do_panic(std::format("peer table and round membership disagree"));
+    }
+    auto candidate_index = peers.majority_match_index(std::move(nservers), log.last_index());
+    if (rusty::detail::rust_not(raft_server_log_index_above(std::move(candidate_index), (*consensus_shadow1).commit_index_))) {
+        return CommitAdvance{.advanced_ = false, .from_ = static_cast<uint64_t>(0), .to_ = static_cast<uint64_t>(0)};
+    }
+    auto candidate = log.get(std::move(candidate_index));
+    if (candidate.is_none()) {
+        rusty::panic::do_panic(std::format("committable index is absent from the log"));
+    }
+    if (rusty::detail::rust_not(raft_server_log_entry_is_current_term(candidate.unwrap().term(), (*consensus_shadow1).current_term_))) {
+        return CommitAdvance{.advanced_ = false, .from_ = static_cast<uint64_t>(0), .to_ = static_cast<uint64_t>(0)};
+    }
+    auto from = (*consensus_shadow1).commit_index_;
+    (*consensus_shadow1).commit_index_ = std::move(candidate_index);
+    return CommitAdvance{.advanced_ = true, .from_ = std::move(from), .to_ = std::move(candidate_index)};
+}
+
+Phase3Outcome heartbeat_phase3_locked(RaftConsensusState& consensus, const PeerTable& peers, const RaftLog& log, AuthorityLedger& ledger, size_t nservers, std::span<const uint16_t> members, bool is_leader) {
+    RaftConsensusState* consensus_shadow1 = &consensus;
+    auto commit = raft_commit_advance((*consensus_shadow1), peers, log, std::move(nservers));
+    const auto outcome = ledger.settle(std::move(is_leader), (*consensus_shadow1).current_term_, members, (*consensus_shadow1).read_quorum_confirmed_term_, (*consensus_shadow1).read_quorum_confirmed_round_);
+    auto confirmed = false;
+    if (outcome.confirmed()) {
+        (*consensus_shadow1).read_quorum_confirmed_term_ = outcome.term();
+        (*consensus_shadow1).read_quorum_confirmed_round_ = outcome.round_id();
+        confirmed = true;
+    }
+    return Phase3Outcome{.commit_ = std::move(commit), .confirmed_ = std::move(confirmed)};
+}
 
 Phase0Outcome heartbeat_phase0_locked(RaftConsensusState& consensus, const PeerTable& peers, const RaftLog& log, HeartbeatRoundScope& round, PendingTable& pending, AuthorityLedger& ledger, rusty::Option<uint64_t>& pending_leader_term, std::span<const uint16_t> members, uint16_t site_id, bool is_leader) {
     RaftConsensusState* consensus_shadow1 = &consensus;
@@ -3270,27 +3421,9 @@ Phase0Outcome heartbeat_phase0_locked(RaftConsensusState& consensus, const PeerT
     if ((round.nservers() == static_cast<size_t>(0)) || !round.is_member(std::move(site_id))) {
         rusty::panic::do_panic(std::format("heartbeat round admitted no quorum containing this site"));
     }
-    if (rusty::len(peers) != (round.nservers() - 1)) {
-        rusty::panic::do_panic(std::format("peer table and round membership disagree"));
-    }
-    auto new_commit_index = peers.majority_match_index(round.nservers(), log.last_index());
-    auto advanced = false;
-    auto from = static_cast<uint64_t>(0);
-    auto to = static_cast<uint64_t>(0);
-    if (raft_server_log_index_above(std::move(new_commit_index), (*consensus_shadow1).commit_index_)) {
-        auto candidate = log.get(std::move(new_commit_index));
-        if (candidate.is_none()) {
-            rusty::panic::do_panic(std::format("committable index is absent from the log"));
-        }
-        if (raft_server_log_entry_is_current_term(candidate.unwrap().term(), (*consensus_shadow1).current_term_)) {
-            from = (*consensus_shadow1).commit_index_;
-            (*consensus_shadow1).commit_index_ = std::move(new_commit_index);
-            to = (*consensus_shadow1).commit_index_;
-            advanced = true;
-        }
-    }
+    const auto advance = raft_commit_advance((*consensus_shadow1), peers, log, round.nservers());
     round.publish_commit_index((*consensus_shadow1).commit_index_);
-    return Phase0Outcome{.restart_ = false, .commit_advanced_ = std::move(advanced), .commit_from_ = std::move(from), .commit_to_ = std::move(to)};
+    return Phase0Outcome{.restart_ = false, .commit_advanced_ = advance.advanced(), .commit_from_ = advance.from_index(), .commit_to_ = advance.to_index()};
 }
 
 bool heartbeat_round_saturated(uint64_t round_counter) {
@@ -3344,6 +3477,26 @@ inline void HeartbeatRoundScope::set_authority_inserted(bool inserted) {
 
 inline bool HeartbeatRoundScope::authority_inserted() const {
     return this->authority_inserted_;
+}
+
+inline bool CommitAdvance::advanced() const {
+    return this->advanced_;
+}
+
+inline uint64_t CommitAdvance::from_index() const {
+    return this->from_;
+}
+
+inline uint64_t CommitAdvance::to_index() const {
+    return this->to_;
+}
+
+inline const CommitAdvance& Phase3Outcome::commit() const {
+    return this->commit_;
+}
+
+inline bool Phase3Outcome::confirmed() const {
+    return this->confirmed_;
 }
 
 inline bool Phase0Outcome::restart() const {
@@ -4135,72 +4288,43 @@ void RaftServer::HeartbeatPhase2(HeartbeatRoundState& state,
 // read-index authority
 void RaftServer::HeartbeatPhase3(HeartbeatRoundState& state,
                                  HeartbeatRoundScope& round) {
+  // PHASE 3's decisions are heartbeat_phase3_locked, a DSL body: recompute
+  // the commit index now that this round's replies are in, then publish
+  // read-index authority, in that order. What is left here is the mutex, the
+  // apply queue, the replication wake, and the debug logging.
   auto& authority_rounds = state.authority_rounds;
+  if (!IsLeader()) {
+    return;
+  }
+  bool commit_advanced_after_send = false;
+  {
+    std::lock_guard<std::mutex> lock(mtx_);
+    const std::vector<siteid_t> settle_members(current_config_.begin(),
+                                               current_config_.end());
+    const Phase3Outcome outcome = heartbeat_phase3_locked(
+        state_, peers_, raft_log_, authority_rounds, round.nservers(),
+        settle_members, IsLeaderLocked());
 
-      // ========================================================================
-      // PHASE 3: Recalculate commit index after all responses processed
-      // ========================================================================
-      // This ensures commits happen promptly after replication, matching the
-      // original behavior where commit index was recalculated after each response.
-      if (IsLeader()) {
-        bool commit_advanced_after_send = false;
-        {
-          std::lock_guard<std::mutex> lock(mtx_);
+    if (outcome.commit().advanced()) {
+      Log_debug("[PHASE3-COMMIT] Advancing state_.commit_index_ {} -> {}",
+                outcome.commit().from_index(), outcome.commit().to_index());
+      EnqueueCommittedEntries(outcome.commit().from_index(),
+                              outcome.commit().to_index());
+      commit_advanced_after_send = true;
+    }
+    if (outcome.confirmed()) {
+      Log_debug("[READ-INDEX] site={} confirmed round={} term={}",
+                site_id_, state_.read_quorum_confirmed_round_,
+                state_.read_quorum_confirmed_term_);
+    }
+  }
 
-          // nservers is the value latched in PHASE 0. Reusing it here is
-          // sound only because current_config_ is written once during Setup
-          // (server.cc:1671) and never mutated, and progress_ is never erased,
-          // so this size is invariant across the round. Assert it as PHASE 0
-          // does rather than trusting the two phases to stay in step.
-          verify(peers_.len() == round.nservers() - 1);
-          const uint64_t finalCommitIndex =
-              peers_.majority_match_index(round.nservers(), raft_log_.last_index());
-          // Same shape as PHASE 0 above: non-mutating lookup, and the entry
-          // provably exists when the index test passes.
-          const auto final_candidate =
-              raft_server_log_index_above(finalCommitIndex, state_.commit_index_)
-                  ? FindRaftInstance(finalCommitIndex) : nullptr;
-          verify(!raft_server_log_index_above(finalCommitIndex, state_.commit_index_) ||
-                 final_candidate != nullptr);
-          if (final_candidate != nullptr &&
-              raft_server_log_entry_is_current_term(
-                  final_candidate->term(), state_.current_term_)) {
-            uint64_t old_commit = state_.commit_index_;
-            Log_debug("[PHASE3-COMMIT] Advancing state_.commit_index_ {} -> {}", state_.commit_index_, finalCommitIndex);
-            state_.commit_index_ = finalCommitIndex;
-            EnqueueCommittedEntries(old_commit, state_.commit_index_);
-            commit_advanced_after_send = true;
-          }
-
-          // Publish authority only after commit recalculation. A delayed reply
-          // remains evidence for the exact term, generation, and membership
-          // snapshot that launched it; never relabel it as the current round.
-          // The whole scan is AuthorityLedger::settle: it retires every
-          // generation that can no longer contribute and returns the highest
-          // one that reached quorum, which is the same generation the ascending
-          // std::map walk used to leave in state_.read_quorum_confirmed_round_.
-          const std::vector<siteid_t> settle_members(current_config_.begin(),
-                                                     current_config_.end());
-          const AuthorityOutcome outcome = authority_rounds.settle(
-              IsLeaderLocked(), state_.current_term_, settle_members,
-              state_.read_quorum_confirmed_term_, state_.read_quorum_confirmed_round_);
-          if (outcome.confirmed()) {
-            state_.read_quorum_confirmed_term_ = outcome.term();
-            state_.read_quorum_confirmed_round_ = outcome.round_id();
-            Log_debug("[READ-INDEX] site={} confirmed round={} term={} "
-                      "with {}/{} voters",
-                      site_id_, outcome.round_id(), outcome.term(),
-                      outcome.voter_count(), outcome.config_size());
-          }
-        }
-
-        // The AppendEntries messages for this round carried the old commit
-        // index.  Latch exactly one prompt follow-up round so followers learn
-        // the phase-3 commit without waiting for the periodic heartbeat.
-        if (commit_advanced_after_send) {
-          RequestReplication();
-        }
-      }
+  // The AppendEntries messages for this round carried the old commit index.
+  // Latch exactly one prompt follow-up round so followers learn the phase-3
+  // commit without waiting for the periodic heartbeat.
+  if (commit_advanced_after_send) {
+    RequestReplication();
+  }
 }
 
 // The extern "C" trampolines the DSL block declares. Each casts an opaque
