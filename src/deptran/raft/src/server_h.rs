@@ -492,94 +492,141 @@ impl RaftEntry {
 
 #[repr(C)]
 pub struct RaftLog {
+    // Logical index of the first live entry.
     base_: u64,
-    entries_: rusty::Vec<RaftEntry>,
+    // How many entries at the front of blocks_[0] are dead (compacted away).
+    head_: u64,
+    // Live entry count.
+    len_: u64,
+    // Fixed-size blocks. Every block is exactly BLOCK long except the last.
+    // Physical position of logical index i is head_ + (i - base_).
+    blocks_: rusty::Vec<rusty::Vec<RaftEntry>>,
 }
 
 #[allow(clippy::new_without_default)]
 impl RaftLog {
     pub fn new() -> RaftLog {
-        RaftLog { base_: 1, entries_: rusty::Vec::new() }
+        RaftLog { base_: 1, head_: 0, len_: 0, blocks_: rusty::Vec::new() }
     }
 
-    // Index of the first entry still held. Was min_active_slot_.
+    // Entries per block. 4096 * sizeof(RaftEntry) = 128KB, so a block is a
+    // handful of huge pages' worth and the outer vector stays tiny: a
+    // 400k-entry log is 98 pointers.
+    pub fn block_len() -> u64 {
+        4096
+    }
+
     pub fn base(&self) -> u64 {
         self.base_
     }
 
     pub fn len(&self) -> usize {
-        self.entries_.len()
+        self.len_ as usize
     }
 
     pub fn is_empty(&self) -> bool {
-        self.entries_.is_empty()
+        self.len_ == 0
     }
 
-    // Index of the last entry held, or base() - 1 when empty. Was
-    // last_log_index_.
     pub fn last_index(&self) -> u64 {
-        self.base_ + (self.entries_.len() as u64) - 1
+        self.base_ + self.len_ - 1
     }
 
-    // Named `holds`, not `contains`: the emitter rewrites a method called
-    // `contains` into a free rusty::contains() call, which does not exist for
-    // this type. Measured against the pinned transpiler.
     pub fn holds(&self, index: u64) -> bool {
-        index >= self.base_ && index - self.base_ < (self.entries_.len() as u64)
+        index >= self.base_ && index - self.base_ < self.len_
     }
 
-    // The only read path, and it hands out a borrow rather than a handle.
     pub fn get(&self, index: u64) -> rusty::Option<&RaftEntry> {
         if !self.holds(index) {
             return rusty::None;
         }
-        rusty::Some(&self.entries_[(index - self.base_) as usize])
+        let phys = self.head_ + (index - self.base_);
+        let block = (phys / 4096) as usize;
+        let slot = (phys % 4096) as usize;
+        rusty::Some(&self.blocks_[block][slot])
     }
 
-    // The only write path. Appends at last_index() + 1 and returns it: an
-    // entry cannot be placed at an arbitrary index, so a gap is unspellable.
+    // Appends at last_index() + 1 and returns it. Never moves an existing
+    // entry: a full block is left alone and a new one is pushed, so the
+    // reallocation stall that a single growing vector pays under the Raft
+    // mutex does not exist here.
     pub fn append(&mut self, entry: RaftEntry) -> u64 {
-        self.entries_.push(entry);
-        self.last_index()
+        // "is there room in the last block", said directly rather than as
+        // (head_ + len_) % BLOCK == 0, which clippy reads as a hand-rolled
+        // is_multiple_of and which emits as a method call on a uint64_t.
+        let need_block = self.blocks_.is_empty()
+            || self.blocks_[self.blocks_.len() - 1].len() == 4096;
+        if need_block {
+            let fresh: rusty::Vec<RaftEntry> = rusty::Vec::with_capacity(4096);
+            self.blocks_.push(fresh);
+        }
+        let last = self.blocks_.len() - 1;
+        self.blocks_[last].push(entry);
+        self.len_ += 1;
+        self.base_ + self.len_ - 1
     }
 
-    // Discard [index, end) -- Raft's conflict rule. A no-op past the tail,
-    // which is the ordinary extend case.
+    // Discard [index, end). A no-op past the tail, which is the ordinary
+    // extend case.
     pub fn truncate_from(&mut self, index: u64) {
         if index <= self.base_ {
-            self.entries_.clear();
+            self.blocks_.clear();
+            self.head_ = 0;
+            self.len_ = 0;
             return;
         }
         let keep = index - self.base_;
-        if keep < (self.entries_.len() as u64) {
-            self.entries_.truncate(keep as usize);
+        if keep >= self.len_ {
+            return;
         }
+        let new_phys = self.head_ + keep;
+        if new_phys == 0 {
+            self.blocks_.clear();
+        } else {
+            let nblocks = new_phys.div_ceil(4096) as usize;
+            self.blocks_.truncate(nblocks);
+            let tail = (new_phys - 4096 * ((nblocks as u64) - 1)) as usize;
+            self.blocks_[nblocks - 1].truncate(tail);
+        }
+        self.len_ = keep;
     }
 
     // Discard [base, index] -- snapshot compaction. Returns how many went.
+    // Whole leading blocks are released; a partial block is retained and its
+    // dead prefix is recorded in head_, so the index arithmetic stays exact
+    // and no surviving entry is ever copied.
     pub fn compact_through(&mut self, index: u64) -> usize {
         if index < self.base_ {
             return 0;
         }
         let mut drop_count = index - self.base_ + 1;
-        if drop_count > (self.entries_.len() as u64) {
-            drop_count = self.entries_.len() as u64;
+        if drop_count > self.len_ {
+            drop_count = self.len_;
         }
-        // split_off, not a clone-rebuild: the surviving suffix MOVES. A
-        // rebuild would need RaftEntry: Clone, which would need
-        // rusty::RaftCommand: Clone, which the rustc facade does not provide
-        // -- and it would bump a refcount per surviving entry on a path whose
-        // whole point is to reclaim memory.
-        let tail = self.entries_.split_off(drop_count as usize);
-        self.entries_ = tail;
+        self.head_ += drop_count;
+        self.len_ -= drop_count;
+        // index + 1, not base_ + drop_count. They agree whenever index is
+        // inside the log, and when it is past the tail this is what the flat
+        // vector did: the log empties and the index space restarts above the
+        // compaction point rather than at the old tail.
         self.base_ = index + 1;
+        while self.head_ >= 4096 && !self.blocks_.is_empty() {
+            self.blocks_.remove(0);
+            self.head_ -= 4096;
+        }
+        if self.len_ == 0 {
+            self.blocks_.clear();
+            self.head_ = 0;
+        }
         drop_count as usize
     }
 
     // Drop everything and restart the index space at `base`. The follower
     // path after an InstallSnapshot that supersedes the whole local log.
     pub fn reset(&mut self, base: u64) {
-        self.entries_.clear();
+        self.blocks_.clear();
+        self.head_ = 0;
+        self.len_ = 0;
         self.base_ = base;
     }
 }

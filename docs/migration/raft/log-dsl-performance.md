@@ -78,6 +78,36 @@ With `MAKO_RAFT_SNAPSHOTS=1`, where compaction bounds the log instead of
 letting it grow for the whole window, the gap is -4.29%. So this is not an
 artifact of the unbounded-log regime the benchmark defaults to.
 
+## The fix: blocks instead of one vector
+
+The reallocation hypothesis was tested directly by pre-reserving the vector
+for a million entries at construction, so it never grows during a window.
+That recovered about two of the five points and pushed p99 and max BELOW the
+map baseline, which identified the mechanism: the doubling reallocation
+copies the whole log while `mtx_` is held, so the pipeline stalls for as long
+as the memcpy takes. It is not the bytes -- the arithmetic below shows those
+are negligible -- it is that the stall is synchronous and under the lock.
+
+`RaftLog` now stores fixed 4096-entry blocks with the dead prefix recorded in
+`head_`, so a full block is never touched again and an append never moves an
+existing entry. Compaction releases whole leading blocks, which also removes
+the `split_off` that copied every surviving entry.
+
+Measured against the same baseline, n=5, `compare.py --threshold 5`:
+
+```
+                 flat vector        blocks
+throughput          -5.67%          -2.05%   (noise floor 1.76%)
+p50                 +5.90%          +2.72%   (noise floor 1.40%)
+p99                +20.37%          -1.06%   within noise
+max                +52.37%          -5.87%
+verdict          REGRESSION      no regression beyond 5%
+```
+
+The tail is now better than the map it replaced. The remaining -2.05% is the
+entry commit's share, discussed below; it is marginally above its noise floor
+and under the gate's threshold.
+
 ## What was ruled out
 
 - **Ordering bias.** Reversing the within-pair order reproduces it.
@@ -90,10 +120,47 @@ artifact of the unbounded-log regime the benchmark defaults to.
   O(surviving entries); with snapshots off it is never called, and the
   regression is present anyway.
 
-## What could not be done
+## The entry commit's share is not CPU
 
-This host has no working profiler, so the cost is characterised but not
-attributed:
+The remaining -2% belongs to `c95621a33`, which changed no data structure.
+Profiling its leader against the baseline's, 20s windows, gperftools:
+
+```
+                        baseline   entry-only
+total CPU samples         12198       12226
+__memcpy                   1070        1181
+__syscall_cancel_arch      1193        1161
+futex_wait                  798         846
+```
+
+Identical CPU, near-identical profile shape, 2.8% less throughput. Its tail
+barely moves either (p99 +5.0%, max +2.1%, against the flat vector's +20% and
++52%), so it is not the stall signature. Whatever it costs is off-CPU and is
+not visible to a sampling profiler. Unattributed.
+
+Note the profiler itself needed building: see below.
+
+## Profiling on this host
+
+`perf` is installed but `kernel.perf_event_paranoid` is 4, which denies
+unprivileged `perf record`, and there is no root on this machine. gperftools
+is absent -- CLAUDE.md's "Use Google perftools (linked automatically)" is
+inaccurate, nothing links `libprofiler` -- and valgrind is not installed.
+`kernel.yama.ptrace_scope` is 1, so `gdb -p` cannot attach to the benchmark's
+processes.
+
+What worked, with no privileges: build gperftools from source into the home
+directory (it has a CMake build, so the missing `libtool` does not matter),
+then `LD_PRELOAD` its `libprofiler.so` with `CPUPROFILE` set, which samples
+through `setitimer`/SIGPROF and needs no kernel permission at all.
+
+One wrinkle worth recording: `pprof` silently fails to symbolise a profile
+whose `/proc/self/maps` has an inode wide enough to abut the path with no
+separating space (`1099538229610/home/...`). The mapping is dropped and every
+main-binary frame renders as a bare address. Inserting the space into the
+profile's text tail fixes it.
+
+## What could not be done
 
 - `perf` is installed but `kernel.perf_event_paranoid` is 4, which denies
   unprivileged `perf record`.

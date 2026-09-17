@@ -1145,7 +1145,7 @@ inline const rusty::RaftCommand& RaftEntry::cmd() const {
 
 // The Raft log itself, owned by Rust.
 //
-// A dense vector plus the index of its first element, not a map.
+// Fixed-size blocks plus the index of the first live entry, not a map.
 //
 // WHY DENSE. The log is contiguous by construction, and always has been. Only
 // two paths insert. SetLocalAppend writes at last_log_index_ + 1. The
@@ -1167,112 +1167,171 @@ inline const rusty::RaftCommand& RaftEntry::cmd() const {
 // through raftLabTest's 25 cases and shard1ReplicationSimpleRaft and found
 // they never once disagreed, which is what let the fields go.
 //
+// WHY BLOCKS AND NOT ONE VECTOR. One growing vector was measured at 2.0
+// points of saturation throughput against the map it replaced, and it blew
+// the tail out -- p99 +20%, p999 +25%, max +52%. The mechanism is the
+// doubling reallocation, which copies the whole log while holding mtx_, so
+// the whole pipeline stalls for as long as the memcpy takes. Pre-reserving
+// the vector recovered those 2 points and pushed p99 and max BELOW the map
+// baseline, which is what identified it. Blocks get the same result without
+// having to guess a capacity: a full block is never touched again.
+//
 // rusty::Vec specifically: it re-exports std::vec::Vec on the rustc side and
 // is the real vec_port on the C++ side, so both are faithful. See PeerTable's
 // note above for why rusty::BTreeMap is not an option.
 #if RUSTYCPP_RUST
 #[repr(C)]
 pub struct RaftLog {
+    // Logical index of the first live entry.
     base_: u64,
-    entries_: rusty::Vec<RaftEntry>,
+    // How many entries at the front of blocks_[0] are dead (compacted away).
+    head_: u64,
+    // Live entry count.
+    len_: u64,
+    // Fixed-size blocks. Every block is exactly BLOCK long except the last.
+    // Physical position of logical index i is head_ + (i - base_).
+    blocks_: rusty::Vec<rusty::Vec<RaftEntry>>,
 }
 
 #[allow(clippy::new_without_default)]
 impl RaftLog {
     pub fn new() -> RaftLog {
-        RaftLog { base_: 1, entries_: rusty::Vec::new() }
+        RaftLog { base_: 1, head_: 0, len_: 0, blocks_: rusty::Vec::new() }
     }
 
-    // Index of the first entry still held. Was min_active_slot_.
+    // Entries per block. 4096 * sizeof(RaftEntry) = 128KB, so a block is a
+    // handful of huge pages' worth and the outer vector stays tiny: a
+    // 400k-entry log is 98 pointers.
+    pub fn block_len() -> u64 {
+        4096
+    }
+
     pub fn base(&self) -> u64 {
         self.base_
     }
 
     pub fn len(&self) -> usize {
-        self.entries_.len()
+        self.len_ as usize
     }
 
     pub fn is_empty(&self) -> bool {
-        self.entries_.is_empty()
+        self.len_ == 0
     }
 
-    // Index of the last entry held, or base() - 1 when empty. Was
-    // last_log_index_.
     pub fn last_index(&self) -> u64 {
-        self.base_ + (self.entries_.len() as u64) - 1
+        self.base_ + self.len_ - 1
     }
 
-    // Named `holds`, not `contains`: the emitter rewrites a method called
-    // `contains` into a free rusty::contains() call, which does not exist for
-    // this type. Measured against the pinned transpiler.
     pub fn holds(&self, index: u64) -> bool {
-        index >= self.base_ && index - self.base_ < (self.entries_.len() as u64)
+        index >= self.base_ && index - self.base_ < self.len_
     }
 
-    // The only read path, and it hands out a borrow rather than a handle.
     pub fn get(&self, index: u64) -> rusty::Option<&RaftEntry> {
         if !self.holds(index) {
             return rusty::None;
         }
-        rusty::Some(&self.entries_[(index - self.base_) as usize])
+        let phys = self.head_ + (index - self.base_);
+        let block = (phys / 4096) as usize;
+        let slot = (phys % 4096) as usize;
+        rusty::Some(&self.blocks_[block][slot])
     }
 
-    // The only write path. Appends at last_index() + 1 and returns it: an
-    // entry cannot be placed at an arbitrary index, so a gap is unspellable.
+    // Appends at last_index() + 1 and returns it. Never moves an existing
+    // entry: a full block is left alone and a new one is pushed, so the
+    // reallocation stall that a single growing vector pays under the Raft
+    // mutex does not exist here.
     pub fn append(&mut self, entry: RaftEntry) -> u64 {
-        self.entries_.push(entry);
-        self.last_index()
+        // "is there room in the last block", said directly rather than as
+        // (head_ + len_) % BLOCK == 0, which clippy reads as a hand-rolled
+        // is_multiple_of and which emits as a method call on a uint64_t.
+        let need_block = self.blocks_.is_empty()
+            || self.blocks_[self.blocks_.len() - 1].len() == 4096;
+        if need_block {
+            let fresh: rusty::Vec<RaftEntry> = rusty::Vec::with_capacity(4096);
+            self.blocks_.push(fresh);
+        }
+        let last = self.blocks_.len() - 1;
+        self.blocks_[last].push(entry);
+        self.len_ += 1;
+        self.base_ + self.len_ - 1
     }
 
-    // Discard [index, end) -- Raft's conflict rule. A no-op past the tail,
-    // which is the ordinary extend case.
+    // Discard [index, end). A no-op past the tail, which is the ordinary
+    // extend case.
     pub fn truncate_from(&mut self, index: u64) {
         if index <= self.base_ {
-            self.entries_.clear();
+            self.blocks_.clear();
+            self.head_ = 0;
+            self.len_ = 0;
             return;
         }
         let keep = index - self.base_;
-        if keep < (self.entries_.len() as u64) {
-            self.entries_.truncate(keep as usize);
+        if keep >= self.len_ {
+            return;
         }
+        let new_phys = self.head_ + keep;
+        if new_phys == 0 {
+            self.blocks_.clear();
+        } else {
+            let nblocks = new_phys.div_ceil(4096) as usize;
+            self.blocks_.truncate(nblocks);
+            let tail = (new_phys - 4096 * ((nblocks as u64) - 1)) as usize;
+            self.blocks_[nblocks - 1].truncate(tail);
+        }
+        self.len_ = keep;
     }
 
     // Discard [base, index] -- snapshot compaction. Returns how many went.
+    // Whole leading blocks are released; a partial block is retained and its
+    // dead prefix is recorded in head_, so the index arithmetic stays exact
+    // and no surviving entry is ever copied.
     pub fn compact_through(&mut self, index: u64) -> usize {
         if index < self.base_ {
             return 0;
         }
         let mut drop_count = index - self.base_ + 1;
-        if drop_count > (self.entries_.len() as u64) {
-            drop_count = self.entries_.len() as u64;
+        if drop_count > self.len_ {
+            drop_count = self.len_;
         }
-        // split_off, not a clone-rebuild: the surviving suffix MOVES. A
-        // rebuild would need RaftEntry: Clone, which would need
-        // rusty::RaftCommand: Clone, which the rustc facade does not provide
-        // -- and it would bump a refcount per surviving entry on a path whose
-        // whole point is to reclaim memory.
-        let tail = self.entries_.split_off(drop_count as usize);
-        self.entries_ = tail;
+        self.head_ += drop_count;
+        self.len_ -= drop_count;
+        // index + 1, not base_ + drop_count. They agree whenever index is
+        // inside the log, and when it is past the tail this is what the flat
+        // vector did: the log empties and the index space restarts above the
+        // compaction point rather than at the old tail.
         self.base_ = index + 1;
+        while self.head_ >= 4096 && !self.blocks_.is_empty() {
+            self.blocks_.remove(0);
+            self.head_ -= 4096;
+        }
+        if self.len_ == 0 {
+            self.blocks_.clear();
+            self.head_ = 0;
+        }
         drop_count as usize
     }
 
     // Drop everything and restart the index space at `base`. The follower
     // path after an InstallSnapshot that supersedes the whole local log.
     pub fn reset(&mut self, base: u64) {
-        self.entries_.clear();
+        self.blocks_.clear();
+        self.head_ = 0;
+        self.len_ = 0;
         self.base_ = base;
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.log_container version=1 rust_sha256=2132023888edd5b3c5bd685e3c506e53cf86bf955f5589caa6db00b5327f966c*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.log_container version=1 rust_sha256=53ff563b18fcebf43b80f6887bca9ed71093bfdb7e7e2f76286714687dfd2bec*/
 struct RaftLog;
 
 struct RaftLog {
     uint64_t base_;
-    rusty::Vec<RaftEntry> entries_;
+    uint64_t head_;
+    uint64_t len_;
+    rusty::Vec<rusty::Vec<RaftEntry>> blocks_;
 
     static RaftLog new_();
+    static uint64_t block_len();
     uint64_t base() const;
     size_t len() const;
     bool is_empty() const;
@@ -1287,7 +1346,11 @@ struct RaftLog {
 
 
 inline RaftLog RaftLog::new_() {
-    return RaftLog{.base_ = static_cast<uint64_t>(1), .entries_ = rusty::Vec<RaftEntry>::new_()};
+    return RaftLog{.base_ = static_cast<uint64_t>(1), .head_ = static_cast<uint64_t>(0), .len_ = static_cast<uint64_t>(0), .blocks_ = rusty::Vec<rusty::Vec<RaftEntry>>::new_()};
+}
+
+inline uint64_t RaftLog::block_len() {
+    return static_cast<uint64_t>(4096);
 }
 
 inline uint64_t RaftLog::base() const {
@@ -1295,42 +1358,64 @@ inline uint64_t RaftLog::base() const {
 }
 
 inline size_t RaftLog::len() const {
-    return rusty::len(this->entries_);
+    return static_cast<size_t>(this->len_);
 }
 
 inline bool RaftLog::is_empty() const {
-    return rusty::is_empty(this->entries_);
+    return rusty::detail::deref_if_pointer_like(this->len_) == static_cast<uint64_t>(0);
 }
 
 inline uint64_t RaftLog::last_index() const {
-    return (rusty::detail::deref_if_pointer_like(this->base_) + ((static_cast<uint64_t>(rusty::len(this->entries_))))) - static_cast<uint64_t>(1);
+    return (rusty::detail::deref_if_pointer_like(this->base_) + rusty::detail::deref_if_pointer_like(this->len_)) - static_cast<uint64_t>(1);
 }
 
 inline bool RaftLog::holds(uint64_t index) const {
-    return (rusty::detail::deref_if_pointer_like(index) >= rusty::detail::deref_if_pointer_like(this->base_)) && ((rusty::detail::deref_if_pointer_like(index) - rusty::detail::deref_if_pointer_like(this->base_)) < ((static_cast<uint64_t>(rusty::len(this->entries_)))));
+    return (rusty::detail::deref_if_pointer_like(index) >= rusty::detail::deref_if_pointer_like(this->base_)) && ((rusty::detail::deref_if_pointer_like(index) - rusty::detail::deref_if_pointer_like(this->base_)) < rusty::detail::deref_if_pointer_like(this->len_));
 }
 
 inline rusty::Option<const RaftEntry&> RaftLog::get(uint64_t index) const {
     if (!this->holds(std::move(index))) {
         return rusty::None;
     }
-    return rusty::Option<const RaftEntry&>(this->entries_[static_cast<size_t>((rusty::detail::deref_if_pointer_like(index) - rusty::detail::deref_if_pointer_like(this->base_)))]);
+    const auto phys = rusty::detail::deref_if_pointer_like(this->head_) + ((rusty::detail::deref_if_pointer_like(index) - rusty::detail::deref_if_pointer_like(this->base_)));
+    const auto block = static_cast<size_t>((rusty::detail::deref_if_pointer_like(phys) / 4096));
+    const auto slot = static_cast<size_t>((rusty::detail::deref_if_pointer_like(phys) % 4096));
+    return rusty::Option<const RaftEntry&>(this->blocks_[block][slot]);
 }
 
 inline uint64_t RaftLog::append(RaftEntry entry) {
-    this->entries_.push(std::move(entry));
-    return this->last_index();
+    const auto need_block = rusty::is_empty(this->blocks_) || (rusty::len(this->blocks_[rusty::len(this->blocks_) - 1]) == 4096);
+    if (need_block) {
+        rusty::Vec<RaftEntry> fresh = rusty::Vec<RaftEntry>::with_capacity(4096);
+        this->blocks_.push(std::move(fresh));
+    }
+    const auto last = rusty::len(this->blocks_) - 1;
+    this->blocks_[last].push(std::move(entry));
+    this->len_ += 1;
+    return (rusty::detail::deref_if_pointer_like(this->base_) + rusty::detail::deref_if_pointer_like(this->len_)) - static_cast<uint64_t>(1);
 }
 
 inline void RaftLog::truncate_from(uint64_t index) {
     if (rusty::detail::deref_if_pointer_like(index) <= rusty::detail::deref_if_pointer_like(this->base_)) {
-        this->entries_.clear();
+        this->blocks_.clear();
+        this->head_ = static_cast<uint64_t>(0);
+        this->len_ = static_cast<uint64_t>(0);
         return;
     }
-    const auto keep = rusty::detail::deref_if_pointer_like(index) - rusty::detail::deref_if_pointer_like(this->base_);
-    if (rusty::detail::deref_if_pointer_like(keep) < ((static_cast<uint64_t>(rusty::len(this->entries_))))) {
-        this->entries_.truncate(static_cast<size_t>(keep));
+    auto keep = rusty::detail::deref_if_pointer_like(index) - rusty::detail::deref_if_pointer_like(this->base_);
+    if (rusty::detail::deref_if_pointer_like(keep) >= rusty::detail::deref_if_pointer_like(this->len_)) {
+        return;
     }
+    const auto new_phys = rusty::detail::deref_if_pointer_like(this->head_) + rusty::detail::deref_if_pointer_like(keep);
+    if (rusty::detail::deref_if_pointer_like(new_phys) == 0) {
+        this->blocks_.clear();
+    } else {
+        const auto nblocks = static_cast<size_t>(rusty::div_ceil(new_phys, 4096));
+        this->blocks_.truncate(std::move(nblocks));
+        const auto tail = static_cast<size_t>((rusty::detail::deref_if_pointer_like(new_phys) - (4096 * ((((static_cast<uint64_t>(nblocks))) - 1)))));
+        this->blocks_[rusty::detail::deref_if_pointer_like(nblocks) - 1].truncate(std::move(tail));
+    }
+    this->len_ = std::move(keep);
 }
 
 inline size_t RaftLog::compact_through(uint64_t index) {
@@ -1338,17 +1423,27 @@ inline size_t RaftLog::compact_through(uint64_t index) {
         return static_cast<size_t>(0);
     }
     auto drop_count = (rusty::detail::deref_if_pointer_like(index) - rusty::detail::deref_if_pointer_like(this->base_)) + static_cast<uint64_t>(1);
-    if (rusty::detail::deref_if_pointer_like(drop_count) > ((static_cast<uint64_t>(rusty::len(this->entries_))))) {
-        drop_count = static_cast<uint64_t>(rusty::len(this->entries_));
+    if (rusty::detail::deref_if_pointer_like(drop_count) > rusty::detail::deref_if_pointer_like(this->len_)) {
+        drop_count = this->len_;
     }
-    auto tail = this->entries_.split_off(static_cast<size_t>(drop_count));
-    this->entries_ = std::move(tail);
+    this->head_ += drop_count;
+    this->len_ -= drop_count;
     this->base_ = rusty::detail::deref_if_pointer_like(index) + static_cast<uint64_t>(1);
+    while ((rusty::detail::deref_if_pointer_like(this->head_) >= 4096) && rusty::detail::rust_not(rusty::is_empty(this->blocks_))) {
+        this->blocks_.remove(0);
+        this->head_ -= 4096;
+    }
+    if (rusty::detail::deref_if_pointer_like(this->len_) == static_cast<uint64_t>(0)) {
+        this->blocks_.clear();
+        this->head_ = static_cast<uint64_t>(0);
+    }
     return static_cast<size_t>(drop_count);
 }
 
 inline void RaftLog::reset(uint64_t base) {
-    this->entries_.clear();
+    this->blocks_.clear();
+    this->head_ = static_cast<uint64_t>(0);
+    this->len_ = static_cast<uint64_t>(0);
     this->base_ = std::move(base);
 }
 /*RUSTYCPP:GEN-END id=raft_server.log_container*/
