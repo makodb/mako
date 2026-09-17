@@ -393,6 +393,12 @@ impl HeartbeatAuthority {
 use crate::quorum_hpp::raft_quorum_majority_count;
 use crate::quorum_hpp::raft_quorum_count_reached;
 use crate::server_h::raft_server_read_index_reply_confirms_authority;
+use crate::server_h::raft_server_read_index_round_can_advance;
+use crate::server_h::raft_server_log_index_above;
+use crate::server_h::raft_server_log_entry_is_current_term;
+use crate::server_h::RaftConsensusState;
+use crate::server_h::PeerTable;
+use crate::server_h::RaftLog;
 
 pub struct AuthorityGeneration {
     round_id_: u64,
@@ -733,4 +739,170 @@ impl HeartbeatRoundScope {
     pub fn authority_inserted(&self) -> bool {
         self.authority_inserted_
     }
+}
+
+// PHASE 0 of the heartbeat round, which is the whole locked section of
+// RaftServer::HeartbeatPhase0.
+//
+// Everything it decides is now Rust: whether the round runs at all, whether
+// the leader epoch changed under the fiber, whether the read-index round may
+// advance, which members the round admits, and whether the majority-matched
+// index may be committed. Every piece of state it touches was already a DSL
+// type -- RaftConsensusState, PeerTable, RaftLog, HeartbeatRoundScope,
+// PendingTable, AuthorityLedger -- which is what made the phase convertible
+// at all; this is the first body to be assembled out of them rather than
+// alongside them.
+//
+// Three things stay in C++ on purpose, and they are the only three:
+//   - taking mtx_, because a std::mutex has no Rust spelling here;
+//   - EnqueueCommittedEntries, which is the apply queue, i.e. I/O. It is
+//     driven by the range this returns, so the DECISION to commit is Rust
+//     and only the hand-off is not;
+//   - the Log_debug calls, which must keep their level short-circuit. A DSL
+//     body logs through log_line, which evaluates unconditionally, and this
+//     runs once per follower per round.
+//
+// Cross-carrier note: RaftConsensusState, PeerTable and RaftLog live in
+// server.h. Referencing a TYPE across carriers works exactly as referencing
+// a free function does -- `use crate::server_h::X` on the Rust side, and the
+// emitter writes the name unqualified, which resolves because both blocks
+// sit in namespace janus. No shim namespace is needed for types.
+#[repr(C)]
+pub struct Phase0Outcome {
+    restart_: bool,
+    commit_advanced_: bool,
+    commit_from_: u64,
+    commit_to_: u64,
+}
+
+impl Phase0Outcome {
+    // The round is over before it began -- this server is not the leader.
+    // The caller returns, and the driver starts the next round.
+    pub fn restart(&self) -> bool {
+        self.restart_
+    }
+
+    pub fn commit_advanced(&self) -> bool {
+        self.commit_advanced_
+    }
+
+    pub fn commit_from(&self) -> u64 {
+        self.commit_from_
+    }
+
+    pub fn commit_to(&self) -> u64 {
+        self.commit_to_
+    }
+}
+
+// TODO(raft-server-struct): remove this allow once RaftServer is itself a DSL
+// struct. The ten parameters are exactly the pieces of RaftServer's state that
+// PHASE 0 touches; they are separate arguments only because the orphan-impl
+// rule forbids `impl RaftServer`, so this cannot yet be a method taking
+// &mut self. Grouping them into a carrier struct now would invent a type whose
+// only purpose is to be dissolved by that change. Before removing the allow,
+// verify the parameter list really has collapsed into self rather than being
+// hidden behind a wrapper.
+#[allow(clippy::too_many_arguments)]
+pub fn heartbeat_phase0_locked(
+    consensus: &mut RaftConsensusState,
+    peers: &PeerTable,
+    log: &RaftLog,
+    round: &mut HeartbeatRoundScope,
+    pending: &mut PendingTable,
+    ledger: &mut AuthorityLedger,
+    pending_leader_term: &mut rusty::Option<u64>,
+    members: &[u16],
+    site_id: u16,
+    is_leader: bool,
+) -> Phase0Outcome {
+    if !is_leader {
+        pending.abandon();
+        ledger.abandon();
+        *pending_leader_term = rusty::None;
+        return Phase0Outcome {
+            restart_: true,
+            commit_advanced_: false,
+            commit_from_: 0,
+            commit_to_: 0,
+        };
+    }
+
+    round.begin(consensus.current_term_, consensus.heartbeat_round_);
+
+    // Sized here rather than in the prologue because the round state is the
+    // loop's, not the server's. Idempotent: resize only runs when the two
+    // tables disagree, so in-flight slots survive every later round.
+    if pending.len() != peers.len() {
+        pending.resize(peers.len());
+    }
+
+    // Leadership may be lost and regained between two observations by this
+    // fiber. Never let a prior term's physical RPC occupy a slot or collide
+    // with the new leader epoch's round counter reset.
+    let epoch_changed = pending_leader_term.is_none()
+        || *pending_leader_term.as_ref().unwrap() != round.term();
+    if epoch_changed {
+        pending.abandon();
+        ledger.abandon();
+        *pending_leader_term = rusty::Some(round.term());
+    }
+
+    if raft_server_read_index_round_can_advance(consensus.heartbeat_round_) {
+        consensus.heartbeat_round_ += 1;
+    }
+    // Saturation is fail-closed for new reads: the round never wraps, so no
+    // post-baseline proof can be forged from an old generation. The caller
+    // reports it; see round_saturated below.
+
+    let mut i = 0;
+    while i < members.len() {
+        round.admit(members[i]);
+        i += 1;
+    }
+    if round.nservers() == 0 || !round.is_member(site_id) {
+        panic!("heartbeat round admitted no quorum containing this site");
+    }
+    if peers.len() != round.nservers() - 1 {
+        panic!("peer table and round membership disagree");
+    }
+
+    let new_commit_index = peers.majority_match_index(round.nservers(), log.last_index());
+
+    // The candidate is <= last_index() and > commit_index_, so the entry
+    // provably exists. This says so rather than leaving a null dereference
+    // to express it.
+    let mut advanced = false;
+    let mut from = 0u64;
+    let mut to = 0u64;
+    if raft_server_log_index_above(new_commit_index, consensus.commit_index_) {
+        let candidate = log.get(new_commit_index);
+        if candidate.is_none() {
+            panic!("committable index is absent from the log");
+        }
+        if raft_server_log_entry_is_current_term(
+            candidate.unwrap().term(),
+            consensus.current_term_,
+        ) {
+            from = consensus.commit_index_;
+            consensus.commit_index_ = new_commit_index;
+            to = consensus.commit_index_;
+            advanced = true;
+        }
+    }
+    round.publish_commit_index(consensus.commit_index_);
+
+    Phase0Outcome {
+        restart_: false,
+        commit_advanced_: advanced,
+        commit_from_: from,
+        commit_to_: to,
+    }
+}
+
+// Whether PHASE 0 declined to advance the read-index generation because the
+// counter is saturated. Split out so the caller can log it at ERROR without
+// the DSL body paying for an unconditional log_line every round.
+pub fn heartbeat_round_saturated(round_counter: u64) -> bool {
+    !raft_server_read_index_round_can_advance(round_counter)
 }
