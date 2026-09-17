@@ -1,0 +1,395 @@
+# Why the Rust STO singleton-put lane is still ~24% slower
+
+Measured 2026-09-17 on `zoo-002` (AMD EPYC 7702P, 2 threads/core, boost off,
+`schedutil`), matched controls at 1 worker, engine-only mode, 256 keys, 128-byte
+values, checksum disabled. This report explains the mechanism behind the
+remaining gap on the residual report's own cells. It changes no production code.
+
+## Verdict
+
+The Rust lane does not lose to stalls, cache behaviour, or branch prediction. It
+retires **819 more instructions per transaction (2597 -> 3416, +31.5%) at the
+same IPC (~2.3)**, with *fewer* branch misses and *fewer* L1 misses per
+instruction. The 25% throughput deficit is that extra work, almost exactly:
+
+- 819 extra instructions at the Rust lane's own IPC of 2.32 accounts for
+  **+353 of the observed +382 cycles/tx** (1089.7 -> 1472.1); the remaining
+  ~29 cycles/tx is the lane's ~2.5% lower IPC.
+
+Those extra instructions are a balance of lane-specific work, and the largest
+rows are *bookkeeping*, not payload work. Row values are self-time instruction
+shares from section 4 (symbolic rows sum to +786 of the +819; the rest is below
+the 0.15% reporting cutoff); positive = Rust costs more:
+
+| Row | ins/tx | Evidence |
+| --- | -----: | -------- |
+| Generic singleton commit protocol (prepare/acquire/validate/install/release/teardown plan phases, hook driver, per-phase `catch_unwind`) vs C++'s `try_commit` + lock/check/unlock/cleanup | **+752** | profile rows; 10 `catch_unwind` frames and 11 `dyn` calls per tx |
+| Per-operation native admission: structural-admission reader, RCU region, `ticker` guard, `coreid` lookups, and **one vDSO `gettimeofday`** | **+374** | ablation: 3416 -> 3046 ins, 1412 -> 1237 cyc, +13.7% tx/s; counters: 328,192 `gettimeofday` per 327,680 ops |
+| Transaction lifecycle (`begin`/`attach`/`map_commit`/`touch`/`recycle_touched`/drop) vs C++ `start`/`stop` | **+153** | profile rows |
+| Extra bulk payload copies (2x128 B vs 1x128 B `memcpy`) | **+115** | copy shim: 266 B vs 136 B per tx |
+| Benchmark driver loop (shared Rust code, two instantiations) | +92 | profile rows |
+| Erased item batch staging (`with_item_inner_validated`, `with_resolved_item_inner_validated`, `activate_typed_batch_item`, `Any` downcasts) | **+85** | profile rows |
+| One owned 128-byte staging allocation + free per transaction | **+84** | allocator shim: 328,365 mallocs (42.18 MB = 128.5 B each) + 328,601 frees per 327,680 ops; C++: 823 mallocs total |
+| Tree lookup (`find_unlocked` + `reach_leaf` vs `point_get_validated`) | -17 | profile rows |
+| `BenchmarkConfig::getInstance()` (C++-only) | -28 | profile rows |
+| Per-transaction RCU entry/exit callbacks (`thread_init` lambdas, foreground worker) | **-112** | profile rows; C++ takes RCU once per *transaction*, the Rust lane once per *operation* |
+| Tree record write: bulk `memcpy` + lock-free publish vs C++'s release-fenced **byte-wise atomic store loop** in `stuffed_str::replace` | **-336** | `src/mako/sto/stuffed_str.hh:166-180`; C++ `install` = 580 ins/tx (23% of that lane) |
+| Lane boundary: `mako_rust_fast_txn_*` C ABI shims (C++-only) | **-376** | profile rows |
+| **Net** | **+819** | |
+
+Two consequences of this shape. First, the Rust lane is not losing to payload
+movement: its two bulk copies are *cheaper* than the C++ lane's one `memcpy`
+plus a 148-byte byte-wise atomic loop, and it executes 17 fewer lookup
+instructions. Second, the deficit is machinery — plan phases, per-lookup
+admission, staged copies, driver/state-machine steps — that a one-item
+transaction runs exactly once and cannot amortize; the same engine amortizes it
+across a batch (section 5).
+
+## 1 Matched controls, reproduced today
+
+Frozen ThinLTO pair from the preceding optimization campaign
+(`/var/tmp/mako-w1-fixes.ShjYqz/cpp-thin` sha256 `69e58f4b…`, `stage3-thin`
+sha256 `d974c653…`), run as three alternating rounds of
+`engine --workers 1 --iterations 262144 --warmup 65536 --perf 1`, pinned
+`taskset -c 33-63` with workers on 0..0, `LD_PRELOAD` jemalloc:
+
+| Round | C++ M tx/s | C++ cyc/tx | C++ ins/tx | Rust M tx/s | Rust cyc/tx | Rust ins/tx |
+| ----- | ---------: | ---------: | ---------: | ----------: | ----------: | ----------: |
+| 1 | 1.822 | 1089.7 | 2597 | 1.352 | 1472.1 | 3416 |
+| 2 | 1.801 | 1103.2 | 2597 | 1.369 | 1452.4 | 3417 |
+| 3 | 1.793 | 1109.6 | 2597 | 1.342 | 1479.9 | 3416 |
+
+Rust/C++ = 0.743 today (0.760 in the residual report's table, which used the same
+binaries). A separate probe harness pair (frame pointers, 16.7 M iterations)
+gives 1.734/1.308 M = 0.755 at 2597/3426 ins/tx.
+
+Extended `perf stat` counters on the same cells rule out the microarchitectural
+explanations:
+
+| Counter | C++ | Rust |
+| ------- | --: | ---: |
+| IPC | 2.34 | 2.29 |
+| branch misses / all branches | 0.69% | 0.38% |
+| branch misses per tx | 3.5 | 2.4 |
+| L1d misses per 1000 instructions | 3.84 | 2.22 |
+| dTLB misses (whole run) | 10,551 | 7,551 |
+| frontend-stalled cycles | 15.9% | 9.5% |
+
+Note on provenance: `engine-compare-sto-final-production` (sha256 `2ba98a1c…`),
+the w1 audit's frozen candidate, is a *later, different* build; at 1 worker it
+runs at 1.06 M tx/s on zoo-002 and must not be used as the report's control.
+
+## 2 Per-operation native admission: 374 instructions, 171 cycles
+
+The Rust `sto` lane enters a native RCU region, takes the `ticker` guard, checks
+runtime health and takes structural admission **per operation**; the C++ lane
+does its RCU entry/exit once per transaction through the
+`MassTrans::thread_init()` callbacks and never reads a clock in the foreground.
+
+Ablation (`/var/tmp/mako-residual-gap.7FPbwg/rcu`, the private whole-loop-scope
+diagnostic over otherwise unchanged production libraries), three rounds today:
+
+| Round | baseline tx/s | rcu-scope tx/s | baseline ins/tx | rcu ins/tx | baseline cyc/tx | rcu cyc/tx |
+| ----- | ------------: | -------------: | --------------: | ---------: | --------------: | ---------: |
+| 1 | 1,397,898 | 1,568,855 | 3417 | 3046 | 1421.3 | 1266.6 |
+| 2 | 1,418,208 | 1,605,732 | 3416 | 3046 | 1398.7 | 1236.1 |
+| 3 | 1,426,259 | 1,603,302 | 3416 | 3046 | 1394.0 | 1238.5 |
+
+Delta: **-370 ins/tx, -165 cyc/tx, +13.7% throughput**. The `holder` variant run
+in the same script is the null control: 3416 ins/tx and 1.372-1.386 M tx/s,
+i.e. no change, so the method is sensitive and the effect is admission-specific.
+
+Independent cross-check from the profiles: summing the admission symbols
+(`ticker::guard`, `rcu::in_rcu_region`, `rcu::sync::do_cleanup`,
+`scoped_rcu_base`, `coreid::*`, `SiloRuntime::Current`) plus the unresolved vDSO
+IPs gives **10.92% of instructions = 374 ins/tx** and **11.64% of cycles = 171
+cyc/tx** for the Rust lane, and **0.00% for the C++ lane**.
+
+One of those instruction-blocks is a clock read per operation:
+
+| Measure | Rust `sto` | C++ `c-abi` |
+| ------- | ---------: | ----------: |
+| `gettimeofday` calls, foreground worker | 328,192 | 13 (whole run) |
+| `clock_gettime` calls, foreground worker | 5 | 0 |
+| real syscalls in the run (`strace -c`) | none (only 3 `clock_nanosleep`) | none |
+| vDSO share of instructions | 5-7% | < 0.04% |
+
+The leaf is `[vdso] 0x86c`, the post-`rdtscp` TSC conversion inside the vDSO's
+`gettimeofday` fast path (verified by sampling a `gettimeofday` microbenchmark,
+which lands on the identical offset, at **68 ins / 94 cycles per call**, versus
+`clock_gettime(CLOCK_MONOTONIC)` at vDSO `0xb03`, 87 ins / 92 cycles).
+
+Source-level chain for that cost (current tree; the frozen binary's `ticker`
+guard is the same mechanism):
+
+- `sto-masstree` `lookup` -> `ensure_healthy` (`crates/sto-masstree/src/lib.rs:6057-6062`)
+  -> `Directory::get` -> `Tree::get` -> `mako_mtree_get_trusted`
+  (`crates/masstree/src/native.rs:305-322`, `src/mako/storage/mtree_abi.cc:2132-2147`).
+- `trusted_operation` + `point_get_validated` (`mtree_abi.cc:909-975`) take, per
+  directory lookup and *not amortized*: two native runtime-health loads, a
+  `structure_read_guard` (sealed check, structure-reader bit `fetch_or`,
+  `active_tree` publish/recheck, release clear; `mtree_abi.cc:254-302`) and an
+  `operation_rcu_guard` that constructs `scoped_rcu_base<true,false>`
+  (**`ticker` guard + `sync_->depth_++`, destructor `--depth_` + `do_cleanup()`**,
+  `src/mako/rcu.h:358-401`). The ticker guard is where the `gettimeofday` comes
+  from.
+- The engine's put path never uses the Rust `ReadScope`/`PointSession` that would
+  amortize this; it re-enters per lookup.
+- The C++ lane pays its RCU pair once per transaction, in the
+  `MassTrans::thread_init()` start/stop callbacks, and its clock reads happen on
+  a helper thread (9,136 `clock_gettime` calls in the foreground run above),
+  never on the measured worker.
+
+## 3 Direct counts: copies, allocations, indirect calls
+
+Interposition shims (`memcount.c`, `alloccount.c`, `clockcount.c`, appendix A),
+`engine` mode, 262,144 + 65,536 ops per lane:
+
+| Per transaction | Rust `sto` | C++ `c-abi` | Mechanism |
+| --------------- | ---------: | ----------: | --------- |
+| `memcpy` calls | 4.01 | 2.01 | Rust: 2x 128 B (TouchLog stage + record publish) + 2x <=16 B (harness key bytes); C++: 1x 128 B (pooled staging) + 1x <=16 B |
+| bytes copied by `memcpy` | 266 B | 136 B | C++'s second 148 B payload copy happens *inside* `MassTrans::install` as a byte-wise atomic loop, invisible to the shim |
+| `malloc` + `free` | 1.002 + 1.003 | 0.0025 + 0.004 | frozen pair: Rust owns one 128.5-byte staging buffer per transaction; C++ stages into a pooled `std::string`. The current tree's borrowed staging (`ValueRepr::BorrowedStaged`, `crates/sto-masstree/src/lib.rs:305-323`, taken when `38 < len <= 160` and `bounded_atomic_values`) removes that allocation by inspection; not re-measured here |
+| vtable/erased calls | 11 `dyn` + 2 fn-pointer | 3 fn-pointer | engine-mode trace: `ErasedItemBatch`, `ErasedDirectCommitPlan`, `Any` downcasts, `CommitHook` (hook is `None` in engine mode, so no terminal, no record serialization, no HLC gate, no `canonical_ops()`) |
+| `catch_unwind` frames | 10 | 0 | `direct_protocol::run_body` phase driver |
+| RCU entries | 1 per op (+ ticker) | 1 per tx (callback pair) | see section 2 |
+
+## 4 Function-level instruction ledger
+
+`perf record -e instructions:u -F 3999 --call-graph fp` on the frame-pointer
+probe pair, filtered to the measured window (tid + monotonic span from the
+harness's `PROFILE_WINDOW` markers), self time, scaled by the lane's own
+instructions/tx (2597 / 3426). Top entries:
+
+| C++ `c-abi` | ins/tx | Rust `sto` | ins/tx |
+| ----------- | -----: | ---------- | -----: |
+| `MassTrans<…>::install` | 580 | `<…BorrowedInjectiveLockCommitPlan…>::acquire_all` | 125 |
+| `Masstree::unlocked_tcursor<…>::find_unlocked` | 319 | `mako_engine_sto::txn::Transaction::put` | 122 |
+| `Transaction::try_commit` | 190 | `mako_engine_sto::txn::Transaction::begin` | 116 |
+| `mako_rust_fast_txn_put` (C ABI) | 173 | `with_resolved_item_inner_validated::{closure}` | 111 |
+| `mako_rust_fast_txn_commit_and_destroy` (C ABI) | 125 | `with_item_inner_validated` | 105 |
+| `Masstree::node_base<…>::reach_leaf` | 113 | `<…BorrowedInjectiveLockCommitPlan…>::prepare` | 104 |
+| `reallyHandlePutFound` | 105 | `<…BorrowedInjectiveLockCommitPlan…>::release_all` | 96 |
+| `thread_init()::{lambda()#1}` (RCU start) | 90 | `Masstree::unlocked_tcursor<…>::find_unlocked` | 230 |
+| `handlePutFound<true,true,…>` | 86 | `point_get_validated` | 83 |
+| `Transaction::stop` | 90 | `<…BorrowedInjectiveLockCommitPlan…>::validate` | 72 |
+| `__memmove_avx_unaligned_erms` | 82 | `<…BorrowedInjectiveLockCommitPlan…>::install` | 73 |
+| `Transaction::allocate_item` | 47 | `mako_engine_sto::txn::Transaction::recycle_touched` | 33 |
+| `__func<…thread_init()::{lambda()#2}>::operator()` | 22 | `malloc` + `free` | 97 |
+| — | — | `ticker::guard::guard` + `rcu::in_rcu_region` + `scoped_rcu_base` + `do_cleanup` + `coreid::*` | 201 |
+| — | — | `vdso` (clock) | 68-241 (share-weighted; 68 by call count) |
+
+Grouped by role, from the same two profiles (symbolic rows account for 2591 of
+the C++ lane's 2597 ins/tx and 3378 of the Rust lane's 3426; the remainder is
+below the 0.15% reporting cutoff):
+
+| Role | C++ | Rust | Delta |
+| ---- | --: | ---: | ----: |
+| commit protocol (validate/acquire/install/release vs `try_commit` + lock/check/unlock/cleanup) | 258 | 1010 | +752 |
+| lane boundary (C ABI shims / engine facade) | 376 | 0 | -376 |
+| tree record write | 580 | 244 | -336 |
+| native admission (ticker, RCU scope, `coreid`, health) | 0 | 201 | +201 |
+| unresolved IPs (mostly the vDSO clock path) | 0 | 173 | +173 |
+| transaction lifecycle (`begin`/`stop`/`start` plumbing) | 196 | 349 | +153 |
+| payload copies (`memmove`/`memcpy`) | 86 | 201 | +115 |
+| per-transaction RCU callbacks (`thread_init` lambdas) | 112 | 0 | -112 |
+| allocator (`malloc`/`free`) | 0 | 84 | +84 |
+| benchmark driver loop (shared Rust code) | 263 | 355 | +92 |
+| item staging (batch/typed adapter/preflight) | 259 | 345 | +85 |
+| tree lookup (`find_unlocked` + `reach_leaf` + `point_get_validated`) | 433 | 416 | -17 |
+| `BenchmarkConfig::getInstance()` | 28 | 0 | -28 |
+
+The +752/-336 pair is the same story told twice: the Rust lane moves work out of
+a hand-specialised record write and into a generic commit-plan driver. Note that
+these are *self* instruction counts, so a lane cannot be judged by one row: the
+Rust lane's generic driver replaces C++ work that appears in several rows at once
+(`handlePutFound`, `trans_write`, `allocate_item`, `thread_init` callbacks).
+
+The residual campaign's own `cycles:u` profiles, scored over the same roles,
+reproduce the same ordering (cycles/tx):
+
+| Role | C++ | Rust | Delta |
+| ---- | --: | ---: | ----: |
+| commit protocol | 128.8 | 452.8 | +324.0 |
+| tree record write | 252.0 | 100.3 | -151.8 |
+| lane boundary (C ABI) | 163.6 | 0.0 | -163.6 |
+| admission (ticker/RCU/`coreid`) | 0.0 | 93.2 | +93.2 |
+| unresolved IPs (vDSO clock + libc) | 0.0 | 78.2 | +78.2 |
+| transaction lifecycle | 81.9 | 149.4 | +67.5 |
+| payload copies | 31.2 | 87.9 | +56.7 |
+| per-transaction RCU callbacks | 52.1 | 0.0 | -52.1 |
+| tree lookup | 135.1 | 182.5 | +47.4 |
+| item staging | 111.4 | 145.0 | +33.6 |
+| allocator + other | 11.4 | 40.5 | +29.0 |
+| benchmark driver | 113.4 | 112.8 | -0.7 |
+
+Admission plus unresolved-vDSO is **171.4 cycles/tx** here, matching the
+ablation's **165 cyc/tx** within noise, and the rank order matches the
+instruction table. Cycle totals: 1089.7 (C++) and 1472.1 (Rust) per transaction.
+
+## 5 Fixed per-transaction cost versus per-item cost
+
+Method: `--items N` (engine mode only) makes one commit stage N distinct keys;
+the final-value verification is extended to the multi-key schedule
+(`expected_iteration_multi`, in `engine_compare-items.rs` and
+`patch_probe.py`). Three alternating rounds per cell, both lanes, at 1 worker.
+If the deficit were a fixed per-transaction tax, the Rust/C++ ratio would
+converge toward 1 as N grows and the per-item delta would shrink; if the deficit
+is per-item work, the ratio stays flat.
+
+**Status of the matrix.** The `--items` change is complete in source
+(`engine_compare-items.rs` and `patch_probe.py`, with the verification schedule
+extended to multi-key commits), but no paired run was produced in this session:
+the native archives in `build_c22` fail the `mako-local`/`mtree` fingerprint
+guard because system headers changed on the host, so both arms need a native
+rebuild (the frozen archives are from 2026-09-14), and that rebuild was still
+compiling the `rusty-cpp` transpiler when this report was written. The split
+below is therefore established from the source trace, the ablation and the
+per-operation counts — not from a completed 1/2/4-item curve. The harness and
+both build scripts are in this directory so the curve can be filled in without
+re-deriving anything.
+
+What the source says the split is (engine-mode trace; citations in appendix B):
+
+- **Fixed per transaction**: worker/frame lifecycle (`worker::attach` TLS scan,
+  `slot.acquire`, `WorkerContext::begin_isolation`, `frame.begin`,
+  `take_touched`/`recycle_touched`), `CommitDriver::new`, the plan/report state
+  machine, **10 `catch_unwind` frames**, 8 of the 11 erased calls,
+  `SingletonBody::new` rebinding, `teardown_adapter_state`'s `Pooled` early
+  return, `finish_items`' branch + `reset_shape`, `recycle_frame`,
+  `complete_worker`, `slot.release`, `map_commit`.
+- **Per item**: one directory lookup with its `structure_read_guard` +
+  `operation_rcu_guard` (and vDSO clock read), one TouchLog entry and copy, one
+  `prepare`/`acquire` (1 version CAS)/`install` (one publication: 32 B inline +
+  6 B packed tail + 90 B suffix)/`release` (1 Release store) loop iteration, one
+  payload copy at publish.
+- **Discontinuity at N = 2**: `frame.item_count == 1` no longer holds, so the
+  singleton lane (`SingletonBody`) is replaced by the erased per-phase path
+  (`direct_preflight`/`direct_acquire_all`/`direct_validate`/`direct_install`/
+  `direct_release_all`, +5 erased calls), the item index and batch capacities
+  materialize, and the second put loses the borrowed-staging lane, adding one
+  128-byte allocation and one copy (`ValueRepr::Staged`).
+
+## 6 Limits of this attribution
+
+- Instruction shares come from PMU sampling with `-F 3999`; with a short
+  periodic loop the sampled IP can alias onto a few addresses. Every claim here
+  is cross-checked against a cycle-share, a DSO-level share, or a direct call
+  count (shim / ablation), so no conclusion rests on a single profile share.
+- All cells are 1 worker, engine-only, existing key, 128-byte value. The
+  `engine-logged` and `cache-ack` modes add other costs (record terminal, cache
+  queue) and are not attributed here.
+- The `rcu`, `holder` and `--items` builds are private diagnostics over
+  production libraries; none of them is a production change.
+- The frozen pair reproduces at 1.82 M vs 1.35 M on zoo-002 today. On zoo-005
+  (Threadripper 2990WX, boost on) the same binaries were measured at 1.86 M vs
+  1.06 M; cross-host absolute numbers are not interchangeable.
+- The instruction profile was taken on the frame-pointer *probe* pair (16.7 M
+  iterations), not the frozen pair; the two agree to within 1.5% on both
+  instructions/tx and throughput ratio.
+
+## 7 What this implies for the cutover
+
+Ranked by measured size, with the evidence's own ceiling:
+
+1. **Per-operation native admission (up to +13.7% tx/s if amortized).** The
+   whole-loop-scope ablation is an upper bound: it removes the per-lookup
+   `structure_read_guard`, the `scoped_rcu_base` pair and the `ticker` clock read
+   and returns 3416 -> 3046 ins/tx. A production form needs a bounded,
+   synchronous batch boundary (the diagnostic's own limits section says an idle
+   or blocking scope is not safe).
+2. **Generic commit-plan and item machinery (+752 ins/tx over the C++ lane).**
+   Specializing the singleton path further (plan phases, erased dispatch,
+   `catch_unwind` per phase) is the largest single block. The measurements do not
+   say how much of it can be removed; the plan object itself is already pooled
+   across transactions.
+3. **Staging allocation and copies (+84 ins/tx and +115 ins/tx).** The current
+   tree's borrowed staging path removes the 128-byte allocation by inspection;
+   the two bulk copies are already cheaper than the C++ lane's byte-wise atomic
+   store loop, so there is nothing to win by chasing copies.
+4. **Do not chase `MassTrans::install`-style costs.** The C++ lane's 580 ins/tx
+   byte-wise atomic store is a *dis*advantage of the C++ lane in this cell; a
+   Rust design that matches it would be a regression.
+
+## 8 Appendix
+
+### A. Artifacts in this directory
+
+| File | Purpose |
+| ---- | ------- |
+| `measure.sh` | frozen-pair matched controls + extended `perf stat` counters |
+| `variants.sh` | baseline / `rcu` / `holder` alternation (ablation and null control) |
+| `profile_ins.sh` | `perf record -e instructions:u` on the frame-pointer probe pair, window-filtered |
+| `memcount.c` | `memcpy`/`memmove`/`memset` interposer with size buckets |
+| `alloccount.c` | `malloc`/`calloc`/`realloc`/`free` interposer |
+| `clockcount.c` | `gettimeofday`/`clock_gettime`/`time` interposer, per thread |
+| `clockprobe.sh` | clock counters + `strace -c` syscall summary for both lanes |
+| `clockbench.c` | microbenchmark that pins each clock call to its vDSO offset and cost |
+| `engine_compare-items.rs` | the `--items` diagnostic harness (untracked in the worktree) |
+| `patch_probe.py` | applies the same `--items` change to the residual probe harness |
+| `build_probe_items.sh` | offline build of both `--items` arms |
+
+Raw `perf.data` files, per-cell stdout/stderr and the probe binaries remain under
+`/var/tmp/mako-attr-20260917.2` (profiles) and `/var/tmp/probe-mine` (items
+build) on `zoo-002`.
+
+### B. Reproduction commands
+
+```bash
+# matched controls (frozen ThinLTO pair)
+ssh zoo-002 'sudo bash /var/tmp/attr-measure.sh /var/tmp/mako-attr-20260917.1'
+
+# ablation and null control
+ssh zoo-002 'sudo bash /var/tmp/attr-variants.sh'
+
+# instruction profiles on the probe pair (frame pointers, PROFILE_WINDOW markers)
+ssh zoo-002 'sudo bash /var/tmp/attr-profile-ins.sh /var/tmp/mako-attr-20260917.2'
+
+# clock / copy / allocation counters for both lanes
+ssh zoo-002 'sudo bash /var/tmp/clockprobe.sh'
+ssh zoo-002 'cc -O1 -shared -fPIC -o /var/tmp/memcount.so /var/tmp/memcount.c -ldl'
+LD_PRELOAD="$W/libjemalloc.so.2 /var/tmp/memcount.so" taskset -c 33-63 <bin> engine \
+  --workers 1 --iterations 262144 --warmup 65536 --perf 0
+
+# per-item amortization (after building both arms)
+ssh zoo-002 'bash /var/tmp/build_probe_items.sh && sudo bash /var/tmp/items_matrix.sh'
+```
+
+Baselines: `LD_LIBRARY_PATH=/var/tmp/mako-engine-perf-20260912.iz63eX:<llvm lib>`,
+`LD_PRELOAD=/var/tmp/mako-engine-perf-20260912.iz63eX/libjemalloc.so.2`.
+
+### C. Engine-mode trace anchors (Rust lane, `engine_compare` mode `engine`)
+
+- Driver: `crates/mako-cache-bench/src/bin/engine_compare.rs:295-343`.
+- `LocalDb::trusted_bound_transaction` -> `attach` -> `worker::attach`:
+  `crates/mako-engine-sto/src/{db.rs,txn.rs,worker.rs}` (`trusted_bound_transaction`
+  297-309, `Transaction::begin` 222-256).
+- `tx.put`: `crates/mako-engine-sto/src/txn.rs:477-556` -> `sto-masstree`
+  `put_borrowed_with_previous_presence` (`lib.rs:2122`) -> `with_key_record_lookup`
+  (`lib.rs:4451-4484`) -> `sto-core` `with_resolved_item` (`transaction.rs:1340-1377`)
+  -> `with_item_inner_validated` (1740-1788) -> `prepare_typed_unique_batch`
+  (2709-2760) -> `activate_typed_batch_item` (2595-2689) -> native lookup.
+- Native admission per lookup: `src/mako/storage/mtree_abi.cc` `trusted_operation`
+  (909-937), `point_get_validated` (941-975), `structure_read_guard` (254-302),
+  `operation_rcu_guard` (528-537) -> `src/mako/rcu.h:358-401` (`ticker` guard,
+  `depth_++`/`--`, `do_cleanup`).
+- `tx.commit`: `txn.rs:741-751` -> `commit_report` -> `sto_core`
+  `Transaction::commit` (`transaction.rs:1505`) -> `commit_with_optional_hook(None)`
+  (1522-1544) -> `CommitDriver::run` (3394-3432) -> `run_direct` (3806-3844) ->
+  `SingletonBody::{acquire,validate,install,release}`
+  (`sto-core/src/singleton_direct.rs:52-172`) -> `BorrowedInjectiveLockCommitPlan`
+  (`sto-core/src/direct_commit.rs:1929-2330`) -> `sto-masstree`
+  `install_direct_record` (`lib.rs:9962-10014`) -> `CommittedStatePublication::publish`
+  (`lib.rs:9380-9455`).
+- Hook-free consequences: no `CommitHook` vtable calls, no HLC gate, no record
+  encoding/CRC32C, no writeback queue, no `canonical_ops()` (all cache-path only).
+
+C++ lane (for the contrasted numbers): `mako_rust_fast_txn_{begin,put,commit_and_destroy}`
+in `src/mako/storage/mako_local_abi.cc` (begin 1345, put 3367, commit 4676) ->
+`MassTrans::trans_write`/`handlePutFound`/`reallyHandlePutFound`
+(`src/mako/sto/MassTrans.hh:361/1260/1140`) -> `Transaction::try_commit`
+(`src/mako/sto/Transaction.cc:1067`) -> `MassTrans<...>::install`
+(`MassTrans.hh:969-1066`, with `stuffed_str::replace` at
+`src/mako/sto/stuffed_str.hh:166-180`) -> `Transaction::stop` (`Transaction.cc:672`)
+-> `rcu_stop` through the `MassTrans::thread_init()` callbacks
+(`MassTrans.hh:121-146`).
