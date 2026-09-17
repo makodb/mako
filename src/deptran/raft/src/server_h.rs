@@ -833,7 +833,7 @@ pub struct RaftConsensusState {
     election_term_: i64,
     election_timeout_us_: u64,
     election_timer_generation_: u64,
-    vote_for_: u16,
+    pub vote_for_: u16,
     // Snapshot configuration and callback ownership.
     snapshot_threshold_: u64,
     snapshot_callback_owner_token_: u64,
@@ -842,7 +842,7 @@ pub struct RaftConsensusState {
     is_leader_: bool,
     req_voting_: bool,
     election_in_progress_: bool,
-    current_leader_id_: u16,
+    pub current_leader_id_: u16,
     last_heartbeat_time_: u64,
     // Read-index evidence: the round counter and the newest confirmed proof.
     pub heartbeat_round_: u64,

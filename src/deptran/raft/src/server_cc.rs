@@ -396,6 +396,12 @@ use crate::server_h::raft_server_read_index_reply_confirms_authority;
 use crate::server_h::raft_server_read_index_round_can_advance;
 use crate::server_h::raft_server_log_index_above;
 use crate::server_h::raft_server_log_entry_is_current_term;
+use crate::server_h::raft_server_observed_higher_term;
+use crate::server_h::raft_server_append_acknowledged_through;
+use crate::server_h::raft_server_log_index_has_successor;
+use crate::server_h::raft_server_follower_next_index;
+use crate::server_h::BackoffKind;
+use crate::server_h::RAFT_SERVER_INVALID_SITE_ID;
 use crate::server_h::RaftConsensusState;
 use crate::server_h::PeerTable;
 use crate::server_h::RaftLog;
@@ -767,6 +773,225 @@ impl HeartbeatRoundScope {
 // a free function does -- `use crate::server_h::X` on the Rust side, and the
 // emitter writes the name unqualified, which resolves because both blocks
 // sit in namespace janus. No shim namespace is needed for types.
+// PHASE 2's decision core: what one AppendEntries reply means.
+//
+// PHASE 2 is a polling loop over the in-flight slots. The loop itself, its
+// round deadline and its Fiber::sleep stay in C++ -- suspension is the one
+// thing genuinely shaped by the fiber runtime. What each reply MEANS is not,
+// and that is this.
+//
+// The wire reply is read out by the caller and arrives here as three scalars.
+// That is the same "convert at the edge" split the rest of the file uses: the
+// rrr response object never crosses, only what it says.
+//
+// The caller keeps four things because none of them are decisions:
+// LogTermChange and the backoff-rung logging (both pure logging, and both
+// need their level short-circuit), PeerOrdinal (a scan over peer_sites_,
+// which is C++), and stepDown -- which reaches setIsLeader and the election
+// timer, i.e. the reactor. This returns STEP_DOWN and lets the caller do it.
+#[repr(C)]
+pub struct SentAppend {
+    follower_: u16,
+    term_: u64,
+    round_: u64,
+    end_index_: u64,
+    // peers.len() when this follower is no longer a peer at all.
+    ordinal_: usize,
+}
+
+impl SentAppend {
+    pub fn new(follower: u16, term: u64, round: u64, end_index: u64, ordinal: usize) -> SentAppend {
+        SentAppend { follower_: follower, term_: term, round_: round,
+                     end_index_: end_index, ordinal_: ordinal }
+    }
+
+    pub fn round(&self) -> u64 {
+        self.round_
+    }
+}
+
+#[repr(C)]
+pub struct AppendReply {
+    available_: bool,
+    status_: bool,
+    term_: u64,
+    last_log_index_: u64,
+}
+
+impl AppendReply {
+    pub fn new(available: bool, status: bool, term: u64, last_log_index: u64) -> AppendReply {
+        AppendReply { available_: available, status_: status, term_: term,
+                      last_log_index_: last_log_index }
+    }
+}
+
+#[allow(non_camel_case_types)]
+#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Eq, PartialEq))]
+#[repr(i32)]
+pub enum AppendReplyAction {
+    // Nothing was learned: the RPC failed, or the reply belongs to a term or
+    // a leadership epoch that is no longer current.
+    IGNORED = 0,
+    // The follower proved a newer term. Term, vote and leader hint have been
+    // updated here; the caller must perform the step-down itself.
+    STEP_DOWN = 1,
+    // Rejected. The backoff ladder ran and reports which rung it took.
+    BACKED_OFF = 2,
+    // Accepted, and replication progress advanced.
+    ACCEPTED = 3,
+    // Success that does not cover the payload it was sent. AppendEntries
+    // acceptance is atomic, so this proves nothing and must not be counted.
+    CONTRADICTORY = 4,
+    // The follower has no replication indices: it is not one this server
+    // leads. Higher-term evidence was already handled above.
+    UNKNOWN_FOLLOWER = 5,
+}
+
+#[repr(C)]
+pub struct AppendReplyOutcome {
+    action_: AppendReplyAction,
+    rung_: BackoffKind,
+    old_next_: u64,
+    new_next_: u64,
+    acknowledged_: u64,
+    previous_term_: u64,
+}
+
+impl AppendReplyOutcome {
+    pub fn action(&self) -> AppendReplyAction {
+        self.action_
+    }
+
+    // BACKED_OFF only.
+    pub fn rung(&self) -> BackoffKind {
+        self.rung_
+    }
+
+    pub fn old_next(&self) -> u64 {
+        self.old_next_
+    }
+
+    pub fn new_next(&self) -> u64 {
+        self.new_next_
+    }
+
+    // ACCEPTED only.
+    pub fn acknowledged(&self) -> u64 {
+        self.acknowledged_
+    }
+
+    // STEP_DOWN only: the term this server held before the reply displaced it.
+    pub fn previous_term(&self) -> u64 {
+        self.previous_term_
+    }
+}
+
+fn append_reply_nothing(action: AppendReplyAction) -> AppendReplyOutcome {
+    AppendReplyOutcome {
+        action_: action,
+        rung_: BackoffKind::FLOOR,
+        old_next_: 0,
+        new_next_: 0,
+        acknowledged_: 0,
+        previous_term_: 0,
+    }
+}
+
+// Takes the log's tail rather than the log: this decides what a reply
+// proves, and the only thing it needs from the log is where the log ends.
+// Narrowing the parameter is also what keeps the argument list inside
+// clippy's limit without an allow.
+pub fn heartbeat_apply_append_reply(
+    consensus: &mut RaftConsensusState,
+    peers: &mut PeerTable,
+    ledger: &mut AuthorityLedger,
+    sent: &SentAppend,
+    reply: &AppendReply,
+    log_last_index: u64,
+    is_leader: bool,
+) -> AppendReplyOutcome {
+    // Retire the RPC and, if it proves this exact generation, count the vote.
+    // One physical RPC exists per follower per generation, but the evidence
+    // stays a set so a future transport still cannot double-count a voter.
+    let evidence = AuthorityReply::new(
+        sent.round_,
+        sent.follower_,
+        sent.term_,
+        reply.term_,
+        consensus.current_term_,
+        is_leader,
+        reply.available_,
+    );
+    ledger.record_reply(&evidence);
+
+    if !reply.available_ {
+        return append_reply_nothing(AppendReplyAction::IGNORED);
+    }
+
+    // A higher term is authoritative regardless of the accompanying status
+    // bit. The responding follower proves a newer term, not its leader.
+    if raft_server_observed_higher_term(reply.term_, consensus.current_term_) {
+        let previous_term = consensus.current_term_;
+        consensus.current_term_ = reply.term_;
+        consensus.vote_for_ = u16::MAX;
+        // Neither leading nor knowing a leader, so the hint is cleared. The
+        // responding follower proved a newer term, not that it is the leader
+        // of that term. (With both flags false the shared predicate returns
+        // the invalid id whatever ids it is handed, so it is spelled out
+        // here rather than called with two arguments that do not matter.)
+        consensus.current_leader_id_ = RAFT_SERVER_INVALID_SITE_ID;
+        let mut out = append_reply_nothing(AppendReplyAction::STEP_DOWN);
+        out.previous_term_ = previous_term;
+        return out;
+    }
+
+    // A reply from a send term this server has left proves nothing about now.
+    if consensus.current_term_ != sent.term_ {
+        return append_reply_nothing(AppendReplyAction::IGNORED);
+    }
+    // A valid follower processes AppendEntries in the leader's term before
+    // replying, so a lower response term cannot prove this send.
+    if reply.term_ != sent.term_ {
+        return append_reply_nothing(AppendReplyAction::IGNORED);
+    }
+    if !is_leader {
+        return append_reply_nothing(AppendReplyAction::IGNORED);
+    }
+    if sent.ordinal_ == peers.len() {
+        return append_reply_nothing(AppendReplyAction::UNKNOWN_FOLLOWER);
+    }
+
+    if !reply.status_ {
+        let old_next = peers.next_index(sent.ordinal_);
+        let rung = peers.back_off_after_reject(sent.ordinal_, reply.last_log_index_);
+        let new_next = peers.next_index(sent.ordinal_);
+        let mut out = append_reply_nothing(AppendReplyAction::BACKED_OFF);
+        out.rung_ = rung;
+        out.old_next_ = old_next;
+        out.new_next_ = new_next;
+        return out;
+    }
+
+    if reply.last_log_index_ < sent.end_index_ {
+        return append_reply_nothing(AppendReplyAction::CONTRADICTORY);
+    }
+
+    // Successful responses are monotonic and prove no index beyond the exact
+    // payload end. In particular a heartbeat cannot adopt an unknown
+    // follower suffix.
+    let acknowledged = raft_server_append_acknowledged_through(
+        reply.last_log_index_, sent.end_index_, log_last_index);
+    peers.accept_through(
+        sent.ordinal_,
+        acknowledged,
+        raft_server_log_index_has_successor(acknowledged),
+        raft_server_follower_next_index(acknowledged),
+    );
+    let mut out = append_reply_nothing(AppendReplyAction::ACCEPTED);
+    out.acknowledged_ = acknowledged;
+    out
+}
+
 // The commit-index advance, which PHASE 0 and PHASE 3 perform identically:
 // PHASE 0 before the round's RPCs go out, PHASE 3 after their replies have
 // been processed. It was the same fifteen lines twice.

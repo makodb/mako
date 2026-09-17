@@ -1857,7 +1857,7 @@ pub struct RaftConsensusState {
     election_term_: i64,
     election_timeout_us_: u64,
     election_timer_generation_: u64,
-    vote_for_: u16,
+    pub vote_for_: u16,
     // Snapshot configuration and callback ownership.
     snapshot_threshold_: u64,
     snapshot_callback_owner_token_: u64,
@@ -1866,7 +1866,7 @@ pub struct RaftConsensusState {
     is_leader_: bool,
     req_voting_: bool,
     election_in_progress_: bool,
-    current_leader_id_: u16,
+    pub current_leader_id_: u16,
     last_heartbeat_time_: u64,
     // Read-index evidence: the round counter and the newest confirmed proof.
     pub heartbeat_round_: u64,
@@ -1913,7 +1913,7 @@ impl RaftConsensusState {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.consensus_state version=1 rust_sha256=5a54b435c3115a410405061853422af36c8f7a340443d6cdca89b67c408359b3*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.consensus_state version=1 rust_sha256=2483f067b1edbb121303934078ef3eb263dfdf66ae09658f71006e9a5f94ba98*/
 struct RaftConsensusState;
 
 struct RaftConsensusState {
