@@ -473,7 +473,14 @@ for index in "${!FILES[@]}"; do
   # Neither is ever a legitimate thing to commit inside a GEN region, so scan
   # the generated side and fail on either. This is the only check here that
   # catches a body silently doing less than its Rust says.
-  if lost=$(awk -v src="${file}" '/RUSTYCPP:GEN-BEGIN/{g=1} g&&/\/\/ TODO:|#if 0  \/\/ patcher:/{print "  "src":"FNR": "$0} /RUSTYCPP:GEN-END/{g=0}' "${regenerated}") && [ -n "${lost}" ]; then
+  # Match `// TODO` in ANY form, not the literal `// TODO:`. The emitter also
+  # writes `// TODO orphan impl:` (no colon after TODO) and thirteen
+  # `// TODO(interface_traits): ...` variants -- skipped by-value self methods,
+  # skipped generic methods, skipped adapters, unsupported associated
+  # constants. Every one of those silently drops a method from an adapter, and
+  # the narrower pattern caught none of them. A GEN region is entirely
+  # generated, so any TODO inside one is an emitter marker by construction.
+  if lost=$(awk -v src="${file}" '/RUSTYCPP:GEN-BEGIN/{g=1} g&&/\/\/ *TODO|#if 0  \/\/ patcher:/{print "  "src":"FNR": "$0} /RUSTYCPP:GEN-END/{g=0}' "${regenerated}") && [ -n "${lost}" ]; then
     echo "FAILED ${file}: transpiler dropped a statement inside a GEN region" >&2
     echo "${lost}" >&2
     echo "  an unknown macro or an impl on a C++ type was silently discarded;" >&2
