@@ -459,6 +459,77 @@ for index in "${!FILES[@]}"; do
     failures=$((failures + 1))
   fi
 
+  # SOURCE-SIDE FOOTGUNS. Two constructs are accepted by the transpiler and
+  # then lowered WRONG, with exit 0 and no marker anywhere in the output, so
+  # the GEN scan below cannot see them. They have to be caught on the Rust
+  # side instead.
+  #
+  #   #[cfg(...)]  inside a DSL block is DROPPED and the code it guards is
+  #                emitted UNCONDITIONALLY. A `#[cfg(test)]` helper would ship
+  #                in production. Use a C++ #ifdef around the whole block, or
+  #                a runtime predicate. (#[cfg_attr(...)] is a different
+  #                attribute and is fine -- every derive here uses it.)
+  if bad=$(awk -v src="${file}" '
+      /^[[:space:]]*#if RUSTYCPP_RUST/{d=1}
+      d && /#\[cfg\(/ {print "  "src":"FNR": "$0}
+      /^[[:space:]]*#endif/{d=0}' "${file}") && [ -n "${bad}" ]; then
+    echo "FAILED ${file}: #[cfg(...)] inside a DSL block is silently dropped" >&2
+    echo "${bad}" >&2
+    echo "  the guarded code would be emitted unconditionally; use #ifdef" >&2
+    echo "  around the whole block, or a runtime predicate" >&2
+    failures=$((failures + 1))
+  fi
+
+  #   #[derive(Default)] is lowered to `static X default_() { return {}; }`,
+  #                i.e. C++ value-initialisation. That is correct only when
+  #                every field's own Default is all-zero-bytes. A field whose
+  #                Rust Default is non-zero is silently zeroed instead. Allow
+  #                the derive only on structs whose fields are all primitive
+  #                scalars; anything else must write `fn new()` explicitly,
+  #                which is this codebase's convention anyway.
+  if bad=$(python3 - "${file}" <<'PYCHK'
+import re, sys
+path = sys.argv[1]
+src = open(path).read().split('\n')
+state = 'cpp'; block = []; blocks = []; start = 0
+for i, l in enumerate(src):
+    if state == 'cpp' and re.match(r'\s*#if RUSTYCPP_RUST\s*$', l):
+        state = 'rust'; block = []; start = i + 1; continue
+    if state == 'rust' and re.match(r'\s*#endif\s*$', l):
+        state = 'cpp'; blocks.append((start, block)); continue
+    if state == 'rust':
+        block.append(l)
+SCALAR = re.compile(r'^(u8|u16|u32|u64|usize|i8|i16|i32|i64|isize|f32|f64|bool|char)$')
+bad = []
+for start, body in blocks:
+    for n, l in enumerate(body):
+        if not re.search(r'derive\([^)]*\bDefault\b', l):
+            continue
+        # find the struct that follows and read its field types
+        k = n
+        while k < len(body) and not re.match(r'\s*pub struct ', body[k]):
+            k += 1
+        if k >= len(body):
+            continue
+        name = re.sub(r'.*pub struct (\w+).*', r'\1', body[k])
+        k += 1
+        while k < len(body) and not body[k].strip().startswith('}'):
+            m = re.match(r'\s*(?:pub\s+)?\w+:\s*([\w:<>]+)\s*,', body[k])
+            if m and not SCALAR.match(m.group(1)):
+                bad.append(f"  {path}:{start+n+1}: derive(Default) on {name}, "
+                           f"field type {m.group(1)} is not a primitive scalar")
+                break
+            k += 1
+print('\n'.join(bad))
+PYCHK
+  ) && [ -n "${bad}" ]; then
+    echo "FAILED ${file}: derive(Default) is mis-lowered for non-scalar fields" >&2
+    echo "${bad}" >&2
+    echo "  it emits 'return {}' (value-init), zeroing any field whose Rust" >&2
+    echo "  Default is non-zero. Write an explicit fn new() instead." >&2
+    failures=$((failures + 1))
+  fi
+
   # SILENT STATEMENT LOSS. The transpiler does not fail on constructs it
   # cannot lower; it emits a marker and drops the statement, exits 0, and both
   # this gate and the C++ build stay green while the behaviour is simply gone.
