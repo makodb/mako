@@ -888,7 +888,7 @@ pub struct RaftConsensusState {
     pub commit_index_: u64,
     execute_index_: u64,
     // Snapshot boundary.
-    snapidx_: u64,
+    pub snapidx_: u64,
     snapterm_: i64,
 }
 

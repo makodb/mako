@@ -1914,7 +1914,7 @@ pub struct RaftConsensusState {
     pub commit_index_: u64,
     execute_index_: u64,
     // Snapshot boundary.
-    snapidx_: u64,
+    pub snapidx_: u64,
     snapterm_: i64,
 }
 
@@ -1954,7 +1954,7 @@ impl RaftConsensusState {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.consensus_state version=1 rust_sha256=a432de11a6f9117f2b1392368da3234a8b4d67a410a385f03a953aa19da55d41*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.consensus_state version=1 rust_sha256=f2f9d2a48fcc9beae84ad8882af6cdd2b70c73ace81ebaeb8dc0af24625d7076*/
 struct RaftConsensusState;
 
 struct RaftConsensusState {
@@ -2685,7 +2685,10 @@ class RaftServer : public TxLogServer {
   // @unsafe - Stops new wake jobs and releases the gate's PollThread handle.
   void CloseReplicationWakeGate();
   // @unsafe - Caller holds mtx_; performs a non-mutating absolute-slot lookup.
+  // PUBLIC for the raft_election_last_log_term trampoline; see doVote above.
+ public:
   ballot_t ElectionLastLogTermLocked() const;
+ private:
 
 	std::function<void(bool)> leader_change_cb_{};
 
@@ -2743,6 +2746,12 @@ class RaftServer : public TxLogServer {
 
   // @unsafe - raw pointer output parameters (reply_term, vote_granted)
   // Memory-only voting: record the vote and reply immediately.
+  // PUBLIC for the raft_do_vote trampoline, which raft_on_request_vote calls
+  // back through. An extern "C" function is not a member and cannot reach a
+  // private one; the existing heartbeat trampolines work only because
+  // HeartbeatPhase0..3 are public. Both go back to private when their own
+  // bodies convert and the trampolines are deleted.
+ public:
   void doVote(const slotid_t& lst_log_idx,
               const ballot_t& lst_log_term,
               const siteid_t& can_id,
@@ -2804,6 +2813,8 @@ class RaftServer : public TxLogServer {
       }
 
   }
+
+ private:
 
 
   std::thread apply_thread_;

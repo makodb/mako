@@ -2335,6 +2335,8 @@ using janus::raft::raft_quorum_count_reached;
 }  // namespace quorum_hpp
 
 namespace server_h {
+using janus::raft_server_candidate_log_is_at_least;
+using janus::raft_server_vote_is_idempotent;
 using janus::BackoffKind;
 using janus::RAFT_SERVER_INVALID_SITE_ID;
 using janus::raft_server_read_index_reply_confirms_authority;
@@ -2398,6 +2400,8 @@ use crate::server_h::raft_server_observed_higher_term;
 use crate::server_h::raft_server_append_acknowledged_through;
 use crate::server_h::raft_server_log_index_has_successor;
 use crate::server_h::raft_server_follower_next_index;
+use crate::server_h::raft_server_candidate_log_is_at_least;
+use crate::server_h::raft_server_vote_is_idempotent;
 use crate::server_h::BackoffKind;
 use crate::server_h::RAFT_SERVER_INVALID_SITE_ID;
 use crate::server_h::RaftConsensusState;
@@ -2670,7 +2674,7 @@ impl AuthorityLedger {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.authority_ledger version=1 rust_sha256=d56da0ac5eb62c9bf755ab6374c2a96c64349c109ca130b923e0772203f8d372*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.authority_ledger version=1 rust_sha256=4c5dd4d17a5d3a299046c048c7434904b80aeb0805e983b6b755180a0f6431b9*/
 struct AuthorityGeneration;
 struct AuthorityReply;
 struct AuthorityOutcome;
@@ -2695,6 +2699,10 @@ using ::server_h::raft_server_append_acknowledged_through;
 using ::server_h::raft_server_log_index_has_successor;
 
 using ::server_h::raft_server_follower_next_index;
+
+using ::server_h::raft_server_candidate_log_is_at_least;
+
+using ::server_h::raft_server_vote_is_idempotent;
 
 using ::server_h::BackoffKind;
 
@@ -3101,6 +3109,144 @@ impl HeartbeatRoundScope {
 // a free function does -- `use crate::server_h::X` on the Rust side, and the
 // emitter writes the name unqualified, which resolves because both blocks
 // sit in namespace janus. No shim namespace is needed for types.
+// OnRequestVote's whole body, as Rust. The caller holds mtx_ for the
+// duration, exactly as the C++ did -- the lock stays in C++ because
+// RaftCheckedMutex is a C++ type and because moving lock/unlock into a Rust
+// body would lose RAII across this function's many early returns.
+//
+// Two things reach back into unconverted C++ through trampolines, which is
+// the same mechanism HeartbeatDriver has used since it landed: doVote, which
+// writes the reply and can step the term forward, and
+// ElectionLastLogTermLocked, which consults the snapshot boundary. Neither
+// is a blocker -- each becomes an ordinary call once its own body converts,
+// and the trampoline is deleted then.
+//
+// The caller also passes `candidate_is_current_voter` rather than this
+// reading current_config_: that member is a std::set that has not moved into
+// the state struct, and computing the predicate on the C++ side keeps the
+// rejection log line's level short-circuit where it belongs.
+/// # Safety
+///
+/// `server` must be a live `RaftServer*`, and the caller must hold that
+/// server's `mtx_` for the whole call. Both hold at the only call site,
+/// `RaftServer::OnRequestVote`, which takes the lock and passes `this`.
+///
+/// The handle is not dereferenced here. It is forwarded to the two
+/// trampolines below, which cast it back exactly once each.
+#[allow(clippy::too_many_arguments)]
+// TODO(raft-server-struct): the argument list collapses into &mut self when
+// RaftServer is itself a DSL struct; these are its fields, passed separately
+// only because the orphan-impl rule forbids `impl RaftServer` today.
+pub unsafe fn raft_on_request_vote(
+    state: &mut RaftConsensusState,
+    server: *mut core::ffi::c_void,
+    stopped: bool,
+    candidate_is_current_voter: bool,
+    lst_log_idx: u64,
+    lst_log_term: i64,
+    can_id: u16,
+    can_term: i64,
+    reply_term: &mut i64,
+    vote_granted: &mut i8,
+) {
+    if stopped {
+        *reply_term = state.current_term_ as i64;
+        *vote_granted = 0;
+        return;
+    }
+
+    if can_term < 0 || lst_log_term < 0 || !candidate_is_current_voter {
+        *reply_term = state.current_term_ as i64;
+        *vote_granted = 0;
+        return;
+    }
+
+    let cur_term = state.current_term_;
+    // UNSIGNED, deliberately. The C++ this replaces was
+    // `if (can_term < cur_term)` with can_term an int64_t and cur_term a
+    // uint64_t, and C++'s usual arithmetic conversions make that an UNSIGNED
+    // comparison. Writing it as `can_term < cur_term as i64` instead -- the
+    // obvious-looking translation -- is a different function: once
+    // current_term_ passes INT64_MAX the cast goes negative, a non-negative
+    // can_term is never below it, this rejection is skipped, and the
+    // fall-through can GRANT a vote to a candidate whose term is far below
+    // ours. current_term_ is a u64 taken straight off the wire with no
+    // clamp, so that state is reachable from a peer.
+    //
+    // can_term >= 0 is already guaranteed above, so the cast to u64 is the
+    // faithful spelling.
+    if (can_term as u64) < cur_term {
+        unsafe {
+            raft_do_vote(server, lst_log_idx, lst_log_term, can_id, can_term,
+                         reply_term, vote_granted, false)
+        };
+        return;
+    }
+
+    // Already voted for someone ELSE this term. Raft allows re-granting to
+    // the same candidate, which is why the identity is compared and not just
+    // the presence of a vote.
+    // u64 here too, for the same reason and so the two comparisons cannot
+    // drift apart. Equality happens to be unaffected by the signedness, but
+    // relying on that is how the bug above got written.
+    if (can_term as u64) == cur_term
+        && state.vote_for_ != RAFT_SERVER_INVALID_SITE_ID
+        && state.vote_for_ != can_id
+    {
+        unsafe {
+            raft_do_vote(server, lst_log_idx, lst_log_term, can_id, can_term,
+                         reply_term, vote_granted, false)
+        };
+        return;
+    }
+
+    // Every grant, including an idempotent retry, must still carry an
+    // up-to-date candidate log. Defensive against damaged or legacy
+    // persistent state, and the RequestVote rule in its direct form.
+    if state.raft_log_.last_index() < state.snapidx_ {
+        panic!("last log index is below the snapshot boundary");
+    }
+    let lstoff = state.raft_log_.last_index() - state.snapidx_;
+    let curlstterm = unsafe { raft_election_last_log_term(server) };
+    let curlstidx = state.raft_log_.last_index();
+    let candidate_log_is_current = raft_server_candidate_log_is_at_least(
+        lst_log_term, curlstterm, lst_log_idx, curlstidx);
+
+    if raft_server_vote_is_idempotent(can_term as u64, cur_term,
+                                      state.vote_for_, can_id)
+        && candidate_log_is_current
+    {
+        unsafe {
+            raft_do_vote(server, lst_log_idx, lst_log_term, can_id, can_term,
+                         reply_term, vote_granted, true)
+        };
+        return;
+    }
+
+    // Snapshot-aware offset invariant.
+    if lstoff + state.snapidx_ != state.raft_log_.last_index() {
+        panic!("snapshot offset invariant violated");
+    }
+
+    let grant = candidate_log_is_current;
+    unsafe {
+        raft_do_vote(server, lst_log_idx, lst_log_term, can_id, can_term,
+                     reply_term, vote_granted, grant)
+    };
+}
+
+unsafe extern "C" {
+    fn raft_do_vote(server: *mut core::ffi::c_void,
+                    lst_log_idx: u64,
+                    lst_log_term: i64,
+                    can_id: u16,
+                    can_term: i64,
+                    reply_term: &mut i64,
+                    vote_granted: &mut i8,
+                    vote: bool);
+    fn raft_election_last_log_term(server: *mut core::ffi::c_void) -> i64;
+}
+
 // PHASE 2's decision core: what one AppendEntries reply means.
 //
 // PHASE 2 is a polling loop over the in-flight slots. The loop itself, its
@@ -3551,7 +3697,7 @@ pub fn heartbeat_round_saturated(round_counter: u64) -> bool {
     !raft_server_read_index_round_can_advance(round_counter)
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_round_scope version=1 rust_sha256=5bbbdcce5e78a19d60edae8de6dd7eb0b37bd8a2215f5ea17d81e5341bab0212*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_round_scope version=1 rust_sha256=69cb44d64bc6767d2436f0e280948c69667de9b155a0d6dc4df5074e9e751d7a*/
 enum class AppendReplyAction : int32_t;
 constexpr AppendReplyAction AppendReplyAction_IGNORED();
 constexpr AppendReplyAction AppendReplyAction_STEP_DOWN();
@@ -3606,6 +3752,11 @@ struct HeartbeatRoundScope {
     static constexpr bool is_send = true;
     static constexpr bool is_sync = true;
 };
+
+extern "C" {
+    void raft_do_vote(rusty::ffi::c_void* server, uint64_t lst_log_idx, int64_t lst_log_term, uint16_t can_id, int64_t can_term, int64_t& reply_term, int8_t& vote_granted, bool vote);
+    int64_t raft_election_last_log_term(rusty::ffi::c_void* server);
+}
 
 struct SentAppend {
     uint16_t follower_;
@@ -3687,6 +3838,67 @@ struct Phase0Outcome {
     static constexpr bool is_send = true;
     static constexpr bool is_sync = true;
 };
+
+/// # Safety
+///
+/// `server` must be a live `RaftServer*`, and the caller must hold that
+/// server's `mtx_` for the whole call. Both hold at the only call site,
+/// `RaftServer::OnRequestVote`, which takes the lock and passes `this`.
+///
+/// The handle is not dereferenced here. It is forwarded to the two
+/// trampolines below, which cast it back exactly once each.
+// @unsafe
+void raft_on_request_vote(RaftConsensusState& state, rusty::ffi::c_void* server, bool stopped, bool candidate_is_current_voter, uint64_t lst_log_idx, int64_t lst_log_term, uint16_t can_id, int64_t can_term, int64_t& reply_term, int8_t& vote_granted) {
+    int64_t* reply_term_shadow1 = &reply_term;
+    int8_t* vote_granted_shadow1 = &vote_granted;
+    if (stopped) {
+        *reply_term_shadow1 = static_cast<int64_t>(state.current_term_);
+        *vote_granted_shadow1 = static_cast<int8_t>(0);
+        return;
+    }
+    if (((rusty::detail::deref_if_pointer_like(can_term) < 0) || (rusty::detail::deref_if_pointer_like(lst_log_term) < 0)) || !candidate_is_current_voter) {
+        *reply_term_shadow1 = static_cast<int64_t>(state.current_term_);
+        *vote_granted_shadow1 = static_cast<int8_t>(0);
+        return;
+    }
+    const auto cur_term = state.current_term_;
+    if (((static_cast<uint64_t>(can_term))) < rusty::detail::deref_if_pointer_like(cur_term)) {
+        // @unsafe
+        {
+            raft_do_vote(server, std::move(lst_log_idx), std::move(lst_log_term), std::move(can_id), std::move(can_term), (*reply_term_shadow1), (*vote_granted_shadow1), false);
+        }
+        return;
+    }
+    if (((((static_cast<uint64_t>(can_term))) == rusty::detail::deref_if_pointer_like(cur_term)) && (rusty::detail::deref_if_pointer_like(state.vote_for_) != rusty::detail::deref_if_pointer_like(RAFT_SERVER_INVALID_SITE_ID))) && (rusty::detail::deref_if_pointer_like(state.vote_for_) != rusty::detail::deref_if_pointer_like(can_id))) {
+        // @unsafe
+        {
+            raft_do_vote(server, std::move(lst_log_idx), std::move(lst_log_term), std::move(can_id), std::move(can_term), (*reply_term_shadow1), (*vote_granted_shadow1), false);
+        }
+        return;
+    }
+    if (state.raft_log_.last_index() < rusty::detail::deref_if_pointer_like(state.snapidx_)) {
+        rusty::panic::do_panic(std::format("last log index is below the snapshot boundary"));
+    }
+    const auto lstoff = state.raft_log_.last_index() - rusty::detail::deref_if_pointer_like(state.snapidx_);
+    const auto curlstterm = raft_election_last_log_term(server);
+    const auto curlstidx = state.raft_log_.last_index();
+    auto candidate_log_is_current = raft_server_candidate_log_is_at_least(std::move(lst_log_term), std::move(curlstterm), std::move(lst_log_idx), std::move(curlstidx));
+    if (raft_server_vote_is_idempotent(static_cast<uint64_t>(can_term), std::move(cur_term), state.vote_for_, std::move(can_id)) && rusty::detail::deref_if_pointer_like(candidate_log_is_current)) {
+        // @unsafe
+        {
+            raft_do_vote(server, std::move(lst_log_idx), std::move(lst_log_term), std::move(can_id), std::move(can_term), (*reply_term_shadow1), (*vote_granted_shadow1), true);
+        }
+        return;
+    }
+    if ((rusty::detail::deref_if_pointer_like(lstoff) + rusty::detail::deref_if_pointer_like(state.snapidx_)) != state.raft_log_.last_index()) {
+        rusty::panic::do_panic(std::format("snapshot offset invariant violated"));
+    }
+    auto grant = std::move(candidate_log_is_current);
+    // @unsafe
+    {
+        raft_do_vote(server, std::move(lst_log_idx), std::move(lst_log_term), std::move(can_id), std::move(can_term), (*reply_term_shadow1), (*vote_granted_shadow1), std::move(grant));
+    }
+}
 
 AppendReplyOutcome append_reply_nothing(AppendReplyAction action) {
     return AppendReplyOutcome{.action_ = std::move(action), .rung_ = rusty::clone(rusty::clone(BackoffKind::FLOOR)), .old_next_ = static_cast<uint64_t>(0), .new_next_ = static_cast<uint64_t>(0), .acknowledged_ = static_cast<uint64_t>(0), .previous_term_ = static_cast<uint64_t>(0)};
@@ -4102,9 +4314,10 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
       // the lock_guard scope, and that call's completion callback takes the
       // SAME recursive mutex and writes state_.peers_.next_index(ord). Recursive means
       // a callback that completes synchronously re-enters and mutates the map
-      // while a dereferenced cursor into it is live -- the aliasing hazard
-      // recorded as OWN-03 in docs/migration/raft/cpp-to-rust-precheck-raft.txt
-      // and as the one genuine item of Tranche 5 in cpp-refactor-plan.md.
+      // while a dereferenced cursor into it is live -- a map iterator held
+      // across an RPC yield point, which the ownership precheck graded a
+      // MAJOR violation (OWN-03) and which cpp-refactor-plan.md carries as
+      // the one genuine item of Tranche 5.
       // Holding no dereferenced cursor across that call is also what makes the
       // loop expressible in Rust at all: `&mut` into a map cannot be held
       // across a call that takes `&mut` to the same map.
@@ -5038,6 +5251,33 @@ bool RaftServer::RequestVoteImpl(bool timer_guarded,
 }
 
 // @unsafe - calls @safe doVote, external calls marked @external [safe]
+// The trampolines raft_on_request_vote calls back through. Each casts the
+// opaque handle exactly once, the same shape the heartbeat driver uses.
+extern "C" {
+
+// @unsafe { opaque handle cast }
+static inline RaftServer* raft_vote_server(rusty::ffi::c_void* server) {
+  return static_cast<RaftServer*>(server);
+}
+
+void raft_do_vote(rusty::ffi::c_void* server,
+                  uint64_t lst_log_idx, int64_t lst_log_term,
+                  uint16_t can_id, int64_t can_term,
+                  int64_t& reply_term, int8_t& vote_granted, bool vote) {
+  raft_vote_server(server)->doVote(lst_log_idx, lst_log_term, can_id, can_term,
+                                   &reply_term, &vote_granted, vote);
+}
+
+int64_t raft_election_last_log_term(rusty::ffi::c_void* server) {
+  return raft_vote_server(server)->ElectionLastLogTermLocked();
+}
+
+}  // extern "C"
+
+// The body is raft_on_request_vote, a DSL function. What stays here is the
+// lock, the two log lines that must keep their level short-circuit, and the
+// current_config_ membership test -- that member is a std::set which has not
+// moved into the state struct.
 void RaftServer::OnRequestVote(const slotid_t& lst_log_idx,
                                const ballot_t& lst_log_term,
                                const siteid_t& can_id,
@@ -5047,90 +5287,28 @@ void RaftServer::OnRequestVote(const slotid_t& lst_log_idx,
   std::lock_guard<RaftCheckedMutex> lock(mtx_);
   Log_debug("raft receives vote from candidate: {:x}", can_id);
 
-  if (stop_.load(rusty::sync::atomic::Ordering::Acquire)) {
-    *reply_term = state_.current_term_;
-    *vote_granted = false;
+  const bool stopped = stop_.load(rusty::sync::atomic::Ordering::Acquire);
+  if (stopped) {
     Log_debug("[RAFT-SHUTDOWN] Site {} rejecting RequestVote from {}",
               site_id_, can_id);
-    return;
   }
 
   const siteid_t invalid = static_cast<siteid_t>(INVALID_SITEID);
   const bool candidate_is_current_voter =
       can_id != invalid && can_id != site_id_ &&
       current_config_.count(can_id) != 0;
-  if (can_term < 0 || lst_log_term < 0 ||
-      !candidate_is_current_voter) {
-    *reply_term = static_cast<ballot_t>(state_.current_term_);
-    *vote_granted = false;
+  if (!stopped && (can_term < 0 || lst_log_term < 0 ||
+                   !candidate_is_current_voter)) {
     Log_warn("[RAFT_VOTE] Site {} rejected malformed/non-voter candidate {} "
              "term {} last_log_term {} (voter={})",
              site_id_, can_id, can_term, lst_log_term,
              candidate_is_current_voter);
-    return;
   }
 
-  uint64_t cur_term = state_.current_term_ ;
-  if( can_term < cur_term)
-  {
-    doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, false) ;
-    return ;
-  }
-
-  // has voted to a machine in the same term, vote no
-  // CRITICAL FIX: Only reject if we already voted for someone else in this term
-  // Standard Raft allows voting for the SAME candidate multiple times (idempotent)
-  // and allows voting if we haven't voted yet in this term
-  // @unsafe
-  {
-  if( can_term == cur_term && state_.vote_for_ != INVALID_SITEID && state_.vote_for_ != can_id )
-  {
-    Log_debug("site {} vote NO for {} (already voted for {} in term {})",
-              site_id_, can_id, state_.vote_for_, cur_term);
-    doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, false) ;
-    return ;
-  }
-  }
-
-  // Every grant, including an idempotent retry, must still carry an up-to-date
-  // candidate log. This is defensive against damaged/legacy persistent state
-  // and is the Raft RequestVote rule in its direct form.
-  verify(state_.raft_log_.last_index() >= state_.snapidx_);
-  const slotid_t lstoff = state_.raft_log_.last_index() - state_.snapidx_;
-  const ballot_t curlstterm = ElectionLastLogTermLocked();
-  const slotid_t curlstidx = state_.raft_log_.last_index();
-  const bool candidate_log_is_current =
-      raft_server_candidate_log_is_at_least(
-          lst_log_term, curlstterm, lst_log_idx, curlstidx);
-
-  // If we already voted for this same candidate in this term, vote YES again
-  // only when the retry still satisfies log freshness.
-  if (raft_server_vote_is_idempotent(
-          static_cast<uint64_t>(can_term), cur_term, state_.vote_for_, can_id) &&
-      candidate_log_is_current)
-  {
-    Log_debug("site {} vote YES for {} (already voted for them in term {}, idempotent)",
-              site_id_, can_id, cur_term);
-    doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, true) ;
-    return ;
-  }
-
-  // lstoff starts from 1
-  Log_debug("vote for lstoff {}, curlstterm {}, curlstidx {}", lstoff, curlstterm, curlstidx  );
-
-
-  // Snapshot-aware offset invariant.
-  verify(lstoff + state_.snapidx_ == state_.raft_log_.last_index());
-
-  if (candidate_log_is_current)
-  {
-    Log_debug("site {} vote for request vote from {}, lastidx {}, lastterm {}", site_id_, can_id, curlstidx, curlstterm);
-    doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, true) ;
-    return ;
-  }
-
-  doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, false) ;
-
+  raft_on_request_vote(state_, static_cast<rusty::ffi::c_void*>(this),
+                       stopped, candidate_is_current_voter,
+                       lst_log_idx, lst_log_term, can_id, can_term,
+                       *reply_term, *vote_granted);
 }
 
 // ============================================================================

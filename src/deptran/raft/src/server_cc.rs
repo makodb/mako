@@ -400,6 +400,8 @@ use crate::server_h::raft_server_observed_higher_term;
 use crate::server_h::raft_server_append_acknowledged_through;
 use crate::server_h::raft_server_log_index_has_successor;
 use crate::server_h::raft_server_follower_next_index;
+use crate::server_h::raft_server_candidate_log_is_at_least;
+use crate::server_h::raft_server_vote_is_idempotent;
 use crate::server_h::BackoffKind;
 use crate::server_h::RAFT_SERVER_INVALID_SITE_ID;
 use crate::server_h::RaftConsensusState;
@@ -773,6 +775,144 @@ impl HeartbeatRoundScope {
 // a free function does -- `use crate::server_h::X` on the Rust side, and the
 // emitter writes the name unqualified, which resolves because both blocks
 // sit in namespace janus. No shim namespace is needed for types.
+// OnRequestVote's whole body, as Rust. The caller holds mtx_ for the
+// duration, exactly as the C++ did -- the lock stays in C++ because
+// RaftCheckedMutex is a C++ type and because moving lock/unlock into a Rust
+// body would lose RAII across this function's many early returns.
+//
+// Two things reach back into unconverted C++ through trampolines, which is
+// the same mechanism HeartbeatDriver has used since it landed: doVote, which
+// writes the reply and can step the term forward, and
+// ElectionLastLogTermLocked, which consults the snapshot boundary. Neither
+// is a blocker -- each becomes an ordinary call once its own body converts,
+// and the trampoline is deleted then.
+//
+// The caller also passes `candidate_is_current_voter` rather than this
+// reading current_config_: that member is a std::set that has not moved into
+// the state struct, and computing the predicate on the C++ side keeps the
+// rejection log line's level short-circuit where it belongs.
+/// # Safety
+///
+/// `server` must be a live `RaftServer*`, and the caller must hold that
+/// server's `mtx_` for the whole call. Both hold at the only call site,
+/// `RaftServer::OnRequestVote`, which takes the lock and passes `this`.
+///
+/// The handle is not dereferenced here. It is forwarded to the two
+/// trampolines below, which cast it back exactly once each.
+#[allow(clippy::too_many_arguments)]
+// TODO(raft-server-struct): the argument list collapses into &mut self when
+// RaftServer is itself a DSL struct; these are its fields, passed separately
+// only because the orphan-impl rule forbids `impl RaftServer` today.
+pub unsafe fn raft_on_request_vote(
+    state: &mut RaftConsensusState,
+    server: *mut core::ffi::c_void,
+    stopped: bool,
+    candidate_is_current_voter: bool,
+    lst_log_idx: u64,
+    lst_log_term: i64,
+    can_id: u16,
+    can_term: i64,
+    reply_term: &mut i64,
+    vote_granted: &mut i8,
+) {
+    if stopped {
+        *reply_term = state.current_term_ as i64;
+        *vote_granted = 0;
+        return;
+    }
+
+    if can_term < 0 || lst_log_term < 0 || !candidate_is_current_voter {
+        *reply_term = state.current_term_ as i64;
+        *vote_granted = 0;
+        return;
+    }
+
+    let cur_term = state.current_term_;
+    // UNSIGNED, deliberately. The C++ this replaces was
+    // `if (can_term < cur_term)` with can_term an int64_t and cur_term a
+    // uint64_t, and C++'s usual arithmetic conversions make that an UNSIGNED
+    // comparison. Writing it as `can_term < cur_term as i64` instead -- the
+    // obvious-looking translation -- is a different function: once
+    // current_term_ passes INT64_MAX the cast goes negative, a non-negative
+    // can_term is never below it, this rejection is skipped, and the
+    // fall-through can GRANT a vote to a candidate whose term is far below
+    // ours. current_term_ is a u64 taken straight off the wire with no
+    // clamp, so that state is reachable from a peer.
+    //
+    // can_term >= 0 is already guaranteed above, so the cast to u64 is the
+    // faithful spelling.
+    if (can_term as u64) < cur_term {
+        unsafe {
+            raft_do_vote(server, lst_log_idx, lst_log_term, can_id, can_term,
+                         reply_term, vote_granted, false)
+        };
+        return;
+    }
+
+    // Already voted for someone ELSE this term. Raft allows re-granting to
+    // the same candidate, which is why the identity is compared and not just
+    // the presence of a vote.
+    // u64 here too, for the same reason and so the two comparisons cannot
+    // drift apart. Equality happens to be unaffected by the signedness, but
+    // relying on that is how the bug above got written.
+    if (can_term as u64) == cur_term
+        && state.vote_for_ != RAFT_SERVER_INVALID_SITE_ID
+        && state.vote_for_ != can_id
+    {
+        unsafe {
+            raft_do_vote(server, lst_log_idx, lst_log_term, can_id, can_term,
+                         reply_term, vote_granted, false)
+        };
+        return;
+    }
+
+    // Every grant, including an idempotent retry, must still carry an
+    // up-to-date candidate log. Defensive against damaged or legacy
+    // persistent state, and the RequestVote rule in its direct form.
+    if state.raft_log_.last_index() < state.snapidx_ {
+        panic!("last log index is below the snapshot boundary");
+    }
+    let lstoff = state.raft_log_.last_index() - state.snapidx_;
+    let curlstterm = unsafe { raft_election_last_log_term(server) };
+    let curlstidx = state.raft_log_.last_index();
+    let candidate_log_is_current = raft_server_candidate_log_is_at_least(
+        lst_log_term, curlstterm, lst_log_idx, curlstidx);
+
+    if raft_server_vote_is_idempotent(can_term as u64, cur_term,
+                                      state.vote_for_, can_id)
+        && candidate_log_is_current
+    {
+        unsafe {
+            raft_do_vote(server, lst_log_idx, lst_log_term, can_id, can_term,
+                         reply_term, vote_granted, true)
+        };
+        return;
+    }
+
+    // Snapshot-aware offset invariant.
+    if lstoff + state.snapidx_ != state.raft_log_.last_index() {
+        panic!("snapshot offset invariant violated");
+    }
+
+    let grant = candidate_log_is_current;
+    unsafe {
+        raft_do_vote(server, lst_log_idx, lst_log_term, can_id, can_term,
+                     reply_term, vote_granted, grant)
+    };
+}
+
+unsafe extern "C" {
+    fn raft_do_vote(server: *mut core::ffi::c_void,
+                    lst_log_idx: u64,
+                    lst_log_term: i64,
+                    can_id: u16,
+                    can_term: i64,
+                    reply_term: &mut i64,
+                    vote_granted: &mut i8,
+                    vote: bool);
+    fn raft_election_last_log_term(server: *mut core::ffi::c_void) -> i64;
+}
+
 // PHASE 2's decision core: what one AppendEntries reply means.
 //
 // PHASE 2 is a polling loop over the in-flight slots. The loop itself, its
