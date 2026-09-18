@@ -698,6 +698,21 @@ unsafe extern "C" {
         -> AppendRespView;
     fn raft_command_has_value(cmd: *const rusty::RaftCommand) -> bool;
     fn raft_verify(condition: bool);
+    fn raft_snapshot_manager_is_set(
+        manager: *const rusty::RaftSnapshotManagerPtr) -> bool;
+    fn raft_phase1_send_install_snapshot(server: *mut RaftServerBase,
+                                         site_id: u16, ord: usize) -> bool;
+    fn raft_phase1_select_payload(server: *mut RaftServerBase, ord: usize,
+                                  site_id: u16, prev_log_index: u64,
+                                  cmd: *mut rusty::RaftCommand,
+                                  cmd_log_term: *mut u64,
+                                  sent_end_index: *mut u64) -> bool;
+    fn raft_phase1_send_append(server: *mut RaftServerBase, site_id: u16,
+                               partition_id: u32, is_leader: bool, term: u64,
+                               prev_log_index: u64, prev_log_term: u64,
+                               commit_index: u64,
+                               cmd: *const rusty::RaftCommand,
+                               cmd_log_term: u64) -> rusty::RaftResponsePtr;
 }
 
 #[repr(C)]
@@ -2175,5 +2190,177 @@ pub fn on_append_entries_body(server: &mut RaftServerBase,
                 server.state_.raft_log_.last_index(),
                 report.local_prev_term());
         }
+    }
+}
+
+// ==========================================================================
+// PHASE 1: send every AppendEntries RPC in parallel, non-blocking.
+//
+// Formerly RaftServer::HeartbeatPhase1. The ordinal is used for ITERATION
+// ONLY; every read and write of a follower's next index goes through
+// state_.peers_.next_index(ord).
+//
+// That is not style. The body reaches commo()->SendInstallSnapshot inside
+// the lock scope, and that call's completion callback takes the SAME mutex
+// and writes next_index -- so a callback that completes synchronously
+// re-enters and mutates the table while a dereferenced cursor into it is
+// live. Holding no dereferenced cursor across that call is also what makes
+// the loop expressible in Rust at all: a `&mut` into a table cannot be held
+// across a call that takes `&mut` to the same table.
+// ==========================================================================
+// The zero-initialisation of prev_log_index and sent_end_index is the C++
+// original's, kept so the emitted C++ declares initialised locals rather
+// than uninitialised ones. `is_none` then `unwrap` is likewise the shape the
+// original had; rewriting it as a match would obscure the correspondence.
+#[allow(unused_assignments, clippy::unnecessary_unwrap)]
+pub fn heartbeat_phase1_body(server: &mut RaftServerBase,
+                             pending_rpcs: &mut PendingTable,
+                             authority_rounds: &mut AuthorityLedger,
+                             round: &HeartbeatRoundScope) {
+    let partition_id: u32 = server.partition_id_;
+    let mut ord: usize = 0;
+    while ord < server.state_.peers_.len() {
+        let site_id: u16 = server.peer_site_at(ord);
+        if site_id == server.site_id_ {
+            ord += 1;
+            continue;
+        }
+        if !server.IsLeader() {
+            break;  // Stop sending if we lost leadership.
+        }
+        if pending_rpcs.occupied(ord) {
+            ord += 1;
+            continue;
+        }
+
+        let mut prev_log_index: u64 = 0;
+        let mut prev_log_term: u64 = 0;
+        // An empty Command (has_value() == false) signals a heartbeat.
+        let mut cmd: rusty::RaftCommand = Default::default();
+        let mut cmd_log_term: u64 = 0;
+        let mut sent_end_index: u64 = 0;
+        let mut skip_follower: bool = false;
+        {
+            let _lock = RaftLockGuard::new(&mut server.mtx_);
+            if server.state_.peers_.next_index(ord) == 0 {
+                rusty::raft_log_warn_2(
+                    "[APPEND_ENTRIES] Repairing wrapped next_index for follower {} at leader last index {}",
+                    site_id, server.state_.raft_log_.last_index());
+                let last: u64 = server.state_.raft_log_.last_index();
+                let repaired: u64 = if raft_server_log_index_has_successor(last) {
+                    raft_server_follower_next_index(last)
+                } else {
+                    last
+                };
+                server.state_.peers_.set_next_index(ord, repaired);
+            }
+            prev_log_index = server.state_.peers_.next_index(ord) - 1;
+            if prev_log_index > server.state_.raft_log_.last_index() {
+                rusty::raft_log_info_2(
+                    "[APPEND_ENTRIES] ERROR: prevLogIndex ({}) > state_.raft_log_.last_index() ({}), fixing next_index",
+                    prev_log_index, server.state_.raft_log_.last_index());
+                let last: u64 = server.state_.raft_log_.last_index();
+                let repaired: u64 = if raft_server_log_index_has_successor(last) {
+                    raft_server_follower_next_index(last)
+                } else {
+                    last
+                };
+                server.state_.peers_.set_next_index(ord, repaired);
+                prev_log_index = server.state_.peers_.next_index(ord) - 1;
+            }
+            // Until a payload is selected this is a heartbeat, and proves
+            // only the prefix named by prev_log_index.
+            sent_end_index = raft_server_append_sent_end(prev_log_index, 0);
+
+            let snapshot_configured: bool = unsafe {
+                raft_snapshot_manager_is_set(&server.snapshot_manager_)
+            };
+            if prev_log_index > server.state_.raft_log_.last_index() {
+                rusty::raft_log_info_3(
+                    "[APPEND_ENTRIES] WARNING: Cannot send AppendEntries to follower {}: prevLogIndex ({}) > state_.raft_log_.last_index() ({}), skipping",
+                    site_id, prev_log_index,
+                    server.state_.raft_log_.last_index());
+                server.state_.peers_.set_next_index(ord, 1);
+                skip_follower = true;
+            } else if server.state_.peers_.next_index(ord)
+                < server.state_.raft_log_.base()
+                && snapshot_configured
+            {
+                skip_follower = unsafe {
+                    raft_phase1_send_install_snapshot(
+                        server as *mut RaftServerBase, site_id, ord)
+                };
+            } else {
+                unsafe {
+                    raft_verify(
+                        prev_log_index
+                            <= server.state_.raft_log_.last_index());
+                }
+                if prev_log_index == 0 {
+                    prev_log_term = 0;
+                } else if prev_log_index == server.state_.snapidx_
+                    && server.state_.snapidx_ > 0
+                {
+                    // Keep using snapshot boundary metadata after compaction.
+                    prev_log_term = server.state_.snapterm_ as u64;
+                } else {
+                    // Was GetRaftInstance, which default-inserted and so
+                    // could never return null -- the check below was dead,
+                    // and a genuinely missing prevLogIndex silently
+                    // fabricated an empty entry with term 0 and sent
+                    // prevLogTerm = 0 rather than skipping the follower.
+                    let instance = server.state_.raft_log_.get(prev_log_index);
+                    if instance.is_none() {
+                        rusty::raft_log_error_2(
+                            "[HEARTBEAT-SEND] [CRITICAL] log entry {} is absent! Skipping follower {}",
+                            prev_log_index, site_id);
+                        skip_follower = true;
+                    } else {
+                        prev_log_term = instance.unwrap().term() as u64;
+                    }
+                }
+
+                if !skip_follower {
+                    skip_follower = unsafe {
+                        raft_phase1_select_payload(
+                            server as *mut RaftServerBase, ord, site_id,
+                            prev_log_index,
+                            &mut cmd as *mut rusty::RaftCommand,
+                            &mut cmd_log_term as *mut u64,
+                            &mut sent_end_index as *mut u64)
+                    };
+                }
+            }
+        }
+        if skip_follower {
+            ord += 1;
+            continue;
+        }
+
+        let is_leader: bool = server.IsLeader();
+        let sent_response: rusty::RaftResponsePtr = unsafe {
+            raft_phase1_send_append(
+                server as *mut RaftServerBase, site_id, partition_id,
+                is_leader, round.term(), prev_log_index, prev_log_term,
+                round.commit_index(),
+                &cmd as *const rusty::RaftCommand, cmd_log_term)
+        };
+
+        pending_rpcs.place(ord, PendingAppend::new(
+            site_id, round.term(), round.round_id(), sent_end_index,
+            sent_response, cmd));
+        if round.authority_inserted() && round.is_member(site_id) {
+            // Was a std::map iterator created in PHASE 0 and dereferenced
+            // here, after the RPC sends. Nothing between the two points
+            // mutates authority_rounds, so it was valid -- but a cursor held
+            // across a phase boundary and across a synchronous completion
+            // callback is the hazard class this file removed for next_index,
+            // so look it up by key.
+            unsafe {
+                raft_verify(
+                    authority_rounds.launch(round.round_id(), site_id));
+            }
+        }
+        ord += 1;
     }
 }

@@ -362,10 +362,12 @@ pub struct ReactorFiber {
 /// can name a field type and move it. They are deliberately opaque -- Rust
 /// cannot construct or dereference either, which is what makes "carried, never
 /// followed" checkable rather than a convention.
+#[derive(Default)]
 pub struct RaftResponsePtr {
     _opaque: [u8; 0],
 }
 
+#[derive(Default)]
 pub struct RaftCommand {
     _opaque: [u8; 0],
 }

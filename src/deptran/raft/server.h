@@ -5238,9 +5238,6 @@ class RaftServer : public RaftServerBase {
 
   // @unsafe - suspends on the wake gate; false means shutdown
   bool HeartbeatWait();
-  // @unsafe - builds and sends AppendEntries / InstallSnapshot per follower
-  void HeartbeatPhase1(struct HeartbeatRoundState& state,
-                       struct HeartbeatRoundScope& round);
 
 
   // set_site_identity / set_commo / reg_learner_action are RaftServerBase's
