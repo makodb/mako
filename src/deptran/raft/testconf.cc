@@ -657,7 +657,9 @@ void RaftTestConfig::disconnect(siteid_t svr, bool ignore) {
   }
   if (!it->second->svr_->IsDisconnected()) {
     // simulate disconnected server
-    it->second->svr_->Disconnect();
+    // `true` explicitly: Disconnect is a DSL method now and the DSL has no
+    // default arguments.
+    it->second->svr_->Disconnect(true);
   } else if (!ignore) {
     verify(0);
   }

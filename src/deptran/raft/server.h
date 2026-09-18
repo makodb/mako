@@ -2519,6 +2519,16 @@ extern "C" inline void raft_mutex_unlock(RaftCheckedMutex* mutex) {
   mutex->unlock();
 }
 
+// @unsafe - the same two halves for a plain std::mutex. RaftServer has four
+// (startup_mtx_, state_machine_apply_mtx_, apply_queue_mtx_) that a DSL body
+// has to hold across a scope.
+extern "C" inline void raft_std_mutex_lock(std::mutex* mutex) {
+  mutex->lock();
+}
+extern "C" inline void raft_std_mutex_unlock(std::mutex* mutex) {
+  mutex->unlock();
+}
+
 // @unsafe - Time::now is an rrr clock read; the argument is the
 // microsecond-resolution flag every Raft call site already passes.
 extern "C" inline uint64_t raft_time_now_us() { return Time::now(true); }
@@ -2570,6 +2580,8 @@ extern "C" inline bool raft_election_debug_enabled() {
 unsafe extern "C" {
     fn raft_mutex_lock(mutex: *mut rusty::RaftCheckedMutex);
     fn raft_mutex_unlock(mutex: *mut rusty::RaftCheckedMutex);
+    fn raft_std_mutex_lock(mutex: *mut rusty::RaftStdMutex);
+    fn raft_std_mutex_unlock(mutex: *mut rusty::RaftStdMutex);
 }
 
 pub struct RaftLockGuard {
@@ -2600,13 +2612,40 @@ impl Drop for RaftLockGuard {
         }
     }
 }
+
+// The same, for the three plain std::mutex members. Separate because they
+// are a different C++ type, not because the discipline differs.
+pub struct RaftStdLockGuard {
+    mutex_: *mut rusty::RaftStdMutex,
+}
+
+impl RaftStdLockGuard {
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub fn new(mutex: *mut rusty::RaftStdMutex) -> RaftStdLockGuard {
+        unsafe {
+            raft_std_mutex_lock(mutex);
+        }
+        RaftStdLockGuard { mutex_: mutex }
+    }
+}
+
+impl Drop for RaftStdLockGuard {
+    fn drop(&mut self) {
+        unsafe {
+            raft_std_mutex_unlock(self.mutex_);
+        }
+    }
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.lock_guard version=1 rust_sha256=bfaa8678355976aa9a0a7b1bf1d865d1caaddb9c4e9aa6b9ae69a62ebf0b4d61*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.lock_guard version=1 rust_sha256=68e3a5b5408cb910c432764fa92a1972f4429593acf26a16cddf4a4b209ed106*/
 struct RaftLockGuard;
+struct RaftStdLockGuard;
 
 extern "C" {
     void raft_mutex_lock(rusty::RaftCheckedMutex* mutex);
     void raft_mutex_unlock(rusty::RaftCheckedMutex* mutex);
+    void raft_std_mutex_lock(rusty::RaftStdMutex* mutex);
+    void raft_std_mutex_unlock(rusty::RaftStdMutex* mutex);
 }
 
 struct RaftLockGuard {
@@ -2634,6 +2673,31 @@ struct RaftLockGuard {
     ~RaftLockGuard() noexcept(false);
 };
 
+struct RaftStdLockGuard {
+    rusty::RaftStdMutex* mutex_;
+    mutable bool _rusty_forgotten = false;
+    RaftStdLockGuard(rusty::RaftStdMutex* mutex__init) : mutex_(std::move(mutex__init)) {}
+    RaftStdLockGuard(const RaftStdLockGuard&) = delete;
+    RaftStdLockGuard(RaftStdLockGuard&& other) noexcept : mutex_(std::move(other.mutex_)) {
+        this->_rusty_forgotten = other._rusty_forgotten;
+        other._rusty_forgotten = true;
+    }
+    RaftStdLockGuard& operator=(const RaftStdLockGuard&) = delete;
+    RaftStdLockGuard& operator=(RaftStdLockGuard&& other) noexcept {
+        if (this == &other) {
+            return *this;
+        }
+        this->~RaftStdLockGuard();
+        new (this) RaftStdLockGuard(std::move(other));
+        return *this;
+    }
+    void rusty_mark_forgotten() const noexcept { _rusty_forgotten = true; rusty::detail::mark_forgotten_if_supported(this->mutex_); }
+
+
+    static RaftStdLockGuard new_(rusty::RaftStdMutex* mutex);
+    ~RaftStdLockGuard() noexcept(false);
+};
+
 
 inline RaftLockGuard RaftLockGuard::new_(rusty::RaftCheckedMutex* mutex) {
     // @unsafe
@@ -2648,6 +2712,22 @@ inline RaftLockGuard::~RaftLockGuard() noexcept(false) {
     // @unsafe
     {
         raft_mutex_unlock(this->mutex_);
+    }
+}
+
+inline RaftStdLockGuard RaftStdLockGuard::new_(rusty::RaftStdMutex* mutex) {
+    // @unsafe
+    {
+        raft_std_mutex_lock(mutex);
+    }
+    return RaftStdLockGuard(mutex);
+}
+
+inline RaftStdLockGuard::~RaftStdLockGuard() noexcept(false) {
+    if (_rusty_forgotten) { return; }
+    // @unsafe
+    {
+        raft_std_mutex_unlock(this->mutex_);
     }
 }
 /*RUSTYCPP:GEN-END id=raft_server.lock_guard*/
@@ -2722,6 +2802,26 @@ unsafe extern "C" {
         -> rusty::RaftVoteQuorumPtr;
     fn raft_vote_quorum_snapshot(quorum: *const rusty::RaftVoteQuorumPtr)
         -> RaftVoteOutcome;
+    fn raft_snapshot_manager_has_latest(
+        manager: *const rusty::RaftSnapshotManagerPtr) -> bool;
+    fn raft_command_has_value(cmd: *const rusty::RaftCommand) -> bool;
+    fn raft_apply_queue_push_range(server: *mut RaftServerBase, first: u64,
+                                   last: u64) -> u64;
+    fn raft_apply_queue_size(server: *mut RaftServerBase) -> u64;
+    fn raft_startup_wait(server: *mut RaftServerBase);
+    fn raft_startup_notify_all(server: *mut RaftServerBase);
+    fn raft_apply_thread_join(server: *mut RaftServerBase);
+    fn raft_commo_set_network_enabled(server: *mut RaftServerBase, enabled: bool);
+    fn raft_create_snapshot_locked(server: *mut RaftServerBase) -> bool;
+    fn raft_request_replication(server: *mut RaftServerBase);
+    fn raft_set_local_append(server: *mut RaftServerBase,
+                             cmd: *const rusty::RaftCommand,
+                             term: *mut u64, index: *mut u64,
+                             slot_id: u64, ballot: i64) -> RaftStartResult;
+    fn raft_close_replication_wake_gate(server: *mut RaftServerBase);
+    fn raft_spawn_election_timer(server: *mut RaftServerBase, wait_int_us: u64);
+    fn raft_setup_internal_guarded(server: *mut RaftServerBase) -> bool;
+    fn raft_shutdown_barrier_yield();
 }
 
 // One campaign's reply quorum, read in a single shot.
@@ -2800,6 +2900,10 @@ pub struct RaftServerBase {
     pub apply_queue_epoch_: u64,
     pub apply_queue_: rusty::RaftApplyQueue,
     pub appliedIndexForWait_: rusty::sync::atomic::AtomicU64,
+    // Was a function-static in EnqueueCommittedEntries. A DSL body has no
+    // static local, and a per-server counter is the more honest shape: the
+    // C++ one was shared across every RaftServer in a single-process test.
+    pub enqueue_log_counter_: u64,
     pub n_prepare_: i32,
     pub n_accept_: i32,
     pub n_commit_: i32,
@@ -2870,6 +2974,7 @@ impl RaftServerBase {
             apply_queue_epoch_: 0,
             apply_queue_: Default::default(),
             appliedIndexForWait_: rusty::sync::atomic::AtomicU64::new(0),
+            enqueue_log_counter_: 0,
             n_prepare_: 0,
             n_accept_: 0,
             n_commit_: 0,
@@ -3465,6 +3570,260 @@ impl RaftServerBase {
         }
     }
 
+    // ------------------------------------------------------------------
+    // Loop prologue, startup, shutdown, submission and the apply queue.
+    // ------------------------------------------------------------------
+
+    // @unsafe - timer allocation and the first peer-table build.
+    pub fn HeartbeatPrologue(&mut self) {
+        self.heartbeat_loop_running_
+            .store(true, rusty::sync::atomic::Ordering::Release);
+        {
+            // Taken explicitly. setIsLeader does this rebuild holding mtx_
+            // and this did not, which was safe only because both run as
+            // fibers on one poll thread with no suspension between them --
+            // an accident, not a design.
+            let _lock = RaftLockGuard::new(&mut self.mtx_);
+            self.RebuildPeerTables(1);
+        }
+        rusty::raft_log_debug_1("heartbeat loop init from site: {}",
+                                self.site_id_);
+        self.looping_
+            .store(true, rusty::sync::atomic::Ordering::Release);
+    }
+
+    // @unsafe - takes the state-machine apply gate, then mtx_. That order is
+    // the one every apply-side path uses.
+    pub fn MaybeCreateSnapshot(&mut self) {
+        let _apply_lock =
+            RaftStdLockGuard::new(&mut self.state_machine_apply_mtx_);
+        let _lock = RaftLockGuard::new(&mut self.mtx_);
+        let configured: bool =
+            unsafe { raft_snapshot_manager_is_set(&self.snapshot_manager_) };
+        if !configured
+            || !raft_server_snapshot_is_due(self.state_.snapidx_,
+                                            self.state_.execute_index_,
+                                            self.state_.snapshot_threshold_)
+        {
+            return;
+        }
+        unsafe {
+            raft_create_snapshot_locked(self as *mut RaftServerBase);
+        }
+    }
+
+    // @unsafe - copies the manager under mtx_ before querying it, so the
+    // query itself never runs with Raft state locked.
+    pub fn HasSnapshot(&mut self) -> bool {
+        let configured: bool = {
+            let _lock = RaftLockGuard::new(&mut self.mtx_);
+            unsafe { raft_snapshot_manager_is_set(&self.snapshot_manager_) }
+        };
+        if !configured {
+            return false;
+        }
+        unsafe { raft_snapshot_manager_has_latest(&self.snapshot_manager_) }
+    }
+
+    // @unsafe - gates inbound and outbound test traffic under mtx_.
+    pub fn Disconnect(&mut self, disconnect: bool) {
+        let _lock = RaftLockGuard::new(&mut self.mtx_);
+        unsafe {
+            raft_verify(
+                self.disconnected_.load(rusty::sync::atomic::Ordering::Acquire)
+                    != disconnect);
+            raft_commo_set_network_enabled(self as *mut RaftServerBase,
+                                           !disconnect);
+        }
+        self.disconnected_
+            .store(disconnect, rusty::sync::atomic::Ordering::Release);
+    }
+
+    // @safe - calls Disconnect and resets the timer.
+    pub fn Reconnect(&mut self) {
+        self.Disconnect(false);
+        self.resetTimer("reconnect");
+    }
+
+    // @unsafe - idempotent one-shot setup.
+    pub fn EnsureSetup(&mut self) {
+        if self.heartbeat_setup_ {
+            return;
+        }
+        self.heartbeat_setup_ = true;
+        self.Setup();
+    }
+
+    // @unsafe - runs SetupInternal under a catch-all and publishes the
+    // result to whoever is blocked in WaitForStartup.
+    pub fn Setup(&mut self) {
+        let succeeded: bool =
+            unsafe { raft_setup_internal_guarded(self as *mut RaftServerBase) };
+        if !succeeded {
+            self.rpc_ready_
+                .store(false, rusty::sync::atomic::Ordering::Release);
+            self.stop_
+                .store(true, rusty::sync::atomic::Ordering::Release);
+            self.looping_
+                .store(false, rusty::sync::atomic::Ordering::Release);
+        }
+        {
+            let ready: bool = self.IsRpcReady();
+            let _lock = RaftStdLockGuard::new(&mut self.startup_mtx_);
+            self.startup_succeeded_ = succeeded && ready;
+            self.startup_finished_ = true;
+        }
+        unsafe {
+            raft_startup_notify_all(self as *mut RaftServerBase);
+        }
+    }
+
+    // @safe - waits for the owner-thread startup job and reports its result.
+    pub fn WaitForStartup(&mut self) -> bool {
+        unsafe {
+            raft_startup_wait(self as *mut RaftServerBase);
+        }
+        self.startup_succeeded_
+    }
+
+    // @safe - election timer setup; the fiber spawn is a kernel.
+    pub fn StartElectionTimer(&mut self) {
+        self.ElectionLoopSetRunning(true);
+        self.resetTimer("start election timer");
+        let wait_int: u64 = self.wait_int_ as u64;
+        unsafe {
+            raft_spawn_election_timer(self as *mut RaftServerBase, wait_int);
+        }
+    }
+
+    // @unsafe - must be called from a reactor fiber before destroying a live
+    // server; signals both runtime loops and waits for their completion
+    // flags, then stops and joins the apply thread while the server is still
+    // fully alive (applying an entry can trigger snapshot compaction).
+    pub fn PrepareForShutdown(&mut self) {
+        {
+            // Linearize admission closure with every RPC and local mutation
+            // under mtx_.
+            let _admission_lock = RaftLockGuard::new(&mut self.mtx_);
+            self.rpc_ready_
+                .store(false, rusty::sync::atomic::Ordering::Release);
+            self.stop_
+                .store(true, rusty::sync::atomic::Ordering::Release);
+            self.looping_
+                .store(false, rusty::sync::atomic::Ordering::Release);
+        }
+        unsafe {
+            raft_close_replication_wake_gate(self as *mut RaftServerBase);
+        }
+
+        while self
+            .heartbeat_loop_running_
+            .load(rusty::sync::atomic::Ordering::Acquire)
+            || self
+                .election_loop_running_
+                .load(rusty::sync::atomic::Ordering::Acquire)
+        {
+            unsafe {
+                raft_shutdown_barrier_yield();
+            }
+        }
+
+        self.apply_thread_running_
+            .store(false, rusty::sync::atomic::Ordering::SeqCst);
+        unsafe {
+            raft_apply_thread_join(self as *mut RaftServerBase);
+        }
+    }
+
+    // @unsafe - CALLER MUST NOT HOLD mtx_. Appends one command locally and
+    // then publishes the replication wake, in that order: the wake path never
+    // nests the gate's owner mutex below Raft state.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub fn StartImpl(&mut self, cmd: *const rusty::RaftCommand,
+                     index: *mut u64, term: *mut u64, slot_id: u64,
+                     ballot: i64) -> RaftStartResult {
+        {
+            let _lock = RaftLockGuard::new(&mut self.mtx_);
+            if !self.IsLeaderLocked() {
+                unsafe {
+                    *index = 0;
+                    *term = 0;
+                }
+                return RaftStartResult::REJECTED;
+            }
+            let append_result: RaftStartResult = unsafe {
+                raft_set_local_append(self as *mut RaftServerBase, cmd, term,
+                                      index, slot_id, ballot)
+            };
+            unsafe {
+                raft_verify(raft_server_start_was_appended(append_result));
+                // SetLocalAppend reports the OLD last index; Start reports
+                // the index of the entry it just appended.
+                raft_verify(
+                    self.state_.raft_log_.last_index() == *index + 1);
+                *index = self.state_.raft_log_.last_index();
+                rusty::raft_log_debug_3("Start(): ldr={} index={} term={}",
+                                        self.loc_id_, *index, *term);
+            }
+        }
+        unsafe {
+            raft_request_replication(self as *mut RaftServerBase);
+        }
+        RaftStartResult::APPENDED
+    }
+
+    // @unsafe - hands newly committed entries to the background apply thread.
+    #[allow(clippy::manual_is_multiple_of)]
+    // The scan stops at the first gap; the copy out of the log happens before
+    // apply_queue_mtx_ is taken, which is why the enqueue itself is a kernel.
+    pub fn EnqueueCommittedEntries(&mut self, old_commit: u64,
+                                   new_commit: u64) {
+        let mut first_missing: u64 = 0;
+        let mut last_present: u64 = old_commit;
+        let mut id: u64 = old_commit + 1;
+        while id <= new_commit {
+            let found = self.state_.raft_log_.get(id);
+            let usable: bool = found.is_some()
+                && unsafe {
+                    raft_command_has_value(
+                        found.unwrap().cmd() as *const rusty::RaftCommand)
+                };
+            if !usable {
+                first_missing = id;
+                break;
+            }
+            last_present = id;
+            id += 1;
+        }
+
+        let mut enqueued: u64 = 0;
+        if last_present > old_commit {
+            enqueued = unsafe {
+                raft_apply_queue_push_range(self as *mut RaftServerBase,
+                                            old_commit + 1, last_present)
+            };
+        }
+
+        if first_missing > 0 {
+            rusty::raft_log_info_5(
+                "[ENQUEUE] Site {}: gap at slot {} (range {}..{}, enqueued {})",
+                self.site_id_, first_missing, old_commit + 1, new_commit,
+                enqueued);
+        }
+        // One in fifty, so a steady stream of commits does not drown the log.
+        let ticket: u64 = self.enqueue_log_counter_;
+        self.enqueue_log_counter_ += 1;
+        // `%` rather than is_multiple_of: this lowers to C++, where uint64_t
+        // has no such member.
+        if ticket % 50 == 0 {
+            let qsize: u64 =
+                unsafe { raft_apply_queue_size(self as *mut RaftServerBase) };
+            rusty::raft_log_info_5(
+                "[ENQUEUE] Site {}: enqueued {} entries ({}..{}) queue_total={}",
+                self.site_id_, enqueued, old_commit + 1, new_commit, qsize);
+        }
+    }
+
     // @unsafe - CALLER MUST HOLD mtx_. Demotion is terminal for the election
     // in progress as well as for the leadership epoch that is ending.
     // @unsafe - the campaign. Two critical sections with one fiber
@@ -3778,7 +4137,7 @@ impl TxLogServer for RaftServerBase {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=a189376ef0815c17a50d1ef419466f8f99ade3644afc800654d88d211a7e7e23*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=4e5201b64123532b60df33ca982d0bcae3fddfd298caa4d450686af85a9eff0e*/
 struct RaftVoteOutcome;
 struct RaftServerBase;
 
@@ -3804,6 +4163,21 @@ extern "C" {
     bool raft_election_debug_enabled();
     rusty::RaftVoteQuorumPtr raft_broadcast_vote_and_wait(RaftServerBase* server, uint32_t par_id, uint64_t last_log_index, int64_t last_log_term, uint16_t self_site_id, int64_t term);
     RaftVoteOutcome raft_vote_quorum_snapshot(const rusty::RaftVoteQuorumPtr* quorum);
+    bool raft_snapshot_manager_has_latest(const rusty::RaftSnapshotManagerPtr* manager);
+    bool raft_command_has_value(const rusty::RaftCommand* cmd);
+    uint64_t raft_apply_queue_push_range(RaftServerBase* server, uint64_t first, uint64_t last);
+    uint64_t raft_apply_queue_size(RaftServerBase* server);
+    void raft_startup_wait(RaftServerBase* server);
+    void raft_startup_notify_all(RaftServerBase* server);
+    void raft_apply_thread_join(RaftServerBase* server);
+    void raft_commo_set_network_enabled(RaftServerBase* server, bool enabled);
+    bool raft_create_snapshot_locked(RaftServerBase* server);
+    void raft_request_replication(RaftServerBase* server);
+    RaftStartResult raft_set_local_append(RaftServerBase* server, const rusty::RaftCommand* cmd, uint64_t* term, uint64_t* index, uint64_t slot_id, int64_t ballot);
+    void raft_close_replication_wake_gate(RaftServerBase* server);
+    void raft_spawn_election_timer(RaftServerBase* server, uint64_t wait_int_us);
+    bool raft_setup_internal_guarded(RaftServerBase* server);
+    void raft_shutdown_barrier_yield();
 }
 
 struct RaftVoteOutcome {
@@ -3863,6 +4237,7 @@ struct RaftServerBase : public TxLogServer {
     uint64_t apply_queue_epoch_;
     rusty::RaftApplyQueue apply_queue_;
     rusty::sync::atomic::AtomicU64 appliedIndexForWait_;
+    uint64_t enqueue_log_counter_;
     int32_t n_prepare_;
     int32_t n_accept_;
     int32_t n_commit_;
@@ -3913,6 +4288,18 @@ struct RaftServerBase : public TxLogServer {
     void resetTimerLocked(std::string_view reason);
     void resetTimer(std::string_view reason);
     void setIsLeader(bool is_leader);
+    void HeartbeatPrologue();
+    void MaybeCreateSnapshot();
+    bool HasSnapshot();
+    void Disconnect(bool disconnect);
+    void Reconnect();
+    void EnsureSetup();
+    void Setup();
+    bool WaitForStartup();
+    void StartElectionTimer();
+    void PrepareForShutdown();
+    RaftStartResult StartImpl(const rusty::RaftCommand* cmd, uint64_t* index, uint64_t* term, uint64_t slot_id, int64_t ballot);
+    void EnqueueCommittedEntries(uint64_t old_commit, uint64_t new_commit);
     bool RequestVoteImpl(bool timer_guarded, uint64_t expected_generation);
     void stepDown();
     void set_site_identity(uint32_t loc_id, uint16_t site_id, uint32_t partition_id);
@@ -3967,6 +4354,7 @@ inline RaftServerBase::RaftServerBase()
     , apply_queue_epoch_(static_cast<uint64_t>(0))
     , apply_queue_(rusty::default_like<rusty::RaftApplyQueue>())
     , appliedIndexForWait_(rusty::sync::atomic::AtomicU64::new_(0))
+    , enqueue_log_counter_(static_cast<uint64_t>(0))
     , n_prepare_(static_cast<int32_t>(0))
     , n_accept_(static_cast<int32_t>(0))
     , n_commit_(static_cast<int32_t>(0))
@@ -4349,6 +4737,184 @@ inline void RaftServerBase::setIsLeader(bool is_leader) {
     }
 }
 
+inline void RaftServerBase::HeartbeatPrologue() {
+    this->heartbeat_loop_running_.store(true, rusty::sync::atomic::Ordering::Release);
+    {
+        const auto _lock = RaftLockGuard::new_(&this->mtx_);
+        this->RebuildPeerTables(static_cast<uint64_t>(1));
+    }
+    rusty::raft_log_debug_1("heartbeat loop init from site: {}", this->site_id_);
+    this->looping_.store(true, rusty::sync::atomic::Ordering::Release);
+}
+
+inline void RaftServerBase::MaybeCreateSnapshot() {
+    const auto _apply_lock = RaftStdLockGuard::new_(&this->state_machine_apply_mtx_);
+    const auto _lock = RaftLockGuard::new_(&this->mtx_);
+    const bool configured = raft_snapshot_manager_is_set(&this->snapshot_manager_);
+    if (!configured || rusty::detail::rust_not(raft_server_snapshot_is_due(this->state_.snapidx_, this->state_.execute_index_, this->state_.snapshot_threshold_))) {
+        return;
+    }
+    // @unsafe
+    {
+        raft_create_snapshot_locked(static_cast<RaftServerBase*>(rusty::detail::ptr_or_addr((*this))));
+    }
+}
+
+inline bool RaftServerBase::HasSnapshot() {
+    const bool configured = [&]() -> bool { const auto _lock = RaftLockGuard::new_(&this->mtx_);
+// @unsafe
+{
+    return raft_snapshot_manager_is_set(&this->snapshot_manager_);
+} }();
+    if (!configured) {
+        return false;
+    }
+    // @unsafe
+    {
+        return raft_snapshot_manager_has_latest(&this->snapshot_manager_);
+    }
+}
+
+inline void RaftServerBase::Disconnect(bool disconnect) {
+    const auto _lock = RaftLockGuard::new_(&this->mtx_);
+    // @unsafe
+    {
+        raft_verify(this->disconnected_.load(rusty::sync::atomic::Ordering::Acquire) != rusty::detail::deref_if_pointer_like(disconnect));
+        raft_commo_set_network_enabled(static_cast<RaftServerBase*>(rusty::detail::ptr_or_addr((*this))), !disconnect);
+    }
+    this->disconnected_.store(std::move(disconnect), rusty::sync::atomic::Ordering::Release);
+}
+
+inline void RaftServerBase::Reconnect() {
+    this->Disconnect(false);
+    this->resetTimer(std::string_view("reconnect"));
+}
+
+inline void RaftServerBase::EnsureSetup() {
+    if (this->heartbeat_setup_) {
+        return;
+    }
+    this->heartbeat_setup_ = true;
+    this->Setup();
+}
+
+inline void RaftServerBase::Setup() {
+    const bool succeeded = raft_setup_internal_guarded(static_cast<RaftServerBase*>(rusty::detail::ptr_or_addr((*this))));
+    if (!succeeded) {
+        this->rpc_ready_.store(false, rusty::sync::atomic::Ordering::Release);
+        this->stop_.store(true, rusty::sync::atomic::Ordering::Release);
+        this->looping_.store(false, rusty::sync::atomic::Ordering::Release);
+    }
+    {
+        const bool ready = this->IsRpcReady();
+        const auto _lock = RaftStdLockGuard::new_(&this->startup_mtx_);
+        this->startup_succeeded_ = rusty::detail::deref_if_pointer_like(succeeded) && rusty::detail::deref_if_pointer_like(ready);
+        this->startup_finished_ = true;
+    }
+    // @unsafe
+    {
+        raft_startup_notify_all(static_cast<RaftServerBase*>(rusty::detail::ptr_or_addr((*this))));
+    }
+}
+
+inline bool RaftServerBase::WaitForStartup() {
+    // @unsafe
+    {
+        raft_startup_wait(static_cast<RaftServerBase*>(rusty::detail::ptr_or_addr((*this))));
+    }
+    return this->startup_succeeded_;
+}
+
+inline void RaftServerBase::StartElectionTimer() {
+    this->ElectionLoopSetRunning(true);
+    this->resetTimer(std::string_view("start election timer"));
+    uint64_t wait_int = static_cast<uint64_t>(this->wait_int_);
+    // @unsafe
+    {
+        raft_spawn_election_timer(static_cast<RaftServerBase*>(rusty::detail::ptr_or_addr((*this))), std::move(wait_int));
+    }
+}
+
+inline void RaftServerBase::PrepareForShutdown() {
+    {
+        const auto _admission_lock = RaftLockGuard::new_(&this->mtx_);
+        this->rpc_ready_.store(false, rusty::sync::atomic::Ordering::Release);
+        this->stop_.store(true, rusty::sync::atomic::Ordering::Release);
+        this->looping_.store(false, rusty::sync::atomic::Ordering::Release);
+    }
+    // @unsafe
+    {
+        raft_close_replication_wake_gate(static_cast<RaftServerBase*>(rusty::detail::ptr_or_addr((*this))));
+    }
+    while (this->heartbeat_loop_running_.load(rusty::sync::atomic::Ordering::Acquire) || this->election_loop_running_.load(rusty::sync::atomic::Ordering::Acquire)) {
+        // @unsafe
+        {
+            raft_shutdown_barrier_yield();
+        }
+    }
+    this->apply_thread_running_.store(false, rusty::sync::atomic::Ordering::SeqCst);
+    // @unsafe
+    {
+        raft_apply_thread_join(static_cast<RaftServerBase*>(rusty::detail::ptr_or_addr((*this))));
+    }
+}
+
+inline RaftStartResult RaftServerBase::StartImpl(const rusty::RaftCommand* cmd, uint64_t* index, uint64_t* term, uint64_t slot_id, int64_t ballot) {
+    {
+        const auto _lock = RaftLockGuard::new_(&this->mtx_);
+        if (!this->IsLeaderLocked()) {
+            // @unsafe
+            {
+                *index = static_cast<uint64_t>(0);
+                *term = static_cast<uint64_t>(0);
+            }
+            return rusty::clone(RaftStartResult_REJECTED());
+        }
+        const RaftStartResult append_result = raft_set_local_append(static_cast<RaftServerBase*>(rusty::detail::ptr_or_addr((*this))), cmd, term, index, std::move(slot_id), std::move(ballot));
+        // @unsafe
+        {
+            raft_verify(raft_server_start_was_appended(std::move(append_result)));
+            raft_verify(this->state_.raft_log_.last_index() == (*index + 1));
+            *index = this->state_.raft_log_.last_index();
+            rusty::raft_log_debug_3("Start(): ldr={} index={} term={}", this->loc_id_, *index, *term);
+        }
+    }
+    // @unsafe
+    {
+        raft_request_replication(static_cast<RaftServerBase*>(rusty::detail::ptr_or_addr((*this))));
+    }
+    return rusty::clone(rusty::clone(RaftStartResult_APPENDED()));
+}
+
+inline void RaftServerBase::EnqueueCommittedEntries(uint64_t old_commit, uint64_t new_commit) {
+    uint64_t first_missing = static_cast<uint64_t>(0);
+    uint64_t last_present = old_commit;
+    uint64_t id = rusty::detail::deref_if_pointer_like(old_commit) + static_cast<uint64_t>(1);
+    while (rusty::detail::deref_if_pointer_like(id) <= rusty::detail::deref_if_pointer_like(new_commit)) {
+        auto found = this->state_.raft_log_.get(std::move(id));
+        const bool usable = found.is_some() && raft_command_has_value(rusty::detail::ptr_cast<const rusty::RaftCommand*>(found.unwrap().cmd()));
+        if (!usable) {
+            first_missing = std::move(id);
+            break;
+        }
+        last_present = std::move(id);
+        id += 1;
+    }
+    uint64_t enqueued = static_cast<uint64_t>(0);
+    if (rusty::detail::deref_if_pointer_like(last_present) > rusty::detail::deref_if_pointer_like(old_commit)) {
+        enqueued = raft_apply_queue_push_range(static_cast<RaftServerBase*>(rusty::detail::ptr_or_addr((*this))), rusty::detail::deref_if_pointer_like(old_commit) + static_cast<uint64_t>(1), std::move(last_present));
+    }
+    if (rusty::detail::deref_if_pointer_like(first_missing) > 0) {
+        rusty::raft_log_info_5("[ENQUEUE] Site {}: gap at slot {} (range {}..{}, enqueued {})", this->site_id_, std::move(first_missing), rusty::detail::deref_if_pointer_like(old_commit) + 1, std::move(new_commit), std::move(enqueued));
+    }
+    const uint64_t ticket = this->enqueue_log_counter_;
+    this->enqueue_log_counter_ += 1;
+    if ((rusty::detail::deref_if_pointer_like(ticket) % static_cast<int32_t>(50)) == static_cast<uint64_t>(0)) {
+        const uint64_t qsize = raft_apply_queue_size(static_cast<RaftServerBase*>(rusty::detail::ptr_or_addr((*this))));
+        rusty::raft_log_info_5("[ENQUEUE] Site {}: enqueued {} entries ({}..{}) queue_total={}", this->site_id_, std::move(enqueued), rusty::detail::deref_if_pointer_like(old_commit) + 1, std::move(new_commit), std::move(qsize));
+    }
+}
+
 inline bool RaftServerBase::RequestVoteImpl(bool timer_guarded, uint64_t expected_generation) {
     if (this->stop_.load(rusty::sync::atomic::Ordering::Acquire)) {
         rusty::raft_log_debug_1("[RAFT-SHUTDOWN] RequestVote called during shutdown (site={}), ignoring to prevent crash", this->site_id_);
@@ -4538,8 +5104,6 @@ class RaftServer : public RaftServerBase {
   // tranche.
   // ==========================================================================
 
-  // @unsafe - timer allocation, progress_ initialisation, atomic stores
-  void HeartbeatPrologue();
   // @safe - linear scan of a fixed, tiny table (replica counts are 3 or 5).
   // Returns state_.peers_.len() when the site is not a follower of this leader,
   // which is the "removed follower" case PHASE 2 guards against. Deliberately
@@ -4577,13 +5141,6 @@ class RaftServer : public RaftServerBase {
 
  private:
 
-  // Atomic append path shared by the public Start() entry point.
-  RaftStartResult StartImpl(const janus::Command& cmd,
-                            uint64_t* index,
-                            uint64_t* term,
-                            slotid_t slot_id,
-                            ballot_t ballot);
-
 
 
   // @unsafe - Initializes the in-memory snapshot manager and restores the exact
@@ -4611,11 +5168,10 @@ class RaftServer : public RaftServerBase {
   // @unsafe - Requires state_machine_apply_mtx_ and mtx_ in that order.
   // Split out so the apply trigger and RaftLabTest's LabAccess-driven manager
   // rotation helper can preserve the global lock order without re-locking.
+ public:  // for the kernel bridge (server.cc); private again once converted
   bool CreateSnapshotLocked();
+ private:
 
-  // @unsafe - Cheap-trigger slow path. Acquires state_machine_apply_mtx_ then
-  // mtx_, rechecks the canonical snapshot state, and snapshots only if due.
-  void MaybeCreateSnapshot();
 
   // ============================================================================
 
@@ -4633,13 +5189,17 @@ class RaftServer : public RaftServerBase {
   rusty::Arc<ReplicationWakeGate> replication_wake_gate_;
 
   // @unsafe - Reactor bridge; schedules a gate-only job on the bound owner.
+ public:  // for the kernel bridge (server.cc); private again once converted
   void RequestReplication();
+ private:
   // @unsafe - Owner-thread-only wait on the gate's IntEvent.
   bool WaitForReplicationOrHeartbeat(uint64_t timeout_us);
   // @unsafe - Owner-thread-only election delay that shutdown can interrupt.
   bool WaitForElectionTimeoutOrShutdown(uint64_t timeout_us);
   // @unsafe - Stops new wake jobs and releases the gate's PollThread handle.
+ public:  // for the kernel bridge (server.cc); private again once converted
   void CloseReplicationWakeGate();
+ private:
 
 
   // ============================================================================
@@ -4669,9 +5229,9 @@ class RaftServer : public RaftServerBase {
   // first RequestVote state lock revalidates it immediately before term++.
   bool RequestVoteFromElectionTimer(uint64_t expected_generation);
 
-  // @safe - server setup (threading via @unsafe blocks)
-	void Setup();
+ public:  // for the kernel bridge (server.cc); private again once converted
   bool SetupInternal();
+ private:
   // @safe - external calls marked @external, core replication loop
 	void HeartbeatLoop() ;
 
@@ -4753,7 +5313,6 @@ class RaftServer : public RaftServerBase {
 
   void StartApplyThread();
  public:  // for the raft_ae_* trampolines; back to private when converted
-  void EnqueueCommittedEntries(slotid_t old_commit, slotid_t new_commit);
  private:
 
   // @unsafe - const char* parameter type requires unsafe context
@@ -4808,22 +5367,13 @@ class RaftServer : public RaftServerBase {
   // Must run before HeartbeatLoop starts (Setup does so).
   void BindReplicationWakeOwner(rusty::Arc<rrr::PollThread> owner);
 
-  // @unsafe - Must be called from a reactor fiber before destroying a live
-  // server; signals both runtime loops and waits for their completion flags.
-  void PrepareForShutdown();
 
   // @safe - Acquire-load paired with the final startup Release publication.
 
-  // @safe - Waits for the owner-thread startup job and reports its result.
-  bool WaitForStartup();
 
   // Acquire-load pairs with PublishAppliedIndex after app_next_ completes.
   // @safe - Rusty atomic read.
 
-  // @safe - election timer setup (threading via @unsafe blocks in implementation)
-  void StartElectionTimer() ;
-  // @safe - calls Setup
-  void EnsureSetup();
 
   // @unsafe - Locks mtx_ before reading the role published by setIsLeader().
   // CALLER MUST HOLD mtx_. The looping_ check is an atomic, so it needs no
@@ -4909,43 +5459,6 @@ class RaftServer : public RaftServerBase {
   // @unsafe - Locks mtx_ and returns a copy of the shared_ptr.
   std::shared_ptr<janus::raft::SnapshotManager> GetSnapshotManager();
 
-  /**
-   * Set state machine snapshot callbacks.
-   * Called by the application state machine to hook into
-   * CreateSnapshot() and OnInstallSnapshot().
-   * @param create_cb Returns serialized state machine snapshot data
-   * @param prepare_cb Validates and stages serialized state-machine bytes. The
-   * returned transaction must leave the live image unchanged until Commit().
-   *
-   * RE-ENTRANCY CONTRACT -- BOTH CALLBACKS RUN WITH mtx_ HELD, AND NEITHER
-   * MAY CALL BACK INTO THIS RaftServer.
-   *
-   * The two invocation paths are:
-   *   MaybeCreateSnapshot -> CreateSnapshotLocked -> create_cb
-   *   OnInstallSnapshot   -> PrepareStateMachineSnapshotLocked -> prepare_cb
-   * and both hold mtx_ across the call. A callback that reaches any method
-   * taking mtx_ -- GetAppliedIndex, GetSnapshotIndex, IsLeader, Start, ... --
-   * SELF-DEADLOCKS.
-   *
-   * This did not used to be true. mtx_ was a recursive_mutex until the
-   * Tranche 5 demotion, which tolerated exactly this re-entry; the plain
-   * std::mutex does not. Every path INSIDE RaftServer was checked when it was
-   * demoted, and a static walk confirms no function holding mtx_ reaches
-   * another that takes it. These two std::function hooks are the only escapes
-   * from that analysis, because what they call is the embedder's code.
-   *
-   * Note also that create_cb runs on the APPLY THREAD, not the poll thread.
-   *
-   * The in-tree registrations (src/deptran/raft/test.cc) are pure and never
-   * re-enter, so raftLabTest and the replication suites cannot exercise a
-   * violation of this contract. Their passing is not evidence for it.
-   */
-  /**
-   * Check if a snapshot is available.
-   * @return true if a snapshot exists in the snapshot manager
-   */
-  // @unsafe - Copies the manager under mtx_ before querying it.
-  bool HasSnapshot();
 
 
 
@@ -5013,18 +5526,7 @@ class RaftServer : public RaftServerBase {
 
 
 
-  // Gates inbound and outbound test traffic without moving transport state.
-  void Disconnect(const bool disconnect = true);
 
-  // @safe - calls Disconnect (wrapped in @unsafe block) and resetTimer
-  void Reconnect() {
-    // @unsafe
-    {
-      Disconnect(false);
-    }
-    // @unsafe
-    { resetTimer("reconnect"); }
-  }
 
 
 
