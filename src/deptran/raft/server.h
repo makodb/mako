@@ -2823,6 +2823,7 @@ unsafe extern "C" {
     fn raft_setup_internal_guarded(server: *mut RaftServerBase) -> bool;
     fn raft_shutdown_barrier_yield();
     fn raft_peer_sites_len(server: *const RaftServerBase) -> usize;
+    fn raft_sync_config_members(server: *mut RaftServerBase);
 }
 
 // One campaign's reply quorum, read in a single shot.
@@ -2894,6 +2895,11 @@ pub struct RaftServerBase {
     pub preferred_leader_site_id_: u16,
     pub startup_timestamp_: u64,
     pub current_config_: rusty::RaftSiteIdSet,
+    // current_config_'s contents, sorted and duplicate-free, as something a
+    // DSL body can read. std::set is opaque to Rust, and PHASE 0 and PHASE 3
+    // each built exactly this vector from it on EVERY round; the set has one
+    // write, in Setup, so caching it is both expressible and cheaper.
+    pub config_members_: rusty::Vec<u16>,
     pub apply_thread_: rusty::RaftStdThread,
     pub apply_thread_running_: rusty::sync::atomic::AtomicBool,
     pub state_machine_apply_mtx_: rusty::RaftStdMutex,
@@ -2968,6 +2974,7 @@ impl RaftServerBase {
             preferred_leader_site_id_: RAFT_SERVER_INVALID_SITE_ID,
             startup_timestamp_: 0,
             current_config_: Default::default(),
+            config_members_: rusty::Vec::new(),
             apply_thread_: Default::default(),
             apply_thread_running_: rusty::sync::atomic::AtomicBool::new(false),
             state_machine_apply_mtx_: Default::default(),
@@ -3575,6 +3582,33 @@ impl RaftServerBase {
     // Loop prologue, startup, shutdown, submission and the apply queue.
     // ------------------------------------------------------------------
 
+    // @safe - the site id at an ordinal of the peer table.
+    pub fn peer_site_at(&self, ordinal: usize) -> u16 {
+        unsafe { raft_peer_site_at(self as *const RaftServerBase, ordinal) }
+    }
+
+    // @safe - refreshes config_members_ from current_config_. Called once,
+    // by Setup, because that is the only place current_config_ is written.
+    pub fn SyncConfigMembers(&mut self) {
+        unsafe {
+            raft_sync_config_members(self as *mut RaftServerBase);
+        }
+    }
+
+    // @safe - `current_config_.count(site) != 0`, over the cached vector.
+    // A linear scan of three to five sorted u16s, which is what the std::set
+    // lookup it replaces cost anyway.
+    pub fn IsConfigMember(&self, site: u16) -> bool {
+        let mut i: usize = 0;
+        while i < self.config_members_.len() {
+            if self.config_members_[i] == site {
+                return true;
+            }
+            i += 1;
+        }
+        false
+    }
+
     // @safe - linear scan of a fixed, tiny table (replica counts are 3 or 5).
     // Returns state_.peers_.len() when the site is not a follower of this
     // leader, which is the "removed follower" case PHASE 2 guards against.
@@ -4167,7 +4201,7 @@ impl TxLogServer for RaftServerBase {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=fca7362aee83eaafc29411c775ce936e8a733ab4f468de3a50430cd1c58951df*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=59296df80b339f9107dfe46bf864fa913b8e5834035f47916f855c360a072134*/
 struct RaftVoteOutcome;
 struct RaftServerBase;
 
@@ -4209,6 +4243,7 @@ extern "C" {
     bool raft_setup_internal_guarded(RaftServerBase* server);
     void raft_shutdown_barrier_yield();
     size_t raft_peer_sites_len(const RaftServerBase* server);
+    void raft_sync_config_members(RaftServerBase* server);
 }
 
 struct RaftVoteOutcome {
@@ -4261,6 +4296,7 @@ struct RaftServerBase : public TxLogServer {
     uint16_t preferred_leader_site_id_;
     uint64_t startup_timestamp_;
     rusty::RaftSiteIdSet current_config_;
+    rusty::Vec<uint16_t> config_members_;
     rusty::RaftStdThread apply_thread_;
     rusty::sync::atomic::AtomicBool apply_thread_running_;
     rusty::RaftStdMutex state_machine_apply_mtx_;
@@ -4319,6 +4355,9 @@ struct RaftServerBase : public TxLogServer {
     void resetTimerLocked(std::string_view reason);
     void resetTimer(std::string_view reason);
     void setIsLeader(bool is_leader);
+    uint16_t peer_site_at(size_t ordinal) const;
+    void SyncConfigMembers();
+    bool IsConfigMember(uint16_t site) const;
     size_t PeerOrdinal(uint16_t site) const;
     void RequestReplication();
     void HeartbeatPrologue();
@@ -4380,6 +4419,7 @@ inline RaftServerBase::RaftServerBase()
     , preferred_leader_site_id_(RAFT_SERVER_INVALID_SITE_ID)
     , startup_timestamp_(static_cast<uint64_t>(0))
     , current_config_(rusty::default_like<rusty::RaftSiteIdSet>())
+    , config_members_(rusty::Vec<uint16_t>::new_())
     , apply_thread_(rusty::default_like<rusty::RaftStdThread>())
     , apply_thread_running_(rusty::sync::atomic::AtomicBool::new_(false))
     , state_machine_apply_mtx_(rusty::default_like<rusty::RaftStdMutex>())
@@ -4768,6 +4808,31 @@ inline void RaftServerBase::setIsLeader(bool is_leader) {
             }
         }
     }
+}
+
+inline uint16_t RaftServerBase::peer_site_at(size_t ordinal) const {
+    // @unsafe
+    {
+        return raft_peer_site_at(static_cast<const RaftServerBase*>(rusty::detail::ptr_or_addr((*this))), std::move(ordinal));
+    }
+}
+
+inline void RaftServerBase::SyncConfigMembers() {
+    // @unsafe
+    {
+        raft_sync_config_members(static_cast<RaftServerBase*>(rusty::detail::ptr_or_addr((*this))));
+    }
+}
+
+inline bool RaftServerBase::IsConfigMember(uint16_t site) const {
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::len(this->config_members_)) {
+        if (this->config_members_[i] == rusty::detail::deref_if_pointer_like(site)) {
+            return true;
+        }
+        i += 1;
+    }
+    return false;
 }
 
 inline size_t RaftServerBase::PeerOrdinal(uint16_t site) const {
@@ -5173,15 +5238,8 @@ class RaftServer : public RaftServerBase {
 
   // @unsafe - suspends on the wake gate; false means shutdown
   bool HeartbeatWait();
-  // @unsafe - advances the read-index round and recomputes the commit index;
-  // false means leadership is not held, so phases 1-3 are skipped
-  bool HeartbeatPhase0(struct HeartbeatRoundState& state,
-                       struct HeartbeatRoundScope& round);
   // @unsafe - builds and sends AppendEntries / InstallSnapshot per follower
   void HeartbeatPhase1(struct HeartbeatRoundState& state,
-                       struct HeartbeatRoundScope& round);
-  // @unsafe - recomputes the commit index and publishes read-index authority
-  void HeartbeatPhase3(struct HeartbeatRoundState& state,
                        struct HeartbeatRoundScope& round);
 
 

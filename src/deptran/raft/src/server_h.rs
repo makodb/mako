@@ -1210,6 +1210,7 @@ unsafe extern "C" {
     fn raft_setup_internal_guarded(server: *mut RaftServerBase) -> bool;
     fn raft_shutdown_barrier_yield();
     fn raft_peer_sites_len(server: *const RaftServerBase) -> usize;
+    fn raft_sync_config_members(server: *mut RaftServerBase);
 }
 
 // One campaign's reply quorum, read in a single shot.
@@ -1281,6 +1282,11 @@ pub struct RaftServerBase {
     pub preferred_leader_site_id_: u16,
     pub startup_timestamp_: u64,
     pub current_config_: rusty::RaftSiteIdSet,
+    // current_config_'s contents, sorted and duplicate-free, as something a
+    // DSL body can read. std::set is opaque to Rust, and PHASE 0 and PHASE 3
+    // each built exactly this vector from it on EVERY round; the set has one
+    // write, in Setup, so caching it is both expressible and cheaper.
+    pub config_members_: rusty::Vec<u16>,
     pub apply_thread_: rusty::RaftStdThread,
     pub apply_thread_running_: rusty::sync::atomic::AtomicBool,
     pub state_machine_apply_mtx_: rusty::RaftStdMutex,
@@ -1355,6 +1361,7 @@ impl RaftServerBase {
             preferred_leader_site_id_: RAFT_SERVER_INVALID_SITE_ID,
             startup_timestamp_: 0,
             current_config_: Default::default(),
+            config_members_: rusty::Vec::new(),
             apply_thread_: Default::default(),
             apply_thread_running_: rusty::sync::atomic::AtomicBool::new(false),
             state_machine_apply_mtx_: Default::default(),
@@ -1961,6 +1968,33 @@ impl RaftServerBase {
     // ------------------------------------------------------------------
     // Loop prologue, startup, shutdown, submission and the apply queue.
     // ------------------------------------------------------------------
+
+    // @safe - the site id at an ordinal of the peer table.
+    pub fn peer_site_at(&self, ordinal: usize) -> u16 {
+        unsafe { raft_peer_site_at(self as *const RaftServerBase, ordinal) }
+    }
+
+    // @safe - refreshes config_members_ from current_config_. Called once,
+    // by Setup, because that is the only place current_config_ is written.
+    pub fn SyncConfigMembers(&mut self) {
+        unsafe {
+            raft_sync_config_members(self as *mut RaftServerBase);
+        }
+    }
+
+    // @safe - `current_config_.count(site) != 0`, over the cached vector.
+    // A linear scan of three to five sorted u16s, which is what the std::set
+    // lookup it replaces cost anyway.
+    pub fn IsConfigMember(&self, site: u16) -> bool {
+        let mut i: usize = 0;
+        while i < self.config_members_.len() {
+            if self.config_members_[i] == site {
+                return true;
+            }
+            i += 1;
+        }
+        false
+    }
 
     // @safe - linear scan of a fixed, tiny table (replica counts are 3 or 5).
     // Returns state_.peers_.len() when the site is not a follower of this

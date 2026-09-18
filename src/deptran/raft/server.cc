@@ -1284,6 +1284,12 @@ void raft_request_replication(RaftServerBase* self) {
 size_t raft_peer_sites_len(const RaftServerBase* self) {
   return self->peer_sites_.size();
 }
+void raft_sync_config_members(RaftServerBase* self) {
+  self->config_members_.clear();
+  for (const siteid_t site : self->current_config_) {
+    self->config_members_.push(site);
+  }
+}
 RaftStartResult raft_set_local_append(RaftServerBase* self,
                                       const rusty::RaftCommand* cmd,
                                       uint64_t* term, uint64_t* index,
@@ -1698,6 +1704,7 @@ bool RaftServer::SetupInternal() {
     for (auto& site : replicas) {
       current_config_.insert(site.id);
     }
+    SyncConfigMembers();
     Log_info("[RAFT-CONFIG] Initialized current_config_ for site {} partition {} with {} replicas",
              site_id_, partition_id_, current_config_.size());
   }
@@ -2168,8 +2175,6 @@ using janus::raft_server_follower_next_index;
 // writes the name unqualified (both blocks are in namespace janus) and the
 // `use crate::server_h::X` on the Rust side emits as this alias.
 using janus::RaftConsensusState;
-using janus::PeerTable;
-using janus::RaftLog;
 using janus::RaftServerBase;
 using janus::RaftLockGuard;
 }  // namespace server_h
@@ -2233,8 +2238,6 @@ use crate::server_h::raft_server_vote_is_idempotent;
 use crate::server_h::BackoffKind;
 use crate::server_h::RAFT_SERVER_INVALID_SITE_ID;
 use crate::server_h::RaftConsensusState;
-use crate::server_h::PeerTable;
-use crate::server_h::RaftLog;
 
 pub struct AuthorityGeneration {
     round_id_: u64,
@@ -2502,7 +2505,7 @@ impl AuthorityLedger {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.authority_ledger version=1 rust_sha256=be1263ba02906184ab87c531c1974766e7487a058ef2691de512e15b93c2482f*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.authority_ledger version=1 rust_sha256=88dd4715f25bf3b6a1ff93affb8e86fda9b772490d8a669d66e5fa983df70ae6*/
 struct AuthorityGeneration;
 struct AuthorityReply;
 struct AuthorityOutcome;
@@ -2555,10 +2558,6 @@ using ::server_h::BackoffKind;
 using ::server_h::RAFT_SERVER_INVALID_SITE_ID;
 
 using ::server_h::RaftConsensusState;
-
-using ::server_h::PeerTable;
-
-using ::server_h::RaftLog;
 
 struct AuthorityGeneration {
     uint64_t round_id_;
@@ -2870,6 +2869,7 @@ unsafe extern "C" {
     fn raft_append_response_read(response: *const rusty::RaftResponsePtr)
         -> AppendRespView;
     fn raft_command_has_value(cmd: *const rusty::RaftCommand) -> bool;
+    fn raft_verify(condition: bool);
 }
 
 #[repr(C)]
@@ -3718,27 +3718,28 @@ impl CommitAdvance {
     }
 }
 
+// Same aliasing note as heartbeat_phase3_locked: peers and log are reached
+// through `consensus` because both are its fields.
 pub fn raft_commit_advance(
     consensus: &mut RaftConsensusState,
-    peers: &PeerTable,
-    log: &RaftLog,
     nservers: usize,
 ) -> CommitAdvance {
     // nservers is the value latched in PHASE 0. Reusing it in PHASE 3 is
     // sound only because current_config_ has exactly one write, during
     // Setup, and progress_ is never erased, so the size is invariant across
     // the round. Assert it rather than trusting the phases to stay in step.
-    if peers.len() != nservers - 1 {
+    if consensus.peers_.len() != nservers - 1 {
         panic!("peer table and round membership disagree");
     }
-    let candidate_index = peers.majority_match_index(nservers, log.last_index());
+    let candidate_index = consensus.peers_
+        .majority_match_index(nservers, consensus.raft_log_.last_index());
     if !raft_server_log_index_above(candidate_index, consensus.commit_index_) {
         return CommitAdvance { advanced_: false, from_: 0, to_: 0 };
     }
     // The candidate is <= last_index() and > commit_index_, so the entry
     // provably exists. This says so rather than leaving a null dereference
     // to express it.
-    let candidate = log.get(candidate_index);
+    let candidate = consensus.raft_log_.get(candidate_index);
     if candidate.is_none() {
         panic!("committable index is absent from the log");
     }
@@ -3781,16 +3782,18 @@ impl Phase3Outcome {
     }
 }
 
+// peers and log are reached through `consensus`, for the same reason
+// heartbeat_apply_append_reply's are: the C++ call site passed `state_`,
+// `state_.peers_` and `state_.raft_log_` as three arguments, which is one
+// mutable borrow overlapping two shared ones. A Rust caller cannot spell it.
 pub fn heartbeat_phase3_locked(
     consensus: &mut RaftConsensusState,
-    peers: &PeerTable,
-    log: &RaftLog,
     ledger: &mut AuthorityLedger,
     nservers: usize,
     members: &[u16],
     is_leader: bool,
 ) -> Phase3Outcome {
-    let commit = raft_commit_advance(consensus, peers, log, nservers);
+    let commit = raft_commit_advance(consensus, nservers);
     let outcome = ledger.settle(
         is_leader,
         consensus.current_term_,
@@ -3844,10 +3847,9 @@ impl Phase0Outcome {
 // verify the parameter list really has collapsed into self rather than being
 // hidden behind a wrapper.
 #[allow(clippy::too_many_arguments)]
+// Same aliasing note as heartbeat_phase3_locked.
 pub fn heartbeat_phase0_locked(
     consensus: &mut RaftConsensusState,
-    peers: &PeerTable,
-    log: &RaftLog,
     round: &mut HeartbeatRoundScope,
     pending: &mut PendingTable,
     ledger: &mut AuthorityLedger,
@@ -3873,8 +3875,8 @@ pub fn heartbeat_phase0_locked(
     // Sized here rather than in the prologue because the round state is the
     // loop's, not the server's. Idempotent: resize only runs when the two
     // tables disagree, so in-flight slots survive every later round.
-    if pending.len() != peers.len() {
-        pending.resize(peers.len());
+    if pending.len() != consensus.peers_.len() {
+        pending.resize(consensus.peers_.len());
     }
 
     // Leadership may be lost and regained between two observations by this
@@ -3903,7 +3905,7 @@ pub fn heartbeat_phase0_locked(
     if round.nservers() == 0 || !round.is_member(site_id) {
         panic!("heartbeat round admitted no quorum containing this site");
     }
-    let advance = raft_commit_advance(consensus, peers, log, round.nservers());
+    let advance = raft_commit_advance(consensus, round.nservers());
     round.publish_commit_index(consensus.commit_index_);
 
     Phase0Outcome {
@@ -4122,8 +4124,233 @@ pub fn heartbeat_phase2_body(server: &mut RaftServerBase,
         server.RequestReplication();
     }
 }
+
+// ==========================================================================
+// PHASE 0 and PHASE 3, formerly RaftServer::HeartbeatPhase0/3.
+//
+// Their decisions were already DSL bodies (heartbeat_phase0_locked and
+// heartbeat_phase3_locked). What was left in C++ was the mutex, the apply
+// queue, the replication wake and the debug logging -- all of which a DSL
+// body can now express, so the C++ halves are gone.
+//
+// The round members no longer come from a std::vector rebuilt out of
+// current_config_ every round; they are server.config_members_, filled once
+// during Setup. Same contents, sorted and duplicate-free, which is what both
+// the round's membership and the ledger's set-equality check expect.
+// ==========================================================================
+pub fn heartbeat_phase0_body(server: &mut RaftServerBase,
+                             pending_rpcs: &mut PendingTable,
+                             authority_rounds: &mut AuthorityLedger,
+                             pending_leader_term: &mut rusty::Option<u64>,
+                             round: &mut HeartbeatRoundScope) -> bool {
+    {
+        let _lock = RaftLockGuard::new(&mut server.mtx_);
+        let leader: bool = server.IsLeaderLocked();
+        if leader && heartbeat_round_saturated(server.state_.heartbeat_round_) {
+            rusty::raft_log_error_2(
+                "[READ-INDEX] site={} heartbeat round saturated in term {}",
+                server.site_id_, server.state_.current_term_);
+        }
+        if leader {
+            let mut ord: usize = 0;
+            while ord < server.state_.peers_.len() {
+                rusty::raft_log_debug_2(
+                    "[COMMIT-CALC] match_index_[{}] = {}",
+                    server.peer_site_at(ord),
+                    server.state_.peers_.match_index(ord));
+                ord += 1;
+            }
+        }
+
+        let site_id: u16 = server.site_id_;
+        let members: rusty::Vec<u16> = server.config_members_.clone();
+        let outcome: Phase0Outcome = heartbeat_phase0_locked(
+            &mut server.state_, round, pending_rpcs, authority_rounds,
+            pending_leader_term, &members, site_id, leader);
+
+        if outcome.restart() {
+            // Was `continue`; the Rust driver starts the next round when
+            // this returns true.
+            return true;
+        }
+        if outcome.commit_advanced() {
+            // The apply queue is I/O, so the hand-off stays a call; the
+            // DECISION to commit was made above.
+            server.EnqueueCommittedEntries(outcome.commit_from(),
+                                           outcome.commit_to());
+        }
+    }
+
+    let members: rusty::Vec<u16> = server.config_members_.clone();
+    let opened: bool = authority_rounds.open(
+        round.round_id(), &members,
+        HeartbeatAuthority::new(round.term(), round.nservers(),
+                                server.site_id_));
+    round.set_authority_inserted(opened);
+    // heartbeat_round_ never wraps. The only possible duplicate is the
+    // deliberately fail-closed UINT64_MAX saturation generation, which
+    // open() declines rather than overwriting.
+    if !round.authority_inserted() {
+        unsafe {
+            raft_verify(round.round_id() == u64::MAX);
+        }
+    }
+    true
+}
+
+pub fn heartbeat_phase3_body(server: &mut RaftServerBase,
+                             authority_rounds: &mut AuthorityLedger,
+                             round: &HeartbeatRoundScope) {
+    if !server.IsLeader() {
+        return;
+    }
+    let mut commit_advanced_after_send: bool = false;
+    {
+        let _lock = RaftLockGuard::new(&mut server.mtx_);
+        let members: rusty::Vec<u16> = server.config_members_.clone();
+        let nservers: usize = round.nservers();
+        let is_leader: bool = server.IsLeaderLocked();
+        let outcome: Phase3Outcome = heartbeat_phase3_locked(
+            &mut server.state_, authority_rounds, nservers, &members,
+            is_leader);
+
+        if outcome.commit().advanced() {
+            rusty::raft_log_debug_2(
+                "[PHASE3-COMMIT] Advancing state_.commit_index_ {} -> {}",
+                outcome.commit().from_index(), outcome.commit().to_index());
+            server.EnqueueCommittedEntries(outcome.commit().from_index(),
+                                           outcome.commit().to_index());
+            commit_advanced_after_send = true;
+        }
+        if outcome.confirmed() {
+            rusty::raft_log_debug_3(
+                "[READ-INDEX] site={} confirmed round={} term={}",
+                server.site_id_, server.state_.read_quorum_confirmed_round_,
+                server.state_.read_quorum_confirmed_term_);
+        }
+    }
+
+    // The AppendEntries messages for this round carried the OLD commit
+    // index. Latch exactly one prompt follow-up round so followers learn the
+    // phase-3 commit without waiting out the periodic heartbeat.
+    if commit_advanced_after_send {
+        server.RequestReplication();
+    }
+}
+
+// ==========================================================================
+// The two inbound RPC bodies, formerly RaftServer::OnRequestVote and
+// RaftServer::OnAppendEntries. Both keep a one-line C++ entry point, because
+// the rrr service layer calls them by name on RaftServer.
+// ==========================================================================
+#[allow(clippy::too_many_arguments)]
+pub fn on_request_vote_body(server: &mut RaftServerBase, lst_log_idx: u64,
+                            lst_log_term: i64, can_id: u16, can_term: i64,
+                            reply_term: &mut i64, vote_granted: &mut i8) {
+    let _lock = RaftLockGuard::new(&mut server.mtx_);
+    rusty::raft_log_debug_1("raft receives vote from candidate: {:x}", can_id);
+
+    let stopped: bool =
+        server.stop_.load(rusty::sync::atomic::Ordering::Acquire);
+    if stopped {
+        rusty::raft_log_debug_2(
+            "[RAFT-SHUTDOWN] Site {} rejecting RequestVote from {}",
+            server.site_id_, can_id);
+    }
+
+    let candidate_is_current_voter: bool =
+        can_id != RAFT_SERVER_INVALID_SITE_ID && can_id != server.site_id_
+            && server.IsConfigMember(can_id);
+    if !stopped
+        && (can_term < 0 || lst_log_term < 0 || !candidate_is_current_voter)
+    {
+        rusty::raft_log_warn_5(
+            "[RAFT_VOTE] Site {} rejected malformed/non-voter candidate {} term {} last_log_term {} (voter={})",
+            server.site_id_, can_id, can_term, lst_log_term,
+            candidate_is_current_voter);
+    }
+
+    let handle: *mut core::ffi::c_void =
+        server as *mut RaftServerBase as *mut core::ffi::c_void;
+    unsafe {
+        raft_on_request_vote(&mut server.state_, handle, stopped,
+                             candidate_is_current_voter, lst_log_idx,
+                             lst_log_term, can_id, can_term, reply_term,
+                             vote_granted);
+    }
+}
+
+// `cmd` is an opaque handle to the caller's janus::Command; it is passed
+// straight through to raft_on_append_entries, never dereferenced here.
+#[allow(clippy::too_many_arguments, clippy::not_unsafe_ptr_arg_deref)]
+pub fn on_append_entries_body(server: &mut RaftServerBase,
+                              leader_current_term: u64, leader_site_id: u16,
+                              leader_prev_log_index: u64,
+                              leader_prev_log_term: u64,
+                              leader_commit_index: u64,
+                              cmd: *const core::ffi::c_void,
+                              cmd_has_value: bool,
+                              leader_next_log_term: u64,
+                              follower_append_ok: &mut u64,
+                              follower_current_term: &mut u64,
+                              follower_last_log_index: &mut u64) {
+    let _lock = RaftLockGuard::new(&mut server.mtx_);
+
+    let stopped: bool =
+        server.stop_.load(rusty::sync::atomic::Ordering::Acquire);
+    let sender_is_current_voter: bool =
+        leader_site_id != RAFT_SERVER_INVALID_SITE_ID
+            && leader_site_id != server.site_id_
+            && server.IsConfigMember(leader_site_id);
+
+    // NO DECODE HERE. raft_on_append_entries calls raft_ae_decode_payload
+    // itself, after the stopped check and the authoritative gate -- which is
+    // where the original did this work. Decoding up front would make every
+    // rejected AppendEntries pay a dynamic cast and N refcount bumps on a
+    // path a remote peer drives.
+    let handle: *mut core::ffi::c_void =
+        server as *mut RaftServerBase as *mut core::ffi::c_void;
+    let report: AppendReport = unsafe {
+        raft_on_append_entries(
+            &mut server.state_, handle, cmd, stopped, sender_is_current_voter,
+            cmd_has_value, leader_current_term, leader_site_id,
+            leader_prev_log_index, leader_prev_log_term, leader_commit_index,
+            leader_next_log_term, follower_append_ok, follower_current_term,
+            follower_last_log_index)
+    };
+
+    if !stopped && !report.accepted() {
+        if report.refused_committed_conflict() {
+            // A legitimate leader can never conflict with a committed entry.
+            rusty::raft_log_error_4(
+                "[APPEND_REJECT] Site {} refusing conflict at committed index {} (commit_index={}, execute_index={})",
+                server.site_id_, report.conflict_index(),
+                server.state_.commit_index_, server.state_.execute_index_);
+        } else if report.unauthoritative() {
+            // Dispatch on WHICH gate rejected, not on
+            // sender_is_current_voter. A stale-term or non-authoritative
+            // sender that IS a current voter would otherwise land in the
+            // branch below and be reported with term_ok/index_ok/
+            // prev_term_ok all "failed" -- three checks never evaluated on
+            // that path.
+            rusty::raft_log_warn_6(
+                "[APPEND_REJECT] Site {} rejecting unauthoritative AppendEntries sender {} term {} (local_term={} leader={} voter={})",
+                server.site_id_, leader_site_id, leader_current_term,
+                server.state_.current_term_,
+                server.state_.current_leader_id_, sender_is_current_voter);
+        } else {
+            rusty::raft_log_info_10(
+                "[APPEND_REJECT] Site {} rejecting AppendEntries from leader {} - term_ok={} index_ok={} prev_term_ok={} (leaderTerm={} myTerm={} prevIdx={} myLastIdx={} local_prev_term={})",
+                server.site_id_, leader_site_id, report.term_ok(),
+                report.index_ok(), report.prev_term_ok(), leader_current_term,
+                server.state_.current_term_, leader_prev_log_index,
+                server.state_.raft_log_.last_index(),
+                report.local_prev_term());
+        }
+    }
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_round_scope version=1 rust_sha256=a2da2333b8f7a67bf2f1594a0084ee73c182d1f48ceadc2ad7876178bcd12dc8*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_round_scope version=1 rust_sha256=e238ffa8b9e62255e9f360a8ed7f27051f3071bf0a68c78dcd631e4d1c2b9e24*/
 enum class AppendReplyAction : int32_t;
 constexpr AppendReplyAction AppendReplyAction_IGNORED();
 constexpr AppendReplyAction AppendReplyAction_STEP_DOWN();
@@ -4167,6 +4394,7 @@ extern "C" {
     void raft_fiber_sleep_us(uint64_t micros);
     AppendRespView raft_append_response_read(const rusty::RaftResponsePtr* response);
     bool raft_command_has_value(const rusty::RaftCommand* cmd);
+    void raft_verify(bool condition);
 }
 
 struct AppendRespView {
@@ -4592,16 +4820,16 @@ AppendReplyOutcome heartbeat_apply_append_reply(RaftConsensusState& consensus, A
     return std::move(out);
 }
 
-CommitAdvance raft_commit_advance(RaftConsensusState& consensus, const PeerTable& peers, const RaftLog& log, size_t nservers) {
+CommitAdvance raft_commit_advance(RaftConsensusState& consensus, size_t nservers) {
     RaftConsensusState* consensus_shadow1 = &consensus;
-    if (rusty::len(peers) != (rusty::detail::deref_if_pointer_like(nservers) - 1)) {
+    if (rusty::len((*consensus_shadow1).peers_) != (rusty::detail::deref_if_pointer_like(nservers) - 1)) {
         rusty::panic::do_panic(std::format("peer table and round membership disagree"));
     }
-    auto candidate_index = peers.majority_match_index(std::move(nservers), log.last_index());
+    auto candidate_index = (*consensus_shadow1).peers_.majority_match_index(std::move(nservers), (*consensus_shadow1).raft_log_.last_index());
     if (rusty::detail::rust_not(raft_server_log_index_above(std::move(candidate_index), (*consensus_shadow1).commit_index_))) {
         return CommitAdvance{.advanced_ = false, .from_ = static_cast<uint64_t>(0), .to_ = static_cast<uint64_t>(0)};
     }
-    auto candidate = log.get(std::move(candidate_index));
+    auto candidate = (*consensus_shadow1).raft_log_.get(std::move(candidate_index));
     if (candidate.is_none()) {
         rusty::panic::do_panic(std::format("committable index is absent from the log"));
     }
@@ -4613,9 +4841,9 @@ CommitAdvance raft_commit_advance(RaftConsensusState& consensus, const PeerTable
     return CommitAdvance{.advanced_ = true, .from_ = std::move(from), .to_ = std::move(candidate_index)};
 }
 
-Phase3Outcome heartbeat_phase3_locked(RaftConsensusState& consensus, const PeerTable& peers, const RaftLog& log, AuthorityLedger& ledger, size_t nservers, std::span<const uint16_t> members, bool is_leader) {
+Phase3Outcome heartbeat_phase3_locked(RaftConsensusState& consensus, AuthorityLedger& ledger, size_t nservers, std::span<const uint16_t> members, bool is_leader) {
     RaftConsensusState* consensus_shadow1 = &consensus;
-    auto commit = raft_commit_advance((*consensus_shadow1), peers, log, std::move(nservers));
+    auto commit = raft_commit_advance((*consensus_shadow1), std::move(nservers));
     const auto outcome = ledger.settle(std::move(is_leader), (*consensus_shadow1).current_term_, members, (*consensus_shadow1).read_quorum_confirmed_term_, (*consensus_shadow1).read_quorum_confirmed_round_);
     auto confirmed = false;
     if (outcome.confirmed()) {
@@ -4626,7 +4854,7 @@ Phase3Outcome heartbeat_phase3_locked(RaftConsensusState& consensus, const PeerT
     return Phase3Outcome{.commit_ = std::move(commit), .confirmed_ = std::move(confirmed)};
 }
 
-Phase0Outcome heartbeat_phase0_locked(RaftConsensusState& consensus, const PeerTable& peers, const RaftLog& log, HeartbeatRoundScope& round, PendingTable& pending, AuthorityLedger& ledger, rusty::Option<uint64_t>& pending_leader_term, std::span<const uint16_t> members, uint16_t site_id, bool is_leader) {
+Phase0Outcome heartbeat_phase0_locked(RaftConsensusState& consensus, HeartbeatRoundScope& round, PendingTable& pending, AuthorityLedger& ledger, rusty::Option<uint64_t>& pending_leader_term, std::span<const uint16_t> members, uint16_t site_id, bool is_leader) {
     RaftConsensusState* consensus_shadow1 = &consensus;
     rusty::Option<uint64_t>* pending_leader_term_shadow1 = &pending_leader_term;
     if (!is_leader) {
@@ -4636,8 +4864,8 @@ Phase0Outcome heartbeat_phase0_locked(RaftConsensusState& consensus, const PeerT
         return Phase0Outcome{.restart_ = true, .commit_advanced_ = false, .commit_from_ = static_cast<uint64_t>(0), .commit_to_ = static_cast<uint64_t>(0)};
     }
     round.begin((*consensus_shadow1).current_term_, (*consensus_shadow1).heartbeat_round_);
-    if (rusty::len(pending) != rusty::len(peers)) {
-        pending.resize(rusty::len(peers));
+    if (rusty::len(pending) != rusty::len((*consensus_shadow1).peers_)) {
+        pending.resize(rusty::len((*consensus_shadow1).peers_));
     }
     const auto epoch_changed = ((*pending_leader_term_shadow1)).is_none() || (((*pending_leader_term_shadow1)).as_ref().unwrap() != round.term());
     if (epoch_changed) {
@@ -4656,7 +4884,7 @@ Phase0Outcome heartbeat_phase0_locked(RaftConsensusState& consensus, const PeerT
     if ((round.nservers() == static_cast<size_t>(0)) || !round.is_member(std::move(site_id))) {
         rusty::panic::do_panic(std::format("heartbeat round admitted no quorum containing this site"));
     }
-    const auto advance = raft_commit_advance((*consensus_shadow1), peers, log, round.nservers());
+    const auto advance = raft_commit_advance((*consensus_shadow1), round.nservers());
     round.publish_commit_index((*consensus_shadow1).commit_index_);
     return Phase0Outcome{.restart_ = false, .commit_advanced_ = advance.advanced(), .commit_from_ = advance.from_index(), .commit_to_ = advance.to_index()};
 }
@@ -4761,6 +4989,102 @@ void heartbeat_phase2_body(server_h::RaftServerBase& server, PendingTable& pendi
         authority_rounds.abandon();
     } else if (retry_released_follower) {
         ((*server_shadow1)).RequestReplication();
+    }
+}
+
+bool heartbeat_phase0_body(server_h::RaftServerBase& server, PendingTable& pending_rpcs, AuthorityLedger& authority_rounds, rusty::Option<uint64_t>& pending_leader_term, HeartbeatRoundScope& round) {
+    {
+        const auto _lock = RaftLockGuard::new_(&server.mtx_);
+        bool leader = server.IsLeaderLocked();
+        if (rusty::detail::deref_if_pointer_like(leader) && heartbeat_round_saturated([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.heartbeat_round_); }) { return (__r.heartbeat_round_); } else if constexpr (requires { (__r.heartbeat_round__field); }) { return (__r.heartbeat_round__field); } else if constexpr (requires { ((*__r).heartbeat_round_); }) { return ((*__r).heartbeat_round_); } else { return ((*__r).heartbeat_round__field); } }(server.state_))) {
+            rusty::raft_log_error_2("[READ-INDEX] site={} heartbeat round saturated in term {}", server.site_id_, [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.current_term_); }) { return (__r.current_term_); } else if constexpr (requires { (__r.current_term__field); }) { return (__r.current_term__field); } else if constexpr (requires { ((*__r).current_term_); }) { return ((*__r).current_term_); } else { return ((*__r).current_term__field); } }(server.state_));
+        }
+        if (leader) {
+            size_t ord = static_cast<size_t>(0);
+            while (rusty::detail::deref_if_pointer_like(ord) < rusty::len([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.peers_); }) { return (__r.peers_); } else if constexpr (requires { (__r.peers__field); }) { return (__r.peers__field); } else if constexpr (requires { ((*__r).peers_); }) { return ((*__r).peers_); } else { return ((*__r).peers__field); } }(server.state_))) {
+                rusty::raft_log_debug_2("[COMMIT-CALC] match_index_[{}] = {}", server.peer_site_at(std::move(ord)), [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.peers_); }) { return (__r.peers_); } else if constexpr (requires { (__r.peers__field); }) { return (__r.peers__field); } else if constexpr (requires { ((*__r).peers_); }) { return ((*__r).peers_); } else { return ((*__r).peers__field); } }(server.state_).match_index(std::move(ord)));
+                ord += 1;
+            }
+        }
+        uint16_t site_id = server.site_id_;
+        rusty::Vec<uint16_t> members = rusty::clone(server.config_members_);
+        const Phase0Outcome outcome = heartbeat_phase0_locked(rusty::detail::deref_if_pointer_like(server.state_), round, pending_rpcs, authority_rounds, pending_leader_term, std::span<const uint16_t>(rusty::as_slice(members)), std::move(site_id), std::move(leader));
+        if (outcome.restart()) {
+            return true;
+        }
+        if (outcome.commit_advanced()) {
+            server.EnqueueCommittedEntries(outcome.commit_from(), outcome.commit_to());
+        }
+    }
+    rusty::Vec<uint16_t> members = rusty::clone(server.config_members_);
+    bool opened = authority_rounds.open(round.round_id(), members, HeartbeatAuthority::new_(round.term(), round.nservers(), server.site_id_));
+    round.set_authority_inserted(std::move(opened));
+    if (!round.authority_inserted()) {
+        // @unsafe
+        {
+            raft_verify(round.round_id() == rusty::detail::deref_if_pointer_like(std::numeric_limits<uint64_t>::max()));
+        }
+    }
+    return true;
+}
+
+void heartbeat_phase3_body(server_h::RaftServerBase& server, AuthorityLedger& authority_rounds, const HeartbeatRoundScope& round) {
+    if (rusty::detail::rust_not(server.IsLeader())) {
+        return;
+    }
+    bool commit_advanced_after_send = false;
+    {
+        const auto _lock = RaftLockGuard::new_(&server.mtx_);
+        rusty::Vec<uint16_t> members = rusty::clone(server.config_members_);
+        size_t nservers = round.nservers();
+        bool is_leader = server.IsLeaderLocked();
+        const Phase3Outcome outcome = heartbeat_phase3_locked(rusty::detail::deref_if_pointer_like(server.state_), authority_rounds, std::move(nservers), std::span<const uint16_t>(rusty::as_slice(members)), std::move(is_leader));
+        if (outcome.commit().advanced()) {
+            rusty::raft_log_debug_2("[PHASE3-COMMIT] Advancing state_.commit_index_ {} -> {}", outcome.commit().from_index(), outcome.commit().to_index());
+            server.EnqueueCommittedEntries(outcome.commit().from_index(), outcome.commit().to_index());
+            commit_advanced_after_send = true;
+        }
+        if (outcome.confirmed()) {
+            rusty::raft_log_debug_3("[READ-INDEX] site={} confirmed round={} term={}", server.site_id_, [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.read_quorum_confirmed_round_); }) { return (__r.read_quorum_confirmed_round_); } else if constexpr (requires { (__r.read_quorum_confirmed_round__field); }) { return (__r.read_quorum_confirmed_round__field); } else if constexpr (requires { ((*__r).read_quorum_confirmed_round_); }) { return ((*__r).read_quorum_confirmed_round_); } else { return ((*__r).read_quorum_confirmed_round__field); } }(server.state_), [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.read_quorum_confirmed_term_); }) { return (__r.read_quorum_confirmed_term_); } else if constexpr (requires { (__r.read_quorum_confirmed_term__field); }) { return (__r.read_quorum_confirmed_term__field); } else if constexpr (requires { ((*__r).read_quorum_confirmed_term_); }) { return ((*__r).read_quorum_confirmed_term_); } else { return ((*__r).read_quorum_confirmed_term__field); } }(server.state_));
+        }
+    }
+    if (commit_advanced_after_send) {
+        server.RequestReplication();
+    }
+}
+
+void on_request_vote_body(server_h::RaftServerBase& server, uint64_t lst_log_idx, int64_t lst_log_term, uint16_t can_id, int64_t can_term, int64_t& reply_term, int8_t& vote_granted) {
+    const auto _lock = RaftLockGuard::new_(&server.mtx_);
+    rusty::raft_log_debug_1("raft receives vote from candidate: {:x}", std::move(can_id));
+    bool stopped = server.stop_.load(rusty::sync::atomic::Ordering::Acquire);
+    if (stopped) {
+        rusty::raft_log_debug_2("[RAFT-SHUTDOWN] Site {} rejecting RequestVote from {}", server.site_id_, std::move(can_id));
+    }
+    bool candidate_is_current_voter = ((rusty::detail::deref_if_pointer_like(can_id) != rusty::detail::deref_if_pointer_like(RAFT_SERVER_INVALID_SITE_ID)) && (rusty::detail::deref_if_pointer_like(can_id) != rusty::detail::deref_if_pointer_like(server.site_id_))) && server.IsConfigMember(std::move(can_id));
+    if (!stopped && ((((rusty::detail::deref_if_pointer_like(can_term) < 0) || (rusty::detail::deref_if_pointer_like(lst_log_term) < 0)) || !candidate_is_current_voter))) {
+        rusty::raft_log_warn_5("[RAFT_VOTE] Site {} rejected malformed/non-voter candidate {} term {} last_log_term {} (voter={})", server.site_id_, std::move(can_id), std::move(can_term), std::move(lst_log_term), std::move(candidate_is_current_voter));
+    }
+    rusty::ffi::c_void* const handle = const_cast<rusty::ffi::c_void*>(reinterpret_cast<const rusty::ffi::c_void*>(static_cast<server_h::RaftServerBase*>(rusty::detail::ptr_or_addr(server))));
+    // @unsafe
+    {
+        raft_on_request_vote(rusty::detail::deref_if_pointer_like(server.state_), handle, std::move(stopped), std::move(candidate_is_current_voter), std::move(lst_log_idx), std::move(lst_log_term), std::move(can_id), std::move(can_term), reply_term, vote_granted);
+    }
+}
+
+void on_append_entries_body(server_h::RaftServerBase& server, uint64_t leader_current_term, uint16_t leader_site_id, uint64_t leader_prev_log_index, uint64_t leader_prev_log_term, uint64_t leader_commit_index, const rusty::ffi::c_void* cmd, bool cmd_has_value, uint64_t leader_next_log_term, uint64_t& follower_append_ok, uint64_t& follower_current_term, uint64_t& follower_last_log_index) {
+    const auto _lock = RaftLockGuard::new_(&server.mtx_);
+    bool stopped = server.stop_.load(rusty::sync::atomic::Ordering::Acquire);
+    bool sender_is_current_voter = ((rusty::detail::deref_if_pointer_like(leader_site_id) != rusty::detail::deref_if_pointer_like(RAFT_SERVER_INVALID_SITE_ID)) && (rusty::detail::deref_if_pointer_like(leader_site_id) != rusty::detail::deref_if_pointer_like(server.site_id_))) && server.IsConfigMember(std::move(leader_site_id));
+    rusty::ffi::c_void* const handle = const_cast<rusty::ffi::c_void*>(reinterpret_cast<const rusty::ffi::c_void*>(static_cast<server_h::RaftServerBase*>(rusty::detail::ptr_or_addr(server))));
+    const AppendReport report = raft_on_append_entries(rusty::detail::deref_if_pointer_like(server.state_), handle, cmd, std::move(stopped), std::move(sender_is_current_voter), std::move(cmd_has_value), std::move(leader_current_term), std::move(leader_site_id), std::move(leader_prev_log_index), std::move(leader_prev_log_term), std::move(leader_commit_index), std::move(leader_next_log_term), follower_append_ok, follower_current_term, follower_last_log_index);
+    if (!stopped && !report.accepted()) {
+        if (report.refused_committed_conflict()) {
+            rusty::raft_log_error_4("[APPEND_REJECT] Site {} refusing conflict at committed index {} (commit_index={}, execute_index={})", server.site_id_, report.conflict_index(), [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.commit_index_); }) { return (__r.commit_index_); } else if constexpr (requires { (__r.commit_index__field); }) { return (__r.commit_index__field); } else if constexpr (requires { ((*__r).commit_index_); }) { return ((*__r).commit_index_); } else { return ((*__r).commit_index__field); } }(server.state_), [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.execute_index_); }) { return (__r.execute_index_); } else if constexpr (requires { (__r.execute_index__field); }) { return (__r.execute_index__field); } else if constexpr (requires { ((*__r).execute_index_); }) { return ((*__r).execute_index_); } else { return ((*__r).execute_index__field); } }(server.state_));
+        } else if (report.unauthoritative()) {
+            rusty::raft_log_warn_6("[APPEND_REJECT] Site {} rejecting unauthoritative AppendEntries sender {} term {} (local_term={} leader={} voter={})", server.site_id_, std::move(leader_site_id), std::move(leader_current_term), [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.current_term_); }) { return (__r.current_term_); } else if constexpr (requires { (__r.current_term__field); }) { return (__r.current_term__field); } else if constexpr (requires { ((*__r).current_term_); }) { return ((*__r).current_term_); } else { return ((*__r).current_term__field); } }(server.state_), [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.current_leader_id_); }) { return (__r.current_leader_id_); } else if constexpr (requires { (__r.current_leader_id__field); }) { return (__r.current_leader_id__field); } else if constexpr (requires { ((*__r).current_leader_id_); }) { return ((*__r).current_leader_id_); } else { return ((*__r).current_leader_id__field); } }(server.state_), std::move(sender_is_current_voter));
+        } else {
+            rusty::raft_log_info_10("[APPEND_REJECT] Site {} rejecting AppendEntries from leader {} - term_ok={} index_ok={} prev_term_ok={} (leaderTerm={} myTerm={} prevIdx={} myLastIdx={} local_prev_term={})", server.site_id_, std::move(leader_site_id), report.term_ok(), report.index_ok(), report.prev_term_ok(), std::move(leader_current_term), [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.current_term_); }) { return (__r.current_term_); } else if constexpr (requires { (__r.current_term__field); }) { return (__r.current_term__field); } else if constexpr (requires { ((*__r).current_term_); }) { return ((*__r).current_term_); } else { return ((*__r).current_term__field); } }(server.state_), std::move(leader_prev_log_index), [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }(server.state_).last_index(), report.local_prev_term());
+        }
     }
 }
 
@@ -4968,65 +5292,6 @@ struct HeartbeatRoundState {
 // @unsafe - suspends on the wake gate; false means shutdown, not a timeout
 bool RaftServer::HeartbeatWait() {
   return WaitForReplicationOrHeartbeat(heartbeat_interval_us_);
-}
-
-// @unsafe - takes mtx_, advances the read-index round, recomputes the commit
-// index. Returns false when leadership is not held, which the C++ spelled as
-// `continue` and the Rust driver spells as skipping phases 1 to 3.
-bool RaftServer::HeartbeatPhase0(HeartbeatRoundState& state,
-                                 HeartbeatRoundScope& round) {
-  // PHASE 0's decisions are heartbeat_phase0_locked, a DSL body. What is
-  // left here is the three things that cannot cross: the mutex, the apply
-  // queue, and the debug logging whose level short-circuit must survive.
-  auto& pending_rpcs = state.pending_rpcs;
-  auto& authority_rounds = state.authority_rounds;
-  auto& pending_leader_term = state.pending_leader_term;
-
-  // Sorted, duplicate-free, which is what a std::set iteration yields and
-  // what both the round's membership and the ledger's set-equality check
-  // expect. Built once and used for both.
-  const std::vector<siteid_t> round_members(current_config_.begin(),
-                                            current_config_.end());
-  {
-    std::lock_guard<RaftCheckedMutex> lock(mtx_);
-    const bool leader = IsLeaderLocked();
-    if (leader && heartbeat_round_saturated(state_.heartbeat_round_)) {
-      Log_error("[READ-INDEX] site={} heartbeat round saturated in term {}",
-                site_id_, state_.current_term_);
-    }
-    if (leader) {
-      for (size_t ord = 0; ord < state_.peers_.len(); ord++) {
-        Log_debug("[COMMIT-CALC] match_index_[{}] = {}", peer_sites_[ord],
-                  state_.peers_.match_index(ord));
-      }
-    }
-
-    const Phase0Outcome outcome = heartbeat_phase0_locked(
-        state_, state_.peers_, state_.raft_log_, round, pending_rpcs, authority_rounds,
-        pending_leader_term, round_members, site_id_, leader);
-
-    if (outcome.restart()) {
-      // Was `continue`; the Rust driver starts the next round when this
-      // returns true.
-      return true;
-    }
-    if (outcome.commit_advanced()) {
-      // The apply queue is I/O, so the hand-off stays here; the DECISION to
-      // commit was made above.
-      EnqueueCommittedEntries(outcome.commit_from(), outcome.commit_to());
-    }
-  }
-
-  round.set_authority_inserted(authority_rounds.open(
-      round.round_id(), round_members,
-      HeartbeatAuthority::new_(round.term(), round.nservers(), site_id_)));
-  // state_.heartbeat_round_ never wraps. The only possible duplicate is the
-  // deliberately fail-closed UINT64_MAX saturation generation, which open()
-  // declines rather than overwriting.
-  if (!round.authority_inserted()) {
-    verify(round.round_id() == UINT64_MAX);
-  }
-  return true;
 }
 
 // @unsafe - builds and sends AppendEntries / InstallSnapshot per follower
@@ -5417,49 +5682,6 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
       }
 }
 
-// @unsafe - recomputes the commit index from the new evidence and publishes
-// read-index authority
-void RaftServer::HeartbeatPhase3(HeartbeatRoundState& state,
-                                 HeartbeatRoundScope& round) {
-  // PHASE 3's decisions are heartbeat_phase3_locked, a DSL body: recompute
-  // the commit index now that this round's replies are in, then publish
-  // read-index authority, in that order. What is left here is the mutex, the
-  // apply queue, the replication wake, and the debug logging.
-  auto& authority_rounds = state.authority_rounds;
-  if (!IsLeader()) {
-    return;
-  }
-  bool commit_advanced_after_send = false;
-  {
-    std::lock_guard<RaftCheckedMutex> lock(mtx_);
-    const std::vector<siteid_t> settle_members(current_config_.begin(),
-                                               current_config_.end());
-    const Phase3Outcome outcome = heartbeat_phase3_locked(
-        state_, state_.peers_, state_.raft_log_, authority_rounds, round.nservers(),
-        settle_members, IsLeaderLocked());
-
-    if (outcome.commit().advanced()) {
-      Log_debug("[PHASE3-COMMIT] Advancing state_.commit_index_ {} -> {}",
-                outcome.commit().from_index(), outcome.commit().to_index());
-      EnqueueCommittedEntries(outcome.commit().from_index(),
-                              outcome.commit().to_index());
-      commit_advanced_after_send = true;
-    }
-    if (outcome.confirmed()) {
-      Log_debug("[READ-INDEX] site={} confirmed round={} term={}",
-                site_id_, state_.read_quorum_confirmed_round_,
-                state_.read_quorum_confirmed_term_);
-    }
-  }
-
-  // The AppendEntries messages for this round carried the old commit index.
-  // Latch exactly one prompt follow-up round so followers learn the phase-3
-  // commit without waiting for the periodic heartbeat.
-  if (commit_advanced_after_send) {
-    RequestReplication();
-  }
-}
-
 // The extern "C" trampolines the DSL block declares. Each casts an opaque
 // handle back exactly once, and this is the only place either cast happens.
 extern "C" {
@@ -5490,7 +5712,9 @@ bool raft_heartbeat_wait(rusty::ffi::c_void* server) {
 bool raft_heartbeat_phase0(rusty::ffi::c_void* server,
                            rusty::ffi::c_void* round) {
   HeartbeatRoundState* state = raft_heartbeat_state(round);
-  return raft_heartbeat_server(server)->HeartbeatPhase0(*state, state->scope);
+  return heartbeat_phase0_body(*raft_heartbeat_server(server),
+                               state->pending_rpcs, state->authority_rounds,
+                               state->pending_leader_term, state->scope);
 }
 
 void raft_heartbeat_phase1(rusty::ffi::c_void* server,
@@ -5512,7 +5736,8 @@ void raft_heartbeat_phase2(rusty::ffi::c_void* server,
 void raft_heartbeat_phase3(rusty::ffi::c_void* server,
                            rusty::ffi::c_void* round) {
   HeartbeatRoundState* state = raft_heartbeat_state(round);
-  raft_heartbeat_server(server)->HeartbeatPhase3(*state, state->scope);
+  heartbeat_phase3_body(*raft_heartbeat_server(server),
+                        state->authority_rounds, state->scope);
 }
 
 void raft_heartbeat_epilogue(rusty::ffi::c_void* server) {
@@ -5601,30 +5826,9 @@ void RaftServer::OnRequestVote(const slotid_t& lst_log_idx,
                                const ballot_t& can_term,
                                ballot_t *reply_term,
                                bool_t *vote_granted) {
-  std::lock_guard<RaftCheckedMutex> lock(mtx_);
-  Log_debug("raft receives vote from candidate: {:x}", can_id);
-
-  const bool stopped = stop_.load(rusty::sync::atomic::Ordering::Acquire);
-  if (stopped) {
-    Log_debug("[RAFT-SHUTDOWN] Site {} rejecting RequestVote from {}",
-              site_id_, can_id);
-  }
-
-  const siteid_t invalid = static_cast<siteid_t>(INVALID_SITEID);
-  const bool candidate_is_current_voter =
-      can_id != invalid && can_id != site_id_ &&
-      current_config_.count(can_id) != 0;
-  if (!stopped && (can_term < 0 || lst_log_term < 0 ||
-                   !candidate_is_current_voter)) {
-    Log_warn("[RAFT_VOTE] Site {} rejected malformed/non-voter candidate {} "
-             "term {} last_log_term {} (voter={})",
-             site_id_, can_id, can_term, lst_log_term,
-             candidate_is_current_voter);
-  }
-
-  raft_on_request_vote(state_, static_cast<rusty::ffi::c_void*>(this),
-                       stopped, candidate_is_current_voter,
-                       lst_log_idx, lst_log_term, can_id, can_term,
+  // The body is Rust (on_request_vote_body). This entry point remains
+  // because the rrr service layer calls it by name on RaftServer.
+  on_request_vote_body(*this, lst_log_idx, lst_log_term, can_id, can_term,
                        *reply_term, *vote_granted);
 }
 
@@ -5862,58 +6066,17 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
                                  uint64_t *followerAppendOK,
                                  uint64_t *followerCurrentTerm,
                                  uint64_t *followerLastLogIndex) {
-  std::unique_lock<RaftCheckedMutex> lock(mtx_);
-
-  const bool stopped = stop_.load(rusty::sync::atomic::Ordering::Acquire);
-  const siteid_t invalid = static_cast<siteid_t>(INVALID_SITEID);
-  const bool sender_is_current_voter =
-      leaderSiteId != invalid && leaderSiteId != site_id_ &&
-      current_config_.count(leaderSiteId) != 0;
-
-  // NO DECODE HERE. raft_on_append_entries calls raft_ae_decode_payload
-  // itself, after the stopped check and the authoritative gate -- which is
-  // where the original did this work. Decoding up front would make every
-  // rejected AppendEntries pay a dynamic cast and N refcount bumps on a
-  // path a remote peer drives.
-  const AppendReport report = raft_on_append_entries(
-      state_, static_cast<rusty::ffi::c_void*>(this),
-      static_cast<const rusty::ffi::c_void*>(static_cast<const void*>(&cmd)),
-      stopped, sender_is_current_voter, cmd.has_value(),
-      leaderCurrentTerm, leaderSiteId, leaderPrevLogIndex, leaderPrevLogTerm,
-      leaderCommitIndex, leaderNextLogTerm,
-      *followerAppendOK, *followerCurrentTerm, *followerLastLogIndex);
-
-  if (!stopped && !report.accepted()) {
-    if (report.refused_committed_conflict()) {
-      // A legitimate leader can never conflict with a committed entry.
-      Log_error("[APPEND_REJECT] Site {} refusing conflict at committed "
-                "index {} (commit_index={}, execute_index={})",
-                site_id_, report.conflict_index(), state_.commit_index_,
-                state_.execute_index_);
-    } else if (report.unauthoritative()) {
-      // Dispatch on WHICH gate rejected, not on sender_is_current_voter. A
-      // stale-term or non-authoritative sender that IS a current voter would
-      // otherwise land in the branch below and be reported with
-      // term_ok/index_ok/prev_term_ok all "failed" -- three checks that were
-      // never evaluated on that path.
-      Log_warn("[APPEND_REJECT] Site {} rejecting unauthoritative "
-               "AppendEntries sender {} term {} (local_term={} leader={} "
-               "voter={})",
-               site_id_, leaderSiteId, leaderCurrentTerm, state_.current_term_,
-               state_.current_leader_id_, sender_is_current_voter);
-    } else {
-      Log_info("[APPEND_REJECT] Site {} rejecting AppendEntries from leader {}"
-               " - term_ok={} index_ok={} prev_term_ok={} "
-               "(leaderTerm={} myTerm={} prevIdx={} myLastIdx={} "
-               "local_prev_term={})",
-               site_id_, leaderSiteId, report.term_ok(), report.index_ok(),
-               report.prev_term_ok(), leaderCurrentTerm,
-               state_.current_term_, leaderPrevLogIndex,
-               state_.raft_log_.last_index(), report.local_prev_term());
-    }
-  }
+  // The body is Rust (on_append_entries_body). This entry point remains
+  // because the rrr service layer calls it by name on RaftServer; slot_id
+  // and ballot were unused there too.
   (void)slot_id;
   (void)ballot;
+  on_append_entries_body(
+      *this, leaderCurrentTerm, leaderSiteId, leaderPrevLogIndex,
+      leaderPrevLogTerm, leaderCommitIndex,
+      static_cast<const rusty::ffi::c_void*>(static_cast<const void*>(&cmd)),
+      cmd.has_value(), leaderNextLogTerm, *followerAppendOK,
+      *followerCurrentTerm, *followerLastLogIndex);
 }
 
 
