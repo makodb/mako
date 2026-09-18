@@ -987,8 +987,7 @@ void raft_close_replication_wake_gate(RaftServerBase* self) {
 // Spawns the election-timer fiber. The lambda captures the loop by value --
 // two words -- so nothing here outlives the fiber.
 void raft_spawn_election_timer(RaftServerBase* self, uint64_t wait_int_us) {
-  const ElectionTimerLoop loop = ElectionTimerLoop::new_(
-      static_cast<rusty::ffi::c_void*>(self), wait_int_us);
+  const ElectionTimerLoop loop = ElectionTimerLoop::new_(self, wait_int_us);
   Fiber::create_run([loop]() { loop.run(); });
 }
 
@@ -5662,7 +5661,7 @@ bool RaftServer::HeartbeatWait() {
 extern "C" {
 
 // @unsafe { opaque handle cast }
-static inline RaftServer* raft_heartbeat_server(rusty::ffi::c_void* server) {
+static inline RaftServer* raft_heartbeat_server(RaftServerBase* server) {
   return static_cast<RaftServer*>(server);
 }
 
@@ -5672,19 +5671,11 @@ static inline HeartbeatRoundState* raft_heartbeat_state(
   return static_cast<HeartbeatRoundState*>(round);
 }
 
-void raft_heartbeat_prologue(rusty::ffi::c_void* server) {
-  raft_heartbeat_server(server)->HeartbeatPrologue();
-}
-
-bool raft_heartbeat_looping(rusty::ffi::c_void* server) {
-  return raft_heartbeat_server(server)->HeartbeatLooping();
-}
-
-bool raft_heartbeat_wait(rusty::ffi::c_void* server) {
+bool raft_heartbeat_wait(RaftServerBase* server) {
   return raft_heartbeat_server(server)->HeartbeatWait();
 }
 
-bool raft_heartbeat_phase0(rusty::ffi::c_void* server,
+bool raft_heartbeat_phase0(RaftServerBase* server,
                            rusty::ffi::c_void* round) {
   HeartbeatRoundState* state = raft_heartbeat_state(round);
   return heartbeat_phase0_body(*raft_heartbeat_server(server),
@@ -5692,14 +5683,14 @@ bool raft_heartbeat_phase0(rusty::ffi::c_void* server,
                                state->pending_leader_term, state->scope);
 }
 
-void raft_heartbeat_phase1(rusty::ffi::c_void* server,
+void raft_heartbeat_phase1(RaftServerBase* server,
                            rusty::ffi::c_void* round) {
   HeartbeatRoundState* state = raft_heartbeat_state(round);
   heartbeat_phase1_body(*raft_heartbeat_server(server), state->pending_rpcs,
                         state->authority_rounds, state->scope);
 }
 
-void raft_heartbeat_phase2(rusty::ffi::c_void* server,
+void raft_heartbeat_phase2(RaftServerBase* server,
                            rusty::ffi::c_void* round) {
   HeartbeatRoundState* state = raft_heartbeat_state(round);
   // PHASE 2's body is Rust now (heartbeat_phase2_body, above). The three
@@ -5709,15 +5700,11 @@ void raft_heartbeat_phase2(rusty::ffi::c_void* server,
                         state->authority_rounds, state->scope);
 }
 
-void raft_heartbeat_phase3(rusty::ffi::c_void* server,
+void raft_heartbeat_phase3(RaftServerBase* server,
                            rusty::ffi::c_void* round) {
   HeartbeatRoundState* state = raft_heartbeat_state(round);
   heartbeat_phase3_body(*raft_heartbeat_server(server),
                         state->authority_rounds, state->scope);
-}
-
-void raft_heartbeat_epilogue(rusty::ffi::c_void* server) {
-  raft_heartbeat_server(server)->HeartbeatEpilogue();
 }
 
 }  // extern "C"
@@ -5726,8 +5713,7 @@ void raft_heartbeat_epilogue(rusty::ffi::c_void* server) {
 void RaftServer::HeartbeatLoop() {
   HeartbeatRoundState round;
   const HeartbeatDriver driver = HeartbeatDriver::new_(
-      static_cast<rusty::ffi::c_void*>(this),
-      static_cast<rusty::ffi::c_void*>(&round));
+      this, static_cast<rusty::ffi::c_void*>(&round));
   driver.run();
 }
 
@@ -5761,12 +5747,6 @@ RaftServer::~RaftServer() {
       partition_id_, loc_id_, n_prepare_, n_accept_, n_commit_);
 }
 
-
-bool RaftServer::RequestVoteFromElectionTimer(
-    uint64_t expected_generation) {
-  return RequestVoteImpl(/*timer_guarded=*/true,
-                         expected_generation);
-}
 
 // @unsafe - calls @safe doVote, external calls marked @external [safe]
 // The trampolines raft_on_request_vote calls back through. Each casts the
@@ -5824,13 +5804,6 @@ bool RaftServer::ElectionLoopWait(uint64_t timeout_us) {
   return WaitForElectionTimeoutOrShutdown(timeout_us);
 }
 
-// @unsafe - dispatches through the vtable; the Rust loop re-checks stop_
-// immediately before calling, because a collapsed vtable after destruction is
-// the hazard this guards.
-void RaftServer::ElectionLoopRequestVote(uint64_t generation) {
-  RequestVoteFromElectionTimer(generation);
-}
-
 // The extern "C" trampolines the DSL block declares. Each casts the opaque
 // handle back exactly once. This is the only place the cast happens, which is
 // what makes "Rust never dereferences the server" a checkable property rather
@@ -5838,46 +5811,12 @@ void RaftServer::ElectionLoopRequestVote(uint64_t generation) {
 extern "C" {
 
 // @unsafe { opaque handle cast }
-static inline RaftServer* raft_election_server(rusty::ffi::c_void* server) {
+static inline RaftServer* raft_election_server(RaftServerBase* server) {
   return static_cast<RaftServer*>(server);
 }
 
-bool raft_election_stopped(rusty::ffi::c_void* server) {
-  return raft_election_server(server)->ElectionLoopStopped();
-}
-
-bool raft_election_is_voting(rusty::ffi::c_void* server) {
-  return raft_election_server(server)->ElectionLoopVoting();
-}
-
-uint64_t raft_election_random_delay(rusty::ffi::c_void* server) {
-  return raft_election_server(server)->ElectionLoopRandomDelay();
-}
-
-bool raft_election_wait(rusty::ffi::c_void* server, uint64_t timeout_us) {
+bool raft_election_wait(RaftServerBase* server, uint64_t timeout_us) {
   return raft_election_server(server)->ElectionLoopWait(timeout_us);
-}
-
-ElectionTick raft_election_gather(rusty::ffi::c_void* server) {
-  return raft_election_server(server)->ElectionLoopGather();
-}
-
-void raft_election_log_start(rusty::ffi::c_void* server) {
-  raft_election_server(server)->ElectionLoopLogStart();
-}
-
-void raft_election_log_fired(rusty::ffi::c_void* server,
-                             const ElectionTick& tick) {
-  raft_election_server(server)->ElectionLoopLogFired(tick);
-}
-
-void raft_election_request_vote(rusty::ffi::c_void* server,
-                                uint64_t generation) {
-  raft_election_server(server)->ElectionLoopRequestVote(generation);
-}
-
-void raft_election_set_running(rusty::ffi::c_void* server, bool running) {
-  raft_election_server(server)->ElectionLoopSetRunning(running);
 }
 
 }  // extern "C"

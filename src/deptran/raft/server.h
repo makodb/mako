@@ -2053,81 +2053,9 @@ impl ElectionTick {
     pub fn term(&self) -> u64 { self.term_ }
     pub fn vote_for(&self) -> u16 { self.vote_for_ }
 }
-
-pub struct ElectionTimerLoop {
-    server_: *mut core::ffi::c_void,
-    wait_int_us_: u64,
-}
-
-impl ElectionTimerLoop {
-    pub fn new(server: *mut core::ffi::c_void, wait_int_us: u64) -> ElectionTimerLoop {
-        ElectionTimerLoop { server_: server, wait_int_us_: wait_int_us }
-    }
-
-    // The body of the fiber. Structurally identical to the C++ it replaces:
-    // wait a randomised sub-interval, gather under the lock, and if the
-    // timeout fired, campaign and then wait out the vote before looping.
-    pub fn run(&self) {
-        unsafe { raft_election_log_start(self.server_) };
-        while !unsafe { raft_election_stopped(self.server_) } {
-            let delay = unsafe { raft_election_random_delay(self.server_) };
-            // Unlike a plain sleep this is interrupted by shutdown, so a
-            // false return means "stop", not "timed out".
-            if !unsafe { raft_election_wait(self.server_, delay) } {
-                break;
-            }
-            let tick = unsafe { raft_election_gather(self.server_) };
-            if tick.fired() {
-                unsafe { raft_election_log_fired(self.server_, &tick) };
-                // Re-check before campaigning: RequestVote reaches through a
-                // vtable that a concurrent destructor may already have
-                // collapsed.
-                if unsafe { raft_election_stopped(self.server_) } {
-                    break;
-                }
-                unsafe { raft_election_request_vote(self.server_, tick.generation()) };
-                if !self.await_vote_settled() {
-                    break;
-                }
-            }
-        }
-        unsafe { raft_election_set_running(self.server_, false) };
-    }
-
-    // Returns true when voting finished normally, false when shutdown cut it
-    // short. The C++ spelled both as `break` out of the inner loop and let the
-    // outer `while (!stop_)` sort them out; naming the two outcomes is the one
-    // place this reads differently from the original, and the observable
-    // behaviour is the same.
-    fn await_vote_settled(&self) -> bool {
-        loop {
-            if !unsafe { raft_election_is_voting(self.server_) } {
-                return true;
-            }
-            rusty::ReactorFiber::sleep(self.wait_int_us_);
-            if unsafe { raft_election_stopped(self.server_) } {
-                return false;
-            }
-        }
-    }
-}
-
-// The C++ side. Each takes the opaque handle and casts it back exactly once.
-unsafe extern "C" {
-    fn raft_election_stopped(server: *mut core::ffi::c_void) -> bool;
-    fn raft_election_is_voting(server: *mut core::ffi::c_void) -> bool;
-    fn raft_election_random_delay(server: *mut core::ffi::c_void) -> u64;
-    fn raft_election_wait(server: *mut core::ffi::c_void, timeout_us: u64) -> bool;
-    fn raft_election_gather(server: *mut core::ffi::c_void) -> ElectionTick;
-    fn raft_election_log_start(server: *mut core::ffi::c_void);
-    fn raft_election_log_fired(server: *mut core::ffi::c_void, tick: &ElectionTick);
-    fn raft_election_request_vote(server: *mut core::ffi::c_void, generation: u64);
-    fn raft_election_set_running(server: *mut core::ffi::c_void, running: bool);
-}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.election_timer version=1 rust_sha256=22ace867d33370be4652baeb5ab6ce64294dfdb0fcb9053015137c8f5a210c3e*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.election_timer version=1 rust_sha256=516201d4269a31b64f90e904dc70808f7a0124ca4a857210f17ea5960f23d22b*/
 struct ElectionTick;
-struct ElectionTimerLoop;
 
 struct ElectionTick {
     uint64_t time_elapsed_;
@@ -2150,27 +2078,6 @@ struct ElectionTick {
     static constexpr bool is_send = true;
     static constexpr bool is_sync = true;
 };
-
-struct ElectionTimerLoop {
-    rusty::ffi::c_void* server_;
-    uint64_t wait_int_us_;
-
-    static ElectionTimerLoop new_(rusty::ffi::c_void* server, uint64_t wait_int_us);
-    void run() const;
-    bool await_vote_settled() const;
-};
-
-extern "C" {
-    bool raft_election_stopped(rusty::ffi::c_void* server);
-    bool raft_election_is_voting(rusty::ffi::c_void* server);
-    uint64_t raft_election_random_delay(rusty::ffi::c_void* server);
-    bool raft_election_wait(rusty::ffi::c_void* server, uint64_t timeout_us);
-    ElectionTick raft_election_gather(rusty::ffi::c_void* server);
-    void raft_election_log_start(rusty::ffi::c_void* server);
-    void raft_election_log_fired(rusty::ffi::c_void* server, const ElectionTick& tick);
-    void raft_election_request_vote(rusty::ffi::c_void* server, uint64_t generation);
-    void raft_election_set_running(rusty::ffi::c_void* server, bool running);
-}
 
 
 inline ElectionTick ElectionTick::new_(uint64_t time_elapsed, uint64_t election_timeout, uint64_t heartbeat_time, uint64_t generation, uint64_t term, uint16_t vote_for, bool fired) {
@@ -2204,175 +2111,8 @@ inline uint64_t ElectionTick::term() const {
 inline uint16_t ElectionTick::vote_for() const {
     return this->vote_for_;
 }
-
-inline ElectionTimerLoop ElectionTimerLoop::new_(rusty::ffi::c_void* server, uint64_t wait_int_us) {
-    return ElectionTimerLoop{.server_ = server, .wait_int_us_ = std::move(wait_int_us)};
-}
-
-inline void ElectionTimerLoop::run() const {
-    // @unsafe
-    {
-        raft_election_log_start(this->server_);
-    }
-    while (!raft_election_stopped(this->server_)) {
-        auto delay = raft_election_random_delay(this->server_);
-        if (!raft_election_wait(this->server_, std::move(delay))) {
-            break;
-        }
-        const auto tick = raft_election_gather(this->server_);
-        if (tick.fired()) {
-            // @unsafe
-            {
-                raft_election_log_fired(this->server_, tick);
-            }
-            if (raft_election_stopped(this->server_)) {
-                break;
-            }
-            // @unsafe
-            {
-                raft_election_request_vote(this->server_, tick.generation());
-            }
-            if (!this->await_vote_settled()) {
-                break;
-            }
-        }
-    }
-    // @unsafe
-    {
-        raft_election_set_running(this->server_, false);
-    }
-}
-
-inline bool ElectionTimerLoop::await_vote_settled() const {
-    while (true) {
-        if (!raft_election_is_voting(this->server_)) {
-            return true;
-        }
-        rusty::ReactorFiber::sleep(this->wait_int_us_);
-        if (raft_election_stopped(this->server_)) {
-            return false;
-        }
-    }
-}
 /*RUSTYCPP:GEN-END id=raft_server.election_timer*/
 
-// The heartbeat loop, owned by Rust.
-//
-// Same shape as ElectionTimerLoop above and for the same reason: the outer
-// while, the lifecycle and the continuation decision are Rust; everything
-// that touches shared RaftServer state is a C++ kernel behind an opaque
-// handle. Two handles here rather than one, because the round-carried state
-// (the pending-RPC table, the authority generations, the leader-term latch)
-// outlives a round but not the loop, and holds unique_ptr and wire types that
-// have no DSL spelling. Rust carries it and hands it back; it never looks in.
-#if RUSTYCPP_RUST
-pub struct HeartbeatDriver {
-    server_: *mut core::ffi::c_void,
-    round_: *mut core::ffi::c_void,
-}
-
-impl HeartbeatDriver {
-    pub fn new(server: *mut core::ffi::c_void,
-               round: *mut core::ffi::c_void) -> HeartbeatDriver {
-        HeartbeatDriver { server_: server, round_: round }
-    }
-
-    // decide -> emit -> collect -> decide, which is the shape the C++
-    // already had as four comment-delimited phases. It is now the shape of
-    // the Rust that sequences them.
-    pub fn run(&self) {
-        unsafe { raft_heartbeat_prologue(self.server_) };
-        while unsafe { raft_heartbeat_looping(self.server_) } {
-            // The wake gate returns false on shutdown rather than on timeout.
-            if !unsafe { raft_heartbeat_wait(self.server_) } {
-                break;
-            }
-            // PHASE 0 declines the round when leadership is not held. The C++
-            // spelled that `continue`.
-            if !unsafe { raft_heartbeat_phase0(self.server_, self.round_) } {
-                continue;
-            }
-            unsafe { raft_heartbeat_phase1(self.server_, self.round_) };
-            unsafe { raft_heartbeat_phase2(self.server_, self.round_) };
-            unsafe { raft_heartbeat_phase3(self.server_, self.round_) };
-        }
-        unsafe { raft_heartbeat_epilogue(self.server_) };
-    }
-}
-
-unsafe extern "C" {
-    fn raft_heartbeat_prologue(server: *mut core::ffi::c_void);
-    fn raft_heartbeat_looping(server: *mut core::ffi::c_void) -> bool;
-    fn raft_heartbeat_wait(server: *mut core::ffi::c_void) -> bool;
-    fn raft_heartbeat_phase0(server: *mut core::ffi::c_void,
-                             round: *mut core::ffi::c_void) -> bool;
-    fn raft_heartbeat_phase1(server: *mut core::ffi::c_void,
-                             round: *mut core::ffi::c_void);
-    fn raft_heartbeat_phase2(server: *mut core::ffi::c_void,
-                             round: *mut core::ffi::c_void);
-    fn raft_heartbeat_phase3(server: *mut core::ffi::c_void,
-                             round: *mut core::ffi::c_void);
-    fn raft_heartbeat_epilogue(server: *mut core::ffi::c_void);
-}
-#endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_driver version=1 rust_sha256=d45c8272767dbc00023a8d7680890f9c5d788b549fe36e71c5fb7cae1d0d95df*/
-struct HeartbeatDriver;
-
-struct HeartbeatDriver {
-    rusty::ffi::c_void* server_;
-    rusty::ffi::c_void* round_;
-
-    static HeartbeatDriver new_(rusty::ffi::c_void* server, rusty::ffi::c_void* round);
-    void run() const;
-};
-
-extern "C" {
-    void raft_heartbeat_prologue(rusty::ffi::c_void* server);
-    bool raft_heartbeat_looping(rusty::ffi::c_void* server);
-    bool raft_heartbeat_wait(rusty::ffi::c_void* server);
-    bool raft_heartbeat_phase0(rusty::ffi::c_void* server, rusty::ffi::c_void* round);
-    void raft_heartbeat_phase1(rusty::ffi::c_void* server, rusty::ffi::c_void* round);
-    void raft_heartbeat_phase2(rusty::ffi::c_void* server, rusty::ffi::c_void* round);
-    void raft_heartbeat_phase3(rusty::ffi::c_void* server, rusty::ffi::c_void* round);
-    void raft_heartbeat_epilogue(rusty::ffi::c_void* server);
-}
-
-
-inline HeartbeatDriver HeartbeatDriver::new_(rusty::ffi::c_void* server, rusty::ffi::c_void* round) {
-    return HeartbeatDriver{.server_ = server, .round_ = round};
-}
-
-inline void HeartbeatDriver::run() const {
-    // @unsafe
-    {
-        raft_heartbeat_prologue(this->server_);
-    }
-    while (raft_heartbeat_looping(this->server_)) {
-        if (!raft_heartbeat_wait(this->server_)) {
-            break;
-        }
-        if (!raft_heartbeat_phase0(this->server_, this->round_)) {
-            continue;
-        }
-        // @unsafe
-        {
-            raft_heartbeat_phase1(this->server_, this->round_);
-        }
-        // @unsafe
-        {
-            raft_heartbeat_phase2(this->server_, this->round_);
-        }
-        // @unsafe
-        {
-            raft_heartbeat_phase3(this->server_, this->round_);
-        }
-    }
-    // @unsafe
-    {
-        raft_heartbeat_epilogue(this->server_);
-    }
-}
-/*RUSTYCPP:GEN-END id=raft_server.heartbeat_driver*/
 
 // A std::mutex that remembers which thread holds it, so re-entering it
 // aborts with a message instead of hanging.
@@ -3103,6 +2843,15 @@ impl RaftServerBase {
             .store(false, rusty::sync::atomic::Ordering::Release);
         self.heartbeat_loop_running_
             .store(false, rusty::sync::atomic::Ordering::Release);
+    }
+
+    // @unsafe - the campaign the election timer starts. Timer-only entry:
+    // it carries the reset generation observed at expiry, and the first
+    // RequestVote state lock revalidates it immediately before term++.
+    pub fn RequestVoteFromElectionTimer(&mut self, expected_generation: u64)
+        -> bool
+    {
+        self.RequestVoteImpl(true, expected_generation)
     }
 
     // @safe - acquire load; the C++ read it the same way
@@ -5089,7 +4838,7 @@ impl TxLogServer for RaftServerBase {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=bb564689efb9df9fe92149eda0cdafe3596b148e0497475c75231d411cb3f290*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=4e5ed6567d2703be56ac7f111e68a59581278cb96da412bbf6cf0814ebf8f0f6*/
 struct RaftVoteOutcome;
 struct RaftServerBase;
 
@@ -5231,6 +4980,7 @@ struct RaftServerBase : public TxLogServer {
     uint16_t GetLeaderHint();
     bool HeartbeatLooping() const;
     void HeartbeatEpilogue();
+    bool RequestVoteFromElectionTimer(uint64_t expected_generation);
     bool ElectionLoopStopped() const;
     bool ElectionLoopVoting();
     void ElectionLoopSetRunning(bool running);
@@ -5401,6 +5151,10 @@ inline bool RaftServerBase::HeartbeatLooping() const {
 inline void RaftServerBase::HeartbeatEpilogue() {
     this->looping_.store(false, rusty::sync::atomic::Ordering::Release);
     this->heartbeat_loop_running_.store(false, rusty::sync::atomic::Ordering::Release);
+}
+
+inline bool RaftServerBase::RequestVoteFromElectionTimer(uint64_t expected_generation) {
+    return this->RequestVoteImpl(true, std::move(expected_generation));
 }
 
 inline bool RaftServerBase::ElectionLoopStopped() const {
@@ -6529,6 +6283,268 @@ inline void RaftServerBase::reg_learner_action(rusty::LearnerAction learner_acti
     this->app_next_ = std::move(learner_action);
 }
 /*RUSTYCPP:GEN-END id=raft_server.server_state*/
+
+#if RUSTYCPP_RUST
+// The election-timer fiber, owned by Rust.
+//
+// It sits after RaftServerBase rather than beside ElectionTick because it
+// now holds a TYPED pointer to the server and calls its methods directly.
+// Seven of the nine C++ kernels it used to go through are gone: the
+// gather, the two logs, the two state reads, the random delay and the
+// running flag are all RaftServerBase methods. The two that remain suspend
+// on the wake gate and dispatch RequestVote, both still C++.
+pub struct ElectionTimerLoop {
+    server_: *mut RaftServerBase,
+    wait_int_us_: u64,
+}
+
+impl ElectionTimerLoop {
+    pub fn new(server: *mut RaftServerBase, wait_int_us: u64) -> ElectionTimerLoop {
+        ElectionTimerLoop { server_: server, wait_int_us_: wait_int_us }
+    }
+
+    // The body of the fiber. Structurally identical to the C++ it replaces:
+    // wait a randomised sub-interval, gather under the lock, and if the
+    // timeout fired, campaign and then wait out the vote before looping.
+    pub fn run(&self) {
+        unsafe { (*self.server_).ElectionLoopLogStart() };
+        while !unsafe { (*self.server_).ElectionLoopStopped() } {
+            let delay = unsafe { (*self.server_).ElectionLoopRandomDelay() };
+            // Unlike a plain sleep this is interrupted by shutdown, so a
+            // false return means "stop", not "timed out".
+            if !unsafe { raft_election_wait(self.server_, delay) } {
+                break;
+            }
+            let tick = unsafe { (*self.server_).ElectionLoopGather() };
+            if tick.fired() {
+                unsafe { (*self.server_).ElectionLoopLogFired(&tick) };
+                // Re-check before campaigning: RequestVote reaches through a
+                // vtable that a concurrent destructor may already have
+                // collapsed.
+                if unsafe { (*self.server_).ElectionLoopStopped() } {
+                    break;
+                }
+                unsafe {
+                    (*self.server_)
+                        .RequestVoteFromElectionTimer(tick.generation())
+                };
+                if !self.await_vote_settled() {
+                    break;
+                }
+            }
+        }
+        unsafe { (*self.server_).ElectionLoopSetRunning(false) };
+    }
+
+    // Returns true when voting finished normally, false when shutdown cut it
+    // short. The C++ spelled both as `break` out of the inner loop and let the
+    // outer `while (!stop_)` sort them out; naming the two outcomes is the one
+    // place this reads differently from the original, and the observable
+    // behaviour is the same.
+    fn await_vote_settled(&self) -> bool {
+        loop {
+            if !unsafe { (*self.server_).ElectionLoopVoting() } {
+                return true;
+            }
+            rusty::ReactorFiber::sleep(self.wait_int_us_);
+            if unsafe { (*self.server_).ElectionLoopStopped() } {
+                return false;
+            }
+        }
+    }
+}
+
+// What is left of the C++ side: one wake-gate suspension.
+#[allow(improper_ctypes)]
+unsafe extern "C" {
+    fn raft_election_wait(server: *mut RaftServerBase, timeout_us: u64) -> bool;
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_server.election_timer_loop version=1 rust_sha256=11118d1df7f8646bf41526a8663904b625fa0ceb79c6ee55eed77b1e68479868*/
+struct ElectionTimerLoop;
+
+struct ElectionTimerLoop {
+    RaftServerBase* server_;
+    uint64_t wait_int_us_;
+
+    static ElectionTimerLoop new_(RaftServerBase* server, uint64_t wait_int_us);
+    void run() const;
+    bool await_vote_settled() const;
+};
+
+extern "C" {
+    bool raft_election_wait(RaftServerBase* server, uint64_t timeout_us);
+}
+
+
+inline ElectionTimerLoop ElectionTimerLoop::new_(RaftServerBase* server, uint64_t wait_int_us) {
+    return ElectionTimerLoop{.server_ = server, .wait_int_us_ = std::move(wait_int_us)};
+}
+
+inline void ElectionTimerLoop::run() const {
+    // @unsafe
+    {
+        ((*this->server_)).ElectionLoopLogStart();
+    }
+    while (rusty::detail::rust_not(((*this->server_)).ElectionLoopStopped())) {
+        auto delay = ((*this->server_)).ElectionLoopRandomDelay();
+        if (!raft_election_wait(this->server_, std::move(delay))) {
+            break;
+        }
+        const auto tick = ((*this->server_)).ElectionLoopGather();
+        if (tick.fired()) {
+            // @unsafe
+            {
+                ((*this->server_)).ElectionLoopLogFired(tick);
+            }
+            if (((*this->server_)).ElectionLoopStopped()) {
+                break;
+            }
+            // @unsafe
+            {
+                ((*this->server_)).RequestVoteFromElectionTimer(tick.generation());
+            }
+            if (!this->await_vote_settled()) {
+                break;
+            }
+        }
+    }
+    // @unsafe
+    {
+        ((*this->server_)).ElectionLoopSetRunning(false);
+    }
+}
+
+inline bool ElectionTimerLoop::await_vote_settled() const {
+    while (true) {
+        if (rusty::detail::rust_not(((*this->server_)).ElectionLoopVoting())) {
+            return true;
+        }
+        rusty::ReactorFiber::sleep(this->wait_int_us_);
+        if (((*this->server_)).ElectionLoopStopped()) {
+            return false;
+        }
+    }
+}
+/*RUSTYCPP:GEN-END id=raft_server.election_timer_loop*/
+
+
+// The heartbeat loop, owned by Rust.
+//
+// Same shape as ElectionTimerLoop above and for the same reason: the outer
+// while, the lifecycle and the continuation decision are Rust; everything
+// that touches shared RaftServer state is a C++ kernel behind an opaque
+// handle. Two handles here rather than one, because the round-carried state
+// (the pending-RPC table, the authority generations, the leader-term latch)
+// outlives a round but not the loop, and holds unique_ptr and wire types that
+// have no DSL spelling. Rust carries it and hands it back; it never looks in.
+#if RUSTYCPP_RUST
+pub struct HeartbeatDriver {
+    server_: *mut RaftServerBase,
+    round_: *mut core::ffi::c_void,
+}
+
+impl HeartbeatDriver {
+    pub fn new(server: *mut RaftServerBase,
+               round: *mut core::ffi::c_void) -> HeartbeatDriver {
+        HeartbeatDriver { server_: server, round_: round }
+    }
+
+    // decide -> emit -> collect -> decide, which is the shape the C++
+    // already had as four comment-delimited phases. It is now the shape of
+    // the Rust that sequences them.
+    pub fn run(&self) {
+        unsafe { (*self.server_).HeartbeatPrologue() };
+        while unsafe { (*self.server_).HeartbeatLooping() } {
+            // The wake gate returns false on shutdown rather than on timeout.
+            if !unsafe { raft_heartbeat_wait(self.server_) } {
+                break;
+            }
+            // PHASE 0 declines the round when leadership is not held. The C++
+            // spelled that `continue`.
+            if !unsafe { raft_heartbeat_phase0(self.server_, self.round_) } {
+                continue;
+            }
+            unsafe { raft_heartbeat_phase1(self.server_, self.round_) };
+            unsafe { raft_heartbeat_phase2(self.server_, self.round_) };
+            unsafe { raft_heartbeat_phase3(self.server_, self.round_) };
+        }
+        unsafe { (*self.server_).HeartbeatEpilogue() };
+    }
+}
+
+// What is left of the C++ half. The prologue, the looping check and the
+// epilogue used to be here too; they are RaftServerBase methods now, so the
+// driver calls them directly. The four that remain take the round-carried
+// state, which is hand-written C++ this block cannot name.
+#[allow(improper_ctypes)]
+unsafe extern "C" {
+    fn raft_heartbeat_wait(server: *mut RaftServerBase) -> bool;
+    fn raft_heartbeat_phase0(server: *mut RaftServerBase,
+                             round: *mut core::ffi::c_void) -> bool;
+    fn raft_heartbeat_phase1(server: *mut RaftServerBase,
+                             round: *mut core::ffi::c_void);
+    fn raft_heartbeat_phase2(server: *mut RaftServerBase,
+                             round: *mut core::ffi::c_void);
+    fn raft_heartbeat_phase3(server: *mut RaftServerBase,
+                             round: *mut core::ffi::c_void);
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_driver version=1 rust_sha256=5fce1ae5bba432982ec3ff5c3b388d2f88a2bad7ad82b0c17a6a4d04db552649*/
+struct HeartbeatDriver;
+
+struct HeartbeatDriver {
+    RaftServerBase* server_;
+    rusty::ffi::c_void* round_;
+
+    static HeartbeatDriver new_(RaftServerBase* server, rusty::ffi::c_void* round);
+    void run() const;
+};
+
+extern "C" {
+    bool raft_heartbeat_wait(RaftServerBase* server);
+    bool raft_heartbeat_phase0(RaftServerBase* server, rusty::ffi::c_void* round);
+    void raft_heartbeat_phase1(RaftServerBase* server, rusty::ffi::c_void* round);
+    void raft_heartbeat_phase2(RaftServerBase* server, rusty::ffi::c_void* round);
+    void raft_heartbeat_phase3(RaftServerBase* server, rusty::ffi::c_void* round);
+}
+
+
+inline HeartbeatDriver HeartbeatDriver::new_(RaftServerBase* server, rusty::ffi::c_void* round) {
+    return HeartbeatDriver{.server_ = server, .round_ = round};
+}
+
+inline void HeartbeatDriver::run() const {
+    // @unsafe
+    {
+        ((*this->server_)).HeartbeatPrologue();
+    }
+    while (((*this->server_)).HeartbeatLooping()) {
+        if (!raft_heartbeat_wait(this->server_)) {
+            break;
+        }
+        if (!raft_heartbeat_phase0(this->server_, this->round_)) {
+            continue;
+        }
+        // @unsafe
+        {
+            raft_heartbeat_phase1(this->server_, this->round_);
+        }
+        // @unsafe
+        {
+            raft_heartbeat_phase2(this->server_, this->round_);
+        }
+        // @unsafe
+        {
+            raft_heartbeat_phase3(this->server_, this->round_);
+        }
+    }
+    // @unsafe
+    {
+        ((*this->server_)).HeartbeatEpilogue();
+    }
+}
+/*RUSTYCPP:GEN-END id=raft_server.heartbeat_driver*/
 class RaftServer : public RaftServerBase {
  public:
   // ==========================================================================
@@ -6544,8 +6560,6 @@ class RaftServer : public RaftServerBase {
 
   // @unsafe - suspends this fiber on the wake gate's election waiter
   bool ElectionLoopWait(uint64_t timeout_us);
-  // @unsafe - dispatches through the vtable; caller re-checks stop_ first
-  void ElectionLoopRequestVote(uint64_t generation);
 
   // ==========================================================================
   // HEARTBEAT LOOP KERNELS
@@ -6664,9 +6678,6 @@ class RaftServer : public RaftServerBase {
 
   // ============================================================================
 
-  // Timer-only entry retains the reset generation observed at expiry. The
-  // first RequestVote state lock revalidates it immediately before term++.
-  bool RequestVoteFromElectionTimer(uint64_t expected_generation);
 
  public:  // for the kernel bridge (server.cc); private again once converted
   // @safe - external calls marked @external, core replication loop

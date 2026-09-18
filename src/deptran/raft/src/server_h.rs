@@ -967,126 +967,6 @@ impl ElectionTick {
     pub fn vote_for(&self) -> u16 { self.vote_for_ }
 }
 
-pub struct ElectionTimerLoop {
-    server_: *mut core::ffi::c_void,
-    wait_int_us_: u64,
-}
-
-impl ElectionTimerLoop {
-    pub fn new(server: *mut core::ffi::c_void, wait_int_us: u64) -> ElectionTimerLoop {
-        ElectionTimerLoop { server_: server, wait_int_us_: wait_int_us }
-    }
-
-    // The body of the fiber. Structurally identical to the C++ it replaces:
-    // wait a randomised sub-interval, gather under the lock, and if the
-    // timeout fired, campaign and then wait out the vote before looping.
-    pub fn run(&self) {
-        unsafe { raft_election_log_start(self.server_) };
-        while !unsafe { raft_election_stopped(self.server_) } {
-            let delay = unsafe { raft_election_random_delay(self.server_) };
-            // Unlike a plain sleep this is interrupted by shutdown, so a
-            // false return means "stop", not "timed out".
-            if !unsafe { raft_election_wait(self.server_, delay) } {
-                break;
-            }
-            let tick = unsafe { raft_election_gather(self.server_) };
-            if tick.fired() {
-                unsafe { raft_election_log_fired(self.server_, &tick) };
-                // Re-check before campaigning: RequestVote reaches through a
-                // vtable that a concurrent destructor may already have
-                // collapsed.
-                if unsafe { raft_election_stopped(self.server_) } {
-                    break;
-                }
-                unsafe { raft_election_request_vote(self.server_, tick.generation()) };
-                if !self.await_vote_settled() {
-                    break;
-                }
-            }
-        }
-        unsafe { raft_election_set_running(self.server_, false) };
-    }
-
-    // Returns true when voting finished normally, false when shutdown cut it
-    // short. The C++ spelled both as `break` out of the inner loop and let the
-    // outer `while (!stop_)` sort them out; naming the two outcomes is the one
-    // place this reads differently from the original, and the observable
-    // behaviour is the same.
-    fn await_vote_settled(&self) -> bool {
-        loop {
-            if !unsafe { raft_election_is_voting(self.server_) } {
-                return true;
-            }
-            rusty::ReactorFiber::sleep(self.wait_int_us_);
-            if unsafe { raft_election_stopped(self.server_) } {
-                return false;
-            }
-        }
-    }
-}
-
-// The C++ side. Each takes the opaque handle and casts it back exactly once.
-unsafe extern "C" {
-    fn raft_election_stopped(server: *mut core::ffi::c_void) -> bool;
-    fn raft_election_is_voting(server: *mut core::ffi::c_void) -> bool;
-    fn raft_election_random_delay(server: *mut core::ffi::c_void) -> u64;
-    fn raft_election_wait(server: *mut core::ffi::c_void, timeout_us: u64) -> bool;
-    fn raft_election_gather(server: *mut core::ffi::c_void) -> ElectionTick;
-    fn raft_election_log_start(server: *mut core::ffi::c_void);
-    fn raft_election_log_fired(server: *mut core::ffi::c_void, tick: &ElectionTick);
-    fn raft_election_request_vote(server: *mut core::ffi::c_void, generation: u64);
-    fn raft_election_set_running(server: *mut core::ffi::c_void, running: bool);
-}
-
-pub struct HeartbeatDriver {
-    server_: *mut core::ffi::c_void,
-    round_: *mut core::ffi::c_void,
-}
-
-impl HeartbeatDriver {
-    pub fn new(server: *mut core::ffi::c_void,
-               round: *mut core::ffi::c_void) -> HeartbeatDriver {
-        HeartbeatDriver { server_: server, round_: round }
-    }
-
-    // decide -> emit -> collect -> decide, which is the shape the C++
-    // already had as four comment-delimited phases. It is now the shape of
-    // the Rust that sequences them.
-    pub fn run(&self) {
-        unsafe { raft_heartbeat_prologue(self.server_) };
-        while unsafe { raft_heartbeat_looping(self.server_) } {
-            // The wake gate returns false on shutdown rather than on timeout.
-            if !unsafe { raft_heartbeat_wait(self.server_) } {
-                break;
-            }
-            // PHASE 0 declines the round when leadership is not held. The C++
-            // spelled that `continue`.
-            if !unsafe { raft_heartbeat_phase0(self.server_, self.round_) } {
-                continue;
-            }
-            unsafe { raft_heartbeat_phase1(self.server_, self.round_) };
-            unsafe { raft_heartbeat_phase2(self.server_, self.round_) };
-            unsafe { raft_heartbeat_phase3(self.server_, self.round_) };
-        }
-        unsafe { raft_heartbeat_epilogue(self.server_) };
-    }
-}
-
-unsafe extern "C" {
-    fn raft_heartbeat_prologue(server: *mut core::ffi::c_void);
-    fn raft_heartbeat_looping(server: *mut core::ffi::c_void) -> bool;
-    fn raft_heartbeat_wait(server: *mut core::ffi::c_void) -> bool;
-    fn raft_heartbeat_phase0(server: *mut core::ffi::c_void,
-                             round: *mut core::ffi::c_void) -> bool;
-    fn raft_heartbeat_phase1(server: *mut core::ffi::c_void,
-                             round: *mut core::ffi::c_void);
-    fn raft_heartbeat_phase2(server: *mut core::ffi::c_void,
-                             round: *mut core::ffi::c_void);
-    fn raft_heartbeat_phase3(server: *mut core::ffi::c_void,
-                             round: *mut core::ffi::c_void);
-    fn raft_heartbeat_epilogue(server: *mut core::ffi::c_void);
-}
-
 unsafe extern "C" {
     fn raft_mutex_lock(mutex: *mut rusty::RaftCheckedMutex);
     fn raft_mutex_unlock(mutex: *mut rusty::RaftCheckedMutex);
@@ -1489,6 +1369,15 @@ impl RaftServerBase {
             .store(false, rusty::sync::atomic::Ordering::Release);
         self.heartbeat_loop_running_
             .store(false, rusty::sync::atomic::Ordering::Release);
+    }
+
+    // @unsafe - the campaign the election timer starts. Timer-only entry:
+    // it carries the reset generation observed at expiry, and the first
+    // RequestVote state lock revalidates it immediately before term++.
+    pub fn RequestVoteFromElectionTimer(&mut self, expected_generation: u64)
+        -> bool
+    {
+        self.RequestVoteImpl(true, expected_generation)
     }
 
     // @safe - acquire load; the C++ read it the same way
@@ -3473,4 +3362,130 @@ impl TxLogServer for RaftServerBase {
     fn reg_learner_action(&mut self, learner_action: rusty::LearnerAction) {
         self.app_next_ = learner_action;
     }
+}
+
+// The election-timer fiber, owned by Rust.
+//
+// It sits after RaftServerBase rather than beside ElectionTick because it
+// now holds a TYPED pointer to the server and calls its methods directly.
+// Seven of the nine C++ kernels it used to go through are gone: the
+// gather, the two logs, the two state reads, the random delay and the
+// running flag are all RaftServerBase methods. The two that remain suspend
+// on the wake gate and dispatch RequestVote, both still C++.
+pub struct ElectionTimerLoop {
+    server_: *mut RaftServerBase,
+    wait_int_us_: u64,
+}
+
+impl ElectionTimerLoop {
+    pub fn new(server: *mut RaftServerBase, wait_int_us: u64) -> ElectionTimerLoop {
+        ElectionTimerLoop { server_: server, wait_int_us_: wait_int_us }
+    }
+
+    // The body of the fiber. Structurally identical to the C++ it replaces:
+    // wait a randomised sub-interval, gather under the lock, and if the
+    // timeout fired, campaign and then wait out the vote before looping.
+    pub fn run(&self) {
+        unsafe { (*self.server_).ElectionLoopLogStart() };
+        while !unsafe { (*self.server_).ElectionLoopStopped() } {
+            let delay = unsafe { (*self.server_).ElectionLoopRandomDelay() };
+            // Unlike a plain sleep this is interrupted by shutdown, so a
+            // false return means "stop", not "timed out".
+            if !unsafe { raft_election_wait(self.server_, delay) } {
+                break;
+            }
+            let tick = unsafe { (*self.server_).ElectionLoopGather() };
+            if tick.fired() {
+                unsafe { (*self.server_).ElectionLoopLogFired(&tick) };
+                // Re-check before campaigning: RequestVote reaches through a
+                // vtable that a concurrent destructor may already have
+                // collapsed.
+                if unsafe { (*self.server_).ElectionLoopStopped() } {
+                    break;
+                }
+                unsafe {
+                    (*self.server_)
+                        .RequestVoteFromElectionTimer(tick.generation())
+                };
+                if !self.await_vote_settled() {
+                    break;
+                }
+            }
+        }
+        unsafe { (*self.server_).ElectionLoopSetRunning(false) };
+    }
+
+    // Returns true when voting finished normally, false when shutdown cut it
+    // short. The C++ spelled both as `break` out of the inner loop and let the
+    // outer `while (!stop_)` sort them out; naming the two outcomes is the one
+    // place this reads differently from the original, and the observable
+    // behaviour is the same.
+    fn await_vote_settled(&self) -> bool {
+        loop {
+            if !unsafe { (*self.server_).ElectionLoopVoting() } {
+                return true;
+            }
+            rusty::ReactorFiber::sleep(self.wait_int_us_);
+            if unsafe { (*self.server_).ElectionLoopStopped() } {
+                return false;
+            }
+        }
+    }
+}
+
+// What is left of the C++ side: one wake-gate suspension.
+#[allow(improper_ctypes)]
+unsafe extern "C" {
+    fn raft_election_wait(server: *mut RaftServerBase, timeout_us: u64) -> bool;
+}
+
+pub struct HeartbeatDriver {
+    server_: *mut RaftServerBase,
+    round_: *mut core::ffi::c_void,
+}
+
+impl HeartbeatDriver {
+    pub fn new(server: *mut RaftServerBase,
+               round: *mut core::ffi::c_void) -> HeartbeatDriver {
+        HeartbeatDriver { server_: server, round_: round }
+    }
+
+    // decide -> emit -> collect -> decide, which is the shape the C++
+    // already had as four comment-delimited phases. It is now the shape of
+    // the Rust that sequences them.
+    pub fn run(&self) {
+        unsafe { (*self.server_).HeartbeatPrologue() };
+        while unsafe { (*self.server_).HeartbeatLooping() } {
+            // The wake gate returns false on shutdown rather than on timeout.
+            if !unsafe { raft_heartbeat_wait(self.server_) } {
+                break;
+            }
+            // PHASE 0 declines the round when leadership is not held. The C++
+            // spelled that `continue`.
+            if !unsafe { raft_heartbeat_phase0(self.server_, self.round_) } {
+                continue;
+            }
+            unsafe { raft_heartbeat_phase1(self.server_, self.round_) };
+            unsafe { raft_heartbeat_phase2(self.server_, self.round_) };
+            unsafe { raft_heartbeat_phase3(self.server_, self.round_) };
+        }
+        unsafe { (*self.server_).HeartbeatEpilogue() };
+    }
+}
+
+// What is left of the C++ half. The prologue, the looping check and the
+// epilogue used to be here too; they are RaftServerBase methods now, so the
+// driver calls them directly. The four that remain take the round-carried
+// state, which is hand-written C++ this block cannot name.
+#[allow(improper_ctypes)]
+unsafe extern "C" {
+    fn raft_heartbeat_wait(server: *mut RaftServerBase) -> bool;
+    fn raft_heartbeat_phase0(server: *mut RaftServerBase,
+                             round: *mut core::ffi::c_void) -> bool;
+    fn raft_heartbeat_phase1(server: *mut RaftServerBase,
+                             round: *mut core::ffi::c_void);
+    fn raft_heartbeat_phase2(server: *mut RaftServerBase,
+                             round: *mut core::ffi::c_void);
+    fn raft_heartbeat_phase3(server: *mut RaftServerBase,
+                             round: *mut core::ffi::c_void);
 }

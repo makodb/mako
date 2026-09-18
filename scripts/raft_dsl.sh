@@ -60,6 +60,7 @@ EXPECTED_BLOCKS=(
   "src/deptran/raft/server.h|raft_server.commit_status"
   "src/deptran/raft/server.h|raft_server.scalar_decisions"
   "src/deptran/raft/server.h|raft_server.election_timer"
+  "src/deptran/raft/server.h|raft_server.election_timer_loop"
   "src/deptran/raft/server.h|raft_server.heartbeat_driver"
   "src/deptran/raft/server.h|raft_server.log_entry"
   "src/deptran/raft/server.h|raft_server.log_container"
