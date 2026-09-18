@@ -1143,6 +1143,133 @@ bool RaftServer::CreateSnapshotLocked() {
 
 // ============================================================================
 
+// ===========================================================================
+// THE KERNEL BRIDGE
+//
+// RaftServerBase (server.h) is a DSL struct, so its method bodies are Rust.
+// Three things such a body cannot do, and this is where each one lands:
+//
+//   1. Look inside an opaque C++ field. peer_sites_ is a std::vector and
+//      current_config_ a std::set; Rust can hold and move them but not
+//      iterate them.
+//   2. Call a RaftServer method that has not converted yet. These kernels
+//      take RaftServerBase* and static_cast down. That is well defined here
+//      and not a widening of any contract: RaftServerBase is never
+//      instantiated on its own, so every such pointer really does point at a
+//      RaftServer. It is the same downcast the existing raft_* trampolines
+//      already do from void*, spelled with one less erasure.
+//   3. Compile conditionally. #[cfg] is DROPPED SILENTLY inside a DSL block
+//      (scripts/raft_dsl.sh rejects one for that reason), so anything behind
+//      an #ifdef has to keep its preprocessor guard on this side.
+//
+// Every kernel here is expected to disappear as its reason does: (1) when the
+// field converts, (2) when the callee converts, (3) never -- conditional
+// compilation has no Rust spelling in this dialect.
+// ===========================================================================
+extern "C" {
+
+// (1) opaque-field access
+
+// The ordinal peer table, rebuilt whenever the configuration changes.
+// Formerly RaftServer::RebuildPeerTables. CALLER MUST HOLD mtx_.
+void raft_rebuild_peer_tables(RaftServerBase* self, uint64_t next_index) {
+  const std::set<siteid_t>& replication_targets = self->current_config_;
+  self->peer_sites_.clear();
+  for (const auto peer_id : replication_targets) {
+    if (peer_id == self->site_id_) {
+      continue;
+    }
+    self->peer_sites_.push_back(peer_id);
+  }
+  self->state_.peers_.reset(self->peer_sites_.size(), next_index);
+  const size_t expected = replication_targets.size() -
+      static_cast<size_t>(replication_targets.count(self->site_id_) > 0);
+  verify(self->state_.peers_.len() == expected);
+}
+
+// The site id at an ordinal, for the diagnostics that print the peer table.
+uint16_t raft_peer_site_at(const RaftServerBase* self, size_t ordinal) {
+  verify(ordinal < self->peer_sites_.size());
+  return self->peer_sites_[ordinal];
+}
+
+// std::function's bool conversion, and its call.
+bool raft_leader_change_cb_is_set(const RaftServerBase* self) {
+  return static_cast<bool>(self->leader_change_cb_);
+}
+void raft_fire_leader_change(RaftServerBase* self, bool is_leader) {
+  self->leader_change_cb_(is_leader);
+}
+
+// (2) downcalls into RaftServer methods that have not converted
+
+void raft_reset_timer_locked(RaftServerBase* self, const char* reason) {
+  static_cast<RaftServer*>(self)->resetTimerLocked(reason);
+}
+// (misc) the four env-tunable election-timeout knobs, which are ordinary C++
+// free functions above and so need C linkage to be nameable from Rust.
+uint64_t raft_preferred_leader_grace_period_us() {
+  return GetPreferredLeaderGracePeriodUs();
+}
+uint64_t raft_preferred_election_timeout_us() {
+  return GetPreferredElectionTimeoutUs();
+}
+uint64_t raft_non_preferred_grace_election_timeout_us() {
+  return GetNonPreferredGraceElectionTimeoutUs();
+}
+uint64_t raft_non_preferred_steady_election_timeout_us() {
+  return GetNonPreferredSteadyElectionTimeoutUs();
+}
+
+// (3) conditionally compiled regions
+
+// RAFT_LEADER_ELECTION_DEBUG only.
+void raft_log_set_is_leader_entry(const RaftServerBase* self,
+                                  bool prev_is_leader,
+                                  bool new_is_leader) {
+#ifdef RAFT_LEADER_ELECTION_DEBUG
+  Log_info("[RAFT_STATE] setIsLeader invoked site {} (loc {}) term {}: prev_is_leader={} new_is_leader={}",
+           self->site_id_, self->loc_id_, self->state_.current_term_,
+           prev_is_leader, new_is_leader);
+#else
+  (void)self;
+  (void)prev_is_leader;
+  (void)new_is_leader;
+#endif
+}
+
+// Raft only commits prior-term entries after committing one from the current
+// term, so a new leader appends an internal no-op: old client submissions
+// then resolve even when every client is blocked on the former leader. The
+// apply paths consume this protocol entry without invoking the application
+// state machine.
+//
+// Compiled out under RAFT_TEST_CORO, where the lab harness drives the log
+// directly and an unexpected extra entry would fail its index assertions.
+// CALLER MUST HOLD mtx_.
+void raft_append_leader_noop(RaftServerBase* self) {
+#ifndef RAFT_TEST_CORO
+  RaftServer* const server = static_cast<RaftServer*>(self);
+  uint64_t noop_previous_index = 0;
+  uint64_t noop_term = 0;
+  auto noop = rusty::Arc<TpcNoopCommand>::make();
+  const RaftStartResult noop_result = server->SetLocalAppend(
+      janus::Command::pack_aliased<TpcNoopCommand>(std::move(noop)),
+      &noop_term, &noop_previous_index);
+  verify(raft_server_start_was_appended(noop_result));
+  verify(noop_term == self->state_.current_term_);
+  verify(self->state_.raft_log_.last_index() == noop_previous_index + 1);
+  Log_info("[RAFT-NOOP] Site {} appended leader no-op at index {} term {}",
+           self->site_id_, self->state_.raft_log_.last_index(),
+           self->state_.current_term_);
+  server->RequestReplication();
+#else
+  (void)self;
+#endif
+}
+
+}  // extern "C"
+
 RaftServer::RaftServer()
   : replication_wake_gate_(rusty::Arc<ReplicationWakeGate>::make_with(
         []() { return ReplicationWakeGate::new_(); }))
@@ -1246,37 +1373,6 @@ void RaftServer::PrepareForShutdown() {
   if (apply_thread_.joinable()) {
     apply_thread_.join();
   }
-}
-
-// @unsafe - Election timeout calculation (Time::now and RandomGenerator::rand marked safe via @external)
-uint64_t RaftServer::GetElectionTimeout() {
-  // Must be called with mtx_ held. The one caller repo-wide is resetTimer(),
-  // which takes mtx_ before reaching here, so the recursive re-acquisition
-  // that used to sit on this line was a no-op. The configured identity is
-  // still stable for the whole decision -- it is the caller's lock that makes
-  // it so. Tranche 4b.
-  uint64_t current_time = Time::now(true);
-  const uint64_t grace_period_us = GetPreferredLeaderGracePeriodUs();
-  bool in_grace_period = (current_time - startup_timestamp_) < grace_period_us;
-  uint64_t randomized_timeout = 0;
-  const bool preferred_leader_configured =
-      IsPreferredLeaderConfigured(preferred_leader_site_id_);
-
-  if (!preferred_leader_configured) {
-    // Traditional Raft behavior when no preferred leader is configured.
-    randomized_timeout = GetNonPreferredSteadyElectionTimeoutUs();
-  } else if (AmIPreferredLeader()) {
-    randomized_timeout = GetPreferredElectionTimeoutUs();
-  } else if (in_grace_period) {
-    // Startup grace timeout is tunable via env for test stability.
-    randomized_timeout = GetNonPreferredGraceElectionTimeoutUs();
-  } else {
-    randomized_timeout = GetNonPreferredSteadyElectionTimeoutUs();
-  }
-
-  // Memory-only Raft configures no log storage, so the randomized timeout is
-  // the effective election timeout: there is no persistence floor to add.
-  return randomized_timeout;
 }
 
 // Enqueue newly committed entries for the background apply thread.
@@ -1616,136 +1712,6 @@ void RaftServer::Disconnect(const bool disconnect) {
   verify(disconnected_.load(rusty::sync::atomic::Ordering::Acquire) != disconnect);
   commo()->SetNetworkEnabled(!disconnect);
   disconnected_.store(disconnect, rusty::sync::atomic::Ordering::Release);
-}
-
-// @unsafe - Leadership state transition (callbacks and logging wrapped in @unsafe blocks)
-// Must be called with mtx_ held. Every caller reaches here from inside
-// RequestVoteImpl, OnAppendEntries, OnRequestVote (via doVote),
-// OnInstallSnapshot or stepDown, all of which hold mtx_. The sole exception is
-// the RAFT_TEST_CORO line in RaftServer's own constructor, where no other
-// thread can observe the object yet. The recursive re-acquisition removed from
-// this line was therefore always a no-op -- one of the 24 nested acquisitions
-// docs/migration/raft/cpp-refactor-plan.md tranche 4b enumerates.
-void RaftServer::setIsLeader(bool isLeader) {
-  bool prev_is_leader = state_.is_leader_;
-#ifdef RAFT_LEADER_ELECTION_DEBUG
-  Log_info("[RAFT_STATE] setIsLeader invoked site {} (loc {}) term {}: prev_is_leader={} new_is_leader={}",
-           site_id_, loc_id_, state_.current_term_, prev_is_leader, isLeader);
-#endif
-
-  if (isLeader && !prev_is_leader) {
-    // Leadership publication must not proceed once shutdown has begun.
-    const uint64_t publication_term = state_.current_term_;
-    if (stop_.load(rusty::sync::atomic::Ordering::Acquire) ||
-        state_.current_term_ != publication_term) {
-      Log_warn("[RAFT_STATE] Site {} suppressing stale leadership publication "
-               "for term {} (current={}, stopping={})",
-               site_id_, publication_term, state_.current_term_,
-               stop_.load(rusty::sync::atomic::Ordering::Acquire));
-      return;
-    }
-  }
-
-  if (isLeader) {
-    // A heartbeat proof belongs to exactly one leadership term. Reset the
-    // local generation before publishing this server as leader so delayed or
-    // historical acknowledgements cannot prove a quorum in the new term.
-    state_.heartbeat_round_ = 0;
-    state_.read_quorum_confirmed_term_ = 0;
-    state_.read_quorum_confirmed_round_ = 0;
-  }
-
-  if (isLeader && failover_) {
-    // Every caller of setIsLeader already holds mtx_ (server.cc:1754-1759).
-    RebuildPeerTables(state_.raft_log_.last_index() + 1);
-    for (size_t ord = 0; ord < state_.peers_.len(); ord++) {
-      Log_debug("loc_id_={} match_index_[{}]={}, next_index_[{}]={}",
-                loc_id_, peer_sites_[ord], state_.peers_.match_index(ord),
-                peer_sites_[ord], state_.peers_.next_index(ord));
-    }
-  }
-
-
-  // This 2 lines MUST put BEFORE state_.is_leader_ = isLeader ! otherwise they will become 0
-  bool become_new_leader = isLeader && (!state_.is_leader_);
-  bool become_new_follower = (!isLeader) && state_.is_leader_;
-
-  // Update the leader state
-  state_.is_leader_ = isLeader;
-
-  // Becoming leader establishes self as the known leader. Becoming a follower
-  // deliberately preserves a hint learned from AppendEntries/InstallSnapshot;
-  // transitions without a known leader clear it at their call sites.
-  state_.current_leader_id_ = raft_server_leader_hint_after_transition(
-      isLeader,
-      !isLeader && state_.current_leader_id_ != INVALID_SITEID,
-      site_id_, state_.current_leader_id_);
-
-  // Only log on actual transitions, not no-op calls
-  if (become_new_leader || become_new_follower) {
-    Log_info("RaftServer::setIsLeader site_id_ {} become_new_leader {} become_new_follower {} isLeader {}", site_id_, become_new_leader, become_new_follower, isLeader);
-  }
-
-  // Only act when transitioning from non-leader to leader
-  if (become_new_leader) {
-    Log_info("[RAFT_STATE] setIsLeader transition LEADER: site {} term {} prev_is_leader={} become_new_leader={}",
-             site_id_, state_.current_term_, prev_is_leader, become_new_leader);
-
-#ifndef RAFT_TEST_CORO
-    // Raft only commits prior-term entries after committing an entry from the
-    // current term. Append one internal no-op on becoming leader, so old
-    // client submissions resolve even when every client is blocked on the
-    // former leader. The apply paths consume this protocol entry without
-    // invoking the application state machine.
-    uint64_t noop_previous_index = 0;
-    uint64_t noop_term = 0;
-    auto noop = rusty::Arc<TpcNoopCommand>::make();
-    const RaftStartResult noop_result = SetLocalAppend(
-        janus::Command::pack_aliased<TpcNoopCommand>(std::move(noop)),
-        &noop_term, &noop_previous_index);
-    verify(raft_server_start_was_appended(noop_result));
-    verify(noop_term == state_.current_term_);
-    verify(state_.raft_log_.last_index() == noop_previous_index + 1);
-    Log_info("[RAFT-NOOP] Site {} appended leader no-op at index {} term {}",
-             site_id_, state_.raft_log_.last_index(), state_.current_term_);
-    RequestReplication();
-#endif
-
-  } else if (become_new_follower) {
-    Log_info("[RAFT_STATE] setIsLeader transition FOLLOWER: site {} term {} prev_is_leader={} become_new_follower={}",
-             site_id_, state_.current_term_, prev_is_leader, become_new_follower);
-
-    // ============================================================================
-    // CRITICAL FIX: Reset election timer when becoming follower
-    // ============================================================================
-    // This prevents instant elections after recovery/resume. When a node resumes
-    // from SIGSTOP/pause, state_.last_heartbeat_time_ is stale (from before pause).
-    // Resetting it here ensures the election timer counts from NOW, giving the
-    // current leader time to send heartbeats before this node starts an election.
-    // This is standard Raft behavior: followers reset their timer when stepping down.
-    // setIsLeader is caller-holds; see the enumeration above.
-    resetTimerLocked("became follower");
-    Log_info("[RAFT_TIMER] Site {} reset election timer when becoming follower (last_hb now={})",
-             site_id_, state_.last_heartbeat_time_);
-
-    // When transitioning from leader to non-leader
-    Log_info("[RAFT_VIEW] Server {} stepping down as leader for partition {}", site_id_, partition_id_);
-  }
-
-  // CRITICAL: Fire leadership change callback so RaftWorker can update its state
-  // This allows clients to retarget to the new leader after elections
-  if (leader_change_cb_) {
-    // @unsafe
-    {
-    if (become_new_leader) {
-      Log_info("[LEADER_CALLBACK] Site {}: Firing leader_change_cb_(true) - became leader", site_id_);
-      leader_change_cb_(true);
-    } else if (become_new_follower) {
-      Log_info("[LEADER_CALLBACK] Site {}: Firing leader_change_cb_(false) - became follower", site_id_);
-      leader_change_cb_(false);
-    }
-    }
-  }
 }
 
 
@@ -4600,31 +4566,6 @@ struct HeartbeatRoundState {
   HeartbeatRoundScope scope{HeartbeatRoundScope::new_()};
 };
 
-// Rebuilds the ordinal peer tables from current_config_.
-//
-// MUST BE CALLED WITH mtx_ HELD. Deliberately does not take the lock itself:
-// setIsLeader's callers already hold it, and re-acquiring would add one more
-// nested acquisition to the 24 that Step C of
-// docs/migration/raft/heartbeat-first-conversion-plan.md has to remove.
-//
-// Rebuilt rather than appended to: the two callers each run once per
-// leadership acquisition or loop start, and ordinals must not accumulate
-// across terms. The two tables are sized together so an ordinal means the
-// same thing in both.
-void RaftServer::RebuildPeerTables(uint64_t next_index) {
-  const std::set<siteid_t>& replication_targets = current_config_;
-  peer_sites_.clear();
-  for (const auto peer_id : replication_targets) {
-    if (peer_id == site_id_) {
-      continue;
-    }
-    peer_sites_.push_back(peer_id);
-  }
-  state_.peers_.reset(peer_sites_.size(), next_index);
-  const size_t expected = replication_targets.size() -
-      static_cast<size_t>(replication_targets.count(site_id_) > 0);
-  verify(state_.peers_.len() == expected);
-}
 
 // @unsafe - timer allocation, peer-table rebuild under mtx_, atomic stores
 void RaftServer::HeartbeatPrologue() {
@@ -6383,32 +6324,6 @@ void RaftServer::EnsureSetup() {
 // ============================================================================
 // stepDown - Central leader step-down function
 // ============================================================================
-
-void RaftServer::stepDown() {
-  // Must be called with mtx_ held (caller's responsibility)
-  // Most callers already hold the lock
-
-  Log_info("[SPEC-RAFT] Site {}: Stepping down as leader (term={})",
-           site_id_, state_.current_term_);
-
-  // Transition to follower state
-  // This handles the leadership-change callback, timer resets, etc.
-  setIsLeader(false);
-
-  // A late higher-term response can arrive after this server has already
-  // entered a new candidacy. Demotion is terminal for that election as well
-  // as for the old leadership epoch.
-  state_.req_voting_ = false;
-  state_.election_in_progress_ = false;
-
-  // Reset election timer
-  // Important: Give other servers time to elect a new leader
-  // stepDown takes no lock of its own; every caller holds mtx_.
-  resetTimerLocked("stepDown");
-
-  Log_info("[SPEC-RAFT] Site {}: Step-down complete, now follower", site_id_);
-
-}
 
 // ============================================================================
 // MEMBERSHIP CONFIGURATION
