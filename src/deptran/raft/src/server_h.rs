@@ -1086,3 +1086,172 @@ unsafe extern "C" {
                              round: *mut core::ffi::c_void);
     fn raft_heartbeat_epilogue(server: *mut core::ffi::c_void);
 }
+
+use rusty::cpp_inherit;
+use crate::scheduler_h::TxLogServer;
+
+// The rrr `verify` macro, reachable from a DSL body. extern "C" is the one
+// function-declaration form a block can spell that rustc resolves without a
+// Rust definition behind it; server.h defines it just above.
+unsafe extern "C" {
+    fn raft_verify(condition: bool);
+}
+
+// appliedIndexForWait_ keeps its C++ spelling: it is read by name from
+// test.cc and from twelve C++ bodies that have not converted yet, and
+// renaming it is a mechanical change that belongs in its own commit.
+#[allow(non_snake_case)]
+#[repr(C)]
+pub struct RaftServerBase {
+    // Raft's own copy of what TXLOG_SERVER_SITE_FIELDS() gives Paxos; see the
+    // mirror note on RaftConsensusState for why both copies exist.
+    pub loc_id_: u32,
+    pub site_id_: u16,
+    pub app_next_: rusty::LearnerAction,
+    pub commo_: *mut rusty::Communicator,
+    pub partition_id_: u32,
+    pub mtx_: rusty::RaftCheckedMutex,
+    // The consensus cluster mtx_ guards, as one Rust-owned value.
+    pub state_: RaftConsensusState,
+    // Scratch for raft_ae_decode_payload; valid only inside one
+    // OnAppendEntries call, which is entirely under mtx_.
+    pub decoded_terms_: rusty::RaftDecodedTerms,
+    // RPC futures can outlive the server during shutdown. Destruction nulls
+    // this shared gate after waiting for any callback already using it.
+    pub async_callback_lifetime_: rusty::RaftAsyncCallbackLifetimePtr,
+    pub snapshot_manager_: rusty::RaftSnapshotManagerPtr,
+    pub snapshot_manager_configured_: rusty::sync::atomic::AtomicBool,
+    pub snapshot_trigger_index_: rusty::sync::atomic::AtomicU64,
+    pub snapshot_trigger_threshold_: rusty::sync::atomic::AtomicU64,
+    pub create_sm_snapshot_cb_: rusty::RaftCreateSnapshotCb,
+    pub prepare_sm_snapshot_cb_: rusty::RaftPrepareSnapshotCb,
+    // Ordinal peer table, rebuilt whenever the configuration changes.
+    pub peer_sites_: rusty::RaftPeerSites,
+    pub stop_: rusty::sync::atomic::AtomicBool,
+    pub rpc_ready_: rusty::sync::atomic::AtomicBool,
+    pub startup_mtx_: rusty::RaftStdMutex,
+    pub startup_cv_: rusty::RaftStdCondVar,
+    pub startup_finished_: bool,
+    pub startup_succeeded_: bool,
+    pub wait_int_: i32,
+    pub disconnected_: rusty::sync::atomic::AtomicBool,
+    pub in_applying_logs_: bool,
+    pub failover_: bool,
+    pub looping_: rusty::sync::atomic::AtomicBool,
+    pub heartbeat_loop_running_: rusty::sync::atomic::AtomicBool,
+    pub election_loop_running_: rusty::sync::atomic::AtomicBool,
+    pub heartbeat_: bool,
+    pub heartbeat_setup_: bool,
+    pub heartbeat_interval_us_: u64,
+    pub log_retention_window_: u64,
+    pub leader_change_cb_: rusty::RaftLeaderChangeCb,
+    pub preferred_leader_site_id_: u16,
+    pub startup_timestamp_: u64,
+    pub current_config_: rusty::RaftSiteIdSet,
+    pub apply_thread_: rusty::RaftStdThread,
+    pub apply_thread_running_: rusty::sync::atomic::AtomicBool,
+    pub state_machine_apply_mtx_: rusty::RaftStdMutex,
+    pub apply_queue_mtx_: rusty::RaftStdMutex,
+    pub apply_queue_epoch_: u64,
+    pub apply_queue_: rusty::RaftApplyQueue,
+    pub appliedIndexForWait_: rusty::sync::atomic::AtomicU64,
+    pub n_prepare_: i32,
+    pub n_accept_: i32,
+    pub n_commit_: i32,
+}
+
+impl RaftServerBase {
+    // Every default here is the one the hand-written member declaration
+    // carried; the DSL has no field-initialiser syntax, so they move into the
+    // constructor's member-initialiser list instead.
+    // No Default impl: `new` here lowers to a real C++ constructor, and a
+    // Rust-side Default would suggest RaftServerBase is default-constructible
+    // as a value, which it is not -- it holds a mutex and a thread.
+    #[allow(clippy::new_without_default)]
+    #[cfg_attr(any(), cpp_ctor)]
+    pub fn new() -> RaftServerBase {
+        RaftServerBase {
+            // locid_t is uint32_t, so `static_cast<locid_t>(-1)` is this.
+            loc_id_: 4294967295,
+            site_id_: RAFT_SERVER_INVALID_SITE_ID,
+            app_next_: Default::default(),
+            commo_: core::ptr::null_mut(),
+            partition_id_: 0,
+            mtx_: Default::default(),
+            state_: RaftConsensusState::new(),
+            decoded_terms_: Default::default(),
+            // Null here; RaftServer's constructor allocates it, because it
+            // also has to store `this` into the gate.
+            async_callback_lifetime_: Default::default(),
+            snapshot_manager_: Default::default(),
+            snapshot_manager_configured_: rusty::sync::atomic::AtomicBool::new(false),
+            snapshot_trigger_index_: rusty::sync::atomic::AtomicU64::new(0),
+            snapshot_trigger_threshold_: rusty::sync::atomic::AtomicU64::new(10000),
+            create_sm_snapshot_cb_: Default::default(),
+            prepare_sm_snapshot_cb_: Default::default(),
+            peer_sites_: Default::default(),
+            stop_: rusty::sync::atomic::AtomicBool::new(false),
+            rpc_ready_: rusty::sync::atomic::AtomicBool::new(false),
+            startup_mtx_: Default::default(),
+            startup_cv_: Default::default(),
+            startup_finished_: false,
+            startup_succeeded_: false,
+            wait_int_: 100000,
+            disconnected_: rusty::sync::atomic::AtomicBool::new(false),
+            in_applying_logs_: false,
+            failover_: true,
+            looping_: rusty::sync::atomic::AtomicBool::new(false),
+            heartbeat_loop_running_: rusty::sync::atomic::AtomicBool::new(false),
+            election_loop_running_: rusty::sync::atomic::AtomicBool::new(false),
+            heartbeat_: true,
+            heartbeat_setup_: false,
+            // HEARTBEAT_INTERVAL is a macro whose value depends on
+            // RAFT_TEST; RaftServer's constructor applies it, because a DSL
+            // block drops #[cfg] silently and must not decide this.
+            heartbeat_interval_us_: 0,
+            log_retention_window_: 5000,
+            leader_change_cb_: Default::default(),
+            preferred_leader_site_id_: RAFT_SERVER_INVALID_SITE_ID,
+            startup_timestamp_: 0,
+            current_config_: Default::default(),
+            apply_thread_: Default::default(),
+            apply_thread_running_: rusty::sync::atomic::AtomicBool::new(false),
+            state_machine_apply_mtx_: Default::default(),
+            apply_queue_mtx_: Default::default(),
+            apply_queue_epoch_: 0,
+            apply_queue_: Default::default(),
+            appliedIndexForWait_: rusty::sync::atomic::AtomicU64::new(0),
+            n_prepare_: 0,
+            n_accept_: 0,
+            n_commit_: 0,
+        }
+    }
+}
+
+// The three methods a worker reaches through a TxLogServer base pointer.
+// Raft's set_site_identity mirrors the ids into state_ as well, where
+// converted Rust bodies can see them, and asserts the copies agree.
+#[cpp_inherit]
+impl TxLogServer for RaftServerBase {
+    fn set_site_identity(&mut self, loc_id: u32, site_id: u16, partition_id: u32) {
+        self.loc_id_ = loc_id;
+        self.site_id_ = site_id;
+        self.partition_id_ = partition_id;
+        self.state_.loc_id_ = loc_id;
+        self.state_.site_id_ = site_id;
+        self.state_.partition_id_ = partition_id;
+        unsafe {
+            raft_verify(self.state_.site_id_ == self.site_id_
+                && self.state_.partition_id_ == self.partition_id_
+                && self.state_.loc_id_ == self.loc_id_);
+        }
+    }
+
+    fn set_commo(&mut self, commo: *mut rusty::Communicator) {
+        self.commo_ = commo;
+    }
+
+    fn reg_learner_action(&mut self, learner_action: rusty::LearnerAction) {
+        self.app_next_ = learner_action;
+    }
+}

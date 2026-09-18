@@ -1288,6 +1288,12 @@ RaftServer::RaftServer()
   : replication_wake_gate_(rusty::Arc<ReplicationWakeGate>::make_with(
         []() { return ReplicationWakeGate::new_(); }))
 {
+  // The two members RaftServerBase's generated constructor leaves at their
+  // zero value, because a DSL constructor can spell neither of them:
+  // std::make_shared, and a macro whose value depends on RAFT_TEST.
+  async_callback_lifetime_ = std::make_shared<AsyncCallbackLifetime>();
+  heartbeat_interval_us_ = HEARTBEAT_INTERVAL;
+
   async_callback_lifetime_->server = this;
   // Keep the immutable kind-4 compatibility factory registered as soon as a
   // Raft server exists so a legacy payload relayed by a peer still decodes.

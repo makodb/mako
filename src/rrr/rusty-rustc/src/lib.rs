@@ -70,6 +70,7 @@ pub struct Communicator {
 
 /// Model of `std::function<int(int, Command)>`, the learner callback a worker
 /// registers on a replication server.
+#[derive(Default)]
 #[repr(C)]
 pub struct LearnerAction {
     _opaque: [u8; 0],
@@ -367,6 +368,60 @@ pub struct RaftResponsePtr {
 
 pub struct RaftCommand {
     _opaque: [u8; 0],
+}
+
+/// Opaque rustc-only models of RaftServer's remaining C++-typed fields, so
+/// `RaftServerBase` (src/deptran/raft/server.h) can NAME every one of them as
+/// a DSL field. Same contract as `RaftCommand` above: a Rust body may hold,
+/// move and default-construct these, never look inside one. The C++ spellings
+/// are restored by the `namespace rusty` aliases next to the struct, because
+/// each aliases a type that server.h itself declares and so cannot live in
+/// src/deptran/raft/rust_facade_types.h.
+///
+/// Each is `[u8; 0]` rather than the real layout on purpose: the raft crate is
+/// type-checked by rustc but never linked into the binary, so the model only
+/// has to make the field nameable and defaultable. `#[repr(C)]` keeps them
+/// FFI-shaped for the same reason the two above are.
+macro_rules! rusty_opaque_cpp_carrier {
+    ($($(#[$m:meta])* $name:ident),* $(,)?) => {
+        $(
+            $(#[$m])*
+            #[derive(Default)]
+            #[repr(C)]
+            pub struct $name {
+                _opaque: [u8; 0],
+            }
+        )*
+    };
+}
+
+rusty_opaque_cpp_carrier! {
+    /// `janus::RaftCheckedMutex` -- the always-on re-entrancy-checking mutex.
+    RaftCheckedMutex,
+    /// `std::vector<int64_t>` -- OnAppendEntries' decoded-term scratch.
+    RaftDecodedTerms,
+    /// `std::shared_ptr<janus::AsyncCallbackLifetime>`.
+    RaftAsyncCallbackLifetimePtr,
+    /// `std::shared_ptr<janus::raft::SnapshotManager>`.
+    RaftSnapshotManagerPtr,
+    /// `std::function<std::string(uint64_t)>`.
+    RaftCreateSnapshotCb,
+    /// `std::function<std::unique_ptr<PreparedStateMachineSnapshotInstall>(const std::string&, uint64_t)>`.
+    RaftPrepareSnapshotCb,
+    /// `std::vector<siteid_t>` -- the ordinal peer table.
+    RaftPeerSites,
+    /// `std::mutex`.
+    RaftStdMutex,
+    /// `std::condition_variable`.
+    RaftStdCondVar,
+    /// `std::function<void(bool)>` -- the leadership-change notification.
+    RaftLeaderChangeCb,
+    /// `std::set<siteid_t>` -- the current configuration.
+    RaftSiteIdSet,
+    /// `std::thread` -- the background apply thread.
+    RaftStdThread,
+    /// `std::deque<janus::QueuedApplyEntry>` -- the apply queue.
+    RaftApplyQueue,
 }
 
 pub type ReactorIntEvent = rrr::reactor::IntEvent;
