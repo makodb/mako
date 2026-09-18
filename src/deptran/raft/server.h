@@ -2432,6 +2432,27 @@ class RaftCheckedMutex {
 static_assert(std::atomic<std::thread::id>::is_always_lock_free,
               "RaftCheckedMutex assumes a lock-free atomic<thread::id>");
 
+// Lifted out of RaftServer ahead of the struct conversion: a DSL struct
+// cannot declare a nested type, and these two are plain data with no reason
+// to be nested. AsyncCallbackLifetime keeps a back-pointer, so RaftServer is
+// forward-declared above it.
+class RaftServer;
+
+// RPC futures can outlive the server during shutdown. Destruction nulls this
+// shared gate after waiting for any callback already using it.
+struct AsyncCallbackLifetime {
+  std::mutex mutex;
+  RaftServer* server = nullptr;
+};
+
+// One entry waiting for the apply thread. A conflicting snapshot increments
+// the epoch so an entry popped before queue invalidation cannot apply after.
+struct QueuedApplyEntry {
+  slotid_t index = 0;
+  Command command{};
+  uint64_t epoch = 0;
+};
+
 class RaftServer : public TxLogServer {
  public:
   // ==========================================================================
@@ -2519,7 +2540,15 @@ class RaftServer : public TxLogServer {
   //
   // mtx_ being Raft's own is the point: it is what lets Tranche 5 replace this
   // recursive mutex with a single Mutex<RaftState> without touching Paxos.
-  TXLOG_SERVER_SITE_FIELDS()
+  // Declared here rather than through TXLOG_SERVER_SITE_FIELDS(), which is
+  // shared with Paxos and so cannot move. Raft needs them spelled out because
+  // the struct conversion has to name every member; scheduler.h is untouched
+  // and PaxosServer still uses the macro.
+  locid_t loc_id_ = static_cast<locid_t>(-1);
+  siteid_t site_id_ = static_cast<siteid_t>(-1);
+  LearnerAction app_next_{};
+  Communicator* commo_ = nullptr;
+  parid_t partition_id_ = 0;
   RaftCheckedMutex mtx_{};
 
   // The consensus cluster mtx_ guards, now one Rust-owned value instead of
@@ -2554,11 +2583,6 @@ class RaftServer : public TxLogServer {
   }
 
  private:
-  struct AsyncCallbackLifetime {
-    std::mutex mutex;
-    RaftServer* server = nullptr;
-  };
-
   // RPC futures can outlive the server during shutdown. Destruction nulls
   // this shared gate after waiting for any callback already using it.
   std::shared_ptr<AsyncCallbackLifetime> async_callback_lifetime_ =
@@ -2835,11 +2859,6 @@ class RaftServer : public TxLogServer {
   // AppendEntries must retain its short queue-enqueue critical section.
   std::mutex state_machine_apply_mtx_;
   std::mutex apply_queue_mtx_;
-  struct QueuedApplyEntry {
-    slotid_t index = 0;
-    Command command{};
-    uint64_t epoch = 0;
-  };
   // Guarded by apply_queue_mtx_. A conflicting snapshot increments the epoch
   // so an entry popped before queue invalidation cannot apply afterward.
   uint64_t apply_queue_epoch_ = 0;
