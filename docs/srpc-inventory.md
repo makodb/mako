@@ -6,8 +6,51 @@ The per-decl CSV (`docs/srpc-inventory.csv`) is `.gitignore`d as
 a build artifact — re-run `python3 tools/srpc-inventory.py`
 from the repo root to regenerate both this file and the CSV.
 
-**Decl count (top-level class/struct/enum/union):** 267
-**Span across all decls (LOC):** 3200
+The buckets and the blocker vocabulary are defined in the
+porting field guide, `docs/porting-cpp-to-rust-dsl.md`:
+Phase 0 triage is §2, clearing a blocker is §5, and §8.45 is
+the heuristic for telling a real floor from a stale claim.
+
+**What this scanner can see.** It matches a `class`/`struct`/
+`union`/`enum` introducer at **column 0** in `.cpp`/`.hpp`/
+`.h`/`.cc` files under the scanned root, skipping tests. It
+does not read `.rs` sources, and it does not see a decl that
+is indented inside a namespace or module block. It also
+skips one-line forward declarations (`class Foo;`) — the
+`term == ';'` filter at `tools/rrr-inventory.py:568-569` —
+which is why the column-0 hits in
+`src/rrr/base/rustc_markers.hpp` (`struct cpp_inherit;`) and
+`src/rrr/misc/serializable_support.hpp` (`class Arc;`,
+`class Function;`) are absent from a zero-decl `src/rrr` run.
+
+**What the count below includes.** Every top-level decl the
+scan found, DSL and GEN regions included: `classify()`
+buckets those `already-dsl`, but they still land in the
+headline. The remaining hand-written C++ decl surface is the
+non-`already-dsl` rows of the bucket table, not this number.
+Measured 2026-09-17, a run over a root that still has
+hand-written decls — `--root src/cluster` — prints 19 decls,
+of which 15 are `already-dsl` (84.4% of the spanned LOC),
+leaving 4 hand-written. For `src/rrr` the two numbers
+coincide only because both are 0.
+
+**Decl count (top-level class/struct/enum/union):** 0  
+**Span across all decls (LOC):** 0
+
+> **A zero count is a result, not a failure.** It means the
+> scanned root has no column-0 C++ decls left to triage.
+> For `src/rrr` that is the expected end state: the module
+> is canonical Rust, compiled from the `.rs` sources listed
+> in `src/rrr/rust-modules.toml`, and the hand-authored
+> `.cpp` carriers have been deleted. Earlier revisions of
+> this file recorded 267 decls / 3200 LOC at 100%
+> `already-dsl`; that snapshot predates the carrier
+> deletion and is kept only in git history. Zero decls
+> is not zero hand-written C++: this scan counts decls.
+> The line-level measure is
+> `scripts/rrr_handwritten_census.py --files`, which
+> reported 168 hand-written lines across 9 production
+> files on 2026-09-17.
 
 ## Buckets
 
@@ -18,7 +61,7 @@ from the repo root to regenerate both this file and the CSV.
 | refactor-then-dsl | 0 | 0 | 0.0% |
 | needs-transpiler | 0 | 0 | 0.0% |
 | boundary | 0 | 0 | 0.0% |
-| already-dsl | 267 | 3200 | 100.0% |
+| already-dsl | 0 | 0 | 0.0% |
 
 ## Top 20 largest manual decls by LOC
 

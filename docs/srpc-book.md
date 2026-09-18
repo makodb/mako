@@ -4,6 +4,8 @@ A comprehensive developer guide for SRPC — the **S**imple **RPC** framework po
 
 SRPC stands for "Simple RPC." It provides high-performance RPC, stackful fibers, an event-driven reactor, and binary serialization — all with Rust-inspired memory safety.
 
+> Writing or converting SRPC code? Read [`docs/porting-cpp-to-rust-dsl.md`](porting-cpp-to-rust-dsl.md) alongside this book — it is the canonical guide to the inline-Rust DSL that `src/srpc` is now authored in (see §14).
+
 ---
 
 ## Table of Contents
@@ -1869,14 +1871,18 @@ What the DSL currently expresses, in rough order of usage:
 - **`pub trait T { fn method(&self) -> ...; }`** — emits a C++ abstract base class (pure virtual, virtual dtor, copy/move disabled) so concrete C++ implementors keep working unchanged. Examples: `Pollable`, `PollableBase`, `SerializableBase`, `Service`, `Job`, `Alarm`, `SinkBase`, `SourceBase`.
 - **Concrete classes with state + methods** — `Client`, `Server`, `CircuitBreaker`, `HeartbeatManager`, etc. The DSL impl block carries the method bodies; large method bodies stay in out-of-class `T::method(...) { ... }` C++ definitions because the DSL doesn't translate complex syscall / cast-heavy code yet.
 
-Constructs the DSL grammar does **not** accept (these stay manual C++ and show up as `needs-transpiler` or `trivial-blocked` in `docs/srpc-inventory.md`):
+Constructs the DSL grammar does **not** accept — these stay manual C++. Re-audited 2026-09-16 against transpiler pin `a1f8fef8`. The `needs-transpiler` and `trivial-blocked` buckets this list used to point at in `docs/srpc-inventory.md` are empty — and as of this audit *every* bucket is, because `src/srpc` now has no column-0 C++ decls left to scan at all: the module is canonical Rust built from the `.rs` sources in `src/srpc/rust-modules.toml`, and the hand-authored `.cpp` carriers have been deleted. So the list below, not the inventory, is the live record. Section numbers below cite the porting field guide, [`docs/porting-cpp-to-rust-dsl.md`](porting-cpp-to-rust-dsl.md).
 
-- `void*` / `va_list` / C-style array params
-- Template methods (and class templates beyond a couple of pilot shapes)
-- Default-argument syntax on member functions
-- Operator overloading
-- Custom destructors that aren't trivially-defaulted
-- `impl Trait for Type` — parses but the emitter does not yet write `: public Trait` + `override` for the implementor, so trait *implementors* stay manual C++ while the *trait base* migrates cleanly.
+- `void*` / `va_list` / C-style array params — the unsafe substrate the DSL is built to sit on rather than replace (§8.6). Expression-shaped libc calls are reachable from a DSL `unsafe {}` block, but `va_list`, platform `#ifdef` splits and asm stay `@unsafe` C++ kernels (§8.7).
+- Type-level template metaprogramming — variadic parameter packs, CRTP, SFINAE conversion ctors (§8.6). Rust has no spelling for any of them, which by §8.45's heuristic makes this a real floor rather than a dated observation.
+- Default-argument syntax on member functions — Rust has no default arguments either, so this one is also real (§8.45 scores it **REAL**, though untested). Drop the defaults and give each arity its own factory/method; that is what `Fiber::create_run`'s dead `file`/`line` defaults became (`docs/srpc-goal0-burndown.md:203`).
+
+Four entries that used to sit on this list are **retracted as of 2026-09-16**. Each traced to "the transpiler doesn't do it yet" rather than to a gap in Rust — exactly the class §8.45's heuristic predicts will rot:
+
+- **Templates, including template *methods*.** Generic free functions and generic structs lower straight to C++ templates (§8.9); `src/srpc` carries 48 generic `pub fn` sites today (excluding the `rusty-rustc` facade), and a generic *method* is ordinary — `pub fn reg_service_typed<T: Service + 'static>` sits inside `impl Server` (`src/srpc/rpc/server.rs:1180`). Generic structs likewise: `CallbackWrapper<F>` (`src/srpc/base/callback_wrapper.rs:5`) and `SerializableEnvelope<PayloadSet>` (`src/srpc/misc/serializable_envelope.rs:30`) are canonical Rust, and both files were once named as the permanent class-template floor (§8.24, whose framing §8.44 marks historical).
+- **Operator overloading.** Member `operator<<`/`>>` families convert as free operators (§8.4), and an overload family is spelled as a trait with one impl per type (§8.40) — live at `src/srpc/misc/serializable.rs:242` (`pub trait Serialize`, then `impl Serialize for i32`, `for i8`, …).
+- **Custom destructors.** `impl Drop for T` emits a real destructor — `impl Drop for Server` (`src/srpc/rpc/server.rs:788`); for the generated C++ side, see `ConfigWatcher::~ConfigWatcher()` at `src/cluster/config_watcher.h:260`, emitted inside the GEN block from the `impl Drop` at `:136`.
+- **`impl Trait for Type` not producing inheritance.** A *plain* impl still yields only an adapter wrapper — no is-a relationship, no upcast — but mark it `#[cpp_inherit]` and the emitter writes `struct Type : public Trait` with the base ctor prepended to each init-list: `#[cpp_inherit] impl<T: Service> Service for ServiceBoxShim<T>` (`src/srpc/rpc/server.rs:234`), or `src/mako/storage/masstree_ordered_index.hh:167`, whose GEN block emits `struct masstree_ordered_index : public OrderedIndex {` at `:219`. What the DSL does not target is multiple inheritance or a hand-written non-trait base (§4).
 
 The `tools/srpc-inventory.py` script scans `src/srpc` and produces a
 per-decl bucket (trivial / trivial-blocked / refactor-then-dsl /

@@ -4,12 +4,18 @@
 > [`goal0_completion_plan.md`](goal0_completion_plan.md). Its dated baselines and
 > per-file floors describe the earlier conversion campaign, not current source
 > ownership. In particular, `base/basetypes.cpp` is deleted: canonical
-> `src/srpc/src/basetypes.rs` owns SparseInt, including its four explicit unsafe
+> `src/srpc/base/basetypes.rs` owns SparseInt, including its four explicit unsafe
 > raw-pointer codecs, and the platform timing calls use the terminal plain-C
-> `srpc_timing.c` seam.
+> `srpc_timing.c` seam. Canonical Rust lives at layout-mirroring paths —
+> `src/srpc/{base,misc,reactor,rpc}/*.rs`, exactly as each module's `source =`
+> field in `src/srpc/rust-modules.toml` records — and **not** under a flat
+> `src/srpc/src/`, which holds only `lib.rs`.
 
-Methodology (measure hand-written LOC, then classify by reason) is documented in
-[`docs/porting-cpp-to-rust-dsl.md`](../porting-cpp-to-rust-dsl.md) §7.5.
+**Canonical reference:** [`docs/porting-cpp-to-rust-dsl.md`](../porting-cpp-to-rust-dsl.md)
+— *Porting C++ to an Inline-Rust DSL: A Field Guide* — is the guide to the DSL conversion
+this tracker measures, and it is live where this tracker is historical (the README lists it
+under "How new code is authored"). The methodology used below (measure hand-written LOC,
+then classify by reason) is its §8.5.
 
 ## Baseline (measured 2026-07-15)
 
@@ -20,7 +26,7 @@ classified by reason via an 8-way survey reconciled to the per-file totals.
 
 Prior context: the event hierarchy was flattened + the `Event` class deleted this cycle
 (commits `79861ff7 87d8b208 daeb0133 e3ec5bc9 207fcaa6 bd6af779`); see
-[`event-flattening`](../porting-cpp-to-rust-dsl.md#71-composition-over-inheritance-flatten-a-polymorphic-hierarchy).
+[`event-flattening`](../porting-cpp-to-rust-dsl.md#81-composition-over-inheritance-flatten-a-polymorphic-hierarchy).
 
 ### Breakdown by reason (LOC)
 
@@ -121,7 +127,7 @@ async/stream paths); ~several asserts to rewrite to the serialize/deserialize fo
   binding = address-of-temp. Every remaining reactor line now has a named reason.
 
 - 2026-07-19 — **★ SYSCALL PLAN DELIVERED (task #7, 5 items + 2 policy commits)** under the two
-  user rules now codified in the porting guide §7.7-7.8: the runtime stays a FAITHFUL Rust-std
+  user rules now codified in the porting guide §8.7-8.8: the runtime stays a FAITHFUL Rust-std
   translation (no invented APIs — std has no epoll/poll/mmap surface), syscalls without a std
   equivalent are authored as DSL unsafe{} libc calls, and NO external binaries are ever executed
   for results. Items: (probe pair) set_nonblocking_fd fcntl pair + epoll_close as DSL unsafe{}
@@ -225,14 +231,14 @@ async/stream paths); ~several asserts to rewrite to the serialize/deserialize fo
   not ChannelError::None in return position); hand-bridges for C++-ctor-only types
   (empty_on_*_callback in channel.cpp, empty_listener_weak -- SUPERSEDED 2026-08-02: both deleted,
   `Default::default()` reaches them once the transpiler stopped emitting a nonexistent
-  `default_value`, playbook 7.53); prefer &self + interior mutability.
+  `default_value`, playbook §8.53); prefer &self + interior mutability.
   GATE UPGRADED: full-target build + full ctest (was dbtest-only — that gap had hidden ~280 raw
   test streams, 23 umbrella-trim import breaks, and years of never-built-target rot, all now
   repaired; srpc-book.md snippets updated to the current serde/request/Server API and
   compile-tested green). RECLASSIFIED: the clientconn_* family (~487 LOC)
   is NOT convertible-K — sized and read fn-by-fn, every member (even 14-line
   enqueue_heartbeat_probe) is raw byte-pointer surgery (BufferSource, body.read(ptr,n),
-  .data() dispatch, raw-ptr callbacks) interleaved with the Option flow. Per playbook §7.2
+  .data() dispatch, raw-ptr callbacks) interleaved with the Option flow. Per playbook §8.2
   these are ALREADY at the correct end-state: DSL methods delegating to sanctioned @unsafe
   kernels. The census conflated "uses Option<V&>" with "gated on Option<V&>" — do NOT
   force-convert; fragmentation would trade coherent wire-path fns for no safety gain.
@@ -453,7 +459,7 @@ fn shl(&mut self, v: Rhs) -> &mut Marshal { …; self } }`; templates via `impl<
 
 1. **Scalar bodies stay `@unsafe` byte kernels** (`reinterpret_cast + write_bytes` = category-D floor)
    that the DSL operator delegates to — same "methods stay methods, gnarly bodies → free fns" pattern
-   (guide §3). Container bodies (recurse `m << v.first << v.second`, element loops) go fully in DSL.
+   (guide §4). Container bodies (recurse `m << v.first << v.second`, element loops) go fully in DSL.
    So this converts the operator *interface* + recursion logic to DSL; it does NOT eliminate the
    ~D-category byte kernels underneath (those are genuine floor).
 2. **`impl Shl<Rhs> for Marshal` emits a MEMBER operator** (`Marshal::operator<<(const Rhs&)`), and

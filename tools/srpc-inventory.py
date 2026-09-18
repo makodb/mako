@@ -11,10 +11,12 @@ heuristic triage bucket for the manual ones:
 
   - already-dsl       — inside a DSL or GEN region; no work needed
   - boundary          — talks to libc/syscalls/wire types, will stay manual
-  - needs-transpiler  — pattern that the DSL doesn't accept today
-                        (templates, custom Drop dtors, virtual hierarchies)
+  - needs-transpiler  — pattern this heuristic can't clear from a
+                        signature window (today: templates only — see
+                        the `# Template` branch in classify())
   - refactor-then-dsl — would migrate after a refactor (public ctor →
-                        ::new() factory, virtual base → trait, etc.)
+                        ::new() factory, virtual base → trait, user
+                        dtor → `impl Drop`, etc.)
   - trivial           — POD-ish, looks like an easy migration target
 
 Emits a CSV at the destination passed via --out (default
@@ -456,30 +458,62 @@ def classify(decl: Decl) -> tuple[str, list[str]]:
     if decl.file in BOUNDARY_FILES:
         notes.append("file flagged as boundary in plan")
         return "boundary", notes
-    # Template
+    # Template. The blanket "the DSL doesn't accept C++ templates" was
+    # stale; re-audited 2026-09-16 against pin a1f8fef8. Ordinary generics
+    # DO lower: playbook §8.9 tabulates `fn first_of<T>` and
+    # `struct Pair<T>` → C++ templates, §8.45's scoreboard scores class
+    # templates `stale`, and src/rrr ships 59 generic free fns + 12
+    # generic structs today (generic *methods* lower too — see
+    # `reg_service_typed<T>` in src/rrr/rpc/server.rs). What does NOT
+    # lower is type-level metaprogramming — CRTP, TypeList/discriminant
+    # machinery, SFINAE conversion ctors, parameter packs (playbook
+    # §8.6; §8.45 scores variadic generics REAL because Rust itself
+    # lacks them, which is the difference between a floor and a
+    # dated observation). This heuristic can't tell the two apart from a
+    # signature window, so it keeps routing conservatively — the note
+    # says to check by hand.
     if decl.template or decl.name in TEMPLATE_NAMES:
-        notes.append("template — DSL doesn't accept C++ templates")
+        notes.append(
+            "template — plain generics lower (§8.9); check by hand whether "
+            "this is type-level metaprogramming (pack / SFINAE / CRTP), "
+            "which is the real floor"
+        )
         return "needs-transpiler", notes
-    # Custom destructor (Drop trait gate)
+    # Custom destructor. `impl Drop` emits a real dtor — verified
+    # 2026-09-16 against pin a1f8fef8: the generated
+    # `inline ConfigWatcher::~ConfigWatcher() noexcept(false)` at
+    # src/cluster/config_watcher.h:260 is transpiled from a DSL
+    # `impl Drop`, and src/rrr carries 12 more `impl Drop` blocks
+    # (rpc/server.rs, rpc/client.rs, rpc/tcp_channel.rs,
+    # rpc/fiber_channel.rs, rpc/utils.rs, reactor/reactor.rs). The
+    # emitted dtor is guarded by `_rusty_forgotten` so it drops once,
+    # and it is `noexcept(false)`, so a throwing drop body still
+    # propagates — that is the author's problem, not a transpiler gap.
+    # So a user dtor is a reshape, not a wait on the tool.
     if decl.has_user_dtor:
-        notes.append("custom dtor — needs `impl Drop` emit")
-        return "needs-transpiler", notes
+        notes.append("custom dtor — express as `impl Drop`")
+        return "refactor-then-dsl", notes
     # Virtual hierarchy. Two cases:
     #   1. Has `virtual` keyword and no base clause → it's a trait base.
     #      Migrate as DSL `pub trait` (Service, SinkBase, SourceBase
     #      pattern). Works today.
-    #   2. Has a base clause → it's a trait implementor. The DSL syntax
-    #      `impl Trait for Type` parses but rusty-cpp's current emit
-    #      drops the `: public Trait` inheritance clause and the
-    #      `override` modifier — the GEN block becomes a plain struct
-    #      that won't satisfy polymorphic call sites. Needs a transpiler
-    #      fix before these can migrate.
+    #   2. Has a base clause → it's a trait implementor. No longer
+    #      blocked (re-audited 2026-09-16, pin a1f8fef8): marking the
+    #      impl `#[cpp_inherit]` emits `struct Type : public Trait` and
+    #      prepends the base ctor to each init-list — see the generated
+    #      `struct masstree_ordered_index : public OrderedIndex` at
+    #      src/mako/storage/masstree_ordered_index.hh:219, and the 23
+    #      `#[cpp_inherit]` sites now live across src/rrr, src/cluster
+    #      and src/mako/storage. Only MULTIPLE bases, or a hand-written
+    #      non-trait base, still need a reshape first — playbook §4,
+    #      "Inheritance: `#[cpp_inherit]` for trait implementors".
     if decl.has_virtual or decl.base_clause:
         if decl.base_clause:
             notes.append(
-                "virtual / inheritance — trait implementor; blocked on "
-                "rusty-cpp emitting `: public Trait` + `override` for "
-                "`impl Trait for Type` DSL"
+                "virtual / inheritance — trait implementor; migrate as "
+                "`#[cpp_inherit] impl Trait for Type` (emits `: public "
+                "Trait` + base-ctor init). Multiple bases or a "
+                "hand-written non-trait base need a reshape first."
             )
         else:
             notes.append(
@@ -621,9 +655,51 @@ def write_summary(decls: list[Decl], out_path: Path) -> None:
             "The per-decl CSV (`docs/srpc-inventory.csv`) is `.gitignore`d as\n"
             "a build artifact — re-run `python3 tools/srpc-inventory.py`\n"
             "from the repo root to regenerate both this file and the CSV.\n\n"
+            "The buckets and the blocker vocabulary are defined in the\n"
+            "porting field guide, `docs/porting-cpp-to-rust-dsl.md`:\n"
+            "Phase 0 triage is §2, clearing a blocker is §5, and §8.45 is\n"
+            "the heuristic for telling a real floor from a stale claim.\n\n"
+            "**What this scanner can see.** It matches a `class`/`struct`/\n"
+            "`union`/`enum` introducer at **column 0** in `.cpp`/`.hpp`/\n"
+            "`.h`/`.cc` files under the scanned root, skipping tests. It\n"
+            "does not read `.rs` sources, and it does not see a decl that\n"
+            "is indented inside a namespace or module block. It also\n"
+            "skips one-line forward declarations (`class Foo;`) — the\n"
+            "`term == ';'` filter at `tools/rrr-inventory.py:568-569` —\n"
+            "which is why the column-0 hits in\n"
+            "`src/rrr/base/rustc_markers.hpp` (`struct cpp_inherit;`) and\n"
+            "`src/rrr/misc/serializable_support.hpp` (`class Arc;`,\n"
+            "`class Function;`) are absent from a zero-decl `src/rrr` run.\n\n"
+            "**What the count below includes.** Every top-level decl the\n"
+            "scan found, DSL and GEN regions included: `classify()`\n"
+            "buckets those `already-dsl`, but they still land in the\n"
+            "headline. The remaining hand-written C++ decl surface is the\n"
+            "non-`already-dsl` rows of the bucket table, not this number.\n"
+            "Measured 2026-09-17, a run over a root that still has\n"
+            "hand-written decls — `--root src/cluster` — prints 19 decls,\n"
+            "of which 15 are `already-dsl` (84.4% of the spanned LOC),\n"
+            "leaving 4 hand-written. For `src/rrr` the two numbers\n"
+            "coincide only because both are 0.\n\n"
         )
         f.write(f"**Decl count (top-level class/struct/enum/union):** {len(decls)}  \n")
         f.write(f"**Span across all decls (LOC):** {total_loc}\n\n")
+        if not decls:
+            f.write(
+                "> **A zero count is a result, not a failure.** It means the\n"
+                "> scanned root has no column-0 C++ decls left to triage.\n"
+                "> For `src/rrr` that is the expected end state: the module\n"
+                "> is canonical Rust, compiled from the `.rs` sources listed\n"
+                "> in `src/rrr/rust-modules.toml`, and the hand-authored\n"
+                "> `.cpp` carriers have been deleted. Earlier revisions of\n"
+                "> this file recorded 267 decls / 3200 LOC at 100%\n"
+                "> `already-dsl`; that snapshot predates the carrier\n"
+                "> deletion and is kept only in git history. Zero decls\n"
+                "> is not zero hand-written C++: this scan counts decls.\n"
+                "> The line-level measure is\n"
+                "> `scripts/rrr_handwritten_census.py --files`, which\n"
+                "> reported 168 hand-written lines across 9 production\n"
+                "> files on 2026-09-17.\n\n"
+            )
         f.write("## Buckets\n\n")
         f.write("| Bucket | Decls | LOC | % of LOC |\n")
         f.write("|---|---:|---:|---:|\n")
