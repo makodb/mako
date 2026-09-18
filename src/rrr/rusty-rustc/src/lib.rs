@@ -489,6 +489,9 @@ rusty_opaque_cpp_carrier! {
     /// quorum, carried from the broadcast kernel to the snapshot kernel
     /// across a fiber suspension.
     RaftVoteQuorumPtr,
+    /// `std::string` -- a snapshot payload, carried from the RPC entry point
+    /// to the install kernel without being inspected.
+    RaftByteString,
 }
 
 pub type ReactorIntEvent = rrr::reactor::IntEvent;

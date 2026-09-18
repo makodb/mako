@@ -2492,6 +2492,7 @@ using RaftSiteIdSet = ::std::set<siteid_t>;
 using RaftStdThread = ::std::thread;
 using RaftApplyQueue = ::std::deque<::janus::QueuedApplyEntry>;
 using RaftVoteQuorumPtr = ::std::shared_ptr<::janus::RaftVoteQuorumEvent>;
+using RaftByteString = ::std::string;
 }  // namespace rusty
 
 // The DSL block below names the interface as `crate::scheduler_h::TxLogServer`
@@ -2834,6 +2835,19 @@ unsafe extern "C" {
     fn raft_snapshot_serialize_and_save(server: *mut RaftServerBase,
                                         snap_index: u64,
                                         snap_term: i64) -> bool;
+    fn raft_install_snapshot_payload(server: *mut RaftServerBase,
+                                     last_included_index: u64,
+                                     last_included_term: u64,
+                                     data: *const rusty::RaftByteString) -> i32;
+    fn raft_purge_apply_queue(server: *mut RaftServerBase,
+                              last_included_index: u64,
+                              retain_suffix: bool) -> u64;
+    fn raft_apply_queue_pop(server: *mut RaftServerBase, index: *mut u64,
+                            epoch: *mut u64, queue_size: *mut u64) -> bool;
+    fn raft_apply_queue_epoch(server: *mut RaftServerBase) -> u64;
+    fn raft_apply_invoke(server: *mut RaftServerBase, id: u64) -> bool;
+    fn raft_monotonic_now_secs() -> u64;
+    fn raft_thread_sleep_ms(millis: u64);
 }
 
 // One campaign's reply quorum, read in a single shot.
@@ -2916,6 +2930,11 @@ pub struct RaftServerBase {
     pub apply_queue_mtx_: rusty::RaftStdMutex,
     pub apply_queue_epoch_: u64,
     pub apply_queue_: rusty::RaftApplyQueue,
+    // The command the apply thread popped and is about to hand to the
+    // learner. A staging field rather than a local because Command is opaque
+    // to Rust: the pop kernel moves it here and the invoke kernel reads it,
+    // both under the apply thread's own serialisation.
+    pub pending_apply_command_: rusty::RaftCommand,
     pub appliedIndexForWait_: rusty::sync::atomic::AtomicU64,
     // Was a function-static in EnqueueCommittedEntries. A DSL body has no
     // static local, and a per-server counter is the more honest shape: the
@@ -2991,6 +3010,7 @@ impl RaftServerBase {
             apply_queue_mtx_: Default::default(),
             apply_queue_epoch_: 0,
             apply_queue_: Default::default(),
+            pending_apply_command_: Default::default(),
             appliedIndexForWait_: rusty::sync::atomic::AtomicU64::new(0),
             enqueue_log_counter_: 0,
             n_prepare_: 0,
@@ -3696,6 +3716,417 @@ impl RaftServerBase {
         true
     }
 
+    // @safe - the fail-stop every unrecoverable snapshot path performs.
+    pub fn FailStop(&mut self) {
+        self.rpc_ready_
+            .store(false, rusty::sync::atomic::Ordering::Release);
+        self.stop_
+            .store(true, rusty::sync::atomic::Ordering::Release);
+        self.looping_
+            .store(false, rusty::sync::atomic::Ordering::Release);
+        self.apply_thread_running_
+            .store(false, rusty::sync::atomic::Ordering::SeqCst);
+    }
+
+    // @unsafe - installs a leader's snapshot. CALLER HOLDS
+    // state_machine_apply_mtx_ then mtx_, and wraps this in the catch-all
+    // that RaftServer::OnInstallSnapshot still owns: snapshot replacement
+    // must not overlap entry application or recovery replay, and the global
+    // order is apply gate -> Raft state -> queue.
+    //
+    // *term_out is the reply. Zero means "unavailable": the leader's
+    // callback leaves match_index/next_index untouched on zero, so every
+    // individual install failure writes it back to zero after the accepted
+    // leader contact has already set it.
+    #[allow(clippy::too_many_arguments, clippy::not_unsafe_ptr_arg_deref)]
+    pub fn OnInstallSnapshotLocked(&mut self, term: u64, leader_id: u64,
+                                   last_included_index: u64,
+                                   last_included_term: u64,
+                                   data: *const rusty::RaftByteString,
+                                   term_out: &mut u64) {
+        *term_out = 0;
+
+        // Edge case 0: the server is shutting down.
+        if self.stop_.load(rusty::sync::atomic::Ordering::Acquire) {
+            rusty::raft_log_info_1(
+                "[INSTALL-SNAPSHOT] Site {}: Ignoring InstallSnapshot - server shutting down",
+                self.site_id_);
+            return;
+        }
+
+        // Edge case 1: a stale term is rejected.
+        if term < self.state_.current_term_ {
+            rusty::raft_log_info_4(
+                "[INSTALL-SNAPSHOT] Site {}: Rejecting InstallSnapshot from leader {} (leader_term={} < my_term={})",
+                self.site_id_, leader_id, term, self.state_.current_term_);
+            *term_out = self.state_.current_term_;
+            return;
+        }
+
+        // A leader cannot have committed an entry from a term that has not
+        // happened yet. That is a malformed boundary, not usable leader
+        // evidence: reject it with the unavailable sentinel BEFORE
+        // authenticating the sender, stepping down, resetting the timer, or
+        // touching payload state.
+        if !raft_server_snapshot_term_is_valid(last_included_term, term) {
+            rusty::raft_log_error_4(
+                "[INSTALL-SNAPSHOT] Site {}: Rejecting impossible snapshot boundary term {} from leader {} in term {}",
+                self.site_id_, last_included_term, leader_id, term);
+            return;
+        }
+
+        if leader_id > RAFT_SERVER_INVALID_SITE_ID as u64 {
+            rusty::raft_log_warn_3(
+                "[INSTALL-SNAPSHOT] Site {} rejected unrepresentable leader identity {} in term {}",
+                self.site_id_, leader_id, term);
+            return;
+        }
+        let leader_site: u16 = leader_id as u16;
+        let sender_is_current_voter: bool =
+            leader_site != RAFT_SERVER_INVALID_SITE_ID
+                && leader_site != self.site_id_
+                && self.IsConfigMember(leader_site);
+        let leader_has_higher_term: bool =
+            raft_server_observed_higher_term(term, self.state_.current_term_);
+        let sender_is_self: bool = leader_site == self.site_id_;
+        let has_known_leader: bool =
+            self.state_.current_leader_id_ != RAFT_SERVER_INVALID_SITE_ID;
+        let known_leader_matches_sender: bool =
+            self.state_.current_leader_id_ == leader_site;
+        if !sender_is_current_voter
+            || !raft_server_leader_rpc_sender_is_authoritative(
+                leader_has_higher_term, self.state_.is_leader_,
+                sender_is_self, has_known_leader,
+                known_leader_matches_sender)
+        {
+            rusty::raft_log_warn_7(
+                "[INSTALL-SNAPSHOT] Site {} rejected unauthoritative leader {} in term {} (local_term={} leader={} known_leader={} voter={})",
+                self.site_id_, leader_id, term, self.state_.current_term_,
+                self.state_.is_leader_, self.state_.current_leader_id_,
+                sender_is_current_voter);
+            return;
+        }
+
+        // Edge case 2: a higher or equal term is accepted as a legitimate
+        // leader.
+        let previous_term: u64 = self.state_.current_term_;
+        if leader_has_higher_term {
+            rusty::raft_log_info_4(
+                "[INSTALL-SNAPSHOT] Site {}: Leader {} has higher term ({} > {}) - updating",
+                self.site_id_, leader_id, term, self.state_.current_term_);
+            self.state_.current_term_ = term;
+            self.state_.vote_for_ = RAFT_SERVER_INVALID_SITE_ID;
+        }
+
+        // InstallSnapshot comes from a known leader. Publish its identity
+        // before a possible leader-to-follower callback observes the role
+        // transition.
+        self.state_.current_leader_id_ =
+            raft_server_leader_hint_after_transition(false, true,
+                                                     self.site_id_,
+                                                     leader_site);
+
+        // Any accepted leader RPC, including one in our current term,
+        // establishes follower state. Cancel the outstanding election as
+        // well as leadership; RequestVote's delayed-success path
+        // revalidates this ownership before it can promote again.
+        if self.state_.is_leader_ {
+            self.stepDown();
+        } else {
+            self.setIsLeader(false);
+        }
+        self.state_.req_voting_ = false;
+        self.state_.election_in_progress_ = false;
+
+        if leader_has_higher_term {
+            self.LogTermChange("InstallSnapshot carried newer term",
+                               previous_term, self.state_.current_term_,
+                               leader_site);
+        }
+
+        // Legitimate leader contact.
+        self.resetTimerLocked("received InstallSnapshot");
+        // From here current_term_ denotes an accepted current-term leader
+        // contact; individual install failures overwrite it with zero.
+        *term_out = self.state_.current_term_;
+
+        // A current-term leader may retry a snapshot after this follower has
+        // already committed, applied or snapshotted through its boundary.
+        // Acknowledge the contact, but roll no local state backward and do
+        // not install the stale payload.
+        let mut local_progress_index: u64 = self.state_.commit_index_;
+        if self.state_.execute_index_ > local_progress_index {
+            local_progress_index = self.state_.execute_index_;
+        }
+        let applied: u64 = self.GetAppliedIndex();
+        if applied > local_progress_index {
+            local_progress_index = applied;
+        }
+        if self.state_.snapidx_ > local_progress_index {
+            local_progress_index = self.state_.snapidx_;
+        }
+        if last_included_index == self.state_.snapidx_
+            && self.state_.snapidx_ != 0
+            && last_included_term != self.state_.snapterm_ as u64
+        {
+            rusty::raft_log_error_5(
+                "[INSTALL-SNAPSHOT] Site {}: rejecting snapshot boundary ({}, {}) that conflicts with local snapshot ({}, {})",
+                self.site_id_, last_included_index, last_included_term,
+                self.state_.snapidx_, self.state_.snapterm_);
+            *term_out = 0;
+            return;
+        }
+        if raft_server_snapshot_is_stale(last_included_index,
+                                         local_progress_index) {
+            rusty::raft_log_info_6(
+                "[INSTALL-SNAPSHOT] Site {}: Snapshot index {} is already covered (commit={} execute={} applied={} snapidx={}); acknowledging no-op",
+                self.site_id_, last_included_index,
+                self.state_.commit_index_, self.state_.execute_index_,
+                self.GetAppliedIndex(), self.state_.snapidx_);
+            return;
+        }
+        if !raft_server_log_index_has_successor(last_included_index) {
+            // The log's base requires S + 1. Reaching UINT64_MAX exhausts
+            // the index space, so reject rather than wrap.
+            rusty::raft_log_error_2(
+                "[INSTALL-SNAPSHOT] Site {}: Cannot install terminal snapshot index {}; no successor index is representable",
+                self.site_id_, last_included_index);
+            *term_out = 0;
+            return;
+        }
+
+        let configured: bool =
+            unsafe { raft_snapshot_manager_is_set(&self.snapshot_manager_) };
+        if !configured {
+            rusty::raft_log_error_2(
+                "[INSTALL-SNAPSHOT] Site {}: Cannot install snapshot at index {} without configured snapshot storage",
+                self.site_id_, last_included_index);
+            *term_out = 0;
+            return;
+        }
+
+        // Complete every fallible observation the retention decision uses
+        // BEFORE the application loader can replace external state. A
+        // decoded command is required, so a synthesized empty RaftEntry can
+        // never prove the snapshot boundary.
+        let boundary = self.state_.raft_log_.get(last_included_index);
+        #[allow(clippy::unnecessary_unwrap)]
+        let has_boundary: bool = boundary.is_some()
+            && unsafe {
+                raft_command_has_value(
+                    boundary.unwrap().cmd() as *const rusty::RaftCommand)
+            };
+        // The entry's term is ballot_t (int64_t) and the predicate takes
+        // u64; the C++ converted implicitly at the call.
+        let local_boundary_term: u64 = if has_boundary {
+            boundary.unwrap().term() as u64
+        } else {
+            0
+        };
+        let retain_suffix: bool = raft_server_snapshot_boundary_matches(
+            has_boundary, local_boundary_term, last_included_term);
+
+        let install: i32 = unsafe {
+            raft_install_snapshot_payload(self as *mut RaftServerBase,
+                                          last_included_index,
+                                          last_included_term, data)
+        };
+        if install == 2 {
+            self.FailStop();
+            *term_out = 0;
+            return;
+        }
+        if install != 3 {
+            *term_out = 0;
+            return;
+        }
+
+        self.state_.snapidx_ = last_included_index;
+        self.state_.snapterm_ = last_included_term as i64;
+        self.snapshot_trigger_index_
+            .store(self.state_.snapidx_,
+                   rusty::sync::atomic::Ordering::Release);
+
+        // Reconcile the in-memory log and the queued application work.
+        if retain_suffix {
+            self.state_.raft_log_.compact_through(last_included_index);
+        } else {
+            self.state_.raft_log_.reset(last_included_index + 1);
+        }
+        let purged_apply_entries: u64 = unsafe {
+            raft_purge_apply_queue(self as *mut RaftServerBase,
+                                   last_included_index, retain_suffix)
+        };
+
+        self.state_.commit_index_ = last_included_index;
+        unsafe {
+            raft_verify(
+                self.state_.commit_index_
+                    <= self.state_.raft_log_.last_index());
+        }
+
+        // Publish application only after the state machine has finished
+        // loading. Acquire waiters must never observe the covered indices
+        // early.
+        self.PublishAppliedIndexLocked(last_included_index);
+
+        rusty::raft_log_info_9(
+            "[INSTALL-SNAPSHOT] Site {}: Installed snapshot from leader {} (snapidx={}, snapterm={}, state_.commit_index_={}, state_.execute_index_={}, state_.raft_log_.last_index()={}, retain_suffix={}, purged_apply={})",
+            self.site_id_, leader_id, self.state_.snapidx_,
+            self.state_.snapterm_, self.state_.commit_index_,
+            self.state_.execute_index_, self.state_.raft_log_.last_index(),
+            retain_suffix, purged_apply_entries);
+    }
+
+    // @unsafe - the background apply thread's loop. Runs on its own
+    // std::thread, which RaftServer::StartApplyThread spawns.
+    // `%`, an explicit max and an explicit clamp rather than their idiomatic
+    // Rust forms: this lowers to C++, where uint64_t has no such members.
+    #[allow(clippy::manual_is_multiple_of, clippy::implicit_saturating_sub,
+            clippy::manual_clamp)]
+    pub fn ApplyThreadLoop(&mut self) {
+        rusty::raft_log_info_1(
+            "[APPLY-THREAD] Site {}: Started background apply thread",
+            self.site_id_);
+        let mut apply_count: u64 = 0;
+        let mut last_log_time: u64 = unsafe { raft_monotonic_now_secs() };
+        while !self.stop_.load(rusty::sync::atomic::Ordering::Acquire)
+            && self
+                .apply_thread_running_
+                .load(rusty::sync::atomic::Ordering::SeqCst)
+        {
+            let mut id: u64 = 0;
+            let mut entry_epoch: u64 = 0;
+            let mut queue_size: u64 = 0;
+            let got_entry: bool = unsafe {
+                raft_apply_queue_pop(self as *mut RaftServerBase,
+                                     &mut id as *mut u64,
+                                     &mut entry_epoch as *mut u64,
+                                     &mut queue_size as *mut u64)
+            };
+
+            if !got_entry {
+                // Periodic heartbeat while the queue is empty.
+                let now_secs: u64 = unsafe { raft_monotonic_now_secs() };
+                if now_secs - last_log_time >= 5 {
+                    let commit_index_snapshot: u64 = {
+                        let _lock = RaftLockGuard::new(&mut self.mtx_);
+                        self.state_.commit_index_
+                    };
+                    rusty::raft_log_info_5(
+                        "[APPLY-THREAD] Site {}: IDLE state_.execute_index_={} state_.commit_index_={} queue_size={} applied_total={}",
+                        self.site_id_, self.GetAppliedIndex(),
+                        commit_index_snapshot, queue_size, apply_count);
+                    last_log_time = now_secs;
+                }
+                unsafe {
+                    raft_thread_sleep_ms(1);
+                }
+                continue;
+            }
+
+            let mut applied_entry: bool = false;
+            {
+                // An InstallSnapshot can acquire this gate after the entry
+                // is popped but before its callback starts. Re-check the
+                // published applied index inside the gate, so an entry the
+                // snapshot covers is skipped once the snapshot state is in.
+                let _apply_lock =
+                    RaftStdLockGuard::new(&mut self.state_machine_apply_mtx_);
+                let current_epoch: u64 = unsafe {
+                    raft_apply_queue_epoch(self as *mut RaftServerBase)
+                };
+                let applied_index: u64 = self.GetAppliedIndex();
+                if !raft_server_apply_epoch_is_current(entry_epoch,
+                                                       current_epoch) {
+                    rusty::raft_log_debug_4(
+                        "[APPLY-THREAD] Site {}: Skipping invalidated entry {} (entry_epoch={} current_epoch={})",
+                        self.site_id_, id, entry_epoch, current_epoch);
+                } else if raft_server_log_index_at_or_below(id,
+                                                            applied_index) {
+                    rusty::raft_log_debug_3(
+                        "[APPLY-THREAD] Site {}: Skipping snapshot-covered entry {} (applied={})",
+                        self.site_id_, id, applied_index);
+                } else {
+                    // Entries near the historical stall point are logged at
+                    // INFO for debugging.
+                    if (470..=500).contains(&id) {
+                        rusty::raft_log_info_3(
+                            "[APPLY-THREAD] Site {}: ABOUT TO APPLY entry {} (queue_remaining={})",
+                            self.site_id_, id, queue_size);
+                    }
+                    if !unsafe {
+                        raft_apply_invoke(self as *mut RaftServerBase, id)
+                    } {
+                        self.rpc_ready_
+                            .store(false,
+                                   rusty::sync::atomic::Ordering::Release);
+                        self.stop_
+                            .store(true,
+                                   rusty::sync::atomic::Ordering::Release);
+                        self.looping_
+                            .store(false,
+                                   rusty::sync::atomic::Ordering::Release);
+                        continue;
+                    }
+                    if (470..=500).contains(&id) {
+                        rusty::raft_log_info_2(
+                            "[APPLY-THREAD] Site {}: DONE APPLYING entry {}",
+                            self.site_id_, id);
+                    }
+                    self.PublishAppliedIndex(id);
+                    applied_entry = true;
+                }
+            }
+            if !applied_entry {
+                continue;
+            }
+            apply_count += 1;
+
+            if apply_count % 100 == 0 {
+                rusty::raft_log_info_4(
+                    "[APPLY-THREAD] Site {}: applied {} entries, state_.execute_index_={} queue_remaining={}",
+                    self.site_id_, apply_count, self.GetAppliedIndex(),
+                    queue_size);
+            }
+
+            // Snapshot trigger for the queued apply path. The hot precheck
+            // reads only atomic mirrors; the slow path revalidates canonical
+            // state under the apply-gate -> Raft-mutex order.
+            if self
+                .snapshot_manager_configured_
+                .load(rusty::sync::atomic::Ordering::Acquire)
+            {
+                let trigger_snapshot_index: u64 = self
+                    .snapshot_trigger_index_
+                    .load(rusty::sync::atomic::Ordering::Acquire);
+                let trigger_threshold: u64 = self
+                    .snapshot_trigger_threshold_
+                    .load(rusty::sync::atomic::Ordering::Acquire);
+                if raft_server_snapshot_is_due(trigger_snapshot_index,
+                                               self.GetAppliedIndex(),
+                                               trigger_threshold) {
+                    self.MaybeCreateSnapshot();
+                }
+            }
+
+            // Periodic cleanup goes through the snapshot-aware compactor,
+            // which retains any prefix a snapshot does not yet cover.
+            if id % 5000 == 0 {
+                let applied_now: u64 = self.GetAppliedIndex();
+                let cutoff: u64 = if applied_now > 10000 {
+                    applied_now - 10000
+                } else {
+                    0
+                };
+                self.CompactLog(cutoff);
+            }
+        }
+        rusty::raft_log_info_1(
+            "[APPLY-THREAD] Site {}: Background apply thread exiting",
+            self.site_id_);
+    }
+
     // @safe - the three stores every SetupInternal failure path performed.
     // Named rather than repeated so a new failure path cannot forget one.
     pub fn FailClosed(&mut self) {
@@ -4395,7 +4826,7 @@ impl TxLogServer for RaftServerBase {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=323d82fc4c9c9ddd902e543a5ccdc9ca432be407410d7c1614df8d29727a9157*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=74d14ef01b821d0925a05aa8556416d59e715fad0272524db39d734ccccc4da0*/
 struct RaftVoteOutcome;
 struct RaftServerBase;
 
@@ -4446,6 +4877,13 @@ extern "C" {
     void raft_spawn_heartbeat_loop(RaftServerBase* server);
     void raft_spawn_election_timer_fiber(RaftServerBase* server);
     bool raft_snapshot_serialize_and_save(RaftServerBase* server, uint64_t snap_index, int64_t snap_term);
+    int32_t raft_install_snapshot_payload(RaftServerBase* server, uint64_t last_included_index, uint64_t last_included_term, const rusty::RaftByteString* data);
+    uint64_t raft_purge_apply_queue(RaftServerBase* server, uint64_t last_included_index, bool retain_suffix);
+    bool raft_apply_queue_pop(RaftServerBase* server, uint64_t* index, uint64_t* epoch, uint64_t* queue_size);
+    uint64_t raft_apply_queue_epoch(RaftServerBase* server);
+    bool raft_apply_invoke(RaftServerBase* server, uint64_t id);
+    uint64_t raft_monotonic_now_secs();
+    void raft_thread_sleep_ms(uint64_t millis);
 }
 
 struct RaftVoteOutcome {
@@ -4505,6 +4943,7 @@ struct RaftServerBase : public TxLogServer {
     rusty::RaftStdMutex apply_queue_mtx_;
     uint64_t apply_queue_epoch_;
     rusty::RaftApplyQueue apply_queue_;
+    rusty::RaftCommand pending_apply_command_;
     rusty::sync::atomic::AtomicU64 appliedIndexForWait_;
     uint64_t enqueue_log_counter_;
     int32_t n_prepare_;
@@ -4559,6 +4998,9 @@ struct RaftServerBase : public TxLogServer {
     void setIsLeader(bool is_leader);
     uint16_t peer_site_at(size_t ordinal) const;
     bool SetupInternal();
+    void FailStop();
+    void OnInstallSnapshotLocked(uint64_t term, uint64_t leader_id, uint64_t last_included_index, uint64_t last_included_term, const rusty::RaftByteString* data, uint64_t& term_out);
+    void ApplyThreadLoop();
     void FailClosed();
     bool CreateSnapshotLocked();
     void SyncConfigMembers();
@@ -4631,6 +5073,7 @@ inline RaftServerBase::RaftServerBase()
     , apply_queue_mtx_(rusty::default_like<rusty::RaftStdMutex>())
     , apply_queue_epoch_(static_cast<uint64_t>(0))
     , apply_queue_(rusty::default_like<rusty::RaftApplyQueue>())
+    , pending_apply_command_(rusty::default_like<rusty::RaftCommand>())
     , appliedIndexForWait_(rusty::sync::atomic::AtomicU64::new_(0))
     , enqueue_log_counter_(static_cast<uint64_t>(0))
     , n_prepare_(static_cast<int32_t>(0))
@@ -5078,6 +5521,197 @@ inline bool RaftServerBase::SetupInternal() {
         }
     }
     return true;
+}
+
+inline void RaftServerBase::FailStop() {
+    this->rpc_ready_.store(false, rusty::sync::atomic::Ordering::Release);
+    this->stop_.store(true, rusty::sync::atomic::Ordering::Release);
+    this->looping_.store(false, rusty::sync::atomic::Ordering::Release);
+    this->apply_thread_running_.store(false, rusty::sync::atomic::Ordering::SeqCst);
+}
+
+inline void RaftServerBase::OnInstallSnapshotLocked(uint64_t term, uint64_t leader_id, uint64_t last_included_index, uint64_t last_included_term, const rusty::RaftByteString* data, uint64_t& term_out) {
+    uint64_t* term_out_shadow1 = &term_out;
+    *term_out_shadow1 = static_cast<uint64_t>(0);
+    if (this->stop_.load(rusty::sync::atomic::Ordering::Acquire)) {
+        rusty::raft_log_info_1("[INSTALL-SNAPSHOT] Site {}: Ignoring InstallSnapshot - server shutting down", this->site_id_);
+        return;
+    }
+    if (rusty::detail::deref_if_pointer_like(term) < rusty::detail::deref_if_pointer_like(this->state_.current_term_)) {
+        rusty::raft_log_info_4("[INSTALL-SNAPSHOT] Site {}: Rejecting InstallSnapshot from leader {} (leader_term={} < my_term={})", this->site_id_, std::move(leader_id), std::move(term), this->state_.current_term_);
+        *term_out_shadow1 = this->state_.current_term_;
+        return;
+    }
+    if (rusty::detail::rust_not(raft_server_snapshot_term_is_valid(std::move(last_included_term), std::move(term)))) {
+        rusty::raft_log_error_4("[INSTALL-SNAPSHOT] Site {}: Rejecting impossible snapshot boundary term {} from leader {} in term {}", this->site_id_, std::move(last_included_term), std::move(leader_id), std::move(term));
+        return;
+    }
+    if (rusty::detail::deref_if_pointer_like(leader_id) > (static_cast<uint64_t>(RAFT_SERVER_INVALID_SITE_ID))) {
+        rusty::raft_log_warn_3("[INSTALL-SNAPSHOT] Site {} rejected unrepresentable leader identity {} in term {}", this->site_id_, std::move(leader_id), std::move(term));
+        return;
+    }
+    uint16_t leader_site = static_cast<uint16_t>(leader_id);
+    const bool sender_is_current_voter = ((rusty::detail::deref_if_pointer_like(leader_site) != rusty::detail::deref_if_pointer_like(RAFT_SERVER_INVALID_SITE_ID)) && (rusty::detail::deref_if_pointer_like(leader_site) != rusty::detail::deref_if_pointer_like(this->site_id_))) && this->IsConfigMember(std::move(leader_site));
+    const bool leader_has_higher_term = raft_server_observed_higher_term(std::move(term), this->state_.current_term_);
+    const bool sender_is_self = rusty::detail::deref_if_pointer_like(leader_site) == rusty::detail::deref_if_pointer_like(this->site_id_);
+    const bool has_known_leader = rusty::detail::deref_if_pointer_like(this->state_.current_leader_id_) != rusty::detail::deref_if_pointer_like(RAFT_SERVER_INVALID_SITE_ID);
+    const bool known_leader_matches_sender = rusty::detail::deref_if_pointer_like(this->state_.current_leader_id_) == rusty::detail::deref_if_pointer_like(leader_site);
+    if (!sender_is_current_voter || rusty::detail::rust_not(raft_server_leader_rpc_sender_is_authoritative(std::move(leader_has_higher_term), this->state_.is_leader_, std::move(sender_is_self), std::move(has_known_leader), std::move(known_leader_matches_sender)))) {
+        rusty::raft_log_warn_7("[INSTALL-SNAPSHOT] Site {} rejected unauthoritative leader {} in term {} (local_term={} leader={} known_leader={} voter={})", this->site_id_, std::move(leader_id), std::move(term), this->state_.current_term_, this->state_.is_leader_, this->state_.current_leader_id_, std::move(sender_is_current_voter));
+        return;
+    }
+    uint64_t previous_term = this->state_.current_term_;
+    if (leader_has_higher_term) {
+        rusty::raft_log_info_4("[INSTALL-SNAPSHOT] Site {}: Leader {} has higher term ({} > {}) - updating", this->site_id_, std::move(leader_id), std::move(term), this->state_.current_term_);
+        this->state_.current_term_ = std::move(term);
+        this->state_.vote_for_ = RAFT_SERVER_INVALID_SITE_ID;
+    }
+    this->state_.current_leader_id_ = raft_server_leader_hint_after_transition(false, true, this->site_id_, std::move(leader_site));
+    if (this->state_.is_leader_) {
+        this->stepDown();
+    } else {
+        this->setIsLeader(false);
+    }
+    this->state_.req_voting_ = false;
+    this->state_.election_in_progress_ = false;
+    if (leader_has_higher_term) {
+        this->LogTermChange(std::string_view("InstallSnapshot carried newer term"), std::move(previous_term), this->state_.current_term_, std::move(leader_site));
+    }
+    this->resetTimerLocked(std::string_view("received InstallSnapshot"));
+    *term_out_shadow1 = this->state_.current_term_;
+    uint64_t local_progress_index = this->state_.commit_index_;
+    if (rusty::detail::deref_if_pointer_like(this->state_.execute_index_) > rusty::detail::deref_if_pointer_like(local_progress_index)) {
+        local_progress_index = this->state_.execute_index_;
+    }
+    uint64_t applied = this->GetAppliedIndex();
+    if (rusty::detail::deref_if_pointer_like(applied) > rusty::detail::deref_if_pointer_like(local_progress_index)) {
+        local_progress_index = std::move(applied);
+    }
+    if (rusty::detail::deref_if_pointer_like(this->state_.snapidx_) > rusty::detail::deref_if_pointer_like(local_progress_index)) {
+        local_progress_index = this->state_.snapidx_;
+    }
+    if (((rusty::detail::deref_if_pointer_like(last_included_index) == rusty::detail::deref_if_pointer_like(this->state_.snapidx_)) && (rusty::detail::deref_if_pointer_like(this->state_.snapidx_) != 0)) && (rusty::detail::deref_if_pointer_like(last_included_term) != (static_cast<uint64_t>(this->state_.snapterm_)))) {
+        rusty::raft_log_error_5("[INSTALL-SNAPSHOT] Site {}: rejecting snapshot boundary ({}, {}) that conflicts with local snapshot ({}, {})", this->site_id_, std::move(last_included_index), std::move(last_included_term), this->state_.snapidx_, this->state_.snapterm_);
+        *term_out_shadow1 = static_cast<uint64_t>(0);
+        return;
+    }
+    if (raft_server_snapshot_is_stale(std::move(last_included_index), std::move(local_progress_index))) {
+        rusty::raft_log_info_6("[INSTALL-SNAPSHOT] Site {}: Snapshot index {} is already covered (commit={} execute={} applied={} snapidx={}); acknowledging no-op", this->site_id_, std::move(last_included_index), this->state_.commit_index_, this->state_.execute_index_, this->GetAppliedIndex(), this->state_.snapidx_);
+        return;
+    }
+    if (rusty::detail::rust_not(raft_server_log_index_has_successor(std::move(last_included_index)))) {
+        rusty::raft_log_error_2("[INSTALL-SNAPSHOT] Site {}: Cannot install terminal snapshot index {}; no successor index is representable", this->site_id_, std::move(last_included_index));
+        *term_out_shadow1 = static_cast<uint64_t>(0);
+        return;
+    }
+    const bool configured = raft_snapshot_manager_is_set(&this->snapshot_manager_);
+    if (!configured) {
+        rusty::raft_log_error_2("[INSTALL-SNAPSHOT] Site {}: Cannot install snapshot at index {} without configured snapshot storage", this->site_id_, std::move(last_included_index));
+        *term_out_shadow1 = static_cast<uint64_t>(0);
+        return;
+    }
+    auto boundary = this->state_.raft_log_.get(std::move(last_included_index));
+    const bool has_boundary = boundary.is_some() && raft_command_has_value(rusty::detail::ptr_cast<const rusty::RaftCommand*>(boundary.unwrap().cmd()));
+    const uint64_t local_boundary_term = (has_boundary ? static_cast<uint64_t>(boundary.unwrap().term()) : static_cast<uint64_t>(0));
+    bool retain_suffix = raft_server_snapshot_boundary_matches(std::move(has_boundary), std::move(local_boundary_term), std::move(last_included_term));
+    const int32_t install = raft_install_snapshot_payload(static_cast<RaftServerBase*>(rusty::detail::ptr_or_addr((*this))), std::move(last_included_index), std::move(last_included_term), data);
+    if (rusty::detail::deref_if_pointer_like(install) == static_cast<int32_t>(2)) {
+        this->FailStop();
+        *term_out_shadow1 = static_cast<uint64_t>(0);
+        return;
+    }
+    if (rusty::detail::deref_if_pointer_like(install) != static_cast<int32_t>(3)) {
+        *term_out_shadow1 = static_cast<uint64_t>(0);
+        return;
+    }
+    this->state_.snapidx_ = std::move(last_included_index);
+    this->state_.snapterm_ = static_cast<int64_t>(last_included_term);
+    this->snapshot_trigger_index_.store(this->state_.snapidx_, rusty::sync::atomic::Ordering::Release);
+    if (retain_suffix) {
+        this->state_.raft_log_.compact_through(std::move(last_included_index));
+    } else {
+        rusty::reset(this->state_.raft_log_, rusty::detail::deref_if_pointer_like(last_included_index) + 1);
+    }
+    const uint64_t purged_apply_entries = raft_purge_apply_queue(static_cast<RaftServerBase*>(rusty::detail::ptr_or_addr((*this))), std::move(last_included_index), std::move(retain_suffix));
+    this->state_.commit_index_ = std::move(last_included_index);
+    // @unsafe
+    {
+        raft_verify(rusty::detail::deref_if_pointer_like(this->state_.commit_index_) <= this->state_.raft_log_.last_index());
+    }
+    this->PublishAppliedIndexLocked(std::move(last_included_index));
+    rusty::raft_log_info_9("[INSTALL-SNAPSHOT] Site {}: Installed snapshot from leader {} (snapidx={}, snapterm={}, state_.commit_index_={}, state_.execute_index_={}, state_.raft_log_.last_index()={}, retain_suffix={}, purged_apply={})", this->site_id_, std::move(leader_id), this->state_.snapidx_, this->state_.snapterm_, this->state_.commit_index_, this->state_.execute_index_, this->state_.raft_log_.last_index(), std::move(retain_suffix), std::move(purged_apply_entries));
+}
+
+inline void RaftServerBase::ApplyThreadLoop() {
+    rusty::raft_log_info_1("[APPLY-THREAD] Site {}: Started background apply thread", this->site_id_);
+    uint64_t apply_count = static_cast<uint64_t>(0);
+    uint64_t last_log_time = raft_monotonic_now_secs();
+    while (rusty::detail::rust_not(this->stop_.load(rusty::sync::atomic::Ordering::Acquire)) && this->apply_thread_running_.load(rusty::sync::atomic::Ordering::SeqCst)) {
+        uint64_t id = static_cast<uint64_t>(0);
+        uint64_t entry_epoch = static_cast<uint64_t>(0);
+        uint64_t queue_size = static_cast<uint64_t>(0);
+        const bool got_entry = raft_apply_queue_pop(static_cast<RaftServerBase*>(rusty::detail::ptr_or_addr((*this))), static_cast<uint64_t*>(&id), static_cast<uint64_t*>(&entry_epoch), static_cast<uint64_t*>(&queue_size));
+        if (!got_entry) {
+            uint64_t now_secs = raft_monotonic_now_secs();
+            if ((rusty::detail::deref_if_pointer_like(now_secs) - rusty::detail::deref_if_pointer_like(last_log_time)) >= 5) {
+                const uint64_t commit_index_snapshot = [&]() -> uint64_t { const auto _lock = RaftLockGuard::new_(&this->mtx_);
+return this->state_.commit_index_; }();
+                rusty::raft_log_info_5("[APPLY-THREAD] Site {}: IDLE state_.execute_index_={} state_.commit_index_={} queue_size={} applied_total={}", this->site_id_, this->GetAppliedIndex(), std::move(commit_index_snapshot), std::move(queue_size), std::move(apply_count));
+                last_log_time = std::move(now_secs);
+            }
+            // @unsafe
+            {
+                raft_thread_sleep_ms(static_cast<uint64_t>(1));
+            }
+            continue;
+        }
+        bool applied_entry = false;
+        {
+            const auto _apply_lock = RaftStdLockGuard::new_(&this->state_machine_apply_mtx_);
+            const uint64_t current_epoch = raft_apply_queue_epoch(static_cast<RaftServerBase*>(rusty::detail::ptr_or_addr((*this))));
+            const uint64_t applied_index = this->GetAppliedIndex();
+            if (rusty::detail::rust_not(raft_server_apply_epoch_is_current(std::move(entry_epoch), std::move(current_epoch)))) {
+                rusty::raft_log_debug_4("[APPLY-THREAD] Site {}: Skipping invalidated entry {} (entry_epoch={} current_epoch={})", this->site_id_, std::move(id), std::move(entry_epoch), std::move(current_epoch));
+            } else if (raft_server_log_index_at_or_below(std::move(id), std::move(applied_index))) {
+                rusty::raft_log_debug_3("[APPLY-THREAD] Site {}: Skipping snapshot-covered entry {} (applied={})", this->site_id_, std::move(id), std::move(applied_index));
+            } else {
+                if (rusty::contains((rusty::range_inclusive(470, 500)), &id)) {
+                    rusty::raft_log_info_3("[APPLY-THREAD] Site {}: ABOUT TO APPLY entry {} (queue_remaining={})", this->site_id_, std::move(id), std::move(queue_size));
+                }
+                if (!raft_apply_invoke(static_cast<RaftServerBase*>(rusty::detail::ptr_or_addr((*this))), std::move(id))) {
+                    this->rpc_ready_.store(false, rusty::sync::atomic::Ordering::Release);
+                    this->stop_.store(true, rusty::sync::atomic::Ordering::Release);
+                    this->looping_.store(false, rusty::sync::atomic::Ordering::Release);
+                    continue;
+                }
+                if (rusty::contains((rusty::range_inclusive(470, 500)), &id)) {
+                    rusty::raft_log_info_2("[APPLY-THREAD] Site {}: DONE APPLYING entry {}", this->site_id_, std::move(id));
+                }
+                this->PublishAppliedIndex(std::move(id));
+                applied_entry = true;
+            }
+        }
+        if (!applied_entry) {
+            continue;
+        }
+        apply_count += 1;
+        if ((rusty::detail::deref_if_pointer_like(apply_count) % static_cast<int32_t>(100)) == static_cast<uint64_t>(0)) {
+            rusty::raft_log_info_4("[APPLY-THREAD] Site {}: applied {} entries, state_.execute_index_={} queue_remaining={}", this->site_id_, std::move(apply_count), this->GetAppliedIndex(), std::move(queue_size));
+        }
+        if (this->snapshot_manager_configured_.load(rusty::sync::atomic::Ordering::Acquire)) {
+            const uint64_t trigger_snapshot_index = this->snapshot_trigger_index_.load(rusty::sync::atomic::Ordering::Acquire);
+            const uint64_t trigger_threshold = this->snapshot_trigger_threshold_.load(rusty::sync::atomic::Ordering::Acquire);
+            if (raft_server_snapshot_is_due(std::move(trigger_snapshot_index), this->GetAppliedIndex(), std::move(trigger_threshold))) {
+                this->MaybeCreateSnapshot();
+            }
+        }
+        if ((rusty::detail::deref_if_pointer_like(id) % static_cast<int32_t>(5000)) == static_cast<uint64_t>(0)) {
+            const uint64_t applied_now = this->GetAppliedIndex();
+            uint64_t cutoff = (rusty::detail::deref_if_pointer_like(applied_now) > 10000 ? rusty::detail::deref_if_pointer_like(applied_now) - static_cast<uint64_t>(10000) : static_cast<uint64_t>(0));
+            this->CompactLog(std::move(cutoff));
+        }
+    }
+    rusty::raft_log_info_1("[APPLY-THREAD] Site {}: Background apply thread exiting", this->site_id_);
 }
 
 inline void RaftServerBase::FailClosed() {
@@ -5558,6 +6192,7 @@ class RaftServer : public RaftServerBase {
   bool InitializeSnapshotManager();
  private:
 
+ public:  // for the kernel bridge (server.cc); private again once converted
   // @unsafe - Caller holds state_machine_apply_mtx_ then mtx_. Fully validates
   // and stages a production state-machine image without publishing it, or
   // validates the RaftLab marker payload and returns a no-op transaction.
@@ -5566,6 +6201,7 @@ class RaftServer : public RaftServerBase {
       const std::string& data,
       uint64_t last_included_index,
       uint64_t last_included_term);
+ private:
 
   // @unsafe - Startup helper for a snapshot already held by the manager.
   // Prepares and immediately commits its state-machine image before publishing

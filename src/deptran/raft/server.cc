@@ -1218,6 +1218,144 @@ void raft_shutdown_barrier_yield() {
   }
 }
 
+// (1)/(3) OnInstallSnapshot's staging transaction and queue reconciliation.
+
+// Validate and stage the exact state-machine image, publish the Raft
+// snapshot, then commit the staged image -- in that order, because
+// SnapshotManager is the authority for the boundary and the application
+// image must not become visible before it.
+//
+// The staging transaction's destructor aborts a private image, so any
+// rejection here leaves the live state machine, the latest Raft snapshot and
+// the reconstruction log untouched.
+//
+// Returns 0 prepare-rejected, 1 save-failed, 2 commit-failed (the caller
+// fails stop), 3 installed. CALLER MUST HOLD state_machine_apply_mtx_ then
+// mtx_.
+int raft_install_snapshot_payload(RaftServerBase* self,
+                                  uint64_t last_included_index,
+                                  uint64_t last_included_term,
+                                  const rusty::RaftByteString* data) {
+  RaftServer* const server = static_cast<RaftServer*>(self);
+  Log_info("[INSTALL-SNAPSHOT] Site {}: Preparing state machine snapshot ({} bytes)",
+           self->site_id_, data->size());
+  auto prepared_state_machine = server->PrepareStateMachineSnapshotLocked(
+      *data, last_included_index, last_included_term);
+  if (prepared_state_machine == nullptr) {
+    return 0;
+  }
+
+  const bool saved = self->snapshot_manager_->TakeSnapshot(
+      last_included_index, last_included_term, data->data(), data->size());
+  if (!saved) {
+    Log_error("[INSTALL-SNAPSHOT] Site {}: Failed to save snapshot at index={} term={}",
+              self->site_id_, last_included_index, last_included_term);
+    // The transaction has not committed, so its destructor discards only the
+    // private staging image; the old live state machine and log remain usable.
+    return 1;
+  }
+  Log_info("[INSTALL-SNAPSHOT] Site {}: Snapshot saved at index={} term={}",
+           self->site_id_, last_included_index, last_included_term);
+
+  if (!prepared_state_machine->Commit()) {
+    Log_error("[INSTALL-SNAPSHOT] Site {}: Failed to commit prepared state "
+              "machine snapshot at index={} term={}; failing stop",
+              self->site_id_, last_included_index, last_included_term);
+    return 2;
+  }
+  Log_info("[INSTALL-SNAPSHOT] Site {}: State machine committed at index={} "
+           "after Raft snapshot publication",
+           self->site_id_, last_included_index);
+  return 3;
+}
+
+// Drop the queued application work the snapshot covers. Retaining the suffix
+// erases only the covered prefix; replacing the log bumps the epoch, which
+// also invalidates an entry the apply thread popped before this clear -- it
+// rechecks the captured epoch under the outer state-machine gate before
+// invoking the callback. Returns how many entries went away.
+uint64_t raft_purge_apply_queue(RaftServerBase* self,
+                                uint64_t last_included_index,
+                                bool retain_suffix) {
+  uint64_t purged = 0;
+  std::lock_guard<std::mutex> queue_lock(self->apply_queue_mtx_);
+  if (retain_suffix) {
+    auto queued = self->apply_queue_.begin();
+    while (queued != self->apply_queue_.end()) {
+      if (raft_server_log_index_at_or_below(queued->index,
+                                            last_included_index)) {
+        queued = self->apply_queue_.erase(queued);
+        purged++;
+      } else {
+        ++queued;
+      }
+    }
+  } else {
+    self->apply_queue_epoch_++;
+    purged = self->apply_queue_.size();
+    self->apply_queue_.clear();
+  }
+  return purged;
+}
+
+// (1) the apply thread's queue pop and its callback invocation.
+
+// Moves the front entry's command into pending_apply_command_ and reports
+// its index and epoch. Returns false when the queue is empty; queue_size is
+// written either way.
+bool raft_apply_queue_pop(RaftServerBase* self, uint64_t* index,
+                          uint64_t* epoch, uint64_t* queue_size) {
+  std::lock_guard<std::mutex> lock(self->apply_queue_mtx_);
+  *queue_size = self->apply_queue_.size();
+  if (self->apply_queue_.empty()) {
+    return false;
+  }
+  QueuedApplyEntry entry = std::move(self->apply_queue_.front());
+  self->apply_queue_.pop_front();
+  *index = entry.index;
+  *epoch = entry.epoch;
+  self->pending_apply_command_ = std::move(entry.command);
+  return true;
+}
+
+uint64_t raft_apply_queue_epoch(RaftServerBase* self) {
+  std::lock_guard<std::mutex> lock(self->apply_queue_mtx_);
+  return self->apply_queue_epoch_;
+}
+
+// The learner callback, under the catch-all the C++ wrapped it in. An
+// internal no-op is consumed without reaching the application. Returns false
+// when the callback threw, which fails the server stop.
+bool raft_apply_invoke(RaftServerBase* self, uint64_t id) {
+  try {
+    if (!raft_server_command_is_internal_noop(
+            self->pending_apply_command_.kind_,
+            TpcNoopCommand::static_kind())) {
+      self->app_next_(id, self->pending_apply_command_);
+    }
+  } catch (const std::exception& error) {
+    Log_error("[RAFT-APPLY] Site {} callback failed at slot {}: {}",
+              self->site_id_, id, error.what());
+    return false;
+  } catch (...) {
+    Log_error("[RAFT-APPLY] Site {} callback failed at slot {}",
+              self->site_id_, id);
+    return false;
+  }
+  return true;
+}
+
+uint64_t raft_monotonic_now_secs() {
+  return static_cast<uint64_t>(
+      std::chrono::duration_cast<std::chrono::seconds>(
+          std::chrono::steady_clock::now().time_since_epoch())
+          .count());
+}
+
+void raft_thread_sleep_ms(uint64_t millis) {
+  std::this_thread::sleep_for(std::chrono::milliseconds(millis));
+}
+
 // (1)/(3) Setup's environment overrides, membership load, and fiber spawns.
 
 // std::getenv + std::stoull + the catch. Returns 0 when unset, 1 with the
@@ -1494,147 +1632,12 @@ void RaftServer::CloseReplicationWakeGate() {
 
 void RaftServer::StartApplyThread() {
   apply_thread_running_.store(true, rusty::sync::atomic::Ordering::SeqCst);
-  apply_thread_ = std::thread([this]() {
-    Log_info("[APPLY-THREAD] Site {}: Started background apply thread", site_id_);
-    uint64_t apply_count = 0;
-    auto last_log_time = std::chrono::steady_clock::now();
-    while (!stop_.load(rusty::sync::atomic::Ordering::Acquire) &&
-           apply_thread_running_.load(rusty::sync::atomic::Ordering::SeqCst)) {
-      // Drain entries from the queue
-      QueuedApplyEntry entry;
-      bool got_entry = false;
-      size_t queue_size = 0;
-      {
-        std::lock_guard<std::mutex> lock(apply_queue_mtx_);
-        queue_size = apply_queue_.size();
-        if (!apply_queue_.empty()) {
-          entry = std::move(apply_queue_.front());
-          apply_queue_.pop_front();
-          got_entry = true;
-        }
-      }
-
-      if (got_entry) {
-        slotid_t id = entry.index;
-        auto& log_entry = entry.command;
-        bool applied_entry = false;
-        {
-          // An InstallSnapshot can acquire this gate after the entry is popped
-          // but before its callback starts. Re-check the published applied
-          // index inside the gate so a snapshot-covered entry is skipped after
-          // the snapshot state has been loaded.
-          std::lock_guard<std::mutex> apply_lock(state_machine_apply_mtx_);
-          uint64_t current_epoch = 0;
-          {
-            std::lock_guard<std::mutex> queue_lock(apply_queue_mtx_);
-            current_epoch = apply_queue_epoch_;
-          }
-          const uint64_t applied_index = GetAppliedIndex();
-          if (!raft_server_apply_epoch_is_current(
-                  entry.epoch, current_epoch)) {
-            Log_debug("[APPLY-THREAD] Site {}: Skipping invalidated entry {} "
-                      "(entry_epoch={} current_epoch={})",
-                      site_id_, id, entry.epoch, current_epoch);
-          } else if (raft_server_log_index_at_or_below(
-                         id, applied_index)) {
-            Log_debug("[APPLY-THREAD] Site {}: Skipping snapshot-covered entry {} "
-                      "(applied={})",
-                      site_id_, id, applied_index);
-          } else {
-            // Log entries near the stall point for debugging
-            if (id >= 470 && id <= 500) {
-              Log_info("[APPLY-THREAD] Site {}: ABOUT TO APPLY entry {} (queue_remaining={})",
-                       site_id_, id, queue_size);
-            }
-            // @unsafe - callback may have side effects
-            try {
-              if (!raft_server_command_is_internal_noop(
-                      log_entry.kind_, TpcNoopCommand::static_kind())) {
-                app_next_(id, log_entry);
-              }
-            } catch (const std::exception& error) {
-              Log_error("[RAFT-APPLY] Site {} callback failed at slot {}: {}",
-                        site_id_, id, error.what());
-              rpc_ready_.store(
-                  false, rusty::sync::atomic::Ordering::Release);
-              stop_.store(true, rusty::sync::atomic::Ordering::Release);
-              looping_.store(false, rusty::sync::atomic::Ordering::Release);
-              continue;
-            } catch (...) {
-              Log_error("[RAFT-APPLY] Site {} callback failed at slot {}",
-                        site_id_, id);
-              rpc_ready_.store(
-                  false, rusty::sync::atomic::Ordering::Release);
-              stop_.store(true, rusty::sync::atomic::Ordering::Release);
-              looping_.store(false, rusty::sync::atomic::Ordering::Release);
-              continue;
-            }
-            if (id >= 470 && id <= 500) {
-              Log_info("[APPLY-THREAD] Site {}: DONE APPLYING entry {}", site_id_, id);
-            }
-            PublishAppliedIndex(id);
-            applied_entry = true;
-          }
-        }
-        if (!applied_entry) {
-          continue;
-        }
-        apply_count++;
-
-        // Log progress periodically
-        if (apply_count % 100 == 0) {
-          Log_info("[APPLY-THREAD] Site {}: applied {} entries, state_.execute_index_={} queue_remaining={}",
-                   site_id_, apply_count, GetAppliedIndex(), queue_size);
-        }
-
-        // Snapshot trigger for queued apply path. The hot precheck reads only
-        // atomic mirrors; the slow path revalidates canonical state under the
-        // apply-gate -> Raft-mutex order.
-        if (snapshot_manager_configured_.load(
-                rusty::sync::atomic::Ordering::Acquire)) {
-          const uint64_t trigger_snapshot_index =
-              snapshot_trigger_index_.load(
-                  rusty::sync::atomic::Ordering::Acquire);
-          const uint64_t trigger_threshold =
-              snapshot_trigger_threshold_.load(
-                  rusty::sync::atomic::Ordering::Acquire);
-          if (raft_server_snapshot_is_due(
-                  trigger_snapshot_index, GetAppliedIndex(),
-                  trigger_threshold)) {
-            MaybeCreateSnapshot();
-          }
-        }
-
-        // Route periodic cleanup through the snapshot-aware compactor. It will
-        // retain any prefix not yet covered by a snapshot.
-        if (id % 5000 == 0) {
-          const slotid_t cutoff =
-              (GetAppliedIndex() > 10000) ? GetAppliedIndex() - 10000 : 0;
-          CompactLog(cutoff);
-        }
-      } else {
-        // Periodic heartbeat when queue is empty
-        auto now = std::chrono::steady_clock::now();
-        if (std::chrono::duration_cast<std::chrono::seconds>(now - last_log_time).count() >= 5) {
-          uint64_t commit_index_snapshot = 0;
-          {
-            std::lock_guard<RaftCheckedMutex> lock(mtx_);
-            commit_index_snapshot = state_.commit_index_;
-          }
-          Log_info("[APPLY-THREAD] Site {}: IDLE state_.execute_index_={} state_.commit_index_={} queue_size={} applied_total={}",
-                   site_id_, GetAppliedIndex(), commit_index_snapshot,
-                   queue_size, apply_count);
-          last_log_time = now;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-      }
-    }
-    Log_info("[APPLY-THREAD] Site {}: Background apply thread exiting", site_id_);
-  });
-  // Keep the thread joinable so the destructor can await it. Detaching here
-  // causes use-after-free: the thread captures `this` and keeps running after
-  // ~RaftServer destroys the RaftServer, resulting in an empty std::function
-  // invocation when it next pulls from apply_queue_.
+  // The loop is Rust (RaftServerBase::ApplyThreadLoop). Keep the thread
+  // JOINABLE so the destructor can await it: detaching causes
+  // use-after-free, because the thread captures `this` and keeps running
+  // after ~RaftServer has destroyed the server, which shows up as an empty
+  // std::function invocation the next time it pulls from apply_queue_.
+  apply_thread_ = std::thread([this]() { this->ApplyThreadLoop(); });
 }
 
 
@@ -6190,295 +6193,21 @@ void RaftServer::OnInstallSnapshot(const uint64_t term,
   std::lock_guard<std::mutex> apply_lock(state_machine_apply_mtx_);
   std::lock_guard<RaftCheckedMutex> lock(mtx_);
 
-  // @unsafe
-  { *term_out = 0; }
-
+  // The body is Rust (RaftServerBase::OnInstallSnapshotLocked). What stays
+  // here is the catch-all around it -- exceptions have no DSL spelling --
+  // and the rrr service layer's entry point by name on RaftServer.
   try {
-
-  // ============================================================================
-  // Edge Case 0: Server shutting down
-  // ============================================================================
-  if (stop_.load(rusty::sync::atomic::Ordering::Acquire)) {
-    Log_info("[INSTALL-SNAPSHOT] Site {}: Ignoring InstallSnapshot - server shutting down", site_id_);
-    return;
-  }
-
-  // ============================================================================
-  // Edge Case 1: Stale term - reject
-  // ============================================================================
-  if (term < state_.current_term_) {
-    Log_info("[INSTALL-SNAPSHOT] Site {}: Rejecting InstallSnapshot from leader {} "
-             "(leader_term={} < my_term={})",
-             site_id_, leader_id, term, state_.current_term_);
-    *term_out = state_.current_term_;
-    return;
-  }
-
-  // A leader cannot have committed an entry from a term that has not happened
-  // yet. This is a malformed snapshot boundary, not usable Raft leader
-  // evidence. Reject it with the unavailable sentinel before authenticating
-  // the sender, stepping down, resetting the timer, or touching payload state.
-  if (!raft_server_snapshot_term_is_valid(last_included_term, term)) {
-    Log_error("[INSTALL-SNAPSHOT] Site {}: Rejecting impossible snapshot "
-              "boundary term {} from leader {} in term {}",
-              site_id_, last_included_term, leader_id, term);
-    return;
-  }
-
-  if (leader_id > static_cast<uint64_t>(
-                      std::numeric_limits<siteid_t>::max())) {
-    Log_warn("[INSTALL-SNAPSHOT] Site {} rejected unrepresentable leader "
-             "identity {} in term {}",
-             site_id_, leader_id, term);
-    return;
-  }
-  const siteid_t leader_site = static_cast<siteid_t>(leader_id);
-  const siteid_t invalid = static_cast<siteid_t>(INVALID_SITEID);
-  const bool sender_is_current_voter =
-      leader_site != invalid && leader_site != site_id_ &&
-      current_config_.count(leader_site) != 0;
-  const bool leader_has_higher_term =
-      raft_server_observed_higher_term(term, state_.current_term_);
-  const bool sender_is_self = leader_site == site_id_;
-  const bool has_known_leader = state_.current_leader_id_ != invalid;
-  const bool known_leader_matches_sender =
-      state_.current_leader_id_ == leader_site;
-  if (!sender_is_current_voter ||
-      !raft_server_leader_rpc_sender_is_authoritative(
-          leader_has_higher_term, state_.is_leader_, sender_is_self,
-          has_known_leader, known_leader_matches_sender)) {
-    Log_warn("[INSTALL-SNAPSHOT] Site {} rejected unauthoritative leader {} "
-             "in term {} (local_term={} leader={} known_leader={} voter={})",
-             site_id_, leader_id, term, state_.current_term_, state_.is_leader_,
-             state_.current_leader_id_, sender_is_current_voter);
-    return;
-  }
-
-  // ============================================================================
-  // Edge Case 2: Higher or equal term - accept as legitimate leader
-  // ============================================================================
-  const uint64_t previous_term = state_.current_term_;
-  if (leader_has_higher_term) {
-    Log_info("[INSTALL-SNAPSHOT] Site {}: Leader {} has higher term ({} > {}) - updating",
-             site_id_, leader_id, term, state_.current_term_);
-    state_.current_term_ = term;
-    // @unsafe
-    {
-    state_.vote_for_ = INVALID_SITEID;
-    }
-  }
-
-  // InstallSnapshot comes from a known leader. Publish its identity before a
-  // possible leader-to-follower callback observes the role transition.
-  state_.current_leader_id_ = raft_server_leader_hint_after_transition(
-      false, true, site_id_, leader_site);
-
-  // Any accepted leader RPC, including one in our current term, establishes
-  // follower state. Cancel the outstanding election as well as leadership;
-  // RequestVote's delayed-success path revalidates this ownership before it
-  // can promote the server again.
-  if (state_.is_leader_) {
-    stepDown();
-  } else {
-    setIsLeader(false);
-  }
-  state_.req_voting_ = false;
-  state_.election_in_progress_ = false;
-
-  if (leader_has_higher_term) {
-    LogTermChange("InstallSnapshot carried newer term", previous_term,
-                  state_.current_term_, leader_site);
-  }
-
-  // Reset election timer (legitimate leader contact)
-  resetTimerLocked("received InstallSnapshot");
-  // From here, state_.current_term_ denotes an accepted current-term leader contact.
-  // Individual install failures overwrite this with zero so the caller never
-  // advances match/next on an unavailable boundary.
-  *term_out = state_.current_term_;
-
-  // A current-term leader may retry a snapshot after this follower has already
-  // committed, applied, or snapshotted through its boundary. Acknowledge that
-  // leader contact but do not roll any local snapshot/log/application state
-  // backward and do not install the stale payload.
-  uint64_t local_progress_index = state_.commit_index_;
-  local_progress_index = std::max(local_progress_index, state_.execute_index_);
-  local_progress_index = std::max(local_progress_index, GetAppliedIndex());
-  local_progress_index = std::max(local_progress_index, state_.snapidx_);
-  if (last_included_index == state_.snapidx_ && state_.snapidx_ != 0 &&
-      last_included_term != state_.snapterm_) {
-    Log_error("[INSTALL-SNAPSHOT] Site {}: rejecting snapshot boundary "
-              "({}, {}) that conflicts with local snapshot ({}, {})",
-              site_id_, last_included_index, last_included_term,
-              state_.snapidx_, state_.snapterm_);
-    *term_out = 0;
-    return;
-  }
-  if (raft_server_snapshot_is_stale(
-          last_included_index, local_progress_index)) {
-    Log_info("[INSTALL-SNAPSHOT] Site {}: Snapshot index {} is already covered "
-             "(commit={} execute={} applied={} snapidx={}); acknowledging no-op",
-             site_id_, last_included_index, state_.commit_index_, state_.execute_index_,
-             GetAppliedIndex(), state_.snapidx_);
-    return;
-  }
-  if (!raft_server_log_index_has_successor(last_included_index)) {
-    // state_.raft_log_.base() requires S + 1. Reaching UINT64_MAX exhausts the Raft
-    // log index space, so reject the payload without wrapping the value.
-    Log_error("[INSTALL-SNAPSHOT] Site {}: Cannot install terminal snapshot "
-              "index {}; no successor index is representable",
-              site_id_, last_included_index);
-    // The leader callback uses zero as an unavailable/failed response and
-    // therefore leaves match_index/next_index unchanged.
-    // @unsafe
-    { *term_out = 0; }
-    return;
-  }
-
-  if (!snapshot_manager_) {
-    Log_error("[INSTALL-SNAPSHOT] Site {}: Cannot install snapshot at index {} "
-              "without configured snapshot storage",
-              site_id_, last_included_index);
-    // @unsafe
-    { *term_out = 0; }
-    return;
-  }
-
-  // Complete every fallible observation used by the retention decision before
-  // the application loader can replace external state. Use find(), not
-  // PutRaftInstance(), and require a decoded command so a synthesized empty
-  // RaftEntry can never prove the snapshot boundary.
-  const RaftEntry* boundary = FindRaftInstance(last_included_index);
-  const bool has_boundary =
-      boundary != nullptr && boundary->cmd().has_value();
-  const ballot_t local_boundary_term =
-      has_boundary ? boundary->term() : 0;
-  const bool retain_suffix = raft_server_snapshot_boundary_matches(
-      has_boundary, local_boundary_term, last_included_term);
-  const slotid_t previous_last_log_index = state_.raft_log_.last_index();
-
-  // Fully validate and stage the exact state-machine image before changing
-  // either recovery point. The owned transaction's destructor aborts
-  // this private staging image, so rejection leaves the live state machine,
-  // latest Raft snapshot, and reconstruction log untouched.
-  Log_info("[INSTALL-SNAPSHOT] Site {}: Preparing state machine snapshot ({} bytes)",
-           site_id_, data.size());
-  auto prepared_state_machine = PrepareStateMachineSnapshotLocked(
-      data, last_included_index, last_included_term);
-  if (prepared_state_machine == nullptr) {
-    *term_out = 0;
-    return;
-  }
-
-  // ============================================================================
-  // Save snapshot data via snapshot_manager_
-  // ============================================================================
-  // @unsafe { snapshot_manager_ I/O operations }
-  const bool saved = snapshot_manager_->TakeSnapshot(
-      last_included_index, last_included_term,
-      data.data(), data.size());
-  if (!saved) {
-    Log_error("[INSTALL-SNAPSHOT] Site {}: Failed to save snapshot at index={} term={}",
-              site_id_, last_included_index, last_included_term);
-    // The transaction has not committed, so its destructor discards only the
-    // private staging image. The old live state machine and log remain usable.
-    { *term_out = 0; }
-    return;
-  }
-  Log_info("[INSTALL-SNAPSHOT] Site {}: Snapshot saved at index={} term={}",
-           site_id_, last_included_index, last_included_term);
-
-  // SnapshotManager is now the authority for this boundary. Publish the staged
-  // application image only afterward.
-  if (!prepared_state_machine->Commit()) {
-    Log_error("[INSTALL-SNAPSHOT] Site {}: Failed to commit prepared state "
-              "machine snapshot at index={} term={}; failing stop",
-              site_id_, last_included_index, last_included_term);
-    rpc_ready_.store(false, rusty::sync::atomic::Ordering::Release);
-    stop_.store(true, rusty::sync::atomic::Ordering::Release);
-    looping_.store(false, rusty::sync::atomic::Ordering::Release);
-    apply_thread_running_.store(false, rusty::sync::atomic::Ordering::SeqCst);
-    *term_out = 0;
-    return;
-  }
-  Log_info("[INSTALL-SNAPSHOT] Site {}: State machine committed at index={} "
-           "after Raft snapshot publication",
-           site_id_, last_included_index);
-
-  // ============================================================================
-  // Update snapshot metadata
-  // ============================================================================
-  state_.snapidx_ = last_included_index;
-  state_.snapterm_ = last_included_term;
-  snapshot_trigger_index_.store(
-      state_.snapidx_, rusty::sync::atomic::Ordering::Release);
-
-  // ============================================================================
-  // Reconcile in-memory log and queued application work
-  // ============================================================================
-  if (retain_suffix) {
-    state_.raft_log_.compact_through(last_included_index);
-  } else {
-    state_.raft_log_.reset(last_included_index + 1);
-  }
-
-  size_t purged_apply_entries = 0;
-  {
-    std::lock_guard<std::mutex> queue_lock(apply_queue_mtx_);
-    if (retain_suffix) {
-      auto queued = apply_queue_.begin();
-      while (queued != apply_queue_.end()) {
-        if (raft_server_log_index_at_or_below(
-                queued->index, last_included_index)) {
-          queued = apply_queue_.erase(queued);
-          purged_apply_entries++;
-        } else {
-          ++queued;
-        }
-      }
-    } else {
-      // Also invalidates an entry that the apply thread popped before this
-      // queue clear. It rechecks the captured epoch while holding the outer
-      // state-machine gate before invoking the callback.
-      apply_queue_epoch_++;
-      purged_apply_entries = apply_queue_.size();
-      apply_queue_.clear();
-    }
-  }
-
-  // Update state_.raft_log_.base() to reflect compacted log
-
-
-  // ============================================================================
-  // Advance state_.commit_index_ and state_.execute_index_
-  // ============================================================================
-  state_.commit_index_ = last_included_index;
-  verify(state_.commit_index_ <= state_.raft_log_.last_index());
-
-  // Publish application only after the state machine has finished loading the
-  // snapshot. Acquire waiters must never observe the covered indices early.
-  PublishAppliedIndexLocked(last_included_index);
-
-  Log_info("[INSTALL-SNAPSHOT] Site {}: Installed snapshot from leader {} "
-           "(snapidx={}, snapterm={}, state_.commit_index_={}, state_.execute_index_={}, "
-           "state_.raft_log_.last_index()={}, retain_suffix={}, purged_apply={})",
-           site_id_, leader_id, state_.snapidx_, state_.snapterm_, state_.commit_index_, state_.execute_index_,
-           state_.raft_log_.last_index(), retain_suffix, purged_apply_entries);
+    OnInstallSnapshotLocked(term, leader_id, last_included_index,
+                            last_included_term, &data, *term_out);
   } catch (const std::exception& error) {
     Log_error("[INSTALL-SNAPSHOT] Site {} threw while installing snapshot: {}",
               site_id_, error.what());
-    rpc_ready_.store(false, rusty::sync::atomic::Ordering::Release);
-    stop_.store(true, rusty::sync::atomic::Ordering::Release);
-    looping_.store(false, rusty::sync::atomic::Ordering::Release);
-    apply_thread_running_.store(false, rusty::sync::atomic::Ordering::SeqCst);
+    FailStop();
     *term_out = 0;
   } catch (...) {
     Log_error("[INSTALL-SNAPSHOT] Site {} threw while installing snapshot",
               site_id_);
-    rpc_ready_.store(false, rusty::sync::atomic::Ordering::Release);
-    stop_.store(true, rusty::sync::atomic::Ordering::Release);
-    looping_.store(false, rusty::sync::atomic::Ordering::Release);
-    apply_thread_running_.store(false, rusty::sync::atomic::Ordering::SeqCst);
+    FailStop();
     *term_out = 0;
   }
 }
