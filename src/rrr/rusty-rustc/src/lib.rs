@@ -471,16 +471,12 @@ rusty_opaque_cpp_carrier! {
     RaftCreateSnapshotCb,
     /// `std::function<std::unique_ptr<PreparedStateMachineSnapshotInstall>(const std::string&, uint64_t)>`.
     RaftPrepareSnapshotCb,
-    /// `std::vector<siteid_t>` -- the ordinal peer table.
-    RaftPeerSites,
     /// `std::mutex`.
     RaftStdMutex,
     /// `std::condition_variable`.
     RaftStdCondVar,
     /// `std::function<void(bool)>` -- the leadership-change notification.
     RaftLeaderChangeCb,
-    /// `std::set<siteid_t>` -- the current configuration.
-    RaftSiteIdSet,
     /// `std::thread` -- the background apply thread.
     RaftStdThread,
     /// `std::deque<janus::QueuedApplyEntry>` -- the apply queue.

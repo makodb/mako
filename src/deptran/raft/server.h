@@ -2224,11 +2224,9 @@ using RaftCreateSnapshotCb = ::std::function<::std::string(uint64_t)>;
 using RaftPrepareSnapshotCb = ::std::function<
     ::std::unique_ptr<::janus::PreparedStateMachineSnapshotInstall>(
         const ::std::string&, uint64_t)>;
-using RaftPeerSites = ::std::vector<siteid_t>;
 using RaftStdMutex = ::std::mutex;
 using RaftStdCondVar = ::std::condition_variable;
 using RaftLeaderChangeCb = ::std::function<void(bool)>;
-using RaftSiteIdSet = ::std::set<siteid_t>;
 using RaftStdThread = ::std::thread;
 using RaftApplyQueue = ::std::deque<::janus::QueuedApplyEntry>;
 using RaftVoteQuorumPtr = ::std::shared_ptr<::janus::RaftVoteQuorumEvent>;
@@ -2523,8 +2521,6 @@ unsafe extern "C" {
     fn raft_random_range_us(low: u64, high: u64) -> u64;
     // The kernel bridge (server.cc). Each takes the base and, where it has
     // to reach a method that has not converted, casts down to RaftServer.
-    fn raft_rebuild_peer_tables(server: *mut RaftServerBase, next_index: u64);
-    fn raft_peer_site_at(server: *const RaftServerBase, ordinal: usize) -> u16;
     fn raft_leader_change_cb_is_set(server: *const RaftServerBase) -> bool;
     fn raft_fire_leader_change(server: *mut RaftServerBase, is_leader: bool);
     // The four env-tunable election-timeout knobs, which are ordinary C++
@@ -2563,8 +2559,6 @@ unsafe extern "C" {
     fn raft_spawn_election_timer(server: *mut RaftServerBase, wait_int_us: u64);
     fn raft_setup_internal_guarded(server: *mut RaftServerBase) -> bool;
     fn raft_shutdown_barrier_yield();
-    fn raft_peer_sites_len(server: *const RaftServerBase) -> usize;
-    fn raft_sync_config_members(server: *mut RaftServerBase);
     fn raft_env_heartbeat_interval_us(out: *mut u64) -> i32;
     fn raft_env_log_retention_window(out: *mut u64) -> i32;
     fn raft_bind_replication_poll(server: *mut RaftServerBase) -> bool;
@@ -2654,7 +2648,7 @@ pub struct RaftServerBase {
     pub create_sm_snapshot_cb_: rusty::RaftCreateSnapshotCb,
     pub prepare_sm_snapshot_cb_: rusty::RaftPrepareSnapshotCb,
     // Ordinal peer table, rebuilt whenever the configuration changes.
-    pub peer_sites_: rusty::RaftPeerSites,
+    pub peer_sites_: rusty::Vec<u16>,
     pub stop_: rusty::sync::atomic::AtomicBool,
     pub rpc_ready_: rusty::sync::atomic::AtomicBool,
     pub startup_mtx_: rusty::RaftStdMutex,
@@ -2675,11 +2669,12 @@ pub struct RaftServerBase {
     pub leader_change_cb_: rusty::RaftLeaderChangeCb,
     pub preferred_leader_site_id_: u16,
     pub startup_timestamp_: u64,
-    pub current_config_: rusty::RaftSiteIdSet,
-    // current_config_'s contents, sorted and duplicate-free, as something a
-    // DSL body can read. std::set is opaque to Rust, and PHASE 0 and PHASE 3
-    // each built exactly this vector from it on EVERY round; the set has one
-    // write, in Setup, so caching it is both expressible and cheaper.
+    // The replica set for this partition, sorted and duplicate-free. It was
+    // a std::set (current_config_) mirrored into this vector, because a
+    // std::set is opaque to Rust; the set is gone and this is the only copy.
+    // Sorted and duplicate-free is not cosmetic -- the round membership and
+    // the authority ledger's set-equality check both rely on it -- so the
+    // one writer (Setup) sorts and dedups before filling it.
     pub config_members_: rusty::Vec<u16>,
     pub apply_thread_: rusty::RaftStdThread,
     pub apply_thread_running_: rusty::sync::atomic::AtomicBool,
@@ -2748,7 +2743,7 @@ impl RaftServerBase {
             snapshot_trigger_threshold_: rusty::sync::atomic::AtomicU64::new(10000),
             create_sm_snapshot_cb_: Default::default(),
             prepare_sm_snapshot_cb_: Default::default(),
-            peer_sites_: Default::default(),
+            peer_sites_: rusty::Vec::new(),
             stop_: rusty::sync::atomic::AtomicBool::new(false),
             rpc_ready_: rusty::sync::atomic::AtomicBool::new(false),
             startup_mtx_: Default::default(),
@@ -2772,7 +2767,6 @@ impl RaftServerBase {
             leader_change_cb_: Default::default(),
             preferred_leader_site_id_: RAFT_SERVER_INVALID_SITE_ID,
             startup_timestamp_: 0,
-            current_config_: Default::default(),
             config_members_: rusty::Vec::new(),
             apply_thread_: Default::default(),
             apply_thread_running_: rusty::sync::atomic::AtomicBool::new(false),
@@ -3201,8 +3195,29 @@ impl RaftServerBase {
     // std::set and peer_sites_ a std::vector: Rust holds them but cannot
     // iterate them.
     pub fn RebuildPeerTables(&mut self, next_index: u64) {
+        self.peer_sites_.clear();
+        let mut self_is_a_member: bool = false;
+        let mut i: usize = 0;
+        while i < self.config_members_.len() {
+            let peer_id: u16 = self.config_members_[i];
+            if peer_id == self.site_id_ {
+                self_is_a_member = true;
+            } else {
+                self.peer_sites_.push(peer_id);
+            }
+            i += 1;
+        }
+        let followers: usize = self.peer_sites_.len();
+        self.state_.peers_.reset(followers, next_index);
+        // The C++ computed this as set.size() minus set.count(self); the
+        // membership flag above is the same statement over a sorted vector.
+        let expected: usize = if self_is_a_member {
+            self.config_members_.len() - 1
+        } else {
+            self.config_members_.len()
+        };
         unsafe {
-            raft_rebuild_peer_tables(self as *mut RaftServerBase, next_index);
+            raft_verify(self.state_.peers_.len() == expected);
         }
     }
 
@@ -3309,7 +3324,7 @@ impl RaftServerBase {
             let peers: usize = self.state_.peers_.len();
             let mut ord: usize = 0;
             while ord < peers {
-                let site: u16 = unsafe { raft_peer_site_at(self as *const RaftServerBase, ord) };
+                let site: u16 = self.peer_site_at(ord);
                 rusty::raft_log_debug_5(
                     "loc_id_={} match_index_[{}]={}, next_index_[{}]={}",
                     self.loc_id_, site, self.state_.peers_.match_index(ord),
@@ -3394,7 +3409,7 @@ impl RaftServerBase {
 
     // @safe - the site id at an ordinal of the peer table.
     pub fn peer_site_at(&self, ordinal: usize) -> u16 {
-        unsafe { raft_peer_site_at(self as *const RaftServerBase, ordinal) }
+        self.peer_sites_[ordinal]
     }
 
     // @unsafe - the owner-thread startup job. Every failure path closes the
@@ -4294,14 +4309,6 @@ impl RaftServerBase {
         true
     }
 
-    // @safe - refreshes config_members_ from current_config_. Called once,
-    // by Setup, because that is the only place current_config_ is written.
-    pub fn SyncConfigMembers(&mut self) {
-        unsafe {
-            raft_sync_config_members(self as *mut RaftServerBase);
-        }
-    }
-
     // @safe - `current_config_.count(site) != 0`, over the cached vector.
     // A linear scan of three to five sorted u16s, which is what the std::set
     // lookup it replaces cost anyway.
@@ -4322,13 +4329,9 @@ impl RaftServerBase {
     // Deliberately an ordinal rather than a reference: an ordinal cannot
     // dangle across an RPC send or a re-entrant completion callback.
     pub fn PeerOrdinal(&self, site: u16) -> usize {
-        let count: usize =
-            unsafe { raft_peer_sites_len(self as *const RaftServerBase) };
         let mut ord: usize = 0;
-        while ord < count {
-            if unsafe { raft_peer_site_at(self as *const RaftServerBase, ord) }
-                == site
-            {
+        while ord < self.peer_sites_.len() {
+            if self.peer_sites_[ord] == site {
                 return ord;
             }
             ord += 1;
@@ -4906,7 +4909,7 @@ impl TxLogServer for RaftServerBase {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=aee56a07837b6cf719fd2907d5d17960bf2fdfdbf33b10f3f926d31f86895e68*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=3cdd6b4502a6be3079226773dba697fd1b4429e7fd87a6157880793c12f6c283*/
 struct RaftVoteOutcome;
 struct RaftServerBase;
 
@@ -4919,8 +4922,6 @@ extern "C" {
     uint64_t raft_time_now_us();
     bool raft_snapshot_manager_is_set(const rusty::RaftSnapshotManagerPtr* manager);
     uint64_t raft_random_range_us(uint64_t low, uint64_t high);
-    void raft_rebuild_peer_tables(RaftServerBase* server, uint64_t next_index);
-    uint16_t raft_peer_site_at(const RaftServerBase* server, size_t ordinal);
     bool raft_leader_change_cb_is_set(const RaftServerBase* server);
     void raft_fire_leader_change(RaftServerBase* server, bool is_leader);
     uint64_t raft_preferred_leader_grace_period_us();
@@ -4946,8 +4947,6 @@ extern "C" {
     void raft_spawn_election_timer(RaftServerBase* server, uint64_t wait_int_us);
     bool raft_setup_internal_guarded(RaftServerBase* server);
     void raft_shutdown_barrier_yield();
-    size_t raft_peer_sites_len(const RaftServerBase* server);
-    void raft_sync_config_members(RaftServerBase* server);
     int32_t raft_env_heartbeat_interval_us(uint64_t* out);
     int32_t raft_env_log_retention_window(uint64_t* out);
     bool raft_bind_replication_poll(RaftServerBase* server);
@@ -5001,7 +5000,7 @@ struct RaftServerBase : public TxLogServer {
     rusty::sync::atomic::AtomicU64 snapshot_trigger_threshold_;
     rusty::RaftCreateSnapshotCb create_sm_snapshot_cb_;
     rusty::RaftPrepareSnapshotCb prepare_sm_snapshot_cb_;
-    rusty::RaftPeerSites peer_sites_;
+    rusty::Vec<uint16_t> peer_sites_;
     rusty::sync::atomic::AtomicBool stop_;
     rusty::sync::atomic::AtomicBool rpc_ready_;
     rusty::RaftStdMutex startup_mtx_;
@@ -5022,7 +5021,6 @@ struct RaftServerBase : public TxLogServer {
     rusty::RaftLeaderChangeCb leader_change_cb_;
     uint16_t preferred_leader_site_id_;
     uint64_t startup_timestamp_;
-    rusty::RaftSiteIdSet current_config_;
     rusty::Vec<uint16_t> config_members_;
     rusty::RaftStdThread apply_thread_;
     rusty::sync::atomic::AtomicBool apply_thread_running_;
@@ -5096,7 +5094,6 @@ struct RaftServerBase : public TxLogServer {
     void ApplyThreadLoop();
     void FailClosed();
     bool CreateSnapshotLocked();
-    void SyncConfigMembers();
     bool IsConfigMember(uint16_t site) const;
     size_t PeerOrdinal(uint16_t site) const;
     void RequestReplication();
@@ -5137,7 +5134,7 @@ inline RaftServerBase::RaftServerBase()
     , snapshot_trigger_threshold_(rusty::sync::atomic::AtomicU64::new_(10000))
     , create_sm_snapshot_cb_(rusty::default_like<rusty::RaftCreateSnapshotCb>())
     , prepare_sm_snapshot_cb_(rusty::default_like<rusty::RaftPrepareSnapshotCb>())
-    , peer_sites_(rusty::default_like<rusty::RaftPeerSites>())
+    , peer_sites_(rusty::Vec<uint16_t>::new_())
     , stop_(rusty::sync::atomic::AtomicBool::new_(false))
     , rpc_ready_(rusty::sync::atomic::AtomicBool::new_(false))
     , startup_mtx_(rusty::default_like<rusty::RaftStdMutex>())
@@ -5158,7 +5155,6 @@ inline RaftServerBase::RaftServerBase()
     , leader_change_cb_(rusty::default_like<rusty::RaftLeaderChangeCb>())
     , preferred_leader_site_id_(RAFT_SERVER_INVALID_SITE_ID)
     , startup_timestamp_(static_cast<uint64_t>(0))
-    , current_config_(rusty::default_like<rusty::RaftSiteIdSet>())
     , config_members_(rusty::Vec<uint16_t>::new_())
     , apply_thread_(rusty::default_like<rusty::RaftStdThread>())
     , apply_thread_running_(rusty::sync::atomic::AtomicBool::new_(false))
@@ -5438,9 +5434,24 @@ inline void RaftServerBase::ElectionLoopLogFired(const ElectionTick& tick) const
 }
 
 inline void RaftServerBase::RebuildPeerTables(uint64_t next_index) {
+    this->peer_sites_.clear();
+    bool self_is_a_member = false;
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::len(this->config_members_)) {
+        uint16_t peer_id = this->config_members_[i];
+        if (rusty::detail::deref_if_pointer_like(peer_id) == rusty::detail::deref_if_pointer_like(this->site_id_)) {
+            self_is_a_member = true;
+        } else {
+            this->peer_sites_.push(std::move(peer_id));
+        }
+        i += 1;
+    }
+    const size_t followers = rusty::len(this->peer_sites_);
+    this->state_.peers_.reset(std::move(followers), std::move(next_index));
+    const size_t expected = (self_is_a_member ? rusty::len(this->config_members_) - static_cast<size_t>(1) : rusty::len(this->config_members_));
     // @unsafe
     {
-        raft_rebuild_peer_tables(static_cast<RaftServerBase*>(rusty::detail::ptr_or_addr((*this))), std::move(next_index));
+        raft_verify(rusty::len(this->state_.peers_) == rusty::detail::deref_if_pointer_like(expected));
     }
 }
 
@@ -5515,7 +5526,7 @@ inline void RaftServerBase::setIsLeader(bool is_leader) {
         const size_t peers = rusty::len(this->state_.peers_);
         size_t ord = static_cast<size_t>(0);
         while (rusty::detail::deref_if_pointer_like(ord) < rusty::detail::deref_if_pointer_like(peers)) {
-            const uint16_t site = raft_peer_site_at(static_cast<const RaftServerBase*>(rusty::detail::ptr_or_addr((*this))), std::move(ord));
+            const uint16_t site = this->peer_site_at(std::move(ord));
             rusty::raft_log_debug_5("loc_id_={} match_index_[{}]={}, next_index_[{}]={}", this->loc_id_, std::move(site), this->state_.peers_.match_index(std::move(ord)), std::move(site), this->state_.peers_.next_index(std::move(ord)));
             ord += 1;
         }
@@ -5557,10 +5568,7 @@ inline void RaftServerBase::setIsLeader(bool is_leader) {
 }
 
 inline uint16_t RaftServerBase::peer_site_at(size_t ordinal) const {
-    // @unsafe
-    {
-        return raft_peer_site_at(static_cast<const RaftServerBase*>(rusty::detail::ptr_or_addr((*this))), std::move(ordinal));
-    }
+    return this->peer_sites_[ordinal];
 }
 
 inline bool RaftServerBase::SetupInternal() {
@@ -6003,13 +6011,6 @@ inline bool RaftServerBase::CreateSnapshotLocked() {
     return true;
 }
 
-inline void RaftServerBase::SyncConfigMembers() {
-    // @unsafe
-    {
-        raft_sync_config_members(static_cast<RaftServerBase*>(rusty::detail::ptr_or_addr((*this))));
-    }
-}
-
 inline bool RaftServerBase::IsConfigMember(uint16_t site) const {
     size_t i = static_cast<size_t>(0);
     while (rusty::detail::deref_if_pointer_like(i) < rusty::len(this->config_members_)) {
@@ -6022,10 +6023,9 @@ inline bool RaftServerBase::IsConfigMember(uint16_t site) const {
 }
 
 inline size_t RaftServerBase::PeerOrdinal(uint16_t site) const {
-    const size_t count = raft_peer_sites_len(static_cast<const RaftServerBase*>(rusty::detail::ptr_or_addr((*this))));
     size_t ord = static_cast<size_t>(0);
-    while (rusty::detail::deref_if_pointer_like(ord) < rusty::detail::deref_if_pointer_like(count)) {
-        if (raft_peer_site_at(static_cast<const RaftServerBase*>(rusty::detail::ptr_or_addr((*this))), std::move(ord)) == rusty::detail::deref_if_pointer_like(site)) {
+    while (rusty::detail::deref_if_pointer_like(ord) < rusty::len(this->peer_sites_)) {
+        if (this->peer_sites_[ord] == rusty::detail::deref_if_pointer_like(site)) {
             return std::move(ord);
         }
         ord += 1;
@@ -6664,19 +6664,6 @@ class RaftServer : public RaftServerBase {
   // tranche.
   // ==========================================================================
 
-  // @safe - linear scan of a fixed, tiny table (replica counts are 3 or 5).
-  // Returns state_.peers_.len() when the site is not a follower of this leader,
-  // which is the "removed follower" case PHASE 2 guards against. Deliberately
-  // returns an ordinal rather than a reference: an ordinal cannot dangle
-  // across an RPC send or a re-entrant completion callback.
-  size_t PeerOrdinal(siteid_t site) const {
-    for (size_t ord = 0; ord < peer_sites_.size(); ord++) {
-      if (peer_sites_[ord] == site) {
-        return ord;
-      }
-    }
-    return state_.peers_.len();
-  }
 
 
   // @unsafe - suspends on the wake gate; false means shutdown
