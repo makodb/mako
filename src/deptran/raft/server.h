@@ -1855,6 +1855,29 @@ inline void PeerTable::accept_through(size_t ordinal, uint64_t acknowledged_thro
 #if RUSTYCPP_RUST
 #[repr(C)]
 pub struct RaftConsensusState {
+    // THIS SERVER'S IDENTITY, MIRRORED.
+    //
+    // site_id_, partition_id_ and loc_id_ also exist on RaftServer, where
+    // TXLOG_SERVER_SITE_FIELDS() puts them (src/deptran/scheduler.h:136).
+    // That macro is SHARED WITH PAXOS, so the fields cannot simply move; a
+    // converted Rust body needs them and reaching back out to the C++ object
+    // for a scalar would defeat the point.
+    //
+    // They are written exactly once, by RaftServer::set_site_identity, which
+    // sets both copies together and then verifies they agree. All three are
+    // immutable afterwards, so the two copies cannot drift -- but the
+    // assertion is there because "cannot drift" is an argument, and this is
+    // the kind of argument that stops being true when someone adds a setter.
+    //
+    // TODO(txlog-site-fields): remove the mirror by unpacking
+    // TXLOG_SERVER_SITE_FIELDS() for both engines, so Raft and Paxos each own
+    // their identity fields outright and Raft's can live only here. That is a
+    // change to Paxos's contract, which is why it is not done in passing.
+    // Before removing, check that PaxosServer still compiles against whatever
+    // replaces the macro.
+    pub site_id_: u16,
+    pub partition_id_: u32,
+    pub loc_id_: u32,
     // THE LOG AND THE PEERS LIVE HERE NOW, not beside the mutex.
     //
     // This is what makes a converted method body a one-line delegate instead
@@ -1899,6 +1922,10 @@ pub struct RaftConsensusState {
 impl RaftConsensusState {
     pub fn new() -> RaftConsensusState {
         RaftConsensusState {
+            // Overwritten by set_site_identity before anything reads them.
+            site_id_: u16::MAX,
+            partition_id_: 0,
+            loc_id_: u32::MAX,
             raft_log_: RaftLog::new(),
             peers_: PeerTable::new(),
             election_term_: 0,
@@ -1927,10 +1954,13 @@ impl RaftConsensusState {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.consensus_state version=1 rust_sha256=a87c7725640c47628f8897eefc26289c764f6f60fb34bebfab973eb9d426b889*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.consensus_state version=1 rust_sha256=a432de11a6f9117f2b1392368da3234a8b4d67a410a385f03a953aa19da55d41*/
 struct RaftConsensusState;
 
 struct RaftConsensusState {
+    uint16_t site_id_;
+    uint32_t partition_id_;
+    uint32_t loc_id_;
     RaftLog raft_log_;
     PeerTable peers_;
     int64_t election_term_;
@@ -1959,7 +1989,7 @@ struct RaftConsensusState {
 
 
 inline RaftConsensusState RaftConsensusState::new_() {
-    return RaftConsensusState{.raft_log_ = RaftLog::new_(), .peers_ = PeerTable::new_(), .election_term_ = static_cast<int64_t>(0), .election_timeout_us_ = static_cast<uint64_t>(0), .election_timer_generation_ = static_cast<uint64_t>(0), .vote_for_ = std::numeric_limits<uint16_t>::max(), .snapshot_threshold_ = static_cast<uint64_t>(10000), .snapshot_callback_owner_token_ = static_cast<uint64_t>(0), .next_snapshot_callback_owner_token_ = static_cast<uint64_t>(1), .is_leader_ = false, .req_voting_ = false, .election_in_progress_ = false, .current_leader_id_ = std::numeric_limits<uint16_t>::max(), .last_heartbeat_time_ = static_cast<uint64_t>(0), .heartbeat_round_ = static_cast<uint64_t>(0), .read_quorum_confirmed_term_ = static_cast<uint64_t>(0), .read_quorum_confirmed_round_ = static_cast<uint64_t>(0), .current_term_ = static_cast<uint64_t>(0), .commit_index_ = static_cast<uint64_t>(0), .execute_index_ = static_cast<uint64_t>(0), .snapidx_ = static_cast<uint64_t>(0), .snapterm_ = static_cast<int64_t>(0)};
+    return RaftConsensusState{.site_id_ = std::numeric_limits<uint16_t>::max(), .partition_id_ = static_cast<uint32_t>(0), .loc_id_ = std::numeric_limits<uint32_t>::max(), .raft_log_ = RaftLog::new_(), .peers_ = PeerTable::new_(), .election_term_ = static_cast<int64_t>(0), .election_timeout_us_ = static_cast<uint64_t>(0), .election_timer_generation_ = static_cast<uint64_t>(0), .vote_for_ = std::numeric_limits<uint16_t>::max(), .snapshot_threshold_ = static_cast<uint64_t>(10000), .snapshot_callback_owner_token_ = static_cast<uint64_t>(0), .next_snapshot_callback_owner_token_ = static_cast<uint64_t>(1), .is_leader_ = false, .req_voting_ = false, .election_in_progress_ = false, .current_leader_id_ = std::numeric_limits<uint16_t>::max(), .last_heartbeat_time_ = static_cast<uint64_t>(0), .heartbeat_round_ = static_cast<uint64_t>(0), .read_quorum_confirmed_term_ = static_cast<uint64_t>(0), .read_quorum_confirmed_round_ = static_cast<uint64_t>(0), .current_term_ = static_cast<uint64_t>(0), .commit_index_ = static_cast<uint64_t>(0), .execute_index_ = static_cast<uint64_t>(0), .snapidx_ = static_cast<uint64_t>(0), .snapterm_ = static_cast<int64_t>(0)};
 }
 /*RUSTYCPP:GEN-END id=raft_server.consensus_state*/
 
@@ -2495,7 +2525,26 @@ class RaftServer : public TxLogServer {
   // The consensus cluster mtx_ guards, now one Rust-owned value instead of
   // eight bare members. Reached as state_.field by C++ that has not converted.
   RaftConsensusState state_{RaftConsensusState::new_()};
-  TXLOG_SERVER_SITE_METHODS()
+  // Hand-written rather than TXLOG_SERVER_SITE_METHODS(), because Raft has to
+  // mirror the three ids into state_ where converted Rust bodies can see
+  // them. The other two methods the macro defines are reproduced verbatim.
+  // See the mirror note on RaftConsensusState.
+  void set_site_identity(locid_t loc_id, siteid_t site_id,
+                         parid_t partition_id) override {
+    loc_id_ = loc_id;
+    site_id_ = site_id;
+    partition_id_ = partition_id;
+    state_.loc_id_ = loc_id;
+    state_.site_id_ = site_id;
+    state_.partition_id_ = partition_id;
+    verify(state_.site_id_ == site_id_ &&
+           state_.partition_id_ == partition_id_ &&
+           state_.loc_id_ == loc_id_);
+  }
+  void set_commo(Communicator* commo) override { commo_ = commo; }
+  void reg_learner_action(LearnerAction learner_action) override {
+    app_next_ = std::move(learner_action);
+  }
 
  private:
   struct AsyncCallbackLifetime {

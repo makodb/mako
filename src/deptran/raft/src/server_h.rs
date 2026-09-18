@@ -829,6 +829,29 @@ impl PeerTable {
 
 #[repr(C)]
 pub struct RaftConsensusState {
+    // THIS SERVER'S IDENTITY, MIRRORED.
+    //
+    // site_id_, partition_id_ and loc_id_ also exist on RaftServer, where
+    // TXLOG_SERVER_SITE_FIELDS() puts them (src/deptran/scheduler.h:136).
+    // That macro is SHARED WITH PAXOS, so the fields cannot simply move; a
+    // converted Rust body needs them and reaching back out to the C++ object
+    // for a scalar would defeat the point.
+    //
+    // They are written exactly once, by RaftServer::set_site_identity, which
+    // sets both copies together and then verifies they agree. All three are
+    // immutable afterwards, so the two copies cannot drift -- but the
+    // assertion is there because "cannot drift" is an argument, and this is
+    // the kind of argument that stops being true when someone adds a setter.
+    //
+    // TODO(txlog-site-fields): remove the mirror by unpacking
+    // TXLOG_SERVER_SITE_FIELDS() for both engines, so Raft and Paxos each own
+    // their identity fields outright and Raft's can live only here. That is a
+    // change to Paxos's contract, which is why it is not done in passing.
+    // Before removing, check that PaxosServer still compiles against whatever
+    // replaces the macro.
+    pub site_id_: u16,
+    pub partition_id_: u32,
+    pub loc_id_: u32,
     // THE LOG AND THE PEERS LIVE HERE NOW, not beside the mutex.
     //
     // This is what makes a converted method body a one-line delegate instead
@@ -873,6 +896,10 @@ pub struct RaftConsensusState {
 impl RaftConsensusState {
     pub fn new() -> RaftConsensusState {
         RaftConsensusState {
+            // Overwritten by set_site_identity before anything reads them.
+            site_id_: u16::MAX,
+            partition_id_: 0,
+            loc_id_: u32::MAX,
             raft_log_: RaftLog::new(),
             peers_: PeerTable::new(),
             election_term_: 0,
