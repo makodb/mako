@@ -4,6 +4,19 @@
 
 > **About the examples.** This guide was distilled from migrating the `srpc` RPC framework. Concrete class names (`TcpConnection`, `RequestQueue`, `Reactor`), the underscore-suffix field convention (`fd_`, `closed_`), and the prefix-based free-function naming (`tcpconn_*`, `future_*`) are **srpc conventions** — adapt them to your codebase's style. Where a transpiler feature or footgun is tied to a specific `rusty-cpp` commit, that commit is noted so you can tell whether *your* checkout has it. Patterns are general; the proper nouns are illustrative.
 
+> **If you are reading this inside the Mako repo**, this guide is the canonical *how*; these are its companions, and where they disagree with this file, they win on policy and this file wins on mechanics:
+>
+> | Document | Role |
+> |---|---|
+> | [`CLAUDE.md`](../CLAUDE.md) | **Binding policy** — Rust-first default, what fits the DSL cleanly, the sanctioned `@unsafe` kernel list, the stay-std carve-outs, and the transpiler pin. |
+> | [`docs/dev/srpc_migration_policy.md`](dev/srpc_migration_policy.md) | The **ordered decision rule** for one blocked item: translator bug → call-site rewrite → external C. Scoped differently from §5 — see §3.1. |
+> | [`docs/dev/goal0_completion_plan.md`](dev/goal0_completion_plan.md) | The **policy ruling** that there are no permanent exceptions: a floor is a rewrite backlog. Read it for the ruling, not for counts — its ratchet section is dated, and the authority on *what is still hand-written* is `python3 scripts/srpc_handwritten_census.py --files`. |
+> | [`docs/storage-interface.md`](storage-interface.md) | The same mechanics specialized to the storage/cluster layer, plus the `regen_storage_dsl.sh` workflow. |
+> | [`docs/srpc-goal0-burndown.md`](srpc-goal0-burndown.md) | The per-item **census**: convertible now / blocked on a named feature / justified kernel, with a measured re-audit. |
+> | [`docs/srpc-inventory.md`](srpc-inventory.md) + [`tools/srpc-inventory.py`](../tools/srpc-inventory.py) | The Phase-0 inventory for `srpc` — buckets plus the blocker histogram. It now scans to zero, because `src/srpc` has no column-0 C++ decls left; the surviving hand-written surface is measured by [`scripts/srpc_handwritten_census.py`](../scripts/srpc_handwritten_census.py). |
+>
+> The current transpiler pin is `a1f8fef85e8d43bb00f85f8ef32e5ecc69408642`. Every `transpiler gap` claim in this guide is dated against a pin and **must be re-probed, not inherited** — §8.45 explains why, and §8.30 is what happens when you don't.
+
 ---
 
 ## 1. Intro / Mental Model
@@ -61,7 +74,7 @@ Don't discover these mid-migration. A misaligned submodule or unbuilt rusty targ
 Inline-rust blocks work in both C++20 module units and traditional header/TU code, but the rusty library must be in scope either way:
 
 - **Module units** (e.g., a `.cpp` compiled as a module): use `import rusty;` so the DSL types resolve.
-- **Traditional headers / TUs**: bring rusty in via `import rusty;` if your build supports it, or `#include <rusty/...>` on older branches (see the Vec note in §3 for the header→import break).
+- **Traditional headers / TUs**: bring rusty in via `import rusty;` if your build supports it, or `#include <rusty/...>` on older branches (see the Vec note in §4 for the header→import break).
 
 Mixed codebases are normal — one file is a module, the next is a classic header. The only invariant is: **wherever a DSL block lives, the rusty namespace must be importable in that translation unit.**
 
@@ -119,7 +132,7 @@ Each trait base follows the same three steps:
 
 1. **Reshape** — simplify the virtual interface, rename methods to Rust idioms.
 2. **Migrate the base trait** — write the DSL `pub trait`; the transpiler emits the vtable machinery.
-3. **Adapt implementors** — one commit per concrete subclass, using `#[cpp_inherit]` (true inheritance, see §3 and §4) or free-function extraction for gnarly bodies.
+3. **Adapt implementors** — one commit per concrete subclass, using `#[cpp_inherit]` (true inheritance, see §4 and §5) or free-function extraction for gnarly bodies.
 
 **Critical ordering rule: migrate adapters together with — or right after — their trait base, never long before.** A migrated trait whose implementors are still hand-written (or vice versa) is a half-migrated vtable mess.
 
@@ -135,10 +148,10 @@ Tackle them in increasing complexity: small event-driven classes → mid-size co
 
 **Goal:** Clean up collateral, driven by what the transpiler stabilized.
 
-- Drop `#[cpp_ctor]` markers from classes once plain DSL `fn new()` emit is stable (see §3).
+- Drop `#[cpp_ctor]` markers from classes once plain DSL `fn new()` emit is stable (see §4).
 - Drop redundant `rusty::` prefixes once a DSL block matures and namespace resolution settles.
 - Consolidate type aliases (e.g., generic `Atomic<T>` → concrete `AtomicU64` where possible).
-- Fix bugs surfaced *during* migration (the refcount footgun in §5 was found this way).
+- Fix bugs surfaced *during* migration (the refcount footgun in §6 was found this way).
 
 ### Why this order works (example from srpc)
 
@@ -173,7 +186,7 @@ Keep commits small (expect *hundreds* across a real codebase). Small commits giv
 Suppose `ServerConnection` has 4 constructors, a nested `enum { CONNECTED, CLOSED } status_;`, a `std::mutex outbound_mtx_;` guarding a buffer, two callback fields, and a couple of `mutable` counters. The reshape commit, step by step:
 
 1. **Collapse overloaded ctors** to a single survivor; the variants become `#[cpp_ctor]` factories in the migration commit. Where overloads differ only by an optional callback, take one signature and pass an empty `Function` at the short call sites.
-2. **Lift the anonymous enum** to a named top-level enum `ServerConnStatus` — and immediately qualify *every* use (see the enum warning in §4: this is the high-churn step; survey call sites first).
+2. **Lift the anonymous enum** to a named top-level enum `ServerConnStatus` — and immediately qualify *every* use (see the enum warning in §5: this is the high-churn step; survey call sites first).
 3. **Hoist nested aggregates** (`ServerConnection::Header` → `ServerConnHeader`) to namespace scope.
 4. **Drop `mutable`** by moving the counters to `Cell<u64>` (you can't do this until the DSL block, but mark them now) and extract any `const`-method body that mutates into a free function `serverconn_*`.
 5. **Convert raw out-pointers to references** in internal signatures; leave FFI pointers alone but route them through free functions.
@@ -184,7 +197,7 @@ This is the same recipe for any heavyweight class (connections, channels, tracke
 
 ---
 
-## 3. The Per-Class Translation Recipe
+## 4. The Per-Class Translation Recipe
 
 > The `rusty::*` type names below are the ones the srpc/rusty library exposes. A different project may import a different rusty library with different names — check your library's surface.
 
@@ -238,6 +251,10 @@ bool TcpConnection::is_closed() const {
 
 ### `#[cpp_ctor]`: multiple initialization paths
 
+> **STATUS (2026-09-18, pin `a1f8fef8`) — in Mako this stepping stone has been fully retired.** There are **zero live `#[cpp_ctor]` attribute sites** in `src/`; the four textual hits `grep -rn '#\[cpp_ctor\]' src/` returns are all comments recording that the marker is gone (`src/srpc/misc/stat.rs:43`, after which `AvgStat` became a plain aggregate whose populated struct literal lowers to a C++ designated initializer; `src/srpc/scripts/check_srpc_crate_mode.py:256`, "The crate no longer carries the `#[cpp_ctor]` marker family at all"). The house rule is `CLAUDE.md` — **use a `fn new(...) -> T` / `from_*` factory**, which lowers to a static `T::new_`, and change the call sites. See §3 R5 for the rule and §8.53 for the `default_like` fix that made the last "can't spell a default ctor" family unnecessary.
+>
+> The subsection is kept because this guide is written to be reused on **other** codebases, where `#[cpp_ctor]` is still the right first move for a class with several initialization paths. Read it as "how the stepping stone works", not as Mako's current idiom.
+
 Rust has no constructor overloading, but C++ classes often need several. `#[cpp_ctor]` tells the transpiler to emit a Rust factory function as an actual C++ constructor. The function *names* don't matter — they all become the struct name:
 
 ```rust
@@ -267,6 +284,8 @@ TcpConnection::TcpConnection(int32_t fd, std::string peer_address)
 ```
 
 Treat `#[cpp_ctor]` as a stepping stone: use it while a class's init is complex, then drop it in a follow-up once a plain DSL `fn new()` suffices (Phase 4). This keeps technical debt from accumulating.
+
+**In Mako that follow-up is complete** — the marker count went to zero (see the status note at the top of this subsection). The plain-factory end state is the one §3 states as a rule: a `fn new(...) -> T` that returns a struct literal, lowering to a static `T::new_`, with call sites changed to match. Two transpiler fixes are what made the last holdouts unnecessary: `default_like` (§8.53), which unblocked the "can't spell a default ctor" family, and the alias-deref fix in §8.53.2 — whose single-file scope is the reason a *cross-module* alias still needs the concrete type spelled out.
 
 ### Interior mutability: `Cell<T>` / `Mutex<T>` for const methods
 
@@ -348,7 +367,7 @@ Emits `struct TimeoutEvent : public Event { ... }`, and the transpiler **prepend
 
 - `#[cpp_inherit] impl Trait for Type` → real C++ inheritance (`struct Type : public Trait`). Use when `Arc<Type>` must upcast to `Arc<Trait>`.
 - Plain `impl Trait for Type` (no marker) → an **adapter wrapper**; no is-a relationship, no upcast.
-- `#[cpp_inherit]` **alone** synthesizes only a fieldwise + move ctor. Combine it with `#[cpp_ctor]` whenever you need custom or computed ctors (see §4).
+- `#[cpp_inherit]` **alone** synthesizes only a fieldwise + move ctor. Combine it with `#[cpp_ctor]` whenever you need custom or computed ctors (see §5).
 - **Multiple traits / non-trait bases:** the DSL targets single-trait inheritance. If a type must derive from a *hand-written, non-trait* base (e.g., a hand-written `Event` that you chose **not** to migrate), or from several bases, that type is not yet a clean `#[cpp_inherit]` candidate — keep it hand-written (or migrate the base first). Don't force multiple-inheritance shapes through the DSL.
 
 ### Opaque / non-expressible internals: hand-written free functions
@@ -391,7 +410,7 @@ Enums become `enum class`, so **every use must be qualified**: `DisconnectBehavi
 | `std::vector<u8>` | `std::vector<uint8_t>` | Verbatim; use when std API needed |
 | `Arc<T>` | `rusty::Arc<T>` | Atomic refcount; **safe** by-value (copy increments) |
 | `Box<T>` | `rusty::Box<T>` | Unique ownership; move-only |
-| `Rc<T>` | `rusty::Rc<T>` (PORT) | Single-thread refcount; **shallow non-incrementing copy — see §5** |
+| `Rc<T>` | `rusty::Rc<T>` (PORT) | Single-thread refcount; **shallow non-incrementing copy — see §6** |
 | `Function<Sig>` | `rusty::Function<Sig>` | SBO up to 24 B; lambdas auto-convert |
 | `Condvar` | `rusty::Condvar` | Must be fully qualified in `#[cpp_ctor]` inits: `rusty::Condvar::new()` |
 | `Weak<T>` | hand-written wrapper | Not yet a DSL type; use `Arc` + downgrade |
@@ -402,12 +421,12 @@ Enums become `enum class`, so **every use must be qualified**: `DisconnectBehavi
 2. **`rusty::Condvar::new()` must be fully qualified** — the transpiler doesn't qualify non-generic mapped types inside `#[cpp_ctor]` inits.
 3. **Avoid `.is_empty()` on guards** — use `.len() == 0`.
 4. **`#[cpp_ctor]` params are auto-moved** — never write `move` in the DSL.
-5. **Opaque non-Copy iterators block migration** — `std::list::iterator` can't live in a rusty struct. Reshape the data structure (see §4).
+5. **Opaque non-Copy iterators block migration** — `std::list::iterator` can't live in a rusty struct. Reshape the data structure (see §5).
 6. **Non-generic mapped types are NOT auto-qualified in `#[cpp_ctor]` field inits.** The transpiler qualifies *generic* mapped types (`Cell`, `Mutex`, `RefCell`) but not *non-generic* ones (`Condvar`, `RefMut`). **Workaround:** spell them fully qualified in the DSL source — `ready_cond_: rusty::Condvar::new()`, return type `-> rusty::RefMut<Marshal>`. (Expected future fix: the transpiler qualifies all mapped rusty types.)
 
 ---
 
-## 4. Clearing Blockers: Reshape First, Evolve the Transpiler Second
+## 5. Clearing Blockers: Reshape First, Evolve the Transpiler Second
 
 Most blockers are not transpiler bugs — they're C++ shapes that simply don't fit the DSL yet. The discipline is: **analyze every pattern for DSL-expressibility before requesting a transpiler feature.** (The reshape recipes below reflect srpc's bottlenecks — many statics, `std::list`-based caches. Your codebase's friction points may differ; adapt the recipes to what your inventory actually surfaces.)
 
@@ -452,8 +471,8 @@ These features each unblock a *category* of migration. Whether *your* checkout h
 - ✓ **`#[cpp_inherit]`** *(landed)* — emits direct C++ inheritance for trait implementors so `Arc<Impl>` upcasts to `Arc<Base>` and all submit/upcast call sites compile unchanged. Strictly opt-in. (Alone it synthesizes only a fieldwise + move ctor.)
 - ✓ **`#[cpp_ctor]` + `#[cpp_inherit]` composition** *(landed)* — for inheriting types that need custom/default/computed ctors. The transpiler suppresses the synthesized fieldwise ctor, emits your factories as the real ctors, prepends `Base()` to each init-list, and synthesizes a move ctor only.
 - ✓ **Inline-rust runtime-preamble suppression** *(landed)* — inside a namespaced block (`export namespace foo`), the container runtime-helper preamble creates `foo::rusty`, shadowing the top-level `::rusty` that `import rusty` provides, so `rusty::Option` fails to resolve. A flag that suppresses the preamble in inline-rust blocks unblocks *all* container-heavy namespaced migrations.
-- ✓ **`Mutex`/`VecDeque` API completion + field qualification** *(landed, `2f1ffc8`)* — adds `Mutex::new_()`, SFINAE-forwards `len`/`is_empty`/`contains`/`operator[]` on the guard (see the guard NOTE in §3), and qualifies field-init types (`rusty::Cell<T>`, not bare `Cell<T>`) in namespaced blocks.
-- ✓ **`#[cpp_ctor]` parameter move-init** *(landed, `fdecaec`)* — wraps bare-identifier param field-inits in `std::move` so move-only fields (`Box`, proxies) don't hit a deleted copy ctor. This is what makes the "params are auto-moved" behavior in §3 work; on a checkout *before* `fdecaec`, a `#[cpp_ctor]` that stores a move-only param by name fails to compile — bump the submodule if you hit it.
+- ✓ **`Mutex`/`VecDeque` API completion + field qualification** *(landed, `2f1ffc8`)* — adds `Mutex::new_()`, SFINAE-forwards `len`/`is_empty`/`contains`/`operator[]` on the guard (see the guard NOTE in §4), and qualifies field-init types (`rusty::Cell<T>`, not bare `Cell<T>`) in namespaced blocks.
+- ✓ **`#[cpp_ctor]` parameter move-init** *(landed, `fdecaec`)* — wraps bare-identifier param field-inits in `std::move` so move-only fields (`Box`, proxies) don't hit a deleted copy ctor. This is what makes the "params are auto-moved" behavior in §4 work; on a checkout *before* `fdecaec`, a `#[cpp_ctor]` that stores a move-only param by name fails to compile — bump the submodule if you hit it.
 
 A recurring lesson: **hand-written rusty-library gaps masquerade as transpiler bugs.** A missing `Mutex::new_()` or `Condvar::new_()` looks like a codegen failure but is fixed with a small header-only factory in the rusty library — no transpiler rebuild. Check the library before filing a transpiler ask.
 
@@ -461,12 +480,12 @@ A recurring lesson: **hand-written rusty-library gaps masquerade as transpiler b
 
 Be honest: some patterns are genuinely resistant. Don't reshape them into thin shells; leave them as good C++ and document why.
 
-- **Type-parameterized template factories** (`create_event<T>()`, `make_arc<U>()`). The DSL emits monomorphic functions and static methods, not generic impl blocks over a *type*. (But a template *type* can still be a hand-bridge that derives a DSL trait — see §7.2.)
+- **Type-parameterized template factories** (`create_event<T>()`, `make_arc<U>()`). The DSL emits monomorphic functions and static methods, not generic impl blocks over a *type*. (But a template *type* can still be a hand-bridge that derives a DSL trait — see §8.2.)
 - **Re-entrant intrusive lists.** The `VecDeque` reshape doesn't apply: re-entrant code holds an iterator, re-enters, and calls `remove()` — indices/references held mid-flight go invalid. Needs intrusive-node memory safety.
 - **Raw-pointer / `memcpy` / `void*` byte *kernels*** (the innermost bytes-in-bytes-out of a serializer, framer, or buffer sink). The DSL is a memory-safe subset *by design* and deliberately cannot express raw-pointer surgery — nor should it. These stay `@unsafe` C++ precisely because they are the layer the DSL protects everything else from.
-- **Compile-time typing metaprogramming** (CRTP, `TypeList`, SFINAE conversion ctors, `static_assert`-driven type machinery). No Rust-DSL spelling. (Distinct from template *functions*/operators, which often *do* convert — see §7.4.)
+- **Compile-time typing metaprogramming** (CRTP, `TypeList`, SFINAE conversion ctors, `static_assert`-driven type machinery). No Rust-DSL spelling. (Distinct from template *functions*/operators, which often *do* convert — see §8.4.)
 
-> **⚠ The floor is PROVISIONAL, not permanent — re-probe before you skip.** An earlier draft of this guide listed **atomic+CAS**, **`void*` I/O serialization (binary archives)**, and **template+operator overloading** here as "defer, effectively permanent." **All three were later dissolved** — see **§7**: movable atomics flipped the reactor-core connection/pollthread classes (§7.3), the entire Marshal + Binary{Write,Read}Archive wire layer became DSL via free-operator shims (§7.4), and a whole polymorphic virtual hierarchy was flattened by composition (§7.1). More broadly, several "assumed-floored" primitives (capturing closures, `thread::spawn`, `Fiber::create_run`, data-carrying enums) each turned out to lower fine once probed. **The lesson: PROBE the specific blocker in isolation against the *current* transpiler before declaring anything floor. Measure and classify by reason (§7.5), don't inherit an old verdict.** What genuinely remains permanent is the short list above (§7.6): the unsafe substrate the DSL is built to sit on, and compile-time type metaprogramming.
+> **⚠ The floor is PROVISIONAL, not permanent — re-probe before you skip.** An earlier draft of this guide listed **atomic+CAS**, **`void*` I/O serialization (binary archives)**, and **template+operator overloading** here as "defer, effectively permanent." **All three were later dissolved** — see **§8**: movable atomics flipped the reactor-core connection/pollthread classes (§8.3), the entire Marshal + Binary{Write,Read}Archive wire layer became DSL via free-operator shims (§8.4), and a whole polymorphic virtual hierarchy was flattened by composition (§8.1). More broadly, several "assumed-floored" primitives (capturing closures, `thread::spawn`, `Fiber::create_run`, data-carrying enums) each turned out to lower fine once probed. **The lesson: PROBE the specific blocker in isolation against the *current* transpiler before declaring anything floor. Measure and classify by reason (§8.5), don't inherit an old verdict.** What genuinely remains permanent is the short list above (§8.6): the unsafe substrate the DSL is built to sit on, and compile-time type metaprogramming.
 
 ### (D) The justified floor — reshapable but not worth it
 
@@ -488,18 +507,18 @@ Some classes *could* be reshaped but the value doesn't justify the cost: dead co
 | Namespaced container blocks | Transpiler: suppress preamble |
 | Mutex+container classes | Transpiler: API completion + field qualification |
 | Non-copyable field inits | Transpiler: move-init via `std::move` |
-| Atomic + CAS | ~~Defer~~ → **Dissolved: movable atomics (§7.3)** |
-| `void*` I/O serialization (the *classes*) | ~~Defer~~ → **Dissolved: free-operator shims + single-field-proxy flip (§7.4)** |
-| Member operator overload families | ~~Defer~~ → **Dissolved: convert to free operators, identical call syntax (§7.4)** |
-| Polymorphic virtual hierarchy | ~~Keep hand-written~~ → **Dissolved: composition-flatten to a data-free trait + shared kernels (§7.1)** |
-| Type-param template factories | **Defer (permanent)** — but the type can be a hand-bridge deriving a DSL trait (§7.2) |
+| Atomic + CAS | ~~Defer~~ → **Dissolved: movable atomics (§8.3)** |
+| `void*` I/O serialization (the *classes*) | ~~Defer~~ → **Dissolved: free-operator shims + single-field-proxy flip (§8.4)** |
+| Member operator overload families | ~~Defer~~ → **Dissolved: convert to free operators, identical call syntax (§8.4)** |
+| Polymorphic virtual hierarchy | ~~Keep hand-written~~ → **Dissolved: composition-flatten to a data-free trait + shared kernels (§8.1)** |
+| Type-param template factories | **Defer (permanent)** — but the type can be a hand-bridge deriving a DSL trait (§8.2) |
 | Re-entrant intrusive lists | **Defer (permanent)** |
-| Raw-ptr / `memcpy` / `void*` byte *kernels* | **Floor by design** (safe subset excludes unsafe memory ops, §7.6) |
-| Compile-time typing metaprograms (CRTP/TypeList/SFINAE) | **Floor by design** (no Rust-DSL spelling, §7.6) |
+| Raw-ptr / `memcpy` / `void*` byte *kernels* | **Floor by design** (safe subset excludes unsafe memory ops, §8.6) |
+| Compile-time typing metaprograms (CRTP/TypeList/SFINAE) | **Floor by design** (no Rust-DSL spelling, §8.6) |
 
 ---
 
-## 5. Build, Verify, Commit — The Operational Loop
+## 6. Build, Verify, Commit — The Operational Loop
 
 > Commands below use generic placeholders — `<build>` for your build dir, `mylib` for your library target, `test_<name>` for a class's unit test. The srpc migration used `ninja -C build_clang22 srpc` and ran the `srpc` test suite; substitute your own.
 
@@ -615,7 +634,7 @@ A DSL-migrated struct is still a normal C++ class with the same layout — but *
 
 ---
 
-## 6. If I Did It Again — Top Lessons
+## 7. If I Did It Again — Top Lessons
 
 The reusable **PATTERNS** matter more than the **PROCESS** discipline — a pattern unblocks work everywhere, while process keeps you safe. Internalize the patterns first.
 
@@ -639,64 +658,64 @@ The reusable **PATTERNS** matter more than the **PROCESS** discipline — a patt
 
 11. **Library gaps masquerade as transpiler bugs.** A missing `Mutex::new_()` / `Condvar::new_()` is a one-line header factory, not a codegen problem. Check the rusty library before filing a transpiler ask — and check the submodule commit before assuming a *feature* is missing; several "blockers" are already shipped.
 12. **Be honest about the floor, and keep a living plan doc.** Type-parameterized factories, re-entrant intrusive lists, raw byte/`void*` kernels, and compile-time type metaprograms stay hand-written; document why so nobody re-litigates. Keep hundreds of small, bisectable commits and a TODO/plan doc with current bucket counts, so a new worker onboards in half an hour and `grep`s the log to see how far the migration has come.
-13. **Re-probe your own "permanent floor" — it is provisional (see §7).** The single biggest mistake this guide made in an earlier draft was calling things permanent that weren't. Atomic+CAS, `void*` archives, member-operator families, and an entire polymorphic hierarchy were each "permanent floor" until a pattern dissolved them; capturing closures, `thread::spawn`, `Fiber::create_run`, and data-carrying enums were each "can't lower" until an isolated probe showed they lower fine. Before you skip a class, **probe the exact blocker against the current transpiler and classify the remainder by *reason*, not by file** (§7.5). The true floor is much smaller than it first looks — mostly the unsafe substrate the DSL is *designed* to sit on (§7.6).
+13. **Re-probe your own "permanent floor" — it is provisional (see §8).** The single biggest mistake this guide made in an earlier draft was calling things permanent that weren't. Atomic+CAS, `void*` archives, member-operator families, and an entire polymorphic hierarchy were each "permanent floor" until a pattern dissolved them; capturing closures, `thread::spawn`, `Fiber::create_run`, and data-carrying enums were each "can't lower" until an isolated probe showed they lower fine. Before you skip a class, **probe the exact blocker against the current transpiler and classify the remainder by *reason*, not by file** (§8.5). The true floor is much smaller than it first looks — mostly the unsafe substrate the DSL is *designed* to sit on (§8.6).
 
 ---
 
-## 7. Advanced Patterns: Dissolving the "Permanent" Floor
+## 8. Advanced Patterns: Dissolving the "Permanent" Floor
 
-*This section was added after the guide's first draft, once the srpc migration reached what looked like its floor and then kept going. Everything here **supersedes the "defer permanent" verdicts in §4(C)** for the patterns it names. The meta-lesson (§6 #13) is the point: a floor verdict is a hypothesis about the current transpiler and the current design — re-test it.*
+*This section was added after the guide's first draft, once the srpc migration reached what looked like its floor and then kept going. Everything here **supersedes the "defer permanent" verdicts in §5(C)** for the patterns it names. The meta-lesson (§7 #13) is the point: a floor verdict is a hypothesis about the current transpiler and the current design — re-test it.*
 
-### 7.1 Composition over inheritance: flatten a polymorphic hierarchy
+### 8.1 Composition over inheritance: flatten a polymorphic hierarchy
 
-**The blocker §3/§4 gave up on.** A deep polymorphic C++ hierarchy — a virtual base with many subclasses, some of them *templates*, some adding their *own* virtuals and fields — fits neither `#[cpp_inherit]` (single-trait, and it can't express `Concrete : public OtherConcrete`) nor a tagged enum (heterogeneous/templated payloads can't live in one variant type). The old advice was "keep the whole thing hand-written."
+**The blocker §4/§5 gave up on.** A deep polymorphic C++ hierarchy — a virtual base with many subclasses, some of them *templates*, some adding their *own* virtuals and fields — fits neither `#[cpp_inherit]` (single-trait, and it can't express `Concrete : public OtherConcrete`) nor a tagged enum (heterogeneous/templated payloads can't live in one variant type). The old advice was "keep the whole thing hand-written."
 
 **The dissolution: replace inheritance-between-concrete-types with composition around a data-free trait.**
 
 1. **Extract a data-free trait.** Pull the base's pure virtual *interface* (no fields) into a DSL `pub trait` (`EventPollable`: `test`/`is_ready`/`status`/…). Every concrete type derives *this* directly — so no concrete type inherits another.
 2. **Inline the shared state into each concrete type.** The state the base used to hold (the "core": status, owner thread, wait-state, self-weak-ref) becomes ordinary inline fields on every concrete type, **laid out identically** so shared logic can be duck-typed across them.
 3. **Extract the base's shared method bodies into template kernels.** `template<typename W> void event_wait_impl(W& self, ...)` operates on the duck-typed core (`self.status_`, `self.is_ready()`, …). Every concrete type's method is a one-liner delegating to the kernel. **Put the kernels in the *exported* namespace** so cross-module / cross-TU instantiation resolves.
-4. **Split concrete types by expressibility.** Types the DSL can express (plain fields + control flow) become **flat DSL structs**, each `#[cpp_inherit] impl Trait for X`. Types it can't (templates, variadic ctors, `Function`-typed state) become **hand-bridges** (§7.2) — still deriving the trait, still calling the same kernels.
+4. **Split concrete types by expressibility.** Types the DSL can express (plain fields + control flow) become **flat DSL structs**, each `#[cpp_inherit] impl Trait for X`. Types it can't (templates, variadic ctors, `Function`-typed state) become **hand-bridges** (§8.2) — still deriving the trait, still calling the same kernels.
 5. **Delete the base.** Once nothing inherits the old base, it's just another leaf. If it survives only at a couple of call sites, move those to a sibling type and delete the class outright.
 
 The result: the tangled `Base → Sub → SubSub<T>` hierarchy becomes a flat set of trait-implementing leaves sharing one copy of the logic in the kernels. Call sites and runtime behavior are unchanged. (This is how srpc's `Event → BoxEvent<T> → StatusBox` chain, plus `QuorumEvent` with its own virtuals and ~18 fields, was flattened and the `Event` base then deleted.)
 
-### 7.2 The hand-bridge: keep it C++, still derive the DSL trait
+### 8.2 The hand-bridge: keep it C++, still derive the DSL trait
 
-Some concrete types genuinely can't be DSL structs — a **template** (`BoxEvent<T>`), a **variadic ctor** (`WaitAll(a, b, c, …)`), or **stored `Function`-typed state**. They don't have to leave the trait, though. Write them as hand-written C++ classes that **derive the DSL-emitted trait base directly** (`template<class T> class BoxEvent : public EventPollable`), carry the same inline core fields, and delegate to the same shared kernels (§7.1). They're `@unsafe` C++, but they are **leaves that inherit nothing but the trait** — so they don't reintroduce a hierarchy. This is what "minimal-C floor" should look like: a handful of trait-implementing leaves, not a tangled base class.
+Some concrete types genuinely can't be DSL structs — a **template** (`BoxEvent<T>`), a **variadic ctor** (`WaitAll(a, b, c, …)`), or **stored `Function`-typed state**. They don't have to leave the trait, though. Write them as hand-written C++ classes that **derive the DSL-emitted trait base directly** (`template<class T> class BoxEvent : public EventPollable`), carry the same inline core fields, and delegate to the same shared kernels (§8.1). They're `@unsafe` C++, but they are **leaves that inherit nothing but the trait** — so they don't reintroduce a hierarchy. This is what "minimal-C floor" should look like: a handful of trait-implementing leaves, not a tangled base class.
 
 - **Namespace gotcha.** If a hand-bridge lives in a *different* namespace than the trait and kernels, its unqualified references won't resolve, and **ADL can't find the kernels** (their argument is a type in *your* namespace, so ADL searches your namespace, not the trait's). Add an explicit `using their_ns::X;` for every referenced entity (the trait, the enums, each kernel). This cost one wasted long build before it was understood.
 
-### 7.3 Movable atomics dissolve "Atomic + CAS"
+### 8.3 Movable atomics dissolve "Atomic + CAS"
 
-§4(C) called atomic+CAS permanent because `Cell` can't be cross-thread-atomic. The unblock is a library property, not a transpiler feature: a rusty `Atomic<T>` whose **move ctor value-moves** (load `Relaxed`, reinit). That one property makes a struct holding an atomic field **movable**, which is exactly what the DSL needs to build it via `Arc::new_(T{ … })` instead of an in-place `Arc::make` + `friend` + private-ctor triangle. Recipe: swap `std::atomic<bool>` → `AtomicBool`; now all fields are movable → aggregate factory; `exchange` → `swap`, one CAS → `compare_exchange(…).is_ok()`; sweep the `std::memory_order` spellings to the rusty `Ordering` API at the call sites. This flipped `ReconnectState` **and** `PollThread` — a reactor-core class the old floor called untouchable.
+§5(C) called atomic+CAS permanent because `Cell` can't be cross-thread-atomic. The unblock is a library property, not a transpiler feature: a rusty `Atomic<T>` whose **move ctor value-moves** (load `Relaxed`, reinit). That one property makes a struct holding an atomic field **movable**, which is exactly what the DSL needs to build it via `Arc::new_(T{ … })` instead of an in-place `Arc::make` + `friend` + private-ctor triangle. Recipe: swap `std::atomic<bool>` → `AtomicBool`; now all fields are movable → aggregate factory; `exchange` → `swap`, one CAS → `compare_exchange(…).is_ok()`; sweep the `std::memory_order` spellings to the rusty `Ordering` API at the call sites. This flipped `ReconnectState` **and** `PollThread` — a reactor-core class the old floor called untouchable.
 
-### 7.4 Operator overloads → free operators (the wire layer)
+### 8.4 Operator overloads → free operators (the wire layer)
 
-§4(C) called `void*` I/O serialization and template+operator overloading permanent. Both dissolved, in two moves:
+§5(C) called `void*` I/O serialization and template+operator overloading permanent. Both dissolved, in two moves:
 
 - **Member `operator<<`/`>>` families → free operators, identical call syntax.** A class with dozens of member serialization operators (even ~60, including templates over `pair`/`Vec<T>`/`map`) converts by moving them to **free** `operator<<(Archive&, const T&)` — `ar << x` still resolves the same. Do it in two commits: **stage A** slims the class to a shell by relocating the operators (independently build-verifiable), **stage B** flips the now-thin shell to DSL.
 - **Single-field proxy holders flip *ctor-less*.** When the DSL struct wraps exactly one field (a `SinkProxy`), **C++20 paren-aggregate-init** makes `Type x(one_arg);` initialize that lone field — so *hundreds* of construction sites, including ones in **generated** wire headers, need **zero** changes and no generator edits. (The misfill hazard only appears with ≥2 fields — then you must switch call sites to a factory.)
-- What stays floor is only the innermost `void*`/`memcpy` **byte kernel** (§7.6); the *classes* around it (Marshal, Binary{Write,Read}Archive) are now fully DSL.
+- What stays floor is only the innermost `void*`/`memcpy` **byte kernel** (§8.6); the *classes* around it (Marshal, Binary{Write,Read}Archive) are now fully DSL.
 
-### 7.5 Find the real floor: measure, then classify by *reason*
+### 8.5 Find the real floor: measure, then classify by *reason*
 
 Before asserting "N lines can't convert," **measure** instead of estimating:
 
 1. **Count hand-written code deterministically.** A ~30-line script that walks each file and subtracts every `/*RUSTYCPP:GEN-BEGIN … GEN-END*/` region and every `#if RUSTYCPP_RUST … #endif` region gives you the exact hand-written-code line count per file — ground truth, not an LLM guess. (Doing this on srpc corrected a "~9,300" estimate to a measured 8,193.)
 2. **Classify the remainder by reason, not by file.** Bucket every hand-written region into: asm / mmap / syscalls / raw-pointer (the *true* unsafe substrate); compile-time metaprogramming (templates/operators/CRTP); `Function`-typed state + closures; logging/boilerplate; and — critically — a **"genuinely convertible"** bucket and a **"blocked on one transpiler feature"** bucket. The reason-taxonomy is what tells you which floor is real (a safe-subset boundary) versus merely undone work or a single missing feature. A fan-out (one reviewer per file-group, each reconciling to the measured per-file total) makes this tractable on a large tree, and a single missing feature (e.g. `&str`-literal → `const char*` return lowering) can turn out to gate a whole cluster of near-identical helpers at once — higher ROI than hand-converting them one by one.
 
-### 7.6 What is *actually* permanent floor
+### 8.6 What is *actually* permanent floor
 
-After §7.1–7.4, the genuine, by-design floor is small and falls into three kinds:
+After §8.1–8.4, the genuine, by-design floor is small and falls into three kinds:
 
 - **The unsafe substrate the DSL is built to sit on, not replace.** Hand-written assembly (context switches), `mmap` stack management, raw syscalls (sockets, `epoll`, `pthread`, `fcntl`, `getaddrinfo`), and raw-pointer/`memcpy` byte kernels. The DSL is a *memory-safe subset by design* — converting these would move unsafe code *into* the language built to exclude it, which is backwards. Keep them `@unsafe` C++; that boundary is the whole point.
-- **Compile-time type metaprogramming with no Rust spelling.** CRTP, `TypeList`/discriminant machinery, SFINAE conversion ctors, variadic factory *types*. (Note the asymmetry: template *functions* and *operators* frequently convert as free templates — §7.4; it's type-level metaprogramming that has no DSL form.)
-- **Third-party and generated wire types** (`extern "C"`, rpcgen output) — convert *at the edge* (§5's FFI note), never across the boundary.
+- **Compile-time type metaprogramming with no Rust spelling.** CRTP, `TypeList`/discriminant machinery, SFINAE conversion ctors, variadic factory *types*. (Note the asymmetry: template *functions* and *operators* frequently convert as free templates — §8.4; it's type-level metaprogramming that has no DSL form.)
+- **Third-party and generated wire types** (`extern "C"`, rpcgen output) — convert *at the edge* (§6's FFI note), never across the boundary.
 
 Everything else is done, convertible today, or gated on one identifiable transpiler feature. Treat that last set as the work queue — **not** the floor.
 
-### 7.7 Syscall policy: std-faithfulness + two sanctioned routes (July 2026)
+### 8.7 Syscall policy: std-faithfulness + two sanctioned routes (July 2026)
 
 The runtime shipped with the transpiler (`rusty::…`) is a **translation of Rust's std** — treat that
 as a hard design constraint, not a convenience library:
@@ -719,7 +738,7 @@ as a hard design constraint, not a convenience library:
   the grammar rejects, asm), the fn stays an `@unsafe` C++ kernel — which is precisely Rust std's
   own per-platform `sys`-module pattern.
 
-### 7.8 No external binaries for results
+### 8.8 No external binaries for results
 
 Never compute results by executing external binaries (`popen`/`fork`+`exec`). The canonical
 offender was the stack-trace printer shelling out to `addr2line`/`c++filt` — a fork inside an
@@ -728,9 +747,9 @@ abort path, dependent on binutils being installed and on `PATH` trust. Resolve i
 the binary. When you delete such a path, delete its support machinery too (the pipe readers,
 command builders, and any helper — e.g. a `get_exec_path` — that existed only to feed it).
 
-### 7.9 Inline-DSL generics: template *functions* become DSL free templates (July 2026)
+### 8.9 Inline-DSL generics: template *functions* become DSL free templates (July 2026)
 
-§7.1–7.2 built the event system as DSL structs delegating to **hand-written C++
+§8.1–8.2 built the event system as DSL structs delegating to **hand-written C++
 template kernels** (`template<typename W> void event_wait_impl(W& self, …)`), on
 the standing assumption that the *inline* DSL couldn't emit generics — only the
 `--crate` path (the `BTreeMap<K,V>` port) was thought to exercise them. **That
@@ -800,7 +819,7 @@ and *do* compile.
    module fragment; the transpiler wraps enum literals in `clone(...)` but
    doesn't pull the header.
 
-**Still floored** (§7.6 unchanged): **variadic parameter packs** —
+**Still floored** (§8.6 unchanged): **variadic parameter packs** —
 `create_sp_event<Ev, Args...>`, `make_arc<U, Args...>` — plus generic
 *impl-blocks-over-a-type* and CRTP/SFINAE.
 
@@ -809,13 +828,13 @@ and *do* compile.
 convertible subset splits again: **pure-value** templates should convert and
 compile today; **duck-typed method-call kernels are gated on the namespace-shim
 fix above** — so the near-term win is smaller than the raw 119 suggests.
-**Lesson (reinforcing §7.5): probe with a *compile*, not just a transpile — mock
+**Lesson (reinforcing §8.5): probe with a *compile*, not just a transpile — mock
 the types and build the generated template. `--rewrite` + `--check` passing
 proves nothing about compilation.**
 
-### 7.10 Resolution — the shim + guard-deref fixes landed; every reactor kernel converted (late July 2026)
+### 8.10 Resolution — the shim + guard-deref fixes landed; every reactor kernel converted (late July 2026)
 
-The §7.9 blocker and its siblings were all fixed upstream (shuaimu/rusty-cpp),
+The §8.9 blocker and its siblings were all fixed upstream (shuaimu/rusty-cpp),
 and **all seven duck-typed reactor kernels are now inline-Rust DSL**
 (`event_test_impl`, the four `event_core_*`, `tcplistener_handle_error`, and
 finally `event_wait_impl`). The fixes, in order landed:
@@ -866,7 +885,7 @@ finally `event_wait_impl`). The fixes, in order landed:
 `event_core_record_place` stays hand-C++: it is a genuine `sprintf`/`char[]`
 kernel, not a transpiler gap.
 
-### 7.11 Raw pointer + length is usually a slice, not a kernel (July 2026)
+### 8.11 Raw pointer + length is usually a slice, not a kernel (July 2026)
 
 A `(T* buf, size_t len)` signature *looks* like permanent floor. Usually
 it is not: it is a slice that lost its length at the C boundary. Under
@@ -924,7 +943,7 @@ a deliberate short read, spell it — `std::span<const std::uint8_t>(got).first(
    through `cross_file_enums`). If you see a cross-block type resolve
    oddly, check the pin before redesigning the DSL around it.
 
-### 7.12 RESOLVED: integer-returning fn + uppercase-named callee (July 2026)
+### 8.12 RESOLVED: integer-returning fn + uppercase-named callee (July 2026)
 
 A DSL fn whose return type is an **integer** mis-qualifies calls to any
 free function whose name starts with an uppercase letter — it prefixes
@@ -993,7 +1012,7 @@ probe on `escape_cpp_keyword` for the callee name landed exactly on the
 branch. When a grep-hunt across ~200 candidate sites stalls, probe the
 narrowest thing the bad output must have passed through.
 
-### 7.13 Box method dispatch through a Mutex guard needs a named type
+### 8.13 Box method dispatch through a Mutex guard needs a named type
 
 Calling a trait method on a `Box` normally lowers fine — all three of
 these emit `->close()` on their own:
@@ -1035,7 +1054,7 @@ gap — guard types not carrying their element type through
 `let mut cb` note in DeferredReply::reply (§ commit 1e32afe9); fixing
 that inference would retire both workarounds.
 
-### 7.14 `rusty::str_runtime` does not exist for the DSL path
+### 8.14 `rusty::str_runtime` does not exist for the DSL path
 
 Rust `str` methods lower to `rusty::str_runtime::*`, and the transpiler
 emits calls to twelve of them:
@@ -1078,7 +1097,7 @@ returns `rusty::Option<std::size_t>`, not `npos`. DSL written against
 the C++ member functions compares against `std::string::npos`, and would
 need rewriting rather than just relinking.
 
-### 7.15 `let mut guard` is correct Rust, not a transpiler wart
+### 8.15 `let mut guard` is correct Rust, not a transpiler wart
 
 Assigning through a lock guard needs a `mut` binding:
 
@@ -1105,7 +1124,7 @@ So: `let mut guard` — write it and move on. `let mut cb` — a workaround
 for the consumed-binding inference gap, and the `mut` should disappear
 once that is fixed.
 
-### 7.16 const_cast taxonomy: fix the runtime, not the call site
+### 8.16 const_cast taxonomy: fix the runtime, not the call site
 
 A `const_cast` in this tree is one of two things, and a grep cannot tell
 them apart. Sorting them was worth three upstream commits.
@@ -1147,7 +1166,7 @@ five — but note `std::atomic<i32>` also appears INSIDE DSL blocks and in
 `Request::attach_pending_guard`'s signature, so it needs a regen and a
 signature change, not just an alias swap.
 
-### 7.17 Two findings from regenerating an already-converted file
+### 8.17 Two findings from regenerating an already-converted file
 
 Converting `this_fiber::get_id` in `fiber.cpp` surfaced two problems that
 have nothing to do with that function.
@@ -1200,9 +1219,9 @@ its comment cites is GONE (`rc.field` now lowers to `(*rc).field`,
 provided the binding's type is known; annotate it if it comes from a C++
 static like `Fiber::current_fiber()`).
 
-### 7.18 Output drift is real and widespread — 26 of 41 files (measured)
+### 8.18 Output drift is real and widespread — 26 of 41 files (measured)
 
-§7.17 predicted the drift guard cannot see generated-output drift.
+§8.17 predicted the drift guard cannot see generated-output drift.
 Measured it: regenerating all 41 DSL files with the current transpiler
 changes **26 of them** (+234/−101), while `srpc_dsl_check.sh` reports
 "0 drift" throughout — it only hashes the DSL source.
@@ -1240,7 +1259,7 @@ converting something in it, and build. A file that has not been touched
 in a while may not round-trip, and you will discover that only by trying
 — which is exactly how fiber.cpp's `Fiber::sleep_` breakage surfaced.
 
-### 7.19 Callback installation: neither closure form is currently usable
+### 8.19 Callback installation: neither closure form is currently usable
 
 Installing a long-lived callback needs a lambda that is **captured by
 value** and **const-callable**. The DSL can express neither, so
@@ -1309,7 +1328,7 @@ channel.cpp's `empty_*_callback` factories (see the FiberChannel Drop
 conversion, fb430ec9), and only affects DETACHING callbacks, not
 installing them.
 
-### 7.20 A DSL block cannot read a static defined in the impl namespace
+### 8.20 A DSL block cannot read a static defined in the impl namespace
 
 `rand.cpp` declares helpers in the EXPORTED namespace and defines them
 further down in a plain `namespace srpc { ... }` impl section, where the
@@ -1340,7 +1359,7 @@ section is not. Converting one means first moving the state (e.g. behind
 an accessor that is itself exported), which is a design change, not a
 port.
 
-### 7.21 Mutating a map value through get_mut needs three annotations — and the un-annotated form is SILENTLY wrong
+### 8.21 Mutating a map value through get_mut needs three annotations — and the un-annotated form is SILENTLY wrong
 
 `ClientPool::remove_all_unhealthy` is the worked example. The C++ is:
 
@@ -1377,7 +1396,7 @@ the compiler. Whenever a conversion writes back through something
 obtained from a container, READ the emitted C++ for `auto x =` where the
 original had `auto& x =`.
 
-### 7.21a remove_all_unhealthy's removal branch IS reachable (retracted)
+### 8.21a remove_all_unhealthy's removal branch IS reachable (retracted)
 
 **This section previously argued the branch was unreachable dead code.
 That was wrong, and both load-bearing premises were false.** Two
@@ -1433,7 +1452,7 @@ The original conclusion — that the conversion stays deferred — happened
 to survive, but for the opposite reason: the branch is live and needs
 coverage, not adjudication.
 
-### 7.22 A DSL method body can only use types complete AT THE BLOCK
+### 8.22 A DSL method body can only use types complete AT THE BLOCK
 
 `inline-rust` emits a method's declaration and DEFINITION together,
 inside the `#if RUSTYCPP_RUST` block. So the body may only name types
@@ -1450,12 +1469,12 @@ error: incomplete type 'srpc::Reactor' named in nested name specifier
    const auto ev = Reactor::create_sp_event<IntEvent>();
 ```
 
-This is the ORDERING sibling of 7.20 (which is about namespaces), and
+This is the ORDERING sibling of §8.20 (which is about namespaces), and
 neither fix helps the other:
 
 | symptom | cause | fix |
 |---|---|---|
-| `undefined reference to X@mod` | definition is in the impl namespace, DSL block is in the exported one | move the STATE, or leave it C++ (7.20) |
+| `undefined reference to X@mod` | definition is in the impl namespace, DSL block is in the exported one | move the STATE, or leave it C++ (§8.20) |
 | `incomplete type X` in a DSL body | the type is defined after the block | move the type's definition earlier, or leave it C++ |
 | `undefined reference` after forward-declaring an `inline` fn | declaration promises external linkage the inline definition never emits | move the DEFINITION above first use (see PollThread::shutdown) |
 
@@ -1463,14 +1482,14 @@ Check before converting: everything the body names must be COMPLETE at
 the block, not merely declared. A forward declaration is enough for a
 pointer or reference, not for `Type::static_method()`.
 
-### 7.16a The const_cast audit, completed
+### 8.16a The const_cast audit, completed
 
 28 hand-written casts at the start of the sweep, 14 left, and every
 remaining one has been checked against the callee's DECLARATION rather
 than its comment. That distinction mattered: two casts were classified
 genuine on the strength of a comment and turned out to be removable.
 
-Removed (the 7.16 "removable" category):
+Removed (the §8.16 "removable" category):
  - `Mutex::lock` sites — a `lock() const` overload already existed
  - `mpsc::Sender::send`, `net::TcpListener::accept`/`set_nonblocking` —
    made const upstream to match Rust's `&self`
@@ -1495,7 +1514,7 @@ Remaining 14, all genuine, with the reason each resists:
 None of these five are cleanup; each is a signature or API change with
 its own blast radius. The sweep is finished.
 
-### 7.23 Cross-MODULE enums are treated as data enums; tcp_channel.cpp is unregenerable
+### 8.23 Cross-MODULE enums are treated as data enums; tcp_channel.cpp is unregenerable
 
 Two blockers found trying to convert `io_kind_to_channel_error` in
 tcp_channel.cpp — a pure `switch` mapping `rusty::io::Error::Kind` onto
@@ -1516,7 +1535,7 @@ So a `match` over an imported C-like enum does not currently work,
 whichever side it comes from. Same shape as the bug fixed for sibling
 blocks, one scope wider.
 
-**(b) tcp_channel.cpp cannot be regenerated at all**, for the §7.18
+**(b) tcp_channel.cpp cannot be regenerated at all**, for the §8.18
 reason: it reads libc `errno` in two syscall kernels, and the current
 transpiler renames that to `errno_`. Any `--rewrite` of this file
 re-emits those blocks and breaks the build, independent of what you were
@@ -1524,15 +1543,15 @@ trying to convert.
 
 (b) is the harder gate: it makes every conversion in this file
 impossible, not just enum-matching ones. It is the same open decision
-from §7.18 — the rename is right for a fn NAMED errno and wrong for DSL
+from §8.18 — the rename is right for a fn NAMED errno and wrong for DSL
 that READS it — and this is now a concrete cost of leaving it unresolved,
 not a hypothetical one. tcp_channel.cpp has 350 hand-written lines.
 
-### 7.24 Class templates are a hard floor — and the burndown metric was blind to it
+### 8.24 Class templates are a hard floor — and the burndown metric was blind to it
 
 `pub struct` lowers to a **concrete** C++ class. The DSL has no
 class-template construct. Function templates are fine (`fn foo<T>` →
-`template<...>`, see §7.9), but a `template<typename T> class X` — and
+`template<...>`, see §8.9), but a `template<typename T> class X` — and
 every member of it, template or not — cannot be authored as DSL.
 
 This is category (3) under the decision rule: not a translator bug, not
@@ -1553,7 +1572,7 @@ plain code:
 | | lines |
 |---|---|
 | class templates (floor) | **530** |
-| function templates (convertible, §7.9) | 656 |
+| function templates (convertible, §8.9) | 656 |
 | plain (convertible) | 4,606 |
 
 Concentrated in `serializable.cpp` (272), `serializable_envelope.cpp`
@@ -1576,7 +1595,7 @@ you should expect from it.
 *expressibility*. Before treating a high-count file as an opportunity,
 open it — the count is evidence about size, never about tractability.
 
-### 7.25 A DSL `impl` requires a DSL-declared struct — reactor.cpp needs whole-class conversions
+### 8.25 A DSL `impl` requires a DSL-declared struct — reactor.cpp needs whole-class conversions
 
 Every one of the ~60 `impl` blocks across src/srpc targets a type the DSL
 itself declares (`pub struct X` in the same block). A scan for an `impl`
@@ -1631,7 +1650,7 @@ target, check whether its owning type is a DSL struct. If it is not, the
 real unit of work is the class, and the line count you were looking at
 is not the size of the job.
 
-### 7.26 Re-check deferral *causes* after a big sweep lands — they expire
+### 8.26 Re-check deferral *causes* after a big sweep lands — they expire
 
 The J+K census deferred every `*_to_string` function with the cause
 "varargs-UB": they return `const char*`, the DSL can only return
@@ -1696,7 +1715,7 @@ mechanism and read exactly like live references.
 Deferrals still believed live, each needing its own check before use:
 the kernel classifications (`clientconn`, `server-atomics`).
 
-### 7.27 GMF reachability: the module-global fragment must include what the GEN names
+### 8.27 GMF reachability: the module-global fragment must include what the GEN names
 
 `inline-rust` cannot add `#include`s. It emits C++ that calls into the
 rusty runtime, and the file's module-global fragment has to already
@@ -1743,7 +1762,7 @@ verification tells you the translation is *right*; only a compiler tells
 you the translation unit can *resolve* itself. Do both; neither
 substitutes for the other.
 
-### 7.28 A Rust-keyword *parameter* name fails to parse — and the error never says so
+### 8.28 A Rust-keyword *parameter* name fails to parse — and the error never says so
 
 CLAUDE.md documents that struct **fields** named after Rust keywords
 (`type`, `match`, `ref`, …) must be renamed or the type stays C++. The
@@ -1767,12 +1786,12 @@ unconvertible.
 **Measured exposure in this tree:** small. Excluding tests (not a
 target) and the 64 parameters named `self` — which are the deliberate
 "free fn taking `const X& self`" convention that exists *because* the
-DSL cannot own a method on a hand-written class (§7.25), not an
+DSL cannot own a method on a hand-written class (§8.25), not an
 accident — only about three hand-written production parameters carry
 keyword names. This will not obstruct the remaining backlog; it is a
 paper cut to recognise, not a hazard to plan around.
 
-### 7.29 Type aliases ARE supported — two narrow gaps block the last line of four files
+### 8.29 Type aliases ARE supported — two narrow gaps block the last line of four files
 
 Four files sit 1–5 hand-written lines from zero, and what remains is not
 logic. It is type aliases and `using` declarations:
@@ -1820,11 +1839,11 @@ property of the tooling, not of the code.
 
 `pollable_proxy.cpp` is the exception: its alias converts today (row 2),
 and its `make_pollable_proxy_from_typed_arc` is a function template,
-which §7.9 covers. That one is reachable now.
+which §8.9 covers. That one is reachable now.
 
-#### 7.27a Regeneration can break a file nobody edited — one known landmine
+#### 8.27a Regeneration can break a file nobody edited — one known landmine
 
-§7.18 says regenerating changes output in blocks you did not touch. Here
+§8.18 says regenerating changes output in blocks you did not touch. Here
 is what that costs in practice, and it is worse than cosmetic drift.
 
 `pollable_proxy.cpp` had compiled for months. Converting one alias and
@@ -1836,12 +1855,12 @@ regenerated **all four** blocks — and the untouched generic-struct block
 
 which its GMF (`arc.hpp`, `box.hpp`) could not reach. Six errors, in a
 block nobody hand-edited. Fix was one line: `#include <rusty/traits.hpp>`
-(§7.27 table: primary templates at `rusty/traits.hpp:49`).
+(§8.27 table: primary templates at `rusty/traits.hpp:49`).
 
 **So generated output is not stable across transpiler versions.** Any
 regen can surface new symbol requirements in code no human touched.
 Regenerate deliberately, one file at a time, and build after — never as
-a sweep. (§7.14 already says do not bulk-regenerate; this is the
+a sweep. (§8.14 already says do not bulk-regenerate; this is the
 concrete reason.)
 
 **Audit of every file with a generic DSL struct** — a generic struct is
@@ -1862,7 +1881,7 @@ with an error pointing at a line they did not write. Whoever touches it
 next should add `#include <rusty/traits.hpp>` to the GMF *first*, before
 running the transpiler, so the failure never happens.
 
-### 7.30 Auditing stated blockers: structural ones hold, tool ones rot
+### 8.30 Auditing stated blockers: structural ones hold, tool ones rot
 
 Six workarounds in this tree outlived the constraint that created them.
 Each carried a comment stating a reason that had quietly become false,
@@ -1870,9 +1889,9 @@ and nothing linked the two, so the comment kept reading as settled.
 
 | workaround | stated cause | why it expired |
 |---|---|---|
-| `*_to_string` deferral | varargs UB | logging became `std::format` (§7.26) |
+| `*_to_string` deferral | varargs UB | logging became `std::format` (§8.26) |
 | `idempotency-LRU` deferral | waits on Marshal deprecation | `Marshal` no longer exists |
-| drain phase name dropped | "cannot drive `*_to_string` varargs" | same as above (§7.26) |
+| drain phase name dropped | "cannot drive `*_to_string` varargs" | same as above (§8.26) |
 | 5× `server_atomic_*` kernels | classified "kernels", no cause given | DSL expresses the ops directly |
 | 2× `log_connect_*` helpers | `int32_t::Log_error` miscodegen | that transpiler bug was fixed here |
 | `fiber_yield_invoke` | "transpiler can't translate raw deref" | raw deref lowers cleanly |
@@ -1920,14 +1939,14 @@ rather than an opinion.
    reason until it was re-run with `p`.
  - **Isolate one variable.** `type Cb = rusty::Function<void()>` failed,
    which looked like "aliases are unsupported". Aliases work fine; only
-   the C++ callable-signature argument fails (§7.29). One probe, two
+   the C++ callable-signature argument fails (§8.29). One probe, two
    confounded variables, nearly the wrong conclusion.
 
 **And grep for the blocker, not for mentions of it.** `Marshal` appeared
 42 times in `src/srpc` and every one was a comment describing the historical
 migration. The type had been gone for some time.
 
-### 7.31 `!= nullptr` emits a non-existent `nullptr_`; use `.is_null()`
+### 8.31 `!= nullptr` emits a non-existent `nullptr_`; use `.is_null()`
 
 The natural spelling of a null check does not work:
 
@@ -1939,7 +1958,7 @@ The natural spelling of a null check does not work:
 | `p` (truthiness) | `verify(p)` | ✅ works; loses the explicit intent |
 
 `nullptr` is picking up the same trailing-underscore rename that hits
-`errno` (§7.18, §7.23) — the transpiler's libc-identifier handling
+`errno` (§8.18, §8.23) — the transpiler's libc-identifier handling
 applied to a C++ keyword. It fails loudly at build time rather than
 silently, but the error names `nullptr_`, which appears nowhere in the
 source and reads as nonsense.
@@ -1947,15 +1966,15 @@ source and reads as nonsense.
 **Use `!p.is_null()`.** It is the Rust-native spelling anyway, and it
 lowers to exactly the C++ you would write by hand.
 
-Found while converting `fiber_yield_invoke` (§7.30 table): the *stated*
+Found while converting `fiber_yield_invoke` (§8.30 table): the *stated*
 blocker (raw-pointer deref) really had expired, but probing the actual
 function shape surfaced this second, unstated one. Worth generalising —
 **"the stated blocker expired" does not mean "the conversion works".**
 Probe the real body, not the claim about it.
 
-#### 7.30a The discriminator says what to CHECK first, not what to assume
+#### 8.30a The discriminator says what to CHECK first, not what to assume
 
-§7.30 says deferrals naming a *structural fact* hold and those naming a
+§8.30 says deferrals naming a *structural fact* hold and those naming a
 *tool limitation* rot. Six rotted; that is a real signal. It is not a
 licence to treat "tool limitation" as "probably expired, go convert it."
 
@@ -1984,12 +2003,12 @@ treat a green build as weak evidence — the original author wrote
 "keep the proven body" for a reason.
 
 Two deferrals now checked and CONFIRMED VALID: this one, and
-`frame_codec.cpp:519` (§7.30). Both were worth the check; neither was
+`frame_codec.cpp:519` (§8.30). Both were worth the check; neither was
 worth the conversion.
 
-#### 7.30b Probe fidelity: three ways I got a wrong answer from a correct tool
+#### 8.30b Probe fidelity: three ways I got a wrong answer from a correct tool
 
-The scratchpad probe (§7.30) is the best tool here, and every wrong
+The scratchpad probe (§8.30) is the best tool here, and every wrong
 answer it gave came from the probe not matching reality:
 
 1. **Parameter named `self`.** Probing raw-pointer deref with
@@ -2021,16 +2040,16 @@ believing it. Two of these three produced false blockers, which is the
 expensive direction — a false "works" gets caught by the build, a false
 "blocked" just quietly removes work from the plan.
 
-#### 7.24a A second structural floor: Rust has no function overloading
+#### 8.24a A second structural floor: Rust has no function overloading
 
-§7.24 counts class templates as the DSL floor. There is another one, and
+§8.24 counts class templates as the DSL floor. There is another one, and
 `serializable.cpp` is where it bites.
 
 That file defines **14 `deserialize` and 15 `serialize` free-function
 overloads**, distinguished only by first-parameter type (`std::pair`,
 `rusty::Vec<T>`, `std::vector<T>`, `std::set<T>`, `rusty::HashSet<T>`, …).
 Rust has no overloading, so they cannot coexist as `fn deserialize<T>`.
-This is a *structural fact* (§7.30) — it will not rot.
+This is a *structural fact* (§8.30) — it will not rot.
 
 Measured for that one file, counting the **union** (overloads and class
 templates overlap heavily — do not add them):
@@ -2063,7 +2082,7 @@ The honest position: the overloading floor is real and large in
 elsewhere. Counting it properly needs qualified-name resolution, not a
 regex over declaration lines.
 
-### 7.32 Block-id collisions: a failed regen leaves the file BROKEN — commit first
+### 8.32 Block-id collisions: a failed regen leaves the file BROKEN — commit first
 
 Adding a DSL block to a file that already has many can fail with
 
@@ -2110,7 +2129,7 @@ ids in the same file is a bug on its own; that it half-deletes the source
 before erroring is the serious part. A regen failure should leave the file
 exactly as it found it.
 
-### 7.33 Bind the guard, then deref — never chain a method through `borrow_mut()`
+### 8.33 Bind the guard, then deref — never chain a method through `borrow_mut()`
 
 Two spellings of the same operation, one of which is silently wrong:
 
@@ -2141,11 +2160,11 @@ that compiles and misbehaves.
 fix, an equivalent call-site spelling that avoids it. Prefer the bound
 form everywhere a guard is involved.
 
-**It also retracts a verdict.** §7.30a listed `waitall_add_event`
+**It also retracts a verdict.** §8.30a listed `waitall_add_event`
 (reactor.cpp) as a deferral *confirmed still valid*, on the strength of
 probing the chained form and seeing it mis-lower. The deferral is
 avoidable: rewriting the body with a bound guard converts fine. That was
-a **false blocker** — the expensive direction (§7.30b), because a false
+a **false blocker** — the expensive direction (§8.30b), because a false
 "works" is caught by the build while a false "blocked" silently removes
 work from the plan.
 
@@ -2183,9 +2202,9 @@ So: **for a `Vec` behind a guard, bind then deref.** For other containers
 chaining works, but binding is never wrong, so prefer it uniformly rather
 than memorising which containers are safe.
 
-#### 7.30c A probe verifies LOWERING, not COMPILABILITY
+#### 8.30c A probe verifies LOWERING, not COMPILABILITY
 
-§7.30b catalogues four probes that gave wrong answers because the probe
+§8.30b catalogues four probes that gave wrong answers because the probe
 did not match the real code. This one is different: the probe matched
 perfectly and still misled, because reading generated C++ is not the same
 as compiling it.
@@ -2224,9 +2243,9 @@ Note the fix came from in-tree evidence rather than another probe:
 a previous commit, which is direct proof that `&expr` binds where `&mut
 expr` does not.
 
-#### 7.24b A third structural floor: function-local `static`
+#### 8.24b A third structural floor: function-local `static`
 
-§7.24 names class templates, §7.24a function overloading. This one is
+§8.24 names class templates, §8.24a function overloading. This one is
 smaller per site but appears everywhere, and — unlike the other two — it
 is almost never written down, so each occurrence reads like a missed
 conversion until you open the body.
@@ -2248,22 +2267,22 @@ DSL-expressible` on each would have made all four classifiable at a
 glance.
 
 **Workaround, where the semantics allow it:** hoist the static to
-namespace scope, which is what §7.25 found for *class* statics
+namespace scope, which is what §8.25 found for *class* statics
 (`g_rpc_id_missing` was hoisted out of `ServerConnection` for exactly this
 reason). It is not free — it changes linkage and lifetime, and for a
 `thread_local` used as a per-thread cache it changes sharing — so it is a
 deliberate redesign, not a mechanical fix. None of the four above was
 worth it.
 
-**The general point, which is the same as §7.30's:** a kernel that states
+**The general point, which is the same as §8.30's:** a kernel that states
 its cause is classified in seconds; a kernel that does not is re-derived
 by every person who passes. `rand.cpp` is the model — every kernel there
 says `rdtsc asm`, `pthread_key_create`, `malloc`, `pthread_once`, and the
 whole file triages in one pass.
 
-### 7.34 Inlining a kernel can relocate the call across the export boundary — a LINK error
+### 8.34 Inlining a kernel can relocate the call across the export boundary — a LINK error
 
-§7.20 says a DSL block cannot *read* a static defined in the impl
+§8.20 says a DSL block cannot *read* a static defined in the impl
 namespace. This is the same boundary breaking a *function call*, and it
 is worse in one respect: **the compile is clean and only the link fails.**
 
@@ -2313,7 +2332,7 @@ DSL source: a `self`-named parameter becoming a receiver (caught by
 reading GEN), the call emitted above its callee's declaration (caught by
 compile), and this (caught only by link).
 
-### 7.35 Compile ONE TU against the existing BMIs — a 1-minute check, not a 30-minute build
+### 8.35 Compile ONE TU against the existing BMIs — a 1-minute check, not a 30-minute build
 
 Some claims are about code the normal build never compiles: an
 `#ifdef`-disabled block, a platform arm, a file you are about to delete.
@@ -2372,7 +2391,7 @@ the right verdict for the wrong reason, and a wrong reason is a bad thing
 to write into a commit message. If a claim is decidable by the compiler,
 decide it with the compiler.
 
-### 7.36 `--check` verifies the SOURCE hash, not the generated C++
+### 8.36 `--check` verifies the SOURCE hash, not the generated C++
 
 `scripts/srpc_dsl_check.sh` reporting "checked 41 files, 0 with drift" is
 a weaker statement than it looks, and I over-trusted it for a long time.
@@ -2408,7 +2427,7 @@ much:
 Worked example, and the reason this section exists.
 `reactor/epoll_platform_linux.cc` reads libc `errno`. Its checked-in GEN
 contains a bare `errno`, but the transpiler at the time renamed it to
-`errno_` (§7.18). Both facts were true at once and `--check` reported
+`errno_` (§8.18). Both facts were true at once and `--check` reported
 CLEAN, because the source hash matched. I briefly read that CLEAN as
 evidence the errno bug was already fixed — it was evidence of nothing.
 The bug was real, and the probe that actually settled it ran the old and
@@ -2427,9 +2446,9 @@ green check is load-bearing for a conclusion, ask what a red one would
 have required: if no realistic breakage produces red, the green is not
 evidence.
 
-### 7.37 Minimal repro: two-step `unwrap()` of `Option<&mut T>` drops the reference
+### 8.37 Minimal repro: two-step `unwrap()` of `Option<&mut T>` drops the reference
 
-§7.21 recorded that `let x = opt.unwrap()` can silently emit a BY-VALUE
+§8.21 recorded that `let x = opt.unwrap()` can silently emit a BY-VALUE
 binding, so writes land on a copy. This narrows it to a minimal repro and
 identifies which half is actually broken — the two forms differ.
 
@@ -2458,7 +2477,7 @@ const auto slot = slot_opt.unwrap();  // BY VALUE and const
 slot.push(7);                         // mutates the copy
 ```
 
-Two defects, both §7.21's: the intermediate binds `auto&` to a
+Two defects, both §8.21's: the intermediate binds `auto&` to a
 by-value temporary, and the unwrap drops the reference AND adds `const`.
 
 So the bug is NOT in `unwrap()` — the chained form proves `unwrap()`
@@ -2468,17 +2487,17 @@ reference, so by the time `.unwrap()` is emitted the reference-ness is
 already lost. That is the thing to fix, and it is a much narrower target
 than "unwrap copies".
 
-Verified identical on the transpiler before AND after the §7.35 errno
+Verified identical on the transpiler before AND after the §8.35 errno
 fix, so it is long-standing, not a regression.
 
 **Why this class matters more than a loud bug:** the emitted code
-compiles and the tests pass. §7.21 hit exactly this — `test_rpc_client_pool`
+compiles and the tests pass. §8.21 hit exactly this — `test_rpc_client_pool`
 passed 20/20 while `remove_all_unhealthy`'s write-back updated a copy,
 because the only test of that path asserted the all-healthy case
 (`removed == 0`) and never exercised the mutation. A wrong-code bug that
 compiles is found by READING the GEN, not by running the suite.
 
-**Workaround until fixed:** annotate both bindings, as §7.21 records —
+**Workaround until fixed:** annotate both bindings, as §8.21 records —
 `let slot_opt: Option<&mut Vec<T>> = ...` and
 `let slot: &mut Vec<T> = ...` — or collapse to the one-step chained form,
 which needs no annotation.
@@ -2535,7 +2554,7 @@ So the `const auto s = o.unwrap()` defect on the next line is never
 reached: the TU fails first. Whoever hits this gets a diagnostic
 immediately.
 
-That changes the priority. §7.21's silent 20/20-passing incident was
+That changes the priority. §8.21's silent 20/20-passing incident was
 real, but it came from an intermediate whose type was already known —
 and that path is now correct. What remains is an ERGONOMIC gap (the bare
 two-step needs an annotation the chained form does not), not a
@@ -2551,7 +2570,7 @@ priority in place — and I had already written that wrong priority into a
 commit message.
 
 **CORRECTION (2026-08-01) — the destruction no longer reproduces; 4c is moot.**
-§7.32 says `--rewrite` deletes a function body *before* erroring on a
+§8.32 says `--rewrite` deletes a function body *before* erroring on a
 block-id collision, and prescribes committing first. That hazard could
 not be reproduced on either the current transpiler or the older
 reference binary, under both triggers:
@@ -2568,7 +2587,7 @@ reference binary, under both triggers:
 
 So the "commit before regenerating" rule is no longer load-bearing for
 *this* failure. Committing first is still good practice — regeneration
-touches blocks you did not edit (§7.18) — but it is hygiene now, not a
+touches blocks you did not edit (§8.18) — but it is hygiene now, not a
 guard against losing work, and the planned upstream bug report has
 nothing left to report.
 
@@ -2583,7 +2602,7 @@ outlived it. Re-testing a stated cause costs one command; carrying a
 phantom constraint costs every future decision that routes around it.
 Before honouring a workaround, re-run its repro.
 
-### 7.38 `mod X { … }` lowers to `namespace X { … }` — nested namespaces are convertible
+### 8.38 `mod X { … }` lowers to `namespace X { … }` — nested namespaces are convertible
 
 Undocumented and unused anywhere in the tree, which reads like
 "unsupported". It is not. Probed directly:
@@ -2630,9 +2649,9 @@ core, and four lines is not worth a linkage change made without a reason
 to touch that file. The point of the entry is that the NAMESPACE is not
 the blocker, so nobody re-derives that.
 
-### 7.39 The const-callable-callback floor: exactly where it stands
+### 8.39 The const-callable-callback floor: exactly where it stands
 
-§7.19 and the Goal-0(b) measurement both land on the same cluster —
+§8.19 and the Goal-0(b) measurement both land on the same cluster —
 `OnFrameCallback` / `OnClosedCallback` / `OnErrorCallback` /
 `ConnectionCallback`, ~50 unresolved names — floored because the DSL
 emits every `move` closure as `[=, x = std::move(x)]() mutable`, and a
@@ -2662,7 +2681,7 @@ there are none). Any value capture — including one that is merely read
 — keeps it. mako's channel closures capture `Weak`/`Arc` values, so
 they are unaffected.
 
-**What would lift it**, and why it is not a one-liner (§7.19 records an
+**What would lift it**, and why it is not a one-liner (§8.19 records an
 attempt that was reverted): the sound rule must keep `mutable` for a
 method call on a capture UNLESS the capture is pointer-like
 (`Arc`/`Box`/`Rc`/`Weak`, where mutation goes through a const-correct
@@ -2680,16 +2699,16 @@ Scoped as three changes, in dependency order:
     non-mutating;
  2. teach the pointer-like predicate to resolve C++ `using` aliases
     (today it only knows DSL `type X =` decls);
- 3. Box-receiver method-call autoderef (§7.19's third blocker).
+ 3. Box-receiver method-call autoderef (§8.19's third blocker).
 
 Worth the effort for a reason that is now measurable rather than
 aesthetic: this single floor accounts for ~50 of the names Goal 0(b)
 would otherwise have to declare across an FFI boundary, and it blocks
 the whole channel-binding cluster in Goal 0(a). One fix, both goals.
 
-### 7.40 Overload families ARE expressible — as trait impls
+### 8.40 Overload families ARE expressible — as trait impls
 
-§7.24a records "no function overloading" as a structural floor: the DSL
+§8.24a records "no function overloading" as a structural floor: the DSL
 rejects two `fn` of the same name, so a C++ overload family looked
 unportable. That is true of *direct* declarations and false of the
 shape that matters.
@@ -2742,9 +2761,9 @@ cannot see relational properties. Overloading, ODR collisions, and
 specialisation-vs-base relationships all need a cross-declaration pass.
 Expect other "plain" counts to hide the same thing.
 
-### 7.40a serializable.cpp's overload family is also an ADL machine — a fork
+### 8.40a serializable.cpp's overload family is also an ADL machine — a fork
 
-§7.40 proves `impl Trait for X` generates an overload set, which is the
+§8.40 proves `impl Trait for X` generates an overload set, which is the
 shape `misc/serializable.cpp` has. Reading the actual file before
 converting shows it is more than that. The family is a deliberately
 engineered ADL dispatch:
@@ -2893,7 +2912,7 @@ containers have no DSL iteration". Each was stated confidently in a
 comment or a plan and each cost one command to disprove. In this
 codebase, probe before believing — including before believing yourself.
 
-### 7.40b Partial conversion of a MUTUALLY RECURSIVE overload family fails
+### 8.40b Partial conversion of a MUTUALLY RECURSIVE overload family fails
 
 Attempted (and reverted) the second slice of `serializable.cpp`: six
 more containers (`rusty::Vec`, `std::vector`, `set`, `unordered_set`,
@@ -2943,7 +2962,7 @@ in the original `Serialize` trait block; its GEN declares the complete
 `WireSerialize_` namespace, its forwarding overloads, and their declaration
 walls are gone.
 
-### 7.41 Default-init helpers: half of them are no longer needed
+### 8.41 Default-init helpers: half of them are no longer needed
 
 `tcp_channel.cpp` carries nine one-line helpers whose comment explains
 them: *"the DSL struct literal can't spell a default-constructed
@@ -2964,7 +2983,7 @@ helpers deleted. The `std::`-typed ones (`tcpconn_empty_buf`,
 `tcplistener_empty_addr`) genuinely cannot be, because the DSL lowers
 `T::new()` to `T::new_()` and the std types have no such static.
 
-> **Superseded (§7.53).** The `std::`-typed conclusion was right about
+> **Superseded (§8.53).** The `std::`-typed conclusion was right about
 > `T::new()` and wrong overall: `Default::default()` reaches them, and
 > `tcplistener_empty_addr` is now deleted. `T::new()` was simply not the
 > spelling to try.
@@ -2986,11 +3005,11 @@ the dead half. That is now twelve for this session. Comments age badly
 in a codebase whose toolchain is under active development — treat every
 "the DSL can't X" as a dated observation, not a property.
 
-### 7.42 The `Function<..>` alias workarounds are now unnecessary (16 sites)
+### 8.42 The `Function<..>` alias workarounds are now unnecessary (16 sites)
 
 A sweep for stated DSL limitations across `src/srpc` turned up ~24
 "the DSL can't X" comments. One family is already dead as of today's
-gap-1 fix (§7.40 / the `rusty::Function` bare-signature change):
+gap-1 fix (§8.40 / the `rusty::Function` bare-signature change):
 
 ```
 base/misc.cpp:143   // Callback alias (the DSL can't parse a Function<..> field type inline).
@@ -3028,9 +3047,9 @@ Two cautions before a sweep:
 Worth doing as one batched pass rather than per-file, since the pattern
 is uniform and each gate cycle is ~40 minutes.
 
-### 7.43 Batch re-test of stated limitations: 2 of 3 expired
+### 8.43 Batch re-test of stated limitations: 2 of 3 expired
 
-Continuing the sweep (§7.42). Three more claims probed in one pass:
+Continuing the sweep (§8.42). Three more claims probed in one pass:
 
 | claim (and where it is stated) | result |
 |---|---|
@@ -3038,7 +3057,7 @@ Continuing the sweep (§7.42). Three more claims probed in one pass:
 | `client.cpp:1481` — "the DSL can't deref a Box for a method" | **EXPIRED.** `(*b).close()` on a `rusty::Box` emits `rusty::detail::deref_if_pointer_like(b).close()` — the deref happens. |
 | `epoll_platform_linux.cc:22` — "struct-fill / memset has no DSL spelling" | **EXPIRED.** A struct literal emits designated initialisers (`epoll_event{.events = …, .data = …}`). |
 
-**The Box result shrinks §7.39.** That entry scopes the
+**The Box result shrinks §8.39.** That entry scopes the
 closure-mutability fix as three changes that must land together, the
 third being "Box-receiver method-call autoderef". That third step is
 already done — `deref_if_pointer_like` covers Box. So the remaining
@@ -3059,7 +3078,7 @@ variadic generics) are both cases where Rust genuinely has no
 equivalent — which is the shape of a real floor. Everything else has
 been a dated observation about a toolchain that kept moving.
 
-### 7.44 ⚠ `#[cfg(...)]` is SILENTLY DROPPED — and the fn-local-static floor is gone
+### 8.44 ⚠ `#[cfg(...)]` is SILENTLY DROPPED — and the fn-local-static floor is gone
 
 Third batch of the limitation sweep. Two expiries and one hazard.
 
@@ -3081,7 +3100,7 @@ function is emitted **unconditionally**. Anyone porting
 platform-conditional code by writing `#[cfg]` and trusting the output
 gets code compiled on every platform — a wrong-code failure that
 compiles, which is the worst category. This is the same shape as the
-`use rusty::…` silent drop fixed earlier today (§7.42 lineage), and it
+`use rusty::…` silent drop fixed earlier today (§8.42 lineage), and it
 deserves the same treatment upstream: either lower `cfg` to `#if`, or
 refuse to transpile it. Silently ignoring it is the one unacceptable
 option.
@@ -3097,18 +3116,18 @@ plain-C `srpc_timing.c` seam. Do NOT write `#[cfg]` expecting it to work.
 | claim | result |
 |---|---|
 | `any_message.cpp:384` — "returns a reference to it, which the DSL cannot spell" | **EXPIRED**: `fn get_ref(v: &Vec<i32>) -> &i32` emits `const int32_t& get_ref(const rusty::Vec<int32_t>&)` |
-| `any_message.cpp:383` / §7.24b — "FUNCTION-LOCAL STATIC, not DSL-expressible" | **EXPIRED**: `static mut N: i64 = 0;` inside a fn emits `static int64_t N = static_cast<int64_t>(0);` in the body |
+| `any_message.cpp:383` / §8.24b — "FUNCTION-LOCAL STATIC, not DSL-expressible" | **EXPIRED**: `static mut N: i64 = 0;` inside a fn emits `static int64_t N = static_cast<int64_t>(0);` in the body |
 
-The second retires one of the **three structural floors** §7.24 names
+The second retires one of the **three structural floors** §8.24 names
 (class templates, overloading, function-local statics). All three are
-now disproved: class templates in §7.40's probe, overloading via trait
-impls (§7.40), and function-local statics here. §7.24's framing should
+now disproved: class templates in §8.40's probe, overloading via trait
+impls (§8.40), and function-local statics here. §8.24's framing should
 be read as historical.
 
 That also removes **A4** from the Goal 0 Phase-A plan — it was never a
 reshape task, the construct simply works now.
 
-### 7.45 The heuristic that predicts which limitations are stale
+### 8.45 The heuristic that predicts which limitations are stale
 
 Twenty stated limitations have now been re-tested. A rule emerged that
 has predicted **every** outcome so far, and it is cheaper to apply than
@@ -3143,11 +3162,11 @@ eventually say, while anything Rust cannot say has nowhere to come from.
 
 **Use it to triage, not to conclude.** The heuristic says where to spend
 a probe, and the probe still decides — but it has turned a 24-item list
-into a ranked one, and it explains why the "floor" framing in §7.24 kept
+into a ranked one, and it explains why the "floor" framing in §8.24 kept
 dissolving: those were all transpiler-maturity claims wearing the
 language of language limits.
 
-### 7.46 Sweep complete — and two ways the grep lies
+### 8.46 Sweep complete — and two ways the grep lies
 
 All ~24 "the DSL can't X" comments in `src/srpc` are now accounted for.
 The last two resolved without a probe, and both were **false positives
@@ -3156,7 +3175,7 @@ of the search itself**:
  - `server.cpp:580` — "the transpiler cannot see the element type
    THROUGH the Mutex guard, so it emitted `.close()` on the Box instead
    of `->close()`. Naming the type restores it." That is a comment
-   documenting a **working idiom** (annotate the binding, §7.21), on
+   documenting a **working idiom** (annotate the binding, §8.21), on
    code that is *already DSL*. Not a limitation; a recipe.
  - `circuit_breaker.cpp:22` — "Previously called
    `clock_gettime(CLOCK_MONOTONIC)` directly — a raw libc syscall the
@@ -3183,9 +3202,9 @@ delegates to" were in the same sentence.
 4 blocked on one fixable transpiler bug (`#[cfg]`), 8 genuinely real
 across 5 constructs, 2 false positives. Zero unknowns remaining.
 
-### 7.47 `bind_channel_direct` is now unblocked — the closure fix's payoff case
+### 8.47 `bind_channel_direct` is now unblocked — the closure fix's payoff case
 
-§7.19 floored the channel-binding cluster because the DSL emitted every
+§8.19 floored the channel-binding cluster because the DSL emitted every
 `move` closure as `[=] mutable`, and a mutable lambda's `operator()` is
 non-const, so it would not convert to the const-callable
 `CallbackWrapper<void(..) const>` slots the channel layer uses. That is
@@ -3211,11 +3230,11 @@ channel->set_on_error([](ChannelError, std::string_view) {});
 
 | piece | route |
 |---|---|
-| `channel->set_on_frame(..)` on a `Box` proxy | Box deref works (§7.43) |
-| `if (!channel) return;` | `Box::is_valid()` (§7.19 precedent) |
-| lambda params `const ChannelFrame&`, `std::string_view` | reference params lower (§7.44) |
+| `channel->set_on_frame(..)` on a `Box` proxy | Box deref works (§8.43) |
+| `if (!channel) return;` | `Box::is_valid()` (§8.19 precedent) |
+| lambda params `const ChannelFrame&`, `std::string_view` | reference params lower (§8.44) |
 | `f.payload`, `f.size` | plain field access |
-| scoped guard + `*guard = Some(..)` | the guard-then-deref idiom (§7.33) |
+| scoped guard + `*guard = Some(..)` | the guard-then-deref idiom (§8.33) |
 
 Not attempted here: `client.cpp` is the RPC client core, and this is a
 36-line conversion touching callback installation, a Box proxy, and a
@@ -3223,7 +3242,7 @@ lock scope at once. It wants a dedicated run with a full gate, not the
 tail of a long session. But the reason it was *floored* is gone, and
 that was the point of the transpiler work.
 
-### 7.48 The drift guard is blind to transpiler changes
+### 8.48 The drift guard is blind to transpiler changes
 
 `scripts/srpc_dsl_check.sh` compares each block's `rust_sha256` against a
 hash of the Rust source. That catches the failure it was built for --
@@ -3259,7 +3278,7 @@ make every pin bump dirty every block at once, which is why it has not
 been done. The cheap version is a periodic regen-and-diff sweep, which
 is what caught this.
 
-#### The stale-binary trap that produced the false reading first
+#### 8.48a The stale-binary trap that produced the false reading first
 
 Before the above, a probe of `Vec<rusty::Function<dyn FnMut()>>`
 reported the *wrong* lowering -- a double wrapper
@@ -3272,12 +3291,12 @@ The tell was the contradiction with a commit, not anything in the
 output; the wrong output is perfectly plausible on its own. Check
 `stat -c %y` on the binary against `find src -name '*.rs' -newer` before
 believing any probe result. This is the same family as the stale test
-binaries in §7.31 -- a green or red reading from a binary that is not
+binaries in §8.31 -- a green or red reading from a binary that is not
 the thing you think you are measuring.
 
-### 7.49 Sweep of the remaining "stated causes" in src/srpc
+### 8.49 Sweep of the remaining "stated causes" in src/srpc
 
-§7.45 predicts that comments claiming "the DSL can't do X" go stale
+§8.45 predicts that comments claiming "the DSL can't do X" go stale
 faster than anyone updates them, and that re-reading them is the
 highest-yield move available. Grepping src/srpc for the phrasings
 (`DSL can't`, `cannot spell`, `no spelling`, `wouldn't parse`, ...)
@@ -3327,7 +3346,7 @@ varargs, and the RefCell-temporary bind at reactor.cpp:3762. The
 default-field-initializer one is a *documented* limit in CLAUDE.md, so
 that family is the most likely to be a genuine floor.
 
-#### 7.49.1 The negative result that makes the heuristic trustworthy
+#### 8.49.1 The negative result that makes the heuristic trustworthy
 
 Eight stated causes have now been probed and found stale, which invites
 the wrong conclusion -- that every such comment is stale and the floor is
@@ -3337,7 +3356,7 @@ zero. It is not. Probed directly:
     -> inline-rust error: Parse error: expected `,`
 
 Default field initializers are a **real floor**, and the reason is the
-one §7.45 names: Rust itself has no field-default syntax (you write
+one §8.45 names: Rust itself has no field-default syntax (you write
 `impl Default`), so there is nothing for the DSL to lower. No transpiler
 change fixes this -- it is a language-expressiveness gap, not a
 missing feature.
@@ -3351,20 +3370,20 @@ design around via `fn new`/factory functions.
 an explicit `ReconnectPolicy::new()` factory, and its former carrier is gone.
 
 So the scoreboard is 8 stale / 1 confirmed-real, and the split falls
-exactly where §7.45 predicts:
+exactly where §8.45 predicts:
 
  - claims of the form *"the transpiler doesn't do X yet"* -> presume stale,
    re-measure (8 for 8 so far)
  - claims of the form *"Rust has no way to say X"* -> presume real floor
 
 Use the phrasing of the comment as the triage signal, and always probe
-against a freshly built binary (§7.48).
+against a freshly built binary (§8.48).
 
-### 7.50 Box method deref: real floor, and a probe that lied
+### 8.50 Box method deref: real floor, and a probe that lied
 
 `client.cpp` carries two kernels (`box_close`, `fiberchannel_bind_callbacks`)
 whose stated cause is "the inline-rust grammar emits a Box method call as
-`box.method()` (dot) rather than `box->method()`". Under the §7.45
+`box.method()` (dot) rather than `box->method()`". Under the §8.45
 heuristic this reads like a transpiler gap, so it should be stale. **It is
 not.** Both kernels are legitimate today.
 
@@ -3418,11 +3437,11 @@ And compile the *emitted* C++, not a hand-written equivalent of it. The
 actually produced does not. Checking the first one is what let a broken
 change get as far as regeneration.
 
-By contrast the nullptr kernel in the same file (§7.49) *was* stale, and
+By contrast the nullptr kernel in the same file (§8.49) *was* stale, and
 its replacement was verified by compiling the emitted
 `cb(ENOTCONN, rusty::ptr::null(), 0)` rather than assuming the conversion.
 
-#### 7.50.1 Root cause, and a call-site route that does not need the fix
+#### 8.50.1 Root cause, and a call-site route that does not need the fix
 
 Tracing the guard case to its origin: the collapse predicate
 `unary_deref_should_collapse_reference_like_operand` (codegen/mod.rs
@@ -3474,9 +3493,9 @@ Two details that are easy to get wrong:
 
 Verified by compiling the emitted C++ in both shapes, not by inspection.
 
-#### 7.50.2 The precise transpiler fix (for whoever does it)
+#### 8.50.2 The precise transpiler fix (for whoever does it)
 
-Tracing one level further than §7.50.1. `infer_simple_expr_type`'s
+Tracing one level further than §8.50.1. `infer_simple_expr_type`'s
 `UnOp::Deref` arm (codegen/inference.rs ~6901) ends in
 
     self.infer_deref_result_type_from_type(&base_ty)
@@ -3489,7 +3508,7 @@ and that function (~9455) only knows how to deref these owners:
 
 **The RAII guards are absent.** So `*guard` types as `None` even when
 `guard`'s own type is known, the collapse predicate hits its
-inference-failure fallback, and the deref is dropped (§7.50).
+inference-failure fallback, and the deref is dropped (§8.50).
 
 The telling detail: `emit_expr.rs` already carries the exact set that is
 missing here --
@@ -3520,9 +3539,9 @@ That second point is why this is a dedicated run with the full suite
 untested transpiler change sitting in the submodule is worse than a
 documented one, because the next regen would silently bake it in.
 
-#### 7.50.3 The fix was attempted and REVERTED — and the suite did not notice
+#### 8.50.3 The fix was attempted and REVERTED — and the suite did not notice
 
-§7.50.2 said the fix was "add the six RAII guard idents to
+§8.50.2 said the fix was "add the six RAII guard idents to
 `infer_deref_result_type_from_type`". That was tried. It works for the
 bug it targets and is **still wrong**, for a reason worth recording
 before anyone tries it again.
@@ -3561,7 +3580,7 @@ Concretely, for any transpiler change: regenerate src/srpc and build it,
 and separate the two populations first, because they are easily confused:
 
  - **backlog** — files whose checked-in GEN predates the current pin, which
-   regenerate differently for reasons unrelated to your change (§7.48).
+   regenerate differently for reasons unrelated to your change (§8.48).
  - **your change** — the incremental diff on top of that.
 
 Isolate by regenerating twice, once with each binary, and diffing the
@@ -3596,7 +3615,7 @@ concluding anything about the toolchain. One `grep` in `include/`
 separates the two, and the difference between them is "add one include"
 versus "the pin is broken".
 
-#### 7.50.4 Scoping the second half (`&mut x` on a loop binding)
+#### 8.50.4 Scoping the second half (`&mut x` on a loop binding)
 
 Where the two halves live, so the next attempt does not re-derive it:
 
@@ -3626,12 +3645,12 @@ fails and an earlier branch collapses the borrow. Landing half 1 alone
 removes that accident and exposes the gap. **The halves are not
 independent and must not be committed separately.**
 
-Verification for the pair cannot be the transpiler suite -- §7.50.3
+Verification for the pair cannot be the transpiler suite -- §8.50.3
 showed it reports an identical failing set while the tree is broken.
 It has to be: regenerate src/srpc, build `srpc`, and run a full gate,
-with backlog separated from the change's own effect (§7.48).
+with backlog separated from the change's own effect (§8.48).
 
-### 7.51 Where the remaining kernels are, and which claims to re-check
+### 8.51 Where the remaining kernels are, and which claims to re-check
 
 **Count kernels outside GEN regions.** A naive
 `grep -c '^inline\|^static'` counts *generated* code and is badly
@@ -3652,17 +3671,17 @@ file has zero hand-written kernels. Excluding GEN regions:
 variadic/SFINAE templates, `reinterpret_cast` helpers (`str_as_i8`,
 `client_dsl_addr_to_cstr`), the single `std::chrono` interop point
 (`fut_secs`), and default-ctor factories (`reply_buffer_empty`,
-`make_pending_queue`) -- the last being the confirmed real floor (§7.49.1).
+`make_pending_queue`) -- the last being the confirmed real floor (§8.49.1).
 
-**Triage of the stated causes in the next two targets**, by the §7.45
+**Triage of the stated causes in the next two targets**, by the §8.45
 phrasing rule:
 
 | site | claim | verdict |
 |---|---|---|
 | reactor 1294 | variadic ctor / `add_event(Args...)` | **real** — Rust has no variadics |
-| server 497 | `#[cpp_ctor]` default-init | **real** — §7.49.1 |
+| server 497 | `#[cpp_ctor]` default-init | **real** — §8.49.1 |
 | server 1080 | `*_to_string` varargs | **real** — varargs UB |
-| reactor 2607 | `QuorumFinalizeFn` fn-type arg | **stale** (§7.49) — kept only as kernel vocabulary |
+| reactor 2607 | `QuorumFinalizeFn` fn-type arg | **stale** (§8.49) — kept only as kernel vocabulary |
 | reactor 3762 | "RefCell borrow returns a temporary Ref the DSL can't bind as a named guard" | **stale** — probed |
 | reactor 739, 2269 | "aliased so the DSL can spell" | unprobed |
 | server 480, 932 | "cannot spell" / "does not parse" | unprobed |
@@ -3680,7 +3699,7 @@ function `rusty::borrow(x)`, the mutable one stays a method.)
 That makes **11 stale against 3 real** so far, and the phrasing rule has
 predicted every one.
 
-#### 7.51.1 Latent transpiler bug: `default_value` vs `default_like`
+#### 8.51.1 Latent transpiler bug: `default_value` vs `default_like`
 
 Probing server.cpp:480's claim ("rusty::Function's default ctor is a `{}`
 the DSL cannot spell") turned up a transpiler bug rather than a floor.
@@ -3713,30 +3732,30 @@ The transpiler emits both names:
 So `Default::default()` in an expression position emits a call to a
 function that was never defined. It is latent only because no current DSL
 in src/srpc takes that path -- the moment one does, it is a compile error
-with no DSL-level warning. Same family as `std::ptr::null()` (§7.49):
+with no DSL-level warning. Same family as `std::ptr::null()` (§8.49):
 plausible output, no such symbol.
 
 **Do not "fix" this by renaming all 14 blindly.** The two names may not be
 interchangeable at every site (`default_like` is the type-param dispatcher;
 some `default_value` sites are inside lambdas over deduced `_rusty_inner_t`
-types), and §7.50.3 established that the transpiler suite will not tell you
+types), and §8.50.3 established that the transpiler suite will not tell you
 if a change breaks real code. It needs the regenerate-and-build check.
 
 Meanwhile server.cpp:480's `empty_server_reply_fn()` kernel stays: the
 claim is **real** as written, since neither spelling works today.
 
-> **Superseded (§7.53).** True only *before* the `default_value` ->
+> **Superseded (§8.53).** True only *before* the `default_value` ->
 > `default_like` fix in the same section. Once that landed,
 > `Default::default()` worked and the kernel was deleted. Note the shape:
 > this claim was accurate when written and falsified by a fix recorded
 > four paragraphs above it.
 
-#### 7.51.2 tcp_channel triage, and a claim that is only half true
+#### 8.51.2 tcp_channel triage, and a claim that is only half true
 
 Three stated causes in `rpc/tcp_channel.cpp`:
 
 **`#[cpp_ctor]` default-init helpers (644)** — real, the confirmed
-default-field-initializer floor (§7.49.1).
+default-field-initializer floor (§8.49.1).
 
 **`TcpOutBuf` alias (1238)** — "so the DSL can spell the parameter type".
 The alias itself is unnecessary (`Vec<u8>` lowers to the same
@@ -3753,7 +3772,7 @@ is DSL+GEN-local. Same class as EventTestFn / QuorumFinalizeFn.
         return ChannelFrame{v->payload, v->payload_size};
     }
 
-> **Superseded (§7.53/§7.53.1).** Both are gone. `FrameView` is
+> **Superseded (§8.53/§8.53.1).** Both are gone. `FrameView` is
 > DSL-defined too -- calling it "a hand-written C++ POD" below was simply
 > wrong -- and `Default::default()` covers it.
 
@@ -3773,7 +3792,7 @@ Not converted: `frame_of` is two lines and needs an `unsafe` raw-pointer
 deref in the DSL, so the win does not pay for a full gate cycle on its
 own. Worth folding into the next tcp_channel change.
 
-### 7.52 Where the src/srpc sweep stands
+### 8.52 Where the src/srpc sweep stands
 
 After this pass, the four files worked are at or near their floor, and
 the remaining kernels are genuine rather than stale:
@@ -3783,7 +3802,7 @@ the remaining kernels are genuine rather than stale:
 | rpc/client.cpp | **at floor** — variadic/SFINAE templates, `reinterpret_cast`, one `std::chrono` interop point, default-ctor factories |
 | reactor/reactor.cpp | identified conversions done (TLS trio, two aliases); rest is variadic `add_event(Args...)`, fiber-context asm, `sprintf` |
 | rpc/server.cpp | **at floor** — `try/catch` (Rust has no exceptions), clock/RNG syscalls, `reinterpret_cast`, default-ctor factories |
-| rpc/tcp_channel.cpp | one small item left (`frame_of`, §7.51.2); rest is `#[cpp_ctor]` defaults + kernel vocabulary |
+| rpc/tcp_channel.cpp | one small item left (`frame_of`, §8.51.2); rest is `#[cpp_ctor]` defaults + kernel vocabulary |
 | misc/serializable.cpp | 104 kernels, deliberately untouched (mutual recursion — a partial serde conversion does not compile) |
 
 Two things in server.cpp are worth not re-litigating:
@@ -3798,22 +3817,22 @@ Two things in server.cpp are worth not re-litigating:
    documented rule. The kernel is shaped to match it.
 
 **The remaining high-value work is the two-half guard-deref fix
-(§7.50.4)**, which is transpiler work needing regenerate-and-build
-verification (§7.50.3 showed the suite cannot see this class of
-breakage), and the `default_value`/`default_like` bug (§7.51.1). Both
+(§8.50.4)**, which is transpiler work needing regenerate-and-build
+verification (§8.50.3 showed the suite cannot see this class of
+breakage), and the `default_value`/`default_like` bug (§8.51.1). Both
 want a session where intermediate results can be inspected, not an
 unattended one.
 
-#### 7.50.5 Both triggers fixed — and §7.50.2/§7.50.4 prescribed the wrong fix
+#### 8.50.5 Both triggers fixed — and §8.50.2/§8.50.4 prescribed the wrong fix
 
-Superseding the plan in §7.50.2 and §7.50.4. Both are now known to be
+Superseding the plan in §8.50.2 and §8.50.4. Both are now known to be
 wrong, in two separate ways, and the working fixes are elsewhere.
 
-**What §7.50.2 got wrong.** It said the fix was to add the six RAII guard
+**What §8.50.2 got wrong.** It said the fix was to add the six RAII guard
 idents to `infer_deref_result_type_from_type`, and that this one change
 would fix the bug. Neither half held:
 
- - it *breaks the build* (§7.50.3 — teaching inference more makes other
+ - it *breaks the build* (§8.50.3 — teaching inference more makes other
    emitters stop guessing, and `&mut hook` over a loop binding flips from
    `hook` to `&hook`); and
  - it would not have fixed the alias case anyway, because that path never
@@ -3850,7 +3869,7 @@ list. Factored into `is_deref_owner_or_guard_name` /
 **Why two lists, not one.** The wider set must **deref**; the pointer-like
 set drives **autoderef**, and a guard must not autoderef (Rust makes you
 `.upgrade()`/`.borrow()` first). Merging them would be the same mistake as
-putting `Weak` in the autoderef list (§7.47).
+putting `Weak` in the autoderef list (§8.47).
 
 **The standing lesson.** Three separate places now answer "is this
 pointer-like", each with its own list, and two of the three could not see
@@ -3858,7 +3877,7 @@ through a `using`. When a lowering looks wrong for a type behind an alias,
 suspect a *by-name* test that nobody taught about aliases — and check
 whether the site you are looking at is the only one.
 
-### 7.53 The `default_like` fix unlocks the "can't spell a default ctor" family
+### 8.53 The `default_like` fix unlocks the "can't spell a default ctor" family
 
 A payoff of `44e1d3f8` that was not the point of the fix. Now that
 `Default::default()` lowers to a call that exists, the DSL *can* spell a
@@ -3872,7 +3891,7 @@ aggregate it is *exactly* the value-init the kernels were written to
 provide — and it works for `rusty::Function` too, which is what
 server.cpp:480 said could not be expressed.
 
-**This corrects §7.49.1, which was too broad.** Two different things were
+**This corrects §8.49.1, which was too broad.** Two different things were
 filed under one "real floor":
 
 | construct | status |
@@ -3883,7 +3902,7 @@ filed under one "real floor":
 Only the first is a Rust-expressiveness gap. The second was a missing
 lowering all along, and its "we tried, it doesn't work" evidence was the
 `default_value` bug: `Default::default()` *did* emit something, it just
-emitted a call to a function that did not exist (§7.51.1). A tool that
+emitted a call to a function that did not exist (§8.51.1). A tool that
 fails by emitting a plausible-looking symbol teaches the wrong lesson.
 
 Ten sites still carry a "cannot spell" comment; most are this family:
@@ -3893,20 +3912,20 @@ Ten sites still carry a "cannot spell" comment; most are this family:
     rpc/inmemory_channel.cpp:69   misc/any_message.cpp:384,411
 
 Also relevant: `tcpconn_frame_view_empty` returns `FrameView`, which
-§7.51.2 called "a hand-written C++ POD". **That was wrong** — `FrameView`
+§8.51.2 called "a hand-written C++ POD". **That was wrong** — `FrameView`
 is DSL-defined (frame_codec.cpp), so both it and `ChannelFrame` are
 expressible, and that kernel pair can go entirely.
 
 Each conversion still needs its own gate, and a few of the ten are not
 this family (fiber_channel:500 is a Mutex + move-out-of-deque, and
 any_message:384 returns a reference to a local static). Check the type
-before assuming, per §7.51.2.
+before assuming, per §8.51.2.
 
-#### 7.53.1 The family is done; the two survivors are real
+#### 8.53.1 The family is done; the two survivors are real
 
 The default-construction sweep finished at **16 kernels across five
 files**. Every one traced to `Default::default()` emitting
-`rusty::default_value<T>()`, a function that never existed (§7.51.1).
+`rusty::default_value<T>()`, a function that never existed (§8.51.1).
 
 Two "cannot spell" comments remain in src/srpc, and neither is this
 family. Checked on their own terms rather than assumed to follow the
@@ -3926,12 +3945,12 @@ runtime initialisation, returning a reference to it. Rust has no
 lazily-initialised mutable static short of `OnceLock`, and `&'static mut`
 is not safely expressible. **Real.**
 
-Both are "Rust has no way to say X", which §7.45 predicts is a genuine
+Both are "Rust has no way to say X", which §8.45 predicts is a genuine
 floor — and both survived a sweep that disproved thirteen claims of the
 other kind. That is the heuristic working in both directions, which is
 what makes it worth trusting: it is not simply "everything is stale".
 
-#### 7.53.2 The alias-deref fix is SINGLE-FILE — cross-module aliases still need the concrete type
+#### 8.53.2 The alias-deref fix is SINGLE-FILE — cross-module aliases still need the concrete type
 
 Tried to simplify client.cpp's workaround now that `5a8e8754` resolves a
 `using` when testing for deref-ownership, replacing
@@ -3966,7 +3985,7 @@ Fixing this properly means feeding the transpiler aliases from imported
 modules, which is a different and much larger change than one alias hop
 within a TU — it needs the module graph, not a line scan.
 
-### 7.54 Goal 0 census (2026-08-02) — and why (b) does not close on this track
+### 8.54 Goal 0 census (2026-08-02) — and why (b) does not close on this track
 
 Measured, not recalled. Goal 0 has two halves:
 
@@ -4009,10 +4028,10 @@ inline DSL must become the crate mechanically. The same extracted source must
 be accepted by rustc and rusty-cpp; hand-moving or rewriting the logic into a
 second source tree does not satisfy Goal 0.
 
-### 7.55 The transpiler suite was reading a degraded sample (NFS + SIGBUS)
+### 8.55 The transpiler suite was reading a degraded sample (NFS + SIGBUS)
 
 Every "the suite is 428 passed / 16 failed, failing set identical to
-baseline" claim in §§7.50-7.53 was measured against a **broken test run**.
+baseline" claim in §§8.50-8.53 was measured against a **broken test run**.
 
 `cargo test` in the rusty-cpp submodule puts `target/` on the NFS home.
 `rustc` mmaps its inputs, and mmap-on-NFS gives **SIGBUS** — 60 to 110
@@ -4041,7 +4060,7 @@ What this does and does not invalidate:
 
  - **Does not** invalidate the three landed transpiler fixes. Each was
    verified by compiling its emitted output and by regenerating all of
-   src/srpc — checks that never touched the suite (and §7.50.3's point was
+   src/srpc — checks that never touched the suite (and §8.50.3's point was
    precisely that the suite cannot see consumer breakage anyway).
  - **Does** invalidate the suite half of those write-ups. "Failing set
    identical to baseline" compared two differently-degraded samples.
@@ -4050,7 +4069,7 @@ Always run rusty-cpp's tests with `CARGO_TARGET_DIR` on local disk. mako's
 own gates were never affected — `build_crate.sh` builds in `/var/tmp`
 on local btrfs, which is why they stayed consistent all campaign.
 
-### 7.56 `core::mem::take` DOES lower and DOES exist — a truncated grep said otherwise
+### 8.56 `core::mem::take` DOES lower and DOES exist — a truncated grep said otherwise
 
 First recorded here as "third nonexistent-symbol emission: rusty::mem::take
 does not exist." **That was false.** `mem.hpp:341` defines exactly the free
@@ -4067,7 +4086,7 @@ error of the campaign, same lesson as the others: an absence conclusion
 needs a check that can actually see presence (here: drop the `head`, or
 compile the emitted call, which was never done).
 
-Consequence: the move-out-of-a-reference floor (§7.53.1's
+Consequence: the move-out-of-a-reference floor (§8.53.1's
 `fiberchannel_try_pop`, and `process_stackless_tasks`) is NOT a floor —
 `core::mem::take` is the Rust-legal spelling and it lowers to a real
 function. `rusty::Function` satisfies the `default_constructible`
@@ -4085,7 +4104,7 @@ file/line debug parameters (no DSL spelling for `char*` — `*const i8` is
 `int8_t*`, a distinct type) and `Fiber::global_id++` mutates a class
 static. They stay kernels behind the 1-arg DSL `create_run_fiber`.
 
-### 7.57 Closure captures of const-PROPAGATING handles need `mutable` (fixed in the transpiler)
+### 8.57 Closure captures of const-PROPAGATING handles need `mutable` (fixed in the transpiler)
 
 The closure-mutability analysis exempted every "non-mutating handle"
 (Box/Rc/Arc/guards/Weak) from forcing `mutable`, reasoning that a method
@@ -4112,9 +4131,9 @@ calls. Two codegen tests pin it (Box keeps mutable / Arc stays
 const-callable). Emission after the fix:
 `[=, listener_box = std::move(listener_box)]() mutable { listener_box->close(); }`.
 
-### 7.58 Expired causes, batch 2 — lb generics, inmemory bodies
+### 8.58 Expired causes, batch 2 — lb generics, inmemory bodies
 
-Re-checking recorded "not DSL-expressible" causes (the §7.52 habit)
+Re-checking recorded "not DSL-expressible" causes (the §8.52 habit)
 closed two more families this session:
 
   * **`load_balancer` selector templates** ("generic arrow-deref …
@@ -4144,7 +4163,7 @@ closed two more families this session:
   * A DSL fn returning a Rust tuple lowers to `std::tuple`, not
     `std::pair` — update `.first/.second` callers to `std::get<>`.
 
-### 7.59 Variadic factories ARE callable from the DSL (turbofish probe)
+### 8.59 Variadic factories ARE callable from the DSL (turbofish probe)
 
 `reactor_create_sp_event::<IntEvent>()` lowers to
 `reactor_create_sp_event<IntEvent>()` — an explicit template argument
@@ -4156,10 +4175,10 @@ set (guard-indexed waiter sweep), wait (borrow_mut Function install),
 wait_until_gte (park + retain-by-identity, with a 2-line
 `int_event_raw_ptr` kernel because `.get()` on the Arc HANDLE would be
 autoderef-misrouted to the pointee — same family as Box::get /
-sconn_proxy_ptr, §7.58). `retain(move |item: &Arc<IntEvent>| ...)`
+sconn_proxy_ptr, §8.58). `retain(move |item: &Arc<IntEvent>| ...)`
 passes a typed-param closure straight through.
 
-### 7.60 Inline-argument closures can mis-infer a return type — bind to a let first
+### 8.60 Inline-argument closures can mis-infer a return type — bind to a let first
 
 An `Arc::<OneTimeJob>::new_(OneTimeJob::new_(move || { ... }))` closure
 in argument position emitted `[...]() -> bool { ... }` regardless of
@@ -4177,7 +4196,7 @@ NO DSL construction spelling from another file (the ctor lives in the
 defining file's GEN; `Type::new_` does not exist) — keep a small
 make_box kernel at the boundary (clientconn_make_fiber_channel).
 
-### 7.61 Three call-shape rules from converting connect_via_factory
+### 8.61 Three call-shape rules from converting connect_via_factory
 
   * **Nested calls inside `format!` can emit an unresolvable
     `rusty::to_string` wrap** (`format!("{}", channel_error_to_string(e))`
@@ -4189,6 +4208,6 @@ make_box kernel at the boundary (clientconn_make_fiber_channel).
     `result.field.unwrap()` copies (deleted for Box payloads).
   * **The RECEIVING binding of a move-only value must be `let mut`** —
     a const binding plus the emitter's `std::move` at the next use
-    selects the deleted copy constructor (same rule as §7.53's
+    selects the deleted copy constructor (same rule as §8.53's
     move-only locals, restated because it also applies to bindings that
     are only ever moved FROM once).

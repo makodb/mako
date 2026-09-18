@@ -2861,7 +2861,7 @@ pub fn clientpool_remove_unhealthy_clients(self_: &ClientPool, addr: &LegacyStdS
     let mut removed: usize = 0usize;
     // Probe with get(): an intermediate `let opt = ...get_mut(..)` binding
     // lowers to `auto&` on a temporary Option (won't compile). The chained
-    // one-step unwrap below binds the inner &mut directly (§7.37).
+    // one-step unwrap below binds the inner &mut directly (§8.37).
     let has_entry: bool = guard.cache.get(addr).is_some();
     if has_entry {
         let clients: &mut Vec<Arc<Client>> = guard.cache.get_mut(addr).unwrap();

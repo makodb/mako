@@ -700,7 +700,7 @@ pub struct WaitAll {
 impl WaitAll {
     pub fn add_event(&self, x: Arc<dyn EventPollable>) {
         // Bind the guard, then deref — chaining `.borrow_mut().push(x)`
-        // mis-lowers to push(Vec::from_iter(x)). See §7.33.
+        // mis-lowers to push(Vec::from_iter(x)). See §8.33.
         let mut g = self.events_.borrow_mut();
         (*g).push(x);
     }
