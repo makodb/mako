@@ -293,7 +293,10 @@ fn run() -> Result<()> {
                 let perf = use_perf.then(Perf::open).transpose()?;
                 let mut record = [0u8; 256];
                 let mut put = |iteration| -> Result<()> {
-                    let key = key(worker, iteration);
+                    // Item 0 of iteration i is key(i * items); the remaining
+                    // items are key(i * items + j), so the write schedule is
+                    // exactly expected_iteration_multi's model.
+                    let key = crate::key(worker, iteration * items);
                     let value = value(worker, iteration);
                     if let Some(db) = &cache {
                         db.put(&key, &value)?;
@@ -302,7 +305,7 @@ fn run() -> Result<()> {
                             engine.as_ref().unwrap().trusted_bound_transaction()?;
                         tx.put(&table, &key, &value)?;
                         for item in 1..items {
-                            let item_key = key(worker, iteration * items + item);
+                            let item_key = crate::key(worker, iteration * items + item);
                             tx.put(&table, &item_key, &value)?;
                         }
                         if logged {

@@ -239,15 +239,9 @@ is per-item work, the ratio stays flat.
 
 **Status of the matrix.** The `--items` change is complete in source
 (`engine_compare-items.rs` and `patch_probe.py`, with the verification schedule
-extended to multi-key commits), but no paired run was produced in this session:
-the native archives in `build_c22` fail the `mako-local`/`mtree` fingerprint
-guard because system headers changed on the host, so both arms need a native
-rebuild (the frozen archives are from 2026-09-14), and that rebuild was still
-compiling the `rusty-cpp` transpiler when this report was written. The split
-below is therefore established from the source trace, the ablation and the
-per-operation counts — not from a completed 1/2/4-item curve. The harness and
-both build scripts are in this directory so the curve can be filled in without
-re-deriving anything.
+extended to multi-key commits) and the curve has since been measured on the
+current tree — see section 8.2. The split below is the source-level account of
+the frozen revision's costs.
 
 What the source says the split is (engine-mode trace; citations in appendix B):
 
@@ -311,7 +305,126 @@ Ranked by measured size, with the evidence's own ceiling:
    byte-wise atomic store is a *dis*advantage of the C++ lane in this cell; a
    Rust design that matches it would be a regression.
 
-## 8 Appendix
+## 8 Update 2026-09-18: what the current tree already fixed, and what each remaining fix is worth
+
+The native archives were rebuilt (system headers had changed since 2026-09-14),
+which unblocked building the *current* tree and the diagnostic harnesses. Three
+new measurements change the priorities: HEAD has already removed a large part of
+the gap, the remaining deficit is **per item**, and the batch-scope fix measured
+in section 2 is worth much less on HEAD than it was on the frozen revision.
+
+### 8.1 HEAD versus the frozen pair (engine, 1 worker)
+
+| Lane | tx/s | cyc/tx | ins/tx |
+| ---- | ---: | -----: | -----: |
+| frozen Rust (`stage3-thin`) | 1,357,428 | 1459.2 | 3416 |
+| **HEAD Rust** (`engine-compare-items-sto`) | **1,666,858** | 1193.3 | **2885** |
+| frozen C++ (`cpp-thin`) | 1,822,104 | 1089.7 | 2597 |
+| **HEAD C++** (`engine-compare-items-c-abi`) | **1,855,066** | 1070.2 | **2605** |
+
+The instruction ratio fell from **1.315 (+31.5%) to 1.108 (+10.8%)**: the
+single-put gap on the current tree is ~10%, not 24%. Three of the costs this
+report measured on the frozen binary are already gone in HEAD, verified with the
+same shims:
+
+| Per transaction | frozen Rust | HEAD Rust | HEAD C++ |
+| --------------- | ----------: | --------: | -------: |
+| `memcpy` calls / bytes | 4.01 / 266 B | **3.01 / 138 B** | 2.01 / 136 B |
+| `malloc` + `free` | 1.002 + 1.003 | **0.0021 + 0.0027** | 0.0025 + 0.004 |
+| worker `gettimeofday` | 328,192 per run | **13 per run** | 13 per run |
+
+So the per-transaction staging allocation, the second bulk copy, and the
+per-operation vDSO clock read are no longer costs — the borrowed staging,
+single-copy publish and untimed RCU scope in HEAD removed them (531 ins/tx).
+
+### 8.2 The remaining deficit is per item, not per transaction
+
+`--items N` stages N distinct keys in one commit (both arms, verification
+extended to the multi-key schedule; all cells verified 256 keys):
+
+| items | C++ ins/tx | C++ ins/item | Rust ins/tx | Rust ins/item | Rust/C++ |
+| ----: | ---------: | -----------: | ----------: | ------------: | -------: |
+| 1 | 2605 | 2605 | 2886 | 2886 | 1.108 |
+| 2 | 4472 | 2236 | 5614 | 2807 | 1.255 |
+| 4 | 8196 | 2049 | 10062 | 2516 | 1.228 |
+
+Linear fits: C++ = **740 fixed + 1865/item**; Rust's general (N ≥ 2) lane =
+**1166 fixed + 2224/item**, and the singleton lane's fixed part is ≈ 662. The
+Rust lane's fixed cost is therefore *lower* than the C++ lane's, and its
+**per-item cost is 359 instructions higher** (+19%). The gap grows with
+transaction size: +10.8% at one item, +22.8% at four. For multi-key workloads
+the per-item machinery — not per-transaction plumbing — is what to optimize.
+
+### 8.3 Batched scopes: measured curve, and why per-transaction scoping is a pessimization
+
+`--rcu-batch K` reopens the native RCU region every K transactions (0 = one
+region for the whole measured loop, the section-2 ceiling). Three rounds,
+264,144 + 65,536 ops, `sto` arm built from the residual's patched source copy:
+
+| K | tx/s | ins/tx | vs unpatched |
+| -: | ---: | -----: | -----------: |
+| unpatched | 1,357,428 | 3416 | — |
+| **1 (per transaction)** | 1,270,116 | 3631 | **-6.4%** |
+| 8 | 1,500,786 | 3121 | +10.6% |
+| 16 | 1,508,762 | 3085 | **+11.1%** |
+| 64 | 1,542,610 | 3058 | +13.6% |
+| 0 (whole loop) | 1,552,561 | 3039 | +14.4% |
+
+Two conclusions. First, **a per-transaction scope is worse than no scope**: it
+adds ~215 ins/tx, because a transaction with one lookup pays the top-level entry
+exactly once either way, and the explicit close/open pair costs more than the
+per-operation guard it replaces. Second, the gain saturates early: K = 16 gets
+88% of the ceiling. But this curve was measured on the stage3 sources, where
+admission was 374 ins/tx; on HEAD admission is 116 ins/tx (8.4), so batching is
+now worth at most ~4%, and the remaining admission cost is better attacked by
+reusing the scope object than by batching.
+
+### 8.4 HEAD role ledger: where the remaining +283 instructions live
+
+Same role mapping as section 4, on the HEAD binaries (sto 2885, c-abi 2605):
+
+| Role | C++ | Rust | Delta |
+| ---- | --: | ---: | ----: |
+| commit protocol (plan phases vs `try_commit` + lock/check/unlock) | 219 | 808 | **+589** |
+| lane boundary (`mako_rust_fast_txn_*` shims) | 413 | 0 | -413 |
+| transaction lifecycle (`begin`/`put`/`recycle_touched`/TouchLog) | 201 | 530 | **+329** |
+| tree record write | 559 | 239 | -320 |
+| native admission (guards, scope emplace) | 0 | 116 | +116 |
+| per-transaction RCU callbacks | 98 | 0 | -98 |
+| item staging | 299 | 337 | +39 |
+| driver loop | 253 | 290 | +36 |
+| payload copies | 82 | 106 | +24 |
+| tree lookup | 429 | 415 | -15 |
+| **Net** | **2596** | **2879** | **+283** |
+
+Hot Rust-side items inside those rows: `BorrowedInjectiveLockCommitPlan::acquire_all`
+167, `Transaction::begin` 172, `commit_with_optional_hook` 164,
+`Transaction::put` 160, `with_resolved_item_inner_validated::{closure}` 145,
+`run_single_item_direct` 104, `Transaction::recycle_touched` 101,
+`finish_and_teardown` 94, `optional<scoped_rcu_base>::emplace` 89, `TouchLog::touch`
+23 + `drop_in_place<TouchLog>` 15.
+
+### 8.5 Re-ranked fix list
+
+1. **Specialize the singleton commit path** (`sto-core` plan phases): +589 ins/tx
+   sit in the Rust commit protocol against the C++ lane's 219. Elide the
+   per-item erased dispatch (`ErasedItemBatch`/`ErasedDirectCommitPlan`) and the
+   10 per-phase `catch_unwind` frames for the certified-unique lane, keeping the
+   capability check and the `PlanState` machine. This is the only row that can
+   close the remaining 10% on its own.
+2. **Cut the per-item transaction lifecycle** (+329, of which `begin` 172,
+   TouchLog touch/recycle/drop ~139, `put` 160 vs the C++ lane's 201 total):
+   the engine-only path pays TouchLog bookkeeping for a value that is already
+   borrowed; a singleton lane that skips it removes most of this row.
+3. **Reuse the native scope object** instead of re-emplacing
+   `optional<scoped_rcu_base>` per lookup (89 ins/tx); batched scopes are now a
+   ~4% lever, not an 11% one.
+4. **Do not touch** the tree write, payload copies, or the C-ABI boundary: Rust
+   is 320 + 98 + 413 ins/tx ahead there. A C++ lane that replaced its byte-wise
+   atomic store loop would close most of that by itself, which is the fair
+   baseline for a cutover decision.
+
+## 9 Appendix
 
 ### A. Artifacts in this directory
 

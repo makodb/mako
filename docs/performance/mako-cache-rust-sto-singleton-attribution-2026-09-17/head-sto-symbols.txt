@@ -1,0 +1,672 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 46K of event 'instructions:u'
+# Event count (approx.): 51612721732
+#
+# Overhead  Symbol                                                                                                                                                                                 IPC   [IPC Coverage]
+# ........  .....................................................................................................................................................................................  ....................
+#
+    10.04%  [.] engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb                                             -      -            
+            |          
+            |--8.64%--std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+            |          start_thread
+            |          clone3
+            |          
+             --1.40%--core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     7.35%  [.] Masstree::unlocked_tcursor<mt_abi_detail::record_params>::find_unlocked(simple_threadinfo&)                                                                                        -      -            
+            |
+            ---(anonymous namespace)::point_get_validated(mt_tree&, mt_thread&, mt_runtime*, bool, void const*, unsigned long, unsigned long*)
+               mako_mtree_get_trusted
+               mako_engine_sto::txn::Transaction::put
+               engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+               std::sys::backtrace::__rust_begin_short_backtrace
+               core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+               _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+               start_thread
+               clone3
+
+     5.97%  [.] mako_engine_sto::txn::Transaction::begin                                                                                                                                           -      -            
+            |          
+            |--3.51%--std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+            |          start_thread
+            |          clone3
+            |          
+             --2.45%--engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     5.78%  [.] <sto_core::direct_commit::BorrowedInjectiveLockCommitPlan<A,L> as sto_core::direct_commit::ErasedDirectCommitPlan<A>>::run_single_item_direct                                      -      -            
+            |          
+            |--5.61%--<sto_core::item::TypedItemBatch<A> as sto_core::item::ErasedItemBatch>::run_single_item_direct
+            |          sto_core::transaction::Transaction::commit_with_optional_hook
+            |          mako_engine_sto::txn::Transaction::commit_report
+            |          engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+            |          start_thread
+            |          clone3
+            |          
+             --0.17%--sto_core::transaction::Transaction::commit_with_optional_hook
+                       mako_engine_sto::txn::Transaction::commit_report
+                       engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     5.69%  [.] sto_core::transaction::Transaction::commit_with_optional_hook                                                                                                                      -      -            
+            |          
+            |--5.43%--mako_engine_sto::txn::Transaction::commit_report
+            |          engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+            |          start_thread
+            |          clone3
+            |          
+             --0.26%--engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     5.56%  [.] mako_engine_sto::txn::Transaction::put                                                                                                                                             -      -            
+            |          
+            |--4.30%--engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+            |          start_thread
+            |          clone3
+            |          
+             --1.26%--std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     5.02%  [.] sto_core::transaction::with_resolved_item_inner_validated::_$u7b$$u7b$closure$u7d$$u7d$::h2ad4ac478e7fa2bb                                                                         -      -            
+            |          
+            |--4.25%--sto_core::transaction::with_item_inner_validated
+            |          mako_engine_sto::txn::Transaction::put
+            |          engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+            |          start_thread
+            |          clone3
+            |          
+             --0.77%--mako_engine_sto::txn::Transaction::put
+                       engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     4.84%  [.] sto_masstree::CommittedStatePublication::publish                                                                                                                                   -      -            
+            |          
+            |--4.02%--sto_masstree::install_direct_record
+            |          <sto_core::direct_commit::BorrowedInjectiveLockCommitPlan<A,L> as sto_core::direct_commit::ErasedDirectCommitPlan<A>>::run_single_item_direct
+            |          <sto_core::item::TypedItemBatch<A> as sto_core::item::ErasedItemBatch>::run_single_item_direct
+            |          sto_core::transaction::Transaction::commit_with_optional_hook
+            |          mako_engine_sto::txn::Transaction::commit_report
+            |          engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+            |          start_thread
+            |          clone3
+            |          
+             --0.83%--<sto_core::direct_commit::BorrowedInjectiveLockCommitPlan<A,L> as sto_core::direct_commit::ErasedDirectCommitPlan<A>>::run_single_item_direct
+                       <sto_core::item::TypedItemBatch<A> as sto_core::item::ErasedItemBatch>::run_single_item_direct
+                       sto_core::transaction::Transaction::commit_with_optional_hook
+                       mako_engine_sto::txn::Transaction::commit_report
+                       engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     3.77%  [.] sto_core::transaction::with_item_inner_validated                                                                                                                                   -      -            
+            |          
+            |--2.56%--mako_engine_sto::txn::Transaction::put
+            |          engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+            |          start_thread
+            |          clone3
+            |          
+             --1.22%--engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     3.60%  [.] <sto_core::item::TypedItemBatch<A> as sto_core::item::ErasedItemBatch>::run_single_item_direct                                                                                     -      -            
+            |          
+            |--1.89%--sto_core::transaction::Transaction::commit_with_optional_hook
+            |          mako_engine_sto::txn::Transaction::commit_report
+            |          engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+            |          start_thread
+            |          clone3
+            |          
+             --1.70%--mako_engine_sto::txn::Transaction::commit_report
+                       engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     3.49%  [.] mako_engine_sto::txn::Transaction::recycle_touched                                                                                                                                 -      -            
+            |          
+            |--3.28%--core::ptr::drop_in_place<mako_engine_sto::txn::Transaction>
+            |          engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+            |          start_thread
+            |          clone3
+            |          
+             --0.21%--engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     3.27%  [.] <sto_core::item::TypedItemBatch<A> as sto_core::item::ErasedItemBatch>::finish_and_teardown                                                                                        -      -            
+            |          
+            |--1.76%--sto_core::transaction::Transaction::commit_with_optional_hook
+            |          mako_engine_sto::txn::Transaction::commit_report
+            |          engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+            |          start_thread
+            |          clone3
+            |          
+             --1.51%--sto_core::transaction::CommitDriver::finish_items
+                       sto_core::transaction::Transaction::commit_with_optional_hook
+                       mako_engine_sto::txn::Transaction::commit_report
+                       engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     3.16%  [.] Masstree::node_base<mt_abi_detail::record_params>::reach_leaf(Masstree::key<unsigned long> const&, nodeversion<nodeversion_parameters<unsigned int> >&, simple_threadinfo&) const  -      -            
+            |          
+             --3.07%--Masstree::unlocked_tcursor<mt_abi_detail::record_params>::find_unlocked(simple_threadinfo&)
+                       (anonymous namespace)::point_get_validated(mt_tree&, mt_thread&, mt_runtime*, bool, void const*, unsigned long, unsigned long*)
+                       mako_mtree_get_trusted
+                       mako_engine_sto::txn::Transaction::put
+                       engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     3.08%  [.] _ZNSt3__18optionalI15scoped_rcu_baseILb1ELb0EEE7emplaceIJRKN3rcu12local_handleEETnNS_9enable_ifIX33__is_constructible_for_optional_vIS2_DpT_EEiE4typeELi0EEERS2_DpOSA_             -      -            
+            |
+            ---(anonymous namespace)::point_get_validated(mt_tree&, mt_thread&, mt_runtime*, bool, void const*, unsigned long, unsigned long*)
+               mako_mtree_get_trusted
+               mako_engine_sto::txn::Transaction::put
+               engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+               std::sys::backtrace::__rust_begin_short_backtrace
+               core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+               _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+               start_thread
+               clone3
+
+     3.05%  [.] <sto_core::direct_commit::BorrowedInjectiveLockCommitPlan<A,L> as sto_core::direct_commit::ErasedDirectCommitPlan<A>>::prepare                                                     -      -            
+            |          
+            |--2.80%--<sto_core::item::TypedItemBatch<A> as sto_core::item::ErasedItemBatch>::direct_preflight
+            |          <sto_core::item::TypedItemBatch<A> as sto_core::item::ErasedItemBatch>::run_single_item_direct
+            |          sto_core::transaction::Transaction::commit_with_optional_hook
+            |          mako_engine_sto::txn::Transaction::commit_report
+            |          engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+            |          start_thread
+            |          clone3
+            |          
+             --0.25%--<sto_core::item::TypedItemBatch<A> as sto_core::item::ErasedItemBatch>::run_single_item_direct
+                       sto_core::transaction::Transaction::commit_with_optional_hook
+                       mako_engine_sto::txn::Transaction::commit_report
+                       engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     2.64%  [.] (anonymous namespace)::point_get_validated(mt_tree&, mt_thread&, mt_runtime*, bool, void const*, unsigned long, unsigned long*)                                                    -      -            
+            |          
+             --2.58%--mako_mtree_get_trusted
+                       mako_engine_sto::txn::Transaction::put
+                       engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     2.50%  [.] __memmove_avx_unaligned_erms                                                                                                                                                       -      -            
+            |          
+             --2.25%--engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     2.01%  [.] sto_core::transaction::prepare_typed_unique_batch                                                                                                                                  -      -            
+            |          
+             --1.94%--sto_core::transaction::with_item_inner_validated
+                       mako_engine_sto::txn::Transaction::put
+                       engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     1.65%  [.] sto_masstree::prepare_direct_item                                                                                                                                                  -      -            
+            |          
+            |--1.29%--<sto_core::direct_commit::BorrowedInjectiveLockCommitPlan<A,L> as sto_core::direct_commit::ErasedDirectCommitPlan<A>>::prepare
+            |          <sto_core::item::TypedItemBatch<A> as sto_core::item::ErasedItemBatch>::direct_preflight
+            |          <sto_core::item::TypedItemBatch<A> as sto_core::item::ErasedItemBatch>::run_single_item_direct
+            |          sto_core::transaction::Transaction::commit_with_optional_hook
+            |          mako_engine_sto::txn::Transaction::commit_report
+            |          engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+            |          start_thread
+            |          clone3
+            |          
+             --0.36%--<sto_core::item::TypedItemBatch<A> as sto_core::item::ErasedItemBatch>::direct_preflight
+                       <sto_core::item::TypedItemBatch<A> as sto_core::item::ErasedItemBatch>::run_single_item_direct
+                       sto_core::transaction::Transaction::commit_with_optional_hook
+                       mako_engine_sto::txn::Transaction::commit_report
+                       engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     1.33%  [.] sto_masstree::install_direct_record                                                                                                                                                -      -            
+            |          
+            |--1.16%--<sto_core::direct_commit::BorrowedInjectiveLockCommitPlan<A,L> as sto_core::direct_commit::ErasedDirectCommitPlan<A>>::run_single_item_direct
+            |          <sto_core::item::TypedItemBatch<A> as sto_core::item::ErasedItemBatch>::run_single_item_direct
+            |          sto_core::transaction::Transaction::commit_with_optional_hook
+            |          mako_engine_sto::txn::Transaction::commit_report
+            |          engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+            |          start_thread
+            |          clone3
+            |          
+             --0.17%--<sto_core::item::TypedItemBatch<A> as sto_core::item::ErasedItemBatch>::run_single_item_direct
+                       sto_core::transaction::Transaction::commit_with_optional_hook
+                       mako_engine_sto::txn::Transaction::commit_report
+                       engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     1.22%  [.] sto_core::transaction::activate_typed_batch_item                                                                                                                                   -      -            
+            |          
+             --1.21%--sto_core::transaction::with_item_inner_validated
+                       mako_engine_sto::txn::Transaction::put
+                       engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     1.22%  [.] mako_mtree_get_trusted                                                                                                                                                             -      -            
+            |          
+            |--0.97%--mako_engine_sto::txn::Transaction::put
+            |          engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+            |          start_thread
+            |          clone3
+            |          
+             --0.24%--engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     1.19%  [.] mako_engine_sto::txn::Transaction::commit_report                                                                                                                                   -      -            
+            |          
+            |--0.82%--engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+            |          start_thread
+            |          clone3
+            |          
+             --0.37%--std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     1.19%  [.] __memmove_avx_unaligned                                                                                                                                                            -      -            
+            |          
+            |--0.64%--sto_masstree::install_direct_record
+            |          <sto_core::direct_commit::BorrowedInjectiveLockCommitPlan<A,L> as sto_core::direct_commit::ErasedDirectCommitPlan<A>>::run_single_item_direct
+            |          <sto_core::item::TypedItemBatch<A> as sto_core::item::ErasedItemBatch>::run_single_item_direct
+            |          sto_core::transaction::Transaction::commit_with_optional_hook
+            |          mako_engine_sto::txn::Transaction::commit_report
+            |          engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+            |          start_thread
+            |          clone3
+            |          
+            |--0.28%--mako_engine_sto::txn::Transaction::put
+            |          engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+            |          start_thread
+            |          clone3
+            |          
+             --0.26%--engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     1.04%  [.] <sto_core::item::TypedItemBatch<A> as sto_core::item::ErasedItemBatch>::adapter_type_id                                                                                            -      -            
+            |          
+            |--0.84%--sto_core::transaction::with_item_inner_validated
+            |          mako_engine_sto::txn::Transaction::put
+            |          engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+            |          start_thread
+            |          clone3
+            |          
+             --0.20%--sto_core::transaction::prepare_typed_unique_batch
+                       sto_core::transaction::with_item_inner_validated
+                       mako_engine_sto::txn::Transaction::put
+                       engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     0.93%  [.] rcu::sync::do_cleanup()                                                                                                                                                            -      -            
+            |          
+             --0.84%--(anonymous namespace)::point_get_validated(mt_tree&, mt_thread&, mt_runtime*, bool, void const*, unsigned long, unsigned long*)
+                       mako_mtree_get_trusted
+                       mako_engine_sto::txn::Transaction::put
+                       engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     0.91%  [.] <sto_core::item::TypedItemBatch<A> as sto_core::item::ErasedItemBatch>::direct_preflight                                                                                           -      -            
+            |          
+             --0.88%--<sto_core::item::TypedItemBatch<A> as sto_core::item::ErasedItemBatch>::run_single_item_direct
+                       sto_core::transaction::Transaction::commit_with_optional_hook
+                       mako_engine_sto::txn::Transaction::commit_report
+                       engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     0.81%  [.] <T as core::any::Any>::type_id                                                                                                                                                     -      -            
+            |          
+            |--0.63%--sto_core::transaction::with_item_inner_validated
+            |          mako_engine_sto::txn::Transaction::put
+            |          engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+            |          start_thread
+            |          clone3
+            |          
+             --0.18%--sto_core::transaction::prepare_typed_unique_batch
+                       sto_core::transaction::with_item_inner_validated
+                       mako_engine_sto::txn::Transaction::put
+                       engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     0.81%  [.] core::ptr::drop_in_place<mako_engine_sto::txn::Transaction>                                                                                                                        -      -            
+            |          
+             --0.76%--engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     0.80%  [.] mako_engine_sto::touched::TouchLog::touch                                                                                                                                          -      -            
+            |          
+            |--0.61%--mako_engine_sto::txn::Transaction::put
+            |          engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+            |          start_thread
+            |          clone3
+            |          
+             --0.19%--engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     0.76%  [.] mako_engine_sto::db::LocalDb::attach                                                                                                                                               -      -            
+            |          
+            |--0.47%--engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+            |          start_thread
+            |          clone3
+            |          
+             --0.29%--std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     0.70%  [.] <sto_core::direct_commit::BorrowedInjectiveLockCommitPlan<A,L> as sto_core::direct_commit::ErasedDirectCommitPlan<A>>::capability                                                  -      -            
+            |          
+             --0.57%--<sto_core::item::TypedItemBatch<A> as sto_core::item::ErasedItemBatch>::run_single_item_direct
+                       sto_core::transaction::Transaction::commit_with_optional_hook
+                       mako_engine_sto::txn::Transaction::commit_report
+                       engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     0.59%  [.] mako_engine_sto::txn::map_commit                                                                                                                                                   -      -            
+            |          
+             --0.44%--engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     0.58%  [.] <sto_core::item::TypedItemBatch<A> as sto_core::item::ErasedItemBatch>::select_direct_commit                                                                                       -      -            
+            |          
+            |--0.31%--sto_core::transaction::Transaction::commit_with_optional_hook
+            |          mako_engine_sto::txn::Transaction::commit_report
+            |          engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+            |          start_thread
+            |          clone3
+            |          
+             --0.27%--mako_engine_sto::txn::Transaction::commit_report
+                       engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     0.56%  [.] <sto_core::item::TypedItemBatch<A> as sto_core::item::ErasedItemBatch>::as_any_mut                                                                                                 -      -            
+            |
+            ---sto_core::transaction::with_item_inner_validated
+               mako_engine_sto::txn::Transaction::put
+               engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+               std::sys::backtrace::__rust_begin_short_backtrace
+               core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+               _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+               start_thread
+               clone3
+
+     0.51%  [.] _ZN4core3ptr55drop_in_place$LT$mako_engine_sto..touched..TouchLog$GT$17h24ece804435578d1E.llvm.7074470777871638215                                                                 -      -            
+            |          
+             --0.46%--mako_engine_sto::txn::Transaction::recycle_touched
+                       core::ptr::drop_in_place<mako_engine_sto::txn::Transaction>
+                       engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     0.47%  [.] <sto_masstree::TableShared as sto_core::lock::TransactionLock>::release                                                                                                            -      -            
+            |          
+            |--0.30%--<sto_core::direct_commit::BorrowedInjectiveLockCommitPlan<A,L> as sto_core::direct_commit::ErasedDirectCommitPlan<A>>::run_single_item_direct
+            |          <sto_core::item::TypedItemBatch<A> as sto_core::item::ErasedItemBatch>::run_single_item_direct
+            |          sto_core::transaction::Transaction::commit_with_optional_hook
+            |          mako_engine_sto::txn::Transaction::commit_report
+            |          engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+            |          start_thread
+            |          clone3
+            |          
+             --0.17%--<sto_core::item::TypedItemBatch<A> as sto_core::item::ErasedItemBatch>::run_single_item_direct
+                       sto_core::transaction::Transaction::commit_with_optional_hook
+                       mako_engine_sto::txn::Transaction::commit_report
+                       engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     0.46%  [.] <sto_core::direct_commit::BorrowedInjectiveLockCommitPlan<A,L> as sto_core::direct_commit::ErasedDirectCommitPlan<A>>::teardown_adapter_state                                      -      -            
+            |          
+             --0.35%--sto_core::transaction::Transaction::commit_with_optional_hook
+                       mako_engine_sto::txn::Transaction::commit_report
+                       engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     0.40%  [.] <sto_core::item::TypedItemBatch<A> as sto_core::item::ErasedItemBatch>::is_preflight_free_read_only                                                                                -      -            
+            |          
+             --0.33%--mako_engine_sto::txn::Transaction::commit_report
+                       engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     0.35%  [.] sto_core::item::TypedItemBatch<A>::note_active_item_shape                                                                                                                          -      -            
+            |          
+             --0.21%--sto_core::transaction::with_item_inner_validated
+                       mako_engine_sto::txn::Transaction::put
+                       engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     0.31%  [.] sto_core::transaction::CommitDriver::finish_items                                                                                                                                  -      -            
+            |
+            ---sto_core::transaction::Transaction::commit_with_optional_hook
+               mako_engine_sto::txn::Transaction::commit_report
+               engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+               std::sys::backtrace::__rust_begin_short_backtrace
+               core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+               _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+               start_thread
+               clone3
+
+     0.17%  [.] <sto_core::item::TypedItemBatch<A> as sto_core::item::ErasedItemBatch>::active_len                                                                                                 -      -            
+            |
+            ---sto_core::transaction::with_item_inner_validated
+               mako_engine_sto::txn::Transaction::put
+               engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::he484367de5e8f4eb
+               std::sys::backtrace::__rust_begin_short_backtrace
+               core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::hd3216d1dd828770e
+               _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+               start_thread
+               clone3
+
+
+
+#
+# (Cannot load tips.txt file, please install perf!)
+#

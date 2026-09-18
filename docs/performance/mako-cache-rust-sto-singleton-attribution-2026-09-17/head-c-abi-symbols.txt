@@ -1,0 +1,414 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 40K of event 'instructions:u'
+# Event count (approx.): 46451102927
+#
+# Overhead  Symbol                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   IPC   [IPC Coverage]
+# ........  .......................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................  ....................
+#
+    21.47%  [.] MassTrans<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> >, versioned_str_struct, false>::install(TransItem&, Transaction&)                                                                                                                                                                                                                                                                                                                                                                                                                                                     -      -            
+            |          
+            |--20.94%--Transaction::try_commit(bool, bool (*)(void*, unsigned long) noexcept, void*, Transaction::preinstall_failure*, Transaction::commit_validation_gate const*)
+            |          mako_rust_fast_txn_commit_and_destroy
+            |          engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::h0328994cb669d49c
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h500ba4ae6807baa9
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+            |          start_thread
+            |          clone3
+            |          
+             --0.52%--mako_rust_fast_txn_commit_and_destroy
+                       engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::h0328994cb669d49c
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h500ba4ae6807baa9
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+    11.72%  [.] Masstree::unlocked_tcursor<MassTrans<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> >, versioned_str_struct, false>::table_params>::find_unlocked(threadinfo&)                                                                                                                                                                                                                                                                                                                                                                                                                  -      -            
+            |          
+             --11.68%--bool MassTrans<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> >, versioned_str_struct, false>::trans_write<true, true, lcdf::Str, StringWrapper>(lcdf::Str const&, StringWrapper const&, bool (*)(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> > const&, std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> > const&), MassTrans<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> >, versioned_str_struct, false>::ti_wrapper&, Transaction::canonical_write_view*)
+                       mako_rust_fast_txn_put
+                       mako_local::Transaction::put
+                       engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::h0328994cb669d49c
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h500ba4ae6807baa9
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     9.72%  [.] engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::h0328994cb669d49c                                                                                                                                                                                                                                                                                                                                                                                                                                                                               -      -            
+            |          
+            |--8.66%--std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h500ba4ae6807baa9
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+            |          start_thread
+            |          clone3
+            |          
+             --1.06%--core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h500ba4ae6807baa9
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     8.14%  [.] mako_rust_fast_txn_put                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               -      -            
+            |          
+            |--6.39%--mako_local::Transaction::put
+            |          engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::h0328994cb669d49c
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h500ba4ae6807baa9
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+            |          start_thread
+            |          clone3
+            |          
+             --1.75%--engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::h0328994cb669d49c
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h500ba4ae6807baa9
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     6.12%  [.] Transaction::try_commit(bool, bool (*)(void*, unsigned long) noexcept, void*, Transaction::preinstall_failure*, Transaction::commit_validation_gate const*)                                                                                                                                                                                                                                                                                                                                                                                                                                                          -      -            
+            |          
+             --6.07%--mako_rust_fast_txn_commit_and_destroy
+                       engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::h0328994cb669d49c
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h500ba4ae6807baa9
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     4.78%  [.] void MassTrans<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> >, versioned_str_struct, false>::reallyHandlePutFound<StringWrapper>(TransProxy&, versioned_str_struct*, lcdf::Str, StringWrapper const&)                                                                                                                                                                                                                                                                                                                                                                         -      -            
+            |          
+            |--4.57%--bool MassTrans<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> >, versioned_str_struct, false>::handlePutFound<true, true, StringWrapper>(versioned_str_struct*, lcdf::Str, StringWrapper const&, Transaction::canonical_write_view*)
+            |          bool MassTrans<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> >, versioned_str_struct, false>::trans_write<true, true, lcdf::Str, StringWrapper>(lcdf::Str const&, StringWrapper const&, bool (*)(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> > const&, std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> > const&), MassTrans<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> >, versioned_str_struct, false>::ti_wrapper&, Transaction::canonical_write_view*)
+            |          mako_rust_fast_txn_put
+            |          mako_local::Transaction::put
+            |          engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::h0328994cb669d49c
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h500ba4ae6807baa9
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+            |          start_thread
+            |          clone3
+            |          
+             --0.21%--bool MassTrans<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> >, versioned_str_struct, false>::trans_write<true, true, lcdf::Str, StringWrapper>(lcdf::Str const&, StringWrapper const&, bool (*)(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> > const&, std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> > const&), MassTrans<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> >, versioned_str_struct, false>::ti_wrapper&, Transaction::canonical_write_view*)
+                       mako_rust_fast_txn_put
+                       mako_local::Transaction::put
+                       engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::h0328994cb669d49c
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h500ba4ae6807baa9
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     4.76%  [.] Masstree::node_base<MassTrans<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> >, versioned_str_struct, false>::table_params>::reach_leaf(Masstree::key<unsigned long> const&, nodeversion<nodeversion_parameters<unsigned int> >&, threadinfo&) const                                                                                                                                                                                                                                                                                                                            -      -            
+            |          
+             --4.76%--Masstree::unlocked_tcursor<MassTrans<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> >, versioned_str_struct, false>::table_params>::find_unlocked(threadinfo&)
+                       bool MassTrans<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> >, versioned_str_struct, false>::trans_write<true, true, lcdf::Str, StringWrapper>(lcdf::Str const&, StringWrapper const&, bool (*)(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> > const&, std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> > const&), MassTrans<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> >, versioned_str_struct, false>::ti_wrapper&, Transaction::canonical_write_view*)
+                       mako_rust_fast_txn_put
+                       mako_local::Transaction::put
+                       engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::h0328994cb669d49c
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h500ba4ae6807baa9
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     4.49%  [.] mako_rust_fast_txn_commit_and_destroy                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                -      -            
+            |          
+            |--2.62%--std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h500ba4ae6807baa9
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+            |          start_thread
+            |          clone3
+            |          
+             --1.87%--engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::h0328994cb669d49c
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h500ba4ae6807baa9
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     3.68%  [.] bool MassTrans<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> >, versioned_str_struct, false>::handlePutFound<true, true, StringWrapper>(versioned_str_struct*, lcdf::Str, StringWrapper const&, Transaction::canonical_write_view*)                                                                                                                                                                                                                                                                                                                                            -      -            
+            |          
+             --3.57%--bool MassTrans<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> >, versioned_str_struct, false>::trans_write<true, true, lcdf::Str, StringWrapper>(lcdf::Str const&, StringWrapper const&, bool (*)(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> > const&, std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> > const&), MassTrans<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> >, versioned_str_struct, false>::ti_wrapper&, Transaction::canonical_write_view*)
+                       mako_rust_fast_txn_put
+                       mako_local::Transaction::put
+                       engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::h0328994cb669d49c
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h500ba4ae6807baa9
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     3.24%  [.] Transaction::stop(bool, unsigned int*, unsigned int)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 -      -            
+            |          
+             --3.18%--Transaction::try_commit(bool, bool (*)(void*, unsigned long) noexcept, void*, Transaction::preinstall_failure*, Transaction::commit_validation_gate const*)
+                       mako_rust_fast_txn_commit_and_destroy
+                       engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::h0328994cb669d49c
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h500ba4ae6807baa9
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     3.11%  [.] std::__1::__function::__func<MassTrans<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> >, versioned_str_struct, false>::thread_init()::{lambda()#1}, void ()>::operator()()                                                                                                                                                                                                                                                                                                                                                                                                      -      -            
+            |          
+            |--2.85%--Transaction::start()
+            |          mako_rust_fast_txn_begin
+            |          mako_local::LocalDb::trusted_bound_transaction
+            |          engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::h0328994cb669d49c
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h500ba4ae6807baa9
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+            |          start_thread
+            |          clone3
+            |          
+             --0.26%--mako_rust_fast_txn_begin
+                       mako_local::LocalDb::trusted_bound_transaction
+                       engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::h0328994cb669d49c
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h500ba4ae6807baa9
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     2.98%  [.] __memmove_avx_unaligned_erms                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         -      -            
+            |          
+            |--2.39%--mako_local::Transaction::put
+            |          engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::h0328994cb669d49c
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h500ba4ae6807baa9
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+            |          start_thread
+            |          clone3
+            |          
+             --0.59%--bool MassTrans<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> >, versioned_str_struct, false>::handlePutFound<true, true, StringWrapper>(versioned_str_struct*, lcdf::Str, StringWrapper const&, Transaction::canonical_write_view*)
+                       bool MassTrans<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> >, versioned_str_struct, false>::trans_write<true, true, lcdf::Str, StringWrapper>(lcdf::Str const&, StringWrapper const&, bool (*)(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> > const&, std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> > const&), MassTrans<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> >, versioned_str_struct, false>::ti_wrapper&, Transaction::canonical_write_view*)
+                       mako_rust_fast_txn_put
+                       mako_local::Transaction::put
+                       engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::h0328994cb669d49c
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h500ba4ae6807baa9
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     1.87%  [.] Transaction::allocate_item(TObject const*, void*)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    -      -            
+            |          
+             --1.87%--TransProxy Transaction::item<versioned_str_struct*>(TObject const*, versioned_str_struct*)
+                       bool MassTrans<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> >, versioned_str_struct, false>::handlePutFound<true, true, StringWrapper>(versioned_str_struct*, lcdf::Str, StringWrapper const&, Transaction::canonical_write_view*)
+                       bool MassTrans<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> >, versioned_str_struct, false>::trans_write<true, true, lcdf::Str, StringWrapper>(lcdf::Str const&, StringWrapper const&, bool (*)(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> > const&, std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> > const&), MassTrans<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> >, versioned_str_struct, false>::ti_wrapper&, Transaction::canonical_write_view*)
+                       mako_rust_fast_txn_put
+                       mako_local::Transaction::put
+                       engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::h0328994cb669d49c
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h500ba4ae6807baa9
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     1.79%  [.] mako_local::Transaction::put                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         -      -            
+            |          
+            |--0.94%--engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::h0328994cb669d49c
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h500ba4ae6807baa9
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+            |          start_thread
+            |          clone3
+            |          
+             --0.85%--std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h500ba4ae6807baa9
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     1.62%  [.] BenchmarkConfig::getInstance()                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       -      -            
+            |          
+            |--1.13%--mako_rust_fast_txn_commit_and_destroy
+            |          engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::h0328994cb669d49c
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h500ba4ae6807baa9
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+            |          start_thread
+            |          clone3
+            |          
+             --0.48%--Transaction::try_commit(bool, bool (*)(void*, unsigned long) noexcept, void*, Transaction::preinstall_failure*, Transaction::commit_validation_gate const*)
+                       mako_rust_fast_txn_commit_and_destroy
+                       engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::h0328994cb669d49c
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h500ba4ae6807baa9
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     1.58%  [.] bool MassTrans<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> >, versioned_str_struct, false>::trans_write<true, true, lcdf::Str, StringWrapper>(lcdf::Str const&, StringWrapper const&, bool (*)(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> > const&, std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> > const&), MassTrans<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> >, versioned_str_struct, false>::ti_wrapper&, Transaction::canonical_write_view*)  -      -            
+            |          
+             --1.58%--mako_rust_fast_txn_put
+                       mako_local::Transaction::put
+                       engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::h0328994cb669d49c
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h500ba4ae6807baa9
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     1.42%  [.] MassTrans<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> >, versioned_str_struct, false>::get_is_remote() const                                                                                                                                                                                                                                                                                                                                                                                                                                                                 -      -            
+            |          
+             --1.42%--mako_rust_fast_txn_commit_and_destroy
+                       engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::h0328994cb669d49c
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h500ba4ae6807baa9
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     1.36%  [.] TransProxy Transaction::item<versioned_str_struct*>(TObject const*, versioned_str_struct*)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           -      -            
+            |          
+             --1.34%--bool MassTrans<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> >, versioned_str_struct, false>::handlePutFound<true, true, StringWrapper>(versioned_str_struct*, lcdf::Str, StringWrapper const&, Transaction::canonical_write_view*)
+                       bool MassTrans<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> >, versioned_str_struct, false>::trans_write<true, true, lcdf::Str, StringWrapper>(lcdf::Str const&, StringWrapper const&, bool (*)(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> > const&, std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> > const&), MassTrans<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> >, versioned_str_struct, false>::ti_wrapper&, Transaction::canonical_write_view*)
+                       mako_rust_fast_txn_put
+                       mako_local::Transaction::put
+                       engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::h0328994cb669d49c
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h500ba4ae6807baa9
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     1.00%  [.] Transaction::start()                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 -      -            
+            |
+            ---mako_rust_fast_txn_begin
+               mako_local::LocalDb::trusted_bound_transaction
+               engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::h0328994cb669d49c
+               std::sys::backtrace::__rust_begin_short_backtrace
+               core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h500ba4ae6807baa9
+               _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+               start_thread
+               clone3
+
+     0.78%  [.] MassTrans<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> >, versioned_str_struct, false>::lock(TransItem&, Transaction&)                                                                                                                                                                                                                                                                                                                                                                                                                                                        -      -            
+            |          
+            |--0.49%--Transaction::try_commit(bool, bool (*)(void*, unsigned long) noexcept, void*, Transaction::preinstall_failure*, Transaction::commit_validation_gate const*)
+            |          mako_rust_fast_txn_commit_and_destroy
+            |          engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::h0328994cb669d49c
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h500ba4ae6807baa9
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+            |          start_thread
+            |          clone3
+            |          
+             --0.29%--mako_rust_fast_txn_commit_and_destroy
+                       engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::h0328994cb669d49c
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h500ba4ae6807baa9
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     0.67%  [.] mako_rust_fast_txn_begin                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             -      -            
+            |          
+            |--0.48%--mako_local::LocalDb::trusted_bound_transaction
+            |          engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::h0328994cb669d49c
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h500ba4ae6807baa9
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+            |          start_thread
+            |          clone3
+            |          
+             --0.19%--engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::h0328994cb669d49c
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h500ba4ae6807baa9
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     0.67%  [.] std::__1::__function::__func<MassTrans<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> >, versioned_str_struct, false>::thread_init()::{lambda()#2}, void ()>::operator()()                                                                                                                                                                                                                                                                                                                                                                                                      -      -            
+            |          
+             --0.54%--Transaction::try_commit(bool, bool (*)(void*, unsigned long) noexcept, void*, Transaction::preinstall_failure*, Transaction::commit_validation_gate const*)
+                       mako_rust_fast_txn_commit_and_destroy
+                       engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::h0328994cb669d49c
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h500ba4ae6807baa9
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     0.59%  [.] mako_local::LocalDb::trusted_bound_transaction                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       -      -            
+            |          
+            |--0.41%--engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::h0328994cb669d49c
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h500ba4ae6807baa9
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+            |          start_thread
+            |          clone3
+            |          
+             --0.18%--std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h500ba4ae6807baa9
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     0.53%  [.] MassTrans<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> >, versioned_str_struct, false>::check(TransItem&, Transaction&)                                                                                                                                                                                                                                                                                                                                                                                                                                                       -      -            
+            |          
+             --0.42%--mako_rust_fast_txn_commit_and_destroy
+                       engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::h0328994cb669d49c
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h500ba4ae6807baa9
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     0.52%  [.] MassTrans<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> >, versioned_str_struct, false>::unlock(TransItem&)                                                                                                                                                                                                                                                                                                                                                                                                                                                                    -      -            
+            |          
+             --0.51%--Transaction::try_commit(bool, bool (*)(void*, unsigned long) noexcept, void*, Transaction::preinstall_failure*, Transaction::commit_validation_gate const*)
+                       mako_rust_fast_txn_commit_and_destroy
+                       engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::h0328994cb669d49c
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h500ba4ae6807baa9
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     0.45%  [.] MassTrans<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> >, versioned_str_struct, false>::cleanup(TransItem&, bool)                                                                                                                                                                                                                                                                                                                                                                                                                                                             -      -            
+            |
+            ---Transaction::try_commit(bool, bool (*)(void*, unsigned long) noexcept, void*, Transaction::preinstall_failure*, Transaction::commit_validation_gate const*)
+               mako_rust_fast_txn_commit_and_destroy
+               engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::h0328994cb669d49c
+               std::sys::backtrace::__rust_begin_short_backtrace
+               core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h500ba4ae6807baa9
+               _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+               start_thread
+               clone3
+
+     0.23%  [.] Sto::start_transaction()                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             -      -            
+            |          
+             --0.16%--mako_local::LocalDb::trusted_bound_transaction
+                       engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::h0328994cb669d49c
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h500ba4ae6807baa9
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+                       start_thread
+                       clone3
+
+     0.18%  [.] core::ptr::drop_in_place<mako_local::Transaction>                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    -      -            
+     0.18%  [.] memcpy@plt                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           -      -            
+            |
+            ---bool MassTrans<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> >, versioned_str_struct, false>::handlePutFound<true, true, StringWrapper>(versioned_str_struct*, lcdf::Str, StringWrapper const&, Transaction::canonical_write_view*)
+               bool MassTrans<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> >, versioned_str_struct, false>::trans_write<true, true, lcdf::Str, StringWrapper>(lcdf::Str const&, StringWrapper const&, bool (*)(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> > const&, std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> > const&), MassTrans<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> >, versioned_str_struct, false>::ti_wrapper&, Transaction::canonical_write_view*)
+               mako_rust_fast_txn_put
+               mako_local::Transaction::put
+               engine_compare_items::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::h0328994cb669d49c
+               std::sys::backtrace::__rust_begin_short_backtrace
+               core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h500ba4ae6807baa9
+               _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start.llvm.3643936799275306673
+               start_thread
+               clone3
+
+
+
+#
+# (Cannot load tips.txt file, please install perf!)
+#
