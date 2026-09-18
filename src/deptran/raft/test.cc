@@ -1417,8 +1417,8 @@ int RaftLabTest::testInstallSnapshotBasic(void) {
     old_snapterm = server->GetSnapshotTermLocked();
     old_commit_index = server->state_.commit_index_;
     old_execute_index = server->state_.execute_index_;
-    old_last_log_index = server->raft_log_.last_index();
-    old_min_active_slot = server->raft_log_.base();
+    old_last_log_index = server->state_.raft_log_.last_index();
+    old_min_active_slot = server->state_.raft_log_.base();
     follower_term = server->state_.current_term_;
   }
 
@@ -1461,8 +1461,8 @@ int RaftLabTest::testInstallSnapshotBasic(void) {
             old_snapterm, server->GetSnapshotTermLocked());
     Assert2(server->state_.commit_index_ == old_commit_index &&
                 server->state_.execute_index_ == old_execute_index &&
-                server->raft_log_.last_index() == old_last_log_index &&
-                server->raft_log_.base() == old_min_active_slot,
+                server->state_.raft_log_.last_index() == old_last_log_index &&
+                server->state_.raft_log_.base() == old_min_active_slot,
             "Stale snapshot mutated log/apply indices");
     Assert2(!server->IsLeaderLocked(),
             "Accepted same-term leader contact must leave receiver a follower");
@@ -1498,16 +1498,16 @@ int RaftLabTest::testInstallSnapshotBasic(void) {
   uint64_t rejected_local_progress = 0;
   {
     std::lock_guard<RaftCheckedMutex> lock(server->mtx_);
-    rejected_logs_before = RaftLogFingerprint(server->raft_log_);
+    rejected_logs_before = RaftLogFingerprint(server->state_.raft_log_);
     rejected_snapidx_before = RaftServer::LabAccess::snapidx(*server);
     rejected_snapterm_before = RaftServer::LabAccess::snapterm(*server);
     rejected_commit_before = server->state_.commit_index_;
     rejected_execute_before = server->state_.execute_index_;
-    rejected_last_log_before = server->raft_log_.last_index();
-    rejected_min_active_before = server->raft_log_.base();
+    rejected_last_log_before = server->state_.raft_log_.last_index();
+    rejected_min_active_before = server->state_.raft_log_.base();
     rejected_local_progress = std::max(
         {server->state_.commit_index_, server->state_.execute_index_,
-         server->GetAppliedIndex(), RaftServer::LabAccess::snapidx(*server), server->raft_log_.last_index()});
+         server->GetAppliedIndex(), RaftServer::LabAccess::snapidx(*server), server->state_.raft_log_.last_index()});
   }
   Assert2(rejected_local_progress < UINT64_MAX,
           "Test58 cannot construct a successor snapshot boundary");
@@ -1554,9 +1554,9 @@ int RaftLabTest::testInstallSnapshotBasic(void) {
                 RaftServer::LabAccess::snapterm(*server) == rejected_snapterm_before &&
                 server->state_.commit_index_ == rejected_commit_before &&
                 server->state_.execute_index_ == rejected_execute_before &&
-                server->raft_log_.last_index() == rejected_last_log_before &&
-                server->raft_log_.base() == rejected_min_active_before &&
-                RaftLogFingerprint(server->raft_log_) ==
+                server->state_.raft_log_.last_index() == rejected_last_log_before &&
+                server->state_.raft_log_.base() == rejected_min_active_before &&
+                RaftLogFingerprint(server->state_.raft_log_) ==
                     rejected_logs_before,
             "Rejected Prepare mutated the in-memory snapshot/log boundary");
   }
@@ -1639,7 +1639,7 @@ int RaftLabTest::testInstallSnapshotRejectsStaleTerm(void) {
     before_snapterm = RaftServer::LabAccess::snapterm(*server);
     before_commitIndex = server->state_.commit_index_;
     before_executeIndex = server->state_.execute_index_;
-    before_lastLogIndex = server->raft_log_.last_index();
+    before_lastLogIndex = server->state_.raft_log_.last_index();
     follower_term = server->state_.current_term_;
     before_leader_id = RaftServer::LabAccess::current_leader_id(*server);
     before_vote_for = RaftServer::LabAccess::vote_for(*server);
@@ -1682,7 +1682,7 @@ int RaftLabTest::testInstallSnapshotRejectsStaleTerm(void) {
     Assert2(server->state_.execute_index_ == before_executeIndex,
             "state_.execute_index_ should be unchanged (%lu), got %lu",
             before_executeIndex, server->state_.execute_index_);
-    Assert2(server->raft_log_.last_index() == before_lastLogIndex &&
+    Assert2(server->state_.raft_log_.last_index() == before_lastLogIndex &&
                 server->state_.current_term_ == follower_term &&
                 RaftServer::LabAccess::current_leader_id(*server) == before_leader_id &&
                 RaftServer::LabAccess::vote_for(*server) == before_vote_for &&
@@ -1719,7 +1719,7 @@ int RaftLabTest::testInstallSnapshotRejectsStaleTerm(void) {
                     before_snapterm &&
                 server->state_.commit_index_ == before_commitIndex &&
                 server->state_.execute_index_ == before_executeIndex &&
-                server->raft_log_.last_index() == before_lastLogIndex &&
+                server->state_.raft_log_.last_index() == before_lastLogIndex &&
                 RaftServer::LabAccess::current_leader_id(*server) == before_leader_id &&
                 RaftServer::LabAccess::vote_for(*server) == before_vote_for &&
                 RaftServer::LabAccess::is_leader(*server) == before_is_leader &&
@@ -1763,7 +1763,7 @@ int RaftLabTest::testInstallSnapshotRejectsStaleTerm(void) {
                     before_snapterm &&
                 server->state_.commit_index_ == before_commitIndex &&
                 server->state_.execute_index_ == before_executeIndex &&
-                server->raft_log_.last_index() == before_lastLogIndex &&
+                server->state_.raft_log_.last_index() == before_lastLogIndex &&
                 RaftServer::LabAccess::current_leader_id(*server) == before_leader_id &&
                 RaftServer::LabAccess::vote_for(*server) == before_vote_for &&
                 RaftServer::LabAccess::is_leader(*server) == before_is_leader &&
@@ -1852,7 +1852,7 @@ int RaftLabTest::testHeartbeatTriggersInstallSnapshot(void) {
   {
     std::lock_guard<RaftCheckedMutex> lock(follower_server->mtx_);
     follower_snap_before = follower_server->GetSnapshotIndexLocked();
-    follower_last_before = follower_server->raft_log_.last_index();
+    follower_last_before = follower_server->state_.raft_log_.last_index();
   }
 
   config_->Disconnect(follower);
@@ -1916,7 +1916,7 @@ int RaftLabTest::testHeartbeatTriggersInstallSnapshot(void) {
       std::lock_guard<RaftCheckedMutex> lock(leader_server->mtx_);
       leader_execute_index = leader_server->state_.execute_index_;
       leader_snap_idx = leader_server->GetSnapshotIndexLocked();
-      leader_min_active = leader_server->raft_log_.base();
+      leader_min_active = leader_server->state_.raft_log_.base();
     }
     auto candidate = managers[leader]->GetLatestSnapshot();
     if (candidate.is_some()) {
@@ -2293,7 +2293,7 @@ int RaftLabTest::testLongPartitionRecovery(void) {
       std::lock_guard<RaftCheckedMutex> lock(leader_server->mtx_);
       leader_execute_index = leader_server->state_.execute_index_;
       leader_snap_idx = leader_server->GetSnapshotIndexLocked();
-      leader_min_active = leader_server->raft_log_.base();
+      leader_min_active = leader_server->state_.raft_log_.base();
     }
     auto candidate = test_mgrs[leader]->GetLatestSnapshot();
     if (candidate.is_some()) {
@@ -2331,7 +2331,7 @@ int RaftLabTest::testLongPartitionRecovery(void) {
           seeded_snapshot_indices[leader], first_partition_index,
           leader_snap_idx);
   Assert2(leader_min_active > 1,
-          "Leader raft_log_.base() should be > 1 after compaction, got %lu",
+          "Leader state_.raft_log_.base() should be > 1 after compaction, got %lu",
           leader_min_active);
 
   // Capture the disconnected boundary before opening the network. Otherwise
@@ -2346,7 +2346,7 @@ int RaftLabTest::testLongPartitionRecovery(void) {
   {
     std::lock_guard<RaftCheckedMutex> lock(follower_server->mtx_);
     follower_snap_before = follower_server->GetSnapshotIndexLocked();
-    follower_last_before = follower_server->raft_log_.last_index();
+    follower_last_before = follower_server->state_.raft_log_.last_index();
   }
   Assert2(leader_snap_idx > follower_snap_before,
           "Leader snapshot %lu must be newer than disconnected follower snapshot %lu",

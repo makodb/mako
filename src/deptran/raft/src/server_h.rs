@@ -829,6 +829,16 @@ impl PeerTable {
 
 #[repr(C)]
 pub struct RaftConsensusState {
+    // THE LOG AND THE PEERS LIVE HERE NOW, not beside the mutex.
+    //
+    // This is what makes a converted method body a one-line delegate instead
+    // of a marshalling shim. PHASE 0, 2 and 3 each needed an outcome struct
+    // and a switch on the C++ side purely because the state they decide over
+    // was split across three members, so a Rust function could compute an
+    // answer but not finish the job. With the state in one place a body can
+    // be moved wholesale and the C++ that remains is `raft_foo(state_);`.
+    pub raft_log_: RaftLog,
+    pub peers_: PeerTable,
     // Election cluster.
     election_term_: i64,
     election_timeout_us_: u64,
@@ -863,6 +873,8 @@ pub struct RaftConsensusState {
 impl RaftConsensusState {
     pub fn new() -> RaftConsensusState {
         RaftConsensusState {
+            raft_log_: RaftLog::new(),
+            peers_: PeerTable::new(),
             election_term_: 0,
             election_timeout_us_: 0,
             election_timer_generation_: 0,

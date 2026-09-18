@@ -1855,6 +1855,16 @@ inline void PeerTable::accept_through(size_t ordinal, uint64_t acknowledged_thro
 #if RUSTYCPP_RUST
 #[repr(C)]
 pub struct RaftConsensusState {
+    // THE LOG AND THE PEERS LIVE HERE NOW, not beside the mutex.
+    //
+    // This is what makes a converted method body a one-line delegate instead
+    // of a marshalling shim. PHASE 0, 2 and 3 each needed an outcome struct
+    // and a switch on the C++ side purely because the state they decide over
+    // was split across three members, so a Rust function could compute an
+    // answer but not finish the job. With the state in one place a body can
+    // be moved wholesale and the C++ that remains is `raft_foo(state_);`.
+    pub raft_log_: RaftLog,
+    pub peers_: PeerTable,
     // Election cluster.
     election_term_: i64,
     election_timeout_us_: u64,
@@ -1889,6 +1899,8 @@ pub struct RaftConsensusState {
 impl RaftConsensusState {
     pub fn new() -> RaftConsensusState {
         RaftConsensusState {
+            raft_log_: RaftLog::new(),
+            peers_: PeerTable::new(),
             election_term_: 0,
             election_timeout_us_: 0,
             election_timer_generation_: 0,
@@ -1915,10 +1927,12 @@ impl RaftConsensusState {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.consensus_state version=1 rust_sha256=2483f067b1edbb121303934078ef3eb263dfdf66ae09658f71006e9a5f94ba98*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.consensus_state version=1 rust_sha256=a87c7725640c47628f8897eefc26289c764f6f60fb34bebfab973eb9d426b889*/
 struct RaftConsensusState;
 
 struct RaftConsensusState {
+    RaftLog raft_log_;
+    PeerTable peers_;
     int64_t election_term_;
     uint64_t election_timeout_us_;
     uint64_t election_timer_generation_;
@@ -1941,14 +1955,11 @@ struct RaftConsensusState {
     int64_t snapterm_;
 
     static RaftConsensusState new_();
-    // Rust derives Send/Sync from the field types; C++ cannot see them.
-    static constexpr bool is_send = true;
-    static constexpr bool is_sync = true;
 };
 
 
 inline RaftConsensusState RaftConsensusState::new_() {
-    return RaftConsensusState{.election_term_ = static_cast<int64_t>(0), .election_timeout_us_ = static_cast<uint64_t>(0), .election_timer_generation_ = static_cast<uint64_t>(0), .vote_for_ = std::numeric_limits<uint16_t>::max(), .snapshot_threshold_ = static_cast<uint64_t>(10000), .snapshot_callback_owner_token_ = static_cast<uint64_t>(0), .next_snapshot_callback_owner_token_ = static_cast<uint64_t>(1), .is_leader_ = false, .req_voting_ = false, .election_in_progress_ = false, .current_leader_id_ = std::numeric_limits<uint16_t>::max(), .last_heartbeat_time_ = static_cast<uint64_t>(0), .heartbeat_round_ = static_cast<uint64_t>(0), .read_quorum_confirmed_term_ = static_cast<uint64_t>(0), .read_quorum_confirmed_round_ = static_cast<uint64_t>(0), .current_term_ = static_cast<uint64_t>(0), .commit_index_ = static_cast<uint64_t>(0), .execute_index_ = static_cast<uint64_t>(0), .snapidx_ = static_cast<uint64_t>(0), .snapterm_ = static_cast<int64_t>(0)};
+    return RaftConsensusState{.raft_log_ = RaftLog::new_(), .peers_ = PeerTable::new_(), .election_term_ = static_cast<int64_t>(0), .election_timeout_us_ = static_cast<uint64_t>(0), .election_timer_generation_ = static_cast<uint64_t>(0), .vote_for_ = std::numeric_limits<uint16_t>::max(), .snapshot_threshold_ = static_cast<uint64_t>(10000), .snapshot_callback_owner_token_ = static_cast<uint64_t>(0), .next_snapshot_callback_owner_token_ = static_cast<uint64_t>(1), .is_leader_ = false, .req_voting_ = false, .election_in_progress_ = false, .current_leader_id_ = std::numeric_limits<uint16_t>::max(), .last_heartbeat_time_ = static_cast<uint64_t>(0), .heartbeat_round_ = static_cast<uint64_t>(0), .read_quorum_confirmed_term_ = static_cast<uint64_t>(0), .read_quorum_confirmed_round_ = static_cast<uint64_t>(0), .current_term_ = static_cast<uint64_t>(0), .commit_index_ = static_cast<uint64_t>(0), .execute_index_ = static_cast<uint64_t>(0), .snapidx_ = static_cast<uint64_t>(0), .snapterm_ = static_cast<int64_t>(0)};
 }
 /*RUSTYCPP:GEN-END id=raft_server.consensus_state*/
 
@@ -2436,7 +2447,7 @@ class RaftServer : public TxLogServer {
   // @safe - acquire load
   bool HeartbeatLooping() const;
   // @safe - linear scan of a fixed, tiny table (replica counts are 3 or 5).
-  // Returns peers_.len() when the site is not a follower of this leader,
+  // Returns state_.peers_.len() when the site is not a follower of this leader,
   // which is the "removed follower" case PHASE 2 guards against. Deliberately
   // returns an ordinal rather than a reference: an ordinal cannot dangle
   // across an RPC send or a re-entrant completion callback.
@@ -2446,7 +2457,7 @@ class RaftServer : public TxLogServer {
         return ord;
       }
     }
-    return peers_.len();
+    return state_.peers_.len();
   }
 
   // @unsafe - rebuilds the ordinal peer tables; CALLER MUST HOLD mtx_
@@ -2563,9 +2574,8 @@ class RaftServer : public TxLogServer {
   // asserted to have equal size; merging removes the "find both, check both"
   // dance at the reply site. The value type is DSL-owned; see server.cc.
   // Peer progress, indexed by ordinal. peer_sites_ is the ordinal -> site id
-  // map, fixed at the same moment peers_ is sized; both come from
+  // map, fixed at the same moment state_.peers_ is sized; both come from
   // current_config_, which is written once during Setup.
-  PeerTable peers_{PeerTable::new_()};
   std::vector<siteid_t> peer_sites_{};
   // Heartbeat quorum proof, guarded by mtx_. HeartbeatLoop stamps every round
   // with state_.heartbeat_round_ and records the newest round that a quorum of the
@@ -2870,7 +2880,6 @@ class RaftServer : public TxLogServer {
   int n_accept_ = 0;
   int n_commit_ = 0;
 
-  RaftLog raft_log_{RaftLog::new_()};
 
   // @unsafe - Binds the cross-thread wake gate to HeartbeatLoop's PollThread.
   // Must run before HeartbeatLoop starts (Setup does so).
@@ -2974,13 +2983,13 @@ class RaftServer : public TxLogServer {
     // replaces was a no-op on the recursive mutex. Tranche 4b.
     // The pre-append tail, which is what this out-parameter has always
     // reported -- the new entry lands at *index + 1.
-    *index = raft_log_.last_index();
+    *index = state_.raft_log_.last_index();
     // slot_id and ballot are accepted for signature compatibility with the
     // Paxos-shaped callers; RaftEntry has no field for either, because the
     // three fields that used to receive them here were read nowhere.
     (void)slot_id;
     (void)ballot;
-    const uint64_t appended = raft_log_.append(
+    const uint64_t appended = state_.raft_log_.append(
         RaftEntry::new_(state_.current_term_, cmd));
     verify(appended == *index + 1);
 
@@ -3000,7 +3009,7 @@ class RaftServer : public TxLogServer {
   // The Rust side never sees this pointer.
   // @unsafe - borrow flattened to a pointer; caller must hold mtx_
   const RaftEntry* FindRaftInstance(slotid_t id) const {
-    const auto found = raft_log_.get(id);
+    const auto found = state_.raft_log_.get(id);
     if (found.is_none()) {
       return nullptr;
     }

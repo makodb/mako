@@ -791,16 +791,16 @@ bool RaftServer::InitializeSnapshotManager() {
   if (!should_enable) {
     std::lock_guard<RaftCheckedMutex> lock(mtx_);
     const bool has_orphaned_compacted_suffix =
-        state_.snapidx_ == 0 && !raft_log_.is_empty() &&
-        raft_log_.base() > 1;
+        state_.snapidx_ == 0 && !state_.raft_log_.is_empty() &&
+        state_.raft_log_.base() > 1;
     const bool has_uncovered_empty_progress =
-        state_.snapidx_ == 0 && raft_log_.is_empty() && state_.commit_index_ != 0;
+        state_.snapidx_ == 0 && state_.raft_log_.is_empty() && state_.commit_index_ != 0;
     if (has_orphaned_compacted_suffix || has_uncovered_empty_progress) {
       Log_error("[RAFT-SNAPSHOT] Site {} has recovered progress without its "
                 "covering snapshot (first={} commit={}); "
                 "snapshots are disabled",
                 site_id_,
-                raft_log_.is_empty() ? 0 : raft_log_.base(),
+                state_.raft_log_.is_empty() ? 0 : state_.raft_log_.base(),
                 state_.commit_index_);
       rpc_ready_.store(false, rusty::sync::atomic::Ordering::Release);
       stop_.store(true, rusty::sync::atomic::Ordering::Release);
@@ -851,10 +851,10 @@ bool RaftServer::InitializeSnapshotManager() {
   const auto latest = manager->GetLatestSnapshot();
   if (latest.is_none()) {
     const bool has_orphaned_compacted_suffix =
-        state_.snapidx_ == 0 && !raft_log_.is_empty() &&
-        raft_log_.base() > 1;
+        state_.snapidx_ == 0 && !state_.raft_log_.is_empty() &&
+        state_.raft_log_.base() > 1;
     const bool has_uncovered_empty_progress =
-        state_.snapidx_ == 0 && raft_log_.is_empty() && state_.commit_index_ != 0;
+        state_.snapidx_ == 0 && state_.raft_log_.is_empty() && state_.commit_index_ != 0;
     if (state_.snapidx_ != 0 || has_orphaned_compacted_suffix ||
         has_uncovered_empty_progress) {
       return fail_recovery(
@@ -898,8 +898,8 @@ bool RaftServer::InitializeSnapshotManager() {
   const uint64_t recovered_snapshot_term = metadata.last_included_term;
   const uint64_t previous_snapshot_index = state_.snapidx_;
   const uint64_t previous_snapshot_term = state_.snapterm_;
-  const uint64_t previous_last_log_index = raft_log_.last_index();
-  const uint64_t previous_min_active_slot = raft_log_.base();
+  const uint64_t previous_last_log_index = state_.raft_log_.last_index();
+  const uint64_t previous_min_active_slot = state_.raft_log_.base();
 
   // Reconstruct Figure 13's suffix decision from the old boundary when it is
   // still present.  A live reinitialization would use its exact existing
@@ -946,12 +946,12 @@ bool RaftServer::InitializeSnapshotManager() {
   state_.snapidx_ = recovered_snapshot_index;
   state_.snapterm_ = recovered_snapshot_term;
   if (retain_suffix) {
-    raft_log_.compact_through(state_.snapidx_);
+    state_.raft_log_.compact_through(state_.snapidx_);
   } else {
-    raft_log_.reset(state_.snapidx_ + 1);
+    state_.raft_log_.reset(state_.snapidx_ + 1);
   }
   state_.commit_index_ = raft_server_snapshot_progress_clamp(
-      state_.commit_index_, state_.snapidx_, raft_log_.last_index());
+      state_.commit_index_, state_.snapidx_, state_.raft_log_.last_index());
 
 
   if (state_.current_term_ < state_.snapterm_) {
@@ -962,7 +962,7 @@ bool RaftServer::InitializeSnapshotManager() {
     state_.vote_for_ = INVALID_SITEID;
   }
 
-  verify(state_.commit_index_ <= raft_log_.last_index());
+  verify(state_.commit_index_ <= state_.raft_log_.last_index());
 
   snapshot_manager_ = manager;
   snapshot_manager_configured_.store(
@@ -977,7 +977,7 @@ bool RaftServer::InitializeSnapshotManager() {
   Log_info("[RAFT-SNAPSHOT] Restored snapshot for site {}: index={} term={} "
            "size={} commit={} last={} min_active={} retain_suffix={}",
            site_id_, state_.snapidx_, state_.snapterm_, metadata.size_bytes,
-           state_.commit_index_, raft_log_.last_index(), raft_log_.base(), retain_suffix);
+           state_.commit_index_, state_.raft_log_.last_index(), state_.raft_log_.base(), retain_suffix);
 
   Log_info("[RAFT-SNAPSHOT] Initialized for site {} partition {}: interval={}",
            site_id_, partition_id_, snapshot_interval);
@@ -1087,7 +1087,7 @@ size_t RaftServer::CompactLogLocked(slotid_t up_to_index) {
     return 0;
   }
 
-  const size_t removed_memory = raft_log_.compact_through(up_to_index);
+  const size_t removed_memory = state_.raft_log_.compact_through(up_to_index);
 
   // up_to_index was proven to have a representable successor above.
 
@@ -1173,7 +1173,7 @@ bool RaftServer::CreateSnapshotLocked() {
   if (raft_server_snapshot_term_uses_boundary(snap_index, state_.snapidx_)) {
     // The boundary entry is intentionally absent after compaction. Its term is
     // carried by snapshot metadata; do not recreate the entry or rewind
-    // raft_log_.base() by appending it again.
+    // state_.raft_log_.base() by appending it again.
     snap_term = state_.snapterm_;
   } else {
     const RaftEntry* instance = FindRaftInstance(snap_index);
@@ -1831,11 +1831,11 @@ void RaftServer::setIsLeader(bool isLeader) {
 
   if (isLeader && failover_) {
     // Every caller of setIsLeader already holds mtx_ (server.cc:1754-1759).
-    RebuildPeerTables(raft_log_.last_index() + 1);
-    for (size_t ord = 0; ord < peers_.len(); ord++) {
+    RebuildPeerTables(state_.raft_log_.last_index() + 1);
+    for (size_t ord = 0; ord < state_.peers_.len(); ord++) {
       Log_debug("loc_id_={} match_index_[{}]={}, next_index_[{}]={}",
-                loc_id_, peer_sites_[ord], peers_.match_index(ord),
-                peer_sites_[ord], peers_.next_index(ord));
+                loc_id_, peer_sites_[ord], state_.peers_.match_index(ord),
+                peer_sites_[ord], state_.peers_.next_index(ord));
     }
   }
 
@@ -1879,9 +1879,9 @@ void RaftServer::setIsLeader(bool isLeader) {
         &noop_term, &noop_previous_index);
     verify(raft_server_start_was_appended(noop_result));
     verify(noop_term == state_.current_term_);
-    verify(raft_log_.last_index() == noop_previous_index + 1);
+    verify(state_.raft_log_.last_index() == noop_previous_index + 1);
     Log_info("[RAFT-NOOP] Site {} appended leader no-op at index {} term {}",
-             site_id_, raft_log_.last_index(), state_.current_term_);
+             site_id_, state_.raft_log_.last_index(), state_.current_term_);
     RequestReplication();
 #endif
 
@@ -3975,10 +3975,10 @@ void RaftServer::RebuildPeerTables(uint64_t next_index) {
     }
     peer_sites_.push_back(peer_id);
   }
-  peers_.reset(peer_sites_.size(), next_index);
+  state_.peers_.reset(peer_sites_.size(), next_index);
   const size_t expected = replication_targets.size() -
       static_cast<size_t>(replication_targets.count(site_id_) > 0);
-  verify(peers_.len() == expected);
+  verify(state_.peers_.len() == expected);
 }
 
 // @unsafe - timer allocation, peer-table rebuild under mtx_, atomic stores
@@ -4050,14 +4050,14 @@ bool RaftServer::HeartbeatPhase0(HeartbeatRoundState& state,
                 site_id_, state_.current_term_);
     }
     if (leader) {
-      for (size_t ord = 0; ord < peers_.len(); ord++) {
+      for (size_t ord = 0; ord < state_.peers_.len(); ord++) {
         Log_debug("[COMMIT-CALC] match_index_[{}] = {}", peer_sites_[ord],
-                  peers_.match_index(ord));
+                  state_.peers_.match_index(ord));
       }
     }
 
     const Phase0Outcome outcome = heartbeat_phase0_locked(
-        state_, peers_, raft_log_, round, pending_rpcs, authority_rounds,
+        state_, state_.peers_, state_.raft_log_, round, pending_rpcs, authority_rounds,
         pending_leader_term, round_members, site_id_, leader);
 
     if (outcome.restart()) {
@@ -4095,12 +4095,12 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
       // PHASE 1: Send all AppendEntries RPCs in PARALLEL (non-blocking)
       // ========================================================================
       // The cursor is used for ITERATION ONLY; every read and write of a
-      // follower's next index below goes through peers_.next_index(ord), which
+      // follower's next index below goes through state_.peers_.next_index(ord), which
       // is the same slot (site_id is it->first, so the key provably exists).
       //
       // This is not style. The body calls commo()->SendInstallSnapshot INSIDE
       // the lock_guard scope, and that call's completion callback takes the
-      // SAME recursive mutex and writes peers_.next_index(ord). Recursive means
+      // SAME recursive mutex and writes state_.peers_.next_index(ord). Recursive means
       // a callback that completes synchronously re-enters and mutates the map
       // while a dereferenced cursor into it is live -- the aliasing hazard
       // recorded as OWN-03 in docs/migration/raft/cpp-to-rust-precheck-raft.txt
@@ -4108,7 +4108,7 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
       // Holding no dereferenced cursor across that call is also what makes the
       // loop expressible in Rust at all: `&mut` into a map cannot be held
       // across a call that takes `&mut` to the same map.
-      for (size_t ord = 0; ord < peers_.len(); ord++) {
+      for (size_t ord = 0; ord < state_.peers_.len(); ord++) {
         const siteid_t site_id = peer_sites_[ord];
         if (site_id == site_id_) {
           continue;
@@ -4131,37 +4131,37 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
         bool skip_follower = false;
         {
           std::lock_guard<RaftCheckedMutex> lock(mtx_);
-          if (peers_.next_index(ord) == 0) {
+          if (state_.peers_.next_index(ord) == 0) {
             Log_warn("[APPEND_ENTRIES] Repairing wrapped next_index for "
                      "follower {} at leader last index {}",
-                     site_id, raft_log_.last_index());
-            peers_.set_next_index(ord, 
-                raft_server_log_index_has_successor(raft_log_.last_index())
-                    ? raft_server_follower_next_index(raft_log_.last_index())
-                    : raft_log_.last_index());
+                     site_id, state_.raft_log_.last_index());
+            state_.peers_.set_next_index(ord, 
+                raft_server_log_index_has_successor(state_.raft_log_.last_index())
+                    ? raft_server_follower_next_index(state_.raft_log_.last_index())
+                    : state_.raft_log_.last_index());
           }
-          prevLogIndex = peers_.next_index(ord) - 1;
-          if (prevLogIndex > raft_log_.last_index()) {
-            Log_info("[APPEND_ENTRIES] ERROR: prevLogIndex ({}) > raft_log_.last_index() ({}), fixing next_index", prevLogIndex, raft_log_.last_index());
-            peers_.set_next_index(ord, 
-                raft_server_log_index_has_successor(raft_log_.last_index())
-                    ? raft_server_follower_next_index(raft_log_.last_index())
-                    : raft_log_.last_index());
-            prevLogIndex = peers_.next_index(ord) - 1;
+          prevLogIndex = state_.peers_.next_index(ord) - 1;
+          if (prevLogIndex > state_.raft_log_.last_index()) {
+            Log_info("[APPEND_ENTRIES] ERROR: prevLogIndex ({}) > state_.raft_log_.last_index() ({}), fixing next_index", prevLogIndex, state_.raft_log_.last_index());
+            state_.peers_.set_next_index(ord, 
+                raft_server_log_index_has_successor(state_.raft_log_.last_index())
+                    ? raft_server_follower_next_index(state_.raft_log_.last_index())
+                    : state_.raft_log_.last_index());
+            prevLogIndex = state_.peers_.next_index(ord) - 1;
           }
           // Until a payload is selected, this is a heartbeat and proves only
           // the prefix named by prevLogIndex.
           sent_end_index = raft_server_append_sent_end(prevLogIndex, 0);
 
-          if (prevLogIndex > raft_log_.last_index()) {
-            Log_info("[APPEND_ENTRIES] WARNING: Cannot send AppendEntries to follower {}: prevLogIndex ({}) > raft_log_.last_index() ({}), skipping",
-                     site_id, prevLogIndex, raft_log_.last_index());
-            peers_.set_next_index(ord, 1);
+          if (prevLogIndex > state_.raft_log_.last_index()) {
+            Log_info("[APPEND_ENTRIES] WARNING: Cannot send AppendEntries to follower {}: prevLogIndex ({}) > state_.raft_log_.last_index() ({}), skipping",
+                     site_id, prevLogIndex, state_.raft_log_.last_index());
+            state_.peers_.set_next_index(ord, 1);
             skip_follower = true;
-          } else if (peers_.next_index(ord) < raft_log_.base() && snapshot_manager_) {
+          } else if (state_.peers_.next_index(ord) < state_.raft_log_.base() && snapshot_manager_) {
             // @unsafe - Follower is too far behind (log compacted), send InstallSnapshot
-            Log_info("[HEARTBEAT-SNAPSHOT] Site {}: Follower {} next_index={} < raft_log_.base()={}, sending InstallSnapshot",
-                     site_id_, site_id, peers_.next_index(ord), raft_log_.base());
+            Log_info("[HEARTBEAT-SNAPSHOT] Site {}: Follower {} next_index={} < state_.raft_log_.base()={}, sending InstallSnapshot",
+                     site_id_, site_id, state_.peers_.next_index(ord), state_.raft_log_.base());
             janus::raft::SnapshotMetadata snap_meta;
             std::string snap_data;
             if (snapshot_manager_->LoadLatestSnapshot(&snap_meta, &snap_data)) {
@@ -4235,7 +4235,7 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
                                server->site_id_);
                       return;
                     }
-                    server->peers_.accept_through(ord,
+                    server->state_.peers_.accept_through(ord,
                         snap_last_idx,
                         raft_server_log_index_has_successor(snap_last_idx),
                         raft_server_log_index_has_successor(snap_last_idx)
@@ -4243,8 +4243,8 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
                             : snap_last_idx);
                     Log_info("[HEARTBEAT-SNAPSHOT] Site {}: Updated follower {}: next_index={} match_index={}",
                              server->site_id_, site_id,
-                             server->peers_.next_index(ord),
-                             server->peers_.match_index(ord));
+                             server->state_.peers_.next_index(ord),
+                             server->state_.peers_.match_index(ord));
                   });
               skip_follower = true;  // Skip normal AppendEntries for this follower
             } else {
@@ -4253,7 +4253,7 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
               skip_follower = true;
             }
           } else {
-            verify(prevLogIndex <= raft_log_.last_index());
+            verify(prevLogIndex <= state_.raft_log_.last_index());
             if (prevLogIndex == 0) {
               prevLogTerm = 0;
             } else if (prevLogIndex == state_.snapidx_ && state_.snapidx_ > 0) {
@@ -4277,9 +4277,9 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
 
             if (!skip_follower) {
 #ifndef RAFT_BATCH_OPTIMIZATION
-              Log_debug("[BATCH_CHECK] site={} follower={} next_index={} raft_log_.base()={} raft_log_.last_index()={}",
-                       site_id_, site_id, peers_.next_index(ord), raft_log_.base(), raft_log_.last_index());
-              if (peers_.next_index(ord) <= raft_log_.last_index()) {
+              Log_debug("[BATCH_CHECK] site={} follower={} next_index={} state_.raft_log_.base()={} state_.raft_log_.last_index()={}",
+                       site_id_, site_id, state_.peers_.next_index(ord), state_.raft_log_.base(), state_.raft_log_.last_index());
+              if (state_.peers_.next_index(ord) <= state_.raft_log_.last_index()) {
                 if (!raft_server_append_entry_count_fits(prevLogIndex, 1)) {
                   Log_error("[HEARTBEAT-SEND] Log index exhausted after {}, "
                             "skipping follower {}",
@@ -4287,10 +4287,10 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
                   skip_follower = true;
                 } else {
                   const RaftEntry* cur_log =
-                      FindRaftInstance(peers_.next_index(ord));
+                      FindRaftInstance(state_.peers_.next_index(ord));
                   if (cur_log == nullptr || !cur_log->cmd().has_value()) {
                     Log_error("[HEARTBEAT-SEND] Missing log entry {}, skipping follower {}",
-                              peers_.next_index(ord), site_id);
+                              state_.peers_.next_index(ord), site_id);
                     skip_follower = true;
                   } else {
                     const RaftEntry* curInstance = cur_log;
@@ -4304,7 +4304,7 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
                     // inner shared_ptr's raw pointer; the kind tag is
                     // a more useful identifier anyway.
                     Log_debug("[APPEND_SEND] site={} sending entry {} to follower {} cmd_kind={}",
-                        site_id_, peers_.next_index(ord), site_id, cmd.kind_);
+                        site_id_, state_.peers_.next_index(ord), site_id, cmd.kind_);
                   }
                 }
               }
@@ -4313,9 +4313,9 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
 #ifdef RAFT_BATCH_OPTIMIZATION
               vector<rusty::Arc<TpcCommitCommand>> batch_buffer_;
               const uint64_t max_batch_entries = GetAppendEntriesBatchMaxEntries();
-              const uint64_t batch_start_idx = peers_.next_index(ord);
-              Log_debug("[BATCH_CHECK] site={} follower={} next_index={} raft_log_.base()={} raft_log_.last_index()={}",
-                       site_id_, site_id, peers_.next_index(ord), raft_log_.base(), raft_log_.last_index());
+              const uint64_t batch_start_idx = state_.peers_.next_index(ord);
+              Log_debug("[BATCH_CHECK] site={} follower={} next_index={} state_.raft_log_.base()={} state_.raft_log_.last_index()={}",
+                       site_id_, site_id, state_.peers_.next_index(ord), state_.raft_log_.base(), state_.raft_log_.last_index());
               if (!raft_server_append_entry_count_fits(prevLogIndex, 1)) {
                 Log_error("[HEARTBEAT-BATCH] Log index exhausted after {}, "
                           "skipping follower {}",
@@ -4327,15 +4327,15 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
                   : raft_server_append_sent_end(prevLogIndex, 1);
               if (!skip_follower &&
                   (batch_start_idx != first_encoded_index ||
-                   batch_start_idx < raft_log_.base())) {
+                   batch_start_idx < state_.raft_log_.base())) {
                 Log_error("[HEARTBEAT-BATCH] Non-contiguous source for follower {}: "
                           "prev={} start={} min_active={}; refusing to compress a hole",
                           site_id, prevLogIndex, batch_start_idx,
-                          raft_log_.base());
+                          state_.raft_log_.base());
                 skip_follower = true;
               } else if (!skip_follower) {
                 for (uint64_t idx = batch_start_idx;
-                     idx <= raft_log_.last_index() &&
+                     idx <= state_.raft_log_.last_index() &&
                      batch_buffer_.size() < max_batch_entries;) {
                   const RaftEntry* cur_log = FindRaftInstance(idx);
                   if (cur_log == nullptr || !cur_log->cmd().has_value()) {
@@ -4425,7 +4425,7 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
                     prevLogIndex,
                     static_cast<uint64_t>(batch_buffer_.size()));
                 const uint64_t batch_end_idx = sent_end_index;
-                const bool truncated = batch_end_idx < raft_log_.last_index();
+                const bool truncated = batch_end_idx < state_.raft_log_.last_index();
                 Log_info("[BATCH_SEND] site={} sending batch of {} entries to follower {} "
                          "(from={} to={}{})",
                          site_id_, batch_buffer_.size(), site_id,
@@ -4532,13 +4532,13 @@ void RaftServer::HeartbeatPhase2(HeartbeatRoundState& state,
                   resp.last_log_index == 0);
             const size_t resp_ord = PeerOrdinal(pending.follower_id);
             const AppendReplyOutcome outcome = heartbeat_apply_append_reply(
-                state_, peers_, authority_rounds,
+                state_, state_.peers_, authority_rounds,
                 SentAppend::new_(pending.follower_id, pending.sent_term,
                                  pending.sent_round, pending.sent_end_index,
                                  resp_ord),
                 AppendReply::new_(response_available, resp.status, resp.term,
                                   resp.last_log_index),
-                raft_log_.last_index(), IsLeaderLocked());
+                state_.raft_log_.last_index(), IsLeaderLocked());
 
             switch (outcome.action()) {
               case AppendReplyAction::STEP_DOWN: {
@@ -4603,8 +4603,8 @@ void RaftServer::HeartbeatPhase2(HeartbeatRoundState& state,
                     site_id_, pending.follower_id,
                     pending.cmd.has_value() ? "entries" : "heartbeat",
                     resp.last_log_index, pending.sent_end_index,
-                    outcome.acknowledged(), peers_.next_index(resp_ord),
-                    peers_.match_index(resp_ord));
+                    outcome.acknowledged(), state_.peers_.next_index(resp_ord),
+                    state_.peers_.match_index(resp_ord));
                 break;
               case AppendReplyAction::CONTRADICTORY:
                 Log_warn("[APPEND_RPC] Ignoring contradictory success from "
@@ -4677,7 +4677,7 @@ void RaftServer::HeartbeatPhase3(HeartbeatRoundState& state,
     const std::vector<siteid_t> settle_members(current_config_.begin(),
                                                current_config_.end());
     const Phase3Outcome outcome = heartbeat_phase3_locked(
-        state_, peers_, raft_log_, authority_rounds, round.nservers(),
+        state_, state_.peers_, state_.raft_log_, authority_rounds, round.nservers(),
         settle_members, IsLeaderLocked());
 
     if (outcome.commit().advanced()) {
@@ -4802,12 +4802,12 @@ RaftServer::~RaftServer() {
 // the absolute last-log slot without inserting into or otherwise mutating the
 // compacted log map.
 ballot_t RaftServer::ElectionLastLogTermLocked() const {
-  verify(raft_log_.last_index() >= state_.snapidx_);
-  if (raft_server_election_last_log_uses_snapshot(raft_log_.last_index(), state_.snapidx_)) {
+  verify(state_.raft_log_.last_index() >= state_.snapidx_);
+  if (raft_server_election_last_log_uses_snapshot(state_.raft_log_.last_index(), state_.snapidx_)) {
     return state_.snapterm_;
   }
 
-  const RaftEntry* last_log = FindRaftInstance(raft_log_.last_index());
+  const RaftEntry* last_log = FindRaftInstance(state_.raft_log_.last_index());
   verify(last_log != nullptr);
   return last_log->term();
 }
@@ -4891,7 +4891,7 @@ bool RaftServer::RequestVoteImpl(bool timer_guarded,
     term = state_.current_term_;
 
     LogTermChange("starting election", prev_local_term, state_.current_term_);
-    lst_idx = raft_log_.last_index();
+    lst_idx = state_.raft_log_.last_index();
     lst_term = ElectionLastLogTermLocked();
   }
 
@@ -5095,10 +5095,10 @@ void RaftServer::OnRequestVote(const slotid_t& lst_log_idx,
   // Every grant, including an idempotent retry, must still carry an up-to-date
   // candidate log. This is defensive against damaged/legacy persistent state
   // and is the Raft RequestVote rule in its direct form.
-  verify(raft_log_.last_index() >= state_.snapidx_);
-  const slotid_t lstoff = raft_log_.last_index() - state_.snapidx_;
+  verify(state_.raft_log_.last_index() >= state_.snapidx_);
+  const slotid_t lstoff = state_.raft_log_.last_index() - state_.snapidx_;
   const ballot_t curlstterm = ElectionLastLogTermLocked();
-  const slotid_t curlstidx = raft_log_.last_index();
+  const slotid_t curlstidx = state_.raft_log_.last_index();
   const bool candidate_log_is_current =
       raft_server_candidate_log_is_at_least(
           lst_log_term, curlstterm, lst_log_idx, curlstidx);
@@ -5120,7 +5120,7 @@ void RaftServer::OnRequestVote(const slotid_t& lst_log_idx,
 
 
   // Snapshot-aware offset invariant.
-  verify(lstoff + state_.snapidx_ == raft_log_.last_index());
+  verify(lstoff + state_.snapidx_ == state_.raft_log_.last_index());
 
   if (candidate_log_is_current)
   {
@@ -5294,12 +5294,12 @@ RaftStartResult RaftServer::StartImpl(const janus::Command& cmd,
   const RaftStartResult append_result =
       SetLocalAppend(cmd, term, index, slot_id, ballot);
   verify(raft_server_start_was_appended(append_result));
-  // SetLocalAppend returns the old raft_log_.last_index() value, but Start returns the
+  // SetLocalAppend returns the old state_.raft_log_.last_index() value, but Start returns the
   // index of the newly appended instance
   // @unsafe
   {
-  verify(raft_log_.last_index() == (*index) + 1);
-  *index = raft_log_.last_index();
+  verify(state_.raft_log_.last_index() == (*index) + 1);
+  *index = state_.raft_log_.last_index();
   Log_debug("Start(): ldr={} index={} term={}", loc_id_, *index, *term);
   }
   }
@@ -5340,7 +5340,7 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
   if (stop_.load(rusty::sync::atomic::Ordering::Acquire)) {
     *followerAppendOK = 0;
     *followerCurrentTerm = state_.current_term_;
-    *followerLastLogIndex = raft_log_.last_index();
+    *followerLastLogIndex = state_.raft_log_.last_index();
     return;
   }
 
@@ -5367,7 +5367,7 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
              state_.is_leader_, state_.current_leader_id_, sender_is_current_voter);
     *followerAppendOK = 0;
     *followerCurrentTerm = state_.current_term_;
-    *followerLastLogIndex = raft_log_.last_index();
+    *followerLastLogIndex = state_.raft_log_.last_index();
     return;
   }
 
@@ -5401,16 +5401,16 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
       leaderCurrentTerm, this->state_.current_term_);
   const bool compacted_prefix_miss =
       (leaderPrevLogIndex != 0 &&
-       leaderPrevLogIndex < raft_log_.base() &&
+       leaderPrevLogIndex < state_.raft_log_.base() &&
        leaderPrevLogIndex != state_.snapidx_);
-  bool index_ok = (leaderPrevLogIndex <= raft_log_.last_index()) && !compacted_prefix_miss;
+  bool index_ok = (leaderPrevLogIndex <= state_.raft_log_.last_index()) && !compacted_prefix_miss;
   uint64_t local_prev_term = 0;
   if (leaderPrevLogIndex == 0) {
       local_prev_term = 0;
   } else if (leaderPrevLogIndex == state_.snapidx_) {
       // Snapshot boundary is still valid even when log entries are compacted.
       local_prev_term = state_.snapterm_;
-  } else if (leaderPrevLogIndex <= raft_log_.last_index() && !compacted_prefix_miss) {
+  } else if (leaderPrevLogIndex <= state_.raft_log_.last_index() && !compacted_prefix_miss) {
       // THE LOG-MATCHING CHECK. A follower legitimately may not hold
       // leaderPrevLogIndex -- discovering that is the whole point, and what
       // drives the leader's backtracking.
@@ -5491,7 +5491,7 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
 
       // Decode the complete wire payload before mutating the local log.
       std::vector<std::pair<slotid_t, RaftEntry>> incoming_entries;
-      const uint64_t old_last_log_index = raft_log_.last_index();
+      const uint64_t old_last_log_index = state_.raft_log_.last_index();
       const uint64_t accepted_through = cmd.has_value()
           ? raft_server_append_sent_end(
                 leaderPrevLogIndex, encoded_entry_count)
@@ -5559,7 +5559,7 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
                   old_last_log_index);
         *followerAppendOK = 0;
         *followerCurrentTerm = this->state_.current_term_;
-        *followerLastLogIndex = raft_log_.last_index();
+        *followerLastLogIndex = state_.raft_log_.last_index();
         return;
       }
 
@@ -5568,19 +5568,19 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
         // drop the divergent suffix, then re-append in index order.
         // truncate_from is a no-op when first_write_index is already past the
         // tail, which is the ordinary extend case (truncate_suffix false).
-        raft_log_.truncate_from(first_write_index);
+        state_.raft_log_.truncate_from(first_write_index);
         for (auto& [index, incoming] : incoming_entries) {
           if (index >= first_write_index) {
-            const uint64_t appended = raft_log_.append(std::move(incoming));
+            const uint64_t appended = state_.raft_log_.append(std::move(incoming));
             verify(appended == index);
           }
         }
       }
-      // Was an assignment to raft_log_.last_index() computed by
+      // Was an assignment to state_.raft_log_.last_index() computed by
       // raft_server_append_result_last_index. The container reaches exactly
       // that value on its own: truncate_from + append leaves the tail at
       // accepted_through when anything was written, and untouched otherwise.
-      verify(raft_log_.last_index() == raft_server_append_result_last_index(
+      verify(state_.raft_log_.last_index() == raft_server_append_result_last_index(
           old_last_log_index, accepted_through, truncate_suffix));
 
       // Advance commit index and enqueue committed entries for background apply.
@@ -5591,7 +5591,7 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
               follower_commit_candidate, state_.commit_index_)) {
         auto old_commit = state_.commit_index_;
         state_.commit_index_ = follower_commit_candidate;
-        verify(raft_log_.last_index() >= state_.commit_index_);
+        verify(state_.raft_log_.last_index() >= state_.commit_index_);
         EnqueueCommittedEntries(old_commit, state_.commit_index_);
       }
 
@@ -5601,7 +5601,7 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
       *followerCurrentTerm = this->state_.current_term_;
       // On success this field is the inclusive end proved by this call, not
       // the follower's possibly longer and divergent local suffix. Rejections
-      // below retain local raft_log_.last_index() as a backoff hint.
+      // below retain local state_.raft_log_.last_index() as a backoff hint.
       *followerLastLogIndex = accepted_through;
       }
     }
@@ -5609,12 +5609,12 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
         Log_info("[APPEND_REJECT] Site {} rejecting AppendEntries from leader {} - term_ok={} index_ok={} prev_term_ok={} payload_ok={} (leaderTerm={} myTerm={} prevIdx={} myLastIdx={} local_prev_term={})",
                  site_id_, leaderSiteId, term_ok, index_ok, prev_term_ok,
                  append_payload_valid, leaderCurrentTerm, state_.current_term_,
-                 leaderPrevLogIndex, raft_log_.last_index(), local_prev_term);
+                 leaderPrevLogIndex, state_.raft_log_.last_index(), local_prev_term);
         // @unsafe
         {
         *followerAppendOK = 0;
         *followerCurrentTerm = this->state_.current_term_;
-        *followerLastLogIndex = raft_log_.last_index();
+        *followerLastLogIndex = state_.raft_log_.last_index();
         }
     }
 
@@ -5780,7 +5780,7 @@ void RaftServer::OnInstallSnapshot(const uint64_t term,
     return;
   }
   if (!raft_server_log_index_has_successor(last_included_index)) {
-    // raft_log_.base() requires S + 1. Reaching UINT64_MAX exhausts the Raft
+    // state_.raft_log_.base() requires S + 1. Reaching UINT64_MAX exhausts the Raft
     // log index space, so reject the payload without wrapping the value.
     Log_error("[INSTALL-SNAPSHOT] Site {}: Cannot install terminal snapshot "
               "index {}; no successor index is representable",
@@ -5812,7 +5812,7 @@ void RaftServer::OnInstallSnapshot(const uint64_t term,
       has_boundary ? boundary->term() : 0;
   const bool retain_suffix = raft_server_snapshot_boundary_matches(
       has_boundary, local_boundary_term, last_included_term);
-  const slotid_t previous_last_log_index = raft_log_.last_index();
+  const slotid_t previous_last_log_index = state_.raft_log_.last_index();
 
   // Fully validate and stage the exact state-machine image before changing
   // either recovery point. The owned transaction's destructor aborts
@@ -5874,9 +5874,9 @@ void RaftServer::OnInstallSnapshot(const uint64_t term,
   // Reconcile in-memory log and queued application work
   // ============================================================================
   if (retain_suffix) {
-    raft_log_.compact_through(last_included_index);
+    state_.raft_log_.compact_through(last_included_index);
   } else {
-    raft_log_.reset(last_included_index + 1);
+    state_.raft_log_.reset(last_included_index + 1);
   }
 
   size_t purged_apply_entries = 0;
@@ -5903,14 +5903,14 @@ void RaftServer::OnInstallSnapshot(const uint64_t term,
     }
   }
 
-  // Update raft_log_.base() to reflect compacted log
+  // Update state_.raft_log_.base() to reflect compacted log
 
 
   // ============================================================================
   // Advance state_.commit_index_ and state_.execute_index_
   // ============================================================================
   state_.commit_index_ = last_included_index;
-  verify(state_.commit_index_ <= raft_log_.last_index());
+  verify(state_.commit_index_ <= state_.raft_log_.last_index());
 
   // Publish application only after the state machine has finished loading the
   // snapshot. Acquire waiters must never observe the covered indices early.
@@ -5918,9 +5918,9 @@ void RaftServer::OnInstallSnapshot(const uint64_t term,
 
   Log_info("[INSTALL-SNAPSHOT] Site {}: Installed snapshot from leader {} "
            "(snapidx={}, snapterm={}, state_.commit_index_={}, state_.execute_index_={}, "
-           "raft_log_.last_index()={}, retain_suffix={}, purged_apply={})",
+           "state_.raft_log_.last_index()={}, retain_suffix={}, purged_apply={})",
            site_id_, leader_id, state_.snapidx_, state_.snapterm_, state_.commit_index_, state_.execute_index_,
-           raft_log_.last_index(), retain_suffix, purged_apply_entries);
+           state_.raft_log_.last_index(), retain_suffix, purged_apply_entries);
   } catch (const std::exception& error) {
     Log_error("[INSTALL-SNAPSHOT] Site {} threw while installing snapshot: {}",
               site_id_, error.what());
