@@ -2491,6 +2491,7 @@ using RaftLeaderChangeCb = ::std::function<void(bool)>;
 using RaftSiteIdSet = ::std::set<siteid_t>;
 using RaftStdThread = ::std::thread;
 using RaftApplyQueue = ::std::deque<::janus::QueuedApplyEntry>;
+using RaftVoteQuorumPtr = ::std::shared_ptr<::janus::RaftVoteQuorumEvent>;
 }  // namespace rusty
 
 // The DSL block below names the interface as `crate::scheduler_h::TxLogServer`
@@ -2532,6 +2533,22 @@ extern "C" inline bool raft_snapshot_manager_is_set(
 // @unsafe - RandomGenerator is external.
 extern "C" inline uint64_t raft_random_range_us(uint64_t low, uint64_t high) {
   return RandomGenerator::rand(low, high);
+}
+
+// @safe - RAFT_LEADER_ELECTION_DEBUG, as a value a DSL body can branch on.
+//
+// #[cfg] is dropped silently inside a DSL block, so an #ifdef-guarded log
+// cannot be written there directly. Returning the flag instead keeps the log
+// AT its call site, where its arguments are, and the compiler folds the
+// branch away exactly as the preprocessor did -- the arguments are all
+// scalars already in registers, so there is nothing else the #ifdef was
+// saving.
+extern "C" inline bool raft_election_debug_enabled() {
+#ifdef RAFT_LEADER_ELECTION_DEBUG
+  return true;
+#else
+  return false;
+#endif
 }
 
 // ============================================================================
@@ -2697,11 +2714,37 @@ unsafe extern "C" {
     fn raft_log_set_is_leader_entry(server: *const RaftServerBase,
                                     prev_is_leader: bool, new_is_leader: bool);
     fn raft_append_leader_noop(server: *mut RaftServerBase);
+    fn raft_election_debug_enabled() -> bool;
+    // The campaign broadcast, and the reply quorum read back under mtx_.
+    fn raft_broadcast_vote_and_wait(server: *mut RaftServerBase, par_id: u32,
+                                    last_log_index: u64, last_log_term: i64,
+                                    self_site_id: u16, term: i64)
+        -> rusty::RaftVoteQuorumPtr;
+    fn raft_vote_quorum_snapshot(quorum: *const rusty::RaftVoteQuorumPtr)
+        -> RaftVoteOutcome;
+}
+
+// One campaign's reply quorum, read in a single shot.
+//
+// RequestVoteImpl must snapshot these AFTER reacquiring mtx_ -- FeedResponse
+// publishes the highest observed term before its wakeup -- so the broadcast
+// kernel hands back the event and this is filled by a second kernel called
+// under the lock. Splitting it that way is not a detail: reading the term
+// inside the broadcast kernel would sample it before the lock and lose the
+// ordering the comment at that call site exists to protect.
+#[repr(C)]
+pub struct RaftVoteOutcome {
+    pub term_: i64,
+    pub yes_: bool,
+    pub no_: bool,
+    pub n_voted_yes_: i32,
+    pub n_voted_no_: i32,
+    pub timeouted_: bool,
 }
 
 // appliedIndexForWait_ keeps its C++ spelling: it is read by name from
-// test.cc and from twelve C++ bodies that have not converted yet, and
-// renaming it is a mechanical change that belongs in its own commit.
+// test.cc and from the C++ bodies that have not converted yet, and renaming
+// it is a mechanical change that belongs in its own commit.
 #[allow(non_snake_case)]
 #[repr(C)]
 pub struct RaftServerBase {
@@ -3424,6 +3467,267 @@ impl RaftServerBase {
 
     // @unsafe - CALLER MUST HOLD mtx_. Demotion is terminal for the election
     // in progress as well as for the leadership epoch that is ending.
+    // @unsafe - the campaign. Two critical sections with one fiber
+    // suspension between them: the broadcast must not hold mtx_, and every
+    // decision after it must be re-derived from state read under the
+    // reacquired lock.
+    //
+    // Returns true only when this server both won the election and still
+    // held leadership when the result was applied.
+    // The zero-initialisation of lst_idx/lst_term/prev_term is the C++
+    // original's and is kept deliberately: dropping it to satisfy the lint
+    // would emit uninitialised C++ locals, which is a worse trade than an
+    // assignment rustc can see is redundant.
+    #[allow(unused_assignments)]
+    pub fn RequestVoteImpl(&mut self, timer_guarded: bool,
+                           expected_generation: u64) -> bool {
+        // The election timer fiber can fire after ~RaftServer has run, which
+        // would reach TxLogServer::RequestVote and its verify(0). stop_ is
+        // the guard against that teardown race.
+        if self.stop_.load(rusty::sync::atomic::Ordering::Acquire) {
+            rusty::raft_log_debug_1(
+                "[RAFT-SHUTDOWN] RequestVote called during shutdown (site={}), ignoring to prevent crash",
+                self.site_id_);
+            return false;
+        }
+
+        let par_id: u32 = self.partition_id_;
+        let loc_id: u32 = self.loc_id_;
+
+        let mut lst_idx: u64 = 0;
+        let mut lst_term: i64 = 0;
+        let mut prev_term: u64 = 0;
+        let mut term: u64 = 0;
+        let mut prev_vote_for: u16 = RAFT_SERVER_INVALID_SITE_ID;
+
+        {
+            let _lock = RaftLockGuard::new(&mut self.mtx_);
+            if self.stop_.load(rusty::sync::atomic::Ordering::Acquire) {
+                self.state_.req_voting_ = false;
+                return false;
+            }
+            // This is the sole campaign admission point. Entrants can overlap
+            // while one of them is yielding, so a caller must NOT reserve
+            // req_voting_ before entering this critical section.
+            if !raft_server_campaign_can_start(
+                self.state_.is_leader_, self.state_.election_in_progress_)
+            {
+                return false;
+            }
+            if timer_guarded {
+                let now: u64 = unsafe { raft_time_now_us() };
+                let elapsed: u64 = now - self.state_.last_heartbeat_time_;
+                if !raft_server_timer_campaign_is_current(
+                    self.state_.is_leader_, expected_generation,
+                    self.state_.election_timer_generation_, elapsed,
+                    self.state_.election_timeout_us_)
+                {
+                    return false;
+                }
+            }
+
+            // A campaign owns a fresh, latched timeout. If it loses without
+            // hearing from a leader, the next campaign waits out this whole
+            // interval instead of reusing the already-expired deadline.
+            self.resetTimerLocked("starting election campaign");
+            prev_term = self.state_.current_term_;
+            prev_vote_for = self.state_.vote_for_;
+            let prev_local_term: u64 = self.state_.current_term_;
+            self.state_.current_term_ += 1;
+            // Vote for ourselves.
+            self.state_.vote_for_ = self.site_id_;
+            // A candidate has no elected-leader evidence in its new term; in
+            // particular it must not redirect clients to the leader of the
+            // term it just left.
+            self.state_.current_leader_id_ =
+                raft_server_leader_hint_after_transition(
+                    false, false, self.site_id_, self.state_.current_leader_id_);
+
+            // Publish ownership of req_voting_ and the election term before
+            // broadcasting, so no second caller can campaign concurrently.
+            self.state_.election_in_progress_ = true;
+            // election_term_ is ballot_t (int64_t) and current_term_ is
+            // uint64_t; the C++ assigned across that implicitly.
+            self.state_.election_term_ = self.state_.current_term_ as i64;
+            self.state_.req_voting_ = true;
+            term = self.state_.current_term_;
+
+            self.LogTermChange("starting election", prev_local_term,
+                               self.state_.current_term_,
+                               RAFT_SERVER_INVALID_SITE_ID);
+            lst_idx = self.state_.raft_log_.last_index();
+            lst_term = self.ElectionLastLogTermLocked();
+        }
+
+        if unsafe { raft_election_debug_enabled() } {
+            rusty::raft_log_info_7(
+                "[RAFT_ELECTION] server {} (loc {}) starting election term {}->{} lastLogIdx={} lastLogTerm={} prev_vote_for={}",
+                self.site_id_, loc_id, prev_term, term, lst_idx, lst_term,
+                prev_vote_for);
+        }
+
+        // The candidate id on the wire is a GLOBAL site id, not the
+        // per-partition locale id. Everything downstream treats it that way:
+        // RaftCommo skips itself by comparing peer->site_id(), the receiver
+        // admits a candidate only if current_config_ contains it and
+        // current_config_ is filled from Config::SitesByPartitionId()'s
+        // site.id, and this candidate just recorded vote_for_ = site_id_,
+        // which the grant path compares against can_id.
+        //
+        // Passing loc_id_ here was correct only for partition 0:
+        // Config::LoadSiteYML increments site_id globally across replica-group
+        // rows while resetting locale_id to 0 at the top of each row, so with
+        // three replicas per group site_id == 3 * partition + locale and the
+        // two id spaces coincide only at partition 0. Above it the candidate
+        // advertised 0, 1 or 2 while current_config_ held {3p, 3p+1, 3p+2}:
+        // every vote was rejected as a non-voter, the self-skip never matched
+        // so the candidate RequestVoted its own listener, and the term counter
+        // ran away. It compiled silently because locid_t is uint32_t and
+        // siteid_t is uint16_t, so the call narrowed.
+        let quorum: rusty::RaftVoteQuorumPtr = unsafe {
+            raft_broadcast_vote_and_wait(
+                self as *mut RaftServerBase, par_id, lst_idx, lst_term,
+                self.site_id_, term as i64)
+        };
+
+        let _lock1 = RaftLockGuard::new(&mut self.mtx_);
+        if self.stop_.load(rusty::sync::atomic::Ordering::Acquire) {
+            self.state_.election_in_progress_ = false;
+            self.state_.req_voting_ = false;
+            return false;
+        }
+        // A higher term dominates every outcome, TIMEOUT and a concurrently
+        // completed YES quorum included. FeedResponse publishes that maximum
+        // before its wakeup, so it is snapshotted only now, after Raft state
+        // has been reacquired.
+        let outcome: RaftVoteOutcome =
+            unsafe {
+                raft_vote_quorum_snapshot(
+                    &quorum as *const rusty::RaftVoteQuorumPtr)
+            };
+        let observed_response_term: i64 = outcome.term_;
+        let completion_action: i32 = raft_server_election_completion_action(
+            self.state_.election_in_progress_,
+            self.state_.election_term_ as u64, term, self.state_.current_term_,
+            observed_response_term);
+
+        if completion_action == ElectionCompletionAction::ADVANCE_HIGHER_TERM as i32 {
+            let previous_term: u64 = self.state_.current_term_;
+            self.state_.current_term_ = observed_response_term as u64;
+            self.state_.vote_for_ = RAFT_SERVER_INVALID_SITE_ID;
+            self.state_.current_leader_id_ =
+                raft_server_leader_hint_after_transition(
+                    false, false, self.site_id_, self.state_.current_leader_id_);
+
+            if self.state_.is_leader_ {
+                self.stepDown();
+            } else {
+                self.setIsLeader(false);
+            }
+            self.state_.election_in_progress_ = false;
+            self.state_.req_voting_ = false;
+
+            self.LogTermChange("observed higher term from RequestVote replies",
+                               previous_term, self.state_.current_term_,
+                               RAFT_SERVER_INVALID_SITE_ID);
+            return false;
+        }
+
+        // An accepted leader RPC can cancel this campaign while the broadcast
+        // is yielding, and another campaign can begin before this result
+        // arrives. Only the exact active term owns role changes and election
+        // bookkeeping. A strictly higher response term was handled above,
+        // because that evidence supersedes even a newer local campaign.
+        if completion_action == ElectionCompletionAction::IGNORE_STALE as i32 {
+            if unsafe { raft_election_debug_enabled() } {
+                rusty::raft_log_info_5(
+                    "[RAFT_ELECTION] server {} ignoring stale election result: result_term={} local_term={} election_term={} active={}",
+                    self.site_id_, term, self.state_.current_term_,
+                    self.state_.election_term_,
+                    self.state_.election_in_progress_);
+            }
+            return false;
+        }
+        unsafe {
+            raft_verify(completion_action
+                == ElectionCompletionAction::APPLY_CURRENT as i32);
+        }
+        if unsafe { raft_election_debug_enabled() } {
+            rusty::raft_log_info_6(
+                "[RAFT_ELECTION] server {} term {} vote outcome yes={} no={} highest_term_seen={} timeout={}",
+                self.site_id_, term, outcome.n_voted_yes_, outcome.n_voted_no_,
+                outcome.term_, outcome.timeouted_);
+        }
+
+        if outcome.yes_ {
+            unsafe {
+                raft_verify(self.state_.current_term_ >= term);
+            }
+            self.state_.election_in_progress_ = false;
+            self.state_.req_voting_ = false;
+
+            if self.stop_.load(rusty::sync::atomic::Ordering::Acquire)
+                || self.state_.current_term_ != term
+            {
+                self.state_.req_voting_ = false;
+                return false;
+            }
+
+            self.setIsLeader(true);
+            rusty::raft_log_debug_2("site {} became leader for term {}",
+                                    self.site_id_, term);
+            if unsafe { raft_election_debug_enabled() } {
+                rusty::raft_log_info_4(
+                    "[RAFT_ELECTION] server {} won election term {} (votes yes={} no={})",
+                    self.site_id_, term, outcome.n_voted_yes_,
+                    outcome.n_voted_no_);
+            }
+
+            if self.IsLeaderLocked() {
+                rusty::raft_log_debug_2("vote accepted {} curterm {}",
+                                        loc_id, self.state_.current_term_);
+                self.state_.req_voting_ = false;
+                true
+            } else {
+                rusty::raft_log_debug_2("vote rejected {} curterm {}, do rollback",
+                                        loc_id, self.state_.current_term_);
+                self.setIsLeader(false);
+                false
+            }
+        } else if outcome.no_ {
+            rusty::raft_log_debug_1("site {} requestvote rejected", self.site_id_);
+            self.setIsLeader(false);
+            if unsafe { raft_election_debug_enabled() } {
+                rusty::raft_log_info_5(
+                    "[RAFT_ELECTION] server {} lost election term {} (yes={} no={}) highest_term={}",
+                    self.site_id_, term, outcome.n_voted_yes_,
+                    outcome.n_voted_no_, outcome.term_);
+            }
+            if self.state_.election_in_progress_
+                && self.state_.election_term_ == term as i64
+            {
+                self.state_.election_in_progress_ = false;
+            }
+            self.state_.req_voting_ = false;
+            false
+        } else {
+            rusty::raft_log_debug_1("vote timeout {}", loc_id);
+            if unsafe { raft_election_debug_enabled() } {
+                rusty::raft_log_info_4(
+                    "[RAFT_ELECTION] server {} election timed out term {} (yes={} no={})",
+                    self.site_id_, term, outcome.n_voted_yes_,
+                    outcome.n_voted_no_);
+            }
+            if self.state_.election_in_progress_
+                && self.state_.election_term_ == term as i64
+            {
+                self.state_.election_in_progress_ = false;
+            }
+            self.state_.req_voting_ = false;
+            false
+        }
+    }
+
     pub fn stepDown(&mut self) {
         rusty::raft_log_info_2(
             "[SPEC-RAFT] Site {}: Stepping down as leader (term={})",
@@ -3474,7 +3778,8 @@ impl TxLogServer for RaftServerBase {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=d664174cbebcbd57977ca5125a5650accc58e7968f6713eff741b413bec2b32d*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=a189376ef0815c17a50d1ef419466f8f99ade3644afc800654d88d211a7e7e23*/
+struct RaftVoteOutcome;
 struct RaftServerBase;
 
 // Rust-only compiler marker import: rusty::cpp_inherit
@@ -3496,7 +3801,22 @@ extern "C" {
     uint64_t raft_non_preferred_steady_election_timeout_us();
     void raft_log_set_is_leader_entry(const RaftServerBase* server, bool prev_is_leader, bool new_is_leader);
     void raft_append_leader_noop(RaftServerBase* server);
+    bool raft_election_debug_enabled();
+    rusty::RaftVoteQuorumPtr raft_broadcast_vote_and_wait(RaftServerBase* server, uint32_t par_id, uint64_t last_log_index, int64_t last_log_term, uint16_t self_site_id, int64_t term);
+    RaftVoteOutcome raft_vote_quorum_snapshot(const rusty::RaftVoteQuorumPtr* quorum);
 }
+
+struct RaftVoteOutcome {
+    int64_t term_;
+    bool yes_;
+    bool no_;
+    int32_t n_voted_yes_;
+    int32_t n_voted_no_;
+    bool timeouted_;
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
+};
 
 struct RaftServerBase : public TxLogServer {
     uint32_t loc_id_;
@@ -3593,6 +3913,7 @@ struct RaftServerBase : public TxLogServer {
     void resetTimerLocked(std::string_view reason);
     void resetTimer(std::string_view reason);
     void setIsLeader(bool is_leader);
+    bool RequestVoteImpl(bool timer_guarded, uint64_t expected_generation);
     void stepDown();
     void set_site_identity(uint32_t loc_id, uint16_t site_id, uint32_t partition_id);
     void set_commo(rusty::Communicator* commo);
@@ -4028,6 +4349,139 @@ inline void RaftServerBase::setIsLeader(bool is_leader) {
     }
 }
 
+inline bool RaftServerBase::RequestVoteImpl(bool timer_guarded, uint64_t expected_generation) {
+    if (this->stop_.load(rusty::sync::atomic::Ordering::Acquire)) {
+        rusty::raft_log_debug_1("[RAFT-SHUTDOWN] RequestVote called during shutdown (site={}), ignoring to prevent crash", this->site_id_);
+        return false;
+    }
+    uint32_t par_id = this->partition_id_;
+    const uint32_t loc_id = this->loc_id_;
+    uint64_t lst_idx = static_cast<uint64_t>(0);
+    int64_t lst_term = static_cast<int64_t>(0);
+    uint64_t prev_term = static_cast<uint64_t>(0);
+    uint64_t term = static_cast<uint64_t>(0);
+    uint16_t prev_vote_for = RAFT_SERVER_INVALID_SITE_ID;
+    {
+        const auto _lock = RaftLockGuard::new_(&this->mtx_);
+        if (this->stop_.load(rusty::sync::atomic::Ordering::Acquire)) {
+            this->state_.req_voting_ = false;
+            return false;
+        }
+        if (rusty::detail::rust_not(raft_server_campaign_can_start(this->state_.is_leader_, this->state_.election_in_progress_))) {
+            return false;
+        }
+        if (timer_guarded) {
+            const uint64_t now = raft_time_now_us();
+            const uint64_t elapsed = rusty::detail::deref_if_pointer_like(now) - rusty::detail::deref_if_pointer_like(this->state_.last_heartbeat_time_);
+            if (rusty::detail::rust_not(raft_server_timer_campaign_is_current(this->state_.is_leader_, std::move(expected_generation), this->state_.election_timer_generation_, std::move(elapsed), this->state_.election_timeout_us_))) {
+                return false;
+            }
+        }
+        this->resetTimerLocked(std::string_view("starting election campaign"));
+        prev_term = this->state_.current_term_;
+        prev_vote_for = this->state_.vote_for_;
+        uint64_t prev_local_term = this->state_.current_term_;
+        rusty::detail::deref_if_pointer_like(this->state_.current_term_) += 1;
+        this->state_.vote_for_ = this->site_id_;
+        this->state_.current_leader_id_ = raft_server_leader_hint_after_transition(false, false, this->site_id_, this->state_.current_leader_id_);
+        this->state_.election_in_progress_ = true;
+        this->state_.election_term_ = static_cast<int64_t>(this->state_.current_term_);
+        this->state_.req_voting_ = true;
+        term = this->state_.current_term_;
+        this->LogTermChange(std::string_view("starting election"), std::move(prev_local_term), this->state_.current_term_, RAFT_SERVER_INVALID_SITE_ID);
+        lst_idx = this->state_.raft_log_.last_index();
+        lst_term = this->ElectionLastLogTermLocked();
+    }
+    if (raft_election_debug_enabled()) {
+        rusty::raft_log_info_7("[RAFT_ELECTION] server {} (loc {}) starting election term {}->{} lastLogIdx={} lastLogTerm={} prev_vote_for={}", this->site_id_, std::move(loc_id), std::move(prev_term), std::move(term), std::move(lst_idx), std::move(lst_term), std::move(prev_vote_for));
+    }
+    const rusty::RaftVoteQuorumPtr quorum = raft_broadcast_vote_and_wait(static_cast<RaftServerBase*>(rusty::detail::ptr_or_addr((*this))), std::move(par_id), std::move(lst_idx), std::move(lst_term), this->site_id_, static_cast<int64_t>(term));
+    const auto _lock1 = RaftLockGuard::new_(&this->mtx_);
+    if (this->stop_.load(rusty::sync::atomic::Ordering::Acquire)) {
+        this->state_.election_in_progress_ = false;
+        this->state_.req_voting_ = false;
+        return false;
+    }
+    const RaftVoteOutcome outcome = raft_vote_quorum_snapshot(static_cast<const rusty::RaftVoteQuorumPtr*>(&quorum));
+    const int64_t observed_response_term = outcome.term_;
+    const int32_t completion_action = raft_server_election_completion_action(this->state_.election_in_progress_, static_cast<uint64_t>(this->state_.election_term_), std::move(term), this->state_.current_term_, std::move(observed_response_term));
+    if (rusty::detail::deref_if_pointer_like(completion_action) == (static_cast<int32_t>(ElectionCompletionAction_ADVANCE_HIGHER_TERM()))) {
+        uint64_t previous_term = this->state_.current_term_;
+        this->state_.current_term_ = static_cast<uint64_t>(observed_response_term);
+        this->state_.vote_for_ = RAFT_SERVER_INVALID_SITE_ID;
+        this->state_.current_leader_id_ = raft_server_leader_hint_after_transition(false, false, this->site_id_, this->state_.current_leader_id_);
+        if (this->state_.is_leader_) {
+            this->stepDown();
+        } else {
+            this->setIsLeader(false);
+        }
+        this->state_.election_in_progress_ = false;
+        this->state_.req_voting_ = false;
+        this->LogTermChange(std::string_view("observed higher term from RequestVote replies"), std::move(previous_term), this->state_.current_term_, RAFT_SERVER_INVALID_SITE_ID);
+        return false;
+    }
+    if (rusty::detail::deref_if_pointer_like(completion_action) == (static_cast<int32_t>(ElectionCompletionAction_IGNORE_STALE()))) {
+        if (raft_election_debug_enabled()) {
+            rusty::raft_log_info_5("[RAFT_ELECTION] server {} ignoring stale election result: result_term={} local_term={} election_term={} active={}", this->site_id_, std::move(term), this->state_.current_term_, this->state_.election_term_, this->state_.election_in_progress_);
+        }
+        return false;
+    }
+    // @unsafe
+    {
+        raft_verify(rusty::detail::deref_if_pointer_like(completion_action) == (static_cast<int32_t>(ElectionCompletionAction_APPLY_CURRENT())));
+    }
+    if (raft_election_debug_enabled()) {
+        rusty::raft_log_info_6("[RAFT_ELECTION] server {} term {} vote outcome yes={} no={} highest_term_seen={} timeout={}", this->site_id_, std::move(term), std::move(outcome.n_voted_yes_), std::move(outcome.n_voted_no_), std::move(outcome.term_), std::move(outcome.timeouted_));
+    }
+    if (outcome.yes_) {
+        // @unsafe
+        {
+            raft_verify(rusty::detail::deref_if_pointer_like(this->state_.current_term_) >= rusty::detail::deref_if_pointer_like(term));
+        }
+        this->state_.election_in_progress_ = false;
+        this->state_.req_voting_ = false;
+        if (this->stop_.load(rusty::sync::atomic::Ordering::Acquire) || (rusty::detail::deref_if_pointer_like(this->state_.current_term_) != rusty::detail::deref_if_pointer_like(term))) {
+            this->state_.req_voting_ = false;
+            return false;
+        }
+        this->setIsLeader(true);
+        rusty::raft_log_debug_2("site {} became leader for term {}", this->site_id_, std::move(term));
+        if (raft_election_debug_enabled()) {
+            rusty::raft_log_info_4("[RAFT_ELECTION] server {} won election term {} (votes yes={} no={})", this->site_id_, std::move(term), std::move(outcome.n_voted_yes_), std::move(outcome.n_voted_no_));
+        }
+        if (this->IsLeaderLocked()) {
+            rusty::raft_log_debug_2("vote accepted {} curterm {}", std::move(loc_id), this->state_.current_term_);
+            this->state_.req_voting_ = false;
+            return true;
+        } else {
+            rusty::raft_log_debug_2("vote rejected {} curterm {}, do rollback", std::move(loc_id), this->state_.current_term_);
+            this->setIsLeader(false);
+            return false;
+        }
+    } else if (outcome.no_) {
+        rusty::raft_log_debug_1("site {} requestvote rejected", this->site_id_);
+        this->setIsLeader(false);
+        if (raft_election_debug_enabled()) {
+            rusty::raft_log_info_5("[RAFT_ELECTION] server {} lost election term {} (yes={} no={}) highest_term={}", this->site_id_, std::move(term), std::move(outcome.n_voted_yes_), std::move(outcome.n_voted_no_), std::move(outcome.term_));
+        }
+        if (rusty::detail::deref_if_pointer_like(this->state_.election_in_progress_) && (rusty::detail::deref_if_pointer_like(this->state_.election_term_) == (static_cast<int64_t>(term)))) {
+            this->state_.election_in_progress_ = false;
+        }
+        this->state_.req_voting_ = false;
+        return false;
+    } else {
+        rusty::raft_log_debug_1("vote timeout {}", std::move(loc_id));
+        if (raft_election_debug_enabled()) {
+            rusty::raft_log_info_4("[RAFT_ELECTION] server {} election timed out term {} (yes={} no={})", this->site_id_, std::move(term), std::move(outcome.n_voted_yes_), std::move(outcome.n_voted_no_));
+        }
+        if (rusty::detail::deref_if_pointer_like(this->state_.election_in_progress_) && (rusty::detail::deref_if_pointer_like(this->state_.election_term_) == (static_cast<int64_t>(term)))) {
+            this->state_.election_in_progress_ = false;
+        }
+        this->state_.req_voting_ = false;
+        return false;
+    }
+}
+
 inline void RaftServerBase::stepDown() {
     rusty::raft_log_info_2("[SPEC-RAFT] Site {}: Stepping down as leader (term={})", this->site_id_, this->state_.current_term_);
     this->setIsLeader(false);
@@ -4214,8 +4668,6 @@ class RaftServer : public RaftServerBase {
   // Timer-only entry retains the reset generation observed at expiry. The
   // first RequestVote state lock revalidates it immediately before term++.
   bool RequestVoteFromElectionTimer(uint64_t expected_generation);
-  bool RequestVoteImpl(bool timer_guarded,
-                       uint64_t expected_generation);
 
   // @safe - server setup (threading via @unsafe blocks)
 	void Setup();

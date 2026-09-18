@@ -1206,6 +1206,36 @@ void raft_fire_leader_change(RaftServerBase* self, bool is_leader) {
 void raft_reset_timer_locked(RaftServerBase* self, const char* reason) {
   static_cast<RaftServer*>(self)->resetTimerLocked(reason);
 }
+// (1) the campaign broadcast, and the reply quorum read back under mtx_.
+//
+// Two kernels, not one, and deliberately: the broadcast SUSPENDS this fiber
+// in wait_timeout, so it must run with mtx_ released, while the quorum's
+// highest observed term must be sampled only after mtx_ is reacquired --
+// FeedResponse publishes it before its wakeup. Reading the term inside the
+// broadcast kernel would lose exactly that ordering.
+rusty::RaftVoteQuorumPtr raft_broadcast_vote_and_wait(
+    RaftServerBase* self, uint32_t par_id, uint64_t last_log_index,
+    int64_t last_log_term, uint16_t self_site_id, int64_t term) {
+  rusty::RaftVoteQuorumPtr quorum =
+      static_cast<RaftServer*>(self)->commo()->BroadcastVote(
+          par_id, last_log_index, last_log_term, self_site_id, term);
+  quorum->wait_timeout(1000000);
+  return quorum;
+}
+
+RaftVoteOutcome raft_vote_quorum_snapshot(
+    const rusty::RaftVoteQuorumPtr* quorum) {
+  RaftVoteQuorumEvent& event = **quorum;
+  RaftVoteOutcome outcome{};
+  outcome.term_ = event.Term();
+  outcome.yes_ = event.yes();
+  outcome.no_ = event.no();
+  outcome.n_voted_yes_ = event.q().n_voted_yes_.get();
+  outcome.n_voted_no_ = event.q().n_voted_no_.get();
+  outcome.timeouted_ = event.q().timeouted_.get();
+  return outcome;
+}
+
 // (misc) the four env-tunable election-timeout knobs, which are ordinary C++
 // free functions above and so need C linkage to be nameable from Rust.
 uint64_t raft_preferred_leader_grace_period_us() {
@@ -5378,227 +5408,6 @@ bool RaftServer::RequestVoteFromElectionTimer(
     uint64_t expected_generation) {
   return RequestVoteImpl(/*timer_guarded=*/true,
                          expected_generation);
-}
-
-bool RaftServer::RequestVoteImpl(bool timer_guarded,
-                                 uint64_t expected_generation) {
-  // FIX 2: Prevent RequestVote during shutdown
-  // The election timer coroutine may fire after ~RaftServer destructor runs,
-  // causing a call to the base class TxLogServer::RequestVote() which hits verify(0)
-  // Check stop_ flag to avoid this crash during teardown
-  if (stop_.load(rusty::sync::atomic::Ordering::Acquire)) {
-    Log_debug("[RAFT-SHUTDOWN] RequestVote called during shutdown (site={}), ignoring to prevent crash", site_id_);
-    return false;
-  }
-
-
-  const parid_t par_id = partition_id_;
-  const locid_t loc_id = loc_id_;
-
-  slotid_t lst_idx = 0 ;
-  ballot_t lst_term = 0 ;
-  ballot_t prev_term = 0;
-  ballot_t term = 0;
-  siteid_t prev_vote_for;
-  // @unsafe
-  {
-  prev_vote_for = INVALID_SITEID;
-  }
-
-  {
-    std::lock_guard<RaftCheckedMutex> lock(mtx_);
-    if (stop_.load(rusty::sync::atomic::Ordering::Acquire)) {
-      state_.req_voting_ = false;
-      return false;
-    }
-    // RequestVoteImpl is the sole campaign admission point. Its entrants can
-    // overlap while one of them is yielding, so callers must not reserve
-    // state_.req_voting_ before entering this critical section.
-    if (!raft_server_campaign_can_start(
-            state_.is_leader_, state_.election_in_progress_)) {
-      return false;
-    }
-    if (timer_guarded) {
-      const uint64_t now = Time::now(true);
-      const uint64_t elapsed = now - state_.last_heartbeat_time_;
-      if (!raft_server_timer_campaign_is_current(
-              state_.is_leader_, expected_generation,
-              state_.election_timer_generation_, elapsed,
-              state_.election_timeout_us_)) {
-        return false;
-      }
-    }
-
-    // A campaign owns a fresh, latched timeout. If it loses without hearing
-    // from a leader, the next campaign waits for this complete interval rather
-    // than immediately reusing the already-expired follower deadline.
-    resetTimerLocked("starting election campaign");
-    prev_term = state_.current_term_;
-    prev_vote_for = state_.vote_for_;
-    auto prev_local_term = state_.current_term_;
-    state_.current_term_++ ;
-    state_.vote_for_ = site_id_;  // Vote for ourselves when starting election
-    // A candidate has no elected leader evidence in its new term. In
-    // particular, it must not redirect clients to the leader from the term it
-    // just left.
-    state_.current_leader_id_ = raft_server_leader_hint_after_transition(
-        false, false, site_id_, state_.current_leader_id_);
-
-    // Atomically publish ownership of state_.req_voting_ and the election term before
-    // broadcasting so no second caller can campaign concurrently.
-    state_.election_in_progress_ = true;
-    state_.election_term_ = state_.current_term_;
-    state_.req_voting_ = true;
-    term = state_.current_term_;
-
-    // INVALID_SITEID explicitly: RaftServerBase::LogTermChange is a DSL
-    // method and the DSL has no default arguments.
-    LogTermChange("starting election", prev_local_term, state_.current_term_,
-                  INVALID_SITEID);
-    lst_idx = state_.raft_log_.last_index();
-    lst_term = ElectionLastLogTermLocked();
-  }
-
-#ifdef RAFT_LEADER_ELECTION_DEBUG
-  Log_info("[RAFT_ELECTION] server {} (loc {}) starting election term {}->{} lastLogIdx={} lastLogTerm={} prev_vote_for={}",
-           site_id_, loc_id, prev_term, term, lst_idx, lst_term, prev_vote_for);
-#endif
-  shared_ptr<RaftVoteQuorumEvent> sp_quorum;
-  // @unsafe
-  {
-  // The candidate id on the wire is a GLOBAL site id, not the per-partition
-  // locale id. Everything downstream treats it that way: RaftCommo skips
-  // itself by comparing against peer->site_id() (commo.cc:121-124), the
-  // receiver admits a candidate only if current_config_ contains it and
-  // current_config_ is filled from Config::SitesByPartitionId()'s site.id
-  // (server.cc:1565-1571, 2939-2942), and this candidate has just recorded
-  // state_.vote_for_ = site_id_ above, which the grant path compares against can_id.
-  //
-  // Passing loc_id_ here was correct only for partition 0. Config::LoadSiteYML
-  // increments site_id globally across replica-group rows while resetting
-  // locale_id to 0 at the top of each row (config.cc:336-366), so with three
-  // replicas per group site_id == 3 * partition + locale and the two id spaces
-  // coincide only when partition == 0. For every partition above 0 the
-  // candidate advertised 0, 1 or 2 while current_config_ held {3p, 3p+1,
-  // 3p+2}: every vote was rejected as a non-voter, the self-skip never
-  // matched so a candidate also RequestVoted its own listener, and the term
-  // counter ran away. It compiled silently because locid_t is uint32_t and
-  // siteid_t is uint16_t (constants.h:15,18), so the call narrowed.
-  sp_quorum = commo()->BroadcastVote(
-      par_id, lst_idx, lst_term, site_id_, term);
-  sp_quorum->wait_timeout(1000000);
-  }
-  std::unique_lock<RaftCheckedMutex> lock1(mtx_);
-  if (stop_.load(rusty::sync::atomic::Ordering::Acquire)) {
-    state_.election_in_progress_ = false;
-    state_.req_voting_ = false;
-    return false;
-  }
-  // A higher term dominates every election outcome, including TIMEOUT and a
-  // concurrently completed YES quorum. FeedResponse publishes this maximum
-  // before its wakeup, so snapshot it only after reacquiring Raft state.
-  const int64_t observed_response_term = sp_quorum->Term();
-  const ElectionCompletionAction completion_action =
-      static_cast<ElectionCompletionAction>(
-          raft_server_election_completion_action(
-              state_.election_in_progress_, state_.election_term_, term, state_.current_term_,
-              observed_response_term));
-  if (completion_action ==
-      ElectionCompletionAction::ADVANCE_HIGHER_TERM) {
-    const uint64_t previous_term = state_.current_term_;
-    state_.current_term_ = static_cast<uint64_t>(observed_response_term);
-    state_.vote_for_ = INVALID_SITEID;
-    state_.current_leader_id_ = raft_server_leader_hint_after_transition(
-        false, false, site_id_, state_.current_leader_id_);
-
-    if (state_.is_leader_) {
-      stepDown();
-    } else {
-      setIsLeader(false);
-    }
-    state_.election_in_progress_ = false;
-    state_.req_voting_ = false;
-
-    LogTermChange("observed higher term from RequestVote replies",
-                  previous_term, state_.current_term_, INVALID_SITEID);
-    return false;
-  }
-
-  // An accepted leader RPC can cancel this campaign while BroadcastVote is
-  // yielding, and another campaign can then begin before this result arrives.
-  // Only the exact active term owns role changes and election bookkeeping.
-  // A strictly higher response term was handled above because that evidence
-  // globally supersedes even a newer local campaign.
-  if (completion_action == ElectionCompletionAction::IGNORE_STALE) {
-#ifdef RAFT_LEADER_ELECTION_DEBUG
-    Log_info("[RAFT_ELECTION] server {} ignoring stale election result: "
-             "result_term={} local_term={} election_term={} active={}",
-             site_id_, term, state_.current_term_, state_.election_term_,
-             state_.election_in_progress_);
-#endif
-    return false;
-  }
-  verify(completion_action == ElectionCompletionAction::APPLY_CURRENT);
-#ifdef RAFT_LEADER_ELECTION_DEBUG
-  Log_info("[RAFT_ELECTION] server {} term {} vote outcome yes={} no={} highest_term_seen={} timeout={}",
-           site_id_, term, sp_quorum->q().n_voted_yes_.get(), sp_quorum->q().n_voted_no_.get(), sp_quorum->Term(), sp_quorum->q().timeouted_.get());
-#endif
-  if (sp_quorum->yes()) {
-    verify(state_.current_term_ >= term);
-
-    state_.election_in_progress_ = false;
-    state_.req_voting_ = false;
-
-    if (stop_.load(rusty::sync::atomic::Ordering::Acquire) ||
-        state_.current_term_ != term) {
-      state_.req_voting_ = false;
-      return false;
-    }
-
-    // become a leader
-    setIsLeader(true) ;
-    // verify(state_.current_term_ == term); // [Jetpack] Comment this since in failure recovery test this will fail after experiment end.
-    Log_debug("site {} became leader for term {}", site_id_, term);
-
-#ifdef RAFT_LEADER_ELECTION_DEBUG
-    Log_info("[RAFT_ELECTION] server {} won election term {} (votes yes={} no={})",
-             site_id_, term, sp_quorum->q().n_voted_yes_.get(), sp_quorum->q().n_voted_no_.get());
-#endif
-
-    if(IsLeaderLocked()) {
-      Log_debug("vote accepted {} curterm {}", loc_id, state_.current_term_);
-  		state_.req_voting_ = false ;
-			return true;
-    } else {
-      Log_debug("vote rejected {} curterm {}, do rollback", loc_id, state_.current_term_);
-      setIsLeader(false) ;
-    	return false;
-		}
-  } else if (sp_quorum->no()) {
-    // become a follower
-    Log_debug("site {} requestvote rejected", site_id_);
-    setIsLeader(false) ;
-#ifdef RAFT_LEADER_ELECTION_DEBUG
-    Log_info("[RAFT_ELECTION] server {} lost election term {} (yes={} no={}) highest_term={}",
-             site_id_, term, sp_quorum->q().n_voted_yes_.get(), sp_quorum->q().n_voted_no_.get(), sp_quorum->Term());
-#endif
-    if (state_.election_in_progress_ && state_.election_term_ == term) {
-      state_.election_in_progress_ = false;
-    }
-  	state_.req_voting_ = false ;
-		return false;
-  } else {
-    Log_debug("vote timeout {}", loc_id);
-#ifdef RAFT_LEADER_ELECTION_DEBUG
-    Log_info("[RAFT_ELECTION] server {} election timed out term {} (yes={} no={})",
-             site_id_, term, sp_quorum->q().n_voted_yes_.get(), sp_quorum->q().n_voted_no_.get());
-#endif
-    if (state_.election_in_progress_ && state_.election_term_ == term) {
-      state_.election_in_progress_ = false;
-    }
-  	state_.req_voting_ = false ;
-		return false;
-  }
 }
 
 // @unsafe - calls @safe doVote, external calls marked @external [safe]

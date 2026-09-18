@@ -483,6 +483,10 @@ rusty_opaque_cpp_carrier! {
     RaftStdThread,
     /// `std::deque<janus::QueuedApplyEntry>` -- the apply queue.
     RaftApplyQueue,
+    /// `std::shared_ptr<janus::RaftVoteQuorumEvent>` -- one campaign's reply
+    /// quorum, carried from the broadcast kernel to the snapshot kernel
+    /// across a fiber suspension.
+    RaftVoteQuorumPtr,
 }
 
 pub type ReactorIntEvent = rrr::reactor::IntEvent;
