@@ -444,5 +444,5 @@ auto result = pool.reconnect_all(config);
 
 ## See Also
 
-- [Transport Backends](transport_backends.md) - Overview of RPC transport options
-- [Phase Implementation Plans](rpc/) - Detailed design documents for each phase
+- [Transport Backends](../developer/transport-backends.md) - Overview of RPC transport options
+- [Phase Implementation Plans](./) - Detailed design documents for each phase (`phase1_*` … `phase7_*` in this directory)

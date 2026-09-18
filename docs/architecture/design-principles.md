@@ -546,4 +546,4 @@ txn2->batch_put(results);
 
 ---
 
-**Next**: [Architecture Overview](architecture.md) | [Speculative 2PC](speculative-2pc.md) | [Configuration Reference](config.md)
+**Next**: [Architecture Overview](overview.md) | [Speculative 2PC](speculative-2pc.md) | [Configuration Reference](../configuration/config.md)

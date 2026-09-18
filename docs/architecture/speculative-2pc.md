@@ -617,4 +617,4 @@ register_for_follower_par_id_return([](const char*& log, int len,
 
 ---
 
-**Next**: [Replication & Consensus](replication.md) | [Architecture Overview](architecture.md) | [Watermark System](watermarks.md)
+**Next**: [Replication & Consensus](../raft-book.md) | [Architecture Overview](overview.md)
