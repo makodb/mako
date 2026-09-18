@@ -1217,6 +1217,19 @@ pub struct RaftServerBase {
     // to Rust: the pop kernel moves it here and the invoke kernel reads it,
     // both under the apply thread's own serialisation.
     pub pending_apply_command_: rusty::RaftCommand,
+    // PHASE 1's batch under assembly. A field rather than a local because
+    // its element type is a wire command Rust cannot construct; the loop
+    // that fills it is Rust, the pushes and the final wrap are kernels. Only
+    // the heartbeat fiber touches it.
+    //
+    // It is cleared as the FIRST statement of the batch arm, unconditionally
+    // and per follower, which is what makes it equivalent to the local
+    // vector it replaces: no reader can see another follower's entries. The
+    // one difference is that between two rounds it holds refcounts the local
+    // would have dropped at end of scope -- bounded by max_batch_entries and
+    // released on the next round, which runs every heartbeat interval
+    // whether or not there is work.
+    pub batch_buffer_: rusty::RaftBatchBuffer,
     pub appliedIndexForWait_: rusty::sync::atomic::AtomicU64,
     // Was a function-static in EnqueueCommittedEntries. A DSL body has no
     // static local, and a per-server counter is the more honest shape: the
@@ -1293,6 +1306,7 @@ impl RaftServerBase {
             apply_queue_epoch_: 0,
             apply_queue_: Default::default(),
             pending_apply_command_: Default::default(),
+            batch_buffer_: Default::default(),
             appliedIndexForWait_: rusty::sync::atomic::AtomicU64::new(0),
             enqueue_log_counter_: 0,
             n_prepare_: 0,
@@ -2252,6 +2266,59 @@ impl RaftServerBase {
             "[RAFT-SNAPSHOT] Initialized for site {} partition {}: interval={}",
             self.site_id_, self.partition_id_, snapshot_interval);
         true
+    }
+
+    // @unsafe - an InstallSnapshot reply that carried a usable term. The
+    // caller (the RPC completion lambda in server.cc) has already taken the
+    // async-callback lifetime lock and confirmed the reply is available;
+    // it does NOT hold mtx_, which this takes, and that ordering is what
+    // keeps the inline-completion path from self-deadlocking.
+    pub fn InstallSnapshotReplyAccepted(&mut self, site_id: u16, ord: usize,
+                                        snap_last_idx: u64, send_term: u64,
+                                        follower_term: u64) {
+        let _lock = RaftLockGuard::new(&mut self.mtx_);
+        if raft_server_observed_higher_term(follower_term,
+                                            self.state_.current_term_) {
+            rusty::raft_log_info_4(
+                "[HEARTBEAT-SNAPSHOT] Site {}: Follower {} has higher term {} > {}, stepping down",
+                self.site_id_, site_id, follower_term,
+                self.state_.current_term_);
+            let previous_term: u64 = self.state_.current_term_;
+            self.state_.current_term_ = follower_term;
+            self.state_.vote_for_ = RAFT_SERVER_INVALID_SITE_ID;
+            self.LogTermChange("InstallSnapshot reply carried newer term",
+                               previous_term, self.state_.current_term_,
+                               site_id);
+            // A follower's higher term does not identify the leader of that
+            // term. Retire the previous leader hint before publishing
+            // follower state.
+            self.state_.current_leader_id_ =
+                raft_server_leader_hint_after_transition(
+                    false, false, self.site_id_, site_id);
+            self.stepDown();
+            self.state_.req_voting_ = false;
+            self.state_.election_in_progress_ = false;
+            return;
+        }
+        if self.state_.current_term_ != send_term {
+            rusty::raft_log_info_1(
+                "[HEARTBEAT-SNAPSHOT] Site {}: Term changed since snapshot send, ignoring response",
+                self.site_id_);
+            return;
+        }
+        let has_successor: bool =
+            raft_server_log_index_has_successor(snap_last_idx);
+        let next_index: u64 = if has_successor {
+            raft_server_follower_next_index(snap_last_idx)
+        } else {
+            snap_last_idx
+        };
+        self.state_.peers_.accept_through(ord, snap_last_idx, has_successor,
+                                          next_index);
+        rusty::raft_log_info_4(
+            "[HEARTBEAT-SNAPSHOT] Site {}: Updated follower {}: next_index={} match_index={}",
+            self.site_id_, site_id, self.state_.peers_.next_index(ord),
+            self.state_.peers_.match_index(ord));
     }
 
     // @safe - the fail-stop every unrecoverable snapshot path performs.

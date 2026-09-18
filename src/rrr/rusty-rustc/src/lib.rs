@@ -492,6 +492,10 @@ rusty_opaque_cpp_carrier! {
     /// `std::string` -- a snapshot payload, carried from the RPC entry point
     /// to the install kernel without being inspected.
     RaftByteString,
+    /// `std::vector<rusty::Arc<janus::TpcCommitCommand>>` -- PHASE 1's batch
+    /// under assembly. Rust drives the loop that fills it and reads its
+    /// length; the marshalling itself stays C++.
+    RaftBatchBuffer,
 }
 
 pub type ReactorIntEvent = rrr::reactor::IntEvent;

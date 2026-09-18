@@ -1937,6 +1937,8 @@ using janus::raft_server_leader_rpc_sender_is_authoritative;
 using janus::raft_server_append_term_is_acceptable;
 using janus::raft_server_append_is_acceptable;
 using janus::raft_server_append_sent_end;
+using janus::raft_server_append_entry_count_fits;
+using janus::raft_server_append_batch_count_is_valid;
 using janus::raft_server_append_entry_conflicts;
 using janus::raft_server_append_result_last_index;
 using janus::raft_server_commit_index_clamp;
@@ -2011,6 +2013,8 @@ use crate::server_h::raft_server_leader_rpc_sender_is_authoritative;
 use crate::server_h::raft_server_append_term_is_acceptable;
 use crate::server_h::raft_server_append_is_acceptable;
 use crate::server_h::raft_server_append_sent_end;
+use crate::server_h::raft_server_append_entry_count_fits;
+use crate::server_h::raft_server_append_batch_count_is_valid;
 use crate::server_h::raft_server_append_entry_conflicts;
 use crate::server_h::raft_server_append_result_last_index;
 use crate::server_h::raft_server_commit_index_clamp;
@@ -2286,7 +2290,7 @@ impl AuthorityLedger {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.authority_ledger version=1 rust_sha256=88dd4715f25bf3b6a1ff93affb8e86fda9b772490d8a669d66e5fa983df70ae6*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.authority_ledger version=1 rust_sha256=db0c4e65b82655da5fad7d5b5960b6ff8b2ed2457ea2cffe1cdaf3de52f2e29a*/
 struct AuthorityGeneration;
 struct AuthorityReply;
 struct AuthorityOutcome;
@@ -2323,6 +2327,10 @@ using ::server_h::raft_server_append_term_is_acceptable;
 using ::server_h::raft_server_append_is_acceptable;
 
 using ::server_h::raft_server_append_sent_end;
+
+using ::server_h::raft_server_append_entry_count_fits;
+
+using ::server_h::raft_server_append_batch_count_is_valid;
 
 using ::server_h::raft_server_append_entry_conflicts;
 
@@ -2653,13 +2661,19 @@ unsafe extern "C" {
     fn raft_verify(condition: bool);
     fn raft_snapshot_manager_is_set(
         manager: *const rusty::RaftSnapshotManagerPtr) -> bool;
-    fn raft_phase1_send_install_snapshot(server: *mut RaftServerBase,
-                                         site_id: u16, ord: usize) -> bool;
-    fn raft_phase1_select_payload(server: *mut RaftServerBase, ord: usize,
-                                  site_id: u16, prev_log_index: u64,
-                                  cmd: *mut rusty::RaftCommand,
-                                  cmd_log_term: *mut u64,
-                                  sent_end_index: *mut u64) -> bool;
+    fn raft_phase1_load_and_send_snapshot(server: *mut RaftServerBase,
+                                          site_id: u16, ord: usize) -> bool;
+    fn raft_batch_optimization_enabled() -> bool;
+    fn raft_append_entries_batch_max() -> u64;
+    fn raft_batch_buffer_clear(server: *mut RaftServerBase);
+    fn raft_batch_buffer_len(server: *const RaftServerBase) -> u64;
+    fn raft_log_entry_kind(server: *const RaftServerBase, index: u64) -> i32;
+    fn raft_copy_log_command(server: *const RaftServerBase, index: u64,
+                             cmd_out: *mut rusty::RaftCommand);
+    fn raft_batch_try_push(server: *mut RaftServerBase, index: u64) -> bool;
+    fn raft_batch_finalize(server: *mut RaftServerBase,
+                           cmd_out: *mut rusty::RaftCommand);
+
     fn raft_phase1_send_append(server: *mut RaftServerBase, site_id: u16,
                                partition_id: u32, is_leader: bool, term: u64,
                                prev_log_index: u64, prev_log_term: u64,
@@ -4146,6 +4160,187 @@ pub fn on_append_entries_body(server: &mut RaftServerBase,
     }
 }
 
+// Chooses what this AppendEntries carries: nothing (a heartbeat), one raw
+// entry, or a TpcBatchCommand. Returns true when the follower must be
+// skipped. CALLER MUST HOLD mtx_.
+//
+// The two arms were an #ifdef RAFT_BATCH_OPTIMIZATION / #ifndef pair. They
+// are an if/else on a compile-time-constant function now, because the
+// preprocessor has no DSL spelling; the compiler folds the dead arm exactly
+// as the preprocessor removed it.
+#[allow(clippy::too_many_arguments)]
+pub fn heartbeat_phase1_select_payload(server: &mut RaftServerBase,
+                                       ord: usize, site_id: u16,
+                                       prev_log_index: u64,
+                                       cmd: &mut rusty::RaftCommand,
+                                       cmd_log_term: &mut u64,
+                                       sent_end_index: &mut u64) -> bool {
+    let mut skip_follower: bool = false;
+
+    if !unsafe { raft_batch_optimization_enabled() } {
+        rusty::raft_log_debug_5(
+            "[BATCH_CHECK] site={} follower={} next_index={} state_.raft_log_.base()={} state_.raft_log_.last_index()={}",
+            server.site_id_, site_id, server.state_.peers_.next_index(ord),
+            server.state_.raft_log_.base(),
+            server.state_.raft_log_.last_index());
+        if server.state_.peers_.next_index(ord)
+            <= server.state_.raft_log_.last_index()
+        {
+            if !raft_server_append_entry_count_fits(prev_log_index, 1) {
+                rusty::raft_log_error_2(
+                    "[HEARTBEAT-SEND] Log index exhausted after {}, skipping follower {}",
+                    prev_log_index, site_id);
+                skip_follower = true;
+            } else {
+                let next: u64 = server.state_.peers_.next_index(ord);
+                let entry = server.state_.raft_log_.get(next);
+                let usable: bool = entry.is_some()
+                    && unsafe {
+                        raft_command_has_value(
+                            entry.unwrap().cmd() as *const rusty::RaftCommand)
+                    };
+                if !usable {
+                    rusty::raft_log_error_2(
+                        "[HEARTBEAT-SEND] Missing log entry {}, skipping follower {}",
+                        next, site_id);
+                    skip_follower = true;
+                } else {
+                    *cmd_log_term = entry.unwrap().term() as u64;
+                    unsafe {
+                        raft_copy_log_command(
+                            server as *const RaftServerBase, next,
+                            cmd as *mut rusty::RaftCommand);
+                    }
+                    *sent_end_index =
+                        raft_server_append_sent_end(prev_log_index, 1);
+                    // The kind tag identifies the payload better than the
+                    // inner shared_ptr's raw address ever did.
+                    let kind: i32 = unsafe {
+                        raft_log_entry_kind(server as *const RaftServerBase,
+                                            next)
+                    };
+                    rusty::raft_log_debug_4(
+                        "[APPEND_SEND] site={} sending entry {} to follower {} cmd_kind={}",
+                        server.site_id_, next, site_id, kind);
+                }
+            }
+        }
+        return skip_follower;
+    }
+
+    // A fresh buffer per follower, as the C++ local was.
+    unsafe {
+        raft_batch_buffer_clear(server as *mut RaftServerBase);
+    }
+    let max_batch_entries: u64 = unsafe { raft_append_entries_batch_max() };
+    let batch_start_idx: u64 = server.state_.peers_.next_index(ord);
+    rusty::raft_log_debug_5(
+        "[BATCH_CHECK] site={} follower={} next_index={} state_.raft_log_.base()={} state_.raft_log_.last_index()={}",
+        server.site_id_, site_id, server.state_.peers_.next_index(ord),
+        server.state_.raft_log_.base(), server.state_.raft_log_.last_index());
+    if !raft_server_append_entry_count_fits(prev_log_index, 1) {
+        rusty::raft_log_error_2(
+            "[HEARTBEAT-BATCH] Log index exhausted after {}, skipping follower {}",
+            prev_log_index, site_id);
+        skip_follower = true;
+    }
+    let first_encoded_index: u64 = if skip_follower {
+        0
+    } else {
+        raft_server_append_sent_end(prev_log_index, 1)
+    };
+    if !skip_follower
+        && (batch_start_idx != first_encoded_index
+            || batch_start_idx < server.state_.raft_log_.base())
+    {
+        rusty::raft_log_error_4(
+            "[HEARTBEAT-BATCH] Non-contiguous source for follower {}: prev={} start={} min_active={}; refusing to compress a hole",
+            site_id, prev_log_index, batch_start_idx,
+            server.state_.raft_log_.base());
+        skip_follower = true;
+    } else if !skip_follower {
+        let mut idx: u64 = batch_start_idx;
+        while idx <= server.state_.raft_log_.last_index()
+            && unsafe { raft_batch_buffer_len(server as *const RaftServerBase) }
+                < max_batch_entries
+        {
+            let entry = server.state_.raft_log_.get(idx);
+            let usable: bool = entry.is_some()
+                && unsafe {
+                    raft_command_has_value(
+                        entry.unwrap().cmd() as *const rusty::RaftCommand)
+                };
+            if !usable {
+                rusty::raft_log_error_2(
+                    "[HEARTBEAT-BATCH] Missing log entry {} for follower {}; refusing to compress a hole",
+                    idx, site_id);
+                skip_follower = true;
+                break;
+            }
+            let entry_term: i64 = entry.unwrap().term();
+            if !unsafe { raft_batch_try_push(server as *mut RaftServerBase, idx) }
+            {
+                let kind: i32 = unsafe {
+                    raft_log_entry_kind(server as *const RaftServerBase, idx)
+                };
+                let batched: u64 = unsafe {
+                    raft_batch_buffer_len(server as *const RaftServerBase)
+                };
+                if batched == 0 {
+                    rusty::raft_log_info_3(
+                        "[BATCH_SKIP] site={} idx={}: log entry is not TpcCommitCommand (kind={}), using raw log",
+                        server.site_id_, idx, kind);
+                    unsafe {
+                        raft_copy_log_command(
+                            server as *const RaftServerBase, idx,
+                            cmd as *mut rusty::RaftCommand);
+                    }
+                    *cmd_log_term = entry_term as u64;
+                    *sent_end_index =
+                        raft_server_append_sent_end(prev_log_index, 1);
+                } else {
+                    rusty::raft_log_info_3(
+                        "[BATCH_STOP] site={} idx={}: ending batch before non-TpcCommitCommand kind={}",
+                        server.site_id_, idx, kind);
+                }
+                break;
+            }
+            if !raft_server_log_index_has_successor(idx) {
+                break;
+            }
+            idx += 1;
+        }
+    }
+
+    let encoded_entry_count: u64 =
+        unsafe { raft_batch_buffer_len(server as *const RaftServerBase) };
+    if !skip_follower && encoded_entry_count > 0
+        && !raft_server_append_batch_count_is_valid(prev_log_index,
+                                                    encoded_entry_count)
+    {
+        rusty::raft_log_error_3(
+            "[HEARTBEAT-BATCH] Invalid encoded count {} after previous index {}; skipping follower {}",
+            encoded_entry_count, prev_log_index, site_id);
+        skip_follower = true;
+    }
+    if !skip_follower && encoded_entry_count > 0 {
+        unsafe {
+            raft_batch_finalize(server as *mut RaftServerBase,
+                                cmd as *mut rusty::RaftCommand);
+        }
+        *sent_end_index = raft_server_append_sent_end(prev_log_index,
+                                                      encoded_entry_count);
+        let batch_end_idx: u64 = *sent_end_index;
+        let truncated: bool =
+            batch_end_idx < server.state_.raft_log_.last_index();
+        rusty::raft_log_info_6(
+            "[BATCH_SEND] site={} sending batch of {} entries to follower {} (from={} to={}{})",
+            server.site_id_, encoded_entry_count, site_id, batch_start_idx,
+            batch_end_idx, if truncated { ", truncated" } else { "" });
+    }
+    skip_follower
+}
+
 // ==========================================================================
 // PHASE 1: send every AppendEntries RPC in parallel, non-blocking.
 //
@@ -4239,10 +4434,25 @@ pub fn heartbeat_phase1_body(server: &mut RaftServerBase,
                 < server.state_.raft_log_.base()
                 && snapshot_configured
             {
-                skip_follower = unsafe {
-                    raft_phase1_send_install_snapshot(
+                // The follower is behind the log's base, so send it a
+                // snapshot instead of entries it can no longer be given.
+                rusty::raft_log_info_4(
+                    "[HEARTBEAT-SNAPSHOT] Site {}: Follower {} next_index={} < state_.raft_log_.base()={}, sending InstallSnapshot",
+                    server.site_id_, site_id,
+                    server.state_.peers_.next_index(ord),
+                    server.state_.raft_log_.base());
+                let sent: bool = unsafe {
+                    raft_phase1_load_and_send_snapshot(
                         server as *mut RaftServerBase, site_id, ord)
                 };
+                if !sent {
+                    rusty::raft_log_warn_2(
+                        "[HEARTBEAT-SNAPSHOT] Site {}: Failed to load snapshot for follower {}, skipping",
+                        server.site_id_, site_id);
+                }
+                // Both outcomes skip the normal AppendEntries for this
+                // follower: sent, or failed to load.
+                skip_follower = true;
             } else {
                 unsafe {
                     raft_verify(
@@ -4274,14 +4484,9 @@ pub fn heartbeat_phase1_body(server: &mut RaftServerBase,
                 }
 
                 if !skip_follower {
-                    skip_follower = unsafe {
-                        raft_phase1_select_payload(
-                            server as *mut RaftServerBase, ord, site_id,
-                            prev_log_index,
-                            &mut cmd as *mut rusty::RaftCommand,
-                            &mut cmd_log_term as *mut u64,
-                            &mut sent_end_index as *mut u64)
-                    };
+                    skip_follower = heartbeat_phase1_select_payload(
+                        server, ord, site_id, prev_log_index, &mut cmd,
+                        &mut cmd_log_term, &mut sent_end_index);
                 }
             }
         }
@@ -4318,7 +4523,7 @@ pub fn heartbeat_phase1_body(server: &mut RaftServerBase,
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_round_scope version=1 rust_sha256=5c1b4649b32cb24b732e3c9247d5b4c879a97608e6d8ae07eaaac4b8a9dab037*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_round_scope version=1 rust_sha256=0f49690295c8e0f7d9bd1f2e4b7502717adf07e9088023eb542574c649131b36*/
 enum class AppendReplyAction : int32_t;
 constexpr AppendReplyAction AppendReplyAction_IGNORED();
 constexpr AppendReplyAction AppendReplyAction_STEP_DOWN();
@@ -4364,8 +4569,15 @@ extern "C" {
     bool raft_command_has_value(const rusty::RaftCommand* cmd);
     void raft_verify(bool condition);
     bool raft_snapshot_manager_is_set(const rusty::RaftSnapshotManagerPtr* manager);
-    bool raft_phase1_send_install_snapshot(server_h::RaftServerBase* server, uint16_t site_id, size_t ord);
-    bool raft_phase1_select_payload(server_h::RaftServerBase* server, size_t ord, uint16_t site_id, uint64_t prev_log_index, rusty::RaftCommand* cmd, uint64_t* cmd_log_term, uint64_t* sent_end_index);
+    bool raft_phase1_load_and_send_snapshot(server_h::RaftServerBase* server, uint16_t site_id, size_t ord);
+    bool raft_batch_optimization_enabled();
+    uint64_t raft_append_entries_batch_max();
+    void raft_batch_buffer_clear(server_h::RaftServerBase* server);
+    uint64_t raft_batch_buffer_len(const server_h::RaftServerBase* server);
+    int32_t raft_log_entry_kind(const server_h::RaftServerBase* server, uint64_t index);
+    void raft_copy_log_command(const server_h::RaftServerBase* server, uint64_t index, rusty::RaftCommand* cmd_out);
+    bool raft_batch_try_push(server_h::RaftServerBase* server, uint64_t index);
+    void raft_batch_finalize(server_h::RaftServerBase* server, rusty::RaftCommand* cmd_out);
     rusty::RaftResponsePtr raft_phase1_send_append(server_h::RaftServerBase* server, uint16_t site_id, uint32_t partition_id, bool is_leader, uint64_t term, uint64_t prev_log_index, uint64_t prev_log_term, uint64_t commit_index, const rusty::RaftCommand* cmd, uint64_t cmd_log_term);
 }
 
@@ -5060,6 +5272,103 @@ void on_append_entries_body(server_h::RaftServerBase& server, uint64_t leader_cu
     }
 }
 
+bool heartbeat_phase1_select_payload(server_h::RaftServerBase& server, size_t ord, uint16_t site_id, uint64_t prev_log_index, rusty::RaftCommand& cmd, uint64_t& cmd_log_term, uint64_t& sent_end_index) {
+    uint64_t* cmd_log_term_shadow1 = &cmd_log_term;
+    uint64_t* sent_end_index_shadow1 = &sent_end_index;
+    bool skip_follower = false;
+    if (!raft_batch_optimization_enabled()) {
+        rusty::raft_log_debug_5("[BATCH_CHECK] site={} follower={} next_index={} state_.raft_log_.base()={} state_.raft_log_.last_index()={}", server.site_id_, std::move(site_id), [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.peers_); }) { return (__r.peers_); } else if constexpr (requires { (__r.peers__field); }) { return (__r.peers__field); } else if constexpr (requires { ((*__r).peers_); }) { return ((*__r).peers_); } else { return ((*__r).peers__field); } }(server.state_).next_index(std::move(ord)), [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }(server.state_).base(), [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }(server.state_).last_index());
+        if ([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.peers_); }) { return (__r.peers_); } else if constexpr (requires { (__r.peers__field); }) { return (__r.peers__field); } else if constexpr (requires { ((*__r).peers_); }) { return ((*__r).peers_); } else { return ((*__r).peers__field); } }(server.state_).next_index(std::move(ord)) <= [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }(server.state_).last_index()) {
+            if (rusty::detail::rust_not(raft_server_append_entry_count_fits(std::move(prev_log_index), 1))) {
+                rusty::raft_log_error_2("[HEARTBEAT-SEND] Log index exhausted after {}, skipping follower {}", std::move(prev_log_index), std::move(site_id));
+                skip_follower = true;
+            } else {
+                uint64_t next = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.peers_); }) { return (__r.peers_); } else if constexpr (requires { (__r.peers__field); }) { return (__r.peers__field); } else if constexpr (requires { ((*__r).peers_); }) { return ((*__r).peers_); } else { return ((*__r).peers__field); } }(server.state_).next_index(std::move(ord));
+                auto entry = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }(server.state_).get(std::move(next));
+                const bool usable = entry.is_some() && raft_command_has_value(rusty::detail::ptr_cast<const rusty::RaftCommand*>(entry.unwrap().cmd()));
+                if (!usable) {
+                    rusty::raft_log_error_2("[HEARTBEAT-SEND] Missing log entry {}, skipping follower {}", std::move(next), std::move(site_id));
+                    skip_follower = true;
+                } else {
+                    *cmd_log_term_shadow1 = static_cast<uint64_t>(entry.unwrap().term());
+                    // @unsafe
+                    {
+                        raft_copy_log_command(static_cast<const server_h::RaftServerBase*>(rusty::detail::ptr_or_addr(server)), std::move(next), static_cast<rusty::RaftCommand*>(rusty::detail::ptr_or_addr(cmd)));
+                    }
+                    *sent_end_index_shadow1 = raft_server_append_sent_end(std::move(prev_log_index), 1);
+                    const int32_t kind = raft_log_entry_kind(static_cast<const server_h::RaftServerBase*>(rusty::detail::ptr_or_addr(server)), std::move(next));
+                    rusty::raft_log_debug_4("[APPEND_SEND] site={} sending entry {} to follower {} cmd_kind={}", server.site_id_, std::move(next), std::move(site_id), std::move(kind));
+                }
+            }
+        }
+        return std::move(skip_follower);
+    }
+    // @unsafe
+    {
+        raft_batch_buffer_clear(static_cast<server_h::RaftServerBase*>(rusty::detail::ptr_or_addr(server)));
+    }
+    const uint64_t max_batch_entries = raft_append_entries_batch_max();
+    uint64_t batch_start_idx = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.peers_); }) { return (__r.peers_); } else if constexpr (requires { (__r.peers__field); }) { return (__r.peers__field); } else if constexpr (requires { ((*__r).peers_); }) { return ((*__r).peers_); } else { return ((*__r).peers__field); } }(server.state_).next_index(std::move(ord));
+    rusty::raft_log_debug_5("[BATCH_CHECK] site={} follower={} next_index={} state_.raft_log_.base()={} state_.raft_log_.last_index()={}", server.site_id_, std::move(site_id), [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.peers_); }) { return (__r.peers_); } else if constexpr (requires { (__r.peers__field); }) { return (__r.peers__field); } else if constexpr (requires { ((*__r).peers_); }) { return ((*__r).peers_); } else { return ((*__r).peers__field); } }(server.state_).next_index(std::move(ord)), [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }(server.state_).base(), [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }(server.state_).last_index());
+    if (rusty::detail::rust_not(raft_server_append_entry_count_fits(std::move(prev_log_index), 1))) {
+        rusty::raft_log_error_2("[HEARTBEAT-BATCH] Log index exhausted after {}, skipping follower {}", std::move(prev_log_index), std::move(site_id));
+        skip_follower = true;
+    }
+    const uint64_t first_encoded_index = (skip_follower ? static_cast<uint64_t>(0) : raft_server_append_sent_end(std::move(prev_log_index), 1));
+    if (!skip_follower && (((rusty::detail::deref_if_pointer_like(batch_start_idx) != rusty::detail::deref_if_pointer_like(first_encoded_index)) || (rusty::detail::deref_if_pointer_like(batch_start_idx) < [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }(server.state_).base())))) {
+        rusty::raft_log_error_4("[HEARTBEAT-BATCH] Non-contiguous source for follower {}: prev={} start={} min_active={}; refusing to compress a hole", std::move(site_id), std::move(prev_log_index), std::move(batch_start_idx), [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }(server.state_).base());
+        skip_follower = true;
+    } else if (!skip_follower) {
+        uint64_t idx = batch_start_idx;
+        while ((rusty::detail::deref_if_pointer_like(idx) <= [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }(server.state_).last_index()) && (raft_batch_buffer_len(static_cast<const server_h::RaftServerBase*>(rusty::detail::ptr_or_addr(server))) < rusty::detail::deref_if_pointer_like(max_batch_entries))) {
+            auto entry = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }(server.state_).get(std::move(idx));
+            const bool usable = entry.is_some() && raft_command_has_value(rusty::detail::ptr_cast<const rusty::RaftCommand*>(entry.unwrap().cmd()));
+            if (!usable) {
+                rusty::raft_log_error_2("[HEARTBEAT-BATCH] Missing log entry {} for follower {}; refusing to compress a hole", std::move(idx), std::move(site_id));
+                skip_follower = true;
+                break;
+            }
+            const int64_t entry_term = entry.unwrap().term();
+            if (!raft_batch_try_push(static_cast<server_h::RaftServerBase*>(rusty::detail::ptr_or_addr(server)), std::move(idx))) {
+                const int32_t kind = raft_log_entry_kind(static_cast<const server_h::RaftServerBase*>(rusty::detail::ptr_or_addr(server)), std::move(idx));
+                const uint64_t batched = raft_batch_buffer_len(static_cast<const server_h::RaftServerBase*>(rusty::detail::ptr_or_addr(server)));
+                if (rusty::detail::deref_if_pointer_like(batched) == static_cast<uint64_t>(0)) {
+                    rusty::raft_log_info_3("[BATCH_SKIP] site={} idx={}: log entry is not TpcCommitCommand (kind={}), using raw log", server.site_id_, std::move(idx), std::move(kind));
+                    // @unsafe
+                    {
+                        raft_copy_log_command(static_cast<const server_h::RaftServerBase*>(rusty::detail::ptr_or_addr(server)), std::move(idx), static_cast<rusty::RaftCommand*>(rusty::detail::ptr_or_addr(cmd)));
+                    }
+                    *cmd_log_term_shadow1 = static_cast<uint64_t>(entry_term);
+                    *sent_end_index_shadow1 = raft_server_append_sent_end(std::move(prev_log_index), 1);
+                } else {
+                    rusty::raft_log_info_3("[BATCH_STOP] site={} idx={}: ending batch before non-TpcCommitCommand kind={}", server.site_id_, std::move(idx), std::move(kind));
+                }
+                break;
+            }
+            if (rusty::detail::rust_not(raft_server_log_index_has_successor(std::move(idx)))) {
+                break;
+            }
+            idx += 1;
+        }
+    }
+    const uint64_t encoded_entry_count = raft_batch_buffer_len(static_cast<const server_h::RaftServerBase*>(rusty::detail::ptr_or_addr(server)));
+    if ((!skip_follower && (rusty::detail::deref_if_pointer_like(encoded_entry_count) > 0)) && rusty::detail::rust_not(raft_server_append_batch_count_is_valid(std::move(prev_log_index), std::move(encoded_entry_count)))) {
+        rusty::raft_log_error_3("[HEARTBEAT-BATCH] Invalid encoded count {} after previous index {}; skipping follower {}", std::move(encoded_entry_count), std::move(prev_log_index), std::move(site_id));
+        skip_follower = true;
+    }
+    if (!skip_follower && (rusty::detail::deref_if_pointer_like(encoded_entry_count) > 0)) {
+        // @unsafe
+        {
+            raft_batch_finalize(static_cast<server_h::RaftServerBase*>(rusty::detail::ptr_or_addr(server)), static_cast<rusty::RaftCommand*>(rusty::detail::ptr_or_addr(cmd)));
+        }
+        *sent_end_index_shadow1 = raft_server_append_sent_end(std::move(prev_log_index), std::move(encoded_entry_count));
+        const uint64_t batch_end_idx = *sent_end_index_shadow1;
+        const bool truncated = rusty::detail::deref_if_pointer_like(batch_end_idx) < [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }(server.state_).last_index();
+        rusty::raft_log_info_6("[BATCH_SEND] site={} sending batch of {} entries to follower {} (from={} to={}{})", server.site_id_, std::move(encoded_entry_count), std::move(site_id), std::move(batch_start_idx), std::move(batch_end_idx), (truncated ? ", truncated" : ""));
+    }
+    return std::move(skip_follower);
+}
+
 void heartbeat_phase1_body(server_h::RaftServerBase& server, PendingTable& pending_rpcs, AuthorityLedger& authority_rounds, const HeartbeatRoundScope& round) {
     uint32_t partition_id = server.partition_id_;
     size_t ord = static_cast<size_t>(0);
@@ -5105,7 +5414,12 @@ void heartbeat_phase1_body(server_h::RaftServerBase& server, PendingTable& pendi
                 [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.peers_); }) { return (__r.peers_); } else if constexpr (requires { (__r.peers__field); }) { return (__r.peers__field); } else if constexpr (requires { ((*__r).peers_); }) { return ((*__r).peers_); } else { return ((*__r).peers__field); } }(server.state_).set_next_index(std::move(ord), 1);
                 skip_follower = true;
             } else if (([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.peers_); }) { return (__r.peers_); } else if constexpr (requires { (__r.peers__field); }) { return (__r.peers__field); } else if constexpr (requires { ((*__r).peers_); }) { return ((*__r).peers_); } else { return ((*__r).peers__field); } }(server.state_).next_index(std::move(ord)) < [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }(server.state_).base()) && rusty::detail::deref_if_pointer_like(snapshot_configured)) {
-                skip_follower = raft_phase1_send_install_snapshot(static_cast<server_h::RaftServerBase*>(rusty::detail::ptr_or_addr(server)), std::move(site_id), std::move(ord));
+                rusty::raft_log_info_4("[HEARTBEAT-SNAPSHOT] Site {}: Follower {} next_index={} < state_.raft_log_.base()={}, sending InstallSnapshot", server.site_id_, std::move(site_id), [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.peers_); }) { return (__r.peers_); } else if constexpr (requires { (__r.peers__field); }) { return (__r.peers__field); } else if constexpr (requires { ((*__r).peers_); }) { return ((*__r).peers_); } else { return ((*__r).peers__field); } }(server.state_).next_index(std::move(ord)), [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }(server.state_).base());
+                const bool sent = raft_phase1_load_and_send_snapshot(static_cast<server_h::RaftServerBase*>(rusty::detail::ptr_or_addr(server)), std::move(site_id), std::move(ord));
+                if (!sent) {
+                    rusty::raft_log_warn_2("[HEARTBEAT-SNAPSHOT] Site {}: Failed to load snapshot for follower {}, skipping", server.site_id_, std::move(site_id));
+                }
+                skip_follower = true;
             } else {
                 // @unsafe
                 {
@@ -5125,7 +5439,7 @@ void heartbeat_phase1_body(server_h::RaftServerBase& server, PendingTable& pendi
                     }
                 }
                 if (!skip_follower) {
-                    skip_follower = raft_phase1_select_payload(static_cast<server_h::RaftServerBase*>(rusty::detail::ptr_or_addr(server)), std::move(ord), std::move(site_id), std::move(prev_log_index), static_cast<rusty::RaftCommand*>(&cmd), static_cast<uint64_t*>(&cmd_log_term), static_cast<uint64_t*>(&sent_end_index));
+                    skip_follower = heartbeat_phase1_select_payload(server, std::move(ord), std::move(site_id), std::move(prev_log_index), cmd, cmd_log_term, sent_end_index);
                 }
             }
         }
@@ -5315,278 +5629,149 @@ extern "C" {
 // Returns true in both outcomes -- sent, or failed to load -- because either
 // way the normal AppendEntries for this follower is skipped.
 // CALLER MUST HOLD mtx_.
-bool raft_phase1_send_install_snapshot(RaftServerBase* self, uint16_t site_id,
-                                       size_t ord) {
-  // @unsafe - Follower is too far behind (log compacted), send InstallSnapshot
-  Log_info("[HEARTBEAT-SNAPSHOT] Site {}: Follower {} next_index={} < state_.raft_log_.base()={}, sending InstallSnapshot",
-           self->site_id_, site_id, self->state_.peers_.next_index(ord), self->state_.raft_log_.base());
+// Loads the latest snapshot and sends it. Returns false when there is no
+// snapshot to load; the caller logs that and skips the follower either way.
+// CALLER MUST HOLD mtx_.
+bool raft_phase1_load_and_send_snapshot(RaftServerBase* self,
+                                        uint16_t site_id, size_t ord) {
   janus::raft::SnapshotMetadata snap_meta;
   std::string snap_data;
-  if (self->snapshot_manager_->LoadLatestSnapshot(&snap_meta, &snap_data)) {
-    uint64_t snap_last_idx = snap_meta.last_included_index;
-    uint64_t snap_last_term = snap_meta.last_included_term;
-    uint64_t send_term = self->state_.current_term_;
-    auto callback_lifetime = self->async_callback_lifetime_;
-    static_cast<RaftServer*>(self)->commo()->SendInstallSnapshot(
-        site_id, self->partition_id_,
-        send_term, self->site_id_,
-        snap_last_idx, snap_last_term,
-        snap_data,
-        [callback_lifetime, site_id, ord, snap_last_idx, send_term](uint64_t follower_term) {
-          std::lock_guard<std::mutex> lifetime_lock(
-              callback_lifetime->mutex);
-          auto* server = callback_lifetime->server;
-          if (server == nullptr) {
-            return;
-          }
-          // THE LOCK IS TAKEN BELOW THIS CHECK, NOT ABOVE IT, and
-          // that placement is load-bearing.
-          //
-          // This callback runs in TWO contexts. Normally the reactor
-          // invokes it when the reply lands, with mtx_ not held. But
-          // RaftCommo::SendInstallSnapshot invokes it INLINE, on the
-          // caller's stack, when PeerForSite returns null
-          // (commo.cc:167-170) -- and that caller is PHASE 1, which
-          // holds mtx_. A recursive_mutex tolerates the re-entry; a
-          // plain std::mutex would self-deadlock, which is what
-          // blocked demoting it.
-          //
-          // The inline path always passes follower_term == 0, so it
-          // takes the branch below and returns having touched no
-          // state at all. Acquiring after the check means the
-          // synchronous context never reaches the lock, and every
-          // path that does reach it is the asynchronous one. self->site_id_
-          // is written once during Setup, so reading it for the log
-          // needs no lock.
-          if (!raft_server_install_snapshot_reply_is_available(
-                  follower_term)) {
-            Log_warn("[HEARTBEAT-SNAPSHOT] Site {}: Follower {} snapshot response unavailable; retaining replication indices",
-                     server->site_id_, site_id);
-            return;
-          }
-          // @unsafe - callback modifies shared state under lock
-          std::lock_guard<RaftCheckedMutex> lock(server->mtx_);
-          if (raft_server_observed_higher_term(
-                  follower_term, server->state_.current_term_)) {
-            Log_info("[HEARTBEAT-SNAPSHOT] Site {}: Follower {} has higher term {} > {}, stepping down",
-                     server->site_id_, site_id, follower_term,
-                     server->state_.current_term_);
-            const uint64_t previous_term = server->state_.current_term_;
-            server->state_.current_term_ = follower_term;
-            server->state_.vote_for_ = INVALID_SITEID;
-            server->LogTermChange(
-                "InstallSnapshot reply carried newer term",
-                previous_term, server->state_.current_term_, site_id);
-            // A follower's higher term does not identify the leader
-            // of that term. Retire the previous leader hint before
-            // publishing follower state.
-            server->state_.current_leader_id_ =
-                raft_server_leader_hint_after_transition(
-                    false, false, server->site_id_, site_id);
-            server->stepDown();
-            server->state_.req_voting_ = false;
-            server->state_.election_in_progress_ = false;
-            return;
-          }
-          if (server->state_.current_term_ != send_term) {
-            Log_info("[HEARTBEAT-SNAPSHOT] Site {}: Term changed since snapshot send, ignoring response",
-                     server->site_id_);
-            return;
-          }
-          server->state_.peers_.accept_through(ord,
-              snap_last_idx,
-              raft_server_log_index_has_successor(snap_last_idx),
-              raft_server_log_index_has_successor(snap_last_idx)
-                  ? raft_server_follower_next_index(snap_last_idx)
-                  : snap_last_idx);
-          Log_info("[HEARTBEAT-SNAPSHOT] Site {}: Updated follower {}: next_index={} match_index={}",
-                   server->site_id_, site_id,
-                   server->state_.peers_.next_index(ord),
-                   server->state_.peers_.match_index(ord));
-        });
-    // Skip the normal AppendEntries for this follower.
-  } else {
-    Log_warn("[HEARTBEAT-SNAPSHOT] Site {}: Failed to load snapshot for follower {}, skipping",
-             self->site_id_, site_id);
+  if (!self->snapshot_manager_->LoadLatestSnapshot(&snap_meta, &snap_data)) {
+    return false;
   }
-  // Both outcomes skip: sent, or failed to load.
+  const uint64_t snap_last_idx = snap_meta.last_included_index;
+  const uint64_t snap_last_term = snap_meta.last_included_term;
+  const uint64_t send_term = self->state_.current_term_;
+  auto callback_lifetime = self->async_callback_lifetime_;
+  static_cast<RaftServer*>(self)->commo()->SendInstallSnapshot(
+      site_id, self->partition_id_,
+      send_term, self->site_id_,
+      snap_last_idx, snap_last_term,
+      snap_data,
+      [callback_lifetime, site_id, ord, snap_last_idx, send_term](
+          uint64_t follower_term) {
+        std::lock_guard<std::mutex> lifetime_lock(callback_lifetime->mutex);
+        auto* server = callback_lifetime->server;
+        if (server == nullptr) {
+          return;
+        }
+        // THE LOCK IS TAKEN BELOW THIS CHECK, NOT ABOVE IT, and that
+        // placement is load-bearing.
+        //
+        // This callback runs in TWO contexts. Normally the reactor invokes it
+        // when the reply lands, with mtx_ not held. But
+        // RaftCommo::SendInstallSnapshot invokes it INLINE, on the caller's
+        // stack, when PeerForSite returns null (commo.cc:167-170) -- and that
+        // caller is PHASE 1, which holds mtx_. A recursive_mutex tolerates
+        // the re-entry; a plain std::mutex would self-deadlock, which is what
+        // blocked demoting it.
+        //
+        // The inline path always passes follower_term == 0, so it takes the
+        // branch below and returns having touched no state at all. Acquiring
+        // after the check means the synchronous context never reaches the
+        // lock, and every path that does reach it is the asynchronous one.
+        // site_id_ is written once during Setup, so reading it for the log
+        // needs no lock.
+        //
+        // Everything past this point is Rust
+        // (RaftServerBase::InstallSnapshotReplyAccepted), which takes mtx_
+        // itself -- so the ordering the comment describes is now expressed by
+        // where the call sits rather than by where a guard is declared.
+        if (!raft_server_install_snapshot_reply_is_available(follower_term)) {
+          Log_warn("[HEARTBEAT-SNAPSHOT] Site {}: Follower {} snapshot response unavailable; retaining replication indices",
+                   server->site_id_, site_id);
+          return;
+        }
+        server->InstallSnapshotReplyAccepted(site_id, ord, snap_last_idx,
+                                             send_term, follower_term);
+      });
   return true;
 }
 
-// Chooses what this AppendEntries carries: nothing (a heartbeat), one raw
-// entry, or a TpcBatchCommand. Writes cmd / cmd_log_term / sent_end_index
-// through its out-parameters and returns true when the follower must be
-// skipped.
-// CALLER MUST HOLD mtx_.
-bool raft_phase1_select_payload(RaftServerBase* self, size_t ord,
-                                uint16_t site_id, uint64_t prevLogIndex,
-                                rusty::RaftCommand* cmd_out,
-                                uint64_t* cmd_log_term_out,
-                                uint64_t* sent_end_index_out) {
-  bool skip_follower = false;
-  janus::Command cmd = std::move(*cmd_out);
-  uint64_t cmdLogTerm = *cmd_log_term_out;
-  uint64_t sent_end_index = *sent_end_index_out;
-  #ifndef RAFT_BATCH_OPTIMIZATION
-  Log_debug("[BATCH_CHECK] site={} follower={} next_index={} state_.raft_log_.base()={} state_.raft_log_.last_index()={}",
-           self->site_id_, site_id, self->state_.peers_.next_index(ord), self->state_.raft_log_.base(), self->state_.raft_log_.last_index());
-  if (self->state_.peers_.next_index(ord) <= self->state_.raft_log_.last_index()) {
-    if (!raft_server_append_entry_count_fits(prevLogIndex, 1)) {
-      Log_error("[HEARTBEAT-SEND] Log index exhausted after {}, "
-                "skipping follower {}",
-                prevLogIndex, site_id);
-      skip_follower = true;
-    } else {
-      const RaftEntry* cur_log =
-          static_cast<RaftServer*>(self)->FindRaftInstance(self->state_.peers_.next_index(ord));
-      if (cur_log == nullptr || !cur_log->cmd().has_value()) {
-        Log_error("[HEARTBEAT-SEND] Missing log entry {}, skipping follower {}",
-                  self->state_.peers_.next_index(ord), site_id);
-        skip_follower = true;
-      } else {
-        const RaftEntry* curInstance = cur_log;
-        // cmd is Command; assign directly from
-        // curInstance->log_ (also Command).
-        cmd = curInstance->cmd();
-        cmdLogTerm = curInstance->term();
-        sent_end_index =
-            raft_server_append_sent_end(prevLogIndex, 1);
-        // 2 step 1: debug log no longer needs the
-        // inner shared_ptr's raw pointer; the kind tag is
-        // a more useful identifier anyway.
-        Log_debug("[APPEND_SEND] site={} sending entry {} to follower {} cmd_kind={}",
-            self->site_id_, self->state_.peers_.next_index(ord), site_id, cmd.kind_);
-      }
-    }
-  }
-  #endif
+// RAFT_BATCH_OPTIMIZATION, as a value a DSL body can branch on. Same device
+// as raft_election_debug_enabled: the two payload-selection arms were an
+// #ifdef/#ifndef pair, and the preprocessor has no DSL spelling, so the
+// switch becomes a branch the compiler folds.
+bool raft_batch_optimization_enabled() {
+#ifdef RAFT_BATCH_OPTIMIZATION
+  return true;
+#else
+  return false;
+#endif
+}
 
-  #ifdef RAFT_BATCH_OPTIMIZATION
-  vector<rusty::Arc<TpcCommitCommand>> batch_buffer_;
-  const uint64_t max_batch_entries = GetAppendEntriesBatchMaxEntries();
-  const uint64_t batch_start_idx = self->state_.peers_.next_index(ord);
-  Log_debug("[BATCH_CHECK] site={} follower={} next_index={} state_.raft_log_.base()={} state_.raft_log_.last_index()={}",
-           self->site_id_, site_id, self->state_.peers_.next_index(ord), self->state_.raft_log_.base(), self->state_.raft_log_.last_index());
-  if (!raft_server_append_entry_count_fits(prevLogIndex, 1)) {
-    Log_error("[HEARTBEAT-BATCH] Log index exhausted after {}, "
-              "skipping follower {}",
-              prevLogIndex, site_id);
-    skip_follower = true;
+uint64_t raft_append_entries_batch_max() {
+  return GetAppendEntriesBatchMaxEntries();
+}
+
+void raft_batch_buffer_clear(RaftServerBase* self) {
+  self->batch_buffer_.clear();
+}
+
+uint64_t raft_batch_buffer_len(const RaftServerBase* self) {
+  return self->batch_buffer_.size();
+}
+
+// The wire kind of the command at a log index, for the diagnostics that
+// report why an entry could not be batched.
+int32_t raft_log_entry_kind(const RaftServerBase* self, uint64_t index) {
+  const auto found = self->state_.raft_log_.get(index);
+  verify(found.is_some());
+  return static_cast<int32_t>(found.unwrap().cmd().kind_);
+}
+
+// Copies the stored command out of the log, for the single-entry paths.
+void raft_copy_log_command(const RaftServerBase* self, uint64_t index,
+                           rusty::RaftCommand* cmd_out) {
+  const auto found = self->state_.raft_log_.get(index);
+  verify(found.is_some());
+  *cmd_out = found.unwrap().cmd();
+}
+
+// Appends the entry at `index` to the batch under assembly. Returns false
+// when it is not a TpcCommitCommand, which ends the batch.
+//
+// STAMP A COPY, NEVER THE STORED ENTRY.
+//
+// The batched wire format carries each entry's term inside its
+// TpcCommitCommand -- the receiver reads it back to set the entry's term --
+// and the command is created with term 0 (raft_worker.cc), so something has
+// to stamp it. This used to const_cast the payload of the entry in the log
+// and write through it: a mutation of committed, already-replicated, shared
+// state, performed lazily at send time.
+//
+// It was idempotent, because a committed entry's term never changes, so it
+// was not a live bug. But it is the only place in the file that modifies an
+// existing log entry, and a log that can be modified after commit cannot
+// state its own invariants -- so it has no spelling in a Rust-owned RaftLog,
+// whose entries are reachable only as &RaftEntry.
+//
+// Copying is cheap and does not touch the payload: TpcCommitCommand is two
+// scalars, an int and two Arcs, so the copy bumps refcounts and leaves the
+// LogEntry bytes shared.
+// @unsafe { factory-fresh Arc, uniquely owned mutation window }
+bool raft_batch_try_push(RaftServerBase* self, uint64_t index) {
+  const auto found = self->state_.raft_log_.get(index);
+  verify(found.is_some());
+  const RaftEntry& entry = found.unwrap();
+  // marshallable_cast<T>(SerializableEnvelope&) handles a Command directly.
+  auto cur_cmd = marshallable_cast<TpcCommitCommand>(entry.cmd());
+  if (cur_cmd.is_none()) {
+    return false;
   }
-  const uint64_t first_encoded_index = skip_follower
-      ? 0
-      : raft_server_append_sent_end(prevLogIndex, 1);
-  if (!skip_follower &&
-      (batch_start_idx != first_encoded_index ||
-       batch_start_idx < self->state_.raft_log_.base())) {
-    Log_error("[HEARTBEAT-BATCH] Non-contiguous source for follower {}: "
-              "prev={} start={} min_active={}; refusing to compress a hole",
-              site_id, prevLogIndex, batch_start_idx,
-              self->state_.raft_log_.base());
-    skip_follower = true;
-  } else if (!skip_follower) {
-    for (uint64_t idx = batch_start_idx;
-         idx <= self->state_.raft_log_.last_index() &&
-         batch_buffer_.size() < max_batch_entries;) {
-      const RaftEntry* cur_log = static_cast<RaftServer*>(self)->FindRaftInstance(idx);
-      if (cur_log == nullptr || !cur_log->cmd().has_value()) {
-        Log_error("[HEARTBEAT-BATCH] Missing log entry {} for follower {}; "
-                  "refusing to compress a hole",
-                  idx, site_id);
-        skip_follower = true;
-        break;
-      }
-      const RaftEntry* curInstance = cur_log;
-      // curInstance->cmd() is Command; the
-      // `marshallable_cast<T>(SerializableEnvelope&)`
-      // overload (in serializable_envelope.hpp) handles
-      // this directly.
-      auto curCmd =
-          marshallable_cast<TpcCommitCommand>(curInstance->cmd());
-      if (curCmd.is_none()) {
-        if (batch_buffer_.empty()) {
-          Log_info("[BATCH_SKIP] site={} idx={}: log entry is not "
-                   "TpcCommitCommand (kind={}), using raw log",
-                   self->site_id_, idx, curInstance->cmd().kind_);
-          cmd = curInstance->cmd();
-          cmdLogTerm = curInstance->term();
-          sent_end_index =
-              raft_server_append_sent_end(prevLogIndex, 1);
-        } else {
-          Log_info("[BATCH_STOP] site={} idx={}: ending batch before "
-                   "non-TpcCommitCommand kind={}",
-                   self->site_id_, idx, curInstance->cmd().kind_);
-        }
-        break;
-      }
-      // STAMP A COPY, NEVER THE STORED ENTRY.
-      //
-      // The batched wire format carries each entry's term inside
-      // its TpcCommitCommand -- the receiver reads it back at
-      // server.cc:4730 to set the entry's term -- and the command
-      // is created with term 0 (raft_worker.cc:741), so something
-      // has to stamp it. This used to const_cast the payload of
-      // the entry in the log and write through it: a mutation
-      // of committed, already-replicated, shared state, performed
-      // lazily at send time.
-      //
-      // It was idempotent, because a committed entry's term never
-      // changes, so it was not a live bug. But it is the only
-      // place in the file that modifies an existing log entry, and
-      // a log that can be modified after commit cannot state its
-      // own invariants -- so it has no spelling in a Rust-owned
-      // RaftLog, whose entries are reachable only as &RaftEntry.
-      //
-      // Copying is cheap and does not touch the payload:
-      // TpcCommitCommand is two scalars, an int, and two Arcs, so
-      // the copy bumps refcounts and leaves the LogEntry bytes
-      // shared.
-      // @unsafe { factory-fresh Arc, uniquely owned mutation window }
-      {
-        auto stamped = rusty::Arc<TpcCommitCommand>::make(
-            *curCmd.as_ref().unwrap());
-        stamped.get_mut().unwrap().term = curInstance->term();
-        batch_buffer_.push_back(std::move(stamped));
-      }
-      if (!raft_server_log_index_has_successor(idx)) {
-        break;
-      }
-      ++idx;
-    }
-  }
-  if (!skip_follower && batch_buffer_.size() > 0) {
-    const uint64_t encoded_entry_count =
-        static_cast<uint64_t>(batch_buffer_.size());
-    if (!raft_server_append_batch_count_is_valid(
-            prevLogIndex, encoded_entry_count)) {
-      Log_error("[HEARTBEAT-BATCH] Invalid encoded count {} after "
-                "previous index {}; skipping follower {}",
-                encoded_entry_count, prevLogIndex, site_id);
-      skip_follower = true;
-    }
-  }
-  if (!skip_follower && batch_buffer_.size() > 0) {
-    // Fill-then-wrap: assemble locally, wrap once complete.
-    TpcBatchCommand batch_local;
-    batch_local.AddCmds(batch_buffer_);
-    auto batch_cmd =
-        rusty::Arc<TpcBatchCommand>::make(std::move(batch_local));
-    cmd = std::move(batch_cmd);
-    sent_end_index = raft_server_append_sent_end(
-        prevLogIndex,
-        static_cast<uint64_t>(batch_buffer_.size()));
-    const uint64_t batch_end_idx = sent_end_index;
-    const bool truncated = batch_end_idx < self->state_.raft_log_.last_index();
-    Log_info("[BATCH_SEND] site={} sending batch of {} entries to follower {} "
-             "(from={} to={}{})",
-             self->site_id_, batch_buffer_.size(), site_id,
-             batch_start_idx, batch_end_idx, truncated ? ", truncated" : "");
-  }
-  #endif
-  *cmd_out = std::move(cmd);
-  *cmd_log_term_out = cmdLogTerm;
-  *sent_end_index_out = sent_end_index;
-  return skip_follower;
+  auto stamped = rusty::Arc<TpcCommitCommand>::make(*cur_cmd.as_ref().unwrap());
+  stamped.get_mut().unwrap().term = entry.term();
+  self->batch_buffer_.push_back(std::move(stamped));
+  return true;
+}
+
+// Fill-then-wrap: the buffer is assembled entry by entry above, and wrapped
+// once, here, when it is complete.
+void raft_batch_finalize(RaftServerBase* self, rusty::RaftCommand* cmd_out) {
+  TpcBatchCommand batch_local;
+  batch_local.AddCmds(self->batch_buffer_);
+  auto batch_cmd = rusty::Arc<TpcBatchCommand>::make(std::move(batch_local));
+  *cmd_out = std::move(batch_cmd);
 }
 
 // The send itself. Non-blocking: it only initiates the async call. The
