@@ -872,9 +872,9 @@ pub struct RaftConsensusState {
     snapshot_callback_owner_token_: u64,
     next_snapshot_callback_owner_token_: u64,
     // Leadership, and the campaign in progress.
-    is_leader_: bool,
-    req_voting_: bool,
-    election_in_progress_: bool,
+    pub is_leader_: bool,
+    pub req_voting_: bool,
+    pub election_in_progress_: bool,
     pub current_leader_id_: u16,
     last_heartbeat_time_: u64,
     // Read-index evidence: the round counter and the newest confirmed proof.
@@ -886,10 +886,10 @@ pub struct RaftConsensusState {
     // in the class without a trailing underscore.
     pub current_term_: u64,
     pub commit_index_: u64,
-    execute_index_: u64,
+    pub execute_index_: u64,
     // Snapshot boundary.
     pub snapidx_: u64,
-    snapterm_: i64,
+    pub snapterm_: i64,
 }
 
 #[allow(clippy::new_without_default)]

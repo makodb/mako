@@ -1898,9 +1898,9 @@ pub struct RaftConsensusState {
     snapshot_callback_owner_token_: u64,
     next_snapshot_callback_owner_token_: u64,
     // Leadership, and the campaign in progress.
-    is_leader_: bool,
-    req_voting_: bool,
-    election_in_progress_: bool,
+    pub is_leader_: bool,
+    pub req_voting_: bool,
+    pub election_in_progress_: bool,
     pub current_leader_id_: u16,
     last_heartbeat_time_: u64,
     // Read-index evidence: the round counter and the newest confirmed proof.
@@ -1912,10 +1912,10 @@ pub struct RaftConsensusState {
     // in the class without a trailing underscore.
     pub current_term_: u64,
     pub commit_index_: u64,
-    execute_index_: u64,
+    pub execute_index_: u64,
     // Snapshot boundary.
     pub snapidx_: u64,
-    snapterm_: i64,
+    pub snapterm_: i64,
 }
 
 #[allow(clippy::new_without_default)]
@@ -1954,7 +1954,7 @@ impl RaftConsensusState {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.consensus_state version=1 rust_sha256=f2f9d2a48fcc9beae84ad8882af6cdd2b70c73ace81ebaeb8dc0af24625d7076*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.consensus_state version=1 rust_sha256=cd68c26e42b48a077fca92b6c6c297a9b56a1a900752cb44d21f7763788a083e*/
 struct RaftConsensusState;
 
 struct RaftConsensusState {
@@ -2525,6 +2525,13 @@ class RaftServer : public TxLogServer {
   // The consensus cluster mtx_ guards, now one Rust-owned value instead of
   // eight bare members. Reached as state_.field by C++ that has not converted.
   RaftConsensusState state_{RaftConsensusState::new_()};
+
+  // Scratch for raft_ae_decode_payload: the incoming entries' terms, read
+  // back one at a time by the DSL body. A member rather than a parameter
+  // because rusty::Vec is not FFI-safe across an extern "C" block. Valid
+  // only between a decode and the end of the OnAppendEntries call that
+  // triggered it, which is entirely under mtx_.
+  std::vector<int64_t> decoded_terms_{};
   // Hand-written rather than TXLOG_SERVER_SITE_METHODS(), because Raft has to
   // mirror the three ids into state_ where converted Rust bodies can see
   // them. The other two methods the macro defines are reproduced verbatim.
@@ -2634,7 +2641,9 @@ class RaftServer : public TxLogServer {
   // random timeout on each poll or start a campaign from an expired snapshot
   // after a concurrent heartbeat reset.
   // @safe - logging calls wrapped in @unsafe blocks in implementation
+ public:  // for the raft_ae_* trampolines; back to private when converted
   void LogTermChange(const char* reason, uint64_t old_term, uint64_t new_term, siteid_t source = INVALID_SITEID);
+ private:
   rusty::sync::atomic::AtomicBool stop_{false};
   // Consensus RPC services are registered before their owner-thread Setup job
   // runs. Admission stays closed until snapshot recovery has completed, and
@@ -2847,7 +2856,9 @@ class RaftServer : public TxLogServer {
   void PublishAppliedIndexLocked(uint64_t index);
 
   void StartApplyThread();
+ public:  // for the raft_ae_* trampolines; back to private when converted
   void EnqueueCommittedEntries(slotid_t old_commit, slotid_t new_commit);
+ private:
 
   // @unsafe - const char* parameter type requires unsafe context
   // Acquiring entry point. See resetTimerLocked for the body.
@@ -2860,6 +2871,7 @@ class RaftServer : public TxLogServer {
   }
 
   // CALLER MUST HOLD mtx_.
+ public:  // for the raft_ae_* trampolines; back to private when converted
   void resetTimerLocked(const char* reason = "unspecified") {
     // @unsafe
     {
@@ -2882,6 +2894,7 @@ class RaftServer : public TxLogServer {
       }
     }
   }
+ private:
 
 
   /**
