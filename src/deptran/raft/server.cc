@@ -1003,123 +1003,6 @@ RaftServer::GetSnapshotManager() {
 }
 
 
-// @unsafe - Caller holds state_machine_apply_mtx_ then mtx_. This keeps the
-// callback's serialized bytes, state_.execute_index_, and boundary term in one applied
-// state-machine epoch.
-bool RaftServer::CreateSnapshotLocked() {
-
-  if (!snapshot_manager_) {
-    Log_debug("[RAFT-SNAPSHOT] Site {}: No snapshot manager, skipping CreateSnapshot",
-              site_id_);
-    return false;
-  }
-
-  slotid_t snap_index = state_.execute_index_;
-  if (snap_index == 0) {
-    Log_debug("[RAFT-SNAPSHOT] Site {}: state_.execute_index_ is 0, nothing to snapshot",
-              site_id_);
-    return false;
-  }
-  if (!raft_server_log_index_has_successor(snap_index)) {
-    Log_error("[RAFT-SNAPSHOT] Site {}: Cannot snapshot terminal log index {}; "
-              "no successor index is representable",
-              site_id_, snap_index);
-    return false;
-  }
-
-  // Determine the term at the snapshot index
-  ballot_t snap_term = 0;
-  if (raft_server_snapshot_term_uses_boundary(snap_index, state_.snapidx_)) {
-    // The boundary entry is intentionally absent after compaction. Its term is
-    // carried by snapshot metadata; do not recreate the entry or rewind
-    // state_.raft_log_.base() by appending it again.
-    snap_term = state_.snapterm_;
-  } else {
-    const RaftEntry* instance = FindRaftInstance(snap_index);
-    if (instance != nullptr) {
-      snap_term = instance->term();
-    } else {
-      // A missing historical term cannot be inferred from state_.current_term_: doing
-      // so would forge the snapshot boundary tuple and could make a follower
-      // retain a conflicting suffix. Preserve the existing snapshot/log state
-      // and wait until a trustworthy boundary is available.
-      Log_error("[RAFT-SNAPSHOT] Site {}: Cannot determine term at applied "
-                "index {}; aborting snapshot creation",
-                site_id_, snap_index);
-      return false;
-    }
-  }
-
-  // Serialize state-machine data. Production may compact only behind a real
-  // state-machine checkpoint. RaftLab has no application state and therefore
-  // uses a strict 16-byte index+term marker.
-  // @unsafe { string operations, callback invocation }
-  std::string state_data;
-  if (create_sm_snapshot_cb_) {
-    try {
-      state_data = create_sm_snapshot_cb_(snap_index);
-    } catch (const std::exception& error) {
-      Log_error("[RAFT-SNAPSHOT] Site {} state-machine snapshot callback threw: {}",
-                site_id_, error.what());
-      return false;
-    } catch (...) {
-      Log_error("[RAFT-SNAPSHOT] Site {} state-machine snapshot callback threw",
-                site_id_);
-      return false;
-    }
-    if (state_data.empty()) {
-      Log_error("[RAFT-SNAPSHOT] Site {} state-machine snapshot callback "
-                "returned an empty checkpoint; retaining the log",
-                site_id_);
-      return false;
-    }
-    Log_info("[RAFT-SNAPSHOT] Site {}: State machine snapshot callback produced {} bytes",
-             site_id_, state_data.size());
-  } else {
-#ifdef RAFT_TEST_CORO
-    // Fallback: 8 bytes state_.execute_index_ + 8 bytes term
-    state_data.resize(sizeof(uint64_t) * 2);
-    char* ptr = state_data.data();
-    std::memcpy(ptr, &snap_index, sizeof(uint64_t));
-    ptr += sizeof(uint64_t);
-    std::memcpy(ptr, &snap_term, sizeof(uint64_t));
-#else
-    Log_error("[RAFT-SNAPSHOT] Site {} has no state-machine snapshot callback; "
-              "production compaction is disabled",
-              site_id_);
-    return false;
-#endif
-  }
-
-  // Persist the snapshot via the snapshot manager
-  // @unsafe { snapshot_manager_ I/O operations }
-  bool saved = snapshot_manager_->TakeSnapshot(
-      snap_index, snap_term,
-      state_data.data(), state_data.size());
-
-  if (!saved) {
-    Log_error("[RAFT-SNAPSHOT] Site {}: Failed to save snapshot at index={} term={}",
-              site_id_, snap_index, snap_term);
-    return false;
-  }
-
-  // Update snapshot metadata
-  slotid_t old_snapidx = state_.snapidx_;
-  state_.snapidx_ = snap_index;
-  state_.snapterm_ = snap_term;
-  snapshot_trigger_index_.store(
-      state_.snapidx_, rusty::sync::atomic::Ordering::Release);
-
-  Log_info("[RAFT-SNAPSHOT] Site {}: Snapshot saved at index={} term={} (prev snapidx={})",
-           site_id_, snap_index, snap_term, old_snapidx);
-
-  // Compact the log up to the snapshot index
-  size_t compacted = CompactLogLocked(snap_index);
-  Log_info("[RAFT-SNAPSHOT] Site {}: Compacted {} entries up to index={}",
-           site_id_, compacted, snap_index);
-  return true;
-}
-
 // ============================================================================
 
 // ===========================================================================
@@ -1271,9 +1154,6 @@ void raft_apply_thread_join(RaftServerBase* self) {
 void raft_commo_set_network_enabled(RaftServerBase* self, bool enabled) {
   static_cast<RaftServer*>(self)->commo()->SetNetworkEnabled(enabled);
 }
-bool raft_create_snapshot_locked(RaftServerBase* self) {
-  return static_cast<RaftServer*>(self)->CreateSnapshotLocked();
-}
 void raft_request_replication(RaftServerBase* self) {
   RaftServer* const server = static_cast<RaftServer*>(self);
   if (!server->replication_wake_gate_->publish()) {
@@ -1315,9 +1195,8 @@ void raft_spawn_election_timer(RaftServerBase* self, uint64_t wait_int_us) {
 // have no DSL spelling in this dialect, and this one exists to turn a throwing
 // setup into a failed startup rather than a crash.
 bool raft_setup_internal_guarded(RaftServerBase* self) {
-  RaftServer* const server = static_cast<RaftServer*>(self);
   try {
-    return server->SetupInternal();
+    return self->SetupInternal();
   } catch (const std::exception& error) {
     Log_error("[RAFT-STARTUP] Site {} setup threw: {}", self->site_id_,
               error.what());
@@ -1337,6 +1216,142 @@ void raft_shutdown_barrier_yield() {
   } else {
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
+}
+
+// (1)/(3) Setup's environment overrides, membership load, and fiber spawns.
+
+// std::getenv + std::stoull + the catch. Returns 0 when unset, 1 with the
+// parsed value in *out, 2 when the value is present but unparseable (the
+// diagnostic is logged here, where the raw string is).
+int raft_env_heartbeat_interval_us(uint64_t* out) {
+  const char* raw = std::getenv("MAKO_RAFT_HEARTBEAT_INTERVAL_US");
+  if (raw == nullptr || raw[0] == '\0') {
+    return 0;
+  }
+  try {
+    *out = std::stoull(raw);
+  } catch (const std::exception& error) {
+    Log_error("[RAFT] Invalid heartbeat interval '{}': {}", raw, error.what());
+    return 2;
+  }
+  return 1;
+}
+
+int raft_env_log_retention_window(uint64_t* out) {
+  const char* raw = std::getenv("MAKO_RAFT_LOG_RETENTION_WINDOW");
+  if (raw == nullptr || raw[0] == '\0') {
+    return 0;
+  }
+  try {
+    *out = std::stoull(raw);
+  } catch (const std::exception& error) {
+    Log_error("[RAFT] Invalid log retention window '{}': {}", raw,
+              error.what());
+    return 2;
+  }
+  return 1;
+}
+
+// Binds the wake gate to the communicator's PollThread before HeartbeatLoop
+// can publish its owner-thread-only IntEvent. The communicator always
+// retains the PollThread it created or was given.
+bool raft_bind_replication_poll(RaftServerBase* self) {
+  RaftServer* const server = static_cast<RaftServer*>(self);
+  rusty::Option<rusty::Arc<rrr::PollThread>> replication_poll = rusty::None;
+  if (server->commo() != nullptr) {
+    replication_poll = server->commo()->PollThread();
+  }
+  if (replication_poll.is_none()) {
+    return false;
+  }
+  server->BindReplicationWakeOwner(replication_poll.unwrap());
+  return true;
+}
+
+bool raft_initialize_snapshot_manager(RaftServerBase* self) {
+  return static_cast<RaftServer*>(self)->InitializeSnapshotManager();
+}
+
+// The fixed replica set for this partition's lifetime; memory-only Raft has
+// no membership change. Returns how many replicas were loaded.
+uint64_t raft_load_current_config(RaftServerBase* self) {
+  auto config = Config::GetConfig();
+  auto replicas = config->SitesByPartitionId(self->partition_id_);
+  for (auto& site : replicas) {
+    self->current_config_.insert(site.id);
+  }
+  self->SyncConfigMembers();
+  return self->current_config_.size();
+}
+
+void raft_start_apply_thread(RaftServerBase* self) {
+  static_cast<RaftServer*>(self)->StartApplyThread();
+}
+
+void raft_spawn_heartbeat_loop(RaftServerBase* self) {
+  RaftServer* const server = static_cast<RaftServer*>(self);
+  Fiber::create_run([server]() { server->HeartbeatLoop(); });
+}
+
+void raft_spawn_election_timer_fiber(RaftServerBase* self) {
+  RaftServer* const server = static_cast<RaftServer*>(self);
+  Fiber::create_run([server]() { server->StartElectionTimer(); });
+}
+
+// CreateSnapshotLocked's state-machine checkpoint and its persistence: a
+// std::string built by a std::function that may throw, an #ifdef fallback,
+// and snapshot_manager_ I/O. CALLER MUST HOLD mtx_.
+bool raft_snapshot_serialize_and_save(RaftServerBase* self,
+                                      uint64_t snap_index,
+                                      int64_t snap_term) {
+  // Production may compact only behind a real state-machine checkpoint.
+  // RaftLab has no application state and uses a strict 16-byte index+term
+  // marker instead.
+  std::string state_data;
+  if (self->create_sm_snapshot_cb_) {
+    try {
+      state_data = self->create_sm_snapshot_cb_(snap_index);
+    } catch (const std::exception& error) {
+      Log_error("[RAFT-SNAPSHOT] Site {} state-machine snapshot callback threw: {}",
+                self->site_id_, error.what());
+      return false;
+    } catch (...) {
+      Log_error("[RAFT-SNAPSHOT] Site {} state-machine snapshot callback threw",
+                self->site_id_);
+      return false;
+    }
+    if (state_data.empty()) {
+      Log_error("[RAFT-SNAPSHOT] Site {} state-machine snapshot callback "
+                "returned an empty checkpoint; retaining the log",
+                self->site_id_);
+      return false;
+    }
+    Log_info("[RAFT-SNAPSHOT] Site {}: State machine snapshot callback produced {} bytes",
+             self->site_id_, state_data.size());
+  } else {
+#ifdef RAFT_TEST_CORO
+    // Fallback: 8 bytes execute_index_ + 8 bytes term.
+    state_data.resize(sizeof(uint64_t) * 2);
+    char* ptr = state_data.data();
+    std::memcpy(ptr, &snap_index, sizeof(uint64_t));
+    ptr += sizeof(uint64_t);
+    std::memcpy(ptr, &snap_term, sizeof(uint64_t));
+#else
+    Log_error("[RAFT-SNAPSHOT] Site {} has no state-machine snapshot callback; "
+              "production compaction is disabled",
+              self->site_id_);
+    return false;
+#endif
+  }
+
+  const bool saved = self->snapshot_manager_->TakeSnapshot(
+      snap_index, snap_term, state_data.data(), state_data.size());
+  if (!saved) {
+    Log_error("[RAFT-SNAPSHOT] Site {}: Failed to save snapshot at index={} term={}",
+              self->site_id_, snap_index, snap_term);
+    return false;
+  }
+  return true;
 }
 
 // (misc) a monotonic clock and a fiber sleep, for PHASE 2's poll deadline.
@@ -1620,121 +1635,6 @@ void RaftServer::StartApplyThread() {
   // causes use-after-free: the thread captures `this` and keeps running after
   // ~RaftServer destroys the RaftServer, resulting in an empty std::function
   // invocation when it next pulls from apply_queue_.
-}
-
-// @unsafe - Server setup (Time::now, Log_debug, Fiber::create_run marked safe via @external)
-bool RaftServer::SetupInternal() {
-  // RPC services may already be listening when this owner-thread job begins.
-  // Keep every handler fail-closed until snapshot loading has completed.
-  rpc_ready_.store(false, rusty::sync::atomic::Ordering::Release);
-
-  // Record startup time for grace period logic
-  startup_timestamp_ = Time::now(true);
-
-  // ========== HEARTBEAT INTERVAL (runtime override) ==========
-  // @unsafe { std::getenv and Log_info are not borrow-checked }
-  {
-    const char* hb_str = std::getenv("MAKO_RAFT_HEARTBEAT_INTERVAL_US");
-    if (hb_str && hb_str[0] != '\0') {
-      try {
-        heartbeat_interval_us_ = std::stoull(hb_str);
-      } catch (const std::exception& error) {
-        Log_error("[RAFT] Invalid heartbeat interval '{}': {}",
-                  hb_str, error.what());
-        stop_.store(true, rusty::sync::atomic::Ordering::Release);
-        looping_.store(false, rusty::sync::atomic::Ordering::Release);
-        return false;
-      }
-      Log_info("[RAFT] Heartbeat interval set to {} us from env", heartbeat_interval_us_);
-    }
-  }
-
-  // Bind before HeartbeatLoop can publish its owner-thread-only IntEvent.
-  // The communicator always retains the PollThread it created or was given.
-  rusty::Option<rusty::Arc<rrr::PollThread>> replication_poll = rusty::None;
-  if (commo() != nullptr) {
-    replication_poll = commo()->PollThread();
-  }
-  if (replication_poll.is_some()) {
-    BindReplicationWakeOwner(replication_poll.unwrap());
-  } else {
-    Log_error("[RAFT-WAKE] Site {} has no PollThread owner during Setup",
-              site_id_);
-    stop_.store(true, rusty::sync::atomic::Ordering::Release);
-    looping_.store(false, rusty::sync::atomic::Ordering::Release);
-    return false;
-  }
-
-  // ========== LOG RETENTION WINDOW (runtime override) ==========
-  // @unsafe { std::getenv and Log_info are not borrow-checked }
-  {
-    const char* lrw_str = std::getenv("MAKO_RAFT_LOG_RETENTION_WINDOW");
-    if (lrw_str && lrw_str[0] != '\0') {
-      uint64_t val = 0;
-      try {
-        val = std::stoull(lrw_str);
-      } catch (const std::exception& error) {
-        Log_error("[RAFT] Invalid log retention window '{}': {}",
-                  lrw_str, error.what());
-        stop_.store(true, rusty::sync::atomic::Ordering::Release);
-        looping_.store(false, rusty::sync::atomic::Ordering::Release);
-        return false;
-      }
-      log_retention_window_ = raft_server_retention_window_normalize(val);
-      Log_info("[RAFT] Log retention window set to {} from env", log_retention_window_);
-    }
-  }
-
-  // ========== INITIALIZE SNAPSHOT MANAGER ==========
-  if (!InitializeSnapshotManager()) {
-    Log_error("[RAFT-SNAPSHOT] Site {} cannot start after snapshot recovery failure",
-              site_id_);
-    stop_.store(true, rusty::sync::atomic::Ordering::Release);
-    looping_.store(false, rusty::sync::atomic::Ordering::Release);
-    return false;
-  }
-
-  // ========== INITIALIZE MEMBERSHIP CONFIGURATION ==========
-  // Populate current_config_ from the static partition configuration. This is
-  // the fixed replica set for this partition's lifetime; memory-only Raft has
-  // no membership change.
-  {
-    auto config = Config::GetConfig();
-    auto replicas = config->SitesByPartitionId(partition_id_);
-    for (auto& site : replicas) {
-      current_config_.insert(site.id);
-    }
-    SyncConfigMembers();
-    Log_info("[RAFT-CONFIG] Initialized current_config_ for site {} partition {} with {} replicas",
-             site_id_, partition_id_, current_config_.size());
-  }
-
-  StartApplyThread();
-  rpc_ready_.store(true, rusty::sync::atomic::Ordering::Release);
-
-// Unconditional. This was written twice, once under #ifdef
-// RAFT_TEST_CORO and once under #ifndef, with CHARACTER-IDENTICAL
-// bodies -- so it always ran, and editing one arm without the other
-// was a standing trap.
-  if (heartbeat_) {
-		Log_debug("starting heartbeat loop at site {}", site_id_);
-    heartbeat_loop_running_.store(
-        true, rusty::sync::atomic::Ordering::Release);
-    Fiber::create_run([this](){
-      this->HeartbeatLoop();
-    });
-    // Start election timeout loop
-    if (failover_) {
-      election_loop_running_.store(
-          true, rusty::sync::atomic::Ordering::Release);
-      Fiber::create_run([this](){
-        StartElectionTimer();
-      });
-    }
-	}
-
-  // Election timer will be started in Start() method when first command is submitted
-  return true;
 }
 
 

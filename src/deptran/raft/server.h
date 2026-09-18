@@ -2812,7 +2812,6 @@ unsafe extern "C" {
     fn raft_startup_notify_all(server: *mut RaftServerBase);
     fn raft_apply_thread_join(server: *mut RaftServerBase);
     fn raft_commo_set_network_enabled(server: *mut RaftServerBase, enabled: bool);
-    fn raft_create_snapshot_locked(server: *mut RaftServerBase) -> bool;
     fn raft_request_replication(server: *mut RaftServerBase);
     fn raft_set_local_append(server: *mut RaftServerBase,
                              cmd: *const rusty::RaftCommand,
@@ -2824,6 +2823,17 @@ unsafe extern "C" {
     fn raft_shutdown_barrier_yield();
     fn raft_peer_sites_len(server: *const RaftServerBase) -> usize;
     fn raft_sync_config_members(server: *mut RaftServerBase);
+    fn raft_env_heartbeat_interval_us(out: *mut u64) -> i32;
+    fn raft_env_log_retention_window(out: *mut u64) -> i32;
+    fn raft_bind_replication_poll(server: *mut RaftServerBase) -> bool;
+    fn raft_initialize_snapshot_manager(server: *mut RaftServerBase) -> bool;
+    fn raft_load_current_config(server: *mut RaftServerBase) -> u64;
+    fn raft_start_apply_thread(server: *mut RaftServerBase);
+    fn raft_spawn_heartbeat_loop(server: *mut RaftServerBase);
+    fn raft_spawn_election_timer_fiber(server: *mut RaftServerBase);
+    fn raft_snapshot_serialize_and_save(server: *mut RaftServerBase,
+                                        snap_index: u64,
+                                        snap_term: i64) -> bool;
 }
 
 // One campaign's reply quorum, read in a single shot.
@@ -3587,6 +3597,192 @@ impl RaftServerBase {
         unsafe { raft_peer_site_at(self as *const RaftServerBase, ordinal) }
     }
 
+    // @unsafe - the owner-thread startup job. Every failure path closes the
+    // server fail-closed rather than starting half a replica.
+    pub fn SetupInternal(&mut self) -> bool {
+        // RPC services may already be listening when this job begins. Keep
+        // every handler fail-closed until snapshot loading has completed.
+        self.rpc_ready_
+            .store(false, rusty::sync::atomic::Ordering::Release);
+
+        // Record startup time for the grace-period logic.
+        self.startup_timestamp_ = unsafe { raft_time_now_us() };
+
+        let mut hb_override: u64 = 0;
+        let hb_status: i32 =
+            unsafe {
+                raft_env_heartbeat_interval_us(&mut hb_override as *mut u64)
+            };
+        if hb_status == 2 {
+            self.FailClosed();
+            return false;
+        }
+        if hb_status == 1 {
+            self.heartbeat_interval_us_ = hb_override;
+            rusty::raft_log_info_1(
+                "[RAFT] Heartbeat interval set to {} us from env",
+                self.heartbeat_interval_us_);
+        }
+
+        if !unsafe { raft_bind_replication_poll(self as *mut RaftServerBase) }
+        {
+            rusty::raft_log_error_1(
+                "[RAFT-WAKE] Site {} has no PollThread owner during Setup",
+                self.site_id_);
+            self.FailClosed();
+            return false;
+        }
+
+        let mut lrw_override: u64 = 0;
+        let lrw_status: i32 =
+            unsafe {
+                raft_env_log_retention_window(&mut lrw_override as *mut u64)
+            };
+        if lrw_status == 2 {
+            self.FailClosed();
+            return false;
+        }
+        if lrw_status == 1 {
+            self.log_retention_window_ =
+                raft_server_retention_window_normalize(lrw_override);
+            rusty::raft_log_info_1(
+                "[RAFT] Log retention window set to {} from env",
+                self.log_retention_window_);
+        }
+
+        if !unsafe {
+            raft_initialize_snapshot_manager(self as *mut RaftServerBase)
+        } {
+            rusty::raft_log_error_1(
+                "[RAFT-SNAPSHOT] Site {} cannot start after snapshot recovery failure",
+                self.site_id_);
+            self.FailClosed();
+            return false;
+        }
+
+        let replicas: u64 =
+            unsafe { raft_load_current_config(self as *mut RaftServerBase) };
+        rusty::raft_log_info_3(
+            "[RAFT-CONFIG] Initialized current_config_ for site {} partition {} with {} replicas",
+            self.site_id_, self.partition_id_, replicas);
+
+        unsafe {
+            raft_start_apply_thread(self as *mut RaftServerBase);
+        }
+        self.rpc_ready_
+            .store(true, rusty::sync::atomic::Ordering::Release);
+
+        // Unconditional. This was written twice, once under
+        // #ifdef RAFT_TEST_CORO and once under #ifndef, with
+        // CHARACTER-IDENTICAL bodies -- so it always ran, and editing one arm
+        // without the other was a standing trap.
+        if self.heartbeat_ {
+            rusty::raft_log_debug_1("starting heartbeat loop at site {}",
+                                    self.site_id_);
+            self.heartbeat_loop_running_
+                .store(true, rusty::sync::atomic::Ordering::Release);
+            unsafe {
+                raft_spawn_heartbeat_loop(self as *mut RaftServerBase);
+            }
+            if self.failover_ {
+                self.election_loop_running_
+                    .store(true, rusty::sync::atomic::Ordering::Release);
+                unsafe {
+                    raft_spawn_election_timer_fiber(
+                        self as *mut RaftServerBase);
+                }
+            }
+        }
+        true
+    }
+
+    // @safe - the three stores every SetupInternal failure path performed.
+    // Named rather than repeated so a new failure path cannot forget one.
+    pub fn FailClosed(&mut self) {
+        self.stop_
+            .store(true, rusty::sync::atomic::Ordering::Release);
+        self.looping_
+            .store(false, rusty::sync::atomic::Ordering::Release);
+    }
+
+    // `is_some` then `unwrap` mirrors the C++ null check it replaces;
+    // rewriting it as a match would obscure the correspondence.
+    #[allow(clippy::unnecessary_unwrap)]
+    // @unsafe - CALLER MUST HOLD mtx_. Takes a state-machine checkpoint at
+    // the applied index, records the new snapshot boundary, and compacts the
+    // log behind it.
+    pub fn CreateSnapshotLocked(&mut self) -> bool {
+        let configured: bool =
+            unsafe { raft_snapshot_manager_is_set(&self.snapshot_manager_) };
+        if !configured {
+            rusty::raft_log_debug_1(
+                "[RAFT-SNAPSHOT] Site {}: No snapshot manager, skipping CreateSnapshot",
+                self.site_id_);
+            return false;
+        }
+
+        let snap_index: u64 = self.state_.execute_index_;
+        if snap_index == 0 {
+            rusty::raft_log_debug_1(
+                "[RAFT-SNAPSHOT] Site {}: state_.execute_index_ is 0, nothing to snapshot",
+                self.site_id_);
+            return false;
+        }
+        if !raft_server_log_index_has_successor(snap_index) {
+            rusty::raft_log_error_2(
+                "[RAFT-SNAPSHOT] Site {}: Cannot snapshot terminal log index {}; no successor index is representable",
+                self.site_id_, snap_index);
+            return false;
+        }
+
+        let snap_term: i64;
+        if raft_server_snapshot_term_uses_boundary(snap_index,
+                                                   self.state_.snapidx_) {
+            // The boundary entry is intentionally absent after compaction.
+            // Its term is carried by snapshot metadata; do not recreate the
+            // entry or rewind the log's base by appending it again.
+            snap_term = self.state_.snapterm_;
+        } else {
+            let instance = self.state_.raft_log_.get(snap_index);
+            if instance.is_some() {
+                snap_term = instance.unwrap().term();
+            } else {
+                // A missing historical term cannot be inferred from
+                // current_term_: doing so would forge the snapshot boundary
+                // tuple and could make a follower retain a conflicting
+                // suffix. Preserve the existing state and wait for a
+                // trustworthy boundary.
+                rusty::raft_log_error_2(
+                    "[RAFT-SNAPSHOT] Site {}: Cannot determine term at applied index {}; aborting snapshot creation",
+                    self.site_id_, snap_index);
+                return false;
+            }
+        }
+
+        if !unsafe {
+            raft_snapshot_serialize_and_save(self as *mut RaftServerBase,
+                                             snap_index, snap_term)
+        } {
+            return false;
+        }
+
+        let old_snapidx: u64 = self.state_.snapidx_;
+        self.state_.snapidx_ = snap_index;
+        self.state_.snapterm_ = snap_term;
+        self.snapshot_trigger_index_
+            .store(self.state_.snapidx_,
+                   rusty::sync::atomic::Ordering::Release);
+        rusty::raft_log_info_4(
+            "[RAFT-SNAPSHOT] Site {}: Snapshot saved at index={} term={} (prev snapidx={})",
+            self.site_id_, snap_index, snap_term, old_snapidx);
+
+        let compacted: usize = self.CompactLogLocked(snap_index);
+        rusty::raft_log_info_3(
+            "[RAFT-SNAPSHOT] Site {}: Compacted {} entries up to index={}",
+            self.site_id_, compacted, snap_index);
+        true
+    }
+
     // @safe - refreshes config_members_ from current_config_. Called once,
     // by Setup, because that is the only place current_config_ is written.
     pub fn SyncConfigMembers(&mut self) {
@@ -3671,9 +3867,7 @@ impl RaftServerBase {
         {
             return;
         }
-        unsafe {
-            raft_create_snapshot_locked(self as *mut RaftServerBase);
-        }
+        self.CreateSnapshotLocked();
     }
 
     // @unsafe - copies the manager under mtx_ before querying it, so the
@@ -4201,7 +4395,7 @@ impl TxLogServer for RaftServerBase {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=59296df80b339f9107dfe46bf864fa913b8e5834035f47916f855c360a072134*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=323d82fc4c9c9ddd902e543a5ccdc9ca432be407410d7c1614df8d29727a9157*/
 struct RaftVoteOutcome;
 struct RaftServerBase;
 
@@ -4235,7 +4429,6 @@ extern "C" {
     void raft_startup_notify_all(RaftServerBase* server);
     void raft_apply_thread_join(RaftServerBase* server);
     void raft_commo_set_network_enabled(RaftServerBase* server, bool enabled);
-    bool raft_create_snapshot_locked(RaftServerBase* server);
     void raft_request_replication(RaftServerBase* server);
     RaftStartResult raft_set_local_append(RaftServerBase* server, const rusty::RaftCommand* cmd, uint64_t* term, uint64_t* index, uint64_t slot_id, int64_t ballot);
     void raft_close_replication_wake_gate(RaftServerBase* server);
@@ -4244,6 +4437,15 @@ extern "C" {
     void raft_shutdown_barrier_yield();
     size_t raft_peer_sites_len(const RaftServerBase* server);
     void raft_sync_config_members(RaftServerBase* server);
+    int32_t raft_env_heartbeat_interval_us(uint64_t* out);
+    int32_t raft_env_log_retention_window(uint64_t* out);
+    bool raft_bind_replication_poll(RaftServerBase* server);
+    bool raft_initialize_snapshot_manager(RaftServerBase* server);
+    uint64_t raft_load_current_config(RaftServerBase* server);
+    void raft_start_apply_thread(RaftServerBase* server);
+    void raft_spawn_heartbeat_loop(RaftServerBase* server);
+    void raft_spawn_election_timer_fiber(RaftServerBase* server);
+    bool raft_snapshot_serialize_and_save(RaftServerBase* server, uint64_t snap_index, int64_t snap_term);
 }
 
 struct RaftVoteOutcome {
@@ -4356,6 +4558,9 @@ struct RaftServerBase : public TxLogServer {
     void resetTimer(std::string_view reason);
     void setIsLeader(bool is_leader);
     uint16_t peer_site_at(size_t ordinal) const;
+    bool SetupInternal();
+    void FailClosed();
+    bool CreateSnapshotLocked();
     void SyncConfigMembers();
     bool IsConfigMember(uint16_t site) const;
     size_t PeerOrdinal(uint16_t site) const;
@@ -4817,6 +5022,109 @@ inline uint16_t RaftServerBase::peer_site_at(size_t ordinal) const {
     }
 }
 
+inline bool RaftServerBase::SetupInternal() {
+    this->rpc_ready_.store(false, rusty::sync::atomic::Ordering::Release);
+    this->startup_timestamp_ = raft_time_now_us();
+    uint64_t hb_override = static_cast<uint64_t>(0);
+    const int32_t hb_status = raft_env_heartbeat_interval_us(static_cast<uint64_t*>(&hb_override));
+    if (rusty::detail::deref_if_pointer_like(hb_status) == static_cast<int32_t>(2)) {
+        this->FailClosed();
+        return false;
+    }
+    if (rusty::detail::deref_if_pointer_like(hb_status) == static_cast<int32_t>(1)) {
+        this->heartbeat_interval_us_ = std::move(hb_override);
+        rusty::raft_log_info_1("[RAFT] Heartbeat interval set to {} us from env", this->heartbeat_interval_us_);
+    }
+    if (!raft_bind_replication_poll(static_cast<RaftServerBase*>(rusty::detail::ptr_or_addr((*this))))) {
+        rusty::raft_log_error_1("[RAFT-WAKE] Site {} has no PollThread owner during Setup", this->site_id_);
+        this->FailClosed();
+        return false;
+    }
+    uint64_t lrw_override = static_cast<uint64_t>(0);
+    const int32_t lrw_status = raft_env_log_retention_window(static_cast<uint64_t*>(&lrw_override));
+    if (rusty::detail::deref_if_pointer_like(lrw_status) == static_cast<int32_t>(2)) {
+        this->FailClosed();
+        return false;
+    }
+    if (rusty::detail::deref_if_pointer_like(lrw_status) == static_cast<int32_t>(1)) {
+        this->log_retention_window_ = raft_server_retention_window_normalize(std::move(lrw_override));
+        rusty::raft_log_info_1("[RAFT] Log retention window set to {} from env", this->log_retention_window_);
+    }
+    if (!raft_initialize_snapshot_manager(static_cast<RaftServerBase*>(rusty::detail::ptr_or_addr((*this))))) {
+        rusty::raft_log_error_1("[RAFT-SNAPSHOT] Site {} cannot start after snapshot recovery failure", this->site_id_);
+        this->FailClosed();
+        return false;
+    }
+    const uint64_t replicas = raft_load_current_config(static_cast<RaftServerBase*>(rusty::detail::ptr_or_addr((*this))));
+    rusty::raft_log_info_3("[RAFT-CONFIG] Initialized current_config_ for site {} partition {} with {} replicas", this->site_id_, this->partition_id_, std::move(replicas));
+    // @unsafe
+    {
+        raft_start_apply_thread(static_cast<RaftServerBase*>(rusty::detail::ptr_or_addr((*this))));
+    }
+    this->rpc_ready_.store(true, rusty::sync::atomic::Ordering::Release);
+    if (this->heartbeat_) {
+        rusty::raft_log_debug_1("starting heartbeat loop at site {}", this->site_id_);
+        this->heartbeat_loop_running_.store(true, rusty::sync::atomic::Ordering::Release);
+        // @unsafe
+        {
+            raft_spawn_heartbeat_loop(static_cast<RaftServerBase*>(rusty::detail::ptr_or_addr((*this))));
+        }
+        if (this->failover_) {
+            this->election_loop_running_.store(true, rusty::sync::atomic::Ordering::Release);
+            // @unsafe
+            {
+                raft_spawn_election_timer_fiber(static_cast<RaftServerBase*>(rusty::detail::ptr_or_addr((*this))));
+            }
+        }
+    }
+    return true;
+}
+
+inline void RaftServerBase::FailClosed() {
+    this->stop_.store(true, rusty::sync::atomic::Ordering::Release);
+    this->looping_.store(false, rusty::sync::atomic::Ordering::Release);
+}
+
+inline bool RaftServerBase::CreateSnapshotLocked() {
+    const bool configured = raft_snapshot_manager_is_set(&this->snapshot_manager_);
+    if (!configured) {
+        rusty::raft_log_debug_1("[RAFT-SNAPSHOT] Site {}: No snapshot manager, skipping CreateSnapshot", this->site_id_);
+        return false;
+    }
+    uint64_t snap_index = this->state_.execute_index_;
+    if (rusty::detail::deref_if_pointer_like(snap_index) == static_cast<uint64_t>(0)) {
+        rusty::raft_log_debug_1("[RAFT-SNAPSHOT] Site {}: state_.execute_index_ is 0, nothing to snapshot", this->site_id_);
+        return false;
+    }
+    if (rusty::detail::rust_not(raft_server_log_index_has_successor(std::move(snap_index)))) {
+        rusty::raft_log_error_2("[RAFT-SNAPSHOT] Site {}: Cannot snapshot terminal log index {}; no successor index is representable", this->site_id_, std::move(snap_index));
+        return false;
+    }
+    std::optional<int64_t> snap_term;
+    if (raft_server_snapshot_term_uses_boundary(std::move(snap_index), this->state_.snapidx_)) {
+        snap_term.emplace(this->state_.snapterm_);
+    } else {
+        auto instance = this->state_.raft_log_.get(std::move(snap_index));
+        if (instance.is_some()) {
+            snap_term.emplace(instance.unwrap().term());
+        } else {
+            rusty::raft_log_error_2("[RAFT-SNAPSHOT] Site {}: Cannot determine term at applied index {}; aborting snapshot creation", this->site_id_, std::move(snap_index));
+            return false;
+        }
+    }
+    if (!raft_snapshot_serialize_and_save(static_cast<RaftServerBase*>(rusty::detail::ptr_or_addr((*this))), std::move(snap_index), std::move(snap_term.value()))) {
+        return false;
+    }
+    const uint64_t old_snapidx = this->state_.snapidx_;
+    this->state_.snapidx_ = std::move(snap_index);
+    this->state_.snapterm_ = std::move(snap_term.value());
+    this->snapshot_trigger_index_.store(this->state_.snapidx_, rusty::sync::atomic::Ordering::Release);
+    rusty::raft_log_info_4("[RAFT-SNAPSHOT] Site {}: Snapshot saved at index={} term={} (prev snapidx={})", this->site_id_, std::move(snap_index), std::move(snap_term.value()), std::move(old_snapidx));
+    const size_t compacted = this->CompactLogLocked(std::move(snap_index));
+    rusty::raft_log_info_3("[RAFT-SNAPSHOT] Site {}: Compacted {} entries up to index={}", this->site_id_, std::move(compacted), std::move(snap_index));
+    return true;
+}
+
 inline void RaftServerBase::SyncConfigMembers() {
     // @unsafe
     {
@@ -4871,10 +5179,7 @@ inline void RaftServerBase::MaybeCreateSnapshot() {
     if (!configured || rusty::detail::rust_not(raft_server_snapshot_is_due(this->state_.snapidx_, this->state_.execute_index_, this->state_.snapshot_threshold_))) {
         return;
     }
-    // @unsafe
-    {
-        raft_create_snapshot_locked(static_cast<RaftServerBase*>(rusty::detail::ptr_or_addr((*this))));
-    }
+    this->CreateSnapshotLocked();
 }
 
 inline bool RaftServerBase::HasSnapshot() {
@@ -5249,7 +5554,9 @@ class RaftServer : public RaftServerBase {
 
   // @unsafe - Initializes the in-memory snapshot manager and restores the exact
   // state machine bytes before publishing any recovered snapshot boundary.
+ public:  // for the kernel bridge (server.cc); private again once converted
   bool InitializeSnapshotManager();
+ private:
 
   // @unsafe - Caller holds state_machine_apply_mtx_ then mtx_. Fully validates
   // and stages a production state-machine image without publishing it, or
@@ -5272,9 +5579,6 @@ class RaftServer : public RaftServerBase {
   // @unsafe - Requires state_machine_apply_mtx_ and mtx_ in that order.
   // Split out so the apply trigger and RaftLabTest's LabAccess-driven manager
   // rotation helper can preserve the global lock order without re-locking.
- public:  // for the kernel bridge (server.cc); private again once converted
-  bool CreateSnapshotLocked();
- private:
 
 
   // ============================================================================
@@ -5332,10 +5636,9 @@ class RaftServer : public RaftServerBase {
   bool RequestVoteFromElectionTimer(uint64_t expected_generation);
 
  public:  // for the kernel bridge (server.cc); private again once converted
-  bool SetupInternal();
- private:
   // @safe - external calls marked @external, core replication loop
-	void HeartbeatLoop() ;
+  void HeartbeatLoop();
+ private:
 
   // @unsafe - raw pointer output parameters (reply_term, vote_granted)
   // Memory-only voting: record the vote and reply immediately.
@@ -5413,7 +5716,9 @@ class RaftServer : public RaftServerBase {
 
 
 
+ public:  // for the kernel bridge (server.cc); private again once converted
   void StartApplyThread();
+ private:
  public:  // for the raft_ae_* trampolines; back to private when converted
  private:
 
@@ -5465,9 +5770,11 @@ class RaftServer : public RaftServerBase {
 
 
 
+ public:  // for the kernel bridge (server.cc); private again once converted
   // @unsafe - Binds the cross-thread wake gate to HeartbeatLoop's PollThread.
   // Must run before HeartbeatLoop starts (Setup does so).
   void BindReplicationWakeOwner(rusty::Arc<rrr::PollThread> owner);
+ public:
 
 
   // @safe - Acquire-load paired with the final startup Release publication.

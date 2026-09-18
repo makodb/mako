@@ -1199,7 +1199,6 @@ unsafe extern "C" {
     fn raft_startup_notify_all(server: *mut RaftServerBase);
     fn raft_apply_thread_join(server: *mut RaftServerBase);
     fn raft_commo_set_network_enabled(server: *mut RaftServerBase, enabled: bool);
-    fn raft_create_snapshot_locked(server: *mut RaftServerBase) -> bool;
     fn raft_request_replication(server: *mut RaftServerBase);
     fn raft_set_local_append(server: *mut RaftServerBase,
                              cmd: *const rusty::RaftCommand,
@@ -1211,6 +1210,17 @@ unsafe extern "C" {
     fn raft_shutdown_barrier_yield();
     fn raft_peer_sites_len(server: *const RaftServerBase) -> usize;
     fn raft_sync_config_members(server: *mut RaftServerBase);
+    fn raft_env_heartbeat_interval_us(out: *mut u64) -> i32;
+    fn raft_env_log_retention_window(out: *mut u64) -> i32;
+    fn raft_bind_replication_poll(server: *mut RaftServerBase) -> bool;
+    fn raft_initialize_snapshot_manager(server: *mut RaftServerBase) -> bool;
+    fn raft_load_current_config(server: *mut RaftServerBase) -> u64;
+    fn raft_start_apply_thread(server: *mut RaftServerBase);
+    fn raft_spawn_heartbeat_loop(server: *mut RaftServerBase);
+    fn raft_spawn_election_timer_fiber(server: *mut RaftServerBase);
+    fn raft_snapshot_serialize_and_save(server: *mut RaftServerBase,
+                                        snap_index: u64,
+                                        snap_term: i64) -> bool;
 }
 
 // One campaign's reply quorum, read in a single shot.
@@ -1974,6 +1984,192 @@ impl RaftServerBase {
         unsafe { raft_peer_site_at(self as *const RaftServerBase, ordinal) }
     }
 
+    // @unsafe - the owner-thread startup job. Every failure path closes the
+    // server fail-closed rather than starting half a replica.
+    pub fn SetupInternal(&mut self) -> bool {
+        // RPC services may already be listening when this job begins. Keep
+        // every handler fail-closed until snapshot loading has completed.
+        self.rpc_ready_
+            .store(false, rusty::sync::atomic::Ordering::Release);
+
+        // Record startup time for the grace-period logic.
+        self.startup_timestamp_ = unsafe { raft_time_now_us() };
+
+        let mut hb_override: u64 = 0;
+        let hb_status: i32 =
+            unsafe {
+                raft_env_heartbeat_interval_us(&mut hb_override as *mut u64)
+            };
+        if hb_status == 2 {
+            self.FailClosed();
+            return false;
+        }
+        if hb_status == 1 {
+            self.heartbeat_interval_us_ = hb_override;
+            rusty::raft_log_info_1(
+                "[RAFT] Heartbeat interval set to {} us from env",
+                self.heartbeat_interval_us_);
+        }
+
+        if !unsafe { raft_bind_replication_poll(self as *mut RaftServerBase) }
+        {
+            rusty::raft_log_error_1(
+                "[RAFT-WAKE] Site {} has no PollThread owner during Setup",
+                self.site_id_);
+            self.FailClosed();
+            return false;
+        }
+
+        let mut lrw_override: u64 = 0;
+        let lrw_status: i32 =
+            unsafe {
+                raft_env_log_retention_window(&mut lrw_override as *mut u64)
+            };
+        if lrw_status == 2 {
+            self.FailClosed();
+            return false;
+        }
+        if lrw_status == 1 {
+            self.log_retention_window_ =
+                raft_server_retention_window_normalize(lrw_override);
+            rusty::raft_log_info_1(
+                "[RAFT] Log retention window set to {} from env",
+                self.log_retention_window_);
+        }
+
+        if !unsafe {
+            raft_initialize_snapshot_manager(self as *mut RaftServerBase)
+        } {
+            rusty::raft_log_error_1(
+                "[RAFT-SNAPSHOT] Site {} cannot start after snapshot recovery failure",
+                self.site_id_);
+            self.FailClosed();
+            return false;
+        }
+
+        let replicas: u64 =
+            unsafe { raft_load_current_config(self as *mut RaftServerBase) };
+        rusty::raft_log_info_3(
+            "[RAFT-CONFIG] Initialized current_config_ for site {} partition {} with {} replicas",
+            self.site_id_, self.partition_id_, replicas);
+
+        unsafe {
+            raft_start_apply_thread(self as *mut RaftServerBase);
+        }
+        self.rpc_ready_
+            .store(true, rusty::sync::atomic::Ordering::Release);
+
+        // Unconditional. This was written twice, once under
+        // #ifdef RAFT_TEST_CORO and once under #ifndef, with
+        // CHARACTER-IDENTICAL bodies -- so it always ran, and editing one arm
+        // without the other was a standing trap.
+        if self.heartbeat_ {
+            rusty::raft_log_debug_1("starting heartbeat loop at site {}",
+                                    self.site_id_);
+            self.heartbeat_loop_running_
+                .store(true, rusty::sync::atomic::Ordering::Release);
+            unsafe {
+                raft_spawn_heartbeat_loop(self as *mut RaftServerBase);
+            }
+            if self.failover_ {
+                self.election_loop_running_
+                    .store(true, rusty::sync::atomic::Ordering::Release);
+                unsafe {
+                    raft_spawn_election_timer_fiber(
+                        self as *mut RaftServerBase);
+                }
+            }
+        }
+        true
+    }
+
+    // @safe - the three stores every SetupInternal failure path performed.
+    // Named rather than repeated so a new failure path cannot forget one.
+    pub fn FailClosed(&mut self) {
+        self.stop_
+            .store(true, rusty::sync::atomic::Ordering::Release);
+        self.looping_
+            .store(false, rusty::sync::atomic::Ordering::Release);
+    }
+
+    // `is_some` then `unwrap` mirrors the C++ null check it replaces;
+    // rewriting it as a match would obscure the correspondence.
+    #[allow(clippy::unnecessary_unwrap)]
+    // @unsafe - CALLER MUST HOLD mtx_. Takes a state-machine checkpoint at
+    // the applied index, records the new snapshot boundary, and compacts the
+    // log behind it.
+    pub fn CreateSnapshotLocked(&mut self) -> bool {
+        let configured: bool =
+            unsafe { raft_snapshot_manager_is_set(&self.snapshot_manager_) };
+        if !configured {
+            rusty::raft_log_debug_1(
+                "[RAFT-SNAPSHOT] Site {}: No snapshot manager, skipping CreateSnapshot",
+                self.site_id_);
+            return false;
+        }
+
+        let snap_index: u64 = self.state_.execute_index_;
+        if snap_index == 0 {
+            rusty::raft_log_debug_1(
+                "[RAFT-SNAPSHOT] Site {}: state_.execute_index_ is 0, nothing to snapshot",
+                self.site_id_);
+            return false;
+        }
+        if !raft_server_log_index_has_successor(snap_index) {
+            rusty::raft_log_error_2(
+                "[RAFT-SNAPSHOT] Site {}: Cannot snapshot terminal log index {}; no successor index is representable",
+                self.site_id_, snap_index);
+            return false;
+        }
+
+        let snap_term: i64;
+        if raft_server_snapshot_term_uses_boundary(snap_index,
+                                                   self.state_.snapidx_) {
+            // The boundary entry is intentionally absent after compaction.
+            // Its term is carried by snapshot metadata; do not recreate the
+            // entry or rewind the log's base by appending it again.
+            snap_term = self.state_.snapterm_;
+        } else {
+            let instance = self.state_.raft_log_.get(snap_index);
+            if instance.is_some() {
+                snap_term = instance.unwrap().term();
+            } else {
+                // A missing historical term cannot be inferred from
+                // current_term_: doing so would forge the snapshot boundary
+                // tuple and could make a follower retain a conflicting
+                // suffix. Preserve the existing state and wait for a
+                // trustworthy boundary.
+                rusty::raft_log_error_2(
+                    "[RAFT-SNAPSHOT] Site {}: Cannot determine term at applied index {}; aborting snapshot creation",
+                    self.site_id_, snap_index);
+                return false;
+            }
+        }
+
+        if !unsafe {
+            raft_snapshot_serialize_and_save(self as *mut RaftServerBase,
+                                             snap_index, snap_term)
+        } {
+            return false;
+        }
+
+        let old_snapidx: u64 = self.state_.snapidx_;
+        self.state_.snapidx_ = snap_index;
+        self.state_.snapterm_ = snap_term;
+        self.snapshot_trigger_index_
+            .store(self.state_.snapidx_,
+                   rusty::sync::atomic::Ordering::Release);
+        rusty::raft_log_info_4(
+            "[RAFT-SNAPSHOT] Site {}: Snapshot saved at index={} term={} (prev snapidx={})",
+            self.site_id_, snap_index, snap_term, old_snapidx);
+
+        let compacted: usize = self.CompactLogLocked(snap_index);
+        rusty::raft_log_info_3(
+            "[RAFT-SNAPSHOT] Site {}: Compacted {} entries up to index={}",
+            self.site_id_, compacted, snap_index);
+        true
+    }
+
     // @safe - refreshes config_members_ from current_config_. Called once,
     // by Setup, because that is the only place current_config_ is written.
     pub fn SyncConfigMembers(&mut self) {
@@ -2058,9 +2254,7 @@ impl RaftServerBase {
         {
             return;
         }
-        unsafe {
-            raft_create_snapshot_locked(self as *mut RaftServerBase);
-        }
+        self.CreateSnapshotLocked();
     }
 
     // @unsafe - copies the manager under mtx_ before querying it, so the
