@@ -1087,6 +1087,40 @@ unsafe extern "C" {
     fn raft_heartbeat_epilogue(server: *mut core::ffi::c_void);
 }
 
+unsafe extern "C" {
+    fn raft_mutex_lock(mutex: *mut rusty::RaftCheckedMutex);
+    fn raft_mutex_unlock(mutex: *mut rusty::RaftCheckedMutex);
+}
+
+pub struct RaftLockGuard {
+    mutex_: *mut rusty::RaftCheckedMutex,
+}
+
+impl RaftLockGuard {
+    // A raw pointer rather than `&mut RaftCheckedMutex`, because the emitter
+    // renders the argument `&mut self.mtx_` as `&this->mtx_` either way, and
+    // a reference parameter would then not bind. The pointer is not a
+    // widening of the contract: every call site in this file passes
+    // `&mut self.mtx_`, a field of the live object whose method is running,
+    // and the borrow ends with the constructing statement -- which is
+    // precisely what lets the body go on using `self` while the lock is held.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub fn new(mutex: *mut rusty::RaftCheckedMutex) -> RaftLockGuard {
+        unsafe {
+            raft_mutex_lock(mutex);
+        }
+        RaftLockGuard { mutex_: mutex }
+    }
+}
+
+impl Drop for RaftLockGuard {
+    fn drop(&mut self) {
+        unsafe {
+            raft_mutex_unlock(self.mutex_);
+        }
+    }
+}
+
 use rusty::cpp_inherit;
 use crate::scheduler_h::TxLogServer;
 
@@ -1160,6 +1194,10 @@ pub struct RaftServerBase {
     pub n_commit_: i32,
 }
 
+// Method names keep their C++ spelling: every one of them is called by name
+// from bodies that have not converted yet, and from test.cc. Renaming them to
+// snake_case is a mechanical change for after the conversion, not during it.
+#[allow(non_snake_case)]
 impl RaftServerBase {
     // Every default here is the one the hand-written member declaration
     // carried; the DSL has no field-initialiser syntax, so they move into the
@@ -1225,6 +1263,93 @@ impl RaftServerBase {
             n_accept_: 0,
             n_commit_: 0,
         }
+    }
+
+    // ======================================================================
+    // Bodies moved here from server.cc. Each is the C++ statement sequence,
+    // unchanged; mtx_ is held through RaftLockGuard, whose scope is the same
+    // as the std::lock_guard it replaces.
+    // ======================================================================
+
+    // CALLER MUST HOLD mtx_.
+    pub fn GetSnapshotIndexLocked(&self) -> u64 {
+        self.state_.snapidx_
+    }
+
+    // @unsafe - returns the last snapshotted log index under mtx_.
+    pub fn GetSnapshotIndex(&mut self) -> u64 {
+        let _lock = RaftLockGuard::new(&mut self.mtx_);
+        self.GetSnapshotIndexLocked()
+    }
+
+    // CALLER MUST HOLD mtx_.
+    pub fn GetSnapshotTermLocked(&self) -> u64 {
+        // snapterm_ is ballot_t (int64_t); the C++ signature returned
+        // uint64_t and relied on the implicit conversion.
+        self.state_.snapterm_ as u64
+    }
+
+    // @unsafe - returns the snapshot boundary term under mtx_.
+    pub fn GetSnapshotTerm(&mut self) -> u64 {
+        let _lock = RaftLockGuard::new(&mut self.mtx_);
+        self.GetSnapshotTermLocked()
+    }
+
+    // CALLER MUST HOLD mtx_.
+    pub fn SetSnapshotThresholdLocked(&mut self, threshold: u64) {
+        self.state_.snapshot_threshold_ = threshold;
+        self.snapshot_trigger_threshold_
+            .store(threshold, rusty::sync::atomic::Ordering::Release);
+    }
+
+    // @unsafe - takes mtx_.
+    pub fn SetSnapshotThreshold(&mut self, threshold: u64) {
+        let _lock = RaftLockGuard::new(&mut self.mtx_);
+        self.SetSnapshotThresholdLocked(threshold);
+    }
+
+    // @unsafe - synchronizes with Disconnect() through the Raft state mutex.
+    pub fn IsDisconnected(&self) -> bool {
+        self.disconnected_.load(rusty::sync::atomic::Ordering::Acquire)
+    }
+
+    // @unsafe - synchronizes with role/leader publication through mtx_.
+    pub fn GetLeaderHint(&mut self) -> u16 {
+        let _lock = RaftLockGuard::new(&mut self.mtx_);
+        if self.state_.is_leader_ {
+            return self.site_id_;
+        }
+        self.state_.current_leader_id_
+    }
+
+    // @safe - acquire load
+    pub fn HeartbeatLooping(&self) -> bool {
+        self.looping_.load(rusty::sync::atomic::Ordering::Acquire)
+    }
+
+    // @safe - two release stores
+    pub fn HeartbeatEpilogue(&mut self) {
+        self.looping_
+            .store(false, rusty::sync::atomic::Ordering::Release);
+        self.heartbeat_loop_running_
+            .store(false, rusty::sync::atomic::Ordering::Release);
+    }
+
+    // @safe - acquire load; the C++ read it the same way
+    pub fn ElectionLoopStopped(&self) -> bool {
+        self.stop_.load(rusty::sync::atomic::Ordering::Acquire)
+    }
+
+    // @unsafe - takes mtx_ to read state_.req_voting_
+    pub fn ElectionLoopVoting(&mut self) -> bool {
+        let _lock = RaftLockGuard::new(&mut self.mtx_);
+        self.state_.req_voting_
+    }
+
+    // @safe - release store on an atomic
+    pub fn ElectionLoopSetRunning(&mut self, running: bool) {
+        self.election_loop_running_
+            .store(running, rusty::sync::atomic::Ordering::Release);
     }
 }
 

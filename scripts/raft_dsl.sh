@@ -63,6 +63,7 @@ EXPECTED_BLOCKS=(
   "src/deptran/raft/server.h|raft_server.heartbeat_driver"
   "src/deptran/raft/server.h|raft_server.log_entry"
   "src/deptran/raft/server.h|raft_server.log_container"
+  "src/deptran/raft/server.h|raft_server.lock_guard"
   "src/deptran/raft/server.h|raft_server.server_state"
   "src/deptran/raft/service.cc|raft_service.scalar_decisions"
   "src/deptran/raft/snapshot_manager.hpp|raft_snapshot.metadata_decisions"

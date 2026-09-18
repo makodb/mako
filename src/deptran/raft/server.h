@@ -2506,6 +2506,117 @@ namespace janus {
 // can spell and rustc can resolve without a Rust definition behind it.
 extern "C" inline void raft_verify(bool condition) { verify(condition); }
 
+// @unsafe - the two halves of std::lock_guard<RaftCheckedMutex>, so a DSL
+// body can hold mtx_ across a scope. mtx_ is opaque to Rust; these are the
+// only operations on it a converted body performs.
+extern "C" inline void raft_mutex_lock(RaftCheckedMutex* mutex) {
+  mutex->lock();
+}
+extern "C" inline void raft_mutex_unlock(RaftCheckedMutex* mutex) {
+  mutex->unlock();
+}
+
+// ============================================================================
+// RaftLockGuard -- std::lock_guard<RaftCheckedMutex>, for converted bodies.
+//
+// mtx_ is an opaque carrier on the Rust side, so a DSL body cannot call
+// lock() on it. This guard is the one piece of machinery every converted
+// RaftServer method needs: it acquires in `new`, releases in Drop, and so
+// reproduces the exact scope the C++ std::lock_guard had -- including early
+// returns. That is what lets a body be translated statement by statement
+// rather than restructured, which is the difference between a translation
+// that can be reviewed against the original and one that cannot.
+//
+// A separate block from RaftServerBase on purpose: `impl Drop` makes the
+// emitter add a move constructor, which RaftServerBase (std::mutex,
+// std::condition_variable) could not compile.
+// ============================================================================
+#if RUSTYCPP_RUST
+unsafe extern "C" {
+    fn raft_mutex_lock(mutex: *mut rusty::RaftCheckedMutex);
+    fn raft_mutex_unlock(mutex: *mut rusty::RaftCheckedMutex);
+}
+
+pub struct RaftLockGuard {
+    mutex_: *mut rusty::RaftCheckedMutex,
+}
+
+impl RaftLockGuard {
+    // A raw pointer rather than `&mut RaftCheckedMutex`, because the emitter
+    // renders the argument `&mut self.mtx_` as `&this->mtx_` either way, and
+    // a reference parameter would then not bind. The pointer is not a
+    // widening of the contract: every call site in this file passes
+    // `&mut self.mtx_`, a field of the live object whose method is running,
+    // and the borrow ends with the constructing statement -- which is
+    // precisely what lets the body go on using `self` while the lock is held.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub fn new(mutex: *mut rusty::RaftCheckedMutex) -> RaftLockGuard {
+        unsafe {
+            raft_mutex_lock(mutex);
+        }
+        RaftLockGuard { mutex_: mutex }
+    }
+}
+
+impl Drop for RaftLockGuard {
+    fn drop(&mut self) {
+        unsafe {
+            raft_mutex_unlock(self.mutex_);
+        }
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_server.lock_guard version=1 rust_sha256=bfaa8678355976aa9a0a7b1bf1d865d1caaddb9c4e9aa6b9ae69a62ebf0b4d61*/
+struct RaftLockGuard;
+
+extern "C" {
+    void raft_mutex_lock(rusty::RaftCheckedMutex* mutex);
+    void raft_mutex_unlock(rusty::RaftCheckedMutex* mutex);
+}
+
+struct RaftLockGuard {
+    rusty::RaftCheckedMutex* mutex_;
+    mutable bool _rusty_forgotten = false;
+    RaftLockGuard(rusty::RaftCheckedMutex* mutex__init) : mutex_(std::move(mutex__init)) {}
+    RaftLockGuard(const RaftLockGuard&) = delete;
+    RaftLockGuard(RaftLockGuard&& other) noexcept : mutex_(std::move(other.mutex_)) {
+        this->_rusty_forgotten = other._rusty_forgotten;
+        other._rusty_forgotten = true;
+    }
+    RaftLockGuard& operator=(const RaftLockGuard&) = delete;
+    RaftLockGuard& operator=(RaftLockGuard&& other) noexcept {
+        if (this == &other) {
+            return *this;
+        }
+        this->~RaftLockGuard();
+        new (this) RaftLockGuard(std::move(other));
+        return *this;
+    }
+    void rusty_mark_forgotten() const noexcept { _rusty_forgotten = true; rusty::detail::mark_forgotten_if_supported(this->mutex_); }
+
+
+    static RaftLockGuard new_(rusty::RaftCheckedMutex* mutex);
+    ~RaftLockGuard() noexcept(false);
+};
+
+
+inline RaftLockGuard RaftLockGuard::new_(rusty::RaftCheckedMutex* mutex) {
+    // @unsafe
+    {
+        raft_mutex_lock(mutex);
+    }
+    return RaftLockGuard(mutex);
+}
+
+inline RaftLockGuard::~RaftLockGuard() noexcept(false) {
+    if (_rusty_forgotten) { return; }
+    // @unsafe
+    {
+        raft_mutex_unlock(this->mutex_);
+    }
+}
+/*RUSTYCPP:GEN-END id=raft_server.lock_guard*/
+
 // ============================================================================
 // RaftServerBase -- RaftServer's STATE, as a DSL struct.
 //
@@ -2607,6 +2718,10 @@ pub struct RaftServerBase {
     pub n_commit_: i32,
 }
 
+// Method names keep their C++ spelling: every one of them is called by name
+// from bodies that have not converted yet, and from test.cc. Renaming them to
+// snake_case is a mechanical change for after the conversion, not during it.
+#[allow(non_snake_case)]
 impl RaftServerBase {
     // Every default here is the one the hand-written member declaration
     // carried; the DSL has no field-initialiser syntax, so they move into the
@@ -2673,6 +2788,93 @@ impl RaftServerBase {
             n_commit_: 0,
         }
     }
+
+    // ======================================================================
+    // Bodies moved here from server.cc. Each is the C++ statement sequence,
+    // unchanged; mtx_ is held through RaftLockGuard, whose scope is the same
+    // as the std::lock_guard it replaces.
+    // ======================================================================
+
+    // CALLER MUST HOLD mtx_.
+    pub fn GetSnapshotIndexLocked(&self) -> u64 {
+        self.state_.snapidx_
+    }
+
+    // @unsafe - returns the last snapshotted log index under mtx_.
+    pub fn GetSnapshotIndex(&mut self) -> u64 {
+        let _lock = RaftLockGuard::new(&mut self.mtx_);
+        self.GetSnapshotIndexLocked()
+    }
+
+    // CALLER MUST HOLD mtx_.
+    pub fn GetSnapshotTermLocked(&self) -> u64 {
+        // snapterm_ is ballot_t (int64_t); the C++ signature returned
+        // uint64_t and relied on the implicit conversion.
+        self.state_.snapterm_ as u64
+    }
+
+    // @unsafe - returns the snapshot boundary term under mtx_.
+    pub fn GetSnapshotTerm(&mut self) -> u64 {
+        let _lock = RaftLockGuard::new(&mut self.mtx_);
+        self.GetSnapshotTermLocked()
+    }
+
+    // CALLER MUST HOLD mtx_.
+    pub fn SetSnapshotThresholdLocked(&mut self, threshold: u64) {
+        self.state_.snapshot_threshold_ = threshold;
+        self.snapshot_trigger_threshold_
+            .store(threshold, rusty::sync::atomic::Ordering::Release);
+    }
+
+    // @unsafe - takes mtx_.
+    pub fn SetSnapshotThreshold(&mut self, threshold: u64) {
+        let _lock = RaftLockGuard::new(&mut self.mtx_);
+        self.SetSnapshotThresholdLocked(threshold);
+    }
+
+    // @unsafe - synchronizes with Disconnect() through the Raft state mutex.
+    pub fn IsDisconnected(&self) -> bool {
+        self.disconnected_.load(rusty::sync::atomic::Ordering::Acquire)
+    }
+
+    // @unsafe - synchronizes with role/leader publication through mtx_.
+    pub fn GetLeaderHint(&mut self) -> u16 {
+        let _lock = RaftLockGuard::new(&mut self.mtx_);
+        if self.state_.is_leader_ {
+            return self.site_id_;
+        }
+        self.state_.current_leader_id_
+    }
+
+    // @safe - acquire load
+    pub fn HeartbeatLooping(&self) -> bool {
+        self.looping_.load(rusty::sync::atomic::Ordering::Acquire)
+    }
+
+    // @safe - two release stores
+    pub fn HeartbeatEpilogue(&mut self) {
+        self.looping_
+            .store(false, rusty::sync::atomic::Ordering::Release);
+        self.heartbeat_loop_running_
+            .store(false, rusty::sync::atomic::Ordering::Release);
+    }
+
+    // @safe - acquire load; the C++ read it the same way
+    pub fn ElectionLoopStopped(&self) -> bool {
+        self.stop_.load(rusty::sync::atomic::Ordering::Acquire)
+    }
+
+    // @unsafe - takes mtx_ to read state_.req_voting_
+    pub fn ElectionLoopVoting(&mut self) -> bool {
+        let _lock = RaftLockGuard::new(&mut self.mtx_);
+        self.state_.req_voting_
+    }
+
+    // @safe - release store on an atomic
+    pub fn ElectionLoopSetRunning(&mut self, running: bool) {
+        self.election_loop_running_
+            .store(running, rusty::sync::atomic::Ordering::Release);
+    }
 }
 
 // The three methods a worker reaches through a TxLogServer base pointer.
@@ -2703,7 +2905,7 @@ impl TxLogServer for RaftServerBase {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=9b48a97ab4a397ef9a341ec116b92463af6f447502e5397098a1e77e2fb5ac7e*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=b459bd13625b47e7e50e54d2791da45883aa750ac13f5a509a1a900c331c615b*/
 struct RaftServerBase;
 
 // Rust-only compiler marker import: rusty::cpp_inherit
@@ -2764,6 +2966,19 @@ struct RaftServerBase : public TxLogServer {
     int32_t n_commit_;
 
     RaftServerBase();
+    uint64_t GetSnapshotIndexLocked() const;
+    uint64_t GetSnapshotIndex();
+    uint64_t GetSnapshotTermLocked() const;
+    uint64_t GetSnapshotTerm();
+    void SetSnapshotThresholdLocked(uint64_t threshold);
+    void SetSnapshotThreshold(uint64_t threshold);
+    bool IsDisconnected() const;
+    uint16_t GetLeaderHint();
+    bool HeartbeatLooping() const;
+    void HeartbeatEpilogue();
+    bool ElectionLoopStopped() const;
+    bool ElectionLoopVoting();
+    void ElectionLoopSetRunning(bool running);
     void set_site_identity(uint32_t loc_id, uint16_t site_id, uint32_t partition_id);
     void set_commo(rusty::Communicator* commo);
     void reg_learner_action(rusty::LearnerAction learner_action);
@@ -2821,6 +3036,68 @@ inline RaftServerBase::RaftServerBase()
     , n_commit_(static_cast<int32_t>(0))
 {}
 
+inline uint64_t RaftServerBase::GetSnapshotIndexLocked() const {
+    return this->state_.snapidx_;
+}
+
+inline uint64_t RaftServerBase::GetSnapshotIndex() {
+    const auto _lock = RaftLockGuard::new_(&this->mtx_);
+    return this->GetSnapshotIndexLocked();
+}
+
+inline uint64_t RaftServerBase::GetSnapshotTermLocked() const {
+    return static_cast<uint64_t>(this->state_.snapterm_);
+}
+
+inline uint64_t RaftServerBase::GetSnapshotTerm() {
+    const auto _lock = RaftLockGuard::new_(&this->mtx_);
+    return this->GetSnapshotTermLocked();
+}
+
+inline void RaftServerBase::SetSnapshotThresholdLocked(uint64_t threshold) {
+    this->state_.snapshot_threshold_ = std::move(threshold);
+    this->snapshot_trigger_threshold_.store(std::move(threshold), rusty::sync::atomic::Ordering::Release);
+}
+
+inline void RaftServerBase::SetSnapshotThreshold(uint64_t threshold) {
+    const auto _lock = RaftLockGuard::new_(&this->mtx_);
+    this->SetSnapshotThresholdLocked(std::move(threshold));
+}
+
+inline bool RaftServerBase::IsDisconnected() const {
+    return this->disconnected_.load(rusty::sync::atomic::Ordering::Acquire);
+}
+
+inline uint16_t RaftServerBase::GetLeaderHint() {
+    const auto _lock = RaftLockGuard::new_(&this->mtx_);
+    if (this->state_.is_leader_) {
+        return this->site_id_;
+    }
+    return this->state_.current_leader_id_;
+}
+
+inline bool RaftServerBase::HeartbeatLooping() const {
+    return this->looping_.load(rusty::sync::atomic::Ordering::Acquire);
+}
+
+inline void RaftServerBase::HeartbeatEpilogue() {
+    this->looping_.store(false, rusty::sync::atomic::Ordering::Release);
+    this->heartbeat_loop_running_.store(false, rusty::sync::atomic::Ordering::Release);
+}
+
+inline bool RaftServerBase::ElectionLoopStopped() const {
+    return this->stop_.load(rusty::sync::atomic::Ordering::Acquire);
+}
+
+inline bool RaftServerBase::ElectionLoopVoting() {
+    const auto _lock = RaftLockGuard::new_(&this->mtx_);
+    return this->state_.req_voting_;
+}
+
+inline void RaftServerBase::ElectionLoopSetRunning(bool running) {
+    this->election_loop_running_.store(std::move(running), rusty::sync::atomic::Ordering::Release);
+}
+
 inline void RaftServerBase::set_site_identity(uint32_t loc_id, uint16_t site_id, uint32_t partition_id) {
     this->loc_id_ = std::move(loc_id);
     this->site_id_ = std::move(site_id);
@@ -2855,10 +3132,6 @@ class RaftServer : public RaftServerBase {
   // private member read, an rrr logging macro, or a call to another method.
   // ==========================================================================
 
-  // @safe - relaxed atomic read, no lock needed (the C++ read it the same way)
-  bool ElectionLoopStopped() const;
-  // @unsafe - takes mtx_ to read state_.req_voting_
-  bool ElectionLoopVoting();
   // @unsafe - RandomGenerator is external
   uint64_t ElectionLoopRandomDelay() const;
   // @unsafe - suspends this fiber on the wake gate's election waiter
@@ -2871,8 +3144,6 @@ class RaftServer : public RaftServerBase {
   void ElectionLoopLogFired(const ElectionTick& tick) const;
   // @unsafe - dispatches through the vtable; caller re-checks stop_ first
   void ElectionLoopRequestVote(uint64_t generation);
-  // @safe - release store on an atomic
-  void ElectionLoopSetRunning(bool running);
 
   // ==========================================================================
   // HEARTBEAT LOOP KERNELS
@@ -2884,8 +3155,6 @@ class RaftServer : public RaftServerBase {
 
   // @unsafe - timer allocation, progress_ initialisation, atomic stores
   void HeartbeatPrologue();
-  // @safe - acquire load
-  bool HeartbeatLooping() const;
   // @safe - linear scan of a fixed, tiny table (replica counts are 3 or 5).
   // Returns state_.peers_.len() when the site is not a follower of this leader,
   // which is the "removed follower" case PHASE 2 guards against. Deliberately
@@ -2918,8 +3187,6 @@ class RaftServer : public RaftServerBase {
   // @unsafe - recomputes the commit index and publishes read-index authority
   void HeartbeatPhase3(struct HeartbeatRoundState& state,
                        struct HeartbeatRoundScope& round);
-  // @safe - two release stores
-  void HeartbeatEpilogue();
 
 
   // set_site_identity / set_commo / reg_learner_action are RaftServerBase's
@@ -3428,45 +3695,14 @@ class RaftServer : public RaftServerBase {
   // @unsafe - Copies the manager under mtx_ before querying it.
   bool HasSnapshot();
 
-  /**
-   * Get the last log index included in the most recent snapshot.
-   * @return Last included index, or 0 if no snapshot exists
-   */
-  // @unsafe - Reads snapshot metadata under mtx_.
-  uint64_t GetSnapshotIndex();
 
-  /**
-   * Get the term of the last log entry included in the most recent snapshot.
-   * @return Last included term, or 0 if no snapshot exists
-   */
-  // @unsafe - Reads snapshot metadata under mtx_.
-  uint64_t GetSnapshotTerm();
 
-  /**
-   * Compact log entries up to the given index.
-   * Removes in-memory entries that are covered by a snapshot.
-   * @param up_to_index Remove entries with index <= this value
-   * @return Number of entries removed
-   */
-  // @unsafe - In-memory log compaction under mtx_.
-  // @unsafe - CALLER MUST HOLD mtx_ (the *Locked accessors exist so test code
-  // and internal callers that already hold the lock do not re-acquire it,
-  // which a non-recursive mutex cannot tolerate)
-  uint64_t GetSnapshotIndexLocked() const;
-  uint64_t GetSnapshotTermLocked() const;
-  void SetSnapshotThresholdLocked(uint64_t threshold);
   void SetSnapshotManagerLocked(
       std::shared_ptr<janus::raft::SnapshotManager> manager);
   size_t CompactLog(slotid_t up_to_index);
   // @unsafe - CALLER MUST HOLD mtx_
   size_t CompactLogLocked(slotid_t up_to_index);
 
-  /**
-   * Set the snapshot threshold (number of entries between snapshots).
-   * @param threshold Number of log entries applied before taking a snapshot
-   */
-  // @unsafe - Locks mtx_ and publishes the apply-thread trigger hint.
-  void SetSnapshotThreshold(uint64_t threshold);
 
   /**
    * Get the current snapshot threshold.
@@ -3549,8 +3785,6 @@ class RaftServer : public RaftServerBase {
     { resetTimer("reconnect"); }
   }
 
-  // @safe
-  bool IsDisconnected();
 
 
   // ============================================================================
@@ -3583,12 +3817,6 @@ class RaftServer : public RaftServerBase {
     }
   }
 
-  /**
-   * Get the last known leader's site_id for client redirection.
-   * @return Leader site_id, or INVALID_SITEID if unknown
-   */
-  // @unsafe - Locks mtx_ before reading role/leader identity.
-  siteid_t GetLeaderHint();
 
 
   /**

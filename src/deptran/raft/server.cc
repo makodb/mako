@@ -1017,46 +1017,12 @@ RaftServer::GetSnapshotManager() {
   return snapshot_manager_;
 }
 
-void RaftServer::SetSnapshotThreshold(uint64_t threshold) {
-  std::lock_guard<RaftCheckedMutex> lock(mtx_);
-  SetSnapshotThresholdLocked(threshold);
-}
-
-// CALLER MUST HOLD mtx_.
-void RaftServer::SetSnapshotThresholdLocked(uint64_t threshold) {
-  state_.snapshot_threshold_ = threshold;
-  snapshot_trigger_threshold_.store(
-      threshold, rusty::sync::atomic::Ordering::Release);
-}
-
 // @unsafe - Copies the manager while holding mtx_ before external I/O.
 bool RaftServer::HasSnapshot() {
   auto manager = GetSnapshotManager();
   if (!manager) return false;
   auto latest = manager->GetLatestSnapshot();
   return latest.is_some();
-}
-
-// @unsafe - Returns the last snapshotted log index under mtx_.
-uint64_t RaftServer::GetSnapshotIndex() {
-  std::lock_guard<RaftCheckedMutex> lock(mtx_);
-  return GetSnapshotIndexLocked();
-}
-
-// CALLER MUST HOLD mtx_.
-uint64_t RaftServer::GetSnapshotIndexLocked() const {
-  return state_.snapidx_;
-}
-
-// @unsafe - Returns the snapshot boundary term under mtx_.
-uint64_t RaftServer::GetSnapshotTerm() {
-  std::lock_guard<RaftCheckedMutex> lock(mtx_);
-  return GetSnapshotTermLocked();
-}
-
-// CALLER MUST HOLD mtx_.
-uint64_t RaftServer::GetSnapshotTermLocked() const {
-  return state_.snapterm_;
 }
 
 // @unsafe - In-memory log compaction behind the snapshot boundary.
@@ -1782,20 +1748,6 @@ void RaftServer::Disconnect(const bool disconnect) {
   verify(disconnected_.load(rusty::sync::atomic::Ordering::Acquire) != disconnect);
   commo()->SetNetworkEnabled(!disconnect);
   disconnected_.store(disconnect, rusty::sync::atomic::Ordering::Release);
-}
-
-// @unsafe - Synchronizes with Disconnect() through the Raft state mutex.
-bool RaftServer::IsDisconnected() {
-  return disconnected_.load(rusty::sync::atomic::Ordering::Acquire);
-}
-
-// @unsafe - Synchronizes with role/leader publication through the Raft mutex.
-siteid_t RaftServer::GetLeaderHint() {
-  std::lock_guard<RaftCheckedMutex> lock(mtx_);
-  if (state_.is_leader_) {
-    return site_id_;
-  }
-  return state_.current_leader_id_;
 }
 
 // @unsafe - Leadership state transition (callbacks and logging wrapped in @unsafe blocks)
@@ -4824,18 +4776,6 @@ void RaftServer::HeartbeatPrologue() {
   looping_.store(true, rusty::sync::atomic::Ordering::Release);
 }
 
-// @safe - acquire load, exactly as the old loop condition read it
-bool RaftServer::HeartbeatLooping() const {
-  return looping_.load(rusty::sync::atomic::Ordering::Acquire);
-}
-
-// @safe - two release stores
-void RaftServer::HeartbeatEpilogue() {
-  looping_.store(false, rusty::sync::atomic::Ordering::Release);
-  heartbeat_loop_running_.store(
-      false, rusty::sync::atomic::Ordering::Release);
-}
-
 // @unsafe - one heartbeat round: locks, RPC sends, reply polling, commit.
 //
 // This is the former while-body, unchanged except for its two OUTER-level
@@ -5934,17 +5874,6 @@ void RaftServer::OnRequestVote(const slotid_t& lst_log_idx,
 // fiber lambda; nothing about the lock discipline changed.
 // ============================================================================
 
-// @safe - acquire load, exactly as the inline loop condition read it
-bool RaftServer::ElectionLoopStopped() const {
-  return stop_.load(rusty::sync::atomic::Ordering::Acquire);
-}
-
-// @unsafe - takes mtx_ to read state_.req_voting_
-bool RaftServer::ElectionLoopVoting() {
-  std::lock_guard<RaftCheckedMutex> lock(mtx_);
-  return state_.req_voting_;
-}
-
 // @unsafe - RandomGenerator is external
 uint64_t RaftServer::ElectionLoopRandomDelay() const {
   return RandomGenerator::rand(heartbeat_interval_us_ * 2,
@@ -5992,11 +5921,6 @@ void RaftServer::ElectionLoopLogFired(const ElectionTick& tick) const {
 // the hazard this guards.
 void RaftServer::ElectionLoopRequestVote(uint64_t generation) {
   RequestVoteFromElectionTimer(generation);
-}
-
-// @safe - release store on an atomic
-void RaftServer::ElectionLoopSetRunning(bool running) {
-  election_loop_running_.store(running, rusty::sync::atomic::Ordering::Release);
 }
 
 // The extern "C" trampolines the DSL block declares. Each casts the opaque
