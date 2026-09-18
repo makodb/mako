@@ -2599,9 +2599,8 @@ class RaftServer : public TxLogServer {
   bool startup_finished_ = false;
   bool startup_succeeded_ = false;
   int32_t wait_int_ = 100000 ;
-  std::atomic_bool disconnected_{false};
+  rusty::sync::atomic::AtomicBool disconnected_{false};
   bool in_applying_logs_ = false ;
-  std::atomic<bool> apply_pending_{false};  // Tracks if new work arrived while applying logs
   // UNWIRED, and unconditional -- the two #ifdef RAFT_TEST_CORO arms declared
   // it identically, so the conditional said nothing.
   //
@@ -2759,7 +2758,7 @@ class RaftServer : public TxLogServer {
 
 
   std::thread apply_thread_;
-  std::atomic<bool> apply_thread_running_{false};
+  rusty::sync::atomic::AtomicBool apply_thread_running_{false};
   // Serializes state-machine application/replay with snapshot installation.
   // Lock order, when more than one is needed:
   // state_machine_apply_mtx_ -> mtx_ -> apply_queue_mtx_.

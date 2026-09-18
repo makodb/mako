@@ -805,7 +805,7 @@ bool RaftServer::InitializeSnapshotManager() {
       rpc_ready_.store(false, rusty::sync::atomic::Ordering::Release);
       stop_.store(true, rusty::sync::atomic::Ordering::Release);
       looping_.store(false, rusty::sync::atomic::Ordering::Release);
-      apply_thread_running_.store(false);
+      apply_thread_running_.store(false, rusty::sync::atomic::Ordering::SeqCst);
       return false;
     }
     Log_info("[RAFT-SNAPSHOT] Snapshots disabled for site {} (set MAKO_RAFT_SNAPSHOTS=1 to enable)",
@@ -844,7 +844,7 @@ bool RaftServer::InitializeSnapshotManager() {
     rpc_ready_.store(false, rusty::sync::atomic::Ordering::Release);
     stop_.store(true, rusty::sync::atomic::Ordering::Release);
     looping_.store(false, rusty::sync::atomic::Ordering::Release);
-    apply_thread_running_.store(false);
+    apply_thread_running_.store(false, rusty::sync::atomic::Ordering::SeqCst);
     return false;
   };
 
@@ -992,7 +992,7 @@ bool RaftServer::InitializeSnapshotManager() {
   rpc_ready_.store(false, rusty::sync::atomic::Ordering::Release);
   stop_.store(true, rusty::sync::atomic::Ordering::Release);
   looping_.store(false, rusty::sync::atomic::Ordering::Release);
-  apply_thread_running_.store(false);
+  apply_thread_running_.store(false, rusty::sync::atomic::Ordering::SeqCst);
   return false;
 }
 
@@ -1377,7 +1377,7 @@ void RaftServer::PrepareForShutdown() {
 
   // Applying an entry can trigger snapshot compaction. Stop and join that
   // producer while the server is still fully alive.
-  apply_thread_running_.store(false);
+  apply_thread_running_.store(false, rusty::sync::atomic::Ordering::SeqCst);
   if (apply_thread_.joinable()) {
     apply_thread_.join();
   }
@@ -1480,13 +1480,13 @@ void RaftServer::PublishAppliedIndexLocked(uint64_t index) {
 }
 
 void RaftServer::StartApplyThread() {
-  apply_thread_running_.store(true);
+  apply_thread_running_.store(true, rusty::sync::atomic::Ordering::SeqCst);
   apply_thread_ = std::thread([this]() {
     Log_info("[APPLY-THREAD] Site {}: Started background apply thread", site_id_);
     uint64_t apply_count = 0;
     auto last_log_time = std::chrono::steady_clock::now();
     while (!stop_.load(rusty::sync::atomic::Ordering::Acquire) &&
-           apply_thread_running_.load()) {
+           apply_thread_running_.load(rusty::sync::atomic::Ordering::SeqCst)) {
       // Drain entries from the queue
       QueuedApplyEntry entry;
       bool got_entry = false;
@@ -1773,14 +1773,14 @@ bool RaftServer::WaitForStartup() {
 
 void RaftServer::Disconnect(const bool disconnect) {
   std::lock_guard<RaftCheckedMutex> lock(mtx_);
-  verify(disconnected_.load(std::memory_order_acquire) != disconnect);
+  verify(disconnected_.load(rusty::sync::atomic::Ordering::Acquire) != disconnect);
   commo()->SetNetworkEnabled(!disconnect);
-  disconnected_.store(disconnect, std::memory_order_release);
+  disconnected_.store(disconnect, rusty::sync::atomic::Ordering::Release);
 }
 
 // @unsafe - Synchronizes with Disconnect() through the Raft state mutex.
 bool RaftServer::IsDisconnected() {
-  return disconnected_.load(std::memory_order_acquire);
+  return disconnected_.load(rusty::sync::atomic::Ordering::Acquire);
 }
 
 // @unsafe - Synchronizes with role/leader publication through the Raft mutex.
@@ -4789,7 +4789,7 @@ RaftServer::~RaftServer() {
   // Stop and join the background apply thread if it was started. The thread
   // captures `this` and walks apply_queue_ / app_next_, so it must finish
   // before any member state is destroyed.
-  apply_thread_running_.store(false);
+  apply_thread_running_.store(false, rusty::sync::atomic::Ordering::SeqCst);
   if (apply_thread_.joinable()) {
     apply_thread_.join();
   }
@@ -5854,7 +5854,7 @@ void RaftServer::OnInstallSnapshot(const uint64_t term,
     rpc_ready_.store(false, rusty::sync::atomic::Ordering::Release);
     stop_.store(true, rusty::sync::atomic::Ordering::Release);
     looping_.store(false, rusty::sync::atomic::Ordering::Release);
-    apply_thread_running_.store(false);
+    apply_thread_running_.store(false, rusty::sync::atomic::Ordering::SeqCst);
     *term_out = 0;
     return;
   }
@@ -5927,7 +5927,7 @@ void RaftServer::OnInstallSnapshot(const uint64_t term,
     rpc_ready_.store(false, rusty::sync::atomic::Ordering::Release);
     stop_.store(true, rusty::sync::atomic::Ordering::Release);
     looping_.store(false, rusty::sync::atomic::Ordering::Release);
-    apply_thread_running_.store(false);
+    apply_thread_running_.store(false, rusty::sync::atomic::Ordering::SeqCst);
     *term_out = 0;
   } catch (...) {
     Log_error("[INSTALL-SNAPSHOT] Site {} threw while installing snapshot",
@@ -5935,7 +5935,7 @@ void RaftServer::OnInstallSnapshot(const uint64_t term,
     rpc_ready_.store(false, rusty::sync::atomic::Ordering::Release);
     stop_.store(true, rusty::sync::atomic::Ordering::Release);
     looping_.store(false, rusty::sync::atomic::Ordering::Release);
-    apply_thread_running_.store(false);
+    apply_thread_running_.store(false, rusty::sync::atomic::Ordering::SeqCst);
     *term_out = 0;
   }
 }
