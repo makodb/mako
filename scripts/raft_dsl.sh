@@ -480,6 +480,32 @@ for index in "${!FILES[@]}"; do
     failures=$((failures + 1))
   fi
 
+  #   #[cpp_inherit] WITHOUT `use rusty::cpp_inherit;` in the same block is
+  #                the worst of these. The attribute is authenticated through
+  #                the marker crate; unauthenticated, the emitter DROPS THE
+  #                BASE CLASS and emits adapter classes instead -- exit 0, no
+  #                marker, no diagnostic, and the type silently stops
+  #                implementing its interface. REPRODUCED against the pinned
+  #                transpiler: with the import, `struct X : public Base`;
+  #                without it, `struct X {` plus BaseAdapter<X>.
+  if bad=$(awk -v src="${file}" '
+      /^[[:space:]]*#if RUSTYCPP_RUST/ { d=1; imp=0; line=0; next }
+      /^[[:space:]]*#endif/ {
+        if (d && line && !imp) {
+          print "  " src ":" line ": #[cpp_inherit] without use rusty::cpp_inherit;"
+        }
+        d=0; line=0; imp=0; next
+      }
+      d && /use[[:space:]]+rusty::cpp_inherit[[:space:]]*;/ { imp=1 }
+      d && /#\[cpp_inherit\]/ { if (line == 0) line=FNR }
+    ' "${file}") && [ -n "${bad}" ]; then
+    echo "FAILED ${file}: #[cpp_inherit] is not authenticated in this block" >&2
+    echo "${bad}" >&2
+    echo "  without 'use rusty::cpp_inherit;' in the SAME block the emitter" >&2
+    echo "  silently drops the base class and emits adapters instead" >&2
+    failures=$((failures + 1))
+  fi
+
   #   #[derive(Default)] is lowered to `static X default_() { return {}; }`,
   #                i.e. C++ value-initialisation. That is correct only when
   #                every field's own Default is all-zero-bytes. A field whose
