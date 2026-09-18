@@ -1234,6 +1234,22 @@ unsafe extern "C" {
     fn raft_apply_invoke(server: *mut RaftServerBase, id: u64) -> bool;
     fn raft_monotonic_now_secs() -> u64;
     fn raft_thread_sleep_ms(millis: u64);
+    fn raft_env_snapshots_enabled() -> bool;
+    fn raft_prepare_snapshot_cb_is_set(server: *const RaftServerBase) -> bool;
+    fn raft_env_snapshot_interval(out: *mut u64) -> i32;
+    fn raft_snapshot_recovery_pick_manager(
+        server: *mut RaftServerBase,
+        out: *mut rusty::RaftSnapshotManagerPtr);
+    fn raft_snapshot_manager_latest(
+        manager: *const rusty::RaftSnapshotManagerPtr, index: *mut u64,
+        term: *mut u64) -> bool;
+    fn raft_snapshot_manager_load(
+        manager: *const rusty::RaftSnapshotManagerPtr,
+        data: *mut rusty::RaftByteString, index: *mut u64, term: *mut u64,
+        size_bytes: *mut u64) -> bool;
+    fn raft_load_state_machine_snapshot(
+        server: *mut RaftServerBase, data: *const rusty::RaftByteString,
+        last_included_index: u64, last_included_term: u64) -> bool;
 }
 
 // One campaign's reply quorum, read in a single shot.
@@ -2099,6 +2115,253 @@ impl RaftServerBase {
                 }
             }
         }
+        true
+    }
+
+    // @safe - the fail-stop a snapshot recovery failure performs, with the
+    // reason. Was a lambda inside InitializeSnapshotManager.
+    pub fn FailSnapshotRecovery(&mut self, reason: &str) -> bool {
+        rusty::raft_log_error_2(
+            "[RAFT-SNAPSHOT] Site {} recovery failed: {}", self.site_id_,
+            reason);
+        self.FailStop();
+        false
+    }
+
+    // @safe - the two shapes of recovered progress that no snapshot covers.
+    // Both mean the live log was compacted by a snapshot this manager does
+    // not have.
+    pub fn HasUncoveredProgress(&self) -> bool {
+        let orphaned_compacted_suffix: bool = self.state_.snapidx_ == 0
+            && !self.state_.raft_log_.is_empty()
+            && self.state_.raft_log_.base() > 1;
+        let uncovered_empty_progress: bool = self.state_.snapidx_ == 0
+            && self.state_.raft_log_.is_empty()
+            && self.state_.commit_index_ != 0;
+        orphaned_compacted_suffix || uncovered_empty_progress
+    }
+
+    // @unsafe - CALLER HOLDS NOTHING; takes the apply gate and mtx_ in that
+    // order. Wrapped by RaftServer::InitializeSnapshotManager's catch-all.
+    //
+    // Restores the exact state-machine bytes before publishing any recovered
+    // snapshot boundary, so a failure anywhere leaves the live state machine,
+    // the latest Raft snapshot and the reconstruction log untouched.
+    pub fn InitializeSnapshotManagerLocked(&mut self) -> bool {
+        if !unsafe { raft_env_snapshots_enabled() } {
+            let _lock = RaftLockGuard::new(&mut self.mtx_);
+            if self.HasUncoveredProgress() {
+                let first: u64 = if self.state_.raft_log_.is_empty() {
+                    0
+                } else {
+                    self.state_.raft_log_.base()
+                };
+                rusty::raft_log_error_3(
+                    "[RAFT-SNAPSHOT] Site {} has recovered progress without its covering snapshot (first={} commit={}); snapshots are disabled",
+                    self.site_id_, first, self.state_.commit_index_);
+                self.FailStop();
+                return false;
+            }
+            rusty::raft_log_info_1(
+                "[RAFT-SNAPSHOT] Snapshots disabled for site {} (set MAKO_RAFT_SNAPSHOTS=1 to enable)",
+                self.site_id_);
+            return true;
+        }
+
+        let mut snapshot_interval: u64 = self.GetSnapshotThreshold();
+        let mut interval_override: u64 = 0;
+        let interval_status: i32 = unsafe {
+            raft_env_snapshot_interval(&mut interval_override as *mut u64)
+        };
+        if interval_status == 2 {
+            return false;
+        }
+        if interval_status == 1 {
+            snapshot_interval = interval_override;
+            self.SetSnapshotThreshold(snapshot_interval);
+        }
+
+        let _apply_lock =
+            RaftStdLockGuard::new(&mut self.state_machine_apply_mtx_);
+        let _lock = RaftLockGuard::new(&mut self.mtx_);
+
+        let mut manager: rusty::RaftSnapshotManagerPtr = Default::default();
+        unsafe {
+            raft_snapshot_recovery_pick_manager(
+                self as *mut RaftServerBase,
+                &mut manager as *mut rusty::RaftSnapshotManagerPtr);
+        }
+
+        let mut discovered_index: u64 = 0;
+        let mut discovered_term: u64 = 0;
+        let has_latest: bool = unsafe {
+            raft_snapshot_manager_latest(
+                &manager as *const rusty::RaftSnapshotManagerPtr,
+                &mut discovered_index as *mut u64,
+                &mut discovered_term as *mut u64)
+        };
+        if !has_latest {
+            if self.state_.snapidx_ != 0 || self.HasUncoveredProgress() {
+                return self.FailSnapshotRecovery(
+                    "empty snapshot manager cannot cover the compacted live log");
+            }
+            self.snapshot_manager_ = manager;
+            self.snapshot_manager_configured_
+                .store(true, rusty::sync::atomic::Ordering::Release);
+            rusty::raft_log_info_3(
+                "[RAFT-SNAPSHOT] Initialized empty in-memory manager for site {} partition {}: interval={}",
+                self.site_id_, self.partition_id_, snapshot_interval);
+            return true;
+        }
+
+        let mut snapshot_data: rusty::RaftByteString = Default::default();
+        let mut recovered_snapshot_index: u64 = 0;
+        let mut recovered_snapshot_term: u64 = 0;
+        let mut snapshot_size_bytes: u64 = 0;
+        let loaded: bool = unsafe {
+            raft_snapshot_manager_load(
+                &manager as *const rusty::RaftSnapshotManagerPtr,
+                &mut snapshot_data as *mut rusty::RaftByteString,
+                &mut recovered_snapshot_index as *mut u64,
+                &mut recovered_snapshot_term as *mut u64,
+                &mut snapshot_size_bytes as *mut u64)
+        };
+        if !loaded {
+            return self.FailSnapshotRecovery(
+                "latest snapshot bytes failed to load");
+        }
+        if recovered_snapshot_index != discovered_index
+            || recovered_snapshot_term != discovered_term
+        {
+            return self.FailSnapshotRecovery(
+                "snapshot manager metadata does not match its loaded snapshot");
+        }
+        if recovered_snapshot_index == 0
+            || !raft_server_log_index_has_successor(recovered_snapshot_index)
+        {
+            return self.FailSnapshotRecovery(
+                "snapshot boundary is outside the recoverable log range");
+        }
+        if recovered_snapshot_index < self.state_.snapidx_
+            || (recovered_snapshot_index == self.state_.snapidx_
+                && self.state_.snapidx_ != 0
+                && recovered_snapshot_term != self.state_.snapterm_ as u64)
+        {
+            return self.FailSnapshotRecovery(
+                "snapshot manager would move the live boundary backward or change its term");
+        }
+        let has_prepare_cb: bool =
+            unsafe { raft_prepare_snapshot_cb_is_set(self as *const RaftServerBase) };
+        if has_prepare_cb && self.GetAppliedIndex() > recovered_snapshot_index
+        {
+            return self.FailSnapshotRecovery(
+                "refusing to rewind a live state machine to an older snapshot");
+        }
+
+        let previous_snapshot_index: u64 = self.state_.snapidx_;
+        let previous_snapshot_term: u64 = self.state_.snapterm_ as u64;
+        let previous_last_log_index: u64 = self.state_.raft_log_.last_index();
+        let previous_min_active_slot: u64 = self.state_.raft_log_.base();
+
+        // Reconstruct Figure 13's suffix decision from the old boundary when
+        // it is still present. A live reinitialisation would use its exact
+        // existing snapshot tuple as the same proof; that proof is
+        // unreachable today because Setup is the only caller and snapidx_ is
+        // still 0 there.
+        let boundary = self.state_.raft_log_.get(recovered_snapshot_index);
+        #[allow(clippy::unnecessary_unwrap)]
+        let has_boundary: bool = boundary.is_some()
+            && unsafe {
+                raft_command_has_value(
+                    boundary.unwrap().cmd() as *const rusty::RaftCommand)
+            };
+        let local_boundary_term: u64 = if has_boundary {
+            boundary.unwrap().term() as u64
+        } else {
+            0
+        };
+        let boundary_matches: bool = raft_server_snapshot_boundary_matches(
+            has_boundary, local_boundary_term, recovered_snapshot_term);
+        let has_recovered_suffix: bool = raft_server_log_index_above(
+            previous_last_log_index, recovered_snapshot_index);
+        let live_snapshot_proves_suffix: bool =
+            previous_snapshot_index == recovered_snapshot_index
+                && previous_snapshot_term == recovered_snapshot_term
+                && previous_min_active_slot == recovered_snapshot_index + 1;
+        let retain_suffix: bool =
+            raft_server_snapshot_recovery_retains_suffix(
+                has_recovered_suffix, has_boundary, boundary_matches,
+                live_snapshot_proves_suffix);
+
+        if raft_server_snapshot_recovery_has_unproven_gap(
+            has_recovered_suffix, has_boundary, live_snapshot_proves_suffix)
+        {
+            return self.FailSnapshotRecovery(
+                "recovered suffix has no snapshot boundary or live-snapshot proof");
+        }
+        if has_recovered_suffix && has_boundary && !boundary_matches {
+            rusty::raft_log_warn_5(
+                "[RAFT-SNAPSHOT] Site {} discarding recovered suffix after snapshot boundary term mismatch: local=({}, {}) snapshot=({}, {})",
+                self.site_id_, recovered_snapshot_index, local_boundary_term,
+                recovered_snapshot_index, recovered_snapshot_term);
+        }
+
+        if !unsafe {
+            raft_load_state_machine_snapshot(
+                self as *mut RaftServerBase,
+                &snapshot_data as *const rusty::RaftByteString,
+                recovered_snapshot_index, recovered_snapshot_term)
+        } {
+            return self.FailSnapshotRecovery(
+                "state-machine snapshot validation/load failed");
+        }
+
+        self.state_.snapidx_ = recovered_snapshot_index;
+        self.state_.snapterm_ = recovered_snapshot_term as i64;
+        if retain_suffix {
+            self.state_.raft_log_.compact_through(self.state_.snapidx_);
+        } else {
+            self.state_.raft_log_.reset(self.state_.snapidx_ + 1);
+        }
+        self.state_.commit_index_ = raft_server_snapshot_progress_clamp(
+            self.state_.commit_index_, self.state_.snapidx_,
+            self.state_.raft_log_.last_index());
+
+        if self.state_.current_term_ < self.state_.snapterm_ as u64 {
+            rusty::raft_log_warn_3(
+                "[RAFT-SNAPSHOT] Site {} advancing recovered term {} -> {} to cover snapshot boundary",
+                self.site_id_, self.state_.current_term_,
+                self.state_.snapterm_);
+            self.state_.current_term_ = self.state_.snapterm_ as u64;
+            self.state_.vote_for_ = RAFT_SERVER_INVALID_SITE_ID;
+        }
+
+        unsafe {
+            raft_verify(
+                self.state_.commit_index_
+                    <= self.state_.raft_log_.last_index());
+        }
+
+        self.snapshot_manager_ = manager;
+        self.snapshot_manager_configured_
+            .store(true, rusty::sync::atomic::Ordering::Release);
+        self.snapshot_trigger_index_
+            .store(self.state_.snapidx_,
+                   rusty::sync::atomic::Ordering::Release);
+
+        if self.state_.snapidx_ > self.GetAppliedIndex() {
+            self.PublishAppliedIndexLocked(self.state_.snapidx_);
+        }
+
+        rusty::raft_log_info_8(
+            "[RAFT-SNAPSHOT] Restored snapshot for site {}: index={} term={} size={} commit={} last={} min_active={} retain_suffix={}",
+            self.site_id_, self.state_.snapidx_, self.state_.snapterm_,
+            snapshot_size_bytes, self.state_.commit_index_,
+            self.state_.raft_log_.last_index(),
+            self.state_.raft_log_.base(), retain_suffix);
+        rusty::raft_log_info_3(
+            "[RAFT-SNAPSHOT] Initialized for site {} partition {}: interval={}",
+            self.site_id_, self.partition_id_, snapshot_interval);
         true
     }
 
