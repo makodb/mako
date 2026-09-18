@@ -102,9 +102,24 @@ mapfile -t EXPECTED_INVENTORY_FILES < <(
 # NOTE: the `\w+::` has NO leading `\b` on purpose -- a `\b` before it makes the
 # pattern fail to match destructors (`Owner::~Owner()`), which then emit a
 # non-inline out-of-line dtor and blow up with a multiple-definition link
-# error in any header included by more than one TU. `^\S` already anchors
-# these to column 0, so dropping `\b` is safe: statements inside bodies are
-# indented and skipped.
+# error in any header included by more than one TU.
+#
+# `^\S` alone is NOT enough to anchor these to definitions. The claim this
+# comment used to make -- "statements inside bodies are indented and skipped"
+# -- is false for one emitted shape: a Rust block EXPRESSION lowers to an
+# immediately-invoked lambda whose body the emitter renders at column 0. Its
+# statements then matched, and `inline uint64_t size_before = rusty::len(...)`
+# and `inline if (rusty::detail::rust_not(...))` are syntax errors the DSL
+# gate cannot see -- it checks the Rust, not the emitted C++ -- so they
+# surface much later as a compile failure in something unrelated-looking.
+#
+# Hence the two exclusions below, neither of which can hold for the FIRST
+# LINE of an out-of-line definition:
+#   - the line contains `;`   -- a definition opens a body rather than ending
+#     a statement, and a wrapped signature's first line ends in `,` or `(`;
+#   - the line starts with a control keyword.
+# Both only ever REMOVE matches, so nothing that used to be inlined stops
+# being inlined.
 #
 # On the tree as of this commit the pass changes ZERO lines across all 17
 # carriers: every existing block is a free const fn that already emits as
@@ -117,12 +132,15 @@ p = sys.argv[1]
 lines = open(p).read().split('\n')
 out, in_gen = [], False
 defpat = re.compile(r'^(?!inline\b|class\b|struct\b|template\b|namespace\b|/\*|//|\})\S.*\w+::~?\w+\s*\(')
+stmtpat = re.compile(r'^(if|for|while|do|switch|case|default|return|else|throw|delete|break|continue|goto)\b')
+def is_definition(ln):
+    return defpat.match(ln) is not None and ';' not in ln and not stmtpat.match(ln)
 for ln in lines:
     if ln.startswith('/*RUSTYCPP:GEN-BEGIN'):
         in_gen = True
     elif ln.startswith('/*RUSTYCPP:GEN-END'):
         in_gen = False
-    elif in_gen and defpat.match(ln):
+    elif in_gen and is_definition(ln):
         ln = 'inline ' + ln
     out.append(ln)
 open(p, 'w').write('\n'.join(out))
@@ -150,12 +168,15 @@ p = sys.argv[1]
 lines = open(p).read().split('\n')
 out, in_gen = [], False
 defpat = re.compile(r'^(?!inline\b|class\b|struct\b|template\b|namespace\b|/\*|//|\})\S.*\w+::~?\w+\s*\(')
+stmtpat = re.compile(r'^(if|for|while|do|switch|case|default|return|else|throw|delete|break|continue|goto)\b')
+def is_definition(ln):
+    return defpat.match(ln) is not None and ';' not in ln and not stmtpat.match(ln)
 for ln in lines:
     if ln.startswith('/*RUSTYCPP:GEN-BEGIN'):
         in_gen = True
     elif ln.startswith('/*RUSTYCPP:GEN-END'):
         in_gen = False
-    elif in_gen and ln.startswith('inline ') and defpat.match(ln[len('inline '):]):
+    elif in_gen and ln.startswith('inline ') and is_definition(ln[len('inline '):]):
         ln = ln[len('inline '):]
     out.append(ln)
 open(p, 'w').write('\n'.join(out))

@@ -367,7 +367,12 @@ pub struct RaftResponsePtr {
     _opaque: [u8; 0],
 }
 
-#[derive(Default)]
+/// `Clone` models `janus::Command`'s copy constructor, which is a refcount
+/// bump on the inner `Arc<SerializableBase>` rather than a payload copy.
+/// `.clone()` emits `rusty::clone(x)`, whose SFINAE falls back to copy
+/// construction for a type with no `clone()` member -- so the Rust spelling
+/// and the C++ one are the same operation.
+#[derive(Default, Clone)]
 pub struct RaftCommand {
     _opaque: [u8; 0],
 }
@@ -479,8 +484,6 @@ rusty_opaque_cpp_carrier! {
     RaftLeaderChangeCb,
     /// `std::thread` -- the background apply thread.
     RaftStdThread,
-    /// `std::deque<janus::QueuedApplyEntry>` -- the apply queue.
-    RaftApplyQueue,
     /// `std::shared_ptr<janus::RaftVoteQuorumEvent>` -- one campaign's reply
     /// quorum, carried from the broadcast kernel to the snapshot kernel
     /// across a fiber suspension.

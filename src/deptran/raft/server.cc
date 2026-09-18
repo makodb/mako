@@ -889,30 +889,6 @@ bool raft_command_has_value(const rusty::RaftCommand* cmd) {
   return cmd->has_value();
 }
 
-// The batch EnqueueCommittedEntries hands to the apply thread. The copy
-// happens BEFORE apply_queue_mtx_ is taken, exactly as the C++ did: the log
-// must not be read while that mutex is held. Returns how many were enqueued.
-uint64_t raft_apply_queue_push_range(RaftServerBase* self, uint64_t first,
-                                     uint64_t last) {
-  std::vector<std::pair<slotid_t, Command>> batch;
-  for (uint64_t id = first; id <= last; id++) {
-    const auto found = self->state_.raft_log_.get(id);
-    verify(found.is_some());
-    batch.emplace_back(id, found.unwrap().cmd());
-  }
-  std::lock_guard<std::mutex> lock(self->apply_queue_mtx_);
-  for (auto& entry : batch) {
-    self->apply_queue_.push_back(QueuedApplyEntry{
-        entry.first, std::move(entry.second), self->apply_queue_epoch_});
-  }
-  return batch.size();
-}
-
-uint64_t raft_apply_queue_size(RaftServerBase* self) {
-  std::lock_guard<std::mutex> lock(self->apply_queue_mtx_);
-  return self->apply_queue_.size();
-}
-
 // std::condition_variable, whose wait takes a predicate closure.
 void raft_startup_wait(RaftServerBase* self) {
   std::unique_lock<std::mutex> lock(self->startup_mtx_);
@@ -1064,7 +1040,7 @@ bool raft_load_state_machine_snapshot(RaftServerBase* self,
       *data, last_included_index, last_included_term);
 }
 
-// (1)/(3) OnInstallSnapshot's staging transaction and queue reconciliation.
+// (1)/(3) OnInstallSnapshot's staging transaction.
 
 // Validate and stage the exact state-machine image, publish the Raft
 // snapshot, then commit the staged image -- in that order, because
@@ -1115,59 +1091,7 @@ int raft_install_snapshot_payload(RaftServerBase* self,
   return 3;
 }
 
-// Drop the queued application work the snapshot covers. Retaining the suffix
-// erases only the covered prefix; replacing the log bumps the epoch, which
-// also invalidates an entry the apply thread popped before this clear -- it
-// rechecks the captured epoch under the outer state-machine gate before
-// invoking the callback. Returns how many entries went away.
-uint64_t raft_purge_apply_queue(RaftServerBase* self,
-                                uint64_t last_included_index,
-                                bool retain_suffix) {
-  uint64_t purged = 0;
-  std::lock_guard<std::mutex> queue_lock(self->apply_queue_mtx_);
-  if (retain_suffix) {
-    auto queued = self->apply_queue_.begin();
-    while (queued != self->apply_queue_.end()) {
-      if (raft_server_log_index_at_or_below(queued->index,
-                                            last_included_index)) {
-        queued = self->apply_queue_.erase(queued);
-        purged++;
-      } else {
-        ++queued;
-      }
-    }
-  } else {
-    self->apply_queue_epoch_++;
-    purged = self->apply_queue_.size();
-    self->apply_queue_.clear();
-  }
-  return purged;
-}
-
-// (1) the apply thread's queue pop and its callback invocation.
-
-// Moves the front entry's command into pending_apply_command_ and reports
-// its index and epoch. Returns false when the queue is empty; queue_size is
-// written either way.
-bool raft_apply_queue_pop(RaftServerBase* self, uint64_t* index,
-                          uint64_t* epoch, uint64_t* queue_size) {
-  std::lock_guard<std::mutex> lock(self->apply_queue_mtx_);
-  *queue_size = self->apply_queue_.size();
-  if (self->apply_queue_.empty()) {
-    return false;
-  }
-  QueuedApplyEntry entry = std::move(self->apply_queue_.front());
-  self->apply_queue_.pop_front();
-  *index = entry.index;
-  *epoch = entry.epoch;
-  self->pending_apply_command_ = std::move(entry.command);
-  return true;
-}
-
-uint64_t raft_apply_queue_epoch(RaftServerBase* self) {
-  std::lock_guard<std::mutex> lock(self->apply_queue_mtx_);
-  return self->apply_queue_epoch_;
-}
+// (2) the apply thread's callback invocation.
 
 // The learner callback, under the catch-all the C++ wrapped it in. An
 // internal no-op is consumed without reaching the application. Returns false
