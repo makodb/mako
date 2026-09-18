@@ -28,6 +28,7 @@
 // commo.h above.
 import rusty;   // rusty::Vec is a vec_port C++20 module, not a header
 #include "rust_facade_types.h"
+#include "rust_log_shims.h"
 #include <rusty/option.hpp>
 #include <rusty/slice.hpp>
 #include <rusty/sync/atomic.hpp>
@@ -2516,6 +2517,29 @@ extern "C" inline void raft_mutex_unlock(RaftCheckedMutex* mutex) {
   mutex->unlock();
 }
 
+// @unsafe - Time::now is an rrr clock read; the argument is the
+// microsecond-resolution flag every Raft call site already passes.
+extern "C" inline uint64_t raft_time_now_us() { return Time::now(true); }
+
+// @unsafe - shared_ptr null test. The pointer itself is opaque to Rust, so
+// "is a snapshot manager configured" has to be asked here.
+extern "C" inline bool raft_snapshot_manager_is_set(
+    const rusty::RaftSnapshotManagerPtr* manager) {
+  return *manager != nullptr;
+}
+
+// @unsafe - RandomGenerator is external.
+extern "C" inline uint64_t raft_random_range_us(uint64_t low, uint64_t high) {
+  return RandomGenerator::rand(low, high);
+}
+
+// @safe - the `reason ? reason : "unspecified"` the C++ LogTermChange did
+// inline. A DSL body cannot spell a C string literal, so the fallback lives
+// on this side.
+extern "C" inline const char* raft_reason_or_unspecified(const char* reason) {
+  return reason != nullptr ? reason : "unspecified";
+}
+
 // ============================================================================
 // RaftLockGuard -- std::lock_guard<RaftCheckedMutex>, for converted bodies.
 //
@@ -2653,6 +2677,10 @@ use crate::scheduler_h::TxLogServer;
 // Rust definition behind it; server.h defines it just above.
 unsafe extern "C" {
     fn raft_verify(condition: bool);
+    fn raft_time_now_us() -> u64;
+    fn raft_snapshot_manager_is_set(manager: *const rusty::RaftSnapshotManagerPtr) -> bool;
+    fn raft_random_range_us(low: u64, high: u64) -> u64;
+    fn raft_reason_or_unspecified(reason: *const core::ffi::c_char) -> *const core::ffi::c_char;
 }
 
 // appliedIndexForWait_ keeps its C++ spelling: it is read by name from
@@ -2875,6 +2903,313 @@ impl RaftServerBase {
         self.election_loop_running_
             .store(running, rusty::sync::atomic::Ordering::Release);
     }
+
+    // @unsafe - takes mtx_ and reads the whole election cluster in one scope,
+    // so the Rust loop can branch on copies after the lock is released.
+    pub fn ElectionLoopGather(&mut self) -> ElectionTick {
+        let _lock = RaftLockGuard::new(&mut self.mtx_);
+        let time_now: u64 = unsafe { raft_time_now_us() };
+        let heartbeat_time: u64 = self.state_.last_heartbeat_time_;
+        let time_elapsed: u64 = time_now - heartbeat_time;
+        let election_timeout: u64 = self.state_.election_timeout_us_;
+        ElectionTick::new(
+            time_elapsed,
+            election_timeout,
+            heartbeat_time,
+            self.state_.election_timer_generation_,
+            self.state_.current_term_,
+            self.state_.vote_for_,
+            raft_server_election_timeout_has_fired(
+                self.state_.is_leader_, time_elapsed, election_timeout),
+        )
+    }
+
+    // CALLER MUST HOLD mtx_. The term of the last log entry, or the snapshot
+    // boundary term when the log has been compacted past it.
+    pub fn ElectionLastLogTermLocked(&self) -> i64 {
+        let last_index: u64 = self.state_.raft_log_.last_index();
+        unsafe {
+            raft_verify(last_index >= self.state_.snapidx_);
+        }
+        if raft_server_election_last_log_uses_snapshot(
+            last_index, self.state_.snapidx_)
+        {
+            return self.state_.snapterm_;
+        }
+        // The C++ went through FindRaftInstance, which flattened the Option
+        // to a raw pointer and then verified it non-null. Asking the log
+        // directly is the same lookup with the check kept.
+        let last_log = self.state_.raft_log_.get(last_index);
+        unsafe {
+            raft_verify(last_log.is_some());
+        }
+        last_log.unwrap().term()
+    }
+
+    // @unsafe - takes mtx_; the returned token is how a state machine proves
+    // ownership when it later clears the callbacks.
+    pub fn SetStateMachineSnapshotCallbacks(
+        &mut self,
+        create_cb: rusty::RaftCreateSnapshotCb,
+        prepare_cb: rusty::RaftPrepareSnapshotCb,
+    ) -> u64 {
+        let _lock = RaftLockGuard::new(&mut self.mtx_);
+        if self.state_.next_snapshot_callback_owner_token_ == 0 {
+            self.state_.next_snapshot_callback_owner_token_ = 1;
+        }
+        let owner_token: u64 = self.state_.next_snapshot_callback_owner_token_;
+        self.state_.next_snapshot_callback_owner_token_ += 1;
+        self.create_sm_snapshot_cb_ = create_cb;
+        self.prepare_sm_snapshot_cb_ = prepare_cb;
+        self.state_.snapshot_callback_owner_token_ = owner_token;
+        owner_token
+    }
+
+    // @unsafe - takes mtx_; a non-owning token is refused.
+    pub fn ClearStateMachineSnapshotCallbacks(
+        &mut self,
+        callback_owner_token: u64,
+    ) -> bool {
+        if callback_owner_token == 0 {
+            return false;
+        }
+        let _lock = RaftLockGuard::new(&mut self.mtx_);
+        if self.state_.snapshot_callback_owner_token_ != callback_owner_token {
+            return false;
+        }
+        self.create_sm_snapshot_cb_ = Default::default();
+        self.prepare_sm_snapshot_cb_ = Default::default();
+        self.state_.snapshot_callback_owner_token_ = 0;
+        true
+    }
+
+    // CALLER MUST HOLD mtx_.
+    pub fn SetSnapshotManagerLocked(
+        &mut self,
+        manager: rusty::RaftSnapshotManagerPtr,
+    ) {
+        self.snapshot_manager_ = manager;
+        let configured: bool =
+            unsafe { raft_snapshot_manager_is_set(&self.snapshot_manager_) };
+        self.snapshot_manager_configured_
+            .store(configured, rusty::sync::atomic::Ordering::Release);
+    }
+
+    // @unsafe - takes mtx_.
+    pub fn SetSnapshotManager(&mut self, manager: rusty::RaftSnapshotManagerPtr) {
+        let _lock = RaftLockGuard::new(&mut self.mtx_);
+        self.SetSnapshotManagerLocked(manager);
+    }
+
+    // @safe - a plain move into the notification slot; no lock, exactly as
+    // the C++ had it.
+    pub fn RegisterLeaderChangeCallback(&mut self, cb: rusty::RaftLeaderChangeCb) {
+        self.leader_change_cb_ = cb;
+    }
+
+    // ------------------------------------------------------------------
+    // Role and progress accessors, formerly inline in class RaftServer.
+    // ------------------------------------------------------------------
+
+    // @unsafe - CALLER MUST HOLD mtx_.
+    pub fn AmIPreferredLeader(&self) -> bool {
+        raft_server_site_is_preferred_leader(
+            self.site_id_, self.preferred_leader_site_id_)
+    }
+
+    // @safe - acquire load pairing with the final startup publication.
+    pub fn IsRpcReady(&self) -> bool {
+        self.rpc_ready_.load(rusty::sync::atomic::Ordering::Acquire)
+    }
+
+    // @safe - acquire load pairing with PublishAppliedIndex.
+    pub fn GetAppliedIndex(&self) -> u64 {
+        self.appliedIndexForWait_
+            .load(rusty::sync::atomic::Ordering::Acquire)
+    }
+
+    // The looping_ check is not an optimisation: it is the guard against
+    // reading members during destruction.
+    pub fn IsLeaderLocked(&self) -> bool {
+        if !self.looping_.load(rusty::sync::atomic::Ordering::Acquire) {
+            return false;
+        }
+        self.state_.is_leader_
+    }
+
+    // Acquiring entry point, for callers that do not already hold mtx_.
+    pub fn IsLeader(&mut self) -> bool {
+        if !self.looping_.load(rusty::sync::atomic::Ordering::Acquire) {
+            return false;
+        }
+        let _lock = RaftLockGuard::new(&mut self.mtx_);
+        self.state_.is_leader_
+    }
+
+    // @unsafe - writes through caller-provided out-pointers under mtx_. The
+    // signature is the C++ one; every call site passes the address of a
+    // local.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub fn GetState(&mut self, is_leader: *mut bool, term: *mut u64) {
+        let _lock = RaftLockGuard::new(&mut self.mtx_);
+        let leading: bool = self.IsLeaderLocked();
+        unsafe {
+            *is_leader = leading;
+            *term = self.state_.current_term_;
+        }
+    }
+
+    // @safe - POD field
+    pub fn GetHeartbeatInterval(&self) -> u64 {
+        self.heartbeat_interval_us_
+    }
+
+    // @safe - POD field
+    pub fn SetHeartbeatInterval(&mut self, micros: u64) {
+        self.heartbeat_interval_us_ = micros;
+    }
+
+    // @safe - POD field
+    pub fn GetLogRetentionWindow(&self) -> u64 {
+        self.log_retention_window_
+    }
+
+    // @safe - POD field, floored at 1 so the retention arithmetic cannot
+    // divide by zero.
+    pub fn SetLogRetentionWindow(&mut self, window: u64) {
+        self.log_retention_window_ =
+            raft_server_retention_window_normalize(window);
+    }
+
+    // @safe - reads the atomic trigger mirror.
+    pub fn GetSnapshotThreshold(&self) -> u64 {
+        self.snapshot_trigger_threshold_
+            .load(rusty::sync::atomic::Ordering::Acquire)
+    }
+
+    // @unsafe - takes mtx_ and logs.
+    pub fn SetPreferredLeader(&mut self, site_id: u16) {
+        let _lock = RaftLockGuard::new(&mut self.mtx_);
+        let old_preferred: u16 = self.preferred_leader_site_id_;
+        self.preferred_leader_site_id_ = site_id;
+        if old_preferred != site_id {
+            rusty::raft_log_info_2(
+                "[LEADERSHIP-TRANSFER] Site {}: Preferred leader set to {}",
+                self.site_id_, site_id);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Applied-index publication, compaction, and the term-change log.
+    // ------------------------------------------------------------------
+
+    // CALLER MUST HOLD mtx_. The applied index never moves backward; a
+    // caller that tries is a bug, so it is reported rather than obeyed.
+    pub fn PublishAppliedIndexLocked(&mut self, index: u64) {
+        let published: u64 = self.GetAppliedIndex();
+        if raft_server_log_index_above(published, index) {
+            rusty::raft_log_warn_3(
+                "[RAFT-APPLY] Site {} refusing to move applied index backward from {} to {}",
+                self.site_id_, published, index);
+            return;
+        }
+        self.state_.execute_index_ = index;
+        self.appliedIndexForWait_
+            .store(index, rusty::sync::atomic::Ordering::Release);
+    }
+
+    // @unsafe - takes mtx_.
+    pub fn PublishAppliedIndex(&mut self, index: u64) {
+        let _lock = RaftLockGuard::new(&mut self.mtx_);
+        self.PublishAppliedIndexLocked(index);
+    }
+
+    // CALLER MUST HOLD mtx_. Compaction is safe only through the prefix
+    // covered by BOTH the committed state and the snapshot boundary.
+    pub fn CompactLogLocked(&mut self, up_to_index: u64) -> usize {
+        let requested_index: u64 = up_to_index;
+        let safe_index: u64 = raft_server_compaction_safe_index(
+            up_to_index, self.state_.commit_index_, self.state_.snapidx_);
+        if safe_index != requested_index {
+            rusty::raft_log_warn_5(
+                "[RAFT-COMPACT] Site {}: Clamped compaction {} -> {} (state_.commit_index_={}, snapidx={})",
+                self.site_id_, requested_index, safe_index,
+                self.state_.commit_index_, self.state_.snapidx_);
+        }
+
+        if !raft_server_log_index_has_successor(safe_index) {
+            rusty::raft_log_error_2(
+                "[RAFT-COMPACT] Site {}: Refusing terminal compaction index {}; the exclusive storage bound and min_active_slot would wrap",
+                self.site_id_, safe_index);
+            return 0;
+        }
+
+        let removed_memory: usize =
+            self.state_.raft_log_.compact_through(safe_index);
+
+        rusty::raft_log_info_3(
+            "[RAFT-COMPACT] Site {}: Compacted in-memory entries through {} (memory={})",
+            self.site_id_, safe_index, removed_memory);
+        removed_memory
+    }
+
+    // @unsafe - acquiring entry point, for callers that do not hold mtx_.
+    pub fn CompactLog(&mut self, up_to_index: u64) -> usize {
+        let _lock = RaftLockGuard::new(&mut self.mtx_);
+        self.CompactLogLocked(up_to_index)
+    }
+
+    // @unsafe - logs a term transition; silent when the term is unchanged.
+    // `reason` is a C string literal at every call site; it is never
+    // dereferenced here, only handed to the formatter and to the
+    // null-fallback kernel.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub fn LogTermChange(&self, reason: *const core::ffi::c_char,
+                         old_term: u64, new_term: u64, source: u16) {
+        if old_term == new_term {
+            return;
+        }
+        let why: *const core::ffi::c_char =
+            unsafe { raft_reason_or_unspecified(reason) };
+        if source != RAFT_SERVER_INVALID_SITE_ID {
+            rusty::raft_log_info_5(
+                "[RAFT-TERM] server {} term {} -> {} ({}, source_site={})",
+                self.site_id_, old_term, new_term, why, source);
+        } else {
+            rusty::raft_log_info_4(
+                "[RAFT-TERM] server {} term {} -> {} ({})",
+                self.site_id_, old_term, new_term, why);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Election-loop kernels.
+    // ------------------------------------------------------------------
+
+    // @unsafe - RandomGenerator is external.
+    pub fn ElectionLoopRandomDelay(&self) -> u64 {
+        unsafe {
+            raft_random_range_us(
+                self.heartbeat_interval_us_ * 2,
+                self.heartbeat_interval_us_ * 4)
+        }
+    }
+
+    // @unsafe - rrr logging.
+    pub fn ElectionLoopLogStart(&self) {
+        rusty::raft_log_debug_0("start timer for election");
+    }
+
+    // @unsafe - rrr logging.
+    pub fn ElectionLoopLogFired(&self, tick: &ElectionTick) {
+        rusty::raft_log_info_3(
+            "[ELECTION_TIMER] Site {}: TIMEOUT FIRED - starting election (elapsed={} > timeout={})",
+            self.site_id_, tick.time_elapsed(), tick.election_timeout());
+        rusty::raft_log_info_6(
+            "[ELECTION_START] Site {}: TRIGGERING REQUESTVOTE - time_elapsed={} > timeout={} last_hb={} current_term={} vote_for={}",
+            self.site_id_, tick.time_elapsed(), tick.election_timeout(),
+            tick.heartbeat_time(), tick.term(), tick.vote_for());
+    }
 }
 
 // The three methods a worker reaches through a TxLogServer base pointer.
@@ -2905,7 +3240,7 @@ impl TxLogServer for RaftServerBase {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=b459bd13625b47e7e50e54d2791da45883aa750ac13f5a509a1a900c331c615b*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=a8bc00f53e9775072e2ed3ce57d9e8d562c2b2d9c308133b7036153f755133bb*/
 struct RaftServerBase;
 
 // Rust-only compiler marker import: rusty::cpp_inherit
@@ -2914,6 +3249,10 @@ using ::scheduler_h::TxLogServer;
 
 extern "C" {
     void raft_verify(bool condition);
+    uint64_t raft_time_now_us();
+    bool raft_snapshot_manager_is_set(const rusty::RaftSnapshotManagerPtr* manager);
+    uint64_t raft_random_range_us(uint64_t low, uint64_t high);
+    const rusty::ffi::c_char* raft_reason_or_unspecified(const rusty::ffi::c_char* reason);
 }
 
 struct RaftServerBase : public TxLogServer {
@@ -2979,6 +3318,33 @@ struct RaftServerBase : public TxLogServer {
     bool ElectionLoopStopped() const;
     bool ElectionLoopVoting();
     void ElectionLoopSetRunning(bool running);
+    ElectionTick ElectionLoopGather();
+    int64_t ElectionLastLogTermLocked() const;
+    uint64_t SetStateMachineSnapshotCallbacks(rusty::RaftCreateSnapshotCb create_cb, rusty::RaftPrepareSnapshotCb prepare_cb);
+    bool ClearStateMachineSnapshotCallbacks(uint64_t callback_owner_token);
+    void SetSnapshotManagerLocked(rusty::RaftSnapshotManagerPtr manager);
+    void SetSnapshotManager(rusty::RaftSnapshotManagerPtr manager);
+    void RegisterLeaderChangeCallback(rusty::RaftLeaderChangeCb cb);
+    bool AmIPreferredLeader() const;
+    bool IsRpcReady() const;
+    uint64_t GetAppliedIndex() const;
+    bool IsLeaderLocked() const;
+    bool IsLeader();
+    void GetState(bool* is_leader, uint64_t* term);
+    uint64_t GetHeartbeatInterval() const;
+    void SetHeartbeatInterval(uint64_t micros);
+    uint64_t GetLogRetentionWindow() const;
+    void SetLogRetentionWindow(uint64_t window);
+    uint64_t GetSnapshotThreshold() const;
+    void SetPreferredLeader(uint16_t site_id);
+    void PublishAppliedIndexLocked(uint64_t index);
+    void PublishAppliedIndex(uint64_t index);
+    size_t CompactLogLocked(uint64_t up_to_index);
+    size_t CompactLog(uint64_t up_to_index);
+    void LogTermChange(const rusty::ffi::c_char* reason, uint64_t old_term, uint64_t new_term, uint16_t source) const;
+    uint64_t ElectionLoopRandomDelay() const;
+    void ElectionLoopLogStart() const;
+    void ElectionLoopLogFired(const ElectionTick& tick) const;
     void set_site_identity(uint32_t loc_id, uint16_t site_id, uint32_t partition_id);
     void set_commo(rusty::Communicator* commo);
     void reg_learner_action(rusty::LearnerAction learner_action);
@@ -3098,6 +3464,203 @@ inline void RaftServerBase::ElectionLoopSetRunning(bool running) {
     this->election_loop_running_.store(std::move(running), rusty::sync::atomic::Ordering::Release);
 }
 
+inline ElectionTick RaftServerBase::ElectionLoopGather() {
+    const auto _lock = RaftLockGuard::new_(&this->mtx_);
+    const uint64_t time_now = raft_time_now_us();
+    uint64_t heartbeat_time = this->state_.last_heartbeat_time_;
+    uint64_t time_elapsed = rusty::detail::deref_if_pointer_like(time_now) - rusty::detail::deref_if_pointer_like(heartbeat_time);
+    uint64_t election_timeout = this->state_.election_timeout_us_;
+    return ElectionTick::new_(std::move(time_elapsed), std::move(election_timeout), std::move(heartbeat_time), this->state_.election_timer_generation_, this->state_.current_term_, this->state_.vote_for_, raft_server_election_timeout_has_fired(this->state_.is_leader_, std::move(time_elapsed), std::move(election_timeout)));
+}
+
+inline int64_t RaftServerBase::ElectionLastLogTermLocked() const {
+    const uint64_t last_index = this->state_.raft_log_.last_index();
+    // @unsafe
+    {
+        raft_verify(rusty::detail::deref_if_pointer_like(last_index) >= rusty::detail::deref_if_pointer_like(this->state_.snapidx_));
+    }
+    if (raft_server_election_last_log_uses_snapshot(std::move(last_index), this->state_.snapidx_)) {
+        return this->state_.snapterm_;
+    }
+    auto last_log = this->state_.raft_log_.get(std::move(last_index));
+    // @unsafe
+    {
+        raft_verify(last_log.is_some());
+    }
+    return last_log.unwrap().term();
+}
+
+inline uint64_t RaftServerBase::SetStateMachineSnapshotCallbacks(rusty::RaftCreateSnapshotCb create_cb, rusty::RaftPrepareSnapshotCb prepare_cb) {
+    const auto _lock = RaftLockGuard::new_(&this->mtx_);
+    if (rusty::detail::deref_if_pointer_like(this->state_.next_snapshot_callback_owner_token_) == 0) {
+        this->state_.next_snapshot_callback_owner_token_ = 1;
+    }
+    uint64_t owner_token = this->state_.next_snapshot_callback_owner_token_;
+    rusty::detail::deref_if_pointer_like(this->state_.next_snapshot_callback_owner_token_) += 1;
+    this->create_sm_snapshot_cb_ = std::move(create_cb);
+    this->prepare_sm_snapshot_cb_ = std::move(prepare_cb);
+    this->state_.snapshot_callback_owner_token_ = std::move(owner_token);
+    return std::move(owner_token);
+}
+
+inline bool RaftServerBase::ClearStateMachineSnapshotCallbacks(uint64_t callback_owner_token) {
+    if (rusty::detail::deref_if_pointer_like(callback_owner_token) == static_cast<uint64_t>(0)) {
+        return false;
+    }
+    const auto _lock = RaftLockGuard::new_(&this->mtx_);
+    if (rusty::detail::deref_if_pointer_like(this->state_.snapshot_callback_owner_token_) != rusty::detail::deref_if_pointer_like(callback_owner_token)) {
+        return false;
+    }
+    this->create_sm_snapshot_cb_ = rusty::default_like<rusty::RaftCreateSnapshotCb>();
+    this->prepare_sm_snapshot_cb_ = rusty::default_like<rusty::RaftPrepareSnapshotCb>();
+    this->state_.snapshot_callback_owner_token_ = 0;
+    return true;
+}
+
+inline void RaftServerBase::SetSnapshotManagerLocked(rusty::RaftSnapshotManagerPtr manager) {
+    this->snapshot_manager_ = std::move(manager);
+    const bool configured = raft_snapshot_manager_is_set(&this->snapshot_manager_);
+    this->snapshot_manager_configured_.store(std::move(configured), rusty::sync::atomic::Ordering::Release);
+}
+
+inline void RaftServerBase::SetSnapshotManager(rusty::RaftSnapshotManagerPtr manager) {
+    const auto _lock = RaftLockGuard::new_(&this->mtx_);
+    this->SetSnapshotManagerLocked(std::move(manager));
+}
+
+inline void RaftServerBase::RegisterLeaderChangeCallback(rusty::RaftLeaderChangeCb cb) {
+    this->leader_change_cb_ = std::move(cb);
+}
+
+inline bool RaftServerBase::AmIPreferredLeader() const {
+    return raft_server_site_is_preferred_leader(this->site_id_, this->preferred_leader_site_id_);
+}
+
+inline bool RaftServerBase::IsRpcReady() const {
+    return this->rpc_ready_.load(rusty::sync::atomic::Ordering::Acquire);
+}
+
+inline uint64_t RaftServerBase::GetAppliedIndex() const {
+    return this->appliedIndexForWait_.load(rusty::sync::atomic::Ordering::Acquire);
+}
+
+inline bool RaftServerBase::IsLeaderLocked() const {
+    if (rusty::detail::rust_not(this->looping_.load(rusty::sync::atomic::Ordering::Acquire))) {
+        return false;
+    }
+    return this->state_.is_leader_;
+}
+
+inline bool RaftServerBase::IsLeader() {
+    if (rusty::detail::rust_not(this->looping_.load(rusty::sync::atomic::Ordering::Acquire))) {
+        return false;
+    }
+    const auto _lock = RaftLockGuard::new_(&this->mtx_);
+    return this->state_.is_leader_;
+}
+
+inline void RaftServerBase::GetState(bool* is_leader, uint64_t* term) {
+    const auto _lock = RaftLockGuard::new_(&this->mtx_);
+    bool leading = this->IsLeaderLocked();
+    // @unsafe
+    {
+        *is_leader = std::move(leading);
+        *term = this->state_.current_term_;
+    }
+}
+
+inline uint64_t RaftServerBase::GetHeartbeatInterval() const {
+    return this->heartbeat_interval_us_;
+}
+
+inline void RaftServerBase::SetHeartbeatInterval(uint64_t micros) {
+    this->heartbeat_interval_us_ = std::move(micros);
+}
+
+inline uint64_t RaftServerBase::GetLogRetentionWindow() const {
+    return this->log_retention_window_;
+}
+
+inline void RaftServerBase::SetLogRetentionWindow(uint64_t window) {
+    this->log_retention_window_ = raft_server_retention_window_normalize(std::move(window));
+}
+
+inline uint64_t RaftServerBase::GetSnapshotThreshold() const {
+    return this->snapshot_trigger_threshold_.load(rusty::sync::atomic::Ordering::Acquire);
+}
+
+inline void RaftServerBase::SetPreferredLeader(uint16_t site_id) {
+    const auto _lock = RaftLockGuard::new_(&this->mtx_);
+    const uint16_t old_preferred = this->preferred_leader_site_id_;
+    this->preferred_leader_site_id_ = std::move(site_id);
+    if (rusty::detail::deref_if_pointer_like(old_preferred) != rusty::detail::deref_if_pointer_like(site_id)) {
+        rusty::raft_log_info_2("[LEADERSHIP-TRANSFER] Site {}: Preferred leader set to {}", this->site_id_, std::move(site_id));
+    }
+}
+
+inline void RaftServerBase::PublishAppliedIndexLocked(uint64_t index) {
+    const uint64_t published = this->GetAppliedIndex();
+    if (raft_server_log_index_above(std::move(published), std::move(index))) {
+        rusty::raft_log_warn_3("[RAFT-APPLY] Site {} refusing to move applied index backward from {} to {}", this->site_id_, std::move(published), std::move(index));
+        return;
+    }
+    this->state_.execute_index_ = std::move(index);
+    this->appliedIndexForWait_.store(std::move(index), rusty::sync::atomic::Ordering::Release);
+}
+
+inline void RaftServerBase::PublishAppliedIndex(uint64_t index) {
+    const auto _lock = RaftLockGuard::new_(&this->mtx_);
+    this->PublishAppliedIndexLocked(std::move(index));
+}
+
+inline size_t RaftServerBase::CompactLogLocked(uint64_t up_to_index) {
+    const uint64_t requested_index = up_to_index;
+    const uint64_t safe_index = raft_server_compaction_safe_index(std::move(up_to_index), this->state_.commit_index_, this->state_.snapidx_);
+    if (rusty::detail::deref_if_pointer_like(safe_index) != rusty::detail::deref_if_pointer_like(requested_index)) {
+        rusty::raft_log_warn_5("[RAFT-COMPACT] Site {}: Clamped compaction {} -> {} (state_.commit_index_={}, snapidx={})", this->site_id_, std::move(requested_index), std::move(safe_index), this->state_.commit_index_, this->state_.snapidx_);
+    }
+    if (rusty::detail::rust_not(raft_server_log_index_has_successor(std::move(safe_index)))) {
+        rusty::raft_log_error_2("[RAFT-COMPACT] Site {}: Refusing terminal compaction index {}; the exclusive storage bound and min_active_slot would wrap", this->site_id_, std::move(safe_index));
+        return static_cast<size_t>(0);
+    }
+    size_t removed_memory = this->state_.raft_log_.compact_through(std::move(safe_index));
+    rusty::raft_log_info_3("[RAFT-COMPACT] Site {}: Compacted in-memory entries through {} (memory={})", this->site_id_, std::move(safe_index), std::move(removed_memory));
+    return std::move(removed_memory);
+}
+
+inline size_t RaftServerBase::CompactLog(uint64_t up_to_index) {
+    const auto _lock = RaftLockGuard::new_(&this->mtx_);
+    return this->CompactLogLocked(std::move(up_to_index));
+}
+
+inline void RaftServerBase::LogTermChange(const rusty::ffi::c_char* reason, uint64_t old_term, uint64_t new_term, uint16_t source) const {
+    if (rusty::detail::deref_if_pointer_like(old_term) == rusty::detail::deref_if_pointer_like(new_term)) {
+        return;
+    }
+    const rusty::ffi::c_char* why = raft_reason_or_unspecified(reason);
+    if (rusty::detail::deref_if_pointer_like(source) != rusty::detail::deref_if_pointer_like(RAFT_SERVER_INVALID_SITE_ID)) {
+        rusty::raft_log_info_5("[RAFT-TERM] server {} term {} -> {} ({}, source_site={})", this->site_id_, std::move(old_term), std::move(new_term), why, std::move(source));
+    } else {
+        rusty::raft_log_info_4("[RAFT-TERM] server {} term {} -> {} ({})", this->site_id_, std::move(old_term), std::move(new_term), why);
+    }
+}
+
+inline uint64_t RaftServerBase::ElectionLoopRandomDelay() const {
+    // @unsafe
+    {
+        return raft_random_range_us(rusty::detail::deref_if_pointer_like(this->heartbeat_interval_us_) * static_cast<uint64_t>(2), rusty::detail::deref_if_pointer_like(this->heartbeat_interval_us_) * static_cast<uint64_t>(4));
+    }
+}
+
+inline void RaftServerBase::ElectionLoopLogStart() const {
+    rusty::raft_log_debug_0("start timer for election");
+}
+
+inline void RaftServerBase::ElectionLoopLogFired(const ElectionTick& tick) const {
+    rusty::raft_log_info_3("[ELECTION_TIMER] Site {}: TIMEOUT FIRED - starting election (elapsed={} > timeout={})", this->site_id_, tick.time_elapsed(), tick.election_timeout());
+    rusty::raft_log_info_6("[ELECTION_START] Site {}: TRIGGERING REQUESTVOTE - time_elapsed={} > timeout={} last_hb={} current_term={} vote_for={}", this->site_id_, tick.time_elapsed(), tick.election_timeout(), tick.heartbeat_time(), tick.term(), tick.vote_for());
+}
+
 inline void RaftServerBase::set_site_identity(uint32_t loc_id, uint16_t site_id, uint32_t partition_id) {
     this->loc_id_ = std::move(loc_id);
     this->site_id_ = std::move(site_id);
@@ -3132,16 +3695,8 @@ class RaftServer : public RaftServerBase {
   // private member read, an rrr logging macro, or a call to another method.
   // ==========================================================================
 
-  // @unsafe - RandomGenerator is external
-  uint64_t ElectionLoopRandomDelay() const;
   // @unsafe - suspends this fiber on the wake gate's election waiter
   bool ElectionLoopWait(uint64_t timeout_us);
-  // @unsafe - takes mtx_ and reads the election cluster
-  ElectionTick ElectionLoopGather();
-  // @unsafe - rrr logging macro
-  void ElectionLoopLogStart() const;
-  // @unsafe - rrr logging macro
-  void ElectionLoopLogFired(const ElectionTick& tick) const;
   // @unsafe - dispatches through the vtable; caller re-checks stop_ first
   void ElectionLoopRequestVote(uint64_t generation);
 
@@ -3243,10 +3798,6 @@ class RaftServer : public RaftServerBase {
   // one timeout and advances the generation; the timer must never redraw the
   // random timeout on each poll or start a campaign from an expired snapshot
   // after a concurrent heartbeat reset.
-  // @safe - logging calls wrapped in @unsafe blocks in implementation
- public:  // for the raft_ae_* trampolines; back to private when converted
-  void LogTermChange(const char* reason, uint64_t old_term, uint64_t new_term, siteid_t source = INVALID_SITEID);
-
 
   // Cross-thread submissions publish only to this level-triggered gate.  The
   // gate posts a gate-only job to the heartbeat PollThread; IntEvent itself is
@@ -3261,11 +3812,6 @@ class RaftServer : public RaftServerBase {
   bool WaitForElectionTimeoutOrShutdown(uint64_t timeout_us);
   // @unsafe - Stops new wake jobs and releases the gate's PollThread handle.
   void CloseReplicationWakeGate();
-  // @unsafe - Caller holds mtx_; performs a non-mutating absolute-slot lookup.
-  // PUBLIC for the raft_election_last_log_term trampoline; see doVote above.
- public:
-  ballot_t ElectionLastLogTermLocked() const;
- private:
 
 
   // ============================================================================
@@ -3288,12 +3834,6 @@ class RaftServer : public RaftServerBase {
   // takes mtx_ -- so the inner re-acquisition this used to take was a no-op on
   // the recursive mutex, and removing it states the precondition as a type-
   // adjacent comment rather than re-checking it at runtime. See
-  // docs/migration/raft/cpp-refactor-plan.md tranche 4b.
-  // @unsafe - Must be called with mtx_ held (caller's responsibility).
-  bool AmIPreferredLeader() {
-    return raft_server_site_is_preferred_leader(
-        site_id_, preferred_leader_site_id_);
-  }
 
   // ============================================================================
 
@@ -3384,11 +3924,6 @@ class RaftServer : public RaftServerBase {
 
 
 
-  // @unsafe - Caller owns state_machine_apply_mtx_; locks mtx_ before
-  // publishing the legacy state_.execute_index_ field and its atomic mirror.
-  void PublishAppliedIndex(uint64_t index);
-  // @unsafe - CALLER MUST HOLD mtx_
-  void PublishAppliedIndexLocked(uint64_t index);
 
   void StartApplyThread();
  public:  // for the raft_ae_* trampolines; back to private when converted
@@ -3494,19 +4029,12 @@ class RaftServer : public RaftServerBase {
   void PrepareForShutdown();
 
   // @safe - Acquire-load paired with the final startup Release publication.
-  bool IsRpcReady() const {
-    return rpc_ready_.load(rusty::sync::atomic::Ordering::Acquire);
-  }
 
   // @safe - Waits for the owner-thread startup job and reports its result.
   bool WaitForStartup();
 
   // Acquire-load pairs with PublishAppliedIndex after app_next_ completes.
   // @safe - Rusty atomic read.
-  uint64_t GetAppliedIndex() const {
-    return appliedIndexForWait_.load(
-        rusty::sync::atomic::Ordering::Acquire);
-  }
 
   // @safe - election timer setup (threading via @unsafe blocks in implementation)
   void StartElectionTimer() ;
@@ -3517,27 +4045,10 @@ class RaftServer : public RaftServerBase {
   // CALLER MUST HOLD mtx_. The looping_ check is an atomic, so it needs no
   // lock and stays here: it is the guard against reading members during
   // destruction.
-  bool IsLeaderLocked() const {
-    if (!looping_.load(rusty::sync::atomic::Ordering::Acquire)) {
-      return false;
-    }
-    return state_.is_leader_ ;
-  }
 
-  // Acquiring entry point, for callers that do not already hold mtx_.
-  bool IsLeader() {
-    if (!looping_.load(rusty::sync::atomic::Ordering::Acquire)) {
-      return false;
-    }
-    std::lock_guard<RaftCheckedMutex> lock(mtx_);
-    return state_.is_leader_ ;
-  }
   
   // @safe - leadership state transition (callbacks and logging wrapped in @unsafe blocks)
   void setIsLeader(bool isLeader);
-
-  // @safe - stores callback for later invocation
-  void RegisterLeaderChangeCallback(std::function<void(bool)> cb);
 
   // @safe - external calls marked @external, output pointer writes in @unsafe blocks
   // take janus::Command;
@@ -3548,30 +4059,6 @@ class RaftServer : public RaftServerBase {
                         uint64_t* term,
                         slotid_t slot_id = -1,
                         ballot_t ballot = 1);
-
-  // @unsafe - output pointer writes and mutex operations
-  void GetState(bool *is_leader, uint64_t *term) {
-    std::lock_guard<RaftCheckedMutex> lock(mtx_);
-    // @unsafe
-    {
-      *is_leader = IsLeaderLocked();
-      *term = state_.current_term_;
-    }
-  }
-
-  // @safe - returns POD field
-  uint64_t GetHeartbeatInterval() const { return heartbeat_interval_us_; }
-
-  // @safe - sets POD field
-  void SetHeartbeatInterval(uint64_t micros) { heartbeat_interval_us_ = micros; }
-
-  // @safe - returns POD field
-  uint64_t GetLogRetentionWindow() const { return log_retention_window_; }
-
-  // @safe - sets POD field (minimum 1 to avoid division by zero)
-  void SetLogRetentionWindow(uint64_t window) {
-    log_retention_window_ = raft_server_retention_window_normalize(window);
-  }
 
   // @unsafe - external calls plus output pointer writes and shared_ptr ops
   // take janus::Command;
@@ -3633,11 +4120,6 @@ class RaftServer : public RaftServerBase {
    * Should be called before starting the server.
    * @param manager Shared pointer to SnapshotManager implementation
    */
-  // @unsafe - Locks mtx_, moves shared_ptr into member field, and publishes
-  // the apply-thread trigger hint.
-  void SetSnapshotManager(
-      std::shared_ptr<janus::raft::SnapshotManager> manager);
-
   /**
    * Get the current snapshot manager.
    * @return Shared pointer to SnapshotManager, or nullptr if not set
@@ -3676,18 +4158,6 @@ class RaftServer : public RaftServerBase {
    * re-enter, so raftLabTest and the replication suites cannot exercise a
    * violation of this contract. Their passing is not evidence for it.
    */
-  // Returns a unique owner token. Replacing callbacks invalidates the previous
-  // owner's token, so its eventual destructor cannot clear the new owner.
-  // @unsafe - Locks mtx_ and stores std::function closures.
-  uint64_t SetStateMachineSnapshotCallbacks(
-      std::function<std::string(uint64_t)> create_cb,
-      std::function<std::unique_ptr<PreparedStateMachineSnapshotInstall>(
-          const std::string&, uint64_t)> prepare_cb);
-
-  // Clears callbacks only when callback_owner_token still owns them.
-  // @unsafe - Locks mtx_ and destroys std::function closures.
-  bool ClearStateMachineSnapshotCallbacks(uint64_t callback_owner_token);
-
   /**
    * Check if a snapshot is available.
    * @return true if a snapshot exists in the snapshot manager
@@ -3697,23 +4167,12 @@ class RaftServer : public RaftServerBase {
 
 
 
-  void SetSnapshotManagerLocked(
-      std::shared_ptr<janus::raft::SnapshotManager> manager);
-  size_t CompactLog(slotid_t up_to_index);
-  // @unsafe - CALLER MUST HOLD mtx_
-  size_t CompactLogLocked(slotid_t up_to_index);
 
 
   /**
    * Get the current snapshot threshold.
    * @return Current threshold value
    */
-  // @safe - Reads the atomic trigger mirror.
-  uint64_t GetSnapshotThreshold() const {
-    return snapshot_trigger_threshold_.load(
-        rusty::sync::atomic::Ordering::Acquire);
-  }
-
   // ============================================================================
 
   // @safe - calls doVote which is @safe, output pointer writes in @unsafe blocks
@@ -3804,18 +4263,6 @@ class RaftServer : public RaftServerBase {
    *
    * Safety: Voting is unbiased, so all Raft safety guarantees are preserved.
    */
-  // @unsafe - Log_info plus mutex operations
-  void SetPreferredLeader(siteid_t site_id) {
-    std::lock_guard<RaftCheckedMutex> lock(mtx_);
-
-    siteid_t old_preferred = preferred_leader_site_id_;
-    preferred_leader_site_id_ = site_id;
-
-    if (old_preferred != site_id) {
-      Log_info("[LEADERSHIP-TRANSFER] Site {}: Preferred leader set to {}",
-               site_id_, site_id);
-    }
-  }
 
 
 

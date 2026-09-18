@@ -996,21 +996,6 @@ bool RaftServer::InitializeSnapshotManager() {
   return false;
 }
 
-void RaftServer::SetSnapshotManager(
-    std::shared_ptr<janus::raft::SnapshotManager> manager) {
-  std::lock_guard<RaftCheckedMutex> lock(mtx_);
-  SetSnapshotManagerLocked(std::move(manager));
-}
-
-// CALLER MUST HOLD mtx_.
-void RaftServer::SetSnapshotManagerLocked(
-    std::shared_ptr<janus::raft::SnapshotManager> manager) {
-  snapshot_manager_ = std::move(manager);
-  snapshot_manager_configured_.store(
-      snapshot_manager_ != nullptr,
-      rusty::sync::atomic::Ordering::Release);
-}
-
 std::shared_ptr<janus::raft::SnapshotManager>
 RaftServer::GetSnapshotManager() {
   std::lock_guard<RaftCheckedMutex> lock(mtx_);
@@ -1023,77 +1008,6 @@ bool RaftServer::HasSnapshot() {
   if (!manager) return false;
   auto latest = manager->GetLatestSnapshot();
   return latest.is_some();
-}
-
-// @unsafe - In-memory log compaction behind the snapshot boundary.
-// Acquiring entry point, for callers that do not already hold mtx_.
-size_t RaftServer::CompactLog(slotid_t up_to_index) {
-  std::lock_guard<RaftCheckedMutex> lock(mtx_);
-  return CompactLogLocked(up_to_index);
-}
-
-// CALLER MUST HOLD mtx_.
-size_t RaftServer::CompactLogLocked(slotid_t up_to_index) {
-
-  // Compaction is safe only through the prefix represented by both committed
-  // state and the installed/local snapshot boundary.
-  const slotid_t requested_index = up_to_index;
-  up_to_index = raft_server_compaction_safe_index(
-      up_to_index, state_.commit_index_, state_.snapidx_);
-  if (up_to_index != requested_index) {
-    Log_warn("[RAFT-COMPACT] Site {}: Clamped compaction {} -> {} "
-             "(state_.commit_index_={}, snapidx={})",
-             site_id_, requested_index, up_to_index, state_.commit_index_, state_.snapidx_);
-  }
-
-  if (!raft_server_log_index_has_successor(up_to_index)) {
-    Log_error("[RAFT-COMPACT] Site {}: Refusing terminal compaction index {}; "
-              "the exclusive storage bound and min_active_slot would wrap",
-              site_id_, up_to_index);
-    return 0;
-  }
-
-  const size_t removed_memory = state_.raft_log_.compact_through(up_to_index);
-
-  // up_to_index was proven to have a representable successor above.
-
-
-  Log_info("[RAFT-COMPACT] Site {}: Compacted in-memory entries through {} "
-           "(memory={})",
-           site_id_, up_to_index, removed_memory);
-  return removed_memory;
-}
-
-uint64_t RaftServer::SetStateMachineSnapshotCallbacks(
-    std::function<std::string(uint64_t)> create_cb,
-    std::function<std::unique_ptr<PreparedStateMachineSnapshotInstall>(
-        const std::string&, uint64_t)> prepare_cb) {
-  std::lock_guard<RaftCheckedMutex> lock(mtx_);
-  if (state_.next_snapshot_callback_owner_token_ == 0) {
-    state_.next_snapshot_callback_owner_token_ = 1;
-  }
-  const uint64_t owner_token = state_.next_snapshot_callback_owner_token_++;
-  create_sm_snapshot_cb_ = std::move(create_cb);
-  prepare_sm_snapshot_cb_ = std::move(prepare_cb);
-  state_.snapshot_callback_owner_token_ = owner_token;
-  return owner_token;
-}
-
-bool RaftServer::ClearStateMachineSnapshotCallbacks(
-    uint64_t callback_owner_token) {
-  if (callback_owner_token == 0) {
-    return false;
-  }
-
-  std::lock_guard<RaftCheckedMutex> lock(mtx_);
-  if (state_.snapshot_callback_owner_token_ != callback_owner_token) {
-    return false;
-  }
-
-  create_sm_snapshot_cb_ = {};
-  prepare_sm_snapshot_cb_ = {};
-  state_.snapshot_callback_owner_token_ = 0;
-  return true;
 }
 
 
@@ -1228,27 +1142,6 @@ bool RaftServer::CreateSnapshotLocked() {
 }
 
 // ============================================================================
-
-// @unsafe - Logs term changes (Log_info marked safe via @external)
-void RaftServer::LogTermChange(const char* reason,
-                               uint64_t old_term,
-                               uint64_t new_term,
-                               siteid_t source) {
-  if (old_term == new_term) {
-    return;
-  }
-  // @unsafe
-  {
-  const char* why = reason ? reason : "unspecified";
-  if (source != INVALID_SITEID) {
-    Log_info("[RAFT-TERM] server {} term {} -> {} ({}, source_site={})",
-             site_id_, old_term, new_term, why, source);
-  } else {
-    Log_info("[RAFT-TERM] server {} term {} -> {} ({})",
-             site_id_, old_term, new_term, why);
-  }
-  }
-}
 
 RaftServer::RaftServer()
   : replication_wake_gate_(rusty::Arc<ReplicationWakeGate>::make_with(
@@ -1424,31 +1317,6 @@ void RaftServer::EnqueueCommittedEntries(slotid_t old_commit, slotid_t new_commi
     Log_info("[ENQUEUE] Site {}: enqueued {} entries ({}..{}) queue_total={}",
              site_id_, batch.size(), old_commit + 1, new_commit, qsize);
   }
-}
-
-// Background OS thread for entry application.
-// Drains from apply_queue_ (populated by OnAppendEntries) to avoid contention on mtx_.
-// Acquiring entry point. Every caller owns the state-machine apply gate;
-// taking the Raft mutex here completes the documented apply-gate -> Raft-state
-// lock order and keeps the legacy state_.execute_index_ field synchronized with
-// consensus readers.
-void RaftServer::PublishAppliedIndex(uint64_t index) {
-  std::lock_guard<RaftCheckedMutex> lock(mtx_);
-  PublishAppliedIndexLocked(index);
-}
-
-// CALLER MUST HOLD mtx_.
-void RaftServer::PublishAppliedIndexLocked(uint64_t index) {
-  const uint64_t published = GetAppliedIndex();
-  if (raft_server_log_index_above(published, index)) {
-    Log_warn("[RAFT-APPLY] Site {} refusing to move applied index backward "
-             "from {} to {}",
-             site_id_, published, index);
-    return;
-  }
-  state_.execute_index_ = index;
-  appliedIndexForWait_.store(
-      index, rusty::sync::atomic::Ordering::Release);
 }
 
 void RaftServer::StartApplyThread() {
@@ -5564,20 +5432,6 @@ RaftServer::~RaftServer() {
       partition_id_, loc_id_, n_prepare_, n_accept_, n_commit_);
 }
 
-// @unsafe - Caller holds mtx_; validates the snapshot/log invariant and reads
-// the absolute last-log slot without inserting into or otherwise mutating the
-// compacted log map.
-ballot_t RaftServer::ElectionLastLogTermLocked() const {
-  verify(state_.raft_log_.last_index() >= state_.snapidx_);
-  if (raft_server_election_last_log_uses_snapshot(state_.raft_log_.last_index(), state_.snapidx_)) {
-    return state_.snapterm_;
-  }
-
-  const RaftEntry* last_log = FindRaftInstance(state_.raft_log_.last_index());
-  verify(last_log != nullptr);
-  return last_log->term();
-}
-
 
 bool RaftServer::RequestVoteFromElectionTimer(
     uint64_t expected_generation) {
@@ -5656,7 +5510,10 @@ bool RaftServer::RequestVoteImpl(bool timer_guarded,
     state_.req_voting_ = true;
     term = state_.current_term_;
 
-    LogTermChange("starting election", prev_local_term, state_.current_term_);
+    // INVALID_SITEID explicitly: RaftServerBase::LogTermChange is a DSL
+    // method and the DSL has no default arguments.
+    LogTermChange("starting election", prev_local_term, state_.current_term_,
+                  INVALID_SITEID);
     lst_idx = state_.raft_log_.last_index();
     lst_term = ElectionLastLogTermLocked();
   }
@@ -5722,7 +5579,7 @@ bool RaftServer::RequestVoteImpl(bool timer_guarded,
     state_.req_voting_ = false;
 
     LogTermChange("observed higher term from RequestVote replies",
-                  previous_term, state_.current_term_);
+                  previous_term, state_.current_term_, INVALID_SITEID);
     return false;
   }
 
@@ -5874,46 +5731,10 @@ void RaftServer::OnRequestVote(const slotid_t& lst_log_idx,
 // fiber lambda; nothing about the lock discipline changed.
 // ============================================================================
 
-// @unsafe - RandomGenerator is external
-uint64_t RaftServer::ElectionLoopRandomDelay() const {
-  return RandomGenerator::rand(heartbeat_interval_us_ * 2,
-                               heartbeat_interval_us_ * 4);
-}
-
 // @unsafe - suspends this fiber; unlike a plain Fiber::sleep this is
 // interrupted by shutdown, so false means stop rather than timed out.
 bool RaftServer::ElectionLoopWait(uint64_t timeout_us) {
   return WaitForElectionTimeoutOrShutdown(timeout_us);
-}
-
-// @unsafe - takes mtx_ and reads the whole election cluster in one scope, so
-// the Rust loop can branch on copies after the lock is released.
-ElectionTick RaftServer::ElectionLoopGather() {
-  std::lock_guard<RaftCheckedMutex> lock(mtx_);
-  const uint64_t time_now = Time::now(true);
-  const uint64_t heartbeat_time = state_.last_heartbeat_time_;
-  const uint64_t time_elapsed = time_now - heartbeat_time;
-  const uint64_t election_timeout = state_.election_timeout_us_;
-  return ElectionTick::new_(
-      time_elapsed, election_timeout, heartbeat_time,
-      state_.election_timer_generation_, state_.current_term_,
-      static_cast<uint16_t>(state_.vote_for_),
-      raft_server_election_timeout_has_fired(state_.is_leader_, time_elapsed,
-                                             election_timeout));
-}
-
-// @unsafe { rrr logging macro }
-void RaftServer::ElectionLoopLogStart() const {
-  Log_debug("start timer for election");
-}
-
-// @unsafe { rrr logging macro }
-void RaftServer::ElectionLoopLogFired(const ElectionTick& tick) const {
-  Log_info("[ELECTION_TIMER] Site {}: TIMEOUT FIRED - starting election (elapsed={} > timeout={})",
-           site_id_, tick.time_elapsed(), tick.election_timeout());
-  Log_info("[ELECTION_START] Site {}: TRIGGERING REQUESTVOTE - time_elapsed={} > timeout={} last_hb={} current_term={} vote_for={}",
-           site_id_, tick.time_elapsed(), tick.election_timeout(),
-           tick.heartbeat_time(), tick.term(), tick.vote_for());
 }
 
 // @unsafe - dispatches through the vtable; the Rust loop re-checks stop_
@@ -6240,11 +6061,6 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
   (void)ballot;
 }
 
-
-// @unsafe - Stores callback for later invocation
-void RaftServer::RegisterLeaderChangeCallback(std::function<void(bool)> cb) {
-  leader_change_cb_ = std::move(cb);
-}
 
 // ============================================================================
 // InstallSnapshot RPC Handler

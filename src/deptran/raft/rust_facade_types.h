@@ -41,6 +41,16 @@
 // `rrr.reactor`, so they cannot be forward-declared from here -- an alias is
 // all this file may contain.
 
+namespace rusty::ffi {
+
+// `core::ffi::c_char`, which rusty/ffi.hpp does not define (it stops at
+// c_void). A Raft DSL body needs it for LogTermChange's `const char* reason`.
+// Adding to the existing namespace rather than patching the pinned
+// transpiler submodule.
+using c_char = char;
+
+}  // namespace rusty::ffi
+
 namespace rusty {
 
 using ReactorPollThread = ::rrr::PollThread;

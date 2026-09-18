@@ -382,6 +382,67 @@ pub struct RaftCommand {
 /// type-checked by rustc but never linked into the binary, so the model only
 /// has to make the field nameable and defaultable. `#[repr(C)]` keeps them
 /// FFI-shaped for the same reason the two above are.
+/// rrr's logging, as something a Raft DSL body can name.
+///
+/// `rrr::Log_info` and friends are variadic C++ function templates, and Rust
+/// has no variadic generics, so there is one Rust function per (level,
+/// arity). Each is a no-op here: the raft crate is type-checked by rustc but
+/// never linked, so these only have to make the call NAMEABLE and check the
+/// argument count. The emitted C++ resolves to the matching forwarder in
+/// src/deptran/raft/rust_log_shims.h, which keeps `std::format_string`'s
+/// compile-time placeholder check and the level short-circuit.
+///
+/// Arities 0..10 cover every Raft call site; keep this in step with the
+/// RAFT_DSL_LOG_LEVEL list in that header.
+macro_rules! raft_log_shims {
+    ($($name:ident($($p:ident),*);)*) => {
+        $(
+            #[allow(clippy::too_many_arguments, unused_variables, non_snake_case)]
+            pub fn $name<$($p),*>(fmt: &str $(, $p: $p)*) {}
+        )*
+    };
+}
+
+macro_rules! raft_log_level_shims {
+    ($l0:ident, $l1:ident, $l2:ident, $l3:ident, $l4:ident, $l5:ident,
+     $l6:ident, $l7:ident, $l8:ident, $l9:ident, $l10:ident) => {
+        raft_log_shims! {
+            $l0();
+            $l1(A);
+            $l2(A, B);
+            $l3(A, B, C);
+            $l4(A, B, C, D);
+            $l5(A, B, C, D, E);
+            $l6(A, B, C, D, E, F);
+            $l7(A, B, C, D, E, F, G);
+            $l8(A, B, C, D, E, F, G, H);
+            $l9(A, B, C, D, E, F, G, H, I);
+            $l10(A, B, C, D, E, F, G, H, I, J);
+        }
+    };
+}
+
+raft_log_level_shims!(
+    raft_log_debug_0, raft_log_debug_1, raft_log_debug_2, raft_log_debug_3,
+    raft_log_debug_4, raft_log_debug_5, raft_log_debug_6, raft_log_debug_7,
+    raft_log_debug_8, raft_log_debug_9, raft_log_debug_10
+);
+raft_log_level_shims!(
+    raft_log_info_0, raft_log_info_1, raft_log_info_2, raft_log_info_3,
+    raft_log_info_4, raft_log_info_5, raft_log_info_6, raft_log_info_7,
+    raft_log_info_8, raft_log_info_9, raft_log_info_10
+);
+raft_log_level_shims!(
+    raft_log_warn_0, raft_log_warn_1, raft_log_warn_2, raft_log_warn_3,
+    raft_log_warn_4, raft_log_warn_5, raft_log_warn_6, raft_log_warn_7,
+    raft_log_warn_8, raft_log_warn_9, raft_log_warn_10
+);
+raft_log_level_shims!(
+    raft_log_error_0, raft_log_error_1, raft_log_error_2, raft_log_error_3,
+    raft_log_error_4, raft_log_error_5, raft_log_error_6, raft_log_error_7,
+    raft_log_error_8, raft_log_error_9, raft_log_error_10
+);
+
 macro_rules! rusty_opaque_cpp_carrier {
     ($($(#[$m:meta])* $name:ident),* $(,)?) => {
         $(
