@@ -17,7 +17,7 @@ Three documents overlap. Their standing:
 | document | status |
 |---|---|
 | `docs/migration/cpp-to-rust-pre-check-list.txt` | the aspect vocabulary (LIF/OWN/TYP/ERR/CON/LIB/TST). Stable, use it for naming. |
-| `docs/migration/raft/cpp-to-rust-precheck-raft.txt` | the blocker inventory B1–B7. Substance is sound; **every `server.cc` line above 2802 is stale by +18** (commit `3774ba93` inserted 18 lines at :2803). Below 2802 and all of `server.h` are exact. |
+| ~~`cpp-to-rust-precheck-raft.txt`~~ | DELETED. 287KB of machine-generated precheck output whose line numbers had already gone stale by +18 above `server.cc:2802`. Its findings are in this document's tranches; its one code citation (OWN-03, a map iterator held across an RPC yield point) is now spelled out at the site instead of referenced. |
 | `docs/migration/raft/strategy-recommendation.txt` | superseded by this file for ordering. Its measurements are mostly right; its critical path is wrong. |
 | `docs/migration/raft/cpp-refactor-progress.md` | what actually happened when this plan was executed. Authoritative for the current state of tranches 0-4. |
 
