@@ -2654,27 +2654,20 @@ unsafe extern "C" {
                                commit_index: u64,
                                cmd: *const rusty::RaftCommand,
                                cmd_log_term: u64) -> rusty::RaftResponsePtr;
-    fn raft_ae_slot_term(server: *mut core::ffi::c_void, index: u64,
+    fn raft_ae_slot_term(server: *mut RaftServerBase, index: u64,
                          has_cmd: &mut bool) -> i64;
-    fn raft_ae_decode_payload(server: *mut core::ffi::c_void,
+    fn raft_ae_decode_payload(server: *mut RaftServerBase,
                               cmd: *const core::ffi::c_void,
                               leader_prev_log_index: u64,
                               leader_next_log_term: u64,
                               out_count: &mut u64) -> bool;
-    fn raft_ae_decoded_term(server: *mut core::ffi::c_void, i: u64) -> i64;
-    fn raft_ae_log_term_change(server: *mut core::ffi::c_void, prev: u64, now: u64,
-                               source: u16);
-    fn raft_ae_step_down(server: *mut core::ffi::c_void);
-    fn raft_ae_set_is_leader(server: *mut core::ffi::c_void, is_leader: bool);
-    fn raft_ae_reset_timer(server: *mut core::ffi::c_void);
-    fn raft_ae_enqueue_committed(server: *mut core::ffi::c_void, old_commit: u64,
-                                 new_commit: u64);
-    fn raft_ae_apply_incoming(server: *mut core::ffi::c_void,
+    fn raft_ae_decoded_term(server: *mut RaftServerBase, i: u64) -> i64;
+    fn raft_ae_apply_incoming(server: *mut RaftServerBase,
                               cmd: *const core::ffi::c_void,
                               leader_prev_log_index: u64,
                               leader_next_log_term: u64,
                               first_write_index: u64);
-    fn raft_do_vote(server: *mut core::ffi::c_void,
+    fn raft_do_vote(server: *mut RaftServerBase,
                     lst_log_idx: u64,
                     lst_log_term: i64,
                     can_id: u16,
@@ -2682,7 +2675,6 @@ unsafe extern "C" {
                     reply_term: &mut i64,
                     vote_granted: &mut i8,
                     vote: bool);
-    fn raft_election_last_log_term(server: *mut core::ffi::c_void) -> i64;
 }
 
 // ==========================================================================
@@ -3956,8 +3948,7 @@ pub fn heartbeat_phase3_body(server: &mut RaftServerBase,
 // RaftServer is itself a DSL struct; these are its fields, passed separately
 // only because the orphan-impl rule forbids `impl RaftServer` today.
 pub unsafe fn raft_on_request_vote(
-    state: &mut RaftConsensusState,
-    server: *mut core::ffi::c_void,
+    server: &mut RaftServerBase,
     stopped: bool,
     candidate_is_current_voter: bool,
     lst_log_idx: u64,
@@ -3968,18 +3959,18 @@ pub unsafe fn raft_on_request_vote(
     vote_granted: &mut i8,
 ) {
     if stopped {
-        *reply_term = state.current_term_ as i64;
+        *reply_term = server.state_.current_term_ as i64;
         *vote_granted = 0;
         return;
     }
 
     if can_term < 0 || lst_log_term < 0 || !candidate_is_current_voter {
-        *reply_term = state.current_term_ as i64;
+        *reply_term = server.state_.current_term_ as i64;
         *vote_granted = 0;
         return;
     }
 
-    let cur_term = state.current_term_;
+    let cur_term = server.state_.current_term_;
     // UNSIGNED, deliberately. The C++ this replaces was
     // `if (can_term < cur_term)` with can_term an int64_t and cur_term a
     // uint64_t, and C++'s usual arithmetic conversions make that an UNSIGNED
@@ -3995,7 +3986,7 @@ pub unsafe fn raft_on_request_vote(
     // faithful spelling.
     if (can_term as u64) < cur_term {
         unsafe {
-            raft_do_vote(server, lst_log_idx, lst_log_term, can_id, can_term,
+            raft_do_vote(server as *mut RaftServerBase, lst_log_idx, lst_log_term, can_id, can_term,
                          reply_term, vote_granted, false)
         };
         return;
@@ -4008,11 +3999,11 @@ pub unsafe fn raft_on_request_vote(
     // drift apart. Equality happens to be unaffected by the signedness, but
     // relying on that is how the bug above got written.
     if (can_term as u64) == cur_term
-        && state.vote_for_ != RAFT_SERVER_INVALID_SITE_ID
-        && state.vote_for_ != can_id
+        && server.state_.vote_for_ != RAFT_SERVER_INVALID_SITE_ID
+        && server.state_.vote_for_ != can_id
     {
         unsafe {
-            raft_do_vote(server, lst_log_idx, lst_log_term, can_id, can_term,
+            raft_do_vote(server as *mut RaftServerBase, lst_log_idx, lst_log_term, can_id, can_term,
                          reply_term, vote_granted, false)
         };
         return;
@@ -4021,34 +4012,34 @@ pub unsafe fn raft_on_request_vote(
     // Every grant, including an idempotent retry, must still carry an
     // up-to-date candidate log. Defensive against damaged or legacy
     // persistent state, and the RequestVote rule in its direct form.
-    if state.raft_log_.last_index() < state.snapidx_ {
+    if server.state_.raft_log_.last_index() < server.state_.snapidx_ {
         panic!("last log index is below the snapshot boundary");
     }
-    let lstoff = state.raft_log_.last_index() - state.snapidx_;
-    let curlstterm = unsafe { raft_election_last_log_term(server) };
-    let curlstidx = state.raft_log_.last_index();
+    let lstoff = server.state_.raft_log_.last_index() - server.state_.snapidx_;
+    let curlstterm = server.ElectionLastLogTermLocked();
+    let curlstidx = server.state_.raft_log_.last_index();
     let candidate_log_is_current = raft_server_candidate_log_is_at_least(
         lst_log_term, curlstterm, lst_log_idx, curlstidx);
 
     if raft_server_vote_is_idempotent(can_term as u64, cur_term,
-                                      state.vote_for_, can_id)
+                                      server.state_.vote_for_, can_id)
         && candidate_log_is_current
     {
         unsafe {
-            raft_do_vote(server, lst_log_idx, lst_log_term, can_id, can_term,
+            raft_do_vote(server as *mut RaftServerBase, lst_log_idx, lst_log_term, can_id, can_term,
                          reply_term, vote_granted, true)
         };
         return;
     }
 
     // Snapshot-aware offset invariant.
-    if lstoff + state.snapidx_ != state.raft_log_.last_index() {
+    if lstoff + server.state_.snapidx_ != server.state_.raft_log_.last_index() {
         panic!("snapshot offset invariant violated");
     }
 
     let grant = candidate_log_is_current;
     unsafe {
-        raft_do_vote(server, lst_log_idx, lst_log_term, can_id, can_term,
+        raft_do_vote(server as *mut RaftServerBase, lst_log_idx, lst_log_term, can_id, can_term,
                      reply_term, vote_granted, grant)
     };
 }
@@ -4085,13 +4076,10 @@ pub fn on_request_vote_body(server: &mut RaftServerBase, lst_log_idx: u64,
             candidate_is_current_voter);
     }
 
-    let handle: *mut core::ffi::c_void =
-        server as *mut RaftServerBase as *mut core::ffi::c_void;
     unsafe {
-        raft_on_request_vote(&mut server.state_, handle, stopped,
-                             candidate_is_current_voter, lst_log_idx,
-                             lst_log_term, can_id, can_term, reply_term,
-                             vote_granted);
+        raft_on_request_vote(server, stopped, candidate_is_current_voter,
+                             lst_log_idx, lst_log_term, can_id, can_term,
+                             reply_term, vote_granted);
     }
 }
 
@@ -4203,8 +4191,7 @@ impl AppendReport {
 // TODO(raft-server-struct): collapses into &mut self once RaftServer is a
 // DSL struct; these are its fields and its RPC arguments.
 pub unsafe fn raft_on_append_entries(
-    state: &mut RaftConsensusState,
-    server: *mut core::ffi::c_void,
+    server: &mut RaftServerBase,
     cmd: *const core::ffi::c_void,
     stopped: bool,
     sender_is_current_voter: bool,
@@ -4232,23 +4219,23 @@ pub unsafe fn raft_on_append_entries(
 
     if stopped {
         *follower_append_ok = 0;
-        *follower_current_term = state.current_term_;
-        *follower_last_log_index = state.raft_log_.last_index();
+        *follower_current_term = server.state_.current_term_;
+        *follower_last_log_index = server.state_.raft_log_.last_index();
         return report;
     }
 
     let leader_has_higher_term =
-        raft_server_observed_higher_term(leader_current_term, state.current_term_);
+        raft_server_observed_higher_term(leader_current_term, server.state_.current_term_);
     let leader_term_is_stale =
-        raft_server_vote_term_is_stale(leader_current_term, state.current_term_);
-    let sender_is_self = leader_site_id == state.site_id_;
-    let has_known_leader = state.current_leader_id_ != RAFT_SERVER_INVALID_SITE_ID;
-    let known_leader_matches_sender = state.current_leader_id_ == leader_site_id;
+        raft_server_vote_term_is_stale(leader_current_term, server.state_.current_term_);
+    let sender_is_self = leader_site_id == server.state_.site_id_;
+    let has_known_leader = server.state_.current_leader_id_ != RAFT_SERVER_INVALID_SITE_ID;
+    let known_leader_matches_sender = server.state_.current_leader_id_ == leader_site_id;
     if !sender_is_current_voter
         || leader_term_is_stale
         || !raft_server_leader_rpc_sender_is_authoritative(
             leader_has_higher_term,
-            state.is_leader_,
+            server.state_.is_leader_,
             sender_is_self,
             has_known_leader,
             known_leader_matches_sender,
@@ -4256,8 +4243,8 @@ pub unsafe fn raft_on_append_entries(
     {
         report.unauthoritative_ = true;
         *follower_append_ok = 0;
-        *follower_current_term = state.current_term_;
-        *follower_last_log_index = state.raft_log_.last_index();
+        *follower_current_term = server.state_.current_term_;
+        *follower_last_log_index = server.state_.raft_log_.last_index();
         return report;
     }
 
@@ -4270,17 +4257,18 @@ pub unsafe fn raft_on_append_entries(
     // repair.
     let mut decoded_count: u64 = 0;
     let append_payload_valid = unsafe {
-        raft_ae_decode_payload(server, cmd, leader_prev_log_index,
+        raft_ae_decode_payload(server as *mut RaftServerBase, cmd,
+                               leader_prev_log_index,
                                leader_next_log_term, &mut decoded_count)
     };
 
     let term_ok =
-        raft_server_append_term_is_acceptable(leader_current_term, state.current_term_);
+        raft_server_append_term_is_acceptable(leader_current_term, server.state_.current_term_);
     let compacted_prefix_miss = leader_prev_log_index != 0
-        && leader_prev_log_index < state.raft_log_.base()
-        && leader_prev_log_index != state.snapidx_;
+        && leader_prev_log_index < server.state_.raft_log_.base()
+        && leader_prev_log_index != server.state_.snapidx_;
     let index_ok =
-        leader_prev_log_index <= state.raft_log_.last_index() && !compacted_prefix_miss;
+        leader_prev_log_index <= server.state_.raft_log_.last_index() && !compacted_prefix_miss;
 
     // THE LOG-MATCHING CHECK. A follower legitimately may not hold
     // leaderPrevLogIndex -- discovering that is the point, and what drives
@@ -4289,15 +4277,15 @@ pub unsafe fn raft_on_append_entries(
     let mut local_prev_term: u64 = 0;
     if leader_prev_log_index == 0 {
         local_prev_term = 0;
-    } else if leader_prev_log_index == state.snapidx_ {
+    } else if leader_prev_log_index == server.state_.snapidx_ {
         // The snapshot boundary is still valid when entries are compacted.
-        local_prev_term = state.snapterm_ as u64;
-    } else if leader_prev_log_index <= state.raft_log_.last_index()
+        local_prev_term = server.state_.snapterm_ as u64;
+    } else if leader_prev_log_index <= server.state_.raft_log_.last_index()
         && !compacted_prefix_miss
-        && state.raft_log_.holds(leader_prev_log_index)
+        && server.state_.raft_log_.holds(leader_prev_log_index)
     {
         local_prev_term =
-            state.raft_log_.get(leader_prev_log_index).unwrap().term() as u64;
+            server.state_.raft_log_.get(leader_prev_log_index).unwrap().term() as u64;
     }
     let prev_term_ok = leader_prev_log_index == 0 || local_prev_term == leader_prev_log_term;
 
@@ -4310,56 +4298,55 @@ pub unsafe fn raft_on_append_entries(
     // conflicts, so a follower being repaired by backtracking does not keep
     // starting elections.
     if term_ok {
-        if raft_server_observed_higher_term(leader_current_term, state.current_term_) {
-            let prev_term = state.current_term_;
-            state.current_term_ = leader_current_term;
-            state.vote_for_ = RAFT_SERVER_INVALID_SITE_ID;
+        if raft_server_observed_higher_term(leader_current_term, server.state_.current_term_) {
+            let prev_term = server.state_.current_term_;
+            server.state_.current_term_ = leader_current_term;
+            server.state_.vote_for_ = RAFT_SERVER_INVALID_SITE_ID;
             // Publish the accepted leader before any leader-change callback
             // can observe the follower transition.
-            state.current_leader_id_ = raft_server_leader_hint_after_transition(
-                false, true, state.site_id_, leader_site_id);
-            unsafe {
-                raft_ae_log_term_change(server, prev_term, state.current_term_,
-                                        leader_site_id)
-            };
-            if state.is_leader_ {
+            server.state_.current_leader_id_ = raft_server_leader_hint_after_transition(
+                false, true, server.state_.site_id_, leader_site_id);
+            let now_term: u64 = server.state_.current_term_;
+            server.LogTermChange("AppendEntries leader term is newer",
+                                 prev_term, now_term, leader_site_id);
+            if server.state_.is_leader_ {
                 // The central transition, so no leadership state survives an
                 // accepted competing leader epoch.
-                unsafe { raft_ae_step_down(server) };
+                server.stepDown();
             } else {
-                unsafe { raft_ae_set_is_leader(server, false) };
+                server.setIsLeader(false);
             }
-            state.req_voting_ = false;
-            state.election_in_progress_ = false;
+            server.state_.req_voting_ = false;
+            server.state_.election_in_progress_ = false;
         }
         // Refresh the hint for current-term contact too; a higher-term sender
         // was already published above, before its role transition.
-        state.current_leader_id_ = raft_server_leader_hint_after_transition(
-            false, true, state.site_id_, leader_site_id);
-        unsafe { raft_ae_reset_timer(server) };
+        server.state_.current_leader_id_ = raft_server_leader_hint_after_transition(
+            false, true, server.state_.site_id_, leader_site_id);
+        server.resetTimerLocked("AppendEntries from current-term leader");
     }
 
     if !(raft_server_append_is_acceptable(term_ok, index_ok, prev_term_ok)
          && append_payload_valid)
     {
         *follower_append_ok = 0;
-        *follower_current_term = state.current_term_;
-        *follower_last_log_index = state.raft_log_.last_index();
+        *follower_current_term = server.state_.current_term_;
+        *follower_last_log_index = server.state_.raft_log_.last_index();
         return report;
     }
 
     // Any accepted leader RPC establishes follower state even in our current
     // term. Cancel an outstanding election before its delayed result can
     // promote this server after the accepted AppendEntries.
-    if state.is_leader_ {
-        unsafe { raft_ae_step_down(server) };
+    if server.state_.is_leader_ {
+        server.stepDown();
     } else {
-        unsafe { raft_ae_set_is_leader(server, false) };
+        server.setIsLeader(false);
     }
-    state.req_voting_ = false;
-    state.election_in_progress_ = false;
+    server.state_.req_voting_ = false;
+    server.state_.election_in_progress_ = false;
 
-    let old_last_log_index = state.raft_log_.last_index();
+    let old_last_log_index = server.state_.raft_log_.last_index();
     let count = if has_cmd { decoded_count } else { 0 };
     let accepted_through = raft_server_append_sent_end(leader_prev_log_index, count);
 
@@ -4380,8 +4367,12 @@ pub unsafe fn raft_on_append_entries(
         // the count at one FindRaftInstance instead of three.
         let mut local_exists = false;
         let local_term =
-            unsafe { raft_ae_slot_term(server, index, &mut local_exists) };
-        let incoming_term = unsafe { raft_ae_decoded_term(server, i) };
+            unsafe {
+                raft_ae_slot_term(server as *mut RaftServerBase, index,
+                                  &mut local_exists)
+            };
+        let incoming_term =
+            unsafe { raft_ae_decoded_term(server as *mut RaftServerBase, i) };
         if raft_server_append_entry_conflicts(local_exists, local_term as u64,
                                               incoming_term as u64) {
             have_first_write = true;
@@ -4393,10 +4384,10 @@ pub unsafe fn raft_on_append_entries(
     }
 
     if truncate_suffix
-        && first_write_index <= (if state.commit_index_ > state.execute_index_ {
-               state.commit_index_
+        && first_write_index <= (if server.state_.commit_index_ > server.state_.execute_index_ {
+               server.state_.commit_index_
            } else {
-               state.execute_index_
+               server.state_.execute_index_
            })
     {
         // A legitimate leader never conflicts with a committed entry. Do not
@@ -4405,8 +4396,8 @@ pub unsafe fn raft_on_append_entries(
         report.refused_committed_conflict_ = true;
         report.conflict_index_ = first_write_index;
         *follower_append_ok = 0;
-        *follower_current_term = state.current_term_;
-        *follower_last_log_index = state.raft_log_.last_index();
+        *follower_current_term = server.state_.current_term_;
+        *follower_last_log_index = server.state_.raft_log_.last_index();
         return report;
     }
 
@@ -4415,13 +4406,14 @@ pub unsafe fn raft_on_append_entries(
         // then re-append in index order. truncate_from is a no-op when
         // first_write_index is already past the tail, the ordinary extend
         // case. The append itself is C++ because it needs the wire payload.
-        state.raft_log_.truncate_from(first_write_index);
+        server.state_.raft_log_.truncate_from(first_write_index);
         unsafe {
-            raft_ae_apply_incoming(server, cmd, leader_prev_log_index,
+            raft_ae_apply_incoming(server as *mut RaftServerBase, cmd,
+                                   leader_prev_log_index,
                                    leader_next_log_term, first_write_index)
         };
     }
-    if state.raft_log_.last_index()
+    if server.state_.raft_log_.last_index()
         != raft_server_append_result_last_index(old_last_log_index, accepted_through,
                                                 truncate_suffix)
     {
@@ -4430,17 +4422,18 @@ pub unsafe fn raft_on_append_entries(
 
     let follower_commit_candidate =
         raft_server_commit_index_clamp(leader_commit_index, accepted_through);
-    if raft_server_log_index_above(follower_commit_candidate, state.commit_index_) {
-        let old_commit = state.commit_index_;
-        state.commit_index_ = follower_commit_candidate;
-        if state.raft_log_.last_index() < state.commit_index_ {
+    if raft_server_log_index_above(follower_commit_candidate, server.state_.commit_index_) {
+        let old_commit = server.state_.commit_index_;
+        server.state_.commit_index_ = follower_commit_candidate;
+        if server.state_.raft_log_.last_index() < server.state_.commit_index_ {
             panic!("commit index advanced past the log tail");
         }
-        unsafe { raft_ae_enqueue_committed(server, old_commit, state.commit_index_) };
+        let new_commit: u64 = server.state_.commit_index_;
+        server.EnqueueCommittedEntries(old_commit, new_commit);
     }
 
     *follower_append_ok = 1;
-    *follower_current_term = state.current_term_;
+    *follower_current_term = server.state_.current_term_;
     // The inclusive end PROVED by this call, not the follower's possibly
     // longer and divergent local suffix. Rejections above report the local
     // tail instead, as a backoff hint.
@@ -4477,11 +4470,9 @@ pub fn on_append_entries_body(server: &mut RaftServerBase,
     // where the original did this work. Decoding up front would make every
     // rejected AppendEntries pay a dynamic cast and N refcount bumps on a
     // path a remote peer drives.
-    let handle: *mut core::ffi::c_void =
-        server as *mut RaftServerBase as *mut core::ffi::c_void;
     let report: AppendReport = unsafe {
         raft_on_append_entries(
-            &mut server.state_, handle, cmd, stopped, sender_is_current_voter,
+            server, cmd, stopped, sender_is_current_voter,
             cmd_has_value, leader_current_term, leader_site_id,
             leader_prev_log_index, leader_prev_log_term, leader_commit_index,
             leader_next_log_term, follower_append_ok, follower_current_term,
@@ -4519,7 +4510,7 @@ pub fn on_append_entries_body(server: &mut RaftServerBase,
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_round_scope version=1 rust_sha256=a5253597ad7bd3354f893d7303a89513a7638783da56a2a08d98380127d0b578*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_round_scope version=1 rust_sha256=1eb07c909dcf7455b9da79bdd9c8115f20c8f180119edc60676c23a14b269287*/
 enum class AppendReplyAction : int32_t;
 constexpr AppendReplyAction AppendReplyAction_IGNORED();
 constexpr AppendReplyAction AppendReplyAction_STEP_DOWN();
@@ -4575,17 +4566,11 @@ extern "C" {
     bool raft_batch_try_push(server_h::RaftServerBase* server, uint64_t index);
     void raft_batch_finalize(server_h::RaftServerBase* server, rusty::RaftCommand* cmd_out);
     rusty::RaftResponsePtr raft_phase1_send_append(server_h::RaftServerBase* server, uint16_t site_id, uint32_t partition_id, bool is_leader, uint64_t term, uint64_t prev_log_index, uint64_t prev_log_term, uint64_t commit_index, const rusty::RaftCommand* cmd, uint64_t cmd_log_term);
-    int64_t raft_ae_slot_term(rusty::ffi::c_void* server, uint64_t index, bool& has_cmd);
-    bool raft_ae_decode_payload(rusty::ffi::c_void* server, const rusty::ffi::c_void* cmd, uint64_t leader_prev_log_index, uint64_t leader_next_log_term, uint64_t& out_count);
-    int64_t raft_ae_decoded_term(rusty::ffi::c_void* server, uint64_t i);
-    void raft_ae_log_term_change(rusty::ffi::c_void* server, uint64_t prev, uint64_t now, uint16_t source);
-    void raft_ae_step_down(rusty::ffi::c_void* server);
-    void raft_ae_set_is_leader(rusty::ffi::c_void* server, bool is_leader);
-    void raft_ae_reset_timer(rusty::ffi::c_void* server);
-    void raft_ae_enqueue_committed(rusty::ffi::c_void* server, uint64_t old_commit, uint64_t new_commit);
-    void raft_ae_apply_incoming(rusty::ffi::c_void* server, const rusty::ffi::c_void* cmd, uint64_t leader_prev_log_index, uint64_t leader_next_log_term, uint64_t first_write_index);
-    void raft_do_vote(rusty::ffi::c_void* server, uint64_t lst_log_idx, int64_t lst_log_term, uint16_t can_id, int64_t can_term, int64_t& reply_term, int8_t& vote_granted, bool vote);
-    int64_t raft_election_last_log_term(rusty::ffi::c_void* server);
+    int64_t raft_ae_slot_term(server_h::RaftServerBase* server, uint64_t index, bool& has_cmd);
+    bool raft_ae_decode_payload(server_h::RaftServerBase* server, const rusty::ffi::c_void* cmd, uint64_t leader_prev_log_index, uint64_t leader_next_log_term, uint64_t& out_count);
+    int64_t raft_ae_decoded_term(server_h::RaftServerBase* server, uint64_t i);
+    void raft_ae_apply_incoming(server_h::RaftServerBase* server, const rusty::ffi::c_void* cmd, uint64_t leader_prev_log_index, uint64_t leader_next_log_term, uint64_t first_write_index);
+    void raft_do_vote(server_h::RaftServerBase* server, uint64_t lst_log_idx, int64_t lst_log_term, uint16_t can_id, int64_t can_term, int64_t& reply_term, int8_t& vote_granted, bool vote);
 }
 
 struct HeartbeatRoundScope {
@@ -5207,55 +5192,55 @@ void heartbeat_phase3_body(server_h::RaftServerBase& server, AuthorityLedger& au
 /// The handle is not dereferenced here. It is forwarded to the two
 /// trampolines below, which cast it back exactly once each.
 // @unsafe
-void raft_on_request_vote(RaftConsensusState& state, rusty::ffi::c_void* server, bool stopped, bool candidate_is_current_voter, uint64_t lst_log_idx, int64_t lst_log_term, uint16_t can_id, int64_t can_term, int64_t& reply_term, int8_t& vote_granted) {
+void raft_on_request_vote(server_h::RaftServerBase& server, bool stopped, bool candidate_is_current_voter, uint64_t lst_log_idx, int64_t lst_log_term, uint16_t can_id, int64_t can_term, int64_t& reply_term, int8_t& vote_granted) {
     int64_t* reply_term_shadow1 = &reply_term;
     int8_t* vote_granted_shadow1 = &vote_granted;
     if (stopped) {
-        *reply_term_shadow1 = static_cast<int64_t>(state.current_term_);
+        *reply_term_shadow1 = static_cast<int64_t>([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.current_term_); }) { return (__r.current_term_); } else if constexpr (requires { (__r.current_term__field); }) { return (__r.current_term__field); } else if constexpr (requires { ((*__r).current_term_); }) { return ((*__r).current_term_); } else { return ((*__r).current_term__field); } }(server.state_));
         *vote_granted_shadow1 = static_cast<int8_t>(0);
         return;
     }
     if (((rusty::detail::deref_if_pointer_like(can_term) < 0) || (rusty::detail::deref_if_pointer_like(lst_log_term) < 0)) || !candidate_is_current_voter) {
-        *reply_term_shadow1 = static_cast<int64_t>(state.current_term_);
+        *reply_term_shadow1 = static_cast<int64_t>([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.current_term_); }) { return (__r.current_term_); } else if constexpr (requires { (__r.current_term__field); }) { return (__r.current_term__field); } else if constexpr (requires { ((*__r).current_term_); }) { return ((*__r).current_term_); } else { return ((*__r).current_term__field); } }(server.state_));
         *vote_granted_shadow1 = static_cast<int8_t>(0);
         return;
     }
-    const auto cur_term = state.current_term_;
+    const auto cur_term = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.current_term_); }) { return (__r.current_term_); } else if constexpr (requires { (__r.current_term__field); }) { return (__r.current_term__field); } else if constexpr (requires { ((*__r).current_term_); }) { return ((*__r).current_term_); } else { return ((*__r).current_term__field); } }(server.state_);
     if (((static_cast<uint64_t>(can_term))) < rusty::detail::deref_if_pointer_like(cur_term)) {
         // @unsafe
         {
-            raft_do_vote(server, std::move(lst_log_idx), std::move(lst_log_term), std::move(can_id), std::move(can_term), (*reply_term_shadow1), (*vote_granted_shadow1), false);
+            raft_do_vote(static_cast<server_h::RaftServerBase*>(rusty::detail::ptr_or_addr(server)), std::move(lst_log_idx), std::move(lst_log_term), std::move(can_id), std::move(can_term), (*reply_term_shadow1), (*vote_granted_shadow1), false);
         }
         return;
     }
-    if (((((static_cast<uint64_t>(can_term))) == rusty::detail::deref_if_pointer_like(cur_term)) && (rusty::detail::deref_if_pointer_like(state.vote_for_) != rusty::detail::deref_if_pointer_like(RAFT_SERVER_INVALID_SITE_ID))) && (rusty::detail::deref_if_pointer_like(state.vote_for_) != rusty::detail::deref_if_pointer_like(can_id))) {
+    if (((((static_cast<uint64_t>(can_term))) == rusty::detail::deref_if_pointer_like(cur_term)) && (rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.vote_for_); }) { return (__r.vote_for_); } else if constexpr (requires { (__r.vote_for__field); }) { return (__r.vote_for__field); } else if constexpr (requires { ((*__r).vote_for_); }) { return ((*__r).vote_for_); } else { return ((*__r).vote_for__field); } }(server.state_)) != rusty::detail::deref_if_pointer_like(RAFT_SERVER_INVALID_SITE_ID))) && (rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.vote_for_); }) { return (__r.vote_for_); } else if constexpr (requires { (__r.vote_for__field); }) { return (__r.vote_for__field); } else if constexpr (requires { ((*__r).vote_for_); }) { return ((*__r).vote_for_); } else { return ((*__r).vote_for__field); } }(server.state_)) != rusty::detail::deref_if_pointer_like(can_id))) {
         // @unsafe
         {
-            raft_do_vote(server, std::move(lst_log_idx), std::move(lst_log_term), std::move(can_id), std::move(can_term), (*reply_term_shadow1), (*vote_granted_shadow1), false);
+            raft_do_vote(static_cast<server_h::RaftServerBase*>(rusty::detail::ptr_or_addr(server)), std::move(lst_log_idx), std::move(lst_log_term), std::move(can_id), std::move(can_term), (*reply_term_shadow1), (*vote_granted_shadow1), false);
         }
         return;
     }
-    if (state.raft_log_.last_index() < rusty::detail::deref_if_pointer_like(state.snapidx_)) {
+    if ([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }(server.state_).last_index() < rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.snapidx_); }) { return (__r.snapidx_); } else if constexpr (requires { (__r.snapidx__field); }) { return (__r.snapidx__field); } else if constexpr (requires { ((*__r).snapidx_); }) { return ((*__r).snapidx_); } else { return ((*__r).snapidx__field); } }(server.state_))) {
         rusty::panic::do_panic(std::format("last log index is below the snapshot boundary"));
     }
-    const auto lstoff = state.raft_log_.last_index() - rusty::detail::deref_if_pointer_like(state.snapidx_);
-    const auto curlstterm = raft_election_last_log_term(server);
-    const auto curlstidx = state.raft_log_.last_index();
+    const auto lstoff = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }(server.state_).last_index() - rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.snapidx_); }) { return (__r.snapidx_); } else if constexpr (requires { (__r.snapidx__field); }) { return (__r.snapidx__field); } else if constexpr (requires { ((*__r).snapidx_); }) { return ((*__r).snapidx_); } else { return ((*__r).snapidx__field); } }(server.state_));
+    const auto curlstterm = server.ElectionLastLogTermLocked();
+    const auto curlstidx = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }(server.state_).last_index();
     auto candidate_log_is_current = raft_server_candidate_log_is_at_least(std::move(lst_log_term), std::move(curlstterm), std::move(lst_log_idx), std::move(curlstidx));
-    if (raft_server_vote_is_idempotent(static_cast<uint64_t>(can_term), std::move(cur_term), state.vote_for_, std::move(can_id)) && rusty::detail::deref_if_pointer_like(candidate_log_is_current)) {
+    if (raft_server_vote_is_idempotent(static_cast<uint64_t>(can_term), std::move(cur_term), [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.vote_for_); }) { return (__r.vote_for_); } else if constexpr (requires { (__r.vote_for__field); }) { return (__r.vote_for__field); } else if constexpr (requires { ((*__r).vote_for_); }) { return ((*__r).vote_for_); } else { return ((*__r).vote_for__field); } }(server.state_), std::move(can_id)) && rusty::detail::deref_if_pointer_like(candidate_log_is_current)) {
         // @unsafe
         {
-            raft_do_vote(server, std::move(lst_log_idx), std::move(lst_log_term), std::move(can_id), std::move(can_term), (*reply_term_shadow1), (*vote_granted_shadow1), true);
+            raft_do_vote(static_cast<server_h::RaftServerBase*>(rusty::detail::ptr_or_addr(server)), std::move(lst_log_idx), std::move(lst_log_term), std::move(can_id), std::move(can_term), (*reply_term_shadow1), (*vote_granted_shadow1), true);
         }
         return;
     }
-    if ((rusty::detail::deref_if_pointer_like(lstoff) + rusty::detail::deref_if_pointer_like(state.snapidx_)) != state.raft_log_.last_index()) {
+    if ((rusty::detail::deref_if_pointer_like(lstoff) + rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.snapidx_); }) { return (__r.snapidx_); } else if constexpr (requires { (__r.snapidx__field); }) { return (__r.snapidx__field); } else if constexpr (requires { ((*__r).snapidx_); }) { return ((*__r).snapidx_); } else { return ((*__r).snapidx__field); } }(server.state_))) != [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }(server.state_).last_index()) {
         rusty::panic::do_panic(std::format("snapshot offset invariant violated"));
     }
     auto grant = std::move(candidate_log_is_current);
     // @unsafe
     {
-        raft_do_vote(server, std::move(lst_log_idx), std::move(lst_log_term), std::move(can_id), std::move(can_term), (*reply_term_shadow1), (*vote_granted_shadow1), std::move(grant));
+        raft_do_vote(static_cast<server_h::RaftServerBase*>(rusty::detail::ptr_or_addr(server)), std::move(lst_log_idx), std::move(lst_log_term), std::move(can_id), std::move(can_term), (*reply_term_shadow1), (*vote_granted_shadow1), std::move(grant));
     }
 }
 
@@ -5270,10 +5255,9 @@ void on_request_vote_body(server_h::RaftServerBase& server, uint64_t lst_log_idx
     if (!stopped && ((((rusty::detail::deref_if_pointer_like(can_term) < 0) || (rusty::detail::deref_if_pointer_like(lst_log_term) < 0)) || !candidate_is_current_voter))) {
         rusty::raft_log_warn_5("[RAFT_VOTE] Site {} rejected malformed/non-voter candidate {} term {} last_log_term {} (voter={})", server.site_id_, std::move(can_id), std::move(can_term), std::move(lst_log_term), std::move(candidate_is_current_voter));
     }
-    rusty::ffi::c_void* const handle = const_cast<rusty::ffi::c_void*>(reinterpret_cast<const rusty::ffi::c_void*>(static_cast<server_h::RaftServerBase*>(rusty::detail::ptr_or_addr(server))));
     // @unsafe
     {
-        raft_on_request_vote(rusty::detail::deref_if_pointer_like(server.state_), handle, std::move(stopped), std::move(candidate_is_current_voter), std::move(lst_log_idx), std::move(lst_log_term), std::move(can_id), std::move(can_term), reply_term, vote_granted);
+        raft_on_request_vote(server, std::move(stopped), std::move(candidate_is_current_voter), std::move(lst_log_idx), std::move(lst_log_term), std::move(can_id), std::move(can_term), reply_term, vote_granted);
     }
 }
 
@@ -5285,42 +5269,42 @@ void on_request_vote_body(server_h::RaftServerBase& server, uint64_t lst_log_idx
 /// `RaftServer::OnAppendEntries`. Neither handle is dereferenced here; both
 /// are forwarded to trampolines that cast back exactly once.
 // @unsafe
-AppendReport raft_on_append_entries(RaftConsensusState& state, rusty::ffi::c_void* server, const rusty::ffi::c_void* cmd, bool stopped, bool sender_is_current_voter, bool has_cmd, uint64_t leader_current_term, uint16_t leader_site_id, uint64_t leader_prev_log_index, uint64_t leader_prev_log_term, uint64_t leader_commit_index, uint64_t leader_next_log_term, uint64_t& follower_append_ok, uint64_t& follower_current_term, uint64_t& follower_last_log_index) {
-    RaftConsensusState* state_shadow1 = &state;
+AppendReport raft_on_append_entries(server_h::RaftServerBase& server, const rusty::ffi::c_void* cmd, bool stopped, bool sender_is_current_voter, bool has_cmd, uint64_t leader_current_term, uint16_t leader_site_id, uint64_t leader_prev_log_index, uint64_t leader_prev_log_term, uint64_t leader_commit_index, uint64_t leader_next_log_term, uint64_t& follower_append_ok, uint64_t& follower_current_term, uint64_t& follower_last_log_index) {
+    server_h::RaftServerBase* server_shadow1 = &server;
     uint64_t* follower_append_ok_shadow1 = &follower_append_ok;
     uint64_t* follower_current_term_shadow1 = &follower_current_term;
     uint64_t* follower_last_log_index_shadow1 = &follower_last_log_index;
     auto report = AppendReport{.accepted_ = false, .term_ok_ = false, .index_ok_ = false, .prev_term_ok_ = false, .refused_committed_conflict_ = false, .unauthoritative_ = false, .conflict_index_ = static_cast<uint64_t>(0), .local_prev_term_ = static_cast<uint64_t>(0)};
     if (stopped) {
         *follower_append_ok_shadow1 = static_cast<uint64_t>(0);
-        *follower_current_term_shadow1 = (*state_shadow1).current_term_;
-        *follower_last_log_index_shadow1 = (*state_shadow1).raft_log_.last_index();
+        *follower_current_term_shadow1 = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.current_term_); }) { return (__r.current_term_); } else if constexpr (requires { (__r.current_term__field); }) { return (__r.current_term__field); } else if constexpr (requires { ((*__r).current_term_); }) { return ((*__r).current_term_); } else { return ((*__r).current_term__field); } }((*server_shadow1).state_);
+        *follower_last_log_index_shadow1 = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }((*server_shadow1).state_).last_index();
         return std::move(report);
     }
-    const auto leader_has_higher_term = raft_server_observed_higher_term(std::move(leader_current_term), (*state_shadow1).current_term_);
-    const auto leader_term_is_stale = raft_server_vote_term_is_stale(std::move(leader_current_term), (*state_shadow1).current_term_);
-    const auto sender_is_self = rusty::detail::deref_if_pointer_like(leader_site_id) == rusty::detail::deref_if_pointer_like((*state_shadow1).site_id_);
-    const auto has_known_leader = rusty::detail::deref_if_pointer_like((*state_shadow1).current_leader_id_) != rusty::detail::deref_if_pointer_like(RAFT_SERVER_INVALID_SITE_ID);
-    const auto known_leader_matches_sender = rusty::detail::deref_if_pointer_like((*state_shadow1).current_leader_id_) == rusty::detail::deref_if_pointer_like(leader_site_id);
-    if ((!sender_is_current_voter || rusty::detail::deref_if_pointer_like(leader_term_is_stale)) || rusty::detail::rust_not(raft_server_leader_rpc_sender_is_authoritative(std::move(leader_has_higher_term), (*state_shadow1).is_leader_, std::move(sender_is_self), std::move(has_known_leader), std::move(known_leader_matches_sender)))) {
+    const auto leader_has_higher_term = raft_server_observed_higher_term(std::move(leader_current_term), [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.current_term_); }) { return (__r.current_term_); } else if constexpr (requires { (__r.current_term__field); }) { return (__r.current_term__field); } else if constexpr (requires { ((*__r).current_term_); }) { return ((*__r).current_term_); } else { return ((*__r).current_term__field); } }((*server_shadow1).state_));
+    const auto leader_term_is_stale = raft_server_vote_term_is_stale(std::move(leader_current_term), [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.current_term_); }) { return (__r.current_term_); } else if constexpr (requires { (__r.current_term__field); }) { return (__r.current_term__field); } else if constexpr (requires { ((*__r).current_term_); }) { return ((*__r).current_term_); } else { return ((*__r).current_term__field); } }((*server_shadow1).state_));
+    const auto sender_is_self = rusty::detail::deref_if_pointer_like(leader_site_id) == rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.site_id_); }) { return (__r.site_id_); } else if constexpr (requires { (__r.site_id__field); }) { return (__r.site_id__field); } else if constexpr (requires { ((*__r).site_id_); }) { return ((*__r).site_id_); } else { return ((*__r).site_id__field); } }((*server_shadow1).state_));
+    const auto has_known_leader = rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.current_leader_id_); }) { return (__r.current_leader_id_); } else if constexpr (requires { (__r.current_leader_id__field); }) { return (__r.current_leader_id__field); } else if constexpr (requires { ((*__r).current_leader_id_); }) { return ((*__r).current_leader_id_); } else { return ((*__r).current_leader_id__field); } }((*server_shadow1).state_)) != rusty::detail::deref_if_pointer_like(RAFT_SERVER_INVALID_SITE_ID);
+    const auto known_leader_matches_sender = rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.current_leader_id_); }) { return (__r.current_leader_id_); } else if constexpr (requires { (__r.current_leader_id__field); }) { return (__r.current_leader_id__field); } else if constexpr (requires { ((*__r).current_leader_id_); }) { return ((*__r).current_leader_id_); } else { return ((*__r).current_leader_id__field); } }((*server_shadow1).state_)) == rusty::detail::deref_if_pointer_like(leader_site_id);
+    if ((!sender_is_current_voter || rusty::detail::deref_if_pointer_like(leader_term_is_stale)) || rusty::detail::rust_not(raft_server_leader_rpc_sender_is_authoritative(std::move(leader_has_higher_term), [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.is_leader_); }) { return (__r.is_leader_); } else if constexpr (requires { (__r.is_leader__field); }) { return (__r.is_leader__field); } else if constexpr (requires { ((*__r).is_leader_); }) { return ((*__r).is_leader_); } else { return ((*__r).is_leader__field); } }((*server_shadow1).state_), std::move(sender_is_self), std::move(has_known_leader), std::move(known_leader_matches_sender)))) {
         report.unauthoritative_ = true;
         *follower_append_ok_shadow1 = static_cast<uint64_t>(0);
-        *follower_current_term_shadow1 = (*state_shadow1).current_term_;
-        *follower_last_log_index_shadow1 = (*state_shadow1).raft_log_.last_index();
+        *follower_current_term_shadow1 = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.current_term_); }) { return (__r.current_term_); } else if constexpr (requires { (__r.current_term__field); }) { return (__r.current_term__field); } else if constexpr (requires { ((*__r).current_term_); }) { return ((*__r).current_term_); } else { return ((*__r).current_term__field); } }((*server_shadow1).state_);
+        *follower_last_log_index_shadow1 = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }((*server_shadow1).state_).last_index();
         return std::move(report);
     }
     uint64_t decoded_count = static_cast<uint64_t>(0);
-    const auto append_payload_valid = raft_ae_decode_payload(server, cmd, std::move(leader_prev_log_index), std::move(leader_next_log_term), decoded_count);
-    auto term_ok = raft_server_append_term_is_acceptable(std::move(leader_current_term), (*state_shadow1).current_term_);
-    const auto compacted_prefix_miss = ((rusty::detail::deref_if_pointer_like(leader_prev_log_index) != static_cast<uint64_t>(0)) && (rusty::detail::deref_if_pointer_like(leader_prev_log_index) < (*state_shadow1).raft_log_.base())) && (rusty::detail::deref_if_pointer_like(leader_prev_log_index) != rusty::detail::deref_if_pointer_like((*state_shadow1).snapidx_));
-    auto index_ok = (rusty::detail::deref_if_pointer_like(leader_prev_log_index) <= (*state_shadow1).raft_log_.last_index()) && rusty::detail::rust_not(compacted_prefix_miss);
+    const auto append_payload_valid = raft_ae_decode_payload(static_cast<server_h::RaftServerBase*>(rusty::detail::ptr_or_addr((*server_shadow1))), cmd, std::move(leader_prev_log_index), std::move(leader_next_log_term), decoded_count);
+    auto term_ok = raft_server_append_term_is_acceptable(std::move(leader_current_term), [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.current_term_); }) { return (__r.current_term_); } else if constexpr (requires { (__r.current_term__field); }) { return (__r.current_term__field); } else if constexpr (requires { ((*__r).current_term_); }) { return ((*__r).current_term_); } else { return ((*__r).current_term__field); } }((*server_shadow1).state_));
+    const auto compacted_prefix_miss = ((rusty::detail::deref_if_pointer_like(leader_prev_log_index) != static_cast<uint64_t>(0)) && (rusty::detail::deref_if_pointer_like(leader_prev_log_index) < [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }((*server_shadow1).state_).base())) && (rusty::detail::deref_if_pointer_like(leader_prev_log_index) != rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.snapidx_); }) { return (__r.snapidx_); } else if constexpr (requires { (__r.snapidx__field); }) { return (__r.snapidx__field); } else if constexpr (requires { ((*__r).snapidx_); }) { return ((*__r).snapidx_); } else { return ((*__r).snapidx__field); } }((*server_shadow1).state_)));
+    auto index_ok = (rusty::detail::deref_if_pointer_like(leader_prev_log_index) <= [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }((*server_shadow1).state_).last_index()) && rusty::detail::rust_not(compacted_prefix_miss);
     uint64_t local_prev_term = static_cast<uint64_t>(0);
     if (rusty::detail::deref_if_pointer_like(leader_prev_log_index) == static_cast<uint64_t>(0)) {
         local_prev_term = static_cast<uint64_t>(0);
-    } else if (rusty::detail::deref_if_pointer_like(leader_prev_log_index) == rusty::detail::deref_if_pointer_like((*state_shadow1).snapidx_)) {
-        local_prev_term = static_cast<uint64_t>((*state_shadow1).snapterm_);
-    } else if (((rusty::detail::deref_if_pointer_like(leader_prev_log_index) <= (*state_shadow1).raft_log_.last_index()) && rusty::detail::rust_not(compacted_prefix_miss)) && (*state_shadow1).raft_log_.holds(std::move(leader_prev_log_index))) {
-        local_prev_term = static_cast<uint64_t>((*state_shadow1).raft_log_.get(std::move(leader_prev_log_index)).unwrap().term());
+    } else if (rusty::detail::deref_if_pointer_like(leader_prev_log_index) == rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.snapidx_); }) { return (__r.snapidx_); } else if constexpr (requires { (__r.snapidx__field); }) { return (__r.snapidx__field); } else if constexpr (requires { ((*__r).snapidx_); }) { return ((*__r).snapidx_); } else { return ((*__r).snapidx__field); } }((*server_shadow1).state_))) {
+        local_prev_term = static_cast<uint64_t>([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.snapterm_); }) { return (__r.snapterm_); } else if constexpr (requires { (__r.snapterm__field); }) { return (__r.snapterm__field); } else if constexpr (requires { ((*__r).snapterm_); }) { return ((*__r).snapterm_); } else { return ((*__r).snapterm__field); } }((*server_shadow1).state_));
+    } else if (((rusty::detail::deref_if_pointer_like(leader_prev_log_index) <= [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }((*server_shadow1).state_).last_index()) && rusty::detail::rust_not(compacted_prefix_miss)) && [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }((*server_shadow1).state_).holds(std::move(leader_prev_log_index))) {
+        local_prev_term = static_cast<uint64_t>([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }((*server_shadow1).state_).get(std::move(leader_prev_log_index)).unwrap().term());
     }
     auto prev_term_ok = (rusty::detail::deref_if_pointer_like(leader_prev_log_index) == static_cast<uint64_t>(0)) || (rusty::detail::deref_if_pointer_like(local_prev_term) == rusty::detail::deref_if_pointer_like(leader_prev_log_term));
     report.term_ok_ = std::move(term_ok);
@@ -5328,55 +5312,38 @@ AppendReport raft_on_append_entries(RaftConsensusState& state, rusty::ffi::c_voi
     report.prev_term_ok_ = std::move(prev_term_ok);
     report.local_prev_term_ = std::move(local_prev_term);
     if (term_ok) {
-        if (raft_server_observed_higher_term(std::move(leader_current_term), (*state_shadow1).current_term_)) {
-            auto prev_term = (*state_shadow1).current_term_;
-            (*state_shadow1).current_term_ = std::move(leader_current_term);
-            (*state_shadow1).vote_for_ = RAFT_SERVER_INVALID_SITE_ID;
-            (*state_shadow1).current_leader_id_ = raft_server_leader_hint_after_transition(false, true, (*state_shadow1).site_id_, std::move(leader_site_id));
-            // @unsafe
-            {
-                raft_ae_log_term_change(server, std::move(prev_term), (*state_shadow1).current_term_, std::move(leader_site_id));
-            }
-            if ((*state_shadow1).is_leader_) {
-                // @unsafe
-                {
-                    raft_ae_step_down(server);
-                }
+        if (raft_server_observed_higher_term(std::move(leader_current_term), [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.current_term_); }) { return (__r.current_term_); } else if constexpr (requires { (__r.current_term__field); }) { return (__r.current_term__field); } else if constexpr (requires { ((*__r).current_term_); }) { return ((*__r).current_term_); } else { return ((*__r).current_term__field); } }((*server_shadow1).state_))) {
+            const auto prev_term = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.current_term_); }) { return (__r.current_term_); } else if constexpr (requires { (__r.current_term__field); }) { return (__r.current_term__field); } else if constexpr (requires { ((*__r).current_term_); }) { return ((*__r).current_term_); } else { return ((*__r).current_term__field); } }((*server_shadow1).state_);
+            [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.current_term_); }) { return (__r.current_term_); } else if constexpr (requires { (__r.current_term__field); }) { return (__r.current_term__field); } else if constexpr (requires { ((*__r).current_term_); }) { return ((*__r).current_term_); } else { return ((*__r).current_term__field); } }((*server_shadow1).state_) = std::move(leader_current_term);
+            [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.vote_for_); }) { return (__r.vote_for_); } else if constexpr (requires { (__r.vote_for__field); }) { return (__r.vote_for__field); } else if constexpr (requires { ((*__r).vote_for_); }) { return ((*__r).vote_for_); } else { return ((*__r).vote_for__field); } }((*server_shadow1).state_) = RAFT_SERVER_INVALID_SITE_ID;
+            [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.current_leader_id_); }) { return (__r.current_leader_id_); } else if constexpr (requires { (__r.current_leader_id__field); }) { return (__r.current_leader_id__field); } else if constexpr (requires { ((*__r).current_leader_id_); }) { return ((*__r).current_leader_id_); } else { return ((*__r).current_leader_id__field); } }((*server_shadow1).state_) = raft_server_leader_hint_after_transition(false, true, [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.site_id_); }) { return (__r.site_id_); } else if constexpr (requires { (__r.site_id__field); }) { return (__r.site_id__field); } else if constexpr (requires { ((*__r).site_id_); }) { return ((*__r).site_id_); } else { return ((*__r).site_id__field); } }((*server_shadow1).state_), std::move(leader_site_id));
+            const uint64_t now_term = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.current_term_); }) { return (__r.current_term_); } else if constexpr (requires { (__r.current_term__field); }) { return (__r.current_term__field); } else if constexpr (requires { ((*__r).current_term_); }) { return ((*__r).current_term_); } else { return ((*__r).current_term__field); } }((*server_shadow1).state_);
+            ((*server_shadow1)).LogTermChange("AppendEntries leader term is newer", std::move(prev_term), std::move(now_term), std::move(leader_site_id));
+            if ([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.is_leader_); }) { return (__r.is_leader_); } else if constexpr (requires { (__r.is_leader__field); }) { return (__r.is_leader__field); } else if constexpr (requires { ((*__r).is_leader_); }) { return ((*__r).is_leader_); } else { return ((*__r).is_leader__field); } }((*server_shadow1).state_)) {
+                ((*server_shadow1)).stepDown();
             } else {
-                // @unsafe
-                {
-                    raft_ae_set_is_leader(server, false);
-                }
+                ((*server_shadow1)).setIsLeader(false);
             }
-            (*state_shadow1).req_voting_ = false;
-            (*state_shadow1).election_in_progress_ = false;
+            [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.req_voting_); }) { return (__r.req_voting_); } else if constexpr (requires { (__r.req_voting__field); }) { return (__r.req_voting__field); } else if constexpr (requires { ((*__r).req_voting_); }) { return ((*__r).req_voting_); } else { return ((*__r).req_voting__field); } }((*server_shadow1).state_) = false;
+            [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.election_in_progress_); }) { return (__r.election_in_progress_); } else if constexpr (requires { (__r.election_in_progress__field); }) { return (__r.election_in_progress__field); } else if constexpr (requires { ((*__r).election_in_progress_); }) { return ((*__r).election_in_progress_); } else { return ((*__r).election_in_progress__field); } }((*server_shadow1).state_) = false;
         }
-        (*state_shadow1).current_leader_id_ = raft_server_leader_hint_after_transition(false, true, (*state_shadow1).site_id_, std::move(leader_site_id));
-        // @unsafe
-        {
-            raft_ae_reset_timer(server);
-        }
+        [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.current_leader_id_); }) { return (__r.current_leader_id_); } else if constexpr (requires { (__r.current_leader_id__field); }) { return (__r.current_leader_id__field); } else if constexpr (requires { ((*__r).current_leader_id_); }) { return ((*__r).current_leader_id_); } else { return ((*__r).current_leader_id__field); } }((*server_shadow1).state_) = raft_server_leader_hint_after_transition(false, true, [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.site_id_); }) { return (__r.site_id_); } else if constexpr (requires { (__r.site_id__field); }) { return (__r.site_id__field); } else if constexpr (requires { ((*__r).site_id_); }) { return ((*__r).site_id_); } else { return ((*__r).site_id__field); } }((*server_shadow1).state_), std::move(leader_site_id));
+        ((*server_shadow1)).resetTimerLocked("AppendEntries from current-term leader");
     }
     if (!(raft_server_append_is_acceptable(std::move(term_ok), std::move(index_ok), std::move(prev_term_ok)) && rusty::detail::deref_if_pointer_like(append_payload_valid))) {
         *follower_append_ok_shadow1 = static_cast<uint64_t>(0);
-        *follower_current_term_shadow1 = (*state_shadow1).current_term_;
-        *follower_last_log_index_shadow1 = (*state_shadow1).raft_log_.last_index();
+        *follower_current_term_shadow1 = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.current_term_); }) { return (__r.current_term_); } else if constexpr (requires { (__r.current_term__field); }) { return (__r.current_term__field); } else if constexpr (requires { ((*__r).current_term_); }) { return ((*__r).current_term_); } else { return ((*__r).current_term__field); } }((*server_shadow1).state_);
+        *follower_last_log_index_shadow1 = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }((*server_shadow1).state_).last_index();
         return std::move(report);
     }
-    if ((*state_shadow1).is_leader_) {
-        // @unsafe
-        {
-            raft_ae_step_down(server);
-        }
+    if ([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.is_leader_); }) { return (__r.is_leader_); } else if constexpr (requires { (__r.is_leader__field); }) { return (__r.is_leader__field); } else if constexpr (requires { ((*__r).is_leader_); }) { return ((*__r).is_leader_); } else { return ((*__r).is_leader__field); } }((*server_shadow1).state_)) {
+        ((*server_shadow1)).stepDown();
     } else {
-        // @unsafe
-        {
-            raft_ae_set_is_leader(server, false);
-        }
+        ((*server_shadow1)).setIsLeader(false);
     }
-    (*state_shadow1).req_voting_ = false;
-    (*state_shadow1).election_in_progress_ = false;
-    const auto old_last_log_index = (*state_shadow1).raft_log_.last_index();
+    [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.req_voting_); }) { return (__r.req_voting_); } else if constexpr (requires { (__r.req_voting__field); }) { return (__r.req_voting__field); } else if constexpr (requires { ((*__r).req_voting_); }) { return ((*__r).req_voting_); } else { return ((*__r).req_voting__field); } }((*server_shadow1).state_) = false;
+    [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.election_in_progress_); }) { return (__r.election_in_progress_); } else if constexpr (requires { (__r.election_in_progress__field); }) { return (__r.election_in_progress__field); } else if constexpr (requires { ((*__r).election_in_progress_); }) { return ((*__r).election_in_progress_); } else { return ((*__r).election_in_progress__field); } }((*server_shadow1).state_) = false;
+    const auto old_last_log_index = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }((*server_shadow1).state_).last_index();
     const auto count = (has_cmd ? decoded_count : 0);
     auto accepted_through = raft_server_append_sent_end(std::move(leader_prev_log_index), std::move(count));
     auto have_first_write = false;
@@ -5386,8 +5353,8 @@ AppendReport raft_on_append_entries(RaftConsensusState& state, rusty::ffi::c_voi
     while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(decoded_count)) {
         auto index = (rusty::detail::deref_if_pointer_like(leader_prev_log_index) + rusty::detail::deref_if_pointer_like(i)) + 1;
         auto local_exists = false;
-        const auto local_term = raft_ae_slot_term(server, std::move(index), local_exists);
-        const auto incoming_term = raft_ae_decoded_term(server, std::move(i));
+        const auto local_term = raft_ae_slot_term(static_cast<server_h::RaftServerBase*>(rusty::detail::ptr_or_addr((*server_shadow1))), std::move(index), local_exists);
+        const auto incoming_term = raft_ae_decoded_term(static_cast<server_h::RaftServerBase*>(rusty::detail::ptr_or_addr((*server_shadow1))), std::move(i));
         if (raft_server_append_entry_conflicts(std::move(local_exists), static_cast<uint64_t>(local_term), static_cast<uint64_t>(incoming_term))) {
             have_first_write = true;
             first_write_index = std::move(index);
@@ -5396,38 +5363,36 @@ AppendReport raft_on_append_entries(RaftConsensusState& state, rusty::ffi::c_voi
         }
         i += 1;
     }
-    if (rusty::detail::deref_if_pointer_like(truncate_suffix) && (rusty::detail::deref_if_pointer_like(first_write_index) <= ((rusty::detail::deref_if_pointer_like((*state_shadow1).commit_index_) > rusty::detail::deref_if_pointer_like((*state_shadow1).execute_index_) ? (*state_shadow1).commit_index_ : (*state_shadow1).execute_index_)))) {
+    if (rusty::detail::deref_if_pointer_like(truncate_suffix) && (rusty::detail::deref_if_pointer_like(first_write_index) <= ((rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.commit_index_); }) { return (__r.commit_index_); } else if constexpr (requires { (__r.commit_index__field); }) { return (__r.commit_index__field); } else if constexpr (requires { ((*__r).commit_index_); }) { return ((*__r).commit_index_); } else { return ((*__r).commit_index__field); } }((*server_shadow1).state_)) > rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.execute_index_); }) { return (__r.execute_index_); } else if constexpr (requires { (__r.execute_index__field); }) { return (__r.execute_index__field); } else if constexpr (requires { ((*__r).execute_index_); }) { return ((*__r).execute_index_); } else { return ((*__r).execute_index__field); } }((*server_shadow1).state_)) ? [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.commit_index_); }) { return (__r.commit_index_); } else if constexpr (requires { (__r.commit_index__field); }) { return (__r.commit_index__field); } else if constexpr (requires { ((*__r).commit_index_); }) { return ((*__r).commit_index_); } else { return ((*__r).commit_index__field); } }((*server_shadow1).state_) : [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.execute_index_); }) { return (__r.execute_index_); } else if constexpr (requires { (__r.execute_index__field); }) { return (__r.execute_index__field); } else if constexpr (requires { ((*__r).execute_index_); }) { return ((*__r).execute_index_); } else { return ((*__r).execute_index__field); } }((*server_shadow1).state_))))) {
         report.refused_committed_conflict_ = true;
         report.conflict_index_ = std::move(first_write_index);
         *follower_append_ok_shadow1 = static_cast<uint64_t>(0);
-        *follower_current_term_shadow1 = (*state_shadow1).current_term_;
-        *follower_last_log_index_shadow1 = (*state_shadow1).raft_log_.last_index();
+        *follower_current_term_shadow1 = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.current_term_); }) { return (__r.current_term_); } else if constexpr (requires { (__r.current_term__field); }) { return (__r.current_term__field); } else if constexpr (requires { ((*__r).current_term_); }) { return ((*__r).current_term_); } else { return ((*__r).current_term__field); } }((*server_shadow1).state_);
+        *follower_last_log_index_shadow1 = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }((*server_shadow1).state_).last_index();
         return std::move(report);
     }
     if (have_first_write) {
-        (*state_shadow1).raft_log_.truncate_from(std::move(first_write_index));
+        [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }((*server_shadow1).state_).truncate_from(std::move(first_write_index));
         // @unsafe
         {
-            raft_ae_apply_incoming(server, cmd, std::move(leader_prev_log_index), std::move(leader_next_log_term), std::move(first_write_index));
+            raft_ae_apply_incoming(static_cast<server_h::RaftServerBase*>(rusty::detail::ptr_or_addr((*server_shadow1))), cmd, std::move(leader_prev_log_index), std::move(leader_next_log_term), std::move(first_write_index));
         }
     }
-    if ((*state_shadow1).raft_log_.last_index() != raft_server_append_result_last_index(std::move(old_last_log_index), std::move(accepted_through), std::move(truncate_suffix))) {
+    if ([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }((*server_shadow1).state_).last_index() != raft_server_append_result_last_index(std::move(old_last_log_index), std::move(accepted_through), std::move(truncate_suffix))) {
         rusty::panic::do_panic(std::format("append left the log tail somewhere the result rule did not predict"));
     }
     auto follower_commit_candidate = raft_server_commit_index_clamp(std::move(leader_commit_index), std::move(accepted_through));
-    if (raft_server_log_index_above(std::move(follower_commit_candidate), (*state_shadow1).commit_index_)) {
-        auto old_commit = (*state_shadow1).commit_index_;
-        (*state_shadow1).commit_index_ = std::move(follower_commit_candidate);
-        if ((*state_shadow1).raft_log_.last_index() < rusty::detail::deref_if_pointer_like((*state_shadow1).commit_index_)) {
+    if (raft_server_log_index_above(std::move(follower_commit_candidate), [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.commit_index_); }) { return (__r.commit_index_); } else if constexpr (requires { (__r.commit_index__field); }) { return (__r.commit_index__field); } else if constexpr (requires { ((*__r).commit_index_); }) { return ((*__r).commit_index_); } else { return ((*__r).commit_index__field); } }((*server_shadow1).state_))) {
+        const auto old_commit = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.commit_index_); }) { return (__r.commit_index_); } else if constexpr (requires { (__r.commit_index__field); }) { return (__r.commit_index__field); } else if constexpr (requires { ((*__r).commit_index_); }) { return ((*__r).commit_index_); } else { return ((*__r).commit_index__field); } }((*server_shadow1).state_);
+        [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.commit_index_); }) { return (__r.commit_index_); } else if constexpr (requires { (__r.commit_index__field); }) { return (__r.commit_index__field); } else if constexpr (requires { ((*__r).commit_index_); }) { return ((*__r).commit_index_); } else { return ((*__r).commit_index__field); } }((*server_shadow1).state_) = std::move(follower_commit_candidate);
+        if ([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }((*server_shadow1).state_).last_index() < rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.commit_index_); }) { return (__r.commit_index_); } else if constexpr (requires { (__r.commit_index__field); }) { return (__r.commit_index__field); } else if constexpr (requires { ((*__r).commit_index_); }) { return ((*__r).commit_index_); } else { return ((*__r).commit_index__field); } }((*server_shadow1).state_))) {
             rusty::panic::do_panic(std::format("commit index advanced past the log tail"));
         }
-        // @unsafe
-        {
-            raft_ae_enqueue_committed(server, std::move(old_commit), (*state_shadow1).commit_index_);
-        }
+        const uint64_t new_commit = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.commit_index_); }) { return (__r.commit_index_); } else if constexpr (requires { (__r.commit_index__field); }) { return (__r.commit_index__field); } else if constexpr (requires { ((*__r).commit_index_); }) { return ((*__r).commit_index_); } else { return ((*__r).commit_index__field); } }((*server_shadow1).state_);
+        ((*server_shadow1)).EnqueueCommittedEntries(std::move(old_commit), std::move(new_commit));
     }
     *follower_append_ok_shadow1 = static_cast<uint64_t>(1);
-    *follower_current_term_shadow1 = (*state_shadow1).current_term_;
+    *follower_current_term_shadow1 = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.current_term_); }) { return (__r.current_term_); } else if constexpr (requires { (__r.current_term__field); }) { return (__r.current_term__field); } else if constexpr (requires { ((*__r).current_term_); }) { return ((*__r).current_term_); } else { return ((*__r).current_term__field); } }((*server_shadow1).state_);
     *follower_last_log_index_shadow1 = accepted_through;
     report.accepted_ = true;
     return std::move(report);
@@ -5437,8 +5402,7 @@ void on_append_entries_body(server_h::RaftServerBase& server, uint64_t leader_cu
     const auto _lock = RaftLockGuard::new_(&server.mtx_);
     bool stopped = server.stop_.load(rusty::sync::atomic::Ordering::Acquire);
     bool sender_is_current_voter = ((rusty::detail::deref_if_pointer_like(leader_site_id) != rusty::detail::deref_if_pointer_like(RAFT_SERVER_INVALID_SITE_ID)) && (rusty::detail::deref_if_pointer_like(leader_site_id) != rusty::detail::deref_if_pointer_like(server.site_id_))) && server.IsConfigMember(std::move(leader_site_id));
-    rusty::ffi::c_void* const handle = const_cast<rusty::ffi::c_void*>(reinterpret_cast<const rusty::ffi::c_void*>(static_cast<server_h::RaftServerBase*>(rusty::detail::ptr_or_addr(server))));
-    const AppendReport report = raft_on_append_entries(rusty::detail::deref_if_pointer_like(server.state_), handle, cmd, std::move(stopped), std::move(sender_is_current_voter), std::move(cmd_has_value), std::move(leader_current_term), std::move(leader_site_id), std::move(leader_prev_log_index), std::move(leader_prev_log_term), std::move(leader_commit_index), std::move(leader_next_log_term), follower_append_ok, follower_current_term, follower_last_log_index);
+    const AppendReport report = raft_on_append_entries(server, cmd, std::move(stopped), std::move(sender_is_current_voter), std::move(cmd_has_value), std::move(leader_current_term), std::move(leader_site_id), std::move(leader_prev_log_index), std::move(leader_prev_log_term), std::move(leader_commit_index), std::move(leader_next_log_term), follower_append_ok, follower_current_term, follower_last_log_index);
     if (!stopped && !report.accepted()) {
         if (report.refused_committed_conflict()) {
             rusty::raft_log_error_4("[APPEND_REJECT] Site {} refusing conflict at committed index {} (commit_index={}, execute_index={})", server.site_id_, report.conflict_index(), [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.commit_index_); }) { return (__r.commit_index_); } else if constexpr (requires { (__r.commit_index__field); }) { return (__r.commit_index__field); } else if constexpr (requires { ((*__r).commit_index_); }) { return ((*__r).commit_index_); } else { return ((*__r).commit_index__field); } }(server.state_), [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.execute_index_); }) { return (__r.execute_index_); } else if constexpr (requires { (__r.execute_index__field); }) { return (__r.execute_index__field); } else if constexpr (requires { ((*__r).execute_index_); }) { return ((*__r).execute_index_); } else { return ((*__r).execute_index__field); } }(server.state_));
@@ -5924,25 +5888,19 @@ RaftServer::~RaftServer() {
 
 
 // @unsafe - calls @safe doVote, external calls marked @external [safe]
-// The trampolines raft_on_request_vote calls back through. Each casts the
-// opaque handle exactly once, the same shape the heartbeat driver uses.
+// The one kernel raft_on_request_vote still needs. It is not a forwarder: the
+// vote reply is written through two out-params whose C++ types (int64_t& /
+// int8_t&) are what the RPC handler already owns.
 extern "C" {
 
-// @unsafe { opaque handle cast }
-static inline RaftServer* raft_vote_server(rusty::ffi::c_void* server) {
-  return static_cast<RaftServer*>(server);
-}
-
-void raft_do_vote(rusty::ffi::c_void* server,
+void raft_do_vote(RaftServerBase* server,
                   uint64_t lst_log_idx, int64_t lst_log_term,
                   uint16_t can_id, int64_t can_term,
                   int64_t& reply_term, int8_t& vote_granted, bool vote) {
-  raft_vote_server(server)->doVote(lst_log_idx, lst_log_term, can_id, can_term,
-                                   &reply_term, &vote_granted, vote);
-}
-
-int64_t raft_election_last_log_term(rusty::ffi::c_void* server) {
-  return raft_vote_server(server)->ElectionLastLogTermLocked();
+  // @unsafe { RaftServerBase is RaftServer's base; the call needs the derived }
+  static_cast<RaftServer*>(server)->doVote(lst_log_idx, lst_log_term, can_id,
+                                           can_term, &reply_term, &vote_granted,
+                                           vote);
 }
 
 }  // extern "C"
@@ -6008,18 +5966,16 @@ RaftStartResult RaftServer::Start(const janus::Command& cmd,
 /* NOTE: broadcast send to all of the host even to its own server
  * should we exclude the execution of this function for leader? */
 // @unsafe - external calls marked @external [safe], output pointer writes in @unsafe blocks
-// The trampolines raft_on_append_entries calls back through.
+// The four kernels raft_on_append_entries still needs. None is a forwarder:
+// two reach the log through RaftServer::FindRaftInstance, and two decode the
+// wire payload, which is a Marshallable hierarchy with no Rust spelling.
 extern "C" {
 
-// @unsafe { opaque handle cast }
-static inline RaftServer* raft_ae_server(rusty::ffi::c_void* server) {
-  return static_cast<RaftServer*>(server);
-}
-
 // One lookup, returning both facts the conflict test needs.
-int64_t raft_ae_slot_term(rusty::ffi::c_void* server, uint64_t index,
+int64_t raft_ae_slot_term(RaftServerBase* server, uint64_t index,
                           bool& has_cmd) {
-  const RaftEntry* e = raft_ae_server(server)->FindRaftInstance(index);
+  // @unsafe { RaftServerBase is RaftServer's base; the lookup needs the derived }
+  const RaftEntry* e = static_cast<RaftServer*>(server)->FindRaftInstance(index);
   if (e == nullptr || !e->cmd().has_value()) {
     has_cmd = false;
     return 0;
@@ -6032,12 +5988,12 @@ int64_t raft_ae_slot_term(rusty::ffi::c_void* server, uint64_t index,
 // acceptable. Called from the DSL body only AFTER the stopped check and the
 // authoritative-sender gate, which is where the original did this work --
 // a rejected AppendEntries must not pay for a dynamic cast it will discard.
-bool raft_ae_decode_payload(rusty::ffi::c_void* server,
+bool raft_ae_decode_payload(RaftServerBase* server,
                             const rusty::ffi::c_void* cmd_handle,
                             uint64_t leader_prev_log_index,
                             uint64_t leader_next_log_term,
                             uint64_t& out_count) {
-  std::vector<int64_t>& terms = raft_ae_server(server)->decoded_terms_;
+  std::vector<int64_t>& terms = static_cast<RaftServer*>(server)->decoded_terms_;
   terms.clear();
   const janus::Command& cmd =
       *static_cast<const janus::Command*>(static_cast<const void*>(cmd_handle));
@@ -6067,46 +6023,22 @@ bool raft_ae_decode_payload(rusty::ffi::c_void* server,
   return raft_server_append_entry_count_fits(leader_prev_log_index, 1);
 }
 
-int64_t raft_ae_decoded_term(rusty::ffi::c_void* server, uint64_t i) {
-  const std::vector<int64_t>& terms = raft_ae_server(server)->decoded_terms_;
+int64_t raft_ae_decoded_term(RaftServerBase* server, uint64_t i) {
+  const std::vector<int64_t>& terms = static_cast<RaftServer*>(server)->decoded_terms_;
   verify(i < terms.size());
   return terms[i];
-}
-
-void raft_ae_log_term_change(rusty::ffi::c_void* server, uint64_t prev,
-                             uint64_t now, uint16_t source) {
-  raft_ae_server(server)->LogTermChange("AppendEntries leader term is newer",
-                                        prev, now, source);
-}
-
-void raft_ae_step_down(rusty::ffi::c_void* server) {
-  raft_ae_server(server)->stepDown();
-}
-
-void raft_ae_set_is_leader(rusty::ffi::c_void* server, bool is_leader) {
-  raft_ae_server(server)->setIsLeader(is_leader);
-}
-
-void raft_ae_reset_timer(rusty::ffi::c_void* server) {
-  raft_ae_server(server)->resetTimerLocked(
-      "AppendEntries from current-term leader");
-}
-
-void raft_ae_enqueue_committed(rusty::ffi::c_void* server, uint64_t old_commit,
-                               uint64_t new_commit) {
-  raft_ae_server(server)->EnqueueCommittedEntries(old_commit, new_commit);
 }
 
 // Builds and appends the incoming entries at or past first_write_index.
 // Called only after the Rust body has decided to accept and has truncated
 // the divergent suffix, so entries are constructed for a payload that is
 // actually being written -- the same laziness the C++ had.
-void raft_ae_apply_incoming(rusty::ffi::c_void* server,
+void raft_ae_apply_incoming(RaftServerBase* server,
                             const rusty::ffi::c_void* cmd_handle,
                             uint64_t leader_prev_log_index,
                             uint64_t leader_next_log_term,
                             uint64_t first_write_index) {
-  RaftServer* self = raft_ae_server(server);
+  RaftServer* self = static_cast<RaftServer*>(server);
   const janus::Command& cmd =
       *static_cast<const janus::Command*>(static_cast<const void*>(cmd_handle));
   uint64_t cnt = 0;
