@@ -1209,6 +1209,7 @@ unsafe extern "C" {
     fn raft_spawn_election_timer(server: *mut RaftServerBase, wait_int_us: u64);
     fn raft_setup_internal_guarded(server: *mut RaftServerBase) -> bool;
     fn raft_shutdown_barrier_yield();
+    fn raft_peer_sites_len(server: *const RaftServerBase) -> usize;
 }
 
 // One campaign's reply quorum, read in a single shot.
@@ -1960,6 +1961,35 @@ impl RaftServerBase {
     // ------------------------------------------------------------------
     // Loop prologue, startup, shutdown, submission and the apply queue.
     // ------------------------------------------------------------------
+
+    // @safe - linear scan of a fixed, tiny table (replica counts are 3 or 5).
+    // Returns state_.peers_.len() when the site is not a follower of this
+    // leader, which is the "removed follower" case PHASE 2 guards against.
+    // Deliberately an ordinal rather than a reference: an ordinal cannot
+    // dangle across an RPC send or a re-entrant completion callback.
+    pub fn PeerOrdinal(&self, site: u16) -> usize {
+        let count: usize =
+            unsafe { raft_peer_sites_len(self as *const RaftServerBase) };
+        let mut ord: usize = 0;
+        while ord < count {
+            if unsafe { raft_peer_site_at(self as *const RaftServerBase, ord) }
+                == site
+            {
+                return ord;
+            }
+            ord += 1;
+        }
+        self.state_.peers_.len()
+    }
+
+    // @unsafe - publishes the cross-thread replication wake. The gate itself
+    // is still a RaftServer member (ReplicationWakeGate is only forward
+    // declared in this header), so the body is a kernel.
+    pub fn RequestReplication(&mut self) {
+        unsafe {
+            raft_request_replication(self as *mut RaftServerBase);
+        }
+    }
 
     // @unsafe - timer allocation and the first peer-table build.
     pub fn HeartbeatPrologue(&mut self) {

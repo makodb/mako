@@ -2822,6 +2822,7 @@ unsafe extern "C" {
     fn raft_spawn_election_timer(server: *mut RaftServerBase, wait_int_us: u64);
     fn raft_setup_internal_guarded(server: *mut RaftServerBase) -> bool;
     fn raft_shutdown_barrier_yield();
+    fn raft_peer_sites_len(server: *const RaftServerBase) -> usize;
 }
 
 // One campaign's reply quorum, read in a single shot.
@@ -3574,6 +3575,35 @@ impl RaftServerBase {
     // Loop prologue, startup, shutdown, submission and the apply queue.
     // ------------------------------------------------------------------
 
+    // @safe - linear scan of a fixed, tiny table (replica counts are 3 or 5).
+    // Returns state_.peers_.len() when the site is not a follower of this
+    // leader, which is the "removed follower" case PHASE 2 guards against.
+    // Deliberately an ordinal rather than a reference: an ordinal cannot
+    // dangle across an RPC send or a re-entrant completion callback.
+    pub fn PeerOrdinal(&self, site: u16) -> usize {
+        let count: usize =
+            unsafe { raft_peer_sites_len(self as *const RaftServerBase) };
+        let mut ord: usize = 0;
+        while ord < count {
+            if unsafe { raft_peer_site_at(self as *const RaftServerBase, ord) }
+                == site
+            {
+                return ord;
+            }
+            ord += 1;
+        }
+        self.state_.peers_.len()
+    }
+
+    // @unsafe - publishes the cross-thread replication wake. The gate itself
+    // is still a RaftServer member (ReplicationWakeGate is only forward
+    // declared in this header), so the body is a kernel.
+    pub fn RequestReplication(&mut self) {
+        unsafe {
+            raft_request_replication(self as *mut RaftServerBase);
+        }
+    }
+
     // @unsafe - timer allocation and the first peer-table build.
     pub fn HeartbeatPrologue(&mut self) {
         self.heartbeat_loop_running_
@@ -4137,7 +4167,7 @@ impl TxLogServer for RaftServerBase {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=4e5201b64123532b60df33ca982d0bcae3fddfd298caa4d450686af85a9eff0e*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=fca7362aee83eaafc29411c775ce936e8a733ab4f468de3a50430cd1c58951df*/
 struct RaftVoteOutcome;
 struct RaftServerBase;
 
@@ -4178,6 +4208,7 @@ extern "C" {
     void raft_spawn_election_timer(RaftServerBase* server, uint64_t wait_int_us);
     bool raft_setup_internal_guarded(RaftServerBase* server);
     void raft_shutdown_barrier_yield();
+    size_t raft_peer_sites_len(const RaftServerBase* server);
 }
 
 struct RaftVoteOutcome {
@@ -4288,6 +4319,8 @@ struct RaftServerBase : public TxLogServer {
     void resetTimerLocked(std::string_view reason);
     void resetTimer(std::string_view reason);
     void setIsLeader(bool is_leader);
+    size_t PeerOrdinal(uint16_t site) const;
+    void RequestReplication();
     void HeartbeatPrologue();
     void MaybeCreateSnapshot();
     bool HasSnapshot();
@@ -4737,6 +4770,25 @@ inline void RaftServerBase::setIsLeader(bool is_leader) {
     }
 }
 
+inline size_t RaftServerBase::PeerOrdinal(uint16_t site) const {
+    const size_t count = raft_peer_sites_len(static_cast<const RaftServerBase*>(rusty::detail::ptr_or_addr((*this))));
+    size_t ord = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(ord) < rusty::detail::deref_if_pointer_like(count)) {
+        if (raft_peer_site_at(static_cast<const RaftServerBase*>(rusty::detail::ptr_or_addr((*this))), std::move(ord)) == rusty::detail::deref_if_pointer_like(site)) {
+            return std::move(ord);
+        }
+        ord += 1;
+    }
+    return rusty::len(this->state_.peers_);
+}
+
+inline void RaftServerBase::RequestReplication() {
+    // @unsafe
+    {
+        raft_request_replication(static_cast<RaftServerBase*>(rusty::detail::ptr_or_addr((*this))));
+    }
+}
+
 inline void RaftServerBase::HeartbeatPrologue() {
     this->heartbeat_loop_running_.store(true, rusty::sync::atomic::Ordering::Release);
     {
@@ -5128,9 +5180,6 @@ class RaftServer : public RaftServerBase {
   // @unsafe - builds and sends AppendEntries / InstallSnapshot per follower
   void HeartbeatPhase1(struct HeartbeatRoundState& state,
                        struct HeartbeatRoundScope& round);
-  // @unsafe - polls replies through one round deadline and processes them
-  void HeartbeatPhase2(struct HeartbeatRoundState& state,
-                       struct HeartbeatRoundScope& round);
   // @unsafe - recomputes the commit index and publishes read-index authority
   void HeartbeatPhase3(struct HeartbeatRoundState& state,
                        struct HeartbeatRoundScope& round);
@@ -5186,11 +5235,9 @@ class RaftServer : public RaftServerBase {
   // Cross-thread submissions publish only to this level-triggered gate.  The
   // gate posts a gate-only job to the heartbeat PollThread; IntEvent itself is
   // created, signalled, waited, and cleared exclusively by that owner thread.
+ public:  // for the kernel bridge (server.cc); private again once the gate
+          // itself can live in RaftServerBase
   rusty::Arc<ReplicationWakeGate> replication_wake_gate_;
-
-  // @unsafe - Reactor bridge; schedules a gate-only job on the bound owner.
- public:  // for the kernel bridge (server.cc); private again once converted
-  void RequestReplication();
  private:
   // @unsafe - Owner-thread-only wait on the gate's IntEvent.
   bool WaitForReplicationOrHeartbeat(uint64_t timeout_us);

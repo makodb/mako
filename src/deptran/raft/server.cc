@@ -1275,7 +1275,14 @@ bool raft_create_snapshot_locked(RaftServerBase* self) {
   return static_cast<RaftServer*>(self)->CreateSnapshotLocked();
 }
 void raft_request_replication(RaftServerBase* self) {
-  static_cast<RaftServer*>(self)->RequestReplication();
+  RaftServer* const server = static_cast<RaftServer*>(self);
+  if (!server->replication_wake_gate_->publish()) {
+    return;
+  }
+  QueueReplicationWake(server->replication_wake_gate_);
+}
+size_t raft_peer_sites_len(const RaftServerBase* self) {
+  return self->peer_sites_.size();
 }
 RaftStartResult raft_set_local_append(RaftServerBase* self,
                                       const rusty::RaftCommand* cmd,
@@ -1324,6 +1331,17 @@ void raft_shutdown_barrier_yield() {
   } else {
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
+}
+
+// (misc) a monotonic clock and a fiber sleep, for PHASE 2's poll deadline.
+uint64_t raft_monotonic_now_us() {
+  return static_cast<uint64_t>(
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          std::chrono::steady_clock::now().time_since_epoch())
+          .count());
+}
+void raft_fiber_sleep_us(uint64_t micros) {
+  Fiber::sleep(static_cast<int>(micros < 1 ? 1 : micros));
 }
 
 // (misc) the four env-tunable election-timeout knobs, which are ordinary C++
@@ -1414,14 +1432,6 @@ RaftServer::RaftServer()
 void RaftServer::BindReplicationWakeOwner(
     rusty::Arc<rrr::PollThread> owner) {
   replication_wake_gate_->bind_owner(std::move(owner));
-}
-
-// @unsafe - Any-thread publication followed by a gate-only PollThread job.
-void RaftServer::RequestReplication() {
-  if (!replication_wake_gate_->publish()) {
-    return;
-  }
-  QueueReplicationWake(replication_wake_gate_);
 }
 
 // @unsafe - Called only by HeartbeatLoop on its bound PollThread.
@@ -2160,6 +2170,8 @@ using janus::raft_server_follower_next_index;
 using janus::RaftConsensusState;
 using janus::PeerTable;
 using janus::RaftLog;
+using janus::RaftServerBase;
+using janus::RaftLockGuard;
 }  // namespace server_h
 
 namespace janus {
@@ -2842,6 +2854,32 @@ inline AuthorityOutcome AuthorityLedger::settle(bool is_leader, uint64_t current
 // round_config.size(), so it is now derived by nservers(), which removes the
 // possibility of the two disagreeing.
 #if RUSTYCPP_RUST
+use crate::server_h::RaftServerBase;
+use crate::server_h::RaftLockGuard;
+
+// The three things PHASE 2 needs that are not expressible here: a monotonic
+// clock, a fiber sleep, and the three scalars of an rrr AppendEntries reply
+// (the response object itself is a shared_ptr this block only carries).
+// improper_ctypes: RaftResponsePtr and RaftCommand are opaque handles the
+// Rust side only ever passes by pointer, never lays out. Same case as the
+// allow on server.h's bridge block.
+#[allow(improper_ctypes)]
+unsafe extern "C" {
+    fn raft_monotonic_now_us() -> u64;
+    fn raft_fiber_sleep_us(micros: u64);
+    fn raft_append_response_read(response: *const rusty::RaftResponsePtr)
+        -> AppendRespView;
+    fn raft_command_has_value(cmd: *const rusty::RaftCommand) -> bool;
+}
+
+#[repr(C)]
+pub struct AppendRespView {
+    pub completed_: bool,
+    pub status_: bool,
+    pub term_: u64,
+    pub last_log_index_: u64,
+}
+
 pub struct HeartbeatRoundScope {
     term_: u64,
     round_id_: u64,
@@ -3556,9 +3594,13 @@ fn append_reply_nothing(action: AppendReplyAction) -> AppendReplyOutcome {
 // proves, and the only thing it needs from the log is where the log ends.
 // Narrowing the parameter is also what keeps the argument list inside
 // clippy's limit without an allow.
+// `peers` is reached through `consensus` rather than passed alongside it.
+// The C++ call site passed `state_` and `state_.peers_` as two arguments --
+// two mutable borrows of overlapping state, which only compiled because the
+// caller was C++. A Rust caller cannot spell that, and PHASE 2 is a Rust
+// caller now.
 pub fn heartbeat_apply_append_reply(
     consensus: &mut RaftConsensusState,
-    peers: &mut PeerTable,
     ledger: &mut AuthorityLedger,
     sent: &SentAppend,
     reply: &AppendReply,
@@ -3612,14 +3654,15 @@ pub fn heartbeat_apply_append_reply(
     if !is_leader {
         return append_reply_nothing(AppendReplyAction::IGNORED);
     }
-    if sent.ordinal_ == peers.len() {
+    if sent.ordinal_ == consensus.peers_.len() {
         return append_reply_nothing(AppendReplyAction::UNKNOWN_FOLLOWER);
     }
 
     if !reply.status_ {
-        let old_next = peers.next_index(sent.ordinal_);
-        let rung = peers.back_off_after_reject(sent.ordinal_, reply.last_log_index_);
-        let new_next = peers.next_index(sent.ordinal_);
+        let old_next = consensus.peers_.next_index(sent.ordinal_);
+        let rung = consensus.peers_
+            .back_off_after_reject(sent.ordinal_, reply.last_log_index_);
+        let new_next = consensus.peers_.next_index(sent.ordinal_);
         let mut out = append_reply_nothing(AppendReplyAction::BACKED_OFF);
         out.rung_ = rung;
         out.old_next_ = old_next;
@@ -3636,7 +3679,7 @@ pub fn heartbeat_apply_append_reply(
     // follower suffix.
     let acknowledged = raft_server_append_acknowledged_through(
         reply.last_log_index_, sent.end_index_, log_last_index);
-    peers.accept_through(
+    consensus.peers_.accept_through(
         sent.ordinal_,
         acknowledged,
         raft_server_log_index_has_successor(acknowledged),
@@ -3877,8 +3920,210 @@ pub fn heartbeat_phase0_locked(
 pub fn heartbeat_round_saturated(round_counter: u64) -> bool {
     !raft_server_read_index_round_can_advance(round_counter)
 }
+
+// ==========================================================================
+// PHASE 2: poll responses through one SHORT round deadline and process them.
+//
+// Formerly RaftServer::HeartbeatPhase2. Never call wait_timeout on an
+// individual response: that permanently marks its event TIMEOUT and loses a
+// legitimate late persistence reply. Polling also gives every parallel RPC
+// the same bounded round budget.
+//
+// The pieces of HeartbeatRoundState are passed separately rather than the
+// struct itself, because that struct is hand-written C++ declared after this
+// block; its three members are all DSL types declared in it.
+// ==========================================================================
+#[allow(clippy::too_many_arguments, clippy::manual_clamp)]
+pub fn heartbeat_phase2_body(server: &mut RaftServerBase,
+                             pending_rpcs: &mut PendingTable,
+                             authority_rounds: &mut AuthorityLedger,
+                             round: &HeartbeatRoundScope) {
+    const RESPONSE_POLL_STEP_US: u64 = 1000;
+    // max(1, min(100000, heartbeat_interval_us_)). Spelled out rather than
+    // with clamp: this lowers to C++, where uint64_t has no such member.
+    let response_round_timeout_us: u64 =
+        if server.heartbeat_interval_us_ > 100000 {
+            100000
+        } else if server.heartbeat_interval_us_ < 1 {
+            1
+        } else {
+            server.heartbeat_interval_us_
+        };
+    let response_deadline_us: u64 =
+        unsafe { raft_monotonic_now_us() } + response_round_timeout_us;
+    let mut stop_response_processing: bool = false;
+    let mut retry_released_follower: bool = false;
+
+    while !stop_response_processing {
+        let mut waiting_for_current_round: bool = false;
+        let mut pending_ord: usize = 0;
+        while pending_ord < pending_rpcs.len() {
+            if !server.IsLeader() {
+                stop_response_processing = true;
+                break;
+            }
+            if !pending_rpcs.occupied(pending_ord) {
+                pending_ord += 1;
+                continue;
+            }
+
+            // Bound once per slot per poll pass, not per use: every read
+            // below is the same shape it was when this was a map value.
+            let follower_id: u16 = pending_rpcs.follower(pending_ord);
+            let sent_term: u64 = pending_rpcs.sent_term(pending_ord);
+            let sent_round: u64 = pending_rpcs.sent_round(pending_ord);
+            let sent_end_index: u64 = pending_rpcs.sent_end_index(pending_ord);
+            let cmd_has_value: bool = unsafe {
+                raft_command_has_value(
+                    pending_rpcs.cmd(pending_ord) as *const rusty::RaftCommand)
+            };
+            let resp: AppendRespView = unsafe {
+                raft_append_response_read(
+                    pending_rpcs.response(pending_ord)
+                        as *const rusty::RaftResponsePtr)
+            };
+            if !resp.completed_ {
+                if sent_round == round.round_id() {
+                    waiting_for_current_round = true;
+                }
+                pending_ord += 1;
+                continue;
+            }
+
+            let mut stepped_down: bool = false;
+            {
+                let _lock = RaftLockGuard::new(&mut server.mtx_);
+                // What the reply MEANS is heartbeat_apply_append_reply. It
+                // reads the wire response as three scalars -- the rrr object
+                // itself never crosses -- and returns what to do about it.
+                let response_available: bool =
+                    !(!resp.status_ && resp.term_ == 0
+                      && resp.last_log_index_ == 0);
+                let resp_ord: usize = server.PeerOrdinal(follower_id);
+                let log_last_index: u64 = server.state_.raft_log_.last_index();
+                let is_leader: bool = server.IsLeaderLocked();
+                let outcome: AppendReplyOutcome = heartbeat_apply_append_reply(
+                    &mut server.state_,
+                    authority_rounds,
+                    &SentAppend::new(follower_id, sent_term, sent_round,
+                                     sent_end_index, resp_ord),
+                    &AppendReply::new(response_available, resp.status_,
+                                      resp.term_, resp.last_log_index_),
+                    log_last_index,
+                    is_leader);
+
+                let action: AppendReplyAction = outcome.action();
+                if action == AppendReplyAction::STEP_DOWN {
+                    rusty::raft_log_info_4(
+                        "[STEPDOWN] Site {}: AppendEntries response from follower {} carried higher term {} > {}",
+                        server.site_id_, follower_id, resp.term_,
+                        outcome.previous_term());
+                    server.LogTermChange(
+                        "AppendEntries response carried newer term",
+                        outcome.previous_term(), server.state_.current_term_,
+                        follower_id);
+                    // stepDown reaches setIsLeader and the election timer, so
+                    // it stays here; the decision to take it was made above.
+                    server.stepDown();
+                    server.state_.req_voting_ = false;
+                    server.state_.election_in_progress_ = false;
+                    stepped_down = true;
+                } else if action == AppendReplyAction::BACKED_OFF {
+                    // The five-rung ladder is
+                    // FollowerProgress::back_off_after_reject; it reports
+                    // which rung it took so the diagnostics stay as specific
+                    // as they were when the branches were inline.
+                    let rung: BackoffKind = outcome.rung();
+                    if rung == BackoffKind::FAST {
+                        rusty::raft_log_info_6(
+                            "[LOG-RECONCILE] Site {}: Fast backoff for follower {}: next_index {} -> {} (gap: {}, follower reported last: {})",
+                            server.site_id_, follower_id, outcome.old_next(),
+                            outcome.new_next(),
+                            outcome.old_next() - outcome.new_next(),
+                            resp.last_log_index_);
+                    } else if rung == BackoffKind::TERM_CONFLICT {
+                        rusty::raft_log_info_4(
+                            "[LOG-RECONCILE] Site {}: Term-conflict backoff for follower {}: next_index {} -> {}",
+                            server.site_id_, follower_id, outcome.old_next(),
+                            outcome.new_next());
+                    } else if rung == BackoffKind::EXPONENTIAL {
+                        rusty::raft_log_info_4(
+                            "[LOG-RECONCILE] Site {}: Exponential backoff for follower {}: next_index {} -> {} (halved)",
+                            server.site_id_, follower_id, outcome.old_next(),
+                            outcome.new_next());
+                    } else if rung == BackoffKind::LINEAR {
+                        rusty::raft_log_debug_4(
+                            "[LOG-RECONCILE] Site {}: Linear backoff for follower {}: next_index {} -> {}",
+                            server.site_id_, follower_id, outcome.old_next(),
+                            outcome.new_next());
+                    }
+                    // BackoffKind::FLOOR logs nothing, as before.
+                } else if action == AppendReplyAction::ACCEPTED {
+                    rusty::raft_log_debug_8(
+                        "[APPEND_RPC] Leader {} accepted follower {} proof: kind={} reported={} sent_end={} acknowledged={} next={} match={}",
+                        server.site_id_, follower_id,
+                        if cmd_has_value { "entries" } else { "heartbeat" },
+                        resp.last_log_index_, sent_end_index,
+                        outcome.acknowledged(),
+                        server.state_.peers_.next_index(resp_ord),
+                        server.state_.peers_.match_index(resp_ord));
+                } else if action == AppendReplyAction::CONTRADICTORY {
+                    rusty::raft_log_warn_3(
+                        "[APPEND_RPC] Ignoring contradictory success from follower {}: reported_end={} sent_end={}",
+                        follower_id, resp.last_log_index_, sent_end_index);
+                } else if action == AppendReplyAction::UNKNOWN_FOLLOWER {
+                    rusty::raft_log_debug_1(
+                        "[APPEND_RPC] Ignoring replication response from removed follower {}",
+                        follower_id);
+                }
+                // AppendReplyAction::IGNORED does nothing, as before.
+            }
+
+            let completed_previous_round: bool =
+                sent_round != round.round_id();
+            pending_rpcs.release(pending_ord);
+            retry_released_follower =
+                retry_released_follower || completed_previous_round;
+            if stepped_down {
+                stop_response_processing = true;
+                break;
+            }
+            pending_ord += 1;
+        }
+
+        let current_round_has_authority: bool =
+            authority_rounds.has_quorum(round.round_id());
+        if stop_response_processing || !waiting_for_current_round
+            || current_round_has_authority
+        {
+            break;
+        }
+        let now_us: u64 = unsafe { raft_monotonic_now_us() };
+        if now_us >= response_deadline_us {
+            break;
+        }
+        let remaining_us: u64 = response_deadline_us - now_us;
+        let step_us: u64 = if remaining_us < RESPONSE_POLL_STEP_US {
+            remaining_us
+        } else {
+            RESPONSE_POLL_STEP_US
+        };
+        unsafe {
+            raft_fiber_sleep_us(step_us);
+        }
+    }
+
+    if stop_response_processing {
+        pending_rpcs.abandon();
+        authority_rounds.abandon();
+    } else if retry_released_follower {
+        // A completion from an older round opened a per-follower slot after
+        // PHASE 1. Prompt another round instead of waiting a full interval.
+        server.RequestReplication();
+    }
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_round_scope version=1 rust_sha256=5a6c9ba7e363833bffc9990050e3b8bc0bcb4cd26ea62b30694f0744baac306d*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_round_scope version=1 rust_sha256=a2da2333b8f7a67bf2f1594a0084ee73c182d1f48ceadc2ad7876178bcd12dc8*/
 enum class AppendReplyAction : int32_t;
 constexpr AppendReplyAction AppendReplyAction_IGNORED();
 constexpr AppendReplyAction AppendReplyAction_STEP_DOWN();
@@ -3886,6 +4131,7 @@ constexpr AppendReplyAction AppendReplyAction_BACKED_OFF();
 constexpr AppendReplyAction AppendReplyAction_ACCEPTED();
 constexpr AppendReplyAction AppendReplyAction_CONTRADICTORY();
 constexpr AppendReplyAction AppendReplyAction_UNKNOWN_FOLLOWER();
+struct AppendRespView;
 struct HeartbeatRoundScope;
 struct AppendReport;
 struct SentAppend;
@@ -3911,6 +4157,27 @@ inline constexpr AppendReplyAction AppendReplyAction_BACKED_OFF() { return Appen
 inline constexpr AppendReplyAction AppendReplyAction_ACCEPTED() { return AppendReplyAction::ACCEPTED; }
 inline constexpr AppendReplyAction AppendReplyAction_CONTRADICTORY() { return AppendReplyAction::CONTRADICTORY; }
 inline constexpr AppendReplyAction AppendReplyAction_UNKNOWN_FOLLOWER() { return AppendReplyAction::UNKNOWN_FOLLOWER; }
+
+using ::server_h::RaftServerBase;
+
+using ::server_h::RaftLockGuard;
+
+extern "C" {
+    uint64_t raft_monotonic_now_us();
+    void raft_fiber_sleep_us(uint64_t micros);
+    AppendRespView raft_append_response_read(const rusty::RaftResponsePtr* response);
+    bool raft_command_has_value(const rusty::RaftCommand* cmd);
+}
+
+struct AppendRespView {
+    bool completed_;
+    bool status_;
+    uint64_t term_;
+    uint64_t last_log_index_;
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
+};
 
 struct HeartbeatRoundScope {
     uint64_t term_;
@@ -4277,7 +4544,7 @@ AppendReplyOutcome append_reply_nothing(AppendReplyAction action) {
     return AppendReplyOutcome{.action_ = std::move(action), .rung_ = rusty::clone(rusty::clone(BackoffKind::FLOOR)), .old_next_ = static_cast<uint64_t>(0), .new_next_ = static_cast<uint64_t>(0), .acknowledged_ = static_cast<uint64_t>(0), .previous_term_ = static_cast<uint64_t>(0)};
 }
 
-AppendReplyOutcome heartbeat_apply_append_reply(RaftConsensusState& consensus, PeerTable& peers, AuthorityLedger& ledger, const SentAppend& sent, const AppendReply& reply, uint64_t log_last_index, bool is_leader) {
+AppendReplyOutcome heartbeat_apply_append_reply(RaftConsensusState& consensus, AuthorityLedger& ledger, const SentAppend& sent, const AppendReply& reply, uint64_t log_last_index, bool is_leader) {
     RaftConsensusState* consensus_shadow1 = &consensus;
     const auto evidence = AuthorityReply::new_(sent.round_, sent.follower_, sent.term_, reply.term_, (*consensus_shadow1).current_term_, std::move(is_leader), reply.available_);
     ledger.record_reply(evidence);
@@ -4302,13 +4569,13 @@ AppendReplyOutcome heartbeat_apply_append_reply(RaftConsensusState& consensus, P
     if (!is_leader) {
         return append_reply_nothing(rusty::clone(rusty::clone(AppendReplyAction_IGNORED())));
     }
-    if (rusty::detail::deref_if_pointer_like(sent.ordinal_) == rusty::len(peers)) {
+    if (rusty::detail::deref_if_pointer_like(sent.ordinal_) == rusty::len((*consensus_shadow1).peers_)) {
         return append_reply_nothing(rusty::clone(rusty::clone(AppendReplyAction_UNKNOWN_FOLLOWER())));
     }
     if (!reply.status_) {
-        auto old_next = peers.next_index(sent.ordinal_);
-        auto rung = peers.back_off_after_reject(sent.ordinal_, reply.last_log_index_);
-        auto new_next = peers.next_index(sent.ordinal_);
+        auto old_next = (*consensus_shadow1).peers_.next_index(sent.ordinal_);
+        auto rung = (*consensus_shadow1).peers_.back_off_after_reject(sent.ordinal_, reply.last_log_index_);
+        auto new_next = (*consensus_shadow1).peers_.next_index(sent.ordinal_);
         auto out = append_reply_nothing(rusty::clone(rusty::clone(AppendReplyAction_BACKED_OFF())));
         out.rung_ = std::move(rung);
         out.old_next_ = std::move(old_next);
@@ -4319,7 +4586,7 @@ AppendReplyOutcome heartbeat_apply_append_reply(RaftConsensusState& consensus, P
         return append_reply_nothing(rusty::clone(rusty::clone(AppendReplyAction_CONTRADICTORY())));
     }
     auto acknowledged = raft_server_append_acknowledged_through(reply.last_log_index_, sent.end_index_, std::move(log_last_index));
-    peers.accept_through(sent.ordinal_, std::move(acknowledged), raft_server_log_index_has_successor(std::move(acknowledged)), raft_server_follower_next_index(std::move(acknowledged)));
+    (*consensus_shadow1).peers_.accept_through(sent.ordinal_, std::move(acknowledged), raft_server_log_index_has_successor(std::move(acknowledged)), raft_server_follower_next_index(std::move(acknowledged)));
     auto out = append_reply_nothing(rusty::clone(rusty::clone(AppendReplyAction_ACCEPTED())));
     out.acknowledged_ = std::move(acknowledged);
     return std::move(out);
@@ -4396,6 +4663,105 @@ Phase0Outcome heartbeat_phase0_locked(RaftConsensusState& consensus, const PeerT
 
 bool heartbeat_round_saturated(uint64_t round_counter) {
     return rusty::detail::rust_not(raft_server_read_index_round_can_advance(std::move(round_counter)));
+}
+
+void heartbeat_phase2_body(server_h::RaftServerBase& server, PendingTable& pending_rpcs, AuthorityLedger& authority_rounds, const HeartbeatRoundScope& round) {
+    server_h::RaftServerBase* server_shadow1 = &server;
+    static constexpr uint64_t RESPONSE_POLL_STEP_US = static_cast<uint64_t>(1000);
+    const uint64_t response_round_timeout_us = (rusty::detail::deref_if_pointer_like((*server_shadow1).heartbeat_interval_us_) > 100000 ? static_cast<uint64_t>(100000) : (rusty::detail::deref_if_pointer_like((*server_shadow1).heartbeat_interval_us_) < 1 ? static_cast<uint64_t>(1) : (*server_shadow1).heartbeat_interval_us_));
+    const uint64_t response_deadline_us = raft_monotonic_now_us() + rusty::detail::deref_if_pointer_like(response_round_timeout_us);
+    bool stop_response_processing = false;
+    bool retry_released_follower = false;
+    while (!stop_response_processing) {
+        bool waiting_for_current_round = false;
+        size_t pending_ord = static_cast<size_t>(0);
+        while (rusty::detail::deref_if_pointer_like(pending_ord) < rusty::len(pending_rpcs)) {
+            if (rusty::detail::rust_not(((*server_shadow1)).IsLeader())) {
+                stop_response_processing = true;
+                break;
+            }
+            if (rusty::detail::rust_not(pending_rpcs.occupied(std::move(pending_ord)))) {
+                pending_ord += 1;
+                continue;
+            }
+            uint16_t follower_id = pending_rpcs.follower(std::move(pending_ord));
+            uint64_t sent_term = pending_rpcs.sent_term(std::move(pending_ord));
+            uint64_t sent_round = pending_rpcs.sent_round(std::move(pending_ord));
+            uint64_t sent_end_index = pending_rpcs.sent_end_index(std::move(pending_ord));
+            const bool cmd_has_value = raft_command_has_value(rusty::detail::ptr_cast<const rusty::RaftCommand*>(pending_rpcs.cmd(std::move(pending_ord))));
+            const AppendRespView resp = raft_append_response_read(rusty::detail::ptr_cast<const rusty::RaftResponsePtr*>(pending_rpcs.response(std::move(pending_ord))));
+            if (!resp.completed_) {
+                if (rusty::detail::deref_if_pointer_like(sent_round) == round.round_id()) {
+                    waiting_for_current_round = true;
+                }
+                pending_ord += 1;
+                continue;
+            }
+            bool stepped_down = false;
+            {
+                const auto _lock = RaftLockGuard::new_(&(*server_shadow1).mtx_);
+                bool response_available = !((!resp.status_ && (rusty::detail::deref_if_pointer_like(resp.term_) == static_cast<uint64_t>(0))) && (rusty::detail::deref_if_pointer_like(resp.last_log_index_) == static_cast<uint64_t>(0)));
+                size_t resp_ord = ((*server_shadow1)).PeerOrdinal(std::move(follower_id));
+                uint64_t log_last_index = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }((*server_shadow1).state_).last_index();
+                bool is_leader = ((*server_shadow1)).IsLeaderLocked();
+                const AppendReplyOutcome outcome = heartbeat_apply_append_reply(rusty::detail::deref_if_pointer_like((*server_shadow1).state_), authority_rounds, SentAppend::new_(std::move(follower_id), std::move(sent_term), std::move(sent_round), std::move(sent_end_index), std::move(resp_ord)), AppendReply::new_(std::move(response_available), std::move(resp.status_), std::move(resp.term_), std::move(resp.last_log_index_)), std::move(log_last_index), std::move(is_leader));
+                const AppendReplyAction action = outcome.action();
+                if (rusty::detail::deref_if_pointer_like(action) == rusty::clone(AppendReplyAction_STEP_DOWN())) {
+                    rusty::raft_log_info_4("[STEPDOWN] Site {}: AppendEntries response from follower {} carried higher term {} > {}", (*server_shadow1).site_id_, std::move(follower_id), std::move(resp.term_), outcome.previous_term());
+                    ((*server_shadow1)).LogTermChange("AppendEntries response carried newer term", outcome.previous_term(), [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.current_term_); }) { return (__r.current_term_); } else if constexpr (requires { (__r.current_term__field); }) { return (__r.current_term__field); } else if constexpr (requires { ((*__r).current_term_); }) { return ((*__r).current_term_); } else { return ((*__r).current_term__field); } }((*server_shadow1).state_), std::move(follower_id));
+                    ((*server_shadow1)).stepDown();
+                    [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.req_voting_); }) { return (__r.req_voting_); } else if constexpr (requires { (__r.req_voting__field); }) { return (__r.req_voting__field); } else if constexpr (requires { ((*__r).req_voting_); }) { return ((*__r).req_voting_); } else { return ((*__r).req_voting__field); } }((*server_shadow1).state_) = false;
+                    [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.election_in_progress_); }) { return (__r.election_in_progress_); } else if constexpr (requires { (__r.election_in_progress__field); }) { return (__r.election_in_progress__field); } else if constexpr (requires { ((*__r).election_in_progress_); }) { return ((*__r).election_in_progress_); } else { return ((*__r).election_in_progress__field); } }((*server_shadow1).state_) = false;
+                    stepped_down = true;
+                } else if (rusty::detail::deref_if_pointer_like(action) == rusty::clone(AppendReplyAction_BACKED_OFF())) {
+                    const BackoffKind rung = outcome.rung();
+                    if (rusty::detail::deref_if_pointer_like(rung) == rusty::clone(BackoffKind::FAST)) {
+                        rusty::raft_log_info_6("[LOG-RECONCILE] Site {}: Fast backoff for follower {}: next_index {} -> {} (gap: {}, follower reported last: {})", (*server_shadow1).site_id_, std::move(follower_id), outcome.old_next(), outcome.new_next(), outcome.old_next() - outcome.new_next(), std::move(resp.last_log_index_));
+                    } else if (rusty::detail::deref_if_pointer_like(rung) == rusty::clone(BackoffKind::TERM_CONFLICT)) {
+                        rusty::raft_log_info_4("[LOG-RECONCILE] Site {}: Term-conflict backoff for follower {}: next_index {} -> {}", (*server_shadow1).site_id_, std::move(follower_id), outcome.old_next(), outcome.new_next());
+                    } else if (rusty::detail::deref_if_pointer_like(rung) == rusty::clone(BackoffKind::EXPONENTIAL)) {
+                        rusty::raft_log_info_4("[LOG-RECONCILE] Site {}: Exponential backoff for follower {}: next_index {} -> {} (halved)", (*server_shadow1).site_id_, std::move(follower_id), outcome.old_next(), outcome.new_next());
+                    } else if (rusty::detail::deref_if_pointer_like(rung) == rusty::clone(BackoffKind::LINEAR)) {
+                        rusty::raft_log_debug_4("[LOG-RECONCILE] Site {}: Linear backoff for follower {}: next_index {} -> {}", (*server_shadow1).site_id_, std::move(follower_id), outcome.old_next(), outcome.new_next());
+                    }
+                } else if (rusty::detail::deref_if_pointer_like(action) == rusty::clone(AppendReplyAction_ACCEPTED())) {
+                    rusty::raft_log_debug_8("[APPEND_RPC] Leader {} accepted follower {} proof: kind={} reported={} sent_end={} acknowledged={} next={} match={}", (*server_shadow1).site_id_, std::move(follower_id), (cmd_has_value ? "entries" : "heartbeat"), std::move(resp.last_log_index_), std::move(sent_end_index), outcome.acknowledged(), [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.peers_); }) { return (__r.peers_); } else if constexpr (requires { (__r.peers__field); }) { return (__r.peers__field); } else if constexpr (requires { ((*__r).peers_); }) { return ((*__r).peers_); } else { return ((*__r).peers__field); } }((*server_shadow1).state_).next_index(std::move(resp_ord)), [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.peers_); }) { return (__r.peers_); } else if constexpr (requires { (__r.peers__field); }) { return (__r.peers__field); } else if constexpr (requires { ((*__r).peers_); }) { return ((*__r).peers_); } else { return ((*__r).peers__field); } }((*server_shadow1).state_).match_index(std::move(resp_ord)));
+                } else if (rusty::detail::deref_if_pointer_like(action) == rusty::clone(AppendReplyAction_CONTRADICTORY())) {
+                    rusty::raft_log_warn_3("[APPEND_RPC] Ignoring contradictory success from follower {}: reported_end={} sent_end={}", std::move(follower_id), std::move(resp.last_log_index_), std::move(sent_end_index));
+                } else if (rusty::detail::deref_if_pointer_like(action) == rusty::clone(AppendReplyAction_UNKNOWN_FOLLOWER())) {
+                    rusty::raft_log_debug_1("[APPEND_RPC] Ignoring replication response from removed follower {}", std::move(follower_id));
+                }
+            }
+            const bool completed_previous_round = rusty::detail::deref_if_pointer_like(sent_round) != round.round_id();
+            pending_rpcs.release(std::move(pending_ord));
+            retry_released_follower = rusty::detail::deref_if_pointer_like(retry_released_follower) || rusty::detail::deref_if_pointer_like(completed_previous_round);
+            if (stepped_down) {
+                stop_response_processing = true;
+                break;
+            }
+            pending_ord += 1;
+        }
+        const bool current_round_has_authority = authority_rounds.has_quorum(round.round_id());
+        if ((rusty::detail::deref_if_pointer_like(stop_response_processing) || !waiting_for_current_round) || rusty::detail::deref_if_pointer_like(current_round_has_authority)) {
+            break;
+        }
+        const uint64_t now_us = raft_monotonic_now_us();
+        if (rusty::detail::deref_if_pointer_like(now_us) >= rusty::detail::deref_if_pointer_like(response_deadline_us)) {
+            break;
+        }
+        const uint64_t remaining_us = rusty::detail::deref_if_pointer_like(response_deadline_us) - rusty::detail::deref_if_pointer_like(now_us);
+        uint64_t step_us = (rusty::detail::deref_if_pointer_like(remaining_us) < rusty::detail::deref_if_pointer_like(RESPONSE_POLL_STEP_US) ? remaining_us : RESPONSE_POLL_STEP_US);
+        // @unsafe
+        {
+            raft_fiber_sleep_us(std::move(step_us));
+        }
+    }
+    if (stop_response_processing) {
+        pending_rpcs.abandon();
+        authority_rounds.abandon();
+    } else if (retry_released_follower) {
+        ((*server_shadow1)).RequestReplication();
+    }
 }
 
 
@@ -4551,6 +4917,23 @@ inline uint64_t Phase0Outcome::commit_to() const {
     return this->commit_to_;
 }
 /*RUSTYCPP:GEN-END id=raft_server.heartbeat_round_scope*/
+
+// AppendRespView is generated by the block above, so this kernel has to sit
+// below it rather than with the rest of the bridge.
+extern "C" {
+// The three scalars of an rrr AppendEntries reply. The response object is a
+// shared_ptr the DSL only carries; this reads through it.
+AppendRespView raft_append_response_read(
+    const rusty::RaftResponsePtr* response) {
+  const AppendEntriesResponse& resp = **response;
+  AppendRespView view{};
+  view.completed_ = resp.completed.load(std::memory_order_acquire);
+  view.status_ = resp.status != 0;
+  view.term_ = resp.term;
+  view.last_log_index_ = resp.last_log_index;
+  return view;
+}
+}  // extern "C"
 
 // The three loop-carried locals, which outlive a round but not the loop. They
 // stay C++ because unique_ptr<PendingAppendEntries> and the wire types inside
@@ -5034,194 +5417,6 @@ void RaftServer::HeartbeatPhase1(HeartbeatRoundState& state,
       }
 }
 
-// @unsafe - polls replies through one round deadline and processes them
-void RaftServer::HeartbeatPhase2(HeartbeatRoundState& state,
-                                 HeartbeatRoundScope& round) {
-  auto& pending_rpcs = state.pending_rpcs;
-  auto& authority_rounds = state.authority_rounds;
-
-      // ========================================================================
-      // PHASE 2: Poll responses through one SHORT round deadline and process them
-      // ========================================================================
-      // Do not call wait_timeout on an individual response: that permanently
-      // marks its event TIMEOUT and loses a legitimate late persistence reply.
-      // Polling also gives every parallel RPC the same bounded round budget.
-      constexpr uint64_t RESPONSE_POLL_STEP_US = 1000;
-      const uint64_t response_round_timeout_us = std::max<uint64_t>(
-          1, std::min<uint64_t>(100000, heartbeat_interval_us_));
-      const auto response_deadline =
-          std::chrono::steady_clock::now() +
-          std::chrono::microseconds(response_round_timeout_us);
-      bool stop_response_processing = false;
-      bool retry_released_follower = false;
-      while (!stop_response_processing) {
-        bool waiting_for_current_round = false;
-
-        for (size_t pending_ord = 0; pending_ord < pending_rpcs.len();
-             pending_ord++) {
-          if (!IsLeader()) {
-            stop_response_processing = true;
-            break;
-          }
-          if (!pending_rpcs.occupied(pending_ord)) {
-            continue;
-          }
-
-          // Bound once per slot per poll pass, not per use: every read below
-          // is the same shape it was when `pending` was a map value.
-          const PendingView pending{
-              pending_rpcs.follower(pending_ord),
-              pending_rpcs.sent_term(pending_ord),
-              pending_rpcs.sent_round(pending_ord),
-              pending_rpcs.sent_end_index(pending_ord),
-              pending_rpcs.cmd(pending_ord)};
-          auto &resp = *pending_rpcs.response(pending_ord);
-          if (!resp.completed.load(std::memory_order_acquire)) {
-            if (pending.sent_round == round.round_id()) {
-              waiting_for_current_round = true;
-            }
-            continue;
-          }
-
-          bool stepped_down = false;
-          {
-            std::lock_guard<RaftCheckedMutex> lock(mtx_);
-            // What the reply MEANS is heartbeat_apply_append_reply, a DSL
-            // body. It reads the wire response as three scalars -- the rrr
-            // object itself never crosses -- and returns what the caller
-            // must do about it.
-            const bool response_available =
-                !(resp.status == false && resp.term == 0 &&
-                  resp.last_log_index == 0);
-            const size_t resp_ord = PeerOrdinal(pending.follower_id);
-            const AppendReplyOutcome outcome = heartbeat_apply_append_reply(
-                state_, state_.peers_, authority_rounds,
-                SentAppend::new_(pending.follower_id, pending.sent_term,
-                                 pending.sent_round, pending.sent_end_index,
-                                 resp_ord),
-                AppendReply::new_(response_available, resp.status, resp.term,
-                                  resp.last_log_index),
-                state_.raft_log_.last_index(), IsLeaderLocked());
-
-            switch (outcome.action()) {
-              case AppendReplyAction::STEP_DOWN: {
-                Log_info(
-                    "[STEPDOWN] Site {}: AppendEntries response from follower {} "
-                    "carried higher term {} > {}",
-                    site_id_, pending.follower_id, resp.term,
-                    outcome.previous_term());
-                LogTermChange("AppendEntries response carried newer term",
-                              outcome.previous_term(), state_.current_term_,
-                              pending.follower_id);
-                // stepDown reaches setIsLeader and the election timer, so it
-                // stays here; the decision to take it was made above.
-                stepDown();
-                state_.req_voting_ = false;
-                state_.election_in_progress_ = false;
-                stepped_down = true;
-                break;
-              }
-              case AppendReplyAction::BACKED_OFF: {
-                // The five-rung ladder is FollowerProgress::back_off_after_reject;
-                // it reports which rung it took so the diagnostics stay as
-                // specific as they were when the branches were inline.
-                switch (outcome.rung()) {
-                  case BackoffKind::FAST:
-                    Log_info("[LOG-RECONCILE] Site {}: Fast backoff for "
-                             "follower {}: next_index {} -> {} (gap: {}, "
-                             "follower reported last: {})",
-                             site_id_, pending.follower_id, outcome.old_next(),
-                             outcome.new_next(),
-                             outcome.old_next() - outcome.new_next(),
-                             resp.last_log_index);
-                    break;
-                  case BackoffKind::TERM_CONFLICT:
-                    Log_info("[LOG-RECONCILE] Site {}: Term-conflict backoff "
-                             "for follower {}: next_index {} -> {}",
-                             site_id_, pending.follower_id, outcome.old_next(),
-                             outcome.new_next());
-                    break;
-                  case BackoffKind::EXPONENTIAL:
-                    Log_info("[LOG-RECONCILE] Site {}: Exponential backoff for "
-                             "follower {}: next_index {} -> {} (halved)",
-                             site_id_, pending.follower_id, outcome.old_next(),
-                             outcome.new_next());
-                    break;
-                  case BackoffKind::LINEAR:
-                    Log_debug("[LOG-RECONCILE] Site {}: Linear backoff for "
-                              "follower {}: next_index {} -> {}",
-                              site_id_, pending.follower_id, outcome.old_next(),
-                              outcome.new_next());
-                    break;
-                  case BackoffKind::FLOOR:
-                    break;
-                }
-                break;
-              }
-              case AppendReplyAction::ACCEPTED:
-                Log_debug(
-                    "[APPEND_RPC] Leader {} accepted follower {} proof: "
-                    "kind={} reported={} sent_end={} acknowledged={} "
-                    "next={} match={}",
-                    site_id_, pending.follower_id,
-                    pending.cmd.has_value() ? "entries" : "heartbeat",
-                    resp.last_log_index, pending.sent_end_index,
-                    outcome.acknowledged(), state_.peers_.next_index(resp_ord),
-                    state_.peers_.match_index(resp_ord));
-                break;
-              case AppendReplyAction::CONTRADICTORY:
-                Log_warn("[APPEND_RPC] Ignoring contradictory success from "
-                         "follower {}: reported_end={} sent_end={}",
-                         pending.follower_id, resp.last_log_index,
-                         pending.sent_end_index);
-                break;
-              case AppendReplyAction::UNKNOWN_FOLLOWER:
-                Log_debug(
-                    "[APPEND_RPC] Ignoring replication response from removed "
-                    "follower {}",
-                    pending.follower_id);
-                break;
-              case AppendReplyAction::IGNORED:
-                break;
-            }
-          }
-
-          const bool completed_previous_round = pending.sent_round != round.round_id();
-          pending_rpcs.release(pending_ord);
-          retry_released_follower =
-              retry_released_follower || completed_previous_round;
-          if (stepped_down) {
-            stop_response_processing = true;
-            break;
-          }
-        }
-
-        const bool current_round_has_authority =
-            authority_rounds.has_quorum(round.round_id());
-        if (stop_response_processing || !waiting_for_current_round ||
-            current_round_has_authority) {
-          break;
-        }
-        const auto now = std::chrono::steady_clock::now();
-        if (now >= response_deadline) {
-          break;
-        }
-        const auto remaining_us = std::chrono::duration_cast<
-            std::chrono::microseconds>(response_deadline - now).count();
-        Fiber::sleep(static_cast<int>(std::min<uint64_t>(
-            RESPONSE_POLL_STEP_US,
-            static_cast<uint64_t>(std::max<int64_t>(remaining_us, 1)))));
-      }
-      if (stop_response_processing) {
-        pending_rpcs.abandon();
-        authority_rounds.abandon();
-      } else if (retry_released_follower) {
-        // A completion from an older round opened a per-follower slot after
-        // Phase 1. Prompt another round instead of waiting a full interval.
-        RequestReplication();
-      }
-}
-
 // @unsafe - recomputes the commit index from the new evidence and publishes
 // read-index authority
 void RaftServer::HeartbeatPhase3(HeartbeatRoundState& state,
@@ -5307,7 +5502,11 @@ void raft_heartbeat_phase1(rusty::ffi::c_void* server,
 void raft_heartbeat_phase2(rusty::ffi::c_void* server,
                            rusty::ffi::c_void* round) {
   HeartbeatRoundState* state = raft_heartbeat_state(round);
-  raft_heartbeat_server(server)->HeartbeatPhase2(*state, state->scope);
+  // PHASE 2's body is Rust now (heartbeat_phase2_body, above). The three
+  // members are passed separately because HeartbeatRoundState is
+  // hand-written C++ declared after the DSL block that owns the body.
+  heartbeat_phase2_body(*raft_heartbeat_server(server), state->pending_rpcs,
+                        state->authority_rounds, state->scope);
 }
 
 void raft_heartbeat_phase3(rusty::ffi::c_void* server,
