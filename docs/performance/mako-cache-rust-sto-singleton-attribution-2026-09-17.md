@@ -424,6 +424,49 @@ Hot Rust-side items inside those rows: `BorrowedInjectiveLockCommitPlan::acquire
    atomic store loop would close most of that by itself, which is the fair
    baseline for a cutover decision.
 
+### 8.6 Implemented: one unwind frame for the direct-commit phases
+
+`crates/sto-core/src/direct_protocol.rs` (commit `18e54d5e1`): the hook-free
+direct lane previously wrapped every phase — acquire, validation, installation,
+release — in its own `catch_unwind`, and the singleton body's creation in
+another. Each landing pad forces its closure into a separate function and blocks
+inlining across the commit chain. The phase sequence now runs under a **single**
+unwind with `*self.phase` still written before every step, so a caught panic
+reports the same `FailurePhase`, the caught payload keeps its lifetime, and the
+owner's boundary/cleanup decision is unchanged; hook callbacks keep individual
+containment because upper layers re-enter them.
+
+Three interleaved rounds on zoo-002 (engine mode, 1 worker, frozen native
+archives, previous binary side by side):
+
+| Lane | tx/s before | tx/s after | cyc/tx before | cyc/tx after | ins/tx |
+| ---- | ----------: | ---------: | ------------: | -----------: | -----: |
+| Rust `sto` | 1,544,053 | **1,651,065** | 1283 | **1201** | 2886 -> 2906 |
+| C++ `c-abi` | 1,845,211 | 1,860,488 | 1082 | 1066 | 2605 -> 2605 |
+
++6.9% throughput and -83 cycles/tx for the Rust lane, with the C++ lane
+unchanged (control). Instructions per one-item commit rise by 20 while IPC rises
+2.25 -> 2.42: removing the landing pads let the phase chain inline, trading a few
+instructions for fewer calls and stalls. `--items` shows the per-item effect:
+5468 ins/tx at two items and 9779 at four (from 5614 and 10062), i.e. **-71
+instructions per item**; the singleton lane trades +20 instructions for its
+lower cycle count. `sto-core` and `mako-engine-sto` tests pass (261 tests) and
+every measured cell still verifies all 256 keys.
+
+Absolute throughput drifts on this shared host (the same pre-change code
+measured 1.667 M earlier in the day), so only interleaved comparisons carry
+weight.
+
+Remaining after this pass: the Rust commit protocol is still ~690 ins/tx against
+the C++ lane's 219, spread over `plan.run_single_item_direct` (167),
+`commit_with_optional_hook` (164), `TypedItemBatch::{run_single_item_direct,
+finish_and_teardown}` (198), `plan.prepare` (88) and the erased-dispatch plumbing
+(adapter `TypeId`/`Any` downcast/`capability`/lane selection, ~103). Closing that
+needs the monomorphic singleton path: a certified-unique entry that calls
+acquire/validate/publish/release on the concrete adapter and plan types without
+the erased batch/plan layers — a design change to `sto-core`'s erased
+representation, not a local optimization.
+
 ## 9 Appendix
 
 ### A. Artifacts in this directory
