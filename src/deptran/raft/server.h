@@ -16,6 +16,7 @@
 #include <rusty/box.hpp>
 #include <rusty/arc.hpp>
 #include <rusty/condvar.hpp>
+#include <rusty/mutex.hpp>   // rusty::Mutex, the startup gate
 #include <rusty/num.hpp>
 #include <rusty/array.hpp>   // rusty::len / rusty::is_empty in PeerTable
 #include <rusty/ffi.hpp>   // rusty::ffi::c_void, the election loop opaque handle
@@ -2208,7 +2209,6 @@ struct AsyncCallbackLifetime {
 
 namespace rusty {
 using RaftCheckedMutex = ::janus::RaftCheckedMutex;
-using RaftDecodedTerms = ::std::vector<int64_t>;
 using RaftAsyncCallbackLifetimePtr =
     ::std::shared_ptr<::janus::AsyncCallbackLifetime>;
 using RaftSnapshotManagerPtr =
@@ -2218,7 +2218,6 @@ using RaftPrepareSnapshotCb = ::std::function<
     ::std::unique_ptr<::janus::PreparedStateMachineSnapshotInstall>(
         const ::std::string&, uint64_t)>;
 using RaftStdMutex = ::std::mutex;
-using RaftStdCondVar = ::std::condition_variable;
 using RaftLeaderChangeCb = ::std::function<void(bool)>;
 using RaftStdThread = ::std::thread;
 using RaftVoteQuorumPtr = ::std::shared_ptr<::janus::RaftVoteQuorumEvent>;
@@ -2251,9 +2250,10 @@ extern "C" inline void raft_mutex_unlock(RaftCheckedMutex* mutex) {
   mutex->unlock();
 }
 
-// @unsafe - the same two halves for a plain std::mutex. RaftServer has four
-// (startup_mtx_, state_machine_apply_mtx_, apply_queue_mtx_) that a DSL body
-// has to hold across a scope.
+// @unsafe - the same two halves for a plain std::mutex. RaftServer has two
+// left (state_machine_apply_mtx_, apply_queue_mtx_) that a DSL body has to
+// hold across a scope. The startup gate no longer needs these: its flag lives
+// inside a rusty::Mutex that owns it.
 extern "C" inline void raft_std_mutex_lock(std::mutex* mutex) {
   mutex->lock();
 }
@@ -2535,8 +2535,6 @@ unsafe extern "C" {
     fn raft_snapshot_manager_has_latest(
         manager: *const rusty::RaftSnapshotManagerPtr) -> bool;
     fn raft_command_has_value(cmd: *const rusty::RaftCommand) -> bool;
-    fn raft_startup_wait(server: *mut RaftServerBase);
-    fn raft_startup_notify_all(server: *mut RaftServerBase);
     fn raft_apply_thread_join(server: *mut RaftServerBase);
     fn raft_commo_set_network_enabled(server: *mut RaftServerBase, enabled: bool);
     fn raft_request_replication(server: *mut RaftServerBase);
@@ -2640,7 +2638,7 @@ pub struct RaftServerBase {
     pub state_: RaftConsensusState,
     // Scratch for raft_ae_decode_payload; valid only inside one
     // OnAppendEntries call, which is entirely under mtx_.
-    pub decoded_terms_: rusty::RaftDecodedTerms,
+    pub decoded_terms_: rusty::Vec<i64>,
     // RPC futures can outlive the server during shutdown. Destruction nulls
     // this shared gate after waiting for any callback already using it.
     pub async_callback_lifetime_: rusty::RaftAsyncCallbackLifetimePtr,
@@ -2654,9 +2652,23 @@ pub struct RaftServerBase {
     pub peer_sites_: rusty::Vec<u16>,
     pub stop_: rusty::sync::atomic::AtomicBool,
     pub rpc_ready_: rusty::sync::atomic::AtomicBool,
-    pub startup_mtx_: rusty::RaftStdMutex,
-    pub startup_cv_: rusty::RaftStdCondVar,
-    pub startup_finished_: bool,
+    // THE LOCK OWNS WHAT IT GUARDS. `startup_finished_` used to be a plain
+    // bool next to a std::mutex and a std::condition_variable, with the
+    // relationship between the three stated only in a comment and enforced
+    // only by a C++ kernel that held all of them at once. It lives inside the
+    // mutex now, so the flag is unreachable without the lock and the kernel
+    // pair (raft_startup_wait / raft_startup_notify_all) has nothing to do.
+    //
+    // This is the small case of the shape docs/migration/raft/recursive-mutex.md
+    // names as the end state for mtx_ -- proved on a two-field gate before it
+    // is attempted on the consensus cluster.
+    //
+    // startup_succeeded_ stays outside deliberately: it is written before the
+    // flag and read after the wait, so the mutex's own release/acquire
+    // publishes it, and putting it inside would mean re-taking the lock to
+    // read a value the waiter has already been handed exclusive sight of.
+    pub startup_finished_: rusty::Mutex<bool>,
+    pub startup_cv_: rusty::Condvar,
     pub startup_succeeded_: bool,
     pub wait_int_: i32,
     pub disconnected_: rusty::sync::atomic::AtomicBool,
@@ -2736,7 +2748,7 @@ impl RaftServerBase {
             partition_id_: 0,
             mtx_: Default::default(),
             state_: RaftConsensusState::new(),
-            decoded_terms_: Default::default(),
+            decoded_terms_: rusty::Vec::new(),
             // Null here; RaftServer's constructor allocates it, because it
             // also has to store `this` into the gate.
             async_callback_lifetime_: Default::default(),
@@ -2749,9 +2761,8 @@ impl RaftServerBase {
             peer_sites_: rusty::Vec::new(),
             stop_: rusty::sync::atomic::AtomicBool::new(false),
             rpc_ready_: rusty::sync::atomic::AtomicBool::new(false),
-            startup_mtx_: Default::default(),
-            startup_cv_: Default::default(),
-            startup_finished_: false,
+            startup_finished_: rusty::Mutex::new(false),
+            startup_cv_: rusty::Condvar::new(),
             startup_succeeded_: false,
             wait_int_: 100000,
             disconnected_: rusty::sync::atomic::AtomicBool::new(false),
@@ -4486,21 +4497,31 @@ impl RaftServerBase {
             self.looping_
                 .store(false, rusty::sync::atomic::Ordering::Release);
         }
+        // `ready` is read unconditionally, as it was when this was one
+        // critical section: `succeeded && self.IsRpcReady()` would
+        // short-circuit and skip the call.
+        let ready: bool = self.IsRpcReady();
+        // Published BEFORE the flag, so the unlock below releases it to
+        // whichever thread the wait hands the flag to.
+        self.startup_succeeded_ = succeeded && ready;
         {
-            let ready: bool = self.IsRpcReady();
-            let _lock = RaftStdLockGuard::new(&mut self.startup_mtx_);
-            self.startup_succeeded_ = succeeded && ready;
-            self.startup_finished_ = true;
+            let mut finished = self.startup_finished_.lock().unwrap();
+            *finished = true;
         }
-        unsafe {
-            raft_startup_notify_all(self as *mut RaftServerBase);
-        }
+        self.startup_cv_.notify_all();
     }
 
     // @safe - waits for the owner-thread startup job and reports its result.
     pub fn WaitForStartup(&mut self) -> bool {
-        unsafe {
-            raft_startup_wait(self as *mut RaftServerBase);
+        {
+            let finished = self.startup_finished_.lock().unwrap();
+            // wait_while re-checks under the lock on every wake, so a
+            // spurious one is not a false start -- the same guarantee the
+            // predicate form of std::condition_variable::wait gave.
+            let _finished = self
+                .startup_cv_
+                .wait_while(finished, |done: &mut bool| !*done)
+                .unwrap();
         }
         self.startup_succeeded_
     }
@@ -4978,7 +4999,7 @@ impl TxLogServer for RaftServerBase {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=66545350f8559cd5eeac56c4f81837a2c9067b9254aed9f2fe29c029c15b490a*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=9e8fc7bd9366c5c67b148330ef0379e09d8d11309cf5520f535dd9bcd01a0083*/
 struct QueuedApplyEntry;
 struct RaftVoteOutcome;
 struct RaftServerBase;
@@ -5005,8 +5026,6 @@ extern "C" {
     RaftVoteOutcome raft_vote_quorum_snapshot(const rusty::RaftVoteQuorumPtr* quorum);
     bool raft_snapshot_manager_has_latest(const rusty::RaftSnapshotManagerPtr* manager);
     bool raft_command_has_value(const rusty::RaftCommand* cmd);
-    void raft_startup_wait(RaftServerBase* server);
-    void raft_startup_notify_all(RaftServerBase* server);
     void raft_apply_thread_join(RaftServerBase* server);
     void raft_commo_set_network_enabled(RaftServerBase* server, bool enabled);
     void raft_request_replication(RaftServerBase* server);
@@ -5063,7 +5082,7 @@ struct RaftServerBase : public TxLogServer {
     uint32_t partition_id_;
     rusty::RaftCheckedMutex mtx_;
     RaftConsensusState state_;
-    rusty::RaftDecodedTerms decoded_terms_;
+    rusty::Vec<int64_t> decoded_terms_;
     rusty::RaftAsyncCallbackLifetimePtr async_callback_lifetime_;
     rusty::RaftSnapshotManagerPtr snapshot_manager_;
     rusty::sync::atomic::AtomicBool snapshot_manager_configured_;
@@ -5074,9 +5093,8 @@ struct RaftServerBase : public TxLogServer {
     rusty::Vec<uint16_t> peer_sites_;
     rusty::sync::atomic::AtomicBool stop_;
     rusty::sync::atomic::AtomicBool rpc_ready_;
-    rusty::RaftStdMutex startup_mtx_;
-    rusty::RaftStdCondVar startup_cv_;
-    bool startup_finished_;
+    rusty::Mutex<bool> startup_finished_;
+    rusty::Condvar startup_cv_;
     bool startup_succeeded_;
     int32_t wait_int_;
     rusty::sync::atomic::AtomicBool disconnected_;
@@ -5197,7 +5215,7 @@ inline RaftServerBase::RaftServerBase()
     , partition_id_(static_cast<uint32_t>(0))
     , mtx_(rusty::default_like<rusty::RaftCheckedMutex>())
     , state_(RaftConsensusState::new_())
-    , decoded_terms_(rusty::default_like<rusty::RaftDecodedTerms>())
+    , decoded_terms_(rusty::Vec<int64_t>::new_())
     , async_callback_lifetime_(rusty::default_like<rusty::RaftAsyncCallbackLifetimePtr>())
     , snapshot_manager_(rusty::default_like<rusty::RaftSnapshotManagerPtr>())
     , snapshot_manager_configured_(rusty::sync::atomic::AtomicBool::new_(false))
@@ -5208,9 +5226,8 @@ inline RaftServerBase::RaftServerBase()
     , peer_sites_(rusty::Vec<uint16_t>::new_())
     , stop_(rusty::sync::atomic::AtomicBool::new_(false))
     , rpc_ready_(rusty::sync::atomic::AtomicBool::new_(false))
-    , startup_mtx_(rusty::default_like<rusty::RaftStdMutex>())
-    , startup_cv_(rusty::default_like<rusty::RaftStdCondVar>())
-    , startup_finished_(false)
+    , startup_finished_(rusty::Mutex<bool>::new_(false))
+    , startup_cv_(rusty::Condvar::new_())
     , startup_succeeded_(false)
     , wait_int_(static_cast<int32_t>(100000))
     , disconnected_(rusty::sync::atomic::AtomicBool::new_(false))
@@ -6206,22 +6223,19 @@ inline void RaftServerBase::Setup() {
         this->stop_.store(true, rusty::sync::atomic::Ordering::Release);
         this->looping_.store(false, rusty::sync::atomic::Ordering::Release);
     }
+    const bool ready = this->IsRpcReady();
+    this->startup_succeeded_ = rusty::detail::deref_if_pointer_like(succeeded) && rusty::detail::deref_if_pointer_like(ready);
     {
-        const bool ready = this->IsRpcReady();
-        const auto _lock = RaftStdLockGuard::new_(&this->startup_mtx_);
-        this->startup_succeeded_ = rusty::detail::deref_if_pointer_like(succeeded) && rusty::detail::deref_if_pointer_like(ready);
-        this->startup_finished_ = true;
+        auto finished = this->startup_finished_.lock().unwrap();
+        *finished = true;
     }
-    // @unsafe
-    {
-        raft_startup_notify_all(static_cast<RaftServerBase*>(rusty::detail::ptr_or_addr((*this))));
-    }
+    this->startup_cv_.notify_all();
 }
 
 inline bool RaftServerBase::WaitForStartup() {
-    // @unsafe
     {
-        raft_startup_wait(static_cast<RaftServerBase*>(rusty::detail::ptr_or_addr((*this))));
+        auto finished = this->startup_finished_.lock().unwrap();
+        const auto _finished = this->startup_cv_.wait_while(std::move(finished), [&](bool& done) { return rusty::detail::rust_not(done); }).unwrap();
     }
     return this->startup_succeeded_;
 }

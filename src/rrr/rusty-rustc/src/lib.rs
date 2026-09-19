@@ -466,8 +466,6 @@ macro_rules! rusty_opaque_cpp_carrier {
 rusty_opaque_cpp_carrier! {
     /// `janus::RaftCheckedMutex` -- the always-on re-entrancy-checking mutex.
     RaftCheckedMutex,
-    /// `std::vector<int64_t>` -- OnAppendEntries' decoded-term scratch.
-    RaftDecodedTerms,
     /// `std::shared_ptr<janus::AsyncCallbackLifetime>`.
     RaftAsyncCallbackLifetimePtr,
     /// `std::shared_ptr<janus::raft::SnapshotManager>`.
@@ -478,8 +476,6 @@ rusty_opaque_cpp_carrier! {
     RaftPrepareSnapshotCb,
     /// `std::mutex`.
     RaftStdMutex,
-    /// `std::condition_variable`.
-    RaftStdCondVar,
     /// `std::function<void(bool)>` -- the leadership-change notification.
     RaftLeaderChangeCb,
     /// `std::thread` -- the background apply thread.

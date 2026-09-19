@@ -723,9 +723,7 @@ unsafe extern "C" {
     fn raft_ae_decode_payload(server: *mut RaftServerBase,
                               cmd: *const core::ffi::c_void,
                               leader_prev_log_index: u64,
-                              leader_next_log_term: u64,
-                              out_count: &mut u64) -> bool;
-    fn raft_ae_decoded_term(server: *mut RaftServerBase, i: u64) -> i64;
+                              leader_next_log_term: u64) -> bool;
     fn raft_ae_apply_incoming(server: *mut RaftServerBase,
                               cmd: *const core::ffi::c_void,
                               leader_prev_log_index: u64,
@@ -2319,12 +2317,14 @@ pub unsafe fn raft_on_append_entries(
     // AppendEntries pay a dynamic cast and N refcount bumps, on a path a
     // remote peer drives -- and backtracking rejects are common during log
     // repair.
-    let mut decoded_count: u64 = 0;
+    // The kernel fills server.decoded_terms_, one term per encoded entry, so
+    // its length IS the decoded count -- which is why the out-param it used
+    // to report that count through is gone with it.
     let append_payload_valid = unsafe {
         raft_ae_decode_payload(server as *mut RaftServerBase, cmd,
-                               leader_prev_log_index,
-                               leader_next_log_term, &mut decoded_count)
+                               leader_prev_log_index, leader_next_log_term)
     };
+    let decoded_count: u64 = server.decoded_terms_.len() as u64;
 
     let term_ok =
         raft_server_append_term_is_acceptable(leader_current_term, server.state_.current_term_);
@@ -2435,8 +2435,11 @@ pub unsafe fn raft_on_append_entries(
                 raft_ae_slot_term(server as *mut RaftServerBase, index,
                                   &mut local_exists)
             };
-        let incoming_term =
-            unsafe { raft_ae_decoded_term(server as *mut RaftServerBase, i) };
+        // In bounds by construction: decoded_count IS decoded_terms_.len(),
+        // the loop condition is i < decoded_count, and nothing in the body
+        // touches the vector. The kernel this replaces needed a verify only
+        // because i arrived across the language boundary.
+        let incoming_term: i64 = server.decoded_terms_[i as usize];
         if raft_server_append_entry_conflicts(local_exists, local_term as u64,
                                               incoming_term as u64) {
             have_first_write = true;

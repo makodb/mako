@@ -843,11 +843,6 @@ void raft_fire_leader_change(RaftServerBase* self, bool is_leader) {
   self->leader_change_cb_(is_leader);
 }
 
-// (2) downcalls into RaftServer methods that have not converted
-
-void raft_reset_timer_locked(RaftServerBase* self, const char* reason) {
-  static_cast<RaftServer*>(self)->resetTimerLocked(reason);
-}
 // (1) the campaign broadcast, and the reply quorum read back under mtx_.
 //
 // Two kernels, not one, and deliberately: the broadcast SUSPENDS this fiber
@@ -887,15 +882,6 @@ bool raft_snapshot_manager_has_latest(
 
 bool raft_command_has_value(const rusty::RaftCommand* cmd) {
   return cmd->has_value();
-}
-
-// std::condition_variable, whose wait takes a predicate closure.
-void raft_startup_wait(RaftServerBase* self) {
-  std::unique_lock<std::mutex> lock(self->startup_mtx_);
-  self->startup_cv_.wait(lock, [self]() { return self->startup_finished_; });
-}
-void raft_startup_notify_all(RaftServerBase* self) {
-  self->startup_cv_.notify_all();
 }
 
 // std::thread join.
@@ -2583,9 +2569,7 @@ unsafe extern "C" {
     fn raft_ae_decode_payload(server: *mut RaftServerBase,
                               cmd: *const core::ffi::c_void,
                               leader_prev_log_index: u64,
-                              leader_next_log_term: u64,
-                              out_count: &mut u64) -> bool;
-    fn raft_ae_decoded_term(server: *mut RaftServerBase, i: u64) -> i64;
+                              leader_next_log_term: u64) -> bool;
     fn raft_ae_apply_incoming(server: *mut RaftServerBase,
                               cmd: *const core::ffi::c_void,
                               leader_prev_log_index: u64,
@@ -4179,12 +4163,14 @@ pub unsafe fn raft_on_append_entries(
     // AppendEntries pay a dynamic cast and N refcount bumps, on a path a
     // remote peer drives -- and backtracking rejects are common during log
     // repair.
-    let mut decoded_count: u64 = 0;
+    // The kernel fills server.decoded_terms_, one term per encoded entry, so
+    // its length IS the decoded count -- which is why the out-param it used
+    // to report that count through is gone with it.
     let append_payload_valid = unsafe {
         raft_ae_decode_payload(server as *mut RaftServerBase, cmd,
-                               leader_prev_log_index,
-                               leader_next_log_term, &mut decoded_count)
+                               leader_prev_log_index, leader_next_log_term)
     };
+    let decoded_count: u64 = server.decoded_terms_.len() as u64;
 
     let term_ok =
         raft_server_append_term_is_acceptable(leader_current_term, server.state_.current_term_);
@@ -4295,8 +4281,11 @@ pub unsafe fn raft_on_append_entries(
                 raft_ae_slot_term(server as *mut RaftServerBase, index,
                                   &mut local_exists)
             };
-        let incoming_term =
-            unsafe { raft_ae_decoded_term(server as *mut RaftServerBase, i) };
+        // In bounds by construction: decoded_count IS decoded_terms_.len(),
+        // the loop condition is i < decoded_count, and nothing in the body
+        // touches the vector. The kernel this replaces needed a verify only
+        // because i arrived across the language boundary.
+        let incoming_term: i64 = server.decoded_terms_[i as usize];
         if raft_server_append_entry_conflicts(local_exists, local_term as u64,
                                               incoming_term as u64) {
             have_first_write = true;
@@ -4434,7 +4423,7 @@ pub fn on_append_entries_body(server: &mut RaftServerBase,
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_round_scope version=1 rust_sha256=1eb07c909dcf7455b9da79bdd9c8115f20c8f180119edc60676c23a14b269287*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_round_scope version=1 rust_sha256=31b7d292f81ae0ab26a55ff1b316b0252667203b628417363c8e171d58fd43b5*/
 enum class AppendReplyAction : int32_t;
 constexpr AppendReplyAction AppendReplyAction_IGNORED();
 constexpr AppendReplyAction AppendReplyAction_STEP_DOWN();
@@ -4491,8 +4480,7 @@ extern "C" {
     void raft_batch_finalize(server_h::RaftServerBase* server, rusty::RaftCommand* cmd_out);
     rusty::RaftResponsePtr raft_phase1_send_append(server_h::RaftServerBase* server, uint16_t site_id, uint32_t partition_id, bool is_leader, uint64_t term, uint64_t prev_log_index, uint64_t prev_log_term, uint64_t commit_index, const rusty::RaftCommand* cmd, uint64_t cmd_log_term);
     int64_t raft_ae_slot_term(server_h::RaftServerBase* server, uint64_t index, bool& has_cmd);
-    bool raft_ae_decode_payload(server_h::RaftServerBase* server, const rusty::ffi::c_void* cmd, uint64_t leader_prev_log_index, uint64_t leader_next_log_term, uint64_t& out_count);
-    int64_t raft_ae_decoded_term(server_h::RaftServerBase* server, uint64_t i);
+    bool raft_ae_decode_payload(server_h::RaftServerBase* server, const rusty::ffi::c_void* cmd, uint64_t leader_prev_log_index, uint64_t leader_next_log_term);
     void raft_ae_apply_incoming(server_h::RaftServerBase* server, const rusty::ffi::c_void* cmd, uint64_t leader_prev_log_index, uint64_t leader_next_log_term, uint64_t first_write_index);
     void raft_do_vote(server_h::RaftServerBase* server, uint64_t lst_log_idx, int64_t lst_log_term, uint16_t can_id, int64_t can_term, int64_t& reply_term, int8_t& vote_granted, bool vote);
 }
@@ -5217,8 +5205,8 @@ AppendReport raft_on_append_entries(server_h::RaftServerBase& server, const rust
         *follower_last_log_index_shadow1 = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }((*server_shadow1).state_).last_index();
         return std::move(report);
     }
-    uint64_t decoded_count = static_cast<uint64_t>(0);
-    const auto append_payload_valid = raft_ae_decode_payload(static_cast<server_h::RaftServerBase*>(rusty::detail::ptr_or_addr((*server_shadow1))), cmd, std::move(leader_prev_log_index), std::move(leader_next_log_term), decoded_count);
+    const auto append_payload_valid = raft_ae_decode_payload(static_cast<server_h::RaftServerBase*>(rusty::detail::ptr_or_addr((*server_shadow1))), cmd, std::move(leader_prev_log_index), std::move(leader_next_log_term));
+    const uint64_t decoded_count = static_cast<uint64_t>(rusty::len((*server_shadow1).decoded_terms_));
     auto term_ok = raft_server_append_term_is_acceptable(std::move(leader_current_term), [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.current_term_); }) { return (__r.current_term_); } else if constexpr (requires { (__r.current_term__field); }) { return (__r.current_term__field); } else if constexpr (requires { ((*__r).current_term_); }) { return ((*__r).current_term_); } else { return ((*__r).current_term__field); } }((*server_shadow1).state_));
     const auto compacted_prefix_miss = ((rusty::detail::deref_if_pointer_like(leader_prev_log_index) != static_cast<uint64_t>(0)) && (rusty::detail::deref_if_pointer_like(leader_prev_log_index) < [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }((*server_shadow1).state_).base())) && (rusty::detail::deref_if_pointer_like(leader_prev_log_index) != rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.snapidx_); }) { return (__r.snapidx_); } else if constexpr (requires { (__r.snapidx__field); }) { return (__r.snapidx__field); } else if constexpr (requires { ((*__r).snapidx_); }) { return ((*__r).snapidx_); } else { return ((*__r).snapidx__field); } }((*server_shadow1).state_)));
     auto index_ok = (rusty::detail::deref_if_pointer_like(leader_prev_log_index) <= [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }((*server_shadow1).state_).last_index()) && rusty::detail::rust_not(compacted_prefix_miss);
@@ -5278,7 +5266,7 @@ AppendReport raft_on_append_entries(server_h::RaftServerBase& server, const rust
         auto index = (rusty::detail::deref_if_pointer_like(leader_prev_log_index) + rusty::detail::deref_if_pointer_like(i)) + 1;
         auto local_exists = false;
         const auto local_term = raft_ae_slot_term(static_cast<server_h::RaftServerBase*>(rusty::detail::ptr_or_addr((*server_shadow1))), std::move(index), local_exists);
-        const auto incoming_term = raft_ae_decoded_term(static_cast<server_h::RaftServerBase*>(rusty::detail::ptr_or_addr((*server_shadow1))), std::move(i));
+        const int64_t incoming_term = (*server_shadow1).decoded_terms_[static_cast<size_t>(i)];
         if (raft_server_append_entry_conflicts(std::move(local_exists), static_cast<uint64_t>(local_term), static_cast<uint64_t>(incoming_term))) {
             have_first_write = true;
             first_write_index = std::move(index);
@@ -5908,21 +5896,23 @@ int64_t raft_ae_slot_term(RaftServerBase* server, uint64_t index,
   return e->term();
 }
 
-// Decodes the wire payload and reports whether the encoded entry count is
-// acceptable. Called from the DSL body only AFTER the stopped check and the
-// authoritative-sender gate, which is where the original did this work --
-// a rejected AppendEntries must not pay for a dynamic cast it will discard.
+// Decodes the wire payload into the Rust-owned decoded_terms_ and reports
+// whether the encoded entry count is acceptable. Called from the DSL body
+// only AFTER the stopped check and the authoritative-sender gate, which is
+// where the original did this work -- a rejected AppendEntries must not pay
+// for a dynamic cast it will discard.
+//
+// The count is NOT reported out of band: one term goes in per encoded entry,
+// so decoded_terms_.len() is the count, and the caller reads it there.
 bool raft_ae_decode_payload(RaftServerBase* server,
                             const rusty::ffi::c_void* cmd_handle,
                             uint64_t leader_prev_log_index,
-                            uint64_t leader_next_log_term,
-                            uint64_t& out_count) {
-  std::vector<int64_t>& terms = static_cast<RaftServer*>(server)->decoded_terms_;
+                            uint64_t leader_next_log_term) {
+  rusty::Vec<int64_t>& terms = server->decoded_terms_;
   terms.clear();
   const janus::Command& cmd =
       *static_cast<const janus::Command*>(static_cast<const void*>(cmd_handle));
   if (!cmd.has_value()) {
-    out_count = 0;
     return raft_server_append_entry_count_fits(leader_prev_log_index, 0);
   }
 #ifdef RAFT_BATCH_OPTIMIZATION
@@ -5935,22 +5925,14 @@ bool raft_ae_decode_payload(RaftServerBase* server,
     const uint64_t count =
         static_cast<uint64_t>(batch.as_ref().unwrap()->cmds_.size());
     for (const rusty::Arc<TpcCommitCommand>& c : batch.unwrap()->cmds_) {
-      terms.push_back(static_cast<int64_t>(c->term));
+      terms.push(static_cast<int64_t>(c->term));
     }
-    out_count = count;
     return raft_server_append_batch_count_is_valid(leader_prev_log_index,
                                                    count);
   }
 #endif
-  terms.push_back(static_cast<int64_t>(leader_next_log_term));
-  out_count = 1;
+  terms.push(static_cast<int64_t>(leader_next_log_term));
   return raft_server_append_entry_count_fits(leader_prev_log_index, 1);
-}
-
-int64_t raft_ae_decoded_term(RaftServerBase* server, uint64_t i) {
-  const std::vector<int64_t>& terms = static_cast<RaftServer*>(server)->decoded_terms_;
-  verify(i < terms.size());
-  return terms[i];
 }
 
 // Builds and appends the incoming entries at or past first_write_index.

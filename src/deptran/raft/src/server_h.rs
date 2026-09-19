@@ -1071,8 +1071,6 @@ unsafe extern "C" {
     fn raft_snapshot_manager_has_latest(
         manager: *const rusty::RaftSnapshotManagerPtr) -> bool;
     fn raft_command_has_value(cmd: *const rusty::RaftCommand) -> bool;
-    fn raft_startup_wait(server: *mut RaftServerBase);
-    fn raft_startup_notify_all(server: *mut RaftServerBase);
     fn raft_apply_thread_join(server: *mut RaftServerBase);
     fn raft_commo_set_network_enabled(server: *mut RaftServerBase, enabled: bool);
     fn raft_request_replication(server: *mut RaftServerBase);
@@ -1176,7 +1174,7 @@ pub struct RaftServerBase {
     pub state_: RaftConsensusState,
     // Scratch for raft_ae_decode_payload; valid only inside one
     // OnAppendEntries call, which is entirely under mtx_.
-    pub decoded_terms_: rusty::RaftDecodedTerms,
+    pub decoded_terms_: rusty::Vec<i64>,
     // RPC futures can outlive the server during shutdown. Destruction nulls
     // this shared gate after waiting for any callback already using it.
     pub async_callback_lifetime_: rusty::RaftAsyncCallbackLifetimePtr,
@@ -1190,9 +1188,23 @@ pub struct RaftServerBase {
     pub peer_sites_: rusty::Vec<u16>,
     pub stop_: rusty::sync::atomic::AtomicBool,
     pub rpc_ready_: rusty::sync::atomic::AtomicBool,
-    pub startup_mtx_: rusty::RaftStdMutex,
-    pub startup_cv_: rusty::RaftStdCondVar,
-    pub startup_finished_: bool,
+    // THE LOCK OWNS WHAT IT GUARDS. `startup_finished_` used to be a plain
+    // bool next to a std::mutex and a std::condition_variable, with the
+    // relationship between the three stated only in a comment and enforced
+    // only by a C++ kernel that held all of them at once. It lives inside the
+    // mutex now, so the flag is unreachable without the lock and the kernel
+    // pair (raft_startup_wait / raft_startup_notify_all) has nothing to do.
+    //
+    // This is the small case of the shape docs/migration/raft/recursive-mutex.md
+    // names as the end state for mtx_ -- proved on a two-field gate before it
+    // is attempted on the consensus cluster.
+    //
+    // startup_succeeded_ stays outside deliberately: it is written before the
+    // flag and read after the wait, so the mutex's own release/acquire
+    // publishes it, and putting it inside would mean re-taking the lock to
+    // read a value the waiter has already been handed exclusive sight of.
+    pub startup_finished_: rusty::Mutex<bool>,
+    pub startup_cv_: rusty::Condvar,
     pub startup_succeeded_: bool,
     pub wait_int_: i32,
     pub disconnected_: rusty::sync::atomic::AtomicBool,
@@ -1272,7 +1284,7 @@ impl RaftServerBase {
             partition_id_: 0,
             mtx_: Default::default(),
             state_: RaftConsensusState::new(),
-            decoded_terms_: Default::default(),
+            decoded_terms_: rusty::Vec::new(),
             // Null here; RaftServer's constructor allocates it, because it
             // also has to store `this` into the gate.
             async_callback_lifetime_: Default::default(),
@@ -1285,9 +1297,8 @@ impl RaftServerBase {
             peer_sites_: rusty::Vec::new(),
             stop_: rusty::sync::atomic::AtomicBool::new(false),
             rpc_ready_: rusty::sync::atomic::AtomicBool::new(false),
-            startup_mtx_: Default::default(),
-            startup_cv_: Default::default(),
-            startup_finished_: false,
+            startup_finished_: rusty::Mutex::new(false),
+            startup_cv_: rusty::Condvar::new(),
             startup_succeeded_: false,
             wait_int_: 100000,
             disconnected_: rusty::sync::atomic::AtomicBool::new(false),
@@ -3022,21 +3033,31 @@ impl RaftServerBase {
             self.looping_
                 .store(false, rusty::sync::atomic::Ordering::Release);
         }
+        // `ready` is read unconditionally, as it was when this was one
+        // critical section: `succeeded && self.IsRpcReady()` would
+        // short-circuit and skip the call.
+        let ready: bool = self.IsRpcReady();
+        // Published BEFORE the flag, so the unlock below releases it to
+        // whichever thread the wait hands the flag to.
+        self.startup_succeeded_ = succeeded && ready;
         {
-            let ready: bool = self.IsRpcReady();
-            let _lock = RaftStdLockGuard::new(&mut self.startup_mtx_);
-            self.startup_succeeded_ = succeeded && ready;
-            self.startup_finished_ = true;
+            let mut finished = self.startup_finished_.lock().unwrap();
+            *finished = true;
         }
-        unsafe {
-            raft_startup_notify_all(self as *mut RaftServerBase);
-        }
+        self.startup_cv_.notify_all();
     }
 
     // @safe - waits for the owner-thread startup job and reports its result.
     pub fn WaitForStartup(&mut self) -> bool {
-        unsafe {
-            raft_startup_wait(self as *mut RaftServerBase);
+        {
+            let finished = self.startup_finished_.lock().unwrap();
+            // wait_while re-checks under the lock on every wake, so a
+            // spurious one is not a false start -- the same guarantee the
+            // predicate form of std::condition_variable::wait gave.
+            let _finished = self
+                .startup_cv_
+                .wait_while(finished, |done: &mut bool| !*done)
+                .unwrap();
         }
         self.startup_succeeded_
     }

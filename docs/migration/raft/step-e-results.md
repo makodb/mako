@@ -63,35 +63,65 @@ compile, clippy, and no drift.
 
 `examples/raft_bench.sh`, one partition, 1024-byte entries, 10s measured
 window after a 2s warmup. Baseline is `cfd311109`, the commit before this
-tranche; both binaries built Release from `build_perf` (MAKO_USE_RAFT=ON,
-RAFT_TEST=OFF) and run alternately to spread machine drift across both.
+tranche; every binary is built Release from `build_perf` (MAKO_USE_RAFT=ON,
+RAFT_TEST=OFF) and the arms are run round-robin so machine drift lands on all
+of them equally.
 
-Saturation (`--rate 0`), medians of 5 trials each:
+**These numbers were re-measured after the tranche this file was written for,
+and the table now carries three arms rather than two.** The original pair
+(baseline vs the tree at 70.1% conversion) is superseded: the third arm, `p1`,
+is the tree immediately BEFORE the apply-queue conversion, and it exists to
+separate "did this tranche cost anything" from "has the conversion drifted".
 
-| | baseline | converted | delta |
+Saturation (`--rate 0`), applied/s, medians:
+
+| arm | n | median | vs baseline |
 |---|---|---|---|
-| applied/s | 40320 | 40064 | **-0.64%** |
-| p50 latency | 100713 us | 101517 us | +0.80% |
-| p99 latency | 120427 us | 118992 us | **-1.19%** |
+| baseline `cfd311109` | 10 | 40857.6 | -- |
+| `p1` (before the apply queue) | 5 | 39877.1 | -2.40% |
+| head | 10 | 40409.6 | **-1.10%** |
+
+**The middle arm is the slowest, which is the finding.** If the conversion
+were costing throughput monotonically, `p1` would sit between the baseline and
+head; instead it is below both. Head measures 1.34% FASTER than the tree it
+succeeds. So the one-to-two percent spread across arms is the machine, not the
+code.
+
+The paired test says the same thing. Baseline and head trials with the same
+index run adjacently, so a per-index delta cancels slow drift: over ten pairs
+the median delta is -0.69%, three of ten favour head, and an exact sign test
+gives p = 0.344. Within-arm spread is 3.1% for the baseline and 9.5% for head
+-- the latter inflated by one contaminated trial, during which a transpiler
+run was started on the same host. Dropping that trial puts head's median at
+40550.4, or -0.75%.
 
 Throttled (`--rate 20000`), medians of 3 trials each:
 
-| | baseline | converted | delta |
-|---|---|---|---|
-| applied/s | 19996 | 19997 | +0.00% |
-| p50 latency | 3759 us | 3738 us | -0.56% |
-| p99 latency | 5202 us | 5218 us | +0.31% |
+| | baseline | head |
+|---|---|---|
+| applied/s | 20000.4 | 20000.7 |
+| p50 latency | 3728 us | 3832 us |
+| p99 latency | 5214 us | 5382 us |
 
-The -0.64% is inside the noise: the five baseline trials themselves span
-38989..41318, a 5.7% spread. Every run reported zero gaps, zero duplicates
-and zero out-of-order applications on both sides.
+Both arms sit exactly on the offered rate, so the throttled point measures
+latency only, and 2.8% of 3.7ms is a scheduling artefact at this resolution.
+
+Saturation latency: p50 99569us vs 100278us (+0.71%), p99 118331us vs
+122453us (+3.48%) -- with `p1`'s p99 at 129458us, above both, on the same
+pattern as the throughput numbers.
+
+Every run on every arm reported zero gaps, zero duplicates and zero
+out-of-order applications.
 
 Two changes should be slightly FASTER and are not separable at this
 resolution. PHASE 0 and PHASE 3 each rebuilt a `std::vector<siteid_t>` from
 `current_config_` on every heartbeat round; that set has exactly one write,
 during Setup, so it is mirrored once into `config_members_` now. And
 `ElectionTimerLoop` / `HeartbeatDriver` reach the server through direct
-calls rather than through ten `extern "C"` trampolines.
+calls rather than through ten `extern "C"` trampolines. A third joins them:
+`EnqueueCommittedEntries` walks the log once per commit batch instead of
+twice, because the scan and the copy-out are no longer on opposite sides of
+the language boundary.
 
 ## Bugs this found
 
