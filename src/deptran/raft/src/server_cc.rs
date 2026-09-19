@@ -471,6 +471,7 @@ impl AuthorityLedger {
 }
 
 use crate::server_h::RaftServerBase;
+use crate::server_h::RaftEntry;
 use crate::server_h::RaftLockGuard;
 // Every C++ kernel this carrier calls, in one place. improper_ctypes is
 // allowed because each of these passes an opaque handle by pointer and
@@ -503,8 +504,6 @@ unsafe extern "C" {
                                commit_index: u64,
                                cmd: *const rusty::RaftCommand,
                                cmd_log_term: u64) -> rusty::RaftResponsePtr;
-    fn raft_ae_slot_term(server: *mut RaftServerBase, index: u64,
-                         has_cmd: &mut bool) -> i64;
     fn raft_ae_decode_payload(server: *mut RaftServerBase,
                               cmd: *const core::ffi::c_void,
                               leader_prev_log_index: u64,
@@ -2123,7 +2122,11 @@ impl AppendReport {
 /// throughout. All three hold at the only call site,
 /// `RaftServer::OnAppendEntries`. Neither handle is dereferenced here; both
 /// are forwarded to trampolines that cast back exactly once.
-#[allow(clippy::too_many_arguments)]
+// unnecessary_unwrap: the per-slot lookup below uses is_some()/unwrap() with
+// an explicit `&RaftEntry` binding rather than `if let`. `if let` is the
+// better Rust and it transpiles, but the emitter renders the binding with a
+// dot where the C++ needs an arrow, and an inferred binding COPIES the entry.
+#[allow(clippy::too_many_arguments, clippy::unnecessary_unwrap)]
 // TODO(raft-server-struct): collapses into &mut self once RaftServer is a
 // DSL struct; these are its fields and its RPC arguments.
 pub unsafe fn raft_on_append_entries(
@@ -2299,16 +2302,21 @@ pub unsafe fn raft_on_append_entries(
     let mut i: u64 = 0;
     while i < decoded_count {
         let index = leader_prev_log_index + i + 1;
-        // ONE lookup per entry, as the original had. janus::Command is
-        // opaque to Rust, so "does this slot hold a payload" has to be a
-        // trampoline; making that same trampoline return the term too keeps
-        // the count at one FindRaftInstance instead of three.
-        let mut local_exists = false;
-        let local_term =
-            unsafe {
-                raft_ae_slot_term(server as *mut RaftServerBase, index,
-                                  &mut local_exists)
+        // ONE lookup per entry, as the original had. The lookup itself is
+        // Rust -- the log is a Rust type -- and only "does this slot hold a
+        // payload" crosses, because janus::Command is opaque here.
+        let mut local_exists: bool = false;
+        let mut local_term: i64 = 0;
+        let slot = server.state_.raft_log_.get(index);
+        if slot.is_some() {
+            let entry: &RaftEntry = slot.unwrap();
+            local_exists = unsafe {
+                raft_command_has_value(entry.cmd() as *const rusty::RaftCommand)
             };
+            if local_exists {
+                local_term = entry.term();
+            }
+        }
         // In bounds by construction: decoded_count IS decoded_terms_.len(),
         // the loop condition is i < decoded_count, and nothing in the body
         // touches the vector. The kernel this replaces needed a verify only

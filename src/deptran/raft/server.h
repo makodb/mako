@@ -7611,13 +7611,6 @@ class RaftServer : public RaftServerBase {
   // reason RaftLog::get can return a borrow instead of a refcounted handle.
   // The Rust side never sees this pointer.
   // @unsafe - borrow flattened to a pointer; caller must hold mtx_
-  const RaftEntry* FindRaftInstance(slotid_t id) const {
-    const auto found = state_.raft_log_.get(id);
-    if (found.is_none()) {
-      return nullptr;
-    }
-    return &found.unwrap();
-  }
 
   RaftServer();
   // @unsafe - thread join and timer cleanup require manual resource management

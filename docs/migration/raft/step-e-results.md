@@ -68,7 +68,8 @@ RAFT_TEST=OFF) and the arms are run round-robin so machine drift lands on all
 of them equally.
 
 **These numbers were re-measured after the tranche this file was written for,
-and the table now carries three arms rather than two.** The original pair
+and then again twice more; read the pooled paragraph below the table rather
+than the table alone.** The original pair
 (baseline vs the tree at 70.1% conversion) is superseded: the third arm, `p1`,
 is the tree immediately BEFORE the apply-queue conversion, and it exists to
 separate "did this tranche cost anything" from "has the conversion drifted".
@@ -81,19 +82,35 @@ Saturation (`--rate 0`), applied/s, medians:
 | `p1` (before the apply queue) | 5 | 39877.1 | -2.40% |
 | head | 10 | 40409.6 | **-1.10%** |
 
-**The middle arm is the slowest, which is the finding.** If the conversion
-were costing throughput monotonically, `p1` would sit between the baseline and
-head; instead it is below both. Head measures 1.34% FASTER than the tree it
-succeeds. So the one-to-two percent spread across arms is the machine, not the
-code.
+The middle arm being the slowest looked, from this run alone, like proof that
+the spread was the machine rather than the code. TWO LATER RUNS SHOWED THAT
+READING WAS WRONG, and the paragraph that used to stand here said so too
+confidently on ten pairs at p = 0.344. What the pooled data says:
 
-The paired test says the same thing. Baseline and head trials with the same
-index run adjacently, so a per-index delta cancels slow drift: over ten pairs
-the median delta is -0.69%, three of ten favour head, and an exact sign test
-gives p = 0.344. Within-arm spread is 3.1% for the baseline and 9.5% for head
--- the latter inflated by one contaminated trial, during which a transpiler
-run was started on the same host. Dropping that trial puts head's median at
-40550.4, or -0.75%.
+| run | paired median | favour converted | sign test |
+|---|---|---|---|
+| this one (10 pairs) | -0.69% | 3/10 | p = 0.344 |
+| second (6 pairs) | -2.32% | 0/6 | p = 0.031 |
+| third (6 pairs) | -0.22% | 2/6 | p = 0.688 |
+| **pooled (22 pairs)** | **-1.71%** | **5/22** | **p = 0.017** |
+
+So there IS a small cumulative cost -- roughly 1.5%, mean -1.51%, per-pair
+range -7.74% to +1.47%. It is REAL but it is not localisable by the method
+used here: the three runs disagree on its size by an order of magnitude, the
+between-run variance exceeds the effect, and a bisect over the conversion
+window put the midpoint at -1.20%, which says the cost accumulates across
+tranches rather than arriving in one.
+
+One hypothesis was tested and refuted: the DSL lock guards emitted
+`~RaftLockGuard() noexcept(false)`, which forces unwind bookkeeping in every
+scope holding a guard, and the hot path holds one in about thirty places.
+Declaring them noexcept measured +0.54% median over six pairs, p = 0.688 --
+the right direction, not established. The change was kept because the
+contract is true, not because it closed the gap.
+
+Resolving the remaining 1.5% needs tens of paired trials per candidate on a
+quiet host, which is a dedicated measurement session rather than a step in a
+conversion tranche.
 
 Throttled (`--rate 20000`), medians of 3 trials each:
 

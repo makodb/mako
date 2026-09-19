@@ -1404,6 +1404,7 @@ using janus::raft_server_follower_next_index;
 // writes the name unqualified (both blocks are in namespace janus) and the
 // `use crate::server_h::X` on the Rust side emits as this alias.
 using janus::RaftConsensusState;
+using janus::RaftEntry;
 using janus::RaftServerBase;
 using janus::RaftLockGuard;
 }  // namespace server_h
@@ -2090,6 +2091,7 @@ inline AuthorityOutcome AuthorityLedger::settle(bool is_leader, uint64_t current
 // possibility of the two disagreeing.
 #if RUSTYCPP_RUST
 use crate::server_h::RaftServerBase;
+use crate::server_h::RaftEntry;
 use crate::server_h::RaftLockGuard;
 // Every C++ kernel this carrier calls, in one place. improper_ctypes is
 // allowed because each of these passes an opaque handle by pointer and
@@ -2122,8 +2124,6 @@ unsafe extern "C" {
                                commit_index: u64,
                                cmd: *const rusty::RaftCommand,
                                cmd_log_term: u64) -> rusty::RaftResponsePtr;
-    fn raft_ae_slot_term(server: *mut RaftServerBase, index: u64,
-                         has_cmd: &mut bool) -> i64;
     fn raft_ae_decode_payload(server: *mut RaftServerBase,
                               cmd: *const core::ffi::c_void,
                               leader_prev_log_index: u64,
@@ -3742,7 +3742,11 @@ impl AppendReport {
 /// throughout. All three hold at the only call site,
 /// `RaftServer::OnAppendEntries`. Neither handle is dereferenced here; both
 /// are forwarded to trampolines that cast back exactly once.
-#[allow(clippy::too_many_arguments)]
+// unnecessary_unwrap: the per-slot lookup below uses is_some()/unwrap() with
+// an explicit `&RaftEntry` binding rather than `if let`. `if let` is the
+// better Rust and it transpiles, but the emitter renders the binding with a
+// dot where the C++ needs an arrow, and an inferred binding COPIES the entry.
+#[allow(clippy::too_many_arguments, clippy::unnecessary_unwrap)]
 // TODO(raft-server-struct): collapses into &mut self once RaftServer is a
 // DSL struct; these are its fields and its RPC arguments.
 pub unsafe fn raft_on_append_entries(
@@ -3918,16 +3922,21 @@ pub unsafe fn raft_on_append_entries(
     let mut i: u64 = 0;
     while i < decoded_count {
         let index = leader_prev_log_index + i + 1;
-        // ONE lookup per entry, as the original had. janus::Command is
-        // opaque to Rust, so "does this slot hold a payload" has to be a
-        // trampoline; making that same trampoline return the term too keeps
-        // the count at one FindRaftInstance instead of three.
-        let mut local_exists = false;
-        let local_term =
-            unsafe {
-                raft_ae_slot_term(server as *mut RaftServerBase, index,
-                                  &mut local_exists)
+        // ONE lookup per entry, as the original had. The lookup itself is
+        // Rust -- the log is a Rust type -- and only "does this slot hold a
+        // payload" crosses, because janus::Command is opaque here.
+        let mut local_exists: bool = false;
+        let mut local_term: i64 = 0;
+        let slot = server.state_.raft_log_.get(index);
+        if slot.is_some() {
+            let entry: &RaftEntry = slot.unwrap();
+            local_exists = unsafe {
+                raft_command_has_value(entry.cmd() as *const rusty::RaftCommand)
             };
+            if local_exists {
+                local_term = entry.term();
+            }
+        }
         // In bounds by construction: decoded_count IS decoded_terms_.len(),
         // the loop condition is i < decoded_count, and nothing in the body
         // touches the vector. The kernel this replaces needed a verify only
@@ -4070,7 +4079,7 @@ pub fn on_append_entries_body(server: &mut RaftServerBase,
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_round_scope version=1 rust_sha256=cce20d8bd98be3bf69a789563695f4997ef2effc8c4554c9955f08d7f8c75142*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_round_scope version=1 rust_sha256=87ec8011567d69db194e245d65d48e771da4a60d13b68a2567f7adbf36189a89*/
 enum class AppendReplyAction : int32_t;
 constexpr AppendReplyAction AppendReplyAction_IGNORED();
 constexpr AppendReplyAction AppendReplyAction_STEP_DOWN();
@@ -4109,6 +4118,8 @@ inline constexpr AppendReplyAction AppendReplyAction_UNKNOWN_FOLLOWER() { return
 
 using ::server_h::RaftServerBase;
 
+using ::server_h::RaftEntry;
+
 using ::server_h::RaftLockGuard;
 
 extern "C" {
@@ -4126,7 +4137,6 @@ extern "C" {
     bool raft_batch_try_push(server_h::RaftServerBase* server, uint64_t index);
     void raft_batch_finalize(server_h::RaftServerBase* server, rusty::RaftCommand* cmd_out);
     rusty::RaftResponsePtr raft_phase1_send_append(server_h::RaftServerBase* server, uint16_t site_id, uint32_t partition_id, bool is_leader, uint64_t term, uint64_t prev_log_index, uint64_t prev_log_term, uint64_t commit_index, const rusty::RaftCommand* cmd, uint64_t cmd_log_term);
-    int64_t raft_ae_slot_term(server_h::RaftServerBase* server, uint64_t index, bool& has_cmd);
     bool raft_ae_decode_payload(server_h::RaftServerBase* server, const rusty::ffi::c_void* cmd, uint64_t leader_prev_log_index, uint64_t leader_next_log_term);
     void raft_ae_apply_incoming(server_h::RaftServerBase* server, const rusty::ffi::c_void* cmd, uint64_t leader_prev_log_index, uint64_t leader_next_log_term, uint64_t first_write_index);
     void raft_do_vote(server_h::RaftServerBase* server, uint64_t lst_log_idx, int64_t lst_log_term, uint16_t can_id, int64_t can_term, int64_t& reply_term, int8_t& vote_granted, bool vote);
@@ -4930,8 +4940,16 @@ AppendReport raft_on_append_entries(server_h::RaftServerBase& server, const rust
     uint64_t i = static_cast<uint64_t>(0);
     while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(decoded_count)) {
         auto index = (rusty::detail::deref_if_pointer_like(leader_prev_log_index) + rusty::detail::deref_if_pointer_like(i)) + 1;
-        auto local_exists = false;
-        const auto local_term = raft_ae_slot_term(static_cast<server_h::RaftServerBase*>(rusty::detail::ptr_or_addr((*server_shadow1))), std::move(index), local_exists);
+        bool local_exists = false;
+        int64_t local_term = static_cast<int64_t>(0);
+        auto slot = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }((*server_shadow1).state_).get(std::move(index));
+        if (slot.is_some()) {
+            const server_h::RaftEntry& entry = slot.unwrap();
+            local_exists = raft_command_has_value(rusty::detail::ptr_cast<const rusty::RaftCommand*>(entry.cmd()));
+            if (local_exists) {
+                local_term = entry.term();
+            }
+        }
         const int64_t incoming_term = (*server_shadow1).decoded_terms_[static_cast<size_t>(i)];
         if (raft_server_append_entry_conflicts(std::move(local_exists), static_cast<uint64_t>(local_term), static_cast<uint64_t>(incoming_term))) {
             have_first_write = true;
@@ -5464,23 +5482,10 @@ RaftStartResult RaftServer::Start(const janus::Command& cmd,
 /* NOTE: broadcast send to all of the host even to its own server
  * should we exclude the execution of this function for leader? */
 // @unsafe - external calls marked @external [safe], output pointer writes in @unsafe blocks
-// The four kernels raft_on_append_entries still needs. None is a forwarder:
-// two reach the log through RaftServer::FindRaftInstance, and two decode the
-// wire payload, which is a Marshallable hierarchy with no Rust spelling.
+// The three kernels raft_on_append_entries still needs. None is a forwarder:
+// all three decode or build the wire payload, which is a Marshallable
+// hierarchy with no Rust spelling.
 extern "C" {
-
-// One lookup, returning both facts the conflict test needs.
-int64_t raft_ae_slot_term(RaftServerBase* server, uint64_t index,
-                          bool& has_cmd) {
-  // @unsafe { RaftServerBase is RaftServer's base; the lookup needs the derived }
-  const RaftEntry* e = static_cast<RaftServer*>(server)->FindRaftInstance(index);
-  if (e == nullptr || !e->cmd().has_value()) {
-    has_cmd = false;
-    return 0;
-  }
-  has_cmd = true;
-  return e->term();
-}
 
 // Decodes the wire payload into the Rust-owned decoded_terms_ and reports
 // whether the encoded entry count is acceptable. Called from the DSL body
