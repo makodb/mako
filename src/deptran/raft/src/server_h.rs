@@ -1306,6 +1306,10 @@ unsafe extern "C" {
     // the seam is named here instead of being silently wrong.
     fn raft_new_replication_wake_gate()
         -> rusty::sync::Arc<ReplicationWakeGate>;
+    // The reactor's event factory, `rrr::create_sp_int_event`. It is the one
+    // thing in the wake path with no DSL spelling, so it is the only thing
+    // the three wait methods below leave in C++.
+    fn raft_create_int_event() -> rusty::sync::Arc<rusty::ReactorIntEvent>;
     fn raft_queue_replication_wake(server: *mut RaftServerBase);
     fn raft_queue_replication_shutdown_wake(server: *mut RaftServerBase);
     fn raft_set_local_append(server: *mut RaftServerBase,
@@ -3198,6 +3202,48 @@ impl RaftServerBase {
         }
     }
 
+    // @unsafe - Called only by HeartbeatLoop, on its bound PollThread.
+    //
+    // begin_wait_for_work() is the fast path: Some(answer) when the gate
+    // could decide without arming a waiter, None when the caller must arm
+    // one. Only the slow path allocates an event, so a round that finds work
+    // already pending allocates nothing -- the same split the C++ had, for
+    // the same reason.
+    // is_some()/unwrap() rather than `if let`, for the reason recorded on
+    // ReplicationWakeGate::wake_on_owner: the emitter renders an `if let`
+    // binding with a dot where the C++ needs an arrow. The annotation is
+    // load-bearing, not documentation.
+    #[allow(clippy::unnecessary_unwrap)]
+    pub fn WaitForReplicationOrHeartbeat(&mut self, timeout_us: u64) -> bool {
+        let decided: rusty::Option<bool> =
+            self.replication_wake_gate_.begin_wait_for_work();
+        if decided.is_some() {
+            return decided.unwrap();
+        }
+        let waiter = unsafe { raft_create_int_event() };
+        self.replication_wake_gate_.finish_wait_for_work(waiter, timeout_us)
+    }
+
+    // @unsafe - Called only by the election fiber, on the bound PollThread.
+    //
+    // The accepting() check stays AHEAD of the factory call: a closed gate
+    // must not allocate an event it will never wait on.
+    pub fn WaitForElectionTimeoutOrShutdown(&mut self,
+                                            timeout_us: u64) -> bool {
+        if !self.replication_wake_gate_.accepting() {
+            return false;
+        }
+        let waiter = unsafe { raft_create_int_event() };
+        self.replication_wake_gate_
+            .wait_for_election_timeout(waiter, timeout_us)
+    }
+
+    // @unsafe - one heartbeat tick's wait, which is the above bound to the
+    // configured interval.
+    pub fn HeartbeatWait(&mut self) -> bool {
+        self.WaitForReplicationOrHeartbeat(self.heartbeat_interval_us_)
+    }
+
     // @unsafe - Bind the gate to the communicator's PollThread before
     // HeartbeatLoop can publish an owner-thread-only IntEvent against it.
     pub fn BindReplicationWakeOwner(
@@ -3831,7 +3877,9 @@ impl ElectionTimerLoop {
             let delay = unsafe { (*self.server_).ElectionLoopRandomDelay() };
             // Unlike a plain sleep this is interrupted by shutdown, so a
             // false return means "stop", not "timed out".
-            if !unsafe { raft_election_wait(self.server_, delay) } {
+            if !unsafe {
+                (*self.server_).WaitForElectionTimeoutOrShutdown(delay)
+            } {
                 break;
             }
             let tick = unsafe { (*self.server_).ElectionLoopGather() };
@@ -3876,7 +3924,6 @@ impl ElectionTimerLoop {
 // What is left of the C++ side: one wake-gate suspension.
 #[allow(improper_ctypes)]
 unsafe extern "C" {
-    fn raft_election_wait(server: *mut RaftServerBase, timeout_us: u64) -> bool;
 }
 
 pub struct HeartbeatDriver {
@@ -3897,7 +3944,7 @@ impl HeartbeatDriver {
         unsafe { (*self.server_).HeartbeatPrologue() };
         while unsafe { (*self.server_).HeartbeatLooping() } {
             // The wake gate returns false on shutdown rather than on timeout.
-            if !unsafe { raft_heartbeat_wait(self.server_) } {
+            if !unsafe { (*self.server_).HeartbeatWait() } {
                 break;
             }
             // PHASE 0 declines the round when leadership is not held. The C++
@@ -3919,7 +3966,6 @@ impl HeartbeatDriver {
 // state, which is hand-written C++ this block cannot name.
 #[allow(improper_ctypes)]
 unsafe extern "C" {
-    fn raft_heartbeat_wait(server: *mut RaftServerBase) -> bool;
     fn raft_heartbeat_phase0(server: *mut RaftServerBase,
                              round: *mut core::ffi::c_void) -> bool;
     fn raft_heartbeat_phase1(server: *mut RaftServerBase,

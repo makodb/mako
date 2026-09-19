@@ -3020,6 +3020,10 @@ unsafe extern "C" {
     // the seam is named here instead of being silently wrong.
     fn raft_new_replication_wake_gate()
         -> rusty::sync::Arc<ReplicationWakeGate>;
+    // The reactor's event factory, `rrr::create_sp_int_event`. It is the one
+    // thing in the wake path with no DSL spelling, so it is the only thing
+    // the three wait methods below leave in C++.
+    fn raft_create_int_event() -> rusty::sync::Arc<rusty::ReactorIntEvent>;
     fn raft_queue_replication_wake(server: *mut RaftServerBase);
     fn raft_queue_replication_shutdown_wake(server: *mut RaftServerBase);
     fn raft_set_local_append(server: *mut RaftServerBase,
@@ -4912,6 +4916,48 @@ impl RaftServerBase {
         }
     }
 
+    // @unsafe - Called only by HeartbeatLoop, on its bound PollThread.
+    //
+    // begin_wait_for_work() is the fast path: Some(answer) when the gate
+    // could decide without arming a waiter, None when the caller must arm
+    // one. Only the slow path allocates an event, so a round that finds work
+    // already pending allocates nothing -- the same split the C++ had, for
+    // the same reason.
+    // is_some()/unwrap() rather than `if let`, for the reason recorded on
+    // ReplicationWakeGate::wake_on_owner: the emitter renders an `if let`
+    // binding with a dot where the C++ needs an arrow. The annotation is
+    // load-bearing, not documentation.
+    #[allow(clippy::unnecessary_unwrap)]
+    pub fn WaitForReplicationOrHeartbeat(&mut self, timeout_us: u64) -> bool {
+        let decided: rusty::Option<bool> =
+            self.replication_wake_gate_.begin_wait_for_work();
+        if decided.is_some() {
+            return decided.unwrap();
+        }
+        let waiter = unsafe { raft_create_int_event() };
+        self.replication_wake_gate_.finish_wait_for_work(waiter, timeout_us)
+    }
+
+    // @unsafe - Called only by the election fiber, on the bound PollThread.
+    //
+    // The accepting() check stays AHEAD of the factory call: a closed gate
+    // must not allocate an event it will never wait on.
+    pub fn WaitForElectionTimeoutOrShutdown(&mut self,
+                                            timeout_us: u64) -> bool {
+        if !self.replication_wake_gate_.accepting() {
+            return false;
+        }
+        let waiter = unsafe { raft_create_int_event() };
+        self.replication_wake_gate_
+            .wait_for_election_timeout(waiter, timeout_us)
+    }
+
+    // @unsafe - one heartbeat tick's wait, which is the above bound to the
+    // configured interval.
+    pub fn HeartbeatWait(&mut self) -> bool {
+        self.WaitForReplicationOrHeartbeat(self.heartbeat_interval_us_)
+    }
+
     // @unsafe - Bind the gate to the communicator's PollThread before
     // HeartbeatLoop can publish an owner-thread-only IntEvent against it.
     pub fn BindReplicationWakeOwner(
@@ -5518,7 +5564,7 @@ impl TxLogServer for RaftServerBase {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=3902a7d2157b648187345bddf782d99e2c584c222541104dd669622b226aa801*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=5c8f78ab5b473b3e1ffb67c9f87e1c720c65cba7a368cce44d41d904c5004ae4*/
 struct QueuedApplyEntry;
 struct ApplyQueue;
 struct RaftVoteOutcome;
@@ -5549,6 +5595,7 @@ extern "C" {
     void raft_apply_thread_join(RaftServerBase* server);
     void raft_commo_set_network_enabled(RaftServerBase* server, bool enabled);
     rusty::Arc<ReplicationWakeGate> raft_new_replication_wake_gate();
+    rusty::Arc<rusty::ReactorIntEvent> raft_create_int_event();
     void raft_queue_replication_wake(RaftServerBase* server);
     void raft_queue_replication_shutdown_wake(RaftServerBase* server);
     RaftStartResult raft_set_local_append(RaftServerBase* server, const rusty::RaftCommand* cmd, uint64_t* term, uint64_t* index, uint64_t slot_id, int64_t ballot);
@@ -5713,6 +5760,9 @@ struct RaftServerBase : public TxLogServer {
     bool IsConfigMember(uint16_t site) const;
     size_t PeerOrdinal(uint16_t site) const;
     void RequestReplication();
+    bool WaitForReplicationOrHeartbeat(uint64_t timeout_us);
+    bool WaitForElectionTimeoutOrShutdown(uint64_t timeout_us);
+    bool HeartbeatWait();
     void BindReplicationWakeOwner(rusty::Arc<rusty::ReactorPollThread> owner);
     void CloseReplicationWakeGate();
     void HeartbeatPrologue();
@@ -6692,6 +6742,27 @@ inline void RaftServerBase::RequestReplication() {
     }
 }
 
+inline bool RaftServerBase::WaitForReplicationOrHeartbeat(uint64_t timeout_us) {
+    rusty::Option<bool> decided = this->replication_wake_gate_->begin_wait_for_work();
+    if (decided.is_some()) {
+        return decided.unwrap();
+    }
+    const auto waiter = raft_create_int_event();
+    return this->replication_wake_gate_->finish_wait_for_work(std::move(waiter), std::move(timeout_us));
+}
+
+inline bool RaftServerBase::WaitForElectionTimeoutOrShutdown(uint64_t timeout_us) {
+    if (rusty::detail::rust_not(this->replication_wake_gate_->accepting())) {
+        return false;
+    }
+    const auto waiter = raft_create_int_event();
+    return this->replication_wake_gate_->wait_for_election_timeout(std::move(waiter), std::move(timeout_us));
+}
+
+inline bool RaftServerBase::HeartbeatWait() {
+    return this->WaitForReplicationOrHeartbeat(this->heartbeat_interval_us_);
+}
+
 inline void RaftServerBase::BindReplicationWakeOwner(rusty::Arc<rusty::ReactorPollThread> owner) {
     this->replication_wake_gate_->bind_owner(std::move(owner));
 }
@@ -7076,7 +7147,9 @@ impl ElectionTimerLoop {
             let delay = unsafe { (*self.server_).ElectionLoopRandomDelay() };
             // Unlike a plain sleep this is interrupted by shutdown, so a
             // false return means "stop", not "timed out".
-            if !unsafe { raft_election_wait(self.server_, delay) } {
+            if !unsafe {
+                (*self.server_).WaitForElectionTimeoutOrShutdown(delay)
+            } {
                 break;
             }
             let tick = unsafe { (*self.server_).ElectionLoopGather() };
@@ -7121,10 +7194,9 @@ impl ElectionTimerLoop {
 // What is left of the C++ side: one wake-gate suspension.
 #[allow(improper_ctypes)]
 unsafe extern "C" {
-    fn raft_election_wait(server: *mut RaftServerBase, timeout_us: u64) -> bool;
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.election_timer_loop version=1 rust_sha256=11118d1df7f8646bf41526a8663904b625fa0ceb79c6ee55eed77b1e68479868*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.election_timer_loop version=1 rust_sha256=429ae50f617e6871002bb59ed53c5c040a662fbec9ad59ce2287cbfce0826f2e*/
 struct ElectionTimerLoop;
 
 struct ElectionTimerLoop {
@@ -7137,7 +7209,6 @@ struct ElectionTimerLoop {
 };
 
 extern "C" {
-    bool raft_election_wait(RaftServerBase* server, uint64_t timeout_us);
 }
 
 
@@ -7151,8 +7222,8 @@ inline void ElectionTimerLoop::run() const {
         ((*this->server_)).ElectionLoopLogStart();
     }
     while (rusty::detail::rust_not(((*this->server_)).ElectionLoopStopped())) {
-        auto delay = ((*this->server_)).ElectionLoopRandomDelay();
-        if (!raft_election_wait(this->server_, std::move(delay))) {
+        const auto delay = ((*this->server_)).ElectionLoopRandomDelay();
+        if (rusty::detail::rust_not(((*this->server_)).WaitForElectionTimeoutOrShutdown(std::move(delay)))) {
             break;
         }
         const auto tick = ((*this->server_)).ElectionLoopGather();
@@ -7221,7 +7292,7 @@ impl HeartbeatDriver {
         unsafe { (*self.server_).HeartbeatPrologue() };
         while unsafe { (*self.server_).HeartbeatLooping() } {
             // The wake gate returns false on shutdown rather than on timeout.
-            if !unsafe { raft_heartbeat_wait(self.server_) } {
+            if !unsafe { (*self.server_).HeartbeatWait() } {
                 break;
             }
             // PHASE 0 declines the round when leadership is not held. The C++
@@ -7243,7 +7314,6 @@ impl HeartbeatDriver {
 // state, which is hand-written C++ this block cannot name.
 #[allow(improper_ctypes)]
 unsafe extern "C" {
-    fn raft_heartbeat_wait(server: *mut RaftServerBase) -> bool;
     fn raft_heartbeat_phase0(server: *mut RaftServerBase,
                              round: *mut core::ffi::c_void) -> bool;
     fn raft_heartbeat_phase1(server: *mut RaftServerBase,
@@ -7254,7 +7324,7 @@ unsafe extern "C" {
                              round: *mut core::ffi::c_void);
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_driver version=1 rust_sha256=5fce1ae5bba432982ec3ff5c3b388d2f88a2bad7ad82b0c17a6a4d04db552649*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_driver version=1 rust_sha256=38c2e40316529a45b03fe3f9e71f63e51b9d5e9b11c3127dcfecd1fc27bfdf2f*/
 struct HeartbeatDriver;
 
 struct HeartbeatDriver {
@@ -7266,7 +7336,6 @@ struct HeartbeatDriver {
 };
 
 extern "C" {
-    bool raft_heartbeat_wait(RaftServerBase* server);
     bool raft_heartbeat_phase0(RaftServerBase* server, rusty::ffi::c_void* round);
     void raft_heartbeat_phase1(RaftServerBase* server, rusty::ffi::c_void* round);
     void raft_heartbeat_phase2(RaftServerBase* server, rusty::ffi::c_void* round);
@@ -7284,7 +7353,7 @@ inline void HeartbeatDriver::run() const {
         ((*this->server_)).HeartbeatPrologue();
     }
     while (((*this->server_)).HeartbeatLooping()) {
-        if (!raft_heartbeat_wait(this->server_)) {
+        if (rusty::detail::rust_not(((*this->server_)).HeartbeatWait())) {
             break;
         }
         if (!raft_heartbeat_phase0(this->server_, this->round_)) {
@@ -7323,7 +7392,6 @@ class RaftServer : public RaftServerBase {
   // ==========================================================================
 
   // @unsafe - suspends this fiber on the wake gate's election waiter
-  bool ElectionLoopWait(uint64_t timeout_us);
 
   // ==========================================================================
   // HEARTBEAT LOOP KERNELS
@@ -7336,7 +7404,6 @@ class RaftServer : public RaftServerBase {
 
 
   // @unsafe - suspends on the wake gate; false means shutdown
-  bool HeartbeatWait();
 
 
   // set_site_identity / set_commo / reg_learner_action are RaftServerBase's
@@ -7396,9 +7463,7 @@ class RaftServer : public RaftServerBase {
           // itself can live in RaftServerBase
  private:
   // @unsafe - Owner-thread-only wait on the gate's IntEvent.
-  bool WaitForReplicationOrHeartbeat(uint64_t timeout_us);
   // @unsafe - Owner-thread-only election delay that shutdown can interrupt.
-  bool WaitForElectionTimeoutOrShutdown(uint64_t timeout_us);
   // @unsafe - Stops new wake jobs and releases the gate's PollThread handle.
  public:  // for the kernel bridge (server.cc); private again once converted
  private:

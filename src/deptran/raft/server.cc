@@ -944,33 +944,11 @@ RaftServer::RaftServer() {
   stop_.store(false, rusty::sync::atomic::Ordering::Release);
 }
 
-// @unsafe - Called only by HeartbeatLoop on its bound PollThread.
-//
-// The gate's own fast path lives in begin_wait_for_work(): Some(answer) when
-// it could decide without arming a waiter, None when it could not. Everything
-// this function adds is the one thing the DSL cannot spell -- calling the
-// reactor factory create_sp_int_event -- and it is called ONLY on the slow
-// path, so a round that finds work already pending still allocates nothing.
-bool RaftServer::WaitForReplicationOrHeartbeat(uint64_t timeout_us) {
-  auto decided = replication_wake_gate_->begin_wait_for_work();
-  if (decided.is_some()) {
-    return decided.unwrap();
-  }
-  return replication_wake_gate_->finish_wait_for_work(
-      create_sp_int_event(1), timeout_us);
-}
-
-// @unsafe - Called only by the election fiber on the bound PollThread.
-//
-// Same split, and the accepting() check stays ahead of the factory call for
-// the same reason it did when this was one function: a closed gate must not
-// allocate an event it will never wait on.
-bool RaftServer::WaitForElectionTimeoutOrShutdown(uint64_t timeout_us) {
-  if (!replication_wake_gate_->accepting()) {
-    return false;
-  }
-  return replication_wake_gate_->wait_for_election_timeout(
-      create_sp_int_event(1), timeout_us);
+// @unsafe - the reactor's event factory. The three wait methods on
+// RaftServerBase are Rust; this is the only step in them that is not, because
+// create_sp_int_event has no DSL spelling.
+extern "C" rusty::Arc<rrr::IntEvent> raft_create_int_event() {
+  return create_sp_int_event(1);
 }
 
 void RaftServer::StartApplyThread() {
@@ -5281,18 +5259,10 @@ struct HeartbeatRoundState {
 // them and the round block. Every other break and continue in here belongs to
 // an inner loop and is untouched.
 // @unsafe - suspends on the wake gate; false means shutdown, not a timeout
-bool RaftServer::HeartbeatWait() {
-  return WaitForReplicationOrHeartbeat(heartbeat_interval_us_);
-}
-
-// The extern "C" trampolines the DSL block declares. Each casts an opaque
-// handle back exactly once, and this is the only place either cast happens.
+// The extern "C" trampolines the DSL block declares. One cast is left -- the
+// round-state handle -- because HeartbeatRoundState is hand-written C++
+// declared after the DSL block whose bodies take its members.
 extern "C" {
-
-// @unsafe { opaque handle cast }
-static inline RaftServer* raft_heartbeat_server(RaftServerBase* server) {
-  return static_cast<RaftServer*>(server);
-}
 
 // @unsafe { opaque handle cast }
 static inline HeartbeatRoundState* raft_heartbeat_state(
@@ -5300,14 +5270,10 @@ static inline HeartbeatRoundState* raft_heartbeat_state(
   return static_cast<HeartbeatRoundState*>(round);
 }
 
-bool raft_heartbeat_wait(RaftServerBase* server) {
-  return raft_heartbeat_server(server)->HeartbeatWait();
-}
-
 bool raft_heartbeat_phase0(RaftServerBase* server,
                            rusty::ffi::c_void* round) {
   HeartbeatRoundState* state = raft_heartbeat_state(round);
-  return heartbeat_phase0_body(*raft_heartbeat_server(server),
+  return heartbeat_phase0_body(*server,
                                state->pending_rpcs, state->authority_rounds,
                                state->pending_leader_term, state->scope);
 }
@@ -5315,7 +5281,7 @@ bool raft_heartbeat_phase0(RaftServerBase* server,
 void raft_heartbeat_phase1(RaftServerBase* server,
                            rusty::ffi::c_void* round) {
   HeartbeatRoundState* state = raft_heartbeat_state(round);
-  heartbeat_phase1_body(*raft_heartbeat_server(server), state->pending_rpcs,
+  heartbeat_phase1_body(*server, state->pending_rpcs,
                         state->authority_rounds, state->scope);
 }
 
@@ -5325,14 +5291,14 @@ void raft_heartbeat_phase2(RaftServerBase* server,
   // PHASE 2's body is Rust now (heartbeat_phase2_body, above). The three
   // members are passed separately because HeartbeatRoundState is
   // hand-written C++ declared after the DSL block that owns the body.
-  heartbeat_phase2_body(*raft_heartbeat_server(server), state->pending_rpcs,
+  heartbeat_phase2_body(*server, state->pending_rpcs,
                         state->authority_rounds, state->scope);
 }
 
 void raft_heartbeat_phase3(RaftServerBase* server,
                            rusty::ffi::c_void* round) {
   HeartbeatRoundState* state = raft_heartbeat_state(round);
-  heartbeat_phase3_body(*raft_heartbeat_server(server),
+  heartbeat_phase3_body(*server,
                         state->authority_rounds, state->scope);
 }
 
@@ -5423,27 +5389,6 @@ void RaftServer::OnRequestVote(const slotid_t& lst_log_idx,
 
 // @unsafe - suspends this fiber; unlike a plain Fiber::sleep this is
 // interrupted by shutdown, so false means stop rather than timed out.
-bool RaftServer::ElectionLoopWait(uint64_t timeout_us) {
-  return WaitForElectionTimeoutOrShutdown(timeout_us);
-}
-
-// The extern "C" trampolines the DSL block declares. Each casts the opaque
-// handle back exactly once. This is the only place the cast happens, which is
-// what makes "Rust never dereferences the server" a checkable property rather
-// than a convention.
-extern "C" {
-
-// @unsafe { opaque handle cast }
-static inline RaftServer* raft_election_server(RaftServerBase* server) {
-  return static_cast<RaftServer*>(server);
-}
-
-bool raft_election_wait(RaftServerBase* server, uint64_t timeout_us) {
-  return raft_election_server(server)->ElectionLoopWait(timeout_us);
-}
-
-}  // extern "C"
-
 RaftStartResult RaftServer::Start(const janus::Command& cmd,
                                   uint64_t *index,
                                   uint64_t *term,
