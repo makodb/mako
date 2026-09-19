@@ -514,14 +514,6 @@ unsafe extern "C" {
                               leader_prev_log_index: u64,
                               leader_next_log_term: u64,
                               first_write_index: u64);
-    fn raft_do_vote(server: *mut RaftServerBase,
-                    lst_log_idx: u64,
-                    lst_log_term: i64,
-                    can_id: u16,
-                    can_term: i64,
-                    reply_term: &mut i64,
-                    vote_granted: &mut i8,
-                    vote: bool);
 }
 
 // ==========================================================================
@@ -1923,10 +1915,8 @@ pub unsafe fn raft_on_request_vote(
     // can_term >= 0 is already guaranteed above, so the cast to u64 is the
     // faithful spelling.
     if (can_term as u64) < cur_term {
-        unsafe {
-            raft_do_vote(server as *mut RaftServerBase, lst_log_idx, lst_log_term, can_id, can_term,
-                         reply_term, vote_granted, false)
-        };
+        server.doVote(lst_log_idx, lst_log_term, can_id, can_term,
+                      reply_term, vote_granted, false);
         return;
     }
 
@@ -1940,10 +1930,8 @@ pub unsafe fn raft_on_request_vote(
         && server.state_.vote_for_ != RAFT_SERVER_INVALID_SITE_ID
         && server.state_.vote_for_ != can_id
     {
-        unsafe {
-            raft_do_vote(server as *mut RaftServerBase, lst_log_idx, lst_log_term, can_id, can_term,
-                         reply_term, vote_granted, false)
-        };
+        server.doVote(lst_log_idx, lst_log_term, can_id, can_term,
+                      reply_term, vote_granted, false);
         return;
     }
 
@@ -1963,10 +1951,8 @@ pub unsafe fn raft_on_request_vote(
                                       server.state_.vote_for_, can_id)
         && candidate_log_is_current
     {
-        unsafe {
-            raft_do_vote(server as *mut RaftServerBase, lst_log_idx, lst_log_term, can_id, can_term,
-                         reply_term, vote_granted, true)
-        };
+        server.doVote(lst_log_idx, lst_log_term, can_id, can_term,
+                      reply_term, vote_granted, true);
         return;
     }
 
@@ -1976,10 +1962,8 @@ pub unsafe fn raft_on_request_vote(
     }
 
     let grant = candidate_log_is_current;
-    unsafe {
-        raft_do_vote(server as *mut RaftServerBase, lst_log_idx, lst_log_term, can_id, can_term,
-                     reply_term, vote_granted, grant)
-    };
+    server.doVote(lst_log_idx, lst_log_term, can_id, can_term,
+                  reply_term, vote_granted, grant);
 }
 
 // ==========================================================================

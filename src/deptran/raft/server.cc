@@ -2135,14 +2135,6 @@ unsafe extern "C" {
                               leader_prev_log_index: u64,
                               leader_next_log_term: u64,
                               first_write_index: u64);
-    fn raft_do_vote(server: *mut RaftServerBase,
-                    lst_log_idx: u64,
-                    lst_log_term: i64,
-                    can_id: u16,
-                    can_term: i64,
-                    reply_term: &mut i64,
-                    vote_granted: &mut i8,
-                    vote: bool);
 }
 
 // ==========================================================================
@@ -3544,10 +3536,8 @@ pub unsafe fn raft_on_request_vote(
     // can_term >= 0 is already guaranteed above, so the cast to u64 is the
     // faithful spelling.
     if (can_term as u64) < cur_term {
-        unsafe {
-            raft_do_vote(server as *mut RaftServerBase, lst_log_idx, lst_log_term, can_id, can_term,
-                         reply_term, vote_granted, false)
-        };
+        server.doVote(lst_log_idx, lst_log_term, can_id, can_term,
+                      reply_term, vote_granted, false);
         return;
     }
 
@@ -3561,10 +3551,8 @@ pub unsafe fn raft_on_request_vote(
         && server.state_.vote_for_ != RAFT_SERVER_INVALID_SITE_ID
         && server.state_.vote_for_ != can_id
     {
-        unsafe {
-            raft_do_vote(server as *mut RaftServerBase, lst_log_idx, lst_log_term, can_id, can_term,
-                         reply_term, vote_granted, false)
-        };
+        server.doVote(lst_log_idx, lst_log_term, can_id, can_term,
+                      reply_term, vote_granted, false);
         return;
     }
 
@@ -3584,10 +3572,8 @@ pub unsafe fn raft_on_request_vote(
                                       server.state_.vote_for_, can_id)
         && candidate_log_is_current
     {
-        unsafe {
-            raft_do_vote(server as *mut RaftServerBase, lst_log_idx, lst_log_term, can_id, can_term,
-                         reply_term, vote_granted, true)
-        };
+        server.doVote(lst_log_idx, lst_log_term, can_id, can_term,
+                      reply_term, vote_granted, true);
         return;
     }
 
@@ -3597,10 +3583,8 @@ pub unsafe fn raft_on_request_vote(
     }
 
     let grant = candidate_log_is_current;
-    unsafe {
-        raft_do_vote(server as *mut RaftServerBase, lst_log_idx, lst_log_term, can_id, can_term,
-                     reply_term, vote_granted, grant)
-    };
+    server.doVote(lst_log_idx, lst_log_term, can_id, can_term,
+                  reply_term, vote_granted, grant);
 }
 
 // ==========================================================================
@@ -4083,7 +4067,7 @@ pub fn on_append_entries_body(server: &mut RaftServerBase,
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_round_scope version=1 rust_sha256=84747caecf64528ab3ebc6977d307fe8745e3d3b59033de19f94bdb0968dc699*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_round_scope version=1 rust_sha256=160c563eaaadc085a567e556523b8d063f86d9587c73eb699a5ac8483a9dfce6*/
 enum class AppendReplyAction : int32_t;
 constexpr AppendReplyAction AppendReplyAction_IGNORED();
 constexpr AppendReplyAction AppendReplyAction_STEP_DOWN();
@@ -4142,7 +4126,6 @@ extern "C" {
     rusty::RaftResponsePtr raft_phase1_send_append(server_h::RaftServerBase* server, uint16_t site_id, uint32_t partition_id, bool is_leader, uint64_t term, uint64_t prev_log_index, uint64_t prev_log_term, uint64_t commit_index, const rusty::RaftCommand* cmd, uint64_t cmd_log_term);
     bool raft_ae_decode_payload(server_h::RaftServerBase* server, const rusty::ffi::c_void* cmd, uint64_t leader_prev_log_index, uint64_t leader_next_log_term);
     void raft_ae_apply_incoming(server_h::RaftServerBase* server, const rusty::ffi::c_void* cmd, uint64_t leader_prev_log_index, uint64_t leader_next_log_term, uint64_t first_write_index);
-    void raft_do_vote(server_h::RaftServerBase* server, uint64_t lst_log_idx, int64_t lst_log_term, uint16_t can_id, int64_t can_term, int64_t& reply_term, int8_t& vote_granted, bool vote);
 }
 
 struct HeartbeatRoundScope {
@@ -4795,17 +4778,11 @@ void raft_on_request_vote(server_h::RaftServerBase& server, bool stopped, bool c
     }
     const auto cur_term = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.current_term_); }) { return (__r.current_term_); } else if constexpr (requires { (__r.current_term__field); }) { return (__r.current_term__field); } else if constexpr (requires { ((*__r).current_term_); }) { return ((*__r).current_term_); } else { return ((*__r).current_term__field); } }(server.state_);
     if (((static_cast<uint64_t>(can_term))) < rusty::detail::deref_if_pointer_like(cur_term)) {
-        // @unsafe
-        {
-            raft_do_vote(static_cast<server_h::RaftServerBase*>(rusty::detail::ptr_or_addr(server)), std::move(lst_log_idx), std::move(lst_log_term), std::move(can_id), std::move(can_term), (*reply_term_shadow1), (*vote_granted_shadow1), false);
-        }
+        server.doVote(std::move(lst_log_idx), std::move(lst_log_term), std::move(can_id), std::move(can_term), *reply_term_shadow1, *vote_granted_shadow1, false);
         return;
     }
     if (((((static_cast<uint64_t>(can_term))) == rusty::detail::deref_if_pointer_like(cur_term)) && (rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.vote_for_); }) { return (__r.vote_for_); } else if constexpr (requires { (__r.vote_for__field); }) { return (__r.vote_for__field); } else if constexpr (requires { ((*__r).vote_for_); }) { return ((*__r).vote_for_); } else { return ((*__r).vote_for__field); } }(server.state_)) != rusty::detail::deref_if_pointer_like(RAFT_SERVER_INVALID_SITE_ID))) && (rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.vote_for_); }) { return (__r.vote_for_); } else if constexpr (requires { (__r.vote_for__field); }) { return (__r.vote_for__field); } else if constexpr (requires { ((*__r).vote_for_); }) { return ((*__r).vote_for_); } else { return ((*__r).vote_for__field); } }(server.state_)) != rusty::detail::deref_if_pointer_like(can_id))) {
-        // @unsafe
-        {
-            raft_do_vote(static_cast<server_h::RaftServerBase*>(rusty::detail::ptr_or_addr(server)), std::move(lst_log_idx), std::move(lst_log_term), std::move(can_id), std::move(can_term), (*reply_term_shadow1), (*vote_granted_shadow1), false);
-        }
+        server.doVote(std::move(lst_log_idx), std::move(lst_log_term), std::move(can_id), std::move(can_term), *reply_term_shadow1, *vote_granted_shadow1, false);
         return;
     }
     if ([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }(server.state_).last_index() < rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.snapidx_); }) { return (__r.snapidx_); } else if constexpr (requires { (__r.snapidx__field); }) { return (__r.snapidx__field); } else if constexpr (requires { ((*__r).snapidx_); }) { return ((*__r).snapidx_); } else { return ((*__r).snapidx__field); } }(server.state_))) {
@@ -4816,20 +4793,14 @@ void raft_on_request_vote(server_h::RaftServerBase& server, bool stopped, bool c
     const auto curlstidx = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }(server.state_).last_index();
     auto candidate_log_is_current = raft_server_candidate_log_is_at_least(std::move(lst_log_term), std::move(curlstterm), std::move(lst_log_idx), std::move(curlstidx));
     if (raft_server_vote_is_idempotent(static_cast<uint64_t>(can_term), std::move(cur_term), [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.vote_for_); }) { return (__r.vote_for_); } else if constexpr (requires { (__r.vote_for__field); }) { return (__r.vote_for__field); } else if constexpr (requires { ((*__r).vote_for_); }) { return ((*__r).vote_for_); } else { return ((*__r).vote_for__field); } }(server.state_), std::move(can_id)) && rusty::detail::deref_if_pointer_like(candidate_log_is_current)) {
-        // @unsafe
-        {
-            raft_do_vote(static_cast<server_h::RaftServerBase*>(rusty::detail::ptr_or_addr(server)), std::move(lst_log_idx), std::move(lst_log_term), std::move(can_id), std::move(can_term), (*reply_term_shadow1), (*vote_granted_shadow1), true);
-        }
+        server.doVote(std::move(lst_log_idx), std::move(lst_log_term), std::move(can_id), std::move(can_term), *reply_term_shadow1, *vote_granted_shadow1, true);
         return;
     }
     if ((rusty::detail::deref_if_pointer_like(lstoff) + rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.snapidx_); }) { return (__r.snapidx_); } else if constexpr (requires { (__r.snapidx__field); }) { return (__r.snapidx__field); } else if constexpr (requires { ((*__r).snapidx_); }) { return ((*__r).snapidx_); } else { return ((*__r).snapidx__field); } }(server.state_))) != [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }(server.state_).last_index()) {
         rusty::panic::do_panic(std::format("snapshot offset invariant violated"));
     }
-    auto grant = std::move(candidate_log_is_current);
-    // @unsafe
-    {
-        raft_do_vote(static_cast<server_h::RaftServerBase*>(rusty::detail::ptr_or_addr(server)), std::move(lst_log_idx), std::move(lst_log_term), std::move(can_id), std::move(can_term), (*reply_term_shadow1), (*vote_granted_shadow1), std::move(grant));
-    }
+    const auto grant = std::move(candidate_log_is_current);
+    server.doVote(std::move(lst_log_idx), std::move(lst_log_term), std::move(can_id), std::move(can_term), *reply_term_shadow1, *vote_granted_shadow1, std::move(grant));
 }
 
 void on_request_vote_body(server_h::RaftServerBase& server, uint64_t lst_log_idx, int64_t lst_log_term, uint16_t can_id, int64_t can_term, int64_t& reply_term, int8_t& vote_granted) {
@@ -5390,28 +5361,17 @@ AppendRespView raft_append_response_read(
 RaftServer::~RaftServer() { Shutdown(); }
 
 
-// @unsafe - calls @safe doVote, external calls marked @external [safe]
-// The one kernel raft_on_request_vote still needs. It is not a forwarder: the
-// vote reply is written through two out-params whose C++ types (int64_t& /
-// int8_t&) are what the RPC handler already owns.
-extern "C" {
+// ============================================================================
+// THE RPC ENTRY POINTS
+//
+// Four methods the rrr service layer calls BY NAME on RaftServer, which is
+// why they are C++ at all: they are TxLogServer overrides, and a virtual
+// override has no DSL spelling. Each is a shim over a Rust body, and what
+// sits in the shim is only what cannot cross -- locks whose guard type is
+// C++, and the try/catch around OnInstallSnapshot, because exceptions have
+// no DSL spelling either.
+// ============================================================================
 
-void raft_do_vote(RaftServerBase* server,
-                  uint64_t lst_log_idx, int64_t lst_log_term,
-                  uint16_t can_id, int64_t can_term,
-                  int64_t& reply_term, int8_t& vote_granted, bool vote) {
-  // @unsafe { RaftServerBase is RaftServer's base; the call needs the derived }
-  static_cast<RaftServer*>(server)->doVote(lst_log_idx, lst_log_term, can_id,
-                                           can_term, &reply_term, &vote_granted,
-                                           vote);
-}
-
-}  // extern "C"
-
-// The body is raft_on_request_vote, a DSL function. What stays here is the
-// lock, the two log lines that must keep their level short-circuit, and the
-// current_config_ membership test -- that member is a std::set which has not
-// moved into the state struct.
 void RaftServer::OnRequestVote(const slotid_t& lst_log_idx,
                                const ballot_t& lst_log_term,
                                const siteid_t& can_id,
@@ -5424,18 +5384,6 @@ void RaftServer::OnRequestVote(const slotid_t& lst_log_idx,
                        *reply_term, *vote_granted);
 }
 
-// ============================================================================
-// ELECTION TIMER: the C++ half of the DSL-owned ElectionTimerLoop
-//
-// The loop itself -- the while, the campaign branch, the vote wait -- is Rust,
-// in the raft_server.election_timer block in server.h. What is left here is
-// the set of operations that cannot cross the boundary. Read them as the
-// bodies of the lock scopes and external calls that used to be inline in the
-// fiber lambda; nothing about the lock discipline changed.
-// ============================================================================
-
-// @unsafe - suspends this fiber; unlike a plain Fiber::sleep this is
-// interrupted by shutdown, so false means stop rather than timed out.
 RaftStartResult RaftServer::Start(const janus::Command& cmd,
                                   uint64_t *index,
                                   uint64_t *term,
@@ -5565,11 +5513,6 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
 }
 
 
-// ============================================================================
-// InstallSnapshot RPC Handler
-// ============================================================================
-
-// @unsafe - Modifies log state, snapshot metadata, calls snapshot_manager_
 void RaftServer::OnInstallSnapshot(const uint64_t term,
                                     const uint64_t leader_id,
                                     const uint64_t last_included_index,
@@ -5599,16 +5542,5 @@ void RaftServer::OnInstallSnapshot(const uint64_t term,
     *term_out = 0;
   }
 }
-
-// ============================================================================
-// stepDown - Central leader step-down function
-// ============================================================================
-
-// ============================================================================
-// MEMBERSHIP CONFIGURATION
-// ============================================================================
-
-
-
 
 } // namespace janus

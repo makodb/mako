@@ -4655,6 +4655,75 @@ impl RaftServerBase {
             retain_suffix, purged_apply_entries);
     }
 
+    // @unsafe - CALLER MUST HOLD mtx_; the one caller repo-wide is
+    // raft_on_request_vote, which takes it.
+    //
+    // Records one RequestVote decision. The reply is written through two
+    // out-params because that is what the rrr service layer's handler owns:
+    // ballot_t* and bool_t*, which are int64_t and int8_t.
+    #[allow(clippy::too_many_arguments)]
+    pub fn doVote(&mut self, lst_log_idx: u64, lst_log_term: i64,
+                  can_id: u16, can_term: i64, reply_term: &mut i64,
+                  vote_granted: &mut i8, vote: bool) {
+        *vote_granted = vote as i8;
+        *reply_term = self.state_.current_term_ as i64;
+
+        // Was #ifdef RAFT_LEADER_ELECTION_DEBUG. The preprocessor has no DSL
+        // spelling, so the switch is a branch on a constant the compiler
+        // folds -- the same treatment raft_batch_optimization_enabled gets.
+        if unsafe { raft_election_debug_enabled() } {
+            rusty::raft_log_info_10(
+                "[RAFT_VOTE] server {} (loc {}) vote={} candidate={} can_term={} cur_term={} prev_vote_for={} is_leader={} lst_idx={} lst_term={}",
+                self.site_id_, self.loc_id_, vote, can_id, can_term,
+                self.state_.current_term_, self.state_.vote_for_,
+                self.state_.is_leader_, lst_log_idx, lst_log_term);
+        }
+
+        if raft_server_signed_term_is_newer(can_term,
+                                            self.state_.current_term_) {
+            let prev_term: u64 = self.state_.current_term_;
+            let was_leader: bool = self.state_.is_leader_;
+            // A RequestVote proves only that a candidate exists, not that
+            // Raft has elected it. Do not keep advertising the previous
+            // epoch's leader while processing the higher-term request.
+            self.state_.current_leader_id_ =
+                raft_server_leader_hint_after_transition(false, false,
+                                                         self.site_id_,
+                                                         can_id);
+            self.state_.current_term_ = can_term as u64;
+            // Reset the vote when advancing to a new term.
+            self.state_.vote_for_ = RAFT_SERVER_INVALID_SITE_ID;
+
+            // A higher term is stable state even when this RequestVote is
+            // denied.
+            if was_leader {
+                self.stepDown();
+            } else {
+                self.setIsLeader(false);
+            }
+            self.state_.req_voting_ = false;
+            self.state_.election_in_progress_ = false;
+
+            // Publish the newly observed term, never the pre-transition one.
+            *reply_term = self.state_.current_term_ as i64;
+            self.LogTermChange("vote request carried newer term", prev_term,
+                               self.state_.current_term_, can_id);
+        }
+
+        if vote {
+            self.setIsLeader(false);
+            self.state_.vote_for_ = can_id;
+            if unsafe { raft_election_debug_enabled() } {
+                rusty::raft_log_info_3(
+                    "[RAFT_VOTE] server {} recorded vote_for={} at term={}",
+                    self.site_id_, self.state_.vote_for_,
+                    self.state_.current_term_);
+            }
+            // doVote runs only from OnRequestVote, which holds mtx_.
+            self.resetTimerLocked("granted vote");
+        }
+    }
+
     // @unsafe - starts the background apply thread. The flag is Rust; only
     // the std::thread construction is a kernel, and the thread stays
     // JOINABLE so Shutdown can await it. Detaching causes use-after-free:
@@ -5647,7 +5716,7 @@ impl TxLogServer for RaftServerBase {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=0e620dfae6846693f1afd28e0698fb941c244ca477a1cb87058052d80e337485*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=27fae5431c3b2c7eeb6662961de54e467190a30b88f481c9a1db15d84d62869e*/
 struct QueuedApplyEntry;
 struct ApplyQueue;
 struct RaftElectionTimeouts;
@@ -5846,6 +5915,7 @@ struct RaftServerBase : public TxLogServer {
     void InstallSnapshotReplyAccepted(uint16_t site_id, size_t ord, uint64_t snap_last_idx, uint64_t send_term, uint64_t follower_term);
     void FailStop();
     void OnInstallSnapshotLocked(uint64_t term, uint64_t leader_id, uint64_t last_included_index, uint64_t last_included_term, const rusty::RaftByteString* data, uint64_t& term_out);
+    void doVote(uint64_t lst_log_idx, int64_t lst_log_term, uint16_t can_id, int64_t can_term, int64_t& reply_term, int8_t& vote_granted, bool vote);
     void StartApplyThread();
     void Shutdown();
     void ApplyThreadLoop();
@@ -6661,6 +6731,40 @@ inline void RaftServerBase::OnInstallSnapshotLocked(uint64_t term, uint64_t lead
     }
     this->PublishAppliedIndexLocked(std::move(last_included_index));
     rusty::raft_log_info_9("[INSTALL-SNAPSHOT] Site {}: Installed snapshot from leader {} (snapidx={}, snapterm={}, state_.commit_index_={}, state_.execute_index_={}, state_.raft_log_.last_index()={}, retain_suffix={}, purged_apply={})", this->site_id_, std::move(leader_id), this->state_.snapidx_, this->state_.snapterm_, this->state_.commit_index_, this->state_.execute_index_, this->state_.raft_log_.last_index(), std::move(retain_suffix), std::move(purged_apply_entries));
+}
+
+inline void RaftServerBase::doVote(uint64_t lst_log_idx, int64_t lst_log_term, uint16_t can_id, int64_t can_term, int64_t& reply_term, int8_t& vote_granted, bool vote) {
+    int64_t* reply_term_shadow1 = &reply_term;
+    int8_t* vote_granted_shadow1 = &vote_granted;
+    *vote_granted_shadow1 = static_cast<int8_t>(vote);
+    *reply_term_shadow1 = static_cast<int64_t>(this->state_.current_term_);
+    if (raft_election_debug_enabled()) {
+        rusty::raft_log_info_10("[RAFT_VOTE] server {} (loc {}) vote={} candidate={} can_term={} cur_term={} prev_vote_for={} is_leader={} lst_idx={} lst_term={}", this->site_id_, this->loc_id_, std::move(vote), std::move(can_id), std::move(can_term), this->state_.current_term_, this->state_.vote_for_, this->state_.is_leader_, std::move(lst_log_idx), std::move(lst_log_term));
+    }
+    if (raft_server_signed_term_is_newer(std::move(can_term), this->state_.current_term_)) {
+        uint64_t prev_term = this->state_.current_term_;
+        const bool was_leader = this->state_.is_leader_;
+        this->state_.current_leader_id_ = raft_server_leader_hint_after_transition(false, false, this->site_id_, std::move(can_id));
+        this->state_.current_term_ = static_cast<uint64_t>(can_term);
+        this->state_.vote_for_ = RAFT_SERVER_INVALID_SITE_ID;
+        if (was_leader) {
+            this->stepDown();
+        } else {
+            this->setIsLeader(false);
+        }
+        this->state_.req_voting_ = false;
+        this->state_.election_in_progress_ = false;
+        *reply_term_shadow1 = static_cast<int64_t>(this->state_.current_term_);
+        this->LogTermChange(std::string_view("vote request carried newer term"), std::move(prev_term), this->state_.current_term_, std::move(can_id));
+    }
+    if (vote) {
+        this->setIsLeader(false);
+        this->state_.vote_for_ = std::move(can_id);
+        if (raft_election_debug_enabled()) {
+            rusty::raft_log_info_3("[RAFT_VOTE] server {} recorded vote_for={} at term={}", this->site_id_, this->state_.vote_for_, this->state_.current_term_);
+        }
+        this->resetTimerLocked(std::string_view("granted vote"));
+    }
 }
 
 inline void RaftServerBase::StartApplyThread() {
@@ -7497,67 +7601,6 @@ class RaftServer : public RaftServerBase {
   // HeartbeatPhase0..3 are public. Both go back to private when their own
   // bodies convert and the trampolines are deleted.
  public:
-  void doVote(const slotid_t& lst_log_idx,
-              const ballot_t& lst_log_term,
-              const siteid_t& can_id,
-              const ballot_t& can_term,
-              ballot_t *reply_term,
-              bool_t *vote_granted,
-              bool_t vote) {
-      // @unsafe
-      {
-        *vote_granted = vote ;
-        *reply_term = state_.current_term_ ;
-      }
-#ifdef RAFT_LEADER_ELECTION_DEBUG
-      siteid_t prev_vote_for = state_.vote_for_;
-      Log_info("[RAFT_VOTE] server {} (loc {}) vote={} candidate={} can_term={} cur_term={} prev_vote_for={} is_leader={} lst_idx={} lst_term={}",
-               site_id_, loc_id_, vote, can_id, can_term, state_.current_term_, prev_vote_for, state_.is_leader_, lst_log_idx, lst_log_term);
-#endif
-
-      if (raft_server_signed_term_is_newer(can_term, state_.current_term_))
-      {
-          const uint64_t prev_term = state_.current_term_;
-          const bool was_leader = state_.is_leader_;
-          // A RequestVote proves only that a candidate exists, not that Raft
-          // has elected it. Do not keep advertising the previous epoch's
-          // leader while processing the higher-term request.
-          state_.current_leader_id_ = raft_server_leader_hint_after_transition(
-              false, false, site_id_, can_id);
-          state_.current_term_ = can_term ;
-          // @unsafe
-          {
-            state_.vote_for_ = INVALID_SITEID;  // Reset vote when advancing to new term
-          }
-
-          // A higher term is stable state even when this RequestVote is denied.
-          if (was_leader) {
-            stepDown();
-          } else {
-            setIsLeader(false);
-          }
-          state_.req_voting_ = false;
-          state_.election_in_progress_ = false;
-
-          // Publish the newly observed term, never the pre-transition value.
-          *reply_term = state_.current_term_;
-          LogTermChange("vote request carried newer term", prev_term, state_.current_term_, can_id);
-      }
-
-      if(vote)
-      {
-          setIsLeader(false) ;
-          state_.vote_for_ = can_id ;
-
-#ifdef RAFT_LEADER_ELECTION_DEBUG
-          Log_info("[RAFT_VOTE] server {} recorded vote_for={} at term={}", site_id_, state_.vote_for_, state_.current_term_);
-#endif
-          // Reset timeout
-          // doVote runs only from OnRequestVote, which holds mtx_.
-          resetTimerLocked("granted vote");
-      }
-
-  }
 
  private:
 
