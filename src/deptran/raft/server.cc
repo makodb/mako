@@ -865,19 +865,16 @@ void raft_fiber_sleep_us(uint64_t micros) {
   Fiber::sleep(static_cast<int>(micros < 1 ? 1 : micros));
 }
 
-// (misc) the four env-tunable election-timeout knobs, which are ordinary C++
-// free functions above and so need C linkage to be nameable from Rust.
-uint64_t raft_preferred_leader_grace_period_us() {
-  return GetPreferredLeaderGracePeriodUs();
-}
-uint64_t raft_preferred_election_timeout_us() {
-  return GetPreferredElectionTimeoutUs();
-}
-uint64_t raft_non_preferred_grace_election_timeout_us() {
-  return GetNonPreferredGraceElectionTimeoutUs();
-}
-uint64_t raft_non_preferred_steady_election_timeout_us() {
-  return GetNonPreferredSteadyElectionTimeoutUs();
+// (misc) the env-tunable election-timeout knobs. One call returning the set,
+// rather than four getters: GetElectionTimeout needs them together to make
+// one decision, and a boundary crossing should be a unit of work.
+RaftElectionTimeouts raft_election_timeouts() {
+  RaftElectionTimeouts knobs{};
+  knobs.grace_period_us_ = GetPreferredLeaderGracePeriodUs();
+  knobs.preferred_us_ = GetPreferredElectionTimeoutUs();
+  knobs.non_preferred_grace_us_ = GetNonPreferredGraceElectionTimeoutUs();
+  knobs.non_preferred_steady_us_ = GetNonPreferredSteadyElectionTimeoutUs();
+  return knobs;
 }
 
 // (3) conditionally compiled regions

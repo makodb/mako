@@ -1274,12 +1274,11 @@ unsafe extern "C" {
     // to reach a method that has not converted, casts down to RaftServer.
     fn raft_leader_change_cb_is_set(server: *const RaftServerBase) -> bool;
     fn raft_fire_leader_change(server: *mut RaftServerBase, is_leader: bool);
-    // The four env-tunable election-timeout knobs, which are ordinary C++
-    // free functions in server.cc.
-    fn raft_preferred_leader_grace_period_us() -> u64;
-    fn raft_preferred_election_timeout_us() -> u64;
-    fn raft_non_preferred_grace_election_timeout_us() -> u64;
-    fn raft_non_preferred_steady_election_timeout_us() -> u64;
+    // The env-tunable election-timeout knobs, read in one shot. They were
+    // four separate calls; a boundary crossing should be a verb that does a
+    // unit of work rather than a getter, and GetElectionTimeout wants the
+    // whole set to make one decision.
+    fn raft_election_timeouts() -> RaftElectionTimeouts;
     fn raft_log_set_is_leader_entry(server: *const RaftServerBase,
                                     prev_is_leader: bool, new_is_leader: bool);
     fn raft_append_leader_noop(server: *mut RaftServerBase);
@@ -1401,6 +1400,17 @@ impl ApplyQueue {
     pub fn new() -> ApplyQueue {
         ApplyQueue { entries_: rusty::VecDeque::new(), epoch_: 0 }
     }
+}
+
+// The election-timeout configuration, as one value. Every field is an
+// environment override with a compiled-in default, read afresh on each call
+// exactly as the four separate getters were.
+#[repr(C)]
+pub struct RaftElectionTimeouts {
+    pub grace_period_us_: u64,
+    pub preferred_us_: u64,
+    pub non_preferred_grace_us_: u64,
+    pub non_preferred_steady_us_: u64,
 }
 
 #[repr(C)]
@@ -2039,11 +2049,10 @@ impl RaftServerBase {
     // IS the effective election timeout: there is no persistence floor to
     // add.
     pub fn GetElectionTimeout(&self) -> u64 {
+        let knobs: RaftElectionTimeouts = unsafe { raft_election_timeouts() };
         let current_time: u64 = unsafe { raft_time_now_us() };
-        let grace_period_us: u64 =
-            unsafe { raft_preferred_leader_grace_period_us() };
         let in_grace_period: bool =
-            (current_time - self.startup_timestamp_) < grace_period_us;
+            (current_time - self.startup_timestamp_) < knobs.grace_period_us_;
         // IsPreferredLeaderConfigured's whole body (server.cc). It is a DSL
         // function of the server.cc carrier, so this block cannot name it;
         // the predicate is one comparison and is spelled out rather than
@@ -2053,14 +2062,14 @@ impl RaftServerBase {
 
         if !preferred_leader_configured {
             // Traditional Raft when no preferred leader is configured.
-            unsafe { raft_non_preferred_steady_election_timeout_us() }
+            knobs.non_preferred_steady_us_
         } else if self.AmIPreferredLeader() {
-            unsafe { raft_preferred_election_timeout_us() }
+            knobs.preferred_us_
         } else if in_grace_period {
             // The startup grace timeout is env-tunable for test stability.
-            unsafe { raft_non_preferred_grace_election_timeout_us() }
+            knobs.non_preferred_grace_us_
         } else {
-            unsafe { raft_non_preferred_steady_election_timeout_us() }
+            knobs.non_preferred_steady_us_
         }
     }
 

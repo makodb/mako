@@ -2988,12 +2988,11 @@ unsafe extern "C" {
     // to reach a method that has not converted, casts down to RaftServer.
     fn raft_leader_change_cb_is_set(server: *const RaftServerBase) -> bool;
     fn raft_fire_leader_change(server: *mut RaftServerBase, is_leader: bool);
-    // The four env-tunable election-timeout knobs, which are ordinary C++
-    // free functions in server.cc.
-    fn raft_preferred_leader_grace_period_us() -> u64;
-    fn raft_preferred_election_timeout_us() -> u64;
-    fn raft_non_preferred_grace_election_timeout_us() -> u64;
-    fn raft_non_preferred_steady_election_timeout_us() -> u64;
+    // The env-tunable election-timeout knobs, read in one shot. They were
+    // four separate calls; a boundary crossing should be a verb that does a
+    // unit of work rather than a getter, and GetElectionTimeout wants the
+    // whole set to make one decision.
+    fn raft_election_timeouts() -> RaftElectionTimeouts;
     fn raft_log_set_is_leader_entry(server: *const RaftServerBase,
                                     prev_is_leader: bool, new_is_leader: bool);
     fn raft_append_leader_noop(server: *mut RaftServerBase);
@@ -3115,6 +3114,17 @@ impl ApplyQueue {
     pub fn new() -> ApplyQueue {
         ApplyQueue { entries_: rusty::VecDeque::new(), epoch_: 0 }
     }
+}
+
+// The election-timeout configuration, as one value. Every field is an
+// environment override with a compiled-in default, read afresh on each call
+// exactly as the four separate getters were.
+#[repr(C)]
+pub struct RaftElectionTimeouts {
+    pub grace_period_us_: u64,
+    pub preferred_us_: u64,
+    pub non_preferred_grace_us_: u64,
+    pub non_preferred_steady_us_: u64,
 }
 
 #[repr(C)]
@@ -3753,11 +3763,10 @@ impl RaftServerBase {
     // IS the effective election timeout: there is no persistence floor to
     // add.
     pub fn GetElectionTimeout(&self) -> u64 {
+        let knobs: RaftElectionTimeouts = unsafe { raft_election_timeouts() };
         let current_time: u64 = unsafe { raft_time_now_us() };
-        let grace_period_us: u64 =
-            unsafe { raft_preferred_leader_grace_period_us() };
         let in_grace_period: bool =
-            (current_time - self.startup_timestamp_) < grace_period_us;
+            (current_time - self.startup_timestamp_) < knobs.grace_period_us_;
         // IsPreferredLeaderConfigured's whole body (server.cc). It is a DSL
         // function of the server.cc carrier, so this block cannot name it;
         // the predicate is one comparison and is spelled out rather than
@@ -3767,14 +3776,14 @@ impl RaftServerBase {
 
         if !preferred_leader_configured {
             // Traditional Raft when no preferred leader is configured.
-            unsafe { raft_non_preferred_steady_election_timeout_us() }
+            knobs.non_preferred_steady_us_
         } else if self.AmIPreferredLeader() {
-            unsafe { raft_preferred_election_timeout_us() }
+            knobs.preferred_us_
         } else if in_grace_period {
             // The startup grace timeout is env-tunable for test stability.
-            unsafe { raft_non_preferred_grace_election_timeout_us() }
+            knobs.non_preferred_grace_us_
         } else {
-            unsafe { raft_non_preferred_steady_election_timeout_us() }
+            knobs.non_preferred_steady_us_
         }
     }
 
@@ -5564,9 +5573,10 @@ impl TxLogServer for RaftServerBase {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=5c8f78ab5b473b3e1ffb67c9f87e1c720c65cba7a368cce44d41d904c5004ae4*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=f3fee17ecd41041c7af7ee78e3ecbd3dd99fe6571cf913f4f2dbfa5f8224df26*/
 struct QueuedApplyEntry;
 struct ApplyQueue;
+struct RaftElectionTimeouts;
 struct RaftVoteOutcome;
 struct RaftServerBase;
 
@@ -5581,10 +5591,7 @@ extern "C" {
     uint64_t raft_random_range_us(uint64_t low, uint64_t high);
     bool raft_leader_change_cb_is_set(const RaftServerBase* server);
     void raft_fire_leader_change(RaftServerBase* server, bool is_leader);
-    uint64_t raft_preferred_leader_grace_period_us();
-    uint64_t raft_preferred_election_timeout_us();
-    uint64_t raft_non_preferred_grace_election_timeout_us();
-    uint64_t raft_non_preferred_steady_election_timeout_us();
+    RaftElectionTimeouts raft_election_timeouts();
     void raft_log_set_is_leader_entry(const RaftServerBase* server, bool prev_is_leader, bool new_is_leader);
     void raft_append_leader_noop(RaftServerBase* server);
     bool raft_election_debug_enabled();
@@ -5635,6 +5642,16 @@ struct ApplyQueue {
     uint64_t epoch_;
 
     static ApplyQueue new_();
+};
+
+struct RaftElectionTimeouts {
+    uint64_t grace_period_us_;
+    uint64_t preferred_us_;
+    uint64_t non_preferred_grace_us_;
+    uint64_t non_preferred_steady_us_;
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
 };
 
 struct RaftVoteOutcome {
@@ -6126,30 +6143,18 @@ inline void RaftServerBase::RebuildPeerTables(uint64_t next_index) {
 }
 
 inline uint64_t RaftServerBase::GetElectionTimeout() const {
+    RaftElectionTimeouts knobs = raft_election_timeouts();
     const uint64_t current_time = raft_time_now_us();
-    const uint64_t grace_period_us = raft_preferred_leader_grace_period_us();
-    const bool in_grace_period = ((rusty::detail::deref_if_pointer_like(current_time) - rusty::detail::deref_if_pointer_like(this->startup_timestamp_))) < rusty::detail::deref_if_pointer_like(grace_period_us);
+    const bool in_grace_period = ((rusty::detail::deref_if_pointer_like(current_time) - rusty::detail::deref_if_pointer_like(this->startup_timestamp_))) < rusty::detail::deref_if_pointer_like(knobs.grace_period_us_);
     const bool preferred_leader_configured = rusty::detail::deref_if_pointer_like(this->preferred_leader_site_id_) != rusty::detail::deref_if_pointer_like(RAFT_SERVER_INVALID_SITE_ID);
     if (!preferred_leader_configured) {
-        // @unsafe
-        {
-            return raft_non_preferred_steady_election_timeout_us();
-        }
+        return std::move(knobs.non_preferred_steady_us_);
     } else if (this->AmIPreferredLeader()) {
-        // @unsafe
-        {
-            return raft_preferred_election_timeout_us();
-        }
+        return std::move(knobs.preferred_us_);
     } else if (in_grace_period) {
-        // @unsafe
-        {
-            return raft_non_preferred_grace_election_timeout_us();
-        }
+        return std::move(knobs.non_preferred_grace_us_);
     } else {
-        // @unsafe
-        {
-            return raft_non_preferred_steady_election_timeout_us();
-        }
+        return std::move(knobs.non_preferred_steady_us_);
     }
 }
 
