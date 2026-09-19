@@ -491,9 +491,10 @@ unsafe extern "C" {
                                           site_id: u16, ord: usize) -> bool;
     fn raft_batch_optimization_enabled() -> bool;
     fn raft_append_entries_batch_max() -> u64;
-    fn raft_log_entry_kind(server: *const RaftServerBase, index: u64) -> i32;
-    fn raft_copy_log_command(server: *const RaftServerBase, index: u64,
-                             cmd_out: *mut rusty::RaftCommand);
+    // The wire kind of a command, for the diagnostics that report why an
+    // entry could not be batched. It takes the COMMAND, not (server, index):
+    // the lookup is Rust, and only reading inside the opaque payload is not.
+    fn raft_command_kind(cmd: *const rusty::RaftCommand) -> i32;
     fn raft_batch_try_push(server: *mut RaftServerBase, index: u64) -> bool;
     fn raft_batch_finalize(server: *mut RaftServerBase,
                            cmd_out: *mut rusty::RaftCommand);
@@ -894,11 +895,11 @@ pub fn heartbeat_phase1_select_payload(server: &mut RaftServerBase,
                 skip_follower = true;
             } else {
                 let next: u64 = server.state_.peers_.next_index(ord);
-                let entry = server.state_.raft_log_.get(next);
-                let usable: bool = entry.is_some()
+                let slot = server.state_.raft_log_.get(next);
+                let usable: bool = slot.is_some()
                     && unsafe {
                         raft_command_has_value(
-                            entry.unwrap().cmd() as *const rusty::RaftCommand)
+                            slot.unwrap().cmd() as *const rusty::RaftCommand)
                     };
                 if !usable {
                     rusty::raft_log_error_2(
@@ -906,19 +907,18 @@ pub fn heartbeat_phase1_select_payload(server: &mut RaftServerBase,
                         next, site_id);
                     skip_follower = true;
                 } else {
-                    *cmd_log_term = entry.unwrap().term() as u64;
-                    unsafe {
-                        raft_copy_log_command(
-                            server as *const RaftServerBase, next,
-                            cmd as *mut rusty::RaftCommand);
-                    }
+                    let entry: &RaftEntry = slot.unwrap();
+                    *cmd_log_term = entry.term() as u64;
+                    // Copying a Command is a refcount bump on its inner Arc,
+                    // which is what the kernel this replaces did.
+                    *cmd = entry.cmd().clone();
                     *sent_end_index =
                         raft_server_append_sent_end(prev_log_index, 1);
                     // The kind tag identifies the payload better than the
                     // inner shared_ptr's raw address ever did.
                     let kind: i32 = unsafe {
-                        raft_log_entry_kind(server as *const RaftServerBase,
-                                            next)
+                        raft_command_kind(
+                            entry.cmd() as *const rusty::RaftCommand)
                     };
                     rusty::raft_log_debug_4(
                         "[APPEND_SEND] site={} sending entry {} to follower {} cmd_kind={}",
@@ -978,19 +978,22 @@ pub fn heartbeat_phase1_select_payload(server: &mut RaftServerBase,
             let entry_term: i64 = entry.unwrap().term();
             if !unsafe { raft_batch_try_push(server as *mut RaftServerBase, idx) }
             {
+                // Looked up again rather than held across the push above:
+                // `entry` borrows the log, and handing the push a *mut to the
+                // server ends that borrow. This branch is the rare one -- an
+                // entry that is not a TpcCommitCommand -- so the second
+                // lookup costs nothing on the batching path.
+                let slot = server.state_.raft_log_.get(idx);
                 let kind: i32 = unsafe {
-                    raft_log_entry_kind(server as *const RaftServerBase, idx)
+                    raft_command_kind(
+                        slot.unwrap().cmd() as *const rusty::RaftCommand)
                 };
                 let batched: u64 = server.batch_buffer_.len() as u64;
                 if batched == 0 {
                     rusty::raft_log_info_3(
                         "[BATCH_SKIP] site={} idx={}: log entry is not TpcCommitCommand (kind={}), using raw log",
                         server.site_id_, idx, kind);
-                    unsafe {
-                        raft_copy_log_command(
-                            server as *const RaftServerBase, idx,
-                            cmd as *mut rusty::RaftCommand);
-                    }
+                    *cmd = slot.unwrap().cmd().clone();
                     *cmd_log_term = entry_term as u64;
                     *sent_end_index =
                         raft_server_append_sent_end(prev_log_index, 1);

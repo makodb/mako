@@ -2111,9 +2111,10 @@ unsafe extern "C" {
                                           site_id: u16, ord: usize) -> bool;
     fn raft_batch_optimization_enabled() -> bool;
     fn raft_append_entries_batch_max() -> u64;
-    fn raft_log_entry_kind(server: *const RaftServerBase, index: u64) -> i32;
-    fn raft_copy_log_command(server: *const RaftServerBase, index: u64,
-                             cmd_out: *mut rusty::RaftCommand);
+    // The wire kind of a command, for the diagnostics that report why an
+    // entry could not be batched. It takes the COMMAND, not (server, index):
+    // the lookup is Rust, and only reading inside the opaque payload is not.
+    fn raft_command_kind(cmd: *const rusty::RaftCommand) -> i32;
     fn raft_batch_try_push(server: *mut RaftServerBase, index: u64) -> bool;
     fn raft_batch_finalize(server: *mut RaftServerBase,
                            cmd_out: *mut rusty::RaftCommand);
@@ -2514,11 +2515,11 @@ pub fn heartbeat_phase1_select_payload(server: &mut RaftServerBase,
                 skip_follower = true;
             } else {
                 let next: u64 = server.state_.peers_.next_index(ord);
-                let entry = server.state_.raft_log_.get(next);
-                let usable: bool = entry.is_some()
+                let slot = server.state_.raft_log_.get(next);
+                let usable: bool = slot.is_some()
                     && unsafe {
                         raft_command_has_value(
-                            entry.unwrap().cmd() as *const rusty::RaftCommand)
+                            slot.unwrap().cmd() as *const rusty::RaftCommand)
                     };
                 if !usable {
                     rusty::raft_log_error_2(
@@ -2526,19 +2527,18 @@ pub fn heartbeat_phase1_select_payload(server: &mut RaftServerBase,
                         next, site_id);
                     skip_follower = true;
                 } else {
-                    *cmd_log_term = entry.unwrap().term() as u64;
-                    unsafe {
-                        raft_copy_log_command(
-                            server as *const RaftServerBase, next,
-                            cmd as *mut rusty::RaftCommand);
-                    }
+                    let entry: &RaftEntry = slot.unwrap();
+                    *cmd_log_term = entry.term() as u64;
+                    // Copying a Command is a refcount bump on its inner Arc,
+                    // which is what the kernel this replaces did.
+                    *cmd = entry.cmd().clone();
                     *sent_end_index =
                         raft_server_append_sent_end(prev_log_index, 1);
                     // The kind tag identifies the payload better than the
                     // inner shared_ptr's raw address ever did.
                     let kind: i32 = unsafe {
-                        raft_log_entry_kind(server as *const RaftServerBase,
-                                            next)
+                        raft_command_kind(
+                            entry.cmd() as *const rusty::RaftCommand)
                     };
                     rusty::raft_log_debug_4(
                         "[APPEND_SEND] site={} sending entry {} to follower {} cmd_kind={}",
@@ -2598,19 +2598,22 @@ pub fn heartbeat_phase1_select_payload(server: &mut RaftServerBase,
             let entry_term: i64 = entry.unwrap().term();
             if !unsafe { raft_batch_try_push(server as *mut RaftServerBase, idx) }
             {
+                // Looked up again rather than held across the push above:
+                // `entry` borrows the log, and handing the push a *mut to the
+                // server ends that borrow. This branch is the rare one -- an
+                // entry that is not a TpcCommitCommand -- so the second
+                // lookup costs nothing on the batching path.
+                let slot = server.state_.raft_log_.get(idx);
                 let kind: i32 = unsafe {
-                    raft_log_entry_kind(server as *const RaftServerBase, idx)
+                    raft_command_kind(
+                        slot.unwrap().cmd() as *const rusty::RaftCommand)
                 };
                 let batched: u64 = server.batch_buffer_.len() as u64;
                 if batched == 0 {
                     rusty::raft_log_info_3(
                         "[BATCH_SKIP] site={} idx={}: log entry is not TpcCommitCommand (kind={}), using raw log",
                         server.site_id_, idx, kind);
-                    unsafe {
-                        raft_copy_log_command(
-                            server as *const RaftServerBase, idx,
-                            cmd as *mut rusty::RaftCommand);
-                    }
+                    *cmd = slot.unwrap().cmd().clone();
                     *cmd_log_term = entry_term as u64;
                     *sent_end_index =
                         raft_server_append_sent_end(prev_log_index, 1);
@@ -4079,7 +4082,7 @@ pub fn on_append_entries_body(server: &mut RaftServerBase,
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_round_scope version=1 rust_sha256=87ec8011567d69db194e245d65d48e771da4a60d13b68a2567f7adbf36189a89*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_round_scope version=1 rust_sha256=84747caecf64528ab3ebc6977d307fe8745e3d3b59033de19f94bdb0968dc699*/
 enum class AppendReplyAction : int32_t;
 constexpr AppendReplyAction AppendReplyAction_IGNORED();
 constexpr AppendReplyAction AppendReplyAction_STEP_DOWN();
@@ -4132,8 +4135,7 @@ extern "C" {
     bool raft_phase1_load_and_send_snapshot(server_h::RaftServerBase* server, uint16_t site_id, size_t ord);
     bool raft_batch_optimization_enabled();
     uint64_t raft_append_entries_batch_max();
-    int32_t raft_log_entry_kind(const server_h::RaftServerBase* server, uint64_t index);
-    void raft_copy_log_command(const server_h::RaftServerBase* server, uint64_t index, rusty::RaftCommand* cmd_out);
+    int32_t raft_command_kind(const rusty::RaftCommand* cmd);
     bool raft_batch_try_push(server_h::RaftServerBase* server, uint64_t index);
     void raft_batch_finalize(server_h::RaftServerBase* server, rusty::RaftCommand* cmd_out);
     rusty::RaftResponsePtr raft_phase1_send_append(server_h::RaftServerBase* server, uint16_t site_id, uint32_t partition_id, bool is_leader, uint64_t term, uint64_t prev_log_index, uint64_t prev_log_term, uint64_t commit_index, const rusty::RaftCommand* cmd, uint64_t cmd_log_term);
@@ -4393,6 +4395,7 @@ bool heartbeat_phase0_body(server_h::RaftServerBase& server, PendingTable& pendi
 }
 
 bool heartbeat_phase1_select_payload(server_h::RaftServerBase& server, size_t ord, uint16_t site_id, uint64_t prev_log_index, rusty::RaftCommand& cmd, uint64_t& cmd_log_term, uint64_t& sent_end_index) {
+    rusty::RaftCommand* cmd_shadow1 = &cmd;
     uint64_t* cmd_log_term_shadow1 = &cmd_log_term;
     uint64_t* sent_end_index_shadow1 = &sent_end_index;
     bool skip_follower = false;
@@ -4403,20 +4406,18 @@ bool heartbeat_phase1_select_payload(server_h::RaftServerBase& server, size_t or
                 rusty::raft_log_error_2("[HEARTBEAT-SEND] Log index exhausted after {}, skipping follower {}", std::move(prev_log_index), std::move(site_id));
                 skip_follower = true;
             } else {
-                uint64_t next = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.peers_); }) { return (__r.peers_); } else if constexpr (requires { (__r.peers__field); }) { return (__r.peers__field); } else if constexpr (requires { ((*__r).peers_); }) { return ((*__r).peers_); } else { return ((*__r).peers__field); } }(server.state_).next_index(std::move(ord));
-                auto entry = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }(server.state_).get(std::move(next));
-                const bool usable = entry.is_some() && raft_command_has_value(rusty::detail::ptr_cast<const rusty::RaftCommand*>(entry.unwrap().cmd()));
+                const uint64_t next = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.peers_); }) { return (__r.peers_); } else if constexpr (requires { (__r.peers__field); }) { return (__r.peers__field); } else if constexpr (requires { ((*__r).peers_); }) { return ((*__r).peers_); } else { return ((*__r).peers__field); } }(server.state_).next_index(std::move(ord));
+                auto slot = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }(server.state_).get(std::move(next));
+                const bool usable = slot.is_some() && raft_command_has_value(rusty::detail::ptr_cast<const rusty::RaftCommand*>(slot.unwrap().cmd()));
                 if (!usable) {
                     rusty::raft_log_error_2("[HEARTBEAT-SEND] Missing log entry {}, skipping follower {}", std::move(next), std::move(site_id));
                     skip_follower = true;
                 } else {
-                    *cmd_log_term_shadow1 = static_cast<uint64_t>(entry.unwrap().term());
-                    // @unsafe
-                    {
-                        raft_copy_log_command(static_cast<const server_h::RaftServerBase*>(rusty::detail::ptr_or_addr(server)), std::move(next), static_cast<rusty::RaftCommand*>(rusty::detail::ptr_or_addr(cmd)));
-                    }
+                    const server_h::RaftEntry& entry = slot.unwrap();
+                    *cmd_log_term_shadow1 = static_cast<uint64_t>(entry.term());
+                    *cmd_shadow1 = rusty::clone(entry.cmd());
                     *sent_end_index_shadow1 = raft_server_append_sent_end(std::move(prev_log_index), 1);
-                    const int32_t kind = raft_log_entry_kind(static_cast<const server_h::RaftServerBase*>(rusty::detail::ptr_or_addr(server)), std::move(next));
+                    const int32_t kind = raft_command_kind(rusty::detail::ptr_cast<const rusty::RaftCommand*>(entry.cmd()));
                     rusty::raft_log_debug_4("[APPEND_SEND] site={} sending entry {} to follower {} cmd_kind={}", server.site_id_, std::move(next), std::move(site_id), std::move(kind));
                 }
             }
@@ -4447,14 +4448,12 @@ bool heartbeat_phase1_select_payload(server_h::RaftServerBase& server, size_t or
             }
             const int64_t entry_term = entry.unwrap().term();
             if (!raft_batch_try_push(static_cast<server_h::RaftServerBase*>(rusty::detail::ptr_or_addr(server)), std::move(idx))) {
-                const int32_t kind = raft_log_entry_kind(static_cast<const server_h::RaftServerBase*>(rusty::detail::ptr_or_addr(server)), std::move(idx));
+                auto slot = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }(server.state_).get(std::move(idx));
+                const int32_t kind = raft_command_kind(rusty::detail::ptr_cast<const rusty::RaftCommand*>(slot.unwrap().cmd()));
                 const uint64_t batched = static_cast<uint64_t>(rusty::len(server.batch_buffer_));
                 if (rusty::detail::deref_if_pointer_like(batched) == static_cast<uint64_t>(0)) {
                     rusty::raft_log_info_3("[BATCH_SKIP] site={} idx={}: log entry is not TpcCommitCommand (kind={}), using raw log", server.site_id_, std::move(idx), std::move(kind));
-                    // @unsafe
-                    {
-                        raft_copy_log_command(static_cast<const server_h::RaftServerBase*>(rusty::detail::ptr_or_addr(server)), std::move(idx), static_cast<rusty::RaftCommand*>(rusty::detail::ptr_or_addr(cmd)));
-                    }
+                    *cmd_shadow1 = rusty::clone(slot.unwrap().cmd());
                     *cmd_log_term_shadow1 = static_cast<uint64_t>(entry_term);
                     *sent_end_index_shadow1 = raft_server_append_sent_end(std::move(prev_log_index), 1);
                 } else {
@@ -4476,7 +4475,7 @@ bool heartbeat_phase1_select_payload(server_h::RaftServerBase& server, size_t or
     if (!skip_follower && (rusty::detail::deref_if_pointer_like(encoded_entry_count) > 0)) {
         // @unsafe
         {
-            raft_batch_finalize(static_cast<server_h::RaftServerBase*>(rusty::detail::ptr_or_addr(server)), static_cast<rusty::RaftCommand*>(rusty::detail::ptr_or_addr(cmd)));
+            raft_batch_finalize(static_cast<server_h::RaftServerBase*>(rusty::detail::ptr_or_addr(server)), static_cast<rusty::RaftCommand*>(rusty::detail::ptr_or_addr((*cmd_shadow1))));
         }
         *sent_end_index_shadow1 = raft_server_append_sent_end(std::move(prev_log_index), std::move(encoded_entry_count));
         const uint64_t batch_end_idx = *sent_end_index_shadow1;
@@ -5279,20 +5278,10 @@ uint64_t raft_append_entries_batch_max() {
   return GetAppendEntriesBatchMaxEntries();
 }
 
-// The wire kind of the command at a log index, for the diagnostics that
-// report why an entry could not be batched.
-int32_t raft_log_entry_kind(const RaftServerBase* self, uint64_t index) {
-  const auto found = self->state_.raft_log_.get(index);
-  verify(found.is_some());
-  return static_cast<int32_t>(found.unwrap().cmd().kind_);
-}
-
-// Copies the stored command out of the log, for the single-entry paths.
-void raft_copy_log_command(const RaftServerBase* self, uint64_t index,
-                           rusty::RaftCommand* cmd_out) {
-  const auto found = self->state_.raft_log_.get(index);
-  verify(found.is_some());
-  *cmd_out = found.unwrap().cmd();
+// The wire kind of a command. The lookup that produced it is Rust; this only
+// reads a field of the opaque payload.
+int32_t raft_command_kind(const rusty::RaftCommand* cmd) {
+  return static_cast<int32_t>(cmd->kind_);
 }
 
 // Appends the entry at `index` to the batch under assembly. Returns false
