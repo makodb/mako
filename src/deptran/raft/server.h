@@ -3056,7 +3056,12 @@ unsafe extern "C" {
     fn raft_bind_replication_poll(server: *mut RaftServerBase) -> bool;
     fn raft_initialize_snapshot_manager(server: *mut RaftServerBase) -> bool;
     fn raft_load_current_config(server: *mut RaftServerBase) -> u64;
-    fn raft_start_apply_thread(server: *mut RaftServerBase);
+    // Only the std::thread construction. The flag and the loop are Rust.
+    fn raft_spawn_apply_thread(server: *mut RaftServerBase);
+    // Nulls the server back-pointer the async-RPC gate holds, under the
+    // gate's own mutex. Both the mutex and the shared_ptr live inside an
+    // opaque C++ type, so this stays a kernel.
+    fn raft_clear_async_callback_owner(server: *mut RaftServerBase);
     fn raft_spawn_heartbeat_loop(server: *mut RaftServerBase);
     fn raft_spawn_election_timer_fiber(server: *mut RaftServerBase);
     fn raft_snapshot_serialize_and_save(server: *mut RaftServerBase,
@@ -4036,9 +4041,7 @@ impl RaftServerBase {
             "[RAFT-CONFIG] Initialized current_config_ for site {} partition {} with {} replicas",
             self.site_id_, self.partition_id_, replicas);
 
-        unsafe {
-            raft_start_apply_thread(self as *mut RaftServerBase);
-        }
+        self.StartApplyThread();
         self.rpc_ready_
             .store(true, rusty::sync::atomic::Ordering::Release);
 
@@ -4652,8 +4655,56 @@ impl RaftServerBase {
             retain_suffix, purged_apply_entries);
     }
 
-    // @unsafe - the background apply thread's loop. Runs on its own
-    // std::thread, which RaftServer::StartApplyThread spawns.
+    // @unsafe - starts the background apply thread. The flag is Rust; only
+    // the std::thread construction is a kernel, and the thread stays
+    // JOINABLE so Shutdown can await it. Detaching causes use-after-free:
+    // the thread holds the server and keeps pulling from the apply queue
+    // after the server is destroyed, which shows up as an empty
+    // std::function invocation.
+    pub fn StartApplyThread(&mut self) {
+        self.apply_thread_running_
+            .store(true, rusty::sync::atomic::Ordering::SeqCst);
+        unsafe {
+            raft_spawn_apply_thread(self as *mut RaftServerBase);
+        }
+    }
+
+    // @unsafe - everything RaftServer's destructor used to do. Idempotent for
+    // a server that was never started and for one whose caller already ran
+    // PrepareForShutdown; a live server must be prepared on a reactor fiber
+    // before this runs.
+    pub fn Shutdown(&mut self) {
+        self.stop_.store(true, rusty::sync::atomic::Ordering::Release);
+        self.looping_
+            .store(false, rusty::sync::atomic::Ordering::Release);
+        self.CloseReplicationWakeGate();
+        unsafe {
+            raft_verify(!self
+                .heartbeat_loop_running_
+                .load(rusty::sync::atomic::Ordering::Acquire));
+            raft_verify(!self
+                .election_loop_running_
+                .load(rusty::sync::atomic::Ordering::Acquire));
+            raft_clear_async_callback_owner(self as *mut RaftServerBase);
+        }
+
+        // Stop and join the apply thread if it was started. The thread holds
+        // the server and walks the apply queue and app_next_, so it must
+        // finish before any member state is destroyed.
+        self.apply_thread_running_
+            .store(false, rusty::sync::atomic::Ordering::SeqCst);
+        unsafe {
+            raft_apply_thread_join(self as *mut RaftServerBase);
+        }
+
+        rusty::raft_log_info_5(
+            "site par {}, loc {}: prepare {}, accept {}, commit {}",
+            self.partition_id_, self.loc_id_, self.n_prepare_,
+            self.n_accept_, self.n_commit_);
+    }
+
+    // @unsafe - the background apply thread's loop. Runs on the std::thread
+    // StartApplyThread spawns.
     // `%`, an explicit max and an explicit clamp rather than their idiomatic
     // Rust forms: this lowers to C++, where uint64_t has no such members.
     #[allow(clippy::manual_is_multiple_of, clippy::implicit_saturating_sub,
@@ -5596,7 +5647,7 @@ impl TxLogServer for RaftServerBase {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=a6f09984c0132e563d477b1a2f209f0093dc89847bc55344b12f764623d62fac*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=0e620dfae6846693f1afd28e0698fb941c244ca477a1cb87058052d80e337485*/
 struct QueuedApplyEntry;
 struct ApplyQueue;
 struct RaftElectionTimeouts;
@@ -5637,7 +5688,8 @@ extern "C" {
     bool raft_bind_replication_poll(RaftServerBase* server);
     bool raft_initialize_snapshot_manager(RaftServerBase* server);
     uint64_t raft_load_current_config(RaftServerBase* server);
-    void raft_start_apply_thread(RaftServerBase* server);
+    void raft_spawn_apply_thread(RaftServerBase* server);
+    void raft_clear_async_callback_owner(RaftServerBase* server);
     void raft_spawn_heartbeat_loop(RaftServerBase* server);
     void raft_spawn_election_timer_fiber(RaftServerBase* server);
     bool raft_snapshot_serialize_and_save(RaftServerBase* server, uint64_t snap_index, int64_t snap_term);
@@ -5794,6 +5846,8 @@ struct RaftServerBase : public TxLogServer {
     void InstallSnapshotReplyAccepted(uint16_t site_id, size_t ord, uint64_t snap_last_idx, uint64_t send_term, uint64_t follower_term);
     void FailStop();
     void OnInstallSnapshotLocked(uint64_t term, uint64_t leader_id, uint64_t last_included_index, uint64_t last_included_term, const rusty::RaftByteString* data, uint64_t& term_out);
+    void StartApplyThread();
+    void Shutdown();
     void ApplyThreadLoop();
     void FailClosed();
     bool CreateSnapshotLocked();
@@ -6304,10 +6358,7 @@ inline bool RaftServerBase::SetupInternal() {
     }
     const uint64_t replicas = raft_load_current_config(static_cast<RaftServerBase*>(rusty::detail::ptr_or_addr((*this))));
     rusty::raft_log_info_3("[RAFT-CONFIG] Initialized current_config_ for site {} partition {} with {} replicas", this->site_id_, this->partition_id_, std::move(replicas));
-    // @unsafe
-    {
-        raft_start_apply_thread(static_cast<RaftServerBase*>(rusty::detail::ptr_or_addr((*this))));
-    }
+    this->StartApplyThread();
     this->rpc_ready_.store(true, rusty::sync::atomic::Ordering::Release);
     if (this->heartbeat_) {
         rusty::raft_log_debug_1("starting heartbeat loop at site {}", this->site_id_);
@@ -6610,6 +6661,32 @@ inline void RaftServerBase::OnInstallSnapshotLocked(uint64_t term, uint64_t lead
     }
     this->PublishAppliedIndexLocked(std::move(last_included_index));
     rusty::raft_log_info_9("[INSTALL-SNAPSHOT] Site {}: Installed snapshot from leader {} (snapidx={}, snapterm={}, state_.commit_index_={}, state_.execute_index_={}, state_.raft_log_.last_index()={}, retain_suffix={}, purged_apply={})", this->site_id_, std::move(leader_id), this->state_.snapidx_, this->state_.snapterm_, this->state_.commit_index_, this->state_.execute_index_, this->state_.raft_log_.last_index(), std::move(retain_suffix), std::move(purged_apply_entries));
+}
+
+inline void RaftServerBase::StartApplyThread() {
+    this->apply_thread_running_.store(true, rusty::sync::atomic::Ordering::SeqCst);
+    // @unsafe
+    {
+        raft_spawn_apply_thread(static_cast<RaftServerBase*>(rusty::detail::ptr_or_addr((*this))));
+    }
+}
+
+inline void RaftServerBase::Shutdown() {
+    this->stop_.store(true, rusty::sync::atomic::Ordering::Release);
+    this->looping_.store(false, rusty::sync::atomic::Ordering::Release);
+    this->CloseReplicationWakeGate();
+    // @unsafe
+    {
+        raft_verify(rusty::detail::rust_not(this->heartbeat_loop_running_.load(rusty::sync::atomic::Ordering::Acquire)));
+        raft_verify(rusty::detail::rust_not(this->election_loop_running_.load(rusty::sync::atomic::Ordering::Acquire)));
+        raft_clear_async_callback_owner(static_cast<RaftServerBase*>(rusty::detail::ptr_or_addr((*this))));
+    }
+    this->apply_thread_running_.store(false, rusty::sync::atomic::Ordering::SeqCst);
+    // @unsafe
+    {
+        raft_apply_thread_join(static_cast<RaftServerBase*>(rusty::detail::ptr_or_addr((*this))));
+    }
+    rusty::raft_log_info_5("site par {}, loc {}: prepare {}, accept {}, commit {}", this->partition_id_, this->loc_id_, this->n_prepare_, this->n_accept_, this->n_commit_);
 }
 
 inline void RaftServerBase::ApplyThreadLoop() {
@@ -7489,7 +7566,6 @@ class RaftServer : public RaftServerBase {
 
 
  public:  // for the kernel bridge (server.cc); private again once converted
-  void StartApplyThread();
  private:
  public:  // for the raft_ae_* trampolines; back to private when converted
  private:

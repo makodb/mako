@@ -778,8 +778,19 @@ uint64_t raft_load_current_config(RaftServerBase* self) {
   return sorted_unique.size();
 }
 
-void raft_start_apply_thread(RaftServerBase* self) {
-  static_cast<RaftServer*>(self)->StartApplyThread();
+// The std::thread construction, and nothing else: the running flag and the
+// loop body are both Rust. Joinable on purpose -- see StartApplyThread.
+void raft_spawn_apply_thread(RaftServerBase* self) {
+  self->apply_thread_ = std::thread([self]() { self->ApplyThreadLoop(); });
+}
+
+// The async-RPC gate's back-pointer, cleared under the gate's own mutex.
+// AsyncCallbackLifetime is a hand-written C++ struct holding a std::mutex,
+// and the field is a std::shared_ptr to it, so neither half has a DSL
+// spelling.
+void raft_clear_async_callback_owner(RaftServerBase* self) {
+  std::lock_guard<std::mutex> lifetime_lock(self->async_callback_lifetime_->mutex);
+  self->async_callback_lifetime_->server = nullptr;
 }
 
 // Forward-declared because the emitter writes definitions in source order and
@@ -952,16 +963,6 @@ RaftServer::RaftServer() {
 // create_sp_int_event has no DSL spelling.
 extern "C" rusty::Arc<rrr::IntEvent> raft_create_int_event() {
   return create_sp_int_event(1);
-}
-
-void RaftServer::StartApplyThread() {
-  apply_thread_running_.store(true, rusty::sync::atomic::Ordering::SeqCst);
-  // The loop is Rust (RaftServerBase::ApplyThreadLoop). Keep the thread
-  // JOINABLE so the destructor can await it: detaching causes
-  // use-after-free, because the thread captures `this` and keeps running
-  // after ~RaftServer has destroyed the server, which shows up as an empty
-  // std::function invocation the next time it pulls from apply_queue_.
-  apply_thread_ = std::thread([this]() { this->ApplyThreadLoop(); });
 }
 
 
@@ -5383,34 +5384,10 @@ AppendRespView raft_append_response_read(
 // an inner loop and is untouched.
 // @unsafe - suspends on the wake gate; false means shutdown, not a timeout
 // @unsafe - thread join and timer cleanup require manual resource management
-RaftServer::~RaftServer() {
-  // Make shutdown idempotent for never-started servers and for callers that
-  // already completed PrepareForShutdown().  A live server must be prepared
-  // on a reactor fiber before its destructor runs.
-  stop_.store(true, rusty::sync::atomic::Ordering::Release);
-  looping_.store(false, rusty::sync::atomic::Ordering::Release);
-  CloseReplicationWakeGate();
-  verify(!heartbeat_loop_running_.load(
-      rusty::sync::atomic::Ordering::Acquire));
-  verify(!election_loop_running_.load(
-      rusty::sync::atomic::Ordering::Acquire));
-
-  {
-    std::lock_guard<std::mutex> lifetime_lock(async_callback_lifetime_->mutex);
-    async_callback_lifetime_->server = nullptr;
-  }
-
-  // Stop and join the background apply thread if it was started. The thread
-  // captures `this` and walks apply_queue_ / app_next_, so it must finish
-  // before any member state is destroyed.
-  apply_thread_running_.store(false, rusty::sync::atomic::Ordering::SeqCst);
-  if (apply_thread_.joinable()) {
-    apply_thread_.join();
-  }
-
-  Log_info("site par {}, loc {}: prepare {}, accept {}, commit {}",
-      partition_id_, loc_id_, n_prepare_, n_accept_, n_commit_);
-}
+// The body is RaftServerBase::Shutdown. A destructor cannot be a DSL method
+// -- it is the one C++ special member with no Rust spelling -- so this is
+// the whole of what is left.
+RaftServer::~RaftServer() { Shutdown(); }
 
 
 // @unsafe - calls @safe doVote, external calls marked @external [safe]

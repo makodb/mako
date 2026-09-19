@@ -1338,7 +1338,12 @@ unsafe extern "C" {
     fn raft_bind_replication_poll(server: *mut RaftServerBase) -> bool;
     fn raft_initialize_snapshot_manager(server: *mut RaftServerBase) -> bool;
     fn raft_load_current_config(server: *mut RaftServerBase) -> u64;
-    fn raft_start_apply_thread(server: *mut RaftServerBase);
+    // Only the std::thread construction. The flag and the loop are Rust.
+    fn raft_spawn_apply_thread(server: *mut RaftServerBase);
+    // Nulls the server back-pointer the async-RPC gate holds, under the
+    // gate's own mutex. Both the mutex and the shared_ptr live inside an
+    // opaque C++ type, so this stays a kernel.
+    fn raft_clear_async_callback_owner(server: *mut RaftServerBase);
     fn raft_spawn_heartbeat_loop(server: *mut RaftServerBase);
     fn raft_spawn_election_timer_fiber(server: *mut RaftServerBase);
     fn raft_snapshot_serialize_and_save(server: *mut RaftServerBase,
@@ -2318,9 +2323,7 @@ impl RaftServerBase {
             "[RAFT-CONFIG] Initialized current_config_ for site {} partition {} with {} replicas",
             self.site_id_, self.partition_id_, replicas);
 
-        unsafe {
-            raft_start_apply_thread(self as *mut RaftServerBase);
-        }
+        self.StartApplyThread();
         self.rpc_ready_
             .store(true, rusty::sync::atomic::Ordering::Release);
 
@@ -2934,8 +2937,56 @@ impl RaftServerBase {
             retain_suffix, purged_apply_entries);
     }
 
-    // @unsafe - the background apply thread's loop. Runs on its own
-    // std::thread, which RaftServer::StartApplyThread spawns.
+    // @unsafe - starts the background apply thread. The flag is Rust; only
+    // the std::thread construction is a kernel, and the thread stays
+    // JOINABLE so Shutdown can await it. Detaching causes use-after-free:
+    // the thread holds the server and keeps pulling from the apply queue
+    // after the server is destroyed, which shows up as an empty
+    // std::function invocation.
+    pub fn StartApplyThread(&mut self) {
+        self.apply_thread_running_
+            .store(true, rusty::sync::atomic::Ordering::SeqCst);
+        unsafe {
+            raft_spawn_apply_thread(self as *mut RaftServerBase);
+        }
+    }
+
+    // @unsafe - everything RaftServer's destructor used to do. Idempotent for
+    // a server that was never started and for one whose caller already ran
+    // PrepareForShutdown; a live server must be prepared on a reactor fiber
+    // before this runs.
+    pub fn Shutdown(&mut self) {
+        self.stop_.store(true, rusty::sync::atomic::Ordering::Release);
+        self.looping_
+            .store(false, rusty::sync::atomic::Ordering::Release);
+        self.CloseReplicationWakeGate();
+        unsafe {
+            raft_verify(!self
+                .heartbeat_loop_running_
+                .load(rusty::sync::atomic::Ordering::Acquire));
+            raft_verify(!self
+                .election_loop_running_
+                .load(rusty::sync::atomic::Ordering::Acquire));
+            raft_clear_async_callback_owner(self as *mut RaftServerBase);
+        }
+
+        // Stop and join the apply thread if it was started. The thread holds
+        // the server and walks the apply queue and app_next_, so it must
+        // finish before any member state is destroyed.
+        self.apply_thread_running_
+            .store(false, rusty::sync::atomic::Ordering::SeqCst);
+        unsafe {
+            raft_apply_thread_join(self as *mut RaftServerBase);
+        }
+
+        rusty::raft_log_info_5(
+            "site par {}, loc {}: prepare {}, accept {}, commit {}",
+            self.partition_id_, self.loc_id_, self.n_prepare_,
+            self.n_accept_, self.n_commit_);
+    }
+
+    // @unsafe - the background apply thread's loop. Runs on the std::thread
+    // StartApplyThread spawns.
     // `%`, an explicit max and an explicit clamp rather than their idiomatic
     // Rust forms: this lowers to C++, where uint64_t has no such members.
     #[allow(clippy::manual_is_multiple_of, clippy::implicit_saturating_sub,
