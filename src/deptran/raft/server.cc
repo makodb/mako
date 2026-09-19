@@ -782,9 +782,15 @@ void raft_start_apply_thread(RaftServerBase* self) {
   static_cast<RaftServer*>(self)->StartApplyThread();
 }
 
+// Forward-declared because the emitter writes definitions in source order and
+// the heartbeat block is further down this file; the fiber spawn is up here
+// with the other spawns.
+void heartbeat_loop_body(RaftServerBase* server);
+
 void raft_spawn_heartbeat_loop(RaftServerBase* self) {
-  RaftServer* const server = static_cast<RaftServer*>(self);
-  Fiber::create_run([server]() { server->HeartbeatLoop(); });
+  // The loop is Rust end to end now (heartbeat_loop_body); this is only the
+  // fiber spawn, which has no DSL spelling.
+  Fiber::create_run([self]() { heartbeat_loop_body(self); });
 }
 
 void raft_spawn_election_timer_fiber(RaftServerBase* self) {
@@ -2052,17 +2058,18 @@ inline AuthorityOutcome AuthorityLedger::settle(bool is_leader, uint64_t current
 }
 /*RUSTYCPP:GEN-END id=raft_server.authority_ledger*/
 
-// @unsafe - Heartbeat loop mutates shared state, performs RPCs, and uses raw pointers.
 // ============================================================================
-// HEARTBEAT LOOP: the C++ half of the DSL-owned HeartbeatDriver
+// THE HEARTBEAT LOOP
 //
-// The loop and the lifecycle are Rust, in the raft_server.heartbeat_driver
-// block in server.h. What stays here is the round body -- moved verbatim, not
-// rewritten -- plus the prologue and epilogue. Splitting the round into its
-// four phases is the next tranche; doing it in the same change as the loop
-// extraction would have put the phase boundaries and the loop boundary at
-// risk together, and the phases carry twenty inner break/continue statements
-// whose meaning depends on exactly which loop encloses them.
+// All of it: the round scope, the commit rule, the four phases, the state
+// they carry between them, and the driver that sequences them. The C++ that
+// remains is the fiber spawn in raft_spawn_heartbeat_loop and the kernels
+// each phase calls for work with no DSL spelling -- RPC sends, marshalling,
+// the snapshot manager.
+//
+// Read it in protocol order: the round scope and the commit rule both PHASE 0
+// and PHASE 3 apply, then PHASE 0 through PHASE 3, then the driver, then the
+// two inbound RPC bodies.
 // ============================================================================
 
 // The values that outlive a phase but not a round. PHASE 0 establishes all of
@@ -3380,6 +3387,101 @@ pub fn heartbeat_phase3_body(server: &mut RaftServerBase,
 }
 
 // ==========================================================================
+// THE ROUND DRIVER
+//
+// Sequences the four phases above. It is here rather than in server.h --
+// where it used to be, beside RaftServerBase -- because a DSL block can only
+// call what precedes it, and the phase bodies are in this file. Moving it
+// deleted the four `raft_heartbeat_phase*` trampolines and the round-state
+// cast they existed to perform.
+// ==========================================================================
+
+// Everything one round carries between its phases. This was a hand-written
+// C++ struct whose four members were already DSL types -- it existed only
+// because the DSL has no default member initialisers, which `fn new` solves.
+// Being C++ was not free: the phases could not be called with it, so the
+// driver passed it as `*mut c_void` and four kernels cast it back and split
+// it into members.
+pub struct HeartbeatRoundState {
+    // At most one AppendEntries in flight per follower. A synchronous
+    // follower may legitimately take longer than one heartbeat interval to
+    // persist an entry; retaining its context lets a later round consume that
+    // acknowledgement instead of queueing duplicate writes and discarding
+    // every late success.
+    pending_rpcs_: PendingTable,
+    authority_rounds_: AuthorityLedger,
+    pending_leader_term_: rusty::Option<u64>,
+    // PHASE 0 establishes every field of this each round, so it needs no
+    // reset; when PHASE 0 declines the round, phases 1-3 never read it.
+    scope_: HeartbeatRoundScope,
+}
+
+#[allow(clippy::new_without_default)]
+impl HeartbeatRoundState {
+    pub fn new() -> HeartbeatRoundState {
+        HeartbeatRoundState {
+            pending_rpcs_: PendingTable::new(),
+            authority_rounds_: AuthorityLedger::new(),
+            pending_leader_term_: rusty::None,
+            scope_: HeartbeatRoundScope::new(),
+        }
+    }
+}
+
+// The driver OWNS its round state rather than pointing at one the caller
+// stack-allocated, which is what the `*mut c_void` handle used to be.
+pub struct HeartbeatDriver {
+    server_: *mut RaftServerBase,
+    round_: HeartbeatRoundState,
+}
+
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+impl HeartbeatDriver {
+    pub fn new(server: *mut RaftServerBase) -> HeartbeatDriver {
+        HeartbeatDriver { server_: server, round_: HeartbeatRoundState::new() }
+    }
+
+    // decide -> emit -> collect -> decide, which is the shape the C++ already
+    // had as four comment-delimited phases. It is now the shape of the Rust
+    // that sequences them, and the phases are called directly.
+    pub fn run(&mut self) {
+        let server: &mut RaftServerBase = unsafe { &mut *self.server_ };
+        server.HeartbeatPrologue();
+        while server.HeartbeatLooping() {
+            // The wake gate returns false on shutdown rather than on timeout.
+            if !server.HeartbeatWait() {
+                break;
+            }
+            // PHASE 0 declines the round when leadership is not held. The C++
+            // spelled that `continue`.
+            if !heartbeat_phase0_body(server,
+                                      &mut self.round_.pending_rpcs_,
+                                      &mut self.round_.authority_rounds_,
+                                      &mut self.round_.pending_leader_term_,
+                                      &mut self.round_.scope_) {
+                continue;
+            }
+            heartbeat_phase1_body(server, &mut self.round_.pending_rpcs_,
+                                  &mut self.round_.authority_rounds_,
+                                  &self.round_.scope_);
+            heartbeat_phase2_body(server, &mut self.round_.pending_rpcs_,
+                                  &mut self.round_.authority_rounds_,
+                                  &self.round_.scope_);
+            heartbeat_phase3_body(server, &mut self.round_.authority_rounds_,
+                                  &self.round_.scope_);
+        }
+        server.HeartbeatEpilogue();
+    }
+}
+
+// The whole loop, so the C++ side is one fiber spawn rather than a method.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub fn heartbeat_loop_body(server: *mut RaftServerBase) {
+    let mut driver = HeartbeatDriver::new(server);
+    driver.run();
+}
+
+// ==========================================================================
 // INBOUND RequestVote
 // ==========================================================================
 
@@ -3979,7 +4081,7 @@ pub fn on_append_entries_body(server: &mut RaftServerBase,
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_round_scope version=1 rust_sha256=31b7d292f81ae0ab26a55ff1b316b0252667203b628417363c8e171d58fd43b5*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_round_scope version=1 rust_sha256=887ba7861132520c8da932bfa25665a746a9544e78098e34b3f838d891da15a9*/
 enum class AppendReplyAction : int32_t;
 constexpr AppendReplyAction AppendReplyAction_IGNORED();
 constexpr AppendReplyAction AppendReplyAction_STEP_DOWN();
@@ -3995,6 +4097,8 @@ struct SentAppend;
 struct AppendReply;
 struct AppendReplyOutcome;
 struct Phase3Outcome;
+struct HeartbeatRoundState;
+struct HeartbeatDriver;
 struct AppendReport;
 bool heartbeat_round_saturated(uint64_t round_counter);
 AppendReplyOutcome append_reply_nothing(AppendReplyAction action);
@@ -4153,6 +4257,23 @@ struct Phase3Outcome {
     // Rust derives Send/Sync from the field types; C++ cannot see them.
     static constexpr bool is_send = true;
     static constexpr bool is_sync = true;
+};
+
+struct HeartbeatRoundState {
+    PendingTable pending_rpcs_;
+    AuthorityLedger authority_rounds_;
+    rusty::Option<uint64_t> pending_leader_term_;
+    HeartbeatRoundScope scope_;
+
+    static HeartbeatRoundState new_();
+};
+
+struct HeartbeatDriver {
+    server_h::RaftServerBase* server_;
+    HeartbeatRoundState round_;
+
+    static HeartbeatDriver new_(server_h::RaftServerBase* server);
+    void run();
 };
 
 struct AppendReport {
@@ -4651,6 +4772,11 @@ void heartbeat_phase3_body(server_h::RaftServerBase& server, AuthorityLedger& au
     }
 }
 
+void heartbeat_loop_body(server_h::RaftServerBase* server) {
+    auto driver = HeartbeatDriver::new_(server);
+    driver.run();
+}
+
 /// # Safety
 ///
 /// `server` must be a live `RaftServer*`, and the caller must hold that
@@ -5003,6 +5129,31 @@ inline bool Phase3Outcome::confirmed() const {
     return this->confirmed_;
 }
 
+inline HeartbeatRoundState HeartbeatRoundState::new_() {
+    return HeartbeatRoundState{.pending_rpcs_ = PendingTable::new_(), .authority_rounds_ = AuthorityLedger::new_(), .pending_leader_term_ = rusty::None, .scope_ = HeartbeatRoundScope::new_()};
+}
+
+inline HeartbeatDriver HeartbeatDriver::new_(server_h::RaftServerBase* server) {
+    return HeartbeatDriver{.server_ = server, .round_ = HeartbeatRoundState::new_()};
+}
+
+inline void HeartbeatDriver::run() {
+    server_h::RaftServerBase& server = *this->server_;
+    server.HeartbeatPrologue();
+    while (server.HeartbeatLooping()) {
+        if (rusty::detail::rust_not(server.HeartbeatWait())) {
+            break;
+        }
+        if (!heartbeat_phase0_body(server, this->round_.pending_rpcs_, this->round_.authority_rounds_, this->round_.pending_leader_term_, this->round_.scope_)) {
+            continue;
+        }
+        heartbeat_phase1_body(server, this->round_.pending_rpcs_, this->round_.authority_rounds_, this->round_.scope_);
+        heartbeat_phase2_body(server, this->round_.pending_rpcs_, this->round_.authority_rounds_, this->round_.scope_);
+        heartbeat_phase3_body(server, this->round_.authority_rounds_, this->round_.scope_);
+    }
+    server.HeartbeatEpilogue();
+}
+
 inline bool AppendReport::accepted() const {
     return this->accepted_;
 }
@@ -5232,22 +5383,6 @@ AppendRespView raft_append_response_read(
 // stay C++ because unique_ptr<PendingAppendEntries> and the wire types inside
 // PendingHeartbeatAuthority have no DSL spelling; the Rust driver carries this
 // object as an opaque handle and never looks inside it.
-struct HeartbeatRoundState {
-  // Keep at most one AppendEntries RPC in flight per follower. A synchronous
-  // follower may legitimately take longer than one heartbeat interval to
-  // persist an entry; retaining its context lets a later round consume that
-  // acknowledgement instead of queueing duplicate writes and discarding every
-  // late success.
-  PendingTable pending_rpcs{PendingTable::new_()};
-  AuthorityLedger authority_rounds{AuthorityLedger::new_()};
-  // rusty::Option, not std::optional: PHASE 0 is a DSL body now and takes
-  // this by &mut, which emits as rusty::Option<uint64_t>&.
-  rusty::Option<uint64_t> pending_leader_term{rusty::None};
-  // PHASE 0 establishes every field of this each round, so it needs no reset;
-  // when PHASE 0 declines the round, phases 1-3 never read it.
-  HeartbeatRoundScope scope{HeartbeatRoundScope::new_()};
-};
-
 
 // @unsafe - one heartbeat round: locks, RPC sends, reply polling, commit.
 //
@@ -5259,59 +5394,6 @@ struct HeartbeatRoundState {
 // them and the round block. Every other break and continue in here belongs to
 // an inner loop and is untouched.
 // @unsafe - suspends on the wake gate; false means shutdown, not a timeout
-// The extern "C" trampolines the DSL block declares. One cast is left -- the
-// round-state handle -- because HeartbeatRoundState is hand-written C++
-// declared after the DSL block whose bodies take its members.
-extern "C" {
-
-// @unsafe { opaque handle cast }
-static inline HeartbeatRoundState* raft_heartbeat_state(
-    rusty::ffi::c_void* round) {
-  return static_cast<HeartbeatRoundState*>(round);
-}
-
-bool raft_heartbeat_phase0(RaftServerBase* server,
-                           rusty::ffi::c_void* round) {
-  HeartbeatRoundState* state = raft_heartbeat_state(round);
-  return heartbeat_phase0_body(*server,
-                               state->pending_rpcs, state->authority_rounds,
-                               state->pending_leader_term, state->scope);
-}
-
-void raft_heartbeat_phase1(RaftServerBase* server,
-                           rusty::ffi::c_void* round) {
-  HeartbeatRoundState* state = raft_heartbeat_state(round);
-  heartbeat_phase1_body(*server, state->pending_rpcs,
-                        state->authority_rounds, state->scope);
-}
-
-void raft_heartbeat_phase2(RaftServerBase* server,
-                           rusty::ffi::c_void* round) {
-  HeartbeatRoundState* state = raft_heartbeat_state(round);
-  // PHASE 2's body is Rust now (heartbeat_phase2_body, above). The three
-  // members are passed separately because HeartbeatRoundState is
-  // hand-written C++ declared after the DSL block that owns the body.
-  heartbeat_phase2_body(*server, state->pending_rpcs,
-                        state->authority_rounds, state->scope);
-}
-
-void raft_heartbeat_phase3(RaftServerBase* server,
-                           rusty::ffi::c_void* round) {
-  HeartbeatRoundState* state = raft_heartbeat_state(round);
-  heartbeat_phase3_body(*server,
-                        state->authority_rounds, state->scope);
-}
-
-}  // extern "C"
-
-// @unsafe - hands two opaque handles to the Rust driver and runs it
-void RaftServer::HeartbeatLoop() {
-  HeartbeatRoundState round;
-  const HeartbeatDriver driver = HeartbeatDriver::new_(
-      this, static_cast<rusty::ffi::c_void*>(&round));
-  driver.run();
-}
-
 // @unsafe - thread join and timer cleanup require manual resource management
 RaftServer::~RaftServer() {
   // Make shutdown idempotent for never-started servers and for callers that

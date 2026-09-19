@@ -7273,111 +7273,6 @@ inline bool ElectionTimerLoop::await_vote_settled() const {
 // (the pending-RPC table, the authority generations, the leader-term latch)
 // outlives a round but not the loop, and holds unique_ptr and wire types that
 // have no DSL spelling. Rust carries it and hands it back; it never looks in.
-#if RUSTYCPP_RUST
-pub struct HeartbeatDriver {
-    server_: *mut RaftServerBase,
-    round_: *mut core::ffi::c_void,
-}
-
-impl HeartbeatDriver {
-    pub fn new(server: *mut RaftServerBase,
-               round: *mut core::ffi::c_void) -> HeartbeatDriver {
-        HeartbeatDriver { server_: server, round_: round }
-    }
-
-    // decide -> emit -> collect -> decide, which is the shape the C++
-    // already had as four comment-delimited phases. It is now the shape of
-    // the Rust that sequences them.
-    pub fn run(&self) {
-        unsafe { (*self.server_).HeartbeatPrologue() };
-        while unsafe { (*self.server_).HeartbeatLooping() } {
-            // The wake gate returns false on shutdown rather than on timeout.
-            if !unsafe { (*self.server_).HeartbeatWait() } {
-                break;
-            }
-            // PHASE 0 declines the round when leadership is not held. The C++
-            // spelled that `continue`.
-            if !unsafe { raft_heartbeat_phase0(self.server_, self.round_) } {
-                continue;
-            }
-            unsafe { raft_heartbeat_phase1(self.server_, self.round_) };
-            unsafe { raft_heartbeat_phase2(self.server_, self.round_) };
-            unsafe { raft_heartbeat_phase3(self.server_, self.round_) };
-        }
-        unsafe { (*self.server_).HeartbeatEpilogue() };
-    }
-}
-
-// What is left of the C++ half. The prologue, the looping check and the
-// epilogue used to be here too; they are RaftServerBase methods now, so the
-// driver calls them directly. The four that remain take the round-carried
-// state, which is hand-written C++ this block cannot name.
-#[allow(improper_ctypes)]
-unsafe extern "C" {
-    fn raft_heartbeat_phase0(server: *mut RaftServerBase,
-                             round: *mut core::ffi::c_void) -> bool;
-    fn raft_heartbeat_phase1(server: *mut RaftServerBase,
-                             round: *mut core::ffi::c_void);
-    fn raft_heartbeat_phase2(server: *mut RaftServerBase,
-                             round: *mut core::ffi::c_void);
-    fn raft_heartbeat_phase3(server: *mut RaftServerBase,
-                             round: *mut core::ffi::c_void);
-}
-#endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_driver version=1 rust_sha256=38c2e40316529a45b03fe3f9e71f63e51b9d5e9b11c3127dcfecd1fc27bfdf2f*/
-struct HeartbeatDriver;
-
-struct HeartbeatDriver {
-    RaftServerBase* server_;
-    rusty::ffi::c_void* round_;
-
-    static HeartbeatDriver new_(RaftServerBase* server, rusty::ffi::c_void* round);
-    void run() const;
-};
-
-extern "C" {
-    bool raft_heartbeat_phase0(RaftServerBase* server, rusty::ffi::c_void* round);
-    void raft_heartbeat_phase1(RaftServerBase* server, rusty::ffi::c_void* round);
-    void raft_heartbeat_phase2(RaftServerBase* server, rusty::ffi::c_void* round);
-    void raft_heartbeat_phase3(RaftServerBase* server, rusty::ffi::c_void* round);
-}
-
-
-inline HeartbeatDriver HeartbeatDriver::new_(RaftServerBase* server, rusty::ffi::c_void* round) {
-    return HeartbeatDriver{.server_ = server, .round_ = round};
-}
-
-inline void HeartbeatDriver::run() const {
-    // @unsafe
-    {
-        ((*this->server_)).HeartbeatPrologue();
-    }
-    while (((*this->server_)).HeartbeatLooping()) {
-        if (rusty::detail::rust_not(((*this->server_)).HeartbeatWait())) {
-            break;
-        }
-        if (!raft_heartbeat_phase0(this->server_, this->round_)) {
-            continue;
-        }
-        // @unsafe
-        {
-            raft_heartbeat_phase1(this->server_, this->round_);
-        }
-        // @unsafe
-        {
-            raft_heartbeat_phase2(this->server_, this->round_);
-        }
-        // @unsafe
-        {
-            raft_heartbeat_phase3(this->server_, this->round_);
-        }
-    }
-    // @unsafe
-    {
-        ((*this->server_)).HeartbeatEpilogue();
-    }
-}
-/*RUSTYCPP:GEN-END id=raft_server.heartbeat_driver*/
 class RaftServer : public RaftServerBase {
  public:
   // ==========================================================================
@@ -7392,14 +7287,6 @@ class RaftServer : public RaftServerBase {
   // ==========================================================================
 
   // @unsafe - suspends this fiber on the wake gate's election waiter
-
-  // ==========================================================================
-  // HEARTBEAT LOOP KERNELS
-  //
-  // The C++ half of the DSL-owned HeartbeatDriver declared above. The round
-  // body is still one kernel; splitting it into the four phases is the next
-  // tranche.
-  // ==========================================================================
 
 
 
@@ -7495,7 +7382,6 @@ class RaftServer : public RaftServerBase {
 
  public:  // for the kernel bridge (server.cc); private again once converted
   // @safe - external calls marked @external, core replication loop
-  void HeartbeatLoop();
  private:
 
   // @unsafe - raw pointer output parameters (reply_term, vote_granted)

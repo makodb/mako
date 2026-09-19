@@ -1765,6 +1765,101 @@ pub fn heartbeat_phase3_body(server: &mut RaftServerBase,
 }
 
 // ==========================================================================
+// THE ROUND DRIVER
+//
+// Sequences the four phases above. It is here rather than in server.h --
+// where it used to be, beside RaftServerBase -- because a DSL block can only
+// call what precedes it, and the phase bodies are in this file. Moving it
+// deleted the four `raft_heartbeat_phase*` trampolines and the round-state
+// cast they existed to perform.
+// ==========================================================================
+
+// Everything one round carries between its phases. This was a hand-written
+// C++ struct whose four members were already DSL types -- it existed only
+// because the DSL has no default member initialisers, which `fn new` solves.
+// Being C++ was not free: the phases could not be called with it, so the
+// driver passed it as `*mut c_void` and four kernels cast it back and split
+// it into members.
+pub struct HeartbeatRoundState {
+    // At most one AppendEntries in flight per follower. A synchronous
+    // follower may legitimately take longer than one heartbeat interval to
+    // persist an entry; retaining its context lets a later round consume that
+    // acknowledgement instead of queueing duplicate writes and discarding
+    // every late success.
+    pending_rpcs_: PendingTable,
+    authority_rounds_: AuthorityLedger,
+    pending_leader_term_: rusty::Option<u64>,
+    // PHASE 0 establishes every field of this each round, so it needs no
+    // reset; when PHASE 0 declines the round, phases 1-3 never read it.
+    scope_: HeartbeatRoundScope,
+}
+
+#[allow(clippy::new_without_default)]
+impl HeartbeatRoundState {
+    pub fn new() -> HeartbeatRoundState {
+        HeartbeatRoundState {
+            pending_rpcs_: PendingTable::new(),
+            authority_rounds_: AuthorityLedger::new(),
+            pending_leader_term_: rusty::None,
+            scope_: HeartbeatRoundScope::new(),
+        }
+    }
+}
+
+// The driver OWNS its round state rather than pointing at one the caller
+// stack-allocated, which is what the `*mut c_void` handle used to be.
+pub struct HeartbeatDriver {
+    server_: *mut RaftServerBase,
+    round_: HeartbeatRoundState,
+}
+
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+impl HeartbeatDriver {
+    pub fn new(server: *mut RaftServerBase) -> HeartbeatDriver {
+        HeartbeatDriver { server_: server, round_: HeartbeatRoundState::new() }
+    }
+
+    // decide -> emit -> collect -> decide, which is the shape the C++ already
+    // had as four comment-delimited phases. It is now the shape of the Rust
+    // that sequences them, and the phases are called directly.
+    pub fn run(&mut self) {
+        let server: &mut RaftServerBase = unsafe { &mut *self.server_ };
+        server.HeartbeatPrologue();
+        while server.HeartbeatLooping() {
+            // The wake gate returns false on shutdown rather than on timeout.
+            if !server.HeartbeatWait() {
+                break;
+            }
+            // PHASE 0 declines the round when leadership is not held. The C++
+            // spelled that `continue`.
+            if !heartbeat_phase0_body(server,
+                                      &mut self.round_.pending_rpcs_,
+                                      &mut self.round_.authority_rounds_,
+                                      &mut self.round_.pending_leader_term_,
+                                      &mut self.round_.scope_) {
+                continue;
+            }
+            heartbeat_phase1_body(server, &mut self.round_.pending_rpcs_,
+                                  &mut self.round_.authority_rounds_,
+                                  &self.round_.scope_);
+            heartbeat_phase2_body(server, &mut self.round_.pending_rpcs_,
+                                  &mut self.round_.authority_rounds_,
+                                  &self.round_.scope_);
+            heartbeat_phase3_body(server, &mut self.round_.authority_rounds_,
+                                  &self.round_.scope_);
+        }
+        server.HeartbeatEpilogue();
+    }
+}
+
+// The whole loop, so the C++ side is one fiber spawn rather than a method.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub fn heartbeat_loop_body(server: *mut RaftServerBase) {
+    let mut driver = HeartbeatDriver::new(server);
+    driver.run();
+}
+
+// ==========================================================================
 // INBOUND RequestVote
 // ==========================================================================
 
