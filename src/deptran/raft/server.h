@@ -2223,6 +2223,49 @@ using RaftStdThread = ::std::thread;
 using RaftVoteQuorumPtr = ::std::shared_ptr<::janus::RaftVoteQuorumEvent>;
 using RaftByteString = ::std::string;
 using RaftBatchBuffer = ::std::vector<::rusty::Arc<::janus::TpcCommitCommand>>;
+
+// ---------------------------------------------------------------------------
+// LAYOUT PINS. Each of these types has a rustc-side model in
+// src/rrr/rusty-rustc/src/lib.rs that exists so a DSL body can NAME the field.
+// Those models used to be `[u8; 0]` -- a deliberate lie, safe only because no
+// Rust machine code links today, and the single largest obstacle to the day
+// it does: a Rust-compiled RaftServerBase would compute every field offset
+// after the first carrier wrongly.
+//
+// The models now carry the real size and alignment, measured on this
+// toolchain, and these assertions are what keep the two halves honest. If a
+// libc++ release changes one of these, the build stops here with the new
+// number instead of silently reintroducing the divergence -- update the
+// matching model, do not relax the assertion.
+//
+// What these pins do NOT cover, recorded so the remaining gap is not mistaken
+// for zero: the rusty containers RaftServerBase also holds (rusty::Vec,
+// rusty::VecDeque, rusty::Mutex, rusty::Condvar, rusty::Arc) have their own
+// C++/Rust size differences inside the rusty runtime -- rusty::Vec is 48
+// bytes in C++ against std::vec::Vec's 24 in Rust. Those are a rusty-cpp
+// question, not a Raft one, and the struct's total size still diverges
+// because of them.
+// ---------------------------------------------------------------------------
+static_assert(sizeof(RaftCheckedMutex) == 48 && alignof(RaftCheckedMutex) == 8);
+static_assert(sizeof(RaftAsyncCallbackLifetimePtr) == 16 &&
+              alignof(RaftAsyncCallbackLifetimePtr) == 8);
+static_assert(sizeof(RaftSnapshotManagerPtr) == 16 &&
+              alignof(RaftSnapshotManagerPtr) == 8);
+static_assert(sizeof(RaftCreateSnapshotCb) == 48 &&
+              alignof(RaftCreateSnapshotCb) == 16);
+static_assert(sizeof(RaftPrepareSnapshotCb) == 48 &&
+              alignof(RaftPrepareSnapshotCb) == 16);
+static_assert(sizeof(RaftStdMutex) == 40 && alignof(RaftStdMutex) == 8);
+static_assert(sizeof(RaftLeaderChangeCb) == 48 &&
+              alignof(RaftLeaderChangeCb) == 16);
+static_assert(sizeof(RaftStdThread) == 8 && alignof(RaftStdThread) == 8);
+static_assert(sizeof(RaftVoteQuorumPtr) == 16 &&
+              alignof(RaftVoteQuorumPtr) == 8);
+static_assert(sizeof(RaftByteString) == 24 && alignof(RaftByteString) == 8);
+static_assert(sizeof(RaftBatchBuffer) == 24 && alignof(RaftBatchBuffer) == 8);
+// The two carriers declared in rust_facade_types.h rather than here.
+static_assert(sizeof(RaftCommand) == 24 && alignof(RaftCommand) == 8);
+static_assert(sizeof(RaftResponsePtr) == 16 && alignof(RaftResponsePtr) == 8);
 }  // namespace rusty
 
 // The DSL block below names the interface as `crate::scheduler_h::TxLogServer`

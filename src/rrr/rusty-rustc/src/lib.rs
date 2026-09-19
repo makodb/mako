@@ -362,9 +362,16 @@ pub struct ReactorFiber {
 /// can name a field type and move it. They are deliberately opaque -- Rust
 /// cannot construct or dereference either, which is what makes "carried, never
 /// followed" checkable rather than a convention.
+/// `std::shared_ptr<janus::AppendEntriesResponse>`: 16 bytes, align 8, pinned
+/// by the static_assert block in src/deptran/raft/server.h.
+// Default is derived rather than written out, unlike the carriers inside
+// `rusty_opaque_cpp_carrier!`: std implements Default for `[T; N]` only up to
+// N = 32, and several of those are 40 or 48 bytes.
 #[derive(Default)]
+#[repr(C)]
 pub struct RaftResponsePtr {
-    _opaque: [u8; 0],
+    _align: [u64; 0],
+    _opaque: [u8; 16],
 }
 
 /// `Clone` models `janus::Command`'s copy constructor, which is a refcount
@@ -372,9 +379,17 @@ pub struct RaftResponsePtr {
 /// `.clone()` emits `rusty::clone(x)`, whose SFINAE falls back to copy
 /// construction for a type with no `clone()` member -- so the Rust spelling
 /// and the C++ one are the same operation.
-#[derive(Default, Clone)]
+/// `janus::Command` (`SerializableEnvelope<MakoCommands>`): 24 bytes, align 8,
+/// pinned by the static_assert block in src/deptran/raft/server.h.
+// Clone but NOT Copy: `janus::Command` holds an Arc, so a copy is a refcount
+// bump rather than a memcpy, and `.clone()` at the call site is the spelling
+// that emits `rusty::clone(x)`. Deriving Copy would make clippy demand a bare
+// dereference there and hide that the copy has a cost.
+#[derive(Clone, Default)]
+#[repr(C)]
 pub struct RaftCommand {
-    _opaque: [u8; 0],
+    _align: [u64; 0],
+    _opaque: [u8; 24],
 }
 
 /// Opaque rustc-only models of RaftServer's remaining C++-typed fields, so
@@ -450,48 +465,92 @@ raft_log_level_shims!(
     raft_log_error_8, raft_log_error_9, raft_log_error_10
 );
 
+/// Each carrier declares the SIZE and ALIGNMENT of the C++ type it models,
+/// measured on this toolchain and pinned from the other side by the
+/// `static_assert` block in src/deptran/raft/server.h. They used to be
+/// `[u8; 0]` regardless -- a lie that cost nothing only because no Rust
+/// machine code links, and that a Rust-compiled `RaftServerBase` would turn
+/// into a wrong offset for every field after the first carrier.
+///
+/// The alignment comes from a zero-sized array of a suitably aligned type
+/// rather than `#[repr(align(N))]`, because `align()` does not accept a
+/// macro-interpolated literal. `Default` is hand-written for the same kind of
+/// reason: std implements it for `[T; N]` only up to N = 32, and several of
+/// these are 40 or 48 bytes.
 macro_rules! rusty_opaque_cpp_carrier {
-    ($($(#[$m:meta])* $name:ident),* $(,)?) => {
+    ($($(#[$m:meta])* $name:ident: $size:literal / $align:ty),* $(,)?) => {
         $(
             $(#[$m])*
-            #[derive(Default)]
             #[repr(C)]
             pub struct $name {
-                _opaque: [u8; 0],
+                _align: [$align; 0],
+                _opaque: [u8; $size],
             }
+            impl Default for $name {
+                fn default() -> Self {
+                    Self { _align: [], _opaque: [0u8; $size] }
+                }
+            }
+            const _: () = {
+                assert!(::core::mem::size_of::<$name>() == $size);
+            };
         )*
     };
 }
 
 rusty_opaque_cpp_carrier! {
     /// `janus::RaftCheckedMutex` -- the always-on re-entrancy-checking mutex.
-    RaftCheckedMutex,
+    RaftCheckedMutex: 48 / u64,
     /// `std::shared_ptr<janus::AsyncCallbackLifetime>`.
-    RaftAsyncCallbackLifetimePtr,
+    RaftAsyncCallbackLifetimePtr: 16 / u64,
     /// `std::shared_ptr<janus::raft::SnapshotManager>`.
-    RaftSnapshotManagerPtr,
+    RaftSnapshotManagerPtr: 16 / u64,
     /// `std::function<std::string(uint64_t)>`.
-    RaftCreateSnapshotCb,
+    RaftCreateSnapshotCb: 48 / u128,
     /// `std::function<std::unique_ptr<PreparedStateMachineSnapshotInstall>(const std::string&, uint64_t)>`.
-    RaftPrepareSnapshotCb,
+    RaftPrepareSnapshotCb: 48 / u128,
     /// `std::mutex`.
-    RaftStdMutex,
+    RaftStdMutex: 40 / u64,
     /// `std::function<void(bool)>` -- the leadership-change notification.
-    RaftLeaderChangeCb,
+    RaftLeaderChangeCb: 48 / u128,
     /// `std::thread` -- the background apply thread.
-    RaftStdThread,
+    RaftStdThread: 8 / u64,
     /// `std::shared_ptr<janus::RaftVoteQuorumEvent>` -- one campaign's reply
     /// quorum, carried from the broadcast kernel to the snapshot kernel
     /// across a fiber suspension.
-    RaftVoteQuorumPtr,
+    RaftVoteQuorumPtr: 16 / u64,
     /// `std::string` -- a snapshot payload, carried from the RPC entry point
     /// to the install kernel without being inspected.
-    RaftByteString,
+    RaftByteString: 24 / u64,
     /// `std::vector<rusty::Arc<janus::TpcCommitCommand>>` -- PHASE 1's batch
     /// under assembly. Rust drives the loop that fills it and reads its
     /// length; the marshalling itself stays C++.
-    RaftBatchBuffer,
+    RaftBatchBuffer: 24 / u64,
 }
+
+/// The alignment half of the layout pins, mirroring the `static_assert` block
+/// in src/deptran/raft/server.h one line for one. The sizes are asserted
+/// inside `rusty_opaque_cpp_carrier!`; alignment is stated here because it
+/// comes from a marker type rather than a literal, and a toolchain on which
+/// `u128` were not 16-aligned would otherwise diverge from C++ in silence.
+const _: () = {
+    use ::core::mem::align_of;
+    assert!(align_of::<RaftCheckedMutex>() == 8);
+    assert!(align_of::<RaftAsyncCallbackLifetimePtr>() == 8);
+    assert!(align_of::<RaftSnapshotManagerPtr>() == 8);
+    assert!(align_of::<RaftCreateSnapshotCb>() == 16);
+    assert!(align_of::<RaftPrepareSnapshotCb>() == 16);
+    assert!(align_of::<RaftStdMutex>() == 8);
+    assert!(align_of::<RaftLeaderChangeCb>() == 16);
+    assert!(align_of::<RaftStdThread>() == 8);
+    assert!(align_of::<RaftVoteQuorumPtr>() == 8);
+    assert!(align_of::<RaftByteString>() == 8);
+    assert!(align_of::<RaftBatchBuffer>() == 8);
+    assert!(align_of::<RaftCommand>() == 8);
+    assert!(align_of::<RaftResponsePtr>() == 8);
+    assert!(::core::mem::size_of::<RaftCommand>() == 24);
+    assert!(::core::mem::size_of::<RaftResponsePtr>() == 16);
+};
 
 pub type ReactorIntEvent = rrr::reactor::IntEvent;
 pub type ReactorPollThread = rrr::reactor::PollThread;
