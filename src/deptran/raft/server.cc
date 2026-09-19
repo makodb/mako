@@ -5188,44 +5188,55 @@ bool raft_phase1_load_and_send_snapshot(RaftServerBase* self,
   const uint64_t snap_last_idx = snap_meta.last_included_index;
   const uint64_t snap_last_term = snap_meta.last_included_term;
   const uint64_t send_term = self->state_.current_term_;
+  const uint16_t self_site_id = self->site_id_;
   auto callback_lifetime = self->async_callback_lifetime_;
   static_cast<RaftServer*>(self)->commo()->SendInstallSnapshot(
       site_id, self->partition_id_,
       send_term, self->site_id_,
       snap_last_idx, snap_last_term,
       snap_data,
-      [callback_lifetime, site_id, ord, snap_last_idx, send_term](
-          uint64_t follower_term) {
-        std::lock_guard<std::mutex> lifetime_lock(callback_lifetime->mutex);
-        auto* server = callback_lifetime->server;
-        if (server == nullptr) {
-          return;
-        }
-        // THE LOCK IS TAKEN BELOW THIS CHECK, NOT ABOVE IT, and that
-        // placement is load-bearing.
+      [callback_lifetime, site_id, self_site_id, ord, snap_last_idx,
+       send_term](uint64_t follower_term) {
+        // NEITHER LOCK IS TAKEN ABOVE THIS CHECK, and that is load-bearing
+        // for two different reasons.
         //
         // This callback runs in TWO contexts. Normally the reactor invokes it
         // when the reply lands, with mtx_ not held. But
         // RaftCommo::SendInstallSnapshot invokes it INLINE, on the caller's
         // stack, when PeerForSite returns null (commo.cc:167-170) -- and that
-        // caller is PHASE 1, which holds mtx_. A recursive_mutex tolerates
-        // the re-entry; a plain std::mutex would self-deadlock, which is what
-        // blocked demoting it.
+        // caller is PHASE 1, which holds mtx_.
+        //
+        // mtx_: a recursive_mutex tolerated the re-entry; a plain std::mutex
+        // would self-deadlock. Everything past this check is Rust
+        // (RaftServerBase::InstallSnapshotReplyAccepted), which takes mtx_
+        // itself, so the inline path never reaches it.
+        //
+        // callback_lifetime->mutex: this one USED TO BE ACQUIRED FIRST,
+        // unconditionally, which made the inline path take it while holding
+        // mtx_ -- the exact inverse of the documented order
+        // (callback_lifetime->mutex -> state_machine_apply_mtx_ -> mtx_ ->
+        // apply_queue_), against the asynchronous path below which takes it
+        // and then mtx_. That is an ABBA pair. It was latent rather than live
+        // because both contexts run on the one poll thread and a fiber
+        // blocking on a std::mutex blocks that thread, so the two halves
+        // cannot be in flight at once -- but a total order an existing call
+        // site inverts is not a total order, and the residual risk
+        // docs/migration/raft/recursive-mutex.md names (a suspension inside a
+        // critical section) is exactly what would make it reachable.
         //
         // The inline path always passes follower_term == 0, so it takes the
-        // branch below and returns having touched no state at all. Acquiring
-        // after the check means the synchronous context never reaches the
-        // lock, and every path that does reach it is the asynchronous one.
-        // site_id_ is written once during Setup, so reading it for the log
-        // needs no lock.
-        //
-        // Everything past this point is Rust
-        // (RaftServerBase::InstallSnapshotReplyAccepted), which takes mtx_
-        // itself -- so the ordering the comment describes is now expressed by
-        // where the call sits rather than by where a guard is declared.
+        // branch below and returns having touched no state and taken no lock.
+        // self_site_id is captured by value rather than read through the
+        // server, so the diagnostic needs no lock either; it is written once
+        // during Setup and never changes.
         if (!raft_server_install_snapshot_reply_is_available(follower_term)) {
           Log_warn("[HEARTBEAT-SNAPSHOT] Site {}: Follower {} snapshot response unavailable; retaining replication indices",
-                   server->site_id_, site_id);
+                   self_site_id, site_id);
+          return;
+        }
+        std::lock_guard<std::mutex> lifetime_lock(callback_lifetime->mutex);
+        auto* server = callback_lifetime->server;
+        if (server == nullptr) {
           return;
         }
         server->InstallSnapshotReplyAccepted(site_id, ord, snap_last_idx,
