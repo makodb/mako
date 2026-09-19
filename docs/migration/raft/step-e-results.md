@@ -54,10 +54,30 @@ Three pieces of machinery carried the rest:
 
 RaftLabTest, the 25-case cluster suite, passed 25/25 with exit 0 after every
 one of the fourteen commits in this tranche -- not only at the end.
-`ci/ci.sh shard1ReplicationSimpleRaft` passes, including its data-integrity
-check on both followers. `scripts/raft_dsl.sh --check` is clean across all
-eighteen carriers: pin attestation, block inventory, generated C++, crate
-compile, clippy, and no drift.
+`scripts/raft_dsl.sh --check` is clean across all eighteen carriers: pin
+attestation, block inventory, generated C++, crate compile, clippy, and no
+drift.
+
+**The production path is covered too, and this file used to claim only one
+suite.** RaftLabTest builds with `RAFT_TEST=ON`, which selects `ServerWorker`
+and compiles `RAFT_TEST_CORO` -- a different server lifecycle from the one
+Mako ships. `src/deptran/raft/server.cc` is compiled into production `mako`
+regardless of `MAKO_USE_RAFT` (`CMakeLists.txt:1049`, via `TXLOG_HELPER_SRC`),
+so the converted Raft is in the database binaries; it just needs a different
+suite to exercise. All four Raft replication suites pass at HEAD, run on the
+host from a freshly built `build/`:
+
+| suite | binary | result |
+|---|---|---|
+| `shard1ReplicationSimpleRaft` | `simpleTransactionRep` | data integrity verified on both followers |
+| `shard2ReplicationSimpleRaft` | `simpleTransactionRep` | data integrity verified on all four followers |
+| `shard1ReplicationRaft` | `dbtest` | 153,019 ops/s agg_persist_throughput, 7,730 replay batches, 0% remote abort |
+| `shard2ReplicationRaft` | `dbtest` | 8,007 + 7,994 ops/s across two shards, 12 warehouses, abort ratios 2.3% / 1.8% |
+
+Every one reported "All processes exited cleanly". That matters beyond the
+pass: the production path runs `RaftWorker`, not `ServerWorker` -- the
+lifecycle with the control-plane poll thread, the stub servers and a
+different shutdown ordering, none of which RaftLabTest touches.
 
 ## Performance
 
