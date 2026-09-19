@@ -2221,7 +2221,10 @@ using RaftLeaderChangeCb = ::std::function<void(bool)>;
 using RaftStdThread = ::std::thread;
 using RaftVoteQuorumPtr = ::std::shared_ptr<::janus::RaftVoteQuorumEvent>;
 using RaftByteString = ::std::string;
-using RaftBatchBuffer = ::std::vector<::rusty::Arc<::janus::TpcCommitCommand>>;
+// The batch buffer's ELEMENT. The buffer itself is a rusty::Vec owned by
+// Rust; only what is inside each Arc stays opaque, because it is a wire type
+// the marshalling layer owns.
+using RaftTpcCommitCommand = ::janus::TpcCommitCommand;
 
 // ---------------------------------------------------------------------------
 // LAYOUT PINS. Each of these types has a rustc-side model in
@@ -2261,7 +2264,8 @@ static_assert(sizeof(RaftStdThread) == 8 && alignof(RaftStdThread) == 8);
 static_assert(sizeof(RaftVoteQuorumPtr) == 16 &&
               alignof(RaftVoteQuorumPtr) == 8);
 static_assert(sizeof(RaftByteString) == 24 && alignof(RaftByteString) == 8);
-static_assert(sizeof(RaftBatchBuffer) == 24 && alignof(RaftBatchBuffer) == 8);
+static_assert(sizeof(RaftTpcCommitCommand) == 64 &&
+              alignof(RaftTpcCommitCommand) == 8);
 // The two carriers declared in rust_facade_types.h rather than here.
 static_assert(sizeof(RaftCommand) == 24 && alignof(RaftCommand) == 8);
 static_assert(sizeof(RaftResponsePtr) == 16 && alignof(RaftResponsePtr) == 8);
@@ -3232,7 +3236,11 @@ pub struct RaftServerBase {
     // would have dropped at end of scope -- bounded by max_batch_entries and
     // released on the next round, which runs every heartbeat interval
     // whether or not there is work.
-    pub batch_buffer_: rusty::RaftBatchBuffer,
+    // PHASE 1's batch under assembly. Rust drives the loop that fills it,
+    // clears it and reads its length; only the marshalling of each element
+    // stays C++.
+    pub batch_buffer_:
+        rusty::Vec<rusty::sync::Arc<rusty::RaftTpcCommitCommand>>,
     pub appliedIndexForWait_: rusty::sync::atomic::AtomicU64,
     // Was a function-static in EnqueueCommittedEntries. A DSL body has no
     // static local, and a per-server counter is the more honest shape: the
@@ -3308,7 +3316,7 @@ impl RaftServerBase {
             state_machine_apply_mtx_: Default::default(),
             apply_queue_: rusty::Mutex::new(ApplyQueue::new()),
             pending_apply_command_: Default::default(),
-            batch_buffer_: Default::default(),
+            batch_buffer_: rusty::Vec::new(),
             appliedIndexForWait_: rusty::sync::atomic::AtomicU64::new(0),
             enqueue_log_counter_: 0,
             n_prepare_: 0,
@@ -5573,7 +5581,7 @@ impl TxLogServer for RaftServerBase {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=f3fee17ecd41041c7af7ee78e3ecbd3dd99fe6571cf913f4f2dbfa5f8224df26*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=a6f09984c0132e563d477b1a2f209f0093dc89847bc55344b12f764623d62fac*/
 struct QueuedApplyEntry;
 struct ApplyQueue;
 struct RaftElectionTimeouts;
@@ -5709,7 +5717,7 @@ struct RaftServerBase : public TxLogServer {
     rusty::RaftStdMutex state_machine_apply_mtx_;
     rusty::Mutex<ApplyQueue> apply_queue_;
     rusty::RaftCommand pending_apply_command_;
-    rusty::RaftBatchBuffer batch_buffer_;
+    rusty::Vec<rusty::Arc<rusty::RaftTpcCommitCommand>> batch_buffer_;
     rusty::sync::atomic::AtomicU64 appliedIndexForWait_;
     uint64_t enqueue_log_counter_;
     int32_t n_prepare_;
@@ -5850,7 +5858,7 @@ inline RaftServerBase::RaftServerBase()
     , state_machine_apply_mtx_(rusty::default_like<rusty::RaftStdMutex>())
     , apply_queue_(rusty::Mutex<ApplyQueue>::new_(ApplyQueue::new_()))
     , pending_apply_command_(rusty::default_like<rusty::RaftCommand>())
-    , batch_buffer_(rusty::default_like<rusty::RaftBatchBuffer>())
+    , batch_buffer_(rusty::Vec<rusty::Arc<rusty::RaftTpcCommitCommand>>::new_())
     , appliedIndexForWait_(rusty::sync::atomic::AtomicU64::new_(0))
     , enqueue_log_counter_(static_cast<uint64_t>(0))
     , n_prepare_(static_cast<int32_t>(0))

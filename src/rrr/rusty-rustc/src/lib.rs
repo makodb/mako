@@ -522,10 +522,10 @@ rusty_opaque_cpp_carrier! {
     /// `std::string` -- a snapshot payload, carried from the RPC entry point
     /// to the install kernel without being inspected.
     RaftByteString: 24 / u64,
-    /// `std::vector<rusty::Arc<janus::TpcCommitCommand>>` -- PHASE 1's batch
-    /// under assembly. Rust drives the loop that fills it and reads its
-    /// length; the marshalling itself stays C++.
-    RaftBatchBuffer: 24 / u64,
+    /// `janus::TpcCommitCommand` -- the element of PHASE 1's batch buffer.
+    /// The buffer is a Rust-owned `rusty::Vec`; this is only what sits inside
+    /// each `Arc`, and it stays opaque because it is a wire type.
+    RaftTpcCommitCommand: 64 / u64,
 }
 
 /// The alignment half of the layout pins, mirroring the `static_assert` block
@@ -545,7 +545,7 @@ const _: () = {
     assert!(align_of::<RaftStdThread>() == 8);
     assert!(align_of::<RaftVoteQuorumPtr>() == 8);
     assert!(align_of::<RaftByteString>() == 8);
-    assert!(align_of::<RaftBatchBuffer>() == 8);
+    assert!(align_of::<RaftTpcCommitCommand>() == 8);
     assert!(align_of::<RaftCommand>() == 8);
     assert!(align_of::<RaftResponsePtr>() == 8);
     assert!(::core::mem::size_of::<RaftCommand>() == 24);

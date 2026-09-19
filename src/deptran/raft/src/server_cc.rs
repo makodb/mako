@@ -490,8 +490,6 @@ unsafe extern "C" {
                                           site_id: u16, ord: usize) -> bool;
     fn raft_batch_optimization_enabled() -> bool;
     fn raft_append_entries_batch_max() -> u64;
-    fn raft_batch_buffer_clear(server: *mut RaftServerBase);
-    fn raft_batch_buffer_len(server: *const RaftServerBase) -> u64;
     fn raft_log_entry_kind(server: *const RaftServerBase, index: u64) -> i32;
     fn raft_copy_log_command(server: *const RaftServerBase, index: u64,
                              cmd_out: *mut rusty::RaftCommand);
@@ -933,9 +931,7 @@ pub fn heartbeat_phase1_select_payload(server: &mut RaftServerBase,
     }
 
     // A fresh buffer per follower, as the C++ local was.
-    unsafe {
-        raft_batch_buffer_clear(server as *mut RaftServerBase);
-    }
+    server.batch_buffer_.clear();
     let max_batch_entries: u64 = unsafe { raft_append_entries_batch_max() };
     let batch_start_idx: u64 = server.state_.peers_.next_index(ord);
     rusty::raft_log_debug_5(
@@ -965,8 +961,7 @@ pub fn heartbeat_phase1_select_payload(server: &mut RaftServerBase,
     } else if !skip_follower {
         let mut idx: u64 = batch_start_idx;
         while idx <= server.state_.raft_log_.last_index()
-            && unsafe { raft_batch_buffer_len(server as *const RaftServerBase) }
-                < max_batch_entries
+            && (server.batch_buffer_.len() as u64) < max_batch_entries
         {
             let entry = server.state_.raft_log_.get(idx);
             let usable: bool = entry.is_some()
@@ -987,9 +982,7 @@ pub fn heartbeat_phase1_select_payload(server: &mut RaftServerBase,
                 let kind: i32 = unsafe {
                     raft_log_entry_kind(server as *const RaftServerBase, idx)
                 };
-                let batched: u64 = unsafe {
-                    raft_batch_buffer_len(server as *const RaftServerBase)
-                };
+                let batched: u64 = server.batch_buffer_.len() as u64;
                 if batched == 0 {
                     rusty::raft_log_info_3(
                         "[BATCH_SKIP] site={} idx={}: log entry is not TpcCommitCommand (kind={}), using raw log",
@@ -1016,8 +1009,7 @@ pub fn heartbeat_phase1_select_payload(server: &mut RaftServerBase,
         }
     }
 
-    let encoded_entry_count: u64 =
-        unsafe { raft_batch_buffer_len(server as *const RaftServerBase) };
+    let encoded_entry_count: u64 = server.batch_buffer_.len() as u64;
     if !skip_follower && encoded_entry_count > 0
         && !raft_server_append_batch_count_is_valid(prev_log_index,
                                                     encoded_entry_count)

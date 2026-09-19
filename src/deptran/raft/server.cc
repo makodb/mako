@@ -2109,8 +2109,6 @@ unsafe extern "C" {
                                           site_id: u16, ord: usize) -> bool;
     fn raft_batch_optimization_enabled() -> bool;
     fn raft_append_entries_batch_max() -> u64;
-    fn raft_batch_buffer_clear(server: *mut RaftServerBase);
-    fn raft_batch_buffer_len(server: *const RaftServerBase) -> u64;
     fn raft_log_entry_kind(server: *const RaftServerBase, index: u64) -> i32;
     fn raft_copy_log_command(server: *const RaftServerBase, index: u64,
                              cmd_out: *mut rusty::RaftCommand);
@@ -2552,9 +2550,7 @@ pub fn heartbeat_phase1_select_payload(server: &mut RaftServerBase,
     }
 
     // A fresh buffer per follower, as the C++ local was.
-    unsafe {
-        raft_batch_buffer_clear(server as *mut RaftServerBase);
-    }
+    server.batch_buffer_.clear();
     let max_batch_entries: u64 = unsafe { raft_append_entries_batch_max() };
     let batch_start_idx: u64 = server.state_.peers_.next_index(ord);
     rusty::raft_log_debug_5(
@@ -2584,8 +2580,7 @@ pub fn heartbeat_phase1_select_payload(server: &mut RaftServerBase,
     } else if !skip_follower {
         let mut idx: u64 = batch_start_idx;
         while idx <= server.state_.raft_log_.last_index()
-            && unsafe { raft_batch_buffer_len(server as *const RaftServerBase) }
-                < max_batch_entries
+            && (server.batch_buffer_.len() as u64) < max_batch_entries
         {
             let entry = server.state_.raft_log_.get(idx);
             let usable: bool = entry.is_some()
@@ -2606,9 +2601,7 @@ pub fn heartbeat_phase1_select_payload(server: &mut RaftServerBase,
                 let kind: i32 = unsafe {
                     raft_log_entry_kind(server as *const RaftServerBase, idx)
                 };
-                let batched: u64 = unsafe {
-                    raft_batch_buffer_len(server as *const RaftServerBase)
-                };
+                let batched: u64 = server.batch_buffer_.len() as u64;
                 if batched == 0 {
                     rusty::raft_log_info_3(
                         "[BATCH_SKIP] site={} idx={}: log entry is not TpcCommitCommand (kind={}), using raw log",
@@ -2635,8 +2628,7 @@ pub fn heartbeat_phase1_select_payload(server: &mut RaftServerBase,
         }
     }
 
-    let encoded_entry_count: u64 =
-        unsafe { raft_batch_buffer_len(server as *const RaftServerBase) };
+    let encoded_entry_count: u64 = server.batch_buffer_.len() as u64;
     if !skip_follower && encoded_entry_count > 0
         && !raft_server_append_batch_count_is_valid(prev_log_index,
                                                     encoded_entry_count)
@@ -4078,7 +4070,7 @@ pub fn on_append_entries_body(server: &mut RaftServerBase,
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_round_scope version=1 rust_sha256=887ba7861132520c8da932bfa25665a746a9544e78098e34b3f838d891da15a9*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_round_scope version=1 rust_sha256=cce20d8bd98be3bf69a789563695f4997ef2effc8c4554c9955f08d7f8c75142*/
 enum class AppendReplyAction : int32_t;
 constexpr AppendReplyAction AppendReplyAction_IGNORED();
 constexpr AppendReplyAction AppendReplyAction_STEP_DOWN();
@@ -4129,8 +4121,6 @@ extern "C" {
     bool raft_phase1_load_and_send_snapshot(server_h::RaftServerBase* server, uint16_t site_id, size_t ord);
     bool raft_batch_optimization_enabled();
     uint64_t raft_append_entries_batch_max();
-    void raft_batch_buffer_clear(server_h::RaftServerBase* server);
-    uint64_t raft_batch_buffer_len(const server_h::RaftServerBase* server);
     int32_t raft_log_entry_kind(const server_h::RaftServerBase* server, uint64_t index);
     void raft_copy_log_command(const server_h::RaftServerBase* server, uint64_t index, rusty::RaftCommand* cmd_out);
     bool raft_batch_try_push(server_h::RaftServerBase* server, uint64_t index);
@@ -4423,10 +4413,7 @@ bool heartbeat_phase1_select_payload(server_h::RaftServerBase& server, size_t or
         }
         return std::move(skip_follower);
     }
-    // @unsafe
-    {
-        raft_batch_buffer_clear(static_cast<server_h::RaftServerBase*>(rusty::detail::ptr_or_addr(server)));
-    }
+    server.batch_buffer_.clear();
     const uint64_t max_batch_entries = raft_append_entries_batch_max();
     uint64_t batch_start_idx = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.peers_); }) { return (__r.peers_); } else if constexpr (requires { (__r.peers__field); }) { return (__r.peers__field); } else if constexpr (requires { ((*__r).peers_); }) { return ((*__r).peers_); } else { return ((*__r).peers__field); } }(server.state_).next_index(std::move(ord));
     rusty::raft_log_debug_5("[BATCH_CHECK] site={} follower={} next_index={} state_.raft_log_.base()={} state_.raft_log_.last_index()={}", server.site_id_, std::move(site_id), [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.peers_); }) { return (__r.peers_); } else if constexpr (requires { (__r.peers__field); }) { return (__r.peers__field); } else if constexpr (requires { ((*__r).peers_); }) { return ((*__r).peers_); } else { return ((*__r).peers__field); } }(server.state_).next_index(std::move(ord)), [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }(server.state_).base(), [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }(server.state_).last_index());
@@ -4440,7 +4427,7 @@ bool heartbeat_phase1_select_payload(server_h::RaftServerBase& server, size_t or
         skip_follower = true;
     } else if (!skip_follower) {
         uint64_t idx = batch_start_idx;
-        while ((rusty::detail::deref_if_pointer_like(idx) <= [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }(server.state_).last_index()) && (raft_batch_buffer_len(static_cast<const server_h::RaftServerBase*>(rusty::detail::ptr_or_addr(server))) < rusty::detail::deref_if_pointer_like(max_batch_entries))) {
+        while ((rusty::detail::deref_if_pointer_like(idx) <= [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }(server.state_).last_index()) && (((static_cast<uint64_t>(rusty::len(server.batch_buffer_)))) < rusty::detail::deref_if_pointer_like(max_batch_entries))) {
             auto entry = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }(server.state_).get(std::move(idx));
             const bool usable = entry.is_some() && raft_command_has_value(rusty::detail::ptr_cast<const rusty::RaftCommand*>(entry.unwrap().cmd()));
             if (!usable) {
@@ -4451,7 +4438,7 @@ bool heartbeat_phase1_select_payload(server_h::RaftServerBase& server, size_t or
             const int64_t entry_term = entry.unwrap().term();
             if (!raft_batch_try_push(static_cast<server_h::RaftServerBase*>(rusty::detail::ptr_or_addr(server)), std::move(idx))) {
                 const int32_t kind = raft_log_entry_kind(static_cast<const server_h::RaftServerBase*>(rusty::detail::ptr_or_addr(server)), std::move(idx));
-                const uint64_t batched = raft_batch_buffer_len(static_cast<const server_h::RaftServerBase*>(rusty::detail::ptr_or_addr(server)));
+                const uint64_t batched = static_cast<uint64_t>(rusty::len(server.batch_buffer_));
                 if (rusty::detail::deref_if_pointer_like(batched) == static_cast<uint64_t>(0)) {
                     rusty::raft_log_info_3("[BATCH_SKIP] site={} idx={}: log entry is not TpcCommitCommand (kind={}), using raw log", server.site_id_, std::move(idx), std::move(kind));
                     // @unsafe
@@ -4471,7 +4458,7 @@ bool heartbeat_phase1_select_payload(server_h::RaftServerBase& server, size_t or
             idx += 1;
         }
     }
-    const uint64_t encoded_entry_count = raft_batch_buffer_len(static_cast<const server_h::RaftServerBase*>(rusty::detail::ptr_or_addr(server)));
+    const uint64_t encoded_entry_count = static_cast<uint64_t>(rusty::len(server.batch_buffer_));
     if ((!skip_follower && (rusty::detail::deref_if_pointer_like(encoded_entry_count) > 0)) && rusty::detail::rust_not(raft_server_append_batch_count_is_valid(std::move(prev_log_index), std::move(encoded_entry_count)))) {
         rusty::raft_log_error_3("[HEARTBEAT-BATCH] Invalid encoded count {} after previous index {}; skipping follower {}", std::move(encoded_entry_count), std::move(prev_log_index), std::move(site_id));
         skip_follower = true;
@@ -5274,14 +5261,6 @@ uint64_t raft_append_entries_batch_max() {
   return GetAppendEntriesBatchMaxEntries();
 }
 
-void raft_batch_buffer_clear(RaftServerBase* self) {
-  self->batch_buffer_.clear();
-}
-
-uint64_t raft_batch_buffer_len(const RaftServerBase* self) {
-  return self->batch_buffer_.size();
-}
-
 // The wire kind of the command at a log index, for the diagnostics that
 // report why an entry could not be batched.
 int32_t raft_log_entry_kind(const RaftServerBase* self, uint64_t index) {
@@ -5331,7 +5310,7 @@ bool raft_batch_try_push(RaftServerBase* self, uint64_t index) {
   }
   auto stamped = rusty::Arc<TpcCommitCommand>::make(*cur_cmd.as_ref().unwrap());
   stamped.get_mut().unwrap().term = entry.term();
-  self->batch_buffer_.push_back(std::move(stamped));
+  self->batch_buffer_.push(std::move(stamped));
   return true;
 }
 
@@ -5339,7 +5318,12 @@ bool raft_batch_try_push(RaftServerBase* self, uint64_t index) {
 // once, here, when it is complete.
 void raft_batch_finalize(RaftServerBase* self, rusty::RaftCommand* cmd_out) {
   TpcBatchCommand batch_local;
-  batch_local.AddCmds(self->batch_buffer_);
+  // AddCmd per element rather than AddCmds, which assigned the whole vector
+  // (`cmds_ = cmds`) and so bumped every Arc's refcount. The buffer is a
+  // rusty::Vec now and the round is done with it, so each handle MOVES.
+  for (rusty::Arc<TpcCommitCommand>& cmd : self->batch_buffer_) {
+    batch_local.AddCmd(std::move(cmd));
+  }
   auto batch_cmd = rusty::Arc<TpcBatchCommand>::make(std::move(batch_local));
   *cmd_out = std::move(batch_cmd);
 }

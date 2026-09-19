@@ -1518,7 +1518,11 @@ pub struct RaftServerBase {
     // would have dropped at end of scope -- bounded by max_batch_entries and
     // released on the next round, which runs every heartbeat interval
     // whether or not there is work.
-    pub batch_buffer_: rusty::RaftBatchBuffer,
+    // PHASE 1's batch under assembly. Rust drives the loop that fills it,
+    // clears it and reads its length; only the marshalling of each element
+    // stays C++.
+    pub batch_buffer_:
+        rusty::Vec<rusty::sync::Arc<rusty::RaftTpcCommitCommand>>,
     pub appliedIndexForWait_: rusty::sync::atomic::AtomicU64,
     // Was a function-static in EnqueueCommittedEntries. A DSL body has no
     // static local, and a per-server counter is the more honest shape: the
@@ -1594,7 +1598,7 @@ impl RaftServerBase {
             state_machine_apply_mtx_: Default::default(),
             apply_queue_: rusty::Mutex::new(ApplyQueue::new()),
             pending_apply_command_: Default::default(),
-            batch_buffer_: Default::default(),
+            batch_buffer_: rusty::Vec::new(),
             appliedIndexForWait_: rusty::sync::atomic::AtomicU64::new(0),
             enqueue_log_counter_: 0,
             n_prepare_: 0,
