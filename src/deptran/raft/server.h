@@ -2384,6 +2384,18 @@ impl RaftLockGuard {
 }
 
 impl Drop for RaftLockGuard {
+    // NOT UNWINDABLE, and saying so is a performance fix rather than a
+    // documentation one. Rust Drop is unwindable in general, so the emitter
+    // writes `~RaftLockGuard() noexcept(false)` by default -- and a
+    // potentially-throwing destructor forces the compiler to keep unwind
+    // state alive in EVERY scope that holds a guard. The Raft hot path holds
+    // one in about thirty places, including the heartbeat round and the
+    // AppendEntries handler, and `std::lock_guard`, which this replaced, has
+    // a noexcept destructor.
+    //
+    // The body is one call to RaftCheckedMutex::unlock, which is a relaxed
+    // atomic store and std::mutex::unlock. Neither can throw.
+    #[cfg_attr(any(), cpp_noexcept)]
     fn drop(&mut self) {
         unsafe {
             raft_mutex_unlock(self.mutex_);
@@ -2408,6 +2420,9 @@ impl RaftStdLockGuard {
 }
 
 impl Drop for RaftStdLockGuard {
+    // The same contract, for the same reason. std::mutex::unlock cannot
+    // throw.
+    #[cfg_attr(any(), cpp_noexcept)]
     fn drop(&mut self) {
         unsafe {
             raft_std_mutex_unlock(self.mutex_);
@@ -2415,7 +2430,7 @@ impl Drop for RaftStdLockGuard {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.lock_guard version=1 rust_sha256=68e3a5b5408cb910c432764fa92a1972f4429593acf26a16cddf4a4b209ed106*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.lock_guard version=1 rust_sha256=e9bf6b87b39d6de0a7d988fdf579c037de8d3a86c0f1c660998652dfc1db0ce8*/
 struct RaftLockGuard;
 struct RaftStdLockGuard;
 
@@ -2448,7 +2463,7 @@ struct RaftLockGuard {
 
 
     static RaftLockGuard new_(rusty::RaftCheckedMutex* mutex);
-    ~RaftLockGuard() noexcept(false);
+    ~RaftLockGuard() noexcept(true);
 };
 
 struct RaftStdLockGuard {
@@ -2473,7 +2488,7 @@ struct RaftStdLockGuard {
 
 
     static RaftStdLockGuard new_(rusty::RaftStdMutex* mutex);
-    ~RaftStdLockGuard() noexcept(false);
+    ~RaftStdLockGuard() noexcept(true);
 };
 
 
@@ -2485,7 +2500,7 @@ inline RaftLockGuard RaftLockGuard::new_(rusty::RaftCheckedMutex* mutex) {
     return RaftLockGuard(mutex);
 }
 
-inline RaftLockGuard::~RaftLockGuard() noexcept(false) {
+inline RaftLockGuard::~RaftLockGuard() noexcept(true) {
     if (_rusty_forgotten) { return; }
     // @unsafe
     {
@@ -2501,7 +2516,7 @@ inline RaftStdLockGuard RaftStdLockGuard::new_(rusty::RaftStdMutex* mutex) {
     return RaftStdLockGuard(mutex);
 }
 
-inline RaftStdLockGuard::~RaftStdLockGuard() noexcept(false) {
+inline RaftStdLockGuard::~RaftStdLockGuard() noexcept(true) {
     if (_rusty_forgotten) { return; }
     // @unsafe
     {

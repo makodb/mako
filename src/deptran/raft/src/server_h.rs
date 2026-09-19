@@ -997,6 +997,18 @@ impl RaftLockGuard {
 }
 
 impl Drop for RaftLockGuard {
+    // NOT UNWINDABLE, and saying so is a performance fix rather than a
+    // documentation one. Rust Drop is unwindable in general, so the emitter
+    // writes `~RaftLockGuard() noexcept(false)` by default -- and a
+    // potentially-throwing destructor forces the compiler to keep unwind
+    // state alive in EVERY scope that holds a guard. The Raft hot path holds
+    // one in about thirty places, including the heartbeat round and the
+    // AppendEntries handler, and `std::lock_guard`, which this replaced, has
+    // a noexcept destructor.
+    //
+    // The body is one call to RaftCheckedMutex::unlock, which is a relaxed
+    // atomic store and std::mutex::unlock. Neither can throw.
+    #[cfg_attr(any(), cpp_noexcept)]
     fn drop(&mut self) {
         unsafe {
             raft_mutex_unlock(self.mutex_);
@@ -1021,6 +1033,9 @@ impl RaftStdLockGuard {
 }
 
 impl Drop for RaftStdLockGuard {
+    // The same contract, for the same reason. std::mutex::unlock cannot
+    // throw.
+    #[cfg_attr(any(), cpp_noexcept)]
     fn drop(&mut self) {
         unsafe {
             raft_std_mutex_unlock(self.mutex_);
