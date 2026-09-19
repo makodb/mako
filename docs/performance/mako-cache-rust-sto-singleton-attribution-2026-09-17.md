@@ -467,6 +467,53 @@ acquire/validate/publish/release on the concrete adapter and plan types without
 the erased batch/plan layers — a design change to `sto-core`'s erased
 representation, not a local optimization.
 
+### 8.7 Re-verification, and two fixes the measurements rejected
+
+**Measurement protocol correction.** Strictly interleaved A-then-B cells carry a
+position bias on this host: the first cell of a round measures ~3-4% faster than
+the second regardless of which binary it is. A teardown-skip build first looked
+4% *faster* and then 4% *slower* depending on which position it occupied. Every
+comparison below therefore uses ABBA ordering (A B B A / B A A B), equal repeats
+per slot, medians, and the 4th build as a control where applicable.
+
+**The section 8.6 change re-verified under that protocol** (20 samples per build,
+`sto` arm, engine mode, 1 worker):
+
+| build | tx/s median | range | cyc/tx | ins/tx |
+| ----- | ----------: | ----- | -----: | -----: |
+| before the change | 1,546,644 | 1.534-1.568 M | 1284.0 | 2886 |
+| after the change | **1,659,758** | 1.643-1.676 M | **1197.3** | 2906 |
+
++7.3% throughput, -87 cycles/tx, non-overlapping ranges. The committed change
+stands.
+
+**Rejected: a per-transaction native RCU scope.** Implemented in
+`crates/mako-engine-sto/src/txn.rs`: the transaction owns one
+`masstree::RcuScope` from `begin` until the slot is released, closed explicitly
+on commit, abort and every terminal (including the fused holder path, which the
+cache *forgets* after publishing, so the region must be ended before it returns).
+Measured: **3306 ins/tx and 1.37-1.41 M tx/s, a 17% regression.** This matches the
+`--rcu-batch K=1` cell of section 8.3 independently: one scope begin/end pair per
+transaction costs more than the per-lookup `operation_rcu_guard` it suppresses.
+Reverted. (Side finding worth keeping: any resource owned by the engine facade
+must be released before the fused publish, because the cache forgets that facade
+on success.)
+
+**Rejected: skip the plan teardown call when the plan is already pooled.** A
+`teardown_required` predicate on `ErasedDirectCommitPlan` (default `true`,
+overridden by the borrowed plan with exactly the condition under which its
+teardown returns without touching adapter state) removes 6 ins/tx and one
+`catch_unwind`. Measured under ABBA (24 samples per build): **1,591,238 vs
+1,655,940 tx/s and 1247.8 vs 1198.2 cycles/tx — a 3.9% regression.** Fewer
+instructions, worse cycles: the predicate is itself an erased call and the new
+branch broke the straight-line phase sequence (IPC 2.42 -> 2.32). Reverted.
+
+Both rejections sharpen the rule this workload follows: on the commit path,
+removing an unwind helps only when the call sequence stays straight-line and
+monomorphic (as in 8.6); adding indirection or a branch to save a few
+instructions loses. The remaining +623-row (commit protocol) and +347-row
+(lifecycle) therefore need the structural change, not further local trimming.
+
 ## 9 Appendix
 
 ### A. Artifacts in this directory
