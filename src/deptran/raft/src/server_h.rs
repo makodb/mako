@@ -1127,7 +1127,7 @@ unsafe extern "C" {
 // inside the broadcast kernel would sample it before the lock and lose the
 // ordering the comment at that call site exists to protect.
 // One entry waiting for the apply thread. A conflicting snapshot increments
-// apply_queue_epoch_, so an entry popped before the invalidation carries a
+// ApplyQueue::epoch_, so an entry popped before the invalidation carries a
 // stale epoch and is skipped instead of applied after it.
 //
 // This was a C++ struct in a std::deque that five kernels reached into. It is
@@ -1144,6 +1144,26 @@ pub struct QueuedApplyEntry {
     pub index_: u64,
     pub command_: rusty::RaftCommand,
     pub epoch_: u64,
+}
+
+// The queue and the epoch that invalidates it, as one type, because they are
+// one invariant: an entry is applicable only while its epoch still matches,
+// and a snapshot that replaces the log bumps the epoch in the same critical
+// section that empties the queue. Holding them as two fields beside a mutex
+// stated that relationship in a comment; holding them inside one
+// rusty::Mutex<ApplyQueue> states it in the type, and there is no longer a
+// spelling for reading either one unlocked.
+#[repr(C)]
+pub struct ApplyQueue {
+    pub entries_: rusty::VecDeque<QueuedApplyEntry>,
+    pub epoch_: u64,
+}
+
+#[allow(clippy::new_without_default)]
+impl ApplyQueue {
+    pub fn new() -> ApplyQueue {
+        ApplyQueue { entries_: rusty::VecDeque::new(), epoch_: 0 }
+    }
 }
 
 #[repr(C)]
@@ -1230,9 +1250,7 @@ pub struct RaftServerBase {
     pub apply_thread_: rusty::RaftStdThread,
     pub apply_thread_running_: rusty::sync::atomic::AtomicBool,
     pub state_machine_apply_mtx_: rusty::RaftStdMutex,
-    pub apply_queue_mtx_: rusty::RaftStdMutex,
-    pub apply_queue_epoch_: u64,
-    pub apply_queue_: rusty::VecDeque<QueuedApplyEntry>,
+    pub apply_queue_: rusty::Mutex<ApplyQueue>,
     // The command the apply thread popped and is about to hand to the
     // learner. A staging field rather than a local because Command is opaque
     // to Rust: the pop kernel moves it here and the invoke kernel reads it,
@@ -1321,9 +1339,7 @@ impl RaftServerBase {
             apply_thread_: Default::default(),
             apply_thread_running_: rusty::sync::atomic::AtomicBool::new(false),
             state_machine_apply_mtx_: Default::default(),
-            apply_queue_mtx_: Default::default(),
-            apply_queue_epoch_: 0,
-            apply_queue_: rusty::VecDeque::new(),
+            apply_queue_: rusty::Mutex::new(ApplyQueue::new()),
             pending_apply_command_: Default::default(),
             batch_buffer_: Default::default(),
             appliedIndexForWait_: rusty::sync::atomic::AtomicU64::new(0),
@@ -2600,20 +2616,19 @@ impl RaftServerBase {
         }
         let mut purged_apply_entries: u64 = 0;
         {
-            let _queue_lock =
-                RaftStdLockGuard::new(&mut self.apply_queue_mtx_);
+            let mut queue = self.apply_queue_.lock().unwrap();
             if retain_suffix {
                 // Rotate-filter: pop every entry once and push the survivors
                 // back, which keeps their order without a second container.
-                let examined: usize = self.apply_queue_.len();
+                let examined: usize = queue.entries_.len();
                 let mut seen: usize = 0;
                 while seen < examined {
-                    let entry = self.apply_queue_.pop_front().unwrap();
+                    let entry = queue.entries_.pop_front().unwrap();
                     if raft_server_log_index_at_or_below(
                         entry.index_, last_included_index) {
                         purged_apply_entries += 1;
                     } else {
-                        self.apply_queue_.push_back(entry);
+                        queue.entries_.push_back(entry);
                     }
                     seen += 1;
                 }
@@ -2622,9 +2637,9 @@ impl RaftServerBase {
                 // including an entry the apply thread has already popped --
                 // it rechecks this epoch under the state-machine gate before
                 // invoking the callback.
-                self.apply_queue_epoch_ += 1;
-                purged_apply_entries = self.apply_queue_.len() as u64;
-                self.apply_queue_.clear();
+                queue.epoch_ += 1;
+                purged_apply_entries = queue.entries_.len() as u64;
+                queue.entries_.clear();
             }
         }
 
@@ -2672,11 +2687,10 @@ impl RaftServerBase {
             // "queue_remaining" figure below still counts the entry that is
             // about to be applied.
             let queue_size: u64 = {
-                let _queue_lock =
-                    RaftStdLockGuard::new(&mut self.apply_queue_mtx_);
-                let size_before: u64 = self.apply_queue_.len() as u64;
-                if !self.apply_queue_.is_empty() {
-                    let mut entry = self.apply_queue_.pop_front().unwrap();
+                let mut queue = self.apply_queue_.lock().unwrap();
+                let size_before: u64 = queue.entries_.len() as u64;
+                if !queue.entries_.is_empty() {
+                    let mut entry = queue.entries_.pop_front().unwrap();
                     id = entry.index_;
                     entry_epoch = entry.epoch_;
                     // mem::take rather than the plainer partial move
@@ -2720,11 +2734,8 @@ impl RaftServerBase {
                 // snapshot covers is skipped once the snapshot state is in.
                 let _apply_lock =
                     RaftStdLockGuard::new(&mut self.state_machine_apply_mtx_);
-                let current_epoch: u64 = {
-                    let _queue_lock =
-                        RaftStdLockGuard::new(&mut self.apply_queue_mtx_);
-                    self.apply_queue_epoch_
-                };
+                let current_epoch: u64 =
+                    self.apply_queue_.lock().unwrap().epoch_;
                 let applied_index: u64 = self.GetAppliedIndex();
                 if !raft_server_apply_epoch_is_current(entry_epoch,
                                                        current_epoch) {
@@ -3152,7 +3163,7 @@ impl RaftServerBase {
     #[allow(clippy::manual_is_multiple_of)]
     // ONE PASS, TWO CRITICAL SECTIONS. The scan stops at the first gap and
     // lifts each usable command out of the log as it goes, because the log
-    // must not be read while apply_queue_mtx_ is held -- the reason this used
+    // must not be read while the apply queue is locked -- the reason this used
     // to be split between a Rust scan and a C++ push kernel. Copying a
     // Command is a refcount bump on its inner Arc, not a payload copy.
     pub fn EnqueueCommittedEntries(&mut self, old_commit: u64,
@@ -3198,15 +3209,14 @@ impl RaftServerBase {
         // logging tick and once otherwise.
         let mut qsize: u64 = 0;
         if enqueued > 0 || want_size {
-            let _queue_lock =
-                RaftStdLockGuard::new(&mut self.apply_queue_mtx_);
-            let epoch: u64 = self.apply_queue_epoch_;
+            let mut queue = self.apply_queue_.lock().unwrap();
+            let epoch: u64 = queue.epoch_;
             while !batch.is_empty() {
                 let mut queued = batch.pop_front().unwrap();
                 queued.epoch_ = epoch;
-                self.apply_queue_.push_back(queued);
+                queue.entries_.push_back(queued);
             }
-            qsize = self.apply_queue_.len() as u64;
+            qsize = queue.entries_.len() as u64;
         }
 
         if first_missing > 0 {

@@ -2251,9 +2251,9 @@ extern "C" inline void raft_mutex_unlock(RaftCheckedMutex* mutex) {
 }
 
 // @unsafe - the same two halves for a plain std::mutex. RaftServer has two
-// left (state_machine_apply_mtx_, apply_queue_mtx_) that a DSL body has to
-// hold across a scope. The startup gate no longer needs these: its flag lives
-// inside a rusty::Mutex that owns it.
+// left: state_machine_apply_mtx_, which a DSL body has to hold across a
+// scope. Neither the startup gate nor the apply queue needs these any more --
+// each lives inside a rusty::Mutex that owns what it guards.
 extern "C" inline void raft_std_mutex_lock(std::mutex* mutex) {
   mutex->lock();
 }
@@ -2591,7 +2591,7 @@ unsafe extern "C" {
 // inside the broadcast kernel would sample it before the lock and lose the
 // ordering the comment at that call site exists to protect.
 // One entry waiting for the apply thread. A conflicting snapshot increments
-// apply_queue_epoch_, so an entry popped before the invalidation carries a
+// ApplyQueue::epoch_, so an entry popped before the invalidation carries a
 // stale epoch and is skipped instead of applied after it.
 //
 // This was a C++ struct in a std::deque that five kernels reached into. It is
@@ -2608,6 +2608,26 @@ pub struct QueuedApplyEntry {
     pub index_: u64,
     pub command_: rusty::RaftCommand,
     pub epoch_: u64,
+}
+
+// The queue and the epoch that invalidates it, as one type, because they are
+// one invariant: an entry is applicable only while its epoch still matches,
+// and a snapshot that replaces the log bumps the epoch in the same critical
+// section that empties the queue. Holding them as two fields beside a mutex
+// stated that relationship in a comment; holding them inside one
+// rusty::Mutex<ApplyQueue> states it in the type, and there is no longer a
+// spelling for reading either one unlocked.
+#[repr(C)]
+pub struct ApplyQueue {
+    pub entries_: rusty::VecDeque<QueuedApplyEntry>,
+    pub epoch_: u64,
+}
+
+#[allow(clippy::new_without_default)]
+impl ApplyQueue {
+    pub fn new() -> ApplyQueue {
+        ApplyQueue { entries_: rusty::VecDeque::new(), epoch_: 0 }
+    }
 }
 
 #[repr(C)]
@@ -2694,9 +2714,7 @@ pub struct RaftServerBase {
     pub apply_thread_: rusty::RaftStdThread,
     pub apply_thread_running_: rusty::sync::atomic::AtomicBool,
     pub state_machine_apply_mtx_: rusty::RaftStdMutex,
-    pub apply_queue_mtx_: rusty::RaftStdMutex,
-    pub apply_queue_epoch_: u64,
-    pub apply_queue_: rusty::VecDeque<QueuedApplyEntry>,
+    pub apply_queue_: rusty::Mutex<ApplyQueue>,
     // The command the apply thread popped and is about to hand to the
     // learner. A staging field rather than a local because Command is opaque
     // to Rust: the pop kernel moves it here and the invoke kernel reads it,
@@ -2785,9 +2803,7 @@ impl RaftServerBase {
             apply_thread_: Default::default(),
             apply_thread_running_: rusty::sync::atomic::AtomicBool::new(false),
             state_machine_apply_mtx_: Default::default(),
-            apply_queue_mtx_: Default::default(),
-            apply_queue_epoch_: 0,
-            apply_queue_: rusty::VecDeque::new(),
+            apply_queue_: rusty::Mutex::new(ApplyQueue::new()),
             pending_apply_command_: Default::default(),
             batch_buffer_: Default::default(),
             appliedIndexForWait_: rusty::sync::atomic::AtomicU64::new(0),
@@ -4064,20 +4080,19 @@ impl RaftServerBase {
         }
         let mut purged_apply_entries: u64 = 0;
         {
-            let _queue_lock =
-                RaftStdLockGuard::new(&mut self.apply_queue_mtx_);
+            let mut queue = self.apply_queue_.lock().unwrap();
             if retain_suffix {
                 // Rotate-filter: pop every entry once and push the survivors
                 // back, which keeps their order without a second container.
-                let examined: usize = self.apply_queue_.len();
+                let examined: usize = queue.entries_.len();
                 let mut seen: usize = 0;
                 while seen < examined {
-                    let entry = self.apply_queue_.pop_front().unwrap();
+                    let entry = queue.entries_.pop_front().unwrap();
                     if raft_server_log_index_at_or_below(
                         entry.index_, last_included_index) {
                         purged_apply_entries += 1;
                     } else {
-                        self.apply_queue_.push_back(entry);
+                        queue.entries_.push_back(entry);
                     }
                     seen += 1;
                 }
@@ -4086,9 +4101,9 @@ impl RaftServerBase {
                 // including an entry the apply thread has already popped --
                 // it rechecks this epoch under the state-machine gate before
                 // invoking the callback.
-                self.apply_queue_epoch_ += 1;
-                purged_apply_entries = self.apply_queue_.len() as u64;
-                self.apply_queue_.clear();
+                queue.epoch_ += 1;
+                purged_apply_entries = queue.entries_.len() as u64;
+                queue.entries_.clear();
             }
         }
 
@@ -4136,11 +4151,10 @@ impl RaftServerBase {
             // "queue_remaining" figure below still counts the entry that is
             // about to be applied.
             let queue_size: u64 = {
-                let _queue_lock =
-                    RaftStdLockGuard::new(&mut self.apply_queue_mtx_);
-                let size_before: u64 = self.apply_queue_.len() as u64;
-                if !self.apply_queue_.is_empty() {
-                    let mut entry = self.apply_queue_.pop_front().unwrap();
+                let mut queue = self.apply_queue_.lock().unwrap();
+                let size_before: u64 = queue.entries_.len() as u64;
+                if !queue.entries_.is_empty() {
+                    let mut entry = queue.entries_.pop_front().unwrap();
                     id = entry.index_;
                     entry_epoch = entry.epoch_;
                     // mem::take rather than the plainer partial move
@@ -4184,11 +4198,8 @@ impl RaftServerBase {
                 // snapshot covers is skipped once the snapshot state is in.
                 let _apply_lock =
                     RaftStdLockGuard::new(&mut self.state_machine_apply_mtx_);
-                let current_epoch: u64 = {
-                    let _queue_lock =
-                        RaftStdLockGuard::new(&mut self.apply_queue_mtx_);
-                    self.apply_queue_epoch_
-                };
+                let current_epoch: u64 =
+                    self.apply_queue_.lock().unwrap().epoch_;
                 let applied_index: u64 = self.GetAppliedIndex();
                 if !raft_server_apply_epoch_is_current(entry_epoch,
                                                        current_epoch) {
@@ -4616,7 +4627,7 @@ impl RaftServerBase {
     #[allow(clippy::manual_is_multiple_of)]
     // ONE PASS, TWO CRITICAL SECTIONS. The scan stops at the first gap and
     // lifts each usable command out of the log as it goes, because the log
-    // must not be read while apply_queue_mtx_ is held -- the reason this used
+    // must not be read while the apply queue is locked -- the reason this used
     // to be split between a Rust scan and a C++ push kernel. Copying a
     // Command is a refcount bump on its inner Arc, not a payload copy.
     pub fn EnqueueCommittedEntries(&mut self, old_commit: u64,
@@ -4662,15 +4673,14 @@ impl RaftServerBase {
         // logging tick and once otherwise.
         let mut qsize: u64 = 0;
         if enqueued > 0 || want_size {
-            let _queue_lock =
-                RaftStdLockGuard::new(&mut self.apply_queue_mtx_);
-            let epoch: u64 = self.apply_queue_epoch_;
+            let mut queue = self.apply_queue_.lock().unwrap();
+            let epoch: u64 = queue.epoch_;
             while !batch.is_empty() {
                 let mut queued = batch.pop_front().unwrap();
                 queued.epoch_ = epoch;
-                self.apply_queue_.push_back(queued);
+                queue.entries_.push_back(queued);
             }
-            qsize = self.apply_queue_.len() as u64;
+            qsize = queue.entries_.len() as u64;
         }
 
         if first_missing > 0 {
@@ -4999,8 +5009,9 @@ impl TxLogServer for RaftServerBase {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=9e8fc7bd9366c5c67b148330ef0379e09d8d11309cf5520f535dd9bcd01a0083*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=99940e40ec27e439b45b051d75b64f63684adaed59547467d78b78887369f22c*/
 struct QueuedApplyEntry;
+struct ApplyQueue;
 struct RaftVoteOutcome;
 struct RaftServerBase;
 
@@ -5062,6 +5073,13 @@ struct QueuedApplyEntry {
     uint64_t epoch_;
 };
 
+struct ApplyQueue {
+    rusty::VecDeque<QueuedApplyEntry> entries_;
+    uint64_t epoch_;
+
+    static ApplyQueue new_();
+};
+
 struct RaftVoteOutcome {
     int64_t term_;
     bool yes_;
@@ -5114,9 +5132,7 @@ struct RaftServerBase : public TxLogServer {
     rusty::RaftStdThread apply_thread_;
     rusty::sync::atomic::AtomicBool apply_thread_running_;
     rusty::RaftStdMutex state_machine_apply_mtx_;
-    rusty::RaftStdMutex apply_queue_mtx_;
-    uint64_t apply_queue_epoch_;
-    rusty::VecDeque<QueuedApplyEntry> apply_queue_;
+    rusty::Mutex<ApplyQueue> apply_queue_;
     rusty::RaftCommand pending_apply_command_;
     rusty::RaftBatchBuffer batch_buffer_;
     rusty::sync::atomic::AtomicU64 appliedIndexForWait_;
@@ -5206,6 +5222,10 @@ struct RaftServerBase : public TxLogServer {
 };
 
 
+inline ApplyQueue ApplyQueue::new_() {
+    return ApplyQueue{.entries_ = rusty::VecDeque<QueuedApplyEntry>::new_(), .epoch_ = static_cast<uint64_t>(0)};
+}
+
 inline RaftServerBase::RaftServerBase()
     : TxLogServer()
     , loc_id_(static_cast<uint32_t>(4294967295))
@@ -5247,9 +5267,7 @@ inline RaftServerBase::RaftServerBase()
     , apply_thread_(rusty::default_like<rusty::RaftStdThread>())
     , apply_thread_running_(rusty::sync::atomic::AtomicBool::new_(false))
     , state_machine_apply_mtx_(rusty::default_like<rusty::RaftStdMutex>())
-    , apply_queue_mtx_(rusty::default_like<rusty::RaftStdMutex>())
-    , apply_queue_epoch_(static_cast<uint64_t>(0))
-    , apply_queue_(rusty::VecDeque<QueuedApplyEntry>::new_())
+    , apply_queue_(rusty::Mutex<ApplyQueue>::new_(ApplyQueue::new_()))
     , pending_apply_command_(rusty::default_like<rusty::RaftCommand>())
     , batch_buffer_(rusty::default_like<rusty::RaftBatchBuffer>())
     , appliedIndexForWait_(rusty::sync::atomic::AtomicU64::new_(0))
@@ -5974,23 +5992,23 @@ inline void RaftServerBase::OnInstallSnapshotLocked(uint64_t term, uint64_t lead
     }
     uint64_t purged_apply_entries = static_cast<uint64_t>(0);
     {
-        const auto _queue_lock = RaftStdLockGuard::new_(&this->apply_queue_mtx_);
+        auto queue = this->apply_queue_.lock().unwrap();
         if (retain_suffix) {
-            const size_t examined = rusty::len(this->apply_queue_);
+            const size_t examined = rusty::len((*queue).entries_);
             size_t seen = static_cast<size_t>(0);
             while (rusty::detail::deref_if_pointer_like(seen) < rusty::detail::deref_if_pointer_like(examined)) {
-                auto entry = this->apply_queue_.pop_front().unwrap();
+                auto entry = (*queue).entries_.pop_front().unwrap();
                 if (raft_server_log_index_at_or_below(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.index_); }) { return (__r.index_); } else if constexpr (requires { (__r.index__field); }) { return (__r.index__field); } else if constexpr (requires { ((*__r).index_); }) { return ((*__r).index_); } else { return ((*__r).index__field); } }(entry)), std::move(last_included_index))) {
                     purged_apply_entries += 1;
                 } else {
-                    this->apply_queue_.push_back(std::move(entry));
+                    (*queue).entries_.push_back(std::move(entry));
                 }
                 seen += 1;
             }
         } else {
-            this->apply_queue_epoch_ += 1;
-            purged_apply_entries = static_cast<uint64_t>(rusty::len(this->apply_queue_));
-            this->apply_queue_.clear();
+            (*queue).epoch_ += 1;
+            purged_apply_entries = static_cast<uint64_t>(rusty::len((*queue).entries_));
+            (*queue).entries_.clear();
         }
     }
     this->state_.commit_index_ = std::move(last_included_index);
@@ -6010,10 +6028,10 @@ inline void RaftServerBase::ApplyThreadLoop() {
         uint64_t id = static_cast<uint64_t>(0);
         uint64_t entry_epoch = static_cast<uint64_t>(0);
         bool got_entry = false;
-        const uint64_t queue_size = [&]() -> uint64_t { const auto _queue_lock = RaftStdLockGuard::new_(&this->apply_queue_mtx_);
-uint64_t size_before = static_cast<uint64_t>(rusty::len(this->apply_queue_));
-if (rusty::detail::rust_not(rusty::is_empty(this->apply_queue_))) {
-    auto entry = this->apply_queue_.pop_front().unwrap();
+        const uint64_t queue_size = [&]() -> uint64_t { auto queue = this->apply_queue_.lock().unwrap();
+uint64_t size_before = static_cast<uint64_t>(rusty::len((*queue).entries_));
+if (rusty::detail::rust_not(rusty::is_empty((*queue).entries_))) {
+    auto entry = (*queue).entries_.pop_front().unwrap();
     id = std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.index_); }) { return (__r.index_); } else if constexpr (requires { (__r.index__field); }) { return (__r.index__field); } else if constexpr (requires { ((*__r).index_); }) { return ((*__r).index_); } else { return ((*__r).index__field); } }(entry));
     entry_epoch = std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.epoch_); }) { return (__r.epoch_); } else if constexpr (requires { (__r.epoch__field); }) { return (__r.epoch__field); } else if constexpr (requires { ((*__r).epoch_); }) { return ((*__r).epoch_); } else { return ((*__r).epoch__field); } }(entry));
     this->pending_apply_command_ = rusty::mem::take([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.command_); }) { return (__r.command_); } else if constexpr (requires { (__r.command__field); }) { return (__r.command__field); } else if constexpr (requires { ((*__r).command_); }) { return ((*__r).command_); } else { return ((*__r).command__field); } }(entry));
@@ -6037,8 +6055,7 @@ return this->state_.commit_index_; }();
         bool applied_entry = false;
         {
             const auto _apply_lock = RaftStdLockGuard::new_(&this->state_machine_apply_mtx_);
-            const uint64_t current_epoch = [&]() -> uint64_t { const auto _queue_lock = RaftStdLockGuard::new_(&this->apply_queue_mtx_);
-return this->apply_queue_epoch_; }();
+            const uint64_t current_epoch = (*this->apply_queue_.lock().unwrap()).epoch_;
             const uint64_t applied_index = this->GetAppliedIndex();
             if (rusty::detail::rust_not(raft_server_apply_epoch_is_current(std::move(entry_epoch), std::move(current_epoch)))) {
                 rusty::raft_log_debug_4("[APPLY-THREAD] Site {}: Skipping invalidated entry {} (entry_epoch={} current_epoch={})", this->site_id_, std::move(id), std::move(entry_epoch), std::move(current_epoch));
@@ -6326,14 +6343,14 @@ inline void RaftServerBase::EnqueueCommittedEntries(uint64_t old_commit, uint64_
     const bool want_size = (rusty::detail::deref_if_pointer_like(ticket) % static_cast<int32_t>(50)) == static_cast<uint64_t>(0);
     uint64_t qsize = static_cast<uint64_t>(0);
     if ((rusty::detail::deref_if_pointer_like(enqueued) > 0) || rusty::detail::deref_if_pointer_like(want_size)) {
-        const auto _queue_lock = RaftStdLockGuard::new_(&this->apply_queue_mtx_);
-        uint64_t epoch = this->apply_queue_epoch_;
+        auto queue = this->apply_queue_.lock().unwrap();
+        uint64_t epoch = (*queue).epoch_;
         while (rusty::detail::rust_not(rusty::is_empty(batch))) {
             auto queued = batch.pop_front().unwrap();
             [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.epoch_); }) { return (__r.epoch_); } else if constexpr (requires { (__r.epoch__field); }) { return (__r.epoch__field); } else if constexpr (requires { ((*__r).epoch_); }) { return ((*__r).epoch_); } else { return ((*__r).epoch__field); } }(queued) = std::move(epoch);
-            this->apply_queue_.push_back(std::move(queued));
+            (*queue).entries_.push_back(std::move(queued));
         }
-        qsize = static_cast<uint64_t>(rusty::len(this->apply_queue_));
+        qsize = static_cast<uint64_t>(rusty::len((*queue).entries_));
     }
     if (rusty::detail::deref_if_pointer_like(first_missing) > 0) {
         rusty::raft_log_info_5("[ENQUEUE] Site {}: gap at slot {} (range {}..{}, enqueued {})", this->site_id_, std::move(first_missing), rusty::detail::deref_if_pointer_like(old_commit) + 1, std::move(new_commit), std::move(enqueued));
