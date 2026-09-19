@@ -213,13 +213,30 @@ that nobody has converted yet.
 
 ## 4. Concurrency: who touches which memory
 
-Measured, not assumed (17 OS threads in a 5-replica lab process).
+**13 OS threads** in a five-site RaftLabTest process, counted from
+`/proc/<pid>/task`. They are all named `deptran_server`, so the breakdown
+below is from the code that spawns them, not from the thread names.
+
+There is NO control-plane poll thread in either configuration measured here.
+`RaftWorker::SetupHeartbeat` (`raft_worker.cc:484`) creates one --
+`svr_hb_poll_thread_worker_g` -- but only when `Config::do_heart_beat()` is
+true, which requires the `-b` flag, and neither `ci/ci.sh raftLabTest` nor
+`examples/raft_bench.sh` passes it. When it does exist it serves
+`ServerControlServiceImpl` on `site_port + 10000`: `server_ready`,
+`server_shutdown`, `server_heart_beat` -- the benchmark driver's liveness
+channel, nothing to do with Raft's AppendEntries heartbeat. The `_g` suffix
+is vestigial; it is a per-worker member (`raft_worker.h:130`), not a global.
+
+Worth noting as an inconsistency rather than a design: `ServerWorker` (the
+Mako path) CLONES the server's poll thread for that service
+(`server_worker.cc:13`), while `RaftWorker` and `PaxosWorker` each
+`PollThread::create()` a second one.
 
 ```
 MAIN THREAD
   └── Setup / Shutdown                    [RUST] via the C++ ctor/dtor
 
-POLL THREAD (one per RaftWorker, plus one global, plus one per client stub)
+POLL THREAD (one per RaftWorker, plus one per client stub)
   │   Runs the epoll loop. Two Raft FIBERS are multiplexed onto it:
   ├── heartbeat fiber                     [RUST] heartbeat_loop_body
   │     └── HeartbeatDriver::run          [RUST] owns HeartbeatRoundState
