@@ -1506,9 +1506,10 @@ pub struct RaftServerBase {
     // mutex now, so the flag is unreachable without the lock and the kernel
     // pair (raft_startup_wait / raft_startup_notify_all) has nothing to do.
     //
-    // This is the small case of the shape docs/migration/raft/recursive-mutex.md
-    // names as the end state for mtx_ -- proved on a two-field gate before it
-    // is attempted on the consensus cluster.
+    // This is the small case of the end state planned for mtx_ (step C in
+    // docs/migration/raft/plan.md): a Mutex owning the fields it guards --
+    // proved on a two-field gate before it is attempted on the consensus
+    // cluster.
     //
     // startup_succeeded_ stays outside deliberately: it is written before the
     // flag and read after the wait, so the mutex's own release/acquire

@@ -165,11 +165,11 @@ void ServerWorker::ShutDown() {
   // The worker is the SOLE owner of the scheduler CreateScheduler() returned:
   // RaftFrame::svr_ is a borrowed back-reference, not a unique_ptr, so this
   // delete is the only one. Matches PaxosWorker (paxos_worker.cc:240) and
-  // RaftWorker (raft_worker.cc:564). See cpp-refactor-plan.md B1.
+  // RaftWorker (raft_worker.cc:564).
   if (rep_sched_ != nullptr) {
     Log_info("Deleting replication scheduler in RAFT_TEST_CORO shutdown");
     // Drop the frame's borrowed back-reference first; see
-    // RaftFrame::ReleaseScheduler and cpp-refactor-plan.md B1.
+    // RaftFrame::ReleaseScheduler.
     if (rep_frame_ != nullptr) {
       rep_frame_->ReleaseScheduler();
     }

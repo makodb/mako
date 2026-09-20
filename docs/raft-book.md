@@ -1111,4 +1111,4 @@ See `docs/dev/raft_membership_change_design.md` for the full protocol design.
 
 ---
 
-*This document consolidates the Raft implementation documentation from across the Mako project. For detailed phase implementation plans, see `docs/migration/raft/` and `docs/plans/log-persistence/`. For the Mako integration layer, see `docs/migration/raft/architecture-analysis.md` and `docs/migration/raft/mako-explained.md`.*
+*This document consolidates the Raft implementation documentation from across the Mako project. For the C++-to-Rust conversion, see `docs/migration/raft/conversion-log.md` (what was done) and `docs/migration/raft/plan.md` (what remains); for log persistence, `docs/plans/log-persistence/`.*

@@ -47,8 +47,6 @@ ownership by THREAD while this runtime schedules FIBERS that share one.
 | `fc023f0a6` | documented the re-entrancy contract the demotion created, at the registration point |
 | `bda58df50` | made re-entry ABORT with a diagnostic instead of hanging (`RaftCheckedMutex`) |
 
-Full account: `docs/migration/raft/recursive-mutex.md`.
-
 ## 3. Giving the data to Rust (09-13 .. 09-16)
 
 The order is deliberate: data first, bodies after. Converting bodies over a
@@ -126,6 +124,9 @@ of data on the wrong side.
 | data members on `class RaftServer` | 51 | **0** |
 | out-of-line `RaftServer` methods | 67 (2,527 lines) | **6** |
 | Rust share of `server.{h,cc}` authored lines | 33% | **71.6%** |
+
+Counts as of 09-19. `plan.md` carries the current measured values and the
+method behind each.
 
 ## What it cost
 

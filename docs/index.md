@@ -120,14 +120,8 @@ Welcome to the Mako documentation.
 
 ### Raft Migration (Paxos to Raft)
 
-- **[Raft Migration Overview](migration/raft/overview.md)** - Replace Paxos with Raft
-- **[Architecture Analysis](migration/raft/architecture-analysis.md)** - Architecture for Raft
-- **[Complete Architecture](migration/raft/complete-architecture.md)** - Complete Raft architecture
-- **[Mako Explained](migration/raft/mako-explained.md)** - Mako explanation
-- **[Raft Explained](migration/raft/raft-explained.md)** - Raft protocol explanation
-- **[Raft Helper](migration/raft/raft-helper.md)** - Raft helper implementation
-- **[Main Helper Implementation](migration/raft/main-helper-impl.md)** - Implementation details
-- **[Migration Status](migration/raft/status.md)** - Migration status tracking
+- **[Conversion Log](migration/raft/conversion-log.md)** - Every commit of the Raft C++-to-Rust conversion, in six phases
+- **[Plan](migration/raft/plan.md)** - The steps from here to a rustc-compiled Raft, each with its goal and its done-test
 
 ---
 

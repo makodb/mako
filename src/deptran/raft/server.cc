@@ -5212,9 +5212,10 @@ bool raft_phase1_load_and_send_snapshot(RaftServerBase* self,
         // because both contexts run on the one poll thread and a fiber
         // blocking on a std::mutex blocks that thread, so the two halves
         // cannot be in flight at once -- but a total order an existing call
-        // site inverts is not a total order, and the residual risk
-        // docs/migration/raft/recursive-mutex.md names (a suspension inside a
-        // critical section) is exactly what would make it reachable.
+        // site inverts is not a total order, and the residual risk of the
+        // non-recursive mtx_ (a suspension inside a critical section;
+        // docs/migration/raft/conversion-log.md section 2) is exactly what
+        // would make it reachable.
         //
         // The inline path always passes follower_term == 0, so it takes the
         // branch below and returns having touched no state and taken no lock.

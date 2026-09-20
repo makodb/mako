@@ -17,7 +17,7 @@
 # type name. What still stands is the orphan-impl rule -- an `impl` on a
 # hand-written C++ type is stubbed out, so the unit of conversion is a whole
 # type -- and implementation inheritance, which has no Rust spelling. See
-# docs/migration/raft/cpp-refactor-plan.md gates G1-G4, and docs/stage2_raft.txt
+# the constraints list in docs/migration/raft/plan.md, and docs/stage2_raft.txt
 # (the live text for what was docs/stage2_open_questions.md Q1b is
 # docs/stage2_raft.txt:353).
 #
@@ -674,7 +674,7 @@ if [[ -f "${RAFT_CRATE_MANIFEST}" && ${#FILES[@]} -eq ${#EXPECTED_INVENTORY_FILE
     # flag to every crate it builds from this manifest; the per-carrier stage's
     # `-D warnings` is preserved, not relaxed.
     #
-    # See docs/migration/raft/cpp-refactor-plan.md gate G1.
+    # See the facade-crate constraint in docs/migration/raft/plan.md.
     if ! output=$(cd "${RAFT_CRATE_DIR}" && \
         RUSTFLAGS="-D warnings" CARGO_TARGET_DIR="${RAFT_CRATE_DIR}/target" \
         cargo build --quiet --lib 2>&1); then

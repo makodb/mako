@@ -2010,8 +2010,7 @@ inline RaftConsensusState RaftConsensusState::new_() {
 // `*mut core::ffi::c_void`, not as a pointer to a modelled RaftServer. That is
 // deliberate and it is the whole safety argument. A Rust type that modelled
 // RaftServer's fields would typecheck against a hand-written model while the
-// apply thread and the submit edge mutate the same members concurrently
-// (see docs/migration/raft/heartbeat-first-conversion-plan.md section 3.5),
+// apply thread and the submit edge mutate the same members concurrently,
 // producing a green borrow check over an untrue premise. `c_void` makes that
 // structurally impossible: Rust cannot dereference it, so every read of server
 // state is forced through a kernel that takes the lock the way the old inline
@@ -2527,7 +2526,7 @@ inline RaftStdLockGuard::~RaftStdLockGuard() noexcept(true) {
 
 // ReplicationWakeGate: the first src/deptran/raft conversion that is not a
 // scalar predicate, and the first that proves `impl` at all. See
-// docs/migration/raft/cpp-refactor-plan.md tranche 3.
+// docs/migration/raft/conversion-log.md section 1 (f060472e9).
 //
 // The two wait entry points are SPLIT rather than moved wholesale, for one
 // reason: creating an `IntEvent` calls the reactor factory
@@ -3224,9 +3223,10 @@ pub struct RaftServerBase {
     // mutex now, so the flag is unreachable without the lock and the kernel
     // pair (raft_startup_wait / raft_startup_notify_all) has nothing to do.
     //
-    // This is the small case of the shape docs/migration/raft/recursive-mutex.md
-    // names as the end state for mtx_ -- proved on a two-field gate before it
-    // is attempted on the consensus cluster.
+    // This is the small case of the end state planned for mtx_ (step C in
+    // docs/migration/raft/plan.md): a Mutex owning the fields it guards --
+    // proved on a two-field gate before it is attempted on the consensus
+    // cluster.
     //
     // startup_succeeded_ stays outside deliberately: it is written before the
     // flag and read after the wait, so the mutex's own release/acquire
@@ -5801,7 +5801,7 @@ impl TxLogServer for RaftServerBase {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=8b8e6e74af1db1466181845584cdbbd2d7d56ef2a019b586060565e09deb5234*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=7d5b6e78504f03924c67250aa762334c7bf85c8043922a13f6b549f824934788*/
 enum class RaftEnvError : int32_t;
 constexpr RaftEnvError RaftEnvError_NOT_A_WHOLE_NUMBER();
 constexpr RaftEnvError RaftEnvError_OVERFLOWS_U64();

@@ -565,7 +565,7 @@ void RaftWorker::ShutDown() {
 
   if (rep_sched_) {
     // Drop the frame's borrowed back-reference first; see
-    // RaftFrame::ReleaseScheduler and cpp-refactor-plan.md B1.
+    // RaftFrame::ReleaseScheduler.
     if (auto* raft_frame = dynamic_cast<RaftFrame*>(rep_frame_)) {
       raft_frame->ReleaseScheduler();
     }

@@ -51,7 +51,7 @@ class RaftFrame : public Frame {
   // pointer the worker already deletes -- a double free that stayed latent
   // only because no Frame is ever deleted, i.e. the leak was load-bearing.
   // This matches MultiPaxosFrame, which has never had a frame-side owner
-  // (paxos/frame.cc:30). See docs/migration/raft/cpp-refactor-plan.md B1.
+  // (paxos/frame.cc:30).
   // @unsafe - borrowed raw pointer; ownership is the worker's.
   RaftServer* svr_ = nullptr;
 

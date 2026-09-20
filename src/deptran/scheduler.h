@@ -12,8 +12,8 @@ class Communicator;
 
 // The replication engine interface.
 //
-// WHAT THIS USED TO BE, and why it changed. Until the Tranche 6 work in
-// docs/migration/raft/cpp-refactor-plan.md, TxLogServer was not an interface
+// WHAT THIS USED TO BE, and why it changed. Until the Tranche 6 work
+// (docs/migration/raft/conversion-log.md section 1), TxLogServer was not an interface
 // at all: it was six public data members (loc_id_, site_id_, app_next_,
 // commo_, partition_id_, mtx_), one non-virtual method that assigned one of
 // them, and a virtual destructor -- ZERO behavioural virtuals. RaftServer and

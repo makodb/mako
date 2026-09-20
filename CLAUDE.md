@@ -159,8 +159,8 @@ is `RrrRequestHandle`.
 - `Coordinator`: Coordinates distributed transactions across shards (protocol-specific subclasses like `CoordinatorMultiPaxos`)
 - `TxLogServer`: The replication-engine INTERFACE implemented by the Paxos and
   Raft servers (`src/deptran/scheduler.h`). It holds no state: it was six
-  shared data members until the Tranche 6 work in
-  `docs/migration/raft/cpp-refactor-progress.md` moved them down into the two
+  shared data members until the Tranche 6 work recorded in
+  `docs/migration/raft/conversion-log.md` moved them down into the two
   concrete servers, because implementation inheritance has no Rust spelling.
 - `Communicator`: Manages RPC communication between nodes
 - `Frame`: Protocol-specific transaction processing logic

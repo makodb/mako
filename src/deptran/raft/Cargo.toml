@@ -30,7 +30,7 @@ path = "src/lib.rs"
 # rusty::sync::Arc, rusty::ReactorPollThread, rusty::ReactorIntEvent -- and
 # the extracted Rust dies at E0433/E0573 before the emitter is ever consulted.
 # The emitter lowers those names correctly today; this is what lets rustc
-# agree. See docs/migration/raft/cpp-refactor-plan.md gate G1.
+# agree. See the facade-crate constraint in docs/migration/raft/plan.md.
 [dependencies]
 rusty = { path = "../../rrr/rusty-rustc" }
 
