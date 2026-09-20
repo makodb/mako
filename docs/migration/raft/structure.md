@@ -367,34 +367,52 @@ an existing call site inverts is not a total order.
 
 ### Claim 1: `RaftServerBase` cannot be compiled by rustc and linked
 
-**1a. It is a vtable-bearing C++ base class.** `struct RaftServerBase :
-public TxLogServer` (server.h:5813) implements three pure virtuals, and
-`class RaftServer : public RaftServerBase` derives from it. Base-class
-layout and vtable injection are C++ ABI features **rustc-emitted machine
-code** cannot participate in.
+**1a. It is a vtable-bearing C++ base class — and this is the WEAK half of
+the claim, not the strong one.** An earlier draft had it the other way
+round.
 
-The transpiler already emits `RaftServerBase` *as C++ source* that clang
-compiles into a real base class — that path works today, and mistaking it
-for a counterexample is the obvious wrong objection. It is not one:
-`#[cpp_inherit]` is an identity macro under rustc
-(`rusty-cpp-markers/src/lib.rs:7-9` returns its input unchanged), so rustc
-sees a bare `impl Trait for Type` with no vtable slot and no base subobject;
-the base clause is literal text the emitter writes
-(`emit_items.rs:2221-2223`). Nothing in rusty-cpp makes a Rust type
-inheritable *by* C++ — no `cpp_base`, `cpp_derive`, `cpp_abstract` or
-`inheritable` attribute exists.
+`struct RaftServerBase : public TxLogServer` (server.h:5813) implements
+three pure virtuals, and `class RaftServer : public RaftServerBase` derives
+from it.
 
-And the repo demonstrates the claim rather than contradicting it: rustc
-compiles this exact struct today — `scripts/raft_dsl.sh:680` runs `cargo
-build --lib` over the generated crate, where `pub struct RaftServerBase`
-sits at `src/deptran/raft/src/server_h.rs:1451` — and its output reaches no
-linker. CMake links exactly one cargo artifact, `librust_redis.a`.
+What is true: **rustc cannot emit a C++ polymorphic object.** Rust does have
+vtables — `dyn Trait` is a fat pointer `(data, vtable)` — but the vtable
+lives in the POINTER. C++ (Itanium ABI) embeds a `vptr` as the object's
+first word and dispatches `obj->vptr[i](obj, …)`. No `#[repr]` adds a vptr,
+so a rustc-emitted struct cannot *be* the class C++ dispatches through.
+Hand-laying one out is possible — `{ vptr, fields… }` against a static
+Itanium-shaped vtable, the way COM interop does it — but slot 1 of that
+vtable is a `std::type_info*`, and only a C++ compiler emits those with
+correct cross-TU identity. There are six `dynamic_cast<RaftServer*>` sites
+here, so that route is closed.
 
-*Strength: the soundest claim in this section.* **Cost of removing the
-premise: the twelve `static_cast<RaftServer*>(self)` sites, and nothing
-else.** `RaftServer` supplies no vtable — it has zero `virtual` and zero
-`override` in its whole 361-line body; `RaftServerBase` implements
-`TxLogServer` directly, from the DSL.
+What does NOT follow, and is where the earlier draft overreached: that this
+blocks a rustc-compiled `RaftServerBase`. **It does not need to be the
+polymorphic class.** The standard answer is a C++ shim that owns the vtable
+and forwards into Rust — `cxx` does not support C++ inheriting a Rust type
+at all, and `autocxx`'s `subclass` works by generating exactly such a shim.
+
+**Mako already has the shim. It is `class RaftServer`** — a C++ class with
+zero data members that already sits in that position. Composition would
+change it from deriving `RaftServerBase` to holding one, and the vtable
+never touches Rust:
+
+```
+TxLogServer      C++ abstract: 3 pure virtuals + virtual dtor
+  └── RaftServer C++ shim: owns the vtable, holds the Rust struct,
+      │          implements the 3 by forwarding. dynamic_cast still works.
+      └── base_  real Rust
+```
+
+The forwarding is **three methods** — `set_site_identity`, `set_commo`,
+`reg_learner_action`, all trivial setters — and `RaftServerBase` declares
+zero virtuals of its own beyond them.
+
+*Strength: weak. The vtable is a solved problem with a known shape, and the
+shim that solves it is already in the tree.* Cost: the twelve
+`static_cast<RaftServer*>(self)` sites, which would need a back-pointer
+instead, since a kernel holding a `RaftServerBase*` could no longer cast up
+to its owner.
 
 **1b. The layout does not match.** 22 of the 52 kernels read or write
 `RaftServerBase` fields directly (`self->state_.raft_log_`,
