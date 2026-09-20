@@ -414,21 +414,36 @@ need, and its 22 field-dereferencing kernels are what stand in the way.
 ### Claim 2: exceptions have no DSL spelling
 
 `try`/`catch` cannot be written in the DSL — verified, zero occurrences in
-any `#if RUSTYCPP_RUST` block in `src/deptran/raft`. **Ten** `try` blocks in
-`server.cc` depend on that, not the three the first draft named. By theme:
+any `#if RUSTYCPP_RUST` block in `src/deptran/raft`. **But the claim was
+stated as a blocker and it is not one.** It said "three places need it";
+there were ten, and after `7c7f55a87` there is **one**.
 
-| theme | count | where |
+The fix is not a language feature. It is the observation that Rust models
+failure as a VALUE and C++ models it as control flow, plus the fact that an
+exception unwinding through a Rust frame is undefined behaviour. So:
+**convert the exception to a value at the last C++ frame before Rust, and
+above that line every failure is a value.** Sorting the ten sites by WHAT
+THROWS decides each one:
+
+| what throws | sites | treatment |
 |---|---|---|
-| snapshot install | 2 | `PrepareStateMachineSnapshotLocked` :283, `OnInstallSnapshot` :5530 |
-| snapshot recovery | 2 | `LoadStateMachineSnapshotLocked` :352, `InitializeSnapshotManager` :373 |
-| env parsing (`std::stoull` throws) | 3 | :564, :716, :730 |
-| apply callback | 1 | `raft_apply_invoke` :677 |
-| setup guard | 1 | `raft_setup_internal_guarded` :521 |
-| snapshot serialization | 1 | `raft_snapshot_serialize_and_save` :823 |
+| `std::stoull` on an env var | 3 | **deleted.** `std::from_chars` is noexcept; there was nothing to catch |
+| an embedder callback | 4 | **irreducible.** Rust cannot catch these; one C++ frame must |
+| a Rust body, beneath which `bad_alloc` / the snapshot manager still can | 3 | **kept as a backstop**, unified with the same helper |
 
-*Strength: hard for the DSL as it stands, and three times more load-bearing
-than first stated.* But note the shape of the list: three sites are parsing
-integers, which a `Result` would handle without any language change.
+All seven survivors now share one definition, `raft_catch`, instead of
+seven open-coded catch pairs. `server.cc` went from 10 `try` blocks and 17
+`catch` clauses to 1 and 2.
+
+**`Result` is available and is the right tool above the line.** `Result<T,
+E>` lowers to `rusty::Result<T, E>`, `Ok`/`Err` construct, and the
+transpiler lowers `?` for both `Option` and `Result`
+(`emit_expr.rs:13266`); `src/rrr`'s canonical modules already return
+`Result<(), i32>`. What `Result` cannot do is catch a C++ exception, which
+is why the four embedder sites stay.
+
+*Strength: no longer a blocker.* The residual four are a property of calling
+application code, not of the DSL.
 
 ### Claim 3: the constructor's two-step initialization
 
