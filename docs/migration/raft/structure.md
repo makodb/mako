@@ -145,14 +145,13 @@ RaftServerBase                                        [RUST] 48 fields
     └── commo_: *mut Communicator                a raw pointer to [EXT]
 ```
 
-## 2. The seam: 52 kernels, 549 lines
+## 2. The seam: 50 kernels, 529 lines
 
 Hand-written `extern "C"` `raft_*` functions defined in `server.cc` outside
 every Rust and GEN region. `extern "C"` is part of that definition and does
 work: `server.cc` also holds two file-local `raft_*` helpers -- `raft_catch`
-(13 lines) and `raft_parse_u64` (5) -- which are NOT counted here, because
-they cross no language boundary. Anything counting by name prefix alone
-gets 54. Grouped by WHY each exists, which is the axis on
+(13 lines) -- which is NOT counted here, because it crosses no language
+boundary. Anything counting by name prefix alone gets 51. Grouped by WHY each exists, which is the axis on
 which some are removable and some are not.
 
 ### (a) Wire format and marshalling — 11 kernels, 143 lines
@@ -200,11 +199,10 @@ A C++ class hierarchy, `std::string` payloads, and an abort-on-destruction
 `std::unique_ptr` transaction. Two of these reach an embedder callback and
 so sit behind `raft_catch`; see claim 2.
 
-### (d) Application and configuration hooks — 15 kernels, 120 lines
+### (d) Application and configuration hooks — 13 kernels, 100 lines
 ```
 raft_apply_invoke            raft_fire_leader_change     raft_leader_change_cb_is_set
-raft_prepare_snapshot_cb_is_set   raft_env_heartbeat_interval_us
-raft_env_log_retention_window     raft_env_snapshot_interval
+raft_prepare_snapshot_cb_is_set   raft_env_lookup
 raft_env_snapshots_enabled        raft_election_timeouts
 raft_load_current_config     raft_monotonic_now_us      raft_monotonic_now_secs
 raft_clear_async_callback_owner   raft_setup_internal_guarded
@@ -218,7 +216,7 @@ raft_phase1_load_and_send_snapshot     raft_broadcast_vote_and_wait
 raft_vote_quorum_snapshot
 ```
 
-11 + 13 + 8 + 15 + 5 = 52. 143 + 59 + 128 + 120 + 99 = 549.
+11 + 13 + 8 + 13 + 5 = 50. 143 + 59 + 128 + 100 + 99 = 529.
 
 ## 3. The external edge: where the bytes actually leave
 
@@ -426,39 +424,54 @@ avoided is agreement on any *transpiled C++ container*: no `Box::into_raw`,
 no opaque handle, no callback, no C string. That is the property Raft would
 need, and its 22 field-dereferencing kernels are what stand in the way.
 
-### Claim 2: exceptions have no DSL spelling
+### Claim 2: exceptions — the claim was wrong as stated
 
-`try`/`catch` cannot be written in the DSL — verified, zero occurrences in
-any `#if RUSTYCPP_RUST` block in `src/deptran/raft`. **But the claim was
-stated as a blocker and it is not one.** It said "three places need it";
-there were ten, and after `7c7f55a87` there is **one**.
+The original wording — "exceptions have no DSL spelling, and three places
+need it" — was wrong twice. There were **ten**, not three; and the thing
+without a DSL spelling is not the catch.
 
-The fix is not a language feature. It is the observation that Rust models
-failure as a VALUE and C++ models it as control flow, plus the fact that an
-exception unwinding through a Rust frame is undefined behaviour. So:
-**convert the exception to a value at the last C++ frame before Rust, and
-above that line every failure is a value.** Sorting the ten sites by WHAT
-THROWS decides each one:
+`std::panic::catch_unwind` IS mapped (`types.rs:719`), and the C++ it lowers
+to is literally `try { … } catch (...) { Err(current_exception()) }`
+(`panic.hpp:35`). So nine of the ten catches were expressible in Rust. What
+has no DSL spelling is **invoking a C++ callable**: `app_next_` is a
+`std::function` (`scheduler.h:61`) and `Commit()` is a pure virtual
+(`server.h:82`). Rust can hold both — it does, as opaque carriers — and can
+call neither.
+
+Sorting by WHAT THROWS is what decides each site:
 
 | what throws | sites | treatment |
 |---|---|---|
-| `std::stoull` on an env var | 3 | **deleted.** `std::from_chars` is noexcept; there was nothing to catch |
-| an embedder callback | 4 | **irreducible.** Rust cannot catch these; one C++ frame must |
-| a Rust body, beneath which `bad_alloc` / the snapshot manager still can | 3 | **kept as a backstop**, unified with the same helper |
+| `std::stoull` on an env var | 3 | **now Rust.** `RaftServerBase::raft_env_u64` returns `Result<Option<u64>, RaftEnvError>`; the digits are walked off the raw pointer, so nothing can throw |
+| an embedder callback | 4 | **irreducible**, but because of the CALL, not the catch |
+| a Rust body, beneath which `bad_alloc` and the snapshot manager still can | 3 | **kept as a backstop**, unified behind `raft_catch` |
 
-All seven survivors now share one definition, `raft_catch`, instead of
-seven open-coded catch pairs. `server.cc` went from 10 `try` blocks and 17
-`catch` clauses to 1 and 2.
+`server.cc` holds 1 `try` and 2 `catch` clauses, all inside `raft_catch`.
 
-**`Result` is available and is the right tool above the line.** `Result<T,
-E>` lowers to `rusty::Result<T, E>`, `Ok`/`Err` construct, and the
-transpiler lowers `?` for both `Option` and `Result`
-(`emit_expr.rs:13266`); `src/rrr`'s canonical modules already return
-`Result<(), i32>`. What `Result` cannot do is catch a C++ exception, which
-is why the four embedder sites stay.
+**Why the remaining seven stay in C++, which is a judgement and not a
+limit.** `catch_unwind` would express them, at two costs. Under rustc it
+catches *Rust panics* and returns `Result<R, Box<dyn Any + Send>>`; under
+the emitted C++ it catches *any C++ throw* and returns `Result<R,
+std::exception_ptr>`. Those are different functions wearing one name, and
+the gate verifies the first while production runs the second. And it is
+sound only while the Rust is transpiled: once real Rust links, a C++
+exception crossing a Rust frame is UB and `catch_unwind` genuinely will not
+catch it. A C++ frame at the boundary is correct in both regimes, and is
+what `cxx` generates rather than avoids.
 
-*Strength: no longer a blocker.* The residual four are a property of calling
-application code, not of the DSL.
+Two things worth knowing before anyone tries the Rust route anyway.
+`rusty::ffi::CStr` is mapped by the transpiler but **not implemented** in
+the C++ runtime, so a DSL body cannot receive a C string — which is why
+`raft_env_lookup` returns `*const c_char` and Rust walks it, the same shape
+`src/rrr/base/logging.rs:114` already uses. And `rusty::String::parse()`
+returns `Ok` for `"-5"` and then **throws** `std::out_of_range` converting
+to `u64` (`string.hpp:1036`), where real Rust returns `Err` — so the
+obvious `raw.parse::<u64>()` would have reintroduced the exception it was
+meant to remove.
+
+*Strength: not a blocker.* What remains is a property of calling
+application code, plus a deliberate choice about which regime to be correct
+in.
 
 ### Claim 3: the constructor's two-step initialization
 

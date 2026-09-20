@@ -1,7 +1,5 @@
 #include <stdint.h>
 #include <stddef.h>
-#include <charconv>   // std::from_chars -- the noexcept parse, see raft_parse_u64
-#include <cstring>    // std::strlen, for the same
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
@@ -311,22 +309,6 @@ static bool raft_catch(uint16_t site_id, const char* what, Fn&& fn) {
   return false;
 }
 
-// Parses a whole unsigned decimal, or reports failure. std::from_chars is
-// noexcept, which is why the three env readers below no longer need a catch:
-// the exception they were guarding against was an artifact of std::stoull,
-// not something the operation has to signal.
-//
-// STRICTER THAN std::stoull ON PURPOSE. stoull stops at the first
-// non-digit and returns what it had, so MAKO_RAFT_HEARTBEAT_INTERVAL_US
-// "5000x" silently configured 5000. This requires the whole string to be
-// consumed, so that input is now reported invalid -- and these readers
-// already fail-closed on invalid input, which is the treatment a
-// misconfiguration deserves.
-static bool raft_parse_u64(const char* raw, uint64_t* out) {
-  const char* const end = raw + std::strlen(raw);
-  const std::from_chars_result parsed = std::from_chars(raw, end, *out);
-  return parsed.ec == std::errc() && parsed.ptr == end;
-}
 
 // @unsafe - Caller holds the state-machine apply gate followed by mtx_. The
 // production callback must validate and stage without changing live state.
@@ -599,17 +581,6 @@ bool raft_env_snapshots_enabled() {
 
 // 0 unset, 1 parsed into *out, 2 present but unparseable (logged here,
 // where the raw string is).
-int raft_env_snapshot_interval(uint64_t* out) {
-  const char* raw = std::getenv("MAKO_RAFT_SNAPSHOT_INTERVAL");
-  if (raw == nullptr || raw[0] == '\0') {
-    return 0;
-  }
-  if (!raft_parse_u64(raw, out)) {
-    Log_error("[RAFT-SNAPSHOT] Invalid snapshot interval '{}'", raw);
-    return 2;
-  }
-  return 1;
-}
 
 // Memory-only Raft has no on-disk snapshot store. A manager injected through
 // SetSnapshotManager() before Setup keeps the latest snapshot it holds;
@@ -741,31 +712,27 @@ void raft_thread_sleep_ms(uint64_t millis) {
 
 // (1)/(3) Setup's environment overrides, membership load, and fiber spawns.
 
-// std::getenv + raft_parse_u64. Returns 0 when unset, 1 with the parsed value
-// in *out, 2 when the value is present but unparseable (the diagnostic is
-// logged here, where the raw string is). No catch: the parse cannot throw.
-int raft_env_heartbeat_interval_us(uint64_t* out) {
-  const char* raw = std::getenv("MAKO_RAFT_HEARTBEAT_INTERVAL_US");
-  if (raw == nullptr || raw[0] == '\0') {
-    return 0;
-  }
-  if (!raft_parse_u64(raw, out)) {
-    Log_error("[RAFT] Invalid heartbeat interval '{}'", raw);
-    return 2;
-  }
-  return 1;
-}
 
-int raft_env_log_retention_window(uint64_t* out) {
-  const char* raw = std::getenv("MAKO_RAFT_LOG_RETENTION_WINDOW");
+
+// getenv, and nothing else. The PARSE is Rust (raft_env_u64 in server.h),
+// which is why these three readers no longer need a try/catch: std::stoull
+// throws on malformed input, and a Rust digit loop returns Err.
+//
+// `which` is an i32 rather than a name, so nothing has to carry a Rust &str
+// into C++ -- rusty::ffi::CStr is mapped by the transpiler but NOT
+// implemented in the C++ runtime, so a DSL body cannot receive a C string.
+const char* raft_env_lookup(int32_t which) {
+  const char* raw = nullptr;
+  switch (which) {
+    case 0: raw = std::getenv("MAKO_RAFT_HEARTBEAT_INTERVAL_US"); break;
+    case 1: raw = std::getenv("MAKO_RAFT_LOG_RETENTION_WINDOW"); break;
+    case 2: raw = std::getenv("MAKO_RAFT_SNAPSHOT_INTERVAL"); break;
+    default: verify(false); break;
+  }
   if (raw == nullptr || raw[0] == '\0') {
-    return 0;
+    return nullptr;
   }
-  if (!raft_parse_u64(raw, out)) {
-    Log_error("[RAFT] Invalid log retention window '{}'", raw);
-    return 2;
-  }
-  return 1;
+  return raw;
 }
 
 // Binds the wake gate to the communicator's PollThread before HeartbeatLoop

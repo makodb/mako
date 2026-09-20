@@ -1333,8 +1333,11 @@ unsafe extern "C" {
     fn raft_spawn_election_timer(server: *mut RaftServerBase, wait_int_us: u64);
     fn raft_setup_internal_guarded(server: *mut RaftServerBase) -> bool;
     fn raft_shutdown_barrier_yield();
-    fn raft_env_heartbeat_interval_us(out: *mut u64) -> i32;
-    fn raft_env_log_retention_window(out: *mut u64) -> i32;
+    // getenv, and nothing else. Returns null when the variable is unset or
+    // empty. The PARSE is Rust -- see RaftServerBase::raft_env_u64 -- which is what removes
+    // the three try/catch blocks this used to need: std::stoull throws, and
+    // a hand-written digit loop cannot.
+    fn raft_env_lookup(which: i32) -> *const core::ffi::c_char;
     fn raft_bind_replication_poll(server: *mut RaftServerBase) -> bool;
     fn raft_initialize_snapshot_manager(server: *mut RaftServerBase) -> bool;
     fn raft_load_current_config(server: *mut RaftServerBase) -> u64;
@@ -1358,7 +1361,6 @@ unsafe extern "C" {
     fn raft_thread_sleep_ms(millis: u64);
     fn raft_env_snapshots_enabled() -> bool;
     fn raft_prepare_snapshot_cb_is_set(server: *const RaftServerBase) -> bool;
-    fn raft_env_snapshot_interval(out: *mut u64) -> i32;
     fn raft_snapshot_recovery_pick_manager(
         server: *mut RaftServerBase,
         out: *mut rusty::RaftSnapshotManagerPtr);
@@ -1421,6 +1423,25 @@ impl ApplyQueue {
         ApplyQueue { entries_: rusty::VecDeque::new(), epoch_: 0 }
     }
 }
+
+// Why an environment value was rejected. An error type rather than `()`
+// because the distinction is worth logging: a typo and a number too large
+// for u64 are different operator mistakes, and std::stoull reported the
+// second by throwing std::out_of_range and the first by silently truncating.
+#[allow(non_camel_case_types)]
+#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Eq, PartialEq))]
+#[repr(i32)]
+pub enum RaftEnvError {
+    NOT_A_WHOLE_NUMBER = 0,
+    OVERFLOWS_U64 = 1,
+}
+
+// Which environment variable raft_env_lookup should read. An i32 rather
+// than a string, so nothing has to carry a Rust &str into C++.
+pub const RAFT_ENV_HEARTBEAT_INTERVAL_US: i32 = 0;
+pub const RAFT_ENV_LOG_RETENTION_WINDOW: i32 = 1;
+pub const RAFT_ENV_SNAPSHOT_INTERVAL: i32 = 2;
+
 
 // The election-timeout configuration, as one value. Every field is an
 // environment override with a compiled-in default, read afresh on each call
@@ -2254,6 +2275,68 @@ impl RaftServerBase {
         self.peer_sites_[ordinal]
     }
 
+    // A whole non-negative decimal that fits in u64, parsed in Rust.
+    //
+    //   Ok(None)     the variable is unset or empty
+    //   Ok(Some(v))  it parsed
+    //   Err(())      it is present and is NOT a whole u64
+    //
+    // This is the error handling those three readers used to express with
+    // try/catch around std::stoull. Nothing here can throw: the digits are
+    // walked one at a time off the raw pointer, exactly as
+    // src/rrr/base/logging.rs:114 walks a C string, and the overflow test is a
+    // comparison rather than an exception.
+    //
+    // It is also STRICTER than std::stoull, which stopped at the first non-digit
+    // and returned what it had -- so "5000x" silently configured 5000. Every
+    // byte must be a digit. A leading '-' is rejected rather than wrapped, which
+    // std::stoull did NOT do: it accepts a sign and wraps into a huge u64.
+    // manual_range_contains: `(48..=57).contains(&digit)` is the better Rust and
+    // this lowers to C++, where a u8 has no `contains`. not_unsafe_ptr_arg_deref:
+    // the pointer is getenv's, which outlives every caller.
+    #[allow(clippy::not_unsafe_ptr_arg_deref, clippy::manual_range_contains)]
+    // &self is unused and deliberate: an associated fn emits as a free
+    // function at column 0, which the ODR post-pass in scripts/raft_dsl.sh
+    // does not prefix with `inline` -- it only matches `Owner::method(`.
+    // In a header that is a multiple-definition link error. A method emits
+    // as RaftServerBase::raft_env_u64 and is inlined correctly.
+    #[allow(clippy::unused_self)]
+    pub fn raft_env_u64(&self, which: i32) -> Result<rusty::Option<u64>, RaftEnvError> {
+        let raw: *const core::ffi::c_char = unsafe { raft_env_lookup(which) };
+        if raw.is_null() {
+            return Result::<rusty::Option<u64>, RaftEnvError>::Ok(rusty::None);
+        }
+        let mut value: u64 = 0;
+        let mut index: usize = 0;
+        while unsafe { *raw.add(index) } != 0 {
+            let digit: u8 = unsafe { *raw.add(index) } as u8;
+            if digit < 48 || digit > 57 {
+                return Result::<rusty::Option<u64>, RaftEnvError>::Err(
+                    RaftEnvError::NOT_A_WHOLE_NUMBER);
+            }
+            // Overflow checked BEFORE it happens: u64::MAX / 10, then the last
+            // digit. `checked_mul`/`checked_add` would read better and lower to
+            // an Option this has to unwrap anyway.
+            if value > u64::MAX / 10 {
+                return Result::<rusty::Option<u64>, RaftEnvError>::Err(
+                    RaftEnvError::OVERFLOWS_U64);
+            }
+            value *= 10;
+            let addend: u64 = (digit - 48) as u64;
+            if value > u64::MAX - addend {
+                return Result::<rusty::Option<u64>, RaftEnvError>::Err(
+                    RaftEnvError::OVERFLOWS_U64);
+            }
+            value += addend;
+            index += 1;
+        }
+        Result::<rusty::Option<u64>, RaftEnvError>::Ok(rusty::Some(value))
+    }
+
+    // is_some()/unwrap() rather than `if let`: the emitter renders an
+    // `if let` binding with a dot where the C++ needs an arrow. Same
+    // constraint as ReplicationWakeGate::wake_on_owner.
+    #[allow(clippy::unnecessary_unwrap)]
     // @unsafe - the owner-thread startup job. Every failure path closes the
     // server fail-closed rather than starting half a replica.
     pub fn SetupInternal(&mut self) -> bool {
@@ -2265,17 +2348,16 @@ impl RaftServerBase {
         // Record startup time for the grace-period logic.
         self.startup_timestamp_ = unsafe { raft_time_now_us() };
 
-        let mut hb_override: u64 = 0;
-        let hb_status: i32 =
-            unsafe {
-                raft_env_heartbeat_interval_us(&mut hb_override as *mut u64)
-            };
-        if hb_status == 2 {
+        let hb_env = self.raft_env_u64(RAFT_ENV_HEARTBEAT_INTERVAL_US);
+        if hb_env.is_err() {
+            rusty::raft_log_error_0(
+                "[RAFT] MAKO_RAFT_HEARTBEAT_INTERVAL_US is not a whole u64");
             self.FailClosed();
             return false;
         }
-        if hb_status == 1 {
-            self.heartbeat_interval_us_ = hb_override;
+        let hb_override = hb_env.unwrap();
+        if hb_override.is_some() {
+            self.heartbeat_interval_us_ = hb_override.unwrap();
             rusty::raft_log_info_1(
                 "[RAFT] Heartbeat interval set to {} us from env",
                 self.heartbeat_interval_us_);
@@ -2290,18 +2372,17 @@ impl RaftServerBase {
             return false;
         }
 
-        let mut lrw_override: u64 = 0;
-        let lrw_status: i32 =
-            unsafe {
-                raft_env_log_retention_window(&mut lrw_override as *mut u64)
-            };
-        if lrw_status == 2 {
+        let lrw_env = self.raft_env_u64(RAFT_ENV_LOG_RETENTION_WINDOW);
+        if lrw_env.is_err() {
+            rusty::raft_log_error_0(
+                "[RAFT] MAKO_RAFT_LOG_RETENTION_WINDOW is not a whole u64");
             self.FailClosed();
             return false;
         }
-        if lrw_status == 1 {
+        let lrw_override = lrw_env.unwrap();
+        if lrw_override.is_some() {
             self.log_retention_window_ =
-                raft_server_retention_window_normalize(lrw_override);
+                raft_server_retention_window_normalize(lrw_override.unwrap());
             rusty::raft_log_info_1(
                 "[RAFT] Log retention window set to {} from env",
                 self.log_retention_window_);
@@ -2380,6 +2461,10 @@ impl RaftServerBase {
     // Restores the exact state-machine bytes before publishing any recovered
     // snapshot boundary, so a failure anywhere leaves the live state machine,
     // the latest Raft snapshot and the reconstruction log untouched.
+    // is_some()/unwrap() rather than `if let`: the emitter renders an
+    // `if let` binding with a dot where the C++ needs an arrow. Same
+    // constraint as ReplicationWakeGate::wake_on_owner.
+    #[allow(clippy::unnecessary_unwrap)]
     pub fn InitializeSnapshotManagerLocked(&mut self) -> bool {
         if !unsafe { raft_env_snapshots_enabled() } {
             let _lock = RaftLockGuard::new(&mut self.mtx_);
@@ -2402,15 +2487,15 @@ impl RaftServerBase {
         }
 
         let mut snapshot_interval: u64 = self.GetSnapshotThreshold();
-        let mut interval_override: u64 = 0;
-        let interval_status: i32 = unsafe {
-            raft_env_snapshot_interval(&mut interval_override as *mut u64)
-        };
-        if interval_status == 2 {
+        let interval_env = self.raft_env_u64(RAFT_ENV_SNAPSHOT_INTERVAL);
+        if interval_env.is_err() {
+            rusty::raft_log_error_0(
+                "[RAFT-SNAPSHOT] MAKO_RAFT_SNAPSHOT_INTERVAL is not a whole u64");
             return false;
         }
-        if interval_status == 1 {
-            snapshot_interval = interval_override;
+        let interval_override = interval_env.unwrap();
+        if interval_override.is_some() {
+            snapshot_interval = interval_override.unwrap();
             self.SetSnapshotThreshold(snapshot_interval);
         }
 
