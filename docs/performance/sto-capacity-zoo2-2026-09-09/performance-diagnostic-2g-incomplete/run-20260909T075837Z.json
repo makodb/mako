@@ -1,0 +1,240 @@
+{
+  "alignment": "engine",
+  "allocator_memory": "2G",
+  "binaries": {
+    "new": "/var/tmp/sto-capacity-20260909.kKklOX/pgo-batched/sto_tpcc_bench",
+    "old": "/var/tmp/sto-owner-gate-2770f9d0-20260907T1910Z.BOCOx1/candidate-pgo/sto_tpcc_bench"
+  },
+  "binary_fingerprints": {
+    "new": {
+      "mtime_ns": 1788938879988531405,
+      "sha256": "03acf4188330e1397d381abb398dec5c9b388a077f4fb82973c9427ddfeba20c",
+      "size_bytes": 84904984
+    },
+    "old": {
+      "mtime_ns": 1788808500846636335,
+      "sha256": "b2d484ffb6c80fe31cd03e09119e3885300516c1587218984ec5b9aedba8f716",
+      "size_bytes": 84646608
+    }
+  },
+  "config": "/home/users/shuai/mako/.claude/worktrees/sto-rust/config/mako_sto_tpcc_local.yml",
+  "config_fingerprint": {
+    "mtime_ns": 1787965349588223179,
+    "sha256": "3324428f7b8767c74d93041f500126e6b5721f0d7eb05fbc6b907b6a9d9c9a24",
+    "size_bytes": 427
+  },
+  "expected_samples": 30,
+  "fallbacks": {
+    "MAKO_STO_TPCC_DISABLE_DELIVERY_FULL": "unset",
+    "MAKO_STO_TPCC_DISABLE_NEW_ORDER_FULL": "unset",
+    "MAKO_STO_TPCC_DISABLE_PAYMENT_FULL": "unset",
+    "MAKO_STO_TPCC_DISABLE_PAYMENT_PREFIX": "unset",
+    "MAKO_STO_TPCC_DISABLE_STOCK_LEVEL_FULL": "unset"
+  },
+  "git_head": "2d3504a277b3ee66c8fea10099accd2290884f31",
+  "git_status": "?? docs/performance/sto-capacity-zoo2-2026-09-09/\n?? docs/performance/sto-rust-tpcc-zoo2-2026-09-06/\n?? src/rrr/",
+  "host": "zoo-002",
+  "intermediate_repetitions": 1,
+  "lscpu": "Architecture:                            x86_64\nCPU op-mode(s):                          32-bit, 64-bit\nAddress sizes:                           43 bits physical, 48 bits virtual\nByte Order:                              Little Endian\nCPU(s):                                  128\nOn-line CPU(s) list:                     0-127\nVendor ID:                               AuthenticAMD\nBIOS Vendor ID:                          Advanced Micro Devices, Inc.\nModel name:                              AMD EPYC 7702P 64-Core Processor\nBIOS Model name:                         AMD EPYC 7702P 64-Core Processor                Unknown CPU @ 2.0GHz\nBIOS CPU family:                         107\nCPU family:                              23\nModel:                                   49\nThread(s) per core:                      2\nCore(s) per socket:                      64\nSocket(s):                               1\nStepping:                                0\nFrequency boost:                         disabled\nCPU(s) scaling MHz:                      69%\nCPU max MHz:                             2183.5930\nCPU min MHz:                             1500.0000\nBogoMIPS:                                4000.17\nFlags:                                   fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt pdpe1gb rdtscp lm constant_tsc rep_good nopl nonstop_tsc cpuid extd_apicid aperfmperf rapl pni pclmulqdq monitor ssse3 fma cx16 sse4_1 sse4_2 movbe popcnt aes xsave avx f16c rdrand lahf_lm cmp_legacy svm extapic cr8_legacy abm sse4a misalignsse 3dnowprefetch osvw ibs skinit wdt tce topoext perfctr_core perfctr_nb bpext perfctr_llc mwaitx cpb cat_l3 cdp_l3 hw_pstate ssbd mba ibrs ibpb stibp vmmcall fsgsbase bmi1 avx2 smep bmi2 cqm rdt_a rdseed adx smap clflushopt clwb sha_ni xsaveopt xsavec xgetbv1 xsaves cqm_llc cqm_occup_llc cqm_mbm_total cqm_mbm_local clzero irperf xsaveerptr rdpru wbnoinvd arat npt lbrv svm_lock nrip_save tsc_scale vmcb_clean flushbyasid decodeassists pausefilter pfthreshold avic v_vmsave_vmload vgif v_spec_ctrl umip rdpid overflow_recov succor smca sev sev_es ibpb_exit_to_user\nVirtualization:                          AMD-V\nL1d cache:                               2 MiB (64 instances)\nL1i cache:                               2 MiB (64 instances)\nL2 cache:                                32 MiB (64 instances)\nL3 cache:                                256 MiB (16 instances)\nNUMA node(s):                            1\nNUMA node0 CPU(s):                       0-127\nVulnerability Gather data sampling:      Not affected\nVulnerability Indirect target selection: Not affected\nVulnerability Itlb multihit:             Not affected\nVulnerability L1tf:                      Not affected\nVulnerability Mds:                       Not affected\nVulnerability Meltdown:                  Not affected\nVulnerability Mmio stale data:           Not affected\nVulnerability Reg file data sampling:    Not affected\nVulnerability Retbleed:                  Mitigation; untrained return thunk; SMT enabled with STIBP protection\nVulnerability Spec rstack overflow:      Mitigation; Safe RET\nVulnerability Spec store bypass:         Mitigation; Speculative Store Bypass disabled via prctl\nVulnerability Spectre v1:                Mitigation; usercopy/swapgs barriers and __user pointer sanitization\nVulnerability Spectre v2:                Mitigation; Retpolines; IBPB conditional; STIBP always-on; RSB filling; PBRSB-eIBRS Not affected; BHI Not affected\nVulnerability Srbds:                     Not affected\nVulnerability Tsa:                       Not affected\nVulnerability Tsx async abort:           Not affected\nVulnerability Vmscape:                   Mitigation; IBPB before exit to userspace",
+  "orchestrator_fingerprint": {
+    "mtime_ns": 1788940680221534645,
+    "sha256": "bfc9da453ddd9c563cb1877426c2a38243872a7b0f6b8cd371dd44adb74a0cea",
+    "size_bytes": 17963
+  },
+  "physical_cpus": [
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25
+  ],
+  "priority_boundaries": true,
+  "protocol": "Three old/new blocks each at one and sixteen workers, then one candidate C++/Rust pair each at two, four and eight workers: thirty accepted samples. Each worker-specific four-process order reverses for the second repetition and returns for the third. Every process loads a fresh DB. Existing run_guarded_pair and all acceptance thresholds remain unchanged; an artifact wrapper adds the recorded post-restart settling delay before its original quiet-window check. Retain rejected attempts and logs. Approximate t intervals estimate geometric-mean paired ratios with df=2 and do not establish equivalence.",
+  "quotas": {
+    "MAKO_STO_TPCC_MAX_CONSUMED_RECORD_IDS": "unset",
+    "MAKO_STO_TPCC_MAX_RETAINED_KEY_BYTES": "unset",
+    "MAKO_STO_TPCC_MAX_RETAINED_RECORDS": "unset"
+  },
+  "resume": true,
+  "runner_fingerprint": {
+    "mtime_ns": 1788932008029677071,
+    "sha256": "4aca8d7e118bc565286b0b5f87cd0cca4bd24fa2314c85761fa825e8c0ba5e51",
+    "size_bytes": 55078
+  },
+  "runtime_seconds": 10,
+  "rust_registry_memory": "8G",
+  "schedule": [
+    {
+      "engines": [
+        "cpp",
+        "rust"
+      ],
+      "pair_id": "r00-c01-16t-new",
+      "repetition": 0,
+      "threads": 16,
+      "variant": "new"
+    },
+    {
+      "engines": [
+        "rust",
+        "cpp"
+      ],
+      "pair_id": "r00-c01-16t-old",
+      "repetition": 0,
+      "threads": 16,
+      "variant": "old"
+    },
+    {
+      "engines": [
+        "cpp",
+        "rust"
+      ],
+      "pair_id": "r00-c02-1t-old",
+      "repetition": 0,
+      "threads": 1,
+      "variant": "old"
+    },
+    {
+      "engines": [
+        "rust",
+        "cpp"
+      ],
+      "pair_id": "r00-c02-1t-new",
+      "repetition": 0,
+      "threads": 1,
+      "variant": "new"
+    },
+    {
+      "engines": [
+        "cpp",
+        "rust"
+      ],
+      "pair_id": "r01-c00-1t-new",
+      "repetition": 1,
+      "threads": 1,
+      "variant": "new"
+    },
+    {
+      "engines": [
+        "rust",
+        "cpp"
+      ],
+      "pair_id": "r01-c00-1t-old",
+      "repetition": 1,
+      "threads": 1,
+      "variant": "old"
+    },
+    {
+      "engines": [
+        "cpp",
+        "rust"
+      ],
+      "pair_id": "r01-c02-16t-old",
+      "repetition": 1,
+      "threads": 16,
+      "variant": "old"
+    },
+    {
+      "engines": [
+        "rust",
+        "cpp"
+      ],
+      "pair_id": "r01-c02-16t-new",
+      "repetition": 1,
+      "threads": 16,
+      "variant": "new"
+    },
+    {
+      "engines": [
+        "cpp",
+        "rust"
+      ],
+      "pair_id": "r02-c00-1t-old",
+      "repetition": 2,
+      "threads": 1,
+      "variant": "old"
+    },
+    {
+      "engines": [
+        "rust",
+        "cpp"
+      ],
+      "pair_id": "r02-c00-1t-new",
+      "repetition": 2,
+      "threads": 1,
+      "variant": "new"
+    },
+    {
+      "engines": [
+        "cpp",
+        "rust"
+      ],
+      "pair_id": "r02-c01-16t-new",
+      "repetition": 2,
+      "threads": 16,
+      "variant": "new"
+    },
+    {
+      "engines": [
+        "rust",
+        "cpp"
+      ],
+      "pair_id": "r02-c01-16t-old",
+      "repetition": 2,
+      "threads": 16,
+      "variant": "old"
+    },
+    {
+      "engines": [
+        "rust",
+        "cpp"
+      ],
+      "pair_id": "r00-c00-4t-new",
+      "repetition": 0,
+      "threads": 4,
+      "variant": "new"
+    },
+    {
+      "engines": [
+        "cpp",
+        "rust"
+      ],
+      "pair_id": "r00-c03-8t-new",
+      "repetition": 0,
+      "threads": 8,
+      "variant": "new"
+    },
+    {
+      "engines": [
+        "rust",
+        "cpp"
+      ],
+      "pair_id": "r00-c04-2t-new",
+      "repetition": 0,
+      "threads": 2,
+      "variant": "new"
+    }
+  ],
+  "schedule_seed": 24301,
+  "settling_seconds_before_quiet_window": 3.0,
+  "started_at_utc": "2026-09-09T07:58:34.764777+00:00",
+  "waiting_policy": "same-restart-quiet-v2",
+  "workload_mix": [
+    45,
+    43,
+    4,
+    4,
+    4
+  ]
+}

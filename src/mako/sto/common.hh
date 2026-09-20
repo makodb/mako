@@ -45,7 +45,8 @@ struct versioned_str_struct : public versioned_str {
   
   // responsibility is on the caller of this method to make sure this read is atomic
   value_type read_value() {
-    return Masstree::Str(this->data(), this->length());
+    const auto current = this->snapshot();
+    return Masstree::Str(current.data, static_cast<int>(current.size));
   }
   
   inline version_type& version() {

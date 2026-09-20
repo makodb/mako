@@ -18,7 +18,7 @@ std::vector<std::atomic<uint32_t>> sync_util::sync_logger::disk_timestamp_(80);
 #endif
 std::atomic<uint32_t> sync_util::sync_logger::single_watermark_(0);
 int sync_util::sync_logger::nshards = 0;
-int sync_util::sync_logger::local_replica_id = 0;
+std::atomic<uint32_t> sync_util::sync_logger::local_replica_id{1};
 std::chrono::time_point<std::chrono::high_resolution_clock> sync_util::sync_logger::last_update = std::chrono::high_resolution_clock::now();
 int sync_util::sync_logger::nthreads = 0;
 bool sync_util::sync_logger::worker_running = false;
@@ -33,5 +33,5 @@ std::atomic<uint32_t> sync_util::sync_logger::noops_cnt{0};
 std::atomic<uint32_t> sync_util::sync_logger::noops_cnt_hole{0};
 int sync_util::sync_logger::exchange_refresh_cnt = 0;
 std::atomic<bool> sync_util::sync_logger::exchange_running{true};
-int sync_util::sync_logger::failed_shard_index = -1;
-uint32_t sync_util::sync_logger::failed_shard_ts = -1;
+std::atomic<int> sync_util::sync_logger::failed_shard_index{-1};
+std::atomic<uint32_t> sync_util::sync_logger::failed_shard_ts{UINT32_MAX};

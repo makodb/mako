@@ -1,0 +1,34 @@
+command: /usr/bin/ctest --test-dir /dev/shm/sto-output-regression.2V57O6/cmake -R \^test_benchmark_output\$ --output-on-failure --no-tests=error -V
+Internal ctest changing into directory: /dev/shm/sto-output-regression.2V57O6/cmake
+UpdateCTestConfiguration  from :/dev/shm/sto-output-regression.2V57O6/cmake/DartConfiguration.tcl
+UpdateCTestConfiguration  from :/dev/shm/sto-output-regression.2V57O6/cmake/DartConfiguration.tcl
+Test project /dev/shm/sto-output-regression.2V57O6/cmake
+Constructing a list of tests
+Done constructing a list of tests
+Updating test list for fixtures
+Added 0 tests to meet fixture requirements
+Checking test dependency graph...
+Checking test dependency graph end
+test 17
+    Start 17: test_benchmark_output
+
+17: Test command: /dev/shm/sto-output-regression.2V57O6/cmake/test_benchmark_output
+17: Working Directory: /dev/shm/sto-output-regression.2V57O6/cmake
+17: Test timeout computed to be: 30
+17: Passed 100 bounded capacity diagnostics with concurrent shutdown logging
+1/1 Test #17: test_benchmark_output ............   Passed    0.03 sec
+
+The following tests passed:
+	test_benchmark_output
+
+100% tests passed, 0 tests failed out of 1
+
+Label Time Summary:
+concurrency    =   0.03 sec*proc (1 test)
+diagnostics    =   0.03 sec*proc (1 test)
+ffi            =   0.03 sec*proc (1 test)
+rust           =   0.03 sec*proc (1 test)
+sto            =   0.03 sec*proc (1 test)
+
+Total Test time (real) =   0.04 sec
+exit_status=0

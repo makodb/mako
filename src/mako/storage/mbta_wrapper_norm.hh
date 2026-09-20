@@ -848,9 +848,7 @@ public:
       // someone has to do this (they don't provide us with a general init callback)
       mbta_ordered_index::mbta_type::static_init();
       // need this too
-      pthread_t advancer;
-      pthread_create(&advancer, NULL, Transaction::epoch_advancer, NULL);
-      pthread_detach(advancer);
+      Transaction::start_epoch_advancer();
     }
     mbta_ordered_index::mbta_type::thread_init();
   }

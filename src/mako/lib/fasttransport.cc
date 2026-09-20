@@ -31,14 +31,42 @@ static std::mutex fasttransport_lock;
 static volatile bool fasttransport_initialized = false;
 static bool fasttransport_signal_handlers_enabled = true;
 
-std::function<int(int,int)> bench_callback_ = nullptr;
+namespace {
+
+std::mutex fasttransport_callback_lock;
+std::function<int(int,int)> bench_callback;
+std::function<int(int,int)> dbtest_callback;
+
+} // namespace
+
 void register_fasttransport_for_bench(std::function<int(int,int)> cb) {
-    bench_callback_ = cb;
+    std::lock_guard<std::mutex> lock(fasttransport_callback_lock);
+    bench_callback = std::move(cb);
 }
 
-std::function<int(int,int)> dbtest_callback_ = nullptr;
 void register_fasttransport_for_dbtest(std::function<int(int,int)> cb) {
-    dbtest_callback_ = cb;
+    std::lock_guard<std::mutex> lock(fasttransport_callback_lock);
+    dbtest_callback = std::move(cb);
+}
+
+void invoke_fasttransport_for_bench(int control, int value) {
+    std::function<int(int,int)> callback;
+    {
+        std::lock_guard<std::mutex> lock(fasttransport_callback_lock);
+        callback = bench_callback;
+    }
+    if (callback)
+        callback(control, value);
+}
+
+void invoke_fasttransport_for_dbtest(int control, int value) {
+    std::function<int(int,int)> callback;
+    {
+        std::lock_guard<std::mutex> lock(fasttransport_callback_lock);
+        callback = dbtest_callback;
+    }
+    if (callback)
+        callback(control, value);
 }
 
 void set_fasttransport_signal_handlers_enabled(bool enabled) {

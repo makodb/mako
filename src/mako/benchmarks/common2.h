@@ -7,6 +7,7 @@
 #define SILO_STO_COMMON_2_H
 #include "sto/ThreadPool.h"
 #include <unistd.h>
+#include <cstdlib>
 #include <unordered_map>
 #include <thread>
 #include <vector>
@@ -44,6 +45,16 @@ int isNoops(const char *log, int len) {
     return -1;
 }
 
+static std::string tpcc_bench_options(bool skip_load) {
+    std::string options = skip_load ? "--f_mode=1" : "--f_mode=0";
+    if (const char *mix = std::getenv("MAKO_TPCC_WORKLOAD_MIX");
+        mix != nullptr && *mix != '\0') {
+        options += " --workload-mix=";
+        options += mix;
+    }
+    return options;
+}
+
 bench_runner * start_workers_tpcc(int leader_config, /*leader or learner (new leader)*/
                         abstract_db *db,
                         int threads_nums,
@@ -52,10 +63,7 @@ bench_runner * start_workers_tpcc(int leader_config, /*leader or learner (new le
                         bench_runner *rc = NULL)
 {
     std::string bench_type = "tpcc";
-    std::string bench_opts = "--f_mode=0";
-    if (skip_load) {
-        bench_opts = "--f_mode=1";
-    }
+    std::string bench_opts = tpcc_bench_options(skip_load);
 
     vector<string> bench_toks = split_ws(bench_opts);
     int argc_bench = 1 + bench_toks.size();
@@ -79,10 +87,7 @@ bench_runner * start_workers_tpcc_shard(int leader_config,
                         bench_runner *rc = NULL)
 {
     std::string bench_type = "tpcc";
-    std::string bench_opts = "--f_mode=0";
-    if (skip_load) {
-        bench_opts = "--f_mode=1";
-    }
+    std::string bench_opts = tpcc_bench_options(skip_load);
 
     vector<string> bench_toks = split_ws(bench_opts);
     int argc_bench = 1 + bench_toks.size();

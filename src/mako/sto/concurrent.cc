@@ -295,10 +295,10 @@ template <> struct Container<USE_MASSTREE> {
         return v_.transUpdate(IntStr(key).str(), value);
     }
     static void init() {
-        Transaction::epoch_advance_callback = [] (unsigned) {
+        Transaction::set_epoch_advance_callback([] (unsigned) {
             // just advance blindly because of the way Masstree uses epochs
             globalepoch++;
-        };
+        });
     }
     static void thread_init(Container<USE_MASSTREE>&) {
         type::thread_init();
@@ -341,10 +341,10 @@ template <> struct Container<USE_MASSTREE_STR> {
         return v_.transUpdate(IntStr(key).str(), valtostr(value));
     }
     static void init() {
-        Transaction::epoch_advance_callback = [] (unsigned) {
+        Transaction::set_epoch_advance_callback([] (unsigned) {
             // just advance blindly because of the way Masstree uses epochs
             globalepoch++;
-        };
+        });
     }
     static void thread_init(Container<USE_MASSTREE_STR>&) {
         type::thread_init();
@@ -1061,9 +1061,7 @@ void qstartAndWait(int n, void*(*runfunc)(void*)) {
       tester[i].me = i;
       pthread_create(&tids[i], NULL, runfunc, &tester[i]);
   }
-  pthread_t advancer;
-  pthread_create(&advancer, NULL, Transaction::epoch_advancer, NULL);
-  pthread_detach(advancer);
+  Transaction::start_epoch_advancer();
 
   for (int i = 0; i < n; ++i) {
     pthread_join(tids[i], NULL);
@@ -1090,9 +1088,7 @@ void startAndWait(int n, Tester* tester) {
       testers[i].me = i;
       pthread_create(&tids[i], NULL, runfunc, &testers[i]);
   }
-  pthread_t advancer;
-  pthread_create(&advancer, NULL, Transaction::epoch_advancer, NULL);
-  pthread_detach(advancer);
+  Transaction::start_epoch_advancer();
 
   for (int i = 0; i < n; ++i) {
     pthread_join(tids[i], NULL);
@@ -1355,4 +1351,3 @@ int main(int argc, char *argv[]) {
   }
 #endif
 }
-

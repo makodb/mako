@@ -25,6 +25,9 @@ enum memtag {
     // The type is purely for debugging. The pool indicates the pool from
     // which an allocation was taken.
     // @unsafe - tags travel with raw allocations; misuse can corrupt memdebug state
+    // Keep the callback sentinel inside the enum's existing 13-bit value
+    // range, outside every type-plus-pool tag currently allocated below.
+    memtag_mrcu_callback = 0x1FFF,
     memtag_none = 0x000,
     memtag_value = 0x100,
     memtag_limbo = 0x500,

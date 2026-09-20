@@ -3,14 +3,15 @@
 /**
  * mako/remote_db.hh - Remote Database Client for Decoupled Client-Server Mode
  *
- * This header provides a proxy class that mirrors the mako::DB interface
- * but communicates with a remote server via RPC instead of local execution.
+ * This header contains two remote prototypes. ConnectNontxn provides the
+ * implemented self-contained point-KV path over ClientTcpServer framing. The
+ * SRPC BeginTransaction/Put/Get/Delete/Commit surface is scaffolding: the
+ * server executes each data operation independently and does not provide an
+ * atomic remote transaction.
  *
- * Key Features:
- * - Same API as mako::DB for easy migration
- * - All transaction operations are proxied to the server
- * - Transaction state is managed on the server side
- * - Uses SRPC RPC framework for communication (replaces raw TCP sockets)
+ * Do not use the SRPC transaction-shaped methods when atomicity or isolation
+ * is required. Remote scans, conditional insert, and approximate size are also
+ * incomplete.
  *
  * Usage:
  *   // Connect to remote server
@@ -22,11 +23,8 @@
  *   mako::Status s = mako::RemoteDB::Connect(opts, &db);
  *   if (!s.ok()) { handle error }
  *
- *   // Use same API as mako::DB
- *   void* txn = db->BeginTransaction();
- *   RemoteTable* table = db->GetTable("customer_0");
- *   table->Put(txn, "key", "value");
- *   db->Commit(txn);
+ *   // The implemented remote surface is ConnectNontxn followed by
+ *   // RemoteTable's overloads that do not take a transaction token.
  *
  *   delete db;
  */
@@ -86,9 +84,8 @@ struct RemoteOptions {
 /**
  * RemoteTable - Proxy for remote table operations
  *
- * Provides Put/Get/Delete operations that are forwarded to the server.
- * All operations require a valid transaction handle from BeginTransaction().
- * Implements ITable interface for unified access.
+ * The token-taking methods are experimental non-atomic SRPC scaffolding. The
+ * token-free point methods use the self-contained ConnectNontxn path.
  */
 // @safe - Proxy class with no local state mutation
 class RemoteTable : public ITable {
@@ -192,9 +189,8 @@ private:
 /**
  * RemoteDB - Remote database client proxy
  *
- * This class mirrors the mako::DB interface but proxies all operations
- * to a remote server via SRPC RPC. Transaction state is managed on the server.
- * Implements IDatabase interface for unified access with local DB.
+ * This class implements IDatabase for source compatibility, but its SRPC
+ * transaction-shaped surface is not an atomic transaction implementation.
  */
 // Forward declaration for friend
 class RemoteTable;
@@ -260,8 +256,8 @@ public:
     ITable* GetTable(const std::string& name) override;
 
     /**
-     * Begin a new transaction (implements IDatabase)
-     * Sends RPC to server to create transaction context.
+     * Allocate an experimental transaction-shaped tracking token.
+     * Subsequent data RPCs are still executed independently by the server.
      *
      * @return Transaction handle (opaque pointer encoding txn_id)
      *         nullptr on failure
@@ -269,16 +265,16 @@ public:
     void* BeginTransaction() override;
 
     /**
-     * Commit a transaction (implements IDatabase)
-     * Sends RPC to server to commit the transaction.
+     * Retire an experimental tracking token. This does not atomically commit
+     * the preceding data RPCs; they have already executed independently.
      *
      * @param txn - Transaction handle from BeginTransaction()
      */
     void Commit(void* txn) override;
 
     /**
-     * Rollback/abort a transaction (implements IDatabase)
-     * Sends RPC to server to abort the transaction.
+     * Retire an experimental tracking token. This cannot undo preceding data
+     * RPCs because they have already executed independently.
      *
      * @param txn - Transaction handle from BeginTransaction()
      */
@@ -299,6 +295,11 @@ public:
      * Initialize thread (no-op for remote, implements IDatabase)
      */
     void InitThread() override {}
+
+    /**
+     * Release thread state (no-op for remote, implements IDatabase)
+     */
+    void EndThread() override {}
 
     // Internal: Send Put/Get/Delete request to server (used by RemoteTable)
     // @safe - These use SRPC RPC

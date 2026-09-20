@@ -36,6 +36,14 @@ template <typename T> struct string_slice {
         }
     };
 
+    // @unsafe - caller guarantees sizeof(T) readable bytes; memcpy permits
+    // arbitrary alignment while preserving the native byte representation.
+    static T load_unaligned(const char *s) {
+        T value;
+        memcpy(&value, s, sizeof(value));
+        return value;
+    }
+
   public:
     typedef T type;
 
@@ -43,13 +51,13 @@ template <typename T> struct string_slice {
     static constexpr int size = (int) sizeof(T);
 
     /** @brief Return a T containing data from a string's prefix. */
-    // @unsafe - interprets raw bytes as T; caller must ensure alignment/length
+    // @unsafe - caller must ensure the requested bytes are readable
     static T make(const char *s, int len) {
         if (len <= 0)
             return 0;
 #if HAVE_UNALIGNED_ACCESS
         if (len >= size)
-            return *reinterpret_cast<const T *>(s);
+            return load_unaligned(s);
 #endif
         union_type u(0);
         memcpy(u.s, s, std::min(len, size));
@@ -74,17 +82,17 @@ template <typename T> struct string_slice {
         This function acts like make(), but can use single memory accesses for
         short strings. These accesses may observe data outside the range [@a
         s, @a s + len). */
-    // @unsafe - performs unaligned/bounds-relaxed reads from caller buffer
+    // @unsafe - performs bounds-relaxed reads from caller buffer
     static T make_sloppy(const char *s, int len) {
         if (len <= 0)
             return 0;
 #if HAVE_UNALIGNED_ACCESS
         if (len >= size)
-            return *reinterpret_cast<const T *>(s);
+            return load_unaligned(s);
 # if WORDS_BIGENDIAN
-        return *reinterpret_cast<const T *>(s) & (~T(0) << (8 * (size - len)));
+        return load_unaligned(s) & (~T(0) << (8 * (size - len)));
 # elif WORDS_BIGENDIAN_SET
-        return *reinterpret_cast<const T *>(s - (size - len)) >> (8 * (size - len));
+        return load_unaligned(s - (size - len)) >> (8 * (size - len));
 # else
 #  error "WORDS_BIGENDIAN has not been set!"
 # endif
@@ -150,13 +158,12 @@ template <typename T> struct string_slice {
 
         Always returns the same result as "memcmp(@a a, @a b, @a len) == 0",
         but can be faster on some machines. */
-    // @unsafe - performs raw unaligned reads from caller buffers
+    // @unsafe - caller guarantees the documented readable padding
     static bool equals_sloppy(const char *a, const char *b, int len) {
 #if HAVE_UNALIGNED_ACCESS
         if (len <= size) {
             typename mass::make_unsigned<T>::type delta
-                = *reinterpret_cast<const T *>(a)
-                ^ *reinterpret_cast<const T *>(b);
+                = load_unaligned(a) ^ load_unaligned(b);
             if (unlikely(len <= 0))
                 return true;
 # if WORDS_BIGENDIAN

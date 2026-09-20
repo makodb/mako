@@ -1,0 +1,19 @@
+# started on Fri Aug 28 12:01:22 2026
+
+
+ Performance counter stats for process id '1341121':
+
+           4999.83 msec task-clock                       #    0.999 CPUs utilized             
+       16578626264      cycles                           #    3.316 GHz                         (50.00%)
+       26999028783      instructions                     #    1.63  insn per cycle              (50.03%)
+        5052233798      branches                         #    1.010 G/sec                       (50.04%)
+         248450782      branch-misses                    #    4.92% of all branches             (50.06%)
+        8718694581      L1-dcache-loads                  #    1.744 G/sec                       (50.04%)
+         435729293      L1-dcache-load-misses            #    5.00% of all L1-dcache accesses   (50.00%)
+          29171273      dTLB-loads                       #    5.834 M/sec                       (49.97%)
+            156806      dTLB-load-misses                 #    0.54% of all dTLB cache accesses  (49.96%)
+         458761206      cache-references                 #   91.755 M/sec                       (49.94%)
+         246445482      cache-misses                     #   53.72% of all cache refs           (49.96%)
+
+       5.003299545 seconds time elapsed
+

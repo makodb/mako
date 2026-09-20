@@ -555,9 +555,7 @@ int main() {
         txn_list.emplace_back();
     }
 
-    pthread_t advancer;
-    pthread_create(&advancer, NULL, Transaction::epoch_advancer, NULL);
-    pthread_detach(advancer);
+    Transaction::start_epoch_advancer();
 
     startAndWait(&q);
     

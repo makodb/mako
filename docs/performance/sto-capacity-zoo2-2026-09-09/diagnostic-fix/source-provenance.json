@@ -1,0 +1,14 @@
+{
+  "source_revision": "a3ad9a110727f5ecc937cbeee23fe40152df719f",
+  "observed_head": "a3ad9a110727f5ecc937cbeee23fe40152df719f",
+  "captured_at_utc": "2026-09-09T08:30:08Z",
+  "source_hashes": {
+    "src/mako/benchmarks/benchmark_output.h": "87c49cadf59caccb5ce2d6296770f560ba63330bd47e3329f3493bde5c8f3b27",
+    "src/mako/benchmarks/bench.h": "2f533d9ba9ffcd90a22b3156abee436bf584fdf8c09cc8b7c53b1f244cd3ee96",
+    "tests/test_benchmark_output.cc": "7bb5dfacdc80c8dda6fb53035c0add0b7bea64ec09d02192add071f4482c012c",
+    "CMakeLists.txt": "ae8bedb5ced4ca69e271da81f030d8f91c5b332bd79233656590f99fb5cfd6c0",
+    ".github/workflows/ci.yml": "8cbee458bccc812e60183ede4f092c6e853e0286d03c17e9713d10d789588a2e",
+    "scripts/ci/run_rust_sto_sanitizer.sh": "c5d4d0d546163b4f6caf77642059c82fe39dae1a33693e620dd5f87ce1144e24"
+  },
+  "source_hash_method": "git show revision:path, compared byte-for-byte with compiled working files"
+}

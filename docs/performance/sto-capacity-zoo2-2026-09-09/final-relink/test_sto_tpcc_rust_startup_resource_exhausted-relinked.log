@@ -1,0 +1,42 @@
+20260909-08:33.28-710300(us) 2415482 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:33.28-710427(us) 2415482 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:33.28-710455(us) 2415482 * handle_new_config_format (dbtest.cc:368):    Site local_s0: shard=0, replica_idx=0, is_leader=1, cluster=localhost
+STO_TPCC_NATIVE_ALLOCATOR configured_bytes=1073741824 scope=native_only rust_heap_excluded=1
+SiloRuntime[0]::InitializeAllocator()
+  hugepgsize: 2097152
+  mmap() region [0x7d0838800000, 0x7d0878a00000)
+  runtime0 cpu0 owns [0x7d0838800000, 0x7d0878800000)
+Database Benchmark:
+  pid: 2415482
+settings:
+  num-cpus    : 128
+  num-threads : 1
+  shardIndex  : 0
+  paxos_proc_name  : localhost
+  nshards     : 1
+  is_micro    : 0
+  is_replicated : 0
+  storage_engine : rust
+  var-encode  : yes
+  allocator   : jemalloc
+system properties:
+  tuple_prefetch          : no
+  btree_node_prefetch     : yes
+tpcc settings:
+  cross_partition_transactions : 1
+  read_only_snapshots          : 1
+  partition_locks              : 0
+  separate_tree_per_partition  : 1
+  new_order_remote_item_pct    : 1
+  new_order_fast_id_gen        : 1
+  uniform_item_dist            : 0
+  order_status_scan_hack       : 0
+  workload_mix                 : [45, 43, 4, 4, 4]
+STO_TPCC_CAPACITY phase=startup_failed scope=database allocated_registry_bytes=0 max_registry_bytes=1 registry_headroom_bytes=1
+[STOP_SERVER] Stopping 0 server transports
+[STOP_SERVER] All server transports stopped
+
+TPCC_RESOURCE_EXHAUSTED phase=startup error=Rust STO table_create_with_cache_policy failed (status 6): unable to create STO table: register table: Capacity(BufferLimit)
+[STOP_SERVER] Stopping 0 server transports
+[STOP_SERVER] All server transports stopped
+validated TPC-C argument rejection: status=3 text='TPCC_RESOURCE_EXHAUSTED phase=startup'

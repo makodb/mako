@@ -357,7 +357,6 @@ public:
     }
 
     void initialize() {
-        scoped_db_thread_ctx ctx(db_, false);
         tl_worker_id = worker_id_;
         std::cout << "[Worker " << worker_id_ << "] Initialized on thread " 
                   << std::this_thread::get_id() << std::endl;
@@ -436,8 +435,9 @@ void run_worker(abstract_db *db, abstract_ordered_index *table, int worker_id,
     std::cout << "[Worker " << worker_id << "] Starting on thread " 
               << std::this_thread::get_id() << std::endl;
 
-    auto worker = new MakoWorker(db, table, worker_id);
-    worker->initialize();
+    scoped_db_thread_ctx thread_context(db, false);
+    MakoWorker worker(db, table, worker_id);
+    worker.initialize();
 
     // Signal that this worker is ready
     barrier_ready->count_down();
@@ -446,9 +446,7 @@ void run_worker(abstract_db *db, abstract_ordered_index *table, int worker_id,
     barrier_start->wait_for();
 
     // Run worker - this will block pulling from queue until shutdown
-    worker->run();
-
-    delete worker;
+    worker.run();
     std::cout << "[Worker " << worker_id << "] Thread exiting" << std::endl;
 }
 

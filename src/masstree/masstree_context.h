@@ -61,17 +61,27 @@ public:
     // Epoch management
     // @safe - Rusty atomic load wrapper
     mrcu_epoch_type get_epoch() const {
-        return epoch_.load(rusty::sync::atomic::Ordering::Acquire);
+        return epoch_.load(rusty::sync::atomic::Ordering::SeqCst);
     }
 
     // @safe - Rusty atomic store wrapper
     void set_epoch(mrcu_epoch_type e) {
-        epoch_.store(e, rusty::sync::atomic::Ordering::Release);
+        epoch_.store(e, rusty::sync::atomic::Ordering::SeqCst);
     }
 
     // @safe - Rusty atomic fetch_add wrapper
     void increment_epoch(mrcu_epoch_type delta = 2) {
-        epoch_.fetch_add(delta, rusty::sync::atomic::Ordering::AcqRel);
+        epoch_.fetch_add(delta, rusty::sync::atomic::Ordering::SeqCst);
+    }
+
+    // Raise this context to at least the process transaction epoch. A
+    // compare/exchange-based maximum prevents a delayed worker from moving a
+    // context backwards after another worker has observed a newer epoch.
+    // @safe - Rusty atomic fetch_max wrapper
+    void advance_epoch_to_at_least(mrcu_epoch_type epoch) {
+        // Participant entry snapshots and rechecks this reclamation clock, so
+        // advancement joins the same total order as participant publication.
+        epoch_.fetch_max(epoch, rusty::sync::atomic::Ordering::SeqCst);
     }
 
     // @unsafe { Returns volatile reference for legacy code patterns, bypasses safety }

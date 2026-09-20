@@ -1,0 +1,22 @@
+{
+  "/var/tmp/sto-capacity-20260909.kKklOX/build/CMakeFiles/rules.ninja": {
+    "new": "237224418336123a82fd5262de4b0016e2eda28f2d7e016bd331a688285419ce",
+    "old": "2eaf25b5c9022c93fd52567308bf4d4cf1e94422efff48fd5f5bb637f7991c19"
+  },
+  "/var/tmp/sto-capacity-20260909.kKklOX/build/CMakeFiles/sto_tpcc_bench.dir/src/mako/benchmarks/dbtest.cc.o": {
+    "new": "abab86ced6e290c02a11777db50e44730dc5d0d75e121d19169df6a047139067",
+    "old": "686a05c94e6ed7e6816781ef12287c3e72b18f2eebfe8934731a248a5f312a5f"
+  },
+  "/var/tmp/sto-capacity-20260909.kKklOX/build/CMakeFiles/sto_tpcc_bench.dir/src/mako/storage/rust_sto_tpcc_wrapper.cc.o": {
+    "new": "fff7428f7909140ef773ea18186a7f973349928c96bc858abf17a345d1577577",
+    "old": "df1d704d5868ddce134e216fa814f1ab018a5c1ec89215a2396b6969dd138e9a"
+  },
+  "/var/tmp/sto-capacity-20260909.kKklOX/build/build.ninja": {
+    "new": "02b2427dc81bd5ce2c08b1ea0007310c6eafb2c826a70360a6d121babdbc0268",
+    "old": "83f3b05a4cc3e38a79e8b1a7da25429dd2a52c99eabe4fbd702b6c8fe30f915a"
+  },
+  "/var/tmp/sto-capacity-20260909.kKklOX/build/libmako.a": {
+    "new": "0dc0becbc40de98a0b749385d6d1129529bca55595ef345ce49fb4e0709d14d5",
+    "old": "4d51faedf3154342147759f3de55f1fecc7bc975d561a9e479c5cd1b0f2c1d7b"
+  }
+}

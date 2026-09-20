@@ -1,0 +1,340 @@
+20260909-08:02.58-836179(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:02.58-836323(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:02.58-836356(us) 2397136 * handle_new_config_format (dbtest.cc:368):    Site local_s0: shard=0, replica_idx=0, is_leader=1, cluster=localhost
+SiloRuntime[0]::InitializeAllocator()
+  hugepgsize: 2097152
+  mmap() region [0x7b8cd4a00000, 0x7b8d54c00000)
+  runtime0 cpu0 owns [0x7b8cd4a00000, 0x7b8cdca00000)
+  runtime0 cpu1 owns [0x7b8cdca00000, 0x7b8ce4a00000)
+  runtime0 cpu2 owns [0x7b8ce4a00000, 0x7b8ceca00000)
+  runtime0 cpu3 owns [0x7b8ceca00000, 0x7b8cf4a00000)
+  runtime0 cpu4 owns [0x7b8cf4a00000, 0x7b8cfca00000)
+  runtime0 cpu5 owns [0x7b8cfca00000, 0x7b8d04a00000)
+  runtime0 cpu6 owns [0x7b8d04a00000, 0x7b8d0ca00000)
+  runtime0 cpu7 owns [0x7b8d0ca00000, 0x7b8d14a00000)
+  runtime0 cpu8 owns [0x7b8d14a00000, 0x7b8d1ca00000)
+  runtime0 cpu9 owns [0x7b8d1ca00000, 0x7b8d24a00000)
+  runtime0 cpu10 owns [0x7b8d24a00000, 0x7b8d2ca00000)
+  runtime0 cpu11 owns [0x7b8d2ca00000, 0x7b8d34a00000)
+  runtime0 cpu12 owns [0x7b8d34a00000, 0x7b8d3ca00000)
+  runtime0 cpu13 owns [0x7b8d3ca00000, 0x7b8d44a00000)
+  runtime0 cpu14 owns [0x7b8d44a00000, 0x7b8d4ca00000)
+  runtime0 cpu15 owns [0x7b8d4ca00000, 0x7b8d54a00000)
+Database Benchmark:
+  pid: 2397136
+settings:
+  num-cpus    : 128
+  num-threads : 16
+  shardIndex  : 0
+  paxos_proc_name  : localhost
+  nshards     : 1
+  is_micro    : 0
+  is_replicated : 0
+  storage_engine : rust
+  var-encode  : yes
+  allocator   : jemalloc
+system properties:
+  tuple_prefetch          : no
+  btree_node_prefetch     : yes
+tpcc settings:
+  cross_partition_transactions : 1
+  read_only_snapshots          : 1
+  partition_locks              : 0
+  separate_tree_per_partition  : 1
+  new_order_remote_item_pct    : 1
+  new_order_fast_id_gen        : 1
+  uniform_item_dist            : 0
+  order_status_scan_hack       : 0
+  workload_mix                 : [45, 43, 4, 4, 4]
+20260909-08:02.58-894054(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:02.58-894145(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:02.58-894567(us) 2397136 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20260909-08:02.58-894610(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:02.58-894709(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:02.58-894769(us) 2397136 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31021 (listening on 0.0.0.0:31021)
+20260909-08:02.58-894796(us) 2397136 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31021
+20260909-08:02.58-894820(us) 2397136 * RunEventLoop    (srpc_rpc_backend.cc:516): SrpcRpcBackend::RunEventLoop: Starting event loop
+20260909-08:02.58-895075(us) 2397136 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20260909-08:02.58-895199(us) 2397136 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31022 (listening on 0.0.0.0:31022)
+20260909-08:02.58-895225(us) 2397136 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31022
+20260909-08:02.58-895245(us) 2397136 * RunEventLoop    (srpc_rpc_backend.cc:516): SrpcRpcBackend::RunEventLoop: Starting event loop
+20260909-08:02.58-897567(us) 2397136 ! run             (bench.cc:519):     # of loaders size:6
+20260909-08:02.58-898824(us) 2397136 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=0, shard_index=0, getShardIndex=0, loader=1
+20260909-08:02.58-899018(us) 2397136 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=1, shard_index=0, getShardIndex=0, loader=1
+20260909-08:02.58-899059(us) 2397136 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=2, shard_index=0, getShardIndex=0, loader=1
+PinToWarehouseId(): coreid=3 pinned to whse=1 (partid=0)
+20260909-08:02.58-899424(us) 2397136 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=3, shard_index=0, getShardIndex=0, loader=1
+20260909-08:02.58-899712(us) 2397136 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=4, shard_index=0, getShardIndex=0, loader=1
+20260909-08:02.58-899853(us) 2397136 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=5, shard_index=0, getShardIndex=0, loader=1
+PinToWarehouseId(): coreid=4 pinned to whse=1 (partid=0)
+num batches: 30
+PinToWarehouseId(): coreid=5 pinned to whse=1 (partid=0)
+PinToWarehouseId(): coreid=6 pinned to whse=1 (partid=0)
+PinToWarehouseId(): coreid=4 pinned to whse=2 (partid=1)
+PinToWarehouseId(): coreid=4 pinned to whse=3 (partid=2)
+PinToWarehouseId(): coreid=4 pinned to whse=4 (partid=3)
+PinToWarehouseId(): coreid=4 pinned to whse=5 (partid=4)
+PinToWarehouseId(): coreid=4 pinned to whse=6 (partid=5)
+PinToWarehouseId(): coreid=4 pinned to whse=7 (partid=6)
+PinToWarehouseId(): coreid=4 pinned to whse=8 (partid=7)
+PinToWarehouseId(): coreid=4 pinned to whse=9 (partid=8)
+PinToWarehouseId(): coreid=4 pinned to whse=10 (partid=9)
+PinToWarehouseId(): coreid=4 pinned to whse=11 (partid=10)
+[INFO] finished loading warehouse
+[INFO]   * average warehouse record length: 97 bytes
+PinToWarehouseId(): coreid=4 pinned to whse=12 (partid=11)
+PinToWarehouseId(): coreid=4 pinned to whse=13 (partid=12)
+PinToWarehouseId(): coreid=4 pinned to whse=14 (partid=13)
+PinToWarehouseId(): coreid=4 pinned to whse=15 (partid=14)
+PinToWarehouseId(): coreid=4 pinned to whse=16 (partid=15)
+[INFO] finished loading district
+[INFO]   * average district record length: 99 bytes
+[INFO] finished loading item
+[INFO]   * average item record length: 84.1739 bytes
+PinToWarehouseId(): coreid=6 pinned to whse=2 (partid=1)
+PinToWarehouseId(): coreid=5 pinned to whse=2 (partid=1)
+PinToWarehouseId(): coreid=6 pinned to whse=3 (partid=2)
+PinToWarehouseId(): coreid=5 pinned to whse=3 (partid=2)
+PinToWarehouseId(): coreid=6 pinned to whse=4 (partid=3)
+PinToWarehouseId(): coreid=6 pinned to whse=5 (partid=4)
+PinToWarehouseId(): coreid=5 pinned to whse=4 (partid=3)
+PinToWarehouseId(): coreid=3 pinned to whse=2 (partid=1)
+PinToWarehouseId(): coreid=6 pinned to whse=6 (partid=5)
+PinToWarehouseId(): coreid=5 pinned to whse=5 (partid=4)
+PinToWarehouseId(): coreid=6 pinned to whse=7 (partid=6)
+PinToWarehouseId(): coreid=6 pinned to whse=8 (partid=7)
+PinToWarehouseId(): coreid=5 pinned to whse=6 (partid=5)
+PinToWarehouseId(): coreid=6 pinned to whse=9 (partid=8)
+PinToWarehouseId(): coreid=5 pinned to whse=7 (partid=6)
+PinToWarehouseId(): coreid=6 pinned to whse=10 (partid=9)
+PinToWarehouseId(): coreid=3 pinned to whse=3 (partid=2)
+PinToWarehouseId(): coreid=6 pinned to whse=11 (partid=10)
+PinToWarehouseId(): coreid=5 pinned to whse=8 (partid=7)
+PinToWarehouseId(): coreid=6 pinned to whse=12 (partid=11)
+PinToWarehouseId(): coreid=5 pinned to whse=9 (partid=8)
+PinToWarehouseId(): coreid=6 pinned to whse=13 (partid=12)
+PinToWarehouseId(): coreid=6 pinned to whse=14 (partid=13)
+PinToWarehouseId(): coreid=5 pinned to whse=10 (partid=9)
+PinToWarehouseId(): coreid=6 pinned to whse=15 (partid=14)
+PinToWarehouseId(): coreid=3 pinned to whse=4 (partid=3)
+PinToWarehouseId(): coreid=5 pinned to whse=11 (partid=10)
+PinToWarehouseId(): coreid=6 pinned to whse=16 (partid=15)
+[INFO] finished loading order
+[INFO]   * average order_line record length: 11.2927 bytes
+[INFO]   * average oorder record length: 7.9446 bytes
+[INFO]   * average new_order record length: 12 bytes
+PinToWarehouseId(): coreid=5 pinned to whse=12 (partid=11)
+PinToWarehouseId(): coreid=5 pinned to whse=13 (partid=12)
+PinToWarehouseId(): coreid=5 pinned to whse=14 (partid=13)
+PinToWarehouseId(): coreid=3 pinned to whse=5 (partid=4)
+PinToWarehouseId(): coreid=5 pinned to whse=15 (partid=14)
+PinToWarehouseId(): coreid=5 pinned to whse=16 (partid=15)
+[INFO] finished loading customer
+[INFO]   * average customer record length: 153.983 bytes 
+PinToWarehouseId(): coreid=3 pinned to whse=6 (partid=5)
+PinToWarehouseId(): coreid=3 pinned to whse=7 (partid=6)
+PinToWarehouseId(): coreid=3 pinned to whse=8 (partid=7)
+PinToWarehouseId(): coreid=3 pinned to whse=9 (partid=8)
+PinToWarehouseId(): coreid=3 pinned to whse=10 (partid=9)
+PinToWarehouseId(): coreid=3 pinned to whse=11 (partid=10)
+PinToWarehouseId(): coreid=3 pinned to whse=12 (partid=11)
+PinToWarehouseId(): coreid=3 pinned to whse=13 (partid=12)
+PinToWarehouseId(): coreid=3 pinned to whse=14 (partid=13)
+PinToWarehouseId(): coreid=3 pinned to whse=15 (partid=14)
+PinToWarehouseId(): coreid=3 pinned to whse=16 (partid=15)
+[INFO] finished loading stock
+[INFO]   * average stock record length: 8 bytes
+timed region dataloading took 22085 ms
+DB size: 2405.31 MB
+[0, 0, 0] txns persisted in loading phase
+20260909-08:03.20-982603(us) 2397136 ! run             (bench.cc:578):     # of nthreads:16
+starting benchmark...
+tpcc: worker id 128 => warehouses [1, 2)
+tpcc: worker id 129 => warehouses [2, 3)
+tpcc: worker id 130 => warehouses [3, 4)
+tpcc: worker id 131 => warehouses [4, 5)
+tpcc: worker id 132 => warehouses [5, 6)
+tpcc: worker id 133 => warehouses [6, 7)
+tpcc: worker id 134 => warehouses [7, 8)
+tpcc: worker id 135 => warehouses [8, 9)
+tpcc: worker id 136 => warehouses [9, 10)
+tpcc: worker id 137 => warehouses [10, 11)
+tpcc: worker id 138 => warehouses [11, 12)
+tpcc: worker id 139 => warehouses [12, 13)
+tpcc: worker id 140 => warehouses [13, 14)
+tpcc: worker id 141 => warehouses [14, 15)
+tpcc: worker id 142 => warehouses [15, 16)
+tpcc: worker id 143 => warehouses [16, 17)
+20260909-08:03.20-992363(us) 2397136 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=6, shard_index=0, getShardIndex=0, loader=0
+20260909-08:03.20-992471(us) 2397136 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=7, shard_index=0, getShardIndex=0, loader=0
+20260909-08:03.20-992547(us) 2397136 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=8, shard_index=0, getShardIndex=0, loader=0
+20260909-08:03.20-992606(us) 2397136 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=9, shard_index=0, getShardIndex=0, loader=0
+20260909-08:03.20-992850(us) 2397136 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=10, shard_index=0, getShardIndex=0, loader=0
+20260909-08:03.20-993092(us) 2397136 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=11, shard_index=0, getShardIndex=0, loader=0
+20260909-08:03.20-993626(us) 2397136 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=12, shard_index=0, getShardIndex=0, loader=0
+20260909-08:03.20-993676(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.20-993734(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.20-993782(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.20-993845(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.20-993907(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.20-993932(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.20-994051(us) 2397136 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=13, shard_index=0, getShardIndex=0, loader=0
+20260909-08:03.20-994236(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.20-994287(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.20-994317(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.20-994351(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.20-994403(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.20-994455(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.20-994507(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.20-994553(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.20-994615(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.20-994678(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.20-994718(us) 2397136 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20260909-08:03.20-994768(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.20-994805(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.20-994878(us) 2397136 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31001 (listening on 0.0.0.0:31001)
+20260909-08:03.20-994907(us) 2397136 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31001
+20260909-08:03.20-994946(us) 2397136 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=14, shard_index=0, getShardIndex=0, loader=0
+20260909-08:03.20-994997(us) 2397136 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=16, shard_index=0, getShardIndex=0, loader=0
+20260909-08:03.20-995059(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.20-995110(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.20-995144(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.20-995183(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.20-995222(us) 2397136 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20260909-08:03.20-995296(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.20-995393(us) 2397136 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=15, shard_index=0, getShardIndex=0, loader=0
+20260909-08:03.20-995460(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.20-995514(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.20-995623(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.20-995653(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.20-995695(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.20-995722(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.20-995771(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.20-995818(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.20-995885(us) 2397136 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31000 (listening on 0.0.0.0:31000)
+20260909-08:03.20-995925(us) 2397136 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31000
+20260909-08:03.20-995960(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.20-995995(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.20-996029(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.20-996424(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.20-996483(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.20-999047(us) 2397136 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=17, shard_index=0, getShardIndex=0, loader=0
+20260909-08:03.20-999098(us) 2397136 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=19, shard_index=0, getShardIndex=0, loader=0
+20260909-08:03.20-999153(us) 2397136 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=18, shard_index=0, getShardIndex=0, loader=0
+20260909-08:03.20-999192(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.20-999226(us) 2397136 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20260909-08:03.20-999263(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.20-999296(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.20-999346(us) 2397136 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31002 (listening on 0.0.0.0:31002)
+20260909-08:03.20-999377(us) 2397136 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31002
+20260909-08:03.20-999392(us) 2397136 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20260909-08:03.20-999443(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.20-999475(us) 2397136 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20260909-08:03.20-999525(us) 2397136 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31006 (listening on 0.0.0.0:31006)
+20260909-08:03.20-999567(us) 2397136 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31006
+20260909-08:03.20-999598(us) 2397136 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31007 (listening on 0.0.0.0:31007)
+20260909-08:03.20-999622(us) 2397136 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31007
+20260909-08:03.20-999666(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.20-999712(us) 2397136 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20260909-08:03.20-999762(us) 2397136 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=20, shard_index=0, getShardIndex=0, loader=0
+20260909-08:03.20-999812(us) 2397136 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20260909-08:03.20-999891(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.20-999952(us) 2397136 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31003 (listening on 0.0.0.0:31003)
+20260909-08:03.20-999990(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.21-0033(us) 2397136 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20260909-08:03.21-0070(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.21-0116(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.21-0165(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.21-0207(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.21-0269(us) 2397136 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31003
+20260909-08:03.21-0305(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.21-0340(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.21-0365(us) 2397136 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20260909-08:03.21-0415(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.21-0455(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.21-0490(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.21-0529(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.21-0571(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.21-0618(us) 2397136 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31004 (listening on 0.0.0.0:31004)
+20260909-08:03.21-0639(us) 2397136 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31004
+20260909-08:03.21-0661(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.21-0694(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.21-0843(us) 2397136 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=21, shard_index=0, getShardIndex=0, loader=0
+20260909-08:03.21-16916(us) 2397136 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31010 (listening on 0.0.0.0:31010)
+20260909-08:03.21-16953(us) 2397136 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31010
+20260909-08:03.21-17242(us) 2397136 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20260909-08:03.21-17317(us) 2397136 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31005 (listening on 0.0.0.0:31005)
+20260909-08:03.21-17347(us) 2397136 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31005
+20260909-08:03.21-17374(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.21-17429(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.21-17473(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.21-17505(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.21-17538(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.21-17577(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.21-17620(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.21-17646(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.21-17677(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.21-17718(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.21-17761(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.21-18143(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.21-18192(us) 2397136 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31008 (listening on 0.0.0.0:31008)
+20260909-08:03.21-18221(us) 2397136 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31008
+20260909-08:03.21-18253(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.21-18320(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.21-18359(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.21-18411(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.21-18458(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.21-18511(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.21-18610(us) 2397136 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20260909-08:03.21-18683(us) 2397136 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31011 (listening on 0.0.0.0:31011)
+20260909-08:03.21-18703(us) 2397136 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31011
+20260909-08:03.21-18794(us) 2397136 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20260909-08:03.21-18854(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.21-18902(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.21-18984(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.21-19021(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.21-19070(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.21-19122(us) 2397136 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31012 (listening on 0.0.0.0:31012)
+20260909-08:03.21-19142(us) 2397136 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31012
+20260909-08:03.21-19156(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.21-19202(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.21-19243(us) 2397136 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20260909-08:03.21-19270(us) 2397136 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20260909-08:03.21-19321(us) 2397136 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31009 (listening on 0.0.0.0:31009)
+20260909-08:03.21-19365(us) 2397136 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31009
+20260909-08:03.21-19393(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.21-19448(us) 2397136 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31013 (listening on 0.0.0.0:31013)
+20260909-08:03.21-19643(us) 2397136 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31013
+20260909-08:03.21-19670(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.21-19709(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.21-19759(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.21-19797(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.21-19997(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.21-20037(us) 2397136 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20260909-08:03.21-20066(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.21-20095(us) 2397136 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31014 (listening on 0.0.0.0:31014)
+20260909-08:03.21-20113(us) 2397136 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31014
+20260909-08:03.21-20168(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.21-20193(us) 2397136 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20260909-08:03.21-20238(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.21-20326(us) 2397136 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31015 (listening on 0.0.0.0:31015)
+20260909-08:03.21-20355(us) 2397136 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31015
+20260909-08:03.21-20426(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.21-20467(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.21-20767(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.21-20805(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.21-21126(us) 2397136 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:03.21-21194(us) 2397136 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:03.21-23770(us) 2397136 ! run             (bench.cc:645):     TPCC_BENCH_MEASURE_START
+20260909-08:03.21-23795(us) 2397136 ! run             (bench.cc:653):     start the running time, runTime:10
+20260909-08:03.21-23809(us) 2397136 ! run             (bench.cc:665):     runtime time left:10000 ms, bool:1
+20260909-08:03.22-33355(us) 2397136 ! run             (bench.cc:665):     runtime time left:9000 ms, bool:1
+20260909-08:03.23-40850(us) 2397136 ! run             (bench.cc:665):     runtime time left:8000 ms, bool:1
+20260909-08:03.24-48089(us) 2397136 ! run             (bench.cc:665):     runtime time left:7000 ms, bool:1
+20260909-08:03.25-54160(us) 2397136 ! run             (bench.cc:665):     runtime time left:6000 ms, bool:1
+20260909-08:03.26-60650(us) 2397136 ! run             (bench.cc:665):     runtime time left:5000 ms, bool:1
+20260909-08:03.27-69164(us) 2397136 ! run             (bench.cc:665):     runtime time left:4000 ms, bool:1
+20260909-08:03.28-75351(us) 2397136 ! run             (bench.cc:665):     runtime time left:3000 ms, bool:1
+20260909-08:03.29-82293(us) 2397136 ! run             (bench.cc:665):     runtime time left:2000 ms, bool:1
+20260909-08:03.30-88435(us) 2397136 ! run             (bench.cc:665):     runtime time left:1000 ms, bool:1
+SiloRuntime[0]::AllocateUnmanagedWithLock: OOM

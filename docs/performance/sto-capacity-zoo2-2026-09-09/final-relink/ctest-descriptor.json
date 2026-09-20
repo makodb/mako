@@ -1,0 +1,1610 @@
+{
+  "backtraceGraph" : 
+  {
+    "commands" : 
+    [
+      "add_test"
+    ],
+    "files" : 
+    [
+      "/home/users/shuai/mako/.claude/worktrees/sto-rust/CMakeLists.txt"
+    ],
+    "nodes" : 
+    [
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2157,
+        "parent" : 0
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2165,
+        "parent" : 2
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2173,
+        "parent" : 4
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2181,
+        "parent" : 6
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2201,
+        "parent" : 8
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2227,
+        "parent" : 10
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2247,
+        "parent" : 12
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2270,
+        "parent" : 14
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2270,
+        "parent" : 16
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2270,
+        "parent" : 18
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2296,
+        "parent" : 20
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2315,
+        "parent" : 22
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2332,
+        "parent" : 24
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2349,
+        "parent" : 26
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2366,
+        "parent" : 28
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2384,
+        "parent" : 30
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2413,
+        "parent" : 32
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2437,
+        "parent" : 34
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2458,
+        "parent" : 36
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2659,
+        "parent" : 38
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 3100,
+        "parent" : 40
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 3174,
+        "parent" : 42
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 3182,
+        "parent" : 44
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 3186,
+        "parent" : 46
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 3190,
+        "parent" : 48
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 3194,
+        "parent" : 50
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 3222,
+        "parent" : 52
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 3246,
+        "parent" : 54
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 3295,
+        "parent" : 56
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 3301,
+        "parent" : 58
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 3305,
+        "parent" : 60
+      }
+    ]
+  },
+  "kind" : "ctestInfo",
+  "tests" : 
+  [
+    {
+      "backtrace" : 1,
+      "command" : 
+      [
+        "/var/tmp/sto-capacity-20260909.kKklOX/build/rocksdbInterfaceTest"
+      ],
+      "name" : "test_rocksdb_interface_lifecycle",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "lifecycle",
+            "masstree",
+            "rocks",
+            "sto"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 120.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/var/tmp/sto-capacity-20260909.kKklOX/build"
+        }
+      ]
+    },
+    {
+      "backtrace" : 3,
+      "command" : 
+      [
+        "/var/tmp/sto-capacity-20260909.kKklOX/build/sto_tpcc_cpp_wrapper_smoke",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/config/mako_sto_tpcc_local.yml"
+      ],
+      "name" : "test_sto_tpcc_cpp_wrapper_smoke",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "ffi",
+            "masstree",
+            "rust",
+            "sto"
+          ]
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/var/tmp/sto-capacity-20260909.kKklOX/build"
+        }
+      ]
+    },
+    {
+      "backtrace" : 5,
+      "command" : 
+      [
+        "/var/tmp/sto-capacity-20260909.kKklOX/build/sto_tpcc_cpp_wrapper_scan_smoke",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/config/mako_sto_tpcc_local.yml"
+      ],
+      "name" : "test_sto_tpcc_cpp_wrapper_scan_smoke",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "ffi",
+            "masstree",
+            "rust",
+            "sto"
+          ]
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/var/tmp/sto-capacity-20260909.kKklOX/build"
+        }
+      ]
+    },
+    {
+      "backtrace" : 7,
+      "command" : 
+      [
+        "/usr/bin/python3.12",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/scripts/ci/run_sto_tpcc_ctest.py",
+        "--expected-engine",
+        "cpp",
+        "--expected-threads",
+        "1",
+        "--expected-warehouses",
+        "1",
+        "--expected-seconds",
+        "1",
+        "--",
+        "/var/tmp/sto-capacity-20260909.kKklOX/build/sto_tpcc_bench",
+        "--num-threads",
+        "1",
+        "--shard-config",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/config/mako_sto_tpcc_local.yml",
+        "--site-name",
+        "local_s0",
+        "--runtime",
+        "1",
+        "--storage-engine",
+        "cpp",
+        "--slow-exit"
+      ],
+      "name" : "test_sto_tpcc_cpp_slow_exit",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "cpp",
+            "ffi",
+            "lifecycle",
+            "masstree",
+            "sto",
+            "tpcc"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 180.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/var/tmp/sto-capacity-20260909.kKklOX/build"
+        }
+      ]
+    },
+    {
+      "backtrace" : 9,
+      "command" : 
+      [
+        "/usr/bin/python3.12",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/scripts/ci/run_sto_tpcc_ctest.py",
+        "--expected-engine",
+        "cpp",
+        "--expected-threads",
+        "1",
+        "--expected-warehouses",
+        "1",
+        "--expected-seconds",
+        "1",
+        "--expected-result-count",
+        "2",
+        "--",
+        "/var/tmp/sto-capacity-20260909.kKklOX/build/sto_tpcc_bench",
+        "--num-threads",
+        "1",
+        "--shard-config",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/config/local-shards2-warehouses1.yml",
+        "--paxos-proc-name",
+        "localhost",
+        "--local-shards",
+        "0,1",
+        "--runtime",
+        "1",
+        "--storage-engine",
+        "cpp",
+        "--slow-exit"
+      ],
+      "name" : "test_sto_tpcc_cpp_multishard_slow_exit",
+      "properties" : 
+      [
+        {
+          "name" : "ENVIRONMENT",
+          "value" : 
+          [
+            "MAKO_TPCC_WORKLOAD_MIX=0,0,34,33,33"
+          ]
+        },
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "cpp",
+            "ffi",
+            "lifecycle",
+            "masstree",
+            "multishard",
+            "sto",
+            "tpcc"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 240.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/var/tmp/sto-capacity-20260909.kKklOX/build"
+        }
+      ]
+    },
+    {
+      "backtrace" : 11,
+      "command" : 
+      [
+        "/usr/bin/python3.12",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/scripts/ci/run_sto_tpcc_ctest.py",
+        "--expected-engine",
+        "rust",
+        "--expected-threads",
+        "1",
+        "--expected-warehouses",
+        "1",
+        "--expected-seconds",
+        "1",
+        "--",
+        "/var/tmp/sto-capacity-20260909.kKklOX/build/sto_tpcc_bench",
+        "--num-threads",
+        "1",
+        "--shard-config",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/config/mako_sto_tpcc_local.yml",
+        "--site-name",
+        "local_s0",
+        "--runtime",
+        "1",
+        "--storage-engine",
+        "rust",
+        "--slow-exit"
+      ],
+      "name" : "test_sto_tpcc_rust_slow_exit",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "ffi",
+            "lifecycle",
+            "masstree",
+            "rust",
+            "sto",
+            "tpcc"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 180.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/var/tmp/sto-capacity-20260909.kKklOX/build"
+        }
+      ]
+    },
+    {
+      "backtrace" : 13,
+      "command" : 
+      [
+        "/usr/bin/python3.12",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/scripts/ci/run_sto_tpcc_ctest.py",
+        "--expected-engine",
+        "rust",
+        "--expected-threads",
+        "4",
+        "--expected-warehouses",
+        "4",
+        "--expected-seconds",
+        "1",
+        "--",
+        "/var/tmp/sto-capacity-20260909.kKklOX/build/sto_tpcc_bench",
+        "--num-threads",
+        "4",
+        "--shard-config",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/config/mako_sto_tpcc_local.yml",
+        "--site-name",
+        "local_s0",
+        "--runtime",
+        "1",
+        "--storage-engine",
+        "rust",
+        "--slow-exit"
+      ],
+      "name" : "test_sto_tpcc_rust_concurrent",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "concurrency",
+            "ffi",
+            "lifecycle",
+            "masstree",
+            "rust",
+            "sto",
+            "tpcc"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 180.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/var/tmp/sto-capacity-20260909.kKklOX/build"
+        }
+      ]
+    },
+    {
+      "backtrace" : 15,
+      "command" : 
+      [
+        "/usr/bin/python3.12",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/scripts/ci/run_sto_tpcc_ctest.py",
+        "--expected-failure-text",
+        "TPCC_RESOURCE_EXHAUSTED phase=startup",
+        "--expected-exit-code",
+        "3",
+        "--",
+        "/var/tmp/sto-capacity-20260909.kKklOX/build/sto_tpcc_bench",
+        "--num-threads",
+        "1",
+        "--shard-config",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/config/mako_sto_tpcc_local.yml",
+        "--site-name",
+        "local_s0",
+        "--runtime",
+        "30",
+        "--storage-engine",
+        "rust",
+        "--slow-exit"
+      ],
+      "name" : "test_sto_tpcc_rust_startup_resource_exhausted",
+      "properties" : 
+      [
+        {
+          "name" : "ENVIRONMENT",
+          "value" : 
+          [
+            "MAKO_STO_TPCC_REGISTRY_MEMORY=1"
+          ]
+        },
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "capacity",
+            "ffi",
+            "lifecycle",
+            "masstree",
+            "rust",
+            "sto",
+            "tpcc"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 240.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/var/tmp/sto-capacity-20260909.kKklOX/build"
+        }
+      ]
+    },
+    {
+      "backtrace" : 17,
+      "command" : 
+      [
+        "/usr/bin/python3.12",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/scripts/ci/run_sto_tpcc_ctest.py",
+        "--expected-failure-text",
+        "TPCC_RESOURCE_EXHAUSTED phase=load",
+        "--expected-exit-code",
+        "3",
+        "--",
+        "/var/tmp/sto-capacity-20260909.kKklOX/build/sto_tpcc_bench",
+        "--num-threads",
+        "1",
+        "--shard-config",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/config/mako_sto_tpcc_local.yml",
+        "--site-name",
+        "local_s0",
+        "--runtime",
+        "30",
+        "--storage-engine",
+        "rust",
+        "--slow-exit"
+      ],
+      "name" : "test_sto_tpcc_rust_load_resource_exhausted",
+      "properties" : 
+      [
+        {
+          "name" : "ENVIRONMENT",
+          "value" : 
+          [
+            "MAKO_STO_TPCC_MAX_RETAINED_RECORDS=1"
+          ]
+        },
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "capacity",
+            "ffi",
+            "lifecycle",
+            "masstree",
+            "rust",
+            "sto",
+            "tpcc"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 240.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/var/tmp/sto-capacity-20260909.kKklOX/build"
+        }
+      ]
+    },
+    {
+      "backtrace" : 19,
+      "command" : 
+      [
+        "/usr/bin/python3.12",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/scripts/ci/run_sto_tpcc_ctest.py",
+        "--expected-failure-text",
+        "TPCC_RESOURCE_EXHAUSTED phase=run",
+        "--expected-exit-code",
+        "3",
+        "--",
+        "/var/tmp/sto-capacity-20260909.kKklOX/build/sto_tpcc_bench",
+        "--num-threads",
+        "1",
+        "--shard-config",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/config/mako_sto_tpcc_local.yml",
+        "--site-name",
+        "local_s0",
+        "--runtime",
+        "30",
+        "--storage-engine",
+        "rust",
+        "--slow-exit"
+      ],
+      "name" : "test_sto_tpcc_rust_run_resource_exhausted",
+      "properties" : 
+      [
+        {
+          "name" : "ENVIRONMENT",
+          "value" : 
+          [
+            "MAKO_STO_TPCC_MAX_RETAINED_RECORDS=350000",
+            "MAKO_TPCC_WORKLOAD_MIX=100,0,0,0,0"
+          ]
+        },
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "capacity",
+            "ffi",
+            "lifecycle",
+            "masstree",
+            "rust",
+            "sto",
+            "tpcc"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 240.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/var/tmp/sto-capacity-20260909.kKklOX/build"
+        }
+      ]
+    },
+    {
+      "backtrace" : 21,
+      "command" : 
+      [
+        "/usr/bin/python3.12",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/scripts/ci/run_sto_tpcc_ctest.py",
+        "--expected-failure-text",
+        "TPCC_RESOURCE_EXHAUSTED phase=run",
+        "--expected-exit-code",
+        "3",
+        "--",
+        "/var/tmp/sto-capacity-20260909.kKklOX/build/sto_tpcc_bench",
+        "--num-threads",
+        "4",
+        "--shard-config",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/config/mako_sto_tpcc_local.yml",
+        "--site-name",
+        "local_s0",
+        "--runtime",
+        "30",
+        "--storage-engine",
+        "rust",
+        "--slow-exit"
+      ],
+      "name" : "test_sto_tpcc_rust_concurrent_resource_exhausted",
+      "properties" : 
+      [
+        {
+          "name" : "ENVIRONMENT",
+          "value" : 
+          [
+            "MAKO_STO_TPCC_MAX_RETAINED_RECORDS=350000",
+            "MAKO_TPCC_WORKLOAD_MIX=100,0,0,0,0"
+          ]
+        },
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "capacity",
+            "concurrency",
+            "ffi",
+            "lifecycle",
+            "masstree",
+            "rust",
+            "sto",
+            "tpcc"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 240.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/var/tmp/sto-capacity-20260909.kKklOX/build"
+        }
+      ]
+    },
+    {
+      "backtrace" : 23,
+      "command" : 
+      [
+        "/usr/bin/python3.12",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/scripts/ci/run_sto_tpcc_ctest.py",
+        "--expected-failure-text",
+        "duplicate shard index 0",
+        "--expected-exit-code",
+        "2",
+        "--",
+        "/var/tmp/sto-capacity-20260909.kKklOX/build/sto_tpcc_bench",
+        "--num-threads",
+        "1",
+        "--shard-config",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/config/mako_sto_tpcc_local.yml",
+        "--local-shards",
+        "0,0",
+        "--storage-engine",
+        "rust",
+        "--slow-exit"
+      ],
+      "name" : "test_sto_tpcc_rejects_duplicate_local_shards",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "configuration",
+            "ffi",
+            "lifecycle",
+            "masstree",
+            "rust",
+            "sto",
+            "tpcc"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 30.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/var/tmp/sto-capacity-20260909.kKklOX/build"
+        }
+      ]
+    },
+    {
+      "backtrace" : 25,
+      "command" : 
+      [
+        "/usr/bin/python3.12",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/scripts/ci/run_sto_tpcc_ctest.py",
+        "--expected-failure-text",
+        "hybrid local/remote multi-shard topology is unsupported",
+        "--expected-exit-code",
+        "2",
+        "--",
+        "/var/tmp/sto-capacity-20260909.kKklOX/build/sto_tpcc_bench",
+        "--num-threads",
+        "1",
+        "--shard-config",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/config/local-shards3-warehouses1.yml",
+        "--local-shards",
+        "0,1",
+        "--storage-engine",
+        "rust",
+        "--slow-exit"
+      ],
+      "name" : "test_sto_tpcc_rejects_partial_local_shards",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "configuration",
+            "ffi",
+            "lifecycle",
+            "masstree",
+            "rust",
+            "sto",
+            "tpcc"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 30.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/var/tmp/sto-capacity-20260909.kKklOX/build"
+        }
+      ]
+    },
+    {
+      "backtrace" : 27,
+      "command" : 
+      [
+        "/usr/bin/python3.12",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/scripts/ci/run_sto_tpcc_ctest.py",
+        "--expected-failure-text",
+        "Rust STO TPC-C comparison supports one non-replicated shard",
+        "--expected-exit-code",
+        "2",
+        "--",
+        "/var/tmp/sto-capacity-20260909.kKklOX/build/sto_tpcc_bench",
+        "--num-threads",
+        "1",
+        "--shard-config",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/config/local-shards2-warehouses1.yml",
+        "--local-shards",
+        "0",
+        "--storage-engine",
+        "rust",
+        "--slow-exit"
+      ],
+      "name" : "test_sto_tpcc_rejects_rust_distributed_shard",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "configuration",
+            "ffi",
+            "lifecycle",
+            "masstree",
+            "rust",
+            "sto",
+            "tpcc"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 30.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/var/tmp/sto-capacity-20260909.kKklOX/build"
+        }
+      ]
+    },
+    {
+      "backtrace" : 29,
+      "command" : 
+      [
+        "/usr/bin/python3.12",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/scripts/ci/run_sto_tpcc_ctest.py",
+        "--expected-failure-text",
+        "Rust STO TPC-C comparison supports one non-replicated shard",
+        "--expected-exit-code",
+        "2",
+        "--",
+        "/var/tmp/sto-capacity-20260909.kKklOX/build/sto_tpcc_bench",
+        "--num-threads",
+        "1",
+        "--shard-config",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/config/mako_sto_tpcc_local.yml",
+        "--site-name",
+        "local_s0",
+        "--is-replicated",
+        "--storage-engine",
+        "rust",
+        "--slow-exit"
+      ],
+      "name" : "test_sto_tpcc_rejects_rust_replication",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "configuration",
+            "ffi",
+            "lifecycle",
+            "masstree",
+            "rust",
+            "sto",
+            "tpcc"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 30.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/var/tmp/sto-capacity-20260909.kKklOX/build"
+        }
+      ]
+    },
+    {
+      "backtrace" : 31,
+      "command" : 
+      [
+        "/usr/bin/python3.12",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/scripts/ci/run_sto_tpcc_ctest.py",
+        "--expected-failure-text",
+        "worker count must be in [1, 111]",
+        "--expected-exit-code",
+        "2",
+        "--",
+        "/var/tmp/sto-capacity-20260909.kKklOX/build/sto_tpcc_bench",
+        "--num-threads",
+        "112",
+        "--shard-config",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/config/mako_sto_tpcc_local.yml",
+        "--site-name",
+        "local_s0",
+        "--storage-engine",
+        "rust",
+        "--slow-exit"
+      ],
+      "name" : "test_sto_tpcc_rejects_rust_worker_limit",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "configuration",
+            "ffi",
+            "lifecycle",
+            "masstree",
+            "rust",
+            "sto",
+            "tpcc"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 30.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/var/tmp/sto-capacity-20260909.kKklOX/build"
+        }
+      ]
+    },
+    {
+      "backtrace" : 33,
+      "command" : 
+      [
+        "/var/tmp/sto-capacity-20260909.kKklOX/build/test_benchmark_output"
+      ],
+      "name" : "test_benchmark_output",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "concurrency",
+            "diagnostics",
+            "ffi",
+            "rust",
+            "sto"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 30.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/var/tmp/sto-capacity-20260909.kKklOX/build"
+        }
+      ]
+    },
+    {
+      "backtrace" : 35,
+      "command" : 
+      [
+        "/var/tmp/sto-capacity-20260909.kKklOX/build/test_mtree_abi_c11_header"
+      ],
+      "name" : "test_mtree_abi_c11_header",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "abi",
+            "c11",
+            "masstree"
+          ]
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/var/tmp/sto-capacity-20260909.kKklOX/build"
+        }
+      ]
+    },
+    {
+      "backtrace" : 37,
+      "command" : 
+      [
+        "/var/tmp/sto-capacity-20260909.kKklOX/build/test_sto_tpcc_ffi_c11_header"
+      ],
+      "name" : "test_sto_tpcc_ffi_c11_header",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "c11",
+            "ffi",
+            "rust",
+            "sto"
+          ]
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/var/tmp/sto-capacity-20260909.kKklOX/build"
+        }
+      ]
+    },
+    {
+      "backtrace" : 39,
+      "command" : 
+      [
+        "/var/tmp/sto-capacity-20260909.kKklOX/build/test_srpc_epoll_platform",
+        "--gtest_fail_if_no_test_selected"
+      ],
+      "name" : "test_srpc_epoll_platform",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "epoll",
+            "ffi",
+            "rust",
+            "srpc"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 30.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/var/tmp/sto-capacity-20260909.kKklOX/build"
+        }
+      ]
+    },
+    {
+      "backtrace" : 41,
+      "command" : 
+      [
+        "/var/tmp/sto-capacity-20260909.kKklOX/build/test_silo_varint",
+        "--gtest_fail_if_no_test_selected"
+      ],
+      "name" : "SiloVarintTests",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "rust",
+            "serializer",
+            "silo",
+            "sto"
+          ]
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/var/tmp/sto-capacity-20260909.kKklOX/build"
+        }
+      ]
+    },
+    {
+      "backtrace" : 43,
+      "command" : 
+      [
+        "/var/tmp/sto-capacity-20260909.kKklOX/build/test_silo_runtime",
+        "--gtest_filter=SiloRuntimeTest.ConcurrentGlobalDefaultInitialization:SiloRuntimeLifetimeTest.LazyServicesHaveBoundedTeardown:CoreStorageTest.*:SpinBarrierTest.*:MasstreeContextEpochTest.*:MassTransEpochIntegrationTest.*:StoThreadIdLifecycleTest.*:StoEpochAdvancerLifecycleTest.*:MakoTimestampTest.*",
+        "--gtest_fail_if_no_test_selected"
+      ],
+      "name" : "test_silo_runtime_concurrency_lifecycle",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "concurrency",
+            "masstree",
+            "silo"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 60.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/var/tmp/sto-capacity-20260909.kKklOX/build"
+        }
+      ]
+    },
+    {
+      "backtrace" : 45,
+      "command" : 
+      [
+        "/var/tmp/sto-capacity-20260909.kKklOX/build/test_silo_runtime",
+        "--gtest_filter=TransItemLifetimeTest.ReusedSlotRetainsExactlyOneOwnedExtraString",
+        "--gtest_fail_if_no_test_selected"
+      ],
+      "name" : "test_silo_transitem_lifetime",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "lifecycle",
+            "silo",
+            "transaction"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 120.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/var/tmp/sto-capacity-20260909.kKklOX/build"
+        }
+      ]
+    },
+    {
+      "backtrace" : 47,
+      "command" : 
+      [
+        "/var/tmp/sto-capacity-20260909.kKklOX/build/test_silo_runtime",
+        "--gtest_filter=TransactionSetBoundaryTest.ParticipantAbortCleansExactChunkBoundaries",
+        "--gtest_fail_if_no_test_selected"
+      ],
+      "name" : "test_silo_transaction_set_exact_chunk_boundary",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "lifecycle",
+            "silo",
+            "transaction"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 120.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/var/tmp/sto-capacity-20260909.kKklOX/build"
+        }
+      ]
+    },
+    {
+      "backtrace" : 49,
+      "command" : 
+      [
+        "/var/tmp/sto-capacity-20260909.kKklOX/build/test_silo_runtime",
+        "--gtest_filter=TransactionSetBoundaryTest.CapacityExhaustionFailsClosedInRelease",
+        "--gtest_fail_if_no_test_selected"
+      ],
+      "name" : "test_silo_transaction_set_capacity_exhaustion",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "lifecycle",
+            "silo",
+            "transaction"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 120.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/var/tmp/sto-capacity-20260909.kKklOX/build"
+        }
+      ]
+    },
+    {
+      "backtrace" : 51,
+      "command" : 
+      [
+        "/var/tmp/sto-capacity-20260909.kKklOX/build/test_silo_runtime",
+        "--gtest_filter=TransactionCommitFailureTest.InstallExceptionIsFailStop",
+        "--gtest_fail_if_no_test_selected"
+      ],
+      "name" : "test_silo_transaction_install_exception_fail_stop",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "lifecycle",
+            "silo",
+            "transaction"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 120.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/var/tmp/sto-capacity-20260909.kKklOX/build"
+        }
+      ]
+    },
+    {
+      "backtrace" : 53,
+      "command" : 
+      [
+        "/var/tmp/sto-capacity-20260909.kKklOX/build/test_mtree_abi",
+        "--gtest_fail_if_no_test_selected"
+      ],
+      "name" : "test_mtree_abi",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "abi",
+            "ffi",
+            "masstree",
+            "rust",
+            "silo"
+          ]
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/var/tmp/sto-capacity-20260909.kKklOX/build"
+        }
+      ]
+    },
+    {
+      "backtrace" : 55,
+      "command" : 
+      [
+        "/var/tmp/sto-capacity-20260909.kKklOX/build/test_mako_value_metadata",
+        "--gtest_fail_if_no_test_selected"
+      ],
+      "name" : "test_mako_value_metadata",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "masstree",
+            "metadata",
+            "replay",
+            "rust",
+            "sto"
+          ]
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/var/tmp/sto-capacity-20260909.kKklOX/build"
+        }
+      ]
+    },
+    {
+      "backtrace" : 57,
+      "command" : 
+      [
+        "/var/tmp/sto-capacity-20260909.kKklOX/build/test_silo_nontxn_api",
+        "--gtest_fail_if_no_test_selected"
+      ],
+      "name" : "test_silo_nontxn_api",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "masstree",
+            "nontransactional",
+            "silo"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 60.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/var/tmp/sto-capacity-20260909.kKklOX/build"
+        }
+      ]
+    },
+    {
+      "backtrace" : 59,
+      "command" : 
+      [
+        "/var/tmp/sto-capacity-20260909.kKklOX/build/test_silo_nontxn_api",
+        "--gtest_filter=SiloNonTxnApi.ConcurrentMvDeletesOfPresentRowConflict",
+        "--gtest_fail_if_no_test_selected"
+      ],
+      "name" : "test_silo_nontxn_api_mv_delete_delete_conflict",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "concurrency",
+            "masstree",
+            "mv",
+            "nontransactional",
+            "silo"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 60.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/var/tmp/sto-capacity-20260909.kKklOX/build"
+        }
+      ]
+    },
+    {
+      "backtrace" : 61,
+      "command" : 
+      [
+        "/var/tmp/sto-capacity-20260909.kKklOX/build/test_silo_nontxn_api",
+        "--gtest_filter=SiloNonTxnApi.ConcurrentMvDeleteInvalidatesStagedUpdate",
+        "--gtest_fail_if_no_test_selected"
+      ],
+      "name" : "test_silo_nontxn_api_mv_delete_update_conflict",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "concurrency",
+            "masstree",
+            "mv",
+            "nontransactional",
+            "silo"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 60.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/var/tmp/sto-capacity-20260909.kKklOX/build"
+        }
+      ]
+    }
+  ],
+  "version" : 
+  {
+    "major" : 1,
+    "minor" : 0
+  }
+}

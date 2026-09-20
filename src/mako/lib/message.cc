@@ -158,8 +158,12 @@ void _Panic(void)
 
 #define MAX_DEFERRED_FREES 16
 
-static void *deferredFrees[MAX_DEFERRED_FREES];
-static int nDeferredFrees;
+// Message_VA must consume its arguments synchronously. A deferred buffer is
+// then consumed by the same thread's _Message() call. Keeping the queue
+// thread-local prevents one logger from freeing another logger's variadic
+// arguments before vfprintf() has consumed them.
+static thread_local void *deferredFrees[MAX_DEFERRED_FREES];
+static thread_local int nDeferredFrees;
 
 const char *
 Message_DFree(char *buf)
@@ -279,15 +283,10 @@ _Message_Hexdump(const void *data, int len)
 char *
 Message_FmtBlob(const void *data, int len)
 {
-    static int blobmax = -1;
-    if (blobmax == -1) {
+    static const int blobmax = [] {
         const char *env = getenv("BLOBMAX");
-        if (!env) {
-            blobmax = 32;
-        } else {
-            blobmax = atoi(env);
-        }
-    }
+        return env ? atoi(env) : 32;
+    }();
 
     int plen = len;
     if (plen > blobmax)

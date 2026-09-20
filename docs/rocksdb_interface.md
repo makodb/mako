@@ -14,6 +14,11 @@ Read the conceptual section first if you're deciding *whether* Mako's interface 
 > `transaction_base`/`dbtuple`/`txn_btree` engine is retired and guarded
 > against compilation. Literal `SiloRuntime` references below remain current:
 > it is live allocator, RCU, and Masstree runtime support for STO/MassTrans.
+>
+> **Supported local-facade backend:** `Options::storage_engine` must be `"cpp"`
+> (the default). The facade rejects any other value before consuming its
+> process-lifetime open admission. Rust STO is selected only by the closed
+> single-shard TPC-C comparison adapter; `mako::DB` does not expose it.
 
 ---
 
@@ -27,10 +32,10 @@ Read the conceptual section first if you're deciding *whether* Mako's interface 
 | `ColumnFamily` (namespace within a DB) | `abstract_ordered_index` / `mbtree` instance | Yes — see §2 |
 | `Key` (`Slice`, arbitrary bytes) | `varkey` / `lcdf::Str` (byte string) | Yes |
 | `Value` (`Slice`, arbitrary bytes) | Encoded strings held by MassTrans values | Largely aligned — see §7 |
-| `Transaction` | Mako's `abstract_db::new_txn` returning `void*` handle | Yes for OCC — see §3 |
+| `Transaction` | Local `mako::DB` exposes STO OCC through an opaque token | Yes locally; remote transaction-shaped RPC is unsupported — see §3 |
 | `OptimisticTransactionDB` (OCC) | STO OCC with optional opacity checking | Yes — see §3 |
 | `TransactionDB` (pessimistic 2PL) | No equivalent | No |
-| `Snapshot` (explicit `SetSnapshot`) | Implicit txn-start snapshot only | Diverges — see §4 |
+| `Snapshot` (explicit `SetSnapshot`) | No snapshot handle; OCC reads plus commit validation | Diverges — see §4 |
 | `WriteBatch` (atomic multi-key write) | Implicit within a single txn | Yes — see §3 |
 | `Iterator` (stateful, snapshot-pinned) | `Scan` callback (single pass, per-node consistency only) | Diverges — see §8 |
 | `MergeOperator` | No equivalent | No |
@@ -45,16 +50,23 @@ Read the conceptual section first if you're deciding *whether* Mako's interface 
 
 **Mako `SiloRuntime`.** Declared in `src/mako/silo_runtime.h:38-244`. A runtime bundles the resources for one "site" or shard: its own `MasstreeContext` (epoch counter, threadinfo list), per-site core-id allocator, per-site memory allocator, per-site ticker, per-site RCU system. Multiple runtimes can coexist in one process via `SiloRuntime::Create()`; threads bind to exactly one via `SiloRuntime::BindCurrentThread(runtime)`.
 
-**Mapping.** A `SiloRuntime` is closer to a RocksDB `DB` than to a shared allocator or a global. **One process can host N independent `SiloRuntime`s**, each with its own tables, mirroring the multi-`DB` RocksDB pattern. The current `mako::DB` in `db.hh` is a facade over exactly one `SiloRuntime`; a hypothetical `mako::DB::Open("path_a")` + `mako::DB::Open("path_b")` would each internally create their own runtime.
+**Mapping.** A `SiloRuntime` is closer to a RocksDB `DB` than to a shared
+allocator or a global. The low-level runtime type can represent multiple sites,
+but the current `mako::DB` facade still configures process-global
+`BenchmarkConfig`, `init_env()`, `initWithDB()`, and background-service state. It
+therefore admits at most one local `DB` initialization in a process lifetime.
+`Close()` does not reset that native state or permit a later reopen; another
+`DB::Open` returns `Busy`. Independent multi-DB facade instances are not yet
+supported.
 
-The one meaningful mismatch: RocksDB's `DB` corresponds to a persistence directory. Mako's `SiloRuntime` corresponds to an in-memory shard. The `name` argument to `DB::Open` in RocksDB names the filesystem path; in `mako::DB::Open` it names logical shard identity (or is ignored for in-memory-only builds).
+The one meaningful mismatch: RocksDB's `DB` corresponds to a persistence directory. Mako's `SiloRuntime` corresponds to an in-memory shard. The `path` argument to `mako::DB::Open` is currently always ignored; it does not select persistence or shard identity.
 
 ### 2. Namespaces: `ColumnFamily` vs table / index
 
 **RocksDB `ColumnFamily`.** A CF is a logical KV namespace within a single `DB`. All CFs in one DB share the WAL and block cache, but their key spaces are disjoint. Every put/get/delete/iterator takes a `ColumnFamilyHandle*`. A DB has at minimum one CF (`default`).
 
 **STO/MassTrans tables.** Each table is a separate `abstract_ordered_index`
-(`src/mako/storage/abstract_ordered_index.h`), instantiated by the production
+(`src/mako/storage/abstract_ordered_index.h`), instantiated by the native C++
 wrapper as `mbta_ordered_index` over `MassTrans`. The historical
 `typed_txn_btree` implementation belongs to the retired original Silo engine.
 TPC-C creates approximately ten primary and secondary table instances.
@@ -64,14 +76,30 @@ TPC-C creates approximately ten primary and secondary table instances.
 **Divergences to note**:
 
 - **Shared WAL semantics don't apply**: RocksDB CFs share a WAL, so cross-CF atomic writes are cheap. Mako has no per-runtime WAL; atomicity comes from the txn layer instead. Effect: multi-table atomicity in Mako uses the transaction, not a `WriteBatch`.
-- **CF creation is dynamic in RocksDB, mostly static in Mako**: RocksDB lets you `CreateColumnFamily` at runtime. Mako's benchmarks open all tables at startup. `GetTable(name)` currently creates on demand — this is more RocksDB-like than the benchmarks suggest.
+- **CF creation is dynamic in RocksDB, bounded in Mako**: RocksDB lets you `CreateColumnFamily` at runtime. Local non-replicated Mako can create tables on demand through `GetTable(name)`, up to `NUM_TABLES_PER_SHARD` (currently 200 logical names). Replicated deployments must create a static schema in the same deterministic order on every site before helpers, serving threads, or workers start; dynamic replicated schema is unsupported.
 - **Options per CF**: RocksDB supports per-CF options (block size, compression, comparator). Mako has no per-table options — all masstree instances behave identically.
 
 ### 3. Transaction semantics
 
 **RocksDB.** Two flavors: `OptimisticTransactionDB` (OCC, validates read-set at commit) and `TransactionDB` (pessimistic 2PL, locks acquired eagerly). Both use `class Transaction` with `Put`/`Get`/`GetForUpdate`/`Commit`/`Rollback`. Isolation: snapshot isolation by default; serializable with `SetSnapshot()` + `GetForUpdate()`. Supports 2PC (`Prepare`).
 
-**STO/MassTrans.** OCC with optional opacity checking. `abstract_db::new_txn(flags, arena, buf)` returns a `void*` handle; ops are staged in a per-txn item set (`tset_`, `src/mako/sto/Transaction.hh:571-577`), validated at `commit_txn(txn)` returning `bool`. Aborts throw `abstract_abort_exception` or set an error flag; retry is caller-driven (no automatic loop). Isolation is **serializable** via read-set validation at commit — stricter than RocksDB's default snapshot isolation. No 2PC surface.
+**STO/MassTrans.** OCC with optional opacity checking. The low-level
+`abstract_db::new_txn(flags, arena, buf)` starts ambient thread-local state (and
+the native wrapper returns null); local `mako::DB::BeginTransaction` supplies a
+non-null compatibility token over that state. Operations are staged in a
+per-transaction item set and validated at commit. Aborts throw
+`abstract_abort_exception` or set an error flag; retry is caller-driven.
+Isolation is **serializable** via read-set validation at commit, stricter than
+RocksDB's default snapshot isolation. The public facade exposes no durable
+RocksDB-style `Prepare`; Mako separately has an internal cross-shard 2PC path.
+
+`RemoteDB` implements the same virtual shape, but its SRPC token-taking path is
+only scaffolding: the server executes each Put/Get/Delete independently, and
+Commit/Rollback only retire a tracking ID. It provides neither transaction
+atomicity nor rollback and is unsupported for transactional use. The only
+implemented end-to-end remote surface is `ConnectNontxn` with token-free point
+operations; its thread-per-connection server is still outside the bounded
+production profile described below.
 
 **Mapping**:
 
@@ -81,26 +109,42 @@ TPC-C creates approximately ten primary and secondary table instances.
 | `Put/Get/Delete` in txn | `txn->Put(cf, k, v)` | `table->Put(txn, k, v)` | Present; API shape flipped (Mako passes `void* txn` first) |
 | `GetForUpdate` | `txn->GetForUpdate(...)` | No equivalent | STO OCC doesn't distinguish — every read is tracked implicitly |
 | Isolation level | Snapshot (default) or serializable | Always serializable | Mako is stricter |
-| Read-your-writes | Yes | Yes (`find_item()` in `Transaction.hh:603-639`) | Aligned |
+| Read-your-writes | Yes | Not implemented in the current MassTrans path | Do not rely on it through the compatibility facade |
 | Commit | `txn->Commit()` returning `Status` | `db->commit_txn(txn)` returning `bool` | Aligned semantics; different signatures |
 | Rollback | `txn->Rollback()` | `db->abort_txn(txn)` | Aligned |
 | Retry on conflict | Caller loop | Caller loop | Aligned |
-| 2PC (`Prepare`) | Supported | Not supported | Gap |
+| 2PC (`Prepare`) | Supported | No public durable `Prepare`; internal cross-shard 2PC is separate | Gap |
 | `SetName` (named txn for recovery) | Supported | Not supported | Gap |
 
 **No pessimistic flavor**. RocksDB's `TransactionDB` (2PL) has no counterpart. Any consumer requiring lock-based blocking semantics can't be supported without a fresh implementation.
 
-**Non-transactional access.** Mako's `abstract_ordered_index` also exposes a **non-transactional API** mirroring Masstree's operation set — `get / put / insert / remove / scan / rscan` without a txn handle, each op per-key atomic on its own (internally a one-op OCC transaction with retry; `remove` is a direct raw write). This is the analog of RocksDB's plain `db->Put/Get/Delete` outside any `Transaction`. See [`storage-interface.md`](storage-interface.md) for the full contract, including the constraint that these must not be called from a thread with an open transaction.
+**Non-transactional access.** Mako's `abstract_ordered_index` also exposes a
+**non-transactional API** mirroring Masstree's operation set — `get / put /
+insert / remove / scan / rscan` without a txn handle. On STO/MassTrans, each
+operation runs as a one-operation OCC transaction and retries
+`Transaction::Abort` conflicts. Terminal failures such as timestamp exhaustion
+are not conflicts; the local compatibility facade converts them to an error
+status rather than retrying indefinitely. This is the analog of RocksDB's plain
+`db->Put/Get/Delete` outside any `Transaction`. See
+[`storage-interface.md`](storage-interface.md) for the full contract, including
+the constraint that these methods must not be called from a thread with an open
+transaction.
 
 ### 4. Snapshots
 
 **RocksDB.** `Snapshot* s = db->GetSnapshot()` captures a global sequence number. Reads with `ReadOptions{.snapshot=s}` see the committed state as of that seq. `ReleaseSnapshot(s)` decrements a refcount. Snapshots pin resources (SSTables can't be compacted away). Explicit inside a txn via `txn->SetSnapshot()`.
 
-**STO/MassTrans.** No explicit snapshot handle. A transaction implicitly reads at its start-tid; the "snapshot" is what the txn observes across the lifetime of its ops. There's no way to hand a snapshot to a different code path or hold one open past commit.
+**STO/MassTrans.** No explicit snapshot handle and no general as-of-start MVCC
+view. The default MassTrans path reads current values, records their versions,
+and validates the complete read set at commit. A conflict aborts the transaction
+instead of serving an older version. There is no snapshot object to share with a
+different code path or retain past commit.
 
 **Mapping.** RocksDB's snapshot API is `Status::NotSupported` territory for Mako. Any RocksDB code that does `s = db->GetSnapshot(); ... use s ...; ReleaseSnapshot(s);` outside a transaction cannot be directly ported. Two workaround patterns:
 
-- Wrap the "using the snapshot" region in a Mako transaction (`BeginTransaction` → do reads → `Commit`).
+- Wrap the region in a Mako transaction (`BeginTransaction` → reads →
+  `Commit`) when serializable success-or-retry semantics are sufficient. This
+  does not provide a stable historical view while the transaction is running.
 - Read at higher isolation via GetForUpdate-equivalent — but STO has no such distinction.
 
 Callers relying on cross-txn snapshot handles (e.g., long-running analytical queries against a snapshot fixed at some past time) don't have a natural mapping.
@@ -127,11 +171,17 @@ The most fundamental divergence. Worth stating clearly:
 
 **RocksDB.** Multiple threads share a `DB`; internal locking. Global monotonic sequence number ordered by write time. Snapshots reference a seq.
 
-**Mako/STO.** Multiple threads share a `SiloRuntime` after `BindCurrentThread`. **Epoch-based advancement**: the runtime's ticker advances a global epoch ~every 100µs (`Transaction.cc:122`). Epochs are used for **RCU deferred reclamation only** — not durability, not commit visibility. `txn commit tid` is drawn from a per-thread counter combined with the current epoch.
+**Mako/STO.** Multiple threads share a `SiloRuntime` after
+`BindCurrentThread`. The native STO epoch worker advances its global epoch about
+every 100 ms. Epochs are used for RCU deferred reclamation, not durability or
+commit visibility. STO commit versions come from a process-wide atomic counter;
+Mako's replication path also allocates a process-wide logical timestamp.
 
 **Mapping.** Not directly observable from RocksDB's API — mostly internal. But two visible knock-on effects:
 
-- Deletes in Mako become tombstoned tuples reclaimed at some later epoch; a caller who deletes then quickly reads may still find the value visible until epoch advance (though the txn layer masks this).
+- A committed delete removes the key from the tree during install. Its retired
+  storage is reclaimed only after an RCU grace period; this delay is not visible
+  as a successful point read.
 - No monotonic global sequence number to expose as `SequenceNumber` in a RocksDB-shaped API. Any consumer relying on RocksDB's sequence numbers for external ordering can't be served.
 
 ### 7. Values: opaque bytes vs typed rows
@@ -159,8 +209,8 @@ application-to-memtable path; measure that cost for latency-sensitive uses.
 
 - Callback-based scan is functional and already in `ITable`. Consumers who can restructure code to callbacks can use it directly.
 - Consumers who need a *stateful* pull-based iterator (`for (it->SeekToFirst(); it->Valid(); it->Next())`) need an adapter. Two designs:
-  - **Chunked materialization**: on `SeekToFirst`/`Seek`, run `search_range_call` collecting up to N pairs into a buffer; on `Next` past the buffer, refill from the next key onward. Bounded memory. Loses point-in-time consistency across chunks unless run inside a transaction.
-  - **Transaction-scoped iterator**: an iterator opened inside an STO transaction naturally gets serialisable consistency across its lifetime, because all its reads are tracked in the txn's read-set and validated together at commit.
+  - **Chunked materialization**: on `SeekToFirst`/`Seek`, run `search_range_call` collecting up to N pairs into a buffer; on `Next` past the buffer, refill from the next key onward. Memory is bounded, but there is no point-in-time consistency across chunks.
+  - **Transaction-scoped iterator**: reads can be tracked together in an STO transaction, but the caller must buffer their effects and use them only after Commit succeeds. A failed commit invalidates the observed result, and the default non-opaque profile does not guarantee a consistent intermediate view while callbacks run.
 - Snapshot-pinned iterators outside a transaction (RocksDB's default) have no clean Mako mapping.
 
 ### 9. Secondary indexes
@@ -193,18 +243,18 @@ None of these have workarounds. `NotSupported` is the honest answer for all thre
 | `Get` | Read a value by key | No bloom-filter hint or short-circuit path | |
 | `Delete` | Remove a key | No range delete | |
 | `GetName` | Return the table name | — | |
-| `Scan` | Forward range scan [start, end); returns `NotSupported` if `num_shards > 1` | No stateful iterator; cross-shard not yet implemented | Reverted to local-shard after discussion with Shuai; cross-shard support will be built on top of his upcoming changes. Multi-shard scan is non-trivial because keys are hash-distributed, not range-distributed — results across shards have no global ordering guarantee |
+| `Scan` | Forward range scan [start, end); returns `NotSupported` if `num_shards > 1` | No stateful iterator; cross-shard not implemented | Keys are hash-distributed rather than range-distributed, so a future cross-shard scan also needs an explicit global-order contract |
 | `ReverseScan` | Reverse range scan descending; returns `NotSupported` if `num_shards > 1` | No stateful iterator; cross-shard not yet implemented | Same as Scan |
 | `Exists` | Check key presence without reading value | Does a full Get internally; no bloom-filter hint | Chosen over a separate existence flag to reuse the OCC read-set tracking already done by Get |
-| `Insert` | Insert only if key absent | Aborts transaction on duplicate | Uses `transInsert` instead of `transPut` — non-obvious distinction; `transInsert` registers the key in the OCC write-set so a concurrent insert on the same key causes abort rather than silent overwrite |
-| `GetApproximateSize` | Approximate key count for the local shard | Local shard only; count may be stale | Counter updated under lock in `install()` (commit phase) rather than atomics in the hot path, as reviewer noted atomics are too expensive for an approximate metric |
+| `Insert` | Insert only if key absent | Duplicate returns `InvalidArgument`; caller must still Commit or Rollback the active transaction | An existence read plus `transInsert` makes put-if-absent serializable: validation catches a racing insert rather than silently overwriting it |
+| `GetApproximateSize` | Approximate key count for the local shard | Local shard only; not a transactional snapshot | Relaxed atomic aggregate updated in `install()` |
 
 ### ITable non-transactional methods (2026-07)
 
 `ITable` also carries a non-transactional surface (no `void* txn`
-parameter; each op is a self-contained, immediately-visible operation
-— internally a one-op OCC transaction on the owning shard, so writes
-replicate through the normal commit path). Semantics: `Put` = blind
+parameter). On STO/MassTrans each operation is a self-contained,
+immediately-visible one-operation OCC transaction on the owning shard, so
+writes use the normal commit path. Semantics: `Put` = blind
 overwrite (OK); `Insert` = put-if-absent (`InvalidArgument` if
 present); `Delete` = real remove (`NotFound` if absent); `Get` = OK /
 `NotFound`; `Exists` = OK + flag. Values are raw bytes in both
@@ -224,27 +274,35 @@ replicated, lock leaked) — and "deleted" via an empty-value put. Both
 decoupled-client server paths (the raw-struct handlers and
 `MakoClientService`) now run `ShardReceiver::RunNontxnOp`.
 `RemoteDB::ConnectNontxn(host, port)` + `GetTable(name, table_id)`
-give a client that interoperates with `ClientTcpServer` end-to-end
-(the srpc-protocol txn'd client still has no matching live server —
-pre-existing).
+give a client that interoperates with `ClientTcpServer` end-to-end. That server
+currently creates an OS thread per connection and is outside the bounded
+production profile. The SRPC transaction-shaped path has a live handler, but
+its data operations are independent and therefore non-atomic.
 
 ### IDatabase
 
 | Method | What it does | What it lacks | Why this implementation |
 |--------|-------------|---------------|------------------------|
-| `BeginTransaction` | Start a transaction, return opaque handle | No isolation-level choice | |
-| `Commit` | Commit all writes in the transaction | No auto-retry on OCC abort | |
-| `Rollback` | Discard all writes since `BeginTransaction` | No savepoints | |
-| `GetTable` | Get or create a table proxy by name | Remote table must already exist on the server | |
+| `BeginTransaction` | Local DB starts an STO transaction and returns an opaque token | No isolation-level choice; RemoteDB path is non-atomic scaffolding | |
+| `Commit` | Local DB validates and publishes all writes | No auto-retry on OCC abort; RemoteDB only retires its tracking ID | |
+| `Rollback` | Local DB discards staged writes | No savepoints; RemoteDB cannot undo prior data RPCs | |
+| `GetTable` | Get or create a bounded table proxy by name | Remote table must already exist; local creation returns `nullptr` at capacity; replicated schemas must be static | Local non-replicated lookup is metadata-only and on-demand |
 | `ListTables` | List names of tables opened in this session | Only reflects tables opened via `GetTable`; not a full schema query | Remote DB has no name→table mapping, so listing all tables is not possible; local DB returns only opened tables for the same interface consistency |
-| `Connect` / `Disconnect` / `IsConnected` | Connection lifecycle management | No-op for local DB | Exists on `IDatabase` so the same client code works for both local and remote without branching |
+| `Connect` / `Disconnect` / `IsConnected` | Connection lifecycle management | Local `Connect` validates open state but does no transport work; `Disconnect` is a no-op; `IsConnected` mirrors open state | Common virtual shape only; it does not imply equal transactional capability |
 | `InitThread` | Initialize per-thread database context | Required for local DB; no-op for `RemoteDB` | |
+| `EndThread` | End the current thread's matching context | Same-thread pairing is mandatory for local DB | Prefer the scoped guard |
+| `HasThreadContext` | Report whether this thread's attachment prerequisite is satisfied | Does not describe connection or server-side state | Always true for `RemoteDB` |
 
 ---
 
 ## ITable API
 
-The `ITable` interface provides key-value table operations within a transaction context.
+The `ITable` interface provides key-value table operations within a transaction
+context. Every storage operation on a facade-backed local `ITable`, including
+non-transactional verbs and `GetApproximateSize`, requires a live
+`ScopedDatabaseThreadContext`; the metadata-only `GetName` accessor does not.
+The examples below assume they run inside the guard shown in “Basic CRUD.”
+`RemoteTable` has no client-side attachment.
 
 ### Put
 
@@ -326,7 +384,11 @@ Forward range scan. Iterates keys from `start_key` (inclusive) up to `end_key` (
 
 Values passed to the callback are already stripped of internal metadata — no decoding needed.
 
-**Current limitation:** Only works in single-shard deployments. Returns `Status::NotSupported` if more than one shard is present. Cross-shard scan is not yet implemented — it will be built on top of Shuai's upcoming changes. Note that when implemented, cross-shard scan cannot guarantee globally ordered results because keys are hash-distributed across shards, not range-distributed.
+**Current limitation:** Only works in single-shard deployments. It returns
+`Status::NotSupported` if more than one shard is present. Cross-shard scan is
+not implemented. Because keys are hash-distributed rather than
+range-distributed, any future implementation also needs an explicit
+global-order contract.
 
 **Returns:** `Status::OK()` on success, `Status::NotSupported()` in multi-shard mode, `Status::InvalidArgument()` for an invalid range or null callback, `Status::IOError()` if the transaction was aborted.
 
@@ -375,7 +437,7 @@ Status s = table->ReverseScan(txn, "scan_key_039", &end,
         return true;
     });
 db->Commit(txn);
-// keys contains scan_key_039, scan_key_038, ..., scan_key_020 in descending order
+// keys contains scan_key_039, scan_key_038, ..., scan_key_021 in descending order
 ```
 
 ### Exists
@@ -426,9 +488,14 @@ db->Commit(txn);
 virtual Status GetApproximateSize(size_t* size) = 0;
 ```
 
-Return an approximate count of keys in the **local shard** of this table. Does not require a transaction handle.
+Return an approximate count of keys in the **local shard** of this table. It
+does not require a transaction handle, but a local table still requires the
+database thread context.
 
-The count is tracked via a plain `size_t` updated under lock in the commit phase (`install()`). Only reflects data in the local shard — for a cluster-wide count, a remote RPC scan would be needed (not yet implemented).
+The count is a relaxed atomic aggregate updated in the commit phase
+(`install()`). It is race-free under concurrent inserts and deletes but is not a
+transactionally consistent snapshot. It only reflects data in the local shard;
+a cluster-wide count would require a remote RPC scan (not yet implemented).
 
 **Returns:** `Status::OK()` with `*size` set to the approximate local key count.
 
@@ -453,9 +520,17 @@ The `IDatabase` interface manages transactions, table access, and connection lif
 virtual void* BeginTransaction() = 0;
 ```
 
-Begin a new transaction. Returns an opaque transaction handle to pass to table operations.
+On local `mako::DB`, begin a new transaction and return a non-null opaque token
+to pass to table operations. Local tokens name thread-local ambient transaction
+state, are valid only on the creating thread until `Commit` or `Rollback`, and
+may reuse the same address for a later transaction. Do not retain or reuse a
+resolved token. Because address reuse is intentional, a stale token passed
+during a later active attempt cannot be distinguished from that attempt's live
+token and is an unchecked caller-contract violation.
 
-**Returns:** Transaction handle (opaque pointer), `nullptr` on failure.
+**Errors:** Local setup failures throw; local success does not use `nullptr` as
+a sentinel. `RemoteDB` may return null, and its token-taking path is unsupported
+for transactional use because server data operations are not atomic.
 
 ### Commit
 
@@ -463,7 +538,9 @@ Begin a new transaction. Returns an opaque transaction handle to pass to table o
 virtual void Commit(void* txn) = 0;
 ```
 
-Commit a transaction, making all writes durable and visible.
+On local `mako::DB`, commit a transaction and make all writes atomically visible.
+The in-memory facade does not make them durable; persistence and replication are
+separate layers. `RemoteDB::Commit` only retires an experimental tracking token.
 
 ### Rollback
 
@@ -471,7 +548,8 @@ Commit a transaction, making all writes durable and visible.
 virtual void Rollback(void* txn) = 0;
 ```
 
-Abort a transaction, discarding all writes made since `BeginTransaction`.
+On local `mako::DB`, abort a transaction and discard its staged writes.
+`RemoteDB::Rollback` cannot undo data RPCs that have already executed.
 
 ### GetTable
 
@@ -479,7 +557,18 @@ Abort a transaction, discarding all writes made since `BeginTransaction`.
 virtual ITable* GetTable(const std::string& name) = 0;
 ```
 
-Retrieve (or create) a table by name. The returned pointer is owned by the database and valid for the lifetime of the `IDatabase` instance.
+Retrieve (or create) a table by name. This is a metadata operation and does not
+require `InitThread()`. The returned pointer is owned by the database; stop all
+uses before `Close()` and do not retain it across close or destruction. Local
+creation is bounded by `NUM_TABLES_PER_SHARD`, currently 200 logical names. The
+implementation preflights every shard and returns `nullptr` on exhaustion
+without consuming an ID or partially creating the logical table. Existing
+table lookups and data remain usable at capacity.
+
+In replicated deployments, create the complete schema in the same order on
+every site during startup, before helpers, transport serving, or workers begin.
+Runtime schema changes cannot yet guarantee cross-process table-ID agreement
+and are unsupported.
 
 **Returns:** Pointer to `ITable`, `nullptr` on failure.
 
@@ -489,7 +578,11 @@ Retrieve (or create) a table by name. The returned pointer is owned by the datab
 virtual std::vector<std::string> ListTables() = 0;
 ```
 
-Return the names of all tables currently tracked by the database (i.e., all tables previously accessed via `GetTable`). Tables that exist in the underlying store but have never been opened in this session will not appear.
+Return the names of all tables currently tracked by the database (i.e., all
+tables previously accessed via `GetTable`). This is metadata-only and does not
+require `InitThread()`, but it must be quiesced before `Close()`. Tables that
+exist in the underlying store but have never been opened in this session will
+not appear.
 
 **Returns:** Vector of table name strings.
 
@@ -510,15 +603,57 @@ virtual void Disconnect() {}
 virtual bool IsConnected() const { return true; }
 ```
 
-Connection lifecycle methods. For local `mako::DB` these are no-ops (always connected). For `mako::RemoteDB` these establish/close the RPC connection.
+Connection lifecycle methods. For local `mako::DB`, `Connect` performs no
+transport work but succeeds only while the facade is open, `Disconnect` is a
+no-op, and `IsConnected` mirrors open state. For `mako::RemoteDB`, these
+describe its RPC connection.
 
-### InitThread
+### Thread context lifecycle
 
 ```cpp
 virtual void InitThread() {}
+virtual void EndThread() {}
 ```
 
-Initialize the current thread for database operations. Required for leader nodes before performing transactions. No-op for follower/learner nodes and remote DB.
+Initialize the current thread for database operations. This is required for a
+standalone local database and for a replicated leader before transactions or
+table operations. A follower/learner local facade is replay-only and rejects
+application operation attachment; `RemoteDB` needs no client-side attachment.
+`InitThread()` and `EndThread()` must be paired on the same thread, with
+`EndThread()` after its last database operation and before closing the local
+database. Prefer `ScopedDatabaseThreadContext`, which provides that pairing on
+every lexical exit; the referenced `IDatabase` must outlive the guard. Nested
+attachment and an unmatched direct `EndThread()` throw `std::logic_error` before
+TLS state is changed. `Close()` returns `Busy` while any local thread context is
+reserved, including while its backend attachment or teardown is running.
+Destroying the facade after such a failed `Close()` terminates the process. The
+guard type itself is non-copyable and non-movable. If a heap-owned guard is
+transferred and destroyed on another OS thread, its destructor terminates
+because the underlying STO, RCU, and shard-client state is thread-local.
+
+Teardown aborts an unfinished transaction before retiring its RCU participation
+and destroying its shard client. A later attachment on the same OS thread
+reuses that thread's quiesced native worker slot. Slots are not recycled across
+different OS threads. The process may use at most `MAX_THREADS` (currently 460)
+distinct native STO threads over its lifetime, and each shard admits at most
+the configured warehouses count of distinct non-loader workers. Production
+callers must use a bounded, fixed worker pool. `ClientTcpServer` currently
+creates an OS thread per connection and is outside this supported profile until
+it uses persistent workers.
+The facade permits only one local `mako::DB` initialization per process because
+its configuration and native services remain process-global. `Close()` ends use
+of the facade but deliberately does not make the process eligible for reopen.
+It is not a drain barrier: before calling it, the application must externally
+quiesce metadata calls, table-pointer users, and every borrowed pointer returned
+by `GetDB()`. Those uses are not reference-counted. `GetDB()` stops publishing
+the pointer once close begins, but a previously returned pointer is not made
+safe by that check and must never survive `Close()`.
+
+This release adds `EndThread()` and `HasThreadContext()` virtuals to
+`IDatabase`, and changes `InitThread()` from an immediately self-balanced helper
+to a persistent attachment that may throw. Rebuild all C++ consumers against
+the new headers; prebuilt objects using the old `IDatabase` vtable are not ABI
+compatible.
 
 ---
 
@@ -527,29 +662,48 @@ Initialize the current thread for database operations. Required for leader nodes
 ### Basic CRUD
 
 ```cpp
-#include "mako/mako.hh"
-#include "mako/db.hh"
+#include <mako.hh>
+#include "rocks_interface/db.hh"
 
 mako::DB* db = nullptr;
 mako::Options opts;
 opts.num_threads = 1;
-mako::DB::Open(opts, "/tmp/mako_db", &db);
+mako::Status status = mako::DB::Open(opts, "/tmp/mako_db", &db);
+if (!status.ok()) {
+    std::cerr << status.ToString() << std::endl;
+    return;
+}
 
-db->InitThread();
-ITable* tbl = db->GetTable("my_table");
+// Schema creation is metadata-only. Do it before transaction workers start.
+mako::ITable* tbl = db->GetTable("my_table");
+if (tbl == nullptr) {
+    status = db->Close();
+    if (status.ok()) delete db;
+    return;
+}
 
-// Write
-void* txn = db->BeginTransaction();
-std::string enc = mako::Encode("world");
-tbl->Put(txn, "hello", enc);
-db->Commit(txn);
+{
+    mako::ScopedDatabaseThreadContext thread_context(*db);
 
-// Read
-txn = db->BeginTransaction();
-std::string val;
-tbl->Get(txn, "hello", val);
-db->Commit(txn);
+    // Write
+    void* txn = db->BeginTransaction();
+    std::string enc = mako::Encode("world");
+    tbl->Put(txn, "hello", enc);
+    db->Commit(txn);
 
+    // Read
+    txn = db->BeginTransaction();
+    std::string val;
+    tbl->Get(txn, "hello", val);
+    db->Commit(txn);
+}
+
+status = db->Close();
+if (!status.ok()) {
+    // Quiesce the remaining borrower or context, then retry. Do not delete db.
+    std::cerr << status.ToString() << std::endl;
+    return;
+}
 delete db;
 ```
 
@@ -629,16 +783,19 @@ Three programs currently use the ITable / IDatabase interface:
 
 | Consumer | Role | Notes |
 |---|---|---|
-| `examples/simpleTransactionRep.cc` | Database server + transaction test with colocated / server-only / remote-client modes | The interface's flagship consumer — exercised by Docker CI (`shard1ReplicationSimpleRaft`, `shard2ReplicationSimpleRaft`). Proves the "same client code runs against `mako::DB` or `mako::RemoteDB`" claim by using `IDatabase*` polymorphically. |
-| `examples/makoCon.cc` | Redis-compatible server built on top of `mako::DB`; MULTI/EXEC wraps in one transaction | Proof-of-concept for building higher-level protocol layers on the interface. Not currently in CI. |
-| `examples/rocksdbInterfaceTest.cc` | Integration test for `Scan` / `ReverseScan` / `Exists` / `Insert` / `GetApproximateSize` / `ListTables` | Safety-net regression suite for the six ops added in PR #60. Not currently in CI. |
+| `examples/simpleTransactionRep.cc` | Database server + transaction test with colocated / server-only / remote-client modes | Exercises the shared virtual shape in Docker CI, but does not prove atomic RemoteDB transactions; that path remains scaffolding. |
+| `examples/makoCon.cc` | Redis-compatible server built on top of `mako::DB`; MULTI/EXEC wraps in one transaction | Proof of concept, not in CI. Its Rust workers attach for process lifetime and it has no cooperative server shutdown, so it does not exercise `EndThread`. |
+| `examples/rocksdbInterfaceTest.cc` | Integration and lifecycle test for the local facade | Registered in CTest as `test_rocksdb_interface_lifecycle`; covers the Rocks-like operations, attachment rules, close admission, and process-lifetime reopen rejection. |
 
 No internal Mako subsystem consumes `IDatabase`. The Mako runtime (TPC-C and
 `dbtest`) uses `mbta_wrapper`/`mbta_ordered_index` and the abstract ordered-index
 interface directly. The original `txn_proto2_impl`/`typed_txn_btree` path is
 retired. RocksDB-backed producers call the real RocksDB C API directly.
 
-The compat interface is deliberately an **external-consumer surface** — its purpose is to let code that thinks in RocksDB terms compile and run against Mako, whether that's a client program (`simpleTransactionRep`), a higher-level protocol shim (`makoCon`), or an eventual downstream project.
+The compat interface is an **external-consumer surface**. Local `mako::DB` is
+the transaction-capable implementation. Sharing the interface with `RemoteDB`
+provides source-level shape only; callers must inspect backend capabilities and
+must not infer remote transaction atomicity.
 
 ---
 
@@ -648,24 +805,24 @@ Feasibility assessment for every notable RocksDB feature, from the conceptual an
 
 | RocksDB feature | Mako support today | Feasibility to add | Notes |
 |---|---|---|---|
-| Multiple DBs | Via multiple `SiloRuntime`s | Already possible; `mako::DB::Open` chooses one | Trivial extension of factory |
-| Column families | Via `GetTable(name)` returning per-name `ITable` | Already there | Naming semantics differ |
-| Put/Get/Delete | Yes | — | Present |
+| Multiple DBs | Low-level `SiloRuntime` can represent several sites; `mako::DB` cannot | Requires instance-owned configuration, logger, callbacks, and service teardown | The facade admits one initialization per process lifetime |
+| Column families | Via `GetTable(name)` returning per-name `ITable`, bounded to 200 logical names | Already there for the bounded profile | Distributed schemas must be created identically and in deterministic order before serving starts |
+| Put/Get/Delete | Yes locally; token-free remote point path is implemented | — | Remote token-taking methods are non-atomic scaffolding |
 | MultiGet | No | Straightforward as batch of Get in one txn | Easy |
 | WriteBatch (atomic) | No, use txn | Straightforward as internal single-op txn | Easy |
 | Range delete | No | Feasible via `Scan` + per-key delete | Medium (perf concern) |
 | Iterator (stateful, pull-based) | No, only callback Scan | Chunked-materialisation adapter | Medium |
 | Snapshot outside txn | No | No clean mapping | Hard/impossible |
-| OCC transactions | Yes | Extension: expose STO-style `Transaction` object with `Put/Get/GetForUpdate/Commit/Rollback` | Medium; largely already there |
+| OCC transactions | Yes on local `mako::DB` | Extension: expose a typed transaction object | RemoteDB does not yet provide transaction atomicity |
 | Pessimistic 2PL transactions | No | Would require new locking layer over masstree | Hard |
-| 2PC (`Prepare`) | No | Would require durability + coordinator support | Hard |
+| RocksDB-style durable `Prepare` | No | Would require recovery-facing durability and coordinator support | Mako's internal cross-shard 2PC is not this API |
 | MergeOperator | No | No equivalent | Impossible without RMW loop |
 | CompactionFilter | No | No compaction to hook | Impossible |
 | Custom Comparator | No | Masstree hardcodes bytewise | Impossible without Masstree rewrite |
 | Bloom filter, prefix seek | No | Masstree's trie structure IS prefix-optimised natively; bloom N/A for in-memory | Trivial to expose "prefix seek" as callback semantics |
 | Persistence (WAL, SSTables) | Via separate `RocksDBPersistence` layer | Would replace Masstree's whole storage engine | Out of scope |
 | Backup / Checkpoint | Infrastructure exists (`checkpoint.hh`, `kvio.hh`), unwired | Feasible if wanted | Medium project |
-| Options tuning | Absorb-and-ignore | Options struct exists conceptually; most fields N/A | Cosmetic |
+| Options tuning | No per-table options | Could expose applicable in-memory settings explicitly | RocksDB compression and compaction options have no Masstree equivalent |
 | `Flush`, `CompactRange` | No | N/A | `NotSupported` |
 | `GetProperty("rocksdb.stats")` | Minimal | Could expose masstree counters | Cosmetic |
 
@@ -677,7 +834,7 @@ Method-level mapping for translating RocksDB code to Mako's interface:
 
 | RocksDB | Mako | Notes |
 |---------|------|-------|
-| `DB::Open(opts, path, &db)` | `mako::DB::Open(opts, path, &db)` | Options struct differs; no column families |
+| `DB::Open(opts, path, &db)` | `mako::DB::Open(opts, path, &db)` | Local facade accepts only `storage_engine = "cpp"`, admits one initialization per process lifetime, and ignores path |
 | `db->Put(wo, key, value)` | `table->Put(txn, key, mako::Encode(value))` | Encode value; use txn handle |
 | `db->Get(ro, key, &value)` | `table->Get(txn, key, value)` | Value is decoded automatically |
 | `db->Delete(wo, key)` | `table->Delete(txn, key)` | Needs txn |
@@ -686,32 +843,33 @@ Method-level mapping for translating RocksDB code to Mako's interface:
 | `db->KeyMayExist(...)` | `table->Exists(txn, key, &exists)` | Exact check, not bloom filter hint |
 | `db->Merge(wo, key, value)` | Not available | No merge operators |
 | `db->GetSnapshot()` | Not available | No snapshot isolation |
-| `db->GetColumnFamilyHandle(name)` | `db->GetTable(name)` | Returns `ITable*` |
+| `db->GetColumnFamilyHandle(name)` | `db->GetTable(name)` | Returns a borrowed `ITable*` or `nullptr`; catalog is bounded and distributed schemas are startup-only |
 | `db->DefaultColumnFamily()` | `db->GetTable("default")` or any name | |
 | `db->ListColumnFamilies(...)` | `db->ListTables()` | Only lists opened tables |
 | `WriteBatch` | Multiple `Put`/`Delete` in one `BeginTransaction/Commit` | |
-| `db->Close()` | `delete db` (destructor calls Close) | |
+| `db->Close()` | `Status s = db->Close(); if (s.ok()) delete db;` | Quiesce all callers and end every thread context first; never delete after an ignored `Busy` result |
 
 ---
 
 ## Implications for Extending the Interface
 
-The existing interface is already at "80% of the common-case surface." What extensions move the needle:
+The existing interface covers the operations used by the current in-tree
+consumers. Possible extensions include:
 
 **High value, low-to-medium effort**:
 - **WriteBatch as a single-txn wrapper**: `makoCon.cc` already does this manually — its Redis `MULTI/EXEC` path calls `BeginTransaction` → op → op → `Commit`. Exposing an explicit `WriteBatch` lets it drop that custom wrapper and lets any RocksDB code using `WriteBatch` compile against `mako::DB` unchanged.
-- **MultiGet as batched read within one implicit txn**: `makoCon.cc`'s Redis `MGET` currently issues N individual `Get` calls, each in its own transaction. A native `MultiGet` gives it snapshot-consistent multi-key reads with less overhead. Same win for any consumer doing bulk lookups.
+- **MultiGet as batched read within one implicit txn**: `makoCon.cc`'s Redis `MGET` currently issues N individual `Get` calls, each in its own transaction. A native `MultiGet` can validate all reads together and publish results only after a successful commit, with less overhead than N transactions.
 - **Stateful iterator adapter**: no current consumer needs this. Useful when porting RocksDB code that uses `for (it->SeekToFirst(); it->Valid(); it->Next())`. Worth building only when a specific porting target motivates it.
 - **Explicit `Transaction` class** (`OptimisticTransactionDB`-shaped): `simpleTransactionRep.cc` gets what it needs from the `BeginTransaction/Commit/Rollback` triple already. A separate `Transaction` object is mostly a shape match for RocksDB code being ported in; low urgency compared to WriteBatch/MultiGet.
 
 **Medium value, medium effort**:
 - **Cross-shard Scan** (the existing single-shard limitation; requires RPC fan-out for `RemoteDB`).
-- **Snapshot API** limited to transaction-scoped snapshots only; `db->GetSnapshot()` outside a txn returns `NotSupported`.
+- **Transaction-scoped read adapter** with success-or-retry semantics; this is not a snapshot API, and `db->GetSnapshot()` remains `NotSupported`.
 - **Range delete** as `Scan` + per-key delete inside a txn.
 
 **Low value or infeasible**:
 - Pessimistic `TransactionDB` (no locking substrate in Mako).
-- 2PC `Prepare`.
+- RocksDB-style durable `Prepare`.
 - `MergeOperator`, `CompactionFilter`, custom `Comparator`.
 - Persistence-adjacent (`Flush`, `CompactRange`, `BackupEngine`, `Checkpoint` unless the existing `ckstate`/`kvio` infrastructure is wired up as a follow-on project).
 

@@ -1,0 +1,19 @@
+Internal ctest changing into directory: /dev/shm/sto-capacity-asan-20260909-v4
+Test project /dev/shm/sto-capacity-asan-20260909-v4
+    Start 63: test_silo_transitem_lifetime
+1/4 Test #63: test_silo_transitem_lifetime ........................   Passed    0.09 sec
+    Start 64: test_silo_transaction_set_exact_chunk_boundary
+2/4 Test #64: test_silo_transaction_set_exact_chunk_boundary ......   Passed    0.09 sec
+    Start 65: test_silo_transaction_set_capacity_exhaustion
+3/4 Test #65: test_silo_transaction_set_capacity_exhaustion .......   Passed    0.10 sec
+    Start 66: test_silo_transaction_install_exception_fail_stop
+4/4 Test #66: test_silo_transaction_install_exception_fail_stop ...   Passed    0.13 sec
+
+100% tests passed, 0 tests failed out of 4
+
+Label Time Summary:
+lifecycle      =   0.42 sec*proc (4 tests)
+silo           =   0.42 sec*proc (4 tests)
+transaction    =   0.42 sec*proc (4 tests)
+
+Total Test time (real) =   0.42 sec

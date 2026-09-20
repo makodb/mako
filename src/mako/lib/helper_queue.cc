@@ -22,12 +22,22 @@ HelperQueue::HelperQueue(int id,bool is_req): my_atomic_int(0) {
     this->is_req=is_req;
  }
 
-bool HelperQueue::add_one_req(void *req_handle, size_t msg_size) {
-    // if (is_req_buffer_full()) {
-    //     Warning("the buffer is full");
-    //     return false;
-    // }
+bool HelperQueue::is_req_buffer_full() const {
+    std::lock_guard<std::mutex> lock(condition_mutex);
+    return req_cnt == HELPER_QUEUE_SIZE;
+}
 
+bool HelperQueue::is_req_buffer_empty() const {
+    std::lock_guard<std::mutex> lock(condition_mutex);
+    return req_cnt == 0;
+}
+
+size_t HelperQueue::get_size() const {
+    std::lock_guard<std::mutex> lock(condition_mutex);
+    return static_cast<size_t>(req_cnt);
+}
+
+bool HelperQueue::add_one_req(void *req_handle, size_t msg_size) {
     std::unique_lock<std::mutex> lock(condition_mutex);
     req_buffer[req_buffer_writer_idx] = std::make_pair(req_handle, msg_size);
     req_buffer_writer_idx = (req_buffer_writer_idx+1)%HELPER_QUEUE_SIZE;
@@ -40,7 +50,7 @@ bool HelperQueue::add_one_req(void *req_handle, size_t msg_size) {
 
 bool HelperQueue::fetch_one_req(void **req_handle, size_t &msg_size) {
     std::unique_lock<std::mutex> lock(condition_mutex); // if no such lock, the TPUT is not even cross shards
-    if (is_req_buffer_empty())
+    if (req_cnt == 0)
         return false;
     
     *req_handle = req_buffer[req_buffer_reader_idx].first;
@@ -52,7 +62,9 @@ bool HelperQueue::fetch_one_req(void **req_handle, size_t &msg_size) {
 
 void HelperQueue::suspend() {
     std::unique_lock<std::mutex> lock(condition_mutex);
-    cv.wait(lock, [this]{return stop_flag_.load(std::memory_order_acquire) || !is_req_buffer_empty();});
+    cv.wait(lock, [this]{
+        return stop_flag_.load(std::memory_order_acquire) || req_cnt != 0;
+    });
 }
 
 void HelperQueue::wakeup() { // NOTICE

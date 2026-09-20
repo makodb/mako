@@ -1,0 +1,15 @@
+BLOCK 2026-09-09T06:54:39.591434+00:00 {'repetition': 0, 'threads': 16, 'variant': 'new', 'engines': ['cpp', 'rust'], 'pair_id': 'r00-c01-16t-new'}
+[guard] r00-c01-16t-new attempt=1 waiting for the next LXD restart after NRestarts=46865
+[guard] r00-c01-16t-new attempt=1 aligned after 58.785s at NRestarts=46866
+[1] cpp TPC-C threads=warehouses=16 repetition=0 pair_attempt=1
+[guard] r00-c01-16t-new attempt=1 waiting for the next LXD restart after NRestarts=46866
+[guard] r00-c01-16t-new attempt=1 aligned after 28.994s at NRestarts=46867
+[guard] r00-c01-16t-new attempt=1 restart-window attempt=1 skipped: a selected CPU was below 95% idle
+[guard] r00-c01-16t-new attempt=1 waiting for the next LXD restart after NRestarts=46867
+[guard] r00-c01-16t-new attempt=1 aligned after 61.423s at NRestarts=46868
+[guard] r00-c01-16t-new attempt=1 restart-window attempt=2 skipped: a selected CPU was below 95% idle
+[guard] r00-c01-16t-new attempt=1 waiting for the next LXD restart after NRestarts=46868
+[guard] r00-c01-16t-new attempt=1 aligned after 61.710s at NRestarts=46869
+[2] rust TPC-C threads=warehouses=16 repetition=0 pair_attempt=1
+BLOCK 2026-09-09T07:01:04.728047+00:00 {'repetition': 0, 'threads': 16, 'variant': 'old', 'engines': ['rust', 'cpp'], 'pair_id': 'r00-c01-16t-old'}
+[guard] r00-c01-16t-old attempt=1 waiting for the next LXD restart after NRestarts=46871

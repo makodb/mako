@@ -215,14 +215,16 @@ namespace mako
     void ShardReceiver::HandleGetTimestampRequest(char *reqBuf, char *respBuf, size_t &respLen)
     {
         int status = ErrorCode::SUCCESS;
-        uint32_t result = 0;
         auto *req = reinterpret_cast<basic_request_t*>(reqBuf);
         auto *resp = reinterpret_cast<get_int_response_t *>(respBuf);
         resp->shard_index = TThread::get_shard_index();
         resp->req_nr = req->req_nr;
         respLen = sizeof(get_int_response_t);
+        uint32_t timestamp = 0;
+        if (!Transaction::try_allocate_mako_timestamp(timestamp))
+            status = ErrorCode::ABORT;
         resp->status = (current_term > req->req_nr % 10)? ErrorCode::ABORT: status; // If a reqest comes from old epoch, reject it.;
-        resp->result = __sync_fetch_and_add(&sync_util::sync_logger::local_replica_id, 1);;
+        resp->result = timestamp;
     }
 
     void ShardReceiver::HandleSerializeUtilRequest(char *reqBuf, char *respBuf, size_t &respLen) {
@@ -1037,6 +1039,12 @@ namespace mako
         shardReceiver = new mako::ShardReceiver(file);
     }
 
+    ShardServer::~ShardServer()
+    {
+        delete shardReceiver;
+        shardReceiver = nullptr;
+    }
+
     void ShardServer::Register(abstract_db *dbX,
                                mako::HelperQueue *queueX,
                                mako::HelperQueue *queueY,
@@ -1060,7 +1068,30 @@ namespace mako
     void ShardServer::Run()
     {
         while (true) {
+            // shard_reset() leaves a mode-1 helper with an empty transaction
+            // ready for its next request. Keeping that transaction active
+            // while suspend() waits publishes an RCU reader indefinitely and
+            // can prevent a departing worker from completing its grace
+            // period. Park only the empty participant. A transaction with
+            // staged items may own reads or locks across later 2PC messages
+            // and must remain active.
+            bool parked_idle_participant = false;
+            if (TThread::mode() == 1 && TThread::txn != nullptr &&
+                TThread::txn->has_active_state() &&
+                !TThread::txn->has_staged_items()) {
+                db->abort_txn_local(nullptr);
+                parked_idle_participant = true;
+            }
+
             queue->suspend();
+
+            // Restore the mode-1 idle-participant invariant before dispatching
+            // queued work. This also preserves the existing stop behavior:
+            // requests already queued when stop is requested are drained
+            // before the helper exits.
+            if (parked_idle_participant) {
+                db->shard_reset();
+            }
 
             while (true) {
                 void *handle;
@@ -1069,16 +1100,24 @@ namespace mako
                     break;
                 }
                 if (!handle) {
-                    Panic("the pointer is invalid, p:%s, rIdx:%d, wIdx:%d, count:%d",
-                            (void*)handle,
-                                queue->req_buffer_reader_idx,queue->req_buffer_writer_idx,
-                                queue->req_cnt);
-
+                    Panic("the helper queue returned an invalid pointer: %p",
+                          handle);
                 }
 
                 // Cast to transport-agnostic interface: the backend enqueued
                 // a TransportRequestHandle* as an opaque token.
                 mako::TransportRequestHandle* req_handle = reinterpret_cast<mako::TransportRequestHandle*>(handle);
+
+                // A failed GET or SCAN aborts the participant locally. The
+                // coordinator records that fact and omits the redundant ABORT
+                // RPC, so the next request can arrive while this helper's STO
+                // transaction is inactive. This check must run for every
+                // dequeued request, not only after suspend(): a new request can
+                // enter the queue while the helper is draining it.
+                if (TThread::mode() == 1 && TThread::txn != nullptr &&
+                    !TThread::txn->has_active_state()) {
+                    db->shard_reset();
+                }
 
                 size_t msgLen = shardReceiver->ReceiveRequest(
                     req_handle->GetRequestType(),

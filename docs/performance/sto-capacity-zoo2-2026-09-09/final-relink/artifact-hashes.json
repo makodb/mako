@@ -1,0 +1,682 @@
+{
+  "CMakeCache-before.txt": {
+    "sha256": "334469e045e98cd3ce37a8ad54f67515c8f3d6e2880186f12e89b758c71e42b1",
+    "size_bytes": 68484
+  },
+  "cargo-version.txt": {
+    "sha256": "bfd735e736b354adabe72cea24bc1b393488223889b6ab95e974fd8fb963552e",
+    "size_bytes": 336
+  },
+  "clang-version.txt": {
+    "sha256": "d9b2cdd8548868df173ec2eab2c641a3c545e0f1154951a4078fa7ae9c85669a",
+    "size_bytes": 149
+  },
+  "cmake-version.txt": {
+    "sha256": "f6e81c2559f3ce00c5fdad01d7b226c301f5d6b07ee04f65db6dbfdc1cc5970b",
+    "size_bytes": 91
+  },
+  "commands.json": {
+    "sha256": "4dce7a036bd794de68da4fdb9555effaf5fdc6986697c55cee1596e17c68715e",
+    "size_bytes": 14148
+  },
+  "ctest-boundaries.log": {
+    "sha256": "09d0ab389ec0955fb6dd4e92400b79b46bf6f96519c66d95e7f121beeb422152",
+    "size_bytes": 5817
+  },
+  "ctest-descriptor.json": {
+    "sha256": "8aa6a5f718dcb06cd1f2916b9c4473ead37473a71f9f794186becdbe5c08175d",
+    "size_bytes": 36121
+  },
+  "driver.py": {
+    "sha256": "489f459bfa9558f86bcf07141420a62450d5ebb3cc5be17664aea1d910bfe5a0",
+    "size_bytes": 14934
+  },
+  "native-build.log": {
+    "sha256": "81140ff930ba694543e8364d9cc7e1127ceab893e0c9898d2b7ad4628212e1e2",
+    "size_bytes": 176363
+  },
+  "native-link-input-changes.json": {
+    "sha256": "6b206e6a87c9775bcf0c82f5cfee64dda07bb1d08cb7d8c2fda6d3867a268825",
+    "size_bytes": 1249
+  },
+  "native-link-inputs-sha256-after.json": {
+    "sha256": "07461d70ff6822141152bc931a7774a2a1c28ed800ba87e679dc6e6da951dfe7",
+    "size_bytes": 4019
+  },
+  "native-link-inputs-sha256-before.json": {
+    "sha256": "07461d70ff6822141152bc931a7774a2a1c28ed800ba87e679dc6e6da951dfe7",
+    "size_bytes": 4019
+  },
+  "native-link-inputs.txt": {
+    "sha256": "75be674237a9c2eec3d83e15bdbe4522de65460b2b206ba5e3ccb18eb6d3ee4e",
+    "size_bytes": 2045
+  },
+  "native-link-original.command": {
+    "sha256": "eac783aa8ee07c1bab3f96f3cdc079c4b9488f1e699c46a166c2d75754002906",
+    "size_bytes": 3659
+  },
+  "native-ninja-commands.txt": {
+    "sha256": "773cb729d450f45a05d7face3bdf8bdb250e0184d113770c78fa4216216dd597",
+    "size_bytes": 764230
+  },
+  "optimized-elf-notes.txt": {
+    "sha256": "5b5e16548d44ab2617664470db2cee8cd5c7871a5f53f282706e2f04069c4d36",
+    "size_bytes": 381
+  },
+  "optimized.ldd": {
+    "sha256": "d70c61e7f3db3d1f212fbdb60a7ee7a7c21f12f61c492ba9f1e69973cc50c073",
+    "size_bytes": 1775
+  },
+  "pkg-config-version.txt": {
+    "sha256": "25cec9739d3218e48acc5d8c3d4333e1d624121c5b7ab3bcddc71d0fa0134b83",
+    "size_bytes": 6
+  },
+  "prepare-native-relink.py": {
+    "sha256": "193aac1d3c6cf9f899972d9a42ed1dc86aee688b265d8dae8a3325d62e10eeda",
+    "size_bytes": 6045
+  },
+  "prepare-relink.log": {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "size_bytes": 0
+  },
+  "provenance.json": {
+    "sha256": "e8a010b27f503eaf9315fe97e4a16cf76c9be8ce8714c1c5c359958cc0c11c31",
+    "size_bytes": 3453
+  },
+  "provenance.txt": {
+    "sha256": "e8a010b27f503eaf9315fe97e4a16cf76c9be8ce8714c1c5c359958cc0c11c31",
+    "size_bytes": 3453
+  },
+  "relink-metadata.txt": {
+    "sha256": "49c06e9cd3a6e1e05a51ac59dcd5b3f49a756e9fc2e3d39a72fa718d41e41aa8",
+    "size_bytes": 529
+  },
+  "relink.log": {
+    "sha256": "f8ebe24f54d8d8e14d487abf5b6154136e4849e65a2e67f1027e8229fe8f778d",
+    "size_bytes": 207
+  },
+  "relink.sh": {
+    "sha256": "31bffdd031b52d3bbac1dc990716311d696347dba07e1e88c8d81147cc7d2276",
+    "size_bytes": 3532
+  },
+  "rust-pgo-artifacts-sha256.txt": {
+    "sha256": "a2af9a3f44ae876d5089d2b40eb67cb72777a5d74cf0639c6dc9d62d41bf0287",
+    "size_bytes": 885
+  },
+  "rust-pgo-build-use.command": {
+    "sha256": "707f0faf1951da9bab00c80a8435f62dfc8c151065c9669f8839c5533510b85b",
+    "size_bytes": 692
+  },
+  "rust-pgo-profdata.command": {
+    "sha256": "b65cb56fdc363ac6fa5ce565e40406ab2c2d5c8d851e85a3a3d09b7f5b657025",
+    "size_bytes": 327
+  },
+  "rust-pgo-provenance.txt": {
+    "sha256": "27021b3dbe61c983895d37bba75f996647747c9ddd411bd644048907c6e91d70",
+    "size_bytes": 8444
+  },
+  "rust-pgo-source-dependencies.d": {
+    "sha256": "65ba4e5cf45a922949e9b4a7c91077fb3386f9ff33442967c15a9a4e3d091dc8",
+    "size_bytes": 2278
+  },
+  "rust-pgo-training-profiles-sha256.txt": {
+    "sha256": "3cbc1eb52b86fac9711f958bc46863a28d2fbbbd492c59a8d185c8a75d4f897a",
+    "size_bytes": 173
+  },
+  "rust-pgo-training-result.json": {
+    "sha256": "18e3c4a0ff05ca78b0727e1016fe3f4850080910f63c59f17fedecf828ce99a4",
+    "size_bytes": 539
+  },
+  "rust-source-patch-apply.log": {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "size_bytes": 0
+  },
+  "rust-source-patch-check.log": {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "size_bytes": 0
+  },
+  "rust-source-sha256-captured.json": {
+    "sha256": "ede3206bc9eaaf8c3c212067b8db98163d1f7482965e1492963632f936d12eb6",
+    "size_bytes": 13986
+  },
+  "rust-source-sha256-current.json": {
+    "sha256": "ede3206bc9eaaf8c3c212067b8db98163d1f7482965e1492963632f936d12eb6",
+    "size_bytes": 13986
+  },
+  "rust-source-snapshot/crates/.gitignore": {
+    "sha256": "306fd52e74fca6746e12acc750f232de15e71da917756a1270d74c91f5eb7368",
+    "size_bytes": 9
+  },
+  "rust-source-snapshot/crates/Cargo.lock": {
+    "sha256": "038b69a4691f8eaae7cb5aa4fd90b654fb320282c0e7a6af294eafa02b1f8173",
+    "size_bytes": 7263
+  },
+  "rust-source-snapshot/crates/Cargo.toml": {
+    "sha256": "dd4d6f2c6a796c89453f2646230c4f5ce9e95d3eb96e9c5eaa46a5166daf27a0",
+    "size_bytes": 433
+  },
+  "rust-source-snapshot/crates/mako-history/Cargo.toml": {
+    "sha256": "8687f27627e1e8d8ab71041ca8222b0328a01be1623d7b6b1c3b373be4520a4e",
+    "size_bytes": 265
+  },
+  "rust-source-snapshot/crates/mako-history/src/application.rs": {
+    "sha256": "677a616314ebd7d13c344263e5e7f1593e81b6d67b346ffbdc5acd5da9efdb74",
+    "size_bytes": 71801
+  },
+  "rust-source-snapshot/crates/mako-history/src/checker.rs": {
+    "sha256": "0b663c9623d6f1254ffbcdb977d56d62fd2615e1d9848e3c2e7ee1b609421d95",
+    "size_bytes": 36384
+  },
+  "rust-source-snapshot/crates/mako-history/src/lib.rs": {
+    "sha256": "597680267ede1674381b99060cd9233c36a218890369e3f1f2870f7fa5e7f755",
+    "size_bytes": 13255
+  },
+  "rust-source-snapshot/crates/mako-history/src/replay.rs": {
+    "sha256": "0920f62c131bcaf3f5db3cbd18540e83db2f1d4644bccd7c82aafe2b1bba6200",
+    "size_bytes": 6033
+  },
+  "rust-source-snapshot/crates/mako-history/tests/application.rs": {
+    "sha256": "35aed26e3fc720675336706f080d74ee398fa0d80112f47dea1d46d58f0fa572",
+    "size_bytes": 25681
+  },
+  "rust-source-snapshot/crates/mako-history/tests/oracle.rs": {
+    "sha256": "a99ad3fe34fbfd9c961adc0035bbd1d3803e77729ae2b9035217f67fd651b6ba",
+    "size_bytes": 18566
+  },
+  "rust-source-snapshot/crates/masstree/Cargo.toml": {
+    "sha256": "e9c791041a9ba805a189bf20c2055c4a31b98de57a3d8e01a92a47f3c77d1dfb",
+    "size_bytes": 286
+  },
+  "rust-source-snapshot/crates/masstree/README.md": {
+    "sha256": "1e03748e006b4846ed0053bdbb3e932188776a81d634fc45f6575048311a14d3",
+    "size_bytes": 3859
+  },
+  "rust-source-snapshot/crates/masstree/build.rs": {
+    "sha256": "25c3e5599f1f819742b56e715ca41920888774c0bf5306b201fc09337235b1cd",
+    "size_bytes": 1448
+  },
+  "rust-source-snapshot/crates/masstree/src/bin/masstree_get_bench.rs": {
+    "sha256": "07ac15bfd0ec14a9b0f2897a42cd9d2d8baa9f5fdec48c6daeac0c839392d521",
+    "size_bytes": 16156
+  },
+  "rust-source-snapshot/crates/masstree/src/lib.rs": {
+    "sha256": "526f32480a644f7dfcfd355ffab966b18825b99cf55c155a8d49ef544509f3cb",
+    "size_bytes": 52022
+  },
+  "rust-source-snapshot/crates/masstree/src/native.rs": {
+    "sha256": "40a044ef836cb9f939c619644649c50bfaf910fde4de308411e81f3f6ab71804",
+    "size_bytes": 58924
+  },
+  "rust-source-snapshot/crates/masstree/tests/native_integration.rs": {
+    "sha256": "32880c33b3d784345564bfb02d1829458f7ce51801377a069f8c0a98e5385dd8",
+    "size_bytes": 23654
+  },
+  "rust-source-snapshot/crates/mtree-sys/Cargo.toml": {
+    "sha256": "4e5161b5aea2400bae7c0321e0c3c1e1bb9866609afcbfe8e7d8111a3205f880",
+    "size_bytes": 215
+  },
+  "rust-source-snapshot/crates/mtree-sys/src/lib.rs": {
+    "sha256": "e72ad337714369a3fbb2c50a3682987d8c96e7d5da885aea8474c1f8366644ea",
+    "size_bytes": 18469
+  },
+  "rust-source-snapshot/crates/sto-core/Cargo.toml": {
+    "sha256": "4711c0ad391ff95d5c44be83a70725e49a495959cdfba5a7ab281db77bc6dcbf",
+    "size_bytes": 288
+  },
+  "rust-source-snapshot/crates/sto-core/src/adapter.rs": {
+    "sha256": "2a05a40873289e89a87874d6c691632115b6aaddfbc3ba28381b97d19548be9c",
+    "size_bytes": 22117
+  },
+  "rust-source-snapshot/crates/sto-core/src/bin/sto_core_array_bench.rs": {
+    "sha256": "e106b1cd47e0ae0bc7b461396c214b59590b49de63633ac82bb99e85fc70d4f9",
+    "size_bytes": 15617
+  },
+  "rust-source-snapshot/crates/sto-core/src/direct_commit.rs": {
+    "sha256": "3561855ca639b8a2c0cb49cb80bc50a5d8bce093d7fc0e071af9501450bd4df5",
+    "size_bytes": 88540
+  },
+  "rust-source-snapshot/crates/sto-core/src/error.rs": {
+    "sha256": "bb89dd7fa66536df54b136a4135e0b6f544a07dfd5ad3c62caadcbc4bf6af245",
+    "size_bytes": 13786
+  },
+  "rust-source-snapshot/crates/sto-core/src/hook.rs": {
+    "sha256": "165a30164578110a464a0165d6ac2e8ee9af391432a962fde0bc441a51b1f499",
+    "size_bytes": 2439
+  },
+  "rust-source-snapshot/crates/sto-core/src/identity.rs": {
+    "sha256": "bccd3073719b948b9b4573b3e03991a5bca9cb9f1b2050837129e4420038ddb5",
+    "size_bytes": 15778
+  },
+  "rust-source-snapshot/crates/sto-core/src/item.rs": {
+    "sha256": "983444d3f9e017b20913a9d5a7ace9f0783b11531f9a17a3be5d24cd00c1c5d3",
+    "size_bytes": 81587
+  },
+  "rust-source-snapshot/crates/sto-core/src/legacy_tid.rs": {
+    "sha256": "b520a52e199de98106e242a29d0d50ea25f68af9ce3213a5d33f6948e222e0d8",
+    "size_bytes": 1584
+  },
+  "rust-source-snapshot/crates/sto-core/src/lib.rs": {
+    "sha256": "c9bfd67f66b8cb79b4ca5b09cc213665c07c94493cf9fe5c8f585ceceed33c1b",
+    "size_bytes": 2355
+  },
+  "rust-source-snapshot/crates/sto-core/src/lock.rs": {
+    "sha256": "9f826906648f4bb6304e8fa03096529094a5ebe2a034a32683f812233322ff9e",
+    "size_bytes": 91917
+  },
+  "rust-source-snapshot/crates/sto-core/src/runtime.rs": {
+    "sha256": "5d6a2bcc79ee97878e367f1a4f2febf2d187d58da6ab9cdb37c9e11bea880e0c",
+    "size_bytes": 35632
+  },
+  "rust-source-snapshot/crates/sto-core/src/terminal_read.rs": {
+    "sha256": "2a40fabe86dc4add31df2e80deda310bcf5f8fad809967a5c97e298e425c21f0",
+    "size_bytes": 7814
+  },
+  "rust-source-snapshot/crates/sto-core/src/transaction.rs": {
+    "sha256": "fd1cd12e063a79601ba40043a08a9a8f6ccf5349d1d674ab55df6b32156863f9",
+    "size_bytes": 182030
+  },
+  "rust-source-snapshot/crates/sto-core/src/txn_array.rs": {
+    "sha256": "66a4190f5e271e3e135c26e0dc42f62242e8e0631409a10b16660d8c650aa9a9",
+    "size_bytes": 21555
+  },
+  "rust-source-snapshot/crates/sto-core/src/txn_cell.rs": {
+    "sha256": "12bf34cdaa4bbefc394f7386ce8398b934c7b7aa3b9f38310d66535a7bd6506c",
+    "size_bytes": 17719
+  },
+  "rust-source-snapshot/crates/sto-core/src/txn_counter.rs": {
+    "sha256": "321416cb0d25f345f29a9ca0cb31604e361d5f8f53da7f8b52b3dc925c366109",
+    "size_bytes": 15264
+  },
+  "rust-source-snapshot/crates/sto-core/src/version.rs": {
+    "sha256": "46a9583ac1b80e0e5be116d86072b583c425f290566dfc920ac9ff6394575298",
+    "size_bytes": 37860
+  },
+  "rust-source-snapshot/crates/sto-core/tests/commit_hook.rs": {
+    "sha256": "39b0c3645bc743e9bbf7f132eb9d017d792845436a959102cd2a8eb3c60b85fc",
+    "size_bytes": 7052
+  },
+  "rust-source-snapshot/crates/sto-core/tests/compile_fail.rs": {
+    "sha256": "2e5a8e520fbebb6e70afc9f9d3a39098213c5d3eb1285112f36c61824c70034e",
+    "size_bytes": 153
+  },
+  "rust-source-snapshot/crates/sto-core/tests/failure_protocol.rs": {
+    "sha256": "1d71e7d95f3f26e57abc97687bdd6a405470a6878c9bd4bf991256e5f1d296e4",
+    "size_bytes": 162596
+  },
+  "rust-source-snapshot/crates/sto-core/tests/legacy_tid.rs": {
+    "sha256": "5cafc71ed162af3a8d8be5392064eb982c829da1b1742e605d37c1f6e7931600",
+    "size_bytes": 3172
+  },
+  "rust-source-snapshot/crates/sto-core/tests/public_adapter_contract.rs": {
+    "sha256": "2fd67d7bfbc8999f6e340b3a4d1751fe91ac310611aa42939450b473bacb0d16",
+    "size_bytes": 12155
+  },
+  "rust-source-snapshot/crates/sto-core/tests/reference_history.rs": {
+    "sha256": "d221a229d7c11eef85a0edd75a00cf1b8f8aafdeb55ad4dcb18af8c82fec682c",
+    "size_bytes": 8949
+  },
+  "rust-source-snapshot/crates/sto-core/tests/transactions.rs": {
+    "sha256": "73b888a30aeda0f115152d1a290022cc28f02f1981ffcc2d250388215236ad00",
+    "size_bytes": 80758
+  },
+  "rust-source-snapshot/crates/sto-core/tests/ui/acquire_context.rs": {
+    "sha256": "1d74570297438c166ccc2222e05cf002c17674aea63153e752ac7c847bec1749",
+    "size_bytes": 279
+  },
+  "rust-source-snapshot/crates/sto-core/tests/ui/acquire_context.stderr": {
+    "sha256": "4ccab553372ff4bb84249b6ef51e9d95b129ca97903d6287f49db3aa7bf4a505",
+    "size_bytes": 2083
+  },
+  "rust-source-snapshot/crates/sto-core/tests/ui/active_transaction.rs": {
+    "sha256": "a0556184112c05dea98055482649b30707499668295e1c481a27484785367705",
+    "size_bytes": 314
+  },
+  "rust-source-snapshot/crates/sto-core/tests/ui/active_transaction.stderr": {
+    "sha256": "b3c421ac80ddf610bde9d817fdce07482a7b0be2e89e7b00e19e2da258c03e4b",
+    "size_bytes": 19939
+  },
+  "rust-source-snapshot/crates/sto-core/tests/ui/entry.rs": {
+    "sha256": "c33e1d275ac5d725ae148140734f91c48d79b6f626e211d03dc03362b5b1cd1c",
+    "size_bytes": 316
+  },
+  "rust-source-snapshot/crates/sto-core/tests/ui/entry.stderr": {
+    "sha256": "0df802715ae2c2ff41cceb7d3d06e3e93b3f665f40cfea1664da956377592e62",
+    "size_bytes": 2153
+  },
+  "rust-source-snapshot/crates/sto-core/tests/ui/execution_check_context.rs": {
+    "sha256": "8f84b4ae633b04086ca83b6628d5ffab99dd80382a3981e246a28e95766f5e4c",
+    "size_bytes": 314
+  },
+  "rust-source-snapshot/crates/sto-core/tests/ui/execution_check_context.stderr": {
+    "sha256": "4c0d800f2c56360e69183db1787241e2a9ba09ada00b0317e1bfbb2e6600f046",
+    "size_bytes": 2228
+  },
+  "rust-source-snapshot/crates/sto-core/tests/ui/finish_context.rs": {
+    "sha256": "770a5752298e7cf8c79cc92f593beb7d8a7b95aa5fc449475edb7ba98f4b690a",
+    "size_bytes": 274
+  },
+  "rust-source-snapshot/crates/sto-core/tests/ui/finish_context.stderr": {
+    "sha256": "fdb1b686baa738ca6345418043fab673188629865e52f1c7780e432c4eead98b",
+    "size_bytes": 2063
+  },
+  "rust-source-snapshot/crates/sto-core/tests/ui/finish_item.rs": {
+    "sha256": "709b34e8981cc0d06934d9b5a51e12be1f7b97cd2793745edb8792811b6b99d6",
+    "size_bytes": 339
+  },
+  "rust-source-snapshot/crates/sto-core/tests/ui/finish_item.stderr": {
+    "sha256": "8166c39b39bf11b1dd003455b7d4102ccf8903114b7370c2b26b5f6cad8126b5",
+    "size_bytes": 2202
+  },
+  "rust-source-snapshot/crates/sto-core/tests/ui/install_context.rs": {
+    "sha256": "7abdb5485410ce3859333e8af7b85c9bb6783d03bf0ed2337ed17544e46e7673",
+    "size_bytes": 279
+  },
+  "rust-source-snapshot/crates/sto-core/tests/ui/install_context.stderr": {
+    "sha256": "19f1212782159368513bd88d6cc4f5fad87a2cf8607e2ca48399ffaec5d39ad1",
+    "size_bytes": 6107
+  },
+  "rust-source-snapshot/crates/sto-core/tests/ui/install_item.rs": {
+    "sha256": "251e4fc8a20345c4ccf78dd40fb86534920f3aa324c37531e276f4e43da93268",
+    "size_bytes": 344
+  },
+  "rust-source-snapshot/crates/sto-core/tests/ui/install_item.stderr": {
+    "sha256": "968b970abc0a14f49ae84207ab37828688ee93f286656462d0ed5914012bdc9c",
+    "size_bytes": 2222
+  },
+  "rust-source-snapshot/crates/sto-core/tests/ui/non_send_guard.rs": {
+    "sha256": "bed090e8ad8d3ad84f626eb4a0928b91db8e8b839f48bd73edfd4247d11cf0da",
+    "size_bytes": 402
+  },
+  "rust-source-snapshot/crates/sto-core/tests/ui/non_send_guard.stderr": {
+    "sha256": "053648138f53cd5583ad6525ab4b617fe1ea4e4ed1b1e8fefbc8ae87a08ec6df",
+    "size_bytes": 1644
+  },
+  "rust-source-snapshot/crates/sto-core/tests/ui/predicate_context.rs": {
+    "sha256": "3622a31b2561fae7b8648889cc6f7a3cb9bad3a5ea2cd324cc6fbe95e38fe2e6",
+    "size_bytes": 289
+  },
+  "rust-source-snapshot/crates/sto-core/tests/ui/predicate_context.stderr": {
+    "sha256": "42e4b4aca931825470eaa1488c4cdfd93447ff5fea55b823e914b79c0832943b",
+    "size_bytes": 6160
+  },
+  "rust-source-snapshot/crates/sto-core/tests/ui/preflight_context.rs": {
+    "sha256": "1e4ff5aad8cc64d648f545eedcf0cbe50ec8fff1735273ea836c7dcb0b7b65fd",
+    "size_bytes": 289
+  },
+  "rust-source-snapshot/crates/sto-core/tests/ui/preflight_context.stderr": {
+    "sha256": "d284d27922c34a2b2fce6e684a6436c712e2048cab917042f2d89a00d8ef87ba",
+    "size_bytes": 6175
+  },
+  "rust-source-snapshot/crates/sto-core/tests/ui/preflight_free_validation_context.rs": {
+    "sha256": "3dcfd0a81931456077ab8d4f9b57cdec746e5f97fd609daad7c4a8bc3f6a21a9",
+    "size_bytes": 562
+  },
+  "rust-source-snapshot/crates/sto-core/tests/ui/preflight_free_validation_context.stderr": {
+    "sha256": "d511c4ae9614a906b5785b5544bfe620debd895b8e06f01e13a3da0cab575702",
+    "size_bytes": 2719
+  },
+  "rust-source-snapshot/crates/sto-core/tests/ui/preflight_item.rs": {
+    "sha256": "247390319d5a52a301a4eee004229ed7f8829c676d99dea0793de9c7da967b5e",
+    "size_bytes": 354
+  },
+  "rust-source-snapshot/crates/sto-core/tests/ui/preflight_item.stderr": {
+    "sha256": "6d34a9412a6e566c0b52972d0106b62cbdea7ac86819fa7deac6d6e180ee0fea",
+    "size_bytes": 2262
+  },
+  "rust-source-snapshot/crates/sto-core/tests/ui/release_context.rs": {
+    "sha256": "cbc0fa539fdda3ae06cdf41bf2b1584889422fcdfbbe34fafd7acfde693556c9",
+    "size_bytes": 279
+  },
+  "rust-source-snapshot/crates/sto-core/tests/ui/release_context.stderr": {
+    "sha256": "297cfa19c22f84cc51e4433e61c016993f0b9e7078b3392505b8cd33a8674739",
+    "size_bytes": 2083
+  },
+  "rust-source-snapshot/crates/sto-core/tests/ui/resolved_item_session.rs": {
+    "sha256": "a087a9cc17eba87ea11fd9f4a1028741c4194b5e52315e2d22d3d76f9213f3e8",
+    "size_bytes": 199
+  },
+  "rust-source-snapshot/crates/sto-core/tests/ui/resolved_item_session.stderr": {
+    "sha256": "49c7c9a728d1a0e47b6bfc4edd31fd06443f9365d4800b57a64641bea993c64e",
+    "size_bytes": 361
+  },
+  "rust-source-snapshot/crates/sto-core/tests/ui/support/mod.rs": {
+    "sha256": "42c2a99c57088349b0cba78bcb5b997eb08237ad3364adc35933caf603ad0aa7",
+    "size_bytes": 2990
+  },
+  "rust-source-snapshot/crates/sto-core/tests/ui/terminal_read_typestate.rs": {
+    "sha256": "755089ed88f514dd1ecb2a1d90340ed356f6298047d26ed820a4c97ff53c1b26",
+    "size_bytes": 707
+  },
+  "rust-source-snapshot/crates/sto-core/tests/ui/terminal_read_typestate.stderr": {
+    "sha256": "ddbcbd150a678b546163ffc7e4ed799d1b8871388905653168890a5693bdb4fe",
+    "size_bytes": 757
+  },
+  "rust-source-snapshot/crates/sto-core/tests/ui/unique_item_keys.rs": {
+    "sha256": "a6a408ae2b9b96f4847b173107146089bd535f1f74f39a91a6b8cafeee4fd5dc",
+    "size_bytes": 146
+  },
+  "rust-source-snapshot/crates/sto-core/tests/ui/unique_item_keys.stderr": {
+    "sha256": "68a17886653ec937f792299847dbf9c905b3408f13080f9381078f6f8377eaab",
+    "size_bytes": 369
+  },
+  "rust-source-snapshot/crates/sto-core/tests/ui/validation_context.rs": {
+    "sha256": "5693353275a25b06d2b0b4512662842abeadbaabcdf7e01f49e173e6a9ee0531",
+    "size_bytes": 294
+  },
+  "rust-source-snapshot/crates/sto-core/tests/ui/validation_context.stderr": {
+    "sha256": "1094418e60185fa957ffd339a1ee7ac6b7fc5cb7965cdd02177e98b23818f8e9",
+    "size_bytes": 6194
+  },
+  "rust-source-snapshot/crates/sto-core/tests/ui/worker_context.rs": {
+    "sha256": "1d436168ab1b4153192b394347cfaddd65a63767363a38b2660a056cb4e739ee",
+    "size_bytes": 175
+  },
+  "rust-source-snapshot/crates/sto-core/tests/ui/worker_context.stderr": {
+    "sha256": "812aa8cffd209768ba65bc28faaab0803c9805114947534dafd7401f4dbfc3fa",
+    "size_bytes": 17909
+  },
+  "rust-source-snapshot/crates/sto-masstree/Cargo.toml": {
+    "sha256": "43d4d7d69da8fc11edcf6af020d5694d84c2eb0b273be94e73f090d6fc0c63b5",
+    "size_bytes": 488
+  },
+  "rust-source-snapshot/crates/sto-masstree/build.rs": {
+    "sha256": "5deffb28aefc0175be3e624c794bae1f1fafcf3c9439a78cb1cc1e83d76ef0e3",
+    "size_bytes": 530
+  },
+  "rust-source-snapshot/crates/sto-masstree/src/bin/sto_masstree_compare.rs": {
+    "sha256": "86599acbb629e935c2aa16e44dad1aa989af9d7843ac59a5dd3d63f502b8a45e",
+    "size_bytes": 39064
+  },
+  "rust-source-snapshot/crates/sto-masstree/src/direct_record.rs": {
+    "sha256": "d492a97f6b6a6febe8dc833398fa110fc88807d84a8a07c95ec201f326b4735d",
+    "size_bytes": 9874
+  },
+  "rust-source-snapshot/crates/sto-masstree/src/fixed_u64.rs": {
+    "sha256": "1dcb0b52d93772840882dd93b332f48d6d89db9d8caa9e4fac1729ee32b0eca4",
+    "size_bytes": 66822
+  },
+  "rust-source-snapshot/crates/sto-masstree/src/history_tests.rs": {
+    "sha256": "fb8dad05ac4838e882c74e401d3f787ff43c75fc6a3ab7ad99e816333213f5c9",
+    "size_bytes": 43841
+  },
+  "rust-source-snapshot/crates/sto-masstree/src/lib.rs": {
+    "sha256": "240a75173b6ee618243c53ed5bf543dd42b9a3ef033b06a9b358cc58d7bf492c",
+    "size_bytes": 784308
+  },
+  "rust-source-snapshot/crates/sto-masstree/src/record_prefetch.rs": {
+    "sha256": "7072fd4e0c3c3907de63eac8c3ab7a62c367fe02485a1ab5a62410d6797011ca",
+    "size_bytes": 2050
+  },
+  "rust-source-snapshot/crates/sto-masstree/src/registry_growth_tests.rs": {
+    "sha256": "f8d0ed43e27e241cbfc9d08391ff81ea676d51c8464a4feee822f0f617963e7c",
+    "size_bytes": 21747
+  },
+  "rust-source-snapshot/crates/sto-masstree/tests/history_oracle.rs": {
+    "sha256": "f0757156e6677df7862cb2fde2bb1766fa90bfb7dc3206ce2b2df681d91bae9a",
+    "size_bytes": 46698
+  },
+  "rust-source-snapshot/crates/sto-masstree/tests/native_integration.rs": {
+    "sha256": "abdccef466d814711766660c9402739e92d139c2f4f89e1192d3504b8e67851d",
+    "size_bytes": 56971
+  },
+  "rust-source-snapshot/crates/sto-masstree/tests/public_contract.rs": {
+    "sha256": "8b1ad6fa277909307d57438b121398edb3c34c026cd284474859667e524a6806",
+    "size_bytes": 8371
+  },
+  "rust-source-snapshot/crates/sto-test-datatypes/Cargo.toml": {
+    "sha256": "450f762ca3bc08e06c357ee9202140849725306d12815688e93508a57c404df4",
+    "size_bytes": 292
+  },
+  "rust-source-snapshot/crates/sto-test-datatypes/README.md": {
+    "sha256": "978661a6c4df979394abed7c0bd4fe00da8f6bc08c2a8a9c651c6337a76b918b",
+    "size_bytes": 2725
+  },
+  "rust-source-snapshot/crates/sto-test-datatypes/src/hash_map.rs": {
+    "sha256": "c80e345a0137401781edf9e1e7452b2667b596d3c2eaffd312f469c862f4539a",
+    "size_bytes": 22163
+  },
+  "rust-source-snapshot/crates/sto-test-datatypes/src/lib.rs": {
+    "sha256": "f06e704eaff47ea711757c44387afc1583b226057764af05621f314c4b747183",
+    "size_bytes": 481
+  },
+  "rust-source-snapshot/crates/sto-test-datatypes/src/queue.rs": {
+    "sha256": "ad151dd08735e15866c7e702db253d43aac34cadc8eee51e3641514d470dd576",
+    "size_bytes": 8697
+  },
+  "rust-source-snapshot/crates/sto-test-datatypes/src/snapshot.rs": {
+    "sha256": "773dc5e44cd85ecb6610ebda871ca4db2e9d6e060029aee74ff13a9987adadf6",
+    "size_bytes": 11258
+  },
+  "rust-source-snapshot/crates/sto-test-datatypes/src/vector.rs": {
+    "sha256": "4fe0e7a7ffc86cb50634c4cc2c8caf3655872df87edf10f701f9ef59dbc8934f",
+    "size_bytes": 6877
+  },
+  "rust-source-snapshot/crates/sto-test-datatypes/tests/composition.rs": {
+    "sha256": "9cdea385b746ef626bc7de7f77ccbc836411f2298d9bb959e53477bd0d1d5458",
+    "size_bytes": 2559
+  },
+  "rust-source-snapshot/crates/sto-test-datatypes/tests/conflicts.rs": {
+    "sha256": "ae9779b16400bfb65365b6bb3a7f8e9c16e369cfa8a28a6d57f2b8808e977a71",
+    "size_bytes": 7483
+  },
+  "rust-source-snapshot/crates/sto-test-datatypes/tests/isolation_litmus.rs": {
+    "sha256": "a60d14fd972fc624ce7d31993914b0e4fb122c7bdc8cdc2a6d40e8c57fd1d8c7",
+    "size_bytes": 8147
+  },
+  "rust-source-snapshot/crates/sto-test-datatypes/tests/public_contract.rs": {
+    "sha256": "7943dc5c633bf873d4a9166ebad0a409a701287ea46c3bb420cd3da5dcdb7335",
+    "size_bytes": 5565
+  },
+  "rust-source-snapshot/crates/sto-test-datatypes/tests/reference_histories.rs": {
+    "sha256": "dba9c038b980ebfc82901d475c707d0dffe678acfe266661e8bf02895637f91e",
+    "size_bytes": 4002
+  },
+  "rust-source-snapshot/crates/sto-test-datatypes/tests/strict_serializability.rs": {
+    "sha256": "91d535d61a1c63cf4a57128474912f484a1754f22140abd76bdca99da6e79124",
+    "size_bytes": 27485
+  },
+  "rust-source-snapshot/crates/sto-test-datatypes/tests/unwind_containment.rs": {
+    "sha256": "fa76da0e021a690528437d80fecc3c679d9cc4451cae837256ca2fafa39b04bd",
+    "size_bytes": 4623
+  },
+  "rust-source-snapshot/crates/sto-tpcc-ffi/Cargo.toml": {
+    "sha256": "994257b7fcbb7878f8c3e7dc88924097761378b337d44a78c175588828aed73a",
+    "size_bytes": 404
+  },
+  "rust-source-snapshot/crates/sto-tpcc-ffi/build.rs": {
+    "sha256": "f43e15a725be50be64c6ab8b82e7ee7d8ee5c772535d9526c2eb0057fa636100",
+    "size_bytes": 478
+  },
+  "rust-source-snapshot/crates/sto-tpcc-ffi/include/sto_tpcc_ffi.h": {
+    "sha256": "02784bf42e825cdf060117969d13e7b50bdaea9a737d241d9a981ebdab9ae7ee",
+    "size_bytes": 20033
+  },
+  "rust-source-snapshot/crates/sto-tpcc-ffi/src/lib.rs": {
+    "sha256": "7959323efa1fc8c1bc60e5f9ea958c2e6b676a23b2af4754d5ab7565fb62e243",
+    "size_bytes": 391659
+  },
+  "rust-source-snapshot/crates/sto-tpcc-ffi/tests/capacity.rs": {
+    "sha256": "6ba5b53f7dc251bbcfa515c5b6d0f716523a8dee3374895521199869c8951d9d",
+    "size_bytes": 8695
+  },
+  "rust-source-snapshot/crates/sto-tpcc-ffi/tests/cpp_wrapper_fixed_read_smoke.cc": {
+    "sha256": "a37cfd53eda493b61aa3ce692da0f65f0c5511313946952308dbf75748bed5b4",
+    "size_bytes": 50782
+  },
+  "rust-source-snapshot/crates/sto-tpcc-ffi/tests/cpp_wrapper_scan_smoke.cc": {
+    "sha256": "591d859adffd7c693fcfd663411dffa20b7e9ac1e8a2475cdaef5e28b5668a61",
+    "size_bytes": 5615
+  },
+  "rust-source-snapshot/crates/sto-tpcc-ffi/tests/delivery_full.rs": {
+    "sha256": "db5496489e58431fc9b9a9d65ec7021f9b6c3e505f45a9c673b7524cf8cd418b",
+    "size_bytes": 12538
+  },
+  "rust-source-snapshot/crates/sto-tpcc-ffi/tests/native_ffi.rs": {
+    "sha256": "c76b7c77cb58ed5157215b031ca1cdced967f92bd569c8b979e7967adddb769f",
+    "size_bytes": 46022
+  },
+  "rust-source-snapshot/crates/sto-tpcc-ffi/tests/new_order_full.rs": {
+    "sha256": "e2ef3869fc53a807568cd9e256521aa4882043ecaecedbbe0a3fdfe34135f924",
+    "size_bytes": 16994
+  },
+  "rust-source-snapshot/crates/sto-tpcc-ffi/tests/payment_full.rs": {
+    "sha256": "5085384cc8c16d37ae221a2f544c52c17cccba2117e173a47cbb5ad865ad7e89",
+    "size_bytes": 14025
+  },
+  "rust-source-snapshot/crates/sto-tpcc-ffi/tests/payment_prefix.rs": {
+    "sha256": "a16909ef860aacbe7a12b4687f17cc5b317288a12443482a8a7603fc68e337d1",
+    "size_bytes": 13802
+  },
+  "rust-source-snapshot/crates/sto-tpcc-ffi/tests/stock_level_full.rs": {
+    "sha256": "a8ba102b6029e3f850adcbc67b31175dcdf71225b711763397389022d7614de1",
+    "size_bytes": 12456
+  },
+  "rust-source-snapshot/crates/sto-tpcc-ffi/tests/trusted_ffi.rs": {
+    "sha256": "5f7b379074508c1c9bc4f195d2d56c633b9e0d1889b96aa6324ef97c2b056834",
+    "size_bytes": 13236
+  },
+  "rustc-version.txt": {
+    "sha256": "4fdff2578428e9c5c08ddd7a0d3079c1a106b1cdaa46e73e46f7cd32b0fb9cad",
+    "size_bytes": 196
+  },
+  "source-sha256-after.json": {
+    "sha256": "061ea9efde056f881f37551f96742251cc1103a6a09f5048d432f38108b56cf4",
+    "size_bytes": 956843
+  },
+  "source-sha256-before.json": {
+    "sha256": "061ea9efde056f881f37551f96742251cc1103a6a09f5048d432f38108b56cf4",
+    "size_bytes": 956843
+  },
+  "source-status.txt": {
+    "sha256": "e22c06d9f85dd1d1a8fc755161443dc149a321fa79b344385089b2597f49135b",
+    "size_bytes": 110
+  },
+  "source.patch": {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "size_bytes": 0
+  },
+  "status.json": {
+    "sha256": "3758eccd6347b846a85994f9af8c23487dfddccf8e8b0442a118c98891c4b0e0",
+    "size_bytes": 172
+  },
+  "sto_tpcc_bench": {
+    "sha256": "3e32ba7d47a6de1b080d14cdc4955d04ecee0ece32a969a2dcfdf3925a2e31fe",
+    "size_bytes": 84905808
+  },
+  "test_sto_tpcc_rust_concurrent_resource_exhausted-relinked.log": {
+    "sha256": "7fe9313cb65ff37c738a954430703d6c3f4a7b0b4b0a337684f5de4ce67fb212",
+    "size_bytes": 74205
+  },
+  "test_sto_tpcc_rust_load_resource_exhausted-relinked.log": {
+    "sha256": "3ede23e5a03d37698d1f79b306a494345e947d6ea52a82f345b1a47a5db83f35",
+    "size_bytes": 19767
+  },
+  "test_sto_tpcc_rust_run_resource_exhausted-relinked.log": {
+    "sha256": "4da74833c8d79d91439b1200baa9641002d44c80dd9e5ee4d0be8c5b8b071be1",
+    "size_bytes": 33279
+  },
+  "test_sto_tpcc_rust_startup_resource_exhausted-relinked.log": {
+    "sha256": "9215041fd25885e567dea1abd1247f6f2badf068f14d937f19962b8817fd56fd",
+    "size_bytes": 1873
+  }
+}

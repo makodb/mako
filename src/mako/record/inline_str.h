@@ -46,10 +46,8 @@ public:
   {
     if (this == &that)
       return *this;
-    // Defense-in-depth clamp: the source struct is sometimes constructed by
-    // reinterpret_cast'ing a raw byte buffer (see
-    // serializer<inline_str_8<N>, true>::read in serializer.h, which does
-    // `*obj = *p` where `p = (T*)buf` points into a database-supplied page).
+    // Defense-in-depth clamp: an optimistic read can temporarily expose a
+    // source struct whose length byte is inconsistent with its fixed buffer.
     // If the page is corrupted upstream (as we hit on 2026-04-25 — a 4-byte
     // heap overflow in client.cc's InvokeInstall produced a customer row
     // whose c_first.sz byte happened to read 106), an unchecked memcpy of
@@ -288,6 +286,154 @@ operator<<(std::ostream &o, const inline_str_fixed<N, FillChar> &s)
   return o;
 }
 
+// The record format historically advances by sizeof(T) for the concrete
+// inline-string wrappers, even though variable strings only populate their
+// length prefix and live characters. Decode their logical fields explicitly:
+// treating a byte stream as a nontrivial C++ object would violate object
+// lifetime rules.
+template <typename String, typename SizeType, unsigned int N>
+struct fixed_layout_inline_str_serializer {
+  typedef String obj_type;
+
+  static_assert(alignof(obj_type) == 1,
+                "inline string wire values must remain byte-aligned");
+  static_assert(sizeof(obj_type) == sizeof(SizeType) + N + 1,
+                "inline string layout changed");
+
+  static inline uint8_t *
+  write(uint8_t *buf, const obj_type &obj)
+  {
+    const size_t size = obj.size() > N ? N : obj.size();
+    const SizeType wire_size = static_cast<SizeType>(size);
+    NDB_MEMCPY(buf, &wire_size, sizeof(wire_size));
+    NDB_MEMCPY(buf + sizeof(wire_size), obj.data(), size);
+    return buf + sizeof(obj_type);
+  }
+
+  static inline const uint8_t *
+  read(const uint8_t *buf, obj_type *obj)
+  {
+    SizeType wire_size;
+    NDB_MEMCPY(&wire_size, buf, sizeof(wire_size));
+    const size_t size = wire_size > N ? N : wire_size;
+    obj->assign(reinterpret_cast<const char *>(buf + sizeof(wire_size)), size);
+    return buf + sizeof(obj_type);
+  }
+
+  static inline const uint8_t *
+  failsafe_read(const uint8_t *buf, size_t nbytes, obj_type *obj)
+  {
+    if (unlikely(nbytes < sizeof(obj_type)))
+      return nullptr;
+    SizeType wire_size;
+    NDB_MEMCPY(&wire_size, buf, sizeof(wire_size));
+    if (unlikely(wire_size > N))
+      return nullptr;
+    obj->assign(reinterpret_cast<const char *>(buf + sizeof(wire_size)),
+                wire_size);
+    return buf + sizeof(obj_type);
+  }
+
+  static inline size_t
+  nbytes(const obj_type *)
+  {
+    return sizeof(obj_type);
+  }
+
+  static inline size_t
+  skip(const uint8_t *stream, uint8_t *rawv)
+  {
+    if (rawv)
+      NDB_MEMCPY(rawv, stream, sizeof(obj_type));
+    return sizeof(obj_type);
+  }
+
+  static inline size_t
+  failsafe_skip(const uint8_t *stream, size_t nbytes, uint8_t *rawv)
+  {
+    if (unlikely(nbytes < sizeof(obj_type)))
+      return 0;
+    return skip(stream, rawv);
+  }
+
+  static inline constexpr size_t
+  max_nbytes()
+  {
+    return sizeof(obj_type);
+  }
+};
+
+template <unsigned int N, bool Compress>
+struct serializer<inline_str_8<N>, Compress>
+  : fixed_layout_inline_str_serializer<inline_str_8<N>, uint8_t, N> {};
+
+template <unsigned int N, bool Compress>
+struct serializer<inline_str_16<N>, Compress>
+  : fixed_layout_inline_str_serializer<inline_str_16<N>, uint16_t, N> {};
+
+template <typename String, unsigned int N>
+struct fixed_layout_char_serializer {
+  typedef String obj_type;
+
+  static_assert(alignof(obj_type) == 1,
+                "fixed inline string wire values must remain byte-aligned");
+  static_assert(sizeof(obj_type) == N, "fixed inline string layout changed");
+
+  static inline uint8_t *
+  write(uint8_t *buf, const obj_type &obj)
+  {
+    NDB_MEMCPY(buf, obj.data(), N);
+    return buf + sizeof(obj_type);
+  }
+
+  static inline const uint8_t *
+  read(const uint8_t *buf, obj_type *obj)
+  {
+    obj->assign(reinterpret_cast<const char *>(buf), N);
+    return buf + sizeof(obj_type);
+  }
+
+  static inline const uint8_t *
+  failsafe_read(const uint8_t *buf, size_t nbytes, obj_type *obj)
+  {
+    if (unlikely(nbytes < sizeof(obj_type)))
+      return nullptr;
+    return read(buf, obj);
+  }
+
+  static inline size_t
+  nbytes(const obj_type *)
+  {
+    return sizeof(obj_type);
+  }
+
+  static inline size_t
+  skip(const uint8_t *stream, uint8_t *rawv)
+  {
+    if (rawv)
+      NDB_MEMCPY(rawv, stream, sizeof(obj_type));
+    return sizeof(obj_type);
+  }
+
+  static inline size_t
+  failsafe_skip(const uint8_t *stream, size_t nbytes, uint8_t *rawv)
+  {
+    if (unlikely(nbytes < sizeof(obj_type)))
+      return 0;
+    return skip(stream, rawv);
+  }
+
+  static inline constexpr size_t
+  max_nbytes()
+  {
+    return sizeof(obj_type);
+  }
+};
+
+template <unsigned int N, char FillChar, bool Compress>
+struct serializer<inline_str_fixed<N, FillChar>, Compress>
+  : fixed_layout_char_serializer<inline_str_fixed<N, FillChar>, N> {};
+
 // serializer<T> specialization
 template <typename IntSizeType, unsigned int N, bool Compress>
 struct serializer< inline_str_base<IntSizeType, N>, Compress > {
@@ -295,7 +441,7 @@ struct serializer< inline_str_base<IntSizeType, N>, Compress > {
   static inline uint8_t *
   write(uint8_t *buf, const obj_type &obj)
   {
-    buf = serializer<IntSizeType, Compress>::write(buf, &obj.sz);
+    buf = serializer<IntSizeType, Compress>::write(buf, obj.sz);
     NDB_MEMCPY(buf, &obj.buf[0], obj.sz);
     return buf + obj.sz;
   }
@@ -316,16 +462,19 @@ struct serializer< inline_str_base<IntSizeType, N>, Compress > {
   static const uint8_t *
   failsafe_read(const uint8_t *buf, size_t nbytes, obj_type *obj)
   {
+    IntSizeType wire_size;
     const uint8_t * const hdrbuf =
-      serializer<IntSizeType, Compress>::failsafe_read(buf, nbytes, &obj->sz);
+      serializer<IntSizeType, Compress>::failsafe_read(
+          buf, nbytes, &wire_size);
     if (unlikely(!hdrbuf))
       return nullptr;
     nbytes -= (hdrbuf - buf);
-    if (nbytes < obj->sz)
+    if (unlikely(wire_size > N || nbytes < wire_size))
       return nullptr;
+    obj->sz = wire_size;
     buf = hdrbuf;
-    NDB_MEMCPY(&obj->buf[0], buf, obj->sz);
-    return buf + obj->sz;
+    NDB_MEMCPY(&obj->buf[0], buf, wire_size);
+    return buf + wire_size;
   }
 
   static inline size_t
@@ -354,7 +503,7 @@ struct serializer< inline_str_base<IntSizeType, N>, Compress > {
     if (unlikely(!body))
       return 0;
     nbytes -= (body - stream);
-    if (unlikely(nbytes < sz))
+    if (unlikely(sz > N || nbytes < sz))
       return 0;
     const size_t totalsz = (body - stream) + sz;
     if (oldv)
@@ -365,7 +514,7 @@ struct serializer< inline_str_base<IntSizeType, N>, Compress > {
   static inline constexpr size_t
   max_nbytes()
   {
-    return serializer<IntSizeType, Compress>::max_bytes() + N;
+    return serializer<IntSizeType, Compress>::max_nbytes() + N;
   }
 };
 

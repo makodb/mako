@@ -287,9 +287,7 @@ void startAndWait(int n, void *(*start_routine) (void *)) {
   for (int i = 0; i < n; ++i) {
     pthread_create(&tids[i], NULL, start_routine, (void*)(intptr_t)i);
   }
-  pthread_t advancer;
-  pthread_create(&advancer, NULL, Transaction::epoch_advancer, NULL);
-  pthread_detach(advancer);
+  Transaction::start_epoch_advancer();
 
   for (int i = 0; i < n; ++i) {
     pthread_join(tids[i], NULL);

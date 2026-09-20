@@ -8,7 +8,22 @@ cmake_minimum_required(VERSION 3.30)
 # into no-ops via the header guard. The UUID gates CMake's
 # experimental `import std;` materialization and must be set BEFORE
 # `project()`.
-set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "451f2fe2-a8a2-47c3-bc32-94786d8fc91b")
+# CMake intentionally rotates this experimental gate. Keep the established
+# 3.30/3.31 value while accepting the CMake 4.4 gate used by current developer
+# environments.
+if(CMAKE_VERSION VERSION_GREATER_EQUAL "4.4")
+    set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "f35a9ac6-8463-4d38-8eec-5d6008153e7d")
+elseif(CMAKE_VERSION VERSION_GREATER_EQUAL "4.3")
+    set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "451f2fe2-a8a2-47c3-bc32-94786d8fc91b")
+elseif(CMAKE_VERSION VERSION_GREATER_EQUAL "4.0.3")
+    set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "d0edc3af-4c50-42ea-a356-e2862fe7a444")
+elseif(CMAKE_VERSION VERSION_GREATER_EQUAL "4.0")
+    set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "a9e1cf81-9932-4810-974b-6eccaf14e457")
+elseif(CMAKE_VERSION VERSION_GREATER_EQUAL "3.31.8")
+    set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "d0edc3af-4c50-42ea-a356-e2862fe7a444")
+else()
+    set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "0e5b6991-d74f-4b3d-a41c-cf096e0b2508")
+endif()
 
 # Suppress CMake policy warnings for deprecated modules
 # CMP0167: FindBoost module is removed in CMake 3.30+, but we still support older CMake
@@ -95,7 +110,12 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # can find the right libc++ at runtime too. apt.llvm.org installs are
 # unaffected — clang-21 there ships in /usr/bin and uses the matching
 # /usr/lib/llvm-21/lib/libc++.so via its built-in search.
-get_filename_component(MAKO_CLANG_BINDIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
+# Resolve Homebrew's bin/clang++ symlink before deriving the keg root.  CMake
+# preserves an explicitly supplied symlink path (for example
+# ~/.linuxbrew/bin/clang++), whose parent is not the versioned LLVM keg and
+# therefore cannot supply the matching libc++.
+get_filename_component(MAKO_CLANG_REALPATH "${CMAKE_CXX_COMPILER}" REALPATH)
+get_filename_component(MAKO_CLANG_BINDIR "${MAKO_CLANG_REALPATH}" DIRECTORY)
 get_filename_component(MAKO_CLANG_ROOT "${MAKO_CLANG_BINDIR}" DIRECTORY)
 set(MAKO_BREW_LIBCXX_FLAGS "")
 if(EXISTS "${MAKO_CLANG_ROOT}/lib/libc++.so")
@@ -141,6 +161,13 @@ endif()
 if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-stdlib=libc++>)
     add_link_options(-stdlib=libc++ -lc++abi)
+    # Also apply the detected keg path after project() so an existing build
+    # tree picks it up; *_FLAGS_INIT only initializes a fresh CMake cache.
+    if(MAKO_BREW_LIBCXX_FLAGS)
+        separate_arguments(MAKO_BREW_LIBCXX_OPTIONS NATIVE_COMMAND
+            "${MAKO_BREW_LIBCXX_FLAGS}")
+        add_link_options(${MAKO_BREW_LIBCXX_OPTIONS})
+    endif()
 endif()
 
 # `std_compat.hpp` does `import std;` at the bottom of its 90-line
@@ -290,9 +317,25 @@ foreach(_rusty_port_target IN ITEMS
 endforeach()
 
 # RUST
+find_program(MAKO_CARGO_EXECUTABLE NAMES cargo)
+if(MAKO_CARGO_EXECUTABLE)
+    set(_MAKO_RUST_LIB_CARGO_EXECUTABLE "${MAKO_CARGO_EXECUTABLE}")
+else()
+    # Preserve configure-only and non-Rust target support on hosts without
+    # Cargo. The pre-existing rust_build target will fail at build time if it
+    # is selected without Cargo on PATH.
+    set(_MAKO_RUST_LIB_CARGO_EXECUTABLE cargo)
+endif()
+set(MAKO_RUST_STO_RUSTUP_TOOLCHAIN "" CACHE STRING
+    "Rustup toolchain for Cargo targets selected by Rust STO sanitizer builds")
+
 # Respect CARGO_TARGET_DIR environment variable if set (for Docker builds)
 if(DEFINED ENV{CARGO_TARGET_DIR})
-    set(RUST_LIB_TARGET_BASE "$ENV{CARGO_TARGET_DIR}")
+    if("$ENV{CARGO_TARGET_DIR}" STREQUAL "")
+        message(FATAL_ERROR "CARGO_TARGET_DIR must not be empty")
+    endif()
+    get_filename_component(RUST_LIB_TARGET_BASE "$ENV{CARGO_TARGET_DIR}"
+        ABSOLUTE BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/rust-lib")
     message(STATUS "Using CARGO_TARGET_DIR for rust-lib: ${RUST_LIB_TARGET_BASE}")
 else()
     set(RUST_LIB_TARGET_BASE "${CMAKE_CURRENT_SOURCE_DIR}/rust-lib/target")
@@ -300,15 +343,28 @@ endif()
 set(RUST_LIB_DIR "${RUST_LIB_TARGET_BASE}/release")
 set(RUST_LIB_NAME "rust_redis")
 set(RUST_LIB_PATH "${RUST_LIB_DIR}/lib${RUST_LIB_NAME}.a")
+set(_MAKO_RUST_LIB_TOOLCHAIN_ENV "")
+if(NOT "${MAKO_RUST_STO_RUSTUP_TOOLCHAIN}" STREQUAL "")
+    list(APPEND _MAKO_RUST_LIB_TOOLCHAIN_ENV
+        "RUSTUP_TOOLCHAIN=${MAKO_RUST_STO_RUSTUP_TOOLCHAIN}")
+endif()
+file(GLOB_RECURSE RUST_LIB_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/rust-lib/src/*.rs")
 
 # Use add_custom_command instead of add_custom_target to avoid rebuilding every time
 add_custom_command(
     OUTPUT ${RUST_LIB_PATH}
-    COMMAND cargo build --release
+    COMMAND "${CMAKE_COMMAND}" -E env
+        "CARGO_TARGET_DIR=${RUST_LIB_TARGET_BASE}"
+        ${_MAKO_RUST_LIB_TOOLCHAIN_ENV}
+        "${_MAKO_RUST_LIB_CARGO_EXECUTABLE}" build --release --locked
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/rust-lib
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/rust-lib/Cargo.toml
-            ${CMAKE_CURRENT_SOURCE_DIR}/rust-lib/src/lib.rs
+            ${CMAKE_CURRENT_SOURCE_DIR}/rust-lib/Cargo.lock
+            ${CMAKE_CURRENT_SOURCE_DIR}/rust-lib/build.rs
+            ${RUST_LIB_SOURCES}
     COMMENT "Building Rust library if needed"
+    VERBATIM
 )
 
 # Create a custom target that depends on the output
@@ -579,13 +635,35 @@ set(CXXFLAGS
 list(APPEND CXXFLAGS -DREUSE_FIBER)
 message(STATUS "Reuse fiber enabled")
 
-# AddressSanitizer (MAKO_ASAN=1 in env). Diagnostic toggle used to localize
+# Preserve sanitizer selection across CMake's automatic regeneration. Legacy
+# MAKO_*=0/1 environment toggles override the cached choice when explicitly
+# supplied; otherwise the cache is authoritative for the build directory.
+function(mako_resolve_build_toggle toggle description)
+    option(${toggle} "${description}" OFF)
+    if(DEFINED ENV{${toggle}})
+        if("$ENV{${toggle}}" STREQUAL "1")
+            set(${toggle} ON CACHE BOOL "${description}" FORCE)
+        elseif("$ENV{${toggle}}" STREQUAL "0")
+            set(${toggle} OFF CACHE BOOL "${description}" FORCE)
+        else()
+            message(FATAL_ERROR
+                "${toggle} environment value must be 0 or 1, got: "
+                "$ENV{${toggle}}")
+        endif()
+    endif()
+endfunction()
+
+mako_resolve_build_toggle(MAKO_ASAN "Build native targets with AddressSanitizer")
+mako_resolve_build_toggle(MAKO_UBSAN "Build native targets with UndefinedBehaviorSanitizer")
+mako_resolve_build_toggle(MAKO_TSAN "Build native targets with ThreadSanitizer")
+mako_resolve_build_toggle(MAKO_FUZZER "Build the Masstree libFuzzer target")
+
+# AddressSanitizer (MAKO_ASAN=1 in env or -DMAKO_ASAN=ON). Diagnostic toggle used to localize
 # the shard2ReplicationRaft stack-corruption crash. Forces libc malloc — ASan
 # replaces malloc/free, so we cannot also link jemalloc/tcmalloc. Adds
 # `-fno-omit-frame-pointer` so backtraces are accurate.
-set(MAKO_ASAN_ENABLED OFF)
-if(DEFINED ENV{MAKO_ASAN} AND "$ENV{MAKO_ASAN}" STREQUAL "1")
-    set(MAKO_ASAN_ENABLED ON)
+set(MAKO_ASAN_ENABLED ${MAKO_ASAN})
+if(MAKO_ASAN_ENABLED)
     message(STATUS "MAKO_ASAN=1: building with -fsanitize=address; forcing USE_MALLOC_MODE=0 (libc malloc), stripping -ljemalloc.")
     set(USE_MALLOC_MODE 0 CACHE STRING "Malloc mode forced to libc by MAKO_ASAN" FORCE)
     list(APPEND CXXFLAGS -fsanitize=address -fno-omit-frame-pointer)
@@ -597,9 +675,8 @@ endif()
 # UndefinedBehaviorSanitizer (MAKO_UBSAN=1 in env). Compatible with jemalloc
 # and with the other sanitizers in principle; we still keep them
 # independently configurable so the matrix runs cleanly.
-set(MAKO_UBSAN_ENABLED OFF)
-if(DEFINED ENV{MAKO_UBSAN} AND "$ENV{MAKO_UBSAN}" STREQUAL "1")
-    set(MAKO_UBSAN_ENABLED ON)
+set(MAKO_UBSAN_ENABLED ${MAKO_UBSAN})
+if(MAKO_UBSAN_ENABLED)
     message(STATUS "MAKO_UBSAN=1: building with -fsanitize=undefined.")
     list(APPEND CXXFLAGS -fsanitize=undefined -fno-omit-frame-pointer)
     list(APPEND LDFLAGS  -fsanitize=undefined)
@@ -609,12 +686,11 @@ endif()
 
 # ThreadSanitizer (MAKO_TSAN=1 in env). Like ASan, TSan replaces malloc and is
 # incompatible with jemalloc; force libc malloc. Mutually exclusive with ASan.
-set(MAKO_TSAN_ENABLED OFF)
-if(DEFINED ENV{MAKO_TSAN} AND "$ENV{MAKO_TSAN}" STREQUAL "1")
+set(MAKO_TSAN_ENABLED ${MAKO_TSAN})
+if(MAKO_TSAN_ENABLED)
     if(MAKO_ASAN_ENABLED)
         message(FATAL_ERROR "MAKO_TSAN=1 cannot be combined with MAKO_ASAN=1.")
     endif()
-    set(MAKO_TSAN_ENABLED ON)
     message(STATUS "MAKO_TSAN=1: building with -fsanitize=thread; forcing USE_MALLOC_MODE=0 (libc malloc), stripping -ljemalloc.")
     set(USE_MALLOC_MODE 0 CACHE STRING "Malloc mode forced to libc by MAKO_TSAN" FORCE)
     list(APPEND CXXFLAGS -fsanitize=thread -fno-omit-frame-pointer)
@@ -630,12 +706,12 @@ endif()
 # Implies MAKO_ASAN since the libFuzzer + ASan combo is the standard
 # pairing — incompatible with TSan because both instrumentations use
 # the same coverage hooks.
-set(MAKO_FUZZER_ENABLED OFF CACHE INTERNAL "Tier 6 libFuzzer build")
-if(DEFINED ENV{MAKO_FUZZER} AND "$ENV{MAKO_FUZZER}" STREQUAL "1")
+set(MAKO_FUZZER_ENABLED ${MAKO_FUZZER} CACHE INTERNAL
+    "Tier 6 libFuzzer build" FORCE)
+if(MAKO_FUZZER_ENABLED)
     if(MAKO_TSAN_ENABLED)
         message(FATAL_ERROR "MAKO_FUZZER=1 cannot be combined with MAKO_TSAN=1.")
     endif()
-    set(MAKO_FUZZER_ENABLED ON CACHE INTERNAL "Tier 6 libFuzzer build" FORCE)
     if(NOT MAKO_ASAN_ENABLED)
         set(MAKO_ASAN_ENABLED ON)
         message(STATUS "MAKO_FUZZER=1 implies MAKO_ASAN=1; enabling -fsanitize=address.")
@@ -702,16 +778,56 @@ endif()
 if(TRACKING_ROLLBACK)
   list(APPEND CXXFLAGS -DTRACKING_ROLLBACK)
 endif()
+# CMake spells BOOL values as ON/OFF, but an undefined C preprocessor token in
+# `#if` is zero. Materialize numeric values so enabling one of these options
+# actually enables its guarded code.
+foreach(_MAKO_BOOLEAN_DEFINE IN ITEMS STO_RMW HASHTABLE OPACITY)
+  if(${_MAKO_BOOLEAN_DEFINE})
+    set(${_MAKO_BOOLEAN_DEFINE}_VALUE 1)
+  else()
+    set(${_MAKO_BOOLEAN_DEFINE}_VALUE 0)
+  endif()
+endforeach()
+unset(_MAKO_BOOLEAN_DEFINE)
 list(APPEND CXXFLAGS
-  -DREAD_MY_WRITES=${STO_RMW}
-  -DHASHTABLE=${HASHTABLE}
-  -DSTO_OPACITY=${OPACITY}
+  -DREAD_MY_WRITES=${STO_RMW_VALUE}
+  -DHASHTABLE=${HASHTABLE_VALUE}
+  -DSTO_OPACITY=${OPACITY_VALUE}
 )
 # The `-include <masstree/config.h>` forced-include injects tokens at the start
 # of every TU. It must NOT be applied to C++20 named module files, which
 # require `module;` to be the first token. Kept as a separate flag and added
 # only to targets that actually use Masstree, skipping srpc module files.
 set(MASSTREE_FORCE_INCLUDE_FLAG -include ${MASSTREE_GENERATED_CONFIG_H})
+
+# Attach Masstree's generated config to real translation units, never to a
+# target. CMake forwards target compile options to its synthetic `std.cppm`
+# compilation; a forced include there precedes the required leading `module;`
+# declaration and makes a clean C++23 build ill-formed.
+function(mako_force_include_masstree_config)
+  foreach(_MASSTREE_CONFIG_SOURCE IN LISTS ARGN)
+    if(_MASSTREE_CONFIG_SOURCE MATCHES "[.](cppm|ixx|mpp)$")
+      message(FATAL_ERROR
+        "Masstree config cannot be force-included in module source: ${_MASSTREE_CONFIG_SOURCE}")
+    endif()
+    get_filename_component(_MASSTREE_CONFIG_SOURCE_ABS
+      "${_MASSTREE_CONFIG_SOURCE}" ABSOLUTE
+      BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+    # A translation unit can belong to more than one target (notably
+    # dbtest.cc). Source properties are shared by those uses, so append the
+    # force-include exactly once instead of growing duplicate `-include`
+    # arguments as helper calls accumulate.
+    get_property(_MASSTREE_CONFIG_ATTACHED
+      SOURCE "${_MASSTREE_CONFIG_SOURCE_ABS}"
+      PROPERTY MAKO_MASSTREE_CONFIG_ATTACHED)
+    if(NOT _MASSTREE_CONFIG_ATTACHED)
+      set_property(SOURCE "${_MASSTREE_CONFIG_SOURCE_ABS}" APPEND PROPERTY
+        COMPILE_OPTIONS ${MASSTREE_FORCE_INCLUDE_FLAG})
+      set_property(SOURCE "${_MASSTREE_CONFIG_SOURCE_ABS}" PROPERTY
+        MAKO_MASSTREE_CONFIG_ATTACHED TRUE)
+    endif()
+  endforeach()
+endfunction()
 
 if(DEFINED LESSER_OPACITY)
   list(APPEND CXXFLAGS -DLESSER_OPACITY=${LESSER_OPACITY})
@@ -929,6 +1045,7 @@ set(MAKO_SRCFILES
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/shardClient.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/server.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/storage/abstract_db.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/storage/mtree_abi.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/cluster_bootstrap.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/rocks_interface/client_service.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/rocks_interface/client_proxy.cc"
@@ -1188,7 +1305,8 @@ if(RAFT_BORROW_SRC)
         src/deptran
         ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
     )
-    target_compile_options(raft_borrow PUBLIC ${BENCH_CXXFLAGS} ${MASSTREE_FORCE_INCLUDE_FLAG})
+    target_compile_options(raft_borrow PUBLIC ${BENCH_CXXFLAGS})
+    mako_force_include_masstree_config(${RAFT_BORROW_SRC})
     target_compile_definitions(raft_borrow PUBLIC CONFIG_H="${CONFIG_H}")
 
     if(ENABLE_BORROW_CHECKING AND CPP_BORROW_CHECKER)
@@ -1273,7 +1391,8 @@ if(DEPTRAN_BORROW_SRC)
         ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
         third-party/yaml-cpp/include
     )
-    target_compile_options(deptran_borrow PUBLIC ${BENCH_CXXFLAGS} ${MASSTREE_FORCE_INCLUDE_FLAG})
+    target_compile_options(deptran_borrow PUBLIC ${BENCH_CXXFLAGS})
+    mako_force_include_masstree_config(${DEPTRAN_BORROW_SRC})
     target_compile_definitions(deptran_borrow PUBLIC CONFIG_H="${CONFIG_H}")
 
     # Add borrow checking for deptran files (same style as SRPC library)
@@ -1341,12 +1460,226 @@ target_include_directories(mako PUBLIC
     "${HOME}"
     "${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include"
 )
-target_compile_options(mako PUBLIC ${BENCH_CXXFLAGS} ${MASSTREE_FORCE_INCLUDE_FLAG})
+target_compile_options(mako PUBLIC ${BENCH_CXXFLAGS})
+mako_force_include_masstree_config(${MAKO_SRCFILES})
 target_compile_definitions(mako PUBLIC CONFIG_H=\"${CONFIG_H}\")
 # Inherit srpc module BMI paths from txlog_core_obj.
 target_link_libraries(mako PUBLIC txlog_core_obj masstree)
 target_include_directories(mako PUBLIC ${LIBEVENT_INCLUDE_DIRS})
 set_target_properties(mako PROPERTIES OUTPUT_NAME "mako")
+
+# Inspect the archive rather than trusting the ABI's self-reported symbol
+# fingerprint. The checker filters the static archive down to its externally
+# visible C `mt_*` surface, so unrelated C++ symbols from Mako do not make the
+# allowlist platform- or implementation-dependent.
+add_custom_target(check_mtree_abi_exports
+    COMMAND "${CMAKE_COMMAND}"
+        "-DMAKO_NM=${CMAKE_NM}"
+        "-DMAKO_ABI_ARTIFACT=$<TARGET_FILE:mako>"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckMtreeAbiExports.cmake"
+    DEPENDS mako
+    VERBATIM
+    COMMENT "Checking the native Masstree ABI exported-symbol allowlist"
+)
+
+# Rust's safe Masstree wrapper deliberately leaves the native ABI unresolved
+# in ordinary Cargo builds. This opt-in target first builds the authoritative
+# CMake archives (so mtree_abi.cc sees the exact same generated config and
+# compile definitions as Mako), then runs the downstream Rust integration
+# test against those archive paths. It is not part of ALL and does not make
+# Cargo a configure-time requirement for non-Rust builds.
+set(MAKO_MTREE_RUST_NATIVE_LIBS
+    "static=mako,static=masstree,dylib=c++,dylib=c++abi,dylib=numa,dylib=pthread"
+    CACHE STRING
+    "Comma-separated rustc native libraries for the Masstree ABI integration test"
+)
+set(MAKO_RUST_STO_TARGET_TRIPLE "" CACHE STRING
+    "Explicit Cargo target for Rust STO integration builds")
+option(MAKO_RUST_STO_BUILD_STD
+    "Rebuild the Rust standard library for Rust STO integration builds" OFF)
+option(MAKO_RUST_STO_WORKSPACE_NATIVE_LINK
+    "Link sanitizer-instrumented Rust workspace checks to native Masstree" OFF)
+set(MAKO_RUST_STO_SANITIZER_RUSTFLAGS "" CACHE STRING
+    "Rust flags confined to sanitizer-instrumented Rust STO test targets")
+set(MAKO_RUST_STO_SANITIZER_RUSTDOCFLAGS "" CACHE STRING
+    "Rustdoc flags confined to sanitizer-instrumented Rust STO test targets")
+set(MAKO_RUST_STO_CARGO_LINKER_ENV "" CACHE STRING
+    "Cargo target-linker environment name for Rust STO sanitizer targets")
+set(MAKO_RUST_STO_ASAN_NATIVE_QUARANTINE_TESTS "" CACHE STRING
+    "Exact native FFI tests run with ASan leak reporting disabled")
+set(MAKO_RUST_STO_ASAN_OPTIONS "" CACHE STRING
+    "ASan runtime options confined to Rust STO sanitizer targets")
+if(MAKO_RUST_STO_BUILD_STD AND MAKO_RUST_STO_TARGET_TRIPLE STREQUAL "")
+    message(FATAL_ERROR
+        "MAKO_RUST_STO_BUILD_STD requires MAKO_RUST_STO_TARGET_TRIPLE")
+endif()
+if(MAKO_RUST_STO_WORKSPACE_NATIVE_LINK
+        AND (MAKO_RUST_STO_TARGET_TRIPLE STREQUAL ""
+             OR NOT MAKO_RUST_STO_BUILD_STD))
+    message(FATAL_ERROR
+        "MAKO_RUST_STO_WORKSPACE_NATIVE_LINK is sanitizer-only and requires "
+        "MAKO_RUST_STO_TARGET_TRIPLE plus MAKO_RUST_STO_BUILD_STD=ON")
+endif()
+if(MAKO_RUST_STO_WORKSPACE_NATIVE_LINK
+        AND (MAKO_RUST_STO_SANITIZER_RUSTFLAGS STREQUAL ""
+             OR MAKO_RUST_STO_SANITIZER_RUSTDOCFLAGS STREQUAL ""))
+    message(FATAL_ERROR
+        "MAKO_RUST_STO_WORKSPACE_NATIVE_LINK requires explicit sanitizer "
+        "Rust and rustdoc flags")
+endif()
+if((MAKO_RUST_STO_SANITIZER_RUSTFLAGS STREQUAL ""
+        AND NOT MAKO_RUST_STO_SANITIZER_RUSTDOCFLAGS STREQUAL "")
+        OR (NOT MAKO_RUST_STO_SANITIZER_RUSTFLAGS STREQUAL ""
+            AND MAKO_RUST_STO_SANITIZER_RUSTDOCFLAGS STREQUAL ""))
+    message(FATAL_ERROR
+        "Rust STO sanitizer Rust and rustdoc flags must be set together")
+endif()
+set(_MAKO_RUST_STO_SCOPED_TOOLCHAIN_LINK_ENV "")
+set(_MAKO_RUST_STO_SCOPED_SANITIZER_ENV "")
+if(NOT MAKO_RUST_STO_SANITIZER_RUSTFLAGS STREQUAL "")
+    if(NOT MAKO_RUST_STO_CARGO_LINKER_ENV MATCHES
+            "^CARGO_TARGET_[A-Z0-9_]+_LINKER$")
+        message(FATAL_ERROR
+            "Rust STO sanitizer flags require an exact Cargo target-linker "
+            "environment name")
+    endif()
+    if(NOT CMAKE_C_COMPILER_ID MATCHES "^(AppleClang|Clang)$")
+        message(FATAL_ERROR
+            "Rust STO sanitizer targets require CMake's Clang C compiler "
+            "as their linker")
+    endif()
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "^(AppleClang|Clang)$")
+        message(FATAL_ERROR
+            "Rust STO sanitizer targets require CMake's Clang C++ compiler")
+    endif()
+    if(NOT CMAKE_C_COMPILER_ID STREQUAL CMAKE_CXX_COMPILER_ID)
+        message(FATAL_ERROR
+            "Rust STO sanitizer targets require C and C++ compilers from "
+            "the same Clang family; found ${CMAKE_C_COMPILER_ID} and "
+            "${CMAKE_CXX_COMPILER_ID}")
+    endif()
+    string(REGEX MATCH "^[0-9]+" _MAKO_RUST_STO_C_COMPILER_MAJOR
+        "${CMAKE_C_COMPILER_VERSION}")
+    string(REGEX MATCH "^[0-9]+" _MAKO_RUST_STO_CXX_COMPILER_MAJOR
+        "${CMAKE_CXX_COMPILER_VERSION}")
+    if(_MAKO_RUST_STO_C_COMPILER_MAJOR STREQUAL ""
+            OR _MAKO_RUST_STO_CXX_COMPILER_MAJOR STREQUAL ""
+            OR NOT _MAKO_RUST_STO_C_COMPILER_MAJOR STREQUAL
+                _MAKO_RUST_STO_CXX_COMPILER_MAJOR)
+        message(FATAL_ERROR
+            "Rust STO sanitizer targets require matching Clang C/C++ major "
+            "versions; found ${CMAKE_C_COMPILER_VERSION} and "
+            "${CMAKE_CXX_COMPILER_VERSION}")
+    endif()
+    if(MAKO_RUST_STO_BUILD_STD
+            AND MAKO_RUST_STO_RUSTUP_TOOLCHAIN STREQUAL "")
+        message(FATAL_ERROR
+            "Instrumented Rust standard-library builds require an explicit "
+            "MAKO_RUST_STO_RUSTUP_TOOLCHAIN")
+    endif()
+    list(APPEND _MAKO_RUST_STO_SCOPED_TOOLCHAIN_LINK_ENV
+        "${MAKO_RUST_STO_CARGO_LINKER_ENV}=${CMAKE_C_COMPILER}")
+    if(NOT MAKO_RUST_STO_RUSTUP_TOOLCHAIN STREQUAL "")
+        list(APPEND _MAKO_RUST_STO_SCOPED_TOOLCHAIN_LINK_ENV
+            "RUSTUP_TOOLCHAIN=${MAKO_RUST_STO_RUSTUP_TOOLCHAIN}")
+    endif()
+    set(_MAKO_RUST_STO_SCOPED_SANITIZER_ENV
+        ${_MAKO_RUST_STO_SCOPED_TOOLCHAIN_LINK_ENV}
+        "RUSTFLAGS=${MAKO_RUST_STO_SANITIZER_RUSTFLAGS}"
+        "RUSTDOCFLAGS=${MAKO_RUST_STO_SANITIZER_RUSTDOCFLAGS}")
+endif()
+set(_MAKO_RUST_STO_CARGO_PLATFORM_ARGS "")
+if(NOT MAKO_RUST_STO_TARGET_TRIPLE STREQUAL "")
+    list(APPEND _MAKO_RUST_STO_CARGO_PLATFORM_ARGS
+        --target "${MAKO_RUST_STO_TARGET_TRIPLE}")
+endif()
+if(MAKO_RUST_STO_BUILD_STD)
+    list(APPEND _MAKO_RUST_STO_CARGO_PLATFORM_ARGS -Zbuild-std)
+endif()
+if(MAKO_CARGO_EXECUTABLE)
+    get_filename_component(_MAKO_CXX_COMPILER_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
+    get_filename_component(_MAKO_CXX_COMPILER_ROOT "${_MAKO_CXX_COMPILER_DIR}" DIRECTORY)
+
+    if(APPLE)
+        set(_MAKO_MTREE_LOADER_PATH_VARIABLE "DYLD_LIBRARY_PATH")
+    else()
+        set(_MAKO_MTREE_LOADER_PATH_VARIABLE "LD_LIBRARY_PATH")
+    endif()
+
+    set(_MAKO_MASSTREE_NATIVE_TEST
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/masstree/tests/native_integration.rs")
+    set(_MAKO_STO_MASSTREE_NATIVE_TEST
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-masstree/tests/native_integration.rs")
+    set(_MAKO_STO_MASSTREE_HISTORY_TEST
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-masstree/tests/history_oracle.rs")
+    set(_MAKO_STO_TPCC_NATIVE_TEST
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-tpcc-ffi/tests/native_ffi.rs")
+    foreach(_MAKO_REQUIRED_NATIVE_TEST IN ITEMS
+            "${_MAKO_MASSTREE_NATIVE_TEST}"
+            "${_MAKO_STO_MASSTREE_NATIVE_TEST}"
+            "${_MAKO_STO_MASSTREE_HISTORY_TEST}"
+            "${_MAKO_STO_TPCC_NATIVE_TEST}")
+        if(NOT EXISTS "${_MAKO_REQUIRED_NATIVE_TEST}")
+            message(FATAL_ERROR
+                "Required Rust STO native integration suite is missing: "
+                "${_MAKO_REQUIRED_NATIVE_TEST}")
+        endif()
+    endforeach()
+    unset(_MAKO_REQUIRED_NATIVE_TEST)
+
+    set(_MAKO_RUST_STO_NATIVE_SANITIZER_ARGS "")
+    if(NOT MAKO_RUST_STO_SANITIZER_RUSTFLAGS STREQUAL "")
+        list(APPEND _MAKO_RUST_STO_NATIVE_SANITIZER_ARGS
+            "-DMAKO_RUSTFLAGS=${MAKO_RUST_STO_SANITIZER_RUSTFLAGS}"
+            "-DMAKO_RUSTDOCFLAGS=${MAKO_RUST_STO_SANITIZER_RUSTDOCFLAGS}"
+            "-DMAKO_RUSTUP_TOOLCHAIN=${MAKO_RUST_STO_RUSTUP_TOOLCHAIN}"
+            "-DMAKO_RUST_LINKER_ENV_NAME=${MAKO_RUST_STO_CARGO_LINKER_ENV}"
+            "-DMAKO_RUST_LINKER=${CMAKE_C_COMPILER}")
+    endif()
+    if(NOT MAKO_RUST_STO_ASAN_NATIVE_QUARANTINE_TESTS STREQUAL "")
+        list(APPEND _MAKO_RUST_STO_NATIVE_SANITIZER_ARGS
+            "-DMAKO_ASAN_NATIVE_QUARANTINE_TESTS=${MAKO_RUST_STO_ASAN_NATIVE_QUARANTINE_TESTS}")
+    endif()
+    if(NOT MAKO_RUST_STO_ASAN_OPTIONS STREQUAL "")
+        list(APPEND _MAKO_RUST_STO_NATIVE_SANITIZER_ARGS
+            "-DMAKO_ASAN_OPTIONS=${MAKO_RUST_STO_ASAN_OPTIONS}")
+    endif()
+    set(_MAKO_RUST_STO_NATIVE_PLATFORM_ARGS "")
+    if(NOT MAKO_RUST_STO_TARGET_TRIPLE STREQUAL "")
+        list(APPEND _MAKO_RUST_STO_NATIVE_PLATFORM_ARGS
+            "-DMAKO_RUST_TARGET_TRIPLE=${MAKO_RUST_STO_TARGET_TRIPLE}")
+    endif()
+    if(MAKO_RUST_STO_BUILD_STD)
+        list(APPEND _MAKO_RUST_STO_NATIVE_PLATFORM_ARGS
+            "-DMAKO_RUST_BUILD_STD=ON")
+    endif()
+
+    add_custom_target(rust_masstree_native_integration
+        COMMAND "${CMAKE_COMMAND}"
+            "-DMAKO_CARGO_EXECUTABLE=${MAKO_CARGO_EXECUTABLE}"
+            "-DMAKO_RUST_MANIFEST=${CMAKE_CURRENT_SOURCE_DIR}/crates/Cargo.toml"
+            "-DMAKO_CARGO_TARGET_DIR=${CMAKE_CURRENT_BINARY_DIR}/rust-native-target"
+            "-DMAKO_ARCHIVE=$<TARGET_FILE:mako>"
+            "-DMASSTREE_ARCHIVE=$<TARGET_FILE:masstree>"
+            "-DMAKO_CXX_RUNTIME_DIR=${_MAKO_CXX_COMPILER_ROOT}/lib"
+            "-DMAKO_LOADER_PATH_VARIABLE=${_MAKO_MTREE_LOADER_PATH_VARIABLE}"
+            "-DMAKO_NATIVE_LIBS=${MAKO_MTREE_RUST_NATIVE_LIBS}"
+            ${_MAKO_RUST_STO_NATIVE_PLATFORM_ARGS}
+            ${_MAKO_RUST_STO_NATIVE_SANITIZER_ARGS}
+            "-DMAKO_MASSTREE_NATIVE_TEST=${_MAKO_MASSTREE_NATIVE_TEST}"
+            "-DMAKO_STO_NATIVE_TEST=${_MAKO_STO_MASSTREE_NATIVE_TEST}"
+            "-DMAKO_STO_HISTORY_TEST=${_MAKO_STO_MASSTREE_HISTORY_TEST}"
+            "-DMAKO_STO_TPCC_NATIVE_TEST=${_MAKO_STO_TPCC_NATIVE_TEST}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunRustMasstreeNativeIntegration.cmake"
+        DEPENDS check_mtree_abi_exports masstree
+        USES_TERMINAL
+        VERBATIM
+        COMMENT "Running Rust against CMake's native Masstree ABI"
+    )
+else()
+    message(STATUS
+        "Cargo not found; rust_masstree_native_integration target is unavailable")
+endif()
 
 # ============================================================================
 # BORROW CHECKER REGISTRATION SILO/STO
@@ -1435,7 +1768,8 @@ function(add_apps exec_name exec_path)
       ${CMAKE_CURRENT_SOURCE_DIR}
   )
 
-  target_compile_options(${exec_name} PRIVATE ${BENCH_CXXFLAGS} ${MASSTREE_FORCE_INCLUDE_FLAG}) # include all flags
+  target_compile_options(${exec_name} PRIVATE ${BENCH_CXXFLAGS}) # include all flags
+  mako_force_include_masstree_config(${exec_path})
 
   # Link dbtest against mako library and dependencies
   target_link_libraries(${exec_name}
@@ -1451,7 +1785,7 @@ function(add_apps exec_name exec_path)
       ${LIBEVENT_LDFLAGS}
       ${GFLAGS_LDFLAGS}
       ${PROTOBUF_LDFLAGS}
-      $<$<NOT:$<BOOL:${MAKO_ASAN_ENABLED}>>:${JEMALLOC_LDFLAGS}>
+      $<$<AND:$<NOT:$<BOOL:${MAKO_ASAN_ENABLED}>>,$<NOT:$<BOOL:${MAKO_TSAN_ENABLED}>>>:${JEMALLOC_LDFLAGS}>
   )
 
   # Add dependencies
@@ -1516,12 +1850,696 @@ add_apps(paxos_async_commit_test src/mako/benchmarks/paxos_async_commit_test.cc)
 add_apps(basic src/mako/benchmarks/ut/basic.cc)
 add_apps(rocksdbInterfaceTest examples/rocksdbInterfaceTest.cc)
 
+# Matched native STO/Masstree half of the Rust comparison benchmark. Keep it
+# opt-in and avoid the Rust application target. The existing mako target still
+# brings its public native dependency closure into this executable.
+add_executable(sto_masstree_cpp_bench EXCLUDE_FROM_ALL
+    src/mako/benchmarks/sto_masstree_compare.cc
+)
+target_include_directories(sto_masstree_cpp_bench PRIVATE
+    ${MASSTREE_CONFIG_INCLUDE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/mako
+    ${CMAKE_CURRENT_SOURCE_DIR}/${MASSTREE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/srpc
+    ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
+)
+target_compile_options(sto_masstree_cpp_bench PRIVATE
+    ${BENCH_CXXFLAGS}
+)
+mako_force_include_masstree_config(src/mako/benchmarks/sto_masstree_compare.cc)
+target_compile_definitions(sto_masstree_cpp_bench PRIVATE
+    CONFIG_H=\"${CONFIG_H}\"
+)
+target_link_libraries(sto_masstree_cpp_bench PRIVATE
+    mako
+    srpc
+    yaml-cpp
+    rocksdb
+    lz4
+    pthread
+    ${BENCH_LDFLAGS}
+    ${LIBEVENT_LDFLAGS}
+)
+
+# Matched TPC-C application with a selectable native C++ STO/Masstree or
+# Rust STO/Masstree storage backend. Both modes execute the same compiled
+# workload code; only the abstract_db implementation changes.
+if(MAKO_CARGO_EXECUTABLE)
+    set(STO_TPCC_RUST_TARGET_DIR
+        "${CMAKE_CURRENT_BINARY_DIR}/rust-sto-tpcc-target"
+        CACHE PATH "Cargo target directory for the Rust STO TPC-C static library")
+    set(STO_TPCC_RUST_EXTRA_RUSTFLAGS "" CACHE STRING
+        "Extra rustc flags appended when building the Rust STO TPC-C static library")
+    set(MAKO_RUST_STO_ASAN_QUARANTINE_TESTS "" CACHE STRING
+        "Exact intentional-quarantine tests skipped by the ASan workspace sweep")
+    set(_MAKO_RUST_STO_CONFIGURED_SANITIZER "")
+    if(STO_TPCC_RUST_EXTRA_RUSTFLAGS MATCHES
+            "(^|[ \t])-Zsanitizer=([^ \t]+)($|[ \t])")
+        set(_MAKO_RUST_STO_CONFIGURED_SANITIZER "${CMAKE_MATCH_2}")
+    endif()
+    if(NOT _MAKO_RUST_STO_CONFIGURED_SANITIZER STREQUAL ""
+            AND NOT MAKO_RUST_STO_WORKSPACE_NATIVE_LINK)
+        message(FATAL_ERROR
+            "Rust compiler sanitizer instrumentation requires "
+            "MAKO_RUST_STO_WORKSPACE_NATIVE_LINK=ON so workspace tests "
+            "cannot omit the native Masstree link closure")
+    endif()
+    if(MAKO_RUST_STO_WORKSPACE_NATIVE_LINK)
+        if(NOT _MAKO_RUST_STO_CONFIGURED_SANITIZER MATCHES
+                "^(address|thread)$")
+            message(FATAL_ERROR
+                "MAKO_RUST_STO_WORKSPACE_NATIVE_LINK requires address or "
+                "thread in STO_TPCC_RUST_EXTRA_RUSTFLAGS")
+        endif()
+        if(NOT MAKO_RUST_STO_SANITIZER_RUSTFLAGS MATCHES
+                "(^|[ \t])-Zsanitizer=${_MAKO_RUST_STO_CONFIGURED_SANITIZER}($|[ \t])"
+                OR NOT MAKO_RUST_STO_SANITIZER_RUSTFLAGS MATCHES
+                "(^|[ \t])-Zexternal-clangrt($|[ \t])")
+            message(FATAL_ERROR
+                "MAKO_RUST_STO_WORKSPACE_NATIVE_LINK requires matching "
+                "-Zsanitizer and -Zexternal-clangrt in RUSTFLAGS")
+        endif()
+    endif()
+    set(_MAKO_RUST_STO_WORKSPACE_TEST_ARGS "")
+    if(_MAKO_RUST_STO_CONFIGURED_SANITIZER STREQUAL "address")
+        if(MAKO_RUST_STO_ASAN_QUARANTINE_TESTS STREQUAL "")
+            message(FATAL_ERROR
+                "ASan requires an explicit "
+                "MAKO_RUST_STO_ASAN_QUARANTINE_TESTS allowlist")
+        endif()
+        if(MAKO_RUST_STO_ASAN_NATIVE_QUARANTINE_TESTS STREQUAL "")
+            message(FATAL_ERROR
+                "ASan requires an explicit "
+                "MAKO_RUST_STO_ASAN_NATIVE_QUARANTINE_TESTS allowlist")
+        endif()
+        if(NOT MAKO_RUST_STO_ASAN_OPTIONS MATCHES
+                "(^|:)detect_leaks=1(:|$)")
+            message(FATAL_ERROR
+                "ASan requires MAKO_RUST_STO_ASAN_OPTIONS with "
+                "detect_leaks=1")
+        endif()
+        list(APPEND _MAKO_RUST_STO_WORKSPACE_TEST_ARGS --)
+        foreach(_MAKO_RUST_STO_ASAN_QUARANTINE_TEST IN LISTS
+                MAKO_RUST_STO_ASAN_QUARANTINE_TESTS)
+            if(NOT _MAKO_RUST_STO_ASAN_QUARANTINE_TEST MATCHES
+                    "^[A-Za-z0-9_.:-]+$")
+                message(FATAL_ERROR
+                    "Invalid ASan quarantine test name: "
+                    "${_MAKO_RUST_STO_ASAN_QUARANTINE_TEST}")
+            endif()
+            list(APPEND _MAKO_RUST_STO_WORKSPACE_TEST_ARGS
+                --skip "${_MAKO_RUST_STO_ASAN_QUARANTINE_TEST}")
+        endforeach()
+        foreach(_MAKO_RUST_STO_ASAN_NATIVE_QUARANTINE_TEST IN LISTS
+                MAKO_RUST_STO_ASAN_NATIVE_QUARANTINE_TESTS)
+            if(NOT _MAKO_RUST_STO_ASAN_NATIVE_QUARANTINE_TEST MATCHES
+                    "^[A-Za-z0-9_.:-]+$")
+                message(FATAL_ERROR
+                    "Invalid native ASan quarantine test name: "
+                    "${_MAKO_RUST_STO_ASAN_NATIVE_QUARANTINE_TEST}")
+            endif()
+        endforeach()
+    elseif(NOT MAKO_RUST_STO_ASAN_QUARANTINE_TESTS STREQUAL ""
+            OR NOT MAKO_RUST_STO_ASAN_NATIVE_QUARANTINE_TESTS STREQUAL ""
+            OR NOT MAKO_RUST_STO_ASAN_OPTIONS STREQUAL "")
+        message(FATAL_ERROR
+            "Rust STO ASan quarantine allowlists are valid only for ASan")
+    endif()
+    set(_STO_TPCC_RUSTFLAGS
+        "-C target-cpu=native -C force-frame-pointers=yes")
+    if(NOT STO_TPCC_RUST_EXTRA_RUSTFLAGS STREQUAL "")
+        string(APPEND _STO_TPCC_RUSTFLAGS
+            " ${STO_TPCC_RUST_EXTRA_RUSTFLAGS}")
+    endif()
+    if(MAKO_RUST_STO_TARGET_TRIPLE STREQUAL "")
+        set(_STO_TPCC_RUST_PROFILE_DIR
+            "${STO_TPCC_RUST_TARGET_DIR}/release")
+    else()
+        set(_STO_TPCC_RUST_PROFILE_DIR
+            "${STO_TPCC_RUST_TARGET_DIR}/${MAKO_RUST_STO_TARGET_TRIPLE}/release")
+    endif()
+    set(STO_TPCC_RUST_ARCHIVE
+        "${_STO_TPCC_RUST_PROFILE_DIR}/libsto_tpcc_ffi.a")
+    set(STO_TPCC_RUST_MANIFESTS
+        "${CMAKE_CURRENT_SOURCE_DIR}/rust-toolchain.toml"
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/Cargo.toml"
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/masstree/Cargo.toml"
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/masstree/build.rs"
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/mtree-sys/Cargo.toml"
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-core/Cargo.toml"
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-masstree/Cargo.toml"
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-masstree/build.rs"
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-tpcc-ffi/Cargo.toml"
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-tpcc-ffi/build.rs")
+    file(GLOB_RECURSE STO_TPCC_RUST_SOURCES CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-tpcc-ffi/*.rs"
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-core/src/*.rs"
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-masstree/src/*.rs"
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/masstree/src/*.rs"
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/mtree-sys/src/*.rs")
+    add_custom_command(
+        OUTPUT "${STO_TPCC_RUST_ARCHIVE}"
+        COMMAND "${CMAKE_COMMAND}" -E env
+            --unset=CARGO_BUILD_TARGET
+            --unset=CARGO_ENCODED_RUSTFLAGS
+            ${_MAKO_RUST_STO_SCOPED_TOOLCHAIN_LINK_ENV}
+            "CARGO_TARGET_DIR=${STO_TPCC_RUST_TARGET_DIR}"
+            "CARGO_INCREMENTAL=0"
+            "CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1"
+            "CARGO_PROFILE_RELEASE_DEBUG=1"
+            "CARGO_PROFILE_RELEASE_LTO=fat"
+            "CARGO_PROFILE_RELEASE_OPT_LEVEL=3"
+            "CARGO_PROFILE_RELEASE_PANIC=unwind"
+            "RUSTFLAGS=${_STO_TPCC_RUSTFLAGS}"
+            "${MAKO_CARGO_EXECUTABLE}" build --release --locked
+            ${_MAKO_RUST_STO_CARGO_PLATFORM_ARGS}
+            --manifest-path "${CMAKE_CURRENT_SOURCE_DIR}/crates/Cargo.toml"
+            --package sto-tpcc-ffi
+        DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/crates/Cargo.lock"
+            ${STO_TPCC_RUST_MANIFESTS}
+            ${STO_TPCC_RUST_SOURCES}
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        USES_TERMINAL
+        VERBATIM
+        COMMENT "Building the Rust STO TPC-C C-ABI adapter")
+    add_custom_target(sto_tpcc_rust_build DEPENDS "${STO_TPCC_RUST_ARCHIVE}")
+    add_library(sto_tpcc_rust_ffi STATIC IMPORTED)
+    set_target_properties(sto_tpcc_rust_ffi PROPERTIES
+        IMPORTED_LOCATION "${STO_TPCC_RUST_ARCHIVE}")
+    add_dependencies(sto_tpcc_rust_ffi sto_tpcc_rust_build)
+
+    add_executable(sto_tpcc_bench EXCLUDE_FROM_ALL
+        src/mako/benchmarks/dbtest.cc
+        src/mako/storage/rust_sto_tpcc_wrapper.cc)
+    target_include_directories(sto_tpcc_bench PRIVATE
+        ${MASSTREE_CONFIG_INCLUDE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/mako
+        ${CMAKE_CURRENT_SOURCE_DIR}/${MASSTREE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/srpc
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-tpcc-ffi/include)
+    target_compile_options(sto_tpcc_bench PRIVATE
+        ${BENCH_CXXFLAGS})
+    mako_force_include_masstree_config(
+        src/mako/benchmarks/dbtest.cc
+        src/mako/storage/rust_sto_tpcc_wrapper.cc)
+    target_compile_definitions(sto_tpcc_bench PRIVATE
+        CONFIG_H="${CONFIG_H}"
+        MAKO_RUST_STO_TPCC=1)
+    target_link_libraries(sto_tpcc_bench PRIVATE
+        sto_tpcc_rust_ffi
+        mako
+        ${TXLOG_LINK_LIBS}
+        ${BENCH_LDFLAGS}
+        yaml-cpp
+        pthread
+        $<$<PLATFORM_ID:Linux>:util>
+        numa
+        event_pthreads
+        rocksdb
+        ${LIBEVENT_LDFLAGS}
+        ${GFLAGS_LDFLAGS}
+        ${PROTOBUF_LDFLAGS}
+        $<$<AND:$<NOT:$<BOOL:${MAKO_ASAN_ENABLED}>>,$<NOT:$<BOOL:${MAKO_TSAN_ENABLED}>>>:${JEMALLOC_LDFLAGS}>)
+    add_dependencies(sto_tpcc_bench mako sto_tpcc_rust_build ${TXLOG_BUILD_DEPS})
+
+    add_executable(sto_tpcc_cpp_wrapper_smoke EXCLUDE_FROM_ALL
+        crates/sto-tpcc-ffi/tests/cpp_wrapper_fixed_read_smoke.cc
+        src/mako/storage/rust_sto_tpcc_wrapper.cc)
+    target_include_directories(sto_tpcc_cpp_wrapper_smoke PRIVATE
+        ${MASSTREE_CONFIG_INCLUDE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/mako
+        ${CMAKE_CURRENT_SOURCE_DIR}/${MASSTREE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/srpc
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-tpcc-ffi/include)
+    target_compile_options(sto_tpcc_cpp_wrapper_smoke PRIVATE
+        ${BENCH_CXXFLAGS})
+    mako_force_include_masstree_config(
+        crates/sto-tpcc-ffi/tests/cpp_wrapper_fixed_read_smoke.cc
+        src/mako/storage/rust_sto_tpcc_wrapper.cc)
+    target_compile_definitions(sto_tpcc_cpp_wrapper_smoke PRIVATE
+        CONFIG_H="${CONFIG_H}"
+        MAKO_RUST_STO_TPCC=1
+        MAKO_RUST_STO_TEST_HOOKS=1)
+    target_link_libraries(sto_tpcc_cpp_wrapper_smoke PRIVATE
+        sto_tpcc_rust_ffi
+        mako
+        ${TXLOG_LINK_LIBS}
+        ${BENCH_LDFLAGS}
+        yaml-cpp
+        pthread
+        $<$<PLATFORM_ID:Linux>:util>
+        numa
+        event_pthreads
+        rocksdb
+        ${LIBEVENT_LDFLAGS}
+        ${GFLAGS_LDFLAGS}
+        ${PROTOBUF_LDFLAGS}
+        $<$<AND:$<NOT:$<BOOL:${MAKO_ASAN_ENABLED}>>,$<NOT:$<BOOL:${MAKO_TSAN_ENABLED}>>>:${JEMALLOC_LDFLAGS}>)
+    add_dependencies(sto_tpcc_cpp_wrapper_smoke
+        mako sto_tpcc_rust_build ${TXLOG_BUILD_DEPS})
+
+    add_executable(sto_tpcc_cpp_wrapper_scan_smoke EXCLUDE_FROM_ALL
+        crates/sto-tpcc-ffi/tests/cpp_wrapper_scan_smoke.cc
+        src/mako/storage/rust_sto_tpcc_wrapper.cc)
+    target_include_directories(sto_tpcc_cpp_wrapper_scan_smoke PRIVATE
+        ${MASSTREE_CONFIG_INCLUDE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/mako
+        ${CMAKE_CURRENT_SOURCE_DIR}/${MASSTREE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/srpc
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-tpcc-ffi/include)
+    target_compile_options(sto_tpcc_cpp_wrapper_scan_smoke PRIVATE
+        ${BENCH_CXXFLAGS})
+    mako_force_include_masstree_config(
+        crates/sto-tpcc-ffi/tests/cpp_wrapper_scan_smoke.cc
+        src/mako/storage/rust_sto_tpcc_wrapper.cc)
+    target_compile_definitions(sto_tpcc_cpp_wrapper_scan_smoke PRIVATE
+        CONFIG_H="${CONFIG_H}"
+        MAKO_RUST_STO_TPCC=1)
+    target_link_libraries(sto_tpcc_cpp_wrapper_scan_smoke PRIVATE
+        sto_tpcc_rust_ffi
+        mako
+        ${TXLOG_LINK_LIBS}
+        ${BENCH_LDFLAGS}
+        yaml-cpp
+        pthread
+        $<$<PLATFORM_ID:Linux>:util>
+        numa
+        event_pthreads
+        rocksdb
+        ${LIBEVENT_LDFLAGS}
+        ${GFLAGS_LDFLAGS}
+        ${PROTOBUF_LDFLAGS}
+        $<$<AND:$<NOT:$<BOOL:${MAKO_ASAN_ENABLED}>>,$<NOT:$<BOOL:${MAKO_TSAN_ENABLED}>>>:${JEMALLOC_LDFLAGS}>)
+    add_dependencies(sto_tpcc_cpp_wrapper_scan_smoke
+        mako sto_tpcc_rust_build ${TXLOG_BUILD_DEPS})
+else()
+    message(STATUS "Cargo not found; sto_tpcc_bench target is unavailable")
+endif()
+
 # ============================================================================
 # Test Configuration
 # ============================================================================
 
 # Enable testing
 enable_testing()
+
+add_test(NAME test_rocksdb_interface_lifecycle
+    COMMAND rocksdbInterfaceTest)
+set_tests_properties(test_rocksdb_interface_lifecycle PROPERTIES
+    LABELS "rocks;sto;masstree;lifecycle"
+    RUN_SERIAL TRUE
+    TIMEOUT 120)
+
+if(TARGET sto_tpcc_cpp_wrapper_smoke)
+    add_test(NAME test_sto_tpcc_cpp_wrapper_smoke
+        COMMAND sto_tpcc_cpp_wrapper_smoke
+            "${CMAKE_CURRENT_SOURCE_DIR}/config/mako_sto_tpcc_local.yml")
+    set_tests_properties(test_sto_tpcc_cpp_wrapper_smoke PROPERTIES
+        LABELS "sto;masstree;rust;ffi")
+endif()
+
+if(TARGET sto_tpcc_cpp_wrapper_scan_smoke)
+    add_test(NAME test_sto_tpcc_cpp_wrapper_scan_smoke
+        COMMAND sto_tpcc_cpp_wrapper_scan_smoke
+            "${CMAKE_CURRENT_SOURCE_DIR}/config/mako_sto_tpcc_local.yml")
+    set_tests_properties(test_sto_tpcc_cpp_wrapper_scan_smoke PROPERTIES
+        LABELS "sto;masstree;rust;ffi")
+endif()
+
+if(TARGET sto_tpcc_bench)
+    add_test(NAME test_sto_tpcc_cpp_slow_exit
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/ci/run_sto_tpcc_ctest.py"
+            --expected-engine cpp
+            --expected-threads 1
+            --expected-warehouses 1
+            --expected-seconds 1
+            --
+            "$<TARGET_FILE:sto_tpcc_bench>"
+            --num-threads 1
+            --shard-config "${CMAKE_CURRENT_SOURCE_DIR}/config/mako_sto_tpcc_local.yml"
+            --site-name local_s0
+            --runtime 1
+            --storage-engine cpp
+            --slow-exit)
+    set_tests_properties(test_sto_tpcc_cpp_slow_exit PROPERTIES
+        LABELS "sto;masstree;ffi;lifecycle;tpcc;cpp"
+        RUN_SERIAL TRUE
+        TIMEOUT 180)
+
+    add_test(NAME test_sto_tpcc_cpp_multishard_slow_exit
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/ci/run_sto_tpcc_ctest.py"
+            --expected-engine cpp
+            --expected-threads 1
+            --expected-warehouses 1
+            --expected-seconds 1
+            --expected-result-count 2
+            --
+            "$<TARGET_FILE:sto_tpcc_bench>"
+            --num-threads 1
+            --shard-config "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/config/local-shards2-warehouses1.yml"
+            --paxos-proc-name localhost
+            --local-shards 0,1
+            --runtime 1
+            --storage-engine cpp
+            --slow-exit)
+    set_tests_properties(test_sto_tpcc_cpp_multishard_slow_exit PROPERTIES
+        LABELS "sto;masstree;ffi;lifecycle;tpcc;cpp;multishard"
+        # Keep the timed phase on transaction classes that never follow remote
+        # table pointers. The inherited C++ MassTrans cross-partition payload
+        # race is documented separately in masstree-sanitizer-findings.md.
+        ENVIRONMENT "MAKO_TPCC_WORKLOAD_MIX=0,0,34,33,33"
+        RUN_SERIAL TRUE
+        TIMEOUT 240)
+
+    add_test(NAME test_sto_tpcc_rust_slow_exit
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/ci/run_sto_tpcc_ctest.py"
+            --expected-engine rust
+            --expected-threads 1
+            --expected-warehouses 1
+            --expected-seconds 1
+            --
+            "$<TARGET_FILE:sto_tpcc_bench>"
+            --num-threads 1
+            --shard-config "${CMAKE_CURRENT_SOURCE_DIR}/config/mako_sto_tpcc_local.yml"
+            --site-name local_s0
+            --runtime 1
+            --storage-engine rust
+            --slow-exit)
+    set_tests_properties(test_sto_tpcc_rust_slow_exit PROPERTIES
+        LABELS "sto;masstree;rust;ffi;lifecycle;tpcc"
+        RUN_SERIAL TRUE
+        TIMEOUT 180)
+
+    add_test(NAME test_sto_tpcc_rust_concurrent
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/ci/run_sto_tpcc_ctest.py"
+            --expected-engine rust
+            --expected-threads 4
+            --expected-warehouses 4
+            --expected-seconds 1
+            --
+            "$<TARGET_FILE:sto_tpcc_bench>"
+            --num-threads 4
+            --shard-config "${CMAKE_CURRENT_SOURCE_DIR}/config/mako_sto_tpcc_local.yml"
+            --site-name local_s0
+            --runtime 1
+            --storage-engine rust
+            --slow-exit)
+    set_tests_properties(test_sto_tpcc_rust_concurrent PROPERTIES
+        LABELS "sto;masstree;rust;ffi;lifecycle;tpcc;concurrency"
+        RUN_SERIAL TRUE
+        TIMEOUT 180)
+
+    # Exercise real process shutdown at each capacity-failure boundary. The
+    # runner requires exit 3 and rejects any successful TPCC_BENCH_RESULT.
+    foreach(_capacity_phase IN ITEMS startup load run)
+        add_test(NAME test_sto_tpcc_rust_${_capacity_phase}_resource_exhausted
+            COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/scripts/ci/run_sto_tpcc_ctest.py"
+                --expected-failure-text "TPCC_RESOURCE_EXHAUSTED phase=${_capacity_phase}"
+                --expected-exit-code 3
+                --
+                "$<TARGET_FILE:sto_tpcc_bench>"
+                --num-threads 1
+                --shard-config "${CMAKE_CURRENT_SOURCE_DIR}/config/mako_sto_tpcc_local.yml"
+                --site-name local_s0
+                --runtime 30
+                --storage-engine rust
+                --slow-exit)
+        set_tests_properties(test_sto_tpcc_rust_${_capacity_phase}_resource_exhausted
+            PROPERTIES
+            LABELS "sto;masstree;rust;ffi;lifecycle;tpcc;capacity"
+            RUN_SERIAL TRUE
+            TIMEOUT 240)
+    endforeach()
+    set_tests_properties(test_sto_tpcc_rust_startup_resource_exhausted PROPERTIES
+        ENVIRONMENT "MAKO_STO_TPCC_REGISTRY_MEMORY=1")
+    set_tests_properties(test_sto_tpcc_rust_load_resource_exhausted PROPERTIES
+        ENVIRONMENT "MAKO_STO_TPCC_MAX_RETAINED_RECORDS=1")
+    set_tests_properties(test_sto_tpcc_rust_run_resource_exhausted PROPERTIES
+        ENVIRONMENT "MAKO_STO_TPCC_MAX_RETAINED_RECORDS=350000;MAKO_TPCC_WORKLOAD_MIX=100,0,0,0,0")
+
+    add_test(NAME test_sto_tpcc_rust_concurrent_resource_exhausted
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/ci/run_sto_tpcc_ctest.py"
+            --expected-failure-text "TPCC_RESOURCE_EXHAUSTED phase=run"
+            --expected-exit-code 3
+            --
+            "$<TARGET_FILE:sto_tpcc_bench>"
+            --num-threads 4
+            --shard-config "${CMAKE_CURRENT_SOURCE_DIR}/config/mako_sto_tpcc_local.yml"
+            --site-name local_s0
+            --runtime 30
+            --storage-engine rust
+            --slow-exit)
+    set_tests_properties(test_sto_tpcc_rust_concurrent_resource_exhausted PROPERTIES
+        LABELS "sto;masstree;rust;ffi;lifecycle;tpcc;capacity;concurrency"
+        ENVIRONMENT "MAKO_STO_TPCC_MAX_RETAINED_RECORDS=350000;MAKO_TPCC_WORKLOAD_MIX=100,0,0,0,0"
+        RUN_SERIAL TRUE
+        TIMEOUT 240)
+
+    add_test(NAME test_sto_tpcc_rejects_duplicate_local_shards
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/ci/run_sto_tpcc_ctest.py"
+            --expected-failure-text "duplicate shard index 0"
+            --expected-exit-code 2
+            --
+            "$<TARGET_FILE:sto_tpcc_bench>"
+            --num-threads 1
+            --shard-config "${CMAKE_CURRENT_SOURCE_DIR}/config/mako_sto_tpcc_local.yml"
+            --local-shards 0,0
+            --storage-engine rust
+            --slow-exit)
+    set_tests_properties(test_sto_tpcc_rejects_duplicate_local_shards PROPERTIES
+        LABELS "sto;masstree;rust;ffi;lifecycle;tpcc;configuration"
+        RUN_SERIAL TRUE
+        TIMEOUT 30)
+
+    add_test(NAME test_sto_tpcc_rejects_partial_local_shards
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/ci/run_sto_tpcc_ctest.py"
+            --expected-failure-text "hybrid local/remote multi-shard topology is unsupported"
+            --expected-exit-code 2
+            --
+            "$<TARGET_FILE:sto_tpcc_bench>"
+            --num-threads 1
+            --shard-config "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/config/local-shards3-warehouses1.yml"
+            --local-shards 0,1
+            --storage-engine rust
+            --slow-exit)
+    set_tests_properties(test_sto_tpcc_rejects_partial_local_shards PROPERTIES
+        LABELS "sto;masstree;rust;ffi;lifecycle;tpcc;configuration"
+        RUN_SERIAL TRUE
+        TIMEOUT 30)
+
+    add_test(NAME test_sto_tpcc_rejects_rust_distributed_shard
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/ci/run_sto_tpcc_ctest.py"
+            --expected-failure-text "Rust STO TPC-C comparison supports one non-replicated shard"
+            --expected-exit-code 2
+            --
+            "$<TARGET_FILE:sto_tpcc_bench>"
+            --num-threads 1
+            --shard-config "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/config/local-shards2-warehouses1.yml"
+            --local-shards 0
+            --storage-engine rust
+            --slow-exit)
+    set_tests_properties(test_sto_tpcc_rejects_rust_distributed_shard PROPERTIES
+        LABELS "sto;masstree;rust;ffi;lifecycle;tpcc;configuration"
+        RUN_SERIAL TRUE
+        TIMEOUT 30)
+
+    add_test(NAME test_sto_tpcc_rejects_rust_replication
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/ci/run_sto_tpcc_ctest.py"
+            --expected-failure-text "Rust STO TPC-C comparison supports one non-replicated shard"
+            --expected-exit-code 2
+            --
+            "$<TARGET_FILE:sto_tpcc_bench>"
+            --num-threads 1
+            --shard-config "${CMAKE_CURRENT_SOURCE_DIR}/config/mako_sto_tpcc_local.yml"
+            --site-name local_s0
+            --is-replicated
+            --storage-engine rust
+            --slow-exit)
+    set_tests_properties(test_sto_tpcc_rejects_rust_replication PROPERTIES
+        LABELS "sto;masstree;rust;ffi;lifecycle;tpcc;configuration"
+        RUN_SERIAL TRUE
+        TIMEOUT 30)
+
+    add_test(NAME test_sto_tpcc_rejects_rust_worker_limit
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/ci/run_sto_tpcc_ctest.py"
+            --expected-failure-text "worker count must be in [1, 111]"
+            --expected-exit-code 2
+            --
+            "$<TARGET_FILE:sto_tpcc_bench>"
+            --num-threads 112
+            --shard-config "${CMAKE_CURRENT_SOURCE_DIR}/config/mako_sto_tpcc_local.yml"
+            --site-name local_s0
+            --storage-engine rust
+            --slow-exit)
+    set_tests_properties(test_sto_tpcc_rejects_rust_worker_limit PROPERTIES
+        LABELS "sto;masstree;rust;ffi;lifecycle;tpcc;configuration"
+        RUN_SERIAL TRUE
+        TIMEOUT 30)
+endif()
+
+# Capacity diagnostics must remain intact when shutdown loggers write to the
+# same pipe without sharing the benchmark stream lock. Keep this regression
+# independent of libmako and native process-lifetime allocations.
+add_executable(test_benchmark_output EXCLUDE_FROM_ALL
+    tests/test_benchmark_output.cc)
+target_include_directories(test_benchmark_output PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/mako")
+target_link_libraries(test_benchmark_output PRIVATE pthread)
+set_target_properties(test_benchmark_output PROPERTIES CXX_MODULE_STD OFF)
+target_compile_options(test_benchmark_output PRIVATE
+    $<$<COMPILE_LANG_AND_ID:CXX,Clang,AppleClang,GNU>:-Wall;-Wextra;-Wpedantic;-Werror>)
+add_test(NAME test_benchmark_output COMMAND test_benchmark_output)
+set_tests_properties(test_benchmark_output PROPERTIES
+    LABELS "sto;rust;ffi;diagnostics;concurrency"
+    RUN_SERIAL TRUE
+    TIMEOUT 30)
+
+# C consumers must be able to include the public ABI without any C++
+# compatibility layer. This executable contains no ABI calls and therefore
+# compiles and links independently of libmako and Masstree.
+add_executable(test_mtree_abi_c11_header EXCLUDE_FROM_ALL
+    tests/mtree_abi_c11_header.c)
+target_include_directories(test_mtree_abi_c11_header PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+)
+set_target_properties(test_mtree_abi_c11_header PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED YES
+    C_EXTENSIONS NO
+    CXX_MODULE_STD OFF
+    LINKER_LANGUAGE C
+)
+target_compile_options(test_mtree_abi_c11_header PRIVATE
+    $<$<COMPILE_LANG_AND_ID:C,Clang,AppleClang,GNU>:-Wall;-Wextra;-Wpedantic;-Werror>
+)
+add_test(NAME test_mtree_abi_c11_header COMMAND test_mtree_abi_c11_header)
+set_tests_properties(test_mtree_abi_c11_header PROPERTIES LABELS "masstree;abi;c11")
+
+# Keep the Rust STO public wrapper ABI independently consumable by strict C11
+# code. Like the Masstree header check above, this target requires no runtime
+# library because it verifies declarations and layout only.
+add_executable(test_sto_tpcc_ffi_c11_header EXCLUDE_FROM_ALL
+    tests/sto_tpcc_ffi_c11_header.c)
+target_include_directories(test_sto_tpcc_ffi_c11_header PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-tpcc-ffi/include"
+)
+set_target_properties(test_sto_tpcc_ffi_c11_header PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED YES
+    C_EXTENSIONS NO
+    CXX_MODULE_STD OFF
+    LINKER_LANGUAGE C
+)
+target_compile_options(test_sto_tpcc_ffi_c11_header PRIVATE
+    $<$<COMPILE_LANG_AND_ID:C,Clang,AppleClang,GNU>:-Wall;-Wextra;-Wpedantic;-Werror>
+)
+add_test(NAME test_sto_tpcc_ffi_c11_header
+    COMMAND test_sto_tpcc_ffi_c11_header)
+set_tests_properties(test_sto_tpcc_ffi_c11_header PROPERTIES
+    LABELS "sto;rust;ffi;c11")
+
+# This target is the build half of the Rust STO/Masstree CI gate. Its
+# dependencies compile every opt-in C/C++ consumer and run Rust against the
+# native archives. The final command covers the rest of the Rust workspace.
+# Ordinary builds leave its native environment empty. Sanitizer builds opt in
+# to the CMake archive closure because sanitizer module constructors retain
+# otherwise dead native references; this also intentionally enables every
+# native-gated target in the all-target Clippy and test sweeps. The
+# sto-tpcc-ffi unit-test binary still runs case-by-case in the native runner
+# because native registries have process-wide lifetimes.
+if(MAKO_CARGO_EXECUTABLE)
+    set(_MAKO_RUST_STO_WORKSPACE_NATIVE_ENV
+        ${_MAKO_RUST_STO_SCOPED_SANITIZER_ENV})
+    if(MAKO_RUST_STO_WORKSPACE_NATIVE_LINK)
+        set(_MAKO_RUST_STO_WORKSPACE_NATIVE_DIRS
+            "$<TARGET_FILE_DIR:mako>:$<TARGET_FILE_DIR:masstree>:${_MAKO_CXX_COMPILER_ROOT}/lib")
+        set(_MAKO_RUST_STO_WORKSPACE_LOADER_PATH
+            "${_MAKO_CXX_COMPILER_ROOT}/lib")
+        if(DEFINED ENV{${_MAKO_MTREE_LOADER_PATH_VARIABLE}}
+                AND NOT "$ENV{${_MAKO_MTREE_LOADER_PATH_VARIABLE}}" STREQUAL "")
+            string(APPEND _MAKO_RUST_STO_WORKSPACE_LOADER_PATH
+                ":$ENV{${_MAKO_MTREE_LOADER_PATH_VARIABLE}}")
+        endif()
+        list(APPEND _MAKO_RUST_STO_WORKSPACE_NATIVE_ENV
+            "MAKO_MTREE_NATIVE_INTEGRATION=1"
+            "MAKO_MTREE_NATIVE_LIB_DIRS=${_MAKO_RUST_STO_WORKSPACE_NATIVE_DIRS}"
+            "MAKO_MTREE_NATIVE_LIBS=${MAKO_MTREE_RUST_NATIVE_LIBS}"
+            "${_MAKO_MTREE_LOADER_PATH_VARIABLE}=${_MAKO_RUST_STO_WORKSPACE_LOADER_PATH}")
+        if(_MAKO_RUST_STO_CONFIGURED_SANITIZER STREQUAL "address")
+            list(APPEND _MAKO_RUST_STO_WORKSPACE_NATIVE_ENV
+                "ASAN_OPTIONS=${MAKO_RUST_STO_ASAN_OPTIONS}")
+        elseif(_MAKO_RUST_STO_CONFIGURED_SANITIZER STREQUAL "thread")
+            list(APPEND _MAKO_RUST_STO_WORKSPACE_NATIVE_ENV
+                "TSAN_OPTIONS=$ENV{TSAN_OPTIONS}")
+        endif()
+    endif()
+    add_custom_target(rust_sto_integration
+        COMMAND "${CMAKE_COMMAND}" -E env
+            --unset=CARGO_BUILD_TARGET
+            --unset=CARGO_ENCODED_RUSTFLAGS
+            "CARGO_TARGET_DIR=${CMAKE_CURRENT_BINARY_DIR}/rust-workspace-target"
+            ${_MAKO_RUST_STO_WORKSPACE_NATIVE_ENV}
+            "${MAKO_CARGO_EXECUTABLE}" clippy
+            --manifest-path "${CMAKE_CURRENT_SOURCE_DIR}/crates/Cargo.toml"
+            --workspace
+            --all-targets
+            --all-features
+            --locked
+            ${_MAKO_RUST_STO_CARGO_PLATFORM_ARGS}
+            --
+            -D warnings
+        COMMAND "${CMAKE_COMMAND}" -E env
+            --unset=CARGO_BUILD_TARGET
+            --unset=CARGO_ENCODED_RUSTFLAGS
+            "CARGO_TARGET_DIR=${CMAKE_CURRENT_BINARY_DIR}/rust-workspace-target"
+            ${_MAKO_RUST_STO_WORKSPACE_NATIVE_ENV}
+            "${MAKO_CARGO_EXECUTABLE}" test
+            --manifest-path "${CMAKE_CURRENT_SOURCE_DIR}/crates/Cargo.toml"
+            --workspace
+            --exclude sto-tpcc-ffi
+            --all-targets
+            --all-features
+            --locked
+            ${_MAKO_RUST_STO_CARGO_PLATFORM_ARGS}
+            ${_MAKO_RUST_STO_WORKSPACE_TEST_ARGS}
+        DEPENDS
+            check_mtree_abi_exports
+            rust_masstree_native_integration
+            sto_tpcc_bench
+            sto_tpcc_cpp_wrapper_smoke
+            sto_tpcc_cpp_wrapper_scan_smoke
+            rocksdbInterfaceTest
+            test_benchmark_output
+            test_mtree_abi_c11_header
+            test_sto_tpcc_ffi_c11_header
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        USES_TERMINAL
+        VERBATIM
+        COMMENT "Checking the Rust STO workspace and native integration"
+    )
+endif()
 
 # Use vendored GoogleTest only (no system gtest dependency).
 set(BUILD_TESTS OFF)
@@ -1565,7 +2583,8 @@ else()
                 ${CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES}
             )
         endif()
-        target_compile_options(${MAKO_GTEST_LIB_TARGET} PRIVATE ${BENCH_CXXFLAGS} ${MASSTREE_FORCE_INCLUDE_FLAG})
+        target_compile_options(${MAKO_GTEST_LIB_TARGET} PRIVATE ${BENCH_CXXFLAGS})
+        mako_force_include_masstree_config(${MAKO_GTEST_SRC})
         target_compile_definitions(${MAKO_GTEST_LIB_TARGET} PUBLIC GTEST_HAS_PTHREAD=1)
         target_link_libraries(${MAKO_GTEST_LIB_TARGET} PUBLIC pthread)
     endif()
@@ -1581,7 +2600,8 @@ else()
                 ${CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES}
             )
         endif()
-        target_compile_options(${MAKO_GTEST_MAIN_TARGET} PRIVATE ${BENCH_CXXFLAGS} ${MASSTREE_FORCE_INCLUDE_FLAG})
+        target_compile_options(${MAKO_GTEST_MAIN_TARGET} PRIVATE ${BENCH_CXXFLAGS})
+        mako_force_include_masstree_config(${MAKO_GTEST_MAIN_SRC})
         target_compile_definitions(${MAKO_GTEST_MAIN_TARGET} PUBLIC GTEST_HAS_PTHREAD=1)
         target_link_libraries(${MAKO_GTEST_MAIN_TARGET} PUBLIC ${MAKO_GTEST_LIB_TARGET} pthread)
     endif()
@@ -1621,6 +2641,32 @@ if(BUILD_TESTS)
         ${LIBEVENT_LDFLAGS}
     )
 
+    # Linux epoll_event is packed on x86-64. Keep ADD and MOD coverage in a
+    # root-owned target because src/srpc's optional nested test dependencies
+    # are intentionally not initialized by the main repository checkout.
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_executable(test_srpc_epoll_platform
+            tests/srpc_epoll_platform_test.cc)
+        target_include_directories(test_srpc_epoll_platform PRIVATE
+            ${TEST_INCLUDE_DIRS}
+            ${GTEST_INCLUDE_DIRS})
+        target_compile_options(test_srpc_epoll_platform PRIVATE
+            ${TEST_COMPILE_OPTIONS})
+        target_link_libraries(test_srpc_epoll_platform PRIVATE
+            ${TEST_LINK_LIBS}
+            ${GTEST_LIBRARIES}
+            ${GTEST_MAIN_LIBRARIES})
+        add_test(NAME test_srpc_epoll_platform
+            COMMAND test_srpc_epoll_platform --gtest_fail_if_no_test_selected)
+        set_tests_properties(test_srpc_epoll_platform PROPERTIES
+            LABELS "rust;srpc;epoll;ffi"
+            RUN_SERIAL TRUE
+            TIMEOUT 30)
+        if(TARGET rust_sto_integration)
+            add_dependencies(rust_sto_integration test_srpc_epoll_platform)
+        endif()
+    endif()
+
 
 
     # Marshal Microbenchmark (no gtest — standalone main; prints ns/op).
@@ -1633,6 +2679,23 @@ if(BUILD_TESTS)
     target_compile_options(test_client_service PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_client_service ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_client_service COMMAND test_client_service)
+
+    # HelperQueue carries opaque request tokens between the SRPC event loop
+    # and one helper thread. Keep its snapshots, FIFO operations, and wakeup
+    # paths under a focused concurrency test that can also run under TSan.
+    add_executable(test_helper_queue tests/test_helper_queue.cc)
+    target_include_directories(test_helper_queue PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_helper_queue PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_helper_queue
+        mako ${TEST_LINK_LIBS}
+        ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES}
+        yaml-cpp rocksdb lz4 numa event_pthreads
+        pthread)
+    add_test(NAME test_helper_queue
+        COMMAND test_helper_queue --gtest_fail_if_no_test_selected)
+    set_tests_properties(test_helper_queue PROPERTIES
+        LABELS "concurrency;srpc;lifecycle"
+        TIMEOUT 30)
 
     # Sharding Policy Tests
     #
@@ -2034,7 +3097,13 @@ if(BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/src/mako
         ${GTEST_INCLUDE_DIRS}
     )
-    add_test(NAME SiloVarintTests COMMAND test_silo_varint)
+    add_test(NAME SiloVarintTests
+        COMMAND test_silo_varint --gtest_fail_if_no_test_selected)
+    set_tests_properties(SiloVarintTests PROPERTIES
+        LABELS "silo;sto;rust;serializer")
+    if(TARGET rust_sto_integration)
+        add_dependencies(rust_sto_integration test_silo_varint)
+    endif()
 
     # Test: Silo RCU + Thread
     add_executable(test_silo_rcu_thread tests/test_silo_rcu_thread.cc)
@@ -2089,10 +3158,112 @@ if(BUILD_TESTS)
     )
     target_compile_options(test_silo_runtime PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_silo_runtime
+        mako
+        srpc
+        ${TXLOG_LINK_LIBS}
+        ${GTEST_LIBRARIES}
+        ${GTEST_MAIN_LIBRARIES}
+        pthread
+        yaml-cpp
+        numa
+        event_pthreads
+        rocksdb
+        ${LIBEVENT_LDFLAGS}
+    )
+    add_test(NAME test_silo_runtime COMMAND test_silo_runtime)
+    add_test(NAME test_silo_runtime_concurrency_lifecycle
+        COMMAND test_silo_runtime
+            --gtest_filter=SiloRuntimeTest.ConcurrentGlobalDefaultInitialization:SiloRuntimeLifetimeTest.LazyServicesHaveBoundedTeardown:CoreStorageTest.*:SpinBarrierTest.*:MasstreeContextEpochTest.*:MassTransEpochIntegrationTest.*:StoThreadIdLifecycleTest.*:StoEpochAdvancerLifecycleTest.*:MakoTimestampTest.*
+            --gtest_fail_if_no_test_selected)
+    set_tests_properties(test_silo_runtime_concurrency_lifecycle PROPERTIES
+        LABELS "silo;masstree;concurrency"
+        RUN_SERIAL TRUE
+        TIMEOUT 60)
+    add_test(NAME test_silo_transitem_lifetime
+        COMMAND test_silo_runtime
+            --gtest_filter=TransItemLifetimeTest.ReusedSlotRetainsExactlyOneOwnedExtraString
+            --gtest_fail_if_no_test_selected)
+    add_test(NAME test_silo_transaction_set_exact_chunk_boundary
+        COMMAND test_silo_runtime
+            --gtest_filter=TransactionSetBoundaryTest.ParticipantAbortCleansExactChunkBoundaries
+            --gtest_fail_if_no_test_selected)
+    add_test(NAME test_silo_transaction_set_capacity_exhaustion
+        COMMAND test_silo_runtime
+            --gtest_filter=TransactionSetBoundaryTest.CapacityExhaustionFailsClosedInRelease
+            --gtest_fail_if_no_test_selected)
+    add_test(NAME test_silo_transaction_install_exception_fail_stop
+        COMMAND test_silo_runtime
+            --gtest_filter=TransactionCommitFailureTest.InstallExceptionIsFailStop
+            --gtest_fail_if_no_test_selected)
+    set_tests_properties(
+        test_silo_transitem_lifetime
+        test_silo_transaction_set_exact_chunk_boundary
+        test_silo_transaction_set_capacity_exhaustion
+        test_silo_transaction_install_exception_fail_stop
+        PROPERTIES
+        LABELS "silo;transaction;lifecycle"
+        RUN_SERIAL TRUE
+        TIMEOUT 120)
+
+    # Test: stable C ABI over the native SiloRuntime/Masstree configuration.
+    # Linking through mako ensures the ABI implementation is compiled with the
+    # exact same generated Masstree config, definitions, and native options as
+    # the storage engine it wraps.
+    add_executable(test_mtree_abi tests/test_mtree_abi.cc)
+    target_include_directories(test_mtree_abi PRIVATE
+        ${TEST_INCLUDE_DIRS}
+        ${GTEST_INCLUDE_DIRS}
+    )
+    target_compile_options(test_mtree_abi PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_mtree_abi
         mako ${TEST_LINK_LIBS}
         ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES}
         pthread)
-    add_test(NAME test_silo_runtime COMMAND test_silo_runtime)
+    add_test(NAME test_mtree_abi
+        COMMAND test_mtree_abi --gtest_fail_if_no_test_selected)
+    set_tests_properties(test_mtree_abi PROPERTIES
+        LABELS "masstree;silo;abi;rust;ffi")
+    if(TARGET rust_sto_integration)
+        add_dependencies(rust_sto_integration test_mtree_abi)
+    endif()
+
+    # The Mako value suffix is a packed byte-stream contract shared by the
+    # native STO/Masstree path and the Rust bridge. Exercise every possible
+    # trailer alignment plus the production replay parser/materializer under
+    # sanitizers, including odd scalar offsets and thread-local value reuse.
+    add_executable(test_mako_value_metadata
+        tests/test_mako_value_metadata.cc)
+    target_include_directories(test_mako_value_metadata PRIVATE
+        ${TEST_INCLUDE_DIRS}
+        ${GTEST_INCLUDE_DIRS}
+    )
+    target_compile_options(test_mako_value_metadata PRIVATE
+        ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_mako_value_metadata
+        mako ${TEST_LINK_LIBS}
+        ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES}
+        pthread)
+    add_test(NAME test_mako_value_metadata
+        COMMAND test_mako_value_metadata --gtest_fail_if_no_test_selected)
+    set_tests_properties(test_mako_value_metadata PROPERTIES
+        LABELS "sto;masstree;rust;metadata;replay")
+    if(TARGET rust_sto_integration)
+        add_dependencies(rust_sto_integration test_mako_value_metadata)
+    endif()
+
+    add_test(NAME test_mtree_abi_exports
+        COMMAND "${CMAKE_COMMAND}"
+            "-DMAKO_NM=${CMAKE_NM}"
+            "-DMAKO_ABI_ARTIFACT=$<TARGET_FILE:mako>"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckMtreeAbiExports.cmake"
+    )
+    set_tests_properties(test_mtree_abi_exports PROPERTIES LABELS "masstree;abi;exports")
+
+    add_custom_target(run_mtree_abi_test
+        COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure -R "^test_mtree_abi$"
+        DEPENDS test_mtree_abi
+        COMMENT "Running the Masstree C ABI test"
+    )
 
     # Test: Multi-site Silo stress.
     add_executable(test_silo_multi_site_stress tests/test_silo_multi_site_stress.cc)
@@ -2121,7 +3292,50 @@ if(BUILD_TESTS)
         ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES}
         yaml-cpp rocksdb lz4 numa event_pthreads
         pthread)
-    add_test(NAME test_silo_nontxn_api COMMAND test_silo_nontxn_api)
+    add_test(NAME test_silo_nontxn_api
+        COMMAND test_silo_nontxn_api --gtest_fail_if_no_test_selected)
+    set_tests_properties(test_silo_nontxn_api PROPERTIES
+        LABELS "silo;masstree;nontransactional"
+        RUN_SERIAL TRUE
+        TIMEOUT 60)
+    add_test(NAME test_silo_nontxn_api_mv_delete_delete_conflict
+        COMMAND test_silo_nontxn_api
+            --gtest_filter=SiloNonTxnApi.ConcurrentMvDeletesOfPresentRowConflict
+            --gtest_fail_if_no_test_selected)
+    add_test(NAME test_silo_nontxn_api_mv_delete_update_conflict
+        COMMAND test_silo_nontxn_api
+            --gtest_filter=SiloNonTxnApi.ConcurrentMvDeleteInvalidatesStagedUpdate
+            --gtest_fail_if_no_test_selected)
+    set_tests_properties(
+        test_silo_nontxn_api_mv_delete_delete_conflict
+        test_silo_nontxn_api_mv_delete_update_conflict
+        PROPERTIES
+        LABELS "silo;masstree;nontransactional;mv;concurrency"
+        RUN_SERIAL TRUE
+        TIMEOUT 60)
+    if(STO_RMW)
+        # Keep the read-my-writes-only state transitions visible as their own
+        # CTests. One exact filter per case plus fail-if-empty prevents either
+        # preprocessor/test-name regression from becoming a partial false pass.
+        add_test(NAME test_silo_nontxn_api_sto_rmw_insert_delete
+            COMMAND test_silo_nontxn_api
+                "--gtest_filter=SiloNonTxnApi.MassTransInsertThenDeleteCancelsInMvMode"
+                --gtest_fail_if_no_test_selected)
+        add_test(NAME test_silo_nontxn_api_sto_rmw_resurrection_delete
+            COMMAND test_silo_nontxn_api
+                "--gtest_filter=SiloNonTxnApi.MassTransResurrectionThenDeleteIsNetZeroInMvMode"
+                --gtest_fail_if_no_test_selected)
+        set_tests_properties(
+            test_silo_nontxn_api_sto_rmw_insert_delete
+            test_silo_nontxn_api_sto_rmw_resurrection_delete
+            PROPERTIES
+            LABELS "silo;masstree;nontransactional;mv;sto-rmw"
+            RUN_SERIAL TRUE
+            TIMEOUT 60)
+    endif()
+    if(TARGET rust_sto_integration)
+        add_dependencies(rust_sto_integration test_silo_nontxn_api)
+    endif()
 
     # Test: ConfigManager over a REAL mbta index (integration).
     # Unlike test_config_manager (pure cluster, std::map fake), this
@@ -2183,6 +3397,21 @@ if(BUILD_TESTS)
         yaml-cpp rocksdb lz4 numa event_pthreads
         pthread)
     add_test(NAME test_mako_nontxn_distributed COMMAND test_mako_nontxn_distributed)
+    set_tests_properties(test_mako_nontxn_distributed PROPERTIES
+        LABELS "silo;distributed"
+        RUN_SERIAL TRUE
+        TIMEOUT 60)
+
+    # Focused regression for an idle mode-1 helper pinning Masstree RCU while
+    # a short-lived ClientTcpServer worker drains its callback queue at exit.
+    add_test(NAME test_mako_nontxn_distributed_rcu_shutdown
+        COMMAND test_mako_nontxn_distributed
+            --gtest_filter=MakoNontxnDistributed.L7RemoteTableNontxn
+            --gtest_fail_if_no_test_selected)
+    set_tests_properties(test_mako_nontxn_distributed_rcu_shutdown PROPERTIES
+        LABELS "silo;distributed;rcu;lifecycle"
+        RUN_SERIAL TRUE
+        TIMEOUT 30)
 
     # Reproducer for sanitizer-findings.md Finding 6 (Mako allocator
     # cap). Aborts by design — gated on MAKO_REPRO_FINDING6=1 so it
@@ -2214,6 +3443,7 @@ if(BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/src/mako
         ${GTEST_INCLUDE_DIRS}
     )
+    mako_force_include_masstree_config(tests/test_sto_transaction.cc)
     add_test(NAME STOTransactionTests COMMAND test_sto_transaction)
 
     # Test: STO Transaction Real (Integration)
@@ -2256,7 +3486,7 @@ if(BUILD_TESTS)
     message(STATUS "  Masstree Tests:")
     message(STATUS "    - test_masstree: Core Masstree b-tree regression tests")
     message(STATUS "  Live Silo-support/STO Tests:")
-    message(STATUS "    - test_silo_varint: Varint encoding/decoding (22 tests)")
+    message(STATUS "    - test_silo_varint: Varint/serializer encoding (29 tests)")
     message(STATUS "    - test_silo_rcu_thread: RCU memory management (9 tests)")
     message(STATUS "    - test_silo_allocator: allocator support (9 tests)")
     message(STATUS "    - test_sto_transaction: STO Transaction RCU (13 tests)")

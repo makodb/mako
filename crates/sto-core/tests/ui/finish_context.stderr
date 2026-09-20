@@ -1,0 +1,53 @@
+error[E0277]: `Rc<()>` cannot be sent between threads safely
+  --> tests/ui/finish_context.rs:11:19
+   |
+11 |     assert_send::<FinishContext<'static>>();
+   |                   ^^^^^^^^^^^^^^^^^^^^^^ `Rc<()>` cannot be sent between threads safely
+   |
+   = help: within `FinishContext<'static>`, the trait `Send` is not implemented for `Rc<()>`
+note: required because it appears within the type `PhantomData<Rc<()>>`
+  --> $RUST/core/src/marker.rs
+   |
+   | pub struct PhantomData<T: PointeeSized>;
+   |            ^^^^^^^^^^^
+note: required because it appears within the type `FinishContext<'static>`
+  --> src/lock.rs
+   |
+   | pub struct FinishContext<'a> {
+   |            ^^^^^^^^^^^^^
+note: required by a bound in `assert_send`
+  --> tests/ui/finish_context.rs:3:19
+   |
+ 3 | fn assert_send<T: Send>() {}
+   |                   ^^^^ required by this bound in `assert_send`
+
+error[E0277]: `Rc<()>` cannot be shared between threads safely
+  --> tests/ui/finish_context.rs:12:19
+   |
+12 |     assert_sync::<FinishContext<'static>>();
+   |                   ^^^^^^^^^^^^^^^^^^^^^^ `Rc<()>` cannot be shared between threads safely
+   |
+   = help: within `FinishContext<'static>`, the trait `Sync` is not implemented for `Rc<()>`
+note: required because it appears within the type `PhantomData<Rc<()>>`
+  --> $RUST/core/src/marker.rs
+   |
+   | pub struct PhantomData<T: PointeeSized>;
+   |            ^^^^^^^^^^^
+note: required because it appears within the type `FinishContext<'static>`
+  --> src/lock.rs
+   |
+   | pub struct FinishContext<'a> {
+   |            ^^^^^^^^^^^^^
+note: required by a bound in `assert_sync`
+  --> tests/ui/finish_context.rs:4:19
+   |
+ 4 | fn assert_sync<T: Sync>() {}
+   |                   ^^^^ required by this bound in `assert_sync`
+
+error: lifetime may not live long enough
+ --> tests/ui/finish_context.rs:7:5
+  |
+6 | fn escape(context: FinishContext<'_>) -> FinishContext<'static> {
+  |           ------- has type `FinishContext<'1>`
+7 |     context
+  |     ^^^^^^^ returning this value requires that `'1` must outlive `'static`

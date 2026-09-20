@@ -31,10 +31,15 @@ public:
 #endif
 
   ticker()
-    : current_tick_(1), last_tick_inclusive_(0)
+    : current_tick_(1), last_tick_inclusive_(0), running_(true),
+      worker_(&ticker::tickerloop, this)
+  {}
+
+  ~ticker()
   {
-    std::thread thd(&ticker::tickerloop, this);
-    thd.detach();
+    running_.store(false, std::memory_order_release);
+    if (worker_.joinable())
+      worker_.join();
   }
 
   inline uint64_t
@@ -197,7 +202,7 @@ private:
     // runs as daemon
     util::timer loop_timer;
     struct timespec t;
-    for (;;) {
+    while (running_.load(std::memory_order_acquire)) {
 
       const uint64_t last_loop_usec = loop_timer.lap();
       const uint64_t delay_time_usec = tick_us;
@@ -224,8 +229,17 @@ private:
                   thread_cur_tick == cur_tick);
         if (thread_cur_tick == cur_tick)
           continue;
-        lock_guard<spinlock> lg(ti.lock_);
+        // An epoch guard can span a complete transaction.  If the ticker and
+        // its owner are scheduled on the same CPU, an unconditional spin here
+        // can consume the owner's whole time slice and prevent the guard from
+        // ever making progress.  Briefly sleep while waiting: this path runs
+        // only once per tick, so a small scheduling delay is immaterial to the
+        // 40 ms epoch while guaranteeing that an oversubscribed owner runs.
+        const struct timespec guard_wait = {0, 1000};
+        while (!ti.lock_.try_lock())
+          nanosleep(&guard_wait, nullptr);
         ti.current_tick_.store(cur_tick, std::memory_order_release);
+        ti.lock_.unlock();
       }
 
       last_tick_inclusive_.store(last_tick, std::memory_order_release);
@@ -253,4 +267,6 @@ private:
   std::atomic<uint64_t> last_tick_inclusive_;
     // all threads have *completed* ticks <= last_tick_inclusive_
     // (< current_tick_)
+  std::atomic<bool> running_;
+  std::thread worker_;
 };

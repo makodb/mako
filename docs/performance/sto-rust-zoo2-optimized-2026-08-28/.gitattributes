@@ -1,0 +1,4 @@
+**/*.csv whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+build/*.log -whitespace
+profile-1t-read/*/report-self.txt -whitespace
+profile-1t-read/*/stat*.txt -whitespace

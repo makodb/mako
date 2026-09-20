@@ -1,0 +1,552 @@
+20260909-08:35.08-716073(us) 2416426 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:35.08-716220(us) 2416426 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:35.08-716251(us) 2416426 * handle_new_config_format (dbtest.cc:368):    Site local_s0: shard=0, replica_idx=0, is_leader=1, cluster=localhost
+STO_TPCC_NATIVE_ALLOCATOR configured_bytes=4294967296 scope=native_only rust_heap_excluded=1
+SiloRuntime[0]::InitializeAllocator()
+  hugepgsize: 2097152
+  mmap() region [0x76d39e800000, 0x76d49ea00000)
+  runtime0 cpu0 owns [0x76d39e800000, 0x76d49e800000)
+Database Benchmark:
+  pid: 2416426
+settings:
+  num-cpus    : 128
+  num-threads : 1
+  shardIndex  : 0
+  paxos_proc_name  : localhost
+  nshards     : 1
+  is_micro    : 0
+  is_replicated : 0
+  storage_engine : rust
+  var-encode  : yes
+  allocator   : jemalloc
+system properties:
+  tuple_prefetch          : no
+  btree_node_prefetch     : yes
+tpcc settings:
+  cross_partition_transactions : 1
+  read_only_snapshots          : 1
+  partition_locks              : 0
+  separate_tree_per_partition  : 1
+  new_order_remote_item_pct    : 1
+  new_order_fast_id_gen        : 1
+  uniform_item_dist            : 0
+  order_status_scan_hack       : 0
+  workload_mix                 : [45, 43, 4, 4, 4]
+TPC-C Sharding: Initialized policy with 1 warehouses across 1 shards (version 1788942908)
+20260909-08:35.08-720582(us) 2416426 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:35.08-720630(us) 2416426 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:35.08-720947(us) 2416426 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+D [<unknown>:0] 2026-09-09 08:35:08.721 | Server: generated instance_id=5371119655757622932
+20260909-08:35.08-721092(us) 2416426 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31006 (listening on 0.0.0.0:31006)
+20260909-08:35.08-721113(us) 2416426 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31006
+20260909-08:35.08-721132(us) 2416426 * RunEventLoop    (srpc_rpc_backend.cc:516): SrpcRpcBackend::RunEventLoop: Starting event loop
+D [<unknown>:0] 2026-09-09 08:35:08.721 | [poll_loop] Starting poll loop
+20260909-08:35.08-721702(us) 2416426 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:35.08-721752(us) 2416426 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:35.08-721997(us) 2416426 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+D [<unknown>:0] 2026-09-09 08:35:08.722 | Server: generated instance_id=8598131660263264375
+20260909-08:35.08-722082(us) 2416426 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31007 (listening on 0.0.0.0:31007)
+20260909-08:35.08-722102(us) 2416426 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31007
+20260909-08:35.08-722120(us) 2416426 * RunEventLoop    (srpc_rpc_backend.cc:516): SrpcRpcBackend::RunEventLoop: Starting event loop
+20260909-08:35.08-724488(us) 2416426 ! run             (bench.cc:537):     # of loaders size:6
+start worker:5444
+D [<unknown>:0] 2026-09-09 08:35:08.724 | [poll_loop] Starting poll loop
+D [<unknown>:0] 2026-09-09 08:35:08.724 | create a fiber scheduler
+20260909-08:35.08-725503(us) 2416426 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=0, shard_index=0, getShardIndex=0, loader=1
+D [<unknown>:0] 2026-09-09 08:35:08.726 | create a fiber scheduler
+[INFO] finished loading warehouse
+[INFO]   * average warehouse record length: 97 bytes
+20260909-08:35.08-727602(us) 2416426 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=1, shard_index=0, getShardIndex=0, loader=1
+[INFO] finished loading item
+[INFO]   * average item record length: 84.1739 bytes
+20260909-08:35.09-61988(us) 2416426 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=2, shard_index=0, getShardIndex=0, loader=1
+PinToWarehouseId(): coreid=3 pinned to whse=1 (partid=0)
+[INFO] finished loading stock
+[INFO]   * average stock record length: 8 bytes
+20260909-08:35.10-879742(us) 2416426 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=3, shard_index=0, getShardIndex=0, loader=1
+PinToWarehouseId(): coreid=4 pinned to whse=1 (partid=0)
+[INFO] finished loading district
+[INFO]   * average district record length: 99 bytes
+20260909-08:35.10-881291(us) 2416426 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=4, shard_index=0, getShardIndex=0, loader=1
+num batches: 30
+PinToWarehouseId(): coreid=5 pinned to whse=1 (partid=0)
+[INFO] finished loading customer
+[INFO]   * average customer record length: 153.725 bytes 
+20260909-08:35.11-448114(us) 2416426 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=5, shard_index=0, getShardIndex=0, loader=1
+PinToWarehouseId(): coreid=6 pinned to whse=1 (partid=0)
+[INFO] finished loading order
+[INFO]   * average order_line record length: 10.9193 bytes
+[INFO]   * average oorder record length: 7.4286 bytes
+[INFO]   * average new_order record length: 12 bytes
+timed region dataloading took 3058.69 ms
+DB size: 188.449 MB
+[0, 0, 0] txns persisted in loading phase
+20260909-08:35.11-783244(us) 2416426 ! run             (bench.cc:607):     # of nthreads:1
+starting benchmark...
+--------------Finish loading data and wait for others completing load phase ------------
+STO_TPCC_CAPACITY phase=load_complete scope=database allocated_registry_bytes=69854848 max_registry_bytes=8589934592 registry_headroom_bytes=8520079744
+STO_TPCC_CAPACITY phase=load_complete table=customer_0 retained_records=90000 consumed_record_ids=90000 retained_key_bytes=1080000 allocated_registry_bytes=17856776 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+STO_TPCC_CAPACITY phase=load_complete table=customer_name_idx_0 retained_records=30000 consumed_record_ids=30000 retained_key_bytes=1200000 allocated_registry_bytes=2156376 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+STO_TPCC_CAPACITY phase=load_complete table=district_0 retained_records=10 consumed_record_ids=10 retained_key_bytes=80 allocated_registry_bytes=205424 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+STO_TPCC_CAPACITY phase=load_complete table=history_0 retained_records=30000 consumed_record_ids=30000 retained_key_bytes=720000 allocated_registry_bytes=2156376 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+STO_TPCC_CAPACITY phase=load_complete table=new_order_0 retained_records=9000 consumed_record_ids=9000 retained_key_bytes=108000 allocated_registry_bytes=649024 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+STO_TPCC_CAPACITY phase=load_complete table=oorder_0 retained_records=30000 consumed_record_ids=30000 retained_key_bytes=360000 allocated_registry_bytes=2156376 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+STO_TPCC_CAPACITY phase=load_complete table=oorder_c_id_idx_0 retained_records=30000 consumed_record_ids=30000 retained_key_bytes=480000 allocated_registry_bytes=2156376 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+STO_TPCC_CAPACITY phase=load_complete table=order_line_0 retained_records=299560 consumed_record_ids=299560 retained_key_bytes=4792960 allocated_registry_bytes=21049824 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+STO_TPCC_CAPACITY phase=load_complete table=stock_0 retained_records=100000 consumed_record_ids=100999 retained_key_bytes=800000 allocated_registry_bytes=7111536 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+STO_TPCC_CAPACITY phase=load_complete table=stock_data_0 retained_records=100000 consumed_record_ids=100999 retained_key_bytes=800000 allocated_registry_bytes=7111536 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+STO_TPCC_CAPACITY phase=load_complete table=warehouse_0 retained_records=1 consumed_record_ids=1 retained_key_bytes=4 allocated_registry_bytes=205424 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+STO_TPCC_CAPACITY phase=load_complete table=item retained_records=100000 consumed_record_ids=100000 retained_key_bytes=400000 allocated_registry_bytes=7039800 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+tpcc: worker id 128 => warehouses [1, 2)
+No JEMALLOC_NO_RENAME
+20260909-08:35.11-790458(us) 2416426 * benchmark_thread_init (mbta_wrapper.hh:1811): thread_init: thread_id=6, shard_index=0, getShardIndex=0, loader=0
+20260909-08:35.11-791564(us) 2416426 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:35.11-791614(us) 2416426 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:35.11-792474(us) 2416426 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:35.11-792513(us) 2416426 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+D [<unknown>:0] 2026-09-09 08:35:11.793 | [poll_loop] Starting poll loop
+20260909-08:35.11-793111(us) 2416426 * Initialize      (srpc_rpc_backend.cc:66): SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+D [<unknown>:0] 2026-09-09 08:35:11.793 | Server: generated instance_id=2480741455710750574
+20260909-08:35.11-793196(us) 2416426 * Initialize      (srpc_rpc_backend.cc:97): SrpcRpcBackend initialized on 127.0.0.1:31000 (listening on 0.0.0.0:31000)
+20260909-08:35.11-793215(us) 2416426 * FastTransport   (fasttransport.cc:147): FastTransport initialized with srpc/rpc backend on 127.0.0.1:31000
+D [<unknown>:0] 2026-09-09 08:35:11.794 | create a fiber scheduler
+20260909-08:35.11-794413(us) 2416426 * ParseNewFormat  (configuration.cc:102): Using new configuration format
+20260909-08:35.11-794456(us) 2416426 * ParseNewFormat  (configuration.cc:162): Loaded 1 sites in 1 shards
+20260909-08:35.11-798122(us) 2416426 ! run             (bench.cc:685):     TPCC_BENCH_MEASURE_START
+20260909-08:35.11-798151(us) 2416426 ! run             (bench.cc:693):     start the running time, runTime:180
+20260909-08:35.11-798169(us) 2416426 ! run             (bench.cc:705):     runtime time left:180000 ms, bool:1
+20260909-08:35.12-805164(us) 2416426 ! run             (bench.cc:705):     runtime time left:179000 ms, bool:1
+20260909-08:35.13-810752(us) 2416426 ! run             (bench.cc:705):     runtime time left:178000 ms, bool:1
+20260909-08:35.14-817154(us) 2416426 ! run             (bench.cc:705):     runtime time left:177000 ms, bool:1
+20260909-08:35.15-823675(us) 2416426 ! run             (bench.cc:705):     runtime time left:176000 ms, bool:1
+20260909-08:35.16-831448(us) 2416426 ! run             (bench.cc:705):     runtime time left:175000 ms, bool:1
+20260909-08:35.17-839324(us) 2416426 ! run             (bench.cc:705):     runtime time left:174000 ms, bool:1
+20260909-08:35.18-846458(us) 2416426 ! run             (bench.cc:705):     runtime time left:173000 ms, bool:1
+20260909-08:35.19-852010(us) 2416426 ! run             (bench.cc:705):     runtime time left:172000 ms, bool:1
+20260909-08:35.20-861580(us) 2416426 ! run             (bench.cc:705):     runtime time left:171000 ms, bool:1
+20260909-08:35.21-868721(us) 2416426 ! run             (bench.cc:705):     runtime time left:170000 ms, bool:1
+20260909-08:35.22-874447(us) 2416426 ! run             (bench.cc:705):     runtime time left:169000 ms, bool:1
+20260909-08:35.23-881696(us) 2416426 ! run             (bench.cc:705):     runtime time left:168000 ms, bool:1
+20260909-08:35.24-889101(us) 2416426 ! run             (bench.cc:705):     runtime time left:167000 ms, bool:1
+20260909-08:35.25-895901(us) 2416426 ! run             (bench.cc:705):     runtime time left:166000 ms, bool:1
+20260909-08:35.26-902576(us) 2416426 ! run             (bench.cc:705):     runtime time left:165000 ms, bool:1
+20260909-08:35.27-909088(us) 2416426 ! run             (bench.cc:705):     runtime time left:164000 ms, bool:1
+20260909-08:35.28-914645(us) 2416426 ! run             (bench.cc:705):     runtime time left:163000 ms, bool:1
+20260909-08:35.29-923272(us) 2416426 ! run             (bench.cc:705):     runtime time left:162000 ms, bool:1
+20260909-08:35.30-928761(us) 2416426 ! run             (bench.cc:705):     runtime time left:161000 ms, bool:1
+20260909-08:35.31-933965(us) 2416426 ! run             (bench.cc:705):     runtime time left:160000 ms, bool:1
+20260909-08:35.32-940594(us) 2416426 ! run             (bench.cc:705):     runtime time left:159000 ms, bool:1
+20260909-08:35.33-947289(us) 2416426 ! run             (bench.cc:705):     runtime time left:158000 ms, bool:1
+20260909-08:35.34-953876(us) 2416426 ! run             (bench.cc:705):     runtime time left:157000 ms, bool:1
+20260909-08:35.35-962567(us) 2416426 ! run             (bench.cc:705):     runtime time left:156000 ms, bool:1
+20260909-08:35.36-969434(us) 2416426 ! run             (bench.cc:705):     runtime time left:155000 ms, bool:1
+20260909-08:35.37-977218(us) 2416426 ! run             (bench.cc:705):     runtime time left:154000 ms, bool:1
+20260909-08:35.38-983939(us) 2416426 ! run             (bench.cc:705):     runtime time left:153000 ms, bool:1
+20260909-08:35.39-989776(us) 2416426 ! run             (bench.cc:705):     runtime time left:152000 ms, bool:1
+20260909-08:35.40-996007(us) 2416426 ! run             (bench.cc:705):     runtime time left:151000 ms, bool:1
+20260909-08:35.42-1761(us) 2416426 ! run             (bench.cc:705):     runtime time left:150000 ms, bool:1
+20260909-08:35.43-7082(us) 2416426 ! run             (bench.cc:705):     runtime time left:149000 ms, bool:1
+20260909-08:35.44-13006(us) 2416426 ! run             (bench.cc:705):     runtime time left:148000 ms, bool:1
+20260909-08:35.45-18753(us) 2416426 ! run             (bench.cc:705):     runtime time left:147000 ms, bool:1
+20260909-08:35.46-25777(us) 2416426 ! run             (bench.cc:705):     runtime time left:146000 ms, bool:1
+20260909-08:35.47-31232(us) 2416426 ! run             (bench.cc:705):     runtime time left:145000 ms, bool:1
+20260909-08:35.48-39603(us) 2416426 ! run             (bench.cc:705):     runtime time left:144000 ms, bool:1
+20260909-08:35.49-45164(us) 2416426 ! run             (bench.cc:705):     runtime time left:143000 ms, bool:1
+20260909-08:35.50-50737(us) 2416426 ! run             (bench.cc:705):     runtime time left:142000 ms, bool:1
+20260909-08:35.51-57378(us) 2416426 ! run             (bench.cc:705):     runtime time left:141000 ms, bool:1
+20260909-08:35.52-63498(us) 2416426 ! run             (bench.cc:705):     runtime time left:140000 ms, bool:1
+20260909-08:35.53-70644(us) 2416426 ! run             (bench.cc:705):     runtime time left:139000 ms, bool:1
+20260909-08:35.54-78235(us) 2416426 ! run             (bench.cc:705):     runtime time left:138000 ms, bool:1
+20260909-08:35.55-83768(us) 2416426 ! run             (bench.cc:705):     runtime time left:137000 ms, bool:1
+20260909-08:35.56-89088(us) 2416426 ! run             (bench.cc:705):     runtime time left:136000 ms, bool:1
+20260909-08:35.57-94708(us) 2416426 ! run             (bench.cc:705):     runtime time left:135000 ms, bool:1
+20260909-08:35.58-101805(us) 2416426 ! run             (bench.cc:705):     runtime time left:134000 ms, bool:1
+20260909-08:35.59-107471(us) 2416426 ! run             (bench.cc:705):     runtime time left:133000 ms, bool:1
+20260909-08:36.00-114912(us) 2416426 ! run             (bench.cc:705):     runtime time left:132000 ms, bool:1
+20260909-08:36.01-120509(us) 2416426 ! run             (bench.cc:705):     runtime time left:131000 ms, bool:1
+20260909-08:36.02-126010(us) 2416426 ! run             (bench.cc:705):     runtime time left:130000 ms, bool:1
+20260909-08:36.03-155842(us) 2416426 ! run             (bench.cc:705):     runtime time left:129000 ms, bool:1
+20260909-08:36.04-163637(us) 2416426 ! run             (bench.cc:705):     runtime time left:128000 ms, bool:1
+20260909-08:36.05-175339(us) 2416426 ! run             (bench.cc:705):     runtime time left:127000 ms, bool:1
+20260909-08:36.06-182257(us) 2416426 ! run             (bench.cc:705):     runtime time left:126000 ms, bool:1
+20260909-08:36.07-187847(us) 2416426 ! run             (bench.cc:705):     runtime time left:125000 ms, bool:1
+20260909-08:36.08-193518(us) 2416426 ! run             (bench.cc:705):     runtime time left:124000 ms, bool:1
+20260909-08:36.09-200485(us) 2416426 ! run             (bench.cc:705):     runtime time left:123000 ms, bool:1
+20260909-08:36.10-206293(us) 2416426 ! run             (bench.cc:705):     runtime time left:122000 ms, bool:1
+20260909-08:36.11-216088(us) 2416426 ! run             (bench.cc:705):     runtime time left:121000 ms, bool:1
+20260909-08:36.12-224058(us) 2416426 ! run             (bench.cc:705):     runtime time left:120000 ms, bool:1
+20260909-08:36.13-229729(us) 2416426 ! run             (bench.cc:705):     runtime time left:119000 ms, bool:1
+20260909-08:36.14-235901(us) 2416426 ! run             (bench.cc:705):     runtime time left:118000 ms, bool:1
+20260909-08:36.15-241518(us) 2416426 ! run             (bench.cc:705):     runtime time left:117000 ms, bool:1
+20260909-08:36.16-247223(us) 2416426 ! run             (bench.cc:705):     runtime time left:116000 ms, bool:1
+20260909-08:36.17-255063(us) 2416426 ! run             (bench.cc:705):     runtime time left:115000 ms, bool:1
+20260909-08:36.18-260576(us) 2416426 ! run             (bench.cc:705):     runtime time left:114000 ms, bool:1
+20260909-08:36.19-267752(us) 2416426 ! run             (bench.cc:705):     runtime time left:113000 ms, bool:1
+20260909-08:36.20-273299(us) 2416426 ! run             (bench.cc:705):     runtime time left:112000 ms, bool:1
+20260909-08:36.21-280749(us) 2416426 ! run             (bench.cc:705):     runtime time left:111000 ms, bool:1
+20260909-08:36.22-287426(us) 2416426 ! run             (bench.cc:705):     runtime time left:110000 ms, bool:1
+20260909-08:36.23-293099(us) 2416426 ! run             (bench.cc:705):     runtime time left:109000 ms, bool:1
+20260909-08:36.24-298589(us) 2416426 ! run             (bench.cc:705):     runtime time left:108000 ms, bool:1
+20260909-08:36.25-306317(us) 2416426 ! run             (bench.cc:705):     runtime time left:107000 ms, bool:1
+20260909-08:36.26-311808(us) 2416426 ! run             (bench.cc:705):     runtime time left:106000 ms, bool:1
+20260909-08:36.27-317955(us) 2416426 ! run             (bench.cc:705):     runtime time left:105000 ms, bool:1
+20260909-08:36.28-326435(us) 2416426 ! run             (bench.cc:705):     runtime time left:104000 ms, bool:1
+20260909-08:36.29-332239(us) 2416426 ! run             (bench.cc:705):     runtime time left:103000 ms, bool:1
+20260909-08:36.30-337538(us) 2416426 ! run             (bench.cc:705):     runtime time left:102000 ms, bool:1
+20260909-08:36.31-343212(us) 2416426 ! run             (bench.cc:705):     runtime time left:101000 ms, bool:1
+20260909-08:36.32-349270(us) 2416426 ! run             (bench.cc:705):     runtime time left:100000 ms, bool:1
+20260909-08:36.33-357961(us) 2416426 ! run             (bench.cc:705):     runtime time left:99000 ms, bool:1
+20260909-08:36.34-364778(us) 2416426 ! run             (bench.cc:705):     runtime time left:98000 ms, bool:1
+20260909-08:36.35-371903(us) 2416426 ! run             (bench.cc:705):     runtime time left:97000 ms, bool:1
+20260909-08:36.36-377627(us) 2416426 ! run             (bench.cc:705):     runtime time left:96000 ms, bool:1
+20260909-08:36.37-383019(us) 2416426 ! run             (bench.cc:705):     runtime time left:95000 ms, bool:1
+20260909-08:36.38-389723(us) 2416426 ! run             (bench.cc:705):     runtime time left:94000 ms, bool:1
+20260909-08:36.39-395251(us) 2416426 ! run             (bench.cc:705):     runtime time left:93000 ms, bool:1
+20260909-08:36.40-400435(us) 2416426 ! run             (bench.cc:705):     runtime time left:92000 ms, bool:1
+20260909-08:36.41-407429(us) 2416426 ! run             (bench.cc:705):     runtime time left:91000 ms, bool:1
+20260909-08:36.42-414169(us) 2416426 ! run             (bench.cc:705):     runtime time left:90000 ms, bool:1
+20260909-08:36.43-421439(us) 2416426 ! run             (bench.cc:705):     runtime time left:89000 ms, bool:1
+20260909-08:36.44-428353(us) 2416426 ! run             (bench.cc:705):     runtime time left:88000 ms, bool:1
+20260909-08:36.45-436648(us) 2416426 ! run             (bench.cc:705):     runtime time left:87000 ms, bool:1
+20260909-08:36.46-444546(us) 2416426 ! run             (bench.cc:705):     runtime time left:86000 ms, bool:1
+20260909-08:36.47-452101(us) 2416426 ! run             (bench.cc:705):     runtime time left:85000 ms, bool:1
+20260909-08:36.48-461210(us) 2416426 ! run             (bench.cc:705):     runtime time left:84000 ms, bool:1
+20260909-08:36.49-467084(us) 2416426 ! run             (bench.cc:705):     runtime time left:83000 ms, bool:1
+20260909-08:36.50-474335(us) 2416426 ! run             (bench.cc:705):     runtime time left:82000 ms, bool:1
+20260909-08:36.51-479966(us) 2416426 ! run             (bench.cc:705):     runtime time left:81000 ms, bool:1
+20260909-08:36.52-486095(us) 2416426 ! run             (bench.cc:705):     runtime time left:80000 ms, bool:1
+20260909-08:36.53-491660(us) 2416426 ! run             (bench.cc:705):     runtime time left:79000 ms, bool:1
+20260909-08:36.54-497841(us) 2416426 ! run             (bench.cc:705):     runtime time left:78000 ms, bool:1
+20260909-08:36.55-503507(us) 2416426 ! run             (bench.cc:705):     runtime time left:77000 ms, bool:1
+20260909-08:36.56-510427(us) 2416426 ! run             (bench.cc:705):     runtime time left:76000 ms, bool:1
+20260909-08:36.57-515990(us) 2416426 ! run             (bench.cc:705):     runtime time left:75000 ms, bool:1
+20260909-08:36.58-521362(us) 2416426 ! run             (bench.cc:705):     runtime time left:74000 ms, bool:1
+20260909-08:36.59-526989(us) 2416426 ! run             (bench.cc:705):     runtime time left:73000 ms, bool:1
+20260909-08:37.00-532544(us) 2416426 ! run             (bench.cc:705):     runtime time left:72000 ms, bool:1
+20260909-08:37.01-541035(us) 2416426 ! run             (bench.cc:705):     runtime time left:71000 ms, bool:1
+20260909-08:37.02-546524(us) 2416426 ! run             (bench.cc:705):     runtime time left:70000 ms, bool:1
+20260909-08:37.03-553523(us) 2416426 ! run             (bench.cc:705):     runtime time left:69000 ms, bool:1
+20260909-08:37.04-559130(us) 2416426 ! run             (bench.cc:705):     runtime time left:68000 ms, bool:1
+20260909-08:37.05-564172(us) 2416426 ! run             (bench.cc:705):     runtime time left:67000 ms, bool:1
+20260909-08:37.06-569572(us) 2416426 ! run             (bench.cc:705):     runtime time left:66000 ms, bool:1
+20260909-08:37.07-577943(us) 2416426 ! run             (bench.cc:705):     runtime time left:65000 ms, bool:1
+20260909-08:37.08-585470(us) 2416426 ! run             (bench.cc:705):     runtime time left:64000 ms, bool:1
+20260909-08:37.09-591627(us) 2416426 ! run             (bench.cc:705):     runtime time left:63000 ms, bool:1
+20260909-08:37.10-597727(us) 2416426 ! run             (bench.cc:705):     runtime time left:62000 ms, bool:1
+20260909-08:37.11-604021(us) 2416426 ! run             (bench.cc:705):     runtime time left:61000 ms, bool:1
+20260909-08:37.12-609673(us) 2416426 ! run             (bench.cc:705):     runtime time left:60000 ms, bool:1
+20260909-08:37.13-617317(us) 2416426 ! run             (bench.cc:705):     runtime time left:59000 ms, bool:1
+20260909-08:37.14-623766(us) 2416426 ! run             (bench.cc:705):     runtime time left:58000 ms, bool:1
+20260909-08:37.15-629870(us) 2416426 ! run             (bench.cc:705):     runtime time left:57000 ms, bool:1
+20260909-08:37.16-635491(us) 2416426 ! run             (bench.cc:705):     runtime time left:56000 ms, bool:1
+20260909-08:37.17-641031(us) 2416426 ! run             (bench.cc:705):     runtime time left:55000 ms, bool:1
+20260909-08:37.18-646740(us) 2416426 ! run             (bench.cc:705):     runtime time left:54000 ms, bool:1
+20260909-08:37.19-653084(us) 2416426 ! run             (bench.cc:705):     runtime time left:53000 ms, bool:1
+20260909-08:37.20-659184(us) 2416426 ! run             (bench.cc:705):     runtime time left:52000 ms, bool:1
+20260909-08:37.21-664722(us) 2416426 ! run             (bench.cc:705):     runtime time left:51000 ms, bool:1
+20260909-08:37.22-670088(us) 2416426 ! run             (bench.cc:705):     runtime time left:50000 ms, bool:1
+20260909-08:37.23-677399(us) 2416426 ! run             (bench.cc:705):     runtime time left:49000 ms, bool:1
+20260909-08:37.24-684403(us) 2416426 ! run             (bench.cc:705):     runtime time left:48000 ms, bool:1
+20260909-08:37.25-690063(us) 2416426 ! run             (bench.cc:705):     runtime time left:47000 ms, bool:1
+20260909-08:37.26-696606(us) 2416426 ! run             (bench.cc:705):     runtime time left:46000 ms, bool:1
+20260909-08:37.27-702226(us) 2416426 ! run             (bench.cc:705):     runtime time left:45000 ms, bool:1
+20260909-08:37.28-707720(us) 2416426 ! run             (bench.cc:705):     runtime time left:44000 ms, bool:1
+20260909-08:37.29-713906(us) 2416426 ! run             (bench.cc:705):     runtime time left:43000 ms, bool:1
+20260909-08:37.30-721298(us) 2416426 ! run             (bench.cc:705):     runtime time left:42000 ms, bool:1
+20260909-08:37.31-727968(us) 2416426 ! run             (bench.cc:705):     runtime time left:41000 ms, bool:1
+20260909-08:37.32-733554(us) 2416426 ! run             (bench.cc:705):     runtime time left:40000 ms, bool:1
+20260909-08:37.33-739018(us) 2416426 ! run             (bench.cc:705):     runtime time left:39000 ms, bool:1
+20260909-08:37.34-744404(us) 2416426 ! run             (bench.cc:705):     runtime time left:38000 ms, bool:1
+20260909-08:37.35-750429(us) 2416426 ! run             (bench.cc:705):     runtime time left:37000 ms, bool:1
+20260909-08:37.36-755901(us) 2416426 ! run             (bench.cc:705):     runtime time left:36000 ms, bool:1
+20260909-08:37.37-761488(us) 2416426 ! run             (bench.cc:705):     runtime time left:35000 ms, bool:1
+20260909-08:37.38-767842(us) 2416426 ! run             (bench.cc:705):     runtime time left:34000 ms, bool:1
+20260909-08:37.39-775216(us) 2416426 ! run             (bench.cc:705):     runtime time left:33000 ms, bool:1
+20260909-08:37.40-782851(us) 2416426 ! run             (bench.cc:705):     runtime time left:32000 ms, bool:1
+20260909-08:37.41-788500(us) 2416426 ! run             (bench.cc:705):     runtime time left:31000 ms, bool:1
+20260909-08:37.42-794036(us) 2416426 ! run             (bench.cc:705):     runtime time left:30000 ms, bool:1
+20260909-08:37.43-800841(us) 2416426 ! run             (bench.cc:705):     runtime time left:29000 ms, bool:1
+20260909-08:37.44-806974(us) 2416426 ! run             (bench.cc:705):     runtime time left:28000 ms, bool:1
+20260909-08:37.45-814346(us) 2416426 ! run             (bench.cc:705):     runtime time left:27000 ms, bool:1
+20260909-08:37.46-821533(us) 2416426 ! run             (bench.cc:705):     runtime time left:26000 ms, bool:1
+20260909-08:37.47-829296(us) 2416426 ! run             (bench.cc:705):     runtime time left:25000 ms, bool:1
+20260909-08:37.48-834957(us) 2416426 ! run             (bench.cc:705):     runtime time left:24000 ms, bool:1
+20260909-08:37.49-841912(us) 2416426 ! run             (bench.cc:705):     runtime time left:23000 ms, bool:1
+20260909-08:37.50-847526(us) 2416426 ! run             (bench.cc:705):     runtime time left:22000 ms, bool:1
+20260909-08:37.51-853894(us) 2416426 ! run             (bench.cc:705):     runtime time left:21000 ms, bool:1
+20260909-08:37.52-859304(us) 2416426 ! run             (bench.cc:705):     runtime time left:20000 ms, bool:1
+20260909-08:37.53-866842(us) 2416426 ! run             (bench.cc:705):     runtime time left:19000 ms, bool:1
+20260909-08:37.54-872447(us) 2416426 ! run             (bench.cc:705):     runtime time left:18000 ms, bool:1
+20260909-08:37.55-878483(us) 2416426 ! run             (bench.cc:705):     runtime time left:17000 ms, bool:1
+20260909-08:37.56-883841(us) 2416426 ! run             (bench.cc:705):     runtime time left:16000 ms, bool:1
+20260909-08:37.57-891673(us) 2416426 ! run             (bench.cc:705):     runtime time left:15000 ms, bool:1
+20260909-08:37.58-898738(us) 2416426 ! run             (bench.cc:705):     runtime time left:14000 ms, bool:1
+20260909-08:37.59-905431(us) 2416426 ! run             (bench.cc:705):     runtime time left:13000 ms, bool:1
+20260909-08:38.00-912398(us) 2416426 ! run             (bench.cc:705):     runtime time left:12000 ms, bool:1
+20260909-08:38.01-918137(us) 2416426 ! run             (bench.cc:705):     runtime time left:11000 ms, bool:1
+20260909-08:38.02-924720(us) 2416426 ! run             (bench.cc:705):     runtime time left:10000 ms, bool:1
+20260909-08:38.03-930301(us) 2416426 ! run             (bench.cc:705):     runtime time left:9000 ms, bool:1
+20260909-08:38.04-937621(us) 2416426 ! run             (bench.cc:705):     runtime time left:8000 ms, bool:1
+20260909-08:38.05-943906(us) 2416426 ! run             (bench.cc:705):     runtime time left:7000 ms, bool:1
+20260909-08:38.06-950627(us) 2416426 ! run             (bench.cc:705):     runtime time left:6000 ms, bool:1
+20260909-08:38.07-956489(us) 2416426 ! run             (bench.cc:705):     runtime time left:5000 ms, bool:1
+20260909-08:38.08-962087(us) 2416426 ! run             (bench.cc:705):     runtime time left:4000 ms, bool:1
+20260909-08:38.09-967848(us) 2416426 ! run             (bench.cc:705):     runtime time left:3000 ms, bool:1
+20260909-08:38.10-975171(us) 2416426 ! run             (bench.cc:705):     runtime time left:2000 ms, bool:1
+20260909-08:38.11-981620(us) 2416426 ! run             (bench.cc:705):     runtime time left:1000 ms, bool:1
+20260909-08:38.12-986842(us) 2416426 ! run             (bench.cc:718):     runtime_plus:0
+[SHUTDOWN] Setting running=false to stop database worker threads
+[SHUTDOWN] Calling first stop() to stop client transports
+20260909-08:38.12-986973(us) 2416426 ! stop            (bench.cc:514):     stop all rpc clients. set stop=false
+20260909-08:38.12-987005(us) 2416426 * Stop            (srpc_rpc_backend.cc:593): SrpcRpcBackend::Stop: BEGIN - Setting stop flag
+20260909-08:38.12-987034(us) 2416426 * Stop            (srpc_rpc_backend.cc:596): SrpcRpcBackend::Stop: Waiting for event loop to exit...
+20260909-08:38.12-987063(us) 2416426 * Stop            (srpc_rpc_backend.cc:612): SrpcRpcBackend::Stop: Event loop exited successfully
+20260909-08:38.12-987091(us) 2416426 * Stop            (srpc_rpc_backend.cc:616): SrpcRpcBackend::Stop: Signaling 0 request queues to stop
+20260909-08:38.12-987120(us) 2416426 * Stop            (srpc_rpc_backend.cc:624): SrpcRpcBackend::Stop: Signaling 0 response queues to stop
+20260909-08:38.12-987153(us) 2416426 * Stop            (srpc_rpc_backend.cc:635): SrpcRpcBackend::Stop: Server cleanup deferred to destructor
+20260909-08:38.12-987181(us) 2416426 * Stop            (srpc_rpc_backend.cc:638): SrpcRpcBackend::Stop: Closing client connections
+20260909-08:38.12-987209(us) 2416426 * Stop            (srpc_rpc_backend.cc:642): SrpcRpcBackend::Stop: Found 0 client connections to close
+20260909-08:38.12-987281(us) 2416426 * Stop            (srpc_rpc_backend.cc:662): SrpcRpcBackend::Stop: Closed 0 client connections
+20260909-08:38.12-987310(us) 2416426 * Stop            (srpc_rpc_backend.cc:675): SrpcRpcBackend stats: msg_size_resp_sent: 0 bytes, counter: 0, avg: 0.000000
+20260909-08:38.12-987342(us) 2416426 * Stop            (srpc_rpc_backend.cc:676): SrpcRpcBackend::Stop: END
+[SHUTDOWN] First stop() completed
+[SHUTDOWN] Joining 20260909-08:38.12-987432(us) 2416426 * PrintStats      (srpc_rpc_backend.cc:686): SrpcRpcBackend request stats: msg_size_req_sent: 0 bytes, counter: 0, avg: 0.000000
+1 worker threads
+[SHUTDOWN] Joining worker 0
+20260909-08:38.13-987498(us) 2416426 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+20260909-08:38.13-987532(us) 2416426 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+20260909-08:38.13-987551(us) 2416426 * Shutdown        (srpc_rpc_backend.cc:116): SrpcRpcBackend::Shutdown: Server pointer is valid, deleting...
+20260909-08:38.13-987586(us) 2416426 * Shutdown        (srpc_rpc_backend.cc:120): SrpcRpcBackend::Shutdown: Server deleted successfully
+20260909-08:38.13-987604(us) 2416426 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+20260909-08:38.13-987622(us) 2416426 * Shutdown        (srpc_rpc_backend.cc:136): SrpcRpcBackend::Shutdown: poll_thread_worker_ is valid, calling shutdown()
+D [<unknown>:0] 2026-09-09 08:38:13.987 | [PollThread::shutdown] Called from TID=2416441
+D [<unknown>:0] 2026-09-09 08:38:13.987 | [PollThread::shutdown] Sending CmdShutdown
+D [<unknown>:0] 2026-09-09 08:38:13.987 | [PollThread::shutdown] CmdShutdown sent
+D [<unknown>:0] 2026-09-09 08:38:13.987 | [PollThread::shutdown] Acquiring join_handle lock...
+D [<unknown>:0] 2026-09-09 08:38:13.987 | [PollThread::shutdown] join_handle lock acquired
+D [<unknown>:0] 2026-09-09 08:38:13.987 | [PollThread::shutdown] Calling thread.join()...
+D [<unknown>:0] 2026-09-09 08:38:13.987 | [poll_loop] Exited while loop (stop_=true), starting cleanup
+D [<unknown>:0] 2026-09-09 08:38:13.987 | [poll_loop] Cleanup complete, poll_loop exiting
+D [<unknown>:0] 2026-09-09 08:38:13.987 | [Reactor::~Reactor] Starting destruction, all_events_.len()=0, fibers_.size()=0
+D [<unknown>:0] 2026-09-09 08:38:13.987 | [Reactor::~Reactor] Destructor body complete, about to destroy member variables
+D [<unknown>:0] 2026-09-09 08:38:13.988 | [PollThread::shutdown] thread.join() completed!
+D [<unknown>:0] 2026-09-09 08:38:13.988 | [PollThread::shutdown] Released join_handle lock
+D [<unknown>:0] 2026-09-09 08:38:13.988 | [PollThread::shutdown] Complete
+20260909-08:38.13-988135(us) 2416426 * Shutdown        (srpc_rpc_backend.cc:138): SrpcRpcBackend::Shutdown: poll_thread_worker_->shutdown() completed
+D [<unknown>:0] 2026-09-09 08:38:13.988 | [PollThread::~PollThread] Destructor called from TID=2416441
+D [<unknown>:0] 2026-09-09 08:38:13.988 | [PollThread::shutdown] Called from TID=2416441
+D [<unknown>:0] 2026-09-09 08:38:13.988 | [PollThread::shutdown] Already called, returning
+D [<unknown>:0] 2026-09-09 08:38:13.988 | [PollThread::~PollThread] Destructor complete
+20260909-08:38.13-988176(us) 2416426 * Shutdown        (srpc_rpc_backend.cc:140): SrpcRpcBackend::Shutdown: poll_thread_worker_ reset to None
+20260909-08:38.13-988194(us) 2416426 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+20260909-08:38.13-988211(us) 2416426 * ~SrpcRpcBackend (srpc_rpc_backend.cc:52): SrpcRpcBackend::~SrpcRpcBackend: START destructor
+20260909-08:38.13-988229(us) 2416426 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+20260909-08:38.13-988247(us) 2416426 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+20260909-08:38.13-988283(us) 2416426 * Shutdown        (srpc_rpc_backend.cc:129): SrpcRpcBackend::Shutdown: Server pointer is null, skipping deletion
+20260909-08:38.13-988301(us) 2416426 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+20260909-08:38.13-988318(us) 2416426 * Shutdown        (srpc_rpc_backend.cc:142): SrpcRpcBackend::Shutdown: poll_thread_worker_ is null, skipping shutdown
+20260909-08:38.13-988336(us) 2416426 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+20260909-08:38.13-988362(us) 2416426 * ~SrpcRpcBackend (srpc_rpc_backend.cc:54): SrpcRpcBackend::~SrpcRpcBackend: Shutdown() completed
+[SHUTDOWN] Worker 0 joined
+[SHUTDOWN] All workers joined
+[SHUTDOWN] Calling stop_rpc_server()
+[STOP_SERVER] Stopping 2 server transports
+[STOP_SERVER] Stopping server transport 0
+20260909-08:38.13-988537(us) 2416426 * Stop            (srpc_rpc_backend.cc:593): SrpcRpcBackend::Stop: BEGIN - Setting stop flag
+20260909-08:38.13-988558(us) 2416426 * Stop            (srpc_rpc_backend.cc:596): SrpcRpcBackend::Stop: Waiting for event loop to exit...
+20260909-08:38.13-988614(us) 2416426 * RunEventLoop    (srpc_rpc_backend.cc:577): SrpcRpcBackend::RunEventLoop: Stop flag detected, exiting event loop
+20260909-08:38.13-988634(us) 2416426 * RunEventLoop    (srpc_rpc_backend.cc:581): SrpcRpcBackend::RunEventLoop: Exited cleanly
+20260909-08:38.13-988652(us) 2416426 * rpc_server      (rpc_setup.cc:126): the rpc_server is terminated on shardIdx:0, alpha:0!
+20260909-08:38.13-988732(us) 2416426 * Stop            (srpc_rpc_backend.cc:612): SrpcRpcBackend::Stop: Event loop exited successfully
+20260909-08:38.13-988775(us) 2416426 * Stop            (srpc_rpc_backend.cc:616): SrpcRpcBackend::Stop: Signaling 0 request queues to stop
+20260909-08:38.13-988793(us) 2416426 * Stop            (srpc_rpc_backend.cc:624): SrpcRpcBackend::Stop: Signaling 0 response queues to stop
+20260909-08:38.13-988811(us) 2416426 * Stop            (srpc_rpc_backend.cc:635): SrpcRpcBackend::Stop: Server cleanup deferred to destructor
+20260909-08:38.13-988828(us) 2416426 * Stop            (srpc_rpc_backend.cc:638): SrpcRpcBackend::Stop: Closing client connections
+20260909-08:38.13-988861(us) 2416426 * Stop            (srpc_rpc_backend.cc:642): SrpcRpcBackend::Stop: Found 0 client connections to close
+20260909-08:38.13-988879(us) 2416426 * Stop            (srpc_rpc_backend.cc:662): SrpcRpcBackend::Stop: Closed 0 client connections
+20260909-08:38.13-988897(us) 2416426 * Stop            (srpc_rpc_backend.cc:675): SrpcRpcBackend stats: msg_size_resp_sent: 0 bytes, counter: 0, avg: 0.000000
+20260909-08:38.13-988928(us) 2416426 * Stop            (srpc_rpc_backend.cc:676): SrpcRpcBackend::Stop: END
+[STOP_SERVER] Server transport 0 stopped
+[STOP_SERVER] Stopping server transport 1
+20260909-08:38.13-988965(us) 2416426 * Stop            (srpc_rpc_backend.cc:593): SrpcRpcBackend::Stop: BEGIN - Setting stop flag
+20260909-08:38.13-988983(us) 2416426 * Stop            (srpc_rpc_backend.cc:596): SrpcRpcBackend::Stop: Waiting for event loop to exit...
+20260909-08:38.13-989064(us) 2416426 * RunEventLoop    (srpc_rpc_backend.cc:577): SrpcRpcBackend::RunEventLoop: Stop flag detected, exiting event loop
+20260909-08:38.13-989084(us) 2416426 * RunEventLoop    (srpc_rpc_backend.cc:581): SrpcRpcBackend::RunEventLoop: Exited cleanly
+20260909-08:38.13-989101(us) 2416426 * rpc_server      (rpc_setup.cc:126): the rpc_server is terminated on shardIdx:0, alpha:1!
+20260909-08:38.13-999059(us) 2416426 * Stop            (srpc_rpc_backend.cc:612): SrpcRpcBackend::Stop: Event loop exited successfully
+20260909-08:38.13-999086(us) 2416426 * Stop            (srpc_rpc_backend.cc:616): SrpcRpcBackend::Stop: Signaling 0 request queues to stop
+20260909-08:38.13-999104(us) 2416426 * Stop            (srpc_rpc_backend.cc:624): SrpcRpcBackend::Stop: Signaling 0 response queues to stop
+20260909-08:38.13-999122(us) 2416426 * Stop            (srpc_rpc_backend.cc:635): SrpcRpcBackend::Stop: Server cleanup deferred to destructor
+20260909-08:38.13-999139(us) 2416426 * Stop            (srpc_rpc_backend.cc:638): SrpcRpcBackend::Stop: Closing client connections
+20260909-08:38.13-999157(us) 2416426 * Stop            (srpc_rpc_backend.cc:642): SrpcRpcBackend::Stop: Found 0 client connections to close
+20260909-08:38.13-999174(us) 2416426 * Stop            (srpc_rpc_backend.cc:662): SrpcRpcBackend::Stop: Closed 0 client connections
+20260909-08:38.13-999192(us) 2416426 * Stop            (srpc_rpc_backend.cc:675): SrpcRpcBackend stats: msg_size_resp_sent: 0 bytes, counter: 0, avg: 0.000000
+20260909-08:38.13-999220(us) 2416426 * Stop            (srpc_rpc_backend.cc:676): SrpcRpcBackend::Stop: END
+[STOP_SERVER] Server transport 1 stopped
+20260909-08:38.13-999251(us) 2416426 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+20260909-08:38.13-999268(us) 2416426 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+20260909-08:38.13-999286(us) 2416426 * Shutdown        (srpc_rpc_backend.cc:116): SrpcRpcBackend::Shutdown: Server pointer is valid, deleting...
+20260909-08:38.13-999311(us) 2416426 * Shutdown        (srpc_rpc_backend.cc:120): SrpcRpcBackend::Shutdown: Server deleted successfully
+20260909-08:38.13-999329(us) 2416426 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+20260909-08:38.13-999346(us) 2416426 * Shutdown        (srpc_rpc_backend.cc:136): SrpcRpcBackend::Shutdown: poll_thread_worker_ is valid, calling shutdown()
+D [<unknown>:0] 2026-09-09 08:38:13.999 | [PollThread::shutdown] Called from TID=2416426
+D [<unknown>:0] 2026-09-09 08:38:13.999 | [PollThread::shutdown] Sending CmdShutdown
+D [<unknown>:0] 2026-09-09 08:38:13.999 | [PollThread::shutdown] CmdShutdown sent
+D [<unknown>:0] 2026-09-09 08:38:13.999 | [PollThread::shutdown] Acquiring join_handle lock...
+D [<unknown>:0] 2026-09-09 08:38:13.999 | [PollThread::shutdown] join_handle lock acquired
+D [<unknown>:0] 2026-09-09 08:38:13.999 | [PollThread::shutdown] Calling thread.join()...
+D [<unknown>:0] 2026-09-09 08:38:13.999 | [poll_loop] Exited while loop (stop_=true), starting cleanup
+D [<unknown>:0] 2026-09-09 08:38:13.999 | [poll_loop] Cleanup complete, poll_loop exiting
+D [<unknown>:0] 2026-09-09 08:38:13.999 | [Reactor::~Reactor] Starting destruction, all_events_.len()=0, fibers_.size()=0
+D [<unknown>:0] 2026-09-09 08:38:13.999 | [Reactor::~Reactor] Destructor body complete, about to destroy member variables
+D [<unknown>:0] 2026-09-09 08:38:13.999 | [PollThread::shutdown] thread.join() completed!
+D [<unknown>:0] 2026-09-09 08:38:13.999 | [PollThread::shutdown] Released join_handle lock
+D [<unknown>:0] 2026-09-09 08:38:13.999 | [PollThread::shutdown] Complete
+20260909-08:38.13-999589(us) 2416426 * Shutdown        (srpc_rpc_backend.cc:138): SrpcRpcBackend::Shutdown: poll_thread_worker_->shutdown() completed
+D [<unknown>:0] 2026-09-09 08:38:13.999 | [PollThread::~PollThread] Destructor called from TID=2416426
+D [<unknown>:0] 2026-09-09 08:38:13.999 | [PollThread::shutdown] Called from TID=2416426
+D [<unknown>:0] 2026-09-09 08:38:13.999 | [PollThread::shutdown] Already called, returning
+D [<unknown>:0] 2026-09-09 08:38:13.999 | [PollThread::~PollThread] Destructor complete
+20260909-08:38.13-999629(us) 2416426 * Shutdown        (srpc_rpc_backend.cc:140): SrpcRpcBackend::Shutdown: poll_thread_worker_ reset to None
+20260909-08:38.13-999646(us) 2416426 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+20260909-08:38.13-999664(us) 2416426 * ~SrpcRpcBackend (srpc_rpc_backend.cc:52): SrpcRpcBackend::~SrpcRpcBackend: START destructor
+20260909-08:38.13-999682(us) 2416426 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+20260909-08:38.13-999699(us) 2416426 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+20260909-08:38.13-999717(us) 2416426 * Shutdown        (srpc_rpc_backend.cc:129): SrpcRpcBackend::Shutdown: Server pointer is null, skipping deletion
+20260909-08:38.13-999734(us) 2416426 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+20260909-08:38.13-999752(us) 2416426 * Shutdown        (srpc_rpc_backend.cc:142): SrpcRpcBackend::Shutdown: poll_thread_worker_ is null, skipping shutdown
+20260909-08:38.13-999775(us) 2416426 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+20260909-08:38.13-999801(us) 2416426 * ~SrpcRpcBackend (srpc_rpc_backend.cc:54): SrpcRpcBackend::~SrpcRpcBackend: Shutdown() completed
+20260909-08:38.13-999847(us) 2416426 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+20260909-08:38.13-999870(us) 2416426 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+20260909-08:38.13-999888(us) 2416426 * Shutdown        (srpc_rpc_backend.cc:116): SrpcRpcBackend::Shutdown: Server pointer is valid, deleting...
+20260909-08:38.13-999907(us) 2416426 * Shutdown        (srpc_rpc_backend.cc:120): SrpcRpcBackend::Shutdown: Server deleted successfully
+20260909-08:38.13-999925(us) 2416426 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+20260909-08:38.13-999942(us) 2416426 * Shutdown        (srpc_rpc_backend.cc:136): SrpcRpcBackend::Shutdown: poll_thread_worker_ is valid, calling shutdown()
+D [<unknown>:0] 2026-09-09 08:38:13.999 | [PollThread::shutdown] Called from TID=2416426
+D [<unknown>:0] 2026-09-09 08:38:13.999 | [PollThread::shutdown] Sending CmdShutdown
+D [<unknown>:0] 2026-09-09 08:38:13.999 | [PollThread::shutdown] CmdShutdown sent
+D [<unknown>:0] 2026-09-09 08:38:13.999 | [PollThread::shutdown] Acquiring join_handle lock...
+D [<unknown>:0] 2026-09-09 08:38:13.999 | [PollThread::shutdown] join_handle lock acquired
+D [<unknown>:0] 2026-09-09 08:38:13.999 | [PollThread::shutdown] Calling thread.join()...
+D [<unknown>:0] 2026-09-09 08:38:13.000 | [poll_loop] Exited while loop (stop_=true), starting cleanup
+D [<unknown>:0] 2026-09-09 08:38:13.000 | [poll_loop] Cleanup complete, poll_loop exiting
+D [<unknown>:0] 2026-09-09 08:38:13.000 | [Reactor::~Reactor] Starting destruction, all_events_.len()=0, fibers_.size()=0
+D [<unknown>:0] 2026-09-09 08:38:13.000 | [Reactor::~Reactor] Destructor body complete, about to destroy member variables
+D [<unknown>:0] 2026-09-09 08:38:13.000 | [PollThread::shutdown] thread.join() completed!
+D [<unknown>:0] 2026-09-09 08:38:13.000 | [PollThread::shutdown] Released join_handle lock
+D [<unknown>:0] 2026-09-09 08:38:13.000 | [PollThread::shutdown] Complete
+20260909-08:38.14-0169(us) 2416426 * Shutdown        (srpc_rpc_backend.cc:138): SrpcRpcBackend::Shutdown: poll_thread_worker_->shutdown() completed
+D [<unknown>:0] 2026-09-09 08:38:13.000 | [PollThread::~PollThread] Destructor called from TID=2416426
+D [<unknown>:0] 2026-09-09 08:38:13.000 | [PollThread::shutdown] Called from TID=2416426
+D [<unknown>:0] 2026-09-09 08:38:13.000 | [PollThread::shutdown] Already called, returning
+D [<unknown>:0] 2026-09-09 08:38:13.000 | [PollThread::~PollThread] Destructor complete
+20260909-08:38.14-0207(us) 2416426 * Shutdown        (srpc_rpc_backend.cc:140): SrpcRpcBackend::Shutdown: poll_thread_worker_ reset to None
+20260909-08:38.14-0225(us) 2416426 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+20260909-08:38.14-0243(us) 2416426 * ~SrpcRpcBackend (srpc_rpc_backend.cc:52): SrpcRpcBackend::~SrpcRpcBackend: START destructor
+20260909-08:38.14-0260(us) 2416426 * Stop            (srpc_rpc_backend.cc:589): SrpcRpcBackend::Stop: Already stopped, returning
+20260909-08:38.14-0278(us) 2416426 * Shutdown        (srpc_rpc_backend.cc:112): SrpcRpcBackend::Shutdown: About to delete server
+20260909-08:38.14-0295(us) 2416426 * Shutdown        (srpc_rpc_backend.cc:129): SrpcRpcBackend::Shutdown: Server pointer is null, skipping deletion
+20260909-08:38.14-0312(us) 2416426 * Shutdown        (srpc_rpc_backend.cc:132): SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_
+20260909-08:38.14-0330(us) 2416426 * Shutdown        (srpc_rpc_backend.cc:142): SrpcRpcBackend::Shutdown: poll_thread_worker_ is null, skipping shutdown
+20260909-08:38.14-0347(us) 2416426 * Shutdown        (srpc_rpc_backend.cc:145): SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit
+20260909-08:38.14-0365(us) 2416426 * ~SrpcRpcBackend (srpc_rpc_backend.cc:54): SrpcRpcBackend::~SrpcRpcBackend: Shutdown() completed
+[STOP_SERVER] All server transports stopped
+[SHUTDOWN] stop_rpc_server() completed
+[SHUTDOWN] Calling second stop()
+20260909-08:38.14-0428(us) 2416426 ! stop            (bench.cc:514):     stop all rpc clients. set stop=false
+[SHUTDOWN] Second stop() completed
+20260909-08:38.14-0452(us) 2416426 ! run             (bench.cc:774):     TPCC_BENCH_MEASURE_END
+[SHUTDOWN] Calling do_txn_finish()
+[SHUTDOWN] do_txn_finish() completed
+--- n_commits per partition ---
+ par_id: 0, n_commits: 10187161
+STO_TPCC_CAPACITY phase=run_complete scope=database allocated_registry_bytes=4557103264 max_registry_bytes=8589934592 registry_headroom_bytes=4032831328
+STO_TPCC_CAPACITY phase=run_complete table=customer_0 retained_records=90000 consumed_record_ids=90000 retained_key_bytes=1080000 allocated_registry_bytes=17856776 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+STO_TPCC_CAPACITY phase=run_complete table=customer_name_idx_0 retained_records=30000 consumed_record_ids=30000 retained_key_bytes=1200000 allocated_registry_bytes=2156376 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+STO_TPCC_CAPACITY phase=run_complete table=district_0 retained_records=10 consumed_record_ids=10 retained_key_bytes=80 allocated_registry_bytes=205424 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+STO_TPCC_CAPACITY phase=run_complete table=history_0 retained_records=4410190 consumed_record_ids=4410190 retained_key_bytes=105844560 allocated_registry_bytes=309428208 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+STO_TPCC_CAPACITY phase=run_complete table=new_order_0 retained_records=4593284 consumed_record_ids=4593284 retained_key_bytes=55119408 allocated_registry_bytes=322268952 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+STO_TPCC_CAPACITY phase=run_complete table=oorder_0 retained_records=4614284 consumed_record_ids=4614284 retained_key_bytes=55371408 allocated_registry_bytes=323775408 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+STO_TPCC_CAPACITY phase=run_complete table=oorder_c_id_idx_0 retained_records=4614284 consumed_record_ids=4614284 retained_key_bytes=73828544 allocated_registry_bytes=323775408 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+STO_TPCC_CAPACITY phase=run_complete table=order_line_0 retained_records=46141818 consumed_record_ids=46141818 retained_key_bytes=738269088 allocated_registry_bytes=3236168416 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+STO_TPCC_CAPACITY phase=run_complete table=stock_0 retained_records=100000 consumed_record_ids=100999 retained_key_bytes=800000 allocated_registry_bytes=7111536 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+STO_TPCC_CAPACITY phase=run_complete table=stock_data_0 retained_records=100000 consumed_record_ids=100999 retained_key_bytes=800000 allocated_registry_bytes=7111536 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+STO_TPCC_CAPACITY phase=run_complete table=warehouse_0 retained_records=1 consumed_record_ids=1 retained_key_bytes=4 allocated_registry_bytes=205424 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+STO_TPCC_CAPACITY phase=run_complete table=item retained_records=100000 consumed_record_ids=100000 retained_key_bytes=400000 allocated_registry_bytes=7039800 max_retained_records=18446744073709551615 max_consumed_record_ids=18446744073709551615 max_retained_key_bytes=18446744073709551615
+--- benchmark statistics ---
+runtime: 181.202 sec
+memory delta: 6081.2 MB
+n_commits: 10187161
+latency_numer_us: 175113830
+latency_numer_us_remote: 0
+memory delta rate: 33.5603 MB/sec
+logical memory delta: 649.621 MB
+logical memory delta rate: 3.58506 MB/sec
+agg_nosync_throughput: 56219.8 ops/sec
+avg_nosync_per_core_throughput: 56219.8 ops/sec/core
+agg_throughput: 56219.8 ops/sec
+avg_per_core_throughput: 56219.8 ops/sec/core
+agg_persist_throughput: 56219.8 ops/sec
+avg_per_core_persist_throughput: 56219.8 ops/sec/core
+avg_latency: 0.0171897 ms
+avg_persist_latency: 0 ms
+agg_abort_rate: 0 aborts/sec
+avg_per_core_abort_rate: 0 aborts/sec/core
+  NewOrder_local_commit_latency: 0.0192397 ms
+  NewOrder_local_abort_latency: 0 ms
+  NewOrder_local_abort_ratio: 0
+  Payment_local_commit_latency: 0.0064344 ms
+  Payment_local_abort_latency: 0 ms
+  Payment_local_abort_ratio: 0
+  Delivery_local_commit_latency: 0.0893276 ms
+  Delivery_local_abort_latency: 0 ms
+  Delivery_local_abort_ratio: 0
+  OrderStatus_local_commit_latency: 0.0111566 ms
+  OrderStatus_local_abort_latency: 0 ms
+  OrderStatus_local_abort_ratio: 0
+  StockLevel_local_commit_latency: 0.0559345 ms
+  StockLevel_local_abort_latency: 0 ms
+  StockLevel_local_abort_ratio: 0
+  NewOrder_remote_ratio: 0 %
+  NewOrder_remote_abort_ratio: 0 %
+  NewOrder_remote_commit_latency: 0 ms
+  NewOrder_remote_abort_latency: 0 ms
+  Payment_remote_ratio: 0 %
+  Payment_remote_abort_ratio: 0 %
+  Payment_remote_commit_latency: 0 ms
+  Payment_remote_abort_latency: 0 ms
+--- system counters (for benchmark) ---
+--- perf counters (if enabled, for benchmark) ---
+--- allocator stats ---
+[SiloRuntime 0] ncpus=1
+[SiloRuntime 0] cpu=0 fully_faulted?=0 remaining=2686451712 bytes
+---------------------------------------
+--- system counters for n_commits ---
+
+TPCC_BENCH_RESULT {"schema_version":1,"engine":"rust","threads":1,"warehouses":1,"configured_seconds":180,"measured_seconds":181.20230100000001,"commits":10187161,"aborts":0,"attempts":10187161,"throughput_txn_s":56219.82140281982,"mix":{"NewOrder":4584284,"Payment":4380190,"Delivery":408513,"OrderStatus":407401,"StockLevel":406773}}
+[STOP_SERVER] Stopping 0 server transports
+[STOP_SERVER] All server transports stopped
+	Command being timed: "taskset -c 10 /var/tmp/sto-capacity-20260909.kKklOX/pgo-final-atomic-output/sto_tpcc_bench --num-threads 1 --shard-config config/mako_sto_tpcc_local.yml --site-name local_s0 --runtime 180 --storage-engine rust --slow-exit"
+	User time (seconds): 175.35
+	System time (seconds): 17.07
+	Percent of CPU this job got: 99%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 3:13.53
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 6433792
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 1608746
+	Voluntary context switches: 3022591
+	Involuntary context switches: 1433638
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 376
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

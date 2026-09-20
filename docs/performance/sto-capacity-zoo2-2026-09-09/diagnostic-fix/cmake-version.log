@@ -1,0 +1,5 @@
+command: /usr/bin/cmake --version
+cmake version 3.31.6
+
+CMake suite maintained and supported by Kitware (kitware.com/cmake).
+exit_status=0

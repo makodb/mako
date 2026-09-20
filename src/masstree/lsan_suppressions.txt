@@ -1,0 +1,7 @@
+# The public C ABI does not advertise graceful shutdown. Published mt_tree
+# registry entries and their initial native Masstree roots live until process
+# exit. This exact constructor rule qualifies only those roots.
+#
+# Do not broaden this to leaf::make, make_root, or mt_tree_create: those
+# patterns also match unrelated allocations that must remain visible.
+leak:mt_tree::mt_tree

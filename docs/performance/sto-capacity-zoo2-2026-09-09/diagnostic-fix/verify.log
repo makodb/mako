@@ -1,0 +1,3 @@
+command: python3 /home/users/shuai/.cache/mako-diagnostic-fix-evidence-20260909.g6KQ6B/verify.py /home/users/shuai/mako/.claude/worktrees/sto-rust
+PASS: committed source hashes, four direct 100-record runs, CMake Release/ASan tests, instrumentation, 19 Rust labels, unchanged worktree status
+exit_status=0

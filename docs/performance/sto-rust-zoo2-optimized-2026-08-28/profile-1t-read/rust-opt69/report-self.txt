@@ -1,0 +1,556 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 4K of event 'cycles:P'
+# Event count (approx.): 14150581370
+#
+# Overhead  Symbol                                                                                                                                                                                 Shared Object         IPC   [IPC Coverage]
+# ........  .....................................................................................................................................................................................  ....................  ....................
+#
+    35.70%  [.] Masstree::node_base<mt_abi_detail::record_params>::reach_leaf(Masstree::key<unsigned long> const&, nodeversion<nodeversion_parameters<unsigned int> >&, simple_threadinfo&) const  sto_masstree_compare  -      -            
+            |          
+            |--12.56%--Masstree::node_base<mt_abi_detail::record_params>::reach_leaf(Masstree::key<unsigned long> const&, nodeversion<nodeversion_parameters<unsigned int> >&, simple_threadinfo&) const
+            |          Masstree::unlocked_tcursor<mt_abi_detail::record_params>::find_unlocked(simple_threadinfo&)
+            |          mt_get_strided
+            |          sto_masstree::Table::lookup_fixed_in_read_scope
+            |          sto_masstree_compare::benchmark::run_worker
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+            |          start_thread
+            |          clone3
+            |          
+            |--5.38%--sto_masstree_compare::benchmark::run_worker
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+            |          start_thread
+            |          clone3
+            |          
+            |--3.76%--sto_core::transaction::ResolvedItemSession<A>::try_with_unique_item_batch
+            |          |          
+            |           --3.53%--sto_masstree_compare::benchmark::run_worker
+            |                     std::sys::backtrace::__rust_begin_short_backtrace
+            |                     core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+            |                     _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+            |                     start_thread
+            |                     clone3
+            |          
+            |--3.17%--Masstree::unlocked_tcursor<mt_abi_detail::record_params>::find_unlocked(simple_threadinfo&)
+            |          |          
+            |           --3.15%--mt_get_strided
+            |                     sto_masstree::Table::lookup_fixed_in_read_scope
+            |                     sto_masstree_compare::benchmark::run_worker
+            |                     std::sys::backtrace::__rust_begin_short_backtrace
+            |                     core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+            |                     _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+            |                     start_thread
+            |                     clone3
+            |          
+            |--1.98%--sto_masstree_compare::benchmark::execute_operations::_$u7b$$u7b$closure$u7d$$u7d$::hcaded1e3b88910c6
+            |          |          
+            |           --1.78%--sto_core::transaction::ResolvedItemSession<A>::try_with_unique_item_batch
+            |                     sto_masstree_compare::benchmark::run_worker
+            |                     std::sys::backtrace::__rust_begin_short_backtrace
+            |                     core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+            |                     _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+            |                     start_thread
+            |                     clone3
+            |          
+            |--1.86%--sto_core::transaction::Transaction::commit
+            |          |          
+            |           --1.75%--sto_masstree_compare::benchmark::run_worker
+            |                     std::sys::backtrace::__rust_begin_short_backtrace
+            |                     core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+            |                     _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+            |                     start_thread
+            |                     clone3
+            |          
+            |--0.97%--mt_get_strided
+            |          |          
+            |           --0.95%--sto_masstree::Table::lookup_fixed_in_read_scope
+            |                     sto_masstree_compare::benchmark::run_worker
+            |                     std::sys::backtrace::__rust_begin_short_backtrace
+            |                     core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+            |                     _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+            |                     start_thread
+            |                     clone3
+            |          
+            |--0.89%--<sto_core::item::ItemBox<A> as sto_core::item::ErasedItem>::finish
+            |          |          
+            |          |--0.52%--<sto_core::item::TypedItemBatch<A> as sto_core::item::ErasedItemBatch>::finish_and_teardown
+            |          |          sto_core::transaction::CommitDriver::finish_items
+            |          |          sto_core::transaction::Transaction::commit
+            |          |          sto_masstree_compare::benchmark::run_worker
+            |          |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+            |          |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+            |          |          start_thread
+            |          |          clone3
+            |          |          
+            |           --0.37%--sto_core::transaction::CommitDriver::finish_items
+            |                     sto_core::transaction::Transaction::commit
+            |                     sto_masstree_compare::benchmark::run_worker
+            |                     std::sys::backtrace::__rust_begin_short_backtrace
+            |                     core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+            |                     _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+            |                     start_thread
+            |                     clone3
+            |          
+            |--0.84%--sto_masstree::Table::lookup_fixed_in_read_scope
+            |          |          
+            |           --0.62%--sto_masstree_compare::benchmark::run_worker
+            |                     std::sys::backtrace::__rust_begin_short_backtrace
+            |                     core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+            |                     _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+            |                     start_thread
+            |                     clone3
+            |          
+            |--0.79%--<sto_core::item::TypedItemBatch<A> as sto_core::item::ErasedItemBatch>::validate_preflight_free_reads
+            |          |          
+            |           --0.76%--sto_core::transaction::Transaction::commit
+            |                     sto_masstree_compare::benchmark::run_worker
+            |                     std::sys::backtrace::__rust_begin_short_backtrace
+            |                     core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+            |                     _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+            |                     start_thread
+            |                     clone3
+            |          
+            |--0.57%--<sto_core::item::TypedItemBatch<A> as sto_core::item::ErasedItemBatch>::is_preflight_free_read_only
+            |          |          
+            |           --0.55%--sto_core::transaction::Transaction::commit
+            |                     sto_masstree_compare::benchmark::run_worker
+            |                     std::sys::backtrace::__rust_begin_short_backtrace
+            |                     core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+            |                     _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+            |                     start_thread
+            |                     clone3
+            |          
+            |--0.39%--__memset_avx2_unaligned_erms
+            |          
+            |--0.33%--0x7ffef4ff086c
+            |          ticker::guard::guard(ticker&)
+            |          scoped_rcu_base<true>::scoped_rcu_base()
+            |          mt_get_strided
+            |          sto_masstree::Table::lookup_fixed_in_read_scope
+            |          sto_masstree_compare::benchmark::run_worker
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+            |          start_thread
+            |          clone3
+            |          
+             --0.30%--<sto_core::item::TypedItemBatch<A> as sto_core::item::ErasedItemBatch>::finish_and_teardown
+
+    17.09%  [.] sto_masstree_compare::benchmark::run_worker                                                                                                                                        sto_masstree_compare  -      -            
+            |          
+            |--11.96%--Masstree::node_base<mt_abi_detail::record_params>::reach_leaf(Masstree::key<unsigned long> const&, nodeversion<nodeversion_parameters<unsigned int> >&, simple_threadinfo&) const
+            |          Masstree::unlocked_tcursor<mt_abi_detail::record_params>::find_unlocked(simple_threadinfo&)
+            |          mt_get_strided
+            |          sto_masstree::Table::lookup_fixed_in_read_scope
+            |          sto_masstree_compare::benchmark::run_worker
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+            |          start_thread
+            |          clone3
+            |          
+            |--4.34%--Masstree::unlocked_tcursor<mt_abi_detail::record_params>::find_unlocked(simple_threadinfo&)
+            |          mt_get_strided
+            |          sto_masstree::Table::lookup_fixed_in_read_scope
+            |          sto_masstree_compare::benchmark::run_worker
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+            |          start_thread
+            |          clone3
+            |          
+             --0.61%--mt_get_strided
+                       sto_masstree::Table::lookup_fixed_in_read_scope
+                       sto_masstree_compare::benchmark::run_worker
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+                       start_thread
+                       clone3
+
+    12.13%  [.] sto_core::transaction::ResolvedItemSession<A>::try_with_unique_item_batch                                                                                                          sto_masstree_compare  -      -            
+            |          
+            |--9.42%--Masstree::node_base<mt_abi_detail::record_params>::reach_leaf(Masstree::key<unsigned long> const&, nodeversion<nodeversion_parameters<unsigned int> >&, simple_threadinfo&) const
+            |          Masstree::unlocked_tcursor<mt_abi_detail::record_params>::find_unlocked(simple_threadinfo&)
+            |          mt_get_strided
+            |          sto_masstree::Table::lookup_fixed_in_read_scope
+            |          sto_masstree_compare::benchmark::run_worker
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+            |          start_thread
+            |          clone3
+            |          
+            |--2.39%--Masstree::unlocked_tcursor<mt_abi_detail::record_params>::find_unlocked(simple_threadinfo&)
+            |          mt_get_strided
+            |          sto_masstree::Table::lookup_fixed_in_read_scope
+            |          sto_masstree_compare::benchmark::run_worker
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+            |          start_thread
+            |          clone3
+            |          
+             --0.32%--mt_get_strided
+                       sto_masstree::Table::lookup_fixed_in_read_scope
+                       sto_masstree_compare::benchmark::run_worker
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+                       start_thread
+                       clone3
+
+    11.72%  [.] Masstree::unlocked_tcursor<mt_abi_detail::record_params>::find_unlocked(simple_threadinfo&)                                                                                        sto_masstree_compare  -      -            
+            |          
+            |--4.20%--Masstree::node_base<mt_abi_detail::record_params>::reach_leaf(Masstree::key<unsigned long> const&, nodeversion<nodeversion_parameters<unsigned int> >&, simple_threadinfo&) const
+            |          Masstree::unlocked_tcursor<mt_abi_detail::record_params>::find_unlocked(simple_threadinfo&)
+            |          mt_get_strided
+            |          sto_masstree::Table::lookup_fixed_in_read_scope
+            |          sto_masstree_compare::benchmark::run_worker
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+            |          start_thread
+            |          clone3
+            |          
+            |--2.10%--sto_masstree_compare::benchmark::run_worker
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+            |          start_thread
+            |          clone3
+            |          
+            |--1.27%--Masstree::unlocked_tcursor<mt_abi_detail::record_params>::find_unlocked(simple_threadinfo&)
+            |          mt_get_strided
+            |          sto_masstree::Table::lookup_fixed_in_read_scope
+            |          sto_masstree_compare::benchmark::run_worker
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+            |          start_thread
+            |          clone3
+            |          
+            |--1.20%--sto_core::transaction::ResolvedItemSession<A>::try_with_unique_item_batch
+            |          |          
+            |           --1.11%--sto_masstree_compare::benchmark::run_worker
+            |                     std::sys::backtrace::__rust_begin_short_backtrace
+            |                     core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+            |                     _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+            |                     start_thread
+            |                     clone3
+            |          
+            |--0.69%--sto_core::transaction::Transaction::commit
+            |          |          
+            |           --0.63%--sto_masstree_compare::benchmark::run_worker
+            |                     std::sys::backtrace::__rust_begin_short_backtrace
+            |                     core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+            |                     _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+            |                     start_thread
+            |                     clone3
+            |          
+            |--0.62%--sto_masstree_compare::benchmark::execute_operations::_$u7b$$u7b$closure$u7d$$u7d$::hcaded1e3b88910c6
+            |          |          
+            |           --0.53%--sto_core::transaction::ResolvedItemSession<A>::try_with_unique_item_batch
+            |                     sto_masstree_compare::benchmark::run_worker
+            |                     std::sys::backtrace::__rust_begin_short_backtrace
+            |                     core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+            |                     _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+            |                     start_thread
+            |                     clone3
+            |          
+            |--0.29%--<sto_core::item::ItemBox<A> as sto_core::item::ErasedItem>::finish
+            |          
+             --0.25%--mt_get_strided
+                       sto_masstree::Table::lookup_fixed_in_read_scope
+                       sto_masstree_compare::benchmark::run_worker
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+                       start_thread
+                       clone3
+
+     4.02%  [.] mt_get_strided                                                                                                                                                                     sto_masstree_compare  -      -            
+            |          
+            |--1.99%--Masstree::node_base<mt_abi_detail::record_params>::reach_leaf(Masstree::key<unsigned long> const&, nodeversion<nodeversion_parameters<unsigned int> >&, simple_threadinfo&) const
+            |          Masstree::unlocked_tcursor<mt_abi_detail::record_params>::find_unlocked(simple_threadinfo&)
+            |          mt_get_strided
+            |          sto_masstree::Table::lookup_fixed_in_read_scope
+            |          sto_masstree_compare::benchmark::run_worker
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+            |          start_thread
+            |          clone3
+            |          
+            |--0.55%--sto_masstree_compare::benchmark::run_worker
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+            |          start_thread
+            |          clone3
+            |          
+            |--0.46%--Masstree::unlocked_tcursor<mt_abi_detail::record_params>::find_unlocked(simple_threadinfo&)
+            |          mt_get_strided
+            |          sto_masstree::Table::lookup_fixed_in_read_scope
+            |          sto_masstree_compare::benchmark::run_worker
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+            |          start_thread
+            |          clone3
+            |          
+            |--0.29%--sto_core::transaction::ResolvedItemSession<A>::try_with_unique_item_batch
+            |          |          
+            |           --0.27%--sto_masstree_compare::benchmark::run_worker
+            |                     std::sys::backtrace::__rust_begin_short_backtrace
+            |                     core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+            |                     _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+            |                     start_thread
+            |                     clone3
+            |          
+             --0.26%--sto_core::transaction::Transaction::commit
+                       sto_masstree_compare::benchmark::run_worker
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+                       start_thread
+                       clone3
+
+     2.42%  [.] <sto_core::item::TypedItemBatch<A> as sto_core::item::ErasedItemBatch>::is_preflight_free_read_only                                                                                sto_masstree_compare  -      -            
+            |          
+            |--1.64%--Masstree::node_base<mt_abi_detail::record_params>::reach_leaf(Masstree::key<unsigned long> const&, nodeversion<nodeversion_parameters<unsigned int> >&, simple_threadinfo&) const
+            |          Masstree::unlocked_tcursor<mt_abi_detail::record_params>::find_unlocked(simple_threadinfo&)
+            |          mt_get_strided
+            |          sto_masstree::Table::lookup_fixed_in_read_scope
+            |          sto_masstree_compare::benchmark::run_worker
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+            |          start_thread
+            |          clone3
+            |          
+             --0.71%--Masstree::unlocked_tcursor<mt_abi_detail::record_params>::find_unlocked(simple_threadinfo&)
+                       mt_get_strided
+                       sto_masstree::Table::lookup_fixed_in_read_scope
+                       sto_masstree_compare::benchmark::run_worker
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+                       start_thread
+                       clone3
+
+     2.37%  [.] sto_core::transaction::Transaction::commit                                                                                                                                         sto_masstree_compare  -      -            
+            |          
+            |--1.75%--Masstree::node_base<mt_abi_detail::record_params>::reach_leaf(Masstree::key<unsigned long> const&, nodeversion<nodeversion_parameters<unsigned int> >&, simple_threadinfo&) const
+            |          Masstree::unlocked_tcursor<mt_abi_detail::record_params>::find_unlocked(simple_threadinfo&)
+            |          mt_get_strided
+            |          sto_masstree::Table::lookup_fixed_in_read_scope
+            |          sto_masstree_compare::benchmark::run_worker
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+            |          start_thread
+            |          clone3
+            |          
+             --0.56%--Masstree::unlocked_tcursor<mt_abi_detail::record_params>::find_unlocked(simple_threadinfo&)
+                       mt_get_strided
+                       sto_masstree::Table::lookup_fixed_in_read_scope
+                       sto_masstree_compare::benchmark::run_worker
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+                       start_thread
+                       clone3
+
+     2.11%  [.] sto_masstree::Table::lookup_fixed_in_read_scope                                                                                                                                    sto_masstree_compare  -      -            
+            |          
+             --1.86%--Masstree::node_base<mt_abi_detail::record_params>::reach_leaf(Masstree::key<unsigned long> const&, nodeversion<nodeversion_parameters<unsigned int> >&, simple_threadinfo&) const
+                       Masstree::unlocked_tcursor<mt_abi_detail::record_params>::find_unlocked(simple_threadinfo&)
+                       mt_get_strided
+                       sto_masstree::Table::lookup_fixed_in_read_scope
+                       sto_masstree_compare::benchmark::run_worker
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+                       start_thread
+                       clone3
+
+     1.63%  [.] <sto_core::item::TypedItemBatch<A> as sto_core::item::ErasedItemBatch>::validate_preflight_free_reads                                                                              sto_masstree_compare  -      -            
+            |          
+             --1.41%--Masstree::node_base<mt_abi_detail::record_params>::reach_leaf(Masstree::key<unsigned long> const&, nodeversion<nodeversion_parameters<unsigned int> >&, simple_threadinfo&) const
+                       Masstree::unlocked_tcursor<mt_abi_detail::record_params>::find_unlocked(simple_threadinfo&)
+                       mt_get_strided
+                       sto_masstree::Table::lookup_fixed_in_read_scope
+                       sto_masstree_compare::benchmark::run_worker
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+                       start_thread
+                       clone3
+
+     1.54%  [.] <sto_core::item::TypedItemBatch<A> as sto_core::item::ErasedItemBatch>::finish_and_teardown                                                                                        sto_masstree_compare  -      -            
+            |          
+            |--1.20%--Masstree::node_base<mt_abi_detail::record_params>::reach_leaf(Masstree::key<unsigned long> const&, nodeversion<nodeversion_parameters<unsigned int> >&, simple_threadinfo&) const
+            |          Masstree::unlocked_tcursor<mt_abi_detail::record_params>::find_unlocked(simple_threadinfo&)
+            |          mt_get_strided
+            |          sto_masstree::Table::lookup_fixed_in_read_scope
+            |          sto_masstree_compare::benchmark::run_worker
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+            |          start_thread
+            |          clone3
+            |          
+             --0.34%--Masstree::unlocked_tcursor<mt_abi_detail::record_params>::find_unlocked(simple_threadinfo&)
+                       mt_get_strided
+                       sto_masstree::Table::lookup_fixed_in_read_scope
+                       sto_masstree_compare::benchmark::run_worker
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+                       start_thread
+                       clone3
+
+     1.41%  [.] <sto_core::item::ItemBox<A> as sto_core::item::ErasedItem>::finish                                                                                                                 sto_masstree_compare  -      -            
+            |          
+            |--0.96%--Masstree::node_base<mt_abi_detail::record_params>::reach_leaf(Masstree::key<unsigned long> const&, nodeversion<nodeversion_parameters<unsigned int> >&, simple_threadinfo&) const
+            |          Masstree::unlocked_tcursor<mt_abi_detail::record_params>::find_unlocked(simple_threadinfo&)
+            |          mt_get_strided
+            |          sto_masstree::Table::lookup_fixed_in_read_scope
+            |          sto_masstree_compare::benchmark::run_worker
+            |          std::sys::backtrace::__rust_begin_short_backtrace
+            |          core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+            |          _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+            |          start_thread
+            |          clone3
+            |          
+             --0.41%--Masstree::unlocked_tcursor<mt_abi_detail::record_params>::find_unlocked(simple_threadinfo&)
+                       mt_get_strided
+                       sto_masstree::Table::lookup_fixed_in_read_scope
+                       sto_masstree_compare::benchmark::run_worker
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+                       start_thread
+                       clone3
+
+     1.22%  [.] sto_masstree_compare::benchmark::execute_operations::_$u7b$$u7b$closure$u7d$$u7d$::hcaded1e3b88910c6                                                                               sto_masstree_compare  -      -            
+            |          
+             --0.97%--Masstree::node_base<mt_abi_detail::record_params>::reach_leaf(Masstree::key<unsigned long> const&, nodeversion<nodeversion_parameters<unsigned int> >&, simple_threadinfo&) const
+                       Masstree::unlocked_tcursor<mt_abi_detail::record_params>::find_unlocked(simple_threadinfo&)
+                       mt_get_strided
+                       sto_masstree::Table::lookup_fixed_in_read_scope
+                       sto_masstree_compare::benchmark::run_worker
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+                       start_thread
+                       clone3
+
+     0.75%  [.] sto_core::transaction::prepare_typed_unique_batch                                                                                                                                  sto_masstree_compare  -      -            
+            |          
+             --0.55%--Masstree::node_base<mt_abi_detail::record_params>::reach_leaf(Masstree::key<unsigned long> const&, nodeversion<nodeversion_parameters<unsigned int> >&, simple_threadinfo&) const
+                       Masstree::unlocked_tcursor<mt_abi_detail::record_params>::find_unlocked(simple_threadinfo&)
+                       mt_get_strided
+                       sto_masstree::Table::lookup_fixed_in_read_scope
+                       sto_masstree_compare::benchmark::run_worker
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+                       start_thread
+                       clone3
+
+     0.74%  [.] 0x0000000000000869                                                                                                                                                                 [vdso]                -      -            
+            |          
+             --0.53%--Masstree::node_base<mt_abi_detail::record_params>::reach_leaf(Masstree::key<unsigned long> const&, nodeversion<nodeversion_parameters<unsigned int> >&, simple_threadinfo&) const
+                       Masstree::unlocked_tcursor<mt_abi_detail::record_params>::find_unlocked(simple_threadinfo&)
+                       mt_get_strided
+                       sto_masstree::Table::lookup_fixed_in_read_scope
+                       sto_masstree_compare::benchmark::run_worker
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+                       start_thread
+                       clone3
+
+     0.38%  [.] rcu::in_rcu_region(unsigned long&) const                                                                                                                                           sto_masstree_compare  -      -            
+            |          
+             --0.31%--Masstree::node_base<mt_abi_detail::record_params>::reach_leaf(Masstree::key<unsigned long> const&, nodeversion<nodeversion_parameters<unsigned int> >&, simple_threadinfo&) const
+                       Masstree::unlocked_tcursor<mt_abi_detail::record_params>::find_unlocked(simple_threadinfo&)
+                       mt_get_strided
+                       sto_masstree::Table::lookup_fixed_in_read_scope
+                       sto_masstree_compare::benchmark::run_worker
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+                       start_thread
+                       clone3
+
+     0.37%  [.] __memset_avx2_unaligned_erms                                                                                                                                                       libc.so.6             -      -            
+            |          
+             --0.26%--Masstree::node_base<mt_abi_detail::record_params>::reach_leaf(Masstree::key<unsigned long> const&, nodeversion<nodeversion_parameters<unsigned int> >&, simple_threadinfo&) const
+                       Masstree::unlocked_tcursor<mt_abi_detail::record_params>::find_unlocked(simple_threadinfo&)
+                       mt_get_strided
+                       sto_masstree::Table::lookup_fixed_in_read_scope
+                       sto_masstree_compare::benchmark::run_worker
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+                       start_thread
+                       clone3
+
+     0.34%  [.] sto_masstree::PointReadBatch::prepare_read                                                                                                                                         sto_masstree_compare  -      -            
+            |          
+             --0.26%--Masstree::node_base<mt_abi_detail::record_params>::reach_leaf(Masstree::key<unsigned long> const&, nodeversion<nodeversion_parameters<unsigned int> >&, simple_threadinfo&) const
+                       Masstree::unlocked_tcursor<mt_abi_detail::record_params>::find_unlocked(simple_threadinfo&)
+                       mt_get_strided
+                       sto_masstree::Table::lookup_fixed_in_read_scope
+                       sto_masstree_compare::benchmark::run_worker
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+                       start_thread
+                       clone3
+
+     0.31%  [.] (anonymous namespace)::checked_thread(mt_runtime*, mt_thread*, bool)                                                                                                               sto_masstree_compare  -      -            
+     0.31%  [k] perf_adjust_freq_unthr_context                                                                                                                                                     [kernel.kallsyms]     -      -            
+            |
+            ---perf_event_task_tick
+               scheduler_tick
+               update_process_times
+               tick_sched_handle
+               tick_nohz_highres_handler
+               __hrtimer_run_queues
+               hrtimer_interrupt
+               __sysvec_apic_timer_interrupt
+               sysvec_apic_timer_interrupt
+               asm_sysvec_apic_timer_interrupt
+
+     0.28%  [.] SiloRuntime::Current()                                                                                                                                                             sto_masstree_compare  -      -            
+     0.28%  [.] rcu::sync::do_cleanup()                                                                                                                                                            sto_masstree_compare  -      -            
+            |          
+             --0.26%--Masstree::node_base<mt_abi_detail::record_params>::reach_leaf(Masstree::key<unsigned long> const&, nodeversion<nodeversion_parameters<unsigned int> >&, simple_threadinfo&) const
+                       Masstree::unlocked_tcursor<mt_abi_detail::record_params>::find_unlocked(simple_threadinfo&)
+                       mt_get_strided
+                       sto_masstree::Table::lookup_fixed_in_read_scope
+                       sto_masstree_compare::benchmark::run_worker
+                       std::sys::backtrace::__rust_begin_short_backtrace
+                       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h8b689250964efb45
+                       _RNvNvMs0_NtNtNtCsjrHSEGnQ3l9_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+                       start_thread
+                       clone3
+
+     0.28%  [.] ticker::guard::guard(ticker&)                                                                                                                                                      sto_masstree_compare  -      -            
+
+
+#
+# (Cannot load tips.txt file, please install perf!)
+#

@@ -1,0 +1,53 @@
+error[E0277]: `Rc<()>` cannot be sent between threads safely
+  --> tests/ui/entry.rs:13:19
+   |
+13 |     assert_send::<Entry<'static, support::Adapter>>();
+   |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Rc<()>` cannot be sent between threads safely
+   |
+   = help: within `sto_core::Entry<'static, Adapter>`, the trait `Send` is not implemented for `Rc<()>`
+note: required because it appears within the type `PhantomData<Rc<()>>`
+  --> $RUST/core/src/marker.rs
+   |
+   | pub struct PhantomData<T: PointeeSized>;
+   |            ^^^^^^^^^^^
+note: required because it appears within the type `sto_core::Entry<'static, Adapter>`
+  --> src/item.rs
+   |
+   | pub struct Entry<'entry, A: TransactionalResource> {
+   |            ^^^^^
+note: required by a bound in `assert_send`
+  --> tests/ui/entry.rs:5:19
+   |
+ 5 | fn assert_send<T: Send>() {}
+   |                   ^^^^ required by this bound in `assert_send`
+
+error[E0277]: `Rc<()>` cannot be shared between threads safely
+  --> tests/ui/entry.rs:14:19
+   |
+14 |     assert_sync::<Entry<'static, support::Adapter>>();
+   |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Rc<()>` cannot be shared between threads safely
+   |
+   = help: within `sto_core::Entry<'static, Adapter>`, the trait `Sync` is not implemented for `Rc<()>`
+note: required because it appears within the type `PhantomData<Rc<()>>`
+  --> $RUST/core/src/marker.rs
+   |
+   | pub struct PhantomData<T: PointeeSized>;
+   |            ^^^^^^^^^^^
+note: required because it appears within the type `sto_core::Entry<'static, Adapter>`
+  --> src/item.rs
+   |
+   | pub struct Entry<'entry, A: TransactionalResource> {
+   |            ^^^^^
+note: required by a bound in `assert_sync`
+  --> tests/ui/entry.rs:6:19
+   |
+ 6 | fn assert_sync<T: Sync>() {}
+   |                   ^^^^ required by this bound in `assert_sync`
+
+error: lifetime may not live long enough
+ --> tests/ui/entry.rs:9:5
+  |
+8 | fn escape(entry: Entry<'_, support::Adapter>) -> Entry<'static, support::Adapter> {
+  |           ----- has type `sto_core::Entry<'1, Adapter>`
+9 |     entry
+  |     ^^^^^ returning this value requires that `'1` must outlive `'static`

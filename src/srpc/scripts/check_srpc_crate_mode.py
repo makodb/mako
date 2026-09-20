@@ -4041,6 +4041,10 @@ PLATFORM_IMPL_SYMBOLS = {
     "srpc.epoll_wrapper": frozenset(
         {
             ("T", "srpc::epoll_add_impl@srpc.epoll_wrapper(int, int, int)"),
+            (
+                "T",
+                "srpc::epoll_event_with_fd@srpc.epoll_wrapper(int, unsigned int)",
+            ),
             ("T", "srpc::epoll_event_zeroed@srpc.epoll_wrapper()"),
             ("T", "srpc::epoll_open@srpc.epoll_wrapper()"),
             ("T", "srpc::epoll_remove_impl@srpc.epoll_wrapper(int, int)"),
@@ -4051,7 +4055,7 @@ PLATFORM_IMPL_SYMBOLS = {
         }
     ),
 }
-EXPECTED_TOTAL_PLATFORM_SYMBOLS = 5
+EXPECTED_TOTAL_PLATFORM_SYMBOLS = 6
 
 # Extra raw entries emitted by the C++ ABI for constructor/destructor aliases.
 # Each tuple is one additional occurrence beyond the unique strong symbol in

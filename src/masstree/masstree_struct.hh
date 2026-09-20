@@ -466,11 +466,12 @@ class leaf : public node_base<P> {
     bool ksuf_equals(int p, const key_type& ka, int keylenx) const {
         if (!keylenx_has_ksuf(keylenx))
             return true;
-        // @unsafe - ksuf, suffix, equals_sloppy
+        // The stringbag suffix is padded, but key_type accepts arbitrary
+        // caller storage. Use a bounded comparison for that external operand.
         {
             Str s = ksuf(p, keylenx);
             return s.len == ka.suffix().len
-                && string_slice<uintptr_t>::equals_sloppy(s.s, ka.suffix().s, s.len);
+                && memcmp(s.s, ka.suffix().s, s.len) == 0;
         }
     }
     // @unsafe - compares suffix bytes from raw stringbag storage
@@ -481,11 +482,12 @@ class leaf : public node_base<P> {
             return 1;
         if (keylenx == layer_keylenx)
             return -(int) sizeof(ikey_type);
-        // @unsafe - ksuf, suffix, equals_sloppy
+        // The stringbag suffix is padded, but key_type accepts arbitrary
+        // caller storage. Use a bounded comparison for that external operand.
         {
             Str s = ksuf(p, keylenx);
             return s.len == ka.suffix().len
-                && string_slice<uintptr_t>::equals_sloppy(s.s, ka.suffix().s, s.len);
+                && memcmp(s.s, ka.suffix().s, s.len) == 0;
         }
     }
     // @unsafe - compares suffix view from raw stringbag storage

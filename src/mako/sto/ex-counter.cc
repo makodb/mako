@@ -383,8 +383,6 @@ void* TTester<T>::runfunc(void* arg) {
     return reinterpret_cast<void*>(count_test);
 }
 
-static bool has_epoch_advancer = false;
-
 template <typename T>
 result TTester<T>::run() {
     counter = new T(initial_value);
@@ -394,12 +392,7 @@ result TTester<T>::run() {
     for (uintptr_t i = 0; i < uintptr_t(nthreads); ++i)
         pthread_create(&tids[i], NULL, runfunc, reinterpret_cast<void*>(i));
 
-    if (!has_epoch_advancer) {
-        pthread_t advancer;
-        pthread_create(&advancer, NULL, Transaction::epoch_advancer, NULL);
-        pthread_detach(advancer);
-        has_epoch_advancer = true;
-    }
+    Transaction::start_epoch_advancer();
 
     go = 1;
     usleep(exptime * 1000000);

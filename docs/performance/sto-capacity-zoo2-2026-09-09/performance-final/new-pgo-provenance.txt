@@ -1,0 +1,55 @@
+{
+  "binary": "/var/tmp/sto-capacity-20260909.kKklOX/pgo-final-atomic-output/sto_tpcc_bench",
+  "binary_sha256": "3e32ba7d47a6de1b080d14cdc4955d04ecee0ece32a969a2dcfdf3925a2e31fe",
+  "build_environment": {
+    "CARGO": "/home/users/shuai/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+    "CARGO_TARGET_DIR": "/var/tmp/sto-capacity-20260909.kKklOX/host-cargo",
+    "PATH": "/home/users/shuai/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin:/home/users/shuai/.linuxbrew/Cellar/llvm/22.1.8/bin:/usr/bin:/bin",
+    "PKG_CONFIG": "/usr/bin/pkg-config",
+    "RUSTC": "/home/users/shuai/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/rustc",
+    "RUSTUP_TOOLCHAIN": "1.95.0",
+    "TMPDIR": "/dev/shm"
+  },
+  "completed_at_utc": "2026-09-09T08:33:57.899969+00:00",
+  "ctest_boundary_count": 31,
+  "host": "zoo-002",
+  "mode": "reuse-identical-Rust-PGO-archive-rebuild-native-cold-logging",
+  "native_build": "/var/tmp/sto-capacity-20260909.kKklOX/build",
+  "native_input_changes": {
+    "/var/tmp/sto-capacity-20260909.kKklOX/build/CMakeFiles/rules.ninja": {
+      "new": "237224418336123a82fd5262de4b0016e2eda28f2d7e016bd331a688285419ce",
+      "old": "2eaf25b5c9022c93fd52567308bf4d4cf1e94422efff48fd5f5bb637f7991c19"
+    },
+    "/var/tmp/sto-capacity-20260909.kKklOX/build/CMakeFiles/sto_tpcc_bench.dir/src/mako/benchmarks/dbtest.cc.o": {
+      "new": "abab86ced6e290c02a11777db50e44730dc5d0d75e121d19169df6a047139067",
+      "old": "686a05c94e6ed7e6816781ef12287c3e72b18f2eebfe8934731a248a5f312a5f"
+    },
+    "/var/tmp/sto-capacity-20260909.kKklOX/build/CMakeFiles/sto_tpcc_bench.dir/src/mako/storage/rust_sto_tpcc_wrapper.cc.o": {
+      "new": "fff7428f7909140ef773ea18186a7f973349928c96bc858abf17a345d1577577",
+      "old": "df1d704d5868ddce134e216fa814f1ab018a5c1ec89215a2396b6969dd138e9a"
+    },
+    "/var/tmp/sto-capacity-20260909.kKklOX/build/build.ninja": {
+      "new": "02b2427dc81bd5ce2c08b1ea0007310c6eafb2c826a70360a6d121babdbc0268",
+      "old": "83f3b05a4cc3e38a79e8b1a7da25429dd2a52c99eabe4fbd702b6c8fe30f915a"
+    },
+    "/var/tmp/sto-capacity-20260909.kKklOX/build/libmako.a": {
+      "new": "0dc0becbc40de98a0b749385d6d1129529bca55595ef345ce49fb4e0709d14d5",
+      "old": "4d51faedf3154342147759f3de55f1fecc7bc975d561a9e479c5cd1b0f2c1d7b"
+    }
+  },
+  "original_rust_source_head": "81aa134884219ad148d960c78decca12630648e3",
+  "qualification": "No Rust archive rebuild or PGO retraining. The original Rust PGO train used CPU10, one worker, 60 seconds, native2G, registry8G and mix45,43,4,4,4. Final performance runs use native4G for both binaries and engines. Native C++ was not PGO-trained.",
+  "relinked_capacity_smokes": [
+    "test_sto_tpcc_rust_startup_resource_exhausted",
+    "test_sto_tpcc_rust_load_resource_exhausted",
+    "test_sto_tpcc_rust_run_resource_exhausted",
+    "test_sto_tpcc_rust_concurrent_resource_exhausted"
+  ],
+  "rust_pgo_archive": "/var/tmp/sto-capacity-20260909.kKklOX/pgo-batched/cargo-use/release/libsto_tpcc_ffi.a",
+  "rust_pgo_archive_sha256": "7d29c5077d9a62b9bdce4c4b1a7f1c7eecc206fc7cc92138e8b921321a579b87",
+  "rust_profile": "/var/tmp/sto-capacity-20260909.kKklOX/pgo-batched/merged.profdata",
+  "rust_profile_sha256": "c14043bbd29a8f74459bb2ed1bfcb98917313ee508fd4c2a7f2a9412dadea62b",
+  "rust_subtree_files_verified": 123,
+  "source_head_at_finish": "a3ad9a110727f5ecc937cbeee23fe40152df719f",
+  "source_head_at_start": "a3ad9a110727f5ecc937cbeee23fe40152df719f"
+}

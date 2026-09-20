@@ -26,6 +26,7 @@
 #include "timestamp.hh"
 #include "memdebug.hh"
 #include <rusty/ptr.hpp>
+#include <atomic>
 #include <assert.h>
 #include <pthread.h>
 #include <sys/mman.h>
@@ -36,6 +37,12 @@ class loginfo;
 
 typedef uint64_t mrcu_epoch_type;
 typedef int64_t mrcu_signed_epoch_type;
+
+static_assert(std::atomic_ref<mrcu_epoch_type>::is_always_lock_free,
+              "Masstree RCU requires lock-free 64-bit participant epochs");
+static_assert(alignof(mrcu_epoch_type) >=
+                  std::atomic_ref<mrcu_epoch_type>::required_alignment,
+              "Masstree RCU participant epochs must satisfy atomic_ref alignment");
 
 // globalepoch is now per-context in MasstreeContext for our code.
 // We still declare the extern for backward compatibility with external code
@@ -281,28 +288,49 @@ class threadinfo {
     }
 
     // RCU - Read-Copy-Update memory reclamation
-    // @unsafe { Reads epoch from context raw pointer }
+    // @unsafe { Publishes an atomic epoch through a raw context pointer }
     void rcu_start() {
-        mrcu_epoch_type current = context_->get_epoch();
-        if (gc_epoch_ != current)
-            gc_epoch_ = current;
+        // Publication must precede every protected Masstree load. Recheck the
+        // context epoch so a worker paused between its first snapshot and its
+        // publication cannot enter under an epoch a reclaimer has passed.
+        mrcu_epoch_type current;
+        do {
+            current = context_->get_epoch();
+            store_gc_epoch(current, std::memory_order_seq_cst);
+        } while (current != context_->get_epoch());
     }
     // @unsafe { May call hard_rcu_quiesce which frees memory }
     void rcu_stop() {
-        if (limbo_epoch_ && (gc_epoch_ - limbo_epoch_) > 1)
+        const mrcu_epoch_type current =
+            load_gc_epoch(std::memory_order_relaxed);
+        if (limbo_epoch_ && (current - limbo_epoch_) > 1)
             hard_rcu_quiesce();
-        gc_epoch_ = 0;
+        // Release prevents protected loads from moving past quiescence. A
+        // reclaimer that observes zero may therefore ignore this participant.
+        store_gc_epoch(0, std::memory_order_release);
+    }
+    // @safe - Reports whether this participant currently protects Masstree
+    // reads without exposing the epoch representation.
+    bool rcu_active() const noexcept {
+        return load_gc_epoch(std::memory_order_acquire) != 0;
     }
     // @unsafe { May call hard_rcu_quiesce which frees memory }
     void rcu_quiesce() {
         rcu_start();
-        if (limbo_epoch_ && (gc_epoch_ - limbo_epoch_) > 2)
+        const mrcu_epoch_type current =
+            load_gc_epoch(std::memory_order_relaxed);
+        if (limbo_epoch_ && (current - limbo_epoch_) > 2)
             hard_rcu_quiesce();
     }
+    // Drain this participant's complete callback queue during owner-thread
+    // teardown. The caller must have finished all protected reads and must not
+    // register another callback concurrently. This waits for a full grace
+    // period and returns with the participant inactive.
+    void rcu_drain();
     typedef ::mrcu_callback mrcu_callback;
     // @unsafe { record_rcu is not borrow-checked }
     void rcu_register(rusty::MutPtr<mrcu_callback> cb) {
-        record_rcu(cb, memtag(-1));
+        record_rcu(cb, memtag_mrcu_callback);
     }
 
     // thread management
@@ -321,6 +349,16 @@ class threadinfo {
     static void report_rcu_all(void* ptr);
 
   private:
+    mrcu_epoch_type load_gc_epoch(std::memory_order order) const {
+        return std::atomic_ref<mrcu_epoch_type>(
+                   const_cast<mrcu_epoch_type&>(gc_epoch_))
+            .load(order);
+    }
+
+    void store_gc_epoch(mrcu_epoch_type epoch, std::memory_order order) {
+        std::atomic_ref<mrcu_epoch_type>(gc_epoch_).store(epoch, order);
+    }
+
     union {
         struct {
             mrcu_epoch_type gc_epoch_;
@@ -339,6 +377,8 @@ class threadinfo {
     };
 
     enum { pool_max_nlines = 20 };
+    static_assert((memtag_mrcu_callback & memtag_pool_mask) > pool_max_nlines,
+                  "RCU callback tag must not overlap a pooled allocation tag");
     void* pool_[pool_max_nlines];
 
     limbo_group* limbo_head_;
@@ -357,7 +397,7 @@ class threadinfo {
         if ((tag & memtag_pool_mask) == 0) {
             p = memdebug::check_free_after_rcu(p, tag);
             ::free(p);
-        } else if (tag == memtag(-1))
+        } else if (tag == memtag_mrcu_callback)
             (*static_cast<mrcu_callback*>(p))(*this);
         else {
             p = memdebug::check_free_after_rcu(p, tag);

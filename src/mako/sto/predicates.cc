@@ -185,8 +185,6 @@ void* runFunc(void* x) {
     return nullptr;
 }
 
-static bool has_epoch_advancer = false;
-
 template <typename T>
 void startAndWait(int n, T* queue) {
     pthread_t tids[nthreads];
@@ -197,12 +195,7 @@ void startAndWait(int n, T* queue) {
         pthread_create(&tids[i], NULL, runFunc<T>, &testers[i]);
     }
 
-    if (!has_epoch_advancer) {
-        pthread_t advancer;
-        pthread_create(&advancer, NULL, Transaction::epoch_advancer, NULL);
-        pthread_detach(advancer);
-        has_epoch_advancer = true;
-    }
+    Transaction::start_epoch_advancer();
 
     for (int i = 0; i < nthreads; ++i)
         pthread_join(tids[i], NULL);

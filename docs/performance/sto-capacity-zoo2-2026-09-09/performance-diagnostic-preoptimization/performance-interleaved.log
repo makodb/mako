@@ -1,0 +1,5 @@
+BLOCK 2026-09-09T06:42:45.360115+00:00 {'repetition': 0, 'threads': 4, 'variant': 'old', 'engines': ['cpp', 'rust'], 'pair_id': 'r00-c00-4t-old'}
+[1] cpp TPC-C threads=warehouses=4 repetition=0 pair_attempt=1
+[guard] rejected both r00-c00-4t-old samples from attempt 1: cpp_lxd_restart_count_changed, lxd_restart_count_changed
+[1] cpp TPC-C threads=warehouses=4 repetition=0 pair_attempt=2
+[2] rust TPC-C threads=warehouses=4 repetition=0 pair_attempt=2

@@ -1,0 +1,2 @@
+command: /home/users/shuai/.linuxbrew/opt/llvm@22/bin/clang++ -std=c++23 -Wall -Wextra -Wpedantic -Werror -pthread -Isrc/mako -g -O1 -fno-omit-frame-pointer tests/test_benchmark_output.cc -o /dev/shm/sto-output-regression.2V57O6/test_benchmark_output-native
+exit_status=0

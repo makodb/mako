@@ -1,0 +1,7 @@
+   Compiling rustversion v1.0.23
+   Compiling masstree v0.0.0 (/home/users/shuai/mako/.claude/worktrees/sto-rust/crates/masstree)
+   Compiling mtree-sys v0.0.0 (/home/users/shuai/mako/.claude/worktrees/sto-rust/crates/mtree-sys)
+   Compiling sto-masstree v0.0.0 (/home/users/shuai/mako/.claude/worktrees/sto-rust/crates/sto-masstree)
+   Compiling arc-swap v1.9.2
+   Compiling sto-core v0.0.0 (/home/users/shuai/mako/.claude/worktrees/sto-rust/crates/sto-core)
+    Finished `release` profile [optimized + debuginfo] target(s) in 9.87s

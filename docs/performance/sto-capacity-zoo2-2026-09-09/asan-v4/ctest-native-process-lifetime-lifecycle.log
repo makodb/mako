@@ -1,0 +1,32 @@
+Internal ctest changing into directory: /dev/shm/sto-capacity-asan-20260909-v4
+Test project /dev/shm/sto-capacity-asan-20260909-v4
+    Start  1: test_rocksdb_interface_lifecycle
+1/6 Test  #1: test_rocksdb_interface_lifecycle .................   Passed    0.16 sec
+    Start  4: test_sto_tpcc_cpp_slow_exit
+2/6 Test  #4: test_sto_tpcc_cpp_slow_exit ......................   Passed    4.70 sec
+    Start  5: test_sto_tpcc_cpp_multishard_slow_exit
+3/6 Test  #5: test_sto_tpcc_cpp_multishard_slow_exit ...........   Passed    4.82 sec
+    Start 71: test_silo_nontxn_api
+4/6 Test #71: test_silo_nontxn_api .............................   Passed    0.17 sec
+    Start 72: test_silo_nontxn_api_mv_delete_delete_conflict
+5/6 Test #72: test_silo_nontxn_api_mv_delete_delete_conflict ...   Passed    0.08 sec
+    Start 73: test_silo_nontxn_api_mv_delete_update_conflict
+6/6 Test #73: test_silo_nontxn_api_mv_delete_update_conflict ...   Passed    0.08 sec
+
+100% tests passed, 0 tests failed out of 6
+
+Label Time Summary:
+concurrency         =   0.16 sec*proc (2 tests)
+cpp                 =   9.52 sec*proc (2 tests)
+ffi                 =   9.52 sec*proc (2 tests)
+lifecycle           =   9.68 sec*proc (3 tests)
+masstree            =  10.00 sec*proc (6 tests)
+multishard          =   4.82 sec*proc (1 test)
+mv                  =   0.16 sec*proc (2 tests)
+nontransactional    =   0.33 sec*proc (3 tests)
+rocks               =   0.16 sec*proc (1 test)
+silo                =   0.33 sec*proc (3 tests)
+sto                 =   9.68 sec*proc (3 tests)
+tpcc                =   9.52 sec*proc (2 tests)
+
+Total Test time (real) =  10.01 sec

@@ -1,28 +1,60 @@
 # Masstree — Sanitizer Findings Report
 
-Surfaced by Tier 3.1 of `docs/masstree-test-plan.md`. Each finding is
-documented in enough detail that the user can decide whether it is an
-actual bug or an intentional pattern. No fixes have been applied; the
-items below are all currently silenced by the suppressions files in
-`src/masstree/{ubsan,tsan}_suppressions.txt`.
+Surfaced by Tier 3.1 of `docs/masstree-test-plan.md`. This report retains the
+original evidence and records each finding's current disposition. The fixed
+defects are not suppressed. Only Masstree's documented optimistic-read
+findings remain in the UBSan and TSan suppression files.
 
 ## TL;DR
 
 | # | Sanitizer | Location | Class | My read |
 |---|---|---|---|---|
-| 1 | UBSan | `src/masstree/kpermuter.hh:128` | shift-exponent ≥ width | **likely benign** on x86 — value is consumed by a mask whose unused-bit branch is never taken, but the UB is real per the C++ memory model |
-| 2 | UBSan | `src/masstree/string_slice.hh:52,83,87,158,159` | unaligned 8-byte load | **intentional perf trick**, gated by `HAVE_UNALIGNED_ACCESS`; UB per spec, safe on x86_64 |
-| 3 | UBSan | `src/masstree/masstree_struct.hh:156` (via line 661) | array index from stale read inside optimistic retry | **intentional lock-free pattern**; value is discarded by the surrounding version-check retry |
-| 4 | TSan | `src/masstree/*` (~1,500 distinct call sites) | racy reads of node fields under optimistic concurrency | **intentional lock-free pattern**; safety is via Masstree's version-counter retry, not via `std::atomic` ordering |
-| 5 | TSan | `src/mako/spinlock.h:23,40` | race on `volatile uint32_t value` | **the only finding that looks like a real bug** — plain `volatile` is not a substitute for `std::atomic<uint32_t>` under the C++11+ memory model |
+| 1 | UBSan | `src/masstree/kpermuter.hh:128` | shift-exponent ≥ width | **fixed** by returning zero before a shift at or beyond the word width; suppression removed |
+| 2 | UBSan | `src/masstree/string_slice.hh` | unaligned typed load | **fixed** with a `memcpy`-based load helper that preserves optimized x86 code generation; suppression removed |
+| 3 | UBSan | `src/masstree/masstree_struct.hh:156` (via line 661) | array index from stale read inside optimistic retry | **accepted known UB debt**; the retry discards the value but cannot make the prior access language-defined |
+| 4 | TSan | `src/masstree/*` (~1,500 distinct call sites) | racy reads of node fields under optimistic concurrency | **accepted known UB debt** in the inherited x86 implementation; the later version retry does not legalize plain C++ data races |
+| 5 | TSan | `src/mako/spinlock.h:23,40` | race on `volatile uint32_t value` | **fixed** with `std::atomic<uint32_t>` and explicit memory ordering; suppressions removed |
+| 6 | Native stress | Mako `SiloRuntime` thread registration | monotonically exhausted 512-slot worker ID space | **graceful rejection added** for opted-in callers; recycling and the legacy aborting path remain deferred |
+| 7 | ASan | `src/masstree/masstree_struct.hh` external key suffix comparisons | fixed-width read beyond an exact-length 11/12-byte caller buffer | **fixed** by using bounded `memcmp` for the external operand; no suppression added |
+| 8 | UBSan | `src/mako/core.h` per-core raw storage | placement construction at an address less aligned than the stored type | **fixed** with type-derived storage alignment and lifetime-aware pointer recovery; no suppression added |
+| 9 | TSan | `src/mako/spinbarrier.h` | plain polling read racing with an atomic builtin decrement; no publication edge | **fixed** with a C++ atomic release sequence and acquire wait; no suppression added |
+| 10 | TSan | guarded C++ TPC-C `std::cout`/`std::cerr` path | concurrent mutation of shared stream formatting state | **fixed on the tested TPC-C path** with one output lock shared by formatted and machine records; no suppression added |
+| 11 | TSan | libnuma `numa_node_to_cpus` cache reached by `rcu::pin_current_thread` | unsynchronized lazy topology-cache construction in libnuma 2.0.19 | **fixed at the call boundary** by serializing topology queries during thread setup; no suppression added |
+| 12 | TSan | Masstree `threadinfo::gc_epoch_` | reclaimer reads racing with participant entry and exit; publication also lacked a portable entry barrier | **fixed** with layout-preserving atomic references and an ordered snapshot/publish/recheck protocol; no suppression added |
+| 13 | TSan | legacy C++ MassTrans `stuffed_str` payloads during cross-partition TPC-C | plain payload reads racing with replacement under a version-sandwich retry | **accepted known UB debt outside the supported Rust profile**; the bounded lifecycle gate uses a local-only transaction mix and no suppression was added |
 
-ASan: zero findings across all three test binaries.
+The historical ASan run reported zero findings across its three Masstree test
+binaries. The Rust STO native sanitizer workflow now reruns the expanded
+boundary and TPC-C gate on every relevant pull request.
+
+The Rust boundary ASan result has an explicit leak qualification. The ordinary
+workspace sweep leak-checks every case except the 30 exact intentional
+transaction-frame quarantine cases in
+`scripts/ci/rust_sto_quarantine_tests.txt`; those cases are rerun individually
+with leak reporting disabled. The native FFI runner leak-checks 34 of 35 unit
+cases and disables leak reporting only for
+`tests::post_install_row_count_failure_marks_runtime_indeterminate`, which
+deliberately retains an indeterminate frame after publication begins. The gate
+audits every substring skip against the test inventory before applying it.
+
+The ASan job also ends with a targeted `STO_RMW=ON` rebuild of the MassTrans
+non-transactional test. It verifies that both the library and test compile with
+`READ_MY_WRITES=1` and `-fsanitize=address`, then runs the exact
+insert-then-delete and resurrection-then-delete MV regressions. Leak reporting
+is disabled for those process-lifetime MassTrans invocations; address errors
+remain fatal.
 
 ---
 
 ## Finding 1 — `kpermuter::value_from` shift-exponent
 
+**Resolution**: fixed. `value_from` computes the requested shift and returns
+zero when it reaches the `value_type` width. The obsolete `shift-base` and
+`shift-exponent` suppressions were removed, so UBSan will detect a recurrence.
+
 **Where**: `src/masstree/kpermuter.hh:128`
+
+Original code:
 
 ```cpp
 value_type value_from(int i) const {
@@ -61,23 +93,21 @@ x86 in this specific case (shifting `x_` by 0 mod 64 returns `x_`, but
 the caller masks the result to zero downstream — I have not verified
 the masking, so this is the part that warrants a second look).
 
-**What to check before deciding**
-
-- Walk the call site at `masstree_split.hh:97` and confirm the
-  downstream consumer either masks the high bits away or never enters
-  this code path with `i + 1 == 64`.
-- If the caller does mask, the fix is a one-line clamp:
-  `int s = (i + 1) << 2; return s >= 64 ? 0 : (x_ >> s);` — well-defined
-  on all platforms.
-- If the caller depends on the x86-specific "shift by 64 returns x_"
-  semantics, that's a real bug on any non-x86 target.
+The implemented guard makes the intended all-zero result explicit and
+well-defined on every target.
 
 ---
 
 ## Finding 2 — `string_slice` unaligned 8-byte loads
 
+**Resolution**: fixed. All affected typed dereferences now use a local
+`memcpy` helper. The obsolete `alignment:string_slice` suppression was removed,
+so UBSan will detect any new unaligned typed load in this code.
+
 **Where**: `src/masstree/string_slice.hh:52, 83, 87, 158, 159` (and
 likely more under richer workloads).
+
+Original code:
 
 ```cpp
 #if HAVE_UNALIGNED_ACCESS
@@ -106,15 +136,8 @@ Per the C++ memory model this is UB regardless of platform: a
 `p` is not 8-byte aligned. The fact that x86 tolerates it doesn't
 remove the UB.
 
-**Is it a bug?**
-
-If the codebase is x86_64-only, no — the generated code is correct
-and identical to the safe alternative.
-
-If the codebase ever targets older ARM or any strict-alignment
-architecture, yes — and the fix is `memcpy` into a local `uint64_t`,
-which modern compilers fold to a single unaligned load on x86 (so the
-perf trick is preserved).
+The `memcpy` implementation removes the C++ alignment violation and lets the
+compiler select the appropriate efficient load for each architecture.
 
 ---
 
@@ -305,7 +328,7 @@ the compiler from optimizing away or coalescing the access, but it
 does not impose any memory ordering and does not establish a
 happens-before edge with concurrent accesses on the same object.
 
-The current implementation relies on:
+The original implementation relied on:
 - `__sync_bool_compare_and_swap` for the actual mutual exclusion
   (this is fine — it's an atomic builtin).
 - `COMPILER_MEMORY_FENCE` for ordering around the critical section
@@ -314,15 +337,15 @@ The current implementation relies on:
   this would not establish the necessary release/acquire edge).
 - Plain `volatile` reads in the spin loop.
 
-On x86 the code works by accident. On ARM / POWER it would be a real
+On x86 the old code worked by accident. On ARM / POWER it would be a real
 correctness bug — the load of `value = 0` in `unlock()` could be
 reordered with respect to writes inside the critical section, and
 the spinning load in `lock()` could observe stale values for an
 unbounded period.
 
-**This is the finding I'd recommend looking at most carefully** — it
-is the only one of the five that I would call an outright bug rather
-than "intentional but UB-per-spec." The replacement is mechanical:
+This was the only one of the first five findings classified as an outright bug
+rather than an intentional optimistic-read pattern. Its replacement was
+mechanical:
 
 ```cpp
 std::atomic<uint32_t> value{0};
@@ -330,24 +353,22 @@ std::atomic<uint32_t> value{0};
 // unlock:  value.store(0, memory_order_release);
 ```
 
-It is suppressed in `src/masstree/tsan_suppressions.txt` by
-`race:spinlock::lock` / `race:spinlock::unlock` because chasing it
-inside Tier 3.1 was out of scope.
+It was initially suppressed by `race:spinlock::lock` and
+`race:spinlock::unlock`. Both entries were removed after the atomic rewrite.
 
 ---
 
 ## Cross-cutting recommendations
 
-- **Findings 1–4 are all "UB per the C++ memory model that happens to
-  work on x86."** Whether to fix any of them is a portability and
-  hygiene call, not a correctness call on current hardware.
-- **Finding 5 is a real concurrency bug** on any non-TSO architecture
-  and a "works by accident" pattern on x86. Worth investigating
-  whether `spinlock` is on a hot enough path that the relaxed-atomic
-  rewrite needs benchmarking before/after.
-- **None of the five findings affected the test suite's pass rate**
-  (113/113 passed under each sanitizer once the suppressions were in
-  place). They were all surfaced as out-of-band warnings.
+- Findings 1, 2, 5, and 7–12 are fixed and unsuppressed. The sanitizer gate
+  now treats a recurrence as a failure.
+- Findings 3 and 4 remain accepted, explicitly qualified C++ UB debt in the
+  inherited Masstree implementation. The filename-wide TSan suppressions can
+  hide a new race in the same frames, so a passing TSan job means no
+  unsuppressed finding under that reviewed list, not an absence of all races.
+- In the original investigation, all 113 tests passed once the then-current
+  suppressions were active. Current results are tied to workflow artifacts for
+  the exact tested revision rather than this historical report.
 
 ---
 
@@ -469,7 +490,7 @@ creations, but the counter eventually still hits 512.
 once. The fixed test pool (4 writers + 2 readers + N scanners) is
 nowhere near 512 IDs.
 
-**Fix sketch (not landed here)**:
+**Full slot-recycling fix (not landed)**:
 
 The cleanest fix is a `thread_local` sentinel that releases the
 allocated `core_id` on thread exit and a freelist in `SiloRuntime`
@@ -513,3 +534,176 @@ The minimum-effort interim mitigation is to bump `NMAXCORES`
 but that just kicks the can — any consumer with >512 unique
 thread lifetimes still hits it. The freelist fix is roughly 20
 lines and should be the actual landing.
+
+---
+
+## Finding 7: exact-length external key over-read in `equals_sloppy` (fixed)
+
+**Where**: the external-key suffix comparisons in
+`src/masstree/masstree_struct.hh`, reached by the Rust fixed-read and resolved-
+cache native tests with exact-length 11-byte and 12-byte key allocations.
+
+Masstree's internal stringbag storage is padded and may safely use
+`string_slice<uintptr_t>::equals_sloppy`. The compared `key_type` suffix can,
+however, point to caller-owned storage ending exactly at the logical key
+length. `equals_sloppy` rounds its final comparison up to a machine word, so it
+read four bytes beyond those exact allocations. ASan reported the out-of-bounds
+read at the native Rust/Masstree boundary.
+
+Both comparisons now use `memcmp(s.s, ka.suffix().s, s.len)`. The internal
+padded comparisons retain `equals_sloppy`, so the fix is limited to the operand
+whose padding is not guaranteed. No suppression or leak exception applies to
+this finding; the fixed-read and resolved-cache tests run under ordinary ASan.
+
+---
+
+## Finding 8: under-aligned per-core storage (fixed)
+
+**Where**: the byte arrays backing `percore<T>` and `percore_lazy<T>` in
+`src/mako/core.h`.
+
+The arrays had element-sized capacity but only byte alignment. Placement-new
+therefore constructed cache-line-aligned values, including `ticker::tickinfo`,
+at addresses that did not satisfy the value type's alignment. UBSan reported a
+constructor call on an address that was not 64-byte aligned.
+
+The storage now has `alignas` derived from its actual element type. The lazy
+slot wrapper is itself aligned as `T` and uses `std::launder` when recovering a
+pointer to a constructed object. The
+`CoreStorageTest.LazyPerCoreStorageHonorsOverAlignment` regression uses a
+128-byte-aligned value so the contract remains visible even on platforms where
+ordinary allocations happen to satisfy cache-line alignment. No suppression
+applies.
+
+---
+
+## Finding 9: spin-barrier race and missing publication edge (fixed)
+
+**Where**: `src/mako/spinbarrier.h`.
+
+`count_down()` used a legacy atomic builtin, while `wait_for()` polled the same
+word through a plain `volatile` read. Those accesses race in the C++ memory
+model. More importantly, a waiter that observed zero had no defined happens-
+before edge from setup writes made by every participant.
+
+The count is now `std::atomic<size_t>`. Each decrement is a release RMW, which
+forms one release sequence, and the waiter uses an acquire load. Observing zero
+therefore publishes the setup performed before every decrement. The
+`SpinBarrierTest.WaitingThreadObservesEveryParticipantWrite` regression checks
+that consequence directly. No suppression applies.
+
+---
+
+## Finding 10: shared benchmark stream state (fixed)
+
+**Where**: concurrent loader, worker, RPC, and result output in the active C++
+TPC-C/`dbtest` path used by `sto_tpcc_bench`, principally `bench.cc`,
+`bench.h`, `dbtest.cc`, `rpc_setup.cc`, and `tpcc.cc` under
+`src/mako/benchmarks`.
+
+Two local-shard loader sets can write to `std::cerr` concurrently. libc++'s
+stream operations mutate formatting state, so TSan reported a race even when
+the individual messages appeared intact. Independent locks around only the
+machine-readable result would also allow formatted output to split or corrupt
+that record.
+
+`src/mako/benchmarks/benchmark_output.h` now provides a scoped stream proxy
+that holds one process-wide mutex for the complete insertion expression. The
+tested TPC-C path's human output and raw machine-record writes use the same
+mutex. The lock protects diagnostic and result publication; it is not acquired
+for transaction bookkeeping. The data-loading timer in this path also publishes
+through that proxy after the loader threads join instead of letting the generic
+`scoped_timer` destructor write directly to `std::cerr`. Other benchmark drivers still contain direct
+stream writes and require their own audit before they are run concurrently in
+one process. No suppression applies to the TPC-C finding.
+
+---
+
+## Finding 11: libnuma topology-cache initialization race (fixed at boundary)
+
+**Where**: `rcu::pin_current_thread()` in `src/mako/rcu.cc`, reached
+concurrently by the two local-shard TPC-C loader sets.
+
+libnuma 2.0.19 lazily fills its process-wide `node_cpu_mask_v2` cache from
+`numa_node_to_cpus()`. Its own source describes this cache as slightly racy and
+notes that locking would be preferable. TSan observed one loader copying from a
+cached mask while another loader initialized that mask.
+
+Mako now serializes `numa_node_of_cpu()`, `numa_node_to_cpus()`, and the related
+affinity-mask setup within `rcu::pin_current_thread()`. Every concurrent Mako
+caller that reached the reported cache does so through this boundary. The lock
+is taken only while a thread establishes affinity, before measured transaction
+execution, and no sanitizer suppression was added. The multishard slow-exit
+CTest is the regression workload for this path. This repair does not wrap
+arbitrary direct libnuma calls in other benchmark or dormant runtime paths;
+those paths remain outside this finding's tested boundary.
+
+---
+
+## Finding 12: Masstree RCU participant publication (fixed)
+
+**Where**: `threadinfo::rcu_start()`, `threadinfo::rcu_stop()`, and
+`threadinfo::hard_rcu_quiesce()` in `src/masstree/kvthread.hh` and
+`src/masstree/kvthread.cc`. The strict TSan multishard C++ TPC-C lifecycle test
+reported a reclaimer reading one loader's `gc_epoch_` while that loader wrote
+the same word.
+
+`gc_epoch_` advertises a nonzero RCU read-side epoch, or zero while its worker
+is quiescent. A reclaimer scans every registered participant and frees limbo
+entries older than the oldest advertised epoch. Plain concurrent reads and
+writes were therefore both a C++ data race and a possible premature-free path.
+A release-only entry store would remove neither the formal publication gap nor
+the weak-memory Store-to-Load reordering that matters here.
+
+Changing the member type would disturb the anonymous-union cache-line layout
+and would make `threadinfo`'s construction-time raw initialization invalid for
+a nontrivial atomic member. Instead, short-lived
+`std::atomic_ref<mrcu_epoch_type>` operations cover every executable access to
+the naturally aligned raw word. Compile-time checks require the reference to
+be aligned and lock-free.
+
+Entry takes a sequentially consistent context-epoch snapshot, publishes it
+with a sequentially consistent store, and rechecks the context epoch. It
+repeats if an advancer overlapped publication, preventing a paused worker from
+entering under an epoch that reclamation has already passed. Peer scans and context
+epoch operations join the same total order. Exit clears the participant with a
+release store after its protected accesses; owner-only arithmetic uses relaxed
+loads. The constructor's plain zeroing remains before registration and
+publication, and `threadinfo` allocations remain process-lifetime.
+
+The same audit found a plain function-static flag in `threadinfo::make()` that
+could race between concurrent attachers. A function-static `std::once_flag`
+now publishes that assertion-only allocator initialization. The multishard
+slow-exit CTest exercises both repairs under TSan. No suppression applies.
+
+---
+
+## Finding 13: legacy MassTrans variable-length payload race (accepted outside scope)
+
+**Where**: `stuffed_str<unsigned long>::replace()` and
+`versioned_str_struct::read_value()`, reached when one C++ TPC-C shard updates a
+remotely owned record while another shard reads the same record.
+
+The multi-runner harness intentionally wires every runner's remote partition
+entry to the exact table owned by the corresponding source runner. A remote
+NewOrder stock update can therefore overlap a local StockLevel read of the same
+MassTrans record. The writer changes the plain `size_` member and byte buffer;
+the reader obtains both through plain accesses. `MassTrans::atomicRead()` reads
+the version before and after copying the payload and retries when it detects a
+change, but that seqlock-style validation does not make the intervening C++
+accesses data-race-free.
+
+Making the distributed legacy path language-defined would require a reviewed
+atomic payload/publication design, including every reader and writer, rather
+than a narrow annotation or TSan suppression. That work is separate from this
+branch's supported Rust profile, which is exactly one local, non-replicated
+shard and has no remote indexes or cross-shard commit.
+
+The multishard slow-exit CTest exists to exercise concurrent runner and loader
+construction, topology setup, RCU participation, output, worker join, and
+teardown. Its timed phase uses Delivery, OrderStatus, and StockLevel, which do
+not follow remote table pointers, so those lifecycle properties remain under
+TSan without treating the known legacy distributed payload path as part of the
+Rust release claim. No suppression was added. A separate distributed C++
+sanitizer and correctness effort is required before that profile can be
+described as race-free.
