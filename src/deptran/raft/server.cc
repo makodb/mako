@@ -317,24 +317,24 @@ static bool raft_catch(uint16_t site_id, const char* what, Fn&& fn) {
 // shared by raft_load_state_machine_snapshot and raft_install_snapshot_payload.
 static std::unique_ptr<PreparedStateMachineSnapshotInstall>
 prepare_state_machine_snapshot_locked(
-    RaftServerBase* self,
+    const rusty::RaftPrepareSnapshotCb* prepare_cb, uint16_t site_id,
     const std::string& data,
     uint64_t last_included_index,
     uint64_t last_included_term) {
-  if (self->prepare_sm_snapshot_cb_) {
+  if (*prepare_cb) {
     std::unique_ptr<PreparedStateMachineSnapshotInstall> prepared;
-    if (!raft_catch(self->site_id_, "state-machine snapshot prepare", [&] {
-          prepared = self->prepare_sm_snapshot_cb_(data, last_included_index);
+    if (!raft_catch(site_id, "state-machine snapshot prepare", [&] {
+          prepared = (*prepare_cb)(data, last_included_index);
         })) {
       Log_error("[RAFT-SNAPSHOT] Site {} prepare was for snapshot index={} "
                 "term={}",
-                self->site_id_, last_included_index, last_included_term);
+                site_id, last_included_index, last_included_term);
       return nullptr;
     }
     if (prepared == nullptr) {
       Log_error("[RAFT-SNAPSHOT] Site {} state-machine prepare rejected "
                 "snapshot index={} term={}",
-                self->site_id_, last_included_index, last_included_term);
+                site_id, last_included_index, last_included_term);
     }
     return prepared;
   }
@@ -343,7 +343,7 @@ prepare_state_machine_snapshot_locked(
   constexpr size_t kMarkerSize = sizeof(uint64_t) * 2;
   if (data.size() != kMarkerSize) {
     Log_error("[RAFT-SNAPSHOT] Site {} RaftLab marker has {} bytes, expected {}",
-              self->site_id_, data.size(), kMarkerSize);
+              site_id, data.size(), kMarkerSize);
     return nullptr;
   }
 
@@ -358,7 +358,7 @@ prepare_state_machine_snapshot_locked(
   if (!matches) {
     Log_error("[RAFT-SNAPSHOT] Site {} RaftLab marker mismatch: "
               "payload=({}, {}) metadata=({}, {})",
-              self->site_id_, marker_index, marker_term,
+              site_id, marker_index, marker_term,
               last_included_index, last_included_term);
   }
   if (!matches) {
@@ -369,7 +369,7 @@ prepare_state_machine_snapshot_locked(
   Log_error("[RAFT-SNAPSHOT] Site {} has no state-machine snapshot prepare "
             "callback for "
             "index={} term={}",
-            self->site_id_, last_included_index, last_included_term);
+            site_id, last_included_index, last_included_term);
   return nullptr;
 #endif
 }
@@ -406,8 +406,8 @@ prepare_state_machine_snapshot_locked(
 // RaftServer::commo() method the kernels used to downcast the SERVER to reach.
 // @unsafe - dynamic_cast on a pointer the frame owns; verify keeps the old
 // abort-if-unset behaviour.
-static RaftCommo* commo_of(RaftServerBase* self) {
-  auto* communicator = dynamic_cast<RaftCommo*>(self->commo_);
+static RaftCommo* commo_of(rusty::Communicator* commo) {
+  auto* communicator = dynamic_cast<RaftCommo*>(commo);
   verify(communicator != nullptr);
   return communicator;
 }
@@ -417,11 +417,12 @@ extern "C" {
 // (1) opaque-field access
 
 // std::function's bool conversion, and its call.
-bool raft_leader_change_cb_is_set(const RaftServerBase* self) {
-  return static_cast<bool>(self->leader_change_cb_);
+bool raft_leader_change_cb_is_set(const rusty::RaftLeaderChangeCb* cb) {
+  return static_cast<bool>(*cb);
 }
-void raft_fire_leader_change(RaftServerBase* self, bool is_leader) {
-  self->leader_change_cb_(is_leader);
+void raft_fire_leader_change(const rusty::RaftLeaderChangeCb* cb,
+                             bool is_leader) {
+  (*cb)(is_leader);
 }
 
 // (1) the campaign broadcast, and the reply quorum read back under mtx_.
@@ -432,10 +433,10 @@ void raft_fire_leader_change(RaftServerBase* self, bool is_leader) {
 // FeedResponse publishes it before its wakeup. Reading the term inside the
 // broadcast kernel would lose exactly that ordering.
 rusty::RaftVoteQuorumPtr raft_broadcast_vote_and_wait(
-    RaftServerBase* self, uint32_t par_id, uint64_t last_log_index,
+    rusty::Communicator* commo, uint32_t par_id, uint64_t last_log_index,
     int64_t last_log_term, uint16_t self_site_id, int64_t term) {
   rusty::RaftVoteQuorumPtr quorum =
-      commo_of(self)->BroadcastVote(
+      commo_of(commo)->BroadcastVote(
           par_id, last_log_index, last_log_term, self_site_id, term);
   quorum->wait_timeout(1000000);
   return quorum;
@@ -466,16 +467,16 @@ bool raft_command_has_value(const rusty::RaftCommand* cmd) {
 }
 
 // std::thread join.
-void raft_apply_thread_join(RaftServerBase* self) {
-  if (self->apply_thread_.joinable()) {
-    self->apply_thread_.join();
+void raft_apply_thread_join(rusty::RaftStdThread* thread) {
+  if (thread->joinable()) {
+    thread->join();
   }
 }
 
 // (2) more downcalls into RaftServer methods that have not converted
 
-void raft_commo_set_network_enabled(RaftServerBase* self, bool enabled) {
-  commo_of(self)->SetNetworkEnabled(enabled);
+void raft_commo_set_network_enabled(rusty::Communicator* commo, bool enabled) {
+  commo_of(commo)->SetNetworkEnabled(enabled);
 }
 // The gate's allocation, through the in-place seam. See the declaration in
 // server.h for why the DSL cannot spell this one.
@@ -487,13 +488,15 @@ rusty::Arc<ReplicationWakeGate> raft_new_replication_wake_gate() {
 // The reactor half of RaftServerBase::RequestReplication: the DSL decided to
 // wake, this builds the owner-thread job. No downcast -- the gate is a base
 // field now.
-void raft_queue_replication_wake(RaftServerBase* self) {
-  QueueReplicationWake(self->replication_wake_gate_);
+void raft_queue_replication_wake(
+    const rusty::Arc<ReplicationWakeGate>* gate) {
+  QueueReplicationWake(*gate);
 }
 
 // The reactor half of RaftServerBase::CloseReplicationWakeGate, likewise.
-void raft_queue_replication_shutdown_wake(RaftServerBase* self) {
-  QueueReplicationShutdownWake(self->replication_wake_gate_);
+void raft_queue_replication_shutdown_wake(
+    const rusty::Arc<ReplicationWakeGate>* gate) {
+  QueueReplicationShutdownWake(*gate);
 }
 // Must be called with mtx_ held; both callers -- raft_append_leader_noop and
 // RaftServerBase::Start -- take it first. Reports the PRE-append tail in
@@ -522,9 +525,9 @@ void raft_spawn_election_timer(RaftServerBase* self, uint64_t wait_int_us) {
 // SetupInternal under the try/catch the C++ Setup wrapped it in. Exceptions
 // have no DSL spelling in this dialect, and this one exists to turn a throwing
 // setup into a failed startup rather than a crash.
-bool raft_setup_internal_guarded(RaftServerBase* self) {
+bool raft_setup_internal_guarded(RaftServerBase* self, uint16_t site_id) {
   bool ok = false;
-  if (!raft_catch(self->site_id_, "setup", [&] {
+  if (!raft_catch(site_id, "setup", [&] {
         ok = self->SetupInternal();
       })) {
     return false;
@@ -546,8 +549,8 @@ void raft_shutdown_barrier_yield() {
 // (1)/(3) snapshot recovery: the environment switches, the manager, and the
 // snapshot bytes.
 
-bool raft_prepare_snapshot_cb_is_set(const RaftServerBase* self) {
-  return static_cast<bool>(self->prepare_sm_snapshot_cb_);
+bool raft_prepare_snapshot_cb_is_set(const rusty::RaftPrepareSnapshotCb* cb) {
+  return static_cast<bool>(*cb);
 }
 
 bool raft_env_snapshots_enabled() {
@@ -563,9 +566,10 @@ bool raft_env_snapshots_enabled() {
 // SetSnapshotManager() before Setup keeps the latest snapshot it holds;
 // otherwise start from an empty in-memory manager.
 void raft_snapshot_recovery_pick_manager(
-    RaftServerBase* self, rusty::RaftSnapshotManagerPtr* out) {
-  if (self->snapshot_manager_) {
-    *out = self->snapshot_manager_;
+    const rusty::RaftSnapshotManagerPtr* current,
+    rusty::RaftSnapshotManagerPtr* out) {
+  if (*current) {
+    *out = *current;
     return;
   }
   *out = std::make_shared<janus::raft::MemorySnapshotManager>();
@@ -601,22 +605,22 @@ bool raft_snapshot_manager_load(const rusty::RaftSnapshotManagerPtr* manager,
 // immediately commits its state-machine image before publishing recovery.
 // Caller holds state_machine_apply_mtx_ then mtx_. Was
 // RaftServer::LoadStateMachineSnapshotLocked.
-bool raft_load_state_machine_snapshot(RaftServerBase* self,
-                                      const rusty::RaftByteString* data,
-                                      uint64_t last_included_index,
-                                      uint64_t last_included_term) {
+bool raft_load_state_machine_snapshot(
+    const rusty::RaftPrepareSnapshotCb* prepare_cb, uint16_t site_id,
+    const rusty::RaftByteString* data, uint64_t last_included_index,
+    uint64_t last_included_term) {
   auto prepared = prepare_state_machine_snapshot_locked(
-      self, *data, last_included_index, last_included_term);
+      prepare_cb, site_id, *data, last_included_index, last_included_term);
   if (prepared == nullptr) {
     return false;
   }
   bool committed = false;
-  if (!raft_catch(self->site_id_, "state-machine snapshot commit", [&] {
+  if (!raft_catch(site_id, "state-machine snapshot commit", [&] {
         committed = prepared->Commit();
       })) {
     Log_error("[RAFT-SNAPSHOT] Site {} commit was for snapshot index={} "
               "term={}",
-              self->site_id_, last_included_index, last_included_term);
+              site_id, last_included_index, last_included_term);
     return false;
   }
   return committed;
@@ -636,39 +640,40 @@ bool raft_load_state_machine_snapshot(RaftServerBase* self,
 // Returns 0 prepare-rejected, 1 save-failed, 2 commit-failed (the caller
 // fails stop), 3 installed. CALLER MUST HOLD state_machine_apply_mtx_ then
 // mtx_.
-int raft_install_snapshot_payload(RaftServerBase* self,
-                                  uint64_t last_included_index,
-                                  uint64_t last_included_term,
-                                  const rusty::RaftByteString* data) {
+int raft_install_snapshot_payload(
+    const rusty::RaftPrepareSnapshotCb* prepare_cb,
+    const rusty::RaftSnapshotManagerPtr* snapshot_manager, uint16_t site_id,
+    uint64_t last_included_index, uint64_t last_included_term,
+    const rusty::RaftByteString* data) {
   Log_info("[INSTALL-SNAPSHOT] Site {}: Preparing state machine snapshot ({} bytes)",
-           self->site_id_, data->size());
+           site_id, data->size());
   auto prepared_state_machine = prepare_state_machine_snapshot_locked(
-      self, *data, last_included_index, last_included_term);
+      prepare_cb, site_id, *data, last_included_index, last_included_term);
   if (prepared_state_machine == nullptr) {
     return 0;
   }
 
-  const bool saved = self->snapshot_manager_->TakeSnapshot(
+  const bool saved = (*snapshot_manager)->TakeSnapshot(
       last_included_index, last_included_term, data->data(), data->size());
   if (!saved) {
     Log_error("[INSTALL-SNAPSHOT] Site {}: Failed to save snapshot at index={} term={}",
-              self->site_id_, last_included_index, last_included_term);
+              site_id, last_included_index, last_included_term);
     // The transaction has not committed, so its destructor discards only the
     // private staging image; the old live state machine and log remain usable.
     return 1;
   }
   Log_info("[INSTALL-SNAPSHOT] Site {}: Snapshot saved at index={} term={}",
-           self->site_id_, last_included_index, last_included_term);
+           site_id, last_included_index, last_included_term);
 
   if (!prepared_state_machine->Commit()) {
     Log_error("[INSTALL-SNAPSHOT] Site {}: Failed to commit prepared state "
               "machine snapshot at index={} term={}; failing stop",
-              self->site_id_, last_included_index, last_included_term);
+              site_id, last_included_index, last_included_term);
     return 2;
   }
   Log_info("[INSTALL-SNAPSHOT] Site {}: State machine committed at index={} "
            "after Raft snapshot publication",
-           self->site_id_, last_included_index);
+           site_id, last_included_index);
   return 3;
 }
 
@@ -677,16 +682,17 @@ int raft_install_snapshot_payload(RaftServerBase* self,
 // The learner callback, under the catch-all the C++ wrapped it in. An
 // internal no-op is consumed without reaching the application. Returns false
 // when the callback threw, which fails the server stop.
-bool raft_apply_invoke(RaftServerBase* self, uint64_t id) {
-  if (!raft_catch(self->site_id_, "apply callback", [&] {
+bool raft_apply_invoke(const rusty::LearnerAction* app_next,
+                       const rusty::RaftCommand* pending, uint16_t site_id,
+                       uint64_t id) {
+  if (!raft_catch(site_id, "apply callback", [&] {
         if (!raft_server_command_is_internal_noop(
-                self->pending_apply_command_.kind_,
-                TpcNoopCommand::static_kind())) {
-          self->app_next_(id, self->pending_apply_command_);
+                pending->kind_, TpcNoopCommand::static_kind())) {
+          (*app_next)(id, *pending);
         }
       })) {
     Log_error("[RAFT-APPLY] Site {} callback failed at slot {}",
-              self->site_id_, id);
+              site_id, id);
     return false;
   }
   return true;
@@ -731,12 +737,13 @@ const char* raft_env_lookup(int32_t which) {
 // Binds the wake gate to the communicator's PollThread before HeartbeatLoop
 // can publish its owner-thread-only IntEvent. The communicator always
 // retains the PollThread it created or was given.
-bool raft_bind_replication_poll(RaftServerBase* self) {
+bool raft_bind_replication_poll(RaftServerBase* self,
+                                rusty::Communicator* commo) {
   // commo_of verifies the communicator is set, exactly as the
   // RaftServer::commo() it replaces did, so the null test that used to sit
   // here could never be false.
   rusty::Option<rusty::Arc<rrr::PollThread>> replication_poll =
-      commo_of(self)->PollThread();
+      commo_of(commo)->PollThread();
   if (replication_poll.is_none()) {
     return false;
   }
@@ -747,9 +754,9 @@ bool raft_bind_replication_poll(RaftServerBase* self) {
 // Initializes the snapshot manager and restores the exact state-machine bytes
 // before publishing any recovered snapshot boundary. C++ for the exception
 // boundary around the recovery. Was RaftServer::InitializeSnapshotManager.
-bool raft_initialize_snapshot_manager(RaftServerBase* self) {
+bool raft_initialize_snapshot_manager(RaftServerBase* self, uint16_t site_id) {
   bool recovered = false;
-  if (!raft_catch(self->site_id_, "snapshot recovery", [&] {
+  if (!raft_catch(site_id, "snapshot recovery", [&] {
         recovered = self->InitializeSnapshotManagerLocked();
       })) {
     self->FailStop();
@@ -781,17 +788,19 @@ uint64_t raft_load_current_config(RaftServerBase* self) {
 
 // The std::thread construction, and nothing else: the running flag and the
 // loop body are both Rust. Joinable on purpose -- see StartApplyThread.
-void raft_spawn_apply_thread(RaftServerBase* self) {
-  self->apply_thread_ = std::thread([self]() { self->ApplyThreadLoop(); });
+void raft_spawn_apply_thread(RaftServerBase* self,
+                             rusty::RaftStdThread* thread) {
+  *thread = std::thread([self]() { self->ApplyThreadLoop(); });
 }
 
 // The async-RPC gate's back-pointer, cleared under the gate's own mutex.
 // AsyncCallbackLifetime is a hand-written C++ struct holding a std::mutex,
 // and the field is a std::shared_ptr to it, so neither half has a DSL
 // spelling.
-void raft_clear_async_callback_owner(RaftServerBase* self) {
-  std::lock_guard<std::mutex> lifetime_lock(self->async_callback_lifetime_->mutex);
-  self->async_callback_lifetime_->server = nullptr;
+void raft_clear_async_callback_owner(
+    const rusty::RaftAsyncCallbackLifetimePtr* lifetime) {
+  std::lock_guard<std::mutex> lifetime_lock((*lifetime)->mutex);
+  (*lifetime)->server = nullptr;
 }
 
 // Forward-declared because the emitter writes definitions in source order and
@@ -812,27 +821,28 @@ void raft_spawn_election_timer_fiber(RaftServerBase* self) {
 // CreateSnapshotLocked's state-machine checkpoint and its persistence: a
 // std::string built by a std::function that may throw, an #ifdef fallback,
 // and snapshot_manager_ I/O. CALLER MUST HOLD mtx_.
-bool raft_snapshot_serialize_and_save(RaftServerBase* self,
-                                      uint64_t snap_index,
-                                      int64_t snap_term) {
+bool raft_snapshot_serialize_and_save(
+    const rusty::RaftCreateSnapshotCb* create_cb,
+    const rusty::RaftSnapshotManagerPtr* snapshot_manager, uint16_t site_id,
+    uint64_t snap_index, int64_t snap_term) {
   // Production may compact only behind a real state-machine checkpoint.
   // RaftLab has no application state and uses a strict 16-byte index+term
   // marker instead.
   std::string state_data;
-  if (self->create_sm_snapshot_cb_) {
-    if (!raft_catch(self->site_id_, "state-machine snapshot callback", [&] {
-          state_data = self->create_sm_snapshot_cb_(snap_index);
+  if (*create_cb) {
+    if (!raft_catch(site_id, "state-machine snapshot callback", [&] {
+          state_data = (*create_cb)(snap_index);
         })) {
       return false;
     }
     if (state_data.empty()) {
       Log_error("[RAFT-SNAPSHOT] Site {} state-machine snapshot callback "
                 "returned an empty checkpoint; retaining the log",
-                self->site_id_);
+                site_id);
       return false;
     }
     Log_info("[RAFT-SNAPSHOT] Site {}: State machine snapshot callback produced {} bytes",
-             self->site_id_, state_data.size());
+             site_id, state_data.size());
   } else {
 #ifdef RAFT_TEST_CORO
     // Fallback: 8 bytes execute_index_ + 8 bytes term.
@@ -844,16 +854,16 @@ bool raft_snapshot_serialize_and_save(RaftServerBase* self,
 #else
     Log_error("[RAFT-SNAPSHOT] Site {} has no state-machine snapshot callback; "
               "production compaction is disabled",
-              self->site_id_);
+              site_id);
     return false;
 #endif
   }
 
-  const bool saved = self->snapshot_manager_->TakeSnapshot(
+  const bool saved = (*snapshot_manager)->TakeSnapshot(
       snap_index, snap_term, state_data.data(), state_data.size());
   if (!saved) {
     Log_error("[RAFT-SNAPSHOT] Site {}: Failed to save snapshot at index={} term={}",
-              self->site_id_, snap_index, snap_term);
+              site_id, snap_index, snap_term);
     return false;
   }
   return true;
@@ -885,15 +895,16 @@ RaftElectionTimeouts raft_election_timeouts() {
 // (3) conditionally compiled regions
 
 // RAFT_LEADER_ELECTION_DEBUG only.
-void raft_log_set_is_leader_entry(const RaftServerBase* self,
-                                  bool prev_is_leader,
+void raft_log_set_is_leader_entry(uint16_t site_id, uint32_t loc_id,
+                                  uint64_t term, bool prev_is_leader,
                                   bool new_is_leader) {
 #ifdef RAFT_LEADER_ELECTION_DEBUG
   Log_info("[RAFT_STATE] setIsLeader invoked site {} (loc {}) term {}: prev_is_leader={} new_is_leader={}",
-           self->site_id_, self->loc_id_, self->state_.current_term_,
-           prev_is_leader, new_is_leader);
+           site_id, loc_id, term, prev_is_leader, new_is_leader);
 #else
-  (void)self;
+  (void)site_id;
+  (void)loc_id;
+  (void)term;
   (void)prev_is_leader;
   (void)new_is_leader;
 #endif
@@ -2103,8 +2114,12 @@ unsafe extern "C" {
     fn raft_verify(condition: bool);
     fn raft_snapshot_manager_is_set(
         manager: *const rusty::RaftSnapshotManagerPtr) -> bool;
-    fn raft_phase1_load_and_send_snapshot(server: *mut RaftServerBase,
-                                          site_id: u16, ord: usize) -> bool;
+    fn raft_phase1_load_and_send_snapshot(
+        commo: *mut rusty::Communicator,
+        snapshot_manager: *const rusty::RaftSnapshotManagerPtr,
+        lifetime: *const rusty::RaftAsyncCallbackLifetimePtr,
+        self_site_id: u16, partition_id: u32, send_term: u64,
+        site_id: u16, ord: usize) -> bool;
     fn raft_batch_optimization_enabled() -> bool;
     fn raft_append_entries_batch_max() -> u64;
     // The wire kind of a command, for the diagnostics that report why an
@@ -2115,7 +2130,8 @@ unsafe extern "C" {
     fn raft_batch_finalize(server: *mut RaftServerBase,
                            cmd_out: *mut rusty::RaftCommand);
 
-    fn raft_phase1_send_append(server: *mut RaftServerBase, site_id: u16,
+    fn raft_phase1_send_append(commo: *mut rusty::Communicator,
+                               self_site_id: u16, site_id: u16,
                                partition_id: u32, is_leader: bool, term: u64,
                                prev_log_index: u64, prev_log_term: u64,
                                commit_index: u64,
@@ -2749,7 +2765,13 @@ pub fn heartbeat_phase1_body(server: &mut RaftServerBase,
                     server.state_.raft_log_.base());
                 let sent: bool = unsafe {
                     raft_phase1_load_and_send_snapshot(
-                        server as *mut RaftServerBase, site_id, ord)
+                        server.commo_,
+                        &server.snapshot_manager_
+                            as *const rusty::RaftSnapshotManagerPtr,
+                        &server.async_callback_lifetime_
+                            as *const rusty::RaftAsyncCallbackLifetimePtr,
+                        server.site_id_, server.partition_id_,
+                        server.state_.current_term_, site_id, ord)
                 };
                 if !sent {
                     rusty::raft_log_warn_2(
@@ -2804,7 +2826,7 @@ pub fn heartbeat_phase1_body(server: &mut RaftServerBase,
         let is_leader: bool = server.IsLeader();
         let sent_response: rusty::RaftResponsePtr = unsafe {
             raft_phase1_send_append(
-                server as *mut RaftServerBase, site_id, partition_id,
+                server.commo_, server.site_id_, site_id, partition_id,
                 is_leader, round.term(), prev_log_index, prev_log_term,
                 round.commit_index(),
                 &cmd as *const rusty::RaftCommand, cmd_log_term)
@@ -4062,7 +4084,7 @@ pub fn on_append_entries_body(server: &mut RaftServerBase,
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_round_scope version=1 rust_sha256=db69b2680e57472dc3a6defb383cf9b073744faccb8dc3c32aae6630dcf5b02e*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_round_scope version=1 rust_sha256=28e21413dcf5791e5e37cdb0ef2953768e696979917b958b4247c6c1f9367cc5*/
 enum class AppendReplyAction : int32_t;
 constexpr AppendReplyAction AppendReplyAction_IGNORED();
 constexpr AppendReplyAction AppendReplyAction_STEP_DOWN();
@@ -4114,13 +4136,13 @@ extern "C" {
     bool raft_command_has_value(const rusty::RaftCommand* cmd);
     void raft_verify(bool condition);
     bool raft_snapshot_manager_is_set(const rusty::RaftSnapshotManagerPtr* manager);
-    bool raft_phase1_load_and_send_snapshot(server_h::RaftServerBase* server, uint16_t site_id, size_t ord);
+    bool raft_phase1_load_and_send_snapshot(rusty::Communicator* commo, const rusty::RaftSnapshotManagerPtr* snapshot_manager, const rusty::RaftAsyncCallbackLifetimePtr* lifetime, uint16_t self_site_id, uint32_t partition_id, uint64_t send_term, uint16_t site_id, size_t ord);
     bool raft_batch_optimization_enabled();
     uint64_t raft_append_entries_batch_max();
     int32_t raft_command_kind(const rusty::RaftCommand* cmd);
     bool raft_batch_try_push(server_h::RaftServerBase* server, uint64_t index);
     void raft_batch_finalize(server_h::RaftServerBase* server, rusty::RaftCommand* cmd_out);
-    rusty::RaftResponsePtr raft_phase1_send_append(server_h::RaftServerBase* server, uint16_t site_id, uint32_t partition_id, bool is_leader, uint64_t term, uint64_t prev_log_index, uint64_t prev_log_term, uint64_t commit_index, const rusty::RaftCommand* cmd, uint64_t cmd_log_term);
+    rusty::RaftResponsePtr raft_phase1_send_append(rusty::Communicator* commo, uint16_t self_site_id, uint16_t site_id, uint32_t partition_id, bool is_leader, uint64_t term, uint64_t prev_log_index, uint64_t prev_log_term, uint64_t commit_index, const rusty::RaftCommand* cmd, uint64_t cmd_log_term);
     bool raft_ae_decode_payload(server_h::RaftServerBase* server, const rusty::ffi::c_void* cmd, uint64_t leader_prev_log_index, uint64_t leader_next_log_term);
     void raft_ae_apply_incoming(server_h::RaftServerBase* server, const rusty::ffi::c_void* cmd, uint64_t leader_prev_log_index, uint64_t leader_next_log_term, uint64_t first_write_index);
 }
@@ -4512,7 +4534,7 @@ void heartbeat_phase1_body(server_h::RaftServerBase& server, PendingTable& pendi
                 skip_follower = true;
             } else if (([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.peers_); }) { return (__r.peers_); } else if constexpr (requires { (__r.peers__field); }) { return (__r.peers__field); } else if constexpr (requires { ((*__r).peers_); }) { return ((*__r).peers_); } else { return ((*__r).peers__field); } }(server.state_).next_index(std::move(ord)) < [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }(server.state_).base()) && rusty::detail::deref_if_pointer_like(snapshot_configured)) {
                 rusty::raft_log_info_4("[HEARTBEAT-SNAPSHOT] Site {}: Follower {} next_index={} < state_.raft_log_.base()={}, sending InstallSnapshot", server.site_id_, std::move(site_id), [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.peers_); }) { return (__r.peers_); } else if constexpr (requires { (__r.peers__field); }) { return (__r.peers__field); } else if constexpr (requires { ((*__r).peers_); }) { return ((*__r).peers_); } else { return ((*__r).peers__field); } }(server.state_).next_index(std::move(ord)), [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }(server.state_).base());
-                const bool sent = raft_phase1_load_and_send_snapshot(static_cast<server_h::RaftServerBase*>(rusty::detail::ptr_or_addr(server)), std::move(site_id), std::move(ord));
+                const bool sent = raft_phase1_load_and_send_snapshot(server.commo_, static_cast<const rusty::RaftSnapshotManagerPtr*>(&server.snapshot_manager_), static_cast<const rusty::RaftAsyncCallbackLifetimePtr*>(&server.async_callback_lifetime_), server.site_id_, server.partition_id_, [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.current_term_); }) { return (__r.current_term_); } else if constexpr (requires { (__r.current_term__field); }) { return (__r.current_term__field); } else if constexpr (requires { ((*__r).current_term_); }) { return ((*__r).current_term_); } else { return ((*__r).current_term__field); } }(server.state_), std::move(site_id), std::move(ord));
                 if (!sent) {
                     rusty::raft_log_warn_2("[HEARTBEAT-SNAPSHOT] Site {}: Failed to load snapshot for follower {}, skipping", server.site_id_, std::move(site_id));
                 }
@@ -4545,7 +4567,7 @@ void heartbeat_phase1_body(server_h::RaftServerBase& server, PendingTable& pendi
             continue;
         }
         bool is_leader = server.IsLeader();
-        rusty::RaftResponsePtr sent_response = raft_phase1_send_append(static_cast<server_h::RaftServerBase*>(rusty::detail::ptr_or_addr(server)), std::move(site_id), std::move(partition_id), std::move(is_leader), round.term(), std::move(prev_log_index), std::move(prev_log_term), round.commit_index(), static_cast<const rusty::RaftCommand*>(&cmd), std::move(cmd_log_term));
+        rusty::RaftResponsePtr sent_response = raft_phase1_send_append(server.commo_, server.site_id_, std::move(site_id), std::move(partition_id), std::move(is_leader), round.term(), std::move(prev_log_index), std::move(prev_log_term), round.commit_index(), static_cast<const rusty::RaftCommand*>(&cmd), std::move(cmd_log_term));
         pending_rpcs.place(std::move(ord), PendingAppend::new_(std::move(site_id), round.term(), round.round_id(), std::move(sent_end_index), std::move(sent_response), std::move(cmd)));
         if (round.authority_inserted() && round.is_member(std::move(site_id))) {
             // @unsafe
@@ -5175,21 +5197,23 @@ extern "C" {
 // Loads the latest snapshot and sends it. Returns false when there is no
 // snapshot to load; the caller logs that and skips the follower either way.
 // CALLER MUST HOLD mtx_.
-bool raft_phase1_load_and_send_snapshot(RaftServerBase* self,
-                                        uint16_t site_id, size_t ord) {
+bool raft_phase1_load_and_send_snapshot(
+    rusty::Communicator* commo,
+    const rusty::RaftSnapshotManagerPtr* snapshot_manager,
+    const rusty::RaftAsyncCallbackLifetimePtr* lifetime,
+    uint16_t self_site_id, uint32_t partition_id, uint64_t send_term,
+    uint16_t site_id, size_t ord) {
   janus::raft::SnapshotMetadata snap_meta;
   std::string snap_data;
-  if (!self->snapshot_manager_->LoadLatestSnapshot(&snap_meta, &snap_data)) {
+  if (!(*snapshot_manager)->LoadLatestSnapshot(&snap_meta, &snap_data)) {
     return false;
   }
   const uint64_t snap_last_idx = snap_meta.last_included_index;
   const uint64_t snap_last_term = snap_meta.last_included_term;
-  const uint64_t send_term = self->state_.current_term_;
-  const uint16_t self_site_id = self->site_id_;
-  auto callback_lifetime = self->async_callback_lifetime_;
-  commo_of(self)->SendInstallSnapshot(
-      site_id, self->partition_id_,
-      send_term, self->site_id_,
+  auto callback_lifetime = *lifetime;
+  commo_of(commo)->SendInstallSnapshot(
+      site_id, partition_id,
+      send_term, self_site_id,
       snap_last_idx, snap_last_term,
       snap_data,
       [callback_lifetime, site_id, self_site_id, ord, snap_last_idx,
@@ -5320,12 +5344,13 @@ void raft_batch_finalize(RaftServerBase* self, rusty::RaftCommand* cmd_out) {
 // response is a shared_ptr the transport's callback also holds, which is
 // what keeps it alive; the pending table carries it opaquely.
 rusty::RaftResponsePtr raft_phase1_send_append(
-    RaftServerBase* self, uint16_t site_id, uint32_t partition_id,
+    rusty::Communicator* commo, uint16_t self_site_id, uint16_t site_id,
+    uint32_t partition_id,
     bool is_leader, uint64_t term, uint64_t prev_log_index,
     uint64_t prev_log_term, uint64_t commit_index,
     const rusty::RaftCommand* cmd, uint64_t cmd_log_term) {
-  return commo_of(self)->SendAppendEntries2(
-      site_id, partition_id, -1, -1, is_leader, self->site_id_, term,
+  return commo_of(commo)->SendAppendEntries2(
+      site_id, partition_id, -1, -1, is_leader, self_site_id, term,
       prev_log_index, prev_log_term, commit_index, *cmd, cmd_log_term);
 }
 
@@ -5503,26 +5528,20 @@ void raft_rpc_append_entries(RaftServerBase* self, uint64_t leader_current_term,
 }
 
 
-// @unsafe - the InstallSnapshot exception boundary. state_machine_apply_mtx_
-// is a std::mutex the DSL cannot lock, and raft_catch is the one place an
-// embedder throw (the snapshot callbacks) becomes FailStop instead of
-// unwinding into the rrr service.
-void raft_rpc_install_snapshot(RaftServerBase* self, uint64_t term,
-                               uint64_t leader_id,
-                               uint64_t last_included_index,
-                               uint64_t last_included_term,
-                               const rusty::RaftByteString* data,
-                               uint64_t* term_out) {
-  std::lock_guard<std::mutex> apply_lock(self->state_machine_apply_mtx_);
-  std::lock_guard<RaftCheckedMutex> lock(self->mtx_);
-
-  if (!raft_catch(self->site_id_, "snapshot install", [&] {
-        self->OnInstallSnapshotLocked(term, leader_id, last_included_index,
-                                      last_included_term, data, *term_out);
-      })) {
-    self->FailStop();
-    *term_out = 0;
-  }
+// @unsafe - the InstallSnapshot exception boundary. The two locks it used to
+// take are Rust's now (RaftServerBase::OnInstallSnapshot holds them across
+// this call); what is left is raft_catch, the one place an embedder throw
+// from the snapshot callbacks becomes a false return -- and FailStop, in Rust.
+bool raft_install_snapshot_guarded(RaftServerBase* self, uint16_t site_id,
+                                   uint64_t term, uint64_t leader_id,
+                                   uint64_t last_included_index,
+                                   uint64_t last_included_term,
+                                   const rusty::RaftByteString* data,
+                                   uint64_t* term_out) {
+  return raft_catch(site_id, "snapshot install", [&] {
+    self->OnInstallSnapshotLocked(term, leader_id, last_included_index,
+                                  last_included_term, data, *term_out);
+  });
 }
 
 } // namespace janus

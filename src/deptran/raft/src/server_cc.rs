@@ -488,8 +488,12 @@ unsafe extern "C" {
     fn raft_verify(condition: bool);
     fn raft_snapshot_manager_is_set(
         manager: *const rusty::RaftSnapshotManagerPtr) -> bool;
-    fn raft_phase1_load_and_send_snapshot(server: *mut RaftServerBase,
-                                          site_id: u16, ord: usize) -> bool;
+    fn raft_phase1_load_and_send_snapshot(
+        commo: *mut rusty::Communicator,
+        snapshot_manager: *const rusty::RaftSnapshotManagerPtr,
+        lifetime: *const rusty::RaftAsyncCallbackLifetimePtr,
+        self_site_id: u16, partition_id: u32, send_term: u64,
+        site_id: u16, ord: usize) -> bool;
     fn raft_batch_optimization_enabled() -> bool;
     fn raft_append_entries_batch_max() -> u64;
     // The wire kind of a command, for the diagnostics that report why an
@@ -500,7 +504,8 @@ unsafe extern "C" {
     fn raft_batch_finalize(server: *mut RaftServerBase,
                            cmd_out: *mut rusty::RaftCommand);
 
-    fn raft_phase1_send_append(server: *mut RaftServerBase, site_id: u16,
+    fn raft_phase1_send_append(commo: *mut rusty::Communicator,
+                               self_site_id: u16, site_id: u16,
                                partition_id: u32, is_leader: bool, term: u64,
                                prev_log_index: u64, prev_log_term: u64,
                                commit_index: u64,
@@ -1134,7 +1139,13 @@ pub fn heartbeat_phase1_body(server: &mut RaftServerBase,
                     server.state_.raft_log_.base());
                 let sent: bool = unsafe {
                     raft_phase1_load_and_send_snapshot(
-                        server as *mut RaftServerBase, site_id, ord)
+                        server.commo_,
+                        &server.snapshot_manager_
+                            as *const rusty::RaftSnapshotManagerPtr,
+                        &server.async_callback_lifetime_
+                            as *const rusty::RaftAsyncCallbackLifetimePtr,
+                        server.site_id_, server.partition_id_,
+                        server.state_.current_term_, site_id, ord)
                 };
                 if !sent {
                     rusty::raft_log_warn_2(
@@ -1189,7 +1200,7 @@ pub fn heartbeat_phase1_body(server: &mut RaftServerBase,
         let is_leader: bool = server.IsLeader();
         let sent_response: rusty::RaftResponsePtr = unsafe {
             raft_phase1_send_append(
-                server as *mut RaftServerBase, site_id, partition_id,
+                server.commo_, server.site_id_, site_id, partition_id,
                 is_leader, round.term(), prev_log_index, prev_log_term,
                 round.commit_index(),
                 &cmd as *const rusty::RaftCommand, cmd_log_term)
