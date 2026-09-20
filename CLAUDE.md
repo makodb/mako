@@ -213,6 +213,16 @@ misfills, so this is mandatory, not cosmetic), and struct fields whose
 names are Rust keywords (e.g. `type`) must be renamed or that type stays
 C++.
 
+**A trait impl WITHOUT `#[cpp_inherit]` lowers through `TraitAdapter<Self>`**
+and emits a by-value adapter specialization; for a move-only struct (anything
+holding a mutex, or inheriting a `pub trait` interface, whose copy/move are
+deleted) that is a hard compile error in every TU that includes the header.
+Put `#[cpp_inherit]` on EVERY trait impl of such a struct; the last one in the
+block supplies the single C++ base, so pin it with
+`static_assert(std::is_base_of_v<Base, Struct>)` next to the struct. The
+supertrait pair in `src/deptran/scheduler.h` (`RaftSpecific: TxLogServer`) is
+the worked example.
+
 **`#[cpp_inherit]` requires `use rusty::cpp_inherit;` in the same DSL
 block, and fails SILENTLY without it.** The attribute is authenticated
 through the marker crate (`transpiler/src/codegen/predicates.rs:921-936`).

@@ -471,6 +471,7 @@ impl AuthorityLedger {
 }
 
 use crate::server_h::RaftServerBase;
+use crate::scheduler_h::RaftSpecific;
 use crate::server_h::RaftEntry;
 use crate::server_h::RaftLockGuard;
 // Every C++ kernel this carrier calls, in one place. improper_ctypes is

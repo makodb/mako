@@ -1,14 +1,3 @@
-// Submission admission result for the RaftWorker interface.  Memory-only Raft
-// either rejects a command (not leader) or appends it; there is no durable
-// append whose outcome could be unknown.
-#[allow(non_camel_case_types)]
-#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Eq, PartialEq))]
-#[repr(i32)]
-pub enum RaftStartResult {
-    REJECTED = 0,
-    APPENDED = 1,
-}
-
 // A delayed vote quorum result is interpreted before its YES/NO/TIMEOUT
 // payload. Higher-term evidence is globally authoritative; every ordinary
 // outcome belongs only to the exact campaign that is still active.
@@ -1268,6 +1257,8 @@ impl ReplicationWakeGate {
 
 use rusty::cpp_inherit;
 use crate::scheduler_h::TxLogServer;
+use crate::scheduler_h::RaftSpecific;
+use crate::scheduler_h::RaftStartResult;
 
 // The rrr `verify` macro, reachable from a DSL body. extern "C" is the one
 // function-declaration form a block can spell that rustc resolves without a
@@ -1328,8 +1319,31 @@ unsafe extern "C" {
     fn raft_queue_replication_shutdown_wake(server: *mut RaftServerBase);
     fn raft_set_local_append(server: *mut RaftServerBase,
                              cmd: *const rusty::RaftCommand,
-                             term: *mut u64, index: *mut u64,
-                             slot_id: u64, ballot: i64) -> RaftStartResult;
+                             term: *mut u64, index: *mut u64) -> RaftStartResult;
+    // The RPC entry points' C++ halves. The first two exist only because
+    // on_request_vote_body and on_append_entries_body are emitted in
+    // server.cc's translation unit, which this header cannot name; the third
+    // is the InstallSnapshot exception boundary -- a std::mutex the DSL
+    // cannot lock, and the one catch that turns an embedder throw into
+    // FailStop.
+    fn raft_rpc_request_vote(server: *mut RaftServerBase, lst_log_idx: u64,
+                             lst_log_term: i64, can_id: u16, can_term: i64,
+                             reply_term: *mut i64, vote_granted: *mut i8);
+    fn raft_rpc_append_entries(server: *mut RaftServerBase,
+                               leader_current_term: u64, leader_site_id: u16,
+                               leader_prev_log_index: u64,
+                               leader_prev_log_term: u64,
+                               leader_commit_index: u64,
+                               cmd: *const rusty::RaftCommand,
+                               leader_next_log_term: u64,
+                               follower_append_ok: *mut u64,
+                               follower_current_term: *mut u64,
+                               follower_last_log_index: *mut u64);
+    fn raft_rpc_install_snapshot(server: *mut RaftServerBase, term: u64,
+                                 leader_id: u64, last_included_index: u64,
+                                 last_included_term: u64,
+                                 data: *const rusty::RaftByteString,
+                                 term_out: *mut u64);
     fn raft_spawn_election_timer(server: *mut RaftServerBase, wait_int_us: u64);
     fn raft_setup_internal_guarded(server: *mut RaftServerBase) -> bool;
     fn raft_shutdown_barrier_yield();
@@ -1692,20 +1706,6 @@ impl RaftServerBase {
         self.SetSnapshotThresholdLocked(threshold);
     }
 
-    // @unsafe - synchronizes with Disconnect() through the Raft state mutex.
-    pub fn IsDisconnected(&self) -> bool {
-        self.disconnected_.load(rusty::sync::atomic::Ordering::Acquire)
-    }
-
-    // @unsafe - synchronizes with role/leader publication through mtx_.
-    pub fn GetLeaderHint(&mut self) -> u16 {
-        let _lock = RaftLockGuard::new(&mut self.mtx_);
-        if self.state_.is_leader_ {
-            return self.site_id_;
-        }
-        self.state_.current_leader_id_
-    }
-
     // @safe - acquire load
     pub fn HeartbeatLooping(&self) -> bool {
         self.looping_.load(rusty::sync::atomic::Ordering::Acquire)
@@ -1842,12 +1842,6 @@ impl RaftServerBase {
         self.SetSnapshotManagerLocked(manager);
     }
 
-    // @safe - a plain move into the notification slot; no lock, exactly as
-    // the C++ had it.
-    pub fn RegisterLeaderChangeCallback(&mut self, cb: rusty::RaftLeaderChangeCb) {
-        self.leader_change_cb_ = cb;
-    }
-
     // ------------------------------------------------------------------
     // Role and progress accessors, formerly inline in class RaftServer.
     // ------------------------------------------------------------------
@@ -1856,11 +1850,6 @@ impl RaftServerBase {
     pub fn AmIPreferredLeader(&self) -> bool {
         raft_server_site_is_preferred_leader(
             self.site_id_, self.preferred_leader_site_id_)
-    }
-
-    // @safe - acquire load pairing with the final startup publication.
-    pub fn IsRpcReady(&self) -> bool {
-        self.rpc_ready_.load(rusty::sync::atomic::Ordering::Acquire)
     }
 
     // @safe - acquire load pairing with PublishAppliedIndex.
@@ -1875,15 +1864,6 @@ impl RaftServerBase {
         if !self.looping_.load(rusty::sync::atomic::Ordering::Acquire) {
             return false;
         }
-        self.state_.is_leader_
-    }
-
-    // Acquiring entry point, for callers that do not already hold mtx_.
-    pub fn IsLeader(&mut self) -> bool {
-        if !self.looping_.load(rusty::sync::atomic::Ordering::Acquire) {
-            return false;
-        }
-        let _lock = RaftLockGuard::new(&mut self.mtx_);
         self.state_.is_leader_
     }
 
@@ -1926,18 +1906,6 @@ impl RaftServerBase {
     pub fn GetSnapshotThreshold(&self) -> u64 {
         self.snapshot_trigger_threshold_
             .load(rusty::sync::atomic::Ordering::Acquire)
-    }
-
-    // @unsafe - takes mtx_ and logs.
-    pub fn SetPreferredLeader(&mut self, site_id: u16) {
-        let _lock = RaftLockGuard::new(&mut self.mtx_);
-        let old_preferred: u16 = self.preferred_leader_site_id_;
-        self.preferred_leader_site_id_ = site_id;
-        if old_preferred != site_id {
-            rusty::raft_log_info_2(
-                "[LEADERSHIP-TRANSFER] Site {}: Preferred leader set to {}",
-                self.site_id_, site_id);
-        }
     }
 
     // ------------------------------------------------------------------
@@ -3565,15 +3533,6 @@ impl RaftServerBase {
         self.resetTimer("reconnect");
     }
 
-    // @unsafe - idempotent one-shot setup.
-    pub fn EnsureSetup(&mut self) {
-        if self.heartbeat_setup_ {
-            return;
-        }
-        self.heartbeat_setup_ = true;
-        self.Setup();
-    }
-
     // @unsafe - runs SetupInternal under a catch-all and publishes the
     // result to whoever is blocked in WaitForStartup.
     pub fn Setup(&mut self) {
@@ -3601,21 +3560,6 @@ impl RaftServerBase {
         self.startup_cv_.notify_all();
     }
 
-    // @safe - waits for the owner-thread startup job and reports its result.
-    pub fn WaitForStartup(&mut self) -> bool {
-        {
-            let finished = self.startup_finished_.lock().unwrap();
-            // wait_while re-checks under the lock on every wake, so a
-            // spurious one is not a false start -- the same guarantee the
-            // predicate form of std::condition_variable::wait gave.
-            let _finished = self
-                .startup_cv_
-                .wait_while(finished, |done: &mut bool| !*done)
-                .unwrap();
-        }
-        self.startup_succeeded_
-    }
-
     // @safe - election timer setup; the fiber spawn is a kernel.
     pub fn StartElectionTimer(&mut self) {
         self.ElectionLoopSetRunning(true);
@@ -3624,78 +3568,6 @@ impl RaftServerBase {
         unsafe {
             raft_spawn_election_timer(self as *mut RaftServerBase, wait_int);
         }
-    }
-
-    // @unsafe - must be called from a reactor fiber before destroying a live
-    // server; signals both runtime loops and waits for their completion
-    // flags, then stops and joins the apply thread while the server is still
-    // fully alive (applying an entry can trigger snapshot compaction).
-    pub fn PrepareForShutdown(&mut self) {
-        {
-            // Linearize admission closure with every RPC and local mutation
-            // under mtx_.
-            let _admission_lock = RaftLockGuard::new(&mut self.mtx_);
-            self.rpc_ready_
-                .store(false, rusty::sync::atomic::Ordering::Release);
-            self.stop_
-                .store(true, rusty::sync::atomic::Ordering::Release);
-            self.looping_
-                .store(false, rusty::sync::atomic::Ordering::Release);
-        }
-        self.CloseReplicationWakeGate();
-
-        while self
-            .heartbeat_loop_running_
-            .load(rusty::sync::atomic::Ordering::Acquire)
-            || self
-                .election_loop_running_
-                .load(rusty::sync::atomic::Ordering::Acquire)
-        {
-            unsafe {
-                raft_shutdown_barrier_yield();
-            }
-        }
-
-        self.apply_thread_running_
-            .store(false, rusty::sync::atomic::Ordering::SeqCst);
-        unsafe {
-            raft_apply_thread_join(self as *mut RaftServerBase);
-        }
-    }
-
-    // @unsafe - CALLER MUST NOT HOLD mtx_. Appends one command locally and
-    // then publishes the replication wake, in that order: the wake path never
-    // nests the gate's owner mutex below Raft state.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn StartImpl(&mut self, cmd: *const rusty::RaftCommand,
-                     index: *mut u64, term: *mut u64, slot_id: u64,
-                     ballot: i64) -> RaftStartResult {
-        {
-            let _lock = RaftLockGuard::new(&mut self.mtx_);
-            if !self.IsLeaderLocked() {
-                unsafe {
-                    *index = 0;
-                    *term = 0;
-                }
-                return RaftStartResult::REJECTED;
-            }
-            let append_result: RaftStartResult = unsafe {
-                raft_set_local_append(self as *mut RaftServerBase, cmd, term,
-                                      index, slot_id, ballot)
-            };
-            unsafe {
-                raft_verify(raft_server_start_was_appended(append_result));
-                // SetLocalAppend reports the OLD last index; Start reports
-                // the index of the entry it just appended.
-                raft_verify(
-                    self.state_.raft_log_.last_index() == *index + 1);
-                *index = self.state_.raft_log_.last_index();
-                rusty::raft_log_debug_3("Start(): ldr={} index={} term={}",
-                                        self.loc_id_, *index, *term);
-            }
-        }
-        self.RequestReplication();
-        RaftStartResult::APPENDED
     }
 
     // @unsafe - hands newly committed entries to the background apply thread.
@@ -4059,6 +3931,15 @@ impl RaftServerBase {
 // The three methods a worker reaches through a TxLogServer base pointer.
 // Raft's set_site_identity mirrors the ids into state_ as well, where
 // converted Rust bodies can see them, and asserts the copies agree.
+//
+// `#[cpp_inherit]` on BOTH impls, deliberately. The transpiler grants a struct
+// one C++ base -- the last `#[cpp_inherit]` impl in the block wins, which is
+// RaftSpecific below, whose supertrait is this -- but the attribute does a
+// second job per impl: without it the impl lowers through the generic
+// TraitAdapter<Self> path, which emits a by-value `TxLogServerAdapter<
+// RaftServerBase>` that cannot compile (the struct is move-only and holds
+// mutexes). The static_assert after the struct pins the base clause, so if
+// the "last wins" order ever changes, the build fails instead of the vtable.
 #[cpp_inherit]
 impl TxLogServer for RaftServerBase {
     fn set_site_identity(&mut self, loc_id: u32, site_id: u16, partition_id: u32) {
@@ -4081,6 +3962,207 @@ impl TxLogServer for RaftServerBase {
 
     fn reg_learner_action(&mut self, learner_action: rusty::LearnerAction) {
         self.app_next_ = learner_action;
+    }
+}
+
+// The Raft-specific interface: what the workers and the RPC service reach
+// beyond TxLogServer (declared next to it in scheduler.h). `#[cpp_inherit]`
+// is spent here -- the transpiler grants a struct one C++ base -- and
+// RaftSpecific: TxLogServer carries the other, so the emitted C++ is
+// `struct RaftServerBase : public RaftSpecific` with TxLogServer above it.
+// not_unsafe_ptr_arg_deref: the raw pointers are the rrr service's C++
+// out-parameters. Start writes through its two under `unsafe`; the three
+// RPC methods hand theirs to the raft_rpc_* kernels untouched.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[cpp_inherit]
+#[allow(non_snake_case)]
+#[allow(clippy::too_many_arguments)]
+impl RaftSpecific for RaftServerBase {
+    // @unsafe - idempotent one-shot setup.
+    fn EnsureSetup(&mut self) {
+        if self.heartbeat_setup_ {
+            return;
+        }
+        self.heartbeat_setup_ = true;
+        self.Setup();
+    }
+
+    // @safe - waits for the owner-thread startup job and reports its result.
+    fn WaitForStartup(&mut self) -> bool {
+        {
+            let finished = self.startup_finished_.lock().unwrap();
+            // wait_while re-checks under the lock on every wake, so a
+            // spurious one is not a false start -- the same guarantee the
+            // predicate form of std::condition_variable::wait gave.
+            let _finished = self
+                .startup_cv_
+                .wait_while(finished, |done: &mut bool| !*done)
+                .unwrap();
+        }
+        self.startup_succeeded_
+    }
+
+    // @unsafe - must be called from a reactor fiber before destroying a live
+    // server; signals both runtime loops and waits for their completion
+    // flags, then stops and joins the apply thread while the server is still
+    // fully alive (applying an entry can trigger snapshot compaction).
+    fn PrepareForShutdown(&mut self) {
+        {
+            // Linearize admission closure with every RPC and local mutation
+            // under mtx_.
+            let _admission_lock = RaftLockGuard::new(&mut self.mtx_);
+            self.rpc_ready_
+                .store(false, rusty::sync::atomic::Ordering::Release);
+            self.stop_
+                .store(true, rusty::sync::atomic::Ordering::Release);
+            self.looping_
+                .store(false, rusty::sync::atomic::Ordering::Release);
+        }
+        self.CloseReplicationWakeGate();
+
+        while self
+            .heartbeat_loop_running_
+            .load(rusty::sync::atomic::Ordering::Acquire)
+            || self
+                .election_loop_running_
+                .load(rusty::sync::atomic::Ordering::Acquire)
+        {
+            unsafe {
+                raft_shutdown_barrier_yield();
+            }
+        }
+
+        self.apply_thread_running_
+            .store(false, rusty::sync::atomic::Ordering::SeqCst);
+        unsafe {
+            raft_apply_thread_join(self as *mut RaftServerBase);
+        }
+    }
+
+    // Acquiring entry point, for callers that do not already hold mtx_.
+    fn IsLeader(&mut self) -> bool {
+        if !self.looping_.load(rusty::sync::atomic::Ordering::Acquire) {
+            return false;
+        }
+        let _lock = RaftLockGuard::new(&mut self.mtx_);
+        self.state_.is_leader_
+    }
+
+    // @unsafe - synchronizes with role/leader publication through mtx_.
+    fn GetLeaderHint(&mut self) -> u16 {
+        let _lock = RaftLockGuard::new(&mut self.mtx_);
+        if self.state_.is_leader_ {
+            return self.site_id_;
+        }
+        self.state_.current_leader_id_
+    }
+
+    // @unsafe - takes mtx_ and logs.
+    fn SetPreferredLeader(&mut self, site_id: u16) {
+        let _lock = RaftLockGuard::new(&mut self.mtx_);
+        let old_preferred: u16 = self.preferred_leader_site_id_;
+        self.preferred_leader_site_id_ = site_id;
+        if old_preferred != site_id {
+            rusty::raft_log_info_2(
+                "[LEADERSHIP-TRANSFER] Site {}: Preferred leader set to {}",
+                self.site_id_, site_id);
+        }
+    }
+
+    // @safe - a plain move into the notification slot; no lock, exactly as
+    // the C++ had it.
+    fn RegisterLeaderChangeCallback(&mut self, cb: rusty::RaftLeaderChangeCb) {
+        self.leader_change_cb_ = cb;
+    }
+
+    // @safe - acquire load pairing with the final startup publication.
+    fn IsRpcReady(&self) -> bool {
+        self.rpc_ready_.load(rusty::sync::atomic::Ordering::Acquire)
+    }
+
+    // @unsafe - synchronizes with Disconnect() through the Raft state mutex.
+    fn IsDisconnected(&self) -> bool {
+        self.disconnected_.load(rusty::sync::atomic::Ordering::Acquire)
+    }
+
+    // @unsafe - CALLER MUST NOT HOLD mtx_. Appends one command locally and
+    // then publishes the replication wake, in that order: the wake path never
+    // nests the gate's owner mutex below Raft state.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    fn Start(&mut self, cmd: &rusty::RaftCommand, index: *mut u64,
+             term: *mut u64) -> RaftStartResult {
+        {
+            let _lock = RaftLockGuard::new(&mut self.mtx_);
+            if !self.IsLeaderLocked() {
+                unsafe {
+                    *index = 0;
+                    *term = 0;
+                }
+                return RaftStartResult::REJECTED;
+            }
+            let append_result: RaftStartResult = unsafe {
+                raft_set_local_append(self as *mut RaftServerBase,
+                                      cmd as *const rusty::RaftCommand, term,
+                                      index)
+            };
+            unsafe {
+                raft_verify(raft_server_start_was_appended(append_result));
+                // SetLocalAppend reports the OLD last index; Start reports
+                // the index of the entry it just appended.
+                raft_verify(
+                    self.state_.raft_log_.last_index() == *index + 1);
+                *index = self.state_.raft_log_.last_index();
+                rusty::raft_log_debug_3("Start(): ldr={} index={} term={}",
+                                        self.loc_id_, *index, *term);
+            }
+        }
+        self.RequestReplication();
+        RaftStartResult::APPENDED
+    }
+
+    // Inbound RPC. The bodies are Rust -- on_request_vote_body and
+    // on_append_entries_body in server.cc's block, OnInstallSnapshotLocked
+    // above -- reached through the three raft_rpc_* kernels for the reasons
+    // given at their declaration.
+    fn OnRequestVote(&mut self, lst_log_idx: u64, lst_log_term: i64,
+                     can_id: u16, can_term: i64, reply_term: *mut i64,
+                     vote_granted: *mut i8) {
+        unsafe {
+            raft_rpc_request_vote(self as *mut RaftServerBase, lst_log_idx,
+                                  lst_log_term, can_id, can_term, reply_term,
+                                  vote_granted);
+        }
+    }
+
+    fn OnAppendEntries(&mut self, leader_current_term: u64,
+                       leader_site_id: u16, leader_prev_log_index: u64,
+                       leader_prev_log_term: u64, leader_commit_index: u64,
+                       cmd: &rusty::RaftCommand, leader_next_log_term: u64,
+                       follower_append_ok: *mut u64,
+                       follower_current_term: *mut u64,
+                       follower_last_log_index: *mut u64) {
+        unsafe {
+            raft_rpc_append_entries(self as *mut RaftServerBase,
+                                    leader_current_term, leader_site_id,
+                                    leader_prev_log_index, leader_prev_log_term,
+                                    leader_commit_index,
+                                    cmd as *const rusty::RaftCommand,
+                                    leader_next_log_term, follower_append_ok,
+                                    follower_current_term,
+                                    follower_last_log_index);
+        }
+    }
+
+    fn OnInstallSnapshot(&mut self, term: u64, leader_id: u64,
+                         last_included_index: u64, last_included_term: u64,
+                         data: &rusty::RaftByteString, term_out: *mut u64) {
+        unsafe {
+            raft_rpc_install_snapshot(self as *mut RaftServerBase, term,
+                                      leader_id, last_included_index,
+                                      last_included_term,
+                                      data as *const rusty::RaftByteString,
+                                      term_out);
+        }
     }
 }
 

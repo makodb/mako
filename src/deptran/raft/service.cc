@@ -89,7 +89,7 @@ RaftServiceImpl::AppendEntries(const RpcAppendEntriesRequest& req) {
     resp.followerLastLogIndex = 0;
     return Result<RpcAppendEntriesResponse, rrr::i32>::Ok(resp);
   }
-  svr->OnAppendEntries(req.slot, req.ballot, req.leaderCurrentTerm,
+  svr->OnAppendEntries(req.leaderCurrentTerm,
                        req.leaderSiteId, req.leaderPrevLogIndex,
                        req.leaderPrevLogTerm, req.leaderCommitIndex,
                        req.cmd, req.leaderNextLogTerm,
@@ -117,7 +117,7 @@ RaftServiceImpl::EmptyAppendEntries(const RpcEmptyAppendEntriesRequest& req) {
   // an empty cmd and leaderNextLogTerm == 0 (heartbeat path).
   // followerAppendOK/Term/LastLogIndex are shared layout with the non-empty
   // response, so we can pass pointers directly into our resp struct.
-  svr->OnAppendEntries(req.slot, req.ballot, req.leaderCurrentTerm,
+  svr->OnAppendEntries(req.leaderCurrentTerm,
                        req.leaderSiteId, req.leaderPrevLogIndex,
                        req.leaderPrevLogTerm, req.leaderCommitIndex,
                        janus::Command{}, 0,

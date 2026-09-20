@@ -528,10 +528,8 @@ void raft_queue_replication_shutdown_wake(RaftServerBase* self) {
 }
 RaftStartResult raft_set_local_append(RaftServerBase* self,
                                       const rusty::RaftCommand* cmd,
-                                      uint64_t* term, uint64_t* index,
-                                      uint64_t slot_id, int64_t ballot) {
-  return static_cast<RaftServer*>(self)->SetLocalAppend(*cmd, term, index,
-                                                        slot_id, ballot);
+                                      uint64_t* term, uint64_t* index) {
+  return static_cast<RaftServer*>(self)->SetLocalAppend(*cmd, term, index);
 }
 // Spawns the election-timer fiber. The lambda captures the loop by value --
 // two words -- so nothing here outlives the fiber.
@@ -2084,6 +2082,7 @@ inline AuthorityOutcome AuthorityLedger::settle(bool is_leader, uint64_t current
 // possibility of the two disagreeing.
 #if RUSTYCPP_RUST
 use crate::server_h::RaftServerBase;
+use crate::scheduler_h::RaftSpecific;
 use crate::server_h::RaftEntry;
 use crate::server_h::RaftLockGuard;
 // Every C++ kernel this carrier calls, in one place. improper_ctypes is
@@ -4059,7 +4058,7 @@ pub fn on_append_entries_body(server: &mut RaftServerBase,
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_round_scope version=1 rust_sha256=160c563eaaadc085a567e556523b8d063f86d9587c73eb699a5ac8483a9dfce6*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_round_scope version=1 rust_sha256=db69b2680e57472dc3a6defb383cf9b073744faccb8dc3c32aae6630dcf5b02e*/
 enum class AppendReplyAction : int32_t;
 constexpr AppendReplyAction AppendReplyAction_IGNORED();
 constexpr AppendReplyAction AppendReplyAction_STEP_DOWN();
@@ -4097,6 +4096,8 @@ inline constexpr AppendReplyAction AppendReplyAction_CONTRADICTORY() { return Ap
 inline constexpr AppendReplyAction AppendReplyAction_UNKNOWN_FOLLOWER() { return AppendReplyAction::UNKNOWN_FOLLOWER; }
 
 using ::server_h::RaftServerBase;
+
+using ::scheduler_h::RaftSpecific;
 
 using ::server_h::RaftEntry;
 
@@ -5366,34 +5367,24 @@ RaftServer::~RaftServer() { Shutdown(); }
 
 
 // ============================================================================
-// THE RPC ENTRY POINTS
+// THE RPC ENTRY POINTS' C++ HALVES
 //
-// Four methods the rrr service layer calls BY NAME on RaftServer, which is
-// why they are C++ at all: they are TxLogServer overrides, and a virtual
-// override has no DSL spelling. Each is a shim over a Rust body, and what
-// sits in the shim is only what cannot cross -- locks whose guard type is
-// C++, and the try/catch around OnInstallSnapshot, because exceptions have
-// no DSL spelling either.
+// OnRequestVote, OnAppendEntries, OnInstallSnapshot and Start are RaftSpecific
+// methods on RaftServerBase (scheduler.h), implemented in Rust in server.h.
+// What is left here is what that header cannot reach: on_request_vote_body
+// and on_append_entries_body are Rust too, but they are emitted in THIS
+// translation unit, so the two forwarders are the TU boundary and nothing
+// more; and OnInstallSnapshot's std::mutex and its catch -- the one place an
+// embedder throw becomes FailStop -- are C++ by nature.
 // ============================================================================
 
-void RaftServer::OnRequestVote(const slotid_t& lst_log_idx,
-                               const ballot_t& lst_log_term,
-                               const siteid_t& can_id,
-                               const ballot_t& can_term,
-                               ballot_t *reply_term,
-                               bool_t *vote_granted) {
-  // The body is Rust (on_request_vote_body). This entry point remains
-  // because the rrr service layer calls it by name on RaftServer.
-  on_request_vote_body(*this, lst_log_idx, lst_log_term, can_id, can_term,
+// @unsafe - TU-boundary forwarder; see above.
+void raft_rpc_request_vote(RaftServerBase* self, uint64_t lst_log_idx,
+                           int64_t lst_log_term, uint16_t can_id,
+                           int64_t can_term, int64_t* reply_term,
+                           int8_t* vote_granted) {
+  on_request_vote_body(*self, lst_log_idx, lst_log_term, can_id, can_term,
                        *reply_term, *vote_granted);
-}
-
-RaftStartResult RaftServer::Start(const janus::Command& cmd,
-                                  uint64_t *index,
-                                  uint64_t *term,
-                                  slotid_t slot_id,
-                                  ballot_t ballot) {
-  return StartImpl(&cmd, index, term, slot_id, ballot);
 }
 
 /* NOTE: same as ReceiveAppend */
@@ -5486,56 +5477,46 @@ void raft_ae_apply_incoming(RaftServerBase* server,
 
 }  // extern "C"
 
-// The body is raft_on_append_entries, a DSL function. What stays here is the
-// lock, the payload decode -- the only part that must touch janus::Command --
-// the current_config_ membership test, and the two rejection log lines,
-// which keep their level short-circuit and use the report the DSL returns to
-// say which check failed.
-void RaftServer::OnAppendEntries(const slotid_t slot_id,
-                                 const ballot_t ballot,
-                                 const uint64_t leaderCurrentTerm,
-                                 const siteid_t leaderSiteId,
-                                 const uint64_t leaderPrevLogIndex,
-                                 const uint64_t leaderPrevLogTerm,
-                                 const uint64_t leaderCommitIndex,
-                                 const janus::Command& cmd,
-                                 const uint64_t leaderNextLogTerm,
-                                 uint64_t *followerAppendOK,
-                                 uint64_t *followerCurrentTerm,
-                                 uint64_t *followerLastLogIndex) {
-  // The body is Rust (on_append_entries_body). This entry point remains
-  // because the rrr service layer calls it by name on RaftServer; slot_id
-  // and ballot were unused there too.
-  (void)slot_id;
-  (void)ballot;
+// @unsafe - TU-boundary forwarder; see above. The payload crosses as the
+// c_void the DSL body takes plus has_value() -- the only two things Raft asks
+// of a janus::Command.
+void raft_rpc_append_entries(RaftServerBase* self, uint64_t leader_current_term,
+                             uint16_t leader_site_id,
+                             uint64_t leader_prev_log_index,
+                             uint64_t leader_prev_log_term,
+                             uint64_t leader_commit_index,
+                             const rusty::RaftCommand* cmd,
+                             uint64_t leader_next_log_term,
+                             uint64_t* follower_append_ok,
+                             uint64_t* follower_current_term,
+                             uint64_t* follower_last_log_index) {
   on_append_entries_body(
-      *this, leaderCurrentTerm, leaderSiteId, leaderPrevLogIndex,
-      leaderPrevLogTerm, leaderCommitIndex,
-      static_cast<const rusty::ffi::c_void*>(static_cast<const void*>(&cmd)),
-      cmd.has_value(), leaderNextLogTerm, *followerAppendOK,
-      *followerCurrentTerm, *followerLastLogIndex);
+      *self, leader_current_term, leader_site_id, leader_prev_log_index,
+      leader_prev_log_term, leader_commit_index,
+      static_cast<const rusty::ffi::c_void*>(static_cast<const void*>(cmd)),
+      cmd->has_value(), leader_next_log_term, *follower_append_ok,
+      *follower_current_term, *follower_last_log_index);
 }
 
 
-void RaftServer::OnInstallSnapshot(const uint64_t term,
-                                    const uint64_t leader_id,
-                                    const uint64_t last_included_index,
-                                    const uint64_t last_included_term,
-                                    const std::string& data,
-                                    uint64_t* term_out) {
-  // Snapshot state-machine replacement must not overlap entry application or
-  // recovery replay. The global order is apply gate -> Raft state -> queue.
-  std::lock_guard<std::mutex> apply_lock(state_machine_apply_mtx_);
-  std::lock_guard<RaftCheckedMutex> lock(mtx_);
+// @unsafe - the InstallSnapshot exception boundary. state_machine_apply_mtx_
+// is a std::mutex the DSL cannot lock, and raft_catch is the one place an
+// embedder throw (the snapshot callbacks) becomes FailStop instead of
+// unwinding into the rrr service.
+void raft_rpc_install_snapshot(RaftServerBase* self, uint64_t term,
+                               uint64_t leader_id,
+                               uint64_t last_included_index,
+                               uint64_t last_included_term,
+                               const rusty::RaftByteString* data,
+                               uint64_t* term_out) {
+  std::lock_guard<std::mutex> apply_lock(self->state_machine_apply_mtx_);
+  std::lock_guard<RaftCheckedMutex> lock(self->mtx_);
 
-  // The body is Rust (RaftServerBase::OnInstallSnapshotLocked). What stays
-  // here is the catch-all around it -- exceptions have no DSL spelling --
-  // and the rrr service layer's entry point by name on RaftServer.
-  if (!raft_catch(site_id_, "snapshot install", [&] {
-        OnInstallSnapshotLocked(term, leader_id, last_included_index,
-                                last_included_term, &data, *term_out);
+  if (!raft_catch(self->site_id_, "snapshot install", [&] {
+        self->OnInstallSnapshotLocked(term, leader_id, last_included_index,
+                                      last_included_term, data, *term_out);
       })) {
-    FailStop();
+    self->FailStop();
     *term_out = 0;
   }
 }

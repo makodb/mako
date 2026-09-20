@@ -61,6 +61,6 @@ using ReactorFiber = ::rrr::Fiber;
 // it may never dereference one, which is enforced by the Rust side modelling
 // them as zero-sized opaque structs. See src/rrr/rusty-rustc/src/lib.rs.
 using RaftResponsePtr = ::std::shared_ptr<::janus::AppendEntriesResponse>;
-using RaftCommand = ::janus::Command;
+// RaftCommand is aliased in src/deptran/scheduler.h, where RaftSpecific names it.
 
 }  // namespace rusty

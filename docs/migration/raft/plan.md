@@ -56,7 +56,21 @@ why the steps have the shape they do; fight them and the failure is silent.
 
 - **One base per struct.** `#[cpp_inherit] impl Trait for X` records the base
   in a `HashMap<String,String>` with `.insert()`; a second impl overwrites the
-  first with no diagnostic. A struct gets exactly one C++ base this way.
+  first with no diagnostic. A struct gets exactly one C++ base this way -- the
+  LAST `#[cpp_inherit]` impl in the block. `server.h` pins the outcome with
+  `static_assert(std::is_base_of_v<RaftSpecific, RaftServerBase>)`.
+- **A trait impl WITHOUT `#[cpp_inherit]` lowers through `TraitAdapter<Self>`.**
+  It emits three adapter specializations, one of which holds `Self` by value
+  and moves it; for a move-only struct with mutexes that is a hard compile
+  error in every including TU (`call to implicitly-deleted copy constructor`).
+  So every trait impl on `RaftServerBase` carries `#[cpp_inherit]`, even the
+  one that does not own the base clause -- the attribute suppresses the
+  adapters per impl (`collect_passes.rs:7780`) independently of the slot.
+- **`override` is emitted only for a trait declared in the same block.** The
+  two traits live in `scheduler.h`, so none of `RaftServerBase`'s sixteen
+  interface methods carries the keyword; they override implicitly. A signature
+  drift therefore surfaces not at the method but as `RaftServer` turning
+  abstract at its `new` -- still a compile error, just a less pointed one.
 - **Supertraits emit inheritance only within one carrier.** `pub trait B: A`
   becomes `class B : public A` only if `A` is declared in the same file's
   DSL blocks; otherwise the base is dropped silently.
@@ -102,11 +116,14 @@ reach for today: `commo()`, `SetLocalAppend`, `InitializeSnapshotManager`,
 route the downcasts through.
 
 **Done when:** the GEN region of `scheduler.h` contains
-`class RaftSpecific : public TxLogServer`, and `RaftServerBase`'s GEN
-region names `RaftSpecific` as its base.
+`class RaftSpecific : public TxLogServer`, `RaftServerBase`'s GEN region
+names `RaftSpecific` as its base, `grep -c 'Adapter[A-Za-z]*<RaftServerBase>'
+src/deptran/raft/server.h` is 0, and the two `static_assert(is_base_of_v<..>)`
+after the struct compile.
 
 **Cost:** one carrier edit, one regeneration. The risk is entirely the
-silent-failure list above.
+silent-failure list above -- and the adapter hazard in that list was found
+by this step failing the build, not by reading.
 
 ### B. Delete the downcasts
 
@@ -159,10 +176,11 @@ reference. The `RaftCheckedMutex` abort-on-re-entry stays until then.
 **Makes possible:** step F. This is the hinge. After C, `rusty::Vec`'s
 layout is irrelevant, because nothing outside agrees on anything.
 
-**Done when:** a script that strips the GEN/RUST regions from `server.cc`,
-`server.h`, `test.cc`, `testconf.cc` and greps for each of the struct's
-field names finds nothing. Field list: the `pub struct RaftServerBase`
-block in `server.h`.
+**Done when:** a script that strips the GEN/RUST regions from every C++ file
+under `src/deptran` and greps for each of the struct's field names finds
+nothing -- `server_worker.cc` and `raft_main_helper.cc` poke `site_id_`,
+`partition_id_` and `state_` today, not only the kernels and the tests.
+Field list: the `pub struct RaftServerBase` block in `server.h`.
 
 **You can stop here.** After C the design in the goal statement exists in
 the DSL: struct owns memory, traits define the interface, no downcasts, one
@@ -274,6 +292,12 @@ all of these green, not some.
   the FFI crossings it adds is ~0.1% (about 450k `Command` clone/drop
   crossings per second at 153k ops/s with two followers, ~2 ns each) and an
   estimate is not evidence.
+
+## Progress
+
+| step | commit | measured after |
+|---|---|---|
+| A | `raft: step A` (`git log --grep='raft: step A'`) | `RaftServerBase : public RaftSpecific : public TxLogServer`; 16 interface methods on the struct, 13 of them moved out of inherent impls or off the shim; shim `class RaftServer` 361 -> 255 lines; `Start`/`OnRequestVote`/`OnAppendEntries`/`OnInstallSnapshot` deleted from the shim and from `server.cc` (-80 hand-written lines, +61 for the three `raft_rpc_*` kernels); kernels 50 -> 53 (569 lines), of which 25 reach into the struct, 12 downcast; worker `dynamic_cast`s still 6 (step B). RaftLabTest and the production suite results are in the commit message. |
 
 ## Risks, ranked
 

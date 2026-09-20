@@ -1,6 +1,7 @@
 #pragma once
 
 #include <functional>
+#include <string>
 #include <utility>
 
 #include "constants.h"
@@ -76,30 +77,104 @@ using LearnerAction = std::function<int(int, Command)>;
 namespace rusty {
 using Communicator = ::janus::Communicator;
 using LearnerAction = ::janus::LearnerAction;
+// Named by RaftSpecific's signatures below. They are Raft's, and they sit in
+// the shared header only because RaftSpecific does (see the DSL block for
+// why); the Rust side models them as opaque carriers in
+// src/rrr/rusty-rustc/src/lib.rs, with the layout pinned in raft/server.h.
+using RaftCommand = ::janus::Command;
+using RaftLeaderChangeCb = ::std::function<void(bool)>;
+using RaftByteString = ::std::string;
 }  // namespace rusty
 
 namespace janus {
 
 // @interface - pure virtuals and a virtual destructor only; no state.
 //
-// The three methods are the ONLY things a worker does through a base pointer,
-// enumerated from the call sites rather than guessed: raft_worker.cc:288-290,
-// 374,444 and paxos_worker.cc:50-51,180,553. Everything else the workers want,
-// they dynamic_cast for.
+// TxLogServer's three methods are the ONLY things a worker does through a
+// base pointer common to both engines, enumerated from the call sites rather
+// than guessed: raft_worker.cc:288-290, 374,444 and paxos_worker.cc:50-51,
+// 180,553.
 //
-// locid_t/parid_t/siteid_t are #defines for uint32_t/uint32_t/uint16_t
-// (constants.h:13-18), so the emitted uint32_t/uint16_t below are
-// byte-identical to the previous hand-written signatures after preprocessing,
-// and both engines' overrides still match.
+// RaftSpecific is what the Raft workers and the Raft RPC service reach beyond
+// that. It is declared HERE, in the engine-shared header, and not in
+// raft/server.h, for one reason: the transpiler emits a supertrait as a C++
+// base (`class RaftSpecific : public TxLogServer`) only when both traits are
+// declared in the same carrier. RaftServerBase implements it with
+// `#[cpp_inherit]`, so the struct's one C++ base is RaftSpecific and, through
+// it, TxLogServer.
+//
+// locid_t/parid_t/siteid_t/slotid_t/ballot_t/bool_t are #defines for
+// uint32_t/uint32_t/uint16_t/uint64_t/int64_t/int8_t (constants.h), so the
+// fixed-width types below are byte-identical, after preprocessing, to the
+// hand-written signatures they replaced.
 #if RUSTYCPP_RUST
 pub trait TxLogServer {
     fn set_site_identity(&mut self, loc_id: u32, site_id: u16, partition_id: u32);
     fn set_commo(&mut self, commo: *mut rusty::Communicator);
     fn reg_learner_action(&mut self, learner_action: rusty::LearnerAction);
 }
+
+// Submission admission result for the RaftWorker interface.  Memory-only Raft
+// either rejects a command (not leader) or appends it; there is no durable
+// append whose outcome could be unknown.
+#[allow(non_camel_case_types)]
+#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Eq, PartialEq))]
+#[repr(i32)]
+pub enum RaftStartResult {
+    REJECTED = 0,
+    APPENDED = 1,
+}
+
+// Method names are the C++ names the workers, the service and the lab tests
+// already call; renaming them to snake_case is a mechanical follow-up once
+// nothing hand-written calls them.
+#[allow(non_snake_case)]
+#[allow(clippy::too_many_arguments)]
+pub trait RaftSpecific: TxLogServer {
+    // Lifecycle, as the worker drives it.
+    fn EnsureSetup(&mut self);
+    fn WaitForStartup(&mut self) -> bool;
+    fn PrepareForShutdown(&mut self);
+    // Leadership.
+    fn IsLeader(&mut self) -> bool;
+    fn GetLeaderHint(&mut self) -> u16;
+    fn SetPreferredLeader(&mut self, site_id: u16);
+    fn RegisterLeaderChangeCallback(&mut self, cb: rusty::RaftLeaderChangeCb);
+    // Admission, as the RPC service checks it before every handler.
+    fn IsRpcReady(&self) -> bool;
+    fn IsDisconnected(&self) -> bool;
+    // Replication entry: the worker's "replicate this command".
+    fn Start(&mut self, cmd: &rusty::RaftCommand, index: *mut u64,
+             term: *mut u64) -> RaftStartResult;
+    // Inbound RPC, as the service decodes it off the wire.
+    fn OnRequestVote(&mut self, lst_log_idx: u64, lst_log_term: i64,
+                     can_id: u16, can_term: i64, reply_term: *mut i64,
+                     vote_granted: *mut i8);
+    fn OnAppendEntries(&mut self, leader_current_term: u64,
+                       leader_site_id: u16, leader_prev_log_index: u64,
+                       leader_prev_log_term: u64, leader_commit_index: u64,
+                       cmd: &rusty::RaftCommand, leader_next_log_term: u64,
+                       follower_append_ok: *mut u64,
+                       follower_current_term: *mut u64,
+                       follower_last_log_index: *mut u64);
+    fn OnInstallSnapshot(&mut self, term: u64, leader_id: u64,
+                         last_included_index: u64, last_included_term: u64,
+                         data: &rusty::RaftByteString, term_out: *mut u64);
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=deptran_scheduler.tx_log_server version=1 rust_sha256=477f1bdffafaade87ca2ea1a2b24182fff8d75a520bead0e63b7303c23eca4b2*/
+/*RUSTYCPP:GEN-BEGIN id=deptran_scheduler.tx_log_server version=1 rust_sha256=7c92186db9aa6c20272a1bcc90ac230ec6abfadf737ad311ec653032b5d12699*/
+enum class RaftStartResult : int32_t;
+constexpr RaftStartResult RaftStartResult_REJECTED();
+constexpr RaftStartResult RaftStartResult_APPENDED();
 class TxLogServer;
+class RaftSpecific;
+
+enum class RaftStartResult : int32_t {
+    REJECTED = 0,
+    APPENDED = 1
+};
+inline constexpr RaftStartResult RaftStartResult_REJECTED() { return RaftStartResult::REJECTED; }
+inline constexpr RaftStartResult RaftStartResult_APPENDED() { return RaftStartResult::APPENDED; }
 
 class TxLogServer {
 public:
@@ -118,6 +193,34 @@ protected:
 template <class U> class TxLogServerAdapter;
 template <class U> class TxLogServerAdapterRef;
 template <class U> class TxLogServerAdapterRefMut;
+
+class RaftSpecific : public TxLogServer {
+public:
+    virtual ~RaftSpecific() noexcept(false) {}
+    virtual void EnsureSetup() = 0;
+    virtual bool WaitForStartup() = 0;
+    virtual void PrepareForShutdown() = 0;
+    virtual bool IsLeader() = 0;
+    virtual uint16_t GetLeaderHint() = 0;
+    virtual void SetPreferredLeader(uint16_t site_id) = 0;
+    virtual void RegisterLeaderChangeCallback(rusty::RaftLeaderChangeCb cb) = 0;
+    virtual bool IsRpcReady() const = 0;
+    virtual bool IsDisconnected() const = 0;
+    virtual RaftStartResult Start(const rusty::RaftCommand& cmd, uint64_t* index, uint64_t* term) = 0;
+    virtual void OnRequestVote(uint64_t lst_log_idx, int64_t lst_log_term, uint16_t can_id, int64_t can_term, int64_t* reply_term, int8_t* vote_granted) = 0;
+    virtual void OnAppendEntries(uint64_t leader_current_term, uint16_t leader_site_id, uint64_t leader_prev_log_index, uint64_t leader_prev_log_term, uint64_t leader_commit_index, const rusty::RaftCommand& cmd, uint64_t leader_next_log_term, uint64_t* follower_append_ok, uint64_t* follower_current_term, uint64_t* follower_last_log_index) = 0;
+    virtual void OnInstallSnapshot(uint64_t term, uint64_t leader_id, uint64_t last_included_index, uint64_t last_included_term, const rusty::RaftByteString& data, uint64_t* term_out) = 0;
+    RaftSpecific(const RaftSpecific&) = delete;
+    RaftSpecific& operator=(const RaftSpecific&) = delete;
+    RaftSpecific(RaftSpecific&&) = delete;
+    RaftSpecific& operator=(RaftSpecific&&) = delete;
+protected:
+    RaftSpecific() = default;
+};
+
+template <class U> class RaftSpecificAdapter;
+template <class U> class RaftSpecificAdapterRef;
+template <class U> class RaftSpecificAdapterRefMut;
 /*RUSTYCPP:GEN-END id=deptran_scheduler.tx_log_server*/
 
 // The five fields that used to sit in TxLogServer, as a macro rather than a
