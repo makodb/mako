@@ -500,9 +500,15 @@ unsafe extern "C" {
     // entry could not be batched. It takes the COMMAND, not (server, index):
     // the lookup is Rust, and only reading inside the opaque payload is not.
     fn raft_command_kind(cmd: *const rusty::RaftCommand) -> i32;
-    fn raft_batch_try_push(server: *mut RaftServerBase, index: u64) -> bool;
-    fn raft_batch_finalize(server: *mut RaftServerBase,
-                           cmd_out: *mut rusty::RaftCommand);
+    // The leader's batch: a TpcCommitCommand is copied and stamped with its
+    // log term in C++ (a Marshallable), pushed into batch_buffer_ in Rust,
+    // and the buffer's Arcs are moved into one TpcBatchCommand at the end.
+    fn raft_command_is_tpc_commit(cmd: *const rusty::RaftCommand) -> bool;
+    fn raft_stamped_commit(cmd: *const rusty::RaftCommand, term: i64)
+        -> rusty::sync::Arc<rusty::RaftTpcCommitCommand>;
+    fn raft_batch_finalize(
+        entries: *mut rusty::sync::Arc<rusty::RaftTpcCommitCommand>,
+        count: usize, cmd_out: *mut rusty::RaftCommand);
 
     fn raft_phase1_send_append(commo: *mut rusty::Communicator,
                                self_site_id: u16, site_id: u16,
@@ -511,15 +517,6 @@ unsafe extern "C" {
                                commit_index: u64,
                                cmd: *const rusty::RaftCommand,
                                cmd_log_term: u64) -> rusty::RaftResponsePtr;
-    fn raft_ae_decode_payload(server: *mut RaftServerBase,
-                              cmd: *const core::ffi::c_void,
-                              leader_prev_log_index: u64,
-                              leader_next_log_term: u64) -> bool;
-    fn raft_ae_apply_incoming(server: *mut RaftServerBase,
-                              cmd: *const core::ffi::c_void,
-                              leader_prev_log_index: u64,
-                              leader_next_log_term: u64,
-                              first_write_index: u64);
 }
 
 // ==========================================================================
@@ -974,8 +971,15 @@ pub fn heartbeat_phase1_select_payload(server: &mut RaftServerBase,
                 break;
             }
             let entry_term: i64 = entry.unwrap().term();
-            if !unsafe { raft_batch_try_push(server as *mut RaftServerBase, idx) }
-            {
+            let entry_cmd: *const rusty::RaftCommand =
+                entry.unwrap().cmd() as *const rusty::RaftCommand;
+            let is_commit: bool =
+                unsafe { raft_command_is_tpc_commit(entry_cmd) };
+            if is_commit {
+                server.batch_buffer_.push(unsafe {
+                    raft_stamped_commit(entry_cmd, entry_term)
+                });
+            } else {
                 // Looked up again rather than held across the push above:
                 // `entry` borrows the log, and handing the push a *mut to the
                 // server ends that borrow. This branch is the rare one -- an
@@ -1021,7 +1025,8 @@ pub fn heartbeat_phase1_select_payload(server: &mut RaftServerBase,
     }
     if !skip_follower && encoded_entry_count > 0 {
         unsafe {
-            raft_batch_finalize(server as *mut RaftServerBase,
+            raft_batch_finalize(server.batch_buffer_.as_mut_ptr(),
+                                server.batch_buffer_.len(),
                                 cmd as *mut rusty::RaftCommand);
         }
         *sent_end_index = raft_server_append_sent_end(prev_log_index,
@@ -2193,13 +2198,10 @@ pub unsafe fn raft_on_append_entries(
     // AppendEntries pay a dynamic cast and N refcount bumps, on a path a
     // remote peer drives -- and backtracking rejects are common during log
     // repair.
-    // The kernel fills server.decoded_terms_, one term per encoded entry, so
-    // its length IS the decoded count -- which is why the out-param it used
-    // to report that count through is gone with it.
-    let append_payload_valid = unsafe {
-        raft_ae_decode_payload(server as *mut RaftServerBase, cmd,
-                               leader_prev_log_index, leader_next_log_term)
-    };
+    // AeDecodePayload fills server.decoded_terms_, one term per encoded
+    // entry, so its length IS the decoded count.
+    let append_payload_valid = server.AeDecodePayload(
+        cmd, has_cmd, leader_prev_log_index, leader_next_log_term);
     let decoded_count: u64 = server.decoded_terms_.len() as u64;
 
     let term_ok =
@@ -2353,13 +2355,11 @@ pub unsafe fn raft_on_append_entries(
         // Two operations that cannot leave a hole: drop the divergent suffix,
         // then re-append in index order. truncate_from is a no-op when
         // first_write_index is already past the tail, the ordinary extend
-        // case. The append itself is C++ because it needs the wire payload.
+        // case. The append is Rust; only the per-entry reads of the wire
+        // payload are kernels.
         server.state_.raft_log_.truncate_from(first_write_index);
-        unsafe {
-            raft_ae_apply_incoming(server as *mut RaftServerBase, cmd,
-                                   leader_prev_log_index,
-                                   leader_next_log_term, first_write_index)
-        };
+        server.AeApplyIncoming(cmd, leader_prev_log_index, leader_next_log_term,
+                               first_write_index);
     }
     if server.state_.raft_log_.last_index()
         != raft_server_append_result_last_index(old_last_log_index, accepted_through,

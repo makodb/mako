@@ -3003,7 +3003,30 @@ unsafe extern "C" {
     fn raft_election_timeouts() -> RaftElectionTimeouts;
     fn raft_log_set_is_leader_entry(site_id: u16, loc_id: u32, term: u64,
                                     prev_is_leader: bool, new_is_leader: bool);
-    fn raft_append_leader_noop(server: *mut RaftServerBase);
+    // The leader no-op is compiled out under RAFT_TEST_CORO (the lab suite
+    // counts entries); conditional compilation has no spelling in this
+    // dialect, so the predicate is a kernel and AppendLeaderNoop branches on
+    // it. The command itself is a janus::Command the DSL cannot construct.
+    fn raft_leader_noop_enabled() -> bool;
+    fn raft_noop_command() -> rusty::RaftCommand;
+    // A copy of a janus::Command: a shared_ptr refcount the opaque carrier
+    // cannot touch, made in C++ and handed back by value.
+    fn raft_command_clone(cmd: *const rusty::RaftCommand) -> rusty::RaftCommand;
+    // The AppendEntries payload, read for AeDecodePayload / AeApplyIncoming.
+    // A janus::Command laundered as c_void by the service forwarder; a batch
+    // is opened once (raft_wire_batch: the one marshallable_cast, as before)
+    // and then indexed, so the per-entry cost is unchanged.
+    fn raft_wire_is_batch(cmd: *const core::ffi::c_void) -> bool;
+    fn raft_wire_batch(cmd: *const core::ffi::c_void) -> *const core::ffi::c_void;
+    fn raft_batch_len(batch: *const core::ffi::c_void) -> u64;
+    fn raft_batch_term_at(batch: *const core::ffi::c_void, i: u64) -> i64;
+    fn raft_batch_command_at(batch: *const core::ffi::c_void, i: u64)
+        -> rusty::RaftCommand;
+    fn raft_wire_command_clone(cmd: *const core::ffi::c_void) -> rusty::RaftCommand;
+    // The partition's membership from the static (yaml) config: sorted,
+    // de-duplicated site ids, one read per index. Startup only.
+    fn raft_config_replica_count(partition_id: u32) -> u64;
+    fn raft_config_replica_site(partition_id: u32, i: u64) -> u16;
     fn raft_election_debug_enabled() -> bool;
     // The campaign broadcast, and the reply quorum read back under mtx_.
     fn raft_broadcast_vote_and_wait(commo: *mut rusty::Communicator, par_id: u32,
@@ -3033,9 +3056,6 @@ unsafe extern "C" {
     fn raft_create_int_event() -> rusty::sync::Arc<rusty::ReactorIntEvent>;
     fn raft_queue_replication_wake(gate: *const rusty::sync::Arc<ReplicationWakeGate>);
     fn raft_queue_replication_shutdown_wake(gate: *const rusty::sync::Arc<ReplicationWakeGate>);
-    fn raft_set_local_append(server: *mut RaftServerBase,
-                             cmd: *const rusty::RaftCommand,
-                             term: *mut u64, index: *mut u64) -> RaftStartResult;
     // The RPC entry points' C++ halves. The first two exist only because
     // on_request_vote_body and on_append_entries_body are emitted in
     // server.cc's translation unit, which this header cannot name; the third
@@ -3073,7 +3093,6 @@ unsafe extern "C" {
     fn raft_env_lookup(which: i32) -> *const core::ffi::c_char;
     fn raft_bind_replication_poll(server: *mut RaftServerBase, commo: *mut rusty::Communicator) -> bool;
     fn raft_initialize_snapshot_manager(server: *mut RaftServerBase, site_id: u16) -> bool;
-    fn raft_load_current_config(server: *mut RaftServerBase) -> u64;
     // Only the std::thread construction. The flag and the loop are Rust.
     fn raft_spawn_apply_thread(server: *mut RaftServerBase, thread: *mut rusty::RaftStdThread);
     // Nulls the server back-pointer the async-RPC gate holds, under the
@@ -3920,10 +3939,7 @@ impl RaftServerBase {
                 "[RAFT_STATE] setIsLeader transition LEADER: site {} term {} prev_is_leader={} become_new_leader={}",
                 self.site_id_, self.state_.current_term_, prev_is_leader,
                 become_new_leader);
-            // Compiled out under RAFT_TEST_CORO; see the kernel.
-            unsafe {
-                raft_append_leader_noop(self as *mut RaftServerBase);
-            }
+            self.AppendLeaderNoop();
         } else if become_new_follower {
             rusty::raft_log_info_4(
                 "[RAFT_STATE] setIsLeader transition FOLLOWER: site {} term {} prev_is_leader={} become_new_follower={}",
@@ -4107,8 +4123,7 @@ impl RaftServerBase {
             return false;
         }
 
-        let replicas: u64 =
-            unsafe { raft_load_current_config(self as *mut RaftServerBase) };
+        let replicas: u64 = self.LoadCurrentConfig();
         rusty::raft_log_info_3(
             "[RAFT-CONFIG] Initialized current_config_ for site {} partition {} with {} replicas",
             self.site_id_, self.partition_id_, replicas);
@@ -5691,6 +5706,140 @@ impl RaftServerBase {
     }
 }
 
+// The log's writers and the membership loader, in Rust. Until step C1b these
+// were kernels reaching into state_.raft_log_, decoded_terms_,
+// config_members_ and batch_buffer_ from C++. What those kernels could not
+// do -- copy a janus::Command, look inside a TpcBatchCommand, read the yaml
+// config -- is now the whole of what the raft_command_* / raft_wire_* /
+// raft_batch_* / raft_config_* kernels do; the containers are touched here.
+//
+// not_unsafe_ptr_arg_deref: the c_void payload pointers are the service's
+// wire payload, borrowed for the call and only ever handed to the kernels.
+#[allow(non_snake_case)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+impl RaftServerBase {
+    // Appends one entry at the current term -- mtx_ held by the caller -- and
+    // reports the PRE-append tail: the new entry lands at prev + 1.
+    pub fn AppendLocal(&mut self, cmd: rusty::RaftCommand) -> u64 {
+        let previous_index: u64 = self.state_.raft_log_.last_index();
+        let appended: u64 = self.state_.raft_log_.append(
+            RaftEntry::new(self.state_.current_term_ as i64, cmd));
+        unsafe {
+            raft_verify(appended == previous_index + 1);
+        }
+        previous_index
+    }
+
+    // The new leader's no-op entry, so the term commits something without
+    // waiting for a client. Compiled out under RAFT_TEST_CORO; see the
+    // kernel declarations.
+    pub fn AppendLeaderNoop(&mut self) {
+        if !unsafe { raft_leader_noop_enabled() } {
+            return;
+        }
+        let noop: rusty::RaftCommand = unsafe { raft_noop_command() };
+        let previous_index: u64 = self.AppendLocal(noop);
+        unsafe {
+            raft_verify(
+                self.state_.raft_log_.last_index() == previous_index + 1);
+        }
+        rusty::raft_log_info_3(
+            "[RAFT-NOOP] Site {} appended leader no-op at index {} term {}",
+            self.site_id_, self.state_.raft_log_.last_index(),
+            self.state_.current_term_);
+        self.RequestReplication();
+    }
+
+    // config_members_ from the static config: the partition's sorted,
+    // de-duplicated site ids. Returns the replica count.
+    pub fn LoadCurrentConfig(&mut self) -> u64 {
+        let replicas: u64 =
+            unsafe { raft_config_replica_count(self.partition_id_) };
+        self.config_members_.clear();
+        let mut i: u64 = 0;
+        while i < replicas {
+            let site: u16 =
+                unsafe { raft_config_replica_site(self.partition_id_, i) };
+            self.config_members_.push(site);
+            i += 1;
+        }
+        replicas
+    }
+
+    // Decodes the AppendEntries payload into decoded_terms_ -- one term per
+    // encoded entry, so its length IS the decoded count -- and reports
+    // whether that count fits after leader_prev_log_index.
+    pub fn AeDecodePayload(&mut self, cmd: *const core::ffi::c_void,
+                           has_cmd: bool, leader_prev_log_index: u64,
+                           leader_next_log_term: u64) -> bool {
+        self.decoded_terms_.clear();
+        if !has_cmd {
+            return raft_server_append_entry_count_fits(leader_prev_log_index,
+                                                       0);
+        }
+        if unsafe { raft_wire_is_batch(cmd) } {
+            let batch: *const core::ffi::c_void = unsafe { raft_wire_batch(cmd) };
+            if batch.is_null() {
+                return false;
+            }
+            let count: u64 = unsafe { raft_batch_len(batch) };
+            let mut i: u64 = 0;
+            while i < count {
+                self.decoded_terms_
+                    .push(unsafe { raft_batch_term_at(batch, i) });
+                i += 1;
+            }
+            return raft_server_append_batch_count_is_valid(
+                leader_prev_log_index, count);
+        }
+        self.decoded_terms_.push(leader_next_log_term as i64);
+        raft_server_append_entry_count_fits(leader_prev_log_index, 1)
+    }
+
+    // Appends the payload's entries from first_write_index on, in index
+    // order, after the caller truncated the divergent suffix.
+    pub fn AeApplyIncoming(&mut self, cmd: *const core::ffi::c_void,
+                           leader_prev_log_index: u64,
+                           leader_next_log_term: u64, first_write_index: u64) {
+        if unsafe { raft_wire_is_batch(cmd) } {
+            let batch: *const core::ffi::c_void = unsafe { raft_wire_batch(cmd) };
+            unsafe {
+                raft_verify(!batch.is_null());
+            }
+            let count: u64 = unsafe { raft_batch_len(batch) };
+            let mut i: u64 = 0;
+            while i < count {
+                let index: u64 =
+                    raft_server_append_sent_end(leader_prev_log_index, i + 1);
+                if index >= first_write_index {
+                    let term: i64 = unsafe { raft_batch_term_at(batch, i) };
+                    let entry_cmd: rusty::RaftCommand =
+                        unsafe { raft_batch_command_at(batch, i) };
+                    let appended: u64 = self
+                        .state_
+                        .raft_log_
+                        .append(RaftEntry::new(term, entry_cmd));
+                    unsafe {
+                        raft_verify(appended == index);
+                    }
+                }
+                i += 1;
+            }
+            return;
+        }
+        let index: u64 = raft_server_append_sent_end(leader_prev_log_index, 1);
+        if index >= first_write_index {
+            let copy: rusty::RaftCommand =
+                unsafe { raft_wire_command_clone(cmd) };
+            let appended: u64 = self.state_.raft_log_.append(
+                RaftEntry::new(leader_next_log_term as i64, copy));
+            unsafe {
+                raft_verify(appended == index);
+            }
+        }
+    }
+}
+
 // The three methods a worker reaches through a TxLogServer base pointer.
 // Raft's set_site_identity mirrors the ids into state_ as well, where
 // converted Rust bodies can see them, and asserts the copies agree.
@@ -5878,18 +6027,16 @@ impl RaftSpecific for RaftServerBase {
                 }
                 return RaftStartResult::REJECTED;
             }
-            let append_result: RaftStartResult = unsafe {
-                raft_set_local_append(self as *mut RaftServerBase,
-                                      cmd as *const rusty::RaftCommand, term,
-                                      index)
-            };
+            let copy: rusty::RaftCommand =
+                unsafe { raft_command_clone(cmd as *const rusty::RaftCommand) };
+            let previous_index: u64 = self.AppendLocal(copy);
             unsafe {
-                raft_verify(raft_server_start_was_appended(append_result));
-                // SetLocalAppend reports the OLD last index; Start reports
-                // the index of the entry it just appended.
+                // AppendLocal reports the OLD last index; Start reports the
+                // index of the entry it just appended.
                 raft_verify(
-                    self.state_.raft_log_.last_index() == *index + 1);
+                    self.state_.raft_log_.last_index() == previous_index + 1);
                 *index = self.state_.raft_log_.last_index();
+                *term = self.state_.current_term_;
                 rusty::raft_log_debug_3("Start(): ldr={} index={} term={}",
                                         self.loc_id_, *index, *term);
             }
@@ -5955,7 +6102,7 @@ impl RaftSpecific for RaftServerBase {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=ee2c0c5893a5de3cd015a005e36e6d81a553856341372d26dc40397b4530830f*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=ce4c8070c3947869c298bb2edeea281bfbc3b10b466546191827166f586f62aa*/
 enum class RaftEnvError : int32_t;
 constexpr RaftEnvError RaftEnvError_NOT_A_WHOLE_NUMBER();
 constexpr RaftEnvError RaftEnvError_OVERFLOWS_U64();
@@ -5992,7 +6139,17 @@ extern "C" {
     void raft_fire_leader_change(const rusty::RaftLeaderChangeCb* cb, bool is_leader);
     RaftElectionTimeouts raft_election_timeouts();
     void raft_log_set_is_leader_entry(uint16_t site_id, uint32_t loc_id, uint64_t term, bool prev_is_leader, bool new_is_leader);
-    void raft_append_leader_noop(RaftServerBase* server);
+    bool raft_leader_noop_enabled();
+    rusty::RaftCommand raft_noop_command();
+    rusty::RaftCommand raft_command_clone(const rusty::RaftCommand* cmd);
+    bool raft_wire_is_batch(const rusty::ffi::c_void* cmd);
+    const rusty::ffi::c_void* raft_wire_batch(const rusty::ffi::c_void* cmd);
+    uint64_t raft_batch_len(const rusty::ffi::c_void* batch);
+    int64_t raft_batch_term_at(const rusty::ffi::c_void* batch, uint64_t i);
+    rusty::RaftCommand raft_batch_command_at(const rusty::ffi::c_void* batch, uint64_t i);
+    rusty::RaftCommand raft_wire_command_clone(const rusty::ffi::c_void* cmd);
+    uint64_t raft_config_replica_count(uint32_t partition_id);
+    uint16_t raft_config_replica_site(uint32_t partition_id, uint64_t i);
     bool raft_election_debug_enabled();
     rusty::RaftVoteQuorumPtr raft_broadcast_vote_and_wait(rusty::Communicator* commo, uint32_t par_id, uint64_t last_log_index, int64_t last_log_term, uint16_t self_site_id, int64_t term);
     RaftVoteOutcome raft_vote_quorum_snapshot(const rusty::RaftVoteQuorumPtr* quorum);
@@ -6004,7 +6161,6 @@ extern "C" {
     rusty::Arc<rusty::ReactorIntEvent> raft_create_int_event();
     void raft_queue_replication_wake(const rusty::Arc<ReplicationWakeGate>* gate);
     void raft_queue_replication_shutdown_wake(const rusty::Arc<ReplicationWakeGate>* gate);
-    scheduler_h::RaftStartResult raft_set_local_append(RaftServerBase* server, const rusty::RaftCommand* cmd, uint64_t* term, uint64_t* index);
     void raft_rpc_request_vote(RaftServerBase* server, uint64_t lst_log_idx, int64_t lst_log_term, uint16_t can_id, int64_t can_term, int64_t* reply_term, int8_t* vote_granted);
     void raft_rpc_append_entries(RaftServerBase* server, uint64_t leader_current_term, uint16_t leader_site_id, uint64_t leader_prev_log_index, uint64_t leader_prev_log_term, uint64_t leader_commit_index, const rusty::RaftCommand* cmd, uint64_t leader_next_log_term, uint64_t* follower_append_ok, uint64_t* follower_current_term, uint64_t* follower_last_log_index);
     bool raft_install_snapshot_guarded(RaftServerBase* server, uint16_t site_id, uint64_t term, uint64_t leader_id, uint64_t last_included_index, uint64_t last_included_term, const rusty::RaftByteString* data, uint64_t* term_out);
@@ -6014,7 +6170,6 @@ extern "C" {
     const rusty::ffi::c_char* raft_env_lookup(int32_t which);
     bool raft_bind_replication_poll(RaftServerBase* server, rusty::Communicator* commo);
     bool raft_initialize_snapshot_manager(RaftServerBase* server, uint16_t site_id);
-    uint64_t raft_load_current_config(RaftServerBase* server);
     void raft_spawn_apply_thread(RaftServerBase* server, rusty::RaftStdThread* thread);
     void raft_clear_async_callback_owner(const rusty::RaftAsyncCallbackLifetimePtr* lifetime);
     void raft_spawn_heartbeat_loop(RaftServerBase* server);
@@ -6194,6 +6349,11 @@ struct RaftServerBase : public RaftSpecific {
     void EnqueueCommittedEntries(uint64_t old_commit, uint64_t new_commit);
     bool RequestVoteImpl(bool timer_guarded, uint64_t expected_generation);
     void stepDown();
+    uint64_t AppendLocal(rusty::RaftCommand cmd);
+    void AppendLeaderNoop();
+    uint64_t LoadCurrentConfig();
+    bool AeDecodePayload(const rusty::ffi::c_void* cmd, bool has_cmd, uint64_t leader_prev_log_index, uint64_t leader_next_log_term);
+    void AeApplyIncoming(const rusty::ffi::c_void* cmd, uint64_t leader_prev_log_index, uint64_t leader_next_log_term, uint64_t first_write_index);
     void set_site_identity(uint32_t loc_id, uint16_t site_id, uint32_t partition_id);
     void set_commo(rusty::Communicator* commo);
     void reg_learner_action(rusty::LearnerAction learner_action);
@@ -6592,10 +6752,7 @@ inline void RaftServerBase::setIsLeader(bool is_leader) {
     }
     if (become_new_leader) {
         rusty::raft_log_info_4("[RAFT_STATE] setIsLeader transition LEADER: site {} term {} prev_is_leader={} become_new_leader={}", this->site_id_, this->state_.current_term_, std::move(prev_is_leader), std::move(become_new_leader));
-        // @unsafe
-        {
-            raft_append_leader_noop(static_cast<RaftServerBase*>(rusty::detail::ptr_or_addr((*this))));
-        }
+        this->AppendLeaderNoop();
     } else if (become_new_follower) {
         rusty::raft_log_info_4("[RAFT_STATE] setIsLeader transition FOLLOWER: site {} term {} prev_is_leader={} become_new_follower={}", this->site_id_, this->state_.current_term_, std::move(prev_is_leader), std::move(become_new_follower));
         this->resetTimerLocked(std::string_view("became follower"));
@@ -6684,7 +6841,7 @@ inline bool RaftServerBase::SetupInternal() {
         this->FailClosed();
         return false;
     }
-    const uint64_t replicas = raft_load_current_config(static_cast<RaftServerBase*>(rusty::detail::ptr_or_addr((*this))));
+    const uint64_t replicas = this->LoadCurrentConfig();
     rusty::raft_log_info_3("[RAFT-CONFIG] Initialized current_config_ for site {} partition {} with {} replicas", this->site_id_, this->partition_id_, std::move(replicas));
     this->StartApplyThread();
     this->rpc_ready_.store(true, rusty::sync::atomic::Ordering::Release);
@@ -7505,6 +7662,99 @@ inline void RaftServerBase::stepDown() {
     rusty::raft_log_info_1("[SPEC-RAFT] Site {}: Step-down complete, now follower", this->site_id_);
 }
 
+inline uint64_t RaftServerBase::AppendLocal(rusty::RaftCommand cmd) {
+    uint64_t previous_index = this->state_.raft_log_.last_index();
+    const uint64_t appended = this->state_.raft_log_.append(RaftEntry::new_(static_cast<int64_t>(this->state_.current_term_), std::move(cmd)));
+    // @unsafe
+    {
+        raft_verify(rusty::detail::deref_if_pointer_like(appended) == (rusty::detail::deref_if_pointer_like(previous_index) + static_cast<uint64_t>(1)));
+    }
+    return std::move(previous_index);
+}
+
+inline void RaftServerBase::AppendLeaderNoop() {
+    if (!raft_leader_noop_enabled()) {
+        return;
+    }
+    rusty::RaftCommand noop = raft_noop_command();
+    const uint64_t previous_index = this->AppendLocal(std::move(noop));
+    // @unsafe
+    {
+        raft_verify(this->state_.raft_log_.last_index() == (rusty::detail::deref_if_pointer_like(previous_index) + 1));
+    }
+    rusty::raft_log_info_3("[RAFT-NOOP] Site {} appended leader no-op at index {} term {}", this->site_id_, this->state_.raft_log_.last_index(), this->state_.current_term_);
+    this->RequestReplication();
+}
+
+inline uint64_t RaftServerBase::LoadCurrentConfig() {
+    uint64_t replicas = raft_config_replica_count(this->partition_id_);
+    this->config_members_.clear();
+    uint64_t i = static_cast<uint64_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(replicas)) {
+        uint16_t site = raft_config_replica_site(this->partition_id_, std::move(i));
+        this->config_members_.push(std::move(site));
+        i += 1;
+    }
+    return std::move(replicas);
+}
+
+inline bool RaftServerBase::AeDecodePayload(const rusty::ffi::c_void* cmd, bool has_cmd, uint64_t leader_prev_log_index, uint64_t leader_next_log_term) {
+    this->decoded_terms_.clear();
+    if (!has_cmd) {
+        return raft_server_append_entry_count_fits(std::move(leader_prev_log_index), 0);
+    }
+    if (raft_wire_is_batch(cmd)) {
+        const rusty::ffi::c_void* batch = raft_wire_batch(cmd);
+        if ((batch == nullptr)) {
+            return false;
+        }
+        const uint64_t count = raft_batch_len(batch);
+        uint64_t i = static_cast<uint64_t>(0);
+        while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(count)) {
+            this->decoded_terms_.push(raft_batch_term_at(batch, std::move(i)));
+            i += 1;
+        }
+        return raft_server_append_batch_count_is_valid(std::move(leader_prev_log_index), std::move(count));
+    }
+    this->decoded_terms_.push(static_cast<int64_t>(leader_next_log_term));
+    return raft_server_append_entry_count_fits(std::move(leader_prev_log_index), 1);
+}
+
+inline void RaftServerBase::AeApplyIncoming(const rusty::ffi::c_void* cmd, uint64_t leader_prev_log_index, uint64_t leader_next_log_term, uint64_t first_write_index) {
+    if (raft_wire_is_batch(cmd)) {
+        const rusty::ffi::c_void* batch = raft_wire_batch(cmd);
+        // @unsafe
+        {
+            raft_verify(rusty::detail::rust_not((batch == nullptr)));
+        }
+        const uint64_t count = raft_batch_len(batch);
+        uint64_t i = static_cast<uint64_t>(0);
+        while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(count)) {
+            const uint64_t index = raft_server_append_sent_end(std::move(leader_prev_log_index), rusty::detail::deref_if_pointer_like(i) + 1);
+            if (rusty::detail::deref_if_pointer_like(index) >= rusty::detail::deref_if_pointer_like(first_write_index)) {
+                int64_t term = raft_batch_term_at(batch, std::move(i));
+                rusty::RaftCommand entry_cmd = raft_batch_command_at(batch, std::move(i));
+                const uint64_t appended = this->state_.raft_log_.append(RaftEntry::new_(std::move(term), std::move(entry_cmd)));
+                // @unsafe
+                {
+                    raft_verify(rusty::detail::deref_if_pointer_like(appended) == rusty::detail::deref_if_pointer_like(index));
+                }
+            }
+            i += 1;
+        }
+        return;
+    }
+    const uint64_t index = raft_server_append_sent_end(std::move(leader_prev_log_index), 1);
+    if (rusty::detail::deref_if_pointer_like(index) >= rusty::detail::deref_if_pointer_like(first_write_index)) {
+        rusty::RaftCommand copy = raft_wire_command_clone(cmd);
+        const uint64_t appended = this->state_.raft_log_.append(RaftEntry::new_(static_cast<int64_t>(leader_next_log_term), std::move(copy)));
+        // @unsafe
+        {
+            raft_verify(rusty::detail::deref_if_pointer_like(appended) == rusty::detail::deref_if_pointer_like(index));
+        }
+    }
+}
+
 inline void RaftServerBase::set_site_identity(uint32_t loc_id, uint16_t site_id, uint32_t partition_id) {
     this->loc_id_ = std::move(loc_id);
     this->site_id_ = std::move(site_id);
@@ -7623,12 +7873,13 @@ inline scheduler_h::RaftStartResult RaftServerBase::Start(const rusty::RaftComma
             }
             return rusty::clone(RaftStartResult::REJECTED);
         }
-        const scheduler_h::RaftStartResult append_result = raft_set_local_append(static_cast<RaftServerBase*>(rusty::detail::ptr_or_addr((*this))), static_cast<const rusty::RaftCommand*>(rusty::detail::ptr_or_addr(cmd)), term, index);
+        rusty::RaftCommand copy = raft_command_clone(static_cast<const rusty::RaftCommand*>(rusty::detail::ptr_or_addr(cmd)));
+        const uint64_t previous_index = this->AppendLocal(std::move(copy));
         // @unsafe
         {
-            raft_verify(raft_server_start_was_appended(std::move(append_result)));
-            raft_verify(this->state_.raft_log_.last_index() == (*index + 1));
+            raft_verify(this->state_.raft_log_.last_index() == (rusty::detail::deref_if_pointer_like(previous_index) + 1));
             *index = this->state_.raft_log_.last_index();
+            *term = this->state_.current_term_;
             rusty::raft_log_debug_3("Start(): ldr={} index={} term={}", this->loc_id_, *index, *term);
         }
     }
