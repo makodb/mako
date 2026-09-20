@@ -364,7 +364,7 @@ void create_stub_servers() {
   }
 
   auto& worker = raft_workers_g[0];
-  auto* rep_sched = dynamic_cast<RaftServer*>(worker->rep_sched_);
+  auto* rep_sched = worker->GetRaftServer();
   verify(rep_sched != nullptr);
 
   for (size_t i = 1; i < all_site_infos_g.size(); i++) {
@@ -472,7 +472,7 @@ bool server_launch_worker(std::vector<Config::SiteInfo>& server_sites) {
       if (poll_worker_opt.is_some()) {
         auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([raft_server]() {
           Log_info("[RAFTPOLL] EnsureSetup executing (site={} par={})",
-                   raft_server->site_id_, raft_server->partition_id_);
+                   raft_server->SiteId(), raft_server->PartitionId());
           raft_server->EnsureSetup();
         }));
         Log_info("[RAFTPOLL] Queueing EnsureSetup job for single worker");
@@ -541,7 +541,7 @@ bool server_launch_worker(std::vector<Config::SiteInfo>& server_sites) {
       if (poll_worker_opt.is_some()) {
         auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([raft_server]() {
           Log_info("[RAFTPOLL] EnsureSetup executing (site={} par={})",
-                   raft_server->site_id_, raft_server->partition_id_);
+                   raft_server->SiteId(), raft_server->PartitionId());
           raft_server->EnsureSetup();
         }));
         poll_worker_opt.unwrap()->add(rusty::Arc<Job>(arc_job));
@@ -842,8 +842,8 @@ int setup2(int action, int shardIndex) {
     if (!raft_workers_g.empty() && raft_workers_g[0]) {
       auto raft_server = raft_workers_g[0]->GetRaftServer();
       if (raft_server) {
-        parid_t partition_id = raft_server->partition_id_;
-        siteid_t my_site_id = raft_server->site_id_;
+        parid_t partition_id = raft_server->PartitionId();
+        siteid_t my_site_id = raft_server->SiteId();
 
         auto partition_sites = config->SitesByPartitionId(partition_id);
 
@@ -871,8 +871,8 @@ int setup2(int action, int shardIndex) {
       auto raft_server = worker->GetRaftServer();
       if (!raft_server) continue;
 
-      parid_t partition_id = raft_server->partition_id_;
-      siteid_t my_site_id = raft_server->site_id_;
+      parid_t partition_id = raft_server->PartitionId();
+      siteid_t my_site_id = raft_server->SiteId();
 
       auto partition_sites = config->SitesByPartitionId(partition_id);
 
@@ -956,7 +956,7 @@ int get_outstanding_logs(uint32_t par_id) {
     return -1;
   }
   return static_cast<int>(worker->n_tot.load()) -
-         static_cast<int>(raft_server->state_.commit_index_);
+         static_cast<int>(raft_server->CommitIndex());
 }
 
 // shutdown_paxos drains workers, tears down configs, and mirrors the Paxos helper API.
@@ -1255,7 +1255,7 @@ void set_preferred_leader(int site_id) {
     count++;
 
     Log_info("[PREFERRED-REPLICA-API] Updated worker {}: site_id={}, preferred={}",
-             count, raft_server->site_id_, preferred);
+             count, raft_server->SiteId(), preferred);
   }
 
   if (count == 0) {

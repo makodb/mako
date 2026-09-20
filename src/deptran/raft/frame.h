@@ -61,7 +61,11 @@ class RaftFrame : public Frame {
   // non-null pointer and dereference freed memory.
   // @safe - drops a borrow, owns nothing.
   void ReleaseScheduler() { svr_ = nullptr; }
-  TxLogServer *CreateScheduler() override;
+  // Frame's generic factory, and the typed one beneath it. RaftWorker and the
+  // RAFT_TEST_CORO ServerWorker call CreateRaftScheduler() so they hold the
+  // server as what it is, instead of recovering it with dynamic_cast.
+  TxLogServer *CreateScheduler() override { return CreateRaftScheduler(); }
+  RaftServer *CreateRaftScheduler();
   Communicator *CreateCommo(
       rusty::Option<rusty::Arc<rrr::PollThread>> poll_thread_worker =
           rusty::None) override;

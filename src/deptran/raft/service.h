@@ -28,11 +28,11 @@ class RaftServiceImpl : public RaftService {
   // its in-flight requests (set_admission_ready(false) + drain()) before it
   // destroys either the server or this service -- see RaftWorker::ShutDown
   // and destroy_stub_servers().
-  RaftServer* svr_{nullptr};
+  RaftSpecific* svr_{nullptr};
 
   // @unsafe - Stores the raw Raft server pointer. The poll thread is owned by
   // the rrr::Server that registers this proxy and is not passed in.
-  explicit RaftServiceImpl(RaftServer* sched);
+  explicit RaftServiceImpl(RaftSpecific* sched);
 
   // Generated fiber-RPC overrides. The rrr codegen wraps each one in a
   // Fiber::create_run; we return a packed response struct and the

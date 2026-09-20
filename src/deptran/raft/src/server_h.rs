@@ -4085,6 +4085,20 @@ impl RaftSpecific for RaftServerBase {
         self.disconnected_.load(rusty::sync::atomic::Ordering::Acquire)
     }
 
+    fn SiteId(&self) -> u16 {
+        self.site_id_
+    }
+
+    fn PartitionId(&self) -> u32 {
+        self.partition_id_
+    }
+
+    // See the trait: this is the unlocked read get_outstanding_logs always
+    // made, kept as it was until step C makes it an atomic.
+    fn CommitIndex(&self) -> u64 {
+        self.state_.commit_index_
+    }
+
     // @unsafe - CALLER MUST NOT HOLD mtx_. Appends one command locally and
     // then publishes the replication wake, in that order: the wake path never
     // nests the gate's owner mutex below Raft state.

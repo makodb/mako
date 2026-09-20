@@ -37,7 +37,7 @@ void ServerWorker::SetupBase() {
   rep_frame_ = dynamic_cast<RaftFrame*>(Frame::GetFrame(config->replica_proto_));
   verify(rep_frame_ != nullptr);
   rep_frame_->site_info_ = site_info_;
-  rep_sched_ = dynamic_cast<RaftServer*>(rep_frame_->CreateScheduler());
+  rep_sched_ = rep_frame_->CreateRaftScheduler();
   verify(rep_sched_ != nullptr);
   rep_sched_->partition_id_ = site_info_->partition_id_;
   rep_sched_->loc_id_ = site_info_->locale_id;

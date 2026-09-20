@@ -313,25 +313,28 @@ static bool raft_catch(uint16_t site_id, const char* what, Fn&& fn) {
 // @unsafe - Caller holds the state-machine apply gate followed by mtx_. The
 // production callback must validate and stage without changing live state.
 // RaftLab has no application state, so it validates a strict index+term marker.
-std::unique_ptr<PreparedStateMachineSnapshotInstall>
-RaftServer::PrepareStateMachineSnapshotLocked(
+// Was RaftServer::PrepareStateMachineSnapshotLocked; a file-local helper now,
+// shared by raft_load_state_machine_snapshot and raft_install_snapshot_payload.
+static std::unique_ptr<PreparedStateMachineSnapshotInstall>
+prepare_state_machine_snapshot_locked(
+    RaftServerBase* self,
     const std::string& data,
     uint64_t last_included_index,
     uint64_t last_included_term) {
-  if (prepare_sm_snapshot_cb_) {
+  if (self->prepare_sm_snapshot_cb_) {
     std::unique_ptr<PreparedStateMachineSnapshotInstall> prepared;
-    if (!raft_catch(site_id_, "state-machine snapshot prepare", [&] {
-          prepared = prepare_sm_snapshot_cb_(data, last_included_index);
+    if (!raft_catch(self->site_id_, "state-machine snapshot prepare", [&] {
+          prepared = self->prepare_sm_snapshot_cb_(data, last_included_index);
         })) {
       Log_error("[RAFT-SNAPSHOT] Site {} prepare was for snapshot index={} "
                 "term={}",
-                site_id_, last_included_index, last_included_term);
+                self->site_id_, last_included_index, last_included_term);
       return nullptr;
     }
     if (prepared == nullptr) {
       Log_error("[RAFT-SNAPSHOT] Site {} state-machine prepare rejected "
                 "snapshot index={} term={}",
-                site_id_, last_included_index, last_included_term);
+                self->site_id_, last_included_index, last_included_term);
     }
     return prepared;
   }
@@ -340,7 +343,7 @@ RaftServer::PrepareStateMachineSnapshotLocked(
   constexpr size_t kMarkerSize = sizeof(uint64_t) * 2;
   if (data.size() != kMarkerSize) {
     Log_error("[RAFT-SNAPSHOT] Site {} RaftLab marker has {} bytes, expected {}",
-              site_id_, data.size(), kMarkerSize);
+              self->site_id_, data.size(), kMarkerSize);
     return nullptr;
   }
 
@@ -355,7 +358,7 @@ RaftServer::PrepareStateMachineSnapshotLocked(
   if (!matches) {
     Log_error("[RAFT-SNAPSHOT] Site {} RaftLab marker mismatch: "
               "payload=({}, {}) metadata=({}, {})",
-              site_id_, marker_index, marker_term,
+              self->site_id_, marker_index, marker_term,
               last_included_index, last_included_term);
   }
   if (!matches) {
@@ -366,55 +369,9 @@ RaftServer::PrepareStateMachineSnapshotLocked(
   Log_error("[RAFT-SNAPSHOT] Site {} has no state-machine snapshot prepare "
             "callback for "
             "index={} term={}",
-            site_id_, last_included_index, last_included_term);
+            self->site_id_, last_included_index, last_included_term);
   return nullptr;
 #endif
-}
-
-// @unsafe - Startup uses this only after SnapshotManager has verified and
-// durably discovered the exact Raft snapshot bytes.
-bool RaftServer::LoadStateMachineSnapshotLocked(
-    const std::string& data,
-    uint64_t last_included_index,
-    uint64_t last_included_term) {
-  auto prepared = PrepareStateMachineSnapshotLocked(
-      data, last_included_index, last_included_term);
-  if (prepared == nullptr) {
-    return false;
-  }
-  bool committed = false;
-  if (!raft_catch(site_id_, "state-machine snapshot commit", [&] {
-        committed = prepared->Commit();
-      })) {
-    Log_error("[RAFT-SNAPSHOT] Site {} commit was for snapshot index={} "
-              "term={}",
-              site_id_, last_included_index, last_included_term);
-    return false;
-  }
-  return committed;
-}
-
-// @unsafe - Discovers, verifies, and restores SnapshotManager state before
-// publishing the recovered boundary to application waiters.
-bool RaftServer::InitializeSnapshotManager() {
-  // The body is Rust (RaftServerBase::InitializeSnapshotManagerLocked). What
-  // stays here is the catch-all, which spanned the whole original body:
-  // exceptions have no DSL spelling, and this one turns a throwing recovery
-  // into a fail-stop rather than a half-restored replica.
-  bool recovered = false;
-  if (!raft_catch(site_id_, "snapshot recovery", [&] {
-        recovered = InitializeSnapshotManagerLocked();
-      })) {
-    FailStop();
-    return false;
-  }
-  return recovered;
-}
-
-std::shared_ptr<janus::raft::SnapshotManager>
-RaftServer::GetSnapshotManager() {
-  std::lock_guard<RaftCheckedMutex> lock(mtx_);
-  return snapshot_manager_;
 }
 
 
@@ -443,6 +400,18 @@ RaftServer::GetSnapshotManager() {
 // field converts, (2) when the callee converts, (3) never -- conditional
 // compilation has no Rust spelling in this dialect.
 // ===========================================================================
+// The typed communicator. commo_ is the generic Communicator* the TxLogServer
+// interface hands every engine; RaftFrame::CreateCommo built it as a
+// RaftCommo, and this is the one place that fact is recovered. It replaces the
+// RaftServer::commo() method the kernels used to downcast the SERVER to reach.
+// @unsafe - dynamic_cast on a pointer the frame owns; verify keeps the old
+// abort-if-unset behaviour.
+static RaftCommo* commo_of(RaftServerBase* self) {
+  auto* communicator = dynamic_cast<RaftCommo*>(self->commo_);
+  verify(communicator != nullptr);
+  return communicator;
+}
+
 extern "C" {
 
 // (1) opaque-field access
@@ -466,7 +435,7 @@ rusty::RaftVoteQuorumPtr raft_broadcast_vote_and_wait(
     RaftServerBase* self, uint32_t par_id, uint64_t last_log_index,
     int64_t last_log_term, uint16_t self_site_id, int64_t term) {
   rusty::RaftVoteQuorumPtr quorum =
-      static_cast<RaftServer*>(self)->commo()->BroadcastVote(
+      commo_of(self)->BroadcastVote(
           par_id, last_log_index, last_log_term, self_site_id, term);
   quorum->wait_timeout(1000000);
   return quorum;
@@ -506,7 +475,7 @@ void raft_apply_thread_join(RaftServerBase* self) {
 // (2) more downcalls into RaftServer methods that have not converted
 
 void raft_commo_set_network_enabled(RaftServerBase* self, bool enabled) {
-  static_cast<RaftServer*>(self)->commo()->SetNetworkEnabled(enabled);
+  commo_of(self)->SetNetworkEnabled(enabled);
 }
 // The gate's allocation, through the in-place seam. See the declaration in
 // server.h for why the DSL cannot spell this one.
@@ -526,10 +495,20 @@ void raft_queue_replication_wake(RaftServerBase* self) {
 void raft_queue_replication_shutdown_wake(RaftServerBase* self) {
   QueueReplicationShutdownWake(self->replication_wake_gate_);
 }
+// Must be called with mtx_ held; both callers -- raft_append_leader_noop and
+// RaftServerBase::Start -- take it first. Reports the PRE-append tail in
+// *index: the new entry lands at *index + 1. C++ because appending copies a
+// janus::Command, a refcount the opaque Rust carrier cannot touch. Was
+// RaftServer::SetLocalAppend.
 RaftStartResult raft_set_local_append(RaftServerBase* self,
                                       const rusty::RaftCommand* cmd,
                                       uint64_t* term, uint64_t* index) {
-  return static_cast<RaftServer*>(self)->SetLocalAppend(*cmd, term, index);
+  *index = self->state_.raft_log_.last_index();
+  const uint64_t appended = self->state_.raft_log_.append(
+      RaftEntry::new_(self->state_.current_term_, *cmd));
+  verify(appended == *index + 1);
+  *term = self->state_.current_term_;
+  return RaftStartResult::APPENDED;
 }
 // Spawns the election-timer fiber. The lambda captures the loop by value --
 // two words -- so nothing here outlives the fiber.
@@ -618,12 +597,29 @@ bool raft_snapshot_manager_load(const rusty::RaftSnapshotManagerPtr* manager,
   return true;
 }
 
+// Startup helper for a snapshot already held by the manager: prepares and
+// immediately commits its state-machine image before publishing recovery.
+// Caller holds state_machine_apply_mtx_ then mtx_. Was
+// RaftServer::LoadStateMachineSnapshotLocked.
 bool raft_load_state_machine_snapshot(RaftServerBase* self,
                                       const rusty::RaftByteString* data,
                                       uint64_t last_included_index,
                                       uint64_t last_included_term) {
-  return static_cast<RaftServer*>(self)->LoadStateMachineSnapshotLocked(
-      *data, last_included_index, last_included_term);
+  auto prepared = prepare_state_machine_snapshot_locked(
+      self, *data, last_included_index, last_included_term);
+  if (prepared == nullptr) {
+    return false;
+  }
+  bool committed = false;
+  if (!raft_catch(self->site_id_, "state-machine snapshot commit", [&] {
+        committed = prepared->Commit();
+      })) {
+    Log_error("[RAFT-SNAPSHOT] Site {} commit was for snapshot index={} "
+              "term={}",
+              self->site_id_, last_included_index, last_included_term);
+    return false;
+  }
+  return committed;
 }
 
 // (1)/(3) OnInstallSnapshot's staging transaction.
@@ -644,11 +640,10 @@ int raft_install_snapshot_payload(RaftServerBase* self,
                                   uint64_t last_included_index,
                                   uint64_t last_included_term,
                                   const rusty::RaftByteString* data) {
-  RaftServer* const server = static_cast<RaftServer*>(self);
   Log_info("[INSTALL-SNAPSHOT] Site {}: Preparing state machine snapshot ({} bytes)",
            self->site_id_, data->size());
-  auto prepared_state_machine = server->PrepareStateMachineSnapshotLocked(
-      *data, last_included_index, last_included_term);
+  auto prepared_state_machine = prepare_state_machine_snapshot_locked(
+      self, *data, last_included_index, last_included_term);
   if (prepared_state_machine == nullptr) {
     return 0;
   }
@@ -737,20 +732,30 @@ const char* raft_env_lookup(int32_t which) {
 // can publish its owner-thread-only IntEvent. The communicator always
 // retains the PollThread it created or was given.
 bool raft_bind_replication_poll(RaftServerBase* self) {
-  RaftServer* const server = static_cast<RaftServer*>(self);
-  rusty::Option<rusty::Arc<rrr::PollThread>> replication_poll = rusty::None;
-  if (server->commo() != nullptr) {
-    replication_poll = server->commo()->PollThread();
-  }
+  // commo_of verifies the communicator is set, exactly as the
+  // RaftServer::commo() it replaces did, so the null test that used to sit
+  // here could never be false.
+  rusty::Option<rusty::Arc<rrr::PollThread>> replication_poll =
+      commo_of(self)->PollThread();
   if (replication_poll.is_none()) {
     return false;
   }
-  server->BindReplicationWakeOwner(replication_poll.unwrap());
+  self->BindReplicationWakeOwner(replication_poll.unwrap());
   return true;
 }
 
+// Initializes the snapshot manager and restores the exact state-machine bytes
+// before publishing any recovered snapshot boundary. C++ for the exception
+// boundary around the recovery. Was RaftServer::InitializeSnapshotManager.
 bool raft_initialize_snapshot_manager(RaftServerBase* self) {
-  return static_cast<RaftServer*>(self)->InitializeSnapshotManager();
+  bool recovered = false;
+  if (!raft_catch(self->site_id_, "snapshot recovery", [&] {
+        recovered = self->InitializeSnapshotManagerLocked();
+      })) {
+    self->FailStop();
+    return false;
+  }
+  return recovered;
 }
 
 // The fixed replica set for this partition's lifetime; memory-only Raft has
@@ -801,8 +806,7 @@ void raft_spawn_heartbeat_loop(RaftServerBase* self) {
 }
 
 void raft_spawn_election_timer_fiber(RaftServerBase* self) {
-  RaftServer* const server = static_cast<RaftServer*>(self);
-  Fiber::create_run([server]() { server->StartElectionTimer(); });
+  Fiber::create_run([self]() { self->StartElectionTimer(); });
 }
 
 // CreateSnapshotLocked's state-machine checkpoint and its persistence: a
@@ -906,20 +910,20 @@ void raft_log_set_is_leader_entry(const RaftServerBase* self,
 // CALLER MUST HOLD mtx_.
 void raft_append_leader_noop(RaftServerBase* self) {
 #ifndef RAFT_TEST_CORO
-  RaftServer* const server = static_cast<RaftServer*>(self);
   uint64_t noop_previous_index = 0;
   uint64_t noop_term = 0;
   auto noop = rusty::Arc<TpcNoopCommand>::make();
-  const RaftStartResult noop_result = server->SetLocalAppend(
-      janus::Command::pack_aliased<TpcNoopCommand>(std::move(noop)),
-      &noop_term, &noop_previous_index);
+  const janus::Command noop_cmd =
+      janus::Command::pack_aliased<TpcNoopCommand>(std::move(noop));
+  const RaftStartResult noop_result = raft_set_local_append(
+      self, &noop_cmd, &noop_term, &noop_previous_index);
   verify(raft_server_start_was_appended(noop_result));
   verify(noop_term == self->state_.current_term_);
   verify(self->state_.raft_log_.last_index() == noop_previous_index + 1);
   Log_info("[RAFT-NOOP] Site {} appended leader no-op at index {} term {}",
            self->site_id_, self->state_.raft_log_.last_index(),
            self->state_.current_term_);
-  server->RequestReplication();
+  self->RequestReplication();
 #else
   (void)self;
 #endif
@@ -5183,7 +5187,7 @@ bool raft_phase1_load_and_send_snapshot(RaftServerBase* self,
   const uint64_t send_term = self->state_.current_term_;
   const uint16_t self_site_id = self->site_id_;
   auto callback_lifetime = self->async_callback_lifetime_;
-  static_cast<RaftServer*>(self)->commo()->SendInstallSnapshot(
+  commo_of(self)->SendInstallSnapshot(
       site_id, self->partition_id_,
       send_term, self->site_id_,
       snap_last_idx, snap_last_term,
@@ -5320,7 +5324,7 @@ rusty::RaftResponsePtr raft_phase1_send_append(
     bool is_leader, uint64_t term, uint64_t prev_log_index,
     uint64_t prev_log_term, uint64_t commit_index,
     const rusty::RaftCommand* cmd, uint64_t cmd_log_term) {
-  return static_cast<RaftServer*>(self)->commo()->SendAppendEntries2(
+  return commo_of(self)->SendAppendEntries2(
       site_id, partition_id, -1, -1, is_leader, self->site_id_, term,
       prev_log_index, prev_log_term, commit_index, *cmd, cmd_log_term);
 }
@@ -5444,7 +5448,7 @@ void raft_ae_apply_incoming(RaftServerBase* server,
                             uint64_t leader_prev_log_index,
                             uint64_t leader_next_log_term,
                             uint64_t first_write_index) {
-  RaftServer* self = static_cast<RaftServer*>(server);
+  RaftServerBase* const self = server;
   const janus::Command& cmd =
       *static_cast<const janus::Command*>(static_cast<const void*>(cmd_handle));
   uint64_t cnt = 0;

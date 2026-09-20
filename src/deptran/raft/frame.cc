@@ -195,7 +195,7 @@ int RaftFrame::RaftLabProcessExitCode() {
 
 
 // @unsafe - returns raw pointer to owned member (caller does not take ownership), calls Log_error/Log_debug
-TxLogServer *RaftFrame::CreateScheduler() {
+RaftServer *RaftFrame::CreateRaftScheduler() {
   if(svr_ == nullptr)
   {
     // The caller -- the worker -- takes ownership. The frame keeps only a
@@ -331,13 +331,14 @@ RaftFrame::CreateRpcServices(uint32_t site_id,
   auto config = Config::GetConfig();
   auto result = std::vector<rrr::ServiceProxy>();
   switch (config->replica_proto_) {
-    // The service holds a plain RaftServer* fixed at construction; the
-    // poll thread is owned by the rrr::Server that registers this proxy.
+    // The service holds the server as RaftSpecific*, fixed at construction;
+    // the poll thread is owned by the rrr::Server that registers this proxy.
+    // rep_sched is the scheduler this frame created, and svr_ is the typed
+    // back-reference to the same object, so no RTTI is needed to get there.
     case MODE_RAFT: {
-      auto* server = dynamic_cast<RaftServer*>(rep_sched);
-      verify(server != nullptr);
+      verify(svr_ != nullptr && rep_sched == svr_);
       result.push_back(rrr::make_service_proxy_from_typed_box(
-          rusty::make_box<RaftServiceImpl>(server)));
+          rusty::make_box<RaftServiceImpl>(svr_)));
       break;
     }
     default:break;

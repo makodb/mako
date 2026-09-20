@@ -143,6 +143,14 @@ pub trait RaftSpecific: TxLogServer {
     // Admission, as the RPC service checks it before every handler.
     fn IsRpcReady(&self) -> bool;
     fn IsDisconnected(&self) -> bool;
+    // Identity and progress, read-only: the three facts the main helper used
+    // to read as fields through the concrete type. CommitIndex is the
+    // pre-existing unlocked cross-thread read behind get_outstanding_logs --
+    // a metric polled from the transaction path, tolerated racy since before
+    // the conversion; step C gives it an atomic mirror.
+    fn SiteId(&self) -> u16;
+    fn PartitionId(&self) -> u32;
+    fn CommitIndex(&self) -> u64;
     // Replication entry: the worker's "replicate this command".
     fn Start(&mut self, cmd: &rusty::RaftCommand, index: *mut u64,
              term: *mut u64) -> RaftStartResult;
@@ -162,7 +170,7 @@ pub trait RaftSpecific: TxLogServer {
                          data: &rusty::RaftByteString, term_out: *mut u64);
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=deptran_scheduler.tx_log_server version=1 rust_sha256=7c92186db9aa6c20272a1bcc90ac230ec6abfadf737ad311ec653032b5d12699*/
+/*RUSTYCPP:GEN-BEGIN id=deptran_scheduler.tx_log_server version=1 rust_sha256=a6ce48e2a2c4ce31e857826b9f95e7cd3ca074d13053646b4207c6cdb64f679d*/
 enum class RaftStartResult : int32_t;
 constexpr RaftStartResult RaftStartResult_REJECTED();
 constexpr RaftStartResult RaftStartResult_APPENDED();
@@ -206,6 +214,9 @@ public:
     virtual void RegisterLeaderChangeCallback(rusty::RaftLeaderChangeCb cb) = 0;
     virtual bool IsRpcReady() const = 0;
     virtual bool IsDisconnected() const = 0;
+    virtual uint16_t SiteId() const = 0;
+    virtual uint32_t PartitionId() const = 0;
+    virtual uint64_t CommitIndex() const = 0;
     virtual RaftStartResult Start(const rusty::RaftCommand& cmd, uint64_t* index, uint64_t* term) = 0;
     virtual void OnRequestVote(uint64_t lst_log_idx, int64_t lst_log_term, uint16_t can_id, int64_t can_term, int64_t* reply_term, int8_t* vote_granted) = 0;
     virtual void OnAppendEntries(uint64_t leader_current_term, uint16_t leader_site_id, uint64_t leader_prev_log_index, uint64_t leader_prev_log_term, uint64_t leader_commit_index, const rusty::RaftCommand& cmd, uint64_t leader_next_log_term, uint64_t* follower_append_ok, uint64_t* follower_current_term, uint64_t* follower_last_log_index) = 0;

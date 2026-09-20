@@ -59,7 +59,7 @@ static_assert(!raft_service_server_unavailable(true, false, true));
 Result<RaftService::RpcVoteResponse, rrr::i32>
 RaftServiceImpl::Vote(const RpcVoteRequest& req) {
   RpcVoteResponse resp{};
-  RaftServer* svr = svr_;
+  RaftSpecific* svr = svr_;
   bool has_server = svr != nullptr;
   bool disconnected = has_server && svr->IsDisconnected();
   bool rpc_ready = has_server && svr->IsRpcReady();
@@ -78,7 +78,7 @@ RaftServiceImpl::Vote(const RpcVoteRequest& req) {
 Result<RaftService::RpcAppendEntriesResponse, rrr::i32>
 RaftServiceImpl::AppendEntries(const RpcAppendEntriesRequest& req) {
   RpcAppendEntriesResponse resp{};
-  RaftServer* svr = svr_;
+  RaftSpecific* svr = svr_;
   bool has_server = svr != nullptr;
   bool disconnected = has_server && svr->IsDisconnected();
   bool rpc_ready = has_server && svr->IsRpcReady();
@@ -102,7 +102,7 @@ Result<RaftService::RpcEmptyAppendEntriesResponse, rrr::i32>
 RaftServiceImpl::EmptyAppendEntries(const RpcEmptyAppendEntriesRequest& req) {
   Log_debug("RaftServiceImpl: EmptyAppendEntries answering leader {}", req.leaderSiteId);
   RpcEmptyAppendEntriesResponse resp{};
-  RaftServer* svr = svr_;
+  RaftSpecific* svr = svr_;
   bool has_server = svr != nullptr;
   bool disconnected = has_server && svr->IsDisconnected();
   bool rpc_ready = has_server && svr->IsRpcReady();
@@ -129,7 +129,7 @@ RaftServiceImpl::EmptyAppendEntries(const RpcEmptyAppendEntriesRequest& req) {
 Result<RaftService::RpcInstallSnapshotResponse, rrr::i32>
 RaftServiceImpl::InstallSnapshot(const RpcInstallSnapshotRequest& req) {
   RpcInstallSnapshotResponse resp{};
-  RaftServer* svr = svr_;
+  RaftSpecific* svr = svr_;
   bool has_server = svr != nullptr;
   bool disconnected = has_server && svr->IsDisconnected();
   bool rpc_ready = has_server && svr->IsRpcReady();
@@ -145,7 +145,7 @@ RaftServiceImpl::InstallSnapshot(const RpcInstallSnapshotRequest& req) {
 }
 
 // @unsafe - Stores the raw Raft server pointer for the handlers above.
-RaftServiceImpl::RaftServiceImpl(RaftServer* sched)
+RaftServiceImpl::RaftServiceImpl(RaftSpecific* sched)
     : svr_(sched) {
   struct timespec curr_time;
   clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);

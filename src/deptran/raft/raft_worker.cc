@@ -271,6 +271,11 @@ void RaftWorker::SetupBase() {
   // @unsafe
   { // config-> dereference, Frame::GetFrame returns raw pointer
     rep_frame_ = Frame::GetFrame(config->replica_proto_);
+    // The one cast this worker makes: the generic registry hands back a
+    // Frame*, and a Raft worker configured with any other engine is a
+    // misconfiguration, not a case to skip silently.
+    raft_frame_ = dynamic_cast<RaftFrame*>(rep_frame_);
+    verify(raft_frame_ != nullptr);
   }
 
   // @unsafe
@@ -280,8 +285,9 @@ void RaftWorker::SetupBase() {
 
   // Create RaftServer instance
   // @unsafe
-  { // rep_frame_-> pointer dereference, Frame::CreateScheduler
-    rep_sched_ = rep_frame_->CreateScheduler();
+  { // raft_frame_-> pointer dereference, RaftFrame::CreateRaftScheduler
+    raft_sched_ = raft_frame_->CreateRaftScheduler();
+    rep_sched_ = raft_sched_;
   }
 
   // @unsafe
@@ -293,7 +299,8 @@ void RaftWorker::SetupBase() {
                                 site_info_->partition_id_);
   }
 
-  if (auto raft_server = dynamic_cast<RaftServer*>(rep_sched_)) {
+  {
+    RaftSpecific* raft_server = raft_sched_;
     raft_server->RegisterLeaderChangeCallback([this](bool leader) {
       {
         std::lock_guard<std::recursive_mutex> guard(election_state_lock);
@@ -520,7 +527,7 @@ void RaftWorker::ShutDown() {
   StopSubmitThread();
 
   // Close RPC admission and drain the requests already admitted BEFORE the
-  // server is quiesced. RaftServiceImpl holds a bare RaftServer* and its
+  // server is quiesced. RaftServiceImpl holds a bare RaftSpecific* and its
   // handlers dereference it without any lifetime lease, so a handler fiber
   // that is mid-call on the server PollThread would otherwise still be
   // running when this thread reaches `delete rep_sched_` below. rrr attaches
@@ -542,8 +549,8 @@ void RaftWorker::ShutDown() {
   // wake job; deleting the scheduler after stopping the PollThread would leave
   // those fibers suspended with raw references to the server. rpc_server_,
   // which owns the service, is deleted below before the scheduler.
-  if (auto* raft_server = dynamic_cast<RaftServer*>(rep_sched_)) {
-    raft_server->PrepareForShutdown();
+  if (raft_sched_ != nullptr) {
+    raft_sched_->PrepareForShutdown();
   }
 
   // rrr::Server::~Server schedules its listener-close job on the PollThread.
@@ -566,11 +573,12 @@ void RaftWorker::ShutDown() {
   if (rep_sched_) {
     // Drop the frame's borrowed back-reference first; see
     // RaftFrame::ReleaseScheduler.
-    if (auto* raft_frame = dynamic_cast<RaftFrame*>(rep_frame_)) {
-      raft_frame->ReleaseScheduler();
+    if (raft_frame_ != nullptr) {
+      raft_frame_->ReleaseScheduler();
     }
     delete rep_sched_;
     rep_sched_ = nullptr;
+    raft_sched_ = nullptr;
   }
 
   // Shutdown poll threads only after every owner that can enqueue work onto
@@ -757,7 +765,7 @@ void RaftWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
 
   // @unsafe
   {
-  RaftServer* raft_server = GetRaftServer();
+  RaftSpecific* raft_server = GetRaftServer();
   if (!raft_server) {
     Log_error("[RAFT-SUBMIT] RaftServer is null in Submit()");
     return;

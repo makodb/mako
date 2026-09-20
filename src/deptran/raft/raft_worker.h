@@ -49,6 +49,8 @@ using watermark_callback_t = std::function<int(const char*&, int, int, int,
     std::queue<std::tuple<int, int, int, int, const char*>>&)>;
 
 // @unsafe - class contains raw pointers and manual memory management
+class RaftFrame;  // raft/frame.h; the worker holds its frame typed (raft_frame_)
+
 class RaftWorker {
 private:
   // Callbacks for log application
@@ -118,7 +120,9 @@ public:
 
   // Raft protocol components
   Frame* rep_frame_ = nullptr;
-  TxLogServer* rep_sched_ = nullptr;      // Points to RaftServer
+  RaftFrame* raft_frame_ = nullptr;       // rep_frame_, as the frame it is
+  TxLogServer* rep_sched_ = nullptr;      // the scheduler, as every engine's worker holds it
+  RaftSpecific* raft_sched_ = nullptr;    // the same object, as the interface this worker drives
   Communicator* rep_commo_ = nullptr;
 
   // RPC infrastructure
@@ -258,10 +262,9 @@ public:
     }
   }
 
-  // @unsafe - uses dynamic_cast, returns raw pointer
-  RaftServer* GetRaftServer() {
-    return dynamic_cast<RaftServer*>(rep_sched_);
-  }
+  // @safe - the typed pointer the worker took at creation; null before
+  // SetupBase and after ShutDown.
+  RaftSpecific* GetRaftServer() { return raft_sched_; }
 
   // @unsafe - uses std::make_shared, raw pointers
   rusty::Arc<TpcCommitCommand> CreateRaftLogCommand(

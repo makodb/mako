@@ -5800,6 +5800,20 @@ impl RaftSpecific for RaftServerBase {
         self.disconnected_.load(rusty::sync::atomic::Ordering::Acquire)
     }
 
+    fn SiteId(&self) -> u16 {
+        self.site_id_
+    }
+
+    fn PartitionId(&self) -> u32 {
+        self.partition_id_
+    }
+
+    // See the trait: this is the unlocked read get_outstanding_logs always
+    // made, kept as it was until step C makes it an atomic.
+    fn CommitIndex(&self) -> u64 {
+        self.state_.commit_index_
+    }
+
     // @unsafe - CALLER MUST NOT HOLD mtx_. Appends one command locally and
     // then publishes the replication wake, in that order: the wake path never
     // nests the gate's owner mutex below Raft state.
@@ -5881,7 +5895,7 @@ impl RaftSpecific for RaftServerBase {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=0224edbc47b253e15270194be159044e0fad756a10ad525887abc3786ccbd4d7*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=da6bdf8880d84a5ff44a45e32d46def9e9c6d53b28efe0726778dedbcfb807e4*/
 enum class RaftEnvError : int32_t;
 constexpr RaftEnvError RaftEnvError_NOT_A_WHOLE_NUMBER();
 constexpr RaftEnvError RaftEnvError_OVERFLOWS_U64();
@@ -6132,6 +6146,9 @@ struct RaftServerBase : public RaftSpecific {
     void RegisterLeaderChangeCallback(rusty::RaftLeaderChangeCb cb);
     bool IsRpcReady() const;
     bool IsDisconnected() const;
+    uint16_t SiteId() const;
+    uint32_t PartitionId() const;
+    uint64_t CommitIndex() const;
     scheduler_h::RaftStartResult Start(const rusty::RaftCommand& cmd, uint64_t* index, uint64_t* term);
     void OnRequestVote(uint64_t lst_log_idx, int64_t lst_log_term, uint16_t can_id, int64_t can_term, int64_t* reply_term, int8_t* vote_granted);
     void OnAppendEntries(uint64_t leader_current_term, uint16_t leader_site_id, uint64_t leader_prev_log_index, uint64_t leader_prev_log_term, uint64_t leader_commit_index, const rusty::RaftCommand& cmd, uint64_t leader_next_log_term, uint64_t* follower_append_ok, uint64_t* follower_current_term, uint64_t* follower_last_log_index);
@@ -7522,6 +7539,18 @@ inline bool RaftServerBase::IsDisconnected() const {
     return this->disconnected_.load(rusty::sync::atomic::Ordering::Acquire);
 }
 
+inline uint16_t RaftServerBase::SiteId() const {
+    return this->site_id_;
+}
+
+inline uint32_t RaftServerBase::PartitionId() const {
+    return this->partition_id_;
+}
+
+inline uint64_t RaftServerBase::CommitIndex() const {
+    return this->state_.commit_index_;
+}
+
 inline scheduler_h::RaftStartResult RaftServerBase::Start(const rusty::RaftCommand& cmd, uint64_t* index, uint64_t* term) {
     {
         const auto _lock = RaftLockGuard::new_(&this->mtx_);
@@ -7728,259 +7757,53 @@ inline bool ElectionTimerLoop::await_vote_settled() const {
 static_assert(std::is_base_of_v<RaftSpecific, RaftServerBase>);
 static_assert(std::is_base_of_v<TxLogServer, RaftServerBase>);
 
+// The C++ shim over the Rust struct -- what is left after steps A and B of
+// docs/migration/raft/plan.md. Two special members the DSL cannot spell:
+// construction (two members the generated constructor cannot initialise; see
+// RaftServer::RaftServer in server.cc) and the destructor that runs Shutdown.
+// Plus, under RAFT_TEST_CORO, the RaftLab harness's window into private state.
+// Every behaviour the workers and the RPC service reach is a RaftSpecific
+// method on RaftServerBase (scheduler.h); every kernel in server.cc takes a
+// RaftServerBase* and never names this class.
 class RaftServer : public RaftServerBase {
  public:
-  // ==========================================================================
-  // ELECTION TIMER KERNELS
-  //
-  // The C++ half of the DSL-owned ElectionTimerLoop declared above. The Rust
-  // loop holds this object only as an opaque void*, so every one of its reads
-  // and writes of RaftServer state lands here, where the lock discipline is
-  // the same as the inline code these replace. Each is the smallest operation
-  // that genuinely cannot cross the boundary: a recursive_mutex acquisition, a
-  // private member read, an rrr logging macro, or a call to another method.
-  // ==========================================================================
-
-  // @unsafe - suspends this fiber on the wake gate's election waiter
-
-
-
-  // @unsafe - suspends on the wake gate; false means shutdown
-
-
-  // set_site_identity / set_commo / reg_learner_action are RaftServerBase's
-  // now -- the DSL struct implements TxLogServer directly.
-
- private:
-
-
-
-  // @unsafe - Initializes the in-memory snapshot manager and restores the exact
-  // state machine bytes before publishing any recovered snapshot boundary.
- public:  // for the kernel bridge (server.cc); private again once converted
-  bool InitializeSnapshotManager();
- private:
-
- public:  // for the kernel bridge (server.cc); private again once converted
-  // @unsafe - Caller holds state_machine_apply_mtx_ then mtx_. Fully validates
-  // and stages a production state-machine image without publishing it, or
-  // validates the RaftLab marker payload and returns a no-op transaction.
-  std::unique_ptr<PreparedStateMachineSnapshotInstall>
-  PrepareStateMachineSnapshotLocked(
-      const std::string& data,
-      uint64_t last_included_index,
-      uint64_t last_included_term);
- private:
-
-  // @unsafe - Startup helper for a snapshot already held by the manager.
-  // Prepares and immediately commits its state-machine image before publishing
-  // recovery.
- public:  // for the kernel bridge (server.cc); private again once converted
-  bool LoadStateMachineSnapshotLocked(
-      const std::string& data,
-      uint64_t last_included_index,
-      uint64_t last_included_term);
- private:
-
-
-  // @unsafe - Requires state_machine_apply_mtx_ and mtx_ in that order.
-  // Split out so the apply trigger and RaftLabTest's LabAccess-driven manager
-  // rotation helper can preserve the global lock order without re-locking.
-
-
-  // ============================================================================
-
-  // Heartbeat quorum proof, guarded by mtx_. HeartbeatLoop stamps every round
-  // with state_.heartbeat_round_ and records the newest round that a quorum of the
-  // membership configuration confirmed in the current term.
-  // Election timing is one mutex-protected campaign. A reset samples exactly
-  // one timeout and advances the generation; the timer must never redraw the
-  // random timeout on each poll or start a campaign from an expired snapshot
-  // after a concurrent heartbeat reset.
-
-  // Cross-thread submissions publish only to this level-triggered gate.  The
-  // gate posts a gate-only job to the heartbeat PollThread; IntEvent itself is
-  // created, signalled, waited, and cleared exclusively by that owner thread.
- public:  // for the kernel bridge (server.cc); private again once the gate
-          // itself can live in RaftServerBase
- private:
-  // @unsafe - Owner-thread-only wait on the gate's IntEvent.
-  // @unsafe - Owner-thread-only election delay that shutdown can interrupt.
-  // @unsafe - Stops new wake jobs and releases the gate's PollThread handle.
- public:  // for the kernel bridge (server.cc); private again once converted
- private:
-
-
-  // ============================================================================
-  // PREFERRED REPLICA SYSTEM - Election timeout bias
-  // ============================================================================
-  // One replica may be designated as the "preferred leader". Voting itself
-  // carries no bias: any replica can win any election. The preference only
-  // shapes GetElectionTimeout(), so the preferred replica campaigns sooner
-  // than its peers and normally wins the startup election.
-
-
-  // The campaign that owns state_.req_voting_; a delayed vote result applies only to
-  // this exact term.
-
-
-  // Reads the dynamically configurable preferred-leader identity.
-  //
-  // Must be called with mtx_ held. The one caller repo-wide is
-  // GetElectionTimeout(), which is itself called only from resetTimer(), which
-  // takes mtx_ -- so the inner re-acquisition this used to take was a no-op on
-  // the recursive mutex, and removing it states the precondition as a type-
-  // adjacent comment rather than re-checking it at runtime. See
-
-  // ============================================================================
-
-
- public:  // for the kernel bridge (server.cc); private again once converted
-  // @safe - external calls marked @external, core replication loop
- private:
-
-  // @unsafe - raw pointer output parameters (reply_term, vote_granted)
-  // Memory-only voting: record the vote and reply immediately.
-  // PUBLIC for the raft_do_vote trampoline, which raft_on_request_vote calls
-  // back through. An extern "C" function is not a member and cannot reach a
-  // private one; the existing heartbeat trampolines work only because
-  // HeartbeatPhase0..3 are public. Both go back to private when their own
-  // bodies convert and the trampolines are deleted.
- public:
-
- private:
-
-
-
-
-
- public:  // for the kernel bridge (server.cc); private again once converted
- private:
- public:  // for the raft_ae_* trampolines; back to private when converted
- private:
-
-  // @unsafe - const char* parameter type requires unsafe context
-  // Acquiring entry point. See resetTimerLocked for the body.
-  // CALLER MUST HOLD mtx_.
- public:  // for the raft_ae_* trampolines; back to private when converted
- private:
-
-
- public:
-  // @unsafe - Returns the scheduler's non-owning typed communicator.
-  RaftCommo* commo() {
-    auto* communicator = dynamic_cast<RaftCommo*>(commo_);
-    verify(communicator != nullptr);
-    return communicator;
-  }
+  RaftServer();
+  // @unsafe - thread join and timer cleanup require manual resource management
+  ~RaftServer();
 
 #ifdef RAFT_TEST_CORO
   // Test-only inspection surface for the RaftLab harness (testconf.cc,
   // test.cc). It replaces the former friendship grants to RaftTestConfig
   // and RaftLabTest: a nested class may name the enclosing class's private
-  // members, so no friendship is required. Each
-  // accessor hands back a reference to one private field (read and write
-  // through the same function) or forwards one private method. Production
-  // code must not use it; the Rust port expresses this as a #[cfg(test)]
-  // module.
+  // members, so no friendship is required. Each accessor hands back a
+  // reference to one field (read and write through the same function) or
+  // forwards one method. Production code must not use it; the Rust port
+  // expresses this as a #[cfg(test)] module (plan.md, step C).
   struct LabAccess {
     // --- shutdown / apply-gate state the harness synchronizes with ---
     static rusty::sync::atomic::AtomicBool& stop(RaftServer& s) { return s.stop_; }
     static std::mutex& state_machine_apply_mtx(RaftServer& s) { return s.state_machine_apply_mtx_; }
-
     // --- role / election state inspected by tests ---
     static bool& is_leader(RaftServer& s) { return s.state_.is_leader_; }
     static siteid_t& vote_for(RaftServer& s) { return s.state_.vote_for_; }
     static siteid_t& current_leader_id(RaftServer& s) { return s.state_.current_leader_id_; }
     static bool& req_voting(RaftServer& s) { return s.state_.req_voting_; }
     static bool& election_in_progress(RaftServer& s) { return s.state_.election_in_progress_; }
-
     // --- snapshot boundary ---
     static slotid_t& snapidx(RaftServer& s) { return s.state_.snapidx_; }
     static ballot_t& snapterm(RaftServer& s) { return s.state_.snapterm_; }
     static std::shared_ptr<janus::raft::SnapshotManager>& snapshot_manager(RaftServer& s) { return s.snapshot_manager_; }
-
     // --- private methods the harness drives directly ---
     static bool CreateSnapshotLocked(RaftServer& s) { return s.CreateSnapshotLocked(); }
   };
-#endif
 
-
-
- public:  // for the kernel bridge (server.cc); private again once converted
-  // @unsafe - Binds the cross-thread wake gate to HeartbeatLoop's PollThread.
-  // Must run before HeartbeatLoop starts (Setup does so).
- public:
-
-
-  // @safe - Acquire-load paired with the final startup Release publication.
-
-
-  // Acquire-load pairs with PublishAppliedIndex after app_next_ completes.
-  // @safe - Rusty atomic read.
-
-
-  // @unsafe - Locks mtx_ before reading the role published by setIsLeader().
-  // CALLER MUST HOLD mtx_. The looping_ check is an atomic, so it needs no
-  // lock and stays here: it is the guard against reading members during
-  // destruction.
-
-  
-
-  // @unsafe - external calls plus output pointer writes and shared_ptr ops
-  // take janus::Command;
-  // shared_ptr<Marshallable> callers auto-convert via Command's
-  // implicit ctor.
-  RaftStartResult SetLocalAppend(const janus::Command& cmd,
-                                 uint64_t* term,
-                                 uint64_t* index) {
-    // Must be called with mtx_ held. Both callers -- setIsLeader() and
-    // Start() -- take it before reaching here; the re-acquisition this
-    // replaces was a no-op on the recursive mutex. Tranche 4b.
-    // The pre-append tail, which is what this out-parameter has always
-    // reported -- the new entry lands at *index + 1.
-    *index = state_.raft_log_.last_index();
-    const uint64_t appended = state_.raft_log_.append(
-        RaftEntry::new_(state_.current_term_, cmd));
-    verify(appended == *index + 1);
-
-    // @unsafe
-    {
-      *term = state_.current_term_ ;
-    }
-    return RaftStartResult::APPENDED;
+  // @unsafe - Locks mtx_ and returns a copy of the shared_ptr. Test-only: the
+  // three callers are in test.cc. Stays C++ because copying a shared_ptr is
+  // a refcount the opaque Rust carrier cannot touch.
+  std::shared_ptr<janus::raft::SnapshotManager> GetSnapshotManager() {
+    std::lock_guard<RaftCheckedMutex> lock(mtx_);
+    return snapshot_manager_;
   }
-
-
-  // Unwraps RaftLog::get's borrow into a pointer for the C++ callers.
-  //
-  // Sound because every caller reads a field out of the result before the
-  // next statement that could touch the log -- audited one by one, and the
-  // reason RaftLog::get can return a borrow instead of a refcounted handle.
-  // The Rust side never sees this pointer.
-  // @unsafe - borrow flattened to a pointer; caller must hold mtx_
-
-  RaftServer();
-  // @unsafe - thread join and timer cleanup require manual resource management
-  ~RaftServer() ;
-
-  // ============================================================================
-  // SNAPSHOT SUPPORT PUBLIC API
-  // ============================================================================
-
-  /**
-   * Set the snapshot manager for this server.
-   * Should be called before starting the server.
-   * @param manager Shared pointer to SnapshotManager implementation
-   */
-  /**
-   * Get the current snapshot manager.
-   * @return Shared pointer to SnapshotManager, or nullptr if not set
-   */
-  // @unsafe - Locks mtx_ and returns a copy of the shared_ptr.
-  std::shared_ptr<janus::raft::SnapshotManager> GetSnapshotManager();
-  // Start, OnRequestVote, OnAppendEntries and OnInstallSnapshot are
-  // RaftSpecific methods on RaftServerBase now (scheduler.h); the service
-  // and the workers reach them through the base.
+#endif
 };
 } // namespace janus

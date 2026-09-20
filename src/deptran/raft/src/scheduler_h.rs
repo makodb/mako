@@ -33,6 +33,14 @@ pub trait RaftSpecific: TxLogServer {
     // Admission, as the RPC service checks it before every handler.
     fn IsRpcReady(&self) -> bool;
     fn IsDisconnected(&self) -> bool;
+    // Identity and progress, read-only: the three facts the main helper used
+    // to read as fields through the concrete type. CommitIndex is the
+    // pre-existing unlocked cross-thread read behind get_outstanding_logs --
+    // a metric polled from the transaction path, tolerated racy since before
+    // the conversion; step C gives it an atomic mirror.
+    fn SiteId(&self) -> u16;
+    fn PartitionId(&self) -> u32;
+    fn CommitIndex(&self) -> u64;
     // Replication entry: the worker's "replicate this command".
     fn Start(&mut self, cmd: &rusty::RaftCommand, index: *mut u64,
              term: *mut u64) -> RaftStartResult;
