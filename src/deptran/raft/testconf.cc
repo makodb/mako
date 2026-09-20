@@ -152,7 +152,7 @@ void RaftTestConfig::SetLearnerAction(void) {
     // Runtime apply takes the same gate before copying/invoking app_next_.
     // Replace the fail-closed startup placeholder without a data race.
     std::lock_guard<std::mutex> apply_lock(
-        RaftServer::LabAccess::state_machine_apply_mtx(*frame->svr_));
+        frame->svr_->LabApplyMutex());
     frame->svr_->reg_learner_action(RaftTestConfig::commit_callbacks[svr]);
   }
 }

@@ -39,9 +39,9 @@ void ServerWorker::SetupBase() {
   rep_frame_->site_info_ = site_info_;
   rep_sched_ = rep_frame_->CreateRaftScheduler();
   verify(rep_sched_ != nullptr);
-  rep_sched_->partition_id_ = site_info_->partition_id_;
-  rep_sched_->loc_id_ = site_info_->locale_id;
-  rep_sched_->site_id_ = site_info_->id;
+  // One interface call rather than three field writes, as RaftWorker does.
+  rep_sched_->set_site_identity(site_info_->locale_id, site_info_->id,
+                                site_info_->partition_id_);
 
   // RaftLab installs its agreement oracle only after all communicators exist.
   // Keep recovery fail-closed in the meantime: an unexpected replay must stop
@@ -112,8 +112,7 @@ void ServerWorker::SetupCommo() {
   if (rep_frame_) {
     rep_commo_ = rep_frame_->CreateCommo(svr_poll_thread_worker_.clone());
     verify(rep_commo_ != nullptr);
-    rep_sched_->commo_ = rep_commo_;
-    verify(rep_sched_->commo_ != nullptr);
+    rep_sched_->set_commo(rep_commo_);
   }
 
   Reactor::get_reactor()->server_id_.set(site_info_->id);
@@ -137,7 +136,7 @@ void ServerWorker::SetupCommo() {
   rpc_server_->set_admission_ready(true);
 
   // Keep the coroutine scheduler alive for the embedded lab cluster.
-  if (rep_sched_->site_id_ == 0) {
+  if (rep_sched_->SiteId() == 0) {
     Reactor::get_reactor()->run_loop(true, true);
   }
 }

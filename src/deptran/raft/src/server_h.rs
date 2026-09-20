@@ -4124,6 +4124,68 @@ impl RaftServerBase {
     }
 }
 
+// RaftLab inspection: read-only views of the state the 25-case suite asserts
+// on, plus the two mutexes it takes and the one method it drives. Every one
+// is a getter, so test.cc and testconf.cc hold the layout of nothing --
+// this replaces the C++ shim's LabAccess, which named the fields directly.
+// Emitted unconditionally because the DSL has no cfg; they are inline reads.
+// CALLER MUST HOLD LabMutex() for the state_ reads, as the tests always did.
+#[allow(non_snake_case)]
+impl RaftServerBase {
+    pub fn LabMutex(&mut self) -> &mut rusty::RaftCheckedMutex {
+        &mut self.mtx_
+    }
+    pub fn LabApplyMutex(&mut self) -> &mut rusty::RaftStdMutex {
+        &mut self.state_machine_apply_mtx_
+    }
+    pub fn LabStopped(&self) -> bool {
+        self.stop_.load(rusty::sync::atomic::Ordering::Acquire)
+    }
+    pub fn LabCurrentTerm(&self) -> u64 {
+        self.state_.current_term_
+    }
+    pub fn LabCommitIndex(&self) -> u64 {
+        self.state_.commit_index_
+    }
+    pub fn LabExecuteIndex(&self) -> u64 {
+        self.state_.execute_index_
+    }
+    pub fn LabLastLogIndex(&self) -> u64 {
+        self.state_.raft_log_.last_index()
+    }
+    pub fn LabLogBase(&self) -> u64 {
+        self.state_.raft_log_.base()
+    }
+    pub fn LabIsLeader(&self) -> bool {
+        self.state_.is_leader_
+    }
+    pub fn LabVoteFor(&self) -> u16 {
+        self.state_.vote_for_
+    }
+    pub fn LabCurrentLeaderId(&self) -> u16 {
+        self.state_.current_leader_id_
+    }
+    pub fn LabReqVoting(&self) -> bool {
+        self.state_.req_voting_
+    }
+    pub fn LabElectionInProgress(&self) -> bool {
+        self.state_.election_in_progress_
+    }
+    pub fn LabSnapIdx(&self) -> u64 {
+        self.state_.snapidx_
+    }
+    pub fn LabSnapTerm(&self) -> i64 {
+        self.state_.snapterm_
+    }
+    pub fn LabSnapshotManager(&self) -> &rusty::RaftSnapshotManagerPtr {
+        &self.snapshot_manager_
+    }
+    // The whole log, read-only, for RaftLogFingerprint.
+    pub fn LabLog(&self) -> &RaftLog {
+        &self.state_.raft_log_
+    }
+}
+
 // The three methods a worker reaches through a TxLogServer base pointer.
 // Raft's set_site_identity mirrors the ids into state_ as well, where
 // converted Rust bodies can see them, and asserts the copies agree.

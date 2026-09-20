@@ -5840,6 +5840,68 @@ impl RaftServerBase {
     }
 }
 
+// RaftLab inspection: read-only views of the state the 25-case suite asserts
+// on, plus the two mutexes it takes and the one method it drives. Every one
+// is a getter, so test.cc and testconf.cc hold the layout of nothing --
+// this replaces the C++ shim's LabAccess, which named the fields directly.
+// Emitted unconditionally because the DSL has no cfg; they are inline reads.
+// CALLER MUST HOLD LabMutex() for the state_ reads, as the tests always did.
+#[allow(non_snake_case)]
+impl RaftServerBase {
+    pub fn LabMutex(&mut self) -> &mut rusty::RaftCheckedMutex {
+        &mut self.mtx_
+    }
+    pub fn LabApplyMutex(&mut self) -> &mut rusty::RaftStdMutex {
+        &mut self.state_machine_apply_mtx_
+    }
+    pub fn LabStopped(&self) -> bool {
+        self.stop_.load(rusty::sync::atomic::Ordering::Acquire)
+    }
+    pub fn LabCurrentTerm(&self) -> u64 {
+        self.state_.current_term_
+    }
+    pub fn LabCommitIndex(&self) -> u64 {
+        self.state_.commit_index_
+    }
+    pub fn LabExecuteIndex(&self) -> u64 {
+        self.state_.execute_index_
+    }
+    pub fn LabLastLogIndex(&self) -> u64 {
+        self.state_.raft_log_.last_index()
+    }
+    pub fn LabLogBase(&self) -> u64 {
+        self.state_.raft_log_.base()
+    }
+    pub fn LabIsLeader(&self) -> bool {
+        self.state_.is_leader_
+    }
+    pub fn LabVoteFor(&self) -> u16 {
+        self.state_.vote_for_
+    }
+    pub fn LabCurrentLeaderId(&self) -> u16 {
+        self.state_.current_leader_id_
+    }
+    pub fn LabReqVoting(&self) -> bool {
+        self.state_.req_voting_
+    }
+    pub fn LabElectionInProgress(&self) -> bool {
+        self.state_.election_in_progress_
+    }
+    pub fn LabSnapIdx(&self) -> u64 {
+        self.state_.snapidx_
+    }
+    pub fn LabSnapTerm(&self) -> i64 {
+        self.state_.snapterm_
+    }
+    pub fn LabSnapshotManager(&self) -> &rusty::RaftSnapshotManagerPtr {
+        &self.snapshot_manager_
+    }
+    // The whole log, read-only, for RaftLogFingerprint.
+    pub fn LabLog(&self) -> &RaftLog {
+        &self.state_.raft_log_
+    }
+}
+
 // The three methods a worker reaches through a TxLogServer base pointer.
 // Raft's set_site_identity mirrors the ids into state_ as well, where
 // converted Rust bodies can see them, and asserts the copies agree.
@@ -6102,7 +6164,7 @@ impl RaftSpecific for RaftServerBase {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=ce4c8070c3947869c298bb2edeea281bfbc3b10b466546191827166f586f62aa*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=f7b4d615687af53ac4cf0440182cefadb9c0ef05c28054602fbf8f086a759170*/
 enum class RaftEnvError : int32_t;
 constexpr RaftEnvError RaftEnvError_NOT_A_WHOLE_NUMBER();
 constexpr RaftEnvError RaftEnvError_OVERFLOWS_U64();
@@ -6354,6 +6416,23 @@ struct RaftServerBase : public RaftSpecific {
     uint64_t LoadCurrentConfig();
     bool AeDecodePayload(const rusty::ffi::c_void* cmd, bool has_cmd, uint64_t leader_prev_log_index, uint64_t leader_next_log_term);
     void AeApplyIncoming(const rusty::ffi::c_void* cmd, uint64_t leader_prev_log_index, uint64_t leader_next_log_term, uint64_t first_write_index);
+    rusty::RaftCheckedMutex& LabMutex();
+    rusty::RaftStdMutex& LabApplyMutex();
+    bool LabStopped() const;
+    uint64_t LabCurrentTerm() const;
+    uint64_t LabCommitIndex() const;
+    uint64_t LabExecuteIndex() const;
+    uint64_t LabLastLogIndex() const;
+    uint64_t LabLogBase() const;
+    bool LabIsLeader() const;
+    uint16_t LabVoteFor() const;
+    uint16_t LabCurrentLeaderId() const;
+    bool LabReqVoting() const;
+    bool LabElectionInProgress() const;
+    uint64_t LabSnapIdx() const;
+    int64_t LabSnapTerm() const;
+    const rusty::RaftSnapshotManagerPtr& LabSnapshotManager() const;
+    const RaftLog& LabLog() const;
     void set_site_identity(uint32_t loc_id, uint16_t site_id, uint32_t partition_id);
     void set_commo(rusty::Communicator* commo);
     void reg_learner_action(rusty::LearnerAction learner_action);
@@ -7755,6 +7834,74 @@ inline void RaftServerBase::AeApplyIncoming(const rusty::ffi::c_void* cmd, uint6
     }
 }
 
+inline rusty::RaftCheckedMutex& RaftServerBase::LabMutex() {
+    return this->mtx_;
+}
+
+inline rusty::RaftStdMutex& RaftServerBase::LabApplyMutex() {
+    return this->state_machine_apply_mtx_;
+}
+
+inline bool RaftServerBase::LabStopped() const {
+    return this->stop_.load(rusty::sync::atomic::Ordering::Acquire);
+}
+
+inline uint64_t RaftServerBase::LabCurrentTerm() const {
+    return this->state_.current_term_;
+}
+
+inline uint64_t RaftServerBase::LabCommitIndex() const {
+    return this->state_.commit_index_;
+}
+
+inline uint64_t RaftServerBase::LabExecuteIndex() const {
+    return this->state_.execute_index_;
+}
+
+inline uint64_t RaftServerBase::LabLastLogIndex() const {
+    return this->state_.raft_log_.last_index();
+}
+
+inline uint64_t RaftServerBase::LabLogBase() const {
+    return this->state_.raft_log_.base();
+}
+
+inline bool RaftServerBase::LabIsLeader() const {
+    return this->state_.is_leader_;
+}
+
+inline uint16_t RaftServerBase::LabVoteFor() const {
+    return this->state_.vote_for_;
+}
+
+inline uint16_t RaftServerBase::LabCurrentLeaderId() const {
+    return this->state_.current_leader_id_;
+}
+
+inline bool RaftServerBase::LabReqVoting() const {
+    return this->state_.req_voting_;
+}
+
+inline bool RaftServerBase::LabElectionInProgress() const {
+    return this->state_.election_in_progress_;
+}
+
+inline uint64_t RaftServerBase::LabSnapIdx() const {
+    return this->state_.snapidx_;
+}
+
+inline int64_t RaftServerBase::LabSnapTerm() const {
+    return this->state_.snapterm_;
+}
+
+inline const rusty::RaftSnapshotManagerPtr& RaftServerBase::LabSnapshotManager() const {
+    return this->snapshot_manager_;
+}
+
+inline const RaftLog& RaftServerBase::LabLog() const {
+    return this->state_.raft_log_;
+}
+
 inline void RaftServerBase::set_site_identity(uint32_t loc_id, uint16_t site_id, uint32_t partition_id) {
     this->loc_id_ = std::move(loc_id);
     this->site_id_ = std::move(site_id);
@@ -8075,53 +8222,18 @@ inline bool ElectionTimerLoop::await_vote_settled() const {
 static_assert(std::is_base_of_v<RaftSpecific, RaftServerBase>);
 static_assert(std::is_base_of_v<TxLogServer, RaftServerBase>);
 
-// The C++ shim over the Rust struct -- what is left after steps A and B of
-// docs/migration/raft/plan.md. Two special members the DSL cannot spell:
-// construction (two members the generated constructor cannot initialise; see
-// RaftServer::RaftServer in server.cc) and the destructor that runs Shutdown.
-// Plus, under RAFT_TEST_CORO, the RaftLab harness's window into private state.
-// Every behaviour the workers and the RPC service reach is a RaftSpecific
-// method on RaftServerBase (scheduler.h); every kernel in server.cc takes a
-// RaftServerBase* and never names this class.
+// The C++ shim over the Rust struct -- what is left after steps A, B and C of
+// docs/migration/raft/plan.md: the two special members the DSL cannot spell,
+// construction and the destructor that runs Shutdown. Every behaviour the
+// workers and the RPC service reach is a RaftSpecific method on RaftServerBase
+// (scheduler.h); every kernel in server.cc takes values, carriers or a
+// RaftServerBase* it only calls methods on; the RaftLab suite reads through
+// the Lab* getters above. Nothing outside the struct's own generated region
+// names one of its fields.
 class RaftServer : public RaftServerBase {
  public:
   RaftServer();
   // @unsafe - thread join and timer cleanup require manual resource management
   ~RaftServer();
-
-#ifdef RAFT_TEST_CORO
-  // Test-only inspection surface for the RaftLab harness (testconf.cc,
-  // test.cc). It replaces the former friendship grants to RaftTestConfig
-  // and RaftLabTest: a nested class may name the enclosing class's private
-  // members, so no friendship is required. Each accessor hands back a
-  // reference to one field (read and write through the same function) or
-  // forwards one method. Production code must not use it; the Rust port
-  // expresses this as a #[cfg(test)] module (plan.md, step C).
-  struct LabAccess {
-    // --- shutdown / apply-gate state the harness synchronizes with ---
-    static rusty::sync::atomic::AtomicBool& stop(RaftServer& s) { return s.stop_; }
-    static std::mutex& state_machine_apply_mtx(RaftServer& s) { return s.state_machine_apply_mtx_; }
-    // --- role / election state inspected by tests ---
-    static bool& is_leader(RaftServer& s) { return s.state_.is_leader_; }
-    static siteid_t& vote_for(RaftServer& s) { return s.state_.vote_for_; }
-    static siteid_t& current_leader_id(RaftServer& s) { return s.state_.current_leader_id_; }
-    static bool& req_voting(RaftServer& s) { return s.state_.req_voting_; }
-    static bool& election_in_progress(RaftServer& s) { return s.state_.election_in_progress_; }
-    // --- snapshot boundary ---
-    static slotid_t& snapidx(RaftServer& s) { return s.state_.snapidx_; }
-    static ballot_t& snapterm(RaftServer& s) { return s.state_.snapterm_; }
-    static std::shared_ptr<janus::raft::SnapshotManager>& snapshot_manager(RaftServer& s) { return s.snapshot_manager_; }
-    // --- private methods the harness drives directly ---
-    static bool CreateSnapshotLocked(RaftServer& s) { return s.CreateSnapshotLocked(); }
-  };
-
-  // @unsafe - Locks mtx_ and returns a copy of the shared_ptr. Test-only: the
-  // three callers are in test.cc. Stays C++ because copying a shared_ptr is
-  // a refcount the opaque Rust carrier cannot touch.
-  std::shared_ptr<janus::raft::SnapshotManager> GetSnapshotManager() {
-    std::lock_guard<RaftCheckedMutex> lock(mtx_);
-    return snapshot_manager_;
-  }
-#endif
 };
 } // namespace janus
