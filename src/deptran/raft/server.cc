@@ -1,5 +1,7 @@
 #include <stdint.h>
 #include <stddef.h>
+#include <charconv>   // std::from_chars -- the noexcept parse, see raft_parse_u64
+#include <cstring>    // std::strlen, for the same
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
@@ -38,7 +40,6 @@ import rusty;   // rusty::BTreeSet is a btree_port C++20 module, not a header
 //   std::getenv: [safe, (const char*) -> const char*]
 //   std::tolower: [safe, (int) -> int]
 //   std::transform: [safe, (...) -> void]
-//   std::stoull: [safe, (const std::string&) -> uint64_t]
 //   std::stoll: [safe, (const std::string&) -> int64_t]
 //   std::to_string: [safe, (...) -> owned std::string]
 //   std::min: [safe, (...) -> T]
@@ -271,6 +272,62 @@ static_assert(static_cast<uint16_t>(INVALID_SITEID) ==
 
 }  // namespace
 
+// ===========================================================================
+// THE EXCEPTION BOUNDARY
+//
+// Rust models failure as a VALUE; C++ models it as control flow. The two do
+// not compose: a C++ exception unwinding through a Rust frame is undefined
+// behaviour, so no DSL body may ever be on the stack when one is thrown.
+//
+// The rule this file follows, and the only rule that makes the two models
+// meet: an exception is converted to a value at the LAST C++ FRAME BEFORE
+// RUST, and above that line every failure is a value. This is the one place
+// that conversion happens. Seven call sites used to open-code it, each with
+// its own catch pair and its own wording.
+//
+// Two things it deliberately does NOT do:
+//
+//   - It does not format a diagnostic. `what` is a string literal, so the
+//     success path costs nothing; callers that have more to say (a slot id,
+//     a snapshot index) log it themselves when this returns false. That
+//     matters for raft_apply_invoke, which runs once per applied entry.
+//   - It does not decide what failure means. Some callers fail-stop, some
+//     return false, some publish a zero term. That belongs at the call site,
+//     which is exactly the argument for making the failure a value.
+//
+// @unsafe { the catch-all is the point }
+template <typename Fn>
+static bool raft_catch(uint16_t site_id, const char* what, Fn&& fn) {
+  try {
+    fn();
+    return true;
+  } catch (const std::exception& error) {
+    Log_error("[RAFT-GUARD] Site {}: {} threw: {}", site_id, what,
+              error.what());
+  } catch (...) {
+    Log_error("[RAFT-GUARD] Site {}: {} threw a non-std exception", site_id,
+              what);
+  }
+  return false;
+}
+
+// Parses a whole unsigned decimal, or reports failure. std::from_chars is
+// noexcept, which is why the three env readers below no longer need a catch:
+// the exception they were guarding against was an artifact of std::stoull,
+// not something the operation has to signal.
+//
+// STRICTER THAN std::stoull ON PURPOSE. stoull stops at the first
+// non-digit and returns what it had, so MAKO_RAFT_HEARTBEAT_INTERVAL_US
+// "5000x" silently configured 5000. This requires the whole string to be
+// consumed, so that input is now reported invalid -- and these readers
+// already fail-closed on invalid input, which is the treatment a
+// misconfiguration deserves.
+static bool raft_parse_u64(const char* raw, uint64_t* out) {
+  const char* const end = raw + std::strlen(raw);
+  const std::from_chars_result parsed = std::from_chars(raw, end, *out);
+  return parsed.ec == std::errc() && parsed.ptr == end;
+}
+
 // @unsafe - Caller holds the state-machine apply gate followed by mtx_. The
 // production callback must validate and stage without changing live state.
 // RaftLab has no application state, so it validates a strict index+term marker.
@@ -280,27 +337,21 @@ RaftServer::PrepareStateMachineSnapshotLocked(
     uint64_t last_included_index,
     uint64_t last_included_term) {
   if (prepare_sm_snapshot_cb_) {
-    try {
-      auto prepared =
-          prepare_sm_snapshot_cb_(data, last_included_index);
-      if (prepared == nullptr) {
-        Log_error("[RAFT-SNAPSHOT] Site {} state-machine prepare rejected "
-                  "snapshot index={} term={}",
-                  site_id_, last_included_index, last_included_term);
-      }
-      return prepared;
-    } catch (const std::exception& error) {
-      Log_error("[RAFT-SNAPSHOT] Site {} state-machine prepare threw for "
-                "snapshot index={} term={}: {}",
-                site_id_, last_included_index, last_included_term,
-                error.what());
-      return nullptr;
-    } catch (...) {
-      Log_error("[RAFT-SNAPSHOT] Site {} state-machine prepare threw for "
-                "snapshot index={} term={}",
+    std::unique_ptr<PreparedStateMachineSnapshotInstall> prepared;
+    if (!raft_catch(site_id_, "state-machine snapshot prepare", [&] {
+          prepared = prepare_sm_snapshot_cb_(data, last_included_index);
+        })) {
+      Log_error("[RAFT-SNAPSHOT] Site {} prepare was for snapshot index={} "
+                "term={}",
                 site_id_, last_included_index, last_included_term);
       return nullptr;
     }
+    if (prepared == nullptr) {
+      Log_error("[RAFT-SNAPSHOT] Site {} state-machine prepare rejected "
+                "snapshot index={} term={}",
+                site_id_, last_included_index, last_included_term);
+    }
+    return prepared;
   }
 
 #ifdef RAFT_TEST_CORO
@@ -349,18 +400,16 @@ bool RaftServer::LoadStateMachineSnapshotLocked(
   if (prepared == nullptr) {
     return false;
   }
-  try {
-    return prepared->Commit();
-  } catch (const std::exception& error) {
-    Log_error("[RAFT-SNAPSHOT] Site {} state-machine commit threw for "
-              "snapshot index={} term={}: {}",
-              site_id_, last_included_index, last_included_term, error.what());
-  } catch (...) {
-    Log_error("[RAFT-SNAPSHOT] Site {} state-machine commit threw for "
-              "snapshot index={} term={}",
+  bool committed = false;
+  if (!raft_catch(site_id_, "state-machine snapshot commit", [&] {
+        committed = prepared->Commit();
+      })) {
+    Log_error("[RAFT-SNAPSHOT] Site {} commit was for snapshot index={} "
+              "term={}",
               site_id_, last_included_index, last_included_term);
+    return false;
   }
-  return false;
+  return committed;
 }
 
 // @unsafe - Discovers, verifies, and restores SnapshotManager state before
@@ -370,17 +419,14 @@ bool RaftServer::InitializeSnapshotManager() {
   // stays here is the catch-all, which spanned the whole original body:
   // exceptions have no DSL spelling, and this one turns a throwing recovery
   // into a fail-stop rather than a half-restored replica.
-  try {
-    return InitializeSnapshotManagerLocked();
-  } catch (const std::exception& error) {
-    Log_error("[RAFT-SNAPSHOT] Site {} recovery threw: {}", site_id_,
-              error.what());
-  } catch (...) {
-    Log_error("[RAFT-SNAPSHOT] Site {} recovery threw an unknown exception",
-              site_id_);
+  bool recovered = false;
+  if (!raft_catch(site_id_, "snapshot recovery", [&] {
+        recovered = InitializeSnapshotManagerLocked();
+      })) {
+    FailStop();
+    return false;
   }
-  FailStop();
-  return false;
+  return recovered;
 }
 
 std::shared_ptr<janus::raft::SnapshotManager>
@@ -518,16 +564,13 @@ void raft_spawn_election_timer(RaftServerBase* self, uint64_t wait_int_us) {
 // have no DSL spelling in this dialect, and this one exists to turn a throwing
 // setup into a failed startup rather than a crash.
 bool raft_setup_internal_guarded(RaftServerBase* self) {
-  try {
-    return self->SetupInternal();
-  } catch (const std::exception& error) {
-    Log_error("[RAFT-STARTUP] Site {} setup threw: {}", self->site_id_,
-              error.what());
-  } catch (...) {
-    Log_error("[RAFT-STARTUP] Site {} setup threw an unknown exception",
-              self->site_id_);
+  bool ok = false;
+  if (!raft_catch(self->site_id_, "setup", [&] {
+        ok = self->SetupInternal();
+      })) {
+    return false;
   }
-  return false;
+  return ok;
 }
 
 // The shutdown barrier's yield. A reactor fiber sleeps as a fiber; production
@@ -561,11 +604,8 @@ int raft_env_snapshot_interval(uint64_t* out) {
   if (raw == nullptr || raw[0] == '\0') {
     return 0;
   }
-  try {
-    *out = std::stoull(raw);
-  } catch (const std::exception& error) {
-    Log_error("[RAFT-SNAPSHOT] Invalid snapshot interval '{}': {}", raw,
-              error.what());
+  if (!raft_parse_u64(raw, out)) {
+    Log_error("[RAFT-SNAPSHOT] Invalid snapshot interval '{}'", raw);
     return 2;
   }
   return 1;
@@ -674,17 +714,13 @@ int raft_install_snapshot_payload(RaftServerBase* self,
 // internal no-op is consumed without reaching the application. Returns false
 // when the callback threw, which fails the server stop.
 bool raft_apply_invoke(RaftServerBase* self, uint64_t id) {
-  try {
-    if (!raft_server_command_is_internal_noop(
-            self->pending_apply_command_.kind_,
-            TpcNoopCommand::static_kind())) {
-      self->app_next_(id, self->pending_apply_command_);
-    }
-  } catch (const std::exception& error) {
-    Log_error("[RAFT-APPLY] Site {} callback failed at slot {}: {}",
-              self->site_id_, id, error.what());
-    return false;
-  } catch (...) {
+  if (!raft_catch(self->site_id_, "apply callback", [&] {
+        if (!raft_server_command_is_internal_noop(
+                self->pending_apply_command_.kind_,
+                TpcNoopCommand::static_kind())) {
+          self->app_next_(id, self->pending_apply_command_);
+        }
+      })) {
     Log_error("[RAFT-APPLY] Site {} callback failed at slot {}",
               self->site_id_, id);
     return false;
@@ -705,18 +741,16 @@ void raft_thread_sleep_ms(uint64_t millis) {
 
 // (1)/(3) Setup's environment overrides, membership load, and fiber spawns.
 
-// std::getenv + std::stoull + the catch. Returns 0 when unset, 1 with the
-// parsed value in *out, 2 when the value is present but unparseable (the
-// diagnostic is logged here, where the raw string is).
+// std::getenv + raft_parse_u64. Returns 0 when unset, 1 with the parsed value
+// in *out, 2 when the value is present but unparseable (the diagnostic is
+// logged here, where the raw string is). No catch: the parse cannot throw.
 int raft_env_heartbeat_interval_us(uint64_t* out) {
   const char* raw = std::getenv("MAKO_RAFT_HEARTBEAT_INTERVAL_US");
   if (raw == nullptr || raw[0] == '\0') {
     return 0;
   }
-  try {
-    *out = std::stoull(raw);
-  } catch (const std::exception& error) {
-    Log_error("[RAFT] Invalid heartbeat interval '{}': {}", raw, error.what());
+  if (!raft_parse_u64(raw, out)) {
+    Log_error("[RAFT] Invalid heartbeat interval '{}'", raw);
     return 2;
   }
   return 1;
@@ -727,11 +761,8 @@ int raft_env_log_retention_window(uint64_t* out) {
   if (raw == nullptr || raw[0] == '\0') {
     return 0;
   }
-  try {
-    *out = std::stoull(raw);
-  } catch (const std::exception& error) {
-    Log_error("[RAFT] Invalid log retention window '{}': {}", raw,
-              error.what());
+  if (!raft_parse_u64(raw, out)) {
+    Log_error("[RAFT] Invalid log retention window '{}'", raw);
     return 2;
   }
   return 1;
@@ -820,15 +851,9 @@ bool raft_snapshot_serialize_and_save(RaftServerBase* self,
   // marker instead.
   std::string state_data;
   if (self->create_sm_snapshot_cb_) {
-    try {
-      state_data = self->create_sm_snapshot_cb_(snap_index);
-    } catch (const std::exception& error) {
-      Log_error("[RAFT-SNAPSHOT] Site {} state-machine snapshot callback threw: {}",
-                self->site_id_, error.what());
-      return false;
-    } catch (...) {
-      Log_error("[RAFT-SNAPSHOT] Site {} state-machine snapshot callback threw",
-                self->site_id_);
+    if (!raft_catch(self->site_id_, "state-machine snapshot callback", [&] {
+          state_data = self->create_sm_snapshot_cb_(snap_index);
+        })) {
       return false;
     }
     if (state_data.empty()) {
@@ -5538,17 +5563,10 @@ void RaftServer::OnInstallSnapshot(const uint64_t term,
   // The body is Rust (RaftServerBase::OnInstallSnapshotLocked). What stays
   // here is the catch-all around it -- exceptions have no DSL spelling --
   // and the rrr service layer's entry point by name on RaftServer.
-  try {
-    OnInstallSnapshotLocked(term, leader_id, last_included_index,
-                            last_included_term, &data, *term_out);
-  } catch (const std::exception& error) {
-    Log_error("[INSTALL-SNAPSHOT] Site {} threw while installing snapshot: {}",
-              site_id_, error.what());
-    FailStop();
-    *term_out = 0;
-  } catch (...) {
-    Log_error("[INSTALL-SNAPSHOT] Site {} threw while installing snapshot",
-              site_id_);
+  if (!raft_catch(site_id_, "snapshot install", [&] {
+        OnInstallSnapshotLocked(term, leader_id, last_included_index,
+                                last_included_term, &data, *term_out);
+      })) {
     FailStop();
     *term_out = 0;
   }
