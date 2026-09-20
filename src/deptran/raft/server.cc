@@ -505,14 +505,15 @@ void raft_queue_replication_shutdown_wake(
 rusty::RaftCommand raft_command_clone(const rusty::RaftCommand* cmd) {
   return *cmd;
 }
-// The leader no-op is compiled out under RAFT_TEST_CORO, where the lab suite
-// counts log entries. Conditional compilation has no spelling in this
-// dialect, so the predicate lives here and AppendLeaderNoop branches on it.
-bool raft_leader_noop_enabled() {
+// RAFT_TEST_CORO as a predicate. Conditional compilation has no spelling in
+// this dialect, so the flag is read here and the Rust callers branch on it:
+// AppendLeaderNoop skips the no-op in lab mode (the suite counts entries),
+// ConstructRuntime sets the lab's initial role.
+bool raft_lab_mode() {
 #ifdef RAFT_TEST_CORO
-  return false;
-#else
   return true;
+#else
+  return false;
 #endif
 }
 rusty::RaftCommand raft_noop_command() {
@@ -920,28 +921,25 @@ void raft_log_set_is_leader_entry(uint16_t site_id, uint32_t loc_id,
 }
 
 
+
+// ConstructRuntime's three kernels: what the C++ constructor did that the
+// generated constructor could not -- see RaftServerBase::ConstructRuntime.
+rusty::RaftAsyncCallbackLifetimePtr raft_new_callback_lifetime(
+    RaftServerBase* self) {
+  auto lifetime = std::make_shared<AsyncCallbackLifetime>();
+  lifetime->server = self;
+  return lifetime;
+}
+uint64_t raft_heartbeat_interval_default() { return HEARTBEAT_INTERVAL; }
+void raft_ensure_legacy_payload_registered() {
+  EnsureLegacyRaftLogPayloadRegistered();
+}
+
 }  // extern "C"
 
-RaftServer::RaftServer() {
-  // The two members RaftServerBase's generated constructor leaves at their
-  // zero value, because a DSL constructor can spell neither of them:
-  // std::make_shared, and a macro whose value depends on RAFT_TEST.
-  // replication_wake_gate_ is NOT among them any more: the gate's DSL block
-  // moved into server.h, so the generated constructor builds the Arc through
-  // rusty::Arc<ReplicationWakeGate>::make_with, which is what this
-  // member-initialiser used to do by hand.
-  async_callback_lifetime_ = std::make_shared<AsyncCallbackLifetime>();
-  heartbeat_interval_us_ = HEARTBEAT_INTERVAL;
-
-  async_callback_lifetime_->server = this;
-  // Keep the immutable kind-4 compatibility factory registered as soon as a
-  // Raft server exists so a legacy payload relayed by a peer still decodes.
-  EnsureLegacyRaftLogPayloadRegistered();
-#ifdef RAFT_TEST_CORO
-  setIsLeader(false);
-#endif
-  stop_.store(false, rusty::sync::atomic::Ordering::Release);
-}
+// The one thing a DSL constructor cannot be: this class's. Everything it
+// does is RaftServerBase::ConstructRuntime.
+RaftServer::RaftServer() { ConstructRuntime(); }
 
 // @unsafe - the reactor's event factory. The three wait methods on
 // RaftServerBase are Rust; this is the only step in them that is not, because

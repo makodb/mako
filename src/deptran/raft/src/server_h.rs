@@ -1287,12 +1287,20 @@ unsafe extern "C" {
     fn raft_election_timeouts() -> RaftElectionTimeouts;
     fn raft_log_set_is_leader_entry(site_id: u16, loc_id: u32, term: u64,
                                     prev_is_leader: bool, new_is_leader: bool);
-    // The leader no-op is compiled out under RAFT_TEST_CORO (the lab suite
-    // counts entries); conditional compilation has no spelling in this
-    // dialect, so the predicate is a kernel and AppendLeaderNoop branches on
-    // it. The command itself is a janus::Command the DSL cannot construct.
-    fn raft_leader_noop_enabled() -> bool;
+    // RAFT_TEST_CORO, as a predicate: conditional compilation has no spelling
+    // in this dialect. The lab suite counts log entries, so the leader no-op
+    // is skipped in lab mode, and the lab's initial role is set explicitly.
+    fn raft_lab_mode() -> bool;
+    // The leader no-op command: a janus::Command the DSL cannot construct.
     fn raft_noop_command() -> rusty::RaftCommand;
+    // What RaftServer's constructor used to do after the generated one, for
+    // ConstructRuntime: the shared lifetime gate whose `server` back-pointer
+    // is this object (a std::make_shared), the heartbeat interval (a macro
+    // whose value depends on RAFT_TEST), and the legacy payload registration.
+    fn raft_new_callback_lifetime(server: *mut RaftServerBase)
+        -> rusty::RaftAsyncCallbackLifetimePtr;
+    fn raft_heartbeat_interval_default() -> u64;
+    fn raft_ensure_legacy_payload_registered();
     // A copy of a janus::Command: a shared_ptr refcount the opaque carrier
     // cannot touch, made in C++ and handed back by value.
     fn raft_command_clone(cmd: *const rusty::RaftCommand) -> rusty::RaftCommand;
@@ -4015,10 +4023,10 @@ impl RaftServerBase {
     }
 
     // The new leader's no-op entry, so the term commits something without
-    // waiting for a client. Compiled out under RAFT_TEST_CORO; see the
-    // kernel declarations.
+    // waiting for a client. Skipped in lab mode (RAFT_TEST_CORO), where the
+    // suite counts entries; see raft_lab_mode.
     pub fn AppendLeaderNoop(&mut self) {
-        if !unsafe { raft_leader_noop_enabled() } {
+        if unsafe { raft_lab_mode() } {
             return;
         }
         let noop: rusty::RaftCommand = unsafe { raft_noop_command() };
@@ -4121,6 +4129,28 @@ impl RaftServerBase {
                 raft_verify(appended == index);
             }
         }
+    }
+}
+
+// What RaftServer's constructor does after the generated one. The generated
+// constructor initialises every field the DSL can spell; these two it could
+// not -- a std::make_shared whose payload points back at this object, and a
+// macro -- come from kernels now, and the rest is what the C++ constructor
+// did in order. RaftServer::RaftServer() is one call to this.
+#[allow(non_snake_case)]
+impl RaftServerBase {
+    pub fn ConstructRuntime(&mut self) {
+        self.async_callback_lifetime_ =
+            unsafe { raft_new_callback_lifetime(self as *mut RaftServerBase) };
+        self.heartbeat_interval_us_ =
+            unsafe { raft_heartbeat_interval_default() };
+        unsafe {
+            raft_ensure_legacy_payload_registered();
+        }
+        if unsafe { raft_lab_mode() } {
+            self.setIsLeader(false);
+        }
+        self.stop_.store(false, rusty::sync::atomic::Ordering::Release);
     }
 }
 

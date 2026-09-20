@@ -24,7 +24,7 @@ before trusting a number; the commands are given.
 | Rust share of `server.{h,cc}` authored lines | 71.6% | `conversion-log.md` |
 | data members on `class RaftServer` (the C++ shim) | 0 | it is 361 lines of forwarding, one ctor/dtor, four RPC entry points |
 | hand-written `raft_*` kernels in `server.cc` | **50**, 529 lines | column-0 definitions outside GEN/RUST regions |
-| ... of which reach into `RaftServerBase`'s fields | **24** | body contains `self->` / `server->` |
+| ... of which reach into `RaftServerBase`'s fields | **24** | body contains `self->` / `server->` (0 after step C; `scripts/raft_field_census.py`) |
 | ... of which downcast `RaftServerBase*` to `RaftServer*` | **12** | `static_cast<RaftServer*>(self)` |
 | ... of which pass values only | 21 | neither |
 | worker-side `dynamic_cast<RaftServer*>` | **6** | `raft_main_helper.cc`, `server_worker.cc`, `frame.cc`, `raft_worker.{h,cc}` |
@@ -168,19 +168,26 @@ apply groups); or, for the reactor group, a kernel that receives an
 read-only `Lab*` getters on the struct (done in C2; the DSL has no cfg, so
 they are emitted unconditionally, as inline reads).
 
-This is also where `mtx_` stops being a mutex *next to* the state and
-becomes `Mutex<RaftConsensusState>` owning it, because once no kernel
-holds a raw pointer into the struct, the lock guard can hand out the only
-reference. The `RaftCheckedMutex` abort-on-re-entry stays until then.
+`mtx_` is still a mutex *next to* the state, not `Mutex<RaftConsensusState>`
+owning it. Sized after C3: 34 lock sites, ~415 `state_.` reads and ~71
+writes across the two Rust modules; every `*Locked` method would take the
+guard's `&mut RaftConsensusState` instead of `&mut self`, and the struct
+would split into state-under-lock and everything else. The payoff --
+borrow-checked critical sections -- only materialises under real rustc, and
+the C++ `RaftCheckedMutex` abort-on-re-entry diagnostic would have to be
+re-provided. **Recommendation: do it as part of F, not before.** Not
+required for C's done-test, which is about layout, not lock ownership.
 
 **Makes possible:** step F. This is the hinge. After C, `rusty::Vec`'s
 layout is irrelevant, because nothing outside agrees on anything.
 
-**Done when:** a script that strips the GEN/RUST regions from every C++ file
-under `src/deptran` and greps for each of the struct's field names finds
-nothing -- `server_worker.cc` and `raft_main_helper.cc` poke `site_id_`,
-`partition_id_` and `state_` today, not only the kernels and the tests.
-Field list: the `pub struct RaftServerBase` block in `server.h`.
+**Done when:** `python3 scripts/raft_field_census.py` exits 0. It strips
+GEN/RUST regions, comments and string literals from every C++ file under
+`src/deptran`, takes the field list from the `pub struct RaftServerBase` and
+`pub struct RaftConsensusState` blocks, and reports every site that names one
+through a Raft-server receiver (`self`, `server`, `rep_sched_`, `frame->svr_`,
+implicit `this` inside the server's own carriers, ...). **Done in C1a/C1b/C2/
+C3; see Progress.**
 
 **You can stop here.** After C the design in the goal statement exists in
 the DSL: struct owns memory, traits define the interface, no downcasts, one
@@ -301,7 +308,8 @@ all of these green, not some.
 | B | `738a8b7f2` | `grep -rn 'dynamic_cast<RaftServer\|static_cast<RaftServer\*>' src/deptran` (excluding `LabAccess`) is **0** -- was 6 + 12. `RaftFrame::CreateRaftScheduler()` gives both workers a typed pointer; `RaftWorker` holds `RaftSpecific* raft_sched_`, `RaftServiceImpl` holds `RaftSpecific*`, the main helper reads `SiteId()/PartitionId()/CommitIndex()` off the trait instead of fields. `class RaftServer` 255 -> 41 lines: ctor, dtor, `LabAccess`, and a test-only `GetSnapshotManager`; `server.cc` defines nothing of it but ctor and dtor. The shim's four out-of-line bodies became kernel bodies (`raft_set_local_append`, `raft_load_state_machine_snapshot`, `raft_initialize_snapshot_manager`, and the file-local `prepare_state_machine_snapshot_locked`), `commo()` became the file-local `commo_of(self)`; kernels 53 (592 lines), 28 reaching into the struct -- the moved bodies read fields, which is exactly what step C removes. One `dynamic_cast` remains in the Raft worker, `Frame* -> RaftFrame*`, at the generic frame registry; it is a frame cast, not a server cast, and it now `verify`s instead of silently skipping. Test results in the commit message. |
 | C1a | `eb5482070` | Kernels that name a field of the struct: **26 -> 7**, and the seven left are exactly the container group (`raft_log_`, `decoded_terms_`, `config_members_`, `batch_buffer_`) that C1b moves into Rust. The other nineteen now take what they need: scalars by value (`site_id`, `loc_id`, `term`, `partition_id`), opaque carriers by pointer (`*const RaftLeaderChangeCb`, `*const RaftSnapshotManagerPtr`, `*mut RaftStdThread`, `*const LearnerAction`, `*const Arc<ReplicationWakeGate>`, ...), the communicator as the `Communicator*` field value (`commo_of(commo)`). `OnInstallSnapshot` takes its two locks in Rust (`RaftStdLockGuard` then `RaftLockGuard`, the C++ order) and only the catch stays C++ (`raft_install_snapshot_guarded`). Seventeen kernels still receive `RaftServerBase*`, for METHOD calls only (`SetupInternal`, `StartElectionTimer`, `ApplyThreadLoop`, `OnInstallSnapshotLocked`, ...); a method is the interface, not the layout. Kernels 53 (600 lines). `AsyncCallbackLifetime::server` is `RaftServerBase*`. Test results in the commit message. |
 | C1b | `90b6f828a` | **Kernels that name a field of the struct: 7 -> 0.** The log's writers are Rust: `AppendLocal` (was `SetLocalAppend`/`raft_set_local_append`), `AppendLeaderNoop`, `AeApplyIncoming`; so are `AeDecodePayload` (fills `decoded_terms_`), `LoadCurrentConfig` (fills `config_members_`) and the leader's batch loop (pushes `batch_buffer_`). What the old kernels could not do is the whole of what the new ones do: copy a `janus::Command` (`raft_command_clone`, `raft_wire_command_clone`, `raft_batch_command_at`), look inside a `TpcBatchCommand` (`raft_wire_is_batch`, `raft_wire_batch` -- the one `marshallable_cast`, made once per payload as before -- `raft_batch_len`, `raft_batch_term_at`), stamp and batch a `TpcCommitCommand` (`raft_command_is_tpc_commit`, `raft_stamped_commit`, `raft_batch_finalize` over `(ptr, len)` of the Rust Vec), read the yaml config (`raft_config_replica_count/site`), and the `RAFT_TEST_CORO` predicate for the no-op (`raft_leader_noop_enabled`, `raft_noop_command`). Kernels 53 -> 60 but 600 -> 545 lines: 50 value-only, 10 take `RaftServerBase*` for method calls only. Rust owns every container it declares. Test results in the commit message. |
-| C2 | `raft: step C2` | The RaftLab suite holds the layout of nothing: `RaftServer::LabAccess` (11 accessors, 45 uses) and `test.cc`'s 70-odd direct reads (`server->state_.raft_log_.last_index()`, `->state_.commit_index_`, 24 `std::lock_guard(server->mtx_)`, ...) all became `Lab*` getters on `RaftServerBase` -- `LabMutex()`, `LabApplyMutex()`, `LabCommitIndex()`, `LabLastLogIndex()`, `LabLog()` for the fingerprint, and so on -- read-only, inline, emitted unconditionally because the DSL has no cfg. The RAFT_TEST `ServerWorker` uses `set_site_identity`/`set_commo`/`SiteId()` instead of poking three fields and `commo_`. `class RaftServer` is ctor + dtor. Receiver-aware census over every C++ file under `src/deptran` (comments and string literals stripped): **0 sites name a field of `RaftServerBase` or `RaftConsensusState`** through a server pointer; the two remaining hits are `RaftFrame::commo_` and `SiteInfo::partition_id_`, other objects' same-named fields. The shim constructor still sets two fields by implicit `this` (C3). Test results in the commit message. |
+| C2 | `bcc298560` | The RaftLab suite holds the layout of nothing: `RaftServer::LabAccess` (11 accessors, 45 uses) and `test.cc`'s 70-odd direct reads (`server->state_.raft_log_.last_index()`, `->state_.commit_index_`, 24 `std::lock_guard(server->mtx_)`, ...) all became `Lab*` getters on `RaftServerBase` -- `LabMutex()`, `LabApplyMutex()`, `LabCommitIndex()`, `LabLastLogIndex()`, `LabLog()` for the fingerprint, and so on -- read-only, inline, emitted unconditionally because the DSL has no cfg. The RAFT_TEST `ServerWorker` uses `set_site_identity`/`set_commo`/`SiteId()` instead of poking three fields and `commo_`. `class RaftServer` is ctor + dtor. Receiver-aware census over every C++ file under `src/deptran` (comments and string literals stripped): **0 sites name a field of `RaftServerBase` or `RaftConsensusState`** through a server pointer; the two remaining hits are `RaftFrame::commo_` and `SiteInfo::partition_id_`, other objects' same-named fields. The shim constructor still sets two fields by implicit `this` (C3). Test results in the commit message. |
+| C3 | `raft: step C3` | The shim constructor is `RaftServer::RaftServer() { ConstructRuntime(); }`: the two members the generated constructor could not initialise (`async_callback_lifetime_`, a `std::make_shared` whose payload points back at the object; `heartbeat_interval_us_`, a RAFT_TEST-dependent macro) come from `raft_new_callback_lifetime` and `raft_heartbeat_interval_default`, the legacy payload registration from `raft_ensure_legacy_payload_registered`, and the lab's initial role from `raft_lab_mode()` -- the RAFT_TEST_CORO predicate the no-op already used (renamed from `raft_leader_noop_enabled`). **Step C is done: `python3 scripts/raft_field_census.py` exits 0** -- no hand-written C++ under `src/deptran` names a field of `RaftServerBase` or `RaftConsensusState` through the server (comments, string literals, GEN and RUST regions stripped; `this` counts only inside the server's own carriers; other objects' same-named fields are listed, not counted). `class RaftServer` is ctor + dtor; its layout is private to the struct's generated region. Test results in the commit message. |
 
 ## Risks, ranked
 

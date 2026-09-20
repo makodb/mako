@@ -3003,12 +3003,20 @@ unsafe extern "C" {
     fn raft_election_timeouts() -> RaftElectionTimeouts;
     fn raft_log_set_is_leader_entry(site_id: u16, loc_id: u32, term: u64,
                                     prev_is_leader: bool, new_is_leader: bool);
-    // The leader no-op is compiled out under RAFT_TEST_CORO (the lab suite
-    // counts entries); conditional compilation has no spelling in this
-    // dialect, so the predicate is a kernel and AppendLeaderNoop branches on
-    // it. The command itself is a janus::Command the DSL cannot construct.
-    fn raft_leader_noop_enabled() -> bool;
+    // RAFT_TEST_CORO, as a predicate: conditional compilation has no spelling
+    // in this dialect. The lab suite counts log entries, so the leader no-op
+    // is skipped in lab mode, and the lab's initial role is set explicitly.
+    fn raft_lab_mode() -> bool;
+    // The leader no-op command: a janus::Command the DSL cannot construct.
     fn raft_noop_command() -> rusty::RaftCommand;
+    // What RaftServer's constructor used to do after the generated one, for
+    // ConstructRuntime: the shared lifetime gate whose `server` back-pointer
+    // is this object (a std::make_shared), the heartbeat interval (a macro
+    // whose value depends on RAFT_TEST), and the legacy payload registration.
+    fn raft_new_callback_lifetime(server: *mut RaftServerBase)
+        -> rusty::RaftAsyncCallbackLifetimePtr;
+    fn raft_heartbeat_interval_default() -> u64;
+    fn raft_ensure_legacy_payload_registered();
     // A copy of a janus::Command: a shared_ptr refcount the opaque carrier
     // cannot touch, made in C++ and handed back by value.
     fn raft_command_clone(cmd: *const rusty::RaftCommand) -> rusty::RaftCommand;
@@ -5731,10 +5739,10 @@ impl RaftServerBase {
     }
 
     // The new leader's no-op entry, so the term commits something without
-    // waiting for a client. Compiled out under RAFT_TEST_CORO; see the
-    // kernel declarations.
+    // waiting for a client. Skipped in lab mode (RAFT_TEST_CORO), where the
+    // suite counts entries; see raft_lab_mode.
     pub fn AppendLeaderNoop(&mut self) {
-        if !unsafe { raft_leader_noop_enabled() } {
+        if unsafe { raft_lab_mode() } {
             return;
         }
         let noop: rusty::RaftCommand = unsafe { raft_noop_command() };
@@ -5837,6 +5845,28 @@ impl RaftServerBase {
                 raft_verify(appended == index);
             }
         }
+    }
+}
+
+// What RaftServer's constructor does after the generated one. The generated
+// constructor initialises every field the DSL can spell; these two it could
+// not -- a std::make_shared whose payload points back at this object, and a
+// macro -- come from kernels now, and the rest is what the C++ constructor
+// did in order. RaftServer::RaftServer() is one call to this.
+#[allow(non_snake_case)]
+impl RaftServerBase {
+    pub fn ConstructRuntime(&mut self) {
+        self.async_callback_lifetime_ =
+            unsafe { raft_new_callback_lifetime(self as *mut RaftServerBase) };
+        self.heartbeat_interval_us_ =
+            unsafe { raft_heartbeat_interval_default() };
+        unsafe {
+            raft_ensure_legacy_payload_registered();
+        }
+        if unsafe { raft_lab_mode() } {
+            self.setIsLeader(false);
+        }
+        self.stop_.store(false, rusty::sync::atomic::Ordering::Release);
     }
 }
 
@@ -6164,7 +6194,7 @@ impl RaftSpecific for RaftServerBase {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=f7b4d615687af53ac4cf0440182cefadb9c0ef05c28054602fbf8f086a759170*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=3f60583daca8c65df6c5e918171f6fcf77341dfe83d4f5293e41e8859cbe3575*/
 enum class RaftEnvError : int32_t;
 constexpr RaftEnvError RaftEnvError_NOT_A_WHOLE_NUMBER();
 constexpr RaftEnvError RaftEnvError_OVERFLOWS_U64();
@@ -6201,8 +6231,11 @@ extern "C" {
     void raft_fire_leader_change(const rusty::RaftLeaderChangeCb* cb, bool is_leader);
     RaftElectionTimeouts raft_election_timeouts();
     void raft_log_set_is_leader_entry(uint16_t site_id, uint32_t loc_id, uint64_t term, bool prev_is_leader, bool new_is_leader);
-    bool raft_leader_noop_enabled();
+    bool raft_lab_mode();
     rusty::RaftCommand raft_noop_command();
+    rusty::RaftAsyncCallbackLifetimePtr raft_new_callback_lifetime(RaftServerBase* server);
+    uint64_t raft_heartbeat_interval_default();
+    void raft_ensure_legacy_payload_registered();
     rusty::RaftCommand raft_command_clone(const rusty::RaftCommand* cmd);
     bool raft_wire_is_batch(const rusty::ffi::c_void* cmd);
     const rusty::ffi::c_void* raft_wire_batch(const rusty::ffi::c_void* cmd);
@@ -6416,6 +6449,7 @@ struct RaftServerBase : public RaftSpecific {
     uint64_t LoadCurrentConfig();
     bool AeDecodePayload(const rusty::ffi::c_void* cmd, bool has_cmd, uint64_t leader_prev_log_index, uint64_t leader_next_log_term);
     void AeApplyIncoming(const rusty::ffi::c_void* cmd, uint64_t leader_prev_log_index, uint64_t leader_next_log_term, uint64_t first_write_index);
+    void ConstructRuntime();
     rusty::RaftCheckedMutex& LabMutex();
     rusty::RaftStdMutex& LabApplyMutex();
     bool LabStopped() const;
@@ -7752,7 +7786,7 @@ inline uint64_t RaftServerBase::AppendLocal(rusty::RaftCommand cmd) {
 }
 
 inline void RaftServerBase::AppendLeaderNoop() {
-    if (!raft_leader_noop_enabled()) {
+    if (raft_lab_mode()) {
         return;
     }
     rusty::RaftCommand noop = raft_noop_command();
@@ -7832,6 +7866,19 @@ inline void RaftServerBase::AeApplyIncoming(const rusty::ffi::c_void* cmd, uint6
             raft_verify(rusty::detail::deref_if_pointer_like(appended) == rusty::detail::deref_if_pointer_like(index));
         }
     }
+}
+
+inline void RaftServerBase::ConstructRuntime() {
+    this->async_callback_lifetime_ = raft_new_callback_lifetime(static_cast<RaftServerBase*>(rusty::detail::ptr_or_addr((*this))));
+    this->heartbeat_interval_us_ = raft_heartbeat_interval_default();
+    // @unsafe
+    {
+        raft_ensure_legacy_payload_registered();
+    }
+    if (raft_lab_mode()) {
+        this->setIsLeader(false);
+    }
+    this->stop_.store(false, rusty::sync::atomic::Ordering::Release);
 }
 
 inline rusty::RaftCheckedMutex& RaftServerBase::LabMutex() {
