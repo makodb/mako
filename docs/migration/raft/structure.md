@@ -1,6 +1,6 @@
 # What is Rust and what is C++ in Mako's Raft, and where the seam is
 
-A map of the running system at `040d448c5`, written so the "impossible"
+A map of the running system at `e4963b7ae`, written so the "impossible"
 claims in it can be attacked rather than believed.
 
 **Provenance.** The first draft of this file was checked, claim by claim,
@@ -64,15 +64,18 @@ holds:
 │     >>> plain call to a DSL FREE FUNCTION (on_request_vote_body,
 │         on_append_entries_body). Both sides are C++ after transpilation.
 ├── OnInstallSnapshot                                 [C++] NOT a plain shim
-│     takes state_machine_apply_mtx_ then mtx_, wraps a try/catch with
-│     FailStop, and calls the METHOD RaftServerBase::OnInstallSnapshotLocked
+│     takes state_machine_apply_mtx_ then mtx_, calls the METHOD
+│     RaftServerBase::OnInstallSnapshotLocked through raft_catch, and
+│     fail-stops if it throws
 ├── Start                                             [C++] calls the METHOD
 │     RaftServerBase::StartImpl. There is no `start_body`.
 ├── SetLocalAppend                                    [C++] ~25 lines of LOGIC
 │     reads state_.raft_log_.last_index(), calls raft_log_.append(
 │     RaftEntry::new_(current_term_, cmd)), verifies the result. server.h:7698
 ├── PrepareStateMachineSnapshotLocked                 [C++] returns unique_ptr
-├── LoadStateMachineSnapshotLocked                    [C++] try/catch
+│     and calls an EMBEDDER callback -- behind raft_catch
+├── LoadStateMachineSnapshotLocked                    [C++] embedder Commit(),
+│     also behind raft_catch
 ├── InitializeSnapshotManager, GetSnapshotManager     [C++]
 ├── commo()                                           [C++] dynamic_cast
 ├── struct LabAccess                                  [C++] server.h:7640
@@ -142,10 +145,14 @@ RaftServerBase                                        [RUST] 48 fields
     └── commo_: *mut Communicator                a raw pointer to [EXT]
 ```
 
-## 2. The seam: 52 kernels, 559 lines
+## 2. The seam: 52 kernels, 549 lines
 
 Hand-written `extern "C"` `raft_*` functions defined in `server.cc` outside
-every Rust and GEN region. Grouped by WHY each exists, which is the axis on
+every Rust and GEN region. `extern "C"` is part of that definition and does
+work: `server.cc` also holds two file-local `raft_*` helpers -- `raft_catch`
+(13 lines) and `raft_parse_u64` (5) -- which are NOT counted here, because
+they cross no language boundary. Anything counting by name prefix alone
+gets 54. Grouped by WHY each exists, which is the axis on
 which some are removable and some are not.
 
 ### (a) Wire format and marshalling — 11 kernels, 143 lines
@@ -182,7 +189,7 @@ raft_new_replication_wake_gate   raft_apply_thread_join   raft_bind_replication_
 Only **two** of these (`raft_fiber_sleep_us`, `raft_create_int_event`) are
 pure naming gaps. See section 6 for what the other eleven actually need.
 
-### (c) The snapshot manager — 8 kernels, 134 lines
+### (c) The snapshot manager — 8 kernels, 128 lines
 ```
 raft_snapshot_manager_latest   raft_snapshot_manager_load   raft_snapshot_manager_has_latest
 raft_snapshot_recovery_pick_manager    raft_snapshot_serialize_and_save
@@ -190,9 +197,10 @@ raft_install_snapshot_payload  raft_load_state_machine_snapshot
 raft_initialize_snapshot_manager
 ```
 A C++ class hierarchy, `std::string` payloads, and an abort-on-destruction
-`std::unique_ptr` transaction.
+`std::unique_ptr` transaction. Two of these reach an embedder callback and
+so sit behind `raft_catch`; see claim 2.
 
-### (d) Application and configuration hooks — 15 kernels, 135 lines
+### (d) Application and configuration hooks — 15 kernels, 120 lines
 ```
 raft_apply_invoke            raft_fire_leader_change     raft_leader_change_cb_is_set
 raft_prepare_snapshot_cb_is_set   raft_env_heartbeat_interval_us
@@ -203,14 +211,14 @@ raft_clear_async_callback_owner   raft_setup_internal_guarded
 raft_log_set_is_leader_entry
 ```
 
-### (e) The network path — 5 kernels, 88 lines
+### (e) The network path — 5 kernels, 99 lines
 ```
 raft_commo_set_network_enabled   raft_phase1_send_append
 raft_phase1_load_and_send_snapshot     raft_broadcast_vote_and_wait
 raft_vote_quorum_snapshot
 ```
 
-11 + 13 + 8 + 15 + 5 = 52. 143 + 59 + 134 + 135 + 88 = 559.
+11 + 13 + 8 + 15 + 5 = 52. 143 + 59 + 128 + 120 + 99 = 549.
 
 ## 3. The external edge: where the bytes actually leave
 
@@ -290,7 +298,14 @@ draft got wrong in both directions:
   `ServerWorker`, which has no `SetupHeartbeat` call at all.
 
 `ServerWorker` is the RAFT_TEST harness; `RaftWorker` is the production
-path. (`server_worker.h:15-16` says so.) `svr_hb_poll_thread_worker_g` is a
+path. (`server_worker.h:15-16` says so.) **Both lifecycles are exercised.**
+RaftLabTest covers `ServerWorker`; all four Raft replication suites --
+`shard{1,2}ReplicationRaft` and `shard{1,2}ReplicationSimpleRaft` -- cover
+`RaftWorker`, and the converted Raft is in those binaries because
+`server.cc` is compiled into production `mako` regardless of
+`MAKO_USE_RAFT` (`CMakeLists.txt:1049`). Until 2026-09-19 only the first
+was ever run, and three of the errors the verification pass found were in
+descriptions of the second. `svr_hb_poll_thread_worker_g` is a
 per-worker member (`raft_worker.h:130`); the `_g` is vestigial.
 
 **The benchmark configuration has two more kinds of thread, and the table
