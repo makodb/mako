@@ -316,6 +316,26 @@ all of these green, not some.
 | C2 | `bcc298560` | The RaftLab suite holds the layout of nothing: `RaftServer::LabAccess` (11 accessors, 45 uses) and `test.cc`'s 70-odd direct reads (`server->state_.raft_log_.last_index()`, `->state_.commit_index_`, 24 `std::lock_guard(server->mtx_)`, ...) all became `Lab*` getters on `RaftServerBase` -- `LabMutex()`, `LabApplyMutex()`, `LabCommitIndex()`, `LabLastLogIndex()`, `LabLog()` for the fingerprint, and so on -- read-only, inline, emitted unconditionally because the DSL has no cfg. The RAFT_TEST `ServerWorker` uses `set_site_identity`/`set_commo`/`SiteId()` instead of poking three fields and `commo_`. `class RaftServer` is ctor + dtor. Receiver-aware census over every C++ file under `src/deptran` (comments and string literals stripped): **0 sites name a field of `RaftServerBase` or `RaftConsensusState`** through a server pointer; the two remaining hits are `RaftFrame::commo_` and `SiteInfo::partition_id_`, other objects' same-named fields. The shim constructor still sets two fields by implicit `this` (C3). Test results in the commit message. |
 | C3 | `2996cc572` | The shim constructor is `RaftServer::RaftServer() { ConstructRuntime(); }`: the two members the generated constructor could not initialise (`async_callback_lifetime_`, a `std::make_shared` whose payload points back at the object; `heartbeat_interval_us_`, a RAFT_TEST-dependent macro) come from `raft_new_callback_lifetime` and `raft_heartbeat_interval_default`, the legacy payload registration from `raft_ensure_legacy_payload_registered`, and the lab's initial role from `raft_lab_mode()` -- the RAFT_TEST_CORO predicate the no-op already used (renamed from `raft_leader_noop_enabled`). **Step C is done: `python3 scripts/raft_field_census.py` exits 0** -- no hand-written C++ under `src/deptran` names a field of `RaftServerBase` or `RaftConsensusState` through the server (comments, string literals, GEN and RUST regions stripped; `this` counts only inside the server's own carriers; other objects' same-named fields are listed, not counted). `class RaftServer` is ctor + dtor; its layout is private to the struct's generated region. Test results in the commit message. |
 
+## Performance verdict on A..C3
+
+`scripts/raft_paired_trial.sh` with tree A = `19cfbb213` (before step A,
+built in a worktree with the production configuration) and tree B =
+`2996cc572` (after C3), 25 ABBA pairs of `shard1ReplicationRaft`, quiet host,
+no failed runs. Raw data: `paired-trial-19cfbb213-vs-2996cc572.csv`.
+
+| | A (before) | B (after C3) |
+|---|---|---|
+| median ops/s | 157,474 | 157,724 |
+| mean ops/s | 155,029 | 156,485 |
+| run-to-run spread (stdev/mean) | 5.0% | 4.2% |
+
+Per-pair delta (B-A)/A: **median +0.60%, mean +1.23%, 14/25 pairs favour B,
+exact two-sided sign test p = 0.69.** No detectable cost, at a resolution of
+roughly +-3% on the median. The ~1.5% the tree already carried from the
+earlier conversion phases has not been widened by A..C3, which is the only
+claim this trial can make; localising that earlier cost remains the open
+performance task it was.
+
 ## Risks, ranked
 
 1. **The silent failures in the constraints list.** Every one compiles.
