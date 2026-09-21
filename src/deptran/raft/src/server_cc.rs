@@ -2733,9 +2733,7 @@ pub unsafe extern "C" fn raft_server_on_install_snapshot_locked(s: *mut RaftServ
                                                                 last_included_term: u64,
                                                                 data: *const rusty::RaftByteString,
                                                                 term_out: *mut u64) {
-    let mut term_out_slot: u64 = *term_out;
-    (*s).OnInstallSnapshotLocked(term, leader_id, last_included_index, last_included_term, data, &mut term_out_slot);
-    *term_out = term_out_slot;
+    (*s).OnInstallSnapshotLocked(term, leader_id, last_included_index, last_included_term, data, term_out)
 }
 
 /// # Safety

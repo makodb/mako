@@ -949,7 +949,6 @@ void raft_log_set_is_leader_entry(uint16_t site_id, uint32_t loc_id,
 }
 
 
-
 // ConstructRuntime's three kernels: what the C++ constructor did that the
 // generated constructor could not -- see RaftServerBase::ConstructRuntime.
 // F1: allocation of the (still C++) struct for raft_server_new/delete. The
@@ -969,9 +968,6 @@ void raft_ensure_legacy_payload_registered() {
 
 }  // extern "C"
 
-// The one thing a DSL constructor cannot be: this class's. Everything it
-// does is RaftServerBase::ConstructRuntime.
-RaftServer::RaftServer() { ConstructRuntime(); }
 
 // @unsafe - the reactor's event factory. The three wait methods on
 // RaftServerBase are Rust; this is the only step in them that is not, because
@@ -4370,9 +4366,7 @@ pub unsafe extern "C" fn raft_server_on_install_snapshot_locked(s: *mut RaftServ
                                                                 last_included_term: u64,
                                                                 data: *const rusty::RaftByteString,
                                                                 term_out: *mut u64) {
-    let mut term_out_slot: u64 = *term_out;
-    (*s).OnInstallSnapshotLocked(term, leader_id, last_included_index, last_included_term, data, &mut term_out_slot);
-    *term_out = term_out_slot;
+    (*s).OnInstallSnapshotLocked(term, leader_id, last_included_index, last_included_term, data, term_out)
 }
 
 /// # Safety
@@ -4683,7 +4677,7 @@ pub unsafe extern "C" fn raft_server_shutdown(s: *mut RaftServerBase) {
     (*s).Shutdown()
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_round_scope version=1 rust_sha256=f50b8367ec3f3e2b6e19c9b8001e48fa3a86a14f0d917dfe0c19039a952edc78*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_round_scope version=1 rust_sha256=7e347ea54428ad76c5b1e8f80916a56e673f9a96e83a38fb69149afec410dfb3*/
 enum class AppendReplyAction : int32_t;
 constexpr AppendReplyAction AppendReplyAction_IGNORED();
 constexpr AppendReplyAction AppendReplyAction_STEP_DOWN();
@@ -5811,9 +5805,7 @@ extern "C" void raft_server_install_snapshot_reply_accepted(server_h::RaftServer
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 // @unsafe
 extern "C" void raft_server_on_install_snapshot_locked(server_h::RaftServerBase* s, uint64_t term, uint64_t leader_id, uint64_t last_included_index, uint64_t last_included_term, const rusty::RaftByteString* data, uint64_t* term_out) {
-    uint64_t term_out_slot = *term_out;
-    ((*s)).OnInstallSnapshotLocked(std::move(term), std::move(leader_id), std::move(last_included_index), std::move(last_included_term), data, &term_out_slot);
-    *term_out = std::move(term_out_slot);
+    ((*s)).OnInstallSnapshotLocked(std::move(term), std::move(leader_id), std::move(last_included_index), std::move(last_included_term), data, term_out);
 }
 
 /// # Safety
@@ -6462,22 +6454,6 @@ AppendRespView raft_append_response_read(
 // stay C++ because unique_ptr<PendingAppendEntries> and the wire types inside
 // PendingHeartbeatAuthority have no DSL spelling; the Rust driver carries this
 // object as an opaque handle and never looks inside it.
-
-// @unsafe - one heartbeat round: locks, RPC sends, reply polling, commit.
-//
-// This is the former while-body, unchanged except for its two OUTER-level
-// exits, which a function must spell differently from a loop:
-//   the wait's `break`            -> return false  (stop looping)
-//   PHASE 0's !IsLeader `continue`-> return true   (skip to the next round)
-// Both were confirmed to be outer-level by brace depth, with no loop between
-// them and the round block. Every other break and continue in here belongs to
-// an inner loop and is untouched.
-// @unsafe - suspends on the wake gate; false means shutdown, not a timeout
-// @unsafe - thread join and timer cleanup require manual resource management
-// The body is RaftServerBase::Shutdown. A destructor cannot be a DSL method
-// -- it is the one C++ special member with no Rust spelling -- so this is
-// the whole of what is left.
-RaftServer::~RaftServer() { Shutdown(); }
 
 
 // ============================================================================
