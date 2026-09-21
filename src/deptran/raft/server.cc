@@ -314,9 +314,8 @@ prepare_state_machine_snapshot_locked(
   std::memcpy(&marker_index, data.data(), sizeof(marker_index));
   std::memcpy(&marker_term, data.data() + sizeof(marker_index),
               sizeof(marker_term));
-  const bool matches = raft_server_snapshot_marker_matches(
-      data.size(), kMarkerSize, marker_index, marker_term,
-      last_included_index, last_included_term);
+  const bool matches = marker_index == last_included_index &&
+                       marker_term == last_included_term;
   if (!matches) {
     Log_error("[RAFT-SNAPSHOT] Site {} RaftLab marker mismatch: "
               "payload=({}, {}) metadata=({}, {})",
@@ -468,6 +467,29 @@ void raft_queue_wake_job(const rusty::RaftPollThreadPtr* owner,
 // RaftServerBase::AppendLocal now.
 void raft_command_clone_into(const rusty::RaftCommand* src,
                              rusty::RaftCommand* dst) {
+  construct_into(dst, *src);
+}
+// D2: the setters' carriers, copied the same way -- a std::function or a
+// shared_ptr, into the export's default-constructed slot -- so that no export
+// takes a non-trivial C++ object by value.
+void raft_learner_action_clone_into(const rusty::LearnerAction* src,
+                                    rusty::LearnerAction* dst) {
+  construct_into(dst, *src);
+}
+void raft_leader_change_cb_clone_into(const rusty::RaftLeaderChangeCb* src,
+                                      rusty::RaftLeaderChangeCb* dst) {
+  construct_into(dst, *src);
+}
+void raft_snapshot_manager_ptr_clone_into(const rusty::RaftSnapshotManagerPtr* src,
+                                          rusty::RaftSnapshotManagerPtr* dst) {
+  construct_into(dst, *src);
+}
+void raft_create_snapshot_cb_clone_into(const rusty::RaftCreateSnapshotCb* src,
+                                        rusty::RaftCreateSnapshotCb* dst) {
+  construct_into(dst, *src);
+}
+void raft_prepare_snapshot_cb_clone_into(const rusty::RaftPrepareSnapshotCb* src,
+                                         rusty::RaftPrepareSnapshotCb* dst) {
   construct_into(dst, *src);
 }
 // RAFT_TEST_CORO as a predicate. Conditional compilation has no spelling in
@@ -685,8 +707,7 @@ bool raft_apply_invoke(const rusty::LearnerAction* app_next,
                        const rusty::RaftCommand* pending, uint16_t site_id,
                        uint64_t id) {
   if (!raft_catch(site_id, "apply callback", [&] {
-        if (!raft_server_command_is_internal_noop(
-                pending->kind_, TpcNoopCommand::static_kind())) {
+        if (pending->kind_ != TpcNoopCommand::static_kind()) {
           (*app_next)(id, *pending);
         }
       })) {
@@ -1445,7 +1466,7 @@ using janus::RaftConsensusState;
 using janus::RaftEntry;
 using janus::RaftServerBase;
 using janus::RaftLockGuard;
-using janus::RaftLog;  // the lab_log export returns a pointer to it
+using janus::AppendRespView;  // phase 2 reads one out of the wire reply
 using janus::ElectionTimerLoop;  // the election-timer loop export builds one
 using janus::GateWakeJob;  // the wake-job export takes one back
 }  // namespace server_h
@@ -2132,6 +2153,7 @@ inline AuthorityOutcome AuthorityLedger::settle(bool is_leader, uint64_t current
 // possibility of the two disagreeing.
 #if RUSTYCPP_RUST
 use crate::server_h::RaftServerBase;
+use crate::server_h::AppendRespView;
 use crate::scheduler_h::RaftSpecific;
 use crate::server_h::RaftEntry;
 use crate::server_h::RaftLockGuard;
@@ -2176,6 +2198,18 @@ unsafe extern "C" {
     // The command copy INTO Rust's slot; see server.h for why never by value.
     fn raft_command_clone_into(src: *const rusty::RaftCommand,
                                dst: *mut rusty::RaftCommand);
+    // The same for the carriers the setters take by value (D2): each export
+    // receives a pointer and copies here, into its default-constructed slot.
+    fn raft_learner_action_clone_into(src: *const rusty::LearnerAction,
+                                      dst: *mut rusty::LearnerAction);
+    fn raft_leader_change_cb_clone_into(src: *const rusty::RaftLeaderChangeCb,
+                                        dst: *mut rusty::RaftLeaderChangeCb);
+    fn raft_snapshot_manager_ptr_clone_into(src: *const rusty::RaftSnapshotManagerPtr,
+                                            dst: *mut rusty::RaftSnapshotManagerPtr);
+    fn raft_create_snapshot_cb_clone_into(src: *const rusty::RaftCreateSnapshotCb,
+                                          dst: *mut rusty::RaftCreateSnapshotCb);
+    fn raft_prepare_snapshot_cb_clone_into(src: *const rusty::RaftPrepareSnapshotCb,
+                                           dst: *mut rusty::RaftPrepareSnapshotCb);
 
     fn raft_phase1_send_append(commo: *mut rusty::Communicator,
                                self_site_id: u16, site_id: u16,
@@ -2912,14 +2946,6 @@ pub fn heartbeat_phase1_body(server: &mut RaftServerBase,
 // ==========================================================================
 // PHASE 2 -- poll the replies through one round deadline and apply them
 // ==========================================================================
-
-#[repr(C)]
-pub struct AppendRespView {
-    pub completed_: bool,
-    pub status_: bool,
-    pub term_: u64,
-    pub last_log_index_: u64,
-}
 
 // PHASE 2's decision core: what one AppendEntries reply means.
 //
@@ -3668,9 +3694,15 @@ pub unsafe fn raft_on_request_vote(
 // the rrr service layer calls them by name on RaftServer.
 // ==========================================================================
 #[allow(clippy::too_many_arguments)]
-pub fn on_request_vote_body(server: &mut RaftServerBase, lst_log_idx: u64,
-                            lst_log_term: i64, can_id: u16, can_term: i64,
-                            reply_term: &mut i64, vote_granted: &mut i8) {
+// An export (plan.md F2 slice 4): the service's kernel, raft_rpc_request_vote,
+// reaches this body through server_exports.h, so it survives the cutover. The
+// `&mut` parameters are non-null pointers in the C ABI and references in the
+// C++ prototype, which is what the kernel passes.
+#[no_mangle]
+pub extern "C" fn raft_server_on_request_vote_body(
+    server: &mut RaftServerBase, lst_log_idx: u64,
+    lst_log_term: i64, can_id: u16, can_term: i64,
+    reply_term: &mut i64, vote_granted: &mut i8) {
     let _lock = RaftLockGuard::new(&mut server.mtx_);
     rusty::raft_log_debug_1("raft receives vote from candidate: {:x}", can_id);
 
@@ -4072,7 +4104,10 @@ pub unsafe fn raft_on_append_entries(
 // `cmd` is an opaque handle to the caller's janus::Command; it is passed
 // straight through to raft_on_append_entries, never dereferenced here.
 #[allow(clippy::too_many_arguments, clippy::not_unsafe_ptr_arg_deref)]
-pub fn on_append_entries_body(server: &mut RaftServerBase,
+// An export, as above: entered from raft_rpc_append_entries.
+#[no_mangle]
+pub extern "C" fn raft_server_on_append_entries_body(
+    server: &mut RaftServerBase,
                               leader_current_term: u64, leader_site_id: u16,
                               leader_prev_log_index: u64,
                               leader_prev_log_term: u64,
@@ -4147,7 +4182,6 @@ pub fn on_append_entries_body(server: &mut RaftServerBase,
 // Emitted as extern "C" C++ today; at the cutover these are the crate's
 // exported symbols and nothing else of the struct is visible to C++.
 // ==========================================================================
-use crate::server_h::RaftLog;
 use crate::scheduler_h::RaftStartResult;
 use crate::scheduler_h::TxLogServer;
 use crate::server_h::GateWakeJob;
@@ -4223,8 +4257,10 @@ pub unsafe extern "C" fn raft_server_set_commo(s: *mut RaftServerBase,
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 #[no_mangle]
 pub unsafe extern "C" fn raft_server_reg_learner_action(s: *mut RaftServerBase,
-                                                        learner_action: rusty::LearnerAction) {
-    (*s).reg_learner_action(learner_action)
+                                                        learner_action: *const rusty::LearnerAction) {
+    let mut learner_action_copy: rusty::LearnerAction = Default::default();
+    raft_learner_action_clone_into(learner_action, &mut learner_action_copy as *mut rusty::LearnerAction);
+    (*s).reg_learner_action(learner_action_copy)
 }
 
 /// # Safety
@@ -4274,8 +4310,10 @@ pub unsafe extern "C" fn raft_server_set_preferred_leader(s: *mut RaftServerBase
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 #[no_mangle]
 pub unsafe extern "C" fn raft_server_register_leader_change_callback(s: *mut RaftServerBase,
-                                                                     cb: rusty::RaftLeaderChangeCb) {
-    (*s).RegisterLeaderChangeCallback(cb)
+                                                                     cb: *const rusty::RaftLeaderChangeCb) {
+    let mut cb_copy: rusty::RaftLeaderChangeCb = Default::default();
+    raft_leader_change_cb_clone_into(cb, &mut cb_copy as *mut rusty::RaftLeaderChangeCb);
+    (*s).RegisterLeaderChangeCallback(cb_copy)
 }
 
 /// # Safety
@@ -4600,15 +4638,23 @@ pub unsafe extern "C" fn raft_server_lab_last_log_index(s: *const RaftServerBase
 /// # Safety
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 #[no_mangle]
-pub unsafe extern "C" fn raft_server_lab_log(s: *const RaftServerBase) -> *const RaftLog {
-    (*s).LabLog() as *const RaftLog
+pub unsafe extern "C" fn raft_server_lab_log_base(s: *const RaftServerBase) -> u64 {
+    (*s).LabLogBase()
 }
 
 /// # Safety
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 #[no_mangle]
-pub unsafe extern "C" fn raft_server_lab_log_base(s: *const RaftServerBase) -> u64 {
-    (*s).LabLogBase()
+pub unsafe extern "C" fn raft_server_lab_log_fingerprint_at(s: *const RaftServerBase,
+                                                            i: u64) -> u64 {
+    (*s).LabLogFingerprintAt(i)
+}
+
+/// # Safety
+/// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
+#[no_mangle]
+pub unsafe extern "C" fn raft_server_lab_log_fingerprint_len(s: *const RaftServerBase) -> u64 {
+    (*s).LabLogFingerprintLen()
 }
 
 /// # Safety
@@ -4687,16 +4733,20 @@ pub unsafe extern "C" fn raft_server_set_log_retention_window(s: *mut RaftServer
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 #[no_mangle]
 pub unsafe extern "C" fn raft_server_set_snapshot_manager(s: *mut RaftServerBase,
-                                                          manager: rusty::RaftSnapshotManagerPtr) {
-    (*s).SetSnapshotManager(manager)
+                                                          manager: *const rusty::RaftSnapshotManagerPtr) {
+    let mut manager_copy: rusty::RaftSnapshotManagerPtr = Default::default();
+    raft_snapshot_manager_ptr_clone_into(manager, &mut manager_copy as *mut rusty::RaftSnapshotManagerPtr);
+    (*s).SetSnapshotManager(manager_copy)
 }
 
 /// # Safety
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 #[no_mangle]
 pub unsafe extern "C" fn raft_server_set_snapshot_manager_locked(s: *mut RaftServerBase,
-                                                                 manager: rusty::RaftSnapshotManagerPtr) {
-    (*s).SetSnapshotManagerLocked(manager)
+                                                                 manager: *const rusty::RaftSnapshotManagerPtr) {
+    let mut manager_copy: rusty::RaftSnapshotManagerPtr = Default::default();
+    raft_snapshot_manager_ptr_clone_into(manager, &mut manager_copy as *mut rusty::RaftSnapshotManagerPtr);
+    (*s).SetSnapshotManagerLocked(manager_copy)
 }
 
 /// # Safety
@@ -4719,9 +4769,13 @@ pub unsafe extern "C" fn raft_server_set_snapshot_threshold_locked(s: *mut RaftS
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 #[no_mangle]
 pub unsafe extern "C" fn raft_server_set_state_machine_snapshot_callbacks(s: *mut RaftServerBase,
-                                                                          create_cb: rusty::RaftCreateSnapshotCb,
-                                                                          prepare_cb: rusty::RaftPrepareSnapshotCb) -> u64 {
-    (*s).SetStateMachineSnapshotCallbacks(create_cb, prepare_cb)
+                                                                          create_cb: *const rusty::RaftCreateSnapshotCb,
+                                                                          prepare_cb: *const rusty::RaftPrepareSnapshotCb) -> u64 {
+    let mut create_cb_copy: rusty::RaftCreateSnapshotCb = Default::default();
+    raft_create_snapshot_cb_clone_into(create_cb, &mut create_cb_copy as *mut rusty::RaftCreateSnapshotCb);
+    let mut prepare_cb_copy: rusty::RaftPrepareSnapshotCb = Default::default();
+    raft_prepare_snapshot_cb_clone_into(prepare_cb, &mut prepare_cb_copy as *mut rusty::RaftPrepareSnapshotCb);
+    (*s).SetStateMachineSnapshotCallbacks(create_cb_copy, prepare_cb_copy)
 }
 
 /// # Safety
@@ -4731,7 +4785,7 @@ pub unsafe extern "C" fn raft_server_shutdown(s: *mut RaftServerBase) {
     (*s).Shutdown()
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_round_scope version=1 rust_sha256=7ec2f1d07ce09aac0d04fec5576b4e3eae36879b5a0a7257339b429d4b6b4809*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_round_scope version=1 rust_sha256=e2862f7d55f2d61be1b99129b77762999d2baeeb72fe23c1a49e98aad4cce117*/
 enum class AppendReplyAction : int32_t;
 constexpr AppendReplyAction AppendReplyAction_IGNORED();
 constexpr AppendReplyAction AppendReplyAction_STEP_DOWN();
@@ -4742,7 +4796,6 @@ constexpr AppendReplyAction AppendReplyAction_UNKNOWN_FOLLOWER();
 struct HeartbeatRoundScope;
 struct CommitAdvance;
 struct Phase0Outcome;
-struct AppendRespView;
 struct SentAppend;
 struct AppendReply;
 struct AppendReplyOutcome;
@@ -4771,6 +4824,8 @@ inline constexpr AppendReplyAction AppendReplyAction_UNKNOWN_FOLLOWER() { return
 
 using ::server_h::RaftServerBase;
 
+using ::server_h::AppendRespView;
+
 using ::scheduler_h::RaftSpecific;
 
 using ::server_h::RaftEntry;
@@ -4780,7 +4835,7 @@ using ::server_h::RaftLockGuard;
 extern "C" {
     uint64_t raft_monotonic_now_us();
     void raft_fiber_sleep_us(uint64_t micros);
-    AppendRespView raft_append_response_read(const rusty::RaftResponsePtr* response);
+    server_h::AppendRespView raft_append_response_read(const rusty::RaftResponsePtr* response);
     bool raft_command_has_value(const rusty::RaftCommand* cmd);
     server_h::RaftServerBase* raft_server_alloc();
     void raft_server_free(server_h::RaftServerBase* s);
@@ -4793,6 +4848,11 @@ extern "C" {
     bool raft_command_is_tpc_commit(const rusty::RaftCommand* cmd);
     void raft_batch_finalize(rusty::RaftTpcCommitPtr* entries, size_t count, rusty::RaftCommand* cmd_out);
     void raft_command_clone_into(const rusty::RaftCommand* src, rusty::RaftCommand* dst);
+    void raft_learner_action_clone_into(const rusty::LearnerAction* src, rusty::LearnerAction* dst);
+    void raft_leader_change_cb_clone_into(const rusty::RaftLeaderChangeCb* src, rusty::RaftLeaderChangeCb* dst);
+    void raft_snapshot_manager_ptr_clone_into(const rusty::RaftSnapshotManagerPtr* src, rusty::RaftSnapshotManagerPtr* dst);
+    void raft_create_snapshot_cb_clone_into(const rusty::RaftCreateSnapshotCb* src, rusty::RaftCreateSnapshotCb* dst);
+    void raft_prepare_snapshot_cb_clone_into(const rusty::RaftPrepareSnapshotCb* src, rusty::RaftPrepareSnapshotCb* dst);
     void raft_phase1_send_append(rusty::Communicator* commo, uint16_t self_site_id, uint16_t site_id, uint32_t partition_id, bool is_leader, uint64_t term, uint64_t prev_log_index, uint64_t prev_log_term, uint64_t commit_index, const rusty::RaftCommand* cmd, uint64_t cmd_log_term, rusty::RaftResponsePtr* out);
 }
 
@@ -4842,16 +4902,6 @@ struct Phase0Outcome {
     bool commit_advanced() const;
     uint64_t commit_from() const;
     uint64_t commit_to() const;
-    // Rust derives Send/Sync from the field types; C++ cannot see them.
-    static constexpr bool is_send = true;
-    static constexpr bool is_sync = true;
-};
-
-struct AppendRespView {
-    bool completed_;
-    bool status_;
-    uint64_t term_;
-    uint64_t last_log_index_;
     // Rust derives Send/Sync from the field types; C++ cannot see them.
     static constexpr bool is_send = true;
     static constexpr bool is_sync = true;
@@ -4949,8 +4999,6 @@ struct AppendReport {
     static constexpr bool is_send = true;
     static constexpr bool is_sync = true;
 };
-
-using ::server_h::RaftLog;
 
 using ::scheduler_h::RaftStartResult;
 
@@ -5328,8 +5376,8 @@ void heartbeat_phase2_body(server_h::RaftServerBase& server, PendingTable& pendi
             uint64_t sent_round = pending_rpcs.sent_round(std::move(pending_ord));
             uint64_t sent_end_index = pending_rpcs.sent_end_index(std::move(pending_ord));
             const bool cmd_has_value = raft_command_has_value(rusty::detail::ptr_cast<const rusty::RaftCommand*>(pending_rpcs.cmd(std::move(pending_ord))));
-            const AppendRespView resp = raft_append_response_read(rusty::detail::ptr_cast<const rusty::RaftResponsePtr*>(pending_rpcs.response(std::move(pending_ord))));
-            if (!resp.completed_) {
+            const server_h::AppendRespView resp = raft_append_response_read(rusty::detail::ptr_cast<const rusty::RaftResponsePtr*>(pending_rpcs.response(std::move(pending_ord))));
+            if (rusty::detail::rust_not(resp.completed_)) {
                 if (rusty::detail::deref_if_pointer_like(sent_round) == round.round_id()) {
                     waiting_for_current_round = true;
                 }
@@ -5339,7 +5387,7 @@ void heartbeat_phase2_body(server_h::RaftServerBase& server, PendingTable& pendi
             bool stepped_down = false;
             {
                 const auto _lock = RaftLockGuard::new_(&(*server_shadow1).mtx_);
-                bool response_available = !((!resp.status_ && (rusty::detail::deref_if_pointer_like(resp.term_) == static_cast<uint64_t>(0))) && (rusty::detail::deref_if_pointer_like(resp.last_log_index_) == static_cast<uint64_t>(0)));
+                bool response_available = !((rusty::detail::rust_not(resp.status_) && (rusty::detail::deref_if_pointer_like(resp.term_) == 0)) && (rusty::detail::deref_if_pointer_like(resp.last_log_index_) == 0));
                 size_t resp_ord = ((*server_shadow1)).PeerOrdinal(std::move(follower_id));
                 uint64_t log_last_index = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }((*server_shadow1).state_).last_index();
                 bool is_leader = ((*server_shadow1)).IsLeaderLocked();
@@ -5495,7 +5543,7 @@ void raft_on_request_vote(server_h::RaftServerBase& server, bool stopped, bool c
     server.doVote(std::move(lst_log_idx), std::move(lst_log_term), std::move(can_id), std::move(can_term), *reply_term_shadow1, *vote_granted_shadow1, std::move(grant));
 }
 
-void on_request_vote_body(server_h::RaftServerBase& server, uint64_t lst_log_idx, int64_t lst_log_term, uint16_t can_id, int64_t can_term, int64_t& reply_term, int8_t& vote_granted) {
+extern "C" void raft_server_on_request_vote_body(server_h::RaftServerBase& server, uint64_t lst_log_idx, int64_t lst_log_term, uint16_t can_id, int64_t can_term, int64_t& reply_term, int8_t& vote_granted) {
     const auto _lock = RaftLockGuard::new_(&server.mtx_);
     rusty::raft_log_debug_1("raft receives vote from candidate: {:x}", std::move(can_id));
     bool stopped = server.stop_.load(rusty::sync::atomic::Ordering::Acquire);
@@ -5654,7 +5702,7 @@ AppendReport raft_on_append_entries(server_h::RaftServerBase& server, const rust
     return std::move(report);
 }
 
-void on_append_entries_body(server_h::RaftServerBase& server, uint64_t leader_current_term, uint16_t leader_site_id, uint64_t leader_prev_log_index, uint64_t leader_prev_log_term, uint64_t leader_commit_index, const rusty::ffi::c_void* cmd, bool cmd_has_value, uint64_t leader_next_log_term, uint64_t& follower_append_ok, uint64_t& follower_current_term, uint64_t& follower_last_log_index) {
+extern "C" void raft_server_on_append_entries_body(server_h::RaftServerBase& server, uint64_t leader_current_term, uint16_t leader_site_id, uint64_t leader_prev_log_index, uint64_t leader_prev_log_term, uint64_t leader_commit_index, const rusty::ffi::c_void* cmd, bool cmd_has_value, uint64_t leader_next_log_term, uint64_t& follower_append_ok, uint64_t& follower_current_term, uint64_t& follower_last_log_index) {
     const auto _lock = RaftLockGuard::new_(&server.mtx_);
     bool stopped = server.stop_.load(rusty::sync::atomic::Ordering::Acquire);
     bool sender_is_current_voter = ((rusty::detail::deref_if_pointer_like(leader_site_id) != rusty::detail::deref_if_pointer_like(RAFT_SERVER_INVALID_SITE_ID)) && (rusty::detail::deref_if_pointer_like(leader_site_id) != rusty::detail::deref_if_pointer_like(server.site_id_))) && server.IsConfigMember(std::move(leader_site_id));
@@ -5728,8 +5776,10 @@ extern "C" void raft_server_set_commo(server_h::RaftServerBase* s, rusty::Commun
 /// # Safety
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 // @unsafe
-extern "C" void raft_server_reg_learner_action(server_h::RaftServerBase* s, rusty::LearnerAction learner_action) {
-    ((*s)).reg_learner_action(std::move(learner_action));
+extern "C" void raft_server_reg_learner_action(server_h::RaftServerBase* s, const rusty::LearnerAction* learner_action) {
+    rusty::LearnerAction learner_action_copy = rusty::default_like<rusty::LearnerAction>();
+    raft_learner_action_clone_into(learner_action, static_cast<rusty::LearnerAction*>(&learner_action_copy));
+    ((*s)).reg_learner_action(std::move(learner_action_copy));
 }
 
 /// # Safety
@@ -5777,8 +5827,10 @@ extern "C" void raft_server_set_preferred_leader(server_h::RaftServerBase* s, ui
 /// # Safety
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 // @unsafe
-extern "C" void raft_server_register_leader_change_callback(server_h::RaftServerBase* s, rusty::RaftLeaderChangeCb cb) {
-    ((*s)).RegisterLeaderChangeCallback(std::move(cb));
+extern "C" void raft_server_register_leader_change_callback(server_h::RaftServerBase* s, const rusty::RaftLeaderChangeCb* cb) {
+    rusty::RaftLeaderChangeCb cb_copy = rusty::default_like<rusty::RaftLeaderChangeCb>();
+    raft_leader_change_cb_clone_into(cb, static_cast<rusty::RaftLeaderChangeCb*>(&cb_copy));
+    ((*s)).RegisterLeaderChangeCallback(std::move(cb_copy));
 }
 
 /// # Safety
@@ -6058,15 +6110,22 @@ extern "C" uint64_t raft_server_lab_last_log_index(const server_h::RaftServerBas
 /// # Safety
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 // @unsafe
-extern "C" const server_h::RaftLog* raft_server_lab_log(const server_h::RaftServerBase* s) {
-    return rusty::detail::ptr_cast<const server_h::RaftLog*>(((*s)).LabLog());
+extern "C" uint64_t raft_server_lab_log_base(const server_h::RaftServerBase* s) {
+    return ((*s)).LabLogBase();
 }
 
 /// # Safety
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 // @unsafe
-extern "C" uint64_t raft_server_lab_log_base(const server_h::RaftServerBase* s) {
-    return ((*s)).LabLogBase();
+extern "C" uint64_t raft_server_lab_log_fingerprint_at(const server_h::RaftServerBase* s, uint64_t i) {
+    return ((*s)).LabLogFingerprintAt(std::move(i));
+}
+
+/// # Safety
+/// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
+// @unsafe
+extern "C" uint64_t raft_server_lab_log_fingerprint_len(const server_h::RaftServerBase* s) {
+    return ((*s)).LabLogFingerprintLen();
 }
 
 /// # Safety
@@ -6142,15 +6201,19 @@ extern "C" void raft_server_set_log_retention_window(server_h::RaftServerBase* s
 /// # Safety
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 // @unsafe
-extern "C" void raft_server_set_snapshot_manager(server_h::RaftServerBase* s, rusty::RaftSnapshotManagerPtr manager) {
-    ((*s)).SetSnapshotManager(std::move(manager));
+extern "C" void raft_server_set_snapshot_manager(server_h::RaftServerBase* s, const rusty::RaftSnapshotManagerPtr* manager) {
+    rusty::RaftSnapshotManagerPtr manager_copy = rusty::default_like<rusty::RaftSnapshotManagerPtr>();
+    raft_snapshot_manager_ptr_clone_into(manager, static_cast<rusty::RaftSnapshotManagerPtr*>(&manager_copy));
+    ((*s)).SetSnapshotManager(std::move(manager_copy));
 }
 
 /// # Safety
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 // @unsafe
-extern "C" void raft_server_set_snapshot_manager_locked(server_h::RaftServerBase* s, rusty::RaftSnapshotManagerPtr manager) {
-    ((*s)).SetSnapshotManagerLocked(std::move(manager));
+extern "C" void raft_server_set_snapshot_manager_locked(server_h::RaftServerBase* s, const rusty::RaftSnapshotManagerPtr* manager) {
+    rusty::RaftSnapshotManagerPtr manager_copy = rusty::default_like<rusty::RaftSnapshotManagerPtr>();
+    raft_snapshot_manager_ptr_clone_into(manager, static_cast<rusty::RaftSnapshotManagerPtr*>(&manager_copy));
+    ((*s)).SetSnapshotManagerLocked(std::move(manager_copy));
 }
 
 /// # Safety
@@ -6170,8 +6233,12 @@ extern "C" void raft_server_set_snapshot_threshold_locked(server_h::RaftServerBa
 /// # Safety
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 // @unsafe
-extern "C" uint64_t raft_server_set_state_machine_snapshot_callbacks(server_h::RaftServerBase* s, rusty::RaftCreateSnapshotCb create_cb, rusty::RaftPrepareSnapshotCb prepare_cb) {
-    return ((*s)).SetStateMachineSnapshotCallbacks(std::move(create_cb), std::move(prepare_cb));
+extern "C" uint64_t raft_server_set_state_machine_snapshot_callbacks(server_h::RaftServerBase* s, const rusty::RaftCreateSnapshotCb* create_cb, const rusty::RaftPrepareSnapshotCb* prepare_cb) {
+    rusty::RaftCreateSnapshotCb create_cb_copy = rusty::default_like<rusty::RaftCreateSnapshotCb>();
+    raft_create_snapshot_cb_clone_into(create_cb, static_cast<rusty::RaftCreateSnapshotCb*>(&create_cb_copy));
+    rusty::RaftPrepareSnapshotCb prepare_cb_copy = rusty::default_like<rusty::RaftPrepareSnapshotCb>();
+    raft_prepare_snapshot_cb_clone_into(prepare_cb, static_cast<rusty::RaftPrepareSnapshotCb*>(&prepare_cb_copy));
+    return ((*s)).SetStateMachineSnapshotCallbacks(std::move(create_cb_copy), std::move(prepare_cb_copy));
 }
 
 /// # Safety
@@ -6432,7 +6499,7 @@ bool raft_phase1_load_and_send_snapshot(
         // self_site_id is captured by value rather than read through the
         // server, so the diagnostic needs no lock either; it is written once
         // during Setup and never changes.
-        if (!raft_server_install_snapshot_reply_is_available(follower_term)) {
+        if (follower_term == 0) {
           Log_warn("[HEARTBEAT-SNAPSHOT] Site {}: Follower {} snapshot response unavailable; retaining replication indices",
                    self_site_id, site_id);
           return;
@@ -6543,10 +6610,12 @@ AppendRespView raft_append_response_read(
 //
 // OnRequestVote, OnAppendEntries, OnInstallSnapshot and Start are RaftSpecific
 // methods on RaftServerBase (scheduler.h), implemented in Rust in server.h.
-// What is left here is what that header cannot reach: on_request_vote_body
-// and on_append_entries_body are Rust too, but they are emitted in THIS
+// What is left here is what that header cannot reach: the two RPC bodies are
+// Rust too, exported as raft_server_on_request_vote_body and
+// raft_server_on_append_entries_body (server_exports.h) but defined in THIS
 // translation unit, so the two forwarders are the TU boundary and nothing
-// more; and OnInstallSnapshot's std::mutex and its catch -- the one place an
+// more -- at the cutover server.h's Rust calls the bodies directly and they
+// go; and OnInstallSnapshot's std::mutex and its catch -- the one place an
 // embedder throw becomes FailStop -- are C++ by nature.
 // ============================================================================
 
@@ -6555,8 +6624,8 @@ void raft_rpc_request_vote(RaftServerBase* self, uint64_t lst_log_idx,
                            int64_t lst_log_term, uint16_t can_id,
                            int64_t can_term, int64_t* reply_term,
                            int8_t* vote_granted) {
-  on_request_vote_body(*self, lst_log_idx, lst_log_term, can_id, can_term,
-                       *reply_term, *vote_granted);
+  raft_server_on_request_vote_body(*self, lst_log_idx, lst_log_term, can_id,
+                                   can_term, *reply_term, *vote_granted);
 }
 
 /* NOTE: same as ReceiveAppend */
@@ -6583,8 +6652,7 @@ static const TpcBatchCommand& wire_batch(const rusty::ffi::c_void* batch_handle)
 }
 bool raft_wire_is_batch(const rusty::ffi::c_void* cmd_handle) {
 #ifdef RAFT_BATCH_OPTIMIZATION
-  return raft_server_append_command_is_batch(wire_command(cmd_handle).kind_,
-                                             TpcBatchCommand::static_kind());
+  return wire_command(cmd_handle).kind_ == TpcBatchCommand::static_kind();
 #else
   (void)cmd_handle;
   return false;
@@ -6635,7 +6703,7 @@ void raft_rpc_append_entries(RaftServerBase* self, uint64_t leader_current_term,
                              uint64_t* follower_append_ok,
                              uint64_t* follower_current_term,
                              uint64_t* follower_last_log_index) {
-  on_append_entries_body(
+  raft_server_on_append_entries_body(
       *self, leader_current_term, leader_site_id, leader_prev_log_index,
       leader_prev_log_term, leader_commit_index,
       static_cast<const rusty::ffi::c_void*>(static_cast<const void*>(cmd)),

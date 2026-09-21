@@ -782,7 +782,7 @@ void RaftWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
   uint64_t term = 0;
   const RaftStartResult start_result =
       raft_server->Start(std::move(tpc_cmd), &index, &term);
-  if (raft_server_start_was_rejected(start_result)) {
+  if (start_result == RaftStartResult::REJECTED) {
     return;
   }
   }

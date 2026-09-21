@@ -20,17 +20,21 @@ void raft_server_heartbeat_loop(RaftServerBase* s);
 void raft_server_run_election_timer_loop(RaftServerBase* s, uint64_t wait_int_us);
 // --- The wake job, entered from the reactor's OneTimeJob (raft_queue_wake_job).
 void raft_wake_job_run(void* token);
+// --- The RPC bodies, entered from the service kernels (raft_rpc_*). Defined
+// by hand in server.cc's DSL block; `&mut` parameters are references here.
+void raft_server_on_request_vote_body(RaftServerBase& server, uint64_t lst_log_idx, int64_t lst_log_term, uint16_t can_id, int64_t can_term, int64_t& reply_term, int8_t& vote_granted);
+void raft_server_on_append_entries_body(RaftServerBase& server, uint64_t leader_current_term, uint16_t leader_site_id, uint64_t leader_prev_log_index, uint64_t leader_prev_log_term, uint64_t leader_commit_index, const void* cmd, bool cmd_has_value, uint64_t leader_next_log_term, uint64_t& follower_append_ok, uint64_t& follower_current_term, uint64_t& follower_last_log_index);
 // --- The replication interface: TxLogServer and RaftSpecific.
 void raft_server_set_site_identity(RaftServerBase* s, uint32_t loc_id, uint16_t site_id, uint32_t partition_id);
 void raft_server_set_commo(RaftServerBase* s, rusty::Communicator* commo);
-void raft_server_reg_learner_action(RaftServerBase* s, rusty::LearnerAction learner_action);
+void raft_server_reg_learner_action(RaftServerBase* s, const rusty::LearnerAction* learner_action);
 void raft_server_ensure_setup(RaftServerBase* s);
 bool raft_server_wait_for_startup(RaftServerBase* s);
 void raft_server_prepare_for_shutdown(RaftServerBase* s);
 bool raft_server_is_leader(RaftServerBase* s);
 uint16_t raft_server_get_leader_hint(RaftServerBase* s);
 void raft_server_set_preferred_leader(RaftServerBase* s, uint16_t site_id);
-void raft_server_register_leader_change_callback(RaftServerBase* s, rusty::RaftLeaderChangeCb cb);
+void raft_server_register_leader_change_callback(RaftServerBase* s, const rusty::RaftLeaderChangeCb* cb);
 bool raft_server_is_rpc_ready(const RaftServerBase* s);
 bool raft_server_is_disconnected(const RaftServerBase* s);
 uint16_t raft_server_site_id(const RaftServerBase* s);
@@ -72,8 +76,9 @@ bool raft_server_lab_election_in_progress(const RaftServerBase* s);
 uint64_t raft_server_lab_execute_index(const RaftServerBase* s);
 bool raft_server_lab_is_leader(const RaftServerBase* s);
 uint64_t raft_server_lab_last_log_index(const RaftServerBase* s);
-const RaftLog* raft_server_lab_log(const RaftServerBase* s);
 uint64_t raft_server_lab_log_base(const RaftServerBase* s);
+uint64_t raft_server_lab_log_fingerprint_at(const RaftServerBase* s, uint64_t i);
+uint64_t raft_server_lab_log_fingerprint_len(const RaftServerBase* s);
 rusty::RaftCheckedMutex* raft_server_lab_mutex(RaftServerBase* s);
 bool raft_server_lab_req_voting(const RaftServerBase* s);
 uint64_t raft_server_lab_snap_idx(const RaftServerBase* s);
@@ -84,11 +89,11 @@ uint16_t raft_server_lab_vote_for(const RaftServerBase* s);
 void raft_server_reconnect(RaftServerBase* s);
 void raft_server_set_heartbeat_interval(RaftServerBase* s, uint64_t micros);
 void raft_server_set_log_retention_window(RaftServerBase* s, uint64_t window);
-void raft_server_set_snapshot_manager(RaftServerBase* s, rusty::RaftSnapshotManagerPtr manager);
-void raft_server_set_snapshot_manager_locked(RaftServerBase* s, rusty::RaftSnapshotManagerPtr manager);
+void raft_server_set_snapshot_manager(RaftServerBase* s, const rusty::RaftSnapshotManagerPtr* manager);
+void raft_server_set_snapshot_manager_locked(RaftServerBase* s, const rusty::RaftSnapshotManagerPtr* manager);
 void raft_server_set_snapshot_threshold(RaftServerBase* s, uint64_t threshold);
 void raft_server_set_snapshot_threshold_locked(RaftServerBase* s, uint64_t threshold);
-uint64_t raft_server_set_state_machine_snapshot_callbacks(RaftServerBase* s, rusty::RaftCreateSnapshotCb create_cb, rusty::RaftPrepareSnapshotCb prepare_cb);
+uint64_t raft_server_set_state_machine_snapshot_callbacks(RaftServerBase* s, const rusty::RaftCreateSnapshotCb* create_cb, const rusty::RaftPrepareSnapshotCb* prepare_cb);
 void raft_server_shutdown(RaftServerBase* s);
 }  // extern "C"
 }  // namespace janus

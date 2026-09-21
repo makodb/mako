@@ -53,15 +53,6 @@ pub const fn raft_server_vote_term_is_stale(candidate_term: u64,
     candidate_term < current_term
 }
 
-pub const fn raft_server_vote_is_already_granted_to_other(candidate_term: u64,
-                                                           current_term: u64,
-                                                           voted_for: u16,
-                                                           candidate_id: u16) -> bool {
-    candidate_term == current_term &&
-        voted_for != RAFT_SERVER_INVALID_SITE_ID &&
-        voted_for != candidate_id
-}
-
 pub const fn raft_server_vote_is_idempotent(candidate_term: u64,
                                              current_term: u64,
                                              voted_for: u16,
@@ -80,10 +71,6 @@ pub const fn raft_server_candidate_log_is_at_least(candidate_term: i64,
 pub const fn raft_server_election_last_log_uses_snapshot(last_log_index: u64,
                                                           snapshot_index: u64) -> bool {
     last_log_index == snapshot_index
-}
-
-pub const fn raft_server_install_snapshot_reply_is_available(follower_term: u64) -> bool {
-    follower_term != 0
 }
 
 pub const fn raft_server_snapshot_is_stale(last_included_index: u64,
@@ -122,17 +109,6 @@ pub const fn raft_server_snapshot_recovery_has_unproven_gap(
 pub const fn raft_server_snapshot_term_uses_boundary(snapshot_index: u64,
                                                       existing_snapshot_index: u64) -> bool {
     snapshot_index == existing_snapshot_index
-}
-
-pub const fn raft_server_snapshot_marker_matches(payload_size: usize,
-                                                   marker_size: usize,
-                                                   payload_index: u64,
-                                                   payload_term: u64,
-                                                   expected_index: u64,
-                                                   expected_term: u64) -> bool {
-    payload_size == marker_size &&
-        payload_index == expected_index &&
-        payload_term == expected_term
 }
 
 pub const fn raft_server_election_result_is_current(election_in_progress: bool,
@@ -176,29 +152,10 @@ pub const fn raft_server_append_term_is_acceptable(leader_term: u64,
     leader_term >= follower_term
 }
 
-pub const fn raft_server_append_prefix_is_compacted_miss(previous_index: u64,
-                                                          minimum_active_slot: u64,
-                                                          snapshot_index: u64) -> bool {
-    previous_index != 0 &&
-        previous_index < minimum_active_slot &&
-        previous_index != snapshot_index
-}
-
-pub const fn raft_server_append_previous_term_is_acceptable(previous_index: u64,
-                                                             local_previous_term: u64,
-                                                             leader_previous_term: u64) -> bool {
-    previous_index == 0 || local_previous_term == leader_previous_term
-}
-
 pub const fn raft_server_append_is_acceptable(term_ok: bool,
                                                index_ok: bool,
                                                previous_term_ok: bool) -> bool {
     term_ok && index_ok && previous_term_ok
-}
-
-pub const fn raft_server_append_command_is_batch(command_kind: i32,
-                                                  batch_kind: i32) -> bool {
-    command_kind == batch_kind
 }
 
 pub const fn raft_server_append_entry_count_fits(previous_index: u64,
@@ -350,52 +307,6 @@ pub const fn raft_server_follower_next_index(last_log_index: u64) -> u64 {
     last_log_index.wrapping_add(1)
 }
 
-pub const fn raft_server_append_reject_can_fast_backoff(last_log_index: u64,
-                                                         next_index: u64) -> bool {
-    last_log_index > 0 &&
-        raft_server_follower_next_index(last_log_index) < next_index
-}
-
-pub const fn raft_server_append_reject_has_term_conflict(last_log_index: u64,
-                                                          next_index: u64) -> bool {
-    last_log_index > 0 &&
-        raft_server_follower_next_index(last_log_index) == next_index &&
-        next_index > 1
-}
-
-pub const fn raft_server_append_reject_can_halve(next_index: u64) -> bool {
-    next_index > 10
-}
-
-pub const fn raft_server_append_reject_can_decrement(next_index: u64) -> bool {
-    next_index > 1
-}
-
-pub const fn raft_server_append_reject_halved(next_index: u64) -> u64 {
-    next_index / 2
-}
-
-pub const fn raft_server_append_reject_decremented(next_index: u64) -> u64 {
-    next_index.wrapping_sub(1)
-}
-
-pub const fn raft_server_append_reject_floor() -> u64 {
-    1
-}
-
-pub const fn raft_server_start_was_rejected(result: RaftStartResult) -> bool {
-    (result as i32) == (RaftStartResult::REJECTED as i32)
-}
-
-pub const fn raft_server_start_was_appended(result: RaftStartResult) -> bool {
-    (result as i32) == (RaftStartResult::APPENDED as i32)
-}
-
-
-pub const fn raft_server_command_is_internal_noop(command_kind: i32,
-                                                   noop_kind: i32) -> bool {
-    command_kind == noop_kind
-}
 
 pub const fn raft_server_retention_window_normalize(window: u64) -> u64 {
     if window > 0 {
@@ -412,15 +323,6 @@ pub const fn raft_server_retention_window_normalize(window: u64) -> u64 {
 // emitter output for it, apply the change on its own with the predicate
 // reviewed, then remove this allow.
 #[allow(clippy::implicit_saturating_sub)]
-pub const fn raft_server_retention_cutoff(execute_index: u64,
-                                           retention_window: u64) -> u64 {
-    if execute_index > retention_window {
-        execute_index - retention_window
-    } else {
-        0
-    }
-}
-
 pub const fn raft_server_observed_higher_term(observed_term: u64,
                                                current_term: u64) -> bool {
     observed_term > current_term
@@ -457,6 +359,119 @@ pub const fn raft_server_leader_rpc_sender_is_authoritative(
           (!local_is_leader &&
            (!has_known_leader || known_leader_matches_sender))))
 }
+// The predicates' tests, one `const` assert each, in the order the C++
+// static_asserts had them. The emitter lowers each to a static_assert, so
+// the transpiled build checks them exactly as before; rustc checks them at
+// every gate. Numeric literals take the predicate's parameter types.
+const _: () = assert!(raft_server_site_is_preferred_leader(7, 7));
+// A site that is itself the sentinel is not the preferred leader, because
+// the sentinel means "no preferred leader configured".
+const _: () = assert!(!raft_server_site_is_preferred_leader(RAFT_SERVER_INVALID_SITE_ID, RAFT_SERVER_INVALID_SITE_ID));
+const _: () = assert!(raft_server_vote_is_idempotent(4, 4, 2, 2));
+const _: () = assert!(raft_server_candidate_log_is_at_least(3, 2, 1, 9));
+const _: () = assert!(raft_server_candidate_log_is_at_least(3, 3, 9, 9));
+const _: () = assert!(!raft_server_candidate_log_is_at_least(3, 3, 8, 9));
+const _: () = assert!(raft_server_election_last_log_uses_snapshot(0, 0));
+const _: () = assert!(raft_server_election_last_log_uses_snapshot(460, 460));
+const _: () = assert!(!raft_server_election_last_log_uses_snapshot(461, 460));
+const _: () = assert!(raft_server_timer_campaign_is_current(false, 9, 9, 501, 500));
+const _: () = assert!(!raft_server_timer_campaign_is_current(false, 8, 9, 501, 500));
+const _: () = assert!(!raft_server_timer_campaign_is_current(false, 9, 9, 500, 500));
+const _: () = assert!(!raft_server_timer_campaign_is_current(true, 9, 9, 501, 500));
+const _: () = assert!(raft_server_campaign_can_start(false, false));
+const _: () = assert!(!raft_server_campaign_can_start(true, false));
+const _: () = assert!(!raft_server_campaign_can_start(false, true));
+const _: () = assert!(raft_server_snapshot_is_stale(9, 9));
+const _: () = assert!(raft_server_snapshot_is_stale(8, 9));
+const _: () = assert!(!raft_server_snapshot_is_stale(10, 9));
+const _: () = assert!(raft_server_snapshot_boundary_matches(true, 7, 7));
+const _: () = assert!(!raft_server_snapshot_boundary_matches(false, 7, 7));
+const _: () = assert!(!raft_server_snapshot_boundary_matches(true, 6, 7));
+const _: () = assert!(raft_server_snapshot_term_is_valid(7, 7));
+const _: () = assert!(raft_server_snapshot_term_is_valid(6, 7));
+const _: () = assert!(!raft_server_snapshot_term_is_valid(8, 7));
+const _: () = assert!(raft_server_snapshot_recovery_retains_suffix(true, true, true, false));
+const _: () = assert!(!raft_server_snapshot_recovery_retains_suffix(true, true, false, true));
+const _: () = assert!(raft_server_snapshot_recovery_retains_suffix(true, false, false, true));
+const _: () = assert!(!raft_server_snapshot_recovery_retains_suffix(true, false, false, false));
+const _: () = assert!(!raft_server_snapshot_recovery_retains_suffix(false, false, false, true));
+const _: () = assert!(raft_server_snapshot_recovery_has_unproven_gap(true, false, false));
+const _: () = assert!(!raft_server_snapshot_recovery_has_unproven_gap(true, true, false));
+const _: () = assert!(!raft_server_snapshot_recovery_has_unproven_gap(true, false, true));
+const _: () = assert!(raft_server_snapshot_term_uses_boundary(11, 11));
+const _: () = assert!(!raft_server_snapshot_term_uses_boundary(12, 11));
+const _: () = assert!(raft_server_election_result_is_current(true, 4, 4, 4));
+const _: () = assert!(!raft_server_election_result_is_current(false, 4, 4, 4));
+const _: () = assert!(!raft_server_election_result_is_current(true, 3, 4, 4));
+const _: () = assert!(!raft_server_election_result_is_current(true, 4, 4, 5));
+const _: () = assert!(raft_server_election_completion_action(true, 4, 4, 4, 4) == ElectionCompletionAction::APPLY_CURRENT as i32);
+const _: () = assert!(raft_server_election_completion_action(true, 5, 4, 5, 5) == ElectionCompletionAction::IGNORE_STALE as i32);
+const _: () = assert!(raft_server_election_completion_action(true, 5, 4, 5, 6) == ElectionCompletionAction::ADVANCE_HIGHER_TERM as i32);
+const _: () = assert!(raft_server_apply_epoch_is_current(8, 8));
+const _: () = assert!(!raft_server_apply_epoch_is_current(7, 8));
+const _: () = assert!(raft_server_log_index_has_successor(0));
+const _: () = assert!(raft_server_log_index_has_successor(u64::MAX - 1));
+const _: () = assert!(!raft_server_log_index_has_successor(u64::MAX));
+const _: () = assert!(raft_server_append_is_acceptable(true, true, true));
+const _: () = assert!(!raft_server_append_is_acceptable(false, true, true));
+const _: () = assert!(!raft_server_append_is_acceptable(true, false, true));
+const _: () = assert!(!raft_server_append_is_acceptable(true, true, false));
+const _: () = assert!(raft_server_append_entry_count_fits(u64::MAX, 0));
+const _: () = assert!(!raft_server_append_entry_count_fits(u64::MAX, 1));
+const _: () = assert!(raft_server_append_entry_count_fits(u64::MAX - 3, 3));
+const _: () = assert!(!raft_server_append_entry_count_fits(u64::MAX - 3, 4));
+const _: () = assert!(!raft_server_append_batch_count_is_valid(7, 0));
+const _: () = assert!(raft_server_append_batch_count_is_valid(u64::MAX - 3, 3));
+const _: () = assert!(!raft_server_append_batch_count_is_valid(u64::MAX - 3, 4));
+const _: () = assert!(raft_server_append_entry_conflicts(false, 0, 7));
+const _: () = assert!(raft_server_append_entry_conflicts(true, 6, 7));
+const _: () = assert!(!raft_server_append_entry_conflicts(true, 7, 7));
+const _: () = assert!(raft_server_append_result_last_index(10, 8, false) == 10);
+const _: () = assert!(raft_server_append_result_last_index(10, 8, true) == 8);
+const _: () = assert!(raft_server_append_result_last_index(8, 10, false) == 10);
+const _: () = assert!(raft_server_append_sent_end(7, 0) == 7);
+const _: () = assert!(raft_server_append_sent_end(7, 1) == 8);
+const _: () = assert!(raft_server_append_sent_end(7, 4) == 11);
+const _: () = assert!(raft_server_append_acknowledged_through(20, 10, 15) == 10);
+const _: () = assert!(raft_server_append_acknowledged_through(8, 10, 15) == 8);
+const _: () = assert!(raft_server_append_acknowledged_through(20, 15, 9) == 9);
+const _: () = assert!(raft_server_commit_index_clamp(9, 7) == 7);
+// The clamp policy is now scalar, so it tests as plain static_asserts like its
+// 67 siblings. The majority SELECTION moved onto PeerTable, which owns a
+// rusty::Vec and so cannot be constant-evaluated; raftLabTest covers it.
+const _: () = assert!(raft_server_commit_index_candidate(7, 3, 100) == 7);
+const _: () = assert!(raft_server_commit_index_candidate(9, 5, 100) == 9);
+const _: () = assert!(raft_server_commit_index_candidate(7, 3, 5) == 5);
+const _: () = assert!(raft_server_commit_index_candidate(0, 1, 42) == 42);
+const _: () = assert!(raft_server_compaction_safe_index(12, 10, 8) == 8);
+const _: () = assert!(raft_server_compaction_safe_index(7, 10, 8) == 7);
+const _: () = assert!(raft_server_compaction_safe_index(9, 8, 10) == 8);
+const _: () = assert!(raft_server_read_index_round_can_advance(0));
+const _: () = assert!(!raft_server_read_index_round_can_advance(u64::MAX));
+const _: () = assert!(raft_server_read_index_reply_confirms_authority(true, true, 7, 7, 7, 11, 11));
+const _: () = assert!(!raft_server_read_index_reply_confirms_authority(true, true, 7, 7, 7, 10, 11));
+const _: () = assert!(!raft_server_read_index_reply_confirms_authority(true, true, 7, 8, 7, 11, 11));
+const _: () = assert!(raft_server_snapshot_progress_clamp(3, 5, 9) == 5);
+const _: () = assert!(raft_server_snapshot_progress_clamp(7, 5, 9) == 7);
+const _: () = assert!(raft_server_snapshot_progress_clamp(12, 5, 9) == 9);
+const _: () = assert!(raft_server_snapshot_is_due(4, 10, 5));
+const _: () = assert!(!raft_server_snapshot_is_due(10, 4, 5));
+const _: () = assert!(raft_server_follower_next_index(7) == 8);
+const _: () = assert!(raft_server_follower_next_index(u64::MAX) == 0);
+const _: () = assert!(raft_server_follower_next_index(4) == 5);
+const _: () = assert!(raft_server_follower_next_index(u64::MAX) == 0);
+const _: () = assert!(raft_server_retention_window_normalize(0) == 1);
+const _: () = assert!(raft_server_retention_window_normalize(1) == 1);
+const _: () = assert!(raft_server_retention_window_normalize(u64::MAX) == u64::MAX);
+// Raft currently compares signed ballot_t values with uint64_t state_.current_term_.
+// These casts make the existing C++ usual-arithmetic-conversion semantics
+// explicit, including the historical negative-term edge case.
+const _: () = assert!(!raft_server_vote_term_is_stale(u64::MAX, 0));
+const _: () = assert!(raft_server_observed_higher_term(u64::MAX, 0));
+const _: () = assert!(!raft_server_signed_term_is_newer(-1, 0));
+const _: () = assert!(!raft_server_signed_term_is_newer(0, 0));
+const _: () = assert!(raft_server_signed_term_is_newer(1, 0));
+const _: () = assert!(raft_server_log_entry_is_current_term(-1, u64::MAX));
 
 #[repr(C)]
 pub struct RaftEntry {
@@ -1325,6 +1340,37 @@ impl GateWakeJob {
     }
 }
 
+// The election-timeout configuration, as one value. Every field is an
+// environment override with a compiled-in default, read afresh on each call
+// exactly as the four separate getters were.
+#[repr(C)]
+pub struct RaftElectionTimeouts {
+    pub grace_period_us_: u64,
+    pub preferred_us_: u64,
+    pub non_preferred_grace_us_: u64,
+    pub non_preferred_steady_us_: u64,
+}
+
+#[repr(C)]
+pub struct RaftVoteOutcome {
+    pub term_: i64,
+    pub yes_: bool,
+    pub no_: bool,
+    pub n_voted_yes_: i32,
+    pub n_voted_no_: i32,
+    pub timeouted_: bool,
+}
+
+// One AppendEntries reply, read out of the wire response by
+// raft_append_response_read for heartbeat phase 2 (server.cc).
+#[repr(C)]
+pub struct AppendRespView {
+    pub completed_: bool,
+    pub status_: bool,
+    pub term_: u64,
+    pub last_log_index_: u64,
+}
+
 use rusty::cpp_inherit;
 use crate::scheduler_h::TxLogServer;
 use crate::scheduler_h::RaftSpecific;
@@ -1413,8 +1459,9 @@ unsafe extern "C" {
     fn raft_queue_wake_job(owner: *const rusty::RaftPollThreadPtr,
                            token: *mut core::ffi::c_void);
     // The RPC entry points' C++ halves. The first two exist only because
-    // on_request_vote_body and on_append_entries_body are emitted in
-    // server.cc's translation unit, which this header cannot name; the third
+    // the bodies (raft_server_on_request_vote_body, raft_server_on_append_entries_body)
+    // are defined in server.cc's translation unit, which this header cannot
+    // name before server_exports.h is included at its end; the third
     // is the InstallSnapshot exception boundary -- a std::mutex the DSL
     // cannot lock, and the one catch that turns an embedder throw into
     // FailStop.
@@ -1555,27 +1602,6 @@ pub const RAFT_ENV_HEARTBEAT_INTERVAL_US: i32 = 0;
 pub const RAFT_ENV_LOG_RETENTION_WINDOW: i32 = 1;
 pub const RAFT_ENV_SNAPSHOT_INTERVAL: i32 = 2;
 
-
-// The election-timeout configuration, as one value. Every field is an
-// environment override with a compiled-in default, read afresh on each call
-// exactly as the four separate getters were.
-#[repr(C)]
-pub struct RaftElectionTimeouts {
-    pub grace_period_us_: u64,
-    pub preferred_us_: u64,
-    pub non_preferred_grace_us_: u64,
-    pub non_preferred_steady_us_: u64,
-}
-
-#[repr(C)]
-pub struct RaftVoteOutcome {
-    pub term_: i64,
-    pub yes_: bool,
-    pub no_: bool,
-    pub n_voted_yes_: i32,
-    pub n_voted_no_: i32,
-    pub timeouted_: bool,
-}
 
 // appliedIndexForWait_ keeps its C++ spelling: it is read by name from
 // test.cc and from the C++ bodies that have not converted yet, and renaming
@@ -4339,9 +4365,28 @@ impl RaftServerBase {
     pub fn LabSnapshotManager(&self) -> &rusty::RaftSnapshotManagerPtr {
         &self.snapshot_manager_
     }
-    // The whole log, read-only, for RaftLogFingerprint.
-    pub fn LabLog(&self) -> &RaftLog {
-        &self.state_.raft_log_
+    // The lab suite's log fingerprint (test.cc RaftLogFingerprint), one
+    // element per call so the harness never holds a pointer into the log:
+    // element 0 is the base, 1 the length, 2+i the term of entry base+i, or
+    // 0 where there is none. is_some()/unwrap() rather than `if let`, for the
+    // reason recorded on ReplicationWakeGate::wake_on_owner.
+    pub fn LabLogFingerprintLen(&self) -> u64 {
+        2 + self.state_.raft_log_.len() as u64
+    }
+    #[allow(clippy::unnecessary_unwrap)]
+    pub fn LabLogFingerprintAt(&self, i: u64) -> u64 {
+        if i == 0 {
+            return self.state_.raft_log_.base();
+        }
+        if i == 1 {
+            return self.state_.raft_log_.len() as u64;
+        }
+        let entry: rusty::Option<&RaftEntry> =
+            self.state_.raft_log_.get(self.state_.raft_log_.base() + (i - 2));
+        if entry.is_some() {
+            return entry.unwrap().term() as u64;
+        }
+        0
     }
 }
 

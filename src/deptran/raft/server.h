@@ -201,15 +201,6 @@ pub const fn raft_server_vote_term_is_stale(candidate_term: u64,
     candidate_term < current_term
 }
 
-pub const fn raft_server_vote_is_already_granted_to_other(candidate_term: u64,
-                                                           current_term: u64,
-                                                           voted_for: u16,
-                                                           candidate_id: u16) -> bool {
-    candidate_term == current_term &&
-        voted_for != RAFT_SERVER_INVALID_SITE_ID &&
-        voted_for != candidate_id
-}
-
 pub const fn raft_server_vote_is_idempotent(candidate_term: u64,
                                              current_term: u64,
                                              voted_for: u16,
@@ -228,10 +219,6 @@ pub const fn raft_server_candidate_log_is_at_least(candidate_term: i64,
 pub const fn raft_server_election_last_log_uses_snapshot(last_log_index: u64,
                                                           snapshot_index: u64) -> bool {
     last_log_index == snapshot_index
-}
-
-pub const fn raft_server_install_snapshot_reply_is_available(follower_term: u64) -> bool {
-    follower_term != 0
 }
 
 pub const fn raft_server_snapshot_is_stale(last_included_index: u64,
@@ -270,17 +257,6 @@ pub const fn raft_server_snapshot_recovery_has_unproven_gap(
 pub const fn raft_server_snapshot_term_uses_boundary(snapshot_index: u64,
                                                       existing_snapshot_index: u64) -> bool {
     snapshot_index == existing_snapshot_index
-}
-
-pub const fn raft_server_snapshot_marker_matches(payload_size: usize,
-                                                   marker_size: usize,
-                                                   payload_index: u64,
-                                                   payload_term: u64,
-                                                   expected_index: u64,
-                                                   expected_term: u64) -> bool {
-    payload_size == marker_size &&
-        payload_index == expected_index &&
-        payload_term == expected_term
 }
 
 pub const fn raft_server_election_result_is_current(election_in_progress: bool,
@@ -324,29 +300,10 @@ pub const fn raft_server_append_term_is_acceptable(leader_term: u64,
     leader_term >= follower_term
 }
 
-pub const fn raft_server_append_prefix_is_compacted_miss(previous_index: u64,
-                                                          minimum_active_slot: u64,
-                                                          snapshot_index: u64) -> bool {
-    previous_index != 0 &&
-        previous_index < minimum_active_slot &&
-        previous_index != snapshot_index
-}
-
-pub const fn raft_server_append_previous_term_is_acceptable(previous_index: u64,
-                                                             local_previous_term: u64,
-                                                             leader_previous_term: u64) -> bool {
-    previous_index == 0 || local_previous_term == leader_previous_term
-}
-
 pub const fn raft_server_append_is_acceptable(term_ok: bool,
                                                index_ok: bool,
                                                previous_term_ok: bool) -> bool {
     term_ok && index_ok && previous_term_ok
-}
-
-pub const fn raft_server_append_command_is_batch(command_kind: i32,
-                                                  batch_kind: i32) -> bool {
-    command_kind == batch_kind
 }
 
 pub const fn raft_server_append_entry_count_fits(previous_index: u64,
@@ -498,52 +455,6 @@ pub const fn raft_server_follower_next_index(last_log_index: u64) -> u64 {
     last_log_index.wrapping_add(1)
 }
 
-pub const fn raft_server_append_reject_can_fast_backoff(last_log_index: u64,
-                                                         next_index: u64) -> bool {
-    last_log_index > 0 &&
-        raft_server_follower_next_index(last_log_index) < next_index
-}
-
-pub const fn raft_server_append_reject_has_term_conflict(last_log_index: u64,
-                                                          next_index: u64) -> bool {
-    last_log_index > 0 &&
-        raft_server_follower_next_index(last_log_index) == next_index &&
-        next_index > 1
-}
-
-pub const fn raft_server_append_reject_can_halve(next_index: u64) -> bool {
-    next_index > 10
-}
-
-pub const fn raft_server_append_reject_can_decrement(next_index: u64) -> bool {
-    next_index > 1
-}
-
-pub const fn raft_server_append_reject_halved(next_index: u64) -> u64 {
-    next_index / 2
-}
-
-pub const fn raft_server_append_reject_decremented(next_index: u64) -> u64 {
-    next_index.wrapping_sub(1)
-}
-
-pub const fn raft_server_append_reject_floor() -> u64 {
-    1
-}
-
-pub const fn raft_server_start_was_rejected(result: RaftStartResult) -> bool {
-    (result as i32) == (RaftStartResult::REJECTED as i32)
-}
-
-pub const fn raft_server_start_was_appended(result: RaftStartResult) -> bool {
-    (result as i32) == (RaftStartResult::APPENDED as i32)
-}
-
-
-pub const fn raft_server_command_is_internal_noop(command_kind: i32,
-                                                   noop_kind: i32) -> bool {
-    command_kind == noop_kind
-}
 
 pub const fn raft_server_retention_window_normalize(window: u64) -> u64 {
     if window > 0 {
@@ -560,15 +471,6 @@ pub const fn raft_server_retention_window_normalize(window: u64) -> u64 {
 // emitter output for it, apply the change on its own with the predicate
 // reviewed, then remove this allow.
 #[allow(clippy::implicit_saturating_sub)]
-pub const fn raft_server_retention_cutoff(execute_index: u64,
-                                           retention_window: u64) -> u64 {
-    if execute_index > retention_window {
-        execute_index - retention_window
-    } else {
-        0
-    }
-}
-
 pub const fn raft_server_observed_higher_term(observed_term: u64,
                                                current_term: u64) -> bool {
     observed_term > current_term
@@ -605,8 +507,121 @@ pub const fn raft_server_leader_rpc_sender_is_authoritative(
           (!local_is_leader &&
            (!has_known_leader || known_leader_matches_sender))))
 }
+// The predicates' tests, one `const` assert each, in the order the C++
+// static_asserts had them. The emitter lowers each to a static_assert, so
+// the transpiled build checks them exactly as before; rustc checks them at
+// every gate. Numeric literals take the predicate's parameter types.
+const _: () = assert!(raft_server_site_is_preferred_leader(7, 7));
+// A site that is itself the sentinel is not the preferred leader, because
+// the sentinel means "no preferred leader configured".
+const _: () = assert!(!raft_server_site_is_preferred_leader(RAFT_SERVER_INVALID_SITE_ID, RAFT_SERVER_INVALID_SITE_ID));
+const _: () = assert!(raft_server_vote_is_idempotent(4, 4, 2, 2));
+const _: () = assert!(raft_server_candidate_log_is_at_least(3, 2, 1, 9));
+const _: () = assert!(raft_server_candidate_log_is_at_least(3, 3, 9, 9));
+const _: () = assert!(!raft_server_candidate_log_is_at_least(3, 3, 8, 9));
+const _: () = assert!(raft_server_election_last_log_uses_snapshot(0, 0));
+const _: () = assert!(raft_server_election_last_log_uses_snapshot(460, 460));
+const _: () = assert!(!raft_server_election_last_log_uses_snapshot(461, 460));
+const _: () = assert!(raft_server_timer_campaign_is_current(false, 9, 9, 501, 500));
+const _: () = assert!(!raft_server_timer_campaign_is_current(false, 8, 9, 501, 500));
+const _: () = assert!(!raft_server_timer_campaign_is_current(false, 9, 9, 500, 500));
+const _: () = assert!(!raft_server_timer_campaign_is_current(true, 9, 9, 501, 500));
+const _: () = assert!(raft_server_campaign_can_start(false, false));
+const _: () = assert!(!raft_server_campaign_can_start(true, false));
+const _: () = assert!(!raft_server_campaign_can_start(false, true));
+const _: () = assert!(raft_server_snapshot_is_stale(9, 9));
+const _: () = assert!(raft_server_snapshot_is_stale(8, 9));
+const _: () = assert!(!raft_server_snapshot_is_stale(10, 9));
+const _: () = assert!(raft_server_snapshot_boundary_matches(true, 7, 7));
+const _: () = assert!(!raft_server_snapshot_boundary_matches(false, 7, 7));
+const _: () = assert!(!raft_server_snapshot_boundary_matches(true, 6, 7));
+const _: () = assert!(raft_server_snapshot_term_is_valid(7, 7));
+const _: () = assert!(raft_server_snapshot_term_is_valid(6, 7));
+const _: () = assert!(!raft_server_snapshot_term_is_valid(8, 7));
+const _: () = assert!(raft_server_snapshot_recovery_retains_suffix(true, true, true, false));
+const _: () = assert!(!raft_server_snapshot_recovery_retains_suffix(true, true, false, true));
+const _: () = assert!(raft_server_snapshot_recovery_retains_suffix(true, false, false, true));
+const _: () = assert!(!raft_server_snapshot_recovery_retains_suffix(true, false, false, false));
+const _: () = assert!(!raft_server_snapshot_recovery_retains_suffix(false, false, false, true));
+const _: () = assert!(raft_server_snapshot_recovery_has_unproven_gap(true, false, false));
+const _: () = assert!(!raft_server_snapshot_recovery_has_unproven_gap(true, true, false));
+const _: () = assert!(!raft_server_snapshot_recovery_has_unproven_gap(true, false, true));
+const _: () = assert!(raft_server_snapshot_term_uses_boundary(11, 11));
+const _: () = assert!(!raft_server_snapshot_term_uses_boundary(12, 11));
+const _: () = assert!(raft_server_election_result_is_current(true, 4, 4, 4));
+const _: () = assert!(!raft_server_election_result_is_current(false, 4, 4, 4));
+const _: () = assert!(!raft_server_election_result_is_current(true, 3, 4, 4));
+const _: () = assert!(!raft_server_election_result_is_current(true, 4, 4, 5));
+const _: () = assert!(raft_server_election_completion_action(true, 4, 4, 4, 4) == ElectionCompletionAction::APPLY_CURRENT as i32);
+const _: () = assert!(raft_server_election_completion_action(true, 5, 4, 5, 5) == ElectionCompletionAction::IGNORE_STALE as i32);
+const _: () = assert!(raft_server_election_completion_action(true, 5, 4, 5, 6) == ElectionCompletionAction::ADVANCE_HIGHER_TERM as i32);
+const _: () = assert!(raft_server_apply_epoch_is_current(8, 8));
+const _: () = assert!(!raft_server_apply_epoch_is_current(7, 8));
+const _: () = assert!(raft_server_log_index_has_successor(0));
+const _: () = assert!(raft_server_log_index_has_successor(u64::MAX - 1));
+const _: () = assert!(!raft_server_log_index_has_successor(u64::MAX));
+const _: () = assert!(raft_server_append_is_acceptable(true, true, true));
+const _: () = assert!(!raft_server_append_is_acceptable(false, true, true));
+const _: () = assert!(!raft_server_append_is_acceptable(true, false, true));
+const _: () = assert!(!raft_server_append_is_acceptable(true, true, false));
+const _: () = assert!(raft_server_append_entry_count_fits(u64::MAX, 0));
+const _: () = assert!(!raft_server_append_entry_count_fits(u64::MAX, 1));
+const _: () = assert!(raft_server_append_entry_count_fits(u64::MAX - 3, 3));
+const _: () = assert!(!raft_server_append_entry_count_fits(u64::MAX - 3, 4));
+const _: () = assert!(!raft_server_append_batch_count_is_valid(7, 0));
+const _: () = assert!(raft_server_append_batch_count_is_valid(u64::MAX - 3, 3));
+const _: () = assert!(!raft_server_append_batch_count_is_valid(u64::MAX - 3, 4));
+const _: () = assert!(raft_server_append_entry_conflicts(false, 0, 7));
+const _: () = assert!(raft_server_append_entry_conflicts(true, 6, 7));
+const _: () = assert!(!raft_server_append_entry_conflicts(true, 7, 7));
+const _: () = assert!(raft_server_append_result_last_index(10, 8, false) == 10);
+const _: () = assert!(raft_server_append_result_last_index(10, 8, true) == 8);
+const _: () = assert!(raft_server_append_result_last_index(8, 10, false) == 10);
+const _: () = assert!(raft_server_append_sent_end(7, 0) == 7);
+const _: () = assert!(raft_server_append_sent_end(7, 1) == 8);
+const _: () = assert!(raft_server_append_sent_end(7, 4) == 11);
+const _: () = assert!(raft_server_append_acknowledged_through(20, 10, 15) == 10);
+const _: () = assert!(raft_server_append_acknowledged_through(8, 10, 15) == 8);
+const _: () = assert!(raft_server_append_acknowledged_through(20, 15, 9) == 9);
+const _: () = assert!(raft_server_commit_index_clamp(9, 7) == 7);
+// The clamp policy is now scalar, so it tests as plain static_asserts like its
+// 67 siblings. The majority SELECTION moved onto PeerTable, which owns a
+// rusty::Vec and so cannot be constant-evaluated; raftLabTest covers it.
+const _: () = assert!(raft_server_commit_index_candidate(7, 3, 100) == 7);
+const _: () = assert!(raft_server_commit_index_candidate(9, 5, 100) == 9);
+const _: () = assert!(raft_server_commit_index_candidate(7, 3, 5) == 5);
+const _: () = assert!(raft_server_commit_index_candidate(0, 1, 42) == 42);
+const _: () = assert!(raft_server_compaction_safe_index(12, 10, 8) == 8);
+const _: () = assert!(raft_server_compaction_safe_index(7, 10, 8) == 7);
+const _: () = assert!(raft_server_compaction_safe_index(9, 8, 10) == 8);
+const _: () = assert!(raft_server_read_index_round_can_advance(0));
+const _: () = assert!(!raft_server_read_index_round_can_advance(u64::MAX));
+const _: () = assert!(raft_server_read_index_reply_confirms_authority(true, true, 7, 7, 7, 11, 11));
+const _: () = assert!(!raft_server_read_index_reply_confirms_authority(true, true, 7, 7, 7, 10, 11));
+const _: () = assert!(!raft_server_read_index_reply_confirms_authority(true, true, 7, 8, 7, 11, 11));
+const _: () = assert!(raft_server_snapshot_progress_clamp(3, 5, 9) == 5);
+const _: () = assert!(raft_server_snapshot_progress_clamp(7, 5, 9) == 7);
+const _: () = assert!(raft_server_snapshot_progress_clamp(12, 5, 9) == 9);
+const _: () = assert!(raft_server_snapshot_is_due(4, 10, 5));
+const _: () = assert!(!raft_server_snapshot_is_due(10, 4, 5));
+const _: () = assert!(raft_server_follower_next_index(7) == 8);
+const _: () = assert!(raft_server_follower_next_index(u64::MAX) == 0);
+const _: () = assert!(raft_server_follower_next_index(4) == 5);
+const _: () = assert!(raft_server_follower_next_index(u64::MAX) == 0);
+const _: () = assert!(raft_server_retention_window_normalize(0) == 1);
+const _: () = assert!(raft_server_retention_window_normalize(1) == 1);
+const _: () = assert!(raft_server_retention_window_normalize(u64::MAX) == u64::MAX);
+// Raft currently compares signed ballot_t values with uint64_t state_.current_term_.
+// These casts make the existing C++ usual-arithmetic-conversion semantics
+// explicit, including the historical negative-term edge case.
+const _: () = assert!(!raft_server_vote_term_is_stale(u64::MAX, 0));
+const _: () = assert!(raft_server_observed_higher_term(u64::MAX, 0));
+const _: () = assert!(!raft_server_signed_term_is_newer(-1, 0));
+const _: () = assert!(!raft_server_signed_term_is_newer(0, 0));
+const _: () = assert!(raft_server_signed_term_is_newer(1, 0));
+const _: () = assert!(raft_server_log_entry_is_current_term(-1, u64::MAX));
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.scalar_decisions version=1 rust_sha256=b0882f35b3a23aff7b3f7fff82ee98b0db0f4c7612c3bca4629dc519e46acee7*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.scalar_decisions version=1 rust_sha256=780dd6dde8057841c5069cc41d6c0aa54ca76322356e4630422da27718f22a93*/
 constexpr uint16_t RAFT_SERVER_INVALID_SITE_ID = static_cast<uint16_t>(65535);
 constexpr bool raft_server_log_index_at_or_below(uint64_t index, uint64_t boundary);
 constexpr bool raft_server_log_index_above(uint64_t index, uint64_t boundary);
@@ -615,27 +630,21 @@ constexpr bool raft_server_election_timeout_has_fired(bool is_leader, uint64_t e
 constexpr bool raft_server_timer_campaign_is_current(bool is_leader, uint64_t observed_generation, uint64_t current_generation, uint64_t elapsed, uint64_t timeout);
 constexpr bool raft_server_campaign_can_start(bool is_leader, bool election_in_progress);
 constexpr bool raft_server_vote_term_is_stale(uint64_t candidate_term, uint64_t current_term);
-constexpr bool raft_server_vote_is_already_granted_to_other(uint64_t candidate_term, uint64_t current_term, uint16_t voted_for, uint16_t candidate_id);
 constexpr bool raft_server_vote_is_idempotent(uint64_t candidate_term, uint64_t current_term, uint16_t voted_for, uint16_t candidate_id);
 constexpr bool raft_server_candidate_log_is_at_least(int64_t candidate_term, int64_t current_term, uint64_t candidate_index, uint64_t current_index);
 constexpr bool raft_server_election_last_log_uses_snapshot(uint64_t last_log_index, uint64_t snapshot_index);
-constexpr bool raft_server_install_snapshot_reply_is_available(uint64_t follower_term);
 constexpr bool raft_server_snapshot_is_stale(uint64_t last_included_index, uint64_t local_progress_index);
 constexpr bool raft_server_snapshot_boundary_matches(bool has_entry, uint64_t local_term, uint64_t snapshot_term);
 constexpr bool raft_server_snapshot_term_is_valid(uint64_t snapshot_term, uint64_t leader_term);
 constexpr bool raft_server_snapshot_recovery_retains_suffix(bool has_suffix, bool has_boundary, bool boundary_matches, bool live_snapshot_proves_suffix);
 constexpr bool raft_server_snapshot_recovery_has_unproven_gap(bool has_suffix, bool has_boundary, bool live_snapshot_proves_suffix);
 constexpr bool raft_server_snapshot_term_uses_boundary(uint64_t snapshot_index, uint64_t existing_snapshot_index);
-constexpr bool raft_server_snapshot_marker_matches(size_t payload_size, size_t marker_size, uint64_t payload_index, uint64_t payload_term, uint64_t expected_index, uint64_t expected_term);
 constexpr bool raft_server_election_result_is_current(bool election_in_progress, uint64_t election_term, uint64_t result_term, uint64_t current_term);
 constexpr int32_t raft_server_election_completion_action(bool election_in_progress, uint64_t election_term, uint64_t campaign_term, uint64_t current_term, int64_t observed_response_term);
 constexpr bool raft_server_apply_epoch_is_current(uint64_t entry_epoch, uint64_t current_epoch);
 constexpr bool raft_server_log_index_has_successor(uint64_t index);
 constexpr bool raft_server_append_term_is_acceptable(uint64_t leader_term, uint64_t follower_term);
-constexpr bool raft_server_append_prefix_is_compacted_miss(uint64_t previous_index, uint64_t minimum_active_slot, uint64_t snapshot_index);
-constexpr bool raft_server_append_previous_term_is_acceptable(uint64_t previous_index, uint64_t local_previous_term, uint64_t leader_previous_term);
 constexpr bool raft_server_append_is_acceptable(bool term_ok, bool index_ok, bool previous_term_ok);
-constexpr bool raft_server_append_command_is_batch(int32_t command_kind, int32_t batch_kind);
 constexpr bool raft_server_append_entry_count_fits(uint64_t previous_index, uint64_t entry_count);
 constexpr bool raft_server_append_batch_count_is_valid(uint64_t previous_index, uint64_t entry_count);
 constexpr bool raft_server_append_entry_conflicts(bool local_entry_exists, uint64_t local_term, uint64_t incoming_term);
@@ -651,16 +660,7 @@ constexpr bool raft_server_snapshot_is_due(uint64_t snapshot_index, uint64_t exe
 constexpr uint64_t raft_server_compaction_safe_index(uint64_t candidate_index, uint64_t commit_index, uint64_t snapshot_index);
 constexpr uint64_t raft_server_snapshot_progress_clamp(uint64_t candidate_index, uint64_t commit_index, uint64_t upper_bound);
 constexpr uint64_t raft_server_follower_next_index(uint64_t last_log_index);
-constexpr bool raft_server_append_reject_can_fast_backoff(uint64_t last_log_index, uint64_t next_index);
-constexpr bool raft_server_append_reject_has_term_conflict(uint64_t last_log_index, uint64_t next_index);
-constexpr bool raft_server_append_reject_can_halve(uint64_t next_index);
-constexpr bool raft_server_append_reject_can_decrement(uint64_t next_index);
-constexpr uint64_t raft_server_append_reject_halved(uint64_t next_index);
-constexpr uint64_t raft_server_append_reject_decremented(uint64_t next_index);
-constexpr uint64_t raft_server_append_reject_floor();
-constexpr bool raft_server_command_is_internal_noop(int32_t command_kind, int32_t noop_kind);
 constexpr uint64_t raft_server_retention_window_normalize(uint64_t window);
-constexpr uint64_t raft_server_retention_cutoff(uint64_t execute_index, uint64_t retention_window);
 constexpr bool raft_server_observed_higher_term(uint64_t observed_term, uint64_t current_term);
 constexpr bool raft_server_signed_term_is_newer(int64_t observed_term, uint64_t current_term);
 constexpr uint16_t raft_server_leader_hint_after_transition(bool is_leader, bool has_known_leader, uint16_t self_id, uint16_t known_leader_id);
@@ -686,9 +686,6 @@ constexpr bool raft_server_campaign_can_start(bool is_leader, bool election_in_p
 constexpr bool raft_server_vote_term_is_stale(uint64_t candidate_term, uint64_t current_term) {
     return rusty::detail::deref_if_pointer_like(candidate_term) < rusty::detail::deref_if_pointer_like(current_term);
 }
-constexpr bool raft_server_vote_is_already_granted_to_other(uint64_t candidate_term, uint64_t current_term, uint16_t voted_for, uint16_t candidate_id) {
-    return ((rusty::detail::deref_if_pointer_like(candidate_term) == rusty::detail::deref_if_pointer_like(current_term)) && (rusty::detail::deref_if_pointer_like(voted_for) != rusty::detail::deref_if_pointer_like(RAFT_SERVER_INVALID_SITE_ID))) && (rusty::detail::deref_if_pointer_like(voted_for) != rusty::detail::deref_if_pointer_like(candidate_id));
-}
 constexpr bool raft_server_vote_is_idempotent(uint64_t candidate_term, uint64_t current_term, uint16_t voted_for, uint16_t candidate_id) {
     return (rusty::detail::deref_if_pointer_like(candidate_term) == rusty::detail::deref_if_pointer_like(current_term)) && (rusty::detail::deref_if_pointer_like(voted_for) == rusty::detail::deref_if_pointer_like(candidate_id));
 }
@@ -697,9 +694,6 @@ constexpr bool raft_server_candidate_log_is_at_least(int64_t candidate_term, int
 }
 constexpr bool raft_server_election_last_log_uses_snapshot(uint64_t last_log_index, uint64_t snapshot_index) {
     return rusty::detail::deref_if_pointer_like(last_log_index) == rusty::detail::deref_if_pointer_like(snapshot_index);
-}
-constexpr bool raft_server_install_snapshot_reply_is_available(uint64_t follower_term) {
-    return rusty::detail::deref_if_pointer_like(follower_term) != static_cast<uint64_t>(0);
 }
 constexpr bool raft_server_snapshot_is_stale(uint64_t last_included_index, uint64_t local_progress_index) {
     return rusty::detail::deref_if_pointer_like(last_included_index) <= rusty::detail::deref_if_pointer_like(local_progress_index);
@@ -718,9 +712,6 @@ constexpr bool raft_server_snapshot_recovery_has_unproven_gap(bool has_suffix, b
 }
 constexpr bool raft_server_snapshot_term_uses_boundary(uint64_t snapshot_index, uint64_t existing_snapshot_index) {
     return rusty::detail::deref_if_pointer_like(snapshot_index) == rusty::detail::deref_if_pointer_like(existing_snapshot_index);
-}
-constexpr bool raft_server_snapshot_marker_matches(size_t payload_size, size_t marker_size, uint64_t payload_index, uint64_t payload_term, uint64_t expected_index, uint64_t expected_term) {
-    return ((rusty::detail::deref_if_pointer_like(payload_size) == rusty::detail::deref_if_pointer_like(marker_size)) && (rusty::detail::deref_if_pointer_like(payload_index) == rusty::detail::deref_if_pointer_like(expected_index))) && (rusty::detail::deref_if_pointer_like(payload_term) == rusty::detail::deref_if_pointer_like(expected_term));
 }
 constexpr bool raft_server_election_result_is_current(bool election_in_progress, uint64_t election_term, uint64_t result_term, uint64_t current_term) {
     return (rusty::detail::deref_if_pointer_like(election_in_progress) && (rusty::detail::deref_if_pointer_like(election_term) == rusty::detail::deref_if_pointer_like(result_term))) && (rusty::detail::deref_if_pointer_like(result_term) == rusty::detail::deref_if_pointer_like(current_term));
@@ -743,17 +734,8 @@ constexpr bool raft_server_log_index_has_successor(uint64_t index) {
 constexpr bool raft_server_append_term_is_acceptable(uint64_t leader_term, uint64_t follower_term) {
     return rusty::detail::deref_if_pointer_like(leader_term) >= rusty::detail::deref_if_pointer_like(follower_term);
 }
-constexpr bool raft_server_append_prefix_is_compacted_miss(uint64_t previous_index, uint64_t minimum_active_slot, uint64_t snapshot_index) {
-    return ((rusty::detail::deref_if_pointer_like(previous_index) != static_cast<uint64_t>(0)) && (rusty::detail::deref_if_pointer_like(previous_index) < rusty::detail::deref_if_pointer_like(minimum_active_slot))) && (rusty::detail::deref_if_pointer_like(previous_index) != rusty::detail::deref_if_pointer_like(snapshot_index));
-}
-constexpr bool raft_server_append_previous_term_is_acceptable(uint64_t previous_index, uint64_t local_previous_term, uint64_t leader_previous_term) {
-    return (rusty::detail::deref_if_pointer_like(previous_index) == static_cast<uint64_t>(0)) || (rusty::detail::deref_if_pointer_like(local_previous_term) == rusty::detail::deref_if_pointer_like(leader_previous_term));
-}
 constexpr bool raft_server_append_is_acceptable(bool term_ok, bool index_ok, bool previous_term_ok) {
     return (rusty::detail::deref_if_pointer_like(term_ok) && rusty::detail::deref_if_pointer_like(index_ok)) && rusty::detail::deref_if_pointer_like(previous_term_ok);
-}
-constexpr bool raft_server_append_command_is_batch(int32_t command_kind, int32_t batch_kind) {
-    return rusty::detail::deref_if_pointer_like(command_kind) == rusty::detail::deref_if_pointer_like(batch_kind);
 }
 constexpr bool raft_server_append_entry_count_fits(uint64_t previous_index, uint64_t entry_count) {
     return rusty::detail::deref_if_pointer_like(entry_count) <= (rusty::detail::deref_if_pointer_like(std::numeric_limits<uint64_t>::max()) - rusty::detail::deref_if_pointer_like(previous_index));
@@ -831,48 +813,11 @@ constexpr uint64_t raft_server_snapshot_progress_clamp(uint64_t candidate_index,
 constexpr uint64_t raft_server_follower_next_index(uint64_t last_log_index) {
     return rusty::wrapping_add(last_log_index, static_cast<std::remove_cvref_t<decltype(last_log_index)>>(1));
 }
-constexpr bool raft_server_append_reject_can_fast_backoff(uint64_t last_log_index, uint64_t next_index) {
-    return (rusty::detail::deref_if_pointer_like(last_log_index) > 0) && (raft_server_follower_next_index(std::move(last_log_index)) < rusty::detail::deref_if_pointer_like(next_index));
-}
-constexpr bool raft_server_append_reject_has_term_conflict(uint64_t last_log_index, uint64_t next_index) {
-    return ((rusty::detail::deref_if_pointer_like(last_log_index) > 0) && (raft_server_follower_next_index(std::move(last_log_index)) == rusty::detail::deref_if_pointer_like(next_index))) && (rusty::detail::deref_if_pointer_like(next_index) > 1);
-}
-constexpr bool raft_server_append_reject_can_halve(uint64_t next_index) {
-    return rusty::detail::deref_if_pointer_like(next_index) > 10;
-}
-constexpr bool raft_server_append_reject_can_decrement(uint64_t next_index) {
-    return rusty::detail::deref_if_pointer_like(next_index) > 1;
-}
-constexpr uint64_t raft_server_append_reject_halved(uint64_t next_index) {
-    return rusty::detail::deref_if_pointer_like(next_index) / static_cast<uint64_t>(2);
-}
-constexpr uint64_t raft_server_append_reject_decremented(uint64_t next_index) {
-    return rusty::wrapping_sub(next_index, static_cast<std::remove_cvref_t<decltype(next_index)>>(1));
-}
-constexpr uint64_t raft_server_append_reject_floor() {
-    return static_cast<uint64_t>(1);
-}
-constexpr bool raft_server_start_was_rejected(RaftStartResult result) {
-    return ((static_cast<int32_t>(result))) == ((static_cast<int32_t>(RaftStartResult::REJECTED)));
-}
-constexpr bool raft_server_start_was_appended(RaftStartResult result) {
-    return ((static_cast<int32_t>(result))) == ((static_cast<int32_t>(RaftStartResult::APPENDED)));
-}
-constexpr bool raft_server_command_is_internal_noop(int32_t command_kind, int32_t noop_kind) {
-    return rusty::detail::deref_if_pointer_like(command_kind) == rusty::detail::deref_if_pointer_like(noop_kind);
-}
 constexpr uint64_t raft_server_retention_window_normalize(uint64_t window) {
     if (rusty::detail::deref_if_pointer_like(window) > 0) {
         return std::move(window);
     } else {
         return static_cast<uint64_t>(1);
-    }
-}
-constexpr uint64_t raft_server_retention_cutoff(uint64_t execute_index, uint64_t retention_window) {
-    if (rusty::detail::deref_if_pointer_like(execute_index) > rusty::detail::deref_if_pointer_like(retention_window)) {
-        return rusty::detail::deref_if_pointer_like(execute_index) - rusty::detail::deref_if_pointer_like(retention_window);
-    } else {
-        return static_cast<uint64_t>(0);
     }
 }
 constexpr bool raft_server_observed_higher_term(uint64_t observed_term, uint64_t current_term) {
@@ -893,187 +838,218 @@ constexpr uint16_t raft_server_leader_hint_after_transition(bool is_leader, bool
 constexpr bool raft_server_leader_rpc_sender_is_authoritative(bool leader_has_higher_term, bool local_is_leader, bool sender_is_self, bool has_known_leader, bool known_leader_matches_sender) {
     return (((rusty::detail::deref_if_pointer_like(sender_is_self) && rusty::detail::deref_if_pointer_like(local_is_leader)) && !leader_has_higher_term)) || ((!sender_is_self && ((rusty::detail::deref_if_pointer_like(leader_has_higher_term) || ((!local_is_leader && ((!has_known_leader || rusty::detail::deref_if_pointer_like(known_leader_matches_sender)))))))));
 }
+
+
+static_assert(raft_server_site_is_preferred_leader(static_cast<uint16_t>(7), static_cast<uint16_t>(7)), "assert ! (raft_server_site_is_preferred_leader (7 , 7))");
+
+static_assert(!raft_server_site_is_preferred_leader(RAFT_SERVER_INVALID_SITE_ID, RAFT_SERVER_INVALID_SITE_ID), "assert ! (! raft_server_site_is_preferred_leader (RAFT_SERVER_INVALID_SITE_ID , RAFT_SERVER_INVALID_SITE_ID))");
+
+static_assert(raft_server_vote_is_idempotent(static_cast<uint64_t>(4), static_cast<uint64_t>(4), static_cast<uint16_t>(2), static_cast<uint16_t>(2)), "assert ! (raft_server_vote_is_idempotent (4 , 4 , 2 , 2))");
+
+static_assert(raft_server_candidate_log_is_at_least(static_cast<int64_t>(3), static_cast<int64_t>(2), static_cast<uint64_t>(1), static_cast<uint64_t>(9)), "assert ! (raft_server_candidate_log_is_at_least (3 , 2 , 1 , 9))");
+
+static_assert(raft_server_candidate_log_is_at_least(static_cast<int64_t>(3), static_cast<int64_t>(3), static_cast<uint64_t>(9), static_cast<uint64_t>(9)), "assert ! (raft_server_candidate_log_is_at_least (3 , 3 , 9 , 9))");
+
+static_assert(!raft_server_candidate_log_is_at_least(static_cast<int64_t>(3), static_cast<int64_t>(3), static_cast<uint64_t>(8), static_cast<uint64_t>(9)), "assert ! (! raft_server_candidate_log_is_at_least (3 , 3 , 8 , 9))");
+
+static_assert(raft_server_election_last_log_uses_snapshot(static_cast<uint64_t>(0), static_cast<uint64_t>(0)), "assert ! (raft_server_election_last_log_uses_snapshot (0 , 0))");
+
+static_assert(raft_server_election_last_log_uses_snapshot(static_cast<uint64_t>(460), static_cast<uint64_t>(460)), "assert ! (raft_server_election_last_log_uses_snapshot (460 , 460))");
+
+static_assert(!raft_server_election_last_log_uses_snapshot(static_cast<uint64_t>(461), static_cast<uint64_t>(460)), "assert ! (! raft_server_election_last_log_uses_snapshot (461 , 460))");
+
+static_assert(raft_server_timer_campaign_is_current(false, static_cast<uint64_t>(9), static_cast<uint64_t>(9), static_cast<uint64_t>(501), static_cast<uint64_t>(500)), "assert ! (raft_server_timer_campaign_is_current (false , 9 , 9 , 501 , 500))");
+
+static_assert(!raft_server_timer_campaign_is_current(false, static_cast<uint64_t>(8), static_cast<uint64_t>(9), static_cast<uint64_t>(501), static_cast<uint64_t>(500)), "assert ! (! raft_server_timer_campaign_is_current (false , 8 , 9 , 501 , 500))");
+
+static_assert(!raft_server_timer_campaign_is_current(false, static_cast<uint64_t>(9), static_cast<uint64_t>(9), static_cast<uint64_t>(500), static_cast<uint64_t>(500)), "assert ! (! raft_server_timer_campaign_is_current (false , 9 , 9 , 500 , 500))");
+
+static_assert(!raft_server_timer_campaign_is_current(true, static_cast<uint64_t>(9), static_cast<uint64_t>(9), static_cast<uint64_t>(501), static_cast<uint64_t>(500)), "assert ! (! raft_server_timer_campaign_is_current (true , 9 , 9 , 501 , 500))");
+
+static_assert(raft_server_campaign_can_start(false, false), "assert ! (raft_server_campaign_can_start (false , false))");
+
+static_assert(!raft_server_campaign_can_start(true, false), "assert ! (! raft_server_campaign_can_start (true , false))");
+
+static_assert(!raft_server_campaign_can_start(false, true), "assert ! (! raft_server_campaign_can_start (false , true))");
+
+static_assert(raft_server_snapshot_is_stale(static_cast<uint64_t>(9), static_cast<uint64_t>(9)), "assert ! (raft_server_snapshot_is_stale (9 , 9))");
+
+static_assert(raft_server_snapshot_is_stale(static_cast<uint64_t>(8), static_cast<uint64_t>(9)), "assert ! (raft_server_snapshot_is_stale (8 , 9))");
+
+static_assert(!raft_server_snapshot_is_stale(static_cast<uint64_t>(10), static_cast<uint64_t>(9)), "assert ! (! raft_server_snapshot_is_stale (10 , 9))");
+
+static_assert(raft_server_snapshot_boundary_matches(true, static_cast<uint64_t>(7), static_cast<uint64_t>(7)), "assert ! (raft_server_snapshot_boundary_matches (true , 7 , 7))");
+
+static_assert(!raft_server_snapshot_boundary_matches(false, static_cast<uint64_t>(7), static_cast<uint64_t>(7)), "assert ! (! raft_server_snapshot_boundary_matches (false , 7 , 7))");
+
+static_assert(!raft_server_snapshot_boundary_matches(true, static_cast<uint64_t>(6), static_cast<uint64_t>(7)), "assert ! (! raft_server_snapshot_boundary_matches (true , 6 , 7))");
+
+static_assert(raft_server_snapshot_term_is_valid(static_cast<uint64_t>(7), static_cast<uint64_t>(7)), "assert ! (raft_server_snapshot_term_is_valid (7 , 7))");
+
+static_assert(raft_server_snapshot_term_is_valid(static_cast<uint64_t>(6), static_cast<uint64_t>(7)), "assert ! (raft_server_snapshot_term_is_valid (6 , 7))");
+
+static_assert(!raft_server_snapshot_term_is_valid(static_cast<uint64_t>(8), static_cast<uint64_t>(7)), "assert ! (! raft_server_snapshot_term_is_valid (8 , 7))");
+
+static_assert(raft_server_snapshot_recovery_retains_suffix(true, true, true, false), "assert ! (raft_server_snapshot_recovery_retains_suffix (true , true , true , false))");
+
+static_assert(!raft_server_snapshot_recovery_retains_suffix(true, true, false, true), "assert ! (! raft_server_snapshot_recovery_retains_suffix (true , true , false , true))");
+
+static_assert(raft_server_snapshot_recovery_retains_suffix(true, false, false, true), "assert ! (raft_server_snapshot_recovery_retains_suffix (true , false , false , true))");
+
+static_assert(!raft_server_snapshot_recovery_retains_suffix(true, false, false, false), "assert ! (! raft_server_snapshot_recovery_retains_suffix (true , false , false , false))");
+
+static_assert(!raft_server_snapshot_recovery_retains_suffix(false, false, false, true), "assert ! (! raft_server_snapshot_recovery_retains_suffix (false , false , false , true))");
+
+static_assert(raft_server_snapshot_recovery_has_unproven_gap(true, false, false), "assert ! (raft_server_snapshot_recovery_has_unproven_gap (true , false , false))");
+
+static_assert(!raft_server_snapshot_recovery_has_unproven_gap(true, true, false), "assert ! (! raft_server_snapshot_recovery_has_unproven_gap (true , true , false))");
+
+static_assert(!raft_server_snapshot_recovery_has_unproven_gap(true, false, true), "assert ! (! raft_server_snapshot_recovery_has_unproven_gap (true , false , true))");
+
+static_assert(raft_server_snapshot_term_uses_boundary(static_cast<uint64_t>(11), static_cast<uint64_t>(11)), "assert ! (raft_server_snapshot_term_uses_boundary (11 , 11))");
+
+static_assert(!raft_server_snapshot_term_uses_boundary(static_cast<uint64_t>(12), static_cast<uint64_t>(11)), "assert ! (! raft_server_snapshot_term_uses_boundary (12 , 11))");
+
+static_assert(raft_server_election_result_is_current(true, static_cast<uint64_t>(4), static_cast<uint64_t>(4), static_cast<uint64_t>(4)), "assert ! (raft_server_election_result_is_current (true , 4 , 4 , 4))");
+
+static_assert(!raft_server_election_result_is_current(false, static_cast<uint64_t>(4), static_cast<uint64_t>(4), static_cast<uint64_t>(4)), "assert ! (! raft_server_election_result_is_current (false , 4 , 4 , 4))");
+
+static_assert(!raft_server_election_result_is_current(true, static_cast<uint64_t>(3), static_cast<uint64_t>(4), static_cast<uint64_t>(4)), "assert ! (! raft_server_election_result_is_current (true , 3 , 4 , 4))");
+
+static_assert(!raft_server_election_result_is_current(true, static_cast<uint64_t>(4), static_cast<uint64_t>(4), static_cast<uint64_t>(5)), "assert ! (! raft_server_election_result_is_current (true , 4 , 4 , 5))");
+
+static_assert(raft_server_election_completion_action(true, static_cast<uint64_t>(4), static_cast<uint64_t>(4), static_cast<uint64_t>(4), static_cast<int64_t>(4)) == (static_cast<int32_t>(ElectionCompletionAction_APPLY_CURRENT())), "assert ! (raft_server_election_completion_action (true , 4 , 4 , 4 , 4) == ElectionCompletionAction :: APPLY_CURRENT as i32)");
+
+static_assert(raft_server_election_completion_action(true, static_cast<uint64_t>(5), static_cast<uint64_t>(4), static_cast<uint64_t>(5), static_cast<int64_t>(5)) == (static_cast<int32_t>(ElectionCompletionAction_IGNORE_STALE())), "assert ! (raft_server_election_completion_action (true , 5 , 4 , 5 , 5) == ElectionCompletionAction :: IGNORE_STALE as i32)");
+
+static_assert(raft_server_election_completion_action(true, static_cast<uint64_t>(5), static_cast<uint64_t>(4), static_cast<uint64_t>(5), static_cast<int64_t>(6)) == (static_cast<int32_t>(ElectionCompletionAction_ADVANCE_HIGHER_TERM())), "assert ! (raft_server_election_completion_action (true , 5 , 4 , 5 , 6) == ElectionCompletionAction :: ADVANCE_HIGHER_TERM as i32)");
+
+static_assert(raft_server_apply_epoch_is_current(static_cast<uint64_t>(8), static_cast<uint64_t>(8)), "assert ! (raft_server_apply_epoch_is_current (8 , 8))");
+
+static_assert(!raft_server_apply_epoch_is_current(static_cast<uint64_t>(7), static_cast<uint64_t>(8)), "assert ! (! raft_server_apply_epoch_is_current (7 , 8))");
+
+static_assert(raft_server_log_index_has_successor(static_cast<uint64_t>(0)), "assert ! (raft_server_log_index_has_successor (0))");
+
+static_assert(raft_server_log_index_has_successor(rusty::detail::deref_if_pointer_like(std::numeric_limits<uint64_t>::max()) - static_cast<uint64_t>(1)), "assert ! (raft_server_log_index_has_successor (u64 :: MAX - 1))");
+
+static_assert(!raft_server_log_index_has_successor(std::numeric_limits<uint64_t>::max()), "assert ! (! raft_server_log_index_has_successor (u64 :: MAX))");
+
+static_assert(raft_server_append_is_acceptable(true, true, true), "assert ! (raft_server_append_is_acceptable (true , true , true))");
+
+static_assert(!raft_server_append_is_acceptable(false, true, true), "assert ! (! raft_server_append_is_acceptable (false , true , true))");
+
+static_assert(!raft_server_append_is_acceptable(true, false, true), "assert ! (! raft_server_append_is_acceptable (true , false , true))");
+
+static_assert(!raft_server_append_is_acceptable(true, true, false), "assert ! (! raft_server_append_is_acceptable (true , true , false))");
+
+static_assert(raft_server_append_entry_count_fits(std::numeric_limits<uint64_t>::max(), static_cast<uint64_t>(0)), "assert ! (raft_server_append_entry_count_fits (u64 :: MAX , 0))");
+
+static_assert(!raft_server_append_entry_count_fits(std::numeric_limits<uint64_t>::max(), static_cast<uint64_t>(1)), "assert ! (! raft_server_append_entry_count_fits (u64 :: MAX , 1))");
+
+static_assert(raft_server_append_entry_count_fits(rusty::detail::deref_if_pointer_like(std::numeric_limits<uint64_t>::max()) - static_cast<uint64_t>(3), static_cast<uint64_t>(3)), "assert ! (raft_server_append_entry_count_fits (u64 :: MAX - 3 , 3))");
+
+static_assert(!raft_server_append_entry_count_fits(rusty::detail::deref_if_pointer_like(std::numeric_limits<uint64_t>::max()) - static_cast<uint64_t>(3), static_cast<uint64_t>(4)), "assert ! (! raft_server_append_entry_count_fits (u64 :: MAX - 3 , 4))");
+
+static_assert(!raft_server_append_batch_count_is_valid(static_cast<uint64_t>(7), static_cast<uint64_t>(0)), "assert ! (! raft_server_append_batch_count_is_valid (7 , 0))");
+
+static_assert(raft_server_append_batch_count_is_valid(rusty::detail::deref_if_pointer_like(std::numeric_limits<uint64_t>::max()) - static_cast<uint64_t>(3), static_cast<uint64_t>(3)), "assert ! (raft_server_append_batch_count_is_valid (u64 :: MAX - 3 , 3))");
+
+static_assert(!raft_server_append_batch_count_is_valid(rusty::detail::deref_if_pointer_like(std::numeric_limits<uint64_t>::max()) - static_cast<uint64_t>(3), static_cast<uint64_t>(4)), "assert ! (! raft_server_append_batch_count_is_valid (u64 :: MAX - 3 , 4))");
+
+static_assert(raft_server_append_entry_conflicts(false, static_cast<uint64_t>(0), static_cast<uint64_t>(7)), "assert ! (raft_server_append_entry_conflicts (false , 0 , 7))");
+
+static_assert(raft_server_append_entry_conflicts(true, static_cast<uint64_t>(6), static_cast<uint64_t>(7)), "assert ! (raft_server_append_entry_conflicts (true , 6 , 7))");
+
+static_assert(!raft_server_append_entry_conflicts(true, static_cast<uint64_t>(7), static_cast<uint64_t>(7)), "assert ! (! raft_server_append_entry_conflicts (true , 7 , 7))");
+
+static_assert(raft_server_append_result_last_index(static_cast<uint64_t>(10), static_cast<uint64_t>(8), false) == static_cast<uint64_t>(10), "assert ! (raft_server_append_result_last_index (10 , 8 , false) == 10)");
+
+static_assert(raft_server_append_result_last_index(static_cast<uint64_t>(10), static_cast<uint64_t>(8), true) == static_cast<uint64_t>(8), "assert ! (raft_server_append_result_last_index (10 , 8 , true) == 8)");
+
+static_assert(raft_server_append_result_last_index(static_cast<uint64_t>(8), static_cast<uint64_t>(10), false) == static_cast<uint64_t>(10), "assert ! (raft_server_append_result_last_index (8 , 10 , false) == 10)");
+
+static_assert(raft_server_append_sent_end(static_cast<uint64_t>(7), static_cast<uint64_t>(0)) == static_cast<uint64_t>(7), "assert ! (raft_server_append_sent_end (7 , 0) == 7)");
+
+static_assert(raft_server_append_sent_end(static_cast<uint64_t>(7), static_cast<uint64_t>(1)) == static_cast<uint64_t>(8), "assert ! (raft_server_append_sent_end (7 , 1) == 8)");
+
+static_assert(raft_server_append_sent_end(static_cast<uint64_t>(7), static_cast<uint64_t>(4)) == static_cast<uint64_t>(11), "assert ! (raft_server_append_sent_end (7 , 4) == 11)");
+
+static_assert(raft_server_append_acknowledged_through(static_cast<uint64_t>(20), static_cast<uint64_t>(10), static_cast<uint64_t>(15)) == static_cast<uint64_t>(10), "assert ! (raft_server_append_acknowledged_through (20 , 10 , 15) == 10)");
+
+static_assert(raft_server_append_acknowledged_through(static_cast<uint64_t>(8), static_cast<uint64_t>(10), static_cast<uint64_t>(15)) == static_cast<uint64_t>(8), "assert ! (raft_server_append_acknowledged_through (8 , 10 , 15) == 8)");
+
+static_assert(raft_server_append_acknowledged_through(static_cast<uint64_t>(20), static_cast<uint64_t>(15), static_cast<uint64_t>(9)) == static_cast<uint64_t>(9), "assert ! (raft_server_append_acknowledged_through (20 , 15 , 9) == 9)");
+
+static_assert(raft_server_commit_index_clamp(static_cast<uint64_t>(9), static_cast<uint64_t>(7)) == static_cast<uint64_t>(7), "assert ! (raft_server_commit_index_clamp (9 , 7) == 7)");
+
+static_assert(raft_server_commit_index_candidate(static_cast<uint64_t>(7), static_cast<size_t>(3), static_cast<uint64_t>(100)) == static_cast<uint64_t>(7), "assert ! (raft_server_commit_index_candidate (7 , 3 , 100) == 7)");
+
+static_assert(raft_server_commit_index_candidate(static_cast<uint64_t>(9), static_cast<size_t>(5), static_cast<uint64_t>(100)) == static_cast<uint64_t>(9), "assert ! (raft_server_commit_index_candidate (9 , 5 , 100) == 9)");
+
+static_assert(raft_server_commit_index_candidate(static_cast<uint64_t>(7), static_cast<size_t>(3), static_cast<uint64_t>(5)) == static_cast<uint64_t>(5), "assert ! (raft_server_commit_index_candidate (7 , 3 , 5) == 5)");
+
+static_assert(raft_server_commit_index_candidate(static_cast<uint64_t>(0), static_cast<size_t>(1), static_cast<uint64_t>(42)) == static_cast<uint64_t>(42), "assert ! (raft_server_commit_index_candidate (0 , 1 , 42) == 42)");
+
+static_assert(raft_server_compaction_safe_index(static_cast<uint64_t>(12), static_cast<uint64_t>(10), static_cast<uint64_t>(8)) == static_cast<uint64_t>(8), "assert ! (raft_server_compaction_safe_index (12 , 10 , 8) == 8)");
+
+static_assert(raft_server_compaction_safe_index(static_cast<uint64_t>(7), static_cast<uint64_t>(10), static_cast<uint64_t>(8)) == static_cast<uint64_t>(7), "assert ! (raft_server_compaction_safe_index (7 , 10 , 8) == 7)");
+
+static_assert(raft_server_compaction_safe_index(static_cast<uint64_t>(9), static_cast<uint64_t>(8), static_cast<uint64_t>(10)) == static_cast<uint64_t>(8), "assert ! (raft_server_compaction_safe_index (9 , 8 , 10) == 8)");
+
+static_assert(raft_server_read_index_round_can_advance(static_cast<uint64_t>(0)), "assert ! (raft_server_read_index_round_can_advance (0))");
+
+static_assert(!raft_server_read_index_round_can_advance(std::numeric_limits<uint64_t>::max()), "assert ! (! raft_server_read_index_round_can_advance (u64 :: MAX))");
+
+static_assert(raft_server_read_index_reply_confirms_authority(true, true, static_cast<uint64_t>(7), static_cast<uint64_t>(7), static_cast<uint64_t>(7), static_cast<uint64_t>(11), static_cast<uint64_t>(11)), "assert ! (raft_server_read_index_reply_confirms_authority (true , true , 7 , 7 , 7 , 11 , 11))");
+
+static_assert(!raft_server_read_index_reply_confirms_authority(true, true, static_cast<uint64_t>(7), static_cast<uint64_t>(7), static_cast<uint64_t>(7), static_cast<uint64_t>(10), static_cast<uint64_t>(11)), "assert ! (! raft_server_read_index_reply_confirms_authority (true , true , 7 , 7 , 7 , 10 , 11))");
+
+static_assert(!raft_server_read_index_reply_confirms_authority(true, true, static_cast<uint64_t>(7), static_cast<uint64_t>(8), static_cast<uint64_t>(7), static_cast<uint64_t>(11), static_cast<uint64_t>(11)), "assert ! (! raft_server_read_index_reply_confirms_authority (true , true , 7 , 8 , 7 , 11 , 11))");
+
+static_assert(raft_server_snapshot_progress_clamp(static_cast<uint64_t>(3), static_cast<uint64_t>(5), static_cast<uint64_t>(9)) == static_cast<uint64_t>(5), "assert ! (raft_server_snapshot_progress_clamp (3 , 5 , 9) == 5)");
+
+static_assert(raft_server_snapshot_progress_clamp(static_cast<uint64_t>(7), static_cast<uint64_t>(5), static_cast<uint64_t>(9)) == static_cast<uint64_t>(7), "assert ! (raft_server_snapshot_progress_clamp (7 , 5 , 9) == 7)");
+
+static_assert(raft_server_snapshot_progress_clamp(static_cast<uint64_t>(12), static_cast<uint64_t>(5), static_cast<uint64_t>(9)) == static_cast<uint64_t>(9), "assert ! (raft_server_snapshot_progress_clamp (12 , 5 , 9) == 9)");
+
+static_assert(raft_server_snapshot_is_due(static_cast<uint64_t>(4), static_cast<uint64_t>(10), static_cast<uint64_t>(5)), "assert ! (raft_server_snapshot_is_due (4 , 10 , 5))");
+
+static_assert(!raft_server_snapshot_is_due(static_cast<uint64_t>(10), static_cast<uint64_t>(4), static_cast<uint64_t>(5)), "assert ! (! raft_server_snapshot_is_due (10 , 4 , 5))");
+
+static_assert(raft_server_follower_next_index(static_cast<uint64_t>(7)) == static_cast<uint64_t>(8), "assert ! (raft_server_follower_next_index (7) == 8)");
+
+static_assert(raft_server_follower_next_index(std::numeric_limits<uint64_t>::max()) == static_cast<uint64_t>(0), "assert ! (raft_server_follower_next_index (u64 :: MAX) == 0)");
+
+static_assert(raft_server_follower_next_index(static_cast<uint64_t>(4)) == static_cast<uint64_t>(5), "assert ! (raft_server_follower_next_index (4) == 5)");
+
+static_assert(raft_server_follower_next_index(std::numeric_limits<uint64_t>::max()) == static_cast<uint64_t>(0), "assert ! (raft_server_follower_next_index (u64 :: MAX) == 0)");
+
+static_assert(raft_server_retention_window_normalize(static_cast<uint64_t>(0)) == static_cast<uint64_t>(1), "assert ! (raft_server_retention_window_normalize (0) == 1)");
+
+static_assert(raft_server_retention_window_normalize(static_cast<uint64_t>(1)) == static_cast<uint64_t>(1), "assert ! (raft_server_retention_window_normalize (1) == 1)");
+
+static_assert(raft_server_retention_window_normalize(std::numeric_limits<uint64_t>::max()) == rusty::detail::deref_if_pointer_like(std::numeric_limits<uint64_t>::max()), "assert ! (raft_server_retention_window_normalize (u64 :: MAX) == u64 :: MAX)");
+
+static_assert(!raft_server_vote_term_is_stale(std::numeric_limits<uint64_t>::max(), static_cast<uint64_t>(0)), "assert ! (! raft_server_vote_term_is_stale (u64 :: MAX , 0))");
+
+static_assert(raft_server_observed_higher_term(std::numeric_limits<uint64_t>::max(), static_cast<uint64_t>(0)), "assert ! (raft_server_observed_higher_term (u64 :: MAX , 0))");
+
+static_assert(!raft_server_signed_term_is_newer(-1, static_cast<uint64_t>(0)), "assert ! (! raft_server_signed_term_is_newer (- 1 , 0))");
+
+static_assert(!raft_server_signed_term_is_newer(static_cast<int64_t>(0), static_cast<uint64_t>(0)), "assert ! (! raft_server_signed_term_is_newer (0 , 0))");
+
+static_assert(raft_server_signed_term_is_newer(static_cast<int64_t>(1), static_cast<uint64_t>(0)), "assert ! (raft_server_signed_term_is_newer (1 , 0))");
+
+static_assert(raft_server_log_entry_is_current_term(-1, std::numeric_limits<uint64_t>::max()), "assert ! (raft_server_log_entry_is_current_term (- 1 , u64 :: MAX))");
 /*RUSTYCPP:GEN-END id=raft_server.scalar_decisions*/
 
 // The sentinel is now owned by the DSL block as
 // RAFT_SERVER_INVALID_SITE_ID; pin that it still equals the C++ macro.
 static_assert(RAFT_SERVER_INVALID_SITE_ID ==
               static_cast<uint16_t>(INVALID_SITEID));
-static_assert(raft_server_site_is_preferred_leader(7, 7));
-// A site that is itself the sentinel is not the preferred leader, because
-// the sentinel means "no preferred leader configured".
-static_assert(!raft_server_site_is_preferred_leader(
-    static_cast<uint16_t>(INVALID_SITEID),
-    static_cast<uint16_t>(INVALID_SITEID)));
-static_assert(raft_server_vote_is_already_granted_to_other(4, 4, 1, 2));
-static_assert(!raft_server_vote_is_already_granted_to_other(
-    4, 4, static_cast<uint16_t>(INVALID_SITEID), 2));
-static_assert(raft_server_vote_is_idempotent(4, 4, 2, 2));
-static_assert(raft_server_candidate_log_is_at_least(3, 2, 1, 9));
-static_assert(raft_server_candidate_log_is_at_least(3, 3, 9, 9));
-static_assert(!raft_server_candidate_log_is_at_least(3, 3, 8, 9));
-static_assert(raft_server_election_last_log_uses_snapshot(0, 0));
-static_assert(raft_server_election_last_log_uses_snapshot(460, 460));
-static_assert(!raft_server_election_last_log_uses_snapshot(461, 460));
-static_assert(raft_server_timer_campaign_is_current(
-    false, 9, 9, 501, 500));
-static_assert(!raft_server_timer_campaign_is_current(
-    false, 8, 9, 501, 500));
-static_assert(!raft_server_timer_campaign_is_current(
-    false, 9, 9, 500, 500));
-static_assert(!raft_server_timer_campaign_is_current(
-    true, 9, 9, 501, 500));
-static_assert(raft_server_campaign_can_start(false, false));
-static_assert(!raft_server_campaign_can_start(true, false));
-static_assert(!raft_server_campaign_can_start(false, true));
-static_assert(!raft_server_install_snapshot_reply_is_available(0));
-static_assert(raft_server_install_snapshot_reply_is_available(1));
-static_assert(raft_server_install_snapshot_reply_is_available(UINT64_MAX));
-static_assert(raft_server_snapshot_is_stale(9, 9));
-static_assert(raft_server_snapshot_is_stale(8, 9));
-static_assert(!raft_server_snapshot_is_stale(10, 9));
-static_assert(raft_server_snapshot_boundary_matches(true, 7, 7));
-static_assert(!raft_server_snapshot_boundary_matches(false, 7, 7));
-static_assert(!raft_server_snapshot_boundary_matches(true, 6, 7));
-static_assert(raft_server_snapshot_term_is_valid(7, 7));
-static_assert(raft_server_snapshot_term_is_valid(6, 7));
-static_assert(!raft_server_snapshot_term_is_valid(8, 7));
-static_assert(raft_server_snapshot_recovery_retains_suffix(
-    true, true, true, false));
-static_assert(!raft_server_snapshot_recovery_retains_suffix(
-    true, true, false, true));
-static_assert(raft_server_snapshot_recovery_retains_suffix(
-    true, false, false, true));
-static_assert(!raft_server_snapshot_recovery_retains_suffix(
-    true, false, false, false));
-static_assert(!raft_server_snapshot_recovery_retains_suffix(
-    false, false, false, true));
-static_assert(raft_server_snapshot_recovery_has_unproven_gap(
-    true, false, false));
-static_assert(!raft_server_snapshot_recovery_has_unproven_gap(
-    true, true, false));
-static_assert(!raft_server_snapshot_recovery_has_unproven_gap(
-    true, false, true));
-static_assert(raft_server_snapshot_term_uses_boundary(11, 11));
-static_assert(!raft_server_snapshot_term_uses_boundary(12, 11));
-static_assert(raft_server_snapshot_marker_matches(16, 16, 11, 7, 11, 7));
-static_assert(!raft_server_snapshot_marker_matches(15, 16, 11, 7, 11, 7));
-static_assert(!raft_server_snapshot_marker_matches(16, 16, 10, 7, 11, 7));
-static_assert(!raft_server_snapshot_marker_matches(16, 16, 11, 6, 11, 7));
-static_assert(raft_server_election_result_is_current(true, 4, 4, 4));
-static_assert(!raft_server_election_result_is_current(false, 4, 4, 4));
-static_assert(!raft_server_election_result_is_current(true, 3, 4, 4));
-static_assert(!raft_server_election_result_is_current(true, 4, 4, 5));
-static_assert(raft_server_election_completion_action(
-                  true, 4, 4, 4, 4) ==
-              static_cast<int32_t>(
-                  ElectionCompletionAction::APPLY_CURRENT));
-static_assert(raft_server_election_completion_action(
-                  true, 5, 4, 5, 5) ==
-              static_cast<int32_t>(
-                  ElectionCompletionAction::IGNORE_STALE));
-static_assert(raft_server_election_completion_action(
-                  true, 5, 4, 5, 6) ==
-              static_cast<int32_t>(
-                  ElectionCompletionAction::ADVANCE_HIGHER_TERM));
-static_assert(raft_server_apply_epoch_is_current(8, 8));
-static_assert(!raft_server_apply_epoch_is_current(7, 8));
-static_assert(raft_server_log_index_has_successor(0));
-static_assert(raft_server_log_index_has_successor(UINT64_MAX - 1));
-static_assert(!raft_server_log_index_has_successor(UINT64_MAX));
-static_assert(raft_server_append_prefix_is_compacted_miss(4, 5, 3));
-static_assert(!raft_server_append_prefix_is_compacted_miss(3, 5, 3));
-static_assert(raft_server_append_previous_term_is_acceptable(0, 7, 8));
-static_assert(raft_server_append_is_acceptable(true, true, true));
-static_assert(!raft_server_append_is_acceptable(false, true, true));
-static_assert(!raft_server_append_is_acceptable(true, false, true));
-static_assert(!raft_server_append_is_acceptable(true, true, false));
-static_assert(raft_server_append_command_is_batch(4, 4));
-static_assert(!raft_server_append_command_is_batch(19, 4));
-static_assert(raft_server_append_entry_count_fits(UINT64_MAX, 0));
-static_assert(!raft_server_append_entry_count_fits(UINT64_MAX, 1));
-static_assert(raft_server_append_entry_count_fits(UINT64_MAX - 3, 3));
-static_assert(!raft_server_append_entry_count_fits(UINT64_MAX - 3, 4));
-static_assert(!raft_server_append_batch_count_is_valid(7, 0));
-static_assert(raft_server_append_batch_count_is_valid(UINT64_MAX - 3, 3));
-static_assert(!raft_server_append_batch_count_is_valid(UINT64_MAX - 3, 4));
-static_assert(raft_server_append_entry_conflicts(false, 0, 7));
-static_assert(raft_server_append_entry_conflicts(true, 6, 7));
-static_assert(!raft_server_append_entry_conflicts(true, 7, 7));
-static_assert(raft_server_append_result_last_index(10, 8, false) == 10);
-static_assert(raft_server_append_result_last_index(10, 8, true) == 8);
-static_assert(raft_server_append_result_last_index(8, 10, false) == 10);
-static_assert(raft_server_append_sent_end(7, 0) == 7);
-static_assert(raft_server_append_sent_end(7, 1) == 8);
-static_assert(raft_server_append_sent_end(7, 4) == 11);
-static_assert(raft_server_append_acknowledged_through(20, 10, 15) == 10);
-static_assert(raft_server_append_acknowledged_through(8, 10, 15) == 8);
-static_assert(raft_server_append_acknowledged_through(20, 15, 9) == 9);
-static_assert(raft_server_commit_index_clamp(9, 7) == 7);
-// The clamp policy is now scalar, so it tests as plain static_asserts like its
-// 67 siblings. The majority SELECTION moved onto PeerTable, which owns a
-// rusty::Vec and so cannot be constant-evaluated; raftLabTest covers it.
-static_assert(raft_server_commit_index_candidate(7, 3, 100) == 7);
-static_assert(raft_server_commit_index_candidate(9, 5, 100) == 9);
-static_assert(raft_server_commit_index_candidate(7, 3, 5) == 5);
-static_assert(raft_server_commit_index_candidate(0, 1, 42) == 42);
-static_assert(raft_server_compaction_safe_index(12, 10, 8) == 8);
-static_assert(raft_server_compaction_safe_index(7, 10, 8) == 7);
-static_assert(raft_server_compaction_safe_index(9, 8, 10) == 8);
-static_assert(raft_server_read_index_round_can_advance(0));
-static_assert(!raft_server_read_index_round_can_advance(UINT64_MAX));
-static_assert(raft_server_read_index_reply_confirms_authority(
-    true, true, 7, 7, 7, 11, 11));
-static_assert(!raft_server_read_index_reply_confirms_authority(
-    true, true, 7, 7, 7, 10, 11));
-static_assert(!raft_server_read_index_reply_confirms_authority(
-    true, true, 7, 8, 7, 11, 11));
-static_assert(raft_server_snapshot_progress_clamp(3, 5, 9) == 5);
-static_assert(raft_server_snapshot_progress_clamp(7, 5, 9) == 7);
-static_assert(raft_server_snapshot_progress_clamp(12, 5, 9) == 9);
-static_assert(raft_server_snapshot_is_due(4, 10, 5));
-static_assert(!raft_server_snapshot_is_due(10, 4, 5));
-static_assert(raft_server_follower_next_index(7) == 8);
-static_assert(raft_server_follower_next_index(UINT64_MAX) == 0);
-// Pin every branch of the incumbent rejection-backoff decision tree. The
-// helper arguments are (follower_last_log_index, current_next_index).
-static_assert(raft_server_append_reject_can_fast_backoff(4, 20));
-static_assert(raft_server_follower_next_index(4) == 5);
-static_assert(!raft_server_append_reject_can_fast_backoff(4, 5));
-static_assert(raft_server_append_reject_has_term_conflict(4, 5));
-static_assert(raft_server_append_reject_decremented(5) == 4);
-static_assert(!raft_server_append_reject_has_term_conflict(0, 1));
-static_assert(raft_server_append_reject_can_halve(20));
-static_assert(raft_server_append_reject_halved(20) == 10);
-static_assert(!raft_server_append_reject_can_halve(10));
-static_assert(raft_server_append_reject_can_decrement(10));
-static_assert(raft_server_append_reject_decremented(10) == 9);
-static_assert(!raft_server_append_reject_can_decrement(1));
-static_assert(raft_server_append_reject_floor() == 1);
-static_assert(raft_server_append_reject_can_fast_backoff(UINT64_MAX, 5));
-static_assert(raft_server_follower_next_index(UINT64_MAX) == 0);
-static_assert(!raft_server_append_reject_can_fast_backoff(UINT64_MAX, 0));
-static_assert(!raft_server_append_reject_has_term_conflict(UINT64_MAX, 0));
-static_assert(raft_server_start_was_rejected(RaftStartResult::REJECTED));
-static_assert(!raft_server_start_was_rejected(RaftStartResult::APPENDED));
-static_assert(raft_server_start_was_appended(RaftStartResult::APPENDED));
-static_assert(!raft_server_start_was_appended(RaftStartResult::REJECTED));
-static_assert(raft_server_retention_window_normalize(0) == 1);
-static_assert(raft_server_retention_window_normalize(1) == 1);
-static_assert(raft_server_retention_window_normalize(UINT64_MAX) == UINT64_MAX);
-static_assert(raft_server_retention_cutoff(5, 5) == 0);
-static_assert(raft_server_retention_cutoff(4, 5) == 0);
-static_assert(raft_server_retention_cutoff(6, 5) == 1);
-// Raft currently compares signed ballot_t values with uint64_t state_.current_term_.
-// These casts make the existing C++ usual-arithmetic-conversion semantics
-// explicit, including the historical negative-term edge case.
-static_assert(!raft_server_vote_term_is_stale(static_cast<uint64_t>(-1), 0));
-static_assert(raft_server_observed_higher_term(static_cast<uint64_t>(-1), 0));
-static_assert(!raft_server_signed_term_is_newer(-1, 0));
-static_assert(!raft_server_signed_term_is_newer(0, 0));
-static_assert(raft_server_signed_term_is_newer(1, 0));
-static_assert(raft_server_log_entry_is_current_term(
-    -1, static_cast<uint64_t>(-1)));
+// The predicates' compile-time tests are Rust now: `const _: () = assert!(...)`
+// items next to the predicates, which the emitter lowers back to these
+// static_asserts (plan.md, F2 slice 4). What remains here is C++'s own.
 
 // One log entry, owned by Rust.
 //
@@ -3102,6 +3078,84 @@ inline void GateWakeJob::run() const {
 /*RUSTYCPP:GEN-END id=raft_server.replication_wake_gate*/
 
 // ============================================================================
+// KERNEL RESULT PODS. The three values kernels return BY VALUE -- the
+// election-timeout knobs, one campaign's quorum snapshot, one AppendEntries
+// reply's fields -- #[repr(C)] and scalar, so both worlds agree on the layout.
+// They are in a block of their own because this block stays C++-visible at the
+// cutover: the kernels define and return them, and the struct's block, which
+// is Rust's alone, is deleted from C++ then.
+// ============================================================================
+#if RUSTYCPP_RUST
+// The election-timeout configuration, as one value. Every field is an
+// environment override with a compiled-in default, read afresh on each call
+// exactly as the four separate getters were.
+#[repr(C)]
+pub struct RaftElectionTimeouts {
+    pub grace_period_us_: u64,
+    pub preferred_us_: u64,
+    pub non_preferred_grace_us_: u64,
+    pub non_preferred_steady_us_: u64,
+}
+
+#[repr(C)]
+pub struct RaftVoteOutcome {
+    pub term_: i64,
+    pub yes_: bool,
+    pub no_: bool,
+    pub n_voted_yes_: i32,
+    pub n_voted_no_: i32,
+    pub timeouted_: bool,
+}
+
+// One AppendEntries reply, read out of the wire response by
+// raft_append_response_read for heartbeat phase 2 (server.cc).
+#[repr(C)]
+pub struct AppendRespView {
+    pub completed_: bool,
+    pub status_: bool,
+    pub term_: u64,
+    pub last_log_index_: u64,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_server.kernel_result_pods version=1 rust_sha256=728e459353345b29d96ebb9440a0d358f6478a753a0efdf2b6064db53f1300ff*/
+struct RaftElectionTimeouts;
+struct RaftVoteOutcome;
+struct AppendRespView;
+
+struct RaftElectionTimeouts {
+    uint64_t grace_period_us_;
+    uint64_t preferred_us_;
+    uint64_t non_preferred_grace_us_;
+    uint64_t non_preferred_steady_us_;
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
+};
+
+struct RaftVoteOutcome {
+    int64_t term_;
+    bool yes_;
+    bool no_;
+    int32_t n_voted_yes_;
+    int32_t n_voted_no_;
+    bool timeouted_;
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
+};
+
+struct AppendRespView {
+    bool completed_;
+    bool status_;
+    uint64_t term_;
+    uint64_t last_log_index_;
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
+};
+/*RUSTYCPP:GEN-END id=raft_server.kernel_result_pods*/
+
+// ============================================================================
 // RaftServerBase -- RaftServer's STATE, as a DSL struct.
 //
 // Step E of the migration. Every one of RaftServer's data members except the
@@ -3217,8 +3271,9 @@ unsafe extern "C" {
     fn raft_queue_wake_job(owner: *const rusty::RaftPollThreadPtr,
                            token: *mut core::ffi::c_void);
     // The RPC entry points' C++ halves. The first two exist only because
-    // on_request_vote_body and on_append_entries_body are emitted in
-    // server.cc's translation unit, which this header cannot name; the third
+    // the bodies (raft_server_on_request_vote_body, raft_server_on_append_entries_body)
+    // are defined in server.cc's translation unit, which this header cannot
+    // name before server_exports.h is included at its end; the third
     // is the InstallSnapshot exception boundary -- a std::mutex the DSL
     // cannot lock, and the one catch that turns an embedder throw into
     // FailStop.
@@ -3359,27 +3414,6 @@ pub const RAFT_ENV_HEARTBEAT_INTERVAL_US: i32 = 0;
 pub const RAFT_ENV_LOG_RETENTION_WINDOW: i32 = 1;
 pub const RAFT_ENV_SNAPSHOT_INTERVAL: i32 = 2;
 
-
-// The election-timeout configuration, as one value. Every field is an
-// environment override with a compiled-in default, read afresh on each call
-// exactly as the four separate getters were.
-#[repr(C)]
-pub struct RaftElectionTimeouts {
-    pub grace_period_us_: u64,
-    pub preferred_us_: u64,
-    pub non_preferred_grace_us_: u64,
-    pub non_preferred_steady_us_: u64,
-}
-
-#[repr(C)]
-pub struct RaftVoteOutcome {
-    pub term_: i64,
-    pub yes_: bool,
-    pub no_: bool,
-    pub n_voted_yes_: i32,
-    pub n_voted_no_: i32,
-    pub timeouted_: bool,
-}
 
 // appliedIndexForWait_ keeps its C++ spelling: it is read by name from
 // test.cc and from the C++ bodies that have not converted yet, and renaming
@@ -6143,9 +6177,28 @@ impl RaftServerBase {
     pub fn LabSnapshotManager(&self) -> &rusty::RaftSnapshotManagerPtr {
         &self.snapshot_manager_
     }
-    // The whole log, read-only, for RaftLogFingerprint.
-    pub fn LabLog(&self) -> &RaftLog {
-        &self.state_.raft_log_
+    // The lab suite's log fingerprint (test.cc RaftLogFingerprint), one
+    // element per call so the harness never holds a pointer into the log:
+    // element 0 is the base, 1 the length, 2+i the term of entry base+i, or
+    // 0 where there is none. is_some()/unwrap() rather than `if let`, for the
+    // reason recorded on ReplicationWakeGate::wake_on_owner.
+    pub fn LabLogFingerprintLen(&self) -> u64 {
+        2 + self.state_.raft_log_.len() as u64
+    }
+    #[allow(clippy::unnecessary_unwrap)]
+    pub fn LabLogFingerprintAt(&self, i: u64) -> u64 {
+        if i == 0 {
+            return self.state_.raft_log_.base();
+        }
+        if i == 1 {
+            return self.state_.raft_log_.len() as u64;
+        }
+        let entry: rusty::Option<&RaftEntry> =
+            self.state_.raft_log_.get(self.state_.raft_log_.base() + (i - 2));
+        if entry.is_some() {
+            return entry.unwrap().term() as u64;
+        }
+        0
     }
 }
 
@@ -6414,14 +6467,12 @@ impl RaftSpecific for RaftServerBase {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=5b98fe3b60ad02cd39b38f959e35a50bc7562bae9b19b9400cf667bbecbf50b1*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=f73c694037020b66ec91decbf1290cddedf243198a0eca47f25a5382b8edfc9b*/
 enum class RaftEnvError : int32_t;
 constexpr RaftEnvError RaftEnvError_NOT_A_WHOLE_NUMBER();
 constexpr RaftEnvError RaftEnvError_OVERFLOWS_U64();
 struct QueuedApplyEntry;
 struct ApplyQueue;
-struct RaftElectionTimeouts;
-struct RaftVoteOutcome;
 struct RaftServerBase;
 constexpr int32_t RAFT_ENV_HEARTBEAT_INTERVAL_US = static_cast<int32_t>(0);
 constexpr int32_t RAFT_ENV_LOG_RETENTION_WINDOW = static_cast<int32_t>(1);
@@ -6514,28 +6565,6 @@ struct ApplyQueue {
 
 
 
-
-struct RaftElectionTimeouts {
-    uint64_t grace_period_us_;
-    uint64_t preferred_us_;
-    uint64_t non_preferred_grace_us_;
-    uint64_t non_preferred_steady_us_;
-    // Rust derives Send/Sync from the field types; C++ cannot see them.
-    static constexpr bool is_send = true;
-    static constexpr bool is_sync = true;
-};
-
-struct RaftVoteOutcome {
-    int64_t term_;
-    bool yes_;
-    bool no_;
-    int32_t n_voted_yes_;
-    int32_t n_voted_no_;
-    bool timeouted_;
-    // Rust derives Send/Sync from the field types; C++ cannot see them.
-    static constexpr bool is_send = true;
-    static constexpr bool is_sync = true;
-};
 
 struct RaftServerBase : public RaftSpecific {
     uint32_t loc_id_;
@@ -6684,7 +6713,8 @@ struct RaftServerBase : public RaftSpecific {
     uint64_t LabSnapIdx() const;
     int64_t LabSnapTerm() const;
     const rusty::RaftSnapshotManagerPtr& LabSnapshotManager() const;
-    const RaftLog& LabLog() const;
+    uint64_t LabLogFingerprintLen() const;
+    uint64_t LabLogFingerprintAt(uint64_t i) const;
     void set_site_identity(uint32_t loc_id, uint16_t site_id, uint32_t partition_id);
     void set_commo(rusty::Communicator* commo);
     void reg_learner_action(rusty::LearnerAction learner_action);
@@ -8223,8 +8253,22 @@ inline const rusty::RaftSnapshotManagerPtr& RaftServerBase::LabSnapshotManager()
     return this->snapshot_manager_;
 }
 
-inline const RaftLog& RaftServerBase::LabLog() const {
-    return this->state_.raft_log_;
+inline uint64_t RaftServerBase::LabLogFingerprintLen() const {
+    return static_cast<uint64_t>(2) + (static_cast<uint64_t>(rusty::len(this->state_.raft_log_)));
+}
+
+inline uint64_t RaftServerBase::LabLogFingerprintAt(uint64_t i) const {
+    if (rusty::detail::deref_if_pointer_like(i) == static_cast<uint64_t>(0)) {
+        return this->state_.raft_log_.base();
+    }
+    if (rusty::detail::deref_if_pointer_like(i) == static_cast<uint64_t>(1)) {
+        return static_cast<uint64_t>(rusty::len(this->state_.raft_log_));
+    }
+    rusty::Option<const RaftEntry&> entry = this->state_.raft_log_.get(this->state_.raft_log_.base() + ((rusty::detail::deref_if_pointer_like(i) - 2)));
+    if (entry.is_some()) {
+        return static_cast<uint64_t>(entry.unwrap().term());
+    }
+    return static_cast<uint64_t>(0);
 }
 
 inline void RaftServerBase::set_site_identity(uint32_t loc_id, uint16_t site_id, uint32_t partition_id) {
@@ -8577,14 +8621,14 @@ class RaftServer : public RaftSpecific {
   // --- TxLogServer and RaftSpecific, forwarded to the C ABI.
   void set_site_identity(uint32_t loc_id, uint16_t site_id, uint32_t partition_id) override { raft_server_set_site_identity(impl_, loc_id, site_id, partition_id); }
   void set_commo(rusty::Communicator* commo) override { raft_server_set_commo(impl_, commo); }
-  void reg_learner_action(rusty::LearnerAction learner_action) override { raft_server_reg_learner_action(impl_, learner_action); }
+  void reg_learner_action(rusty::LearnerAction learner_action) override { raft_server_reg_learner_action(impl_, &learner_action); }
   void EnsureSetup() override { raft_server_ensure_setup(impl_); }
   bool WaitForStartup() override { return raft_server_wait_for_startup(impl_); }
   void PrepareForShutdown() override { raft_server_prepare_for_shutdown(impl_); }
   bool IsLeader() override { return raft_server_is_leader(impl_); }
   uint16_t GetLeaderHint() override { return raft_server_get_leader_hint(impl_); }
   void SetPreferredLeader(uint16_t site_id) override { raft_server_set_preferred_leader(impl_, site_id); }
-  void RegisterLeaderChangeCallback(rusty::RaftLeaderChangeCb cb) override { raft_server_register_leader_change_callback(impl_, cb); }
+  void RegisterLeaderChangeCallback(rusty::RaftLeaderChangeCb cb) override { raft_server_register_leader_change_callback(impl_, &cb); }
   bool IsRpcReady() const override { return raft_server_is_rpc_ready(impl_); }
   bool IsDisconnected() const override { return raft_server_is_disconnected(impl_); }
   uint16_t SiteId() const override { return raft_server_site_id(impl_); }
@@ -8619,8 +8663,9 @@ class RaftServer : public RaftSpecific {
   uint64_t LabExecuteIndex() const { return raft_server_lab_execute_index(impl_); }
   bool LabIsLeader() const { return raft_server_lab_is_leader(impl_); }
   uint64_t LabLastLogIndex() const { return raft_server_lab_last_log_index(impl_); }
-  const RaftLog& LabLog() const { return *raft_server_lab_log(impl_); }
   uint64_t LabLogBase() const { return raft_server_lab_log_base(impl_); }
+  uint64_t LabLogFingerprintAt(uint64_t i) const { return raft_server_lab_log_fingerprint_at(impl_, i); }
+  uint64_t LabLogFingerprintLen() const { return raft_server_lab_log_fingerprint_len(impl_); }
   rusty::RaftCheckedMutex& LabMutex() { return *raft_server_lab_mutex(impl_); }
   bool LabReqVoting() const { return raft_server_lab_req_voting(impl_); }
   uint64_t LabSnapIdx() const { return raft_server_lab_snap_idx(impl_); }
@@ -8631,17 +8676,18 @@ class RaftServer : public RaftSpecific {
   void Reconnect() { raft_server_reconnect(impl_); }
   void SetHeartbeatInterval(uint64_t micros) { raft_server_set_heartbeat_interval(impl_, micros); }
   void SetLogRetentionWindow(uint64_t window) { raft_server_set_log_retention_window(impl_, window); }
-  void SetSnapshotManager(rusty::RaftSnapshotManagerPtr manager) { raft_server_set_snapshot_manager(impl_, manager); }
-  void SetSnapshotManagerLocked(rusty::RaftSnapshotManagerPtr manager) { raft_server_set_snapshot_manager_locked(impl_, manager); }
+  void SetSnapshotManager(rusty::RaftSnapshotManagerPtr manager) { raft_server_set_snapshot_manager(impl_, &manager); }
+  void SetSnapshotManagerLocked(rusty::RaftSnapshotManagerPtr manager) { raft_server_set_snapshot_manager_locked(impl_, &manager); }
   void SetSnapshotThreshold(uint64_t threshold) { raft_server_set_snapshot_threshold(impl_, threshold); }
   void SetSnapshotThresholdLocked(uint64_t threshold) { raft_server_set_snapshot_threshold_locked(impl_, threshold); }
-  uint64_t SetStateMachineSnapshotCallbacks(rusty::RaftCreateSnapshotCb create_cb, rusty::RaftPrepareSnapshotCb prepare_cb) { return raft_server_set_state_machine_snapshot_callbacks(impl_, create_cb, prepare_cb); }
+  uint64_t SetStateMachineSnapshotCallbacks(rusty::RaftCreateSnapshotCb create_cb, rusty::RaftPrepareSnapshotCb prepare_cb) { return raft_server_set_state_machine_snapshot_callbacks(impl_, &create_cb, &prepare_cb); }
   void Shutdown() { raft_server_shutdown(impl_); }
 #endif
 
  private:
   RaftServerBase* impl_;
 };
+
 
 
 } // namespace janus

@@ -134,7 +134,8 @@ time) and the four production Raft suites, and committed on its own.
 | `3b0d810dd` | -- | F2 (the cutover proper) inventoried; a project of its own |
 | `8b1cbfe97` | -- | F2 slice 1, facade -> runtime: the crate is a `staticlib` (71 exports defined, 94 kernels undefined); every opaque carrier has a kernel `Drop`; the wake gate's reactor handles are pinned carriers over `rusty::Arc`, built by facade factories and copied by `Clone` because a `rusty::Arc` has no empty state |
 | `87ce66914` | -- | F2 slice 1c: the 44 `raft_log_*` facade functions are the Raft logger under rustc (level check, fmtlib-style substitution, one line to `rrr::log_line`); the transpiled build is unchanged |
-| `raft: F2 slice 2` | -- | F2 slice 2: the wake gate is constructed, reserved and driven from Rust; the reactor job carries a `Box<GateWakeJob>` token back to the `raft_wake_job_run` export; the C++ wake-job pair and three kernels are deleted |
+| `424fe4c79` | -- | F2 slice 2: the wake gate is constructed, reserved and driven from Rust; the reactor job carries a `Box<GateWakeJob>` token back to the `raft_wake_job_run` export; the C++ wake-job pair and three kernels are deleted |
+| `raft: F2 slice 3` | -- | F2 slice 3: the lab log fingerprint is two scalar exports (no `RaftLog&` crosses); the five by-value setters cross by pointer + clone kernel (D2 at the seam); 17 Rust predicates no Rust called are deleted and their 6 C++ callers compare in C++; the kernel-result PODs have a C++-visible block of their own, the RPC bodies are exports, and the 100 predicate static_asserts are Rust const asserts |
 
 ## What the numbers did
 

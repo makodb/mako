@@ -1354,15 +1354,11 @@ int RaftLabTest::testSnapshotThresholdConfigurable(void) {
 // Base, length, and every term, in order. Strictly stronger than the
 // shared_ptr-identity map comparison this replaces, which could not see an
 // entry mutated in place.
-static std::vector<uint64_t> RaftLogFingerprint(const janus::RaftLog& log) {
+static std::vector<uint64_t> RaftLogFingerprint(RaftServer& server) {
   std::vector<uint64_t> fp;
-  fp.push_back(log.base());
-  fp.push_back(static_cast<uint64_t>(log.len()));
-  for (size_t i = 0; i < log.len(); ++i) {
-    const auto entry = log.get(log.base() + static_cast<uint64_t>(i));
-    fp.push_back(entry.is_some()
-                     ? static_cast<uint64_t>(entry.unwrap().term())
-                     : 0);
+  const uint64_t n = server.LabLogFingerprintLen();
+  for (uint64_t i = 0; i < n; ++i) {
+    fp.push_back(server.LabLogFingerprintAt(i));
   }
   return fp;
 }
@@ -1498,7 +1494,7 @@ int RaftLabTest::testInstallSnapshotBasic(void) {
   uint64_t rejected_local_progress = 0;
   {
     std::lock_guard<RaftCheckedMutex> lock(server->LabMutex());
-    rejected_logs_before = RaftLogFingerprint(server->LabLog());
+    rejected_logs_before = RaftLogFingerprint(*server);
     rejected_snapidx_before = server->LabSnapIdx();
     rejected_snapterm_before = server->LabSnapTerm();
     rejected_commit_before = server->LabCommitIndex();
@@ -1556,7 +1552,7 @@ int RaftLabTest::testInstallSnapshotBasic(void) {
                 server->LabExecuteIndex() == rejected_execute_before &&
                 server->LabLastLogIndex() == rejected_last_log_before &&
                 server->LabLogBase() == rejected_min_active_before &&
-                RaftLogFingerprint(server->LabLog()) ==
+                RaftLogFingerprint(*server) ==
                     rejected_logs_before,
             "Rejected Prepare mutated the in-memory snapshot/log boundary");
   }

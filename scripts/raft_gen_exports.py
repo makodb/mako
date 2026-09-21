@@ -6,9 +6,11 @@ methods listed below and prints one `pub unsafe extern "C" fn raft_server_<snake
 per method, forwarding to it. `&self` -> `s: *const RaftServerBase`, `&mut self`
 -> `s: *mut RaftServerBase`, `&T` params -> `*const T` (dereferenced at the
 call), `&mut T` returns -> `*mut T`, `&T` returns -> `*const T`. Non-trivial
-C++ objects taken BY VALUE stay by value: those six setters are the D2
-leftovers the cutover converts. Output is pasted into server.h's struct block
-once; re-run and diff when a method's signature changes.
+C++ objects a method takes BY VALUE cross by pointer and are copied inside
+(BY_VALUE_CARRIERS): an Arc handle through its Clone, everything else through
+its clone kernel into a default-constructed slot -- so no export passes a
+non-trivial object by value (plan.md, D2). Output is spliced into server.cc's
+export block; re-run when a method's signature changes.
 """
 import re, sys
 
@@ -23,7 +25,7 @@ LAB = ['ClearStateMachineSnapshotCallbacks', 'CreateSnapshotLocked', 'Disconnect
        'GetHeartbeatInterval', 'GetLogRetentionWindow', 'GetSnapshotIndex', 'GetSnapshotIndexLocked',
        'GetSnapshotTerm', 'GetSnapshotTermLocked', 'GetSnapshotThreshold', 'GetState', 'HasSnapshot',
        'IsLeaderLocked', 'LabApplyMutex', 'LabCommitIndex', 'LabCurrentLeaderId', 'LabCurrentTerm',
-       'LabElectionInProgress', 'LabExecuteIndex', 'LabIsLeader', 'LabLastLogIndex', 'LabLog', 'LabLogBase',
+       'LabElectionInProgress', 'LabExecuteIndex', 'LabIsLeader', 'LabLastLogIndex', 'LabLogBase', 'LabLogFingerprintAt', 'LabLogFingerprintLen',
        'LabMutex', 'LabReqVoting', 'LabSnapIdx', 'LabSnapTerm', 'LabSnapshotManager', 'LabStopped',
        'LabVoteFor', 'Reconnect', 'SetHeartbeatInterval', 'SetLogRetentionWindow', 'SetSnapshotManager',
        'SetSnapshotManagerLocked', 'SetSnapshotThreshold', 'SetSnapshotThresholdLocked',
@@ -104,7 +106,12 @@ def export(rs, name):
 # kernel named here, into a default-constructed slot.
 BY_VALUE_CARRIERS = {'rusty::RaftPollThreadPtr': None,
                      'rusty::RaftIntEventPtr': None,
-                     'rusty::RaftCommand': 'raft_command_clone_into'}
+                     'rusty::RaftCommand': 'raft_command_clone_into',
+                     'rusty::LearnerAction': 'raft_learner_action_clone_into',
+                     'rusty::RaftLeaderChangeCb': 'raft_leader_change_cb_clone_into',
+                     'rusty::RaftSnapshotManagerPtr': 'raft_snapshot_manager_ptr_clone_into',
+                     'rusty::RaftCreateSnapshotCb': 'raft_create_snapshot_cb_clone_into',
+                     'rusty::RaftPrepareSnapshotCb': 'raft_prepare_snapshot_cb_clone_into'}
 
 SCALARS = {'u8': 'uint8_t', 'u16': 'uint16_t', 'u32': 'uint32_t', 'u64': 'uint64_t', 'i8': 'int8_t',
            'i16': 'int16_t', 'i32': 'int32_t', 'i64': 'int64_t', 'usize': 'size_t', 'bool': 'bool', '': 'void'}
@@ -192,6 +199,10 @@ pub unsafe extern "C" fn raft_wake_job_run(token: *mut core::ffi::c_void) {
 }'''
 GATE_H = ['// --- The wake job, entered from the reactor\'s OneTimeJob (raft_queue_wake_job).',
           'void raft_wake_job_run(void* token);']
+RPC_H = ['// --- The RPC bodies, entered from the service kernels (raft_rpc_*). Defined',
+         '// by hand in server.cc\'s DSL block; `&mut` parameters are references here.',
+         'void raft_server_on_request_vote_body(RaftServerBase& server, uint64_t lst_log_idx, int64_t lst_log_term, uint16_t can_id, int64_t can_term, int64_t& reply_term, int8_t& vote_granted);',
+         'void raft_server_on_append_entries_body(RaftServerBase& server, uint64_t leader_current_term, uint16_t leader_site_id, uint64_t leader_prev_log_index, uint64_t leader_prev_log_term, uint64_t leader_commit_index, const void* cmd, bool cmd_has_value, uint64_t leader_next_log_term, uint64_t& follower_append_ok, uint64_t& follower_current_term, uint64_t& follower_last_log_index);']
 LOOPS_H = ['// --- The two fiber loops, entered from the spawn kernels.',
            'void raft_server_heartbeat_loop(RaftServerBase* s);',
            'void raft_server_run_election_timer_loop(RaftServerBase* s, uint64_t wait_int_us);']
@@ -223,7 +234,9 @@ def forwarder(name, ret, params, const, rust_ret):
     for prm in [x.strip() for x in params.split(',') if x.strip()]:
         pname = prm.split()[-1].lstrip('*&')
         ptype = prm[:prm.rfind(pname)].strip()
-        args.append('&' + pname if ptype.endswith('&') else pname)
+        # A reference, or a carrier the export takes by pointer (BY_VALUE_CARRIERS),
+        # crosses as its address; the export copies inside.
+        args.append('&' + pname if ptype.endswith('&') or ptype in BY_VALUE_CARRIERS else pname)
     call = f'raft_server_{snake(name)}(' + ', '.join(['impl_'] + args) + ')'
     if ret == 'void':
         body = f'{call};'
@@ -274,6 +287,7 @@ def main():
         out.extend(LIFECYCLE_H)
         out.extend(LOOPS_H)
         out.extend(GATE_H)
+        out.extend(RPC_H)
         for title, names in GROUPS:
             out.append(f'// --- {title}')
             out.extend(prototype(rs, n) for n in names)

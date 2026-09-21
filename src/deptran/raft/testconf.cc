@@ -307,7 +307,7 @@ bool RaftTestConfig::Start(siteid_t svr, int cmd, uint64_t *index, uint64_t *ter
       it->second->svr_->Start(std::move(cmdptr), index, term);
   // Log_info("Start: Server {} Start() for command {} returned {}, index={}, term={}",
   //          svr, cmd, result ? "SUCCESS" : "FAILED", *index, *term);
-  return raft_server_start_was_appended(result);
+  return result == RaftStartResult::APPENDED;
 }
 
 int RaftTestConfig::Wait(uint64_t index, int n, uint64_t term) {
