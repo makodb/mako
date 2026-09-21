@@ -1032,6 +1032,17 @@ impl Drop for RaftStdLockGuard {
     }
 }
 
+// The reactor event's two verbs, as kernels. `set` and `wait_timeout` are
+// methods of the rrr::IntEvent behind the Arc, and the emitter renders a
+// method call on an opaque carrier with a dot where the C++ needs an arrow,
+// so they are named here as functions of the handle. Creation is the facade's
+// `rusty::raft_new_int_event()`; a copy is the carrier's Clone.
+unsafe extern "C" {
+    fn raft_int_event_set(event: *const rusty::RaftIntEventPtr, value: i32);
+    fn raft_int_event_wait_timeout(event: *const rusty::RaftIntEventPtr,
+                                   timeout_us: u64);
+}
+
 pub struct ReplicationWakeGate {
     // The gate is pinned: it holds mutexes and atomics, so C++ deletes its
     // move constructor, and the DSL has to say so for two reasons. It makes
@@ -1042,9 +1053,9 @@ pub struct ReplicationWakeGate {
     // the invariant the waiters depend on: an armed waiter holds the gate's
     // address, so the gate must not move while anyone is waiting on it.
     _pin: core::marker::PhantomPinned,
-    owner_: rusty::Mutex<rusty::Option<rusty::sync::Arc<rusty::ReactorPollThread>>>,
-    waiter_: rusty::Mutex<rusty::Option<rusty::sync::Arc<rusty::ReactorIntEvent>>>,
-    election_waiter_: rusty::Mutex<rusty::Option<rusty::sync::Arc<rusty::ReactorIntEvent>>>,
+    owner_: rusty::Mutex<rusty::Option<rusty::RaftPollThreadPtr>>,
+    waiter_: rusty::Mutex<rusty::Option<rusty::RaftIntEventPtr>>,
+    election_waiter_: rusty::Mutex<rusty::Option<rusty::RaftIntEventPtr>>,
     pending_: rusty::sync::atomic::AtomicBool,
     waiter_armed_: rusty::sync::atomic::AtomicBool,
     election_waiter_armed_: rusty::sync::atomic::AtomicBool,
@@ -1075,7 +1086,7 @@ impl ReplicationWakeGate {
         }
     }
 
-    pub fn bind_owner(&self, owner: rusty::sync::Arc<rusty::ReactorPollThread>) {
+    pub fn bind_owner(&self, owner: rusty::RaftPollThreadPtr) {
         let mut guard = self.owner_.lock().unwrap();
         *guard = rusty::Some(owner);
         self.accepting_.store(true, rusty::sync::atomic::Ordering::Release);
@@ -1102,7 +1113,7 @@ impl ReplicationWakeGate {
 
     pub fn reserve_wake_owner(
         &self,
-    ) -> rusty::Option<rusty::sync::Arc<rusty::ReactorPollThread>> {
+    ) -> rusty::Option<rusty::RaftPollThreadPtr> {
         if !self.waiter_armed_.load(rusty::sync::atomic::Ordering::Acquire) {
             return rusty::None;
         }
@@ -1114,12 +1125,14 @@ impl ReplicationWakeGate {
             self.wake_job_queued_.store(false, rusty::sync::atomic::Ordering::Release);
             return rusty::None;
         }
+        // The owner's handle, copied: the Arc's copy constructor under the
+        // transpiler, the clone kernel under rustc (the carrier's Clone).
         (*guard).clone()
     }
 
     pub fn reserve_shutdown_wake_owner(
         &self,
-    ) -> rusty::Option<rusty::sync::Arc<rusty::ReactorPollThread>> {
+    ) -> rusty::Option<rusty::RaftPollThreadPtr> {
         if !self.waiter_armed_.load(rusty::sync::atomic::Ordering::Acquire)
             && !self
                 .election_waiter_armed_
@@ -1139,6 +1152,8 @@ impl ReplicationWakeGate {
                 .store(false, rusty::sync::atomic::Ordering::Release);
             return rusty::None;
         }
+        // The owner's handle, copied: the Arc's copy constructor under the
+        // transpiler, the clone kernel under rustc (the carrier's Clone).
         (*guard).clone()
     }
 
@@ -1162,10 +1177,13 @@ impl ReplicationWakeGate {
         // The guard is a temporary of this statement, so waiter_ is unlocked
         // again before the set() below: set() may make the heartbeat fiber
         // runnable, and that fiber takes waiter_ in DisarmWaiter.
-        let waiter: rusty::Option<rusty::sync::Arc<rusty::ReactorIntEvent>> =
-            (*self.waiter_.lock().unwrap()).clone();
+        let waiter: rusty::Option<rusty::RaftIntEventPtr> =
+            self.clone_waiter(&self.waiter_);
         if waiter.is_some() {
-            waiter.as_ref().unwrap().set(1);
+            unsafe {
+                raft_int_event_set(
+                    waiter.as_ref().unwrap() as *const rusty::RaftIntEventPtr, 1);
+            }
         }
     }
 
@@ -1174,15 +1192,23 @@ impl ReplicationWakeGate {
     pub fn wake_shutdown_on_owner(&self) {
         // Both guards are statement temporaries; neither lock is held across
         // the set() calls below, for the reason given in wake_on_owner.
-        let heartbeat_waiter: rusty::Option<rusty::sync::Arc<rusty::ReactorIntEvent>> =
-            (*self.waiter_.lock().unwrap()).clone();
-        let election_waiter: rusty::Option<rusty::sync::Arc<rusty::ReactorIntEvent>> =
-            (*self.election_waiter_.lock().unwrap()).clone();
+        let heartbeat_waiter: rusty::Option<rusty::RaftIntEventPtr> =
+            self.clone_waiter(&self.waiter_);
+        let election_waiter: rusty::Option<rusty::RaftIntEventPtr> =
+            self.clone_waiter(&self.election_waiter_);
         if heartbeat_waiter.is_some() {
-            heartbeat_waiter.as_ref().unwrap().set(1);
+            unsafe {
+                raft_int_event_set(
+                    heartbeat_waiter.as_ref().unwrap()
+                        as *const rusty::RaftIntEventPtr, 1);
+            }
         }
         if election_waiter.is_some() {
-            election_waiter.as_ref().unwrap().set(1);
+            unsafe {
+                raft_int_event_set(
+                    election_waiter.as_ref().unwrap()
+                        as *const rusty::RaftIntEventPtr, 1);
+            }
         }
     }
 
@@ -1198,10 +1224,12 @@ impl ReplicationWakeGate {
 
     pub fn finish_wait_for_work(
         &self,
-        waiter: rusty::sync::Arc<rusty::ReactorIntEvent>,
+        waiter: rusty::RaftIntEventPtr,
         timeout_us: u64,
     ) -> bool {
-        waiter.set(0);
+        unsafe {
+            raft_int_event_set(&waiter as *const rusty::RaftIntEventPtr, 0);
+        }
         {
             let mut guard = self.waiter_.lock().unwrap();
             *guard = rusty::Some(waiter.clone());
@@ -1211,7 +1239,10 @@ impl ReplicationWakeGate {
             self.disarm_waiter();
             return self.accepting_.load(rusty::sync::atomic::Ordering::Acquire);
         }
-        waiter.wait_timeout(timeout_us);
+        unsafe {
+            raft_int_event_wait_timeout(
+                &waiter as *const rusty::RaftIntEventPtr, timeout_us);
+        }
         self.pending_.swap(false, rusty::sync::atomic::Ordering::AcqRel);
         self.disarm_waiter();
         self.accepting_.load(rusty::sync::atomic::Ordering::Acquire)
@@ -1219,10 +1250,12 @@ impl ReplicationWakeGate {
 
     pub fn wait_for_election_timeout(
         &self,
-        waiter: rusty::sync::Arc<rusty::ReactorIntEvent>,
+        waiter: rusty::RaftIntEventPtr,
         timeout_us: u64,
     ) -> bool {
-        waiter.set(0);
+        unsafe {
+            raft_int_event_set(&waiter as *const rusty::RaftIntEventPtr, 0);
+        }
         {
             let mut guard = self.election_waiter_.lock().unwrap();
             *guard = rusty::Some(waiter.clone());
@@ -1233,9 +1266,24 @@ impl ReplicationWakeGate {
             self.disarm_election_waiter();
             return false;
         }
-        waiter.wait_timeout(timeout_us);
+        unsafe {
+            raft_int_event_wait_timeout(
+                &waiter as *const rusty::RaftIntEventPtr, timeout_us);
+        }
         self.disarm_election_waiter();
         self.accepting_.load(rusty::sync::atomic::Ordering::Acquire)
+    }
+
+    // The armed waiter, copied out from under the gate's lock so the wake
+    // itself happens with the lock released, as it always did. The copy is
+    // the handle's Clone: the Arc's copy constructor under the transpiler,
+    // the clone kernel under rustc (rusty-rustc/src/lib.rs).
+    fn clone_waiter(
+        &self,
+        slot: &rusty::Mutex<rusty::Option<rusty::RaftIntEventPtr>>,
+    ) -> rusty::Option<rusty::RaftIntEventPtr> {
+        let guard = slot.lock().unwrap();
+        (*guard).clone()
     }
 
     pub fn disarm_waiter(&self) {
@@ -1347,10 +1395,6 @@ unsafe extern "C" {
     // the seam is named here instead of being silently wrong.
     fn raft_new_replication_wake_gate()
         -> rusty::sync::Arc<ReplicationWakeGate>;
-    // The reactor's event factory, `rrr::create_sp_int_event`. It is the one
-    // thing in the wake path with no DSL spelling, so it is the only thing
-    // the three wait methods below leave in C++.
-    fn raft_create_int_event() -> rusty::sync::Arc<rusty::ReactorIntEvent>;
     fn raft_queue_replication_wake(gate: *const rusty::sync::Arc<ReplicationWakeGate>);
     fn raft_queue_replication_shutdown_wake(gate: *const rusty::sync::Arc<ReplicationWakeGate>);
     // The RPC entry points' C++ halves. The first two exist only because
@@ -3514,7 +3558,7 @@ impl RaftServerBase {
         if decided.is_some() {
             return decided.unwrap();
         }
-        let waiter = unsafe { raft_create_int_event() };
+        let waiter: rusty::RaftIntEventPtr = rusty::raft_new_int_event();
         self.replication_wake_gate_.finish_wait_for_work(waiter, timeout_us)
     }
 
@@ -3527,7 +3571,7 @@ impl RaftServerBase {
         if !self.replication_wake_gate_.accepting() {
             return false;
         }
-        let waiter = unsafe { raft_create_int_event() };
+        let waiter: rusty::RaftIntEventPtr = rusty::raft_new_int_event();
         self.replication_wake_gate_
             .wait_for_election_timeout(waiter, timeout_us)
     }
@@ -3541,7 +3585,7 @@ impl RaftServerBase {
     // @unsafe - Bind the gate to the communicator's PollThread before
     // HeartbeatLoop can publish an owner-thread-only IntEvent against it.
     pub fn BindReplicationWakeOwner(
-        &mut self, owner: rusty::sync::Arc<rusty::ReactorPollThread>) {
+        &mut self, owner: rusty::RaftPollThreadPtr) {
         self.replication_wake_gate_.bind_owner(owner);
     }
 

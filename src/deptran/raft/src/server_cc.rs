@@ -506,11 +506,10 @@ unsafe extern "C" {
     // the lookup is Rust, and only reading inside the opaque payload is not.
     fn raft_command_kind(cmd: *const rusty::RaftCommand) -> i32;
     // The leader's batch: a TpcCommitCommand is copied and stamped with its
-    // log term in C++ (a Marshallable), pushed into batch_buffer_ in Rust,
-    // and the buffer's Arcs are moved into one TpcBatchCommand at the end.
+    // log term in C++ (a Marshallable) by the facade's `raft_stamped_commit`,
+    // pushed into batch_buffer_ in Rust, and the buffer's Arcs are moved into
+    // one TpcBatchCommand at the end.
     fn raft_command_is_tpc_commit(cmd: *const rusty::RaftCommand) -> bool;
-    fn raft_stamped_commit_into(cmd: *const rusty::RaftCommand, term: i64,
-                                out: *mut rusty::RaftTpcCommitPtr);
     fn raft_batch_finalize(entries: *mut rusty::RaftTpcCommitPtr,
                            count: usize, cmd_out: *mut rusty::RaftCommand);
     // The command copy INTO Rust's slot; see server.h for why never by value.
@@ -988,12 +987,9 @@ pub fn heartbeat_phase1_select_payload(server: &mut RaftServerBase,
             let is_commit: bool =
                 unsafe { raft_command_is_tpc_commit(entry_cmd) };
             if is_commit {
-                let mut stamped: rusty::RaftTpcCommitPtr = Default::default();
-                unsafe {
-                    raft_stamped_commit_into(
-                        entry_cmd, entry_term,
-                        &mut stamped as *mut rusty::RaftTpcCommitPtr);
-                }
+                let stamped: rusty::RaftTpcCommitPtr = unsafe {
+                    rusty::raft_stamped_commit(entry_cmd, entry_term)
+                };
                 server.batch_buffer_.push(stamped);
             } else {
                 // Looked up again rather than held across the push above:
@@ -2711,8 +2707,9 @@ pub unsafe extern "C" fn raft_server_apply_thread_loop(s: *mut RaftServerBase) {
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 #[no_mangle]
 pub unsafe extern "C" fn raft_server_bind_replication_wake_owner(s: *mut RaftServerBase,
-                                                                 owner: *const rusty::sync::Arc<rusty::ReactorPollThread>) {
-    (*s).BindReplicationWakeOwner((*owner).clone())
+                                                                 owner: *const rusty::RaftPollThreadPtr) {
+    let owner_copy: rusty::RaftPollThreadPtr = (*owner).clone();
+    (*s).BindReplicationWakeOwner(owner_copy)
 }
 
 /// # Safety

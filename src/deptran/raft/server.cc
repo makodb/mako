@@ -406,6 +406,18 @@ prepare_state_machine_snapshot_locked(
 // RaftServer::commo() method the kernels used to downcast the SERVER to reach.
 // @unsafe - dynamic_cast on a pointer the frame owns; verify keeps the old
 // abort-if-unset behaviour.
+// Construct-in-place for the out-parameter kernels: destroy whatever the slot
+// holds, then copy- or move-construct the new value there. Under the
+// transpiler the slot is a live default-constructed object; under the runtime
+// it is the zero bytes Rust default-constructs, or a value from an earlier
+// round. Both are handled by the same two lines, which is why the kernels
+// never plain-assign into a slot.
+template <typename T, typename V>
+static void construct_into(T* dst, V&& value) {
+  std::destroy_at(dst);
+  new (dst) T(std::forward<V>(value));
+}
+
 static RaftCommo* commo_of(rusty::Communicator* commo) {
   auto* communicator = dynamic_cast<RaftCommo*>(commo);
   verify(communicator != nullptr);
@@ -436,8 +448,8 @@ void raft_broadcast_vote_and_wait(
     rusty::Communicator* commo, uint32_t par_id, uint64_t last_log_index,
     int64_t last_log_term, uint16_t self_site_id, int64_t term,
     rusty::RaftVoteQuorumPtr* out) {
-  *out = commo_of(commo)->BroadcastVote(
-      par_id, last_log_index, last_log_term, self_site_id, term);
+  construct_into(out, commo_of(commo)->BroadcastVote(
+                          par_id, last_log_index, last_log_term, self_site_id, term));
   (*out)->wait_timeout(1000000);
 }
 
@@ -503,7 +515,7 @@ void raft_queue_replication_shutdown_wake(
 // RaftServerBase::AppendLocal now.
 void raft_command_clone_into(const rusty::RaftCommand* src,
                              rusty::RaftCommand* dst) {
-  *dst = *src;
+  construct_into(dst, *src);
 }
 // RAFT_TEST_CORO as a predicate. Conditional compilation has no spelling in
 // this dialect, so the flag is read here and the Rust callers branch on it:
@@ -518,7 +530,7 @@ bool raft_lab_mode() {
 }
 void raft_noop_command_into(rusty::RaftCommand* dst) {
   auto noop = rusty::Arc<TpcNoopCommand>::make();
-  *dst = janus::Command::pack_aliased<TpcNoopCommand>(std::move(noop));
+  construct_into(dst, janus::Command::pack_aliased<TpcNoopCommand>(std::move(noop)));
 }
 // Spawns the election-timer fiber. The lambda captures the loop by value --
 // two words -- so nothing here outlives the fiber.
@@ -603,10 +615,10 @@ void raft_snapshot_recovery_pick_manager(
     const rusty::RaftSnapshotManagerPtr* current,
     rusty::RaftSnapshotManagerPtr* out) {
   if (*current) {
-    *out = *current;
+    construct_into(out, *current);
     return;
   }
-  *out = std::make_shared<janus::raft::MemorySnapshotManager>();
+  construct_into(out, std::make_shared<janus::raft::MemorySnapshotManager>());
 }
 
 bool raft_snapshot_manager_latest(
@@ -954,9 +966,38 @@ void raft_log_set_is_leader_entry(uint16_t site_id, uint32_t loc_id,
 // shim stopped deriving; ConstructRuntime follows in the Rust export.
 RaftServerBase* raft_server_alloc() { return new RaftServerBase(); }
 void raft_server_free(RaftServerBase* s) { delete s; }
+
+// F2 slice 1: the carriers' destructors, behind the Rust `Drop` impls in the
+// runtime facade (src/rrr/rusty-rustc). Each runs the C++ destructor in
+// place. On a default-constructed carrier -- all zero bytes, the empty state
+// of every one of these types -- each is a no-op, which is what lets Rust
+// default-construct a slot for an _into kernel and drop it unconditionally.
+// Unused by the transpiled build; they are the runtime's, and they compile
+// against the real types here so a drift is caught now.
+void raft_destroy_command(rusty::RaftCommand* p) { std::destroy_at(p); }
+void raft_destroy_response_ptr(rusty::RaftResponsePtr* p) { std::destroy_at(p); }
+void raft_destroy_checked_mutex(rusty::RaftCheckedMutex* p) { std::destroy_at(p); }
+void raft_destroy_async_callback_lifetime_ptr(rusty::RaftAsyncCallbackLifetimePtr* p) {
+  std::destroy_at(p);
+}
+void raft_destroy_snapshot_manager_ptr(rusty::RaftSnapshotManagerPtr* p) { std::destroy_at(p); }
+void raft_destroy_create_snapshot_cb(rusty::RaftCreateSnapshotCb* p) { std::destroy_at(p); }
+void raft_destroy_prepare_snapshot_cb(rusty::RaftPrepareSnapshotCb* p) { std::destroy_at(p); }
+void raft_destroy_std_mutex(rusty::RaftStdMutex* p) { std::destroy_at(p); }
+void raft_destroy_leader_change_cb(rusty::RaftLeaderChangeCb* p) { std::destroy_at(p); }
+// A joinable std::thread's destructor terminates the process; Shutdown joins
+// the apply thread first, and this says so where it would otherwise be silent.
+void raft_destroy_std_thread(rusty::RaftStdThread* p) {
+  verify(!p->joinable());
+  std::destroy_at(p);
+}
+void raft_destroy_vote_quorum_ptr(rusty::RaftVoteQuorumPtr* p) { std::destroy_at(p); }
+void raft_destroy_byte_string(rusty::RaftByteString* p) { std::destroy_at(p); }
+void raft_destroy_tpc_commit_ptr(rusty::RaftTpcCommitPtr* p) { std::destroy_at(p); }
+void raft_destroy_learner_action(rusty::LearnerAction* p) { std::destroy_at(p); }
 void raft_new_callback_lifetime(RaftServerBase* self,
                                 rusty::RaftAsyncCallbackLifetimePtr* out) {
-  *out = std::make_shared<AsyncCallbackLifetime>();
+  construct_into(out, std::make_shared<AsyncCallbackLifetime>());
   (*out)->server = self;
 }
 uint64_t raft_heartbeat_interval_default() { return HEARTBEAT_INTERVAL; }
@@ -967,12 +1008,34 @@ void raft_ensure_legacy_payload_registered() {
 }  // extern "C"
 
 
-// @unsafe - the reactor's event factory. The three wait methods on
-// RaftServerBase are Rust; this is the only step in them that is not, because
-// create_sp_int_event has no DSL spelling.
-extern "C" rusty::Arc<rrr::IntEvent> raft_create_int_event() {
-  return create_sp_int_event(1);
+// @unsafe - the Arc carriers' construction paths, for the rustc facade
+// (rusty-rustc/src/lib.rs: raft_new_int_event and the two Clone impls). Each
+// writes into storage the facade owns but has not constructed -- a
+// MaybeUninit -- so these placement-new WITHOUT the destroy_at that
+// construct_into runs first: there is no live value in the slot to destroy,
+// and rusty::Arc has no empty state a zeroed slot could stand for. Under the
+// transpiler the DSL reaches them through the C++ halves of the same facade
+// functions (server.h, raft_construct_by), so both worlds run this code.
+extern "C" void raft_create_int_event_into(rusty::RaftIntEventPtr* out) {
+  new (out) rusty::RaftIntEventPtr(create_sp_int_event(1));
 }
+extern "C" void raft_int_event_clone_into(const rusty::RaftIntEventPtr* src,
+                                          rusty::RaftIntEventPtr* dst) {
+  new (dst) rusty::RaftIntEventPtr(*src);
+}
+extern "C" void raft_int_event_set(const rusty::RaftIntEventPtr* event, int32_t value) {
+  (*event)->set(value);
+}
+extern "C" void raft_int_event_wait_timeout(const rusty::RaftIntEventPtr* event,
+                                            uint64_t timeout_us) {
+  (*event)->wait_timeout(timeout_us);
+}
+extern "C" void raft_poll_thread_clone_into(const rusty::RaftPollThreadPtr* src,
+                                            rusty::RaftPollThreadPtr* dst) {
+  new (dst) rusty::RaftPollThreadPtr(*src);
+}
+extern "C" void raft_destroy_int_event_ptr(rusty::RaftIntEventPtr* p) { std::destroy_at(p); }
+extern "C" void raft_destroy_poll_thread_ptr(rusty::RaftPollThreadPtr* p) { std::destroy_at(p); }
 
 
 // @unsafe - external calls marked @external [safe], core replication loop
@@ -2138,11 +2201,10 @@ unsafe extern "C" {
     // the lookup is Rust, and only reading inside the opaque payload is not.
     fn raft_command_kind(cmd: *const rusty::RaftCommand) -> i32;
     // The leader's batch: a TpcCommitCommand is copied and stamped with its
-    // log term in C++ (a Marshallable), pushed into batch_buffer_ in Rust,
-    // and the buffer's Arcs are moved into one TpcBatchCommand at the end.
+    // log term in C++ (a Marshallable) by the facade's `raft_stamped_commit`,
+    // pushed into batch_buffer_ in Rust, and the buffer's Arcs are moved into
+    // one TpcBatchCommand at the end.
     fn raft_command_is_tpc_commit(cmd: *const rusty::RaftCommand) -> bool;
-    fn raft_stamped_commit_into(cmd: *const rusty::RaftCommand, term: i64,
-                                out: *mut rusty::RaftTpcCommitPtr);
     fn raft_batch_finalize(entries: *mut rusty::RaftTpcCommitPtr,
                            count: usize, cmd_out: *mut rusty::RaftCommand);
     // The command copy INTO Rust's slot; see server.h for why never by value.
@@ -2620,12 +2682,9 @@ pub fn heartbeat_phase1_select_payload(server: &mut RaftServerBase,
             let is_commit: bool =
                 unsafe { raft_command_is_tpc_commit(entry_cmd) };
             if is_commit {
-                let mut stamped: rusty::RaftTpcCommitPtr = Default::default();
-                unsafe {
-                    raft_stamped_commit_into(
-                        entry_cmd, entry_term,
-                        &mut stamped as *mut rusty::RaftTpcCommitPtr);
-                }
+                let stamped: rusty::RaftTpcCommitPtr = unsafe {
+                    rusty::raft_stamped_commit(entry_cmd, entry_term)
+                };
                 server.batch_buffer_.push(stamped);
             } else {
                 // Looked up again rather than held across the push above:
@@ -4343,8 +4402,9 @@ pub unsafe extern "C" fn raft_server_apply_thread_loop(s: *mut RaftServerBase) {
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 #[no_mangle]
 pub unsafe extern "C" fn raft_server_bind_replication_wake_owner(s: *mut RaftServerBase,
-                                                                 owner: *const rusty::sync::Arc<rusty::ReactorPollThread>) {
-    (*s).BindReplicationWakeOwner((*owner).clone())
+                                                                 owner: *const rusty::RaftPollThreadPtr) {
+    let owner_copy: rusty::RaftPollThreadPtr = (*owner).clone();
+    (*s).BindReplicationWakeOwner(owner_copy)
 }
 
 /// # Safety
@@ -4694,7 +4754,7 @@ pub unsafe extern "C" fn raft_server_shutdown(s: *mut RaftServerBase) {
     (*s).Shutdown()
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_round_scope version=1 rust_sha256=1731edf6fb8c4116c41c46cb68a00a04e4745f0fc705ad129f82e3244e2f5fae*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_round_scope version=1 rust_sha256=5dd006a9fa60bb2b71160c349b53b11dedac87f00f188347c8a006d581ead24c*/
 enum class AppendReplyAction : int32_t;
 constexpr AppendReplyAction AppendReplyAction_IGNORED();
 constexpr AppendReplyAction AppendReplyAction_STEP_DOWN();
@@ -4753,7 +4813,6 @@ extern "C" {
     uint64_t raft_append_entries_batch_max();
     int32_t raft_command_kind(const rusty::RaftCommand* cmd);
     bool raft_command_is_tpc_commit(const rusty::RaftCommand* cmd);
-    void raft_stamped_commit_into(const rusty::RaftCommand* cmd, int64_t term, rusty::RaftTpcCommitPtr* out);
     void raft_batch_finalize(rusty::RaftTpcCommitPtr* entries, size_t count, rusty::RaftCommand* cmd_out);
     void raft_command_clone_into(const rusty::RaftCommand* src, rusty::RaftCommand* dst);
     void raft_phase1_send_append(rusty::Communicator* commo, uint16_t self_site_id, uint16_t site_id, uint32_t partition_id, bool is_leader, uint64_t term, uint64_t prev_log_index, uint64_t prev_log_term, uint64_t commit_index, const rusty::RaftCommand* cmd, uint64_t cmd_log_term, rusty::RaftResponsePtr* out);
@@ -5071,15 +5130,11 @@ bool heartbeat_phase1_select_payload(server_h::RaftServerBase& server, size_t or
                 skip_follower = true;
                 break;
             }
-            int64_t entry_term = entry.unwrap().term();
+            const int64_t entry_term = entry.unwrap().term();
             const rusty::RaftCommand* entry_cmd = rusty::detail::ptr_cast<const rusty::RaftCommand*>(entry.unwrap().cmd());
             const bool is_commit = raft_command_is_tpc_commit(entry_cmd);
             if (is_commit) {
-                rusty::RaftTpcCommitPtr stamped = rusty::default_like<rusty::RaftTpcCommitPtr>();
-                // @unsafe
-                {
-                    raft_stamped_commit_into(entry_cmd, std::move(entry_term), static_cast<rusty::RaftTpcCommitPtr*>(&stamped));
-                }
+                rusty::RaftTpcCommitPtr stamped = rusty::raft_stamped_commit(entry_cmd, std::move(entry_term));
                 server.batch_buffer_.push(std::move(stamped));
             } else {
                 auto slot = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }(server.state_).get(std::move(idx));
@@ -5810,8 +5865,9 @@ extern "C" void raft_server_apply_thread_loop(server_h::RaftServerBase* s) {
 /// # Safety
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 // @unsafe
-extern "C" void raft_server_bind_replication_wake_owner(server_h::RaftServerBase* s, const rusty::Arc<rusty::ReactorPollThread>* owner) {
-    ((*s)).BindReplicationWakeOwner(rusty::clone(((*owner))));
+extern "C" void raft_server_bind_replication_wake_owner(server_h::RaftServerBase* s, const rusty::RaftPollThreadPtr* owner) {
+    const rusty::RaftPollThreadPtr owner_copy = rusty::clone(((*owner)));
+    ((*s)).BindReplicationWakeOwner(std::move(owner_copy));
 }
 
 /// # Safety
@@ -6434,7 +6490,10 @@ void raft_stamped_commit_into(const rusty::RaftCommand* cmd, int64_t term,
                               rusty::RaftTpcCommitPtr* out) {
   auto cur_cmd = marshallable_cast<TpcCommitCommand>(*cmd);
   verify(cur_cmd.is_some());
-  *out = rusty::Arc<TpcCommitCommand>::make(*cur_cmd.as_ref().unwrap());
+  // Into unconstructed storage (the facade's MaybeUninit), so placement-new
+  // without construct_into's destroy_at: see raft_create_int_event_into.
+  new (out) rusty::RaftTpcCommitPtr(
+      rusty::Arc<TpcCommitCommand>::make(*cur_cmd.as_ref().unwrap()));
   out->get_mut().unwrap().term = term;
 }
 
@@ -6460,9 +6519,9 @@ void raft_phase1_send_append(
     uint64_t prev_log_term, uint64_t commit_index,
     const rusty::RaftCommand* cmd, uint64_t cmd_log_term,
     rusty::RaftResponsePtr* out) {
-  *out = commo_of(commo)->SendAppendEntries2(
-      site_id, partition_id, -1, -1, is_leader, self_site_id, term,
-      prev_log_index, prev_log_term, commit_index, *cmd, cmd_log_term);
+  construct_into(out, commo_of(commo)->SendAppendEntries2(
+                          site_id, partition_id, -1, -1, is_leader, self_site_id, term,
+                          prev_log_index, prev_log_term, commit_index, *cmd, cmd_log_term));
 }
 
 }  // extern "C"
@@ -6563,12 +6622,12 @@ int64_t raft_batch_term_at(const rusty::ffi::c_void* batch_handle, uint64_t i) {
 // carrier cannot touch), wrapped exactly as RaftEntry used to receive it.
 void raft_batch_command_into(const rusty::ffi::c_void* batch_handle,
                              uint64_t i, rusty::RaftCommand* dst) {
-  *dst = janus::Command::pack_aliased<TpcCommitCommand>(
-      wire_batch(batch_handle).cmds_[i].clone());
+  construct_into(dst, janus::Command::pack_aliased<TpcCommitCommand>(
+                          wire_batch(batch_handle).cmds_[i].clone()));
 }
 void raft_wire_command_clone_into(const rusty::ffi::c_void* cmd_handle,
                                   rusty::RaftCommand* dst) {
-  *dst = wire_command(cmd_handle);
+  construct_into(dst, wire_command(cmd_handle));
 }
 
 

@@ -1549,23 +1549,33 @@ class CheckedInCanaryTests(unittest.TestCase):
         # Replace them with an EXACT count ratchet over the whole file. This
         # is not a relaxation: every count is equality, so any new unsafe in
         # the facade -- or any removal -- fails the gate.
-        #   #[allow(unsafe_code)]        1  -> 58
+        #   #[allow(unsafe_code)]        1  -> 58 -> 59 -> 62
         #   unsafe extern                1  ->  1
-        #   unsafe fn                    1  -> 53
-        #   unsafe {                     0  -> 29
-        #   /// # Safety                 1  -> 38
+        #   unsafe fn                    1  -> 53 -> 54
+        #   unsafe {                     0  -> 29 -> 30 -> 32
+        #   /// # Safety                 1  -> 38 -> 39
+        # The 59th allowance and the 30th block are one site: the opaque
+        # carriers' Drop layer (rusty_opaque_cpp_carrier_drop!), which calls
+        # the raft_destroy_* kernels so the Raft crate owns the C++ objects it
+        # holds by value -- F2 slice 1 of docs/migration/raft/plan.md. The
+        # 60th..62nd allowances, the 31st/32nd blocks and the 54th unsafe fn
+        # (with its Safety section, the 39th) are the Arc carriers' Clone
+        # layer (rusty_opaque_cpp_arc_carrier_clone!) and the two factories
+        # raft_new_int_event / raft_stamped_commit: a rusty::Arc has no empty
+        # state, so those carriers are built and copied by kernels into
+        # MaybeUninit storage.
         # `unsafe impl` / `unsafe trait` / `#![allow(unsafe_code)]` stay at
         # zero: the facade never asserts a thread-safety property, it only
         # models call boundaries.
         self.assertEqual(facade.count(logging_boundary), 1)
-        self.assertEqual(facade.count("#[allow(unsafe_code"), 58)
+        self.assertEqual(facade.count("#[allow(unsafe_code"), 62)
         self.assertEqual(facade.count("#![allow(unsafe_code"), 0)
         self.assertEqual(facade.count("unsafe extern"), 1)
-        self.assertEqual(facade.count("unsafe fn"), 53)
-        self.assertEqual(facade.count("unsafe {"), 29)
+        self.assertEqual(facade.count("unsafe fn"), 54)
+        self.assertEqual(facade.count("unsafe {"), 32)
         self.assertEqual(facade.count("unsafe impl"), 0)
         self.assertEqual(facade.count("unsafe trait"), 0)
-        self.assertEqual(facade.count("/// # Safety"), 38)
+        self.assertEqual(facade.count("/// # Safety"), 39)
 
         # The inert-attribute crate exists only so rustc accepts
         # `#[cpp_inherit]` on the trait impls the emitter turns into C++ base

@@ -17,6 +17,7 @@
 #include <rusty/arc.hpp>
 #include <rusty/condvar.hpp>
 #include <rusty/mutex.hpp>   // rusty::Mutex, the startup gate
+#include <rusty/maybe_uninit.hpp>   // rusty::MaybeUninit, the Arc-carrier factories below
 #include <rusty/num.hpp>
 #include <rusty/array.hpp>   // rusty::len / rusty::is_empty in PeerTable
 #include <rusty/ffi.hpp>   // rusty::ffi::c_void, the election loop opaque handle
@@ -2193,11 +2194,12 @@ struct AsyncCallbackLifetime {
 // every one aliases a type server.h itself declares, and rust_facade_types.h
 // is included before those declarations exist.
 //
-// The Rust half is src/rrr/rusty-rustc/src/lib.rs, where each name is a
-// zero-sized opaque struct. Rust can hold, move and default-construct one;
-// it cannot look inside. Each alias below is EXACTLY the type the
-// hand-written member used, so this changes where the members are declared
-// and nothing else about them.
+// The Rust half is src/rrr/rusty-rustc/src/lib.rs, where each name is an
+// opaque struct of the C++ size and alignment (the layout pins below). Rust
+// can hold and move one, default-construct those whose C++ type has an empty
+// state, and copy the Arc handles through their Clone; it cannot look inside.
+// Each alias below is EXACTLY the type the hand-written member used, so this
+// changes where the members are declared and nothing else about them.
 // ---------------------------------------------------------------------------
 }  // namespace janus
 
@@ -2219,8 +2221,9 @@ using RaftVoteQuorumPtr = ::std::shared_ptr<::janus::RaftVoteQuorumEvent>;
 // The batch buffer's ELEMENT. The buffer itself is a rusty::Vec owned by
 // Rust; only what is inside each Arc stays opaque, because it is a wire type
 // the marshalling layer owns.
-using RaftTpcCommitCommand = ::janus::TpcCommitCommand;
 using RaftTpcCommitPtr = ::rusty::Arc<::janus::TpcCommitCommand>;
+using RaftIntEventPtr = ::rusty::Arc<::rrr::IntEvent>;
+using RaftPollThreadPtr = ::rusty::Arc<::rrr::PollThread>;
 
 // ---------------------------------------------------------------------------
 // LAYOUT PINS. Each of these types has a rustc-side model in
@@ -2260,12 +2263,47 @@ static_assert(sizeof(RaftStdThread) == 8 && alignof(RaftStdThread) == 8);
 static_assert(sizeof(RaftVoteQuorumPtr) == 16 &&
               alignof(RaftVoteQuorumPtr) == 8);
 static_assert(sizeof(RaftByteString) == 24 && alignof(RaftByteString) == 8);
-static_assert(sizeof(RaftTpcCommitCommand) == 64 &&
-              alignof(RaftTpcCommitCommand) == 8);
+static_assert(sizeof(LearnerAction) == 48 && alignof(LearnerAction) == 16);
 static_assert(sizeof(RaftTpcCommitPtr) == 8 && alignof(RaftTpcCommitPtr) == 8);
+static_assert(sizeof(RaftIntEventPtr) == 8 && alignof(RaftIntEventPtr) == 8);
+static_assert(sizeof(RaftPollThreadPtr) == 8 && alignof(RaftPollThreadPtr) == 8);
 // The two carriers declared in rust_facade_types.h rather than here.
 static_assert(sizeof(RaftCommand) == 24 && alignof(RaftCommand) == 8);
 static_assert(sizeof(RaftResponsePtr) == 16 && alignof(RaftResponsePtr) == 8);
+}  // namespace rusty
+
+// The kernels behind the facade's Arc-carrier factories (rusty-rustc/src/lib.rs:
+// raft_new_int_event, raft_stamped_commit), defined in server.cc. Declared
+// here, ahead of the C++ halves below, so both halves run the same code.
+namespace janus {
+extern "C" {
+void raft_create_int_event_into(rusty::RaftIntEventPtr* out);
+void raft_stamped_commit_into(const rusty::RaftCommand* cmd, int64_t term,
+                              rusty::RaftTpcCommitPtr* out);
+}
+}  // namespace janus
+
+namespace rusty {
+// The C++ half of the facade's MaybeUninit idiom: a kernel placement-news a
+// carrier into unconstructed storage and the value is handed out; the
+// moved-from slot is never destroyed, which is what MaybeUninit means. This is
+// why the factories go through a kernel rather than default-constructing and
+// assigning: a rusty::Arc has no empty state to default to (arc.hpp:134).
+template <typename T, typename Kernel>
+inline T raft_construct_by(Kernel&& kernel) {
+  rusty::MaybeUninit<T> slot;
+  kernel(slot.as_mut_ptr());
+  return std::move(*slot.as_mut_ptr());
+}
+// The C++ halves of the facade's factories: same names, same kernels.
+inline RaftIntEventPtr raft_new_int_event() {
+  return raft_construct_by<RaftIntEventPtr>(::janus::raft_create_int_event_into);
+}
+inline RaftTpcCommitPtr raft_stamped_commit(const RaftCommand* cmd, int64_t term) {
+  return raft_construct_by<RaftTpcCommitPtr>([&](RaftTpcCommitPtr* out) {
+    ::janus::raft_stamped_commit_into(cmd, term, out);
+  });
+}
 }  // namespace rusty
 
 namespace janus {
@@ -2545,6 +2583,17 @@ inline RaftStdLockGuard::~RaftStdLockGuard() noexcept(true) {
 //     documents for a non-movable payload built by a factory (arc.hpp:170-184)
 //     -- ReplicationWakeGate holds AtomicBools and so has no move constructor.
 #if RUSTYCPP_RUST
+// The reactor event's two verbs, as kernels. `set` and `wait_timeout` are
+// methods of the rrr::IntEvent behind the Arc, and the emitter renders a
+// method call on an opaque carrier with a dot where the C++ needs an arrow,
+// so they are named here as functions of the handle. Creation is the facade's
+// `rusty::raft_new_int_event()`; a copy is the carrier's Clone.
+unsafe extern "C" {
+    fn raft_int_event_set(event: *const rusty::RaftIntEventPtr, value: i32);
+    fn raft_int_event_wait_timeout(event: *const rusty::RaftIntEventPtr,
+                                   timeout_us: u64);
+}
+
 pub struct ReplicationWakeGate {
     // The gate is pinned: it holds mutexes and atomics, so C++ deletes its
     // move constructor, and the DSL has to say so for two reasons. It makes
@@ -2555,9 +2604,9 @@ pub struct ReplicationWakeGate {
     // the invariant the waiters depend on: an armed waiter holds the gate's
     // address, so the gate must not move while anyone is waiting on it.
     _pin: core::marker::PhantomPinned,
-    owner_: rusty::Mutex<rusty::Option<rusty::sync::Arc<rusty::ReactorPollThread>>>,
-    waiter_: rusty::Mutex<rusty::Option<rusty::sync::Arc<rusty::ReactorIntEvent>>>,
-    election_waiter_: rusty::Mutex<rusty::Option<rusty::sync::Arc<rusty::ReactorIntEvent>>>,
+    owner_: rusty::Mutex<rusty::Option<rusty::RaftPollThreadPtr>>,
+    waiter_: rusty::Mutex<rusty::Option<rusty::RaftIntEventPtr>>,
+    election_waiter_: rusty::Mutex<rusty::Option<rusty::RaftIntEventPtr>>,
     pending_: rusty::sync::atomic::AtomicBool,
     waiter_armed_: rusty::sync::atomic::AtomicBool,
     election_waiter_armed_: rusty::sync::atomic::AtomicBool,
@@ -2588,7 +2637,7 @@ impl ReplicationWakeGate {
         }
     }
 
-    pub fn bind_owner(&self, owner: rusty::sync::Arc<rusty::ReactorPollThread>) {
+    pub fn bind_owner(&self, owner: rusty::RaftPollThreadPtr) {
         let mut guard = self.owner_.lock().unwrap();
         *guard = rusty::Some(owner);
         self.accepting_.store(true, rusty::sync::atomic::Ordering::Release);
@@ -2615,7 +2664,7 @@ impl ReplicationWakeGate {
 
     pub fn reserve_wake_owner(
         &self,
-    ) -> rusty::Option<rusty::sync::Arc<rusty::ReactorPollThread>> {
+    ) -> rusty::Option<rusty::RaftPollThreadPtr> {
         if !self.waiter_armed_.load(rusty::sync::atomic::Ordering::Acquire) {
             return rusty::None;
         }
@@ -2627,12 +2676,14 @@ impl ReplicationWakeGate {
             self.wake_job_queued_.store(false, rusty::sync::atomic::Ordering::Release);
             return rusty::None;
         }
+        // The owner's handle, copied: the Arc's copy constructor under the
+        // transpiler, the clone kernel under rustc (the carrier's Clone).
         (*guard).clone()
     }
 
     pub fn reserve_shutdown_wake_owner(
         &self,
-    ) -> rusty::Option<rusty::sync::Arc<rusty::ReactorPollThread>> {
+    ) -> rusty::Option<rusty::RaftPollThreadPtr> {
         if !self.waiter_armed_.load(rusty::sync::atomic::Ordering::Acquire)
             && !self
                 .election_waiter_armed_
@@ -2652,6 +2703,8 @@ impl ReplicationWakeGate {
                 .store(false, rusty::sync::atomic::Ordering::Release);
             return rusty::None;
         }
+        // The owner's handle, copied: the Arc's copy constructor under the
+        // transpiler, the clone kernel under rustc (the carrier's Clone).
         (*guard).clone()
     }
 
@@ -2675,10 +2728,13 @@ impl ReplicationWakeGate {
         // The guard is a temporary of this statement, so waiter_ is unlocked
         // again before the set() below: set() may make the heartbeat fiber
         // runnable, and that fiber takes waiter_ in DisarmWaiter.
-        let waiter: rusty::Option<rusty::sync::Arc<rusty::ReactorIntEvent>> =
-            (*self.waiter_.lock().unwrap()).clone();
+        let waiter: rusty::Option<rusty::RaftIntEventPtr> =
+            self.clone_waiter(&self.waiter_);
         if waiter.is_some() {
-            waiter.as_ref().unwrap().set(1);
+            unsafe {
+                raft_int_event_set(
+                    waiter.as_ref().unwrap() as *const rusty::RaftIntEventPtr, 1);
+            }
         }
     }
 
@@ -2687,15 +2743,23 @@ impl ReplicationWakeGate {
     pub fn wake_shutdown_on_owner(&self) {
         // Both guards are statement temporaries; neither lock is held across
         // the set() calls below, for the reason given in wake_on_owner.
-        let heartbeat_waiter: rusty::Option<rusty::sync::Arc<rusty::ReactorIntEvent>> =
-            (*self.waiter_.lock().unwrap()).clone();
-        let election_waiter: rusty::Option<rusty::sync::Arc<rusty::ReactorIntEvent>> =
-            (*self.election_waiter_.lock().unwrap()).clone();
+        let heartbeat_waiter: rusty::Option<rusty::RaftIntEventPtr> =
+            self.clone_waiter(&self.waiter_);
+        let election_waiter: rusty::Option<rusty::RaftIntEventPtr> =
+            self.clone_waiter(&self.election_waiter_);
         if heartbeat_waiter.is_some() {
-            heartbeat_waiter.as_ref().unwrap().set(1);
+            unsafe {
+                raft_int_event_set(
+                    heartbeat_waiter.as_ref().unwrap()
+                        as *const rusty::RaftIntEventPtr, 1);
+            }
         }
         if election_waiter.is_some() {
-            election_waiter.as_ref().unwrap().set(1);
+            unsafe {
+                raft_int_event_set(
+                    election_waiter.as_ref().unwrap()
+                        as *const rusty::RaftIntEventPtr, 1);
+            }
         }
     }
 
@@ -2711,10 +2775,12 @@ impl ReplicationWakeGate {
 
     pub fn finish_wait_for_work(
         &self,
-        waiter: rusty::sync::Arc<rusty::ReactorIntEvent>,
+        waiter: rusty::RaftIntEventPtr,
         timeout_us: u64,
     ) -> bool {
-        waiter.set(0);
+        unsafe {
+            raft_int_event_set(&waiter as *const rusty::RaftIntEventPtr, 0);
+        }
         {
             let mut guard = self.waiter_.lock().unwrap();
             *guard = rusty::Some(waiter.clone());
@@ -2724,7 +2790,10 @@ impl ReplicationWakeGate {
             self.disarm_waiter();
             return self.accepting_.load(rusty::sync::atomic::Ordering::Acquire);
         }
-        waiter.wait_timeout(timeout_us);
+        unsafe {
+            raft_int_event_wait_timeout(
+                &waiter as *const rusty::RaftIntEventPtr, timeout_us);
+        }
         self.pending_.swap(false, rusty::sync::atomic::Ordering::AcqRel);
         self.disarm_waiter();
         self.accepting_.load(rusty::sync::atomic::Ordering::Acquire)
@@ -2732,10 +2801,12 @@ impl ReplicationWakeGate {
 
     pub fn wait_for_election_timeout(
         &self,
-        waiter: rusty::sync::Arc<rusty::ReactorIntEvent>,
+        waiter: rusty::RaftIntEventPtr,
         timeout_us: u64,
     ) -> bool {
-        waiter.set(0);
+        unsafe {
+            raft_int_event_set(&waiter as *const rusty::RaftIntEventPtr, 0);
+        }
         {
             let mut guard = self.election_waiter_.lock().unwrap();
             *guard = rusty::Some(waiter.clone());
@@ -2746,9 +2817,24 @@ impl ReplicationWakeGate {
             self.disarm_election_waiter();
             return false;
         }
-        waiter.wait_timeout(timeout_us);
+        unsafe {
+            raft_int_event_wait_timeout(
+                &waiter as *const rusty::RaftIntEventPtr, timeout_us);
+        }
         self.disarm_election_waiter();
         self.accepting_.load(rusty::sync::atomic::Ordering::Acquire)
+    }
+
+    // The armed waiter, copied out from under the gate's lock so the wake
+    // itself happens with the lock released, as it always did. The copy is
+    // the handle's Clone: the Arc's copy constructor under the transpiler,
+    // the clone kernel under rustc (rusty-rustc/src/lib.rs).
+    fn clone_waiter(
+        &self,
+        slot: &rusty::Mutex<rusty::Option<rusty::RaftIntEventPtr>>,
+    ) -> rusty::Option<rusty::RaftIntEventPtr> {
+        let guard = slot.lock().unwrap();
+        (*guard).clone()
     }
 
     pub fn disarm_waiter(&self) {
@@ -2768,36 +2854,42 @@ impl ReplicationWakeGate {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.replication_wake_gate version=1 rust_sha256=243e5e557826b40edc9944277614a1c8c58377d7058fbf1e91eec54fc9bd1126*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.replication_wake_gate version=1 rust_sha256=a92ae4bef56be9d7b30c39ee1dce2416bde9890542d272217536eb49ce10a6d9*/
 struct ReplicationWakeGate;
+
+extern "C" {
+    void raft_int_event_set(const rusty::RaftIntEventPtr* event, int32_t value);
+    void raft_int_event_wait_timeout(const rusty::RaftIntEventPtr* event, uint64_t timeout_us);
+}
 
 struct ReplicationWakeGate {
     rusty::marker::PhantomPinned _pin;
-    rusty::Mutex<rusty::Option<rusty::Arc<rusty::ReactorPollThread>>> owner_;
-    rusty::Mutex<rusty::Option<rusty::Arc<rusty::ReactorIntEvent>>> waiter_;
-    rusty::Mutex<rusty::Option<rusty::Arc<rusty::ReactorIntEvent>>> election_waiter_;
+    rusty::Mutex<rusty::Option<rusty::RaftPollThreadPtr>> owner_;
+    rusty::Mutex<rusty::Option<rusty::RaftIntEventPtr>> waiter_;
+    rusty::Mutex<rusty::Option<rusty::RaftIntEventPtr>> election_waiter_;
     rusty::sync::atomic::AtomicBool pending_;
     rusty::sync::atomic::AtomicBool waiter_armed_;
     rusty::sync::atomic::AtomicBool election_waiter_armed_;
     rusty::sync::atomic::AtomicBool wake_job_queued_;
     rusty::sync::atomic::AtomicBool shutdown_job_queued_;
     rusty::sync::atomic::AtomicBool accepting_;
-    inline ReplicationWakeGate(rusty::marker::PhantomPinned _pin_init, rusty::Mutex<rusty::Option<rusty::Arc<rusty::ReactorPollThread>>> owner__init, rusty::Mutex<rusty::Option<rusty::Arc<rusty::ReactorIntEvent>>> waiter__init, rusty::Mutex<rusty::Option<rusty::Arc<rusty::ReactorIntEvent>>> election_waiter__init, rusty::sync::atomic::AtomicBool pending__init, rusty::sync::atomic::AtomicBool waiter_armed__init, rusty::sync::atomic::AtomicBool election_waiter_armed__init, rusty::sync::atomic::AtomicBool wake_job_queued__init, rusty::sync::atomic::AtomicBool shutdown_job_queued__init, rusty::sync::atomic::AtomicBool accepting__init) : _pin(std::move(_pin_init)), owner_(std::move(owner__init)), waiter_(std::move(waiter__init)), election_waiter_(std::move(election_waiter__init)), pending_(std::move(pending__init)), waiter_armed_(std::move(waiter_armed__init)), election_waiter_armed_(std::move(election_waiter_armed__init)), wake_job_queued_(std::move(wake_job_queued__init)), shutdown_job_queued_(std::move(shutdown_job_queued__init)), accepting_(std::move(accepting__init)) {}
+    inline ReplicationWakeGate(rusty::marker::PhantomPinned _pin_init, rusty::Mutex<rusty::Option<rusty::RaftPollThreadPtr>> owner__init, rusty::Mutex<rusty::Option<rusty::RaftIntEventPtr>> waiter__init, rusty::Mutex<rusty::Option<rusty::RaftIntEventPtr>> election_waiter__init, rusty::sync::atomic::AtomicBool pending__init, rusty::sync::atomic::AtomicBool waiter_armed__init, rusty::sync::atomic::AtomicBool election_waiter_armed__init, rusty::sync::atomic::AtomicBool wake_job_queued__init, rusty::sync::atomic::AtomicBool shutdown_job_queued__init, rusty::sync::atomic::AtomicBool accepting__init) : _pin(std::move(_pin_init)), owner_(std::move(owner__init)), waiter_(std::move(waiter__init)), election_waiter_(std::move(election_waiter__init)), pending_(std::move(pending__init)), waiter_armed_(std::move(waiter_armed__init)), election_waiter_armed_(std::move(election_waiter_armed__init)), wake_job_queued_(std::move(wake_job_queued__init)), shutdown_job_queued_(std::move(shutdown_job_queued__init)), accepting_(std::move(accepting__init)) {}
 
 
     static ReplicationWakeGate new_();
-    void bind_owner(rusty::Arc<rusty::ReactorPollThread> owner) const;
+    void bind_owner(rusty::RaftPollThreadPtr owner) const;
     bool publish() const;
     void close() const;
     void clear_owner() const;
     bool accepting() const;
-    rusty::Option<rusty::Arc<rusty::ReactorPollThread>> reserve_wake_owner() const;
-    rusty::Option<rusty::Arc<rusty::ReactorPollThread>> reserve_shutdown_wake_owner() const;
+    rusty::Option<rusty::RaftPollThreadPtr> reserve_wake_owner() const;
+    rusty::Option<rusty::RaftPollThreadPtr> reserve_shutdown_wake_owner() const;
     void wake_on_owner() const;
     void wake_shutdown_on_owner() const;
     rusty::Option<bool> begin_wait_for_work() const;
-    bool finish_wait_for_work(rusty::Arc<rusty::ReactorIntEvent> waiter, uint64_t timeout_us) const;
-    bool wait_for_election_timeout(rusty::Arc<rusty::ReactorIntEvent> waiter, uint64_t timeout_us) const;
+    bool finish_wait_for_work(rusty::RaftIntEventPtr waiter, uint64_t timeout_us) const;
+    bool wait_for_election_timeout(rusty::RaftIntEventPtr waiter, uint64_t timeout_us) const;
+    rusty::Option<rusty::RaftIntEventPtr> clone_waiter(const rusty::Mutex<rusty::Option<rusty::RaftIntEventPtr>>& slot) const;
     void disarm_waiter() const;
     void disarm_election_waiter() const;
     ReplicationWakeGate(ReplicationWakeGate&&) = delete;
@@ -2806,12 +2898,12 @@ struct ReplicationWakeGate {
 
 
 inline ReplicationWakeGate ReplicationWakeGate::new_() {
-    return ReplicationWakeGate(rusty::marker::PhantomPinned{}, rusty::Mutex<rusty::Option<rusty::Arc<rusty::ReactorPollThread>>>::new_(rusty::None), rusty::Mutex<rusty::Option<rusty::Arc<rusty::ReactorIntEvent>>>::new_(rusty::None), rusty::Mutex<rusty::Option<rusty::Arc<rusty::ReactorIntEvent>>>::new_(rusty::None), rusty::sync::atomic::AtomicBool::new_(false), rusty::sync::atomic::AtomicBool::new_(false), rusty::sync::atomic::AtomicBool::new_(false), rusty::sync::atomic::AtomicBool::new_(false), rusty::sync::atomic::AtomicBool::new_(false), rusty::sync::atomic::AtomicBool::new_(true));
+    return ReplicationWakeGate(rusty::marker::PhantomPinned{}, rusty::Mutex<rusty::Option<rusty::RaftPollThreadPtr>>::new_(rusty::None), rusty::Mutex<rusty::Option<rusty::RaftIntEventPtr>>::new_(rusty::None), rusty::Mutex<rusty::Option<rusty::RaftIntEventPtr>>::new_(rusty::None), rusty::sync::atomic::AtomicBool::new_(false), rusty::sync::atomic::AtomicBool::new_(false), rusty::sync::atomic::AtomicBool::new_(false), rusty::sync::atomic::AtomicBool::new_(false), rusty::sync::atomic::AtomicBool::new_(false), rusty::sync::atomic::AtomicBool::new_(true));
 }
 
-inline void ReplicationWakeGate::bind_owner(rusty::Arc<rusty::ReactorPollThread> owner) const {
+inline void ReplicationWakeGate::bind_owner(rusty::RaftPollThreadPtr owner) const {
     auto guard = this->owner_.lock().unwrap();
-    *guard = rusty::Option<rusty::Arc<rusty::ReactorPollThread>>(std::move(owner));
+    *guard = rusty::Option<rusty::RaftPollThreadPtr>(std::move(owner));
     this->accepting_.store(true, rusty::sync::atomic::Ordering::Release);
 }
 
@@ -2834,7 +2926,7 @@ inline bool ReplicationWakeGate::accepting() const {
     return this->accepting_.load(rusty::sync::atomic::Ordering::Acquire);
 }
 
-inline rusty::Option<rusty::Arc<rusty::ReactorPollThread>> ReplicationWakeGate::reserve_wake_owner() const {
+inline rusty::Option<rusty::RaftPollThreadPtr> ReplicationWakeGate::reserve_wake_owner() const {
     if (rusty::detail::rust_not(this->waiter_armed_.load(rusty::sync::atomic::Ordering::Acquire))) {
         return rusty::None;
     }
@@ -2849,7 +2941,7 @@ inline rusty::Option<rusty::Arc<rusty::ReactorPollThread>> ReplicationWakeGate::
     return rusty::clone(((*guard)));
 }
 
-inline rusty::Option<rusty::Arc<rusty::ReactorPollThread>> ReplicationWakeGate::reserve_shutdown_wake_owner() const {
+inline rusty::Option<rusty::RaftPollThreadPtr> ReplicationWakeGate::reserve_shutdown_wake_owner() const {
     if (rusty::detail::rust_not(this->waiter_armed_.load(rusty::sync::atomic::Ordering::Acquire)) && rusty::detail::rust_not(this->election_waiter_armed_.load(rusty::sync::atomic::Ordering::Acquire))) {
         return rusty::None;
     }
@@ -2869,20 +2961,29 @@ inline void ReplicationWakeGate::wake_on_owner() const {
         this->wake_job_queued_.store(false, rusty::sync::atomic::Ordering::Release);
         return;
     }
-    const rusty::Option<rusty::Arc<rusty::ReactorIntEvent>> waiter = rusty::clone(((*this->waiter_.lock().unwrap())));
+    const rusty::Option<rusty::RaftIntEventPtr> waiter = this->clone_waiter(this->waiter_);
     if (waiter.is_some()) {
-        waiter.as_ref().unwrap()->set(1);
+        // @unsafe
+        {
+            raft_int_event_set(static_cast<const rusty::RaftIntEventPtr*>(rusty::detail::ptr_or_addr(waiter.as_ref().unwrap())), static_cast<int32_t>(1));
+        }
     }
 }
 
 inline void ReplicationWakeGate::wake_shutdown_on_owner() const {
-    const rusty::Option<rusty::Arc<rusty::ReactorIntEvent>> heartbeat_waiter = rusty::clone(((*this->waiter_.lock().unwrap())));
-    const rusty::Option<rusty::Arc<rusty::ReactorIntEvent>> election_waiter = rusty::clone(((*this->election_waiter_.lock().unwrap())));
+    const rusty::Option<rusty::RaftIntEventPtr> heartbeat_waiter = this->clone_waiter(this->waiter_);
+    const rusty::Option<rusty::RaftIntEventPtr> election_waiter = this->clone_waiter(this->election_waiter_);
     if (heartbeat_waiter.is_some()) {
-        heartbeat_waiter.as_ref().unwrap()->set(1);
+        // @unsafe
+        {
+            raft_int_event_set(static_cast<const rusty::RaftIntEventPtr*>(rusty::detail::ptr_or_addr(heartbeat_waiter.as_ref().unwrap())), static_cast<int32_t>(1));
+        }
     }
     if (election_waiter.is_some()) {
-        election_waiter.as_ref().unwrap()->set(1);
+        // @unsafe
+        {
+            raft_int_event_set(static_cast<const rusty::RaftIntEventPtr*>(rusty::detail::ptr_or_addr(election_waiter.as_ref().unwrap())), static_cast<int32_t>(1));
+        }
     }
 }
 
@@ -2896,37 +2997,54 @@ inline rusty::Option<bool> ReplicationWakeGate::begin_wait_for_work() const {
     return rusty::None;
 }
 
-inline bool ReplicationWakeGate::finish_wait_for_work(rusty::Arc<rusty::ReactorIntEvent> waiter, uint64_t timeout_us) const {
-    waiter->set(0);
+inline bool ReplicationWakeGate::finish_wait_for_work(rusty::RaftIntEventPtr waiter, uint64_t timeout_us) const {
+    // @unsafe
+    {
+        raft_int_event_set(static_cast<const rusty::RaftIntEventPtr*>(&waiter), static_cast<int32_t>(0));
+    }
     {
         auto guard = this->waiter_.lock().unwrap();
-        *guard = rusty::Option<rusty::Arc<rusty::ReactorIntEvent>>(rusty::clone(waiter));
+        *guard = rusty::Some(rusty::clone(waiter));
     }
     this->waiter_armed_.store(true, rusty::sync::atomic::Ordering::Release);
     if (this->pending_.swap(false, rusty::sync::atomic::Ordering::AcqRel)) {
         this->disarm_waiter();
         return this->accepting_.load(rusty::sync::atomic::Ordering::Acquire);
     }
-    waiter->wait_timeout(std::move(timeout_us));
+    // @unsafe
+    {
+        raft_int_event_wait_timeout(static_cast<const rusty::RaftIntEventPtr*>(&waiter), std::move(timeout_us));
+    }
     this->pending_.swap(false, rusty::sync::atomic::Ordering::AcqRel);
     this->disarm_waiter();
     return this->accepting_.load(rusty::sync::atomic::Ordering::Acquire);
 }
 
-inline bool ReplicationWakeGate::wait_for_election_timeout(rusty::Arc<rusty::ReactorIntEvent> waiter, uint64_t timeout_us) const {
-    waiter->set(0);
+inline bool ReplicationWakeGate::wait_for_election_timeout(rusty::RaftIntEventPtr waiter, uint64_t timeout_us) const {
+    // @unsafe
+    {
+        raft_int_event_set(static_cast<const rusty::RaftIntEventPtr*>(&waiter), static_cast<int32_t>(0));
+    }
     {
         auto guard = this->election_waiter_.lock().unwrap();
-        *guard = rusty::Option<rusty::Arc<rusty::ReactorIntEvent>>(rusty::clone(waiter));
+        *guard = rusty::Some(rusty::clone(waiter));
     }
     this->election_waiter_armed_.store(true, rusty::sync::atomic::Ordering::Release);
     if (rusty::detail::rust_not(this->accepting_.load(rusty::sync::atomic::Ordering::Acquire))) {
         this->disarm_election_waiter();
         return false;
     }
-    waiter->wait_timeout(std::move(timeout_us));
+    // @unsafe
+    {
+        raft_int_event_wait_timeout(static_cast<const rusty::RaftIntEventPtr*>(&waiter), std::move(timeout_us));
+    }
     this->disarm_election_waiter();
     return this->accepting_.load(rusty::sync::atomic::Ordering::Acquire);
+}
+
+inline rusty::Option<rusty::RaftIntEventPtr> ReplicationWakeGate::clone_waiter(const rusty::Mutex<rusty::Option<rusty::RaftIntEventPtr>>& slot) const {
+    auto guard = slot.lock().unwrap();
+    return rusty::clone(((*guard)));
 }
 
 inline void ReplicationWakeGate::disarm_waiter() const {
@@ -3065,10 +3183,6 @@ unsafe extern "C" {
     // the seam is named here instead of being silently wrong.
     fn raft_new_replication_wake_gate()
         -> rusty::sync::Arc<ReplicationWakeGate>;
-    // The reactor's event factory, `rrr::create_sp_int_event`. It is the one
-    // thing in the wake path with no DSL spelling, so it is the only thing
-    // the three wait methods below leave in C++.
-    fn raft_create_int_event() -> rusty::sync::Arc<rusty::ReactorIntEvent>;
     fn raft_queue_replication_wake(gate: *const rusty::sync::Arc<ReplicationWakeGate>);
     fn raft_queue_replication_shutdown_wake(gate: *const rusty::sync::Arc<ReplicationWakeGate>);
     // The RPC entry points' C++ halves. The first two exist only because
@@ -5232,7 +5346,7 @@ impl RaftServerBase {
         if decided.is_some() {
             return decided.unwrap();
         }
-        let waiter = unsafe { raft_create_int_event() };
+        let waiter: rusty::RaftIntEventPtr = rusty::raft_new_int_event();
         self.replication_wake_gate_.finish_wait_for_work(waiter, timeout_us)
     }
 
@@ -5245,7 +5359,7 @@ impl RaftServerBase {
         if !self.replication_wake_gate_.accepting() {
             return false;
         }
-        let waiter = unsafe { raft_create_int_event() };
+        let waiter: rusty::RaftIntEventPtr = rusty::raft_new_int_event();
         self.replication_wake_gate_
             .wait_for_election_timeout(waiter, timeout_us)
     }
@@ -5259,7 +5373,7 @@ impl RaftServerBase {
     // @unsafe - Bind the gate to the communicator's PollThread before
     // HeartbeatLoop can publish an owner-thread-only IntEvent against it.
     pub fn BindReplicationWakeOwner(
-        &mut self, owner: rusty::sync::Arc<rusty::ReactorPollThread>) {
+        &mut self, owner: rusty::RaftPollThreadPtr) {
         self.replication_wake_gate_.bind_owner(owner);
     }
 
@@ -6246,7 +6360,7 @@ impl RaftSpecific for RaftServerBase {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=09283e280da39018924d270ed1a440ec8b07ddc302d053f2e3f2561fbf8dfa52*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=4e00a891b1a03a8639636d8d37582c2514b0adbd8a8408923dc7360d6ed11984*/
 enum class RaftEnvError : int32_t;
 constexpr RaftEnvError RaftEnvError_NOT_A_WHOLE_NUMBER();
 constexpr RaftEnvError RaftEnvError_OVERFLOWS_U64();
@@ -6305,7 +6419,6 @@ extern "C" {
     void raft_apply_thread_join(rusty::RaftStdThread* thread);
     void raft_commo_set_network_enabled(rusty::Communicator* commo, bool enabled);
     rusty::Arc<ReplicationWakeGate> raft_new_replication_wake_gate();
-    rusty::Arc<rusty::ReactorIntEvent> raft_create_int_event();
     void raft_queue_replication_wake(const rusty::Arc<ReplicationWakeGate>* gate);
     void raft_queue_replication_shutdown_wake(const rusty::Arc<ReplicationWakeGate>* gate);
     void raft_rpc_request_vote(RaftServerBase* server, uint64_t lst_log_idx, int64_t lst_log_term, uint16_t can_id, int64_t can_term, int64_t* reply_term, int8_t* vote_granted);
@@ -6484,7 +6597,7 @@ struct RaftServerBase : public RaftSpecific {
     bool WaitForReplicationOrHeartbeat(uint64_t timeout_us);
     bool WaitForElectionTimeoutOrShutdown(uint64_t timeout_us);
     bool HeartbeatWait();
-    void BindReplicationWakeOwner(rusty::Arc<rusty::ReactorPollThread> owner);
+    void BindReplicationWakeOwner(rusty::RaftPollThreadPtr owner);
     void CloseReplicationWakeGate();
     void HeartbeatPrologue();
     void MaybeCreateSnapshot();
@@ -7561,7 +7674,7 @@ inline bool RaftServerBase::WaitForReplicationOrHeartbeat(uint64_t timeout_us) {
     if (decided.is_some()) {
         return decided.unwrap();
     }
-    const auto waiter = raft_create_int_event();
+    const rusty::RaftIntEventPtr waiter = rusty::raft_new_int_event();
     return this->replication_wake_gate_->finish_wait_for_work(std::move(waiter), std::move(timeout_us));
 }
 
@@ -7569,7 +7682,7 @@ inline bool RaftServerBase::WaitForElectionTimeoutOrShutdown(uint64_t timeout_us
     if (rusty::detail::rust_not(this->replication_wake_gate_->accepting())) {
         return false;
     }
-    const auto waiter = raft_create_int_event();
+    const rusty::RaftIntEventPtr waiter = rusty::raft_new_int_event();
     return this->replication_wake_gate_->wait_for_election_timeout(std::move(waiter), std::move(timeout_us));
 }
 
@@ -7577,7 +7690,7 @@ inline bool RaftServerBase::HeartbeatWait() {
     return this->WaitForReplicationOrHeartbeat(this->heartbeat_interval_us_);
 }
 
-inline void RaftServerBase::BindReplicationWakeOwner(rusty::Arc<rusty::ReactorPollThread> owner) {
+inline void RaftServerBase::BindReplicationWakeOwner(rusty::RaftPollThreadPtr owner) {
     this->replication_wake_gate_->bind_owner(std::move(owner));
 }
 

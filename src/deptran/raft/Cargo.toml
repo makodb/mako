@@ -24,6 +24,10 @@ publish = false
 
 [lib]
 path = "src/lib.rs"
+# F2 slice 1: the crate also builds as the static library the cutover links;
+# its undefined symbols are exactly the raft_* kernels, its defined exports
+# the raft_server_* ABI. `nm` on target/release/libraft.a is the check.
+crate-type = ["rlib", "staticlib"]
 
 # The same rustc-side facade src/rrr/Cargo.toml:14 depends on. Without it no
 # extracted block can NAME a foreign type -- rusty::Mutex, rusty::Option,

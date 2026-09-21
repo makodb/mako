@@ -68,13 +68,11 @@ pub struct Communicator {
     _opaque: [u8; 0],
 }
 
-/// Model of `std::function<int(int, Command)>`, the learner callback a worker
-/// registers on a replication server.
-#[derive(Default)]
-#[repr(C)]
-pub struct LearnerAction {
-    _opaque: [u8; 0],
-}
+// Model of `std::function<int(int, Command)>`, the learner callback a worker
+// registers on a replication server.
+// LearnerAction -- `std::function<int(int, Command)>`, RaftServerBase::app_next_
+// -- is a pinned carrier in the list below, not a zero-sized model: the
+// struct stores one by value, so under the runtime its size is load-bearing.
 
 /// Opaque rustc-only models of the native pthread types used by the
 /// canonical threading wrapper. The checked C++ type map restores the native
@@ -381,11 +379,11 @@ pub struct RaftResponsePtr {
 /// and the C++ one are the same operation.
 /// `janus::Command` (`SerializableEnvelope<MakoCommands>`): 24 bytes, align 8,
 /// pinned by the static_assert block in src/deptran/raft/server.h.
-// Clone but NOT Copy: `janus::Command` holds an Arc, so a copy is a refcount
-// bump rather than a memcpy, and `.clone()` at the call site is the spelling
-// that emits `rusty::clone(x)`. Deriving Copy would make clippy demand a bare
-// dereference there and hide that the copy has a cost.
-#[derive(Clone, Default)]
+// Neither Clone nor Copy: `janus::Command` holds an Arc, so a copy is a
+// refcount bump the runtime cannot make bitwise. Copies are the
+// raft_command_clone_into kernel (step D1); a `.clone()` here is a compile
+// error, which is the point.
+#[derive(Default)]
 #[repr(C)]
 pub struct RaftCommand {
     _align: [u64; 0],
@@ -522,12 +520,44 @@ rusty_opaque_cpp_carrier! {
     /// `std::string` -- a snapshot payload, carried from the RPC entry point
     /// to the install kernel without being inspected.
     RaftByteString: 24 / u64,
-    /// `janus::TpcCommitCommand` -- the element of PHASE 1's batch buffer.
-    /// The buffer is a Rust-owned `rusty::Vec`; this is only what sits inside
-    /// each `Arc`, and it stays opaque because it is a wire type.
-    RaftTpcCommitCommand: 64 / u64,
-    // rusty::Arc<janus::TpcCommitCommand>: one control-block pointer.
+    /// `std::function<int(int, Command)>` -- the embedder's learner action,
+    /// RaftServerBase::app_next_. Same size and alignment as the other
+    /// std::function carriers.
+    LearnerAction: 48 / u128,
+}
+
+/// The same carrier for a C++ type WITHOUT an empty state. `rusty::Arc<T>`
+/// deletes its default constructor (arc.hpp:134): a zeroed slot would be a
+/// null Arc that no C++ code can produce and whose destructor would
+/// dereference null. So no `Default`: one of these is created by a factory
+/// (`raft_new_int_event` below) or received from a kernel, and copied through
+/// the `Clone` further down.
+macro_rules! rusty_opaque_cpp_arc_carrier {
+    ($($(#[$m:meta])* $name:ident: $size:literal / $align:ty),* $(,)?) => {
+        $(
+            $(#[$m])*
+            #[repr(C)]
+            pub struct $name {
+                _align: [$align; 0],
+                _opaque: [u8; $size],
+            }
+            const _: () = {
+                assert!(::core::mem::size_of::<$name>() == $size);
+            };
+        )*
+    };
+}
+
+rusty_opaque_cpp_arc_carrier! {
+    /// `rusty::Arc<janus::TpcCommitCommand>` -- one control-block pointer, the
+    /// element of PHASE 1's batch buffer (a Rust-owned Vec).
     RaftTpcCommitPtr: 8 / u64,
+    /// `rusty::Arc<rrr::IntEvent>` -- a fiber wait event the reactor owns; one
+    /// control-block pointer. The wake gate holds two and the loops wait on
+    /// them through kernels (F2 slice 1b).
+    RaftIntEventPtr: 8 / u64,
+    /// `rusty::Arc<rrr::PollThread>` -- the wake gate's owner thread handle.
+    RaftPollThreadPtr: 8 / u64,
 }
 
 /// The alignment half of the layout pins, mirroring the `static_assert` block
@@ -546,9 +576,137 @@ const _: () = {
     assert!(align_of::<RaftLeaderChangeCb>() == 16);
     assert!(align_of::<RaftStdThread>() == 8);
     assert!(align_of::<RaftVoteQuorumPtr>() == 8);
-    assert!(align_of::<RaftTpcCommitPtr>() == 8);
     assert!(align_of::<RaftByteString>() == 8);
-    assert!(align_of::<RaftTpcCommitCommand>() == 8);
+    assert!(align_of::<LearnerAction>() == 16);
+    assert!(align_of::<RaftTpcCommitPtr>() == 8);
+    assert!(align_of::<RaftIntEventPtr>() == 8);
+    assert!(align_of::<RaftPollThreadPtr>() == 8);
+};
+
+/// The runtime half of the opaque carriers (docs/migration/raft/plan.md,
+/// F2 slice 1). Each carrier is a C++ object Rust holds by value; its
+/// destructor is a kernel, `raft_destroy_<name>`, that runs `std::destroy_at`
+/// in place. A default-constructed carrier is all zero bytes, which every C++
+/// type that HAS a default here treats as its empty state, so the destructor
+/// is a no-op on a slot Rust default-constructed and never filled; the Arc
+/// carriers have no default, so no such slot exists for them. Moves stay
+/// bitwise: the platform assumption stated next to the layout pins.
+macro_rules! rusty_opaque_cpp_carrier_drop {
+    ($($name:ident => $destroy:ident),* $(,)?) => {
+        extern "C" {
+            $( fn $destroy(p: *mut $name); )*
+        }
+        $(
+            impl Drop for $name {
+                // SAFETY: `self` is a live carrier -- Rust owns it by value and
+                // is dropping it exactly once -- and the destroy kernel runs
+                // the C++ destructor in place, a no-op on the zeroed default.
+                #[allow(unsafe_code)]
+                fn drop(&mut self) {
+                    unsafe { $destroy(self) }
+                }
+            }
+        )*
+    };
+}
+
+rusty_opaque_cpp_carrier_drop! {
+    RaftCommand => raft_destroy_command,
+    RaftResponsePtr => raft_destroy_response_ptr,
+    RaftCheckedMutex => raft_destroy_checked_mutex,
+    RaftAsyncCallbackLifetimePtr => raft_destroy_async_callback_lifetime_ptr,
+    RaftSnapshotManagerPtr => raft_destroy_snapshot_manager_ptr,
+    RaftCreateSnapshotCb => raft_destroy_create_snapshot_cb,
+    RaftPrepareSnapshotCb => raft_destroy_prepare_snapshot_cb,
+    RaftStdMutex => raft_destroy_std_mutex,
+    RaftLeaderChangeCb => raft_destroy_leader_change_cb,
+    RaftStdThread => raft_destroy_std_thread,
+    RaftVoteQuorumPtr => raft_destroy_vote_quorum_ptr,
+    RaftByteString => raft_destroy_byte_string,
+    RaftTpcCommitPtr => raft_destroy_tpc_commit_ptr,
+    LearnerAction => raft_destroy_learner_action,
+    RaftIntEventPtr => raft_destroy_int_event_ptr,
+    RaftPollThreadPtr => raft_destroy_poll_thread_ptr,
+}
+
+/// The copy half of the Arc carriers: a `Clone` whose body is the kernel that
+/// bumps the C++ refcount into storage Rust owns but has not constructed.
+/// Under the transpiler the same `.clone()` is the Arc's copy constructor, so
+/// the two worlds agree on the operation and differ only in who performs it.
+macro_rules! rusty_opaque_cpp_arc_carrier_clone {
+    ($($name:ident => $clone_into:ident),* $(,)?) => {
+        extern "C" {
+            $( fn $clone_into(src: *const $name, dst: *mut $name); )*
+        }
+        $(
+            impl Clone for $name {
+                // SAFETY: `self` is a live carrier; `copy` is uninitialised
+                // storage of the carrier's size and alignment, and the kernel
+                // placement-news exactly one Arc into it before it is read.
+                #[allow(unsafe_code)]
+                fn clone(&self) -> Self {
+                    let mut copy = ::core::mem::MaybeUninit::<$name>::uninit();
+                    unsafe {
+                        $clone_into(self, copy.as_mut_ptr());
+                        copy.assume_init()
+                    }
+                }
+            }
+        )*
+    };
+}
+
+rusty_opaque_cpp_arc_carrier_clone! {
+    RaftIntEventPtr => raft_int_event_clone_into,
+    RaftPollThreadPtr => raft_poll_thread_clone_into,
+}
+
+extern "C" {
+    fn raft_create_int_event_into(out: *mut RaftIntEventPtr);
+}
+
+/// The reactor's fiber-event factory, `rrr::create_sp_int_event(1)`, as the
+/// one construction path for a `RaftIntEventPtr`. The C++ half is the inline
+/// function of the same name in src/deptran/raft/server.h, which calls the
+/// factory directly; this half reaches it through the kernel.
+// SAFETY: `slot` is uninitialised storage of the carrier's size and
+// alignment, and the kernel placement-news exactly one Arc into it.
+#[allow(unsafe_code)]
+pub fn raft_new_int_event() -> RaftIntEventPtr {
+    let mut slot = ::core::mem::MaybeUninit::<RaftIntEventPtr>::uninit();
+    unsafe {
+        raft_create_int_event_into(slot.as_mut_ptr());
+        slot.assume_init()
+    }
+}
+
+extern "C" {
+    fn raft_stamped_commit_into(cmd: *const RaftCommand, term: i64,
+                                out: *mut RaftTpcCommitPtr);
+}
+
+/// The leader's batch element: a copy of the TpcCommitCommand inside `cmd`,
+/// stamped with its log term, as the Arc PHASE 1's batch buffer holds. The
+/// kernel copies and stamps (a Marshallable the DSL cannot construct); the
+/// C++ half is the inline function of the same name in server.h, over the
+/// same kernel.
+///
+/// # Safety
+/// `cmd` points at a live `RaftCommand` holding a TpcCommitCommand.
+// SAFETY (body): `slot` is uninitialised storage of the carrier's size and
+// alignment, and the kernel placement-news exactly one Arc into it.
+#[allow(unsafe_code)]
+pub unsafe fn raft_stamped_commit(cmd: *const RaftCommand, term: i64) -> RaftTpcCommitPtr {
+    let mut slot = ::core::mem::MaybeUninit::<RaftTpcCommitPtr>::uninit();
+    raft_stamped_commit_into(cmd, term, slot.as_mut_ptr());
+    slot.assume_init()
+}
+
+const _: () = {
+    assert!(align_of::<RaftByteString>() == 8);
+    assert!(align_of::<LearnerAction>() == 16);
+    assert!(align_of::<RaftIntEventPtr>() == 8);
+    assert!(align_of::<RaftPollThreadPtr>() == 8);
     assert!(align_of::<RaftCommand>() == 8);
     assert!(align_of::<RaftResponsePtr>() == 8);
     assert!(::core::mem::size_of::<RaftCommand>() == 24);

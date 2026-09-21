@@ -40,7 +40,7 @@ void raft_server_on_append_entries(RaftServerBase* s, uint64_t leader_current_te
 void raft_server_on_install_snapshot(RaftServerBase* s, uint64_t term, uint64_t leader_id, uint64_t last_included_index, uint64_t last_included_term, const rusty::RaftByteString* data, uint64_t* term_out);
 // --- What the kernels in server.cc call back into.
 void raft_server_apply_thread_loop(RaftServerBase* s);
-void raft_server_bind_replication_wake_owner(RaftServerBase* s, const rusty::Arc<rusty::ReactorPollThread>* owner);
+void raft_server_bind_replication_wake_owner(RaftServerBase* s, const rusty::RaftPollThreadPtr* owner);
 void raft_server_fail_stop(RaftServerBase* s);
 bool raft_server_initialize_snapshot_manager_locked(RaftServerBase* s);
 void raft_server_install_snapshot_reply_accepted(RaftServerBase* s, uint16_t site_id, size_t ord, uint64_t snap_last_idx, uint64_t send_term, uint64_t follower_term);

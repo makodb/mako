@@ -62,10 +62,17 @@ def export(rs, name):
             post.append(f'    *{pname} = {pname}_slot;')
         elif pty.startswith('&'):
             out_params.append(f'{pname}: *const {pty[1:]}'); args.append(f'&*{pname}')
-        elif pty.startswith('rusty::sync::Arc<'):
-            # A shared handle crosses borrowed, by pointer, and is cloned inside:
-            # the caller keeps its own reference. By value it is not FFI-safe.
-            out_params.append(f'{pname}: *const {pty}'); args.append(f'(*{pname}).clone()')
+        elif pty in BY_VALUE_CARRIERS:
+            # A carrier crosses borrowed, by pointer, and is copied inside: the
+            # caller keeps its own reference.
+            out_params.append(f'{pname}: *const {pty}')
+            kernel = BY_VALUE_CARRIERS[pty]
+            if kernel is None:
+                pre.append(f'    let {pname}_copy: {pty} = (*{pname}).clone();')
+            else:
+                pre.append(f'    let mut {pname}_copy: {pty} = Default::default();')
+                pre.append(f'    {kernel}({pname}, &mut {pname}_copy as *mut {pty});')
+            args.append(f'{pname}_copy')
         else:
             out_params.append(f'{pname}: {pty}'); args.append(pname)
     call = f'(*s).{name}({", ".join(args)})'
@@ -83,11 +90,21 @@ def export(rs, name):
         sig = head + (',\n' + indent).join(out_params) + ')' + ret_s + ' {'
     if post:
         body = '\n'.join(pre + ([f'    let result = {call};'] if ret_c else [f'    {call};']) + post + (['    result'] if ret_c else []))
+    elif pre:
+        body = '\n'.join(pre + [f'    {call}'])
     else:
         body = f'    {call}'
     return (f'/// # Safety\n/// `s` is a live `RaftServerBase`; every pointer argument is live for the call.\n'
             f'#[no_mangle]\n{sig}\n{body}\n}}')
 
+
+# Carriers a method takes by value, and how the export copies one. An Arc
+# handle (None) has a Clone: the copy constructor under the transpiler, the
+# facade's clone kernel under rustc. A Command has no Clone, so its copy is the
+# kernel named here, into a default-constructed slot.
+BY_VALUE_CARRIERS = {'rusty::RaftPollThreadPtr': None,
+                     'rusty::RaftIntEventPtr': None,
+                     'rusty::RaftCommand': 'raft_command_clone_into'}
 
 SCALARS = {'u8': 'uint8_t', 'u16': 'uint16_t', 'u32': 'uint32_t', 'u64': 'uint64_t', 'i8': 'int8_t',
            'i16': 'int16_t', 'i32': 'int32_t', 'i64': 'int64_t', 'usize': 'size_t', 'bool': 'bool', '': 'void'}
@@ -114,7 +131,7 @@ def prototype(rs, name):
         pname, pty = [x.strip() for x in p.split(':', 1)]
         if pty.startswith('&mut '):
             cps.append(f'{cpp_type(pty[5:])}* {pname}')
-        elif pty.startswith('&') or pty.startswith('rusty::sync::Arc<'):
+        elif pty.startswith('&') or pty in BY_VALUE_CARRIERS:
             cps.append(f'const {cpp_type(pty.lstrip("&"))}* {pname}')
         else:
             cps.append(f'{cpp_type(pty)} {pname}')

@@ -59,7 +59,8 @@ using ReactorFiber = ::rrr::Fiber;
 
 // Opaque carriers. A Raft DSL type may HOLD these and hand them to a kernel;
 // it may never dereference one, which is enforced by the Rust side modelling
-// them as zero-sized opaque structs. See src/rrr/rusty-rustc/src/lib.rs.
+// them as opaque structs of the C++ size and alignment (the layout pins in
+// server.h). See src/rrr/rusty-rustc/src/lib.rs.
 using RaftResponsePtr = ::std::shared_ptr<::janus::AppendEntriesResponse>;
 // RaftCommand is aliased in src/deptran/scheduler.h, where RaftSpecific names it.
 
