@@ -714,8 +714,12 @@ const _: () = {
 /// in place. A default-constructed carrier is all zero bytes, which every C++
 /// type that HAS a default here treats as its empty state, so the destructor
 /// is a no-op on a slot Rust default-constructed and never filled; the Arc
-/// carriers have no default, so no such slot exists for them. Moves stay
-/// bitwise: the platform assumption stated next to the layout pins.
+/// carriers have no default, so no such slot exists for them. Moves are
+/// bitwise, which every carrier here tolerates EXCEPT the four std::function
+/// ones: libc++ keeps a small callable inside the object and points at it, so
+/// a moved live std::function is corrupt. Those four are therefore never
+/// held by value anywhere but their final slot -- the setters take them by
+/// reference and the clone kernels construct in place (server_h.rs).
 macro_rules! rusty_opaque_cpp_carrier_drop {
     ($($name:ident => $destroy:ident),* $(,)?) => {
         extern "C" {

@@ -111,7 +111,10 @@ namespace janus {
 pub trait TxLogServer {
     fn set_site_identity(&mut self, loc_id: u32, site_id: u16, partition_id: u32);
     fn set_commo(&mut self, commo: *mut rusty::Communicator);
-    fn reg_learner_action(&mut self, learner_action: rusty::LearnerAction);
+    // By reference, never by value: a std::function is not bitwise-relocatable
+    // (libc++ keeps a small callable inside the object and points at it), so
+    // the implementation copies it in place, into its final slot.
+    fn reg_learner_action(&mut self, learner_action: &rusty::LearnerAction);
 }
 
 // Submission admission result for the RaftWorker interface.  Memory-only Raft
@@ -139,7 +142,8 @@ pub trait RaftSpecific: TxLogServer {
     fn IsLeader(&mut self) -> bool;
     fn GetLeaderHint(&mut self) -> u16;
     fn SetPreferredLeader(&mut self, site_id: u16);
-    fn RegisterLeaderChangeCallback(&mut self, cb: rusty::RaftLeaderChangeCb);
+    // By reference, for the reason given on reg_learner_action.
+    fn RegisterLeaderChangeCallback(&mut self, cb: &rusty::RaftLeaderChangeCb);
     // Admission, as the RPC service checks it before every handler.
     fn IsRpcReady(&self) -> bool;
     fn IsDisconnected(&self) -> bool;
@@ -170,7 +174,7 @@ pub trait RaftSpecific: TxLogServer {
                          data: &rusty::RaftByteString, term_out: *mut u64);
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=deptran_scheduler.tx_log_server version=1 rust_sha256=a6ce48e2a2c4ce31e857826b9f95e7cd3ca074d13053646b4207c6cdb64f679d*/
+/*RUSTYCPP:GEN-BEGIN id=deptran_scheduler.tx_log_server version=1 rust_sha256=970d818cd7616e41acef7564802f47a65d24d46bb1c89345ec2037ec003f2b06*/
 enum class RaftStartResult : int32_t;
 constexpr RaftStartResult RaftStartResult_REJECTED();
 constexpr RaftStartResult RaftStartResult_APPENDED();
@@ -189,7 +193,7 @@ public:
     virtual ~TxLogServer() noexcept(false) {}
     virtual void set_site_identity(uint32_t loc_id, uint16_t site_id, uint32_t partition_id) = 0;
     virtual void set_commo(rusty::Communicator* commo) = 0;
-    virtual void reg_learner_action(rusty::LearnerAction learner_action) = 0;
+    virtual void reg_learner_action(const rusty::LearnerAction& learner_action) = 0;
     TxLogServer(const TxLogServer&) = delete;
     TxLogServer& operator=(const TxLogServer&) = delete;
     TxLogServer(TxLogServer&&) = delete;
@@ -211,7 +215,7 @@ public:
     virtual bool IsLeader() = 0;
     virtual uint16_t GetLeaderHint() = 0;
     virtual void SetPreferredLeader(uint16_t site_id) = 0;
-    virtual void RegisterLeaderChangeCallback(rusty::RaftLeaderChangeCb cb) = 0;
+    virtual void RegisterLeaderChangeCallback(const rusty::RaftLeaderChangeCb& cb) = 0;
     virtual bool IsRpcReady() const = 0;
     virtual bool IsDisconnected() const = 0;
     virtual uint16_t SiteId() const = 0;
@@ -263,8 +267,8 @@ template <class U> class RaftSpecificAdapterRefMut;
     partition_id_ = partition_id;                                    \
   }                                                                  \
   void set_commo(Communicator* commo) override { commo_ = commo; }    \
-  void reg_learner_action(LearnerAction learner_action) override {     \
-    app_next_ = std::move(learner_action);                           \
+  void reg_learner_action(const LearnerAction& learner_action) override {     \
+    app_next_ = learner_action;                           \
   }
 
 }  // namespace janus

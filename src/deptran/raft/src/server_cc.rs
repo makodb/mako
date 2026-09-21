@@ -1,3 +1,8 @@
+// Canonical Rust source of the Raft server's second half (plan.md, F2.6): the
+// C ABI exports, the RPC bodies and the heartbeat phases. rustc compiles this
+// into libraft.a; nothing here is transpiled. It began as the extraction of
+// server.cc's inline blocks and is edited here now.
+
 #[allow(dead_code, non_snake_case)]
 fn IsPreferredLeaderConfigured(preferred_leader_site_id: u16) -> bool {
     preferred_leader_site_id != u16::MAX
@@ -471,7 +476,7 @@ impl AuthorityLedger {
 }
 
 use crate::server_h::RaftServerBase;
-use crate::server_h::AppendRespView;
+use crate::server_pods_h::AppendRespView;
 use crate::scheduler_h::RaftSpecific;
 use crate::server_h::RaftEntry;
 use crate::server_h::RaftLockGuard;
@@ -486,11 +491,6 @@ unsafe extern "C" {
     fn raft_append_response_read(response: *const rusty::RaftResponsePtr)
         -> AppendRespView;
     fn raft_command_has_value(cmd: *const rusty::RaftCommand) -> bool;
-    // F1: the object's allocation. C++ allocates and frees for now, because
-    // the emitted struct is not movable and `Box::new(RaftServerBase::new())`
-    // cannot lower; at the cutover the struct is Rust's and these two go.
-    fn raft_server_alloc() -> *mut RaftServerBase;
-    fn raft_server_free(s: *mut RaftServerBase);
     fn raft_verify(condition: bool);
     fn raft_snapshot_manager_is_set(
         manager: *const rusty::RaftSnapshotManagerPtr) -> bool;
@@ -516,18 +516,12 @@ unsafe extern "C" {
     // The command copy INTO Rust's slot; see server.h for why never by value.
     fn raft_command_clone_into(src: *const rusty::RaftCommand,
                                dst: *mut rusty::RaftCommand);
-    // The same for the carriers the setters take by value (D2): each export
-    // receives a pointer and copies here, into its default-constructed slot.
-    fn raft_learner_action_clone_into(src: *const rusty::LearnerAction,
-                                      dst: *mut rusty::LearnerAction);
-    fn raft_leader_change_cb_clone_into(src: *const rusty::RaftLeaderChangeCb,
-                                        dst: *mut rusty::RaftLeaderChangeCb);
+    // The snapshot manager's shared_ptr, copied by the export into its
+    // default-constructed slot (a shared_ptr relocates bitwise; the four
+    // std::function carriers do not, and are copied in place by the setters
+    // themselves -- see reg_learner_action in server_h.rs).
     fn raft_snapshot_manager_ptr_clone_into(src: *const rusty::RaftSnapshotManagerPtr,
                                             dst: *mut rusty::RaftSnapshotManagerPtr);
-    fn raft_create_snapshot_cb_clone_into(src: *const rusty::RaftCreateSnapshotCb,
-                                          dst: *mut rusty::RaftCreateSnapshotCb);
-    fn raft_prepare_snapshot_cb_clone_into(src: *const rusty::RaftPrepareSnapshotCb,
-                                           dst: *mut rusty::RaftPrepareSnapshotCb);
 
     fn raft_phase1_send_append(commo: *mut rusty::Communicator,
                                self_site_id: u16, site_id: u16,
@@ -2504,14 +2498,14 @@ use crate::scheduler_h::RaftStartResult;
 use crate::scheduler_h::TxLogServer;
 use crate::server_h::GateWakeJob;
 use crate::server_h::ElectionTimerLoop;
-
-// --- Lifetime. The allocation is a kernel pair until the cutover (see their
-// declaration); construction and shutdown are Rust. The shim holds the pointer.
+// --- GENERATED EXPORTS BEGIN (scripts/raft_gen_exports.py; do not edit by hand) ---
+// --- Lifetime. Rust allocates and frees (F2.6): the struct is a Box the shim
+// holds as a raw pointer between these two calls.
 /// # Safety
 /// The returned pointer is owned by the caller until raft_server_delete.
 #[no_mangle]
 pub unsafe extern "C" fn raft_server_new() -> *mut RaftServerBase {
-    let s: *mut RaftServerBase = raft_server_alloc();
+    let s: *mut RaftServerBase = rusty::Box::into_raw(rusty::Box::new(RaftServerBase::new()));
     (*s).ConstructRuntime();
     s
 }
@@ -2521,7 +2515,7 @@ pub unsafe extern "C" fn raft_server_new() -> *mut RaftServerBase {
 #[no_mangle]
 pub unsafe extern "C" fn raft_server_delete(s: *mut RaftServerBase) {
     (*s).Shutdown();
-    raft_server_free(s);
+    drop(rusty::Box::from_raw(s));
 }
 
 // --- The two fiber loops, entered from the spawn kernels.
@@ -2576,9 +2570,7 @@ pub unsafe extern "C" fn raft_server_set_commo(s: *mut RaftServerBase,
 #[no_mangle]
 pub unsafe extern "C" fn raft_server_reg_learner_action(s: *mut RaftServerBase,
                                                         learner_action: *const rusty::LearnerAction) {
-    let mut learner_action_copy: rusty::LearnerAction = Default::default();
-    raft_learner_action_clone_into(learner_action, &mut learner_action_copy as *mut rusty::LearnerAction);
-    (*s).reg_learner_action(learner_action_copy)
+    (*s).reg_learner_action(&*learner_action)
 }
 
 /// # Safety
@@ -2629,9 +2621,7 @@ pub unsafe extern "C" fn raft_server_set_preferred_leader(s: *mut RaftServerBase
 #[no_mangle]
 pub unsafe extern "C" fn raft_server_register_leader_change_callback(s: *mut RaftServerBase,
                                                                      cb: *const rusty::RaftLeaderChangeCb) {
-    let mut cb_copy: rusty::RaftLeaderChangeCb = Default::default();
-    raft_leader_change_cb_clone_into(cb, &mut cb_copy as *mut rusty::RaftLeaderChangeCb);
-    (*s).RegisterLeaderChangeCallback(cb_copy)
+    (*s).RegisterLeaderChangeCallback(&*cb)
 }
 
 /// # Safety
@@ -3089,11 +3079,7 @@ pub unsafe extern "C" fn raft_server_set_snapshot_threshold_locked(s: *mut RaftS
 pub unsafe extern "C" fn raft_server_set_state_machine_snapshot_callbacks(s: *mut RaftServerBase,
                                                                           create_cb: *const rusty::RaftCreateSnapshotCb,
                                                                           prepare_cb: *const rusty::RaftPrepareSnapshotCb) -> u64 {
-    let mut create_cb_copy: rusty::RaftCreateSnapshotCb = Default::default();
-    raft_create_snapshot_cb_clone_into(create_cb, &mut create_cb_copy as *mut rusty::RaftCreateSnapshotCb);
-    let mut prepare_cb_copy: rusty::RaftPrepareSnapshotCb = Default::default();
-    raft_prepare_snapshot_cb_clone_into(prepare_cb, &mut prepare_cb_copy as *mut rusty::RaftPrepareSnapshotCb);
-    (*s).SetStateMachineSnapshotCallbacks(create_cb_copy, prepare_cb_copy)
+    (*s).SetStateMachineSnapshotCallbacks(&*create_cb, &*prepare_cb)
 }
 
 /// # Safety
@@ -3102,3 +3088,5 @@ pub unsafe extern "C" fn raft_server_set_state_machine_snapshot_callbacks(s: *mu
 pub unsafe extern "C" fn raft_server_shutdown(s: *mut RaftServerBase) {
     (*s).Shutdown()
 }
+
+// --- GENERATED EXPORTS END ---

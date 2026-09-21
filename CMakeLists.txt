@@ -1119,6 +1119,34 @@ target_compile_options(cluster PUBLIC ${BENCH_CXXFLAGS})
 # std_port_hashbrown, so naming std_port pulls in both archives/BMIs.
 target_link_libraries(cluster PUBLIC rrr pthread btree_port vec_port rc_port std_port)
 
+# The Raft server is Rust (docs/migration/raft/plan.md, F2.6). src/deptran/raft is a
+# cargo staticlib: its C ABI (src/deptran/raft/server_exports.h) is what the C++
+# shim `class RaftServer` and the hand-written kernels in server.cc call, and it
+# calls those kernels back. cargo builds it into this build tree; the pinned
+# rusty-rustc facade (src/rrr/rusty-rustc) is its only dependency.
+set(RAFT_RUST_TARGET_DIR "${CMAKE_BINARY_DIR}/raft-cargo")
+set(RAFT_RUST_LIB "${RAFT_RUST_TARGET_DIR}/release/libraft.a")
+file(GLOB RAFT_RUST_SOURCES CONFIGURE_DEPENDS
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/src/*.rs
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/rrr/rusty-rustc/src/*.rs
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/rrr/rusty-cpp-markers/src/*.rs)
+add_custom_command(
+    OUTPUT ${RAFT_RUST_LIB}
+    COMMAND cargo build --release --quiet
+            --manifest-path ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/Cargo.toml
+            --target-dir ${RAFT_RUST_TARGET_DIR}
+    DEPENDS ${RAFT_RUST_SOURCES}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/Cargo.toml
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/rrr/rusty-rustc/Cargo.toml
+    COMMENT "cargo build: the Raft server (src/deptran/raft) as libraft.a"
+    VERBATIM)
+add_custom_target(raft_rust_build DEPENDS ${RAFT_RUST_LIB})
+add_library(raft_rust STATIC IMPORTED GLOBAL)
+set_target_properties(raft_rust PROPERTIES
+    IMPORTED_LOCATION ${RAFT_RUST_LIB}
+    # what Rust's std needs from the platform
+    INTERFACE_LINK_LIBRARIES "pthread;dl;m;rt;util;gcc_s")
+
 # Build the replication core from the explicit manifest above.
 add_library(txlog_core_obj OBJECT
     ${TXLOG_HELPER_SRC}
@@ -1130,11 +1158,11 @@ add_library(txlog_core_obj OBJECT
     # `txlog_core`'s PUBLIC link to the `rrr` target.
 )
 add_dependencies(txlog_core_obj rcc_rpc_gen)
-add_dependencies(txlog_core_obj raft_goal0_source_gate)
+add_dependencies(txlog_core_obj raft_goal0_source_gate raft_rust_build)
 # Pull in rrr's PUBLIC include dirs + module BMI paths so deptran .cc files
 # that `#include "rrr/rrr.hpp"` find both the
 # umbrella header and the imports it references.
-target_link_libraries(txlog_core_obj PUBLIC rrr cluster)
+target_link_libraries(txlog_core_obj PUBLIC rrr cluster raft_rust)
 set_target_properties(txlog_core_obj PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
@@ -1158,8 +1186,10 @@ endforeach()
 target_compile_definitions(txlog_core_obj PRIVATE CONFIG_H=\"${CONFIG_H}\")
 
 add_library(txlog_core STATIC $<TARGET_OBJECTS:txlog_core_obj>)
+add_dependencies(txlog_core raft_rust_build)
 target_link_libraries(txlog_core
     PUBLIC
+    raft_rust
     rrr
     cluster
     yaml-cpp
@@ -1175,11 +1205,13 @@ target_include_directories(txlog_core PUBLIC
     src/deptran
 )
 
+# The archive and the Rust library need each other (kernels one way, exports the
+# other), so anything that links the archive links both in a rescan group.
 set(TXLOG_LINK_LIBS
-    txlog_core
+    "$<LINK_GROUP:RESCAN,txlog_core,raft_rust>"
 )
 set(TXLOG_BUILD_DEPS
-    txlog_core
+    txlog_core raft_rust_build
 )
 
 # Temporary Raft-only target for borrow checking
@@ -1364,7 +1396,10 @@ target_include_directories(mako PUBLIC
 target_compile_options(mako PUBLIC ${BENCH_CXXFLAGS} ${MASSTREE_FORCE_INCLUDE_FLAG})
 target_compile_definitions(mako PUBLIC CONFIG_H=\"${CONFIG_H}\")
 # Inherit rrr module BMI paths from txlog_core_obj.
-target_link_libraries(mako PUBLIC txlog_core_obj masstree)
+# A static library gets no objects from txlog_core_obj, only usage requirements;
+# executables that link mako alone (the gtest binaries) therefore need the
+# kernels' archive next to libraft.a, in the same rescan group.
+target_link_libraries(mako PUBLIC txlog_core_obj masstree "$<LINK_GROUP:RESCAN,txlog_core,raft_rust>")
 target_include_directories(mako PUBLIC ${LIBEVENT_INCLUDE_DIRS})
 set_target_properties(mako PROPERTIES OUTPUT_NAME "mako")
 
@@ -1484,8 +1519,8 @@ endfunction()
 
 add_apps(dbtest src/mako/benchmarks/dbtest.cc)
 add_apps(simpleTransaction examples/simpleTransaction.cc
-    TXLOG_LIBS txlog_core
-    TXLOG_DEPS txlog_core
+    TXLOG_LIBS "$<LINK_GROUP:RESCAN,txlog_core,raft_rust>"
+    TXLOG_DEPS txlog_core raft_rust_build
 )
 add_apps(simpleTransactionRep examples/simpleTransactionRep.cc)
 add_apps(continuousTransactions examples/continuousTransactions.cc)

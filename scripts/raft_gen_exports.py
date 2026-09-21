@@ -107,11 +107,9 @@ def export(rs, name):
 BY_VALUE_CARRIERS = {'rusty::RaftPollThreadPtr': None,
                      'rusty::RaftIntEventPtr': None,
                      'rusty::RaftCommand': 'raft_command_clone_into',
-                     'rusty::LearnerAction': 'raft_learner_action_clone_into',
-                     'rusty::RaftLeaderChangeCb': 'raft_leader_change_cb_clone_into',
-                     'rusty::RaftSnapshotManagerPtr': 'raft_snapshot_manager_ptr_clone_into',
-                     'rusty::RaftCreateSnapshotCb': 'raft_create_snapshot_cb_clone_into',
-                     'rusty::RaftPrepareSnapshotCb': 'raft_prepare_snapshot_cb_clone_into'}
+                     'rusty::RaftSnapshotManagerPtr': 'raft_snapshot_manager_ptr_clone_into'}
+# The four std::function carriers are NOT here: a libc++ std::function is not
+# bitwise-relocatable, so the setters take them by reference and copy in place.
 
 SCALARS = {'u8': 'uint8_t', 'u16': 'uint16_t', 'u32': 'uint32_t', 'u64': 'uint64_t', 'i8': 'int8_t',
            'i16': 'int16_t', 'i32': 'int32_t', 'i64': 'int64_t', 'usize': 'size_t', 'bool': 'bool', '': 'void'}
@@ -154,13 +152,13 @@ def prototype(rs, name):
 # The two functions with no method behind them: the object's lifetime. Rust
 # owns the allocation (Box), C++ holds the pointer; the shim's constructor and
 # destructor are one call each.
-LIFECYCLE_RS = '''// --- Lifetime. The allocation is a kernel pair until the cutover (see their
-// declaration); construction and shutdown are Rust. The shim holds the pointer.
+LIFECYCLE_RS = '''// --- Lifetime. Rust allocates and frees (F2.6): the struct is a Box the shim
+// holds as a raw pointer between these two calls.
 /// # Safety
 /// The returned pointer is owned by the caller until raft_server_delete.
 #[no_mangle]
 pub unsafe extern "C" fn raft_server_new() -> *mut RaftServerBase {
-    let s: *mut RaftServerBase = raft_server_alloc();
+    let s: *mut RaftServerBase = rusty::Box::into_raw(rusty::Box::new(RaftServerBase::new()));
     (*s).ConstructRuntime();
     s
 }
@@ -170,7 +168,7 @@ pub unsafe extern "C" fn raft_server_new() -> *mut RaftServerBase {
 #[no_mangle]
 pub unsafe extern "C" fn raft_server_delete(s: *mut RaftServerBase) {
     (*s).Shutdown();
-    raft_server_free(s);
+    drop(rusty::Box::from_raw(s));
 }'''
 LOOPS_RS = '''// --- The two fiber loops, entered from the spawn kernels.
 /// # Safety
@@ -247,10 +245,27 @@ def forwarder(name, ret, params, const, rust_ret):
     return f'  {ret} {name}({params}){const} {{ {body} }}'
 
 
+def rust_decl(rs, name):
+    """`(ret, params, const)` in C++ spelling, derived from the Rust signature (F2.6:
+    there is no C++ struct declaration to read any more)."""
+    params, ret = signature(rs, name)
+    const = ' const' if params[0] == '&self' else ''
+    def cpp_ref(t):
+        t = t.strip()
+        if t.startswith('&mut '): return cpp_type(t[5:]) + '&'
+        if t.startswith('&'): return 'const ' + cpp_type(t[1:]) + '&'
+        return cpp_type(t)
+    cps = []
+    for p in params[1:]:
+        pname, pty = [x.strip() for x in p.split(':', 1)]
+        cps.append(f'{cpp_ref(pty)} {pname}')
+    return cpp_ref(ret) if ret else 'void', ', '.join(cps), const
+
+
 def shim(rs):
-    h = open(H).read(); sch = open(SCH).read()
+    sch = open(SCH).read()
     iface = {**cpp_decls(sch, r'class TxLogServer \{'), **cpp_decls(sch, r'class RaftSpecific : public TxLogServer \{')}
-    struct = cpp_decls(h, r'struct RaftServerBase : public RaftSpecific \{')
+    struct = {n: rust_decl(rs, n) for n in LAB}
     out = ['class RaftServer : public RaftSpecific {', ' public:',
            '  RaftServer() : impl_(raft_server_new()) {}',
            '  // @unsafe - thread join and timer cleanup require manual resource management',

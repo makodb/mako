@@ -65,15 +65,22 @@ cpp_module = "raft.rocksdb_log_storage_hpp"
 source = "src/deptran/raft/rocksdb_log_storage.hpp"
 output = "src/deptran/raft/src/rocksdb_log_storage_hpp.rs"
 
+# Canonical Rust (F2.6): compiled by rustc, not extracted from a carrier. The
+# extractor leaves these alone and lists them in lib.rs.
 [[module]]
-cpp_module = "raft.server_cc"
-source = "src/deptran/raft/server.cc"
+kind = "canonical"
 output = "src/deptran/raft/src/server_cc.rs"
 
 [[module]]
-cpp_module = "raft.server_h"
-source = "src/deptran/raft/server.h"
+kind = "canonical"
 output = "src/deptran/raft/src/server_h.rs"
+
+# server.h's one remaining inline block: the #[repr(C)] values kernels return
+# by value, which both worlds must see.
+[[module]]
+cpp_module = "raft.server_pods_h"
+source = "src/deptran/raft/server.h"
+output = "src/deptran/raft/src/server_pods_h.rs"
 
 [[module]]
 cpp_module = "raft.service_cc"

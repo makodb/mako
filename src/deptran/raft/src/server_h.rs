@@ -1,3 +1,8 @@
+// Canonical Rust source of the Raft server (docs/migration/raft/plan.md, F2.6).
+// rustc compiles this into libraft.a; nothing here is transpiled. It began as
+// the extraction of server.h's inline blocks and is edited here now.
+
+use crate::server_pods_h::{RaftElectionTimeouts, RaftVoteOutcome};
 // A delayed vote quorum result is interpreted before its YES/NO/TIMEOUT
 // payload. Higher-term evidence is globally authoritative; every ordinary
 // outcome belongs only to the exact campaign that is still active.
@@ -1340,37 +1345,6 @@ impl GateWakeJob {
     }
 }
 
-// The election-timeout configuration, as one value. Every field is an
-// environment override with a compiled-in default, read afresh on each call
-// exactly as the four separate getters were.
-#[repr(C)]
-pub struct RaftElectionTimeouts {
-    pub grace_period_us_: u64,
-    pub preferred_us_: u64,
-    pub non_preferred_grace_us_: u64,
-    pub non_preferred_steady_us_: u64,
-}
-
-#[repr(C)]
-pub struct RaftVoteOutcome {
-    pub term_: i64,
-    pub yes_: bool,
-    pub no_: bool,
-    pub n_voted_yes_: i32,
-    pub n_voted_no_: i32,
-    pub timeouted_: bool,
-}
-
-// One AppendEntries reply, read out of the wire response by
-// raft_append_response_read for heartbeat phase 2 (server.cc).
-#[repr(C)]
-pub struct AppendRespView {
-    pub completed_: bool,
-    pub status_: bool,
-    pub term_: u64,
-    pub last_log_index_: u64,
-}
-
 use rusty::cpp_inherit;
 use crate::scheduler_h::TxLogServer;
 use crate::scheduler_h::RaftSpecific;
@@ -1424,6 +1398,17 @@ unsafe extern "C" {
     // a bitwise copy there.
     fn raft_command_clone_into(src: *const rusty::RaftCommand,
                                dst: *mut rusty::RaftCommand);
+    // The four std::function carriers, copied INTO their final slot: a libc++
+    // std::function is not bitwise-relocatable, so it is never held by value
+    // anywhere but there (see reg_learner_action).
+    fn raft_learner_action_clone_into(src: *const rusty::LearnerAction,
+                                      dst: *mut rusty::LearnerAction);
+    fn raft_leader_change_cb_clone_into(src: *const rusty::RaftLeaderChangeCb,
+                                        dst: *mut rusty::RaftLeaderChangeCb);
+    fn raft_create_snapshot_cb_clone_into(src: *const rusty::RaftCreateSnapshotCb,
+                                          dst: *mut rusty::RaftCreateSnapshotCb);
+    fn raft_prepare_snapshot_cb_clone_into(src: *const rusty::RaftPrepareSnapshotCb,
+                                           dst: *mut rusty::RaftPrepareSnapshotCb);
     // The AppendEntries payload, read for AeDecodePayload / AeApplyIncoming.
     // A janus::Command laundered as c_void by the service forwarder; a batch
     // is opened once (raft_wire_batch: the one marshallable_cast, as before)
@@ -1920,8 +1905,8 @@ impl RaftServerBase {
     // ownership when it later clears the callbacks.
     pub fn SetStateMachineSnapshotCallbacks(
         &mut self,
-        create_cb: rusty::RaftCreateSnapshotCb,
-        prepare_cb: rusty::RaftPrepareSnapshotCb,
+        create_cb: &rusty::RaftCreateSnapshotCb,
+        prepare_cb: &rusty::RaftPrepareSnapshotCb,
     ) -> u64 {
         let _lock = RaftLockGuard::new(&mut self.mtx_);
         if self.state_.next_snapshot_callback_owner_token_ == 0 {
@@ -1929,8 +1914,15 @@ impl RaftServerBase {
         }
         let owner_token: u64 = self.state_.next_snapshot_callback_owner_token_;
         self.state_.next_snapshot_callback_owner_token_ += 1;
-        self.create_sm_snapshot_cb_ = create_cb;
-        self.prepare_sm_snapshot_cb_ = prepare_cb;
+        // In place, for the reason given on reg_learner_action.
+        unsafe {
+            raft_create_snapshot_cb_clone_into(
+                create_cb as *const rusty::RaftCreateSnapshotCb,
+                &mut self.create_sm_snapshot_cb_ as *mut rusty::RaftCreateSnapshotCb);
+            raft_prepare_snapshot_cb_clone_into(
+                prepare_cb as *const rusty::RaftPrepareSnapshotCb,
+                &mut self.prepare_sm_snapshot_cb_ as *mut rusty::RaftPrepareSnapshotCb);
+        }
         self.state_.snapshot_callback_owner_token_ = owner_token;
         owner_token
     }
@@ -4422,8 +4414,17 @@ impl TxLogServer for RaftServerBase {
         self.commo_ = commo;
     }
 
-    fn reg_learner_action(&mut self, learner_action: rusty::LearnerAction) {
-        self.app_next_ = learner_action;
+    // The callback is copied INTO its slot by the kernel, never moved: a
+    // libc++ std::function whose callable fits its small buffer points at that
+    // buffer, so a bitwise move (a Rust move) leaves it pointing at the old
+    // storage and the next call or destruction runs off a dead stack frame --
+    // the SIGSEGV the first rustc-compiled build hit right here.
+    fn reg_learner_action(&mut self, learner_action: &rusty::LearnerAction) {
+        unsafe {
+            raft_learner_action_clone_into(
+                learner_action as *const rusty::LearnerAction,
+                &mut self.app_next_ as *mut rusty::LearnerAction);
+        }
     }
 }
 
@@ -4534,8 +4535,13 @@ impl RaftSpecific for RaftServerBase {
 
     // @safe - a plain move into the notification slot; no lock, exactly as
     // the C++ had it.
-    fn RegisterLeaderChangeCallback(&mut self, cb: rusty::RaftLeaderChangeCb) {
-        self.leader_change_cb_ = cb;
+    // In place, for the reason given on reg_learner_action.
+    fn RegisterLeaderChangeCallback(&mut self, cb: &rusty::RaftLeaderChangeCb) {
+        unsafe {
+            raft_leader_change_cb_clone_into(
+                cb as *const rusty::RaftLeaderChangeCb,
+                &mut self.leader_change_cb_ as *mut rusty::RaftLeaderChangeCb);
+        }
     }
 
     // @safe - acquire load pairing with the final startup publication.

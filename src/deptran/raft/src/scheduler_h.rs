@@ -1,7 +1,10 @@
 pub trait TxLogServer {
     fn set_site_identity(&mut self, loc_id: u32, site_id: u16, partition_id: u32);
     fn set_commo(&mut self, commo: *mut rusty::Communicator);
-    fn reg_learner_action(&mut self, learner_action: rusty::LearnerAction);
+    // By reference, never by value: a std::function is not bitwise-relocatable
+    // (libc++ keeps a small callable inside the object and points at it), so
+    // the implementation copies it in place, into its final slot.
+    fn reg_learner_action(&mut self, learner_action: &rusty::LearnerAction);
 }
 
 // Submission admission result for the RaftWorker interface.  Memory-only Raft
@@ -29,7 +32,8 @@ pub trait RaftSpecific: TxLogServer {
     fn IsLeader(&mut self) -> bool;
     fn GetLeaderHint(&mut self) -> u16;
     fn SetPreferredLeader(&mut self, site_id: u16);
-    fn RegisterLeaderChangeCallback(&mut self, cb: rusty::RaftLeaderChangeCb);
+    // By reference, for the reason given on reg_learner_action.
+    fn RegisterLeaderChangeCallback(&mut self, cb: &rusty::RaftLeaderChangeCb);
     // Admission, as the RPC service checks it before every handler.
     fn IsRpcReady(&self) -> bool;
     fn IsDisconnected(&self) -> bool;
