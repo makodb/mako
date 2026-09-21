@@ -223,6 +223,16 @@ block supplies the single C++ base, so pin it with
 supertrait pair in `src/deptran/scheduler.h` (`RaftSpecific: TxLogServer`) is
 the worked example.
 
+**The Raft seam is a C ABI.** Hand-written C++ reaches `RaftServerBase`
+only through `src/deptran/raft/server_exports.h` -- 71 `extern "C"` functions
+whose definitions are Rust in `server.cc`'s DSL block -- and holds it only as
+`class RaftServer`, a pointer-holding shim. Do not add a method call, a field
+access, a cast or a derivation on the struct in C++; add an export instead:
+the header, the exports and the shim are all generated from one signature
+table by `scripts/raft_gen_exports.py` (`--header`, default, `--shim`), and
+`scripts/raft_field_census.py` must keep exiting 0. The plan and its progress
+are `docs/migration/raft/plan.md`.
+
 **`#[cpp_inherit]` requires `use rusty::cpp_inherit;` in the same DSL
 block, and fails SILENTLY without it.** The attribute is authenticated
 through the marker crate (`transpiler/src/codegen/predicates.rs:921-936`).

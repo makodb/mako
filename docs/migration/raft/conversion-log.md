@@ -115,6 +115,24 @@ of data on the wrong side.
 | `a124990d7` | shutdown and the apply-thread start become Rust | 57 -> 56 |
 | `37d308ed4` | `doVote` becomes Rust; four banners describing nothing are deleted | 56 -> 54 |
 
+## 6. The plan's steps: interface, opacity, ABI (09-20 .. 09-21)
+
+`docs/migration/raft/plan.md` was written, and its steps A through F1
+executed, each gated, built in both trees, run through RaftLabTest (25/25 every
+time) and the four production Raft suites, and committed on its own.
+
+| commit | step | what it did |
+|---|---|---|
+| `526595eb3` | -- | retired the migration write-ups; one plan from here to a rustc-compiled Raft |
+| `c83a34bc0` | A | `RaftSpecific: TxLogServer` declared beside `TxLogServer`, implemented for `RaftServerBase`; found the adapter hazard (a trait impl without `#[cpp_inherit]` on a move-only struct does not compile) |
+| `738a8b7f2` | B | zero `dynamic_cast`/`static_cast<RaftServer*>`; `RaftFrame::CreateRaftScheduler`, `RaftSpecific*` in the workers and the service |
+| `eb5482070` `90b6f828a` `bcc298560` `2996cc572` | C | no hand-written C++ names a field of the struct: kernels take values and carriers, the log/batch/decode/config writers are Rust, the lab harness reads through getters, the shim constructor is one call; `scripts/raft_field_census.py` is the done-test |
+| `5acdad280` | perf | 25 paired trials, before step A vs after C3: +0.60% median, p = 0.69 -- no cost |
+| `204751587` | D1 | nothing non-trivial crosses the boundary by value; no Rust body clones a carrier |
+| `e60267d97` | E | Rust stays on the fiber; `panic = "abort"`, guard page and one-thread-per-fiber written where they bind |
+| `1d24bbf53` `782b34f48` `3cbcdcfe6` | F1 | the seam is a C ABI: 71 `extern "C"` functions defined in Rust, `server_exports.h`, a shim that holds a pointer and forwards; hand-written C++ knows the struct only as a pointer type |
+| `3b0d810dd` | -- | F2 (the cutover proper) inventoried; a project of its own |
+
 ## What the numbers did
 
 | | before | after |

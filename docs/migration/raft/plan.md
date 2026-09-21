@@ -383,6 +383,7 @@ all of these green, not some.
 | F1a | `1d24bbf53` | **The C ABI over the struct exists, in Rust.** 67 `pub unsafe extern "C" fn raft_server_*` exports (19 interface, 8 kernel-called, 40 lab) in server.cc's DSL block, each forwarding to the method; the transpiler emits them as `extern "C"` C++ definitions today and they are the crate's symbols at F2. `src/deptran/raft/server_exports.h` is the generated C++ prototype header -- the one thing hand-written C++ is meant to know of the struct's behaviour -- included from server.h. Both sides come from `scripts/raft_gen_exports.py` off the method signatures, so they cannot drift apart silently: a mismatch is a compile error. Rules learned: exports go in the .cc carrier (a column-0 `extern "C"` definition in a header is multiply defined; the ODR pass only inlines members); shared handles (`Arc<PollThread>`) cross by pointer and are cloned inside -- rustc's `improper_ctypes_definitions` rejected the by-value form, correctly; `# Safety` docs satisfy clippy; the ABI header opens `namespace janus` itself, so its include is scoped outside the namespace (a nested `janus::janus` broke every later `janus::Command`); the emitter lowers `&mut local` in a method call through a raw pointer to `&local`, so the one `&mut u64` out-parameter (`OnInstallSnapshotLocked`) is a raw pointer end to end; and `Box::new(RaftServerBase::new())` cannot lower because the emitted struct is not movable, so allocation is a kernel pair (`raft_server_alloc`/`free`) until the struct is Rust's. Plus the two lifecycle exports `raft_server_new` (alloc + `ConstructRuntime`) and `raft_server_delete` (`Shutdown` + free) the shim will call. Pure addition: no caller uses them yet (F1b, F1c). Test results in the commit message. |
 | F1b | `782b34f48` | **`class RaftServer` no longer derives from the struct.** It is `RaftSpecific` with one member, `RaftServerBase* impl_`, obtained from `raft_server_new()` and released by `raft_server_delete()`; its 19 interface overrides and 40 `RAFT_TEST_CORO` lab forwarders are one call each into the C ABI (`scripts/raft_gen_exports.py --shim`, generated from the GEN's own declarations so `const` and reference types are exact). The workers, the RPC service and the lab harness hold the shim and did not change; `frame.cc` still `new`s it. The struct's C++ definition is still emitted and still visible, but no hand-written C++ derives from it, defines a member of it, or touches `impl_->` anything -- only the eleven kernel call sites F1c retargets still call its methods directly. Test results in the commit message. |
 | F1c | `3cbcdcfe6` | **Hand-written C++ calls no method of the struct.** The eleven kernel sites (`SetupInternal`, `BindReplicationWakeOwner`, `InitializeSnapshotManagerLocked`, `FailStop`, `ApplyThreadLoop`, `StartElectionTimer`, `OnInstallSnapshotLocked`, `InstallSnapshotReplyAccepted` in the snapshot callback, and the two fiber-loop entries) go through the ABI; two exports were added for the loops, `raft_server_heartbeat_loop` and `raft_server_run_election_timer_loop`, so the spawn kernels no longer name `heartbeat_loop_body` or construct an `ElectionTimerLoop`. **F1 is done: the seam is a C ABI while everything is still transpiled C++.** Hand-written C++ knows `RaftServerBase` only as a pointer type: it derives from nothing of it (F1b), names no field of it (C), calls no method of it (F1c), and reaches it solely through `server_exports.h` -- 71 `extern "C"` functions defined in Rust. What F2 changes is *what defines them*: the crate, linked as a `staticlib`, with the struct's C++ definition deleted from the header. Test results in the commit message. |
+| perf | (this commit) | 25 paired trials, before step A vs after F1c: median -0.61%, mean -0.58%, 12/25 favour F1, p = 1.000. No detectable cost through F1. |
 
 ## Performance verdict on A..C3
 
@@ -403,6 +404,15 @@ roughly +-3% on the median. The ~1.5% the tree already carried from the
 earlier conversion phases has not been widened by A..C3, which is the only
 claim this trial can make; localising that earlier cost remains the open
 performance task it was.
+
+**And again for F1** (tree B = `3cbcdcfe6`, after F1c; same method, same
+baseline, 25 pairs, no failed runs; raw data
+`paired-trial-19cfbb213-vs-3cbcdcfe6.csv`): median delta **-0.61%**, mean
+-0.58%, 12/25 pairs favour B, **p = 1.000**. Medians 158,734 vs 155,158
+ops/s. The extra cross-TU call on every interface method -- virtual, then
+`extern "C"`, then the method -- is not visible at this resolution. Both
+trials together: from before step A to the end of F1, no detectable
+throughput cost.
 
 ## Risks, ranked
 
