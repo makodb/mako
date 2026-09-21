@@ -15,6 +15,9 @@ extern "C" {
 // --- Lifetime: Rust allocates and frees; the shim holds the pointer.
 RaftServerBase* raft_server_new();
 void raft_server_delete(RaftServerBase* s);
+// --- The two fiber loops, entered from the spawn kernels.
+void raft_server_heartbeat_loop(RaftServerBase* s);
+void raft_server_run_election_timer_loop(RaftServerBase* s, uint64_t wait_int_us);
 // --- The replication interface: TxLogServer and RaftSpecific.
 void raft_server_set_site_identity(RaftServerBase* s, uint32_t loc_id, uint16_t site_id, uint32_t partition_id);
 void raft_server_set_commo(RaftServerBase* s, rusty::Communicator* commo);

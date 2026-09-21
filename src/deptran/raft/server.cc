@@ -549,8 +549,9 @@ void raft_noop_command_into(rusty::RaftCommand* dst) {
 //     stack-overflow message will not appear, the SIGSEGV will.
 // ============================================================================
 void raft_spawn_election_timer(RaftServerBase* self, uint64_t wait_int_us) {
-  const ElectionTimerLoop loop = ElectionTimerLoop::new_(self, wait_int_us);
-  Fiber::create_run([loop]() { loop.run(); });
+  Fiber::create_run([self, wait_int_us]() {
+    raft_server_run_election_timer_loop(self, wait_int_us);
+  });
 }
 
 // (3) more conditionally compiled or otherwise unspellable regions
@@ -561,7 +562,7 @@ void raft_spawn_election_timer(RaftServerBase* self, uint64_t wait_int_us) {
 bool raft_setup_internal_guarded(RaftServerBase* self, uint16_t site_id) {
   bool ok = false;
   if (!raft_catch(site_id, "setup", [&] {
-        ok = self->SetupInternal();
+        ok = raft_server_setup_internal(self);
       })) {
     return false;
   }
@@ -779,7 +780,8 @@ bool raft_bind_replication_poll(RaftServerBase* self,
   if (replication_poll.is_none()) {
     return false;
   }
-  self->BindReplicationWakeOwner(replication_poll.unwrap());
+  rusty::Arc<rrr::PollThread> owner = replication_poll.unwrap();
+  raft_server_bind_replication_wake_owner(self, &owner);
   return true;
 }
 
@@ -789,9 +791,9 @@ bool raft_bind_replication_poll(RaftServerBase* self,
 bool raft_initialize_snapshot_manager(RaftServerBase* self, uint16_t site_id) {
   bool recovered = false;
   if (!raft_catch(site_id, "snapshot recovery", [&] {
-        recovered = self->InitializeSnapshotManagerLocked();
+        recovered = raft_server_initialize_snapshot_manager_locked(self);
       })) {
-    self->FailStop();
+    raft_server_fail_stop(self);
     return false;
   }
   return recovered;
@@ -826,7 +828,7 @@ uint16_t raft_config_replica_site(uint32_t partition_id, uint64_t i) {
 // loop body are both Rust. Joinable on purpose -- see StartApplyThread.
 void raft_spawn_apply_thread(RaftServerBase* self,
                              rusty::RaftStdThread* thread) {
-  *thread = std::thread([self]() { self->ApplyThreadLoop(); });
+  *thread = std::thread([self]() { raft_server_apply_thread_loop(self); });
 }
 
 // The async-RPC gate's back-pointer, cleared under the gate's own mutex.
@@ -840,20 +842,16 @@ void raft_clear_async_callback_owner(
 }
 
 // Forward-declared because the emitter writes definitions in source order and
-// the heartbeat block is further down this file; the fiber spawn is up here
-// with the other spawns.
-void heartbeat_loop_body(RaftServerBase* server);
-
 // Fiber-hosted Rust; the constraints are stated at raft_spawn_election_timer.
 void raft_spawn_heartbeat_loop(RaftServerBase* self) {
   // The loop is Rust end to end now (heartbeat_loop_body); this is only the
   // fiber spawn, which has no DSL spelling.
-  Fiber::create_run([self]() { heartbeat_loop_body(self); });
+  Fiber::create_run([self]() { raft_server_heartbeat_loop(self); });
 }
 
 // Fiber-hosted Rust; the constraints are stated at raft_spawn_election_timer.
 void raft_spawn_election_timer_fiber(RaftServerBase* self) {
-  Fiber::create_run([self]() { self->StartElectionTimer(); });
+  Fiber::create_run([self]() { raft_server_start_election_timer(self); });
 }
 
 // CreateSnapshotLocked's state-machine checkpoint and its persistence: a
@@ -1420,6 +1418,7 @@ using janus::RaftEntry;
 using janus::RaftServerBase;
 using janus::RaftLockGuard;
 using janus::RaftLog;  // the lab_log export returns a pointer to it
+using janus::ElectionTimerLoop;  // the election-timer loop export builds one
 }  // namespace server_h
 
 namespace janus {
@@ -4126,6 +4125,7 @@ pub fn on_append_entries_body(server: &mut RaftServerBase,
 use crate::server_h::RaftLog;
 use crate::scheduler_h::RaftStartResult;
 use crate::scheduler_h::TxLogServer;
+use crate::server_h::ElectionTimerLoop;
 
 // --- Lifetime. The allocation is a kernel pair until the cutover (see their
 // declaration); construction and shutdown are Rust. The shim holds the pointer.
@@ -4144,6 +4144,23 @@ pub unsafe extern "C" fn raft_server_new() -> *mut RaftServerBase {
 pub unsafe extern "C" fn raft_server_delete(s: *mut RaftServerBase) {
     (*s).Shutdown();
     raft_server_free(s);
+}
+
+// --- The two fiber loops, entered from the spawn kernels.
+/// # Safety
+/// `s` is a live `RaftServerBase`; runs on the calling fiber until shutdown.
+#[no_mangle]
+pub unsafe extern "C" fn raft_server_heartbeat_loop(s: *mut RaftServerBase) {
+    heartbeat_loop_body(s)
+}
+
+/// # Safety
+/// `s` is a live `RaftServerBase`; runs on the calling fiber until shutdown.
+#[no_mangle]
+pub unsafe extern "C" fn raft_server_run_election_timer_loop(s: *mut RaftServerBase,
+                                                              wait_int_us: u64) {
+    let timer: ElectionTimerLoop = ElectionTimerLoop::new(s, wait_int_us);
+    timer.run()
 }
 
 // --- The replication interface: TxLogServer and RaftSpecific.
@@ -4677,7 +4694,7 @@ pub unsafe extern "C" fn raft_server_shutdown(s: *mut RaftServerBase) {
     (*s).Shutdown()
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_round_scope version=1 rust_sha256=7e347ea54428ad76c5b1e8f80916a56e673f9a96e83a38fb69149afec410dfb3*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_round_scope version=1 rust_sha256=1731edf6fb8c4116c41c46cb68a00a04e4745f0fc705ad129f82e3244e2f5fae*/
 enum class AppendReplyAction : int32_t;
 constexpr AppendReplyAction AppendReplyAction_IGNORED();
 constexpr AppendReplyAction AppendReplyAction_STEP_DOWN();
@@ -4901,6 +4918,8 @@ using ::server_h::RaftLog;
 using ::scheduler_h::RaftStartResult;
 
 using ::scheduler_h::TxLogServer;
+
+using ::server_h::ElectionTimerLoop;
 
 CommitAdvance raft_commit_advance(RaftConsensusState& consensus, size_t nservers) {
     RaftConsensusState* consensus_shadow1 = &consensus;
@@ -5634,6 +5653,21 @@ extern "C" void raft_server_delete(server_h::RaftServerBase* s) {
 }
 
 /// # Safety
+/// `s` is a live `RaftServerBase`; runs on the calling fiber until shutdown.
+// @unsafe
+extern "C" void raft_server_heartbeat_loop(server_h::RaftServerBase* s) {
+    heartbeat_loop_body(s);
+}
+
+/// # Safety
+/// `s` is a live `RaftServerBase`; runs on the calling fiber until shutdown.
+// @unsafe
+extern "C" void raft_server_run_election_timer_loop(server_h::RaftServerBase* s, uint64_t wait_int_us) {
+    const server_h::ElectionTimerLoop timer = ElectionTimerLoop::new_(s, std::move(wait_int_us));
+    timer.run();
+}
+
+/// # Safety
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 // @unsafe
 extern "C" void raft_server_set_site_identity(server_h::RaftServerBase* s, uint32_t loc_id, uint16_t site_id, uint32_t partition_id) {
@@ -6363,8 +6397,8 @@ bool raft_phase1_load_and_send_snapshot(
         if (server == nullptr) {
           return;
         }
-        server->InstallSnapshotReplyAccepted(site_id, ord, snap_last_idx,
-                                             send_term, follower_term);
+        raft_server_install_snapshot_reply_accepted(
+            server, site_id, ord, snap_last_idx, send_term, follower_term);
       });
   return true;
 }
@@ -6573,8 +6607,9 @@ bool raft_install_snapshot_guarded(RaftServerBase* self, uint16_t site_id,
                                    const rusty::RaftByteString* data,
                                    uint64_t* term_out) {
   return raft_catch(site_id, "snapshot install", [&] {
-    self->OnInstallSnapshotLocked(term, leader_id, last_included_index,
-                                  last_included_term, data, term_out);
+    raft_server_on_install_snapshot_locked(self, term, leader_id,
+                                           last_included_index,
+                                           last_included_term, data, term_out);
   });
 }
 

@@ -2493,6 +2493,7 @@ pub fn on_append_entries_body(server: &mut RaftServerBase,
 use crate::server_h::RaftLog;
 use crate::scheduler_h::RaftStartResult;
 use crate::scheduler_h::TxLogServer;
+use crate::server_h::ElectionTimerLoop;
 
 // --- Lifetime. The allocation is a kernel pair until the cutover (see their
 // declaration); construction and shutdown are Rust. The shim holds the pointer.
@@ -2511,6 +2512,23 @@ pub unsafe extern "C" fn raft_server_new() -> *mut RaftServerBase {
 pub unsafe extern "C" fn raft_server_delete(s: *mut RaftServerBase) {
     (*s).Shutdown();
     raft_server_free(s);
+}
+
+// --- The two fiber loops, entered from the spawn kernels.
+/// # Safety
+/// `s` is a live `RaftServerBase`; runs on the calling fiber until shutdown.
+#[no_mangle]
+pub unsafe extern "C" fn raft_server_heartbeat_loop(s: *mut RaftServerBase) {
+    heartbeat_loop_body(s)
+}
+
+/// # Safety
+/// `s` is a live `RaftServerBase`; runs on the calling fiber until shutdown.
+#[no_mangle]
+pub unsafe extern "C" fn raft_server_run_election_timer_loop(s: *mut RaftServerBase,
+                                                              wait_int_us: u64) {
+    let timer: ElectionTimerLoop = ElectionTimerLoop::new(s, wait_int_us);
+    timer.run()
 }
 
 // --- The replication interface: TxLogServer and RaftSpecific.

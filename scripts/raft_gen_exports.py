@@ -148,6 +148,25 @@ pub unsafe extern "C" fn raft_server_delete(s: *mut RaftServerBase) {
     (*s).Shutdown();
     raft_server_free(s);
 }'''
+LOOPS_RS = '''// --- The two fiber loops, entered from the spawn kernels.
+/// # Safety
+/// `s` is a live `RaftServerBase`; runs on the calling fiber until shutdown.
+#[no_mangle]
+pub unsafe extern "C" fn raft_server_heartbeat_loop(s: *mut RaftServerBase) {
+    heartbeat_loop_body(s)
+}
+
+/// # Safety
+/// `s` is a live `RaftServerBase`; runs on the calling fiber until shutdown.
+#[no_mangle]
+pub unsafe extern "C" fn raft_server_run_election_timer_loop(s: *mut RaftServerBase,
+                                                              wait_int_us: u64) {
+    let timer: ElectionTimerLoop = ElectionTimerLoop::new(s, wait_int_us);
+    timer.run()
+}'''
+LOOPS_H = ['// --- The two fiber loops, entered from the spawn kernels.',
+           'void raft_server_heartbeat_loop(RaftServerBase* s);',
+           'void raft_server_run_election_timer_loop(RaftServerBase* s, uint64_t wait_int_us);']
 LIFECYCLE_H = ['// --- Lifetime: Rust allocates and frees; the shim holds the pointer.',
                'RaftServerBase* raft_server_new();', 'void raft_server_delete(RaftServerBase* s);']
 
@@ -225,13 +244,14 @@ def main():
                '// every type it names is declared.',
                '#include <cstddef>', '#include <cstdint>', '', 'namespace janus {', 'extern "C" {']
         out.extend(LIFECYCLE_H)
+        out.extend(LOOPS_H)
         for title, names in GROUPS:
             out.append(f'// --- {title}')
             out.extend(prototype(rs, n) for n in names)
         out += ['}  // extern "C"', '}  // namespace janus', '']
         print('\n'.join(out))
         return
-    out = [LIFECYCLE_RS]
+    out = [LIFECYCLE_RS, LOOPS_RS]
     for title, names in GROUPS:
         out.append(f'// --- {title}')
         out.extend(export(rs, n) for n in names)
