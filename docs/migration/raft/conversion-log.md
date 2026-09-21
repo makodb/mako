@@ -136,7 +136,8 @@ time) and the four production Raft suites, and committed on its own.
 | `87ce66914` | -- | F2 slice 1c: the 44 `raft_log_*` facade functions are the Raft logger under rustc (level check, fmtlib-style substitution, one line to `rrr::log_line`); the transpiled build is unchanged |
 | `424fe4c79` | -- | F2 slice 2: the wake gate is constructed, reserved and driven from Rust; the reactor job carries a `Box<GateWakeJob>` token back to the `raft_wake_job_run` export; the C++ wake-job pair and three kernels are deleted |
 | `5e97e4884` | -- | F2 slice 3: the lab log fingerprint is two scalar exports (no `RaftLog&` crosses); the five by-value setters cross by pointer + clone kernel (D2 at the seam); 17 Rust predicates no Rust called are deleted and their 6 C++ callers compare in C++; the kernel-result PODs have a C++-visible block of their own, the RPC bodies are exports, and the 100 predicate static_asserts are Rust const asserts |
-| `raft: F2.6 cutover` | -- | THE CUTOVER: server_h.rs / server_cc.rs are canonical Rust compiled by cargo into libraft.a and linked by CMake; the generated C++ of the server, the bridge, the alloc/free kernels and the facade's C++ halves are deleted; C++ holds `struct RaftServerBase;` as a name |
+| `1de45affa` | -- | THE CUTOVER: server_h.rs / server_cc.rs are canonical Rust compiled by cargo into libraft.a and linked by CMake; the generated C++ of the server, the bridge, the alloc/free kernels and the facade's C++ halves are deleted; C++ holds `struct RaftServerBase;` as a name |
+| docs | -- | perf verdict on the cutover: 25 paired trials, `19cfbb213` vs `1de45affa`, median +0.32%, p = 1.000 -- no detectable cost of the whole conversion |
 
 ## What the numbers did
 

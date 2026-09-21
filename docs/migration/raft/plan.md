@@ -34,6 +34,17 @@ The one in-tree proof that real Rust can link into this program is
 `third-party/mako-redis`: `crate-type = ["staticlib"]`, four `extern "C"`
 functions, 3,595 mangled Rust symbols in `build/makoCon`.
 
+## Where the tree is after the cutover (`1de45affa`)
+
+| | value | how measured |
+|---|---|---|
+| Rust machine code linked into the Raft binaries | **214 v0 symbols of the `raft` crate**, 74 `extern "C"` exports | `nm build/dbtest \| grep -c '_RN[a-zA-Z0-9_]*raft'`; `nm --defined-only build/dbtest \| grep -c '^raft_server_'` (on the third column) |
+| C++-mangled `RaftServerBase` methods in the binary | **0** (87 Rust ones) | `nm --defined-only build/dbtest \| grep -c '_ZN5janus14RaftServerBase'` |
+| canonical Rust source of the server | 7,842 lines | `wc -l src/deptran/raft/src/server_h.rs src/deptran/raft/src/server_cc.rs src/deptran/raft/src/server_pods_h.rs` |
+| `server.h` / `server.cc` | 673 / 1,474 lines (from ~8,600 / ~6,700) | `wc -l`; server.cc is the kernels, server.h the aliases, layout pins, one POD block and the shim |
+| hand-written `raft_*` kernels the crate calls | **97**, every one defined by a C++ object | `nm -u <build>/raft-cargo/release/libraft.a \| grep '^raft_'` against `nm --defined-only` of the objects |
+| inline DSL blocks left in the two carriers | 1 (`raft_server.kernel_result_pods`) | `grep -c '#if RUSTYCPP_RUST' src/deptran/raft/server.h src/deptran/raft/server.cc` |
+
 ## The fact the plan rests on
 
 `rusty::Vec` is 48 bytes in C++ and `std::vec::Vec` is 24 in Rust, and
@@ -285,7 +296,7 @@ becomes an `Arc::into_raw` handle with a Rust-exported wake entry point.
 profile aborts on panic, and the plan records the decision -- all three
 in the E commit.
 
-### F. Cut over -- F1 done; F2 inventoried
+### F. Cut over -- done: F1 (`3cbcdcfe6`), F2.1-F2.3, and the cutover F2.6 (`1de45affa`)
 
 **F1 (done: F1a `1d24bbf53`, F1b `782b34f48`, F1c `3cbcdcfe6`): the seam is a C ABI
 while everything is still transpiled C++.** `server_exports.h` declares 71
@@ -325,6 +336,16 @@ RaftServerBase;` becomes a forward declaration, and the layout pins and
 **Done when:** `nm` on the Raft binaries shows the Rust v0 symbols for the
 71 exports; no GEN region defines a Rust-owned type; and the verification
 below passes on the rustc build.
+
+**Done (`1de45affa`).** `nm build/dbtest`: 214 v0-mangled `raft` crate
+symbols, 74 `raft_server_*` exports, 0 C++-mangled `RaftServerBase` methods
+(87 Rust ones), 14 symbols of the pointer-holding shim. No GEN region of a
+Rust-owned type exists: `server.h` has one inline block (the kernel-result
+PODs) and `server.cc` none; `src/deptran/raft/src/server_h.rs` and
+`server_cc.rs` are canonical Rust compiled by cargo into `libraft.a`.
+RaftLabTest 25/25 and the four production suites pass on the rustc-compiled
+server. The paired throughput trial against `19cfbb213` is recorded in the
+Performance section below.
 
 **F2.6, the cutover, as the probe measured it.** A scratch copy with slices 2-5
 applied, every generated region of server.h/server.cc deleted and six TUs
@@ -410,7 +431,30 @@ all of these green, not some.
 | F2.1c | `87ce66914` | **The Raft crate's 44 logging functions are a logger, not stubs.** Under rustc `rusty::raft_log_<level>_<n>` asks the C++ logger whether the level is on (`raft_log_enabled`, so a disabled debug line costs one call and no formatting, as `Log_debug`'s guard arranges), substitutes the arguments into the fmtlib-style string -- `{}`, `{:x}` and doubled braces are the whole specifier set the 123 call sites use; anything else is printed as `{bad spec}` rather than dropped -- and hands rrr's logger one line (`raft_log_line`, into `rrr::log_line` with line 0 and a null file, as `rrr_log.h`'s templates pass). Argument types implement a small `RaftLogArg` trait (Display, plus hex for the integers), so every call site's types were checked by rustc when the crate compiled. Under the transpiler nothing changed: the same names resolve to the variadic templates in `rust_log_shims.h`, which keep `std::format_string`'s compile-time placeholder check. The formatter has unit tests in the facade (`cargo test` in src/rrr/rusty-rustc). Test results in the commit message. |
 | F2.2 | `424fe4c79` | **The wake gate is Rust's: construction, reservation, and the job the reactor runs.** `ReplicationWakeGate` is built in the DSL with `Arc::new_cyclic(\|_weak\| ReplicationWakeGate::new())` -- the one `Arc` constructor the emitter lowers to the runtime's in-place path, so a `PhantomPinned` payload compiles (checked on a scratch carrier; `Arc::new` lowers to a move that does not) -- and the `raft_new_replication_wake_gate` kernel is gone. `RequestReplication` and `CloseReplicationWakeGate` reserve the owner thread themselves and hand the reactor a Rust-owned token, `Box<GateWakeJob>` (the gate's `Arc` and which wake to run) made raw; the one kernel left, `raft_queue_wake_job`, does `PollThread::add` of a `OneTimeJob` whose body is the export `raft_wake_job_run`, which takes the `Box` back, runs `GateWakeJob::run`, and drops it. `QueueReplicationWake`, `QueueReplicationShutdownWake` and the two `raft_queue_replication_*` kernels are deleted: no hand-written C++ calls a method of the gate any more. An emitter fact recorded on the token type: a field's `Arc`-ness is known only inside the block that declares it, so the wake runs in `GateWakeJob::run` rather than in the export. Test results in the commit message. |
 | F2.3 | `5e97e4884` | **Nothing crosses the seam as a C++ object: the lab suite reads scalars, and no export takes a non-trivial type by value.** `LabLog()` -- a `RaftLog&` handed to test.cc -- is replaced by `LabLogFingerprintLen`/`LabLogFingerprintAt`, two `u64` reads that `RaftLogFingerprint(RaftServer&)` loops over, so the harness holds no pointer into the log and `RaftLog` no longer crosses (`use crate::server_h::RaftLog` and its bridge alias are gone from server.cc). D2: the five setters that passed a `std::function`/`shared_ptr` by value across the C ABI (`reg_learner_action`, `RegisterLeaderChangeCallback`, `SetSnapshotManager[Locked]`, `SetStateMachineSnapshotCallbacks`) receive the carrier by pointer and copy it inside through a clone kernel into a default-constructed slot, exactly as `RaftCommand` does; the shim passes `&param`, the generator's `BY_VALUE_CARRIERS` table drives all three outputs, and the interface in scheduler.h and Paxos are untouched. `grep` over `server_exports.h` for a by-value `rusty::` parameter is **0** -- was 5. And the 17 `pub const fn raft_server_*` predicates that Rust never called are deleted: 13 had no caller at all, and the 6 hand-written C++ call sites (a wire kind, the lab snapshot marker, the commo inline-path sentinel, a `Start` result in raft_worker.cc and testconf.cc) now compare in C++, which is where those facts live; under the cutover their emitted inline C++ would have vanished with the GEN. Three cutover preconditions land with it. The three `#[repr(C)]` values kernels return by value (`RaftElectionTimeouts`, `RaftVoteOutcome`, `AppendRespView`) have their own block, `raft_server.kernel_result_pods`, which stays C++-visible at the cutover while the struct's block is deleted from C++. The two RPC bodies the service kernels called directly (`on_request_vote_body`, `on_append_entries_body`) are exports (`raft_server_on_*_body`, `&mut` parameters as C++ references), declared in `server_exports.h`. And the 100 C++ `static_assert`s over the Rust predicates are Rust `const _: () = assert!(...)` items next to the predicates: the emitter lowers each back to a `static_assert`, so the transpiled build checks them exactly as before and rustc checks them at every gate; the hand-written C++ block is gone. A probe that deleted every generated region of server.h/server.cc on a scratch copy and compiled six TUs is what produced this list -- after it, what the compiler still wants from the generated C++ is the base-class pins and the alloc/free kernels, which are the cutover's own. Test results in the commit message. |
-| F2.6 | `raft: F2.6 cutover` | **The Raft server is compiled by rustc.** `src/deptran/raft/src/server_h.rs` and `server_cc.rs` are canonical Rust (no longer extracted; `kind = "canonical"` in `rust-modules.toml`), built by cargo as `libraft.a` into the build tree and linked by CMake (`raft_rust`, in a rescan group with `txlog_core` because each needs the other). server.h keeps one inline block, the kernel-result PODs (extracted to `server_pods_h.rs`); server.cc keeps none -- 11 + 5 generated regions, the bridge namespace, the alloc/free kernels, the base-class and enum-layout pins, `rust_log_shims.h` and the facade's other C++ halves are deleted, `struct RaftServerBase;` is a forward declaration, `raft_server_new`/`raft_server_delete` are `Box::into_raw`/`Box::from_raw`, nine `extern "C" inline` kernels became out-of-line definitions (a header inline is emitted only where C++ uses it, and only Rust uses these), and three RPC kernels say `extern "C"` on their definitions. The generator derives the shim's lab signatures from the Rust signatures (byte-identical to what the C++ struct used to yield). `nm libraft.a`: 74 exports defined, 97 kernels undefined, every one defined by a C++ object; no C++ object defines a `raft_server_*` symbol. `dbtest` and `deptran_server` already link a second Rust static library (`librust_redis.a`); a trivial program linked against both archives, referencing one export from each, shows no duplicate-symbol clash on this toolchain, so `libraft.a` links alongside it rather than through an umbrella crate. **The first rustc-compiled build found the one false assumption of slice 1:** a libc++ `std::function` is not bitwise-relocatable (its small callable lives inside the object and `__f_` points at it), so the first `reg_learner_action` -- a by-value carrier moved twice on the way to its slot -- jumped through a dead stack frame (SIGSEGV in `raft_server_reg_learner_action`, confirmed under gdb). The fix is structural: the four callback carriers are never held by value anywhere but their final slot; the two interface setters take them by reference (`const T&` in C++, which is also what Paxos's macro now takes) and the two lab setters likewise, and the clone kernels construct in place. Every other carrier relocates bitwise. Test results in the commit message. |
+| F2.6 | `1de45affa` | **The Raft server is compiled by rustc.** `src/deptran/raft/src/server_h.rs` and `server_cc.rs` are canonical Rust (no longer extracted; `kind = "canonical"` in `rust-modules.toml`), built by cargo as `libraft.a` into the build tree and linked by CMake (`raft_rust`, in a rescan group with `txlog_core` because each needs the other). server.h keeps one inline block, the kernel-result PODs (extracted to `server_pods_h.rs`); server.cc keeps none -- 11 + 5 generated regions, the bridge namespace, the alloc/free kernels, the base-class and enum-layout pins, `rust_log_shims.h` and the facade's other C++ halves are deleted, `struct RaftServerBase;` is a forward declaration, `raft_server_new`/`raft_server_delete` are `Box::into_raw`/`Box::from_raw`, nine `extern "C" inline` kernels became out-of-line definitions (a header inline is emitted only where C++ uses it, and only Rust uses these), and three RPC kernels say `extern "C"` on their definitions. The generator derives the shim's lab signatures from the Rust signatures (byte-identical to what the C++ struct used to yield). `nm libraft.a`: 74 exports defined, 97 kernels undefined, every one defined by a C++ object; no C++ object defines a `raft_server_*` symbol. `dbtest` and `deptran_server` already link a second Rust static library (`librust_redis.a`); a trivial program linked against both archives, referencing one export from each, shows no duplicate-symbol clash on this toolchain, so `libraft.a` links alongside it rather than through an umbrella crate. **The first rustc-compiled build found the one false assumption of slice 1:** a libc++ `std::function` is not bitwise-relocatable (its small callable lives inside the object and `__f_` points at it), so the first `reg_learner_action` -- a by-value carrier moved twice on the way to its slot -- jumped through a dead stack frame (SIGSEGV in `raft_server_reg_learner_action`, confirmed under gdb). The fix is structural: the four callback carriers are never held by value anywhere but their final slot; the two interface setters take them by reference (`const T&` in C++, which is also what Paxos's macro now takes) and the two lab setters likewise, and the clone kernels construct in place. Every other carrier relocates bitwise. Test results in the commit message. |
+| perf | `paired-trial-19cfbb213-vs-1de45affa.csv` | 25 paired trials, before step A (`19cfbb213`) vs the rustc-compiled server (`1de45affa`): median +0.32%, mean +1.61%, 13/25 favour Rust, exact sign test p = 1.000. **No detectable throughput cost of the whole conversion, cutover included.** |
+
+## Performance verdict on the cutover (`19cfbb213` vs `1de45affa`)
+
+Same method as below: `scripts/raft_paired_trial.sh`, 25 ABBA pairs of
+`shard1ReplicationRaft`, one run at a time, on this host, the baseline tree's
+`build/dbtest` against this tree's -- which is now the rustc-compiled Raft
+server linked as `libraft.a`. Raw data:
+`docs/migration/raft/paired-trial-19cfbb213-vs-1de45affa.csv`; verdict by
+`python3 scripts/raft_paired_trial.py <csv>`.
+
+| | value |
+|---|---|
+| completed pairs | 25 (0 dropped) |
+| median delta (Rust - baseline) / baseline | **+0.32%** |
+| mean delta | +1.61% |
+| pairs favouring Rust | 13 / 25 |
+| exact two-sided sign test | p = 1.000 |
+| per-pair deltas (%) | -2.8 -5.7 -1.0 +0.3 +10.0 -0.7 -2.7 +12.1 +7.0 -2.4 -2.1 +6.6 -4.7 +7.0 +9.8 +4.5 +2.7 +6.0 -0.7 +4.9 -4.7 -4.8 +3.2 +8.2 -9.8 |
+
+No detectable throughput cost of the conversion, the cutover included: the
+Rust-compiled server is statistically indistinguishable from the C++ it
+replaced, with the same ~13% run-to-run spread the earlier trials showed.
 
 ## Performance verdict on A..C3
 
