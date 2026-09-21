@@ -247,36 +247,43 @@ type in a crossing signature is a scalar, a `#[repr(C)]` struct, a
 pointer, or an inline carrier with a pinned layout -- checked by a census
 over the extern blocks, like step C's.
 
-### E. Decide who owns each suspension point
+### E. Decide who owns each suspension point -- DECIDED
 
 **Goal:** an explicit, recorded decision for every place a Rust-authored
 body yields the fiber, so the cutover has no surprise.
 
-Today two Rust-authored bodies suspend: `ReplicationWakeGate::
-finish_wait_for_work` and `wait_for_election_timeout` (both call
-`waiter.wait_timeout`), and `HeartbeatDriver::run` /
-`heartbeat_loop_body` loop around the first. A Rust frame can live across
-the reactor's hand-written x86-64 context switch -- it is an ordinary stack
-swap on one OS thread -- but three things are then true and must be
-accepted in writing: fiber stacks have no Rust guard page, so overflow is a
-plain SIGSEGV rather than a stack-overflow abort; no unwind may cross the
-switch; and the Rust frame's stack budget is the fiber's, not the thread's.
+Surveyed after D1: five yield points reachable from Rust-authored bodies --
+`ReplicationWakeGate::finish_wait_for_work` and `::wait_for_election_timeout`
+(`IntEvent::wait_timeout`), heartbeat phase 2's response-collection poll
+(`raft_fiber_sleep_us` in a loop), `PrepareForShutdown`'s barrier yield, and
+`ApplyThreadLoop`'s 1 ms sleep, which is an OS thread, not a fiber -- inside
+two fiber loops, `HeartbeatDriver::run` and `ElectionTimerLoop::run`.
 
-Two options, and the goal statement leans to the first:
+**Decision: option 2. Rust stays on the fiber; C++ keeps the scheduling.**
+Option 1 (C++ owns every wait) would have turned phase 2's poll into a
+resumable state machine for no gain but timing risk. The three facts that
+make a Rust frame on a fiber stack sound are written at the spawn kernels in
+`server.cc` (`raft_spawn_election_timer`) and enforced where they can be:
 
-1. **C++ owns every loop and every wait.** `HeartbeatDriver::run` becomes a
-   C++ loop that calls `HeartbeatPrologue`, `heartbeat_phase0..3_body`,
-   `HeartbeatEpilogue` as non-suspending Rust calls; the wake gate's wait
-   moves to the C++ side of the call. Same for the election timer. Rust
-   never yields.
-2. **Rust runs on the fiber, with the three constraints recorded** and a
-   stack-size assertion in the spawn kernel.
+1. A fiber is a stack switch on one OS thread; each site has one PollThread,
+   so a suspended frame resumes where it left. `thread_local!` is stable.
+2. No unwind may cross the assembly switch: `raft_catch` catches on the C++
+   side, and the raft crate builds with **`panic = "abort"`** (`Cargo.toml`)
+   -- the one place rustc enforces it.
+3. The stack budget is rrr's `kDefaultStackBytes` (1 MiB) with a
+   **`PROT_NONE` guard page** below it (`srpc_fiber.c:46`) -- an overflow
+   faults at once rather than corrupting. (The first draft of this plan
+   assumed no guard page; the code has one.)
 
-Independent of A-D; can run alongside them.
+What this leaves for the cutover: `raft_create_int_event` still returns an
+`Arc<IntEvent>` by value and the gate clones its waiters seven times in Rust;
+under rustc those become the same out-parameter/kernel-clone shape D1 gave
+everything else, and the `Arc<ReplicationWakeGate>` the wake job captures
+becomes an `Arc::into_raw` handle with a Rust-exported wake entry point.
 
-**Done when:** either `grep -n 'wait_timeout\|\.wait(' src/deptran/raft/src/*.rs`
-is empty (option 1), or the constraints are written into the spawn kernels
-and enforced by an assertion (option 2).
+**Done when:** the constraints are stated at the spawn kernels, the crate
+profile aborts on panic, and the plan records the decision -- all three
+in the E commit.
 
 ### F. Cut over
 
@@ -348,7 +355,8 @@ all of these green, not some.
 | C1b | `90b6f828a` | **Kernels that name a field of the struct: 7 -> 0.** The log's writers are Rust: `AppendLocal` (was `SetLocalAppend`/`raft_set_local_append`), `AppendLeaderNoop`, `AeApplyIncoming`; so are `AeDecodePayload` (fills `decoded_terms_`), `LoadCurrentConfig` (fills `config_members_`) and the leader's batch loop (pushes `batch_buffer_`). What the old kernels could not do is the whole of what the new ones do: copy a `janus::Command` (`raft_command_clone`, `raft_wire_command_clone`, `raft_batch_command_at`), look inside a `TpcBatchCommand` (`raft_wire_is_batch`, `raft_wire_batch` -- the one `marshallable_cast`, made once per payload as before -- `raft_batch_len`, `raft_batch_term_at`), stamp and batch a `TpcCommitCommand` (`raft_command_is_tpc_commit`, `raft_stamped_commit`, `raft_batch_finalize` over `(ptr, len)` of the Rust Vec), read the yaml config (`raft_config_replica_count/site`), and the `RAFT_TEST_CORO` predicate for the no-op (`raft_leader_noop_enabled`, `raft_noop_command`). Kernels 53 -> 60 but 600 -> 545 lines: 50 value-only, 10 take `RaftServerBase*` for method calls only. Rust owns every container it declares. Test results in the commit message. |
 | C2 | `bcc298560` | The RaftLab suite holds the layout of nothing: `RaftServer::LabAccess` (11 accessors, 45 uses) and `test.cc`'s 70-odd direct reads (`server->state_.raft_log_.last_index()`, `->state_.commit_index_`, 24 `std::lock_guard(server->mtx_)`, ...) all became `Lab*` getters on `RaftServerBase` -- `LabMutex()`, `LabApplyMutex()`, `LabCommitIndex()`, `LabLastLogIndex()`, `LabLog()` for the fingerprint, and so on -- read-only, inline, emitted unconditionally because the DSL has no cfg. The RAFT_TEST `ServerWorker` uses `set_site_identity`/`set_commo`/`SiteId()` instead of poking three fields and `commo_`. `class RaftServer` is ctor + dtor. Receiver-aware census over every C++ file under `src/deptran` (comments and string literals stripped): **0 sites name a field of `RaftServerBase` or `RaftConsensusState`** through a server pointer; the two remaining hits are `RaftFrame::commo_` and `SiteInfo::partition_id_`, other objects' same-named fields. The shim constructor still sets two fields by implicit `this` (C3). Test results in the commit message. |
 | C3 | `2996cc572` | The shim constructor is `RaftServer::RaftServer() { ConstructRuntime(); }`: the two members the generated constructor could not initialise (`async_callback_lifetime_`, a `std::make_shared` whose payload points back at the object; `heartbeat_interval_us_`, a RAFT_TEST-dependent macro) come from `raft_new_callback_lifetime` and `raft_heartbeat_interval_default`, the legacy payload registration from `raft_ensure_legacy_payload_registered`, and the lab's initial role from `raft_lab_mode()` -- the RAFT_TEST_CORO predicate the no-op already used (renamed from `raft_leader_noop_enabled`). **Step C is done: `python3 scripts/raft_field_census.py` exits 0** -- no hand-written C++ under `src/deptran` names a field of `RaftServerBase` or `RaftConsensusState` through the server (comments, string literals, GEN and RUST regions stripped; `this` counts only inside the server's own carriers; other objects' same-named fields are listed, not counted). `class RaftServer` is ctor + dtor; its layout is private to the struct's generated region. Test results in the commit message. |
-| D1 | `raft: step D1` | **No kernel returns a non-trivial C++ object by value, and no Rust body clones a `Command` carrier.** The four `Command` returns became in-place `_into` kernels (`raft_command_clone_into`, `raft_noop_command_into`, `raft_batch_command_into`, `raft_wire_command_clone_into`); the three `shared_ptr` returns (`raft_new_callback_lifetime`, `raft_broadcast_vote_and_wait`, `raft_phase1_send_append`) and the batch `Arc` (`raft_stamped_commit_into`) take an out-parameter Rust default-constructs; the three `entry.cmd().clone()` sites call the clone kernel. The batch buffer's element is a new pinned 8-byte carrier `RaftTpcCommitPtr` (`rusty::Arc<TpcCommitCommand>` is one control-block pointer), so `raft_batch_finalize` iterates `(ptr, len)` over carriers of known size. Left for E, deliberately: `raft_create_int_event -> Arc<IntEvent>` and the seven waiter clones inside `ReplicationWakeGate`, which are the fiber-wait plumbing. Left for D2: the two `std::function` trait parameters. Behaviour-neutral by construction (same C++ runs, moved from a return to an out-slot); tests in the commit message. |
+| D1 | `204751587` | **No kernel returns a non-trivial C++ object by value, and no Rust body clones a `Command` carrier.** The four `Command` returns became in-place `_into` kernels (`raft_command_clone_into`, `raft_noop_command_into`, `raft_batch_command_into`, `raft_wire_command_clone_into`); the three `shared_ptr` returns (`raft_new_callback_lifetime`, `raft_broadcast_vote_and_wait`, `raft_phase1_send_append`) and the batch `Arc` (`raft_stamped_commit_into`) take an out-parameter Rust default-constructs; the three `entry.cmd().clone()` sites call the clone kernel. The batch buffer's element is a new pinned 8-byte carrier `RaftTpcCommitPtr` (`rusty::Arc<TpcCommitCommand>` is one control-block pointer), so `raft_batch_finalize` iterates `(ptr, len)` over carriers of known size. Left for E, deliberately: `raft_create_int_event -> Arc<IntEvent>` and the seven waiter clones inside `ReplicationWakeGate`, which are the fiber-wait plumbing. Left for D2: the two `std::function` trait parameters. Behaviour-neutral by construction (same C++ runs, moved from a return to an out-slot); tests in the commit message. |
+| E | `raft: step E` | **Decided: Rust stays on the fiber, C++ keeps the scheduling.** Five yield points surveyed (two wake-gate waits, phase 2's response poll, the shutdown barrier yield, and the apply thread's OS sleep); option 1 would have made phase 2 a resumable state machine for timing risk and no gain. The three soundness facts are written at `raft_spawn_election_timer` in `server.cc` and enforced where they can be: one OS thread per fiber (thread-locals stable); no unwind across the switch -- **`panic = "abort"` in the raft crate's profile**; a 1 MiB fiber stack with a `PROT_NONE` guard page (`srpc_fiber.c:46`) -- the plan's earlier "no guard page" assumption was wrong. Comments and a profile: no behaviour change, no rebuild; the gate re-checked the crate under the new profile. |
 
 ## Performance verdict on A..C3
 

@@ -36,3 +36,14 @@ rusty = { path = "../../rrr/rusty-rustc" }
 
 [lints.rust]
 unsafe_code = "allow"   # the CRC32 kernel is deliberately unsafe; see its # Safety doc
+
+# Step E of docs/migration/raft/plan.md: Rust-authored bodies run on rrr
+# fibers and suspend mid-frame. No unwind may cross the fiber's assembly
+# context switch, so a panic must abort rather than unwind. This crate is a
+# verification view today; under the cutover it is the runtime, and this is
+# the one place rustc enforces the constraint.
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"

@@ -522,6 +522,32 @@ void raft_noop_command_into(rusty::RaftCommand* dst) {
 }
 // Spawns the election-timer fiber. The lambda captures the loop by value --
 // two words -- so nothing here outlives the fiber.
+// ============================================================================
+// FIBER-HOSTED RUST (plan.md, step E -- decided, not deferred)
+//
+// The three spawn kernels below run Rust-authored bodies on rrr fibers, and
+// those bodies suspend mid-frame: ReplicationWakeGate::finish_wait_for_work
+// and ::wait_for_election_timeout (IntEvent::wait_timeout), heartbeat phase
+// 2's response-collection poll (raft_fiber_sleep_us), PrepareForShutdown's
+// barrier yield. C++ keeps the scheduling; Rust keeps the loops. The
+// alternative -- C++ owning every wait, Rust returning before each yield --
+// would turn phase 2 into a resumable state machine and change nothing but
+// risk in the protocol's timing.
+//
+// What makes a Rust frame on a fiber stack sound, and what the cutover must
+// keep true:
+//  1. A fiber is a stack switch on ONE OS thread (srpc_fiber.c); every site
+//     has one PollThread, so a suspended frame resumes on the thread it
+//     left. Rust's thread_local! is per OS thread and therefore stable.
+//  2. No unwinding may cross the assembly switch. raft_catch is the only
+//     catch on these paths and it catches on the C++ side; the raft crate
+//     builds with panic = "abort" (Cargo.toml) so a Rust panic can never
+//     try.
+//  3. The stack budget is rrr's kDefaultStackBytes (1 MiB,
+//     reactor.rs) with a PROT_NONE guard page below it (srpc_fiber.c:46):
+//     an overflow faults at once, it does not corrupt. Rust's own
+//     stack-overflow message will not appear, the SIGSEGV will.
+// ============================================================================
 void raft_spawn_election_timer(RaftServerBase* self, uint64_t wait_int_us) {
   const ElectionTimerLoop loop = ElectionTimerLoop::new_(self, wait_int_us);
   Fiber::create_run([loop]() { loop.run(); });
@@ -818,12 +844,14 @@ void raft_clear_async_callback_owner(
 // with the other spawns.
 void heartbeat_loop_body(RaftServerBase* server);
 
+// Fiber-hosted Rust; the constraints are stated at raft_spawn_election_timer.
 void raft_spawn_heartbeat_loop(RaftServerBase* self) {
   // The loop is Rust end to end now (heartbeat_loop_body); this is only the
   // fiber spawn, which has no DSL spelling.
   Fiber::create_run([self]() { heartbeat_loop_body(self); });
 }
 
+// Fiber-hosted Rust; the constraints are stated at raft_spawn_election_timer.
 void raft_spawn_election_timer_fiber(RaftServerBase* self) {
   Fiber::create_run([self]() { self->StartElectionTimer(); });
 }
