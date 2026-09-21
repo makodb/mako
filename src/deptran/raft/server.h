@@ -4503,12 +4503,18 @@ impl RaftServerBase {
     // individual install failure writes it back to zero after the accepted
     // leader contact has already set it.
     #[allow(clippy::too_many_arguments, clippy::not_unsafe_ptr_arg_deref)]
+    // term_out is a raw pointer end to end: the RPC service's out-parameter
+    // arrives through the C ABI and the kernel as a pointer, and an `&mut`
+    // here would only be rebuilt from it at the boundary.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn OnInstallSnapshotLocked(&mut self, term: u64, leader_id: u64,
                                    last_included_index: u64,
                                    last_included_term: u64,
                                    data: *const rusty::RaftByteString,
-                                   term_out: &mut u64) {
-        *term_out = 0;
+                                   term_out: *mut u64) {
+        unsafe {
+            *term_out = 0;
+        }
 
         // Edge case 0: the server is shutting down.
         if self.stop_.load(rusty::sync::atomic::Ordering::Acquire) {
@@ -4523,7 +4529,9 @@ impl RaftServerBase {
             rusty::raft_log_info_4(
                 "[INSTALL-SNAPSHOT] Site {}: Rejecting InstallSnapshot from leader {} (leader_term={} < my_term={})",
                 self.site_id_, leader_id, term, self.state_.current_term_);
-            *term_out = self.state_.current_term_;
+            unsafe {
+                *term_out = self.state_.current_term_;
+            }
             return;
         }
 
@@ -4612,7 +4620,9 @@ impl RaftServerBase {
         self.resetTimerLocked("received InstallSnapshot");
         // From here current_term_ denotes an accepted current-term leader
         // contact; individual install failures overwrite it with zero.
-        *term_out = self.state_.current_term_;
+        unsafe {
+            *term_out = self.state_.current_term_;
+        }
 
         // A current-term leader may retry a snapshot after this follower has
         // already committed, applied or snapshotted through its boundary.
@@ -4637,7 +4647,9 @@ impl RaftServerBase {
                 "[INSTALL-SNAPSHOT] Site {}: rejecting snapshot boundary ({}, {}) that conflicts with local snapshot ({}, {})",
                 self.site_id_, last_included_index, last_included_term,
                 self.state_.snapidx_, self.state_.snapterm_);
-            *term_out = 0;
+            unsafe {
+                *term_out = 0;
+            }
             return;
         }
         if raft_server_snapshot_is_stale(last_included_index,
@@ -4655,7 +4667,9 @@ impl RaftServerBase {
             rusty::raft_log_error_2(
                 "[INSTALL-SNAPSHOT] Site {}: Cannot install terminal snapshot index {}; no successor index is representable",
                 self.site_id_, last_included_index);
-            *term_out = 0;
+            unsafe {
+                *term_out = 0;
+            }
             return;
         }
 
@@ -4665,7 +4679,9 @@ impl RaftServerBase {
             rusty::raft_log_error_2(
                 "[INSTALL-SNAPSHOT] Site {}: Cannot install snapshot at index {} without configured snapshot storage",
                 self.site_id_, last_included_index);
-            *term_out = 0;
+            unsafe {
+                *term_out = 0;
+            }
             return;
         }
 
@@ -4699,11 +4715,15 @@ impl RaftServerBase {
         };
         if install == 2 {
             self.FailStop();
-            *term_out = 0;
+            unsafe {
+                *term_out = 0;
+            }
             return;
         }
         if install != 3 {
-            *term_out = 0;
+            unsafe {
+                *term_out = 0;
+            }
             return;
         }
 
@@ -6226,7 +6246,7 @@ impl RaftSpecific for RaftServerBase {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=9b981b11ca995a358fa692f90cd069c29374a3626cf6c7f329aee677d1a77033*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=09283e280da39018924d270ed1a440ec8b07ddc302d053f2e3f2561fbf8dfa52*/
 enum class RaftEnvError : int32_t;
 constexpr RaftEnvError RaftEnvError_NOT_A_WHOLE_NUMBER();
 constexpr RaftEnvError RaftEnvError_OVERFLOWS_U64();
@@ -6451,7 +6471,7 @@ struct RaftServerBase : public RaftSpecific {
     bool InitializeSnapshotManagerLocked();
     void InstallSnapshotReplyAccepted(uint16_t site_id, size_t ord, uint64_t snap_last_idx, uint64_t send_term, uint64_t follower_term);
     void FailStop();
-    void OnInstallSnapshotLocked(uint64_t term, uint64_t leader_id, uint64_t last_included_index, uint64_t last_included_term, const rusty::RaftByteString* data, uint64_t& term_out);
+    void OnInstallSnapshotLocked(uint64_t term, uint64_t leader_id, uint64_t last_included_index, uint64_t last_included_term, const rusty::RaftByteString* data, uint64_t* term_out);
     void doVote(uint64_t lst_log_idx, int64_t lst_log_term, uint16_t can_id, int64_t can_term, int64_t& reply_term, int8_t& vote_granted, bool vote);
     void StartApplyThread();
     void Shutdown();
@@ -7162,16 +7182,21 @@ inline void RaftServerBase::FailStop() {
     this->apply_thread_running_.store(false, rusty::sync::atomic::Ordering::SeqCst);
 }
 
-inline void RaftServerBase::OnInstallSnapshotLocked(uint64_t term, uint64_t leader_id, uint64_t last_included_index, uint64_t last_included_term, const rusty::RaftByteString* data, uint64_t& term_out) {
-    uint64_t* term_out_shadow1 = &term_out;
-    *term_out_shadow1 = static_cast<uint64_t>(0);
+inline void RaftServerBase::OnInstallSnapshotLocked(uint64_t term, uint64_t leader_id, uint64_t last_included_index, uint64_t last_included_term, const rusty::RaftByteString* data, uint64_t* term_out) {
+    // @unsafe
+    {
+        *term_out = static_cast<uint64_t>(0);
+    }
     if (this->stop_.load(rusty::sync::atomic::Ordering::Acquire)) {
         rusty::raft_log_info_1("[INSTALL-SNAPSHOT] Site {}: Ignoring InstallSnapshot - server shutting down", this->site_id_);
         return;
     }
     if (rusty::detail::deref_if_pointer_like(term) < rusty::detail::deref_if_pointer_like(this->state_.current_term_)) {
         rusty::raft_log_info_4("[INSTALL-SNAPSHOT] Site {}: Rejecting InstallSnapshot from leader {} (leader_term={} < my_term={})", this->site_id_, std::move(leader_id), std::move(term), this->state_.current_term_);
-        *term_out_shadow1 = this->state_.current_term_;
+        // @unsafe
+        {
+            *term_out = this->state_.current_term_;
+        }
         return;
     }
     if (rusty::detail::rust_not(raft_server_snapshot_term_is_valid(std::move(last_included_term), std::move(term)))) {
@@ -7210,7 +7235,10 @@ inline void RaftServerBase::OnInstallSnapshotLocked(uint64_t term, uint64_t lead
         this->LogTermChange(std::string_view("InstallSnapshot carried newer term"), std::move(previous_term), this->state_.current_term_, std::move(leader_site));
     }
     this->resetTimerLocked(std::string_view("received InstallSnapshot"));
-    *term_out_shadow1 = this->state_.current_term_;
+    // @unsafe
+    {
+        *term_out = this->state_.current_term_;
+    }
     uint64_t local_progress_index = this->state_.commit_index_;
     if (rusty::detail::deref_if_pointer_like(this->state_.execute_index_) > rusty::detail::deref_if_pointer_like(local_progress_index)) {
         local_progress_index = this->state_.execute_index_;
@@ -7224,7 +7252,10 @@ inline void RaftServerBase::OnInstallSnapshotLocked(uint64_t term, uint64_t lead
     }
     if (((rusty::detail::deref_if_pointer_like(last_included_index) == rusty::detail::deref_if_pointer_like(this->state_.snapidx_)) && (rusty::detail::deref_if_pointer_like(this->state_.snapidx_) != 0)) && (rusty::detail::deref_if_pointer_like(last_included_term) != (static_cast<uint64_t>(this->state_.snapterm_)))) {
         rusty::raft_log_error_5("[INSTALL-SNAPSHOT] Site {}: rejecting snapshot boundary ({}, {}) that conflicts with local snapshot ({}, {})", this->site_id_, std::move(last_included_index), std::move(last_included_term), this->state_.snapidx_, this->state_.snapterm_);
-        *term_out_shadow1 = static_cast<uint64_t>(0);
+        // @unsafe
+        {
+            *term_out = static_cast<uint64_t>(0);
+        }
         return;
     }
     if (raft_server_snapshot_is_stale(std::move(last_included_index), std::move(local_progress_index))) {
@@ -7233,13 +7264,19 @@ inline void RaftServerBase::OnInstallSnapshotLocked(uint64_t term, uint64_t lead
     }
     if (rusty::detail::rust_not(raft_server_log_index_has_successor(std::move(last_included_index)))) {
         rusty::raft_log_error_2("[INSTALL-SNAPSHOT] Site {}: Cannot install terminal snapshot index {}; no successor index is representable", this->site_id_, std::move(last_included_index));
-        *term_out_shadow1 = static_cast<uint64_t>(0);
+        // @unsafe
+        {
+            *term_out = static_cast<uint64_t>(0);
+        }
         return;
     }
     const bool configured = raft_snapshot_manager_is_set(&this->snapshot_manager_);
     if (!configured) {
         rusty::raft_log_error_2("[INSTALL-SNAPSHOT] Site {}: Cannot install snapshot at index {} without configured snapshot storage", this->site_id_, std::move(last_included_index));
-        *term_out_shadow1 = static_cast<uint64_t>(0);
+        // @unsafe
+        {
+            *term_out = static_cast<uint64_t>(0);
+        }
         return;
     }
     auto boundary = this->state_.raft_log_.get(std::move(last_included_index));
@@ -7249,11 +7286,17 @@ inline void RaftServerBase::OnInstallSnapshotLocked(uint64_t term, uint64_t lead
     const int32_t install = raft_install_snapshot_payload(static_cast<const rusty::RaftPrepareSnapshotCb*>(&this->prepare_sm_snapshot_cb_), static_cast<const rusty::RaftSnapshotManagerPtr*>(&this->snapshot_manager_), this->site_id_, std::move(last_included_index), std::move(last_included_term), data);
     if (rusty::detail::deref_if_pointer_like(install) == static_cast<int32_t>(2)) {
         this->FailStop();
-        *term_out_shadow1 = static_cast<uint64_t>(0);
+        // @unsafe
+        {
+            *term_out = static_cast<uint64_t>(0);
+        }
         return;
     }
     if (rusty::detail::deref_if_pointer_like(install) != static_cast<int32_t>(3)) {
-        *term_out_shadow1 = static_cast<uint64_t>(0);
+        // @unsafe
+        {
+            *term_out = static_cast<uint64_t>(0);
+        }
         return;
     }
     this->state_.snapidx_ = std::move(last_included_index);
@@ -8329,6 +8372,15 @@ inline bool ElectionTimerLoop::await_vote_settled() const {
 // silently without the assertion.
 static_assert(std::is_base_of_v<RaftSpecific, RaftServerBase>);
 static_assert(std::is_base_of_v<TxLogServer, RaftServerBase>);
+
+// The C ABI over the struct: every behaviour the shim, the kernels and the lab
+// harness reach, as extern "C" functions defined in Rust (server.cc). Step F1
+// of docs/migration/raft/plan.md; the header is generated by
+// scripts/raft_gen_exports.py. It opens namespace janus itself, so the
+// namespace is closed around the include.
+}  // namespace janus
+#include "server_exports.h"
+namespace janus {
 
 // The C++ shim over the Rust struct -- what is left after steps A, B and C of
 // docs/migration/raft/plan.md: the two special members the DSL cannot spell,

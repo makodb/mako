@@ -2785,12 +2785,18 @@ impl RaftServerBase {
     // individual install failure writes it back to zero after the accepted
     // leader contact has already set it.
     #[allow(clippy::too_many_arguments, clippy::not_unsafe_ptr_arg_deref)]
+    // term_out is a raw pointer end to end: the RPC service's out-parameter
+    // arrives through the C ABI and the kernel as a pointer, and an `&mut`
+    // here would only be rebuilt from it at the boundary.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn OnInstallSnapshotLocked(&mut self, term: u64, leader_id: u64,
                                    last_included_index: u64,
                                    last_included_term: u64,
                                    data: *const rusty::RaftByteString,
-                                   term_out: &mut u64) {
-        *term_out = 0;
+                                   term_out: *mut u64) {
+        unsafe {
+            *term_out = 0;
+        }
 
         // Edge case 0: the server is shutting down.
         if self.stop_.load(rusty::sync::atomic::Ordering::Acquire) {
@@ -2805,7 +2811,9 @@ impl RaftServerBase {
             rusty::raft_log_info_4(
                 "[INSTALL-SNAPSHOT] Site {}: Rejecting InstallSnapshot from leader {} (leader_term={} < my_term={})",
                 self.site_id_, leader_id, term, self.state_.current_term_);
-            *term_out = self.state_.current_term_;
+            unsafe {
+                *term_out = self.state_.current_term_;
+            }
             return;
         }
 
@@ -2894,7 +2902,9 @@ impl RaftServerBase {
         self.resetTimerLocked("received InstallSnapshot");
         // From here current_term_ denotes an accepted current-term leader
         // contact; individual install failures overwrite it with zero.
-        *term_out = self.state_.current_term_;
+        unsafe {
+            *term_out = self.state_.current_term_;
+        }
 
         // A current-term leader may retry a snapshot after this follower has
         // already committed, applied or snapshotted through its boundary.
@@ -2919,7 +2929,9 @@ impl RaftServerBase {
                 "[INSTALL-SNAPSHOT] Site {}: rejecting snapshot boundary ({}, {}) that conflicts with local snapshot ({}, {})",
                 self.site_id_, last_included_index, last_included_term,
                 self.state_.snapidx_, self.state_.snapterm_);
-            *term_out = 0;
+            unsafe {
+                *term_out = 0;
+            }
             return;
         }
         if raft_server_snapshot_is_stale(last_included_index,
@@ -2937,7 +2949,9 @@ impl RaftServerBase {
             rusty::raft_log_error_2(
                 "[INSTALL-SNAPSHOT] Site {}: Cannot install terminal snapshot index {}; no successor index is representable",
                 self.site_id_, last_included_index);
-            *term_out = 0;
+            unsafe {
+                *term_out = 0;
+            }
             return;
         }
 
@@ -2947,7 +2961,9 @@ impl RaftServerBase {
             rusty::raft_log_error_2(
                 "[INSTALL-SNAPSHOT] Site {}: Cannot install snapshot at index {} without configured snapshot storage",
                 self.site_id_, last_included_index);
-            *term_out = 0;
+            unsafe {
+                *term_out = 0;
+            }
             return;
         }
 
@@ -2981,11 +2997,15 @@ impl RaftServerBase {
         };
         if install == 2 {
             self.FailStop();
-            *term_out = 0;
+            unsafe {
+                *term_out = 0;
+            }
             return;
         }
         if install != 3 {
-            *term_out = 0;
+            unsafe {
+                *term_out = 0;
+            }
             return;
         }
 
