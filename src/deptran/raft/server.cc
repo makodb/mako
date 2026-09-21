@@ -111,44 +111,6 @@ void RaftCheckedMutex::ReportReentry() {
 
 namespace {
 
-// @unsafe - Thread-safe PollThread::add bridge.  The queued closure captures
-// only the gate Arc, never a RaftServer pointer.
-void QueueReplicationWake(
-    const rusty::Arc<ReplicationWakeGate>& replication_wake_gate) {
-  auto owner = replication_wake_gate->reserve_wake_owner();
-  if (owner.is_none()) {
-    return;
-  }
-
-  auto gate_for_job = replication_wake_gate.clone();
-  auto wake_job = rusty::Arc<OneTimeJob>::new_(
-      OneTimeJob::new_([gate_for_job]() {
-        gate_for_job->wake_on_owner();
-      }));
-  owner.as_ref().unwrap()->add(rusty::Arc<Job>(wake_job));
-}
-
-// @unsafe - Thread-safe shutdown bridge.  The queued closure captures only
-// the gate Arc, never the RaftServer whose loops it wakes.
-void QueueReplicationShutdownWake(
-    const rusty::Arc<ReplicationWakeGate>& replication_wake_gate) {
-  auto owner = replication_wake_gate->reserve_shutdown_wake_owner();
-  if (owner.is_none()) {
-    return;
-  }
-
-  auto gate_for_job = replication_wake_gate.clone();
-  auto wake_job = rusty::Arc<OneTimeJob>::new_(
-      OneTimeJob::new_([gate_for_job]() {
-        gate_for_job->wake_shutdown_on_owner();
-      }));
-  owner.as_ref().unwrap()->add(rusty::Arc<Job>(wake_job));
-}
-
-}  // namespace
-
-namespace {
-
 // RaftLab snapshots contain no external application state. This transaction
 // preserves the same prepare/commit ordering as production while Commit is a
 // one-shot no-op after strict marker validation.
@@ -489,25 +451,16 @@ void raft_apply_thread_join(rusty::RaftStdThread* thread) {
 void raft_commo_set_network_enabled(rusty::Communicator* commo, bool enabled) {
   commo_of(commo)->SetNetworkEnabled(enabled);
 }
-// The gate's allocation, through the in-place seam. See the declaration in
-// server.h for why the DSL cannot spell this one.
-rusty::Arc<ReplicationWakeGate> raft_new_replication_wake_gate() {
-  return rusty::Arc<ReplicationWakeGate>::make_with(
-      []() { return ReplicationWakeGate::new_(); });
-}
-
-// The reactor half of RaftServerBase::RequestReplication: the DSL decided to
-// wake, this builds the owner-thread job. No downcast -- the gate is a base
-// field now.
-void raft_queue_replication_wake(
-    const rusty::Arc<ReplicationWakeGate>* gate) {
-  QueueReplicationWake(*gate);
-}
-
-// The reactor half of RaftServerBase::CloseReplicationWakeGate, likewise.
-void raft_queue_replication_shutdown_wake(
-    const rusty::Arc<ReplicationWakeGate>* gate) {
-  QueueReplicationShutdownWake(*gate);
+// @unsafe - Thread-safe PollThread::add bridge, the one reactor step of the
+// wake path. `token` is a Box<GateWakeJob> made raw by
+// RaftServerBase::queue_wake_job; the job hands it back to Rust exactly once,
+// through the raft_wake_job_run export, which takes the Box and drops it.
+// Nothing here names the server or the gate.
+void raft_queue_wake_job(const rusty::RaftPollThreadPtr* owner,
+                         rusty::ffi::c_void* token) {
+  auto wake_job = rusty::Arc<OneTimeJob>::new_(
+      OneTimeJob::new_([token]() { raft_wake_job_run(token); }));
+  (*owner)->add(rusty::Arc<Job>(wake_job));
 }
 // A copy of a janus::Command -- a shared_ptr refcount the opaque Rust carrier
 // cannot touch -- made here and handed back by value. Was the reason
@@ -1494,6 +1447,7 @@ using janus::RaftServerBase;
 using janus::RaftLockGuard;
 using janus::RaftLog;  // the lab_log export returns a pointer to it
 using janus::ElectionTimerLoop;  // the election-timer loop export builds one
+using janus::GateWakeJob;  // the wake-job export takes one back
 }  // namespace server_h
 
 namespace janus {
@@ -4196,6 +4150,7 @@ pub fn on_append_entries_body(server: &mut RaftServerBase,
 use crate::server_h::RaftLog;
 use crate::scheduler_h::RaftStartResult;
 use crate::scheduler_h::TxLogServer;
+use crate::server_h::GateWakeJob;
 use crate::server_h::ElectionTimerLoop;
 
 // --- Lifetime. The allocation is a kernel pair until the cutover (see their
@@ -4232,6 +4187,16 @@ pub unsafe extern "C" fn raft_server_run_election_timer_loop(s: *mut RaftServerB
                                                               wait_int_us: u64) {
     let timer: ElectionTimerLoop = ElectionTimerLoop::new(s, wait_int_us);
     timer.run()
+}
+
+// --- The wake job, entered from the reactor's OneTimeJob (raft_queue_wake_job).
+/// # Safety
+/// `token` is the Box<GateWakeJob> RaftServerBase::queue_wake_job made raw,
+/// handed back exactly once.
+#[no_mangle]
+pub unsafe extern "C" fn raft_wake_job_run(token: *mut core::ffi::c_void) {
+    let job: rusty::Box<GateWakeJob> = rusty::Box::from_raw(token as *mut GateWakeJob);
+    job.run();
 }
 
 // --- The replication interface: TxLogServer and RaftSpecific.
@@ -4766,7 +4731,7 @@ pub unsafe extern "C" fn raft_server_shutdown(s: *mut RaftServerBase) {
     (*s).Shutdown()
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_round_scope version=1 rust_sha256=5dd006a9fa60bb2b71160c349b53b11dedac87f00f188347c8a006d581ead24c*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_round_scope version=1 rust_sha256=7ec2f1d07ce09aac0d04fec5576b4e3eae36879b5a0a7257339b429d4b6b4809*/
 enum class AppendReplyAction : int32_t;
 constexpr AppendReplyAction AppendReplyAction_IGNORED();
 constexpr AppendReplyAction AppendReplyAction_STEP_DOWN();
@@ -4787,6 +4752,7 @@ struct HeartbeatDriver;
 struct AppendReport;
 bool heartbeat_round_saturated(uint64_t round_counter);
 AppendReplyOutcome append_reply_nothing(AppendReplyAction action);
+extern "C" void raft_wake_job_run(rusty::ffi::c_void* token);
 
 enum class AppendReplyAction : int32_t {
     IGNORED = 0,
@@ -4989,6 +4955,8 @@ using ::server_h::RaftLog;
 using ::scheduler_h::RaftStartResult;
 
 using ::scheduler_h::TxLogServer;
+
+using ::server_h::GateWakeJob;
 
 using ::server_h::ElectionTimerLoop;
 
@@ -5732,6 +5700,15 @@ extern "C" void raft_server_heartbeat_loop(server_h::RaftServerBase* s) {
 extern "C" void raft_server_run_election_timer_loop(server_h::RaftServerBase* s, uint64_t wait_int_us) {
     const server_h::ElectionTimerLoop timer = ElectionTimerLoop::new_(s, std::move(wait_int_us));
     timer.run();
+}
+
+/// # Safety
+/// `token` is the Box<GateWakeJob> RaftServerBase::queue_wake_job made raw,
+/// handed back exactly once.
+// @unsafe
+extern "C" void raft_wake_job_run(rusty::ffi::c_void* token) {
+    const rusty::Box<server_h::GateWakeJob> job = rusty::Box<server_h::GateWakeJob>::from_raw(const_cast<server_h::GateWakeJob*>(reinterpret_cast<const server_h::GateWakeJob*>(token)));
+    job->run();
 }
 
 /// # Safety

@@ -1303,6 +1303,28 @@ impl ReplicationWakeGate {
     }
 }
 
+// One queued wake, as the reactor carries it: the gate's handle and which
+// wake to run. Boxed and made raw by RaftServerBase::queue_wake_job, taken
+// back and dropped by the raft_wake_job_run export (server.cc).
+pub struct GateWakeJob {
+    pub gate: rusty::sync::Arc<ReplicationWakeGate>,
+    pub shutdown: bool,
+}
+
+impl GateWakeJob {
+    // The wake itself, here rather than in the export: the emitter knows
+    // `gate` is an Arc only inside the block that declares it, and renders a
+    // method call on it with an arrow; from another module it would emit a
+    // dot, which does not compile.
+    pub fn run(&self) {
+        if self.shutdown {
+            self.gate.wake_shutdown_on_owner();
+        } else {
+            self.gate.wake_on_owner();
+        }
+    }
+}
+
 use rusty::cpp_inherit;
 use crate::scheduler_h::TxLogServer;
 use crate::scheduler_h::RaftSpecific;
@@ -1385,18 +1407,11 @@ unsafe extern "C" {
     fn raft_command_has_value(cmd: *const rusty::RaftCommand) -> bool;
     fn raft_apply_thread_join(thread: *mut rusty::RaftStdThread);
     fn raft_commo_set_network_enabled(commo: *mut rusty::Communicator, enabled: bool);
-    // The gate's allocation. `rusty::sync::Arc::new(ReplicationWakeGate::new())`
-    // emits `rusty::Arc<T>::make(T::new_())`, which move-constructs the
-    // payload into the allocation -- and a PhantomPinned payload has its move
-    // constructor deleted, so that does not compile. The runtime's in-place
-    // seam, `Arc<T>::make_with(factory)`, places the prvalue directly in the
-    // allocation with no move; the transpiler has a fusion that rewrites the
-    // former into the latter, but it does not fire for this call shape, so
-    // the seam is named here instead of being silently wrong.
-    fn raft_new_replication_wake_gate()
-        -> rusty::sync::Arc<ReplicationWakeGate>;
-    fn raft_queue_replication_wake(gate: *const rusty::sync::Arc<ReplicationWakeGate>);
-    fn raft_queue_replication_shutdown_wake(gate: *const rusty::sync::Arc<ReplicationWakeGate>);
+    // The reactor's PollThread::add, for the wake job: `owner` is the gate's
+    // owner thread, `token` a Box<GateWakeJob> made raw (queue_wake_job),
+    // which the queued OneTimeJob hands back to raft_wake_job_run once.
+    fn raft_queue_wake_job(owner: *const rusty::RaftPollThreadPtr,
+                           token: *mut core::ffi::c_void);
     // The RPC entry points' C++ halves. The first two exist only because
     // on_request_vote_body and on_append_entries_body are emitted in
     // server.cc's translation unit, which this header cannot name; the third
@@ -1708,9 +1723,14 @@ impl RaftServerBase {
             peer_sites_: rusty::Vec::new(),
             stop_: rusty::sync::atomic::AtomicBool::new(false),
             rpc_ready_: rusty::sync::atomic::AtomicBool::new(false),
-            replication_wake_gate_: unsafe {
-                raft_new_replication_wake_gate()
-            },
+            // new_cyclic, not new: the emitter lowers `Arc::new(T::new())` to
+            // `Arc<T>::make(T::new_())`, a move into the allocation that a
+            // PhantomPinned payload cannot make, and lowers new_cyclic to the
+            // runtime's deferred-init path, which constructs the prvalue in
+            // place (arc.hpp, new_cyclic). Checked on a scratch carrier, not
+            // assumed. The Weak is unused: the gate keeps no handle to itself.
+            replication_wake_gate_: rusty::sync::Arc::new_cyclic(
+                |_weak| ReplicationWakeGate::new()),
             startup_finished_: rusty::Mutex::new(false),
             startup_cv_: rusty::Condvar::new(),
             startup_succeeded_: false,
@@ -3525,18 +3545,36 @@ impl RaftServerBase {
 
     // @unsafe - publishes the cross-thread replication wake.
     //
-    // The DECISION is Rust and the reactor job is not: publish() reports
-    // whether the gate is still accepting, and only then is a OneTimeJob
-    // queued on the owner PollThread -- building that job is reactor
-    // surgery with no DSL spelling, so it stays a kernel.
+    // Every decision is Rust: publish() reports whether the gate is still
+    // accepting, reserve_wake_owner() hands out the owner thread if a waiter
+    // is armed and no wake is already queued, and the job the reactor runs is
+    // a Rust-owned token (queue_wake_job). Only PollThread::add is a kernel.
     pub fn RequestReplication(&mut self) {
         if !self.replication_wake_gate_.publish() {
             return;
         }
+        let owner: rusty::Option<rusty::RaftPollThreadPtr> =
+            self.replication_wake_gate_.reserve_wake_owner();
+        if let rusty::Some(owner) = owner {
+            self.queue_wake_job(owner, false);
+        }
+    }
+
+    // The reactor job as Rust owns it: a Box<GateWakeJob> -- the gate's Arc
+    // and which wake to run -- made raw for the kernel, which queues a
+    // OneTimeJob on the owner thread whose body is the raft_wake_job_run
+    // export: it takes the Box back, runs the wake, and drops it. The token,
+    // not the server, is what the job holds, as the C++ closure used to hold
+    // only the gate.
+    fn queue_wake_job(&self, owner: rusty::RaftPollThreadPtr, is_shutdown: bool) {
+        let token: rusty::Box<GateWakeJob> = rusty::Box::new(GateWakeJob {
+            gate: self.replication_wake_gate_.clone(),
+            shutdown: is_shutdown,
+        });
         unsafe {
-            raft_queue_replication_wake(
-                &self.replication_wake_gate_
-                    as *const rusty::sync::Arc<ReplicationWakeGate>);
+            raft_queue_wake_job(
+                &owner as *const rusty::RaftPollThreadPtr,
+                rusty::Box::into_raw(token) as *mut core::ffi::c_void);
         }
     }
 
@@ -3591,13 +3629,13 @@ impl RaftServerBase {
 
     // @unsafe - Close ordering is intentional: make new submissions inert,
     // queue one owner-thread wake for an armed waiter, then drop the owner's
-    // gate handle. Only the middle step is a kernel.
+    // gate handle.
     pub fn CloseReplicationWakeGate(&mut self) {
         self.replication_wake_gate_.close();
-        unsafe {
-            raft_queue_replication_shutdown_wake(
-                &self.replication_wake_gate_
-                    as *const rusty::sync::Arc<ReplicationWakeGate>);
+        let owner: rusty::Option<rusty::RaftPollThreadPtr> =
+            self.replication_wake_gate_.reserve_shutdown_wake_owner();
+        if let rusty::Some(owner) = owner {
+            self.queue_wake_job(owner, true);
         }
         self.replication_wake_gate_.clear_owner();
     }

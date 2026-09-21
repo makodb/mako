@@ -2853,9 +2853,32 @@ impl ReplicationWakeGate {
         *guard = rusty::None;
     }
 }
+
+// One queued wake, as the reactor carries it: the gate's handle and which
+// wake to run. Boxed and made raw by RaftServerBase::queue_wake_job, taken
+// back and dropped by the raft_wake_job_run export (server.cc).
+pub struct GateWakeJob {
+    pub gate: rusty::sync::Arc<ReplicationWakeGate>,
+    pub shutdown: bool,
+}
+
+impl GateWakeJob {
+    // The wake itself, here rather than in the export: the emitter knows
+    // `gate` is an Arc only inside the block that declares it, and renders a
+    // method call on it with an arrow; from another module it would emit a
+    // dot, which does not compile.
+    pub fn run(&self) {
+        if self.shutdown {
+            self.gate.wake_shutdown_on_owner();
+        } else {
+            self.gate.wake_on_owner();
+        }
+    }
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.replication_wake_gate version=1 rust_sha256=a92ae4bef56be9d7b30c39ee1dce2416bde9890542d272217536eb49ce10a6d9*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.replication_wake_gate version=1 rust_sha256=73be7e2033b20e22623f67604e3ffaef6038996bfb42f20a5bf4f8a594a20349*/
 struct ReplicationWakeGate;
+struct GateWakeJob;
 
 extern "C" {
     void raft_int_event_set(const rusty::RaftIntEventPtr* event, int32_t value);
@@ -2894,6 +2917,13 @@ struct ReplicationWakeGate {
     void disarm_election_waiter() const;
     ReplicationWakeGate(ReplicationWakeGate&&) = delete;
     ReplicationWakeGate& operator=(ReplicationWakeGate&&) = delete;
+};
+
+struct GateWakeJob {
+    rusty::Arc<ReplicationWakeGate> gate;
+    bool shutdown;
+
+    void run() const;
 };
 
 
@@ -3061,6 +3091,14 @@ inline void ReplicationWakeGate::disarm_election_waiter() const {
     auto guard = this->election_waiter_.lock().unwrap();
     *guard = rusty::None;
 }
+
+inline void GateWakeJob::run() const {
+    if (this->shutdown) {
+        rusty::detail::deref_if_pointer_like(this->gate).wake_shutdown_on_owner();
+    } else {
+        rusty::detail::deref_if_pointer_like(this->gate).wake_on_owner();
+    }
+}
 /*RUSTYCPP:GEN-END id=raft_server.replication_wake_gate*/
 
 // ============================================================================
@@ -3173,18 +3211,11 @@ unsafe extern "C" {
     fn raft_command_has_value(cmd: *const rusty::RaftCommand) -> bool;
     fn raft_apply_thread_join(thread: *mut rusty::RaftStdThread);
     fn raft_commo_set_network_enabled(commo: *mut rusty::Communicator, enabled: bool);
-    // The gate's allocation. `rusty::sync::Arc::new(ReplicationWakeGate::new())`
-    // emits `rusty::Arc<T>::make(T::new_())`, which move-constructs the
-    // payload into the allocation -- and a PhantomPinned payload has its move
-    // constructor deleted, so that does not compile. The runtime's in-place
-    // seam, `Arc<T>::make_with(factory)`, places the prvalue directly in the
-    // allocation with no move; the transpiler has a fusion that rewrites the
-    // former into the latter, but it does not fire for this call shape, so
-    // the seam is named here instead of being silently wrong.
-    fn raft_new_replication_wake_gate()
-        -> rusty::sync::Arc<ReplicationWakeGate>;
-    fn raft_queue_replication_wake(gate: *const rusty::sync::Arc<ReplicationWakeGate>);
-    fn raft_queue_replication_shutdown_wake(gate: *const rusty::sync::Arc<ReplicationWakeGate>);
+    // The reactor's PollThread::add, for the wake job: `owner` is the gate's
+    // owner thread, `token` a Box<GateWakeJob> made raw (queue_wake_job),
+    // which the queued OneTimeJob hands back to raft_wake_job_run once.
+    fn raft_queue_wake_job(owner: *const rusty::RaftPollThreadPtr,
+                           token: *mut core::ffi::c_void);
     // The RPC entry points' C++ halves. The first two exist only because
     // on_request_vote_body and on_append_entries_body are emitted in
     // server.cc's translation unit, which this header cannot name; the third
@@ -3496,9 +3527,14 @@ impl RaftServerBase {
             peer_sites_: rusty::Vec::new(),
             stop_: rusty::sync::atomic::AtomicBool::new(false),
             rpc_ready_: rusty::sync::atomic::AtomicBool::new(false),
-            replication_wake_gate_: unsafe {
-                raft_new_replication_wake_gate()
-            },
+            // new_cyclic, not new: the emitter lowers `Arc::new(T::new())` to
+            // `Arc<T>::make(T::new_())`, a move into the allocation that a
+            // PhantomPinned payload cannot make, and lowers new_cyclic to the
+            // runtime's deferred-init path, which constructs the prvalue in
+            // place (arc.hpp, new_cyclic). Checked on a scratch carrier, not
+            // assumed. The Weak is unused: the gate keeps no handle to itself.
+            replication_wake_gate_: rusty::sync::Arc::new_cyclic(
+                |_weak| ReplicationWakeGate::new()),
             startup_finished_: rusty::Mutex::new(false),
             startup_cv_: rusty::Condvar::new(),
             startup_succeeded_: false,
@@ -5313,18 +5349,36 @@ impl RaftServerBase {
 
     // @unsafe - publishes the cross-thread replication wake.
     //
-    // The DECISION is Rust and the reactor job is not: publish() reports
-    // whether the gate is still accepting, and only then is a OneTimeJob
-    // queued on the owner PollThread -- building that job is reactor
-    // surgery with no DSL spelling, so it stays a kernel.
+    // Every decision is Rust: publish() reports whether the gate is still
+    // accepting, reserve_wake_owner() hands out the owner thread if a waiter
+    // is armed and no wake is already queued, and the job the reactor runs is
+    // a Rust-owned token (queue_wake_job). Only PollThread::add is a kernel.
     pub fn RequestReplication(&mut self) {
         if !self.replication_wake_gate_.publish() {
             return;
         }
+        let owner: rusty::Option<rusty::RaftPollThreadPtr> =
+            self.replication_wake_gate_.reserve_wake_owner();
+        if let rusty::Some(owner) = owner {
+            self.queue_wake_job(owner, false);
+        }
+    }
+
+    // The reactor job as Rust owns it: a Box<GateWakeJob> -- the gate's Arc
+    // and which wake to run -- made raw for the kernel, which queues a
+    // OneTimeJob on the owner thread whose body is the raft_wake_job_run
+    // export: it takes the Box back, runs the wake, and drops it. The token,
+    // not the server, is what the job holds, as the C++ closure used to hold
+    // only the gate.
+    fn queue_wake_job(&self, owner: rusty::RaftPollThreadPtr, is_shutdown: bool) {
+        let token: rusty::Box<GateWakeJob> = rusty::Box::new(GateWakeJob {
+            gate: self.replication_wake_gate_.clone(),
+            shutdown: is_shutdown,
+        });
         unsafe {
-            raft_queue_replication_wake(
-                &self.replication_wake_gate_
-                    as *const rusty::sync::Arc<ReplicationWakeGate>);
+            raft_queue_wake_job(
+                &owner as *const rusty::RaftPollThreadPtr,
+                rusty::Box::into_raw(token) as *mut core::ffi::c_void);
         }
     }
 
@@ -5379,13 +5433,13 @@ impl RaftServerBase {
 
     // @unsafe - Close ordering is intentional: make new submissions inert,
     // queue one owner-thread wake for an armed waiter, then drop the owner's
-    // gate handle. Only the middle step is a kernel.
+    // gate handle.
     pub fn CloseReplicationWakeGate(&mut self) {
         self.replication_wake_gate_.close();
-        unsafe {
-            raft_queue_replication_shutdown_wake(
-                &self.replication_wake_gate_
-                    as *const rusty::sync::Arc<ReplicationWakeGate>);
+        let owner: rusty::Option<rusty::RaftPollThreadPtr> =
+            self.replication_wake_gate_.reserve_shutdown_wake_owner();
+        if let rusty::Some(owner) = owner {
+            self.queue_wake_job(owner, true);
         }
         self.replication_wake_gate_.clear_owner();
     }
@@ -6360,7 +6414,7 @@ impl RaftSpecific for RaftServerBase {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=4e00a891b1a03a8639636d8d37582c2514b0adbd8a8408923dc7360d6ed11984*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=5b98fe3b60ad02cd39b38f959e35a50bc7562bae9b19b9400cf667bbecbf50b1*/
 enum class RaftEnvError : int32_t;
 constexpr RaftEnvError RaftEnvError_NOT_A_WHOLE_NUMBER();
 constexpr RaftEnvError RaftEnvError_OVERFLOWS_U64();
@@ -6418,9 +6472,7 @@ extern "C" {
     bool raft_command_has_value(const rusty::RaftCommand* cmd);
     void raft_apply_thread_join(rusty::RaftStdThread* thread);
     void raft_commo_set_network_enabled(rusty::Communicator* commo, bool enabled);
-    rusty::Arc<ReplicationWakeGate> raft_new_replication_wake_gate();
-    void raft_queue_replication_wake(const rusty::Arc<ReplicationWakeGate>* gate);
-    void raft_queue_replication_shutdown_wake(const rusty::Arc<ReplicationWakeGate>* gate);
+    void raft_queue_wake_job(const rusty::RaftPollThreadPtr* owner, rusty::ffi::c_void* token);
     void raft_rpc_request_vote(RaftServerBase* server, uint64_t lst_log_idx, int64_t lst_log_term, uint16_t can_id, int64_t can_term, int64_t* reply_term, int8_t* vote_granted);
     void raft_rpc_append_entries(RaftServerBase* server, uint64_t leader_current_term, uint16_t leader_site_id, uint64_t leader_prev_log_index, uint64_t leader_prev_log_term, uint64_t leader_commit_index, const rusty::RaftCommand* cmd, uint64_t leader_next_log_term, uint64_t* follower_append_ok, uint64_t* follower_current_term, uint64_t* follower_last_log_index);
     bool raft_install_snapshot_guarded(RaftServerBase* server, uint16_t site_id, uint64_t term, uint64_t leader_id, uint64_t last_included_index, uint64_t last_included_term, const rusty::RaftByteString* data, uint64_t* term_out);
@@ -6594,6 +6646,7 @@ struct RaftServerBase : public RaftSpecific {
     bool IsConfigMember(uint16_t site) const;
     size_t PeerOrdinal(uint16_t site) const;
     void RequestReplication();
+    void queue_wake_job(rusty::RaftPollThreadPtr owner, bool is_shutdown) const;
     bool WaitForReplicationOrHeartbeat(uint64_t timeout_us);
     bool WaitForElectionTimeoutOrShutdown(uint64_t timeout_us);
     bool HeartbeatWait();
@@ -6678,7 +6731,7 @@ inline RaftServerBase::RaftServerBase()
     , peer_sites_(rusty::Vec<uint16_t>::new_())
     , stop_(rusty::sync::atomic::AtomicBool::new_(false))
     , rpc_ready_(rusty::sync::atomic::AtomicBool::new_(false))
-    , replication_wake_gate_(raft_new_replication_wake_gate())
+    , replication_wake_gate_(rusty::Arc<ReplicationWakeGate>::new_cyclic([&](auto&& _weak) { return ReplicationWakeGate::new_(); }))
     , startup_finished_(rusty::Mutex<bool>::new_(false))
     , startup_cv_(rusty::Condvar::new_())
     , startup_succeeded_(false)
@@ -7663,9 +7716,19 @@ inline void RaftServerBase::RequestReplication() {
     if (rusty::detail::rust_not(this->replication_wake_gate_->publish())) {
         return;
     }
+    rusty::Option<rusty::RaftPollThreadPtr> owner = this->replication_wake_gate_->reserve_wake_owner();
+    if (rusty::detail::deref_if_pointer(owner).is_some()) {
+        auto&& owner_bind_tmp = std::as_const(rusty::detail::deref_if_pointer(owner)).unwrap();
+        auto&& owner = rusty::detail::deref_if_pointer(owner_bind_tmp);
+        this->queue_wake_job(std::move(owner), false);
+    }
+}
+
+inline void RaftServerBase::queue_wake_job(rusty::RaftPollThreadPtr owner, bool is_shutdown) const {
+    rusty::Box<GateWakeJob> token = rusty::Box<GateWakeJob>::new_(GateWakeJob{.gate = rusty::clone(this->replication_wake_gate_), .shutdown = std::move(is_shutdown)});
     // @unsafe
     {
-        raft_queue_replication_wake(static_cast<const rusty::Arc<ReplicationWakeGate>*>(&this->replication_wake_gate_));
+        raft_queue_wake_job(static_cast<const rusty::RaftPollThreadPtr*>(&owner), rusty::detail::ptr_cast<rusty::ffi::c_void*>((std::move(token)).into_raw()));
     }
 }
 
@@ -7696,9 +7759,11 @@ inline void RaftServerBase::BindReplicationWakeOwner(rusty::RaftPollThreadPtr ow
 
 inline void RaftServerBase::CloseReplicationWakeGate() {
     this->replication_wake_gate_->close();
-    // @unsafe
-    {
-        raft_queue_replication_shutdown_wake(static_cast<const rusty::Arc<ReplicationWakeGate>*>(&this->replication_wake_gate_));
+    rusty::Option<rusty::RaftPollThreadPtr> owner = this->replication_wake_gate_->reserve_shutdown_wake_owner();
+    if (rusty::detail::deref_if_pointer(owner).is_some()) {
+        auto&& owner_bind_tmp = std::as_const(rusty::detail::deref_if_pointer(owner)).unwrap();
+        auto&& owner = rusty::detail::deref_if_pointer(owner_bind_tmp);
+        this->queue_wake_job(std::move(owner), true);
     }
     this->replication_wake_gate_->clear_owner();
 }
@@ -8577,5 +8642,6 @@ class RaftServer : public RaftSpecific {
  private:
   RaftServerBase* impl_;
 };
+
 
 } // namespace janus

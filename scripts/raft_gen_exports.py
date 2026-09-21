@@ -181,6 +181,17 @@ pub unsafe extern "C" fn raft_server_run_election_timer_loop(s: *mut RaftServerB
     let timer: ElectionTimerLoop = ElectionTimerLoop::new(s, wait_int_us);
     timer.run()
 }'''
+GATE_RS = '''// --- The wake job, entered from the reactor's OneTimeJob (raft_queue_wake_job).
+/// # Safety
+/// `token` is the Box<GateWakeJob> RaftServerBase::queue_wake_job made raw,
+/// handed back exactly once.
+#[no_mangle]
+pub unsafe extern "C" fn raft_wake_job_run(token: *mut core::ffi::c_void) {
+    let job: rusty::Box<GateWakeJob> = rusty::Box::from_raw(token as *mut GateWakeJob);
+    job.run();
+}'''
+GATE_H = ['// --- The wake job, entered from the reactor\'s OneTimeJob (raft_queue_wake_job).',
+          'void raft_wake_job_run(void* token);']
 LOOPS_H = ['// --- The two fiber loops, entered from the spawn kernels.',
            'void raft_server_heartbeat_loop(RaftServerBase* s);',
            'void raft_server_run_election_timer_loop(RaftServerBase* s, uint64_t wait_int_us);']
@@ -262,13 +273,14 @@ def main():
                '#include <cstddef>', '#include <cstdint>', '', 'namespace janus {', 'extern "C" {']
         out.extend(LIFECYCLE_H)
         out.extend(LOOPS_H)
+        out.extend(GATE_H)
         for title, names in GROUPS:
             out.append(f'// --- {title}')
             out.extend(prototype(rs, n) for n in names)
         out += ['}  // extern "C"', '}  // namespace janus', '']
         print('\n'.join(out))
         return
-    out = [LIFECYCLE_RS, LOOPS_RS]
+    out = [LIFECYCLE_RS, LOOPS_RS, GATE_RS]
     for title, names in GROUPS:
         out.append(f'// --- {title}')
         out.extend(export(rs, n) for n in names)

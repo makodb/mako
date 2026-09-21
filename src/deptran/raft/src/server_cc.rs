@@ -2489,6 +2489,7 @@ pub fn on_append_entries_body(server: &mut RaftServerBase,
 use crate::server_h::RaftLog;
 use crate::scheduler_h::RaftStartResult;
 use crate::scheduler_h::TxLogServer;
+use crate::server_h::GateWakeJob;
 use crate::server_h::ElectionTimerLoop;
 
 // --- Lifetime. The allocation is a kernel pair until the cutover (see their
@@ -2525,6 +2526,16 @@ pub unsafe extern "C" fn raft_server_run_election_timer_loop(s: *mut RaftServerB
                                                               wait_int_us: u64) {
     let timer: ElectionTimerLoop = ElectionTimerLoop::new(s, wait_int_us);
     timer.run()
+}
+
+// --- The wake job, entered from the reactor's OneTimeJob (raft_queue_wake_job).
+/// # Safety
+/// `token` is the Box<GateWakeJob> RaftServerBase::queue_wake_job made raw,
+/// handed back exactly once.
+#[no_mangle]
+pub unsafe extern "C" fn raft_wake_job_run(token: *mut core::ffi::c_void) {
+    let job: rusty::Box<GateWakeJob> = rusty::Box::from_raw(token as *mut GateWakeJob);
+    job.run();
 }
 
 // --- The replication interface: TxLogServer and RaftSpecific.
