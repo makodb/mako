@@ -285,23 +285,46 @@ becomes an `Arc::into_raw` handle with a Rust-exported wake entry point.
 profile aborts on panic, and the plan records the decision -- all three
 in the E commit.
 
-### F. Cut over
+### F. Cut over -- F1 done; F2 inventoried
 
-**Goal:** the goal statement, literally.
+**F1 (done: F1a `1d24bbf53`, F1b `782b34f48`, F1c `3cbcdcfe6`): the seam is a C ABI
+while everything is still transpiled C++.** `server_exports.h` declares 71
+`extern "C"` functions -- lifetime, the two fiber loops, the 19 interface
+methods, the 8 methods kernels call back, the 40 lab-harness methods --
+and all 71 are defined in Rust in server.cc's DSL block. `class RaftServer`
+holds a `RaftServerBase*` and forwards. Hand-written C++ knows the struct
+only as a pointer type: it derives from nothing of it, names no field, calls
+no method, and reaches it through the header alone. The generator
+(`scripts/raft_gen_exports.py`) produces the exports, the header and the
+shim from one signature table, so they cannot drift apart silently.
 
-`src/deptran/raft/Cargo.toml` gets `crate-type = ["staticlib"]` and links
-the way `third-party/mako-redis` does. Inside the crate `rusty::Vec` becomes
-`Vec`, `rusty::Mutex` becomes `std::sync::Mutex`, and so on -- the source
-otherwise does not change. The GEN regions for everything that moved are
-deleted from `server.h`/`server.cc`; what remains of them is the shim (three
-`TxLogServer` forwarders) and the kernels, now `extern "C"` on both sides.
+**F2 is what defines those 71 symbols: the crate, built as a `staticlib`,
+with every Rust-owned type's C++ definition deleted from the headers.** It is
+a project of its own. The inventory, from every `rusty::` path the raft
+crate uses (`grep` over `src/deptran/raft/src/*.rs` against the facade):
 
-This is a cutover, not an increment. Keep both builds alive behind a CMake
-option for one release so the two can be run side by side.
+| what the crate uses | today (verification facade) | F2 must make it |
+|---|---|---|
+| `Option`, `Vec`, `VecDeque`, atomics, `Mutex`, `Condvar`, `BTreeSet/Map`, `sync::Arc` of Rust types | `std` re-exports / wrappers | unchanged -- they are already real |
+| 15 opaque carriers and models: `RaftCommand` (64 uses), the seven pointer carriers, three `std::function`s + `LearnerAction`, `RaftCheckedMutex`, `RaftStdMutex`, `RaftStdThread` | pinned byte arrays, `Default`, no `Drop` | `impl Drop` calling a destroy kernel each (~13 kernels), no `Clone` (D1 already routed clones through kernels), construction only from kernels; the thread carrier must be joined before drop |
+| `sync::Arc<ReactorIntEvent>`, `sync::Arc<ReactorPollThread>` (14 uses, all in the wake gate) | `std::sync::Arc` over an opaque type | opaque carriers with kernel clone/drop -- the C++ side owns a `rusty::Arc`, not a `std::sync::Arc` (E's leftover) |
+| 33 `raft_log_<level>_<arity>` functions (~200 call sites) | facade stubs | one `raft_log_line(level, ptr, len)` kernel and Rust `format!` -- the format strings are `{}`-style already; a macro makes the rewrite mechanical |
+| `ReplicationWakeGate` methods called from C++ (`QueueReplicationWake`: `reserve_wake_owner`, `wake_on_owner`, ...) | emitted C++ class | exports over an opaque gate pointer; the wake job's `Arc` clone becomes `Arc::into_raw` / `from_raw` |
+| Rust `pub const fn` helpers the kernels call (`raft_server_append_command_is_batch`, `raft_server_command_is_internal_noop`, `raft_server_append_sent_end`, ...) | emitted inline C++ | exports, or the kernels receive the booleans from Rust |
+| `RaftLogFingerprint(const RaftLog&)` in test.cc | reads the emitted log class | one `raft_log_fingerprint(*const RaftLog)` export in Rust |
+| the two `std::function` trait parameters (D2) | by value | `extern "C" fn + ctx`, touching both workers and Paxos |
+| `mtx_` next to the state | `RaftCheckedMutex` carrier + guard kernels | optionally `Mutex<RaftConsensusState>` (sized under C; ~415 reads, ~71 writes) |
 
-**Done when:** `nm` on the Raft binaries shows the Rust v0 symbols; every
-GEN region that used to hold a `RaftServerBase` method is gone; and the
-verification below passes on the rustc build.
+Plus the build: a cargo `staticlib` target for `src/deptran/raft` with the
+runtime facade, linked by CMake the way `third-party/mako-redis` is; the
+kernels already have C linkage on both sides. And the deletion: every GEN
+region of a Rust-owned type in `server.h`/`server.cc` goes, `struct
+RaftServerBase;` becomes a forward declaration, and the layout pins and
+`static_assert(is_base_of...)` lines go with them.
+
+**Done when:** `nm` on the Raft binaries shows the Rust v0 symbols for the
+71 exports; no GEN region defines a Rust-owned type; and the verification
+below passes on the rustc build.
 
 ## What stays C++
 
@@ -359,7 +382,7 @@ all of these green, not some.
 | E | `raft: step E` | **Decided: Rust stays on the fiber, C++ keeps the scheduling.** Five yield points surveyed (two wake-gate waits, phase 2's response poll, the shutdown barrier yield, and the apply thread's OS sleep); option 1 would have made phase 2 a resumable state machine for timing risk and no gain. The three soundness facts are written at `raft_spawn_election_timer` in `server.cc` and enforced where they can be: one OS thread per fiber (thread-locals stable); no unwind across the switch -- **`panic = "abort"` in the raft crate's profile**; a 1 MiB fiber stack with a `PROT_NONE` guard page (`srpc_fiber.c:46`) -- the plan's earlier "no guard page" assumption was wrong. Comments and a profile: no behaviour change, no rebuild; the gate re-checked the crate under the new profile. |
 | F1a | `1d24bbf53` | **The C ABI over the struct exists, in Rust.** 67 `pub unsafe extern "C" fn raft_server_*` exports (19 interface, 8 kernel-called, 40 lab) in server.cc's DSL block, each forwarding to the method; the transpiler emits them as `extern "C"` C++ definitions today and they are the crate's symbols at F2. `src/deptran/raft/server_exports.h` is the generated C++ prototype header -- the one thing hand-written C++ is meant to know of the struct's behaviour -- included from server.h. Both sides come from `scripts/raft_gen_exports.py` off the method signatures, so they cannot drift apart silently: a mismatch is a compile error. Rules learned: exports go in the .cc carrier (a column-0 `extern "C"` definition in a header is multiply defined; the ODR pass only inlines members); shared handles (`Arc<PollThread>`) cross by pointer and are cloned inside -- rustc's `improper_ctypes_definitions` rejected the by-value form, correctly; `# Safety` docs satisfy clippy; the ABI header opens `namespace janus` itself, so its include is scoped outside the namespace (a nested `janus::janus` broke every later `janus::Command`); the emitter lowers `&mut local` in a method call through a raw pointer to `&local`, so the one `&mut u64` out-parameter (`OnInstallSnapshotLocked`) is a raw pointer end to end; and `Box::new(RaftServerBase::new())` cannot lower because the emitted struct is not movable, so allocation is a kernel pair (`raft_server_alloc`/`free`) until the struct is Rust's. Plus the two lifecycle exports `raft_server_new` (alloc + `ConstructRuntime`) and `raft_server_delete` (`Shutdown` + free) the shim will call. Pure addition: no caller uses them yet (F1b, F1c). Test results in the commit message. |
 | F1b | `782b34f48` | **`class RaftServer` no longer derives from the struct.** It is `RaftSpecific` with one member, `RaftServerBase* impl_`, obtained from `raft_server_new()` and released by `raft_server_delete()`; its 19 interface overrides and 40 `RAFT_TEST_CORO` lab forwarders are one call each into the C ABI (`scripts/raft_gen_exports.py --shim`, generated from the GEN's own declarations so `const` and reference types are exact). The workers, the RPC service and the lab harness hold the shim and did not change; `frame.cc` still `new`s it. The struct's C++ definition is still emitted and still visible, but no hand-written C++ derives from it, defines a member of it, or touches `impl_->` anything -- only the eleven kernel call sites F1c retargets still call its methods directly. Test results in the commit message. |
-| F1c | `raft: step F1c` | **Hand-written C++ calls no method of the struct.** The eleven kernel sites (`SetupInternal`, `BindReplicationWakeOwner`, `InitializeSnapshotManagerLocked`, `FailStop`, `ApplyThreadLoop`, `StartElectionTimer`, `OnInstallSnapshotLocked`, `InstallSnapshotReplyAccepted` in the snapshot callback, and the two fiber-loop entries) go through the ABI; two exports were added for the loops, `raft_server_heartbeat_loop` and `raft_server_run_election_timer_loop`, so the spawn kernels no longer name `heartbeat_loop_body` or construct an `ElectionTimerLoop`. **F1 is done: the seam is a C ABI while everything is still transpiled C++.** Hand-written C++ knows `RaftServerBase` only as a pointer type: it derives from nothing of it (F1b), names no field of it (C), calls no method of it (F1c), and reaches it solely through `server_exports.h` -- 71 `extern "C"` functions defined in Rust. What F2 changes is *what defines them*: the crate, linked as a `staticlib`, with the struct's C++ definition deleted from the header. Test results in the commit message. |
+| F1c | `3cbcdcfe6` | **Hand-written C++ calls no method of the struct.** The eleven kernel sites (`SetupInternal`, `BindReplicationWakeOwner`, `InitializeSnapshotManagerLocked`, `FailStop`, `ApplyThreadLoop`, `StartElectionTimer`, `OnInstallSnapshotLocked`, `InstallSnapshotReplyAccepted` in the snapshot callback, and the two fiber-loop entries) go through the ABI; two exports were added for the loops, `raft_server_heartbeat_loop` and `raft_server_run_election_timer_loop`, so the spawn kernels no longer name `heartbeat_loop_body` or construct an `ElectionTimerLoop`. **F1 is done: the seam is a C ABI while everything is still transpiled C++.** Hand-written C++ knows `RaftServerBase` only as a pointer type: it derives from nothing of it (F1b), names no field of it (C), calls no method of it (F1c), and reaches it solely through `server_exports.h` -- 71 `extern "C"` functions defined in Rust. What F2 changes is *what defines them*: the crate, linked as a `staticlib`, with the struct's C++ definition deleted from the header. Test results in the commit message. |
 
 ## Performance verdict on A..C3
 
