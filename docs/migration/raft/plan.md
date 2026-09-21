@@ -201,18 +201,51 @@ started.
 **Goal:** every function that crosses the boundary in either direction has
 a signature `extern "C"` can carry.
 
-Scalars, `#[repr(C)]` structs, opaque pointers. `janus::Command` becomes an
-opaque handle `{ i32 kind; void* payload }` with four C++ functions
-(`clone`, `drop`, `kind`, `has_value`); Raft never inspects the payload
-beyond those two facts. `rusty::Function` callbacks become
-`extern "C" fn(*mut c_void, ...)` plus a context pointer.
+What "can carry" means, decided after inventorying the boundary at C3 (75
+kernel declarations, 19 trait methods, 8 server methods C++ calls plus the
+wake gate's):
+
+- **Scalars, `#[repr(C)]` value structs, pointers to opaque C++ objects**
+  pass as they are. `RaftElectionTimeouts`, `RaftVoteOutcome`,
+  `AppendRespView` are already `#[repr(C)]`.
+- **Non-trivial C++ objects never cross by value.** A `janus::Command`, a
+  `shared_ptr`, a `rusty::Arc` returned by value is an ABI mismatch under
+  rustc: C++ returns a non-trivial type through a hidden pointer, Rust
+  would expect a `[u8; N]` in registers. Every such return becomes an
+  **out-parameter the C++ side fills in place**: `raft_command_clone_into
+  (src, dst)`, `raft_new_callback_lifetime(self, out)`, and so on. 13 of
+  them at C3: four `Command`s, three `shared_ptr`s, three `Arc`s (one of
+  them into a Rust `Vec`), two `std::function` trait parameters.
+- **The carriers stay inline and are declared relocatable.** `RaftCommand`
+  (24 bytes) is a field of every log entry; boxing it would cost a heap
+  allocation per entry on the hottest path. Rust moves it by `memcpy`,
+  which is sound for `std::shared_ptr` and `rusty::Arc` on this platform
+  (no interior pointers) and is the assumption F must state once, next to
+  the layout pins. Construction, copy and destruction are kernels; under
+  rustc the carrier gets a `Drop` that calls the destroy kernel.
+- **Rust never `.clone()`s a carrier.** Ten sites did at C3 (three
+  `RaftCommand`, seven `Arc<IntEvent>` waiters). Under the transpiler that
+  is the C++ copy constructor; under rustc it is a bitwise copy, i.e. a
+  refcount bug. Each becomes a kernel clone.
+- **Rust-native objects handed to C++** (`Arc<ReplicationWakeGate>` into a
+  poll-thread job, the `IntEvent` waiters) are the fiber-wait plumbing and
+  are settled by E, not D.
+- **`std::function` trait parameters** (`RegisterLeaderChangeCallback`,
+  `reg_learner_action`) become `extern "C" fn(*mut c_void, ...)` plus a
+  context pointer, or a boxed handle the worker allocates; this touches the
+  workers and is D2. **References in trait signatures** (`&RaftCommand`,
+  `&RaftByteString`) are `const T*` in C; the change is mechanical and
+  belongs to the cutover.
 
 **Makes possible:** the *traits* surviving the cutover, not just the struct.
 A trait object is a vtable; an FFI table is a vtable. Same shape, so D is
 retyping, not restructuring.
 
-**Done when:** no `rusty::`-namespaced type appears in the signature of any
-kernel or of any method in `TxLogServer`/`RaftSpecific`.
+**Done when:** no kernel returns or takes a non-trivial C++ object by value,
+no Rust body calls `.clone()` on an opaque carrier, and every `rusty::`
+type in a crossing signature is a scalar, a `#[repr(C)]` struct, a
+pointer, or an inline carrier with a pinned layout -- checked by a census
+over the extern blocks, like step C's.
 
 ### E. Decide who owns each suspension point
 
@@ -315,6 +348,7 @@ all of these green, not some.
 | C1b | `90b6f828a` | **Kernels that name a field of the struct: 7 -> 0.** The log's writers are Rust: `AppendLocal` (was `SetLocalAppend`/`raft_set_local_append`), `AppendLeaderNoop`, `AeApplyIncoming`; so are `AeDecodePayload` (fills `decoded_terms_`), `LoadCurrentConfig` (fills `config_members_`) and the leader's batch loop (pushes `batch_buffer_`). What the old kernels could not do is the whole of what the new ones do: copy a `janus::Command` (`raft_command_clone`, `raft_wire_command_clone`, `raft_batch_command_at`), look inside a `TpcBatchCommand` (`raft_wire_is_batch`, `raft_wire_batch` -- the one `marshallable_cast`, made once per payload as before -- `raft_batch_len`, `raft_batch_term_at`), stamp and batch a `TpcCommitCommand` (`raft_command_is_tpc_commit`, `raft_stamped_commit`, `raft_batch_finalize` over `(ptr, len)` of the Rust Vec), read the yaml config (`raft_config_replica_count/site`), and the `RAFT_TEST_CORO` predicate for the no-op (`raft_leader_noop_enabled`, `raft_noop_command`). Kernels 53 -> 60 but 600 -> 545 lines: 50 value-only, 10 take `RaftServerBase*` for method calls only. Rust owns every container it declares. Test results in the commit message. |
 | C2 | `bcc298560` | The RaftLab suite holds the layout of nothing: `RaftServer::LabAccess` (11 accessors, 45 uses) and `test.cc`'s 70-odd direct reads (`server->state_.raft_log_.last_index()`, `->state_.commit_index_`, 24 `std::lock_guard(server->mtx_)`, ...) all became `Lab*` getters on `RaftServerBase` -- `LabMutex()`, `LabApplyMutex()`, `LabCommitIndex()`, `LabLastLogIndex()`, `LabLog()` for the fingerprint, and so on -- read-only, inline, emitted unconditionally because the DSL has no cfg. The RAFT_TEST `ServerWorker` uses `set_site_identity`/`set_commo`/`SiteId()` instead of poking three fields and `commo_`. `class RaftServer` is ctor + dtor. Receiver-aware census over every C++ file under `src/deptran` (comments and string literals stripped): **0 sites name a field of `RaftServerBase` or `RaftConsensusState`** through a server pointer; the two remaining hits are `RaftFrame::commo_` and `SiteInfo::partition_id_`, other objects' same-named fields. The shim constructor still sets two fields by implicit `this` (C3). Test results in the commit message. |
 | C3 | `2996cc572` | The shim constructor is `RaftServer::RaftServer() { ConstructRuntime(); }`: the two members the generated constructor could not initialise (`async_callback_lifetime_`, a `std::make_shared` whose payload points back at the object; `heartbeat_interval_us_`, a RAFT_TEST-dependent macro) come from `raft_new_callback_lifetime` and `raft_heartbeat_interval_default`, the legacy payload registration from `raft_ensure_legacy_payload_registered`, and the lab's initial role from `raft_lab_mode()` -- the RAFT_TEST_CORO predicate the no-op already used (renamed from `raft_leader_noop_enabled`). **Step C is done: `python3 scripts/raft_field_census.py` exits 0** -- no hand-written C++ under `src/deptran` names a field of `RaftServerBase` or `RaftConsensusState` through the server (comments, string literals, GEN and RUST regions stripped; `this` counts only inside the server's own carriers; other objects' same-named fields are listed, not counted). `class RaftServer` is ctor + dtor; its layout is private to the struct's generated region. Test results in the commit message. |
+| D1 | `raft: step D1` | **No kernel returns a non-trivial C++ object by value, and no Rust body clones a `Command` carrier.** The four `Command` returns became in-place `_into` kernels (`raft_command_clone_into`, `raft_noop_command_into`, `raft_batch_command_into`, `raft_wire_command_clone_into`); the three `shared_ptr` returns (`raft_new_callback_lifetime`, `raft_broadcast_vote_and_wait`, `raft_phase1_send_append`) and the batch `Arc` (`raft_stamped_commit_into`) take an out-parameter Rust default-constructs; the three `entry.cmd().clone()` sites call the clone kernel. The batch buffer's element is a new pinned 8-byte carrier `RaftTpcCommitPtr` (`rusty::Arc<TpcCommitCommand>` is one control-block pointer), so `raft_batch_finalize` iterates `(ptr, len)` over carriers of known size. Left for E, deliberately: `raft_create_int_event -> Arc<IntEvent>` and the seven waiter clones inside `ReplicationWakeGate`, which are the fiber-wait plumbing. Left for D2: the two `std::function` trait parameters. Behaviour-neutral by construction (same C++ runs, moved from a return to an out-slot); tests in the commit message. |
 
 ## Performance verdict on A..C3
 

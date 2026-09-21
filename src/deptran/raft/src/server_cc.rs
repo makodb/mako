@@ -504,11 +504,13 @@ unsafe extern "C" {
     // log term in C++ (a Marshallable), pushed into batch_buffer_ in Rust,
     // and the buffer's Arcs are moved into one TpcBatchCommand at the end.
     fn raft_command_is_tpc_commit(cmd: *const rusty::RaftCommand) -> bool;
-    fn raft_stamped_commit(cmd: *const rusty::RaftCommand, term: i64)
-        -> rusty::sync::Arc<rusty::RaftTpcCommitCommand>;
-    fn raft_batch_finalize(
-        entries: *mut rusty::sync::Arc<rusty::RaftTpcCommitCommand>,
-        count: usize, cmd_out: *mut rusty::RaftCommand);
+    fn raft_stamped_commit_into(cmd: *const rusty::RaftCommand, term: i64,
+                                out: *mut rusty::RaftTpcCommitPtr);
+    fn raft_batch_finalize(entries: *mut rusty::RaftTpcCommitPtr,
+                           count: usize, cmd_out: *mut rusty::RaftCommand);
+    // The command copy INTO Rust's slot; see server.h for why never by value.
+    fn raft_command_clone_into(src: *const rusty::RaftCommand,
+                               dst: *mut rusty::RaftCommand);
 
     fn raft_phase1_send_append(commo: *mut rusty::Communicator,
                                self_site_id: u16, site_id: u16,
@@ -516,7 +518,8 @@ unsafe extern "C" {
                                prev_log_index: u64, prev_log_term: u64,
                                commit_index: u64,
                                cmd: *const rusty::RaftCommand,
-                               cmd_log_term: u64) -> rusty::RaftResponsePtr;
+                               cmd_log_term: u64,
+                               out: *mut rusty::RaftResponsePtr);
 }
 
 // ==========================================================================
@@ -904,9 +907,13 @@ pub fn heartbeat_phase1_select_payload(server: &mut RaftServerBase,
                 } else {
                     let entry: &RaftEntry = slot.unwrap();
                     *cmd_log_term = entry.term() as u64;
-                    // Copying a Command is a refcount bump on its inner Arc,
-                    // which is what the kernel this replaces did.
-                    *cmd = entry.cmd().clone();
+                    // Copying a Command is a refcount bump on its inner Arc:
+                    // a kernel, never the carrier's clone.
+                    unsafe {
+                        raft_command_clone_into(
+                            entry.cmd() as *const rusty::RaftCommand,
+                            cmd as *mut rusty::RaftCommand);
+                    }
                     *sent_end_index =
                         raft_server_append_sent_end(prev_log_index, 1);
                     // The kind tag identifies the payload better than the
@@ -976,9 +983,13 @@ pub fn heartbeat_phase1_select_payload(server: &mut RaftServerBase,
             let is_commit: bool =
                 unsafe { raft_command_is_tpc_commit(entry_cmd) };
             if is_commit {
-                server.batch_buffer_.push(unsafe {
-                    raft_stamped_commit(entry_cmd, entry_term)
-                });
+                let mut stamped: rusty::RaftTpcCommitPtr = Default::default();
+                unsafe {
+                    raft_stamped_commit_into(
+                        entry_cmd, entry_term,
+                        &mut stamped as *mut rusty::RaftTpcCommitPtr);
+                }
+                server.batch_buffer_.push(stamped);
             } else {
                 // Looked up again rather than held across the push above:
                 // `entry` borrows the log, and handing the push a *mut to the
@@ -995,7 +1006,11 @@ pub fn heartbeat_phase1_select_payload(server: &mut RaftServerBase,
                     rusty::raft_log_info_3(
                         "[BATCH_SKIP] site={} idx={}: log entry is not TpcCommitCommand (kind={}), using raw log",
                         server.site_id_, idx, kind);
-                    *cmd = slot.unwrap().cmd().clone();
+                    unsafe {
+                        raft_command_clone_into(
+                            slot.unwrap().cmd() as *const rusty::RaftCommand,
+                            cmd as *mut rusty::RaftCommand);
+                    }
                     *cmd_log_term = entry_term as u64;
                     *sent_end_index =
                         raft_server_append_sent_end(prev_log_index, 1);
@@ -1203,13 +1218,15 @@ pub fn heartbeat_phase1_body(server: &mut RaftServerBase,
         }
 
         let is_leader: bool = server.IsLeader();
-        let sent_response: rusty::RaftResponsePtr = unsafe {
+        let mut sent_response: rusty::RaftResponsePtr = Default::default();
+        unsafe {
             raft_phase1_send_append(
                 server.commo_, server.site_id_, site_id, partition_id,
                 is_leader, round.term(), prev_log_index, prev_log_term,
                 round.commit_index(),
-                &cmd as *const rusty::RaftCommand, cmd_log_term)
-        };
+                &cmd as *const rusty::RaftCommand, cmd_log_term,
+                &mut sent_response as *mut rusty::RaftResponsePtr);
+        }
 
         pending_rpcs.place(ord, PendingAppend::new(
             site_id, round.term(), round.round_id(), sent_end_index,

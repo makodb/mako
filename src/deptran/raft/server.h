@@ -2220,6 +2220,7 @@ using RaftVoteQuorumPtr = ::std::shared_ptr<::janus::RaftVoteQuorumEvent>;
 // Rust; only what is inside each Arc stays opaque, because it is a wire type
 // the marshalling layer owns.
 using RaftTpcCommitCommand = ::janus::TpcCommitCommand;
+using RaftTpcCommitPtr = ::rusty::Arc<::janus::TpcCommitCommand>;
 
 // ---------------------------------------------------------------------------
 // LAYOUT PINS. Each of these types has a rustc-side model in
@@ -2261,6 +2262,7 @@ static_assert(sizeof(RaftVoteQuorumPtr) == 16 &&
 static_assert(sizeof(RaftByteString) == 24 && alignof(RaftByteString) == 8);
 static_assert(sizeof(RaftTpcCommitCommand) == 64 &&
               alignof(RaftTpcCommitCommand) == 8);
+static_assert(sizeof(RaftTpcCommitPtr) == 8 && alignof(RaftTpcCommitPtr) == 8);
 // The two carriers declared in rust_facade_types.h rather than here.
 static_assert(sizeof(RaftCommand) == 24 && alignof(RaftCommand) == 8);
 static_assert(sizeof(RaftResponsePtr) == 16 && alignof(RaftResponsePtr) == 8);
@@ -3008,18 +3010,22 @@ unsafe extern "C" {
     // is skipped in lab mode, and the lab's initial role is set explicitly.
     fn raft_lab_mode() -> bool;
     // The leader no-op command: a janus::Command the DSL cannot construct.
-    fn raft_noop_command() -> rusty::RaftCommand;
+    fn raft_noop_command_into(dst: *mut rusty::RaftCommand);
     // What RaftServer's constructor used to do after the generated one, for
     // ConstructRuntime: the shared lifetime gate whose `server` back-pointer
     // is this object (a std::make_shared), the heartbeat interval (a macro
     // whose value depends on RAFT_TEST), and the legacy payload registration.
-    fn raft_new_callback_lifetime(server: *mut RaftServerBase)
-        -> rusty::RaftAsyncCallbackLifetimePtr;
+    fn raft_new_callback_lifetime(server: *mut RaftServerBase,
+                                  out: *mut rusty::RaftAsyncCallbackLifetimePtr);
     fn raft_heartbeat_interval_default() -> u64;
     fn raft_ensure_legacy_payload_registered();
     // A copy of a janus::Command: a shared_ptr refcount the opaque carrier
-    // cannot touch, made in C++ and handed back by value.
-    fn raft_command_clone(cmd: *const rusty::RaftCommand) -> rusty::RaftCommand;
+    // cannot touch, made in C++ INTO a slot Rust owns. Never by value: a
+    // non-trivial C++ object returned by value is an ABI mismatch under rustc
+    // (plan.md, step D), and never `.clone()` on the carrier, which would be
+    // a bitwise copy there.
+    fn raft_command_clone_into(src: *const rusty::RaftCommand,
+                               dst: *mut rusty::RaftCommand);
     // The AppendEntries payload, read for AeDecodePayload / AeApplyIncoming.
     // A janus::Command laundered as c_void by the service forwarder; a batch
     // is opened once (raft_wire_batch: the one marshallable_cast, as before)
@@ -3028,9 +3034,10 @@ unsafe extern "C" {
     fn raft_wire_batch(cmd: *const core::ffi::c_void) -> *const core::ffi::c_void;
     fn raft_batch_len(batch: *const core::ffi::c_void) -> u64;
     fn raft_batch_term_at(batch: *const core::ffi::c_void, i: u64) -> i64;
-    fn raft_batch_command_at(batch: *const core::ffi::c_void, i: u64)
-        -> rusty::RaftCommand;
-    fn raft_wire_command_clone(cmd: *const core::ffi::c_void) -> rusty::RaftCommand;
+    fn raft_batch_command_into(batch: *const core::ffi::c_void, i: u64,
+                               dst: *mut rusty::RaftCommand);
+    fn raft_wire_command_clone_into(cmd: *const core::ffi::c_void,
+                                    dst: *mut rusty::RaftCommand);
     // The partition's membership from the static (yaml) config: sorted,
     // de-duplicated site ids, one read per index. Startup only.
     fn raft_config_replica_count(partition_id: u32) -> u64;
@@ -3039,8 +3046,8 @@ unsafe extern "C" {
     // The campaign broadcast, and the reply quorum read back under mtx_.
     fn raft_broadcast_vote_and_wait(commo: *mut rusty::Communicator, par_id: u32,
                                     last_log_index: u64, last_log_term: i64,
-                                    self_site_id: u16, term: i64)
-        -> rusty::RaftVoteQuorumPtr;
+                                    self_site_id: u16, term: i64,
+                                    out: *mut rusty::RaftVoteQuorumPtr);
     fn raft_vote_quorum_snapshot(quorum: *const rusty::RaftVoteQuorumPtr)
         -> RaftVoteOutcome;
     fn raft_snapshot_manager_has_latest(
@@ -3328,8 +3335,7 @@ pub struct RaftServerBase {
     // PHASE 1's batch under assembly. Rust drives the loop that fills it,
     // clears it and reads its length; only the marshalling of each element
     // stays C++.
-    pub batch_buffer_:
-        rusty::Vec<rusty::sync::Arc<rusty::RaftTpcCommitCommand>>,
+    pub batch_buffer_: rusty::Vec<rusty::RaftTpcCommitPtr>,
     pub appliedIndexForWait_: rusty::sync::atomic::AtomicU64,
     // Was a function-static in EnqueueCommittedEntries. A DSL body has no
     // static local, and a per-server counter is the more honest shape: the
@@ -5384,10 +5390,17 @@ impl RaftServerBase {
                 first_missing = id;
                 break;
             }
-            // epoch_ is stamped below, under the mutex that owns it.
+            // The command copy is a kernel: a refcount the carrier cannot
+            // touch. epoch_ is stamped below, under the mutex that owns it.
+            let mut command: rusty::RaftCommand = Default::default();
+            unsafe {
+                raft_command_clone_into(
+                    entry.cmd() as *const rusty::RaftCommand,
+                    &mut command as *mut rusty::RaftCommand);
+            }
             batch.push_back(QueuedApplyEntry {
                 index_: id,
-                command_: entry.cmd().clone(),
+                command_: command,
                 epoch_: 0,
             });
             id += 1;
@@ -5548,11 +5561,13 @@ impl RaftServerBase {
         // so the candidate RequestVoted its own listener, and the term counter
         // ran away. It compiled silently because locid_t is uint32_t and
         // siteid_t is uint16_t, so the call narrowed.
-        let quorum: rusty::RaftVoteQuorumPtr = unsafe {
+        let mut quorum: rusty::RaftVoteQuorumPtr = Default::default();
+        unsafe {
             raft_broadcast_vote_and_wait(
                 self.commo_, par_id, lst_idx, lst_term,
-                self.site_id_, term as i64)
-        };
+                self.site_id_, term as i64,
+                &mut quorum as *mut rusty::RaftVoteQuorumPtr);
+        }
 
         let _lock1 = RaftLockGuard::new(&mut self.mtx_);
         if self.stop_.load(rusty::sync::atomic::Ordering::Acquire) {
@@ -5745,7 +5760,10 @@ impl RaftServerBase {
         if unsafe { raft_lab_mode() } {
             return;
         }
-        let noop: rusty::RaftCommand = unsafe { raft_noop_command() };
+        let mut noop: rusty::RaftCommand = Default::default();
+        unsafe {
+            raft_noop_command_into(&mut noop as *mut rusty::RaftCommand);
+        }
         let previous_index: u64 = self.AppendLocal(noop);
         unsafe {
             raft_verify(
@@ -5821,8 +5839,11 @@ impl RaftServerBase {
                     raft_server_append_sent_end(leader_prev_log_index, i + 1);
                 if index >= first_write_index {
                     let term: i64 = unsafe { raft_batch_term_at(batch, i) };
-                    let entry_cmd: rusty::RaftCommand =
-                        unsafe { raft_batch_command_at(batch, i) };
+                    let mut entry_cmd: rusty::RaftCommand = Default::default();
+                    unsafe {
+                        raft_batch_command_into(
+                            batch, i, &mut entry_cmd as *mut rusty::RaftCommand);
+                    }
                     let appended: u64 = self
                         .state_
                         .raft_log_
@@ -5837,8 +5858,11 @@ impl RaftServerBase {
         }
         let index: u64 = raft_server_append_sent_end(leader_prev_log_index, 1);
         if index >= first_write_index {
-            let copy: rusty::RaftCommand =
-                unsafe { raft_wire_command_clone(cmd) };
+            let mut copy: rusty::RaftCommand = Default::default();
+            unsafe {
+                raft_wire_command_clone_into(
+                    cmd, &mut copy as *mut rusty::RaftCommand);
+            }
             let appended: u64 = self.state_.raft_log_.append(
                 RaftEntry::new(leader_next_log_term as i64, copy));
             unsafe {
@@ -5856,8 +5880,13 @@ impl RaftServerBase {
 #[allow(non_snake_case)]
 impl RaftServerBase {
     pub fn ConstructRuntime(&mut self) {
-        self.async_callback_lifetime_ =
-            unsafe { raft_new_callback_lifetime(self as *mut RaftServerBase) };
+        let lifetime_slot: *mut rusty::RaftAsyncCallbackLifetimePtr =
+            &mut self.async_callback_lifetime_
+                as *mut rusty::RaftAsyncCallbackLifetimePtr;
+        unsafe {
+            raft_new_callback_lifetime(self as *mut RaftServerBase,
+                                       lifetime_slot);
+        }
         self.heartbeat_interval_us_ =
             unsafe { raft_heartbeat_interval_default() };
         unsafe {
@@ -6119,8 +6148,11 @@ impl RaftSpecific for RaftServerBase {
                 }
                 return RaftStartResult::REJECTED;
             }
-            let copy: rusty::RaftCommand =
-                unsafe { raft_command_clone(cmd as *const rusty::RaftCommand) };
+            let mut copy: rusty::RaftCommand = Default::default();
+            unsafe {
+                raft_command_clone_into(cmd as *const rusty::RaftCommand,
+                                        &mut copy as *mut rusty::RaftCommand);
+            }
             let previous_index: u64 = self.AppendLocal(copy);
             unsafe {
                 // AppendLocal reports the OLD last index; Start reports the
@@ -6194,7 +6226,7 @@ impl RaftSpecific for RaftServerBase {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=3f60583daca8c65df6c5e918171f6fcf77341dfe83d4f5293e41e8859cbe3575*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.server_state version=1 rust_sha256=9b981b11ca995a358fa692f90cd069c29374a3626cf6c7f329aee677d1a77033*/
 enum class RaftEnvError : int32_t;
 constexpr RaftEnvError RaftEnvError_NOT_A_WHOLE_NUMBER();
 constexpr RaftEnvError RaftEnvError_OVERFLOWS_U64();
@@ -6232,21 +6264,21 @@ extern "C" {
     RaftElectionTimeouts raft_election_timeouts();
     void raft_log_set_is_leader_entry(uint16_t site_id, uint32_t loc_id, uint64_t term, bool prev_is_leader, bool new_is_leader);
     bool raft_lab_mode();
-    rusty::RaftCommand raft_noop_command();
-    rusty::RaftAsyncCallbackLifetimePtr raft_new_callback_lifetime(RaftServerBase* server);
+    void raft_noop_command_into(rusty::RaftCommand* dst);
+    void raft_new_callback_lifetime(RaftServerBase* server, rusty::RaftAsyncCallbackLifetimePtr* out);
     uint64_t raft_heartbeat_interval_default();
     void raft_ensure_legacy_payload_registered();
-    rusty::RaftCommand raft_command_clone(const rusty::RaftCommand* cmd);
+    void raft_command_clone_into(const rusty::RaftCommand* src, rusty::RaftCommand* dst);
     bool raft_wire_is_batch(const rusty::ffi::c_void* cmd);
     const rusty::ffi::c_void* raft_wire_batch(const rusty::ffi::c_void* cmd);
     uint64_t raft_batch_len(const rusty::ffi::c_void* batch);
     int64_t raft_batch_term_at(const rusty::ffi::c_void* batch, uint64_t i);
-    rusty::RaftCommand raft_batch_command_at(const rusty::ffi::c_void* batch, uint64_t i);
-    rusty::RaftCommand raft_wire_command_clone(const rusty::ffi::c_void* cmd);
+    void raft_batch_command_into(const rusty::ffi::c_void* batch, uint64_t i, rusty::RaftCommand* dst);
+    void raft_wire_command_clone_into(const rusty::ffi::c_void* cmd, rusty::RaftCommand* dst);
     uint64_t raft_config_replica_count(uint32_t partition_id);
     uint16_t raft_config_replica_site(uint32_t partition_id, uint64_t i);
     bool raft_election_debug_enabled();
-    rusty::RaftVoteQuorumPtr raft_broadcast_vote_and_wait(rusty::Communicator* commo, uint32_t par_id, uint64_t last_log_index, int64_t last_log_term, uint16_t self_site_id, int64_t term);
+    void raft_broadcast_vote_and_wait(rusty::Communicator* commo, uint32_t par_id, uint64_t last_log_index, int64_t last_log_term, uint16_t self_site_id, int64_t term, rusty::RaftVoteQuorumPtr* out);
     RaftVoteOutcome raft_vote_quorum_snapshot(const rusty::RaftVoteQuorumPtr* quorum);
     bool raft_snapshot_manager_has_latest(const rusty::RaftSnapshotManagerPtr* manager);
     bool raft_command_has_value(const rusty::RaftCommand* cmd);
@@ -6363,7 +6395,7 @@ struct RaftServerBase : public RaftSpecific {
     rusty::RaftStdMutex state_machine_apply_mtx_;
     rusty::Mutex<ApplyQueue> apply_queue_;
     rusty::RaftCommand pending_apply_command_;
-    rusty::Vec<rusty::Arc<rusty::RaftTpcCommitCommand>> batch_buffer_;
+    rusty::Vec<rusty::RaftTpcCommitPtr> batch_buffer_;
     rusty::sync::atomic::AtomicU64 appliedIndexForWait_;
     uint64_t enqueue_log_counter_;
     int32_t n_prepare_;
@@ -6537,7 +6569,7 @@ inline RaftServerBase::RaftServerBase()
     , state_machine_apply_mtx_(rusty::default_like<rusty::RaftStdMutex>())
     , apply_queue_(rusty::Mutex<ApplyQueue>::new_(ApplyQueue::new_()))
     , pending_apply_command_(rusty::default_like<rusty::RaftCommand>())
-    , batch_buffer_(rusty::Vec<rusty::Arc<rusty::RaftTpcCommitCommand>>::new_())
+    , batch_buffer_(rusty::Vec<rusty::RaftTpcCommitPtr>::new_())
     , appliedIndexForWait_(rusty::sync::atomic::AtomicU64::new_(0))
     , enqueue_log_counter_(static_cast<uint64_t>(0))
     , n_prepare_(static_cast<int32_t>(0))
@@ -7607,7 +7639,12 @@ inline void RaftServerBase::EnqueueCommittedEntries(uint64_t old_commit, uint64_
             first_missing = std::move(id);
             break;
         }
-        batch.push_back(QueuedApplyEntry{.index_ = std::move(id), .command_ = rusty::clone(entry.cmd()), .epoch_ = static_cast<uint64_t>(0)});
+        rusty::RaftCommand command = rusty::default_like<rusty::RaftCommand>();
+        // @unsafe
+        {
+            raft_command_clone_into(rusty::detail::ptr_cast<const rusty::RaftCommand*>(entry.cmd()), static_cast<rusty::RaftCommand*>(&command));
+        }
+        batch.push_back(QueuedApplyEntry{.index_ = std::move(id), .command_ = std::move(command), .epoch_ = static_cast<uint64_t>(0)});
         id += 1;
     }
     const uint64_t enqueued = static_cast<uint64_t>(rusty::len(batch));
@@ -7679,7 +7716,11 @@ inline bool RaftServerBase::RequestVoteImpl(bool timer_guarded, uint64_t expecte
     if (raft_election_debug_enabled()) {
         rusty::raft_log_info_7("[RAFT_ELECTION] server {} (loc {}) starting election term {}->{} lastLogIdx={} lastLogTerm={} prev_vote_for={}", this->site_id_, std::move(loc_id), std::move(prev_term), std::move(term), std::move(lst_idx), std::move(lst_term), std::move(prev_vote_for));
     }
-    const rusty::RaftVoteQuorumPtr quorum = raft_broadcast_vote_and_wait(this->commo_, std::move(par_id), std::move(lst_idx), std::move(lst_term), this->site_id_, static_cast<int64_t>(term));
+    rusty::RaftVoteQuorumPtr quorum = rusty::default_like<rusty::RaftVoteQuorumPtr>();
+    // @unsafe
+    {
+        raft_broadcast_vote_and_wait(this->commo_, std::move(par_id), std::move(lst_idx), std::move(lst_term), this->site_id_, static_cast<int64_t>(term), static_cast<rusty::RaftVoteQuorumPtr*>(&quorum));
+    }
     const auto _lock1 = RaftLockGuard::new_(&this->mtx_);
     if (this->stop_.load(rusty::sync::atomic::Ordering::Acquire)) {
         this->state_.election_in_progress_ = false;
@@ -7789,7 +7830,11 @@ inline void RaftServerBase::AppendLeaderNoop() {
     if (raft_lab_mode()) {
         return;
     }
-    rusty::RaftCommand noop = raft_noop_command();
+    rusty::RaftCommand noop = rusty::default_like<rusty::RaftCommand>();
+    // @unsafe
+    {
+        raft_noop_command_into(static_cast<rusty::RaftCommand*>(&noop));
+    }
     const uint64_t previous_index = this->AppendLocal(std::move(noop));
     // @unsafe
     {
@@ -7846,7 +7891,11 @@ inline void RaftServerBase::AeApplyIncoming(const rusty::ffi::c_void* cmd, uint6
             const uint64_t index = raft_server_append_sent_end(std::move(leader_prev_log_index), rusty::detail::deref_if_pointer_like(i) + 1);
             if (rusty::detail::deref_if_pointer_like(index) >= rusty::detail::deref_if_pointer_like(first_write_index)) {
                 int64_t term = raft_batch_term_at(batch, std::move(i));
-                rusty::RaftCommand entry_cmd = raft_batch_command_at(batch, std::move(i));
+                rusty::RaftCommand entry_cmd = rusty::default_like<rusty::RaftCommand>();
+                // @unsafe
+                {
+                    raft_batch_command_into(batch, std::move(i), static_cast<rusty::RaftCommand*>(&entry_cmd));
+                }
                 const uint64_t appended = this->state_.raft_log_.append(RaftEntry::new_(std::move(term), std::move(entry_cmd)));
                 // @unsafe
                 {
@@ -7859,7 +7908,11 @@ inline void RaftServerBase::AeApplyIncoming(const rusty::ffi::c_void* cmd, uint6
     }
     const uint64_t index = raft_server_append_sent_end(std::move(leader_prev_log_index), 1);
     if (rusty::detail::deref_if_pointer_like(index) >= rusty::detail::deref_if_pointer_like(first_write_index)) {
-        rusty::RaftCommand copy = raft_wire_command_clone(cmd);
+        rusty::RaftCommand copy = rusty::default_like<rusty::RaftCommand>();
+        // @unsafe
+        {
+            raft_wire_command_clone_into(cmd, static_cast<rusty::RaftCommand*>(&copy));
+        }
         const uint64_t appended = this->state_.raft_log_.append(RaftEntry::new_(static_cast<int64_t>(leader_next_log_term), std::move(copy)));
         // @unsafe
         {
@@ -7869,7 +7922,11 @@ inline void RaftServerBase::AeApplyIncoming(const rusty::ffi::c_void* cmd, uint6
 }
 
 inline void RaftServerBase::ConstructRuntime() {
-    this->async_callback_lifetime_ = raft_new_callback_lifetime(static_cast<RaftServerBase*>(rusty::detail::ptr_or_addr((*this))));
+    rusty::RaftAsyncCallbackLifetimePtr* const lifetime_slot = static_cast<rusty::RaftAsyncCallbackLifetimePtr*>(&this->async_callback_lifetime_);
+    // @unsafe
+    {
+        raft_new_callback_lifetime(static_cast<RaftServerBase*>(rusty::detail::ptr_or_addr((*this))), lifetime_slot);
+    }
     this->heartbeat_interval_us_ = raft_heartbeat_interval_default();
     // @unsafe
     {
@@ -8067,7 +8124,11 @@ inline scheduler_h::RaftStartResult RaftServerBase::Start(const rusty::RaftComma
             }
             return rusty::clone(RaftStartResult::REJECTED);
         }
-        rusty::RaftCommand copy = raft_command_clone(static_cast<const rusty::RaftCommand*>(rusty::detail::ptr_or_addr(cmd)));
+        rusty::RaftCommand copy = rusty::default_like<rusty::RaftCommand>();
+        // @unsafe
+        {
+            raft_command_clone_into(static_cast<const rusty::RaftCommand*>(rusty::detail::ptr_or_addr(cmd)), static_cast<rusty::RaftCommand*>(&copy));
+        }
         const uint64_t previous_index = this->AppendLocal(std::move(copy));
         // @unsafe
         {

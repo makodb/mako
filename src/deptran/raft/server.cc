@@ -432,14 +432,13 @@ void raft_fire_leader_change(const rusty::RaftLeaderChangeCb* cb,
 // highest observed term must be sampled only after mtx_ is reacquired --
 // FeedResponse publishes it before its wakeup. Reading the term inside the
 // broadcast kernel would lose exactly that ordering.
-rusty::RaftVoteQuorumPtr raft_broadcast_vote_and_wait(
+void raft_broadcast_vote_and_wait(
     rusty::Communicator* commo, uint32_t par_id, uint64_t last_log_index,
-    int64_t last_log_term, uint16_t self_site_id, int64_t term) {
-  rusty::RaftVoteQuorumPtr quorum =
-      commo_of(commo)->BroadcastVote(
-          par_id, last_log_index, last_log_term, self_site_id, term);
-  quorum->wait_timeout(1000000);
-  return quorum;
+    int64_t last_log_term, uint16_t self_site_id, int64_t term,
+    rusty::RaftVoteQuorumPtr* out) {
+  *out = commo_of(commo)->BroadcastVote(
+      par_id, last_log_index, last_log_term, self_site_id, term);
+  (*out)->wait_timeout(1000000);
 }
 
 RaftVoteOutcome raft_vote_quorum_snapshot(
@@ -502,8 +501,9 @@ void raft_queue_replication_shutdown_wake(
 // cannot touch -- made here and handed back by value. Was the reason
 // SetLocalAppend / raft_set_local_append had to be C++; the append is
 // RaftServerBase::AppendLocal now.
-rusty::RaftCommand raft_command_clone(const rusty::RaftCommand* cmd) {
-  return *cmd;
+void raft_command_clone_into(const rusty::RaftCommand* src,
+                             rusty::RaftCommand* dst) {
+  *dst = *src;
 }
 // RAFT_TEST_CORO as a predicate. Conditional compilation has no spelling in
 // this dialect, so the flag is read here and the Rust callers branch on it:
@@ -516,9 +516,9 @@ bool raft_lab_mode() {
   return false;
 #endif
 }
-rusty::RaftCommand raft_noop_command() {
+void raft_noop_command_into(rusty::RaftCommand* dst) {
   auto noop = rusty::Arc<TpcNoopCommand>::make();
-  return janus::Command::pack_aliased<TpcNoopCommand>(std::move(noop));
+  *dst = janus::Command::pack_aliased<TpcNoopCommand>(std::move(noop));
 }
 // Spawns the election-timer fiber. The lambda captures the loop by value --
 // two words -- so nothing here outlives the fiber.
@@ -924,11 +924,10 @@ void raft_log_set_is_leader_entry(uint16_t site_id, uint32_t loc_id,
 
 // ConstructRuntime's three kernels: what the C++ constructor did that the
 // generated constructor could not -- see RaftServerBase::ConstructRuntime.
-rusty::RaftAsyncCallbackLifetimePtr raft_new_callback_lifetime(
-    RaftServerBase* self) {
-  auto lifetime = std::make_shared<AsyncCallbackLifetime>();
-  lifetime->server = self;
-  return lifetime;
+void raft_new_callback_lifetime(RaftServerBase* self,
+                                rusty::RaftAsyncCallbackLifetimePtr* out) {
+  *out = std::make_shared<AsyncCallbackLifetime>();
+  (*out)->server = self;
 }
 uint64_t raft_heartbeat_interval_default() { return HEARTBEAT_INTERVAL; }
 void raft_ensure_legacy_payload_registered() {
@@ -2108,11 +2107,13 @@ unsafe extern "C" {
     // log term in C++ (a Marshallable), pushed into batch_buffer_ in Rust,
     // and the buffer's Arcs are moved into one TpcBatchCommand at the end.
     fn raft_command_is_tpc_commit(cmd: *const rusty::RaftCommand) -> bool;
-    fn raft_stamped_commit(cmd: *const rusty::RaftCommand, term: i64)
-        -> rusty::sync::Arc<rusty::RaftTpcCommitCommand>;
-    fn raft_batch_finalize(
-        entries: *mut rusty::sync::Arc<rusty::RaftTpcCommitCommand>,
-        count: usize, cmd_out: *mut rusty::RaftCommand);
+    fn raft_stamped_commit_into(cmd: *const rusty::RaftCommand, term: i64,
+                                out: *mut rusty::RaftTpcCommitPtr);
+    fn raft_batch_finalize(entries: *mut rusty::RaftTpcCommitPtr,
+                           count: usize, cmd_out: *mut rusty::RaftCommand);
+    // The command copy INTO Rust's slot; see server.h for why never by value.
+    fn raft_command_clone_into(src: *const rusty::RaftCommand,
+                               dst: *mut rusty::RaftCommand);
 
     fn raft_phase1_send_append(commo: *mut rusty::Communicator,
                                self_site_id: u16, site_id: u16,
@@ -2120,7 +2121,8 @@ unsafe extern "C" {
                                prev_log_index: u64, prev_log_term: u64,
                                commit_index: u64,
                                cmd: *const rusty::RaftCommand,
-                               cmd_log_term: u64) -> rusty::RaftResponsePtr;
+                               cmd_log_term: u64,
+                               out: *mut rusty::RaftResponsePtr);
 }
 
 // ==========================================================================
@@ -2508,9 +2510,13 @@ pub fn heartbeat_phase1_select_payload(server: &mut RaftServerBase,
                 } else {
                     let entry: &RaftEntry = slot.unwrap();
                     *cmd_log_term = entry.term() as u64;
-                    // Copying a Command is a refcount bump on its inner Arc,
-                    // which is what the kernel this replaces did.
-                    *cmd = entry.cmd().clone();
+                    // Copying a Command is a refcount bump on its inner Arc:
+                    // a kernel, never the carrier's clone.
+                    unsafe {
+                        raft_command_clone_into(
+                            entry.cmd() as *const rusty::RaftCommand,
+                            cmd as *mut rusty::RaftCommand);
+                    }
                     *sent_end_index =
                         raft_server_append_sent_end(prev_log_index, 1);
                     // The kind tag identifies the payload better than the
@@ -2580,9 +2586,13 @@ pub fn heartbeat_phase1_select_payload(server: &mut RaftServerBase,
             let is_commit: bool =
                 unsafe { raft_command_is_tpc_commit(entry_cmd) };
             if is_commit {
-                server.batch_buffer_.push(unsafe {
-                    raft_stamped_commit(entry_cmd, entry_term)
-                });
+                let mut stamped: rusty::RaftTpcCommitPtr = Default::default();
+                unsafe {
+                    raft_stamped_commit_into(
+                        entry_cmd, entry_term,
+                        &mut stamped as *mut rusty::RaftTpcCommitPtr);
+                }
+                server.batch_buffer_.push(stamped);
             } else {
                 // Looked up again rather than held across the push above:
                 // `entry` borrows the log, and handing the push a *mut to the
@@ -2599,7 +2609,11 @@ pub fn heartbeat_phase1_select_payload(server: &mut RaftServerBase,
                     rusty::raft_log_info_3(
                         "[BATCH_SKIP] site={} idx={}: log entry is not TpcCommitCommand (kind={}), using raw log",
                         server.site_id_, idx, kind);
-                    *cmd = slot.unwrap().cmd().clone();
+                    unsafe {
+                        raft_command_clone_into(
+                            slot.unwrap().cmd() as *const rusty::RaftCommand,
+                            cmd as *mut rusty::RaftCommand);
+                    }
                     *cmd_log_term = entry_term as u64;
                     *sent_end_index =
                         raft_server_append_sent_end(prev_log_index, 1);
@@ -2807,13 +2821,15 @@ pub fn heartbeat_phase1_body(server: &mut RaftServerBase,
         }
 
         let is_leader: bool = server.IsLeader();
-        let sent_response: rusty::RaftResponsePtr = unsafe {
+        let mut sent_response: rusty::RaftResponsePtr = Default::default();
+        unsafe {
             raft_phase1_send_append(
                 server.commo_, server.site_id_, site_id, partition_id,
                 is_leader, round.term(), prev_log_index, prev_log_term,
                 round.commit_index(),
-                &cmd as *const rusty::RaftCommand, cmd_log_term)
-        };
+                &cmd as *const rusty::RaftCommand, cmd_log_term,
+                &mut sent_response as *mut rusty::RaftResponsePtr);
+        }
 
         pending_rpcs.place(ord, PendingAppend::new(
             site_id, round.term(), round.round_id(), sent_end_index,
@@ -4062,7 +4078,7 @@ pub fn on_append_entries_body(server: &mut RaftServerBase,
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_round_scope version=1 rust_sha256=f1036a4f63689801e6fc46f8c8f3279fb34457cf7c03663b381f91c39db7bce8*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.heartbeat_round_scope version=1 rust_sha256=d80f855295339f69f5dba4d8b6196a85d0cea5c8c2989e1c946a351b6a85b0cd*/
 enum class AppendReplyAction : int32_t;
 constexpr AppendReplyAction AppendReplyAction_IGNORED();
 constexpr AppendReplyAction AppendReplyAction_STEP_DOWN();
@@ -4119,9 +4135,10 @@ extern "C" {
     uint64_t raft_append_entries_batch_max();
     int32_t raft_command_kind(const rusty::RaftCommand* cmd);
     bool raft_command_is_tpc_commit(const rusty::RaftCommand* cmd);
-    rusty::Arc<rusty::RaftTpcCommitCommand> raft_stamped_commit(const rusty::RaftCommand* cmd, int64_t term);
-    void raft_batch_finalize(rusty::Arc<rusty::RaftTpcCommitCommand>* entries, size_t count, rusty::RaftCommand* cmd_out);
-    rusty::RaftResponsePtr raft_phase1_send_append(rusty::Communicator* commo, uint16_t self_site_id, uint16_t site_id, uint32_t partition_id, bool is_leader, uint64_t term, uint64_t prev_log_index, uint64_t prev_log_term, uint64_t commit_index, const rusty::RaftCommand* cmd, uint64_t cmd_log_term);
+    void raft_stamped_commit_into(const rusty::RaftCommand* cmd, int64_t term, rusty::RaftTpcCommitPtr* out);
+    void raft_batch_finalize(rusty::RaftTpcCommitPtr* entries, size_t count, rusty::RaftCommand* cmd_out);
+    void raft_command_clone_into(const rusty::RaftCommand* src, rusty::RaftCommand* dst);
+    void raft_phase1_send_append(rusty::Communicator* commo, uint16_t self_site_id, uint16_t site_id, uint32_t partition_id, bool is_leader, uint64_t term, uint64_t prev_log_index, uint64_t prev_log_term, uint64_t commit_index, const rusty::RaftCommand* cmd, uint64_t cmd_log_term, rusty::RaftResponsePtr* out);
 }
 
 struct HeartbeatRoundScope {
@@ -4375,7 +4392,6 @@ bool heartbeat_phase0_body(server_h::RaftServerBase& server, PendingTable& pendi
 }
 
 bool heartbeat_phase1_select_payload(server_h::RaftServerBase& server, size_t ord, uint16_t site_id, uint64_t prev_log_index, rusty::RaftCommand& cmd, uint64_t& cmd_log_term, uint64_t& sent_end_index) {
-    rusty::RaftCommand* cmd_shadow1 = &cmd;
     uint64_t* cmd_log_term_shadow1 = &cmd_log_term;
     uint64_t* sent_end_index_shadow1 = &sent_end_index;
     bool skip_follower = false;
@@ -4395,7 +4411,10 @@ bool heartbeat_phase1_select_payload(server_h::RaftServerBase& server, size_t or
                 } else {
                     const server_h::RaftEntry& entry = slot.unwrap();
                     *cmd_log_term_shadow1 = static_cast<uint64_t>(entry.term());
-                    *cmd_shadow1 = rusty::clone(entry.cmd());
+                    // @unsafe
+                    {
+                        raft_command_clone_into(rusty::detail::ptr_cast<const rusty::RaftCommand*>(entry.cmd()), static_cast<rusty::RaftCommand*>(rusty::detail::ptr_or_addr(cmd)));
+                    }
                     *sent_end_index_shadow1 = raft_server_append_sent_end(std::move(prev_log_index), 1);
                     const int32_t kind = raft_command_kind(rusty::detail::ptr_cast<const rusty::RaftCommand*>(entry.cmd()));
                     rusty::raft_log_debug_4("[APPEND_SEND] site={} sending entry {} to follower {} cmd_kind={}", server.site_id_, std::move(next), std::move(site_id), std::move(kind));
@@ -4430,14 +4449,22 @@ bool heartbeat_phase1_select_payload(server_h::RaftServerBase& server, size_t or
             const rusty::RaftCommand* entry_cmd = rusty::detail::ptr_cast<const rusty::RaftCommand*>(entry.unwrap().cmd());
             const bool is_commit = raft_command_is_tpc_commit(entry_cmd);
             if (is_commit) {
-                server.batch_buffer_.push(raft_stamped_commit(entry_cmd, std::move(entry_term)));
+                rusty::RaftTpcCommitPtr stamped = rusty::default_like<rusty::RaftTpcCommitPtr>();
+                // @unsafe
+                {
+                    raft_stamped_commit_into(entry_cmd, std::move(entry_term), static_cast<rusty::RaftTpcCommitPtr*>(&stamped));
+                }
+                server.batch_buffer_.push(std::move(stamped));
             } else {
                 auto slot = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.raft_log_); }) { return (__r.raft_log_); } else if constexpr (requires { (__r.raft_log__field); }) { return (__r.raft_log__field); } else if constexpr (requires { ((*__r).raft_log_); }) { return ((*__r).raft_log_); } else { return ((*__r).raft_log__field); } }(server.state_).get(std::move(idx));
                 const int32_t kind = raft_command_kind(rusty::detail::ptr_cast<const rusty::RaftCommand*>(slot.unwrap().cmd()));
                 const uint64_t batched = static_cast<uint64_t>(rusty::len(server.batch_buffer_));
                 if (rusty::detail::deref_if_pointer_like(batched) == static_cast<uint64_t>(0)) {
                     rusty::raft_log_info_3("[BATCH_SKIP] site={} idx={}: log entry is not TpcCommitCommand (kind={}), using raw log", server.site_id_, std::move(idx), std::move(kind));
-                    *cmd_shadow1 = rusty::clone(slot.unwrap().cmd());
+                    // @unsafe
+                    {
+                        raft_command_clone_into(rusty::detail::ptr_cast<const rusty::RaftCommand*>(slot.unwrap().cmd()), static_cast<rusty::RaftCommand*>(rusty::detail::ptr_or_addr(cmd)));
+                    }
                     *cmd_log_term_shadow1 = static_cast<uint64_t>(entry_term);
                     *sent_end_index_shadow1 = raft_server_append_sent_end(std::move(prev_log_index), 1);
                 } else {
@@ -4459,7 +4486,7 @@ bool heartbeat_phase1_select_payload(server_h::RaftServerBase& server, size_t or
     if (!skip_follower && (rusty::detail::deref_if_pointer_like(encoded_entry_count) > 0)) {
         // @unsafe
         {
-            raft_batch_finalize(reinterpret_cast<rusty::Arc<rusty::RaftTpcCommitCommand>*>(rusty::as_mut_ptr(server.batch_buffer_)), rusty::len(server.batch_buffer_), static_cast<rusty::RaftCommand*>(rusty::detail::ptr_or_addr((*cmd_shadow1))));
+            raft_batch_finalize(reinterpret_cast<rusty::RaftTpcCommitPtr*>(rusty::as_mut_ptr(server.batch_buffer_)), rusty::len(server.batch_buffer_), static_cast<rusty::RaftCommand*>(rusty::detail::ptr_or_addr(cmd)));
         }
         *sent_end_index_shadow1 = raft_server_append_sent_end(std::move(prev_log_index), std::move(encoded_entry_count));
         const uint64_t batch_end_idx = *sent_end_index_shadow1;
@@ -4548,7 +4575,11 @@ void heartbeat_phase1_body(server_h::RaftServerBase& server, PendingTable& pendi
             continue;
         }
         bool is_leader = server.IsLeader();
-        rusty::RaftResponsePtr sent_response = raft_phase1_send_append(server.commo_, server.site_id_, std::move(site_id), std::move(partition_id), std::move(is_leader), round.term(), std::move(prev_log_index), std::move(prev_log_term), round.commit_index(), static_cast<const rusty::RaftCommand*>(&cmd), std::move(cmd_log_term));
+        rusty::RaftResponsePtr sent_response = rusty::default_like<rusty::RaftResponsePtr>();
+        // @unsafe
+        {
+            raft_phase1_send_append(server.commo_, server.site_id_, std::move(site_id), std::move(partition_id), std::move(is_leader), round.term(), std::move(prev_log_index), std::move(prev_log_term), round.commit_index(), static_cast<const rusty::RaftCommand*>(&cmd), std::move(cmd_log_term), static_cast<rusty::RaftResponsePtr*>(&sent_response));
+        }
         pending_rpcs.place(std::move(ord), PendingAppend::new_(std::move(site_id), round.term(), round.round_id(), std::move(sent_end_index), std::move(sent_response), std::move(cmd)));
         if (round.authority_inserted() && round.is_member(std::move(site_id))) {
             // @unsafe
@@ -5272,18 +5303,17 @@ int32_t raft_command_kind(const rusty::RaftCommand* cmd) {
 bool raft_command_is_tpc_commit(const rusty::RaftCommand* cmd) {
   return marshallable_cast<TpcCommitCommand>(*cmd).is_some();
 }
-rusty::Arc<TpcCommitCommand> raft_stamped_commit(const rusty::RaftCommand* cmd,
-                                                 int64_t term) {
+void raft_stamped_commit_into(const rusty::RaftCommand* cmd, int64_t term,
+                              rusty::RaftTpcCommitPtr* out) {
   auto cur_cmd = marshallable_cast<TpcCommitCommand>(*cmd);
   verify(cur_cmd.is_some());
-  auto stamped = rusty::Arc<TpcCommitCommand>::make(*cur_cmd.as_ref().unwrap());
-  stamped.get_mut().unwrap().term = term;
-  return stamped;
+  *out = rusty::Arc<TpcCommitCommand>::make(*cur_cmd.as_ref().unwrap());
+  out->get_mut().unwrap().term = term;
 }
 
 // Moves the buffered Arcs into one TpcBatchCommand; the buffer is Rust's, so
 // it arrives as (pointer, count) and the caller clears it next round.
-void raft_batch_finalize(rusty::Arc<TpcCommitCommand>* entries, size_t count,
+void raft_batch_finalize(rusty::RaftTpcCommitPtr* entries, size_t count,
                          rusty::RaftCommand* cmd_out) {
   TpcBatchCommand batch_local;
   for (size_t i = 0; i < count; ++i) {
@@ -5296,13 +5326,14 @@ void raft_batch_finalize(rusty::Arc<TpcCommitCommand>* entries, size_t count,
 // The send itself. Non-blocking: it only initiates the async call. The
 // response is a shared_ptr the transport's callback also holds, which is
 // what keeps it alive; the pending table carries it opaquely.
-rusty::RaftResponsePtr raft_phase1_send_append(
+void raft_phase1_send_append(
     rusty::Communicator* commo, uint16_t self_site_id, uint16_t site_id,
     uint32_t partition_id,
     bool is_leader, uint64_t term, uint64_t prev_log_index,
     uint64_t prev_log_term, uint64_t commit_index,
-    const rusty::RaftCommand* cmd, uint64_t cmd_log_term) {
-  return commo_of(commo)->SendAppendEntries2(
+    const rusty::RaftCommand* cmd, uint64_t cmd_log_term,
+    rusty::RaftResponsePtr* out) {
+  *out = commo_of(commo)->SendAppendEntries2(
       site_id, partition_id, -1, -1, is_leader, self_site_id, term,
       prev_log_index, prev_log_term, commit_index, *cmd, cmd_log_term);
 }
@@ -5419,13 +5450,14 @@ int64_t raft_batch_term_at(const rusty::ffi::c_void* batch_handle, uint64_t i) {
 }
 // The i-th entry as its own janus::Command: an Arc clone (the refcount the
 // carrier cannot touch), wrapped exactly as RaftEntry used to receive it.
-rusty::RaftCommand raft_batch_command_at(const rusty::ffi::c_void* batch_handle,
-                                         uint64_t i) {
-  return janus::Command::pack_aliased<TpcCommitCommand>(
+void raft_batch_command_into(const rusty::ffi::c_void* batch_handle,
+                             uint64_t i, rusty::RaftCommand* dst) {
+  *dst = janus::Command::pack_aliased<TpcCommitCommand>(
       wire_batch(batch_handle).cmds_[i].clone());
 }
-rusty::RaftCommand raft_wire_command_clone(const rusty::ffi::c_void* cmd_handle) {
-  return wire_command(cmd_handle);
+void raft_wire_command_clone_into(const rusty::ffi::c_void* cmd_handle,
+                                  rusty::RaftCommand* dst) {
+  *dst = wire_command(cmd_handle);
 }
 
 

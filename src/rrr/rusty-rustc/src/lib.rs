@@ -526,6 +526,8 @@ rusty_opaque_cpp_carrier! {
     /// The buffer is a Rust-owned `rusty::Vec`; this is only what sits inside
     /// each `Arc`, and it stays opaque because it is a wire type.
     RaftTpcCommitCommand: 64 / u64,
+    // rusty::Arc<janus::TpcCommitCommand>: one control-block pointer.
+    RaftTpcCommitPtr: 8 / u64,
 }
 
 /// The alignment half of the layout pins, mirroring the `static_assert` block
@@ -544,6 +546,7 @@ const _: () = {
     assert!(align_of::<RaftLeaderChangeCb>() == 16);
     assert!(align_of::<RaftStdThread>() == 8);
     assert!(align_of::<RaftVoteQuorumPtr>() == 8);
+    assert!(align_of::<RaftTpcCommitPtr>() == 8);
     assert!(align_of::<RaftByteString>() == 8);
     assert!(align_of::<RaftTpcCommitCommand>() == 8);
     assert!(align_of::<RaftCommand>() == 8);
