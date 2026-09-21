@@ -233,8 +233,9 @@ shim over a forward-declared `struct RaftServerBase`. Do not add a method
 call, a field access, a cast or a derivation on the struct in C++; add an
 export instead: the exports (spliced between the markers in `server_cc.rs`),
 the header and the shim are all generated from one signature table by
-`scripts/raft_gen_exports.py` (default, `--header`, `--shim`), and
-`scripts/raft_field_census.py` must keep exiting 0. The Rust side calls C++
+`scripts/raft_gen_exports.py` -- run `python3 scripts/raft_regen_exports.py`
+to regenerate all three -- and `scripts/raft_field_census.py` must keep
+exiting 0. The Rust side calls C++
 only through the kernels declared `extern "C"` in `server_h.rs` and defined
 in `server.cc`; a kernel is C++ that has a reason to be (reactor, threads,
 wire types, third-party APIs). The one inline block left in `server.h`, the

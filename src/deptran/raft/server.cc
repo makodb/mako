@@ -1348,27 +1348,14 @@ AppendRespView raft_append_response_read(
 
 
 // ============================================================================
-// THE RPC ENTRY POINTS' C++ HALVES
+// THE RPC ENTRY POINTS' C++ HALF
 //
 // OnRequestVote, OnAppendEntries, OnInstallSnapshot and Start are RaftSpecific
-// methods on RaftServerBase (scheduler.h), implemented in Rust in server.h.
-// What is left here is what that header cannot reach: the two RPC bodies are
-// Rust too, exported as raft_server_on_request_vote_body and
-// raft_server_on_append_entries_body (server_exports.h) but defined in THIS
-// translation unit, so the two forwarders are the TU boundary and nothing
-// more -- at the cutover server.h's Rust calls the bodies directly and they
-// go; and OnInstallSnapshot's std::mutex and its catch -- the one place an
-// embedder throw becomes FailStop -- are C++ by nature.
+// methods on RaftServerBase, Rust in server_h.rs. The first two reach their
+// bodies in server_cc.rs directly (F2.7). What is left here is
+// OnInstallSnapshot's std::mutex and its catch -- the one place an embedder
+// throw becomes FailStop -- which are C++ by nature.
 // ============================================================================
-
-// @unsafe - TU-boundary forwarder; see above.
-extern "C" void raft_rpc_request_vote(RaftServerBase* self, uint64_t lst_log_idx,
-                           int64_t lst_log_term, uint16_t can_id,
-                           int64_t can_term, int64_t* reply_term,
-                           int8_t* vote_granted) {
-  raft_server_on_request_vote_body(*self, lst_log_idx, lst_log_term, can_id,
-                                   can_term, *reply_term, *vote_granted);
-}
 
 /* NOTE: same as ReceiveAppend */
 /* NOTE: broadcast send to all of the host even to its own server
@@ -1432,26 +1419,6 @@ void raft_wire_command_clone_into(const rusty::ffi::c_void* cmd_handle,
 
 }  // extern "C"
 
-// @unsafe - TU-boundary forwarder; see above. The payload crosses as the
-// c_void the DSL body takes plus has_value() -- the only two things Raft asks
-// of a janus::Command.
-extern "C" void raft_rpc_append_entries(RaftServerBase* self, uint64_t leader_current_term,
-                             uint16_t leader_site_id,
-                             uint64_t leader_prev_log_index,
-                             uint64_t leader_prev_log_term,
-                             uint64_t leader_commit_index,
-                             const rusty::RaftCommand* cmd,
-                             uint64_t leader_next_log_term,
-                             uint64_t* follower_append_ok,
-                             uint64_t* follower_current_term,
-                             uint64_t* follower_last_log_index) {
-  raft_server_on_append_entries_body(
-      *self, leader_current_term, leader_site_id, leader_prev_log_index,
-      leader_prev_log_term, leader_commit_index,
-      static_cast<const rusty::ffi::c_void*>(static_cast<const void*>(cmd)),
-      cmd->has_value(), leader_next_log_term, *follower_append_ok,
-      *follower_current_term, *follower_last_log_index);
-}
 
 
 // @unsafe - the InstallSnapshot exception boundary. The two locks it used to

@@ -2006,12 +2006,9 @@ pub unsafe fn raft_on_request_vote(
 // the rrr service layer calls them by name on RaftServer.
 // ==========================================================================
 #[allow(clippy::too_many_arguments)]
-// An export (plan.md F2 slice 4): the service's kernel, raft_rpc_request_vote,
-// reaches this body through server_exports.h, so it survives the cutover. The
-// `&mut` parameters are non-null pointers in the C ABI and references in the
-// C++ prototype, which is what the kernel passes.
-#[no_mangle]
-pub extern "C" fn raft_server_on_request_vote_body(
+// Called by RaftServerBase::OnRequestVote (server_h.rs) -- Rust calling Rust
+// since F2.7; the C++ forwarder that used to sit between them is gone.
+pub fn on_request_vote_body(
     server: &mut RaftServerBase, lst_log_idx: u64,
     lst_log_term: i64, can_id: u16, can_term: i64,
     reply_term: &mut i64, vote_granted: &mut i8) {
@@ -2416,9 +2413,8 @@ pub unsafe fn raft_on_append_entries(
 // `cmd` is an opaque handle to the caller's janus::Command; it is passed
 // straight through to raft_on_append_entries, never dereferenced here.
 #[allow(clippy::too_many_arguments, clippy::not_unsafe_ptr_arg_deref)]
-// An export, as above: entered from raft_rpc_append_entries.
-#[no_mangle]
-pub extern "C" fn raft_server_on_append_entries_body(
+// Called by RaftServerBase::OnAppendEntries (server_h.rs), likewise.
+pub fn on_append_entries_body(
     server: &mut RaftServerBase,
                               leader_current_term: u64, leader_site_id: u16,
                               leader_prev_log_index: u64,

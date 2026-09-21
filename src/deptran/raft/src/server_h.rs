@@ -1443,26 +1443,9 @@ unsafe extern "C" {
     // which the queued OneTimeJob hands back to raft_wake_job_run once.
     fn raft_queue_wake_job(owner: *const rusty::RaftPollThreadPtr,
                            token: *mut core::ffi::c_void);
-    // The RPC entry points' C++ halves. The first two exist only because
-    // the bodies (raft_server_on_request_vote_body, raft_server_on_append_entries_body)
-    // are defined in server.cc's translation unit, which this header cannot
-    // name before server_exports.h is included at its end; the third
-    // is the InstallSnapshot exception boundary -- a std::mutex the DSL
-    // cannot lock, and the one catch that turns an embedder throw into
-    // FailStop.
-    fn raft_rpc_request_vote(server: *mut RaftServerBase, lst_log_idx: u64,
-                             lst_log_term: i64, can_id: u16, can_term: i64,
-                             reply_term: *mut i64, vote_granted: *mut i8);
-    fn raft_rpc_append_entries(server: *mut RaftServerBase,
-                               leader_current_term: u64, leader_site_id: u16,
-                               leader_prev_log_index: u64,
-                               leader_prev_log_term: u64,
-                               leader_commit_index: u64,
-                               cmd: *const rusty::RaftCommand,
-                               leader_next_log_term: u64,
-                               follower_append_ok: *mut u64,
-                               follower_current_term: *mut u64,
-                               follower_last_log_index: *mut u64);
+    // The InstallSnapshot exception boundary -- a std::mutex the DSL cannot
+    // lock, and the one catch that turns an embedder throw into FailStop.
+    // (The RequestVote and AppendEntries bodies are called directly: F2.7.)
     // The catch around OnInstallSnapshotLocked; the two locks it used to take
     // are Rust's now (OnInstallSnapshot below). false is the throw.
     fn raft_install_snapshot_guarded(server: *mut RaftServerBase, site_id: u16,
@@ -4611,11 +4594,11 @@ impl RaftSpecific for RaftServerBase {
     fn OnRequestVote(&mut self, lst_log_idx: u64, lst_log_term: i64,
                      can_id: u16, can_term: i64, reply_term: *mut i64,
                      vote_granted: *mut i8) {
-        unsafe {
-            raft_rpc_request_vote(self as *mut RaftServerBase, lst_log_idx,
-                                  lst_log_term, can_id, can_term, reply_term,
-                                  vote_granted);
-        }
+        // Rust calling Rust (F2.7): the body is in server_cc.rs, one crate
+        // away, where a C++ forwarder used to be the only route.
+        crate::server_cc::on_request_vote_body(
+            self, lst_log_idx, lst_log_term, can_id, can_term,
+            unsafe { &mut *reply_term }, unsafe { &mut *vote_granted });
     }
 
     fn OnAppendEntries(&mut self, leader_current_term: u64,
@@ -4625,16 +4608,19 @@ impl RaftSpecific for RaftServerBase {
                        follower_append_ok: *mut u64,
                        follower_current_term: *mut u64,
                        follower_last_log_index: *mut u64) {
-        unsafe {
-            raft_rpc_append_entries(self as *mut RaftServerBase,
-                                    leader_current_term, leader_site_id,
-                                    leader_prev_log_index, leader_prev_log_term,
-                                    leader_commit_index,
-                                    cmd as *const rusty::RaftCommand,
-                                    leader_next_log_term, follower_append_ok,
-                                    follower_current_term,
-                                    follower_last_log_index);
-        }
+        // The payload crosses as the handle the body takes plus has_value() --
+        // the only two things Raft asks of a janus::Command -- read here
+        // through the one kernel that can look inside it.
+        let cmd_has_value: bool =
+            unsafe { raft_command_has_value(cmd as *const rusty::RaftCommand) };
+        crate::server_cc::on_append_entries_body(
+            self, leader_current_term, leader_site_id, leader_prev_log_index,
+            leader_prev_log_term, leader_commit_index,
+            cmd as *const rusty::RaftCommand as *const core::ffi::c_void,
+            cmd_has_value, leader_next_log_term,
+            unsafe { &mut *follower_append_ok },
+            unsafe { &mut *follower_current_term },
+            unsafe { &mut *follower_last_log_index });
     }
 
     fn OnInstallSnapshot(&mut self, term: u64, leader_id: u64,

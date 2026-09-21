@@ -20,10 +20,6 @@ void raft_server_heartbeat_loop(RaftServerBase* s);
 void raft_server_run_election_timer_loop(RaftServerBase* s, uint64_t wait_int_us);
 // --- The wake job, entered from the reactor's OneTimeJob (raft_queue_wake_job).
 void raft_wake_job_run(void* token);
-// --- The RPC bodies, entered from the service kernels (raft_rpc_*). Defined
-// by hand in server.cc's DSL block; `&mut` parameters are references here.
-void raft_server_on_request_vote_body(RaftServerBase& server, uint64_t lst_log_idx, int64_t lst_log_term, uint16_t can_id, int64_t can_term, int64_t& reply_term, int8_t& vote_granted);
-void raft_server_on_append_entries_body(RaftServerBase& server, uint64_t leader_current_term, uint16_t leader_site_id, uint64_t leader_prev_log_index, uint64_t leader_prev_log_term, uint64_t leader_commit_index, const void* cmd, bool cmd_has_value, uint64_t leader_next_log_term, uint64_t& follower_append_ok, uint64_t& follower_current_term, uint64_t& follower_last_log_index);
 // --- The replication interface: TxLogServer and RaftSpecific.
 void raft_server_set_site_identity(RaftServerBase* s, uint32_t loc_id, uint16_t site_id, uint32_t partition_id);
 void raft_server_set_commo(RaftServerBase* s, rusty::Communicator* commo);
