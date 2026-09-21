@@ -138,7 +138,7 @@ time) and the four production Raft suites, and committed on its own.
 | `5e97e4884` | -- | F2 slice 3: the lab log fingerprint is two scalar exports (no `RaftLog&` crosses); the five by-value setters cross by pointer + clone kernel (D2 at the seam); 17 Rust predicates no Rust called are deleted and their 6 C++ callers compare in C++; the kernel-result PODs have a C++-visible block of their own, the RPC bodies are exports, and the 100 predicate static_asserts are Rust const asserts |
 | `1de45affa` | -- | THE CUTOVER: server_h.rs / server_cc.rs are canonical Rust compiled by cargo into libraft.a and linked by CMake; the generated C++ of the server, the bridge, the alloc/free kernels and the facade's C++ halves are deleted; C++ holds `struct RaftServerBase;` as a name |
 | docs | -- | perf verdict on the cutover: 25 paired trials, `19cfbb213` vs `1de45affa`, median +0.32%, p = 1.000 -- no detectable cost of the whole conversion |
-| `raft: F2.7` | -- | Rust calls Rust: the two RPC forwarder kernels and their exports are deleted; OnRequestVote / OnAppendEntries call the bodies in server_cc.rs directly |
+| `9f3f350ae` | -- | Rust calls Rust: the two RPC forwarder kernels and their exports are deleted; OnRequestVote / OnAppendEntries call the bodies in server_cc.rs directly |
 
 ## What the numbers did
 
