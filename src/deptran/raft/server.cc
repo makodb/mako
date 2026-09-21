@@ -964,6 +964,18 @@ void raft_log_set_is_leader_entry(uint16_t site_id, uint32_t loc_id,
 // F1: allocation of the (still C++) struct for raft_server_new/delete. The
 // generated default constructor is what `new RaftServer()` ran before the
 // shim stopped deriving; ConstructRuntime follows in the Rust export.
+// F2 slice 1c: the Rust logger's two kernels. The runtime facade formats the
+// line itself and asks two things of rrr's logger (module rrr.logging, the
+// transpiled src/rrr/base/logging.rs): is the level on, and here is a line.
+// Levels are rrr's: ERROR 1, WARN 2, INFO 3, DEBUG 4. Line 0 and a null file,
+// as rrr_log.h's Log_* templates pass. Unused by the transpiled build, whose
+// Rust bodies log through the C++ templates in rust_log_shims.h.
+bool raft_log_enabled(int32_t level) { return level <= rrr::Log::level_now(); }
+void raft_log_line(int32_t level, const uint8_t* text, size_t len) {
+  rrr::log_line(level, 0, nullptr,
+                std::string(reinterpret_cast<const char*>(text), len));
+}
+
 RaftServerBase* raft_server_alloc() { return new RaftServerBase(); }
 void raft_server_free(RaftServerBase* s) { delete s; }
 

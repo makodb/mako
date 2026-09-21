@@ -132,7 +132,8 @@ time) and the four production Raft suites, and committed on its own.
 | `e60267d97` | E | Rust stays on the fiber; `panic = "abort"`, guard page and one-thread-per-fiber written where they bind |
 | `1d24bbf53` `782b34f48` `3cbcdcfe6` | F1 | the seam is a C ABI: 71 `extern "C"` functions defined in Rust, `server_exports.h`, a shim that holds a pointer and forwards; hand-written C++ knows the struct only as a pointer type |
 | `3b0d810dd` | -- | F2 (the cutover proper) inventoried; a project of its own |
-| `raft: F2 slice 1` | -- | F2 slice 1, facade -> runtime: the crate is a `staticlib` (71 exports defined, 94 kernels undefined); every opaque carrier has a kernel `Drop`; the wake gate's reactor handles are pinned carriers over `rusty::Arc`, built by facade factories and copied by `Clone` because a `rusty::Arc` has no empty state |
+| `8b1cbfe97` | -- | F2 slice 1, facade -> runtime: the crate is a `staticlib` (71 exports defined, 94 kernels undefined); every opaque carrier has a kernel `Drop`; the wake gate's reactor handles are pinned carriers over `rusty::Arc`, built by facade factories and copied by `Clone` because a `rusty::Arc` has no empty state |
+| `raft: F2 slice 1c` | -- | F2 slice 1c: the 44 `raft_log_*` facade functions are the Raft logger under rustc (level check, fmtlib-style substitution, one line to `rrr::log_line`); the transpiled build is unchanged |
 
 ## What the numbers did
 

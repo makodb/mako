@@ -414,19 +414,140 @@ pub struct RaftCommand {
 ///
 /// Arities 0..10 cover every Raft call site; keep this in step with the
 /// RAFT_DSL_LOG_LEVEL list in that header.
+/// The Raft crate's logging, as a runtime (docs/migration/raft/plan.md, F2
+/// slice 1c). Under the transpiler each `raft_log_<level>_<n>` call is a
+/// C++ `Log_<level>` with fmtlib formatting; under rustc these functions ARE
+/// the logger: they ask the C++ logger whether the level is enabled -- so a
+/// disabled debug line costs one call and no formatting, as the C++ macros
+/// arrange -- then substitute the arguments into the fmtlib-style string
+/// and hand the line to rrr's logger through `raft_log_line`. The whole
+/// specifier set in use is `{}` and `{:x}`; anything else is a bug and says
+/// so in the emitted line rather than silently dropping an argument.
+pub trait RaftLogArg {
+    fn write_display(&self, out: &mut String);
+    fn write_hex(&self, out: &mut String) {
+        self.write_display(out)
+    }
+}
+
+macro_rules! raft_log_arg_display {
+    ($($t:ty),* $(,)?) => { $(
+        impl RaftLogArg for $t {
+            fn write_display(&self, out: &mut String) {
+                use ::std::fmt::Write as _;
+                let _ = write!(out, "{}", self);
+            }
+        }
+    )* };
+}
+macro_rules! raft_log_arg_int {
+    ($($t:ty),* $(,)?) => { $(
+        impl RaftLogArg for $t {
+            fn write_display(&self, out: &mut String) {
+                use ::std::fmt::Write as _;
+                let _ = write!(out, "{}", self);
+            }
+            fn write_hex(&self, out: &mut String) {
+                use ::std::fmt::Write as _;
+                let _ = write!(out, "{:x}", self);
+            }
+        }
+    )* };
+}
+raft_log_arg_int!(u8, u16, u32, u64, usize, i8, i16, i32, i64, isize);
+raft_log_arg_display!(bool, f32, f64, char, str, String);
+impl<T: RaftLogArg + ?Sized> RaftLogArg for &T {
+    fn write_display(&self, out: &mut String) { (**self).write_display(out) }
+    fn write_hex(&self, out: &mut String) { (**self).write_hex(out) }
+}
+
+// rrr's levels (src/rrr/base/logging.rs): FATAL 0, ERROR 1, WARN 2, INFO 3,
+// DEBUG 4.
+pub const RAFT_LOG_ERROR: i32 = 1;
+pub const RAFT_LOG_WARN: i32 = 2;
+pub const RAFT_LOG_INFO: i32 = 3;
+pub const RAFT_LOG_DEBUG: i32 = 4;
+
+extern "C" {
+    /// Is `level` enabled in the C++ logger? Asked before formatting.
+    pub fn raft_log_enabled(level: i32) -> bool;
+    /// One formatted line to rrr's logger; `text` is `len` bytes, not
+    /// NUL-terminated, valid for the call.
+    pub fn raft_log_line(level: i32, text: *const u8, len: usize);
+}
+
+pub fn raft_log_format(fmt: &str, args: &[&dyn RaftLogArg]) -> String {
+    let mut out = String::with_capacity(fmt.len() + 16 * args.len());
+    let mut next = 0usize;
+    let mut rest = fmt;
+    loop {
+        let Some(pos) = rest.find(['{', '}']) else {
+            out.push_str(rest);
+            break;
+        };
+        out.push_str(&rest[..pos]);
+        let tail = &rest[pos..];
+        // fmtlib: a doubled brace is the brace itself; a lone `}` is not a
+        // specifier (fmtlib rejects it at compile time) and is kept visible.
+        if let Some(after) = tail.strip_prefix("{{") {
+            out.push('{');
+            rest = after;
+            continue;
+        }
+        if let Some(after) = tail.strip_prefix("}}") {
+            out.push('}');
+            rest = after;
+            continue;
+        }
+        if let Some(after) = tail.strip_prefix('}') {
+            out.push('}');
+            rest = after;
+            continue;
+        }
+        let Some(close) = tail.find('}') else {
+            out.push_str(tail);
+            break;
+        };
+        let spec = &tail[1..close];
+        match args.get(next) {
+            Some(arg) if spec.is_empty() => arg.write_display(&mut out),
+            Some(arg) if spec == ":x" => arg.write_hex(&mut out),
+            Some(_) => out.push_str("{bad spec}"),
+            None => out.push_str("{missing arg}"),
+        }
+        next += 1;
+        rest = &tail[close + 1..];
+    }
+    out
+}
+
+#[allow(unsafe_code)]
+fn raft_log_emit(level: i32, fmt: &str, args: &[&dyn RaftLogArg]) {
+    // SAFETY: both kernels take plain values and a byte range that lives for
+    // the call; `raft_log_enabled` reads a level, `raft_log_line` copies.
+    if !unsafe { raft_log_enabled(level) } {
+        return;
+    }
+    let line = raft_log_format(fmt, args);
+    unsafe { raft_log_line(level, line.as_ptr(), line.len()) }
+}
+
 macro_rules! raft_log_shims {
-    ($($name:ident($($p:ident),*);)*) => {
+    ($level:expr; $($name:ident($($p:ident),*);)*) => {
         $(
-            #[allow(clippy::too_many_arguments, unused_variables, non_snake_case)]
-            pub fn $name<$($p),*>(fmt: &str $(, $p: $p)*) {}
+            #[allow(clippy::too_many_arguments, non_snake_case)]
+            pub fn $name<$($p: RaftLogArg),*>(fmt: &str $(, $p: $p)*) {
+                raft_log_emit($level, fmt, &[$(&$p as &dyn RaftLogArg),*]);
+            }
         )*
     };
 }
 
 macro_rules! raft_log_level_shims {
-    ($l0:ident, $l1:ident, $l2:ident, $l3:ident, $l4:ident, $l5:ident,
+    ($level:expr; $l0:ident, $l1:ident, $l2:ident, $l3:ident, $l4:ident, $l5:ident,
      $l6:ident, $l7:ident, $l8:ident, $l9:ident, $l10:ident) => {
         raft_log_shims! {
+            $level;
             $l0();
             $l1(A);
             $l2(A, B);
@@ -443,21 +564,25 @@ macro_rules! raft_log_level_shims {
 }
 
 raft_log_level_shims!(
+    RAFT_LOG_DEBUG;
     raft_log_debug_0, raft_log_debug_1, raft_log_debug_2, raft_log_debug_3,
     raft_log_debug_4, raft_log_debug_5, raft_log_debug_6, raft_log_debug_7,
     raft_log_debug_8, raft_log_debug_9, raft_log_debug_10
 );
 raft_log_level_shims!(
+    RAFT_LOG_INFO;
     raft_log_info_0, raft_log_info_1, raft_log_info_2, raft_log_info_3,
     raft_log_info_4, raft_log_info_5, raft_log_info_6, raft_log_info_7,
     raft_log_info_8, raft_log_info_9, raft_log_info_10
 );
 raft_log_level_shims!(
+    RAFT_LOG_WARN;
     raft_log_warn_0, raft_log_warn_1, raft_log_warn_2, raft_log_warn_3,
     raft_log_warn_4, raft_log_warn_5, raft_log_warn_6, raft_log_warn_7,
     raft_log_warn_8, raft_log_warn_9, raft_log_warn_10
 );
 raft_log_level_shims!(
+    RAFT_LOG_ERROR;
     raft_log_error_0, raft_log_error_1, raft_log_error_2, raft_log_error_3,
     raft_log_error_4, raft_log_error_5, raft_log_error_6, raft_log_error_7,
     raft_log_error_8, raft_log_error_9, raft_log_error_10
@@ -2967,11 +3092,21 @@ impl<A: ?Sized + 'static, R: 'static> Function<dyn FnMut(&mut A) -> R> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Function, ReactorBoxEvent};
+    use super::{raft_log_format, Function, ReactorBoxEvent};
     use ::std::cell::Cell;
     use ::std::mem::{align_of, size_of};
     use ::std::rc::Rc;
     use ::std::sync::Arc;
+
+    #[test]
+    fn raft_log_format_is_fmtlib_for_the_specifiers_in_use() {
+        assert_eq!(raft_log_format("a {} b {:x} c", &[&1u32, &255u32]), "a 1 b ff c");
+        assert_eq!(raft_log_format("{} {} {}", &[&"s", &true, &-7i64]), "s true -7");
+        assert_eq!(raft_log_format("{{literal}} {}", &[&7u8]), "{literal} 7");
+        assert_eq!(raft_log_format("{} {}", &[&1u8]), "1 {missing arg}");
+        assert_eq!(raft_log_format("{:?} {}", &[&1u8, &2u8]), "{bad spec} 2");
+        assert_eq!(raft_log_format("no args } here {", &[]), "no args } here {");
+    }
 
     #[test]
     fn box_event_publishes_payload_across_threads() {
