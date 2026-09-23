@@ -1,20 +1,16 @@
 // The snapshot, configuration, partition-recovery and load families of the
-// RaftLab suite, in Rust (lab-harness-to-rust-plan.md, Phase 3).
+// RaftLab suite -- fourteen of the twenty-five cases.
 //
-// Split from lab_cases.rs because these are a different kind of test: where
-// the replication cases drive the cluster through the fixture, these reach
-// into one replica -- its snapshot boundary, its log base, its retention
-// window, its state-machine callbacks. That is precisely why they matter to
-// Phase 4: **all 176 calls into the `class RaftServer` shim come from these
-// eleven cases.** The other fourteen never name a RaftServer at all.
+// Where the replication cases in lab_cases.rs drive the cluster through the
+// fixture, these reach into one replica: its snapshot boundary, its log base,
+// its retention window, its state-machine callbacks.
 //
-// Three cases are deliberately NOT here. testSnapshotMetadataCreation,
+// Three of the fourteen are not here. testSnapshotMetadataCreation,
 // testSnapshotFormatRoundTrip and testSnapshotManagerSaveLoad construct a
 // SnapshotMetadata, call SnapshotFormat's statics and exercise a
-// MemorySnapshotManager on the stack. They are unit tests of C++ classes, they
-// touch no RaftServer, and porting them would add roughly ten kernels to
-// delete zero exports. They stay C++, in lab_unit_tests.cc, and this suite
-// calls them through one kernel.
+// MemorySnapshotManager on the stack. They are unit tests of C++ classes and
+// touch no RaftServer, so they live in lab_unit_tests.cc and this suite calls
+// them through one kernel.
 
 #![cfg(feature = "raft_test")]
 #![allow(non_snake_case)]

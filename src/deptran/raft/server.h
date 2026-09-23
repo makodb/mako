@@ -115,35 +115,32 @@ static_assert(RaftStartResult{} == RaftStartResult::REJECTED);
 // callbacks, logging, and pointer access remain at their existing C++ call
 // sites. `const fn` makes the generated C++ constexpr/implicitly inline.
 
-// The sentinel is now owned by the DSL block as
-// RAFT_SERVER_INVALID_SITE_ID; pin that it still equals the C++ macro.
-// RAFT_SERVER_INVALID_SITE_ID (server_h.rs) is 65535; pin the C++ macro to it.
+// The sentinel belongs to Rust as RAFT_SERVER_INVALID_SITE_ID (server_h.rs),
+// which is 65535; pin the C++ macro to it.
 static_assert(static_cast<uint16_t>(INVALID_SITEID) == 65535);
-// The predicates' compile-time tests are Rust now: `const _: () = assert!(...)`
-// items next to the predicates, which the emitter lowers back to these
-// static_asserts (plan.md, F2 slice 4). What remains here is C++'s own.
+// The predicates' compile-time tests live next to the predicates themselves
+// as `const _: () = assert!(...)` items, which the emitter lowers back to
+// static_asserts. What remains here is C++'s own.
 
 // One log entry, owned by Rust.
 //
-// Was nine fields; seven were dead. max_ballot_seen_, max_ballot_accepted_,
-// accepted_cmd_ and committed_cmd_ had ZERO uses in raft -- a tree-wide grep
-// appears to show them live, but every hit is PaxosData (paxos/server.h:18),
-// a separate struct that happens to share the field names. prevTerm, slot_id
-// and ballot were written once each in SetLocalAppend and read nowhere.
+// Two fields: one scalar and one opaque carrier. A grep for the Paxos entry's
+// field names -- max_ballot_seen_, max_ballot_accepted_, accepted_cmd_,
+// committed_cmd_ -- appears to find them here too, but every hit is PaxosData
+// (paxos/server.h:18), a separate struct that happens to share the names.
 //
-// What is left is one scalar and one opaque carrier, each read at 13 sites in
+// Each of the two is read at 13 sites in
 // server.cc. The payload crosses as rusty::RaftCommand -- held, moved, handed
 // to a kernel, never dereferenced from Rust -- which is the same opaque carry
 // PendingTable already uses for this exact type.
 //
-// The payload's internal storage is still a shared_ptr<Marshallable>; calls
-// to APIs that take one go through cmd().inner_marshallable(). Wire format
-// unchanged -- see docs/dev/l10-unblock-plan.md.
+// The payload's internal storage is a shared_ptr<Marshallable>; calls to APIs
+// that take one go through cmd().inner_marshallable().
 //
 // Deliberately NO method returning &mut: an entry is written when it is
 // constructed and never afterwards. That is what makes "modify an existing
-// entry" unspellable rather than merely discouraged, and it is why the
-// send-time term stamp had to become a copy first (d295a4842).
+// entry" unspellable rather than merely discouraged. A caller that wants a
+// different term stamp takes a copy.
 
 // The Raft log itself, owned by Rust.
 //
@@ -161,17 +158,14 @@ static_assert(static_cast<uint16_t>(INVALID_SITEID) == 65535);
 // sites verify() it is the index they intended, so a gap aborts instead of
 // appearing.
 //
-// WHY IT MATTERS. min_active_slot_ and last_log_index_ WERE a second and a
-// third copy of the log's extents, advanced by hand at six write sites and
-// never once checked against the container. They are base() and
-// base() + len() - 1 now, and cannot disagree with it, because they are no
-// longer stored. A transitional assertion carried both representations
-// through raftLabTest's 25 cases and shard1ReplicationSimpleRaft and found
-// they never once disagreed, which is what let the fields go.
+// WHY IT MATTERS. The log's extents are base() and base() + len() - 1,
+// derived from the container rather than stored beside it. There is no
+// separate min_active_slot_ or last_log_index_ to advance by hand at each
+// write site, so there is nothing that can disagree with the container.
 //
-// WHY BLOCKS AND NOT ONE VECTOR. One growing vector was measured at 2.0
-// points of saturation throughput against the map it replaced, and it blew
-// the tail out -- p99 +20%, p999 +25%, max +52%. The mechanism is the
+// WHY BLOCKS AND NOT ONE VECTOR. A single growing vector measures 2.0 points
+// of saturation throughput worse than a map, and blows the tail out --
+// p99 +20%, p999 +25%, max +52%. The mechanism is the
 // doubling reallocation, which copies the whole log while holding mtx_, so
 // the whole pipeline stalls for as long as the memcpy takes. Pre-reserving
 // the vector recovered those 2 points and pushed p99 and max BELOW the map
@@ -192,11 +186,11 @@ static_assert(static_cast<uint16_t>(INVALID_SITEID) == 65535);
 // @unsafe - inherits from non-@interface TxLogServer (individual methods are @safe)
 // Per-follower replication progress.
 //
-// next_index_ and match_index_ were two std::maps keyed identically, always
-// initialised together and asserted to have equal size. They are now ONE map of
-// a DSL-owned value type, which removes the "find both, check both" dance at
+// next_index_ and match_index_ are ONE map of a value type rather than two
+// maps keyed identically. That removes the "find both, check both" dance at
 // the reply site and makes the index arithmetic a method rather than five
-// inline branches.
+// inline branches; the two indices cannot go out of step because there is
+// only one entry to find.
 //
 // The map itself stays C++: rusty::BTreeMap's rustc facade has no new(), no
 // remove() and no mutable get, so converting the container would cost more
@@ -211,14 +205,11 @@ static_assert(static_cast<uint16_t>(INVALID_SITEID) == 65535);
 // fields gathered into one type first. This is that type, starting with the
 // members measured to be touched ONLY under the lock.
 //
-// Still a plain member behind the C++ mtx_ for now. Making it
-// rusty::Mutex<RaftConsensusState> is the next step and is now unblocked,
-// because mtx_ is no longer recursive -- rusty::Mutex cannot be, since its
-// lock() hands out a reference to the guarded data.
+// A plain member behind mtx_, not a rusty::Mutex<RaftConsensusState>: that
+// would require mtx_ to be non-recursive, since rusty::Mutex::lock() hands
+// out a reference to the guarded data.
 //
-// Fields stay public: the C++ that has not been converted yet reaches them as
-// state_.field, exactly as it reached them as bare members. Methods move onto
-// this type as the bodies that use them convert.
+// Fields are public because the kernels reach them as state_.field.
 
 // The election timer loop, owned by Rust.
 //
@@ -243,11 +234,10 @@ static_assert(static_cast<uint16_t>(INVALID_SITEID) == 65535);
 // A std::mutex that remembers which thread holds it, so re-entering it
 // aborts with a message instead of hanging.
 //
-// WHY THIS IS WORTH AN ATOMIC PER ACQUISITION. mtx_ was a recursive_mutex
-// until the Tranche 5 demotion. Re-entry used to be legal; now it is a
-// self-deadlock -- the thread waits for a lock only it can release. Every
-// path INSIDE RaftServer was checked then, and a static walk still finds no
-// function holding mtx_ that reaches another taking it.
+// WHY THIS IS WORTH AN ATOMIC PER ACQUISITION. mtx_ is non-recursive, so
+// re-entering it is a self-deadlock -- the thread waits for a lock only it
+// can release. A static walk finds no function inside RaftServer that holds
+// mtx_ and reaches another taking it.
 //
 // The gap is the two application-provided callbacks. CreateSnapshotLocked
 // and PrepareStateMachineSnapshotLocked invoke embedder code with mtx_
@@ -357,13 +347,11 @@ using RaftPollThreadPtr = ::rusty::Arc<::rrr::PollThread>;
 // ---------------------------------------------------------------------------
 // LAYOUT PINS. Each of these types has a rustc-side model in
 // src/rrr/rusty-rustc/src/lib.rs that exists so a DSL body can NAME the field.
-// Those models used to be `[u8; 0]` -- a deliberate lie, safe only because no
-// Rust machine code links today, and the single largest obstacle to the day
-// it does: a Rust-compiled RaftServerBase would compute every field offset
-// after the first carrier wrongly.
+// The models carry the real size and alignment of the C++ type, because
+// rustc compiles RaftServerBase: a model that understated a carrier's size
+// would put every field after it at the wrong offset.
 //
-// The models now carry the real size and alignment, measured on this
-// toolchain, and these assertions are what keep the two halves honest. If a
+// These assertions are what keep the two halves honest. If a
 // libc++ release changes one of these, the build stops here with the new
 // number instead of silently reintroducing the divergence -- update the
 // matching model, do not relax the assertion.
@@ -404,9 +392,9 @@ static_assert(sizeof(RaftResponsePtr) == 16 && alignof(RaftResponsePtr) == 8);
 
 namespace janus {
 
-// The small kernels below are DECLARED here and defined in server.cc (F2.6):
-// an `extern "C" inline` body in a header is emitted only in a TU that uses it,
-// and only Rust calls these now.
+// The small kernels below are DECLARED here and defined in server.cc. They
+// cannot be `extern "C" inline` bodies in the header: such a body is emitted
+// only in a translation unit that uses it, and the only caller is Rust.
 // @unsafe - wraps the rrr `verify` macro so a DSL body can assert.
 extern "C" void raft_verify(bool condition);
 
@@ -439,15 +427,12 @@ extern "C" uint64_t raft_random_range_us(uint64_t low, uint64_t high);
 // #[cfg] is dropped silently inside a DSL block, so an #ifdef-guarded log
 // cannot be written there directly. Returning the flag instead keeps the log
 // AT its call site, where its arguments are, and the compiler folds the
-// branch away exactly as the preprocessor did -- the arguments are all
-// scalars already in registers, so there is nothing else the #ifdef was
-// saving.
+// branch away exactly as the preprocessor would -- the arguments are all
+// scalars already in registers, so the #ifdef has nothing else to save.
 extern "C" bool raft_election_debug_enabled();
 
 
-// ReplicationWakeGate: the first src/deptran/raft conversion that is not a
-// scalar predicate, and the first that proves `impl` at all. See
-// docs/migration/raft/conversion-log.md section 1 (f060472e9).
+// ReplicationWakeGate.
 //
 // The two wait entry points are SPLIT rather than moved wholesale, for one
 // reason: creating an `IntEvent` calls the reactor factory
@@ -462,9 +447,7 @@ extern "C" bool raft_election_debug_enabled();
 //
 // The fast path is preserved exactly. `begin_wait_for_work` returns
 // Some(answer) when it could decide without a waiter and None when the caller
-// must arm one, so no event is allocated on the path that today allocates
-// none. That split is the only behavioural seam in the conversion; every
-// other body below is a statement-for-statement transcription.
+// must arm one, so the path that decides immediately allocates no event.
 //
 // TWO THINGS THE DSL GIVES UP HERE, recorded so neither reads as a decision:
 //   * `final` and `private` have no DSL spelling, so the two Disarm* helpers
@@ -480,9 +463,8 @@ extern "C" bool raft_election_debug_enabled();
 // KERNEL RESULT PODS. The three values kernels return BY VALUE -- the
 // election-timeout knobs, one campaign's quorum snapshot, one AppendEntries
 // reply's fields -- #[repr(C)] and scalar, so both worlds agree on the layout.
-// They are in a block of their own because this block stays C++-visible at the
-// cutover: the kernels define and return them, and the struct's block, which
-// is Rust's alone, is deleted from C++ then.
+// They are in a block of their own because both worlds must see them: the
+// kernels define and return them, and Rust names them as return types.
 // ============================================================================
 #if RUSTYCPP_RUST
 // The election-timeout configuration, as one value. Every field is an
@@ -570,9 +552,8 @@ struct AppendRespView {
 // comment on `impl TxLogServer for RaftServerBase` for why this can fail
 // silently without the assertion.
 
-// The C ABI over the struct: every behaviour the shim, the kernels and the lab
-// harness reach, as extern "C" functions defined in Rust (server.cc). Step F1
-// of docs/migration/raft/plan.md; the header is generated by
+// The C ABI over the struct: every behaviour the shim and the kernels reach,
+// as extern "C" functions defined in Rust. The header is generated by
 // scripts/raft_gen_exports.py. It opens namespace janus itself, so the
 // namespace is closed around the include.
 // The server itself is Rust (src/deptran/raft/src/server_h.rs, libraft.a). C++
@@ -583,12 +564,13 @@ struct RaftServerBase;
 #include "server_exports.h"
 namespace janus {
 
-// The C++ view of the Rust object -- step F1 of docs/migration/raft/plan.md.
-// RaftServer no longer derives from RaftServerBase: it holds the pointer Rust
+// The C++ view of the Rust object.
+//
+// RaftServer does not derive from RaftServerBase: it holds the pointer Rust
 // allocated (raft_server_new) and forwards every method to the C ABI in
-// server_exports.h. It is what the workers, the RPC service and the RaftLab
-// harness hold; it knows nothing of the struct's layout or methods, so at the
-// cutover the struct stops being a C++ type and this class does not change.
+// server_exports.h. It is what the workers and the RPC service hold, and it
+// knows nothing of the struct's layout or methods -- which is what lets the
+// struct be a Rust type without this class changing.
 // Generated by scripts/raft_gen_exports.py --shim; re-run and diff when the
 // interface or the lab surface changes.
 class RaftServer : public RaftSpecific {

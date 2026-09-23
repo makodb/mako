@@ -1,6 +1,5 @@
-// Canonical Rust source of the Raft server (docs/migration/raft/plan.md, F2.6).
-// rustc compiles this into libraft.a; nothing here is transpiled. It began as
-// the extraction of server.h's inline blocks and is edited here now.
+// The Raft server. rustc compiles this into libraft.a; nothing here is
+// transpiled, so edit it directly.
 
 use crate::server_pods_h::{RaftElectionTimeouts, RaftVoteOutcome};
 // A delayed vote quorum result is interpreted before its YES/NO/TIMEOUT
@@ -8,15 +7,13 @@ use crate::server_pods_h::{RaftElectionTimeouts, RaftVoteOutcome};
 // outcome belongs only to the exact campaign that is still active.
 
 // ---------------------------------------------------------------------------
-// The lab cluster registry (docs/migration/raft/lab-harness-to-rust-plan.md,
-// Phase 1).
+// The lab cluster registry.
 //
-// The RaftLab suite embeds all five replicas in ONE process; today the C++
-// side finds them through RaftFrame::frames_[locale_id]. The Rust harness
-// needs the same cluster, and the server can publish itself: set_site_identity
+// The RaftLab suite embeds all five replicas in ONE process, and the harness
+// needs to reach each of them. The server publishes itself: set_site_identity
 // is called exactly once per replica by the worker (server_worker.cc:43,
 // raft_worker.cc:297) and is precisely where the server learns which replica
-// it is.
+// it is, so no C++ has to hand the cluster over.
 //
 // So this costs ZERO new exports. The plan budgeted one -- C++ calling in to
 // register each server -- but the registration point was already Rust.
@@ -82,18 +79,16 @@ pub mod lab_registry {
 
 
 // ---------------------------------------------------------------------------
-// The lab cluster fixture, query half (lab-harness-to-rust-plan.md, Phase 2).
+// The lab cluster fixture, query half.
 //
-// A faithful port of RaftTestConfig's invariant readers -- waitOneLeader,
-// OneLeader, NoLeader, OneTerm, TermMovedOn -- onto lab_registry. These are
-// what the 25 cases lean on to decide whether the cluster is in a legal state,
-// and every call they make now stays inside Rust.
+// waitOneLeader, OneLeader, NoLeader, OneTerm and TermMovedOn, over
+// lab_registry. These are what the 25 cases lean on to decide whether the
+// cluster is in a legal state.
 //
-// The constants, the retry counts and the sleep grain below were transcribed
-// from testconf.cc rather than chosen: while both harnesses existed they had
-// to agree, and now that only this one does, they are what the 25 cases were
-// tuned against. A divergence here is a bug in this file, not a design
-// decision.
+// The constants, the retry counts and the sleep grain below are what the 25
+// cases were tuned against, not free parameters: shortening the election
+// timeout or the retry count makes cases flaky without anything being
+// wrong.
 #[cfg(feature = "raft_test")]
 pub mod lab_cluster {
     use super::{lab_registry, RaftServerBase};
@@ -952,8 +947,7 @@ impl PeerTable {
         PeerTable { progress_: rusty::Vec::new() }
     }
 
-    // One slot per follower, in ordinal order. Mirrors the two places the map
-    // used to be filled.
+    // One slot per follower, in ordinal order.
     pub fn reset(&mut self, peers: usize, next_index: u64) {
         self.progress_.clear();
         let mut i: usize = 0;
@@ -1590,9 +1584,8 @@ unsafe extern "C" {
     fn raft_ensure_legacy_payload_registered();
     // A copy of a janus::Command: a shared_ptr refcount the opaque carrier
     // cannot touch, made in C++ INTO a slot Rust owns. Never by value: a
-    // non-trivial C++ object returned by value is an ABI mismatch under rustc
-    // (plan.md, step D), and never `.clone()` on the carrier, which would be
-    // a bitwise copy there.
+    // non-trivial C++ object returned by value is an ABI mismatch under rustc,
+    // and never `.clone()` on the carrier, which would be a bitwise copy.
     fn raft_command_clone_into(src: *const rusty::RaftCommand,
                                dst: *mut rusty::RaftCommand);
     // The four std::function carriers, copied INTO their final slot: a libc++
@@ -1640,11 +1633,11 @@ unsafe extern "C" {
     // which the queued OneTimeJob hands back to raft_wake_job_run once.
     fn raft_queue_wake_job(owner: *const rusty::RaftPollThreadPtr,
                            token: *mut core::ffi::c_void);
-    // The InstallSnapshot exception boundary -- a std::mutex the DSL cannot
-    // lock, and the one catch that turns an embedder throw into FailStop.
-    // (The RequestVote and AppendEntries bodies are called directly: F2.7.)
-    // The catch around OnInstallSnapshotLocked; the two locks it used to take
-    // are Rust's now (OnInstallSnapshot below). false is the throw.
+    // The InstallSnapshot exception boundary: the one catch that turns an
+    // embedder throw into FailStop. It wraps OnInstallSnapshotLocked, whose
+    // two locks are taken by OnInstallSnapshot below; `false` is the throw.
+    // RequestVote and AppendEntries need no such kernel -- their bodies are
+    // Rust and are called directly.
     fn raft_install_snapshot_guarded(server: *mut RaftServerBase, site_id: u16,
                                      term: u64, leader_id: u64,
                                      last_included_index: u64,
@@ -1803,17 +1796,9 @@ pub struct RaftServerBase {
     // The heartbeat/election wake gate, shared with whatever owner-thread job
     // is queued against it -- hence Arc rather than a plain member.
     pub replication_wake_gate_: rusty::sync::Arc<ReplicationWakeGate>,
-    // THE LOCK OWNS WHAT IT GUARDS. `startup_finished_` used to be a plain
-    // bool next to a std::mutex and a std::condition_variable, with the
-    // relationship between the three stated only in a comment and enforced
-    // only by a C++ kernel that held all of them at once. It lives inside the
-    // mutex now, so the flag is unreachable without the lock and the kernel
-    // pair (raft_startup_wait / raft_startup_notify_all) has nothing to do.
-    //
-    // This is the small case of the end state planned for mtx_ (step C in
-    // docs/migration/raft/plan.md): a Mutex owning the fields it guards --
-    // proved on a two-field gate before it is attempted on the consensus
-    // cluster.
+    // THE LOCK OWNS WHAT IT GUARDS. The flag lives inside the mutex rather
+    // than beside it, so it is unreachable without the lock and no separate
+    // wait/notify kernel pair is needed to keep the two in step.
     //
     // startup_succeeded_ stays outside deliberately: it is written before the
     // flag and read after the wait, so the mutex's own release/acquire
@@ -2144,7 +2129,7 @@ impl RaftServerBase {
     }
 
     // ------------------------------------------------------------------
-    // Role and progress accessors, formerly inline in class RaftServer.
+    // Role and progress accessors.
     // ------------------------------------------------------------------
 
     // @unsafe - CALLER MUST HOLD mtx_.
@@ -4751,8 +4736,7 @@ impl RaftSpecific for RaftServerBase {
         self.partition_id_
     }
 
-    // See the trait: this is the unlocked read get_outstanding_logs always
-    // made, kept as it was until step C makes it an atomic.
+    // See the trait: this is the unlocked read get_outstanding_logs makes.
     fn CommitIndex(&self) -> u64 {
         self.state_.commit_index_
     }
@@ -4800,8 +4784,7 @@ impl RaftSpecific for RaftServerBase {
     fn OnRequestVote(&mut self, lst_log_idx: u64, lst_log_term: i64,
                      can_id: u16, can_term: i64, reply_term: *mut i64,
                      vote_granted: *mut i8) {
-        // Rust calling Rust (F2.7): the body is in server_cc.rs, one crate
-        // away, where a C++ forwarder used to be the only route.
+        // The body is in server_cc.rs, one module away.
         crate::server_cc::on_request_vote_body(
             self, lst_log_idx, lst_log_term, can_id, can_term,
             unsafe { &mut *reply_term }, unsafe { &mut *vote_granted });

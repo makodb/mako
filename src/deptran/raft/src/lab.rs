@@ -1,18 +1,13 @@
-// The RaftLab correctness harness, in Rust.
+// The RaftLab correctness harness: the cluster fixture.
 //
-// docs/migration/raft/lab-harness-to-rust-plan.md, Phase 3. This is the port
-// of testconf.cc's RaftTestConfig (the fixture) and test.cc's RaftLabTest (the
-// 25 cases) into the raft crate, where they can read the server directly
-// instead of through the 41 lab exports that exist only for them.
+// This is the suite's view of the five replicas -- the committed-command
+// table, the apply callback, Start/Wait/DoAgreement, connectivity, the RPC
+// counters and the unreliable-network loop. It reaches each replica's
+// RaftServerBase directly, so none of it crosses a C ABI.
 //
-// The C++ harness is STILL THE ORACLE. Both suites run, in that order, on the
-// same five replicas in the same process, and the lab passes only if both
-// report success -- the plan's parallel-run rule, which is not optional
-// because this harness is the safety net every other conversion in the tree
-// was gated on. The C++ half is deleted in Phase 4, not before.
+// The cases themselves are in lab_cases.rs and lab_snapshot_cases.rs.
 //
-// Four C++ kernels back the whole thing, all `#ifdef RAFT_TEST_CORO` in
-// server.cc and all deleted with the C++ harness:
+// Four C++ kernels back it, all `#ifdef RAFT_TEST_CORO` in server.cc:
 //
 //   raft_lab_make_commit_command   build a TpcCommitCommand carrying a tx_id
 //   raft_lab_commit_tx_id          read that tx_id back out
@@ -22,9 +17,7 @@
 // The first three exist for one reason: a payload's identity lives in the C++
 // registry -- PayloadMember<MakoCommands, T>::KIND plus
 // SerializableRegistry::reg<T> -- so Rust can hold a janus::Command but cannot
-// be a member of the set. That is NC5 of commo-service-rpc-to-rust-plan.md, a
-// separate project. The fourth is the communicator, which the plan explicitly
-// keeps in C++ for now.
+// be a member of the set. The fourth is the communicator, which is C++.
 
 #![cfg(feature = "raft_test")]
 #![allow(non_snake_case)]
@@ -38,12 +31,12 @@ use std::sync::Mutex;
 // Constants, transcribed rather than chosen. A divergence here is a bug in
 // this file.
 
-/// testconf.h:21 -- `#define NSERVERS 5`.
+/// The lab cluster is five replicas.
 pub const NSERVERS: usize = 5;
-/// testconf.h:22 -- `#define ELECTIONTIMEOUT 5000000` (microseconds).
+/// How long a case waits for an election to settle, in microseconds.
 pub const ELECTION_TIMEOUT_US: u64 = lab_cluster::ELECTION_TIMEOUT_US;
-/// testconf.cc:106 -- commands are non-negative, so -1 marks an unfilled slot.
-/// A snapshot-restored replica must not be credited for log history its new
+/// Lab commands are non-negative, so -1 marks an unfilled slot. A
+/// snapshot-restored replica must not be credited for log history its new
 /// apply callback never replayed.
 const MISSING: i32 = -1;
 /// `getServerIdByIndex` returns `siteid_t(-1)` on a bad index; this is that,
@@ -75,8 +68,6 @@ unsafe extern "C" {
 }
 
 /// The leader DoAgreement is waiting on is no longer the one it started with.
-/// Was `raft_test_wait_leader_is_invalid` in testconf.cc's DSL block, which
-/// went with that file.
 const fn wait_leader_is_invalid(disconnected: bool, is_leader: bool,
                                 current_term: u64, expected_term: u64) -> bool {
     disconnected || !is_leader || current_term != expected_term
@@ -118,10 +109,11 @@ static NET: Mutex<NetCtl> = Mutex::new(NetCtl {
 });
 static NET_CV: std::sync::Condvar = std::sync::Condvar::new();
 
-/// testconf.h:19 -- servers have a 1/10 chance of being down each period.
+/// Under an unreliable network a replica is down with probability 1/10 in
+/// each period.
 const DOWNRATE_N: i32 = 1;
 const DOWNRATE_D: i32 = 10;
-/// testconf.h -- the slow timeout's upper bound, in milliseconds.
+/// The slow timeout's upper bound, in milliseconds.
 const MAXSLOW: i32 = 27;
 
 /// Port of the RaftTestConfig constructor: every replica starts with one
@@ -367,8 +359,7 @@ pub fn do_agreement(cmd: i32, n: i32, retry: bool) -> u64 {
 
 // ---------------------------------------------------------------------------
 // Network control. Disconnect/Reconnect are Rust methods on the server
-// already; what stays C++ is the communicator behind them, which the plan
-// keeps for now (Phase 2, "Network control").
+// already; what stays C++ is the communicator behind them.
 
 /// The explicit Disconnect the cases call. `verify(!disconnected_[svr])` in
 /// the C++ becomes an assert here: a case that disconnects twice is a bug in
@@ -393,10 +384,9 @@ pub fn n_disconnected() -> i32 {
     NET.lock().unwrap().explicit.values().filter(|&&d| d).count() as i32
 }
 
-/// The lowercase `disconnect`/`reconnect` of testconf.cc: idempotent, used by
-/// the unreliable-network loop, which flips links that Disconnect() did not
-/// own. `ignore` there means "it is not an error if the link is already in
-/// this state", which is every call the loop makes.
+/// The idempotent form, used by the unreliable-network loop, which flips
+/// links that Disconnect() did not own. `ignore` means "it is not an error if
+/// the link is already in this state", which is every call the loop makes.
 fn set_link(svr: u32, up: bool, ignore: bool) {
     let applied = with_server(svr, |s| {
         if up && s.IsDisconnected() {
@@ -465,7 +455,7 @@ fn netctl_loop() {
             if net.explicit.get(&svr).copied().unwrap_or(false) {
                 continue;
             }
-            // DOWNRATE_N / DOWNRATE_D chance of being down (testconf.h:19)
+            // DOWNRATE_N / DOWNRATE_D chance of being down this period
             // SAFETY: libc rand(); the C++ loop calls the same one.
             if (unsafe { rand() } % DOWNRATE_D) < DOWNRATE_N {
                 set_link(svr, false, true);
@@ -575,9 +565,9 @@ pub fn byte_string(text: &str) -> rusty::RaftByteString {
 }
 
 // ---------------------------------------------------------------------------
-// Identity helpers, ported from testconf.cc. The registry is sorted by locale
-// id, which is the same order std::map<siteid_t, RaftFrame*> walks, so an
-// index here means what it means there.
+// Identity helpers. The registry is sorted by locale id, so a replica's
+// index is stable for the life of the suite and a case can name "the server
+// two along from the leader" without ambiguity.
 
 pub fn server_id_by_index(index: usize) -> u32 {
     lab_registry::entries().get(index).map_or(NO_SERVER, |e| e.loc_id)
@@ -600,8 +590,8 @@ pub fn next_server_id(current: u32, offset: i32) -> u32 {
 }
 
 // ---------------------------------------------------------------------------
-// Invariant readers, forwarded to the Phase 2 module so there is one
-// implementation of each.
+// Invariant readers, forwarded to lab_cluster so there is one implementation
+// of each.
 
 pub fn one_leader(expected: i32) -> i32 { lab_cluster::one_leader(expected) }
 pub fn no_leader() -> bool { lab_cluster::no_leader() }

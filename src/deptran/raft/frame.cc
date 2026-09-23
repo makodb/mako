@@ -142,10 +142,8 @@ RaftFrame::~RaftFrame() {
 
 #ifdef RAFT_TEST_CORO
 std::mutex RaftFrame::raft_test_mutex_;
-// File-scope static (used to be RaftFrame::raft_test_fiber_; demoted
-// because rusty::Rc is module-only and frame.h can't reach it). All
-// references below resolve via namespace lookup once the class member
-// is gone.
+// File-scope rather than a class member: rusty::Rc is module-only and frame.h
+// cannot name it. Every reference is in this file.
 static rusty::Option<rusty::Rc<Fiber>> raft_test_fiber_;
 uint16_t RaftFrame::n_replicas_ = 0;
 map<siteid_t, RaftFrame*> RaftFrame::frames_ = {};
@@ -164,7 +162,7 @@ bool RaftFrame::lab_test_config_checked_ = false;
 // Reached through the FRAME, not the server, because that is where the
 // communicator is in a lab build -- RaftServerBase::commo_ is set by
 // RaftWorker/ServerWorker::SetupService and the lab starts no worker.
-// testconf.cc read `replicas[svr]->commo_` for the same reason.
+// The frame is where the communicator is, so the frame is where this reads.
 // @unsafe - dynamic_cast and a recursive_mutex around a legacy counter.
 uint64_t RaftFrame::LabFrameRpcCount(uint32_t loc_id) {
   auto it = RaftFrame::frames_.find(static_cast<siteid_t>(loc_id));

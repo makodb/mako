@@ -1,19 +1,15 @@
-// The 25 RaftLab cases, in Rust (lab-harness-to-rust-plan.md, Phase 3).
+// The replication half of the RaftLab suite: elections, agreement and
+// partitions -- eleven of the twenty-five cases.
 //
-// A port of test.cc, case for case. The C++ suite stays as the oracle until
-// Phase 4: `MAKO_RAFT_LAB_RUST=1` picks this one, and ci.sh runs the binary
-// twice, once each way, so a case counts as ported only when both agree on a
-// clean run of a FRESH cluster.
+// Each case returns 0 on success and 1 on failure, and prints the markers CI
+// greps for -- `TEST <n>: <description>`, `TEST <n> Passed`, and finally
+// `ALL TESTS PASSED`. `run` at the bottom sequences them and short-circuits on
+// the first failure, so a break leaves the cluster in the state that produced
+// it.
 //
-// Running them back to back in one process was considered and rejected: the
-// second suite would start on a cluster whose indices, terms, snapshot
-// managers and retention windows the first had already moved, so half the
-// cases would be testing something other than what they say. Two runs is the
-// honest comparison.
-//
-// Everything a case reads is a Rust method on RaftServerBase now, so none of
-// the 41 `Lab*` exports is called from here. That is the point of the port;
-// Phase 4 deletes them.
+// Everything a case reads is a method on RaftServerBase, reached through the
+// fixture in lab.rs. The snapshot, configuration and load families are in
+// lab_snapshot_cases.rs.
 
 #![cfg(feature = "raft_test")]
 
@@ -21,9 +17,8 @@ use crate::lab::{self, NSERVERS, ELECTION_TIMEOUT_US};
 use std::sync::atomic::{AtomicI32, Ordering};
 
 // ---------------------------------------------------------------------------
-// Reporting. The markers must match testconf.h's Print/Init/Passed/Failed
-// byte for byte, because ci.sh greps for `^TEST [0-9]* Passed` and for
-// `ALL TESTS PASSED`.
+// Reporting. ci.sh greps stderr for `^TEST [0-9]* Passed` and counts them, and
+// for `ALL TESTS PASSED`, so these three formats are load-bearing.
 
 static TEST_ID: AtomicI32 = AtomicI32::new(0);
 
@@ -451,7 +446,7 @@ fn test_count(st: &mut LabState) -> i32 {
     };
 
     // Ceiling raised from 40 to 70 for Mako-specific traffic the upstream
-    // MIT 6.824 reference did not emit; see the note in test.cc.
+    // MIT 6.824 reference implementation did not emit.
     check_msg!(st.init_rpcs > 1 && st.init_rpcs <= 70,
                "too many or too few RPCs ({}) to elect initial leader", st.init_rpcs);
 

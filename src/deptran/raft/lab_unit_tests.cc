@@ -3,14 +3,12 @@
 // testSnapshotMetadataCreation, testSnapshotFormatRoundTrip and
 // testSnapshotManagerSaveLoad construct a SnapshotMetadata, call
 // SnapshotFormat's statics, and exercise a MemorySnapshotManager on the stack.
-// They never name a RaftServer, so moving them to Rust would add roughly ten
-// kernels and delete none of the 41 lab exports
-// (docs/migration/raft/lab-harness-to-rust-plan.md, Phase 4). They test C++
-// classes; they stay C++.
+// They never name a RaftServer, so there is nothing for a Rust port to gain:
+// it would need a kernel per operation and would then be testing the kernels.
+// They test C++ classes, so they are C++.
 //
-// The Rust suite calls them through raft_lab_cpp_unit_tests. They are
-// transcribed from test.cc rather than shared with it, because test.cc is
-// deleted at Phase 4 and these are not.
+// The rest of the suite is Rust (src/deptran/raft/src/lab*.rs) and calls these
+// through raft_lab_cpp_unit_tests.
 
 #include <stdint.h>
 #include <stddef.h>
@@ -32,8 +30,8 @@ namespace {
 
 int lab_unit_test_id = 0;
 
-// testconf.h's Print/Init/Passed/Failed, self-contained: ci.sh greps for
-// `^TEST [0-9]* Passed`, so the markers must match byte for byte.
+// ci.sh greps stderr for `^TEST [0-9]* Passed` and counts them, so these
+// formats must match the Rust suite's byte for byte.
 void UnitInit(int test_id, const char* description) {
   fprintf(stderr, "TEST %d: %s\n", test_id, description);
   lab_unit_test_id = test_id;

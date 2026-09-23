@@ -53,7 +53,7 @@ class RaftFrame : public Frame {
   // worker, which deletes it (raft_worker.cc, server_worker.cc); this member
   // is the borrowed back-reference the RAFT_TEST_CORO harness reaches through.
   //
-  // It used to be a unique_ptr, which made the frame a SECOND owner of a
+  // It must not be a unique_ptr: that would make the frame a SECOND owner of a
   // pointer the worker already deletes -- a double free that stayed latent
   // only because no Frame is ever deleted, i.e. the leak was load-bearing.
   // This matches MultiPaxosFrame, which has never had a frame-side owner
