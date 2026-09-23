@@ -514,6 +514,33 @@ monomorphic (as in 8.6); adding indirection or a branch to save a few
 instructions loses. The remaining +623-row (commit protocol) and +347-row
 (lifecycle) therefore need the structural change, not further local trimming.
 
+### 8.8 Rejected: resolving panic containment by policy
+
+The engine's containment sites were converted to `contain()`, a helper that calls
+the step directly under `panic = "abort"` and keeps `catch_unwind` otherwise, so
+that an aborting build pays no wrapper and an unwinding build keeps the recovery
+semantics (production sites only; test modules keep explicit `catch_unwind` for
+fault injection). Both profiles verified: the unwind suites pass (18 test
+binaries, `sto-core` + `mako-engine-sto`) and the abort harness builds and
+verifies all 256 keys.
+
+Measured under ABBA (20 samples per build, engine mode, 1 worker):
+
+| build | tx/s median | range | cyc/tx | ins/tx (1 / 2 / 4 items) |
+| ----- | ----------: | ----- | -----: | -----------------------: |
+| before | 1,649,410 | 1.633-1.675 M | 1202.7 | 2906 / 5469 / 9778 |
+| after | 1,598,538 | 1.562-1.609 M | 1241.2 | 2902 / 5414 / 9652 |
+
+-3.1% throughput and +38 cycles/tx *despite* fewer instructions. Under
+`panic = "abort"`, `std`'s `catch_unwind` already folds to `Ok(body)` with the
+body inlined, so the closures were not being paid at those sites; replacing them
+with a new generic wrapper changed inlining and layout for the worse. Reverted:
+the tree measures identical to the committed baseline (1,649,680 vs 1,650,348
+tx/s, overlapping ranges). The instruction count is not the objective function on
+this path — the one change that won (+7.3%, 8.6) merged four phase bodies into a
+single function, while three instruction-reducing edits lost (per-transaction RCU
+scope -17%, teardown skip -3.9%, panic split -3.1%).
+
 ## 9 Appendix
 
 ### A. Artifacts in this directory
