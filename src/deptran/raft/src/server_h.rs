@@ -6,6 +6,80 @@ use crate::server_pods_h::{RaftElectionTimeouts, RaftVoteOutcome};
 // A delayed vote quorum result is interpreted before its YES/NO/TIMEOUT
 // payload. Higher-term evidence is globally authoritative; every ordinary
 // outcome belongs only to the exact campaign that is still active.
+
+// ---------------------------------------------------------------------------
+// The lab cluster registry (docs/migration/raft/lab-harness-to-rust-plan.md,
+// Phase 1).
+//
+// The RaftLab suite embeds all five replicas in ONE process; today the C++
+// side finds them through RaftFrame::frames_[locale_id]. The Rust harness
+// needs the same cluster, and the server can publish itself: set_site_identity
+// is called exactly once per replica by the worker (server_worker.cc:43,
+// raft_worker.cc:297) and is precisely where the server learns which replica
+// it is.
+//
+// So this costs ZERO new exports. The plan budgeted one -- C++ calling in to
+// register each server -- but the registration point was already Rust.
+//
+// Entries hold the server as a usize rather than a pointer so the table is
+// Send without a wrapper. That is sound here and nowhere else: the lab is one
+// process, the worker owns every server and tears them down only after the
+// suite has finished, and the harness runs on a fiber in that same process.
+// Nothing outside a `raft_test` build can reach this module.
+#[cfg(feature = "raft_test")]
+pub mod lab_registry {
+    use super::RaftServerBase;
+    use std::sync::Mutex;
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub struct LabEntry {
+        pub loc_id: u32,
+        server: usize,
+    }
+
+    impl LabEntry {
+        /// # Safety
+        /// Valid only while the worker still owns the server -- i.e. for the
+        /// life of the suite. See the module note.
+        pub unsafe fn server(&self) -> *mut RaftServerBase {
+            self.server as *mut RaftServerBase
+        }
+    }
+
+    static REGISTRY: Mutex<Vec<LabEntry>> = Mutex::new(Vec::new());
+
+    /// Publish one replica. Re-registering the same locale replaces the entry
+    /// rather than duplicating it: set_site_identity is idempotent and a
+    /// restarted replica must not appear twice.
+    pub fn register(loc_id: u32, server: *mut RaftServerBase) {
+        let mut guard = REGISTRY.lock().unwrap();
+        let entry = LabEntry { loc_id, server: server as usize };
+        match guard.iter_mut().find(|e| e.loc_id == loc_id) {
+            Some(slot) => *slot = entry,
+            None => guard.push(entry),
+        }
+        guard.sort_by_key(|e| e.loc_id);
+    }
+
+    /// How many replicas have published themselves. The lab expects five.
+    pub fn count() -> usize {
+        REGISTRY.lock().unwrap().len()
+    }
+
+    /// Every replica, ordered by locale id.
+    pub fn entries() -> Vec<LabEntry> {
+        REGISTRY.lock().unwrap().clone()
+    }
+
+    pub fn get(loc_id: u32) -> Option<LabEntry> {
+        REGISTRY.lock().unwrap().iter().copied().find(|e| e.loc_id == loc_id)
+    }
+
+    pub fn clear() {
+        REGISTRY.lock().unwrap().clear();
+    }
+}
+
 #[allow(non_camel_case_types)]
 #[cfg_attr(not(any()), derive(Clone, Copy, Debug, Eq, PartialEq))]
 #[repr(i32)]
@@ -4379,6 +4453,15 @@ impl RaftServerBase {
 #[cpp_inherit]
 impl TxLogServer for RaftServerBase {
     fn set_site_identity(&mut self, loc_id: u32, site_id: u16, partition_id: u32) {
+        // Publish this replica to the lab registry. See lab_registry's note:
+        // this is the one point the server learns which replica it is, and it
+        // is already Rust, so the harness needs no export to find the cluster.
+        #[cfg(feature = "raft_test")]
+        lab_registry::register(loc_id, self as *mut RaftServerBase);
+        #[cfg(feature = "raft_test")]
+        rusty::raft_log_info_3(
+            "[LAB-REGISTRY] replica loc_id={} site={} published ({} of 5)",
+            loc_id, site_id, lab_registry::count() as i64);
         self.loc_id_ = loc_id;
         self.site_id_ = site_id;
         self.partition_id_ = partition_id;
