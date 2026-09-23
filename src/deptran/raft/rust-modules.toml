@@ -69,6 +69,18 @@ output = "src/deptran/raft/src/rocksdb_log_storage_hpp.rs"
 # extractor leaves these alone and lists them in lib.rs.
 [[module]]
 kind = "canonical"
+output = "src/deptran/raft/src/lab.rs"
+
+[[module]]
+kind = "canonical"
+output = "src/deptran/raft/src/lab_cases.rs"
+
+[[module]]
+kind = "canonical"
+output = "src/deptran/raft/src/lab_snapshot_cases.rs"
+
+[[module]]
+kind = "canonical"
 output = "src/deptran/raft/src/server_cc.rs"
 
 [[module]]

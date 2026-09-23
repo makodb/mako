@@ -156,6 +156,49 @@ uint16_t RaftFrame::n_commo_created_ = 0;
 bool RaftFrame::is_lab_test_config_ = false;
 bool RaftFrame::lab_test_config_checked_ = false;
 
+// The lab's RPC counter, for the Rust fixture (lab.rs::rpc_count).
+//
+// Here rather than next to the other kernels in server.cc because
+// RaftFrame::frames_ is private and this file is a member: the alternative was
+// to widen frame.h's public surface for a test.
+//
+// Reached through the FRAME, not the server, because that is where the
+// communicator is in a lab build -- RaftServerBase::commo_ is set by
+// RaftWorker/ServerWorker::SetupService and the lab starts no worker.
+// testconf.cc reads `replicas[svr]->commo_` for the same reason.
+// @unsafe - dynamic_cast and a recursive_mutex around a legacy counter.
+uint64_t RaftFrame::LabFrameRpcCount(uint32_t loc_id) {
+  auto it = RaftFrame::frames_.find(static_cast<siteid_t>(loc_id));
+  if (it == RaftFrame::frames_.end() || it->second == nullptr) {
+    return 0;
+  }
+  auto* raft_commo = dynamic_cast<RaftCommo*>(it->second->commo_.get());
+  if (raft_commo == nullptr) {
+    return 0;
+  }
+  std::lock_guard<std::recursive_mutex> lk(raft_commo->rpc_mtx_);
+  return raft_commo->rpc_count_;
+}
+
+extern "C" uint64_t raft_lab_frame_rpc_count(uint32_t loc_id) {
+  return RaftFrame::LabFrameRpcCount(loc_id);
+}
+
+// The Rust lab harness (src/deptran/raft/src/lab.rs), and the switch that
+// selects it. `MAKO_RAFT_LAB_RUST` set to anything but "0" picks Rust; unset
+// keeps the incumbent C++ suite, which stays the oracle until Phase 4.
+extern "C" int raft_lab_rust_run();
+
+// @safe - reads one environment variable and compares two bytes.
+static bool raft_lab_rust_harness_selected() {
+  // @unsafe { getenv is not borrow-checked }
+  const char* selector = getenv("MAKO_RAFT_LAB_RUST");
+  if (selector == nullptr || selector[0] == '\0') {
+    return false;
+  }
+  return !(selector[0] == '0' && selector[1] == '\0');
+}
+
 // @unsafe - Serializes the shared test-config cache with the legacy test mutex.
 bool RaftFrame::IsRaftLabTestConfig() {
   std::lock_guard<std::mutex> lock(raft_test_mutex_);  // @unsafe
@@ -292,10 +335,25 @@ Communicator *RaftFrame::CreateCommo(
 
         // Run tests
         verify(raft_frame_all_schedulers_created(n_replicas_, 5));
-        auto testconfig = new RaftTestConfig(frames_);
-        RaftLabTest test(testconfig);
-        int test_result = test.Run();
-        test.Cleanup();
+        // Which harness runs (lab-harness-to-rust-plan.md, Phase 3). The Rust
+        // port and the C++ original drive the SAME five replicas through the
+        // same 25 cases; ci.sh runs the binary once each way, because a
+        // second suite in one process would start on a cluster whose indices,
+        // terms and snapshot managers the first had already moved.
+        //
+        // The two must not both construct a fixture: each owns a
+        // network-control thread, and RaftTestConfig's constructor verifies
+        // it is the only one.
+        int test_result = 0;
+        if (raft_lab_rust_harness_selected()) {
+          Log_info("Test fiber: running the RUST lab harness");
+          test_result = raft_lab_rust_run();
+        } else {
+          auto testconfig = new RaftTestConfig(frames_);
+          RaftLabTest test(testconfig);
+          test_result = test.Run();
+          test.Cleanup();
+        }
         lab_test_result_.store(
             test_result, rusty::sync::atomic::Ordering::Release);
         Log_info("Test fiber: Tests completed, turning off reactor loop");

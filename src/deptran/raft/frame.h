@@ -38,6 +38,11 @@ class RaftFrame : public Frame {
   static int RaftLabTestResult();
   // @safe - Returns 1 only for an incomplete/failed in-process RaftLab run.
   static int RaftLabProcessExitCode();
+  // RaftCommo::rpc_count_ for one replica, for the Rust lab fixture
+  // (src/deptran/raft/src/lab.rs). A member because `frames_` is private and
+  // the extern "C" kernel that calls this cannot be one.
+  // @unsafe - dynamic_cast plus the communicator's own recursive mutex.
+  static uint64_t LabFrameRpcCount(uint32_t loc_id);
 #endif
   RaftFrame() = default;
   ~RaftFrame();  // Destructor to clean up owned resources

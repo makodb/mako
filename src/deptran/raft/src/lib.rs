@@ -9,6 +9,9 @@
 pub mod channel_transport_hpp;
 pub mod commo_h;
 pub mod frame_cc;
+pub mod lab;
+pub mod lab_cases;
+pub mod lab_snapshot_cases;
 pub mod log_storage_hpp;
 pub mod memory_log_storage_hpp;
 pub mod memory_snapshot_manager_hpp;

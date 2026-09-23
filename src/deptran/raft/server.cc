@@ -17,6 +17,10 @@
 #include "frame.h"
 #include "../legacy_raft_log_payload.h"
 #include "../tpc_command.h"
+#ifdef RAFT_TEST_CORO
+#include "application_log.h"       // EncodeApplicationLog, for the lab Start payload
+#include "../replication_log_entry.h"  // LogEntry, which mako_commands.h only forward-declares
+#endif
 #include "rust_facade_types.h"
 #include "memory_snapshot_manager.hpp"
 #include "quorum.hpp"
@@ -463,6 +467,74 @@ void raft_learner_action_clone_into(const rusty::LearnerAction* src,
                                     rusty::LearnerAction* dst) {
   construct_into(dst, *src);
 }
+
+#ifdef RAFT_TEST_CORO
+// The two kernels the Rust lab harness needs, and the only two
+// (docs/migration/raft/lab-harness-to-rust-plan.md, Phase 3). Both exist for
+// the same reason: a committed command's identity lives in the C++ payload
+// registry -- PayloadMember<MakoCommands, T>::KIND plus
+// SerializableRegistry::reg<T> -- so Rust can HOLD a janus::Command but cannot
+// be a member of the set, and cannot build the std::function the learner
+// interface takes.
+//
+// The harness does not need either capability in general. It needs one
+// integer out of a committed command, and one callback installed. So these
+// are narrow on purpose rather than a Rust-side reimplementation of the
+// payload system, which is a separate project (NC5 of
+// commo-service-rpc-to-rust-plan.md).
+//
+// RAFT_TEST_CORO-guarded: absent from every production build, and deleted
+// along with the C++ harness once the registry problem is solved.
+
+// The tx_id of a committed TpcCommitCommand, or -1 when the payload is
+// anything else. The C++ fixture reads the same field
+// (testconf.cc, SetLearnerAction) and the lab's oracle is that value.
+int64_t raft_lab_commit_tx_id(const rusty::RaftCommand* cmd) {
+  const auto commit_cmd = marshallable_cast<TpcCommitCommand>(*cmd);
+  if (commit_cmd.is_none()) {
+    return -1;
+  }
+  return static_cast<int64_t>(commit_cmd.unwrap()->tx_id_);
+}
+
+// Wrap a Rust function as a LearnerAction. The std::function owns only the
+// raw fn pointer, so there is nothing to keep alive on the Rust side and no
+// lifetime to get wrong; the command is handed over as a borrowed pointer for
+// the duration of the call and is not retained.
+// `ctx` is the replica's locale id, captured the way the C++ lambda captures
+// `svr` -- the callback has to know which replica applied.
+void raft_lab_make_learner_action(
+    uint64_t ctx,
+    int32_t (*apply)(uint64_t ctx, uint64_t slot, const rusty::RaftCommand* cmd),
+    rusty::LearnerAction* out) {
+  construct_into(out, janus::LearnerAction(
+      [ctx, apply](int slot, janus::Command md) -> int {
+        return apply(ctx, static_cast<uint64_t>(slot),
+                     reinterpret_cast<const rusty::RaftCommand*>(&md));
+      }));
+}
+
+// The encode direction of the same registry problem. The lab's Start()
+// appends a TpcCommitCommand carrying `tx_id` and an empty application log --
+// transcribed from testconf.cc's Start, which builds exactly this -- and
+// building one needs PayloadMember<MakoCommands, TpcCommitCommand>::KIND.
+// Rust holds the result as an opaque rusty::RaftCommand and drops it through
+// the raft_destroy_command it already has.
+void raft_lab_make_commit_command(int64_t tx_id, rusty::RaftCommand* out) {
+  auto cmdptr = rusty::Arc<TpcCommitCommand>::make();
+  LogEntry raw_log;
+  verify(raft::EncodeApplicationLog(nullptr, 0, 0, &raw_log.log_entry));
+  raw_log.length = static_cast<int>(raw_log.log_entry.size());
+  {
+    auto& mut_cmd = cmdptr.get_mut().unwrap();
+    mut_cmd.tx_id_ = static_cast<int32_t>(tx_id);
+    mut_cmd.cmd_ = rusty::Arc<LogEntry>::make(rusty::move(raw_log));
+  }
+  construct_into(out,
+      janus::Command::pack_aliased<TpcCommitCommand>(rusty::move(cmdptr)));
+}
+
+#endif
 void raft_leader_change_cb_clone_into(const rusty::RaftLeaderChangeCb* src,
                                       rusty::RaftLeaderChangeCb* dst) {
   construct_into(dst, *src);
