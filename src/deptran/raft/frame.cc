@@ -164,7 +164,7 @@ bool RaftFrame::lab_test_config_checked_ = false;
 // Reached through the FRAME, not the server, because that is where the
 // communicator is in a lab build -- RaftServerBase::commo_ is set by
 // RaftWorker/ServerWorker::SetupService and the lab starts no worker.
-// testconf.cc reads `replicas[svr]->commo_` for the same reason.
+// testconf.cc read `replicas[svr]->commo_` for the same reason.
 // @unsafe - dynamic_cast and a recursive_mutex around a legacy counter.
 uint64_t RaftFrame::LabFrameRpcCount(uint32_t loc_id) {
   auto it = RaftFrame::frames_.find(static_cast<siteid_t>(loc_id));
@@ -184,8 +184,8 @@ extern "C" uint64_t raft_lab_frame_rpc_count(uint32_t loc_id) {
 }
 
 // The lab harness: src/deptran/raft/src/lab.rs, lab_cases.rs and
-// lab_snapshot_cases.rs. Runs the 25 cases and returns RaftLabTest::Run's old
-// verdict shape, 0 for success.
+// lab_snapshot_cases.rs. Runs the 25 cases and returns the verdict shape the
+// C++ RaftLabTest::Run used to return, 0 for success.
 extern "C" int raft_lab_rust_run();
 
 // @unsafe - Serializes the shared test-config cache with the legacy test mutex.

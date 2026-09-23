@@ -1233,12 +1233,13 @@ file(GLOB RAFT_BORROW_SRC
     "src/deptran/raft/*.cc"
     "src/deptran/raft/*.cpp"
 )
-# Exclude test files from raft borrow checking:
-# - testconf.cc: Test infrastructure with class inheritance patterns not compatible with @safe code
-# - test.cc: Test harness that depends on testconf.h
+# Exclude test files from raft borrow checking. test.cc and testconf.cc are
+# gone -- the suite is Rust now (src/deptran/raft/src/lab*.rs) -- but
+# lab_unit_tests.cc, the three cases that exercise C++ classes, is still a test
+# and still matched by this filter.
 # NOTE: raft_main_helper.cc is also excluded because it includes third-party headers
 # (YAML, etc.) that generate 1000+ false positive violations from header code.
-list(FILTER RAFT_BORROW_SRC EXCLUDE REGEX ".*test(conf)?\\.cc$")
+list(FILTER RAFT_BORROW_SRC EXCLUDE REGEX ".*(test(conf)?|lab_unit_tests)\\.cc$")
 # Note: config_manager.cc / cluster_config.cc / config_watcher.cc moved to
 # src/cluster/ and are no longer part of RAFT_BORROW_SRC.
 

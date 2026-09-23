@@ -488,7 +488,8 @@ void raft_learner_action_clone_into(const rusty::LearnerAction* src,
 
 // The tx_id of a committed TpcCommitCommand, or -1 when the payload is
 // anything else. The C++ fixture reads the same field
-// (testconf.cc, SetLearnerAction) and the lab's oracle is that value.
+// (testconf.cc's SetLearnerAction, deleted at Phase 4) and the lab's
+// oracle is that value.
 int64_t raft_lab_commit_tx_id(const rusty::RaftCommand* cmd) {
   const auto commit_cmd = marshallable_cast<TpcCommitCommand>(*cmd);
   if (commit_cmd.is_none()) {
@@ -516,7 +517,7 @@ void raft_lab_make_learner_action(
 
 // The encode direction of the same registry problem. The lab's Start()
 // appends a TpcCommitCommand carrying `tx_id` and an empty application log --
-// transcribed from testconf.cc's Start, which builds exactly this -- and
+// transcribed from testconf.cc's Start, which built exactly this -- and
 // building one needs PayloadMember<MakoCommands, TpcCommitCommand>::KIND.
 // Rust holds the result as an opaque rusty::RaftCommand and drops it through
 // the raft_destroy_command it already has.

@@ -24,7 +24,8 @@ class RaftFrame : public Frame {
   static uint16_t n_replicas_;
   static map<siteid_t, RaftFrame*> frames_;
   static bool all_sites_created_s;
-  // -1 until the lab fiber finishes, then RaftLabTest::Run()'s status.
+  // -1 until the lab fiber finishes, then the lab harness's status
+  // (raft_lab_rust_run, src/deptran/raft/src/lab.rs).
   static rusty::sync::atomic::AtomicI32 lab_test_result_;
   static uint16_t n_commo_created_;
   static bool is_lab_test_config_;        // True if running raft lab test (1 partition, 5 replicas)

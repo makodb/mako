@@ -439,7 +439,7 @@ run_2shard_replication_simple() {
 }
 
 # ============================================================================
-# Raft lab cluster suite (RaftLabTest, src/deptran/raft/test.cc)
+# Raft lab cluster suite (src/deptran/raft/src/lab*.rs)
 # ============================================================================
 #
 # This is the ONLY cluster-level correctness suite for RaftServer itself:
