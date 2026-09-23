@@ -541,6 +541,47 @@ this path — the one change that won (+7.3%, 8.6) merged four phase bodies into
 single function, while three instruction-reducing edits lost (per-transaction RCU
 scope -17%, teardown skip -3.9%, panic split -3.1%).
 
+### 8.9 Abort-on-bug: scoped, attempted, and reverted pending the wider sweep
+
+Policy chosen: remove panic containment from the commit path and let a bug
+abort (the release profile is already `panic = "abort"`). The hot path was
+converted first — `direct_protocol.rs` (phase driver, `Panicked` variant),
+`item.rs` (`teardown_direct_plan`), `direct_commit.rs` and `lock.rs` (teardown
+loops), and the `transaction.rs` driver entries, adapter-capability probes and
+pooled-disposal helpers. It compiled and the tests exposed what the scoping
+misses:
+
+- **37 further containment sites** in `transaction.rs`'s general and terminal
+  drivers (lines ~3391-4762): every phase callback (preflight, predicate
+  upgrade, validation, acquire, install, release, cleanup) contains its own
+  panic and classifies it by phase.
+- **Machinery that only exists for containment**: `handle_acquire_panic`,
+  `contain_unexpected_unwind` and `emergency_failure` (one pair per driver), the
+  `Panicked(FailurePhase, payload)` variant, the `AdapterFaultKind::Panic`
+  producers, and the `recover_after_callback_panic` chain
+  (lock -> plan -> batch -> driver) with its quarantine bookkeeping.
+- **Cross-crate test fallout**: `sto-core/tests/failure_protocol.rs` asserts the
+  containment directly (install/release/finish panics preserving commit
+  boundaries, payload-destructor panics, poisoning); `lock.rs` has ~40
+  references to the recovery API and `mako-cache` ~33 to worker poisoning. Those
+  tests cannot assert in-process recovery once aborts are the policy; they need
+  subprocess-abort assertions instead.
+
+Landing it half-way was not acceptable: containment would be inconsistent across
+lanes and the tree would not compile. Everything was reverted and re-verified
+(18/18 test suites pass; 1,655,789 vs 1,652,078 tx/s, 1197 vs 1202 cyc/tx against
+the committed baseline binary).
+
+Staged plan if pursued: (1) abort-on-bug for the certified singleton lane only,
+keeping containment in the general/terminal/cache drivers — bounded, no
+cross-crate test change; (2) sweep the 37 general-driver sites, delete the
+panic-recovery machinery, and convert the `failure_protocol` panic tests to a
+subprocess harness that asserts the child aborts with a phase-tagged message;
+(3) measure under ABBA. Note the expectation from 8.8: swapping or deleting
+containment wrappers has measured neutral-to-negative so far; the payoff in this
+lane is expected to come from the monomorphization in (1), not from deleting the
+catches.
+
 ## 9 Appendix
 
 ### A. Artifacts in this directory
