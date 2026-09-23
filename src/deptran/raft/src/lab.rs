@@ -58,6 +58,10 @@ unsafe extern "C" {
         apply: extern "C" fn(u64, u64, *const rusty::RaftCommand) -> i32,
         out: *mut rusty::LearnerAction);
     fn raft_lab_frame_rpc_count(loc_id: u32) -> u64;
+    fn raft_lab_snapshot_copy_latest(src: *const rusty::RaftSnapshotManagerPtr,
+                                     dst: *const rusty::RaftSnapshotManagerPtr) -> bool;
+    fn raft_lab_byte_string_from(out: *mut rusty::RaftByteString,
+                                 data: *const u8, size: usize);
     fn raft_fiber_sleep_us(micros: u64);
     /// The thread-blocking sleep. DoAgreement uses `usleep` where the rest of
     /// the fixture uses `Fiber::sleep`, and the two are not interchangeable --
@@ -543,6 +547,24 @@ pub fn rpc_total() -> u64 {
     lab_registry::entries().iter()
         .map(|e| unsafe { raft_lab_frame_rpc_count(e.loc_id) })
         .sum()
+}
+
+/// Copy one snapshot manager's latest checkpoint into another. See the
+/// kernel's note: a compacted boundary is meaningless without its exact bytes.
+pub fn copy_snapshot(src: &rusty::RaftSnapshotManagerPtr,
+                     dst: &rusty::RaftSnapshotManagerPtr) -> bool {
+    // SAFETY: both are live shared_ptrs held by the caller for the call.
+    unsafe { raft_lab_snapshot_copy_latest(src as *const _, dst as *const _) }
+}
+
+/// A snapshot payload, as the opaque std::string carrier OnInstallSnapshot
+/// takes. Rust cannot build one directly.
+pub fn byte_string(text: &str) -> rusty::RaftByteString {
+    let mut out: rusty::RaftByteString = Default::default();
+    // SAFETY: the kernel copies `len` bytes into a fresh std::string; the
+    // carrier's Drop frees it.
+    unsafe { raft_lab_byte_string_from(&raw mut out, text.as_ptr(), text.len()) };
+    out
 }
 
 // ---------------------------------------------------------------------------

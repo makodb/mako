@@ -12,9 +12,11 @@ its clone kernel into a default-constructed slot -- so no export passes a
 non-trivial object by value (plan.md, D2). Output is spliced into server.cc's
 export block; re-run when a method's signature changes.
 """
+import pathlib
 import re, sys
 
-RS = '/home/users/zyang2/mako/src/deptran/raft/src/server_h.rs'
+RS = str(pathlib.Path(__file__).resolve().parent.parent /
+         'src' / 'deptran' / 'raft' / 'src' / 'server_h.rs')
 INTERFACE = ['set_site_identity', 'set_commo', 'reg_learner_action', 'EnsureSetup', 'WaitForStartup',
              'PrepareForShutdown', 'IsLeader', 'GetLeaderHint', 'SetPreferredLeader',
              'RegisterLeaderChangeCallback', 'IsRpcReady', 'IsDisconnected', 'SiteId', 'PartitionId',
@@ -208,8 +210,13 @@ GROUPS = (('The replication interface: TxLogServer and RaftSpecific.', INTERFACE
           ('The RaftLab harness surface (test.cc, testconf.cc).', LAB))
 
 
-H = '/home/users/zyang2/mako/src/deptran/raft/server.h'
-SCH = '/home/users/zyang2/mako/src/deptran/scheduler.h'
+# Relative to this file, not absolute: a worktree must regenerate from ITS
+# own headers. The absolute paths that were here read the main checkout's
+# server.h while rewriting the worktree's, which can only produce a
+# byte-for-byte mismatch or, worse, a silent stale regeneration.
+_REPO = pathlib.Path(__file__).resolve().parent.parent
+H = str(_REPO / 'src' / 'deptran' / 'raft' / 'server.h')
+SCH = str(_REPO / 'src' / 'deptran' / 'scheduler.h')
 
 
 def cpp_decls(text, class_rx):

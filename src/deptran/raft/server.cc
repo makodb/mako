@@ -534,6 +534,282 @@ void raft_lab_make_commit_command(int64_t tx_id, rusty::RaftCommand* out) {
       janus::Command::pack_aliased<TpcCommitCommand>(rusty::move(cmdptr)));
 }
 
+// --- The snapshot manager, for the Rust lab harness ------------------------
+//
+// Everything a case compares across a snapshot operation, in one struct so a
+// before/after comparison is one call. Declared here rather than in server.h's
+// inline block because it is lab-only: no production build sees it.
+struct RaftLabSnapshotProbe {
+  bool present;
+  uint64_t last_included_index;
+  uint64_t last_included_term;
+  uint64_t timestamp_ms;
+  uint64_t size_bytes;
+  // FNV-1a over the checksum STRING (SnapshotMetadata::checksum is a
+  // std::string) and over the payload. A digest compares as well as a copy
+  // for a before/after assertion and marshals nothing into Rust.
+  uint64_t checksum_digest;
+  uint64_t data_digest;
+  uint64_t count;
+};
+
+namespace {
+uint64_t lab_fnv1a(const std::string& bytes) {
+  uint64_t digest = 0xcbf29ce484222325ull;
+  for (const char byte : bytes) {
+    digest ^= static_cast<unsigned char>(byte);
+    digest *= 0x100000001b3ull;
+  }
+  return digest;
+}
+}  // namespace
+//
+// janus::raft::SnapshotManager is a C++ interface held as a shared_ptr, and
+// the cases that rotate one (54-60, 69) need to create, seed and inspect it.
+// Rust holds the shared_ptr as the opaque rusty::RaftSnapshotManagerPtr it
+// already uses for the server's own field, so these are the verbs it cannot
+// spell -- the same reason the production snapshot kernels next to them exist.
+
+void raft_lab_new_snapshot_manager(rusty::RaftSnapshotManagerPtr* out) {
+  construct_into(out, std::make_shared<janus::raft::MemorySnapshotManager>());
+}
+
+bool raft_lab_snapshot_take(const rusty::RaftSnapshotManagerPtr* manager,
+                            uint64_t index, uint64_t term,
+                            const char* data, size_t size) {
+  if (!*manager) {
+    return false;
+  }
+  return (*manager)->TakeSnapshot(index, term, data, size);
+}
+
+uint64_t raft_lab_snapshot_delete_all(
+    const rusty::RaftSnapshotManagerPtr* manager) {
+  if (!*manager) {
+    return 0;
+  }
+  return static_cast<uint64_t>((*manager)->DeleteAllSnapshots());
+}
+
+// One call for everything a case compares across an operation: the metadata,
+// a digest of the payload, and how many snapshots the manager holds. Test 58
+// asserts five metadata fields, the bytes and the count are all unchanged; a
+// digest says that as well as a copy would and does not marshal a std::string
+// into Rust.
+void raft_lab_snapshot_probe(const rusty::RaftSnapshotManagerPtr* manager,
+                             RaftLabSnapshotProbe* out) {
+  *out = RaftLabSnapshotProbe{};
+  if (!*manager) {
+    return;
+  }
+  janus::raft::SnapshotMetadata metadata;
+  std::string data;
+  if (!(*manager)->LoadLatestSnapshot(&metadata, &data)) {
+    return;
+  }
+  out->present = true;
+  out->last_included_index = metadata.last_included_index;
+  out->last_included_term = metadata.last_included_term;
+  out->timestamp_ms = metadata.timestamp_ms;
+  out->size_bytes = static_cast<uint64_t>(metadata.size_bytes);
+  out->checksum_digest = lab_fnv1a(metadata.checksum);
+  out->data_digest = lab_fnv1a(data);
+  out->count = static_cast<uint64_t>((*manager)->ListSnapshots().size());
+}
+
+// --- The state-machine snapshot callbacks, for the Rust lab harness --------
+//
+// Both are std::functions, one of which returns a
+// std::unique_ptr<PreparedStateMachineSnapshotInstall> -- a C++ interface with
+// a vtable, which Rust cannot implement. So the PROBES are C++ and the test
+// LOGIC that installs them and reads their verdict is Rust.
+//
+// One probe is live at a time, which is all tests 58 and 60 need, so their
+// observations are file statics rather than a handle Rust would have to own.
+
+namespace {
+
+std::atomic<bool> lab_reject_prepare_called{false};
+
+// Test 60's oracle: a prepared install whose Commit succeeds only once the
+// EXACT incoming snapshot is readable from the manager. That makes the
+// Prepare -> TakeSnapshot -> Commit ordering a witnessed fact rather than an
+// assumption. Anonymous-namespace, so it does not collide with test.cc's own
+// copy while both harnesses exist.
+class LabPublicationProbe final : public PreparedStateMachineSnapshotInstall {
+ public:
+  LabPublicationProbe(std::shared_ptr<janus::raft::SnapshotManager> manager,
+                      uint64_t expected_index, uint64_t expected_term,
+                      std::string expected_data,
+                      std::atomic<bool>* commit_called,
+                      std::atomic<bool>* commit_saw_published,
+                      std::atomic<bool>* aborted_before_commit)
+      : manager_(std::move(manager)),
+        expected_index_(expected_index),
+        expected_term_(expected_term),
+        expected_data_(std::move(expected_data)),
+        commit_called_(commit_called),
+        commit_saw_published_(commit_saw_published),
+        aborted_before_commit_(aborted_before_commit) {}
+
+  ~LabPublicationProbe() override {
+    if (!commit_attempted_ && aborted_before_commit_ != nullptr) {
+      aborted_before_commit_->store(true, std::memory_order_release);
+    }
+  }
+
+  bool Commit() override {
+    if (commit_attempted_) {
+      return false;
+    }
+    commit_attempted_ = true;
+    janus::raft::SnapshotMetadata metadata;
+    std::string data;
+    const bool published = manager_ != nullptr &&
+        manager_->LoadLatestSnapshot(&metadata, &data) &&
+        metadata.last_included_index == expected_index_ &&
+        metadata.last_included_term == expected_term_ &&
+        data == expected_data_;
+    if (commit_saw_published_ != nullptr) {
+      commit_saw_published_->store(published, std::memory_order_release);
+    }
+    if (commit_called_ != nullptr) {
+      commit_called_->store(true, std::memory_order_release);
+    }
+    return published;
+  }
+
+ private:
+  std::shared_ptr<janus::raft::SnapshotManager> manager_;
+  uint64_t expected_index_ = 0;
+  uint64_t expected_term_ = 0;
+  std::string expected_data_;
+  std::atomic<bool>* commit_called_ = nullptr;
+  std::atomic<bool>* commit_saw_published_ = nullptr;
+  std::atomic<bool>* aborted_before_commit_ = nullptr;
+  bool commit_attempted_ = false;
+};
+
+struct LabProbeState {
+  std::shared_ptr<janus::raft::SnapshotManager> manager;
+  std::atomic<bool> prepare_called{false};
+  std::atomic<bool> prepare_saw_old_manager{false};
+  std::atomic<bool> commit_called{false};
+  std::atomic<bool> commit_saw_published{false};
+  std::atomic<bool> aborted_before_commit{false};
+};
+
+LabProbeState lab_probe_state;
+
+}  // namespace
+
+// Test 58: a Prepare that refuses. A clean rejection must not publish bytes,
+// compact the log, or fail-stop a healthy follower.
+void raft_lab_make_reject_prepare_cbs(rusty::RaftCreateSnapshotCb* create_out,
+                                      rusty::RaftPrepareSnapshotCb* prepare_out) {
+  lab_reject_prepare_called.store(false, std::memory_order_release);
+  construct_into(create_out, [](uint64_t) { return std::string(); });
+  construct_into(prepare_out,
+      [](const std::string&, uint64_t)
+          -> std::unique_ptr<PreparedStateMachineSnapshotInstall> {
+        lab_reject_prepare_called.store(true, std::memory_order_release);
+        return nullptr;
+      });
+}
+
+bool raft_lab_reject_prepare_called() {
+  return lab_reject_prepare_called.load(std::memory_order_acquire);
+}
+
+// Test 60: the publication-ordering oracle. Commit succeeds only once the
+// exact incoming snapshot is readable from the manager, so the flags below
+// witness Prepare -> TakeSnapshot -> Commit rather than assuming it.
+void raft_lab_make_probe_cbs(const rusty::RaftSnapshotManagerPtr* manager,
+                             rusty::RaftCreateSnapshotCb* create_out,
+                             rusty::RaftPrepareSnapshotCb* prepare_out) {
+  lab_probe_state.manager = *manager;
+  lab_probe_state.prepare_called.store(false, std::memory_order_release);
+  lab_probe_state.prepare_saw_old_manager.store(false, std::memory_order_release);
+  lab_probe_state.commit_called.store(false, std::memory_order_release);
+  lab_probe_state.commit_saw_published.store(false, std::memory_order_release);
+  lab_probe_state.aborted_before_commit.store(false, std::memory_order_release);
+  construct_into(create_out, [](uint64_t) { return std::string(); });
+  construct_into(prepare_out,
+      [](const std::string& incoming_data, uint64_t incoming_index)
+          -> std::unique_ptr<PreparedStateMachineSnapshotInstall> {
+        constexpr size_t kMarkerSize = sizeof(uint64_t) * 2;
+        if (incoming_data.size() != kMarkerSize) {
+          return nullptr;
+        }
+        uint64_t marker_index = 0;
+        uint64_t marker_term = 0;
+        std::memcpy(&marker_index, incoming_data.data(),
+                    sizeof(marker_index));
+        std::memcpy(&marker_term,
+                    incoming_data.data() + sizeof(marker_index),
+                    sizeof(marker_term));
+        if (marker_index != incoming_index) {
+          return nullptr;
+        }
+        auto manager = lab_probe_state.manager;
+        auto previous = manager->GetLatestSnapshot();
+        const bool still_old = previous.is_none() ||
+            previous.unwrap().last_included_index < incoming_index;
+        lab_probe_state.prepare_saw_old_manager.store(
+            still_old, std::memory_order_release);
+        lab_probe_state.prepare_called.store(
+            true, std::memory_order_release);
+        return std::make_unique<LabPublicationProbe>(
+            manager, incoming_index, marker_term, incoming_data,
+            &lab_probe_state.commit_called,
+            &lab_probe_state.commit_saw_published,
+            &lab_probe_state.aborted_before_commit);
+      });
+}
+
+// bit 0 prepare ran, 1 it saw the old manager, 2 commit ran, 3 commit saw the
+// snapshot published, 4 a probe was dropped without committing.
+uint32_t raft_lab_probe_flags() {
+  uint32_t flags = 0;
+  if (lab_probe_state.prepare_called.load(std::memory_order_acquire)) flags |= 1;
+  if (lab_probe_state.prepare_saw_old_manager.load(std::memory_order_acquire)) flags |= 2;
+  if (lab_probe_state.commit_called.load(std::memory_order_acquire)) flags |= 4;
+  if (lab_probe_state.commit_saw_published.load(std::memory_order_acquire)) flags |= 8;
+  if (lab_probe_state.aborted_before_commit.load(std::memory_order_acquire)) flags |= 16;
+  return flags;
+}
+
+void raft_lab_probe_release() {
+  lab_probe_state.manager.reset();
+}
+
+// Copy one manager's latest checkpoint into another. What
+// InstallAndSeedSnapshotManager does when rotating a manager on a replica
+// that has ALREADY compacted: a boundary means nothing without its exact
+// bytes, so the checkpoint is copied rather than regenerated.
+bool raft_lab_snapshot_copy_latest(const rusty::RaftSnapshotManagerPtr* src,
+                                   const rusty::RaftSnapshotManagerPtr* dst) {
+  if (!*src || !*dst) {
+    return false;
+  }
+  janus::raft::SnapshotMetadata metadata;
+  std::string data;
+  if (!(*src)->LoadLatestSnapshot(&metadata, &data)) {
+    return false;
+  }
+  return (*dst)->TakeSnapshot(metadata.last_included_index,
+                              metadata.last_included_term,
+                              data.data(), data.size());
+}
+
+// A std::string from Rust bytes, for the snapshot payloads test 58 and 59
+// hand to OnInstallSnapshot. The carrier is opaque on the Rust side, so this
+// is the only way to make one.
+void raft_lab_byte_string_from(rusty::RaftByteString* out,
+                               const char* data, size_t size) {
+  construct_into(out, std::string(data, size));
+}
+
 #endif
 void raft_leader_change_cb_clone_into(const rusty::RaftLeaderChangeCb* src,
                                       rusty::RaftLeaderChangeCb* dst) {

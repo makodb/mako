@@ -468,30 +468,45 @@ run_raft_lab_test() {
         -DMAKO_USE_RAFT=ON -DRAFT_TEST=ON
     cmake --build "${lab_build_dir}" --parallel "${jobs}" --target deptran_server
 
-    local log
-    log="$(mktemp /tmp/raft_lab_test_XXXX.log)"
-    echo "Running the lab suite (log: ${log})"
-    set +e
-    timeout 900 "./${lab_build_dir}/deptran_server" \
-        -f config/raft_lab_test.yml -P localhost > "${log}" 2>&1
-    local status=$?
-    set -e
+    # BOTH harnesses, one process each (lab-harness-to-rust-plan.md, Phase 3).
+    # The C++ suite is the oracle for the Rust port: a case counts as ported
+    # only when both agree on a clean run. Separate processes, not one after
+    # the other, because the second would start on a cluster whose indices,
+    # terms, snapshot managers and retention windows the first had moved.
+    local harness
+    for harness in cpp rust; do
+        local log
+        log="$(mktemp "/tmp/raft_lab_test_${harness}_XXXX.log")"
+        echo "Running the lab suite, ${harness} harness (log: ${log})"
+        set +e
+        if [ "${harness}" = rust ]; then
+            MAKO_RAFT_LAB_RUST=1 timeout 1800 "./${lab_build_dir}/deptran_server" \
+                -f config/raft_lab_test.yml -P localhost > "${log}" 2>&1
+        else
+            timeout 1800 "./${lab_build_dir}/deptran_server" \
+                -f config/raft_lab_test.yml -P localhost > "${log}" 2>&1
+        fi
+        local status=$?
+        set -e
 
-    local passed
-    passed=$(grep -c '^TEST [0-9]* Passed' "${log}" || true)
-    echo "raftLabTest: ${passed} case(s) passed, deptran_server exited ${status}"
+        local passed
+        passed=$(grep -c '^TEST [0-9]* Passed' "${log}" || true)
+        echo "raftLabTest (${harness}): ${passed} case(s) passed, deptran_server exited ${status}"
 
-    # Both conditions, deliberately. The exit status is the verdict
-    # (src/deptran/s_main.cc returns RaftFrame::RaftLabProcessExitCode()), and
-    # the marker proves the fiber actually reached its verdict rather than the
-    # process exiting 0 having run nothing.
-    if [ "$status" -ne 0 ] || ! grep -q 'ALL TESTS PASSED' "${log}"; then
-        echo "ERROR: RaftLabTest failed (exit ${status})"
-        echo "--- last 60 lines of ${log} ---"
-        tail -n 60 "${log}"
-        return 1
-    fi
-    rm -f "${log}"
+        # Three conditions, deliberately. The exit status is the verdict
+        # (src/deptran/s_main.cc returns RaftFrame::RaftLabProcessExitCode()),
+        # the marker proves the fiber reached its verdict rather than the
+        # process exiting 0 having run nothing, and the count proves no case
+        # was silently skipped -- which a half-ported harness would do.
+        if [ "$status" -ne 0 ] || ! grep -q 'ALL TESTS PASSED' "${log}" || \
+           [ "${passed}" -ne 25 ]; then
+            echo "ERROR: RaftLabTest failed, ${harness} harness (exit ${status}, ${passed}/25)"
+            echo "--- last 60 lines of ${log} ---"
+            tail -n 60 "${log}"
+            return 1
+        fi
+        rm -f "${log}"
+    done
     return 0
 }
 

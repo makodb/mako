@@ -1059,6 +1059,11 @@ if(RAFT_TEST)
     list(APPEND DEPTRAN_CORE_SRC
         src/deptran/raft/test.cc
         src/deptran/raft/testconf.cc
+        # The three lab cases that are unit tests of C++ classes
+        # (SnapshotMetadata, SnapshotFormat, MemorySnapshotManager). They touch
+        # no RaftServer, so they stay C++ and outlive the two files above --
+        # see docs/migration/raft/lab-harness-to-rust-plan.md, Phase 4.
+        src/deptran/raft/lab_unit_tests.cc
     )
 endif()
 

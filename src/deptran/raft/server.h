@@ -667,9 +667,4 @@ class RaftServer : public RaftSpecific {
   RaftServerBase* impl_;
 };
 
-
-
-
-
-
 } // namespace janus
