@@ -89,11 +89,11 @@ pub mod lab_registry {
 // what the 25 cases lean on to decide whether the cluster is in a legal state,
 // and every call they make now stays inside Rust.
 //
-// The C++ RaftTestConfig is NOT replaced yet. It remains the oracle until the
-// whole suite has moved (Phase 4), so both must agree: the constants, the
-// retry counts and the sleep grain below are transcribed from
-// testconf.cc rather than chosen, and a divergence here is a bug in this
-// file, not a design decision.
+// The constants, the retry counts and the sleep grain below were transcribed
+// from testconf.cc rather than chosen: while both harnesses existed they had
+// to agree, and now that only this one does, they are what the 25 cases were
+// tuned against. A divergence here is a bug in this file, not a design
+// decision.
 #[cfg(feature = "raft_test")]
 pub mod lab_cluster {
     use super::{lab_registry, RaftServerBase};
@@ -202,50 +202,6 @@ pub mod lab_cluster {
             !disconnected && cur > term
         })
     }
-
-    /// An order-independent digest of the whole cluster's observable state.
-    /// The C++ fixture computes the same digest from ITS view at the same
-    /// instant; if the two ever differ, this port reads the servers wrongly.
-    ///
-    /// Deliberately instantaneous: comparing the waiting LOOPS would mean
-    /// running two sets of ten half-second sleeps and would perturb the very
-    /// elections the suite is measuring. The loop is plain control flow; the
-    /// risk worth checking is whether the state reads agree.
-    pub fn snapshot_digest() -> u64 {
-        let mut digest: u64 = 0xcbf2_9ce4_8422_2325;
-        for (loc, is_leader, term, disconnected) in snapshot() {
-            for byte in loc.to_le_bytes().iter()
-                .chain(term.to_le_bytes().iter())
-                .chain([is_leader as u8, disconnected as u8].iter())
-            {
-                digest ^= *byte as u64;
-                digest = digest.wrapping_mul(0x0000_0100_0000_01b3);
-            }
-        }
-        digest
-    }
-
-    /// Every replica's (loc_id, is_leader, term, disconnected), ordered by
-    /// locale id.
-    pub fn snapshot() -> Vec<(u32, bool, u64, bool)> {
-        lab_registry::entries()
-            .iter()
-            .map(|e| {
-                let (is_leader, term, disconnected) = state_of(e);
-                (e.loc_id, is_leader, term, disconnected)
-            })
-            .collect()
-    }
-}
-
-/// TEMPORARY verification scaffolding (Phase 2). The C++ RaftTestConfig calls
-/// this and compares against a digest it computes from its own view, so the
-/// Rust port is checked against the incumbent oracle rather than by reading.
-/// Deleted once Phase 3 has moved the cases across.
-#[cfg(feature = "raft_test")]
-#[unsafe(no_mangle)]
-pub extern "C" fn raft_lab_rust_snapshot_digest() -> u64 {
-    lab_cluster::snapshot_digest()
 }
 
 #[allow(non_camel_case_types)]

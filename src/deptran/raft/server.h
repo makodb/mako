@@ -618,51 +618,6 @@ class RaftServer : public RaftSpecific {
   void OnAppendEntries(uint64_t leader_current_term, uint16_t leader_site_id, uint64_t leader_prev_log_index, uint64_t leader_prev_log_term, uint64_t leader_commit_index, const rusty::RaftCommand& cmd, uint64_t leader_next_log_term, uint64_t* follower_append_ok, uint64_t* follower_current_term, uint64_t* follower_last_log_index) override { raft_server_on_append_entries(impl_, leader_current_term, leader_site_id, leader_prev_log_index, leader_prev_log_term, leader_commit_index, &cmd, leader_next_log_term, follower_append_ok, follower_current_term, follower_last_log_index); }
   void OnInstallSnapshot(uint64_t term, uint64_t leader_id, uint64_t last_included_index, uint64_t last_included_term, const rusty::RaftByteString& data, uint64_t* term_out) override { raft_server_on_install_snapshot(impl_, term, leader_id, last_included_index, last_included_term, &data, term_out); }
 
-#ifdef RAFT_TEST_CORO
-  // --- The RaftLab harness surface (test.cc, testconf.cc), forwarded likewise.
-  bool ClearStateMachineSnapshotCallbacks(uint64_t callback_owner_token) { return raft_server_clear_state_machine_snapshot_callbacks(impl_, callback_owner_token); }
-  bool CreateSnapshotLocked() { return raft_server_create_snapshot_locked(impl_); }
-  void Disconnect(bool disconnect) { raft_server_disconnect(impl_, disconnect); }
-  uint64_t GetAppliedIndex() const { return raft_server_get_applied_index(impl_); }
-  uint64_t GetHeartbeatInterval() const { return raft_server_get_heartbeat_interval(impl_); }
-  uint64_t GetLogRetentionWindow() const { return raft_server_get_log_retention_window(impl_); }
-  uint64_t GetSnapshotIndex() { return raft_server_get_snapshot_index(impl_); }
-  uint64_t GetSnapshotIndexLocked() const { return raft_server_get_snapshot_index_locked(impl_); }
-  uint64_t GetSnapshotTerm() { return raft_server_get_snapshot_term(impl_); }
-  uint64_t GetSnapshotTermLocked() const { return raft_server_get_snapshot_term_locked(impl_); }
-  uint64_t GetSnapshotThreshold() const { return raft_server_get_snapshot_threshold(impl_); }
-  void GetState(bool* is_leader, uint64_t* term) { raft_server_get_state(impl_, is_leader, term); }
-  bool HasSnapshot() { return raft_server_has_snapshot(impl_); }
-  bool IsLeaderLocked() const { return raft_server_is_leader_locked(impl_); }
-  rusty::RaftStdMutex& LabApplyMutex() { return *raft_server_lab_apply_mutex(impl_); }
-  uint64_t LabCommitIndex() const { return raft_server_lab_commit_index(impl_); }
-  uint16_t LabCurrentLeaderId() const { return raft_server_lab_current_leader_id(impl_); }
-  uint64_t LabCurrentTerm() const { return raft_server_lab_current_term(impl_); }
-  bool LabElectionInProgress() const { return raft_server_lab_election_in_progress(impl_); }
-  uint64_t LabExecuteIndex() const { return raft_server_lab_execute_index(impl_); }
-  bool LabIsLeader() const { return raft_server_lab_is_leader(impl_); }
-  uint64_t LabLastLogIndex() const { return raft_server_lab_last_log_index(impl_); }
-  uint64_t LabLogBase() const { return raft_server_lab_log_base(impl_); }
-  uint64_t LabLogFingerprintAt(uint64_t i) const { return raft_server_lab_log_fingerprint_at(impl_, i); }
-  uint64_t LabLogFingerprintLen() const { return raft_server_lab_log_fingerprint_len(impl_); }
-  rusty::RaftCheckedMutex& LabMutex() { return *raft_server_lab_mutex(impl_); }
-  bool LabReqVoting() const { return raft_server_lab_req_voting(impl_); }
-  uint64_t LabSnapIdx() const { return raft_server_lab_snap_idx(impl_); }
-  int64_t LabSnapTerm() const { return raft_server_lab_snap_term(impl_); }
-  const rusty::RaftSnapshotManagerPtr& LabSnapshotManager() const { return *raft_server_lab_snapshot_manager(impl_); }
-  bool LabStopped() const { return raft_server_lab_stopped(impl_); }
-  uint16_t LabVoteFor() const { return raft_server_lab_vote_for(impl_); }
-  void Reconnect() { raft_server_reconnect(impl_); }
-  void SetHeartbeatInterval(uint64_t micros) { raft_server_set_heartbeat_interval(impl_, micros); }
-  void SetLogRetentionWindow(uint64_t window) { raft_server_set_log_retention_window(impl_, window); }
-  void SetSnapshotManager(rusty::RaftSnapshotManagerPtr manager) { raft_server_set_snapshot_manager(impl_, &manager); }
-  void SetSnapshotManagerLocked(rusty::RaftSnapshotManagerPtr manager) { raft_server_set_snapshot_manager_locked(impl_, &manager); }
-  void SetSnapshotThreshold(uint64_t threshold) { raft_server_set_snapshot_threshold(impl_, threshold); }
-  void SetSnapshotThresholdLocked(uint64_t threshold) { raft_server_set_snapshot_threshold_locked(impl_, threshold); }
-  uint64_t SetStateMachineSnapshotCallbacks(const rusty::RaftCreateSnapshotCb& create_cb, const rusty::RaftPrepareSnapshotCb& prepare_cb) { return raft_server_set_state_machine_snapshot_callbacks(impl_, &create_cb, &prepare_cb); }
-  void Shutdown() { raft_server_shutdown(impl_); }
-#endif
-
  private:
   RaftServerBase* impl_;
 };

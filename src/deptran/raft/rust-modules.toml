@@ -110,11 +110,6 @@ source = "src/deptran/raft/snapshot_manager.hpp"
 output = "src/deptran/raft/src/snapshot_manager_hpp.rs"
 
 [[module]]
-cpp_module = "raft.testconf_cc"
-source = "src/deptran/raft/testconf.cc"
-output = "src/deptran/raft/src/testconf_cc.rs"
-
-[[module]]
 cpp_module = "raft.raft_main_helper_cc"
 source = "src/deptran/raft_main_helper.cc"
 output = "src/deptran/raft/src/raft_main_helper_cc.rs"

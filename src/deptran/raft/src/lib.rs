@@ -27,4 +27,3 @@ pub mod server_pods_h;
 pub mod service_cc;
 pub mod snapshot_format_hpp;
 pub mod snapshot_manager_hpp;
-pub mod testconf_cc;

@@ -56,7 +56,6 @@ EXPECTED_BLOCKS=(
   "src/deptran/raft/snapshot_format.hpp|raft_snapshot.crc32_update_loop"
   "src/deptran/raft/snapshot_format.hpp|raft_snapshot.format_decisions"
   "src/deptran/raft/snapshot_format.hpp|raft_snapshot.format_enums"
-  "src/deptran/raft/testconf.cc|raft_testconf.index_math"
   "src/deptran/raft_main_helper.cc|raft_main.argument_casefold"
   "src/deptran/raft_main_helper.cc|raft_main.group_mode"
   "src/deptran/raft_main_helper.cc|raft_main.group_mode_argument_predicate"

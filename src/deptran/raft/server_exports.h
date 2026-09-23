@@ -49,48 +49,6 @@ void raft_server_install_snapshot_reply_accepted(RaftServerBase* s, uint16_t sit
 void raft_server_on_install_snapshot_locked(RaftServerBase* s, uint64_t term, uint64_t leader_id, uint64_t last_included_index, uint64_t last_included_term, const rusty::RaftByteString* data, uint64_t* term_out);
 bool raft_server_setup_internal(RaftServerBase* s);
 void raft_server_start_election_timer(RaftServerBase* s);
-// --- The RaftLab harness surface (test.cc, testconf.cc).
-bool raft_server_clear_state_machine_snapshot_callbacks(RaftServerBase* s, uint64_t callback_owner_token);
-bool raft_server_create_snapshot_locked(RaftServerBase* s);
-void raft_server_disconnect(RaftServerBase* s, bool disconnect);
-uint64_t raft_server_get_applied_index(const RaftServerBase* s);
-uint64_t raft_server_get_heartbeat_interval(const RaftServerBase* s);
-uint64_t raft_server_get_log_retention_window(const RaftServerBase* s);
-uint64_t raft_server_get_snapshot_index(RaftServerBase* s);
-uint64_t raft_server_get_snapshot_index_locked(const RaftServerBase* s);
-uint64_t raft_server_get_snapshot_term(RaftServerBase* s);
-uint64_t raft_server_get_snapshot_term_locked(const RaftServerBase* s);
-uint64_t raft_server_get_snapshot_threshold(const RaftServerBase* s);
-void raft_server_get_state(RaftServerBase* s, bool* is_leader, uint64_t* term);
-bool raft_server_has_snapshot(RaftServerBase* s);
-bool raft_server_is_leader_locked(const RaftServerBase* s);
-rusty::RaftStdMutex* raft_server_lab_apply_mutex(RaftServerBase* s);
-uint64_t raft_server_lab_commit_index(const RaftServerBase* s);
-uint16_t raft_server_lab_current_leader_id(const RaftServerBase* s);
-uint64_t raft_server_lab_current_term(const RaftServerBase* s);
-bool raft_server_lab_election_in_progress(const RaftServerBase* s);
-uint64_t raft_server_lab_execute_index(const RaftServerBase* s);
-bool raft_server_lab_is_leader(const RaftServerBase* s);
-uint64_t raft_server_lab_last_log_index(const RaftServerBase* s);
-uint64_t raft_server_lab_log_base(const RaftServerBase* s);
-uint64_t raft_server_lab_log_fingerprint_at(const RaftServerBase* s, uint64_t i);
-uint64_t raft_server_lab_log_fingerprint_len(const RaftServerBase* s);
-rusty::RaftCheckedMutex* raft_server_lab_mutex(RaftServerBase* s);
-bool raft_server_lab_req_voting(const RaftServerBase* s);
-uint64_t raft_server_lab_snap_idx(const RaftServerBase* s);
-int64_t raft_server_lab_snap_term(const RaftServerBase* s);
-const rusty::RaftSnapshotManagerPtr* raft_server_lab_snapshot_manager(const RaftServerBase* s);
-bool raft_server_lab_stopped(const RaftServerBase* s);
-uint16_t raft_server_lab_vote_for(const RaftServerBase* s);
-void raft_server_reconnect(RaftServerBase* s);
-void raft_server_set_heartbeat_interval(RaftServerBase* s, uint64_t micros);
-void raft_server_set_log_retention_window(RaftServerBase* s, uint64_t window);
-void raft_server_set_snapshot_manager(RaftServerBase* s, const rusty::RaftSnapshotManagerPtr* manager);
-void raft_server_set_snapshot_manager_locked(RaftServerBase* s, const rusty::RaftSnapshotManagerPtr* manager);
-void raft_server_set_snapshot_threshold(RaftServerBase* s, uint64_t threshold);
-void raft_server_set_snapshot_threshold_locked(RaftServerBase* s, uint64_t threshold);
-uint64_t raft_server_set_state_machine_snapshot_callbacks(RaftServerBase* s, const rusty::RaftCreateSnapshotCb* create_cb, const rusty::RaftPrepareSnapshotCb* prepare_cb);
-void raft_server_shutdown(RaftServerBase* s);
 }  // extern "C"
 }  // namespace janus
 

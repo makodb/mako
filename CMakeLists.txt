@@ -1057,12 +1057,12 @@ set(DEPTRAN_CORE_SRC
 
 if(RAFT_TEST)
     list(APPEND DEPTRAN_CORE_SRC
-        src/deptran/raft/test.cc
-        src/deptran/raft/testconf.cc
-        # The three lab cases that are unit tests of C++ classes
-        # (SnapshotMetadata, SnapshotFormat, MemorySnapshotManager). They touch
-        # no RaftServer, so they stay C++ and outlive the two files above --
-        # see docs/migration/raft/lab-harness-to-rust-plan.md, Phase 4.
+        # All that is left of the C++ lab harness: the three cases that are
+        # unit tests of C++ classes (SnapshotMetadata, SnapshotFormat,
+        # MemorySnapshotManager) and touch no RaftServer. The suite itself is
+        # Rust -- src/deptran/raft/src/lab*.rs -- which is what let test.cc and
+        # testconf.cc be deleted along with 41 of the 73 exports. See
+        # docs/migration/raft/lab-harness-to-rust-plan.md, Phase 4.
         src/deptran/raft/lab_unit_tests.cc
     )
 endif()

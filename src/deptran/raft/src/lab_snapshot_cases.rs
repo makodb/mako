@@ -64,6 +64,11 @@ unsafe extern "C" {
     fn raft_lab_probe_release();
     /// The three C++ unit tests. 0 on success, as RaftLabTest's cases return.
     fn raft_lab_cpp_unit_tests() -> i32;
+    /// The snapshot manager's shared_ptr, copied into a default-constructed
+    /// slot. A shared_ptr relocates bitwise; the std::function carriers do
+    /// not, which is why those are copied in place by the setters themselves
+    /// (see reg_learner_action in server_h.rs). This was declared in
+    /// server_cc.rs until the lab exports that used it were deleted.
     fn raft_snapshot_manager_ptr_clone_into(
         src: *const rusty::RaftSnapshotManagerPtr,
         dst: *mut rusty::RaftSnapshotManagerPtr);

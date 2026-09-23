@@ -5,7 +5,6 @@
 #include "service.h"
 #include "commo.h"
 #include "config.h"
-#include "test.h"
 #include <rusty/slice.hpp>
 // #include "../kv/server.h"
 
@@ -184,20 +183,10 @@ extern "C" uint64_t raft_lab_frame_rpc_count(uint32_t loc_id) {
   return RaftFrame::LabFrameRpcCount(loc_id);
 }
 
-// The Rust lab harness (src/deptran/raft/src/lab.rs), and the switch that
-// selects it. `MAKO_RAFT_LAB_RUST` set to anything but "0" picks Rust; unset
-// keeps the incumbent C++ suite, which stays the oracle until Phase 4.
+// The lab harness: src/deptran/raft/src/lab.rs, lab_cases.rs and
+// lab_snapshot_cases.rs. Runs the 25 cases and returns RaftLabTest::Run's old
+// verdict shape, 0 for success.
 extern "C" int raft_lab_rust_run();
-
-// @safe - reads one environment variable and compares two bytes.
-static bool raft_lab_rust_harness_selected() {
-  // @unsafe { getenv is not borrow-checked }
-  const char* selector = getenv("MAKO_RAFT_LAB_RUST");
-  if (selector == nullptr || selector[0] == '\0') {
-    return false;
-  }
-  return !(selector[0] == '0' && selector[1] == '\0');
-}
 
 // @unsafe - Serializes the shared test-config cache with the legacy test mutex.
 bool RaftFrame::IsRaftLabTestConfig() {
@@ -335,25 +324,10 @@ Communicator *RaftFrame::CreateCommo(
 
         // Run tests
         verify(raft_frame_all_schedulers_created(n_replicas_, 5));
-        // Which harness runs (lab-harness-to-rust-plan.md, Phase 3). The Rust
-        // port and the C++ original drive the SAME five replicas through the
-        // same 25 cases; ci.sh runs the binary once each way, because a
-        // second suite in one process would start on a cluster whose indices,
-        // terms and snapshot managers the first had already moved.
-        //
-        // The two must not both construct a fixture: each owns a
-        // network-control thread, and RaftTestConfig's constructor verifies
-        // it is the only one.
-        int test_result = 0;
-        if (raft_lab_rust_harness_selected()) {
-          Log_info("Test fiber: running the RUST lab harness");
-          test_result = raft_lab_rust_run();
-        } else {
-          auto testconfig = new RaftTestConfig(frames_);
-          RaftLabTest test(testconfig);
-          test_result = test.Run();
-          test.Cleanup();
-        }
+        // The harness owns its own fixture: it finds the five replicas
+        // through the registry each one publishes in set_site_identity, so
+        // nothing here has to hand it the frames.
+        const int test_result = raft_lab_rust_run();
         lab_test_result_.store(
             test_result, rusty::sync::atomic::Ordering::Release);
         Log_info("Test fiber: Tests completed, turning off reactor loop");

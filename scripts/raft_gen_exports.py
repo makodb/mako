@@ -23,15 +23,6 @@ INTERFACE = ['set_site_identity', 'set_commo', 'reg_learner_action', 'EnsureSetu
              'CommitIndex', 'Start', 'OnRequestVote', 'OnAppendEntries', 'OnInstallSnapshot']
 KERNEL_CALLED = ['ApplyThreadLoop', 'BindReplicationWakeOwner', 'FailStop', 'InitializeSnapshotManagerLocked',
                  'InstallSnapshotReplyAccepted', 'OnInstallSnapshotLocked', 'SetupInternal', 'StartElectionTimer']
-LAB = ['ClearStateMachineSnapshotCallbacks', 'CreateSnapshotLocked', 'Disconnect', 'GetAppliedIndex',
-       'GetHeartbeatInterval', 'GetLogRetentionWindow', 'GetSnapshotIndex', 'GetSnapshotIndexLocked',
-       'GetSnapshotTerm', 'GetSnapshotTermLocked', 'GetSnapshotThreshold', 'GetState', 'HasSnapshot',
-       'IsLeaderLocked', 'LabApplyMutex', 'LabCommitIndex', 'LabCurrentLeaderId', 'LabCurrentTerm',
-       'LabElectionInProgress', 'LabExecuteIndex', 'LabIsLeader', 'LabLastLogIndex', 'LabLogBase', 'LabLogFingerprintAt', 'LabLogFingerprintLen',
-       'LabMutex', 'LabReqVoting', 'LabSnapIdx', 'LabSnapTerm', 'LabSnapshotManager', 'LabStopped',
-       'LabVoteFor', 'Reconnect', 'SetHeartbeatInterval', 'SetLogRetentionWindow', 'SetSnapshotManager',
-       'SetSnapshotManagerLocked', 'SetSnapshotThreshold', 'SetSnapshotThresholdLocked',
-       'SetStateMachineSnapshotCallbacks', 'Shutdown']
 
 
 def snake(name):
@@ -205,9 +196,13 @@ LOOPS_H = ['// --- The two fiber loops, entered from the spawn kernels.',
 LIFECYCLE_H = ['// --- Lifetime: Rust allocates and frees; the shim holds the pointer.',
                'RaftServerBase* raft_server_new();', 'void raft_server_delete(RaftServerBase* s);']
 
+# The RaftLab harness surface -- 41 more exports and 41 more forwarders --
+# used to be a third group here. It is gone: the suite is Rust now
+# (src/deptran/raft/src/lab*.rs) and reads the struct directly, so nothing
+# outside the crate needs those names. See
+# docs/migration/raft/lab-harness-to-rust-plan.md, Phase 4.
 GROUPS = (('The replication interface: TxLogServer and RaftSpecific.', INTERFACE),
-          ('What the kernels in server.cc call back into.', KERNEL_CALLED),
-          ('The RaftLab harness surface (test.cc, testconf.cc).', LAB))
+          ('What the kernels in server.cc call back into.', KERNEL_CALLED))
 
 
 # Relative to this file, not absolute: a worktree must regenerate from ITS
@@ -268,7 +263,6 @@ def rust_decl(rs, name):
 def shim(rs):
     sch = open(SCH).read()
     iface = {**cpp_decls(sch, r'class TxLogServer \{'), **cpp_decls(sch, r'class RaftSpecific : public TxLogServer \{')}
-    struct = {n: rust_decl(rs, n) for n in LAB}
     out = ['class RaftServer : public RaftSpecific {', ' public:',
            '  RaftServer() : impl_(raft_server_new()) {}',
            '  // @unsafe - thread join and timer cleanup require manual resource management',
@@ -277,12 +271,7 @@ def shim(rs):
     for n in INTERFACE:
         ret, params, const = iface[n]
         out.append(forwarder(n, ret, params, const, signature(rs, n)[1]).replace(f'{const} {{', f'{const} override {{', 1))
-    out += ['', '#ifdef RAFT_TEST_CORO',
-            '  // --- The RaftLab harness surface (test.cc, testconf.cc), forwarded likewise.']
-    for n in LAB:
-        ret, params, const = struct[n]
-        out.append(forwarder(n, ret, params, const, signature(rs, n)[1]))
-    out += ['#endif', '', ' private:', '  RaftServerBase* impl_;', '};']
+    out += ['', ' private:', '  RaftServerBase* impl_;', '};']
     return '\n'.join(out)
 
 

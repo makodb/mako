@@ -74,6 +74,14 @@ unsafe extern "C" {
     fn rand() -> i32;
 }
 
+/// The leader DoAgreement is waiting on is no longer the one it started with.
+/// Was `raft_test_wait_leader_is_invalid` in testconf.cc's DSL block, which
+/// went with that file.
+const fn wait_leader_is_invalid(disconnected: bool, is_leader: bool,
+                                current_term: u64, expected_term: u64) -> bool {
+    disconnected || !is_leader || current_term != expected_term
+}
+
 /// `Fiber::sleep` -- yields this fiber, reactor keeps running.
 pub fn fiber_sleep_us(micros: u64) {
     unsafe { raft_fiber_sleep_us(micros) };
@@ -332,8 +340,7 @@ pub fn do_agreement(cmd: i32, n: i32, retry: bool) -> u64 {
                     (s.IsDisconnected(), is_leader, cur_term)
                 });
                 let Some((disconnected, is_leader, cur_term)) = state else { break };
-                if crate::testconf_cc::raft_test_wait_leader_is_invalid(
-                        disconnected, is_leader, cur_term, term) {
+                if wait_leader_is_invalid(disconnected, is_leader, cur_term, term) {
                     break;
                 }
             }
