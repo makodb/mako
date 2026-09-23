@@ -582,6 +582,42 @@ containment wrappers has measured neutral-to-negative so far; the payoff in this
 lane is expected to come from the monomorphization in (1), not from deleting the
 catches.
 
+### 8.10 Stage 1 implemented and rejected: merged certified singleton lane
+
+Stage 1 was built: the certified one-item lane's three steps (preflight, plan
+run, teardown) were merged and the intermediate unwind frames removed —
+`cx.preflight`'s `commit_shape` dispatch replaced by the batch's own shape
+flags, the singleton body driven by a new plain (uncontained) entry
+(`run_singleton_body`), and the plan's singleton branch switched to it, so the
+certified lane runs as plain calls while the general/terminal drivers keep their
+containment.
+
+Result: it compiles, and both the tests and the measurement reject it.
+
+- **Tests**: the fault-injection suite covers this exact path, so abort-on-bug
+  here breaks containment-asserting tests (`failure_protocol`: install/release
+  panics preserving boundaries, payload-drop panics). Stage 2's test conversion
+  is therefore a *prerequisite* of stage 1, not a follow-up.
+- **Measurement** (ABBA, 16 samples per build, engine, 1 worker): 1,595,330 vs
+  1,637,450 tx/s (-2.57%), 1245.5 vs 1212.2 cycles/tx, 2900 vs 2906 ins/tx —
+  fewer instructions, more cycles, the same signature as every other
+  layer-removal attempt on this path (8.7, 8.8, 8.9).
+
+Reverted and re-verified after a clean rebuild: 18/18 test suites pass,
+1,659,574 vs 1,655,362 tx/s, 1194.8 vs 1199.3 cycles/tx, both 2906 ins/tx. (An
+intermediate re-measurement of a stale binary showed -6.4%; the fresh rebuild
+recovered parity, which is worth remembering when comparing rebuilds on this
+host.)
+
+The four consecutive rejections now cover every source-level shape of this
+change: wrapper swap, predicate skip, policy split, and merged plain-call lane.
+The remaining ~300 ins/tx live in the erased *representation* — a `dyn` plan
+stored per capability, a batch behind `Box<dyn ErasedItemBatch>`, and a lock
+type that is a generic parameter rather than an associated type, which is what
+prevents a C++-shaped monomorphic commit today. That representation change is
+the outstanding work; no further local restructuring is supported by the
+measurements.
+
 ## 9 Appendix
 
 ### A. Artifacts in this directory
