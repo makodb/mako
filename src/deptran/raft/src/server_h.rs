@@ -80,6 +80,174 @@ pub mod lab_registry {
     }
 }
 
+
+// ---------------------------------------------------------------------------
+// The lab cluster fixture, query half (lab-harness-to-rust-plan.md, Phase 2).
+//
+// A faithful port of RaftTestConfig's invariant readers -- waitOneLeader,
+// OneLeader, NoLeader, OneTerm, TermMovedOn -- onto lab_registry. These are
+// what the 25 cases lean on to decide whether the cluster is in a legal state,
+// and every call they make now stays inside Rust.
+//
+// The C++ RaftTestConfig is NOT replaced yet. It remains the oracle until the
+// whole suite has moved (Phase 4), so both must agree: the constants, the
+// retry counts and the sleep grain below are transcribed from
+// testconf.cc rather than chosen, and a divergence here is a bug in this
+// file, not a design decision.
+#[cfg(feature = "raft_test")]
+pub mod lab_cluster {
+    use super::{lab_registry, RaftServerBase};
+    // IsDisconnected is declared on RaftSpecific (scheduler_h.rs:39), not
+    // TxLogServer, so that is the trait the call needs in scope.
+    use crate::scheduler_h::RaftSpecific;
+
+    // testconf.h:22 -- `#define ELECTIONTIMEOUT 5000000` (microseconds).
+    pub const ELECTION_TIMEOUT_US: u64 = 5_000_000;
+    // waitOneLeader's loop: ten passes, each preceded by ELECTIONTIMEOUT/10.
+    const WAIT_RETRIES: i32 = 10;
+
+    // The sentinels waitOneLeader returns. -1 "no leader", -2 "two leaders in
+    // one term", -3 "leader is not the expected one". The 25 cases branch on
+    // these exact values.
+    pub const NO_LEADER: i32 = -1;
+    pub const MULTIPLE_LEADERS: i32 = -2;
+    pub const UNEXPECTED_LEADER: i32 = -3;
+
+    unsafe extern "C" {
+        fn raft_fiber_sleep_us(micros: u64);
+    }
+
+    /// Borrow one replica. See lab_registry's note on why this is sound in a
+    /// lab build and nowhere else.
+    fn with_server<R>(entry: &lab_registry::LabEntry, f: impl FnOnce(&mut RaftServerBase) -> R) -> R {
+        // SAFETY: the worker owns every registered server for the life of the
+        // suite, and the harness runs on a fiber in that same process.
+        unsafe { f(&mut *entry.server()) }
+    }
+
+    fn state_of(entry: &lab_registry::LabEntry) -> (bool, u64, bool) {
+        with_server(entry, |svr| {
+            let mut is_leader = false;
+            let mut term: u64 = 0;
+            svr.GetState(&raw mut is_leader, &raw mut term);
+            (is_leader, term, svr.IsDisconnected())
+        })
+    }
+
+    /// Port of RaftTestConfig::waitOneLeader. Disconnected replicas are
+    /// ignored; two leaders sharing a term is a hard failure; otherwise the
+    /// leader with the highest term wins.
+    pub fn wait_one_leader(want_leader: bool, expected: i32) -> i32 {
+        for _ in 0..WAIT_RETRIES {
+            // SAFETY: called from a lab fiber, which is what the C++ fixture
+            // does too (Fiber::sleep(ELECTIONTIMEOUT/10)).
+            unsafe { raft_fiber_sleep_us(ELECTION_TIMEOUT_US / 10) };
+            let mut leader: i32 = NO_LEADER;
+            let mut most_recent_term: u64 = 0;
+            for entry in lab_registry::entries() {
+                let (is_leader, term, disconnected) = state_of(&entry);
+                if disconnected {
+                    continue;
+                }
+                if is_leader {
+                    if term == most_recent_term {
+                        return MULTIPLE_LEADERS;
+                    } else if term > most_recent_term {
+                        leader = entry.loc_id as i32;
+                        most_recent_term = term;
+                    }
+                }
+            }
+            if leader != NO_LEADER {
+                if want_leader && expected >= 0 && leader != expected {
+                    return UNEXPECTED_LEADER;
+                }
+                return leader;
+            }
+        }
+        NO_LEADER
+    }
+
+    pub fn one_leader(expected: i32) -> i32 {
+        wait_one_leader(true, expected)
+    }
+
+    pub fn no_leader() -> bool {
+        wait_one_leader(false, NO_LEADER) == NO_LEADER
+    }
+
+    /// Port of RaftTestConfig::OneTerm: the shared term, or -1 as u64 when the
+    /// replicas disagree. Note it reads EVERY replica, disconnected included --
+    /// that is what the C++ does, and the cases depend on it.
+    pub fn one_term() -> u64 {
+        let entries = lab_registry::entries();
+        let Some(first) = entries.first() else {
+            return u64::MAX;
+        };
+        let (_, term, _) = state_of(first);
+        for entry in entries.iter().skip(1) {
+            let (_, cur, _) = state_of(entry);
+            if cur != term {
+                return u64::MAX;
+            }
+        }
+        term
+    }
+
+    /// Port of RaftTestConfig::TermMovedOn, over the same predicate the C++
+    /// uses (`!disconnected && current_term > observed_term`).
+    pub fn term_moved_on(term: u64) -> bool {
+        lab_registry::entries().iter().any(|entry| {
+            let (_, cur, disconnected) = state_of(entry);
+            !disconnected && cur > term
+        })
+    }
+
+    /// An order-independent digest of the whole cluster's observable state.
+    /// The C++ fixture computes the same digest from ITS view at the same
+    /// instant; if the two ever differ, this port reads the servers wrongly.
+    ///
+    /// Deliberately instantaneous: comparing the waiting LOOPS would mean
+    /// running two sets of ten half-second sleeps and would perturb the very
+    /// elections the suite is measuring. The loop is plain control flow; the
+    /// risk worth checking is whether the state reads agree.
+    pub fn snapshot_digest() -> u64 {
+        let mut digest: u64 = 0xcbf2_9ce4_8422_2325;
+        for (loc, is_leader, term, disconnected) in snapshot() {
+            for byte in loc.to_le_bytes().iter()
+                .chain(term.to_le_bytes().iter())
+                .chain([is_leader as u8, disconnected as u8].iter())
+            {
+                digest ^= *byte as u64;
+                digest = digest.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        }
+        digest
+    }
+
+    /// Every replica's (loc_id, is_leader, term, disconnected), ordered by
+    /// locale id.
+    pub fn snapshot() -> Vec<(u32, bool, u64, bool)> {
+        lab_registry::entries()
+            .iter()
+            .map(|e| {
+                let (is_leader, term, disconnected) = state_of(e);
+                (e.loc_id, is_leader, term, disconnected)
+            })
+            .collect()
+    }
+}
+
+/// TEMPORARY verification scaffolding (Phase 2). The C++ RaftTestConfig calls
+/// this and compares against a digest it computes from its own view, so the
+/// Rust port is checked against the incumbent oracle rather than by reading.
+/// Deleted once Phase 3 has moved the cases across.
+#[cfg(feature = "raft_test")]
+#[unsafe(no_mangle)]
+pub extern "C" fn raft_lab_rust_snapshot_digest() -> u64 {
+    lab_cluster::snapshot_digest()
+}
+
 #[allow(non_camel_case_types)]
 #[cfg_attr(not(any()), derive(Clone, Copy, Debug, Eq, PartialEq))]
 #[repr(i32)]

@@ -191,6 +191,10 @@ class RaftTestConfig {
   // other internal helpers
   int waitOneLeader(bool want_leader, int expected);
 
+  // TEMPORARY Phase-2 verification scaffolding; see testconf.cc.
+  uint64_t CppSnapshotDigest();
+  void CompareRustFixture(const char* where);
+
  public:
   RaftServer *GetServer(siteid_t svr);
 

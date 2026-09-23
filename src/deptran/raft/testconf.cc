@@ -166,6 +166,53 @@ bool RaftTestConfig::NoLeader(void) {
   return r == -1;
 }
 
+#ifdef RAFT_TEST_CORO
+// TEMPORARY verification scaffolding (lab-harness-to-rust-plan.md, Phase 2).
+// The Rust fixture port reads the same five servers this one does; this checks
+// that the two READS agree, on the incumbent's own schedule, without running
+// the Rust waiting loop (which would add ten more half-second sleeps and
+// perturb the elections under test). Deleted with the rest of the C++ harness
+// at Phase 4.
+extern "C" uint64_t raft_lab_rust_snapshot_digest();
+
+uint64_t RaftTestConfig::CppSnapshotDigest() {
+  // Mirrors lab_cluster::snapshot_digest: FNV-1a over
+  // (loc_id, term, is_leader, disconnected) per replica, in locale order.
+  std::map<uint32_t, RaftFrame*> ordered;
+  for (auto& pair : replicas) {
+    ordered[pair.second->site_info_->locale_id] = pair.second;
+  }
+  uint64_t digest = 0xcbf29ce484222325ULL;
+  auto mix = [&digest](uint8_t byte) {
+    digest ^= static_cast<uint64_t>(byte);
+    digest *= 0x00000100000001b3ULL;
+  };
+  for (auto& [loc, frame] : ordered) {
+    bool is_leader = false;
+    uint64_t term = 0;
+    frame->svr_->GetState(&is_leader, &term);
+    const bool disconnected = frame->svr_->IsDisconnected();
+    for (int i = 0; i < 4; ++i) mix((loc >> (8 * i)) & 0xFF);
+    for (int i = 0; i < 8; ++i) mix((term >> (8 * i)) & 0xFF);
+    mix(is_leader ? 1 : 0);
+    mix(disconnected ? 1 : 0);
+  }
+  return digest;
+}
+
+void RaftTestConfig::CompareRustFixture(const char* where) {
+  const uint64_t cpp = CppSnapshotDigest();
+  const uint64_t rust = raft_lab_rust_snapshot_digest();
+  if (cpp == rust) {
+    Log_info("[LAB-FIXTURE-AGREE] %s: cpp==rust digest=%llx",
+             where, (unsigned long long)cpp);
+  } else {
+    Log_error("[LAB-FIXTURE-DISAGREE] %s: cpp=%llx rust=%llx",
+              where, (unsigned long long)cpp, (unsigned long long)rust);
+  }
+}
+#endif
+
 int RaftTestConfig::waitOneLeader(bool want_leader, int expected) {
   uint64_t mostRecentTerm = 0, term;
   int leader = -1;  // Use int instead of siteid_t to avoid unsigned conversion
@@ -194,6 +241,7 @@ int RaftTestConfig::waitOneLeader(bool want_leader, int expected) {
         }
       }
     }
+    CompareRustFixture("waitOneLeader");
     if (leader != -1) {
       if (!want_leader) {
         Failed("leader elected despite lack of quorum");
