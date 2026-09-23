@@ -479,17 +479,6 @@ void raft_prepare_snapshot_cb_clone_into(const rusty::RaftPrepareSnapshotCb* src
                                          rusty::RaftPrepareSnapshotCb* dst) {
   construct_into(dst, *src);
 }
-// RAFT_TEST_CORO as a predicate. Conditional compilation has no spelling in
-// this dialect, so the flag is read here and the Rust callers branch on it:
-// AppendLeaderNoop skips the no-op in lab mode (the suite counts entries),
-// ConstructRuntime sets the lab's initial role.
-bool raft_lab_mode() {
-#ifdef RAFT_TEST_CORO
-  return true;
-#else
-  return false;
-#endif
-}
 void raft_noop_command_into(rusty::RaftCommand* dst) {
   auto noop = rusty::Arc<TpcNoopCommand>::make();
   construct_into(dst, janus::Command::pack_aliased<TpcNoopCommand>(std::move(noop)));

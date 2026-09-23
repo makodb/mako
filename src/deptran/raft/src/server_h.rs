@@ -1380,7 +1380,6 @@ unsafe extern "C" {
     // RAFT_TEST_CORO, as a predicate: conditional compilation has no spelling
     // in this dialect. The lab suite counts log entries, so the leader no-op
     // is skipped in lab mode, and the lab's initial role is set explicitly.
-    fn raft_lab_mode() -> bool;
     // The leader no-op command: a janus::Command the DSL cannot construct.
     fn raft_noop_command_into(dst: *mut rusty::RaftCommand);
     // What RaftServer's constructor used to do after the generated one, for
@@ -4139,10 +4138,10 @@ impl RaftServerBase {
     }
 
     // The new leader's no-op entry, so the term commits something without
-    // waiting for a client. Skipped in lab mode (RAFT_TEST_CORO), where the
-    // suite counts entries; see raft_lab_mode.
+    // waiting for a client. Skipped in lab mode, where the suite counts
+    // entries.
     pub fn AppendLeaderNoop(&mut self) {
-        if unsafe { raft_lab_mode() } {
+        if cfg!(feature = "raft_test") {
             return;
         }
         let mut noop: rusty::RaftCommand = Default::default();
@@ -4277,7 +4276,7 @@ impl RaftServerBase {
         unsafe {
             raft_ensure_legacy_payload_registered();
         }
-        if unsafe { raft_lab_mode() } {
+        if cfg!(feature = "raft_test") {
             self.setIsLeader(false);
         }
         self.stop_.store(false, rusty::sync::atomic::Ordering::Release);

@@ -1130,11 +1130,20 @@ file(GLOB RAFT_RUST_SOURCES CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/src/*.rs
     ${CMAKE_CURRENT_SOURCE_DIR}/src/rrr/rusty-rustc/src/*.rs
     ${CMAKE_CURRENT_SOURCE_DIR}/src/rrr/rusty-cpp-markers/src/*.rs)
+# The Rust half of the lab build. -DRAFT_TEST=ON defines RAFT_TEST_CORO for
+# the C++ side; the crate needs the matching cargo feature or the two halves
+# disagree about whether they are in lab mode (the leader no-op and the lab's
+# initial role both branch on it). One switch, both languages.
+set(RAFT_RUST_FEATURES)
+if(RAFT_TEST)
+    set(RAFT_RUST_FEATURES --features raft_test)
+endif()
 add_custom_command(
     OUTPUT ${RAFT_RUST_LIB}
     COMMAND cargo build --release --quiet
             --manifest-path ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/Cargo.toml
             --target-dir ${RAFT_RUST_TARGET_DIR}
+            ${RAFT_RUST_FEATURES}
     DEPENDS ${RAFT_RUST_SOURCES}
             ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/Cargo.toml
             ${CMAKE_CURRENT_SOURCE_DIR}/src/rrr/rusty-rustc/Cargo.toml

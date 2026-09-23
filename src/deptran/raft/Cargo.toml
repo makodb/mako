@@ -35,6 +35,18 @@ crate-type = ["rlib", "staticlib"]
 # the extracted Rust dies at E0433/E0573 before the emitter is ever consulted.
 # The emitter lowers those names correctly today; this is what lets rustc
 # agree. See the facade-crate constraint in docs/migration/raft/plan.md.
+[features]
+# The RaftLab correctness harness. CMake turns this on exactly when
+# -DRAFT_TEST=ON defines RAFT_TEST_CORO for the C++ side, so the two halves of
+# the lab build cannot disagree about whether they are in lab mode.
+#
+# This is only expressible because server_h.rs / server_cc.rs are canonical
+# Rust (F2.6): rustc compiles them directly, so `cfg!` is real. While they
+# were DSL blocks a `#[cfg]` was dropped SILENTLY -- scripts/raft_dsl.sh
+# rejects one for that reason -- which is why the lab predicate had to be a
+# C++ kernel (`raft_lab_mode`) read across the ABI.
+raft_test = []
+
 [dependencies]
 rusty = { path = "../../rrr/rusty-rustc" }
 
