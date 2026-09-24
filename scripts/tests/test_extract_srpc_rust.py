@@ -149,618 +149,184 @@ class CheckedInCanaryTests(unittest.TestCase):
         with (REPOSITORY / "src/srpc/module-preambles.toml").open("rb") as stream:
             self.assertEqual(
                 tomllib.load(stream),
-                {
-                    "version": 1,
-                    "module": [
-                        {
-                            "name": "srpc.basetypes",
-                            "includes": [
-                                {
-                                    "path": "misc/srpc_timing.h",
-                                    "form": "quote",
-                                },
-                                {
-                                    "path": "rusty/sync/atomic.hpp",
-                                    "form": "angle",
-                                },
-                            ],
-                        },
-                        {
-                            "name": "srpc.connection_metrics",
-                            "includes": [
-                                {
-                                    "path": "rusty/sync/atomic.hpp",
-                                    "form": "angle",
-                                },
-                            ],
-                        },
-                        {
-                            "name": "srpc.completion_tracker",
-                            "includes": [
-                                {
-                                    "path": "rusty/sync/atomic.hpp",
-                                    "form": "angle",
-                                },
-                            ],
-                        },
-                        {
-                            "name": "srpc.rand",
-                            "includes": [
-                                {
-                                    "path": "misc/srpc_rand.h",
-                                    "form": "quote",
-                                },
-                            ],
-                        },
-                        {
-                            "name": "srpc.circuit_breaker",
-                            "includes": [
-                                {
-                                    "path": "misc/srpc_timing.h",
-                                    "form": "quote",
-                                },
-                            ],
-                        },
-                        {
-                            "name": "srpc.threading",
-                            "includes": [
-                                {
-                                    "path": "pthread.h",
-                                    "form": "angle",
-                                },
-                                {
-                                    "path": "misc/srpc_timing.h",
-                                    "form": "quote",
-                                },
-                                {
-                                    "path": "rusty/sync/atomic.hpp",
-                                    "form": "angle",
-                                },
-                            ],
-                        },
-                        {
-                            "name": "srpc.utils",
-                            "includes": [
-                                {
-                                    "path": "netdb.h",
-                                    "form": "angle",
-                                },
-                            ],
-                        },
-                        {
-                            "name": "srpc.frame_codec",
-                            "includes": [
-                                {
-                                    "path": "vector",
-                                    "form": "angle",
-                                },
-                                {
-                                    "path": "rusty/io.hpp",
-                                    "form": "angle",
-                                },
-                            ],
-                        },
-                        {
-                            "name": "srpc.misc",
-                            "includes": [
-                                {
-                                    "path": "base/rustc_markers.hpp",
-                                    "form": "quote",
-                                },
-                            ],
-                        },
-                        {
-                            "name": "srpc.inmemory_channel",
-                            "includes": [
-                                {
-                                    "path": "base/rustc_markers.hpp",
-                                    "form": "quote",
-                                },
-                            ],
-                        },
-                        {
-                            "name": "srpc.server",
-                            "includes": [
-                                {
-                                    "path": "base/rustc_markers.hpp",
-                                    "form": "quote",
-                                },
-                                {
-                                    "path": "rpc/srpc_server.h",
-                                    "form": "quote",
-                                },
-                            ],
-                        },
-                        {
-                            "name": "srpc.tcp_channel",
-                            "includes": [
-                                {
-                                    "path": "base/rustc_markers.hpp",
-                                    "form": "quote",
-                                },
-                                {
-                                    "path": "rpc/srpc_connect.h",
-                                    "form": "quote",
-                                },
-                            ],
-                        },
-                        {
-                            "name": "srpc.epoll_wrapper",
-                            "includes": [
-                                {
-                                    "path": "rusty/os/fd.hpp",
-                                    "form": "angle",
-                                },
-                                {
-                                    "path": "rusty/sync/atomic.hpp",
-                                    "form": "angle",
-                                },
-                            ],
-                        },
-                        {
-                            "name": "srpc.debugging",
-                            "includes": [
-                                {
-                                    "path": "stdio.h",
-                                    "form": "angle",
-                                },
-                                {
-                                    "path": "source_location",
-                                    "form": "angle",
-                                },
-                            ],
-                        },
-                        {
-                            "name": "srpc.serializable",
-                            "includes": [
-                                {
-                                    "path": "misc/serializable_support.hpp",
-                                    "form": "quote",
-                                },
-                            ],
-                        },
-                        {
-                            "name": "srpc.reactor",
-                            "includes": [
-                                {
-                                    "path": "reactor/srpc_fiber.h",
-                                    "form": "quote",
-                                },
-                                {
-                                    "path": "set",
-                                    "form": "angle",
-                                },
-                            ],
-                        },
-                    ],
-                }
+                {'version': 1,
+                 'module': [{'name': 'srpc.basetypes',
+                             'includes': [{'path': 'misc/srpc_timing.h', 'form': 'quote'},
+                                          {'path': 'rusty/sync/atomic.hpp', 'form': 'angle'}]},
+                            {'name': 'srpc.connection_metrics',
+                             'includes': [{'path': 'rusty/sync/atomic.hpp', 'form': 'angle'}]},
+                            {'name': 'srpc.completion_tracker',
+                             'includes': [{'path': 'rusty/sync/atomic.hpp', 'form': 'angle'}]},
+                            {'name': 'srpc.rand',
+                             'includes': [{'path': 'misc/srpc_rand.h', 'form': 'quote'}]},
+                            {'name': 'srpc.circuit_breaker',
+                             'includes': [{'path': 'misc/srpc_timing.h', 'form': 'quote'}]},
+                            {'name': 'srpc.threading',
+                             'includes': [{'path': 'pthread.h', 'form': 'angle'},
+                                          {'path': 'misc/srpc_timing.h', 'form': 'quote'},
+                                          {'path': 'rusty/sync/atomic.hpp', 'form': 'angle'}]},
+                            {'name': 'srpc.utils', 'includes': [{'path': 'netdb.h', 'form': 'angle'}]},
+                            {'name': 'srpc.frame_codec',
+                             'includes': [{'path': 'vector', 'form': 'angle'},
+                                          {'path': 'rusty/io.hpp', 'form': 'angle'}]},
+                            {'name': 'srpc.server',
+                             'includes': [{'path': 'rpc/srpc_server.h', 'form': 'quote'}]},
+                            {'name': 'srpc.tcp_channel',
+                             'includes': [{'path': 'rpc/srpc_connect.h', 'form': 'quote'}]},
+                            {'name': 'srpc.epoll_wrapper',
+                             'includes': [{'path': 'reactor/srpc_epoll.h', 'form': 'quote'},
+                                          {'path': 'rusty/os/fd.hpp', 'form': 'angle'},
+                                          {'path': 'rusty/sync/atomic.hpp', 'form': 'angle'}]},
+                            {'name': 'srpc.debugging',
+                             'includes': [{'path': 'stdio.h', 'form': 'angle'},
+                                          {'path': 'source_location', 'form': 'angle'}]},
+                            {'name': 'srpc.serializable',
+                             'includes': [{'path': 'misc/serializable_support.hpp', 'form': 'quote'}],
+                             'epilogue_includes': [{'path': 'misc/serializable_adapters.hpp',
+                                                    'form': 'quote'}]},
+                            {'name': 'srpc.reactor',
+                             'includes': [{'path': 'reactor/srpc_fiber.h', 'form': 'quote'},
+                                          {'path': 'set', 'form': 'angle'}]}]}
             )
 
     def test_utils_sidecars_are_narrow_and_fail_closed_inputs(self) -> None:
         with (REPOSITORY / "src/srpc/rust-type-map.toml").open("rb") as stream:
             self.assertEqual(
                 tomllib.load(stream),
-                {
-                    "LegacyAddrInfo": "addrinfo",
-                    "LegacyCChar": "std::string::value_type",
-                    "LegacyStdString": "std::string",
-                    "LegacyCallbackWrapper": "::srpc::detail::CallbackWrapper",
-                    "LegacyChannelConnectionBase": "srpc::ChannelConnectionBase",
-                    "LegacyStdDeque": "std::deque",
-                    "LegacyTcpListener": "rusty::net::TcpListener",
-                    "LegacySocketAddrV4": "rusty::net::SocketAddrV4",
-                    "LegacyIoErrorKind": "rusty::io::Error::Kind",
-                    "std::marker::PhantomPinned": "rusty::marker::PhantomPinned",
-                    "BinaryReadArchive": "BinaryReadArchive",
-                    "BinaryWriteArchive": "BinaryWriteArchive",
-                    "SerializableBase": "SerializableBase",
-                    "SerializableProxy": "rusty::Arc<SerializableBase>",
-                    "SerializableSharedPtrHolder": "details::SerializableSharedPtrHolder",
-                    "SrcFileCStr": "const char*",
-                    "rusty": {
-                        "CallbackWrapper": "::srpc::detail::CallbackWrapper",
-                        "ReactorJobSet": "std::set",
-                        "StdVector": "std::vector",
-                        "PthreadSpinlock": "::pthread_spinlock_t",
-                        "PthreadMutex": "::pthread_mutex_t",
-                        "PthreadMutexAttr": "::pthread_mutexattr_t",
-                        "PthreadCond": "::pthread_cond_t",
-                        "PthreadCondAttr": "::pthread_condattr_t",
-                        "BinaryReadArchive": "BinaryReadArchive",
-                        "BinaryWriteArchive": "BinaryWriteArchive",
-                        "SerializableBase": "SerializableBase",
-                        "SerializableProxy": "rusty::Arc<SerializableBase>",
-                        "SerializableSharedPtrHolder": "details::SerializableSharedPtrHolder",
-                        "LoggingString": "std::string",
-                        "CFile": "FILE",
-                        "SourceLocation": "std::source_location",
-                        "ReactorBoxEvent": "BoxEvent",
-                        "ReactorFiber": "Fiber",
-                        "ReactorIntEvent": "IntEvent",
-                        "ReactorPollThread": "PollThread",
-                        "ReactorFiberContext": "::srpc_fiber_ctx",
-                        "ReactorFiberState": "::srpc_fiber",
-                        "StdPair": "std::pair",
-                        "Mutex": "rusty::Mutex",
-                        "BTreeSet": "rusty::BTreeSet",
-                        "BTreeMap": "rusty::BTreeMap",
-                        "HashSet": "rusty::HashSet",
-                        "HashMap": "rusty::HashMap",
-                        "SerializableStdStringView": "std::string_view",
-                        "SerializableStdList": "std::list",
-                        "SerializableStdVector": "std::vector",
-                        "SerializableStdSet": "std::set",
-                        "SerializableStdUnorderedSet": "std::unordered_set",
-                        "SerializableStdMap": "std::map",
-                        "SerializableStdUnorderedMap": "std::unordered_map",
-                        "SerializableV32": "v32",
-                        "SerializableV64": "v64",
-                        "LegacyCVoid": "void",
-                        "RustcSinkBaseAdapterRefMut": "SinkBaseAdapterRefMut",
-                        "RustcSourceBaseAdapterRefMut": "SourceBaseAdapterRefMut",
-                        "SerializableSerializeDispatch": "Serialize_",
-                        "SerializableDeserializeDispatch": "Deserialize_",
-                        "SerializableRegistryFactory": "rusty::Function<SerializableProxy()>",
-                        "srpc::serializable::BinaryWriteArchive": "srpc::BinaryWriteArchive",
-                        "srpc::serializable::BinaryReadArchive": "srpc::BinaryReadArchive",
-                        "LegacyOwnedFd": "rusty::os::fd::OwnedFd",
-                        "RustcOwnedFd": "rusty::os::fd::OwnedFd",
-                        "LegacyTcpListener": "rusty::net::TcpListener",
-                        "RustcTcpListener": "rusty::net::TcpListener",
-                        "RustcTcpStream": "rusty::net::TcpStream",
-                        "RustcSocketAddrV4": "rusty::net::SocketAddrV4",
-                        "RustcIoError": "rusty::io::Error",
-                        "RustcIoErrorKind": "rusty::io::Error::Kind",
-                        "errors::RpcError": "::srpc::RpcError",
-                        "LegacyRpcError": "::srpc::RpcError",
-                    },
-                }
+                {'PthreadSpinlock': '::pthread_spinlock_t',
+                 'PthreadMutex': '::pthread_mutex_t',
+                 'PthreadMutexAttr': '::pthread_mutexattr_t',
+                 'PthreadCond': '::pthread_cond_t',
+                 'PthreadCondAttr': '::pthread_condattr_t',
+                 'CFile': 'FILE',
+                 'srpc_fiber_ctx': '::srpc_fiber_ctx',
+                 'srpc_fiber': '::srpc_fiber',
+                 'PromisePair': 'std::pair',
+                 'QuorumDangling': 'std::pair<uint16_t, int64_t>',
+                 'FrameBytes': 'std::vector<uint8_t>',
+                 'TcpOutBuf': 'std::vector<uint8_t>',
+                 'LegacyAddrInfo': 'addrinfo',
+                 'LegacyCChar': 'std::string::value_type',
+                 'LegacyCallbackWrapper': '::srpc::detail::CallbackWrapper',
+                 'LegacyChannelConnectionBase': 'srpc::ChannelConnectionBase',
+                 'LegacyStdDeque': 'std::deque',
+                 'LegacyTcpListener': 'rusty::net::TcpListener',
+                 'LegacySocketAddrV4': 'rusty::net::SocketAddrV4',
+                 'LegacyIoErrorKind': 'rusty::io::Error::Kind',
+                 'std::marker::PhantomPinned': 'rusty::marker::PhantomPinned',
+                 'std::os::fd::OwnedFd': 'rusty::os::fd::OwnedFd',
+                 'BinaryReadArchive': 'BinaryReadArchive',
+                 'BinaryWriteArchive': 'BinaryWriteArchive',
+                 'SerializableBase': 'SerializableBase',
+                 'SerializableProxy': 'rusty::Arc<SerializableBase>',
+                 'SerializableSharedPtrHolder': 'details::SerializableSharedPtrHolder',
+                 'SrcFileCStr': 'const char*',
+                 'NullableCallbackManager': 'rusty::Arc<::srpc::CallbackManager>',
+                 'NullablePendingCounter': 'rusty::Arc<rusty::sync::atomic::AtomicI32>',
+                 'NullableChannelConnectionProxy': '::srpc::ChannelConnectionProxy',
+                 'NullableChannelFactoryProxy': '::srpc::ChannelFactoryProxy'}
             )
         with (REPOSITORY / "src/srpc/cpp-module-index.toml").open("rb") as stream:
             self.assertEqual(
                 tomllib.load(stream),
-                {
-                    "version": 1,
-                    "modules": {
-                        "srpc::basetypes": {
-                            "cpp_module": "srpc.basetypes",
-                            "namespace": "srpc",
-                            "symbols": {
-                                "SparseInt::buf_size": {
-                                    "kind": "function",
-                                    "callable_signatures": [
-                                        "size_t(uint8_t)",
-                                    ],
-                                },
-                                "SparseInt::dump32": {
-                                    "kind": "function",
-                                    "callable_signatures": [
-                                        "size_t(int32_t,uint8_t*)",
-                                    ],
-                                },
-                                "SparseInt::dump64": {
-                                    "kind": "function",
-                                    "callable_signatures": [
-                                        "size_t(int64_t,uint8_t*)",
-                                    ],
-                                },
-                                "SparseInt::load32": {
-                                    "kind": "function",
-                                    "callable_signatures": [
-                                        "int32_t(const uint8_t*)",
-                                    ],
-                                },
-                                "SparseInt::load64": {
-                                    "kind": "function",
-                                    "callable_signatures": [
-                                        "int64_t(const uint8_t*)",
-                                    ],
-                                },
-                                "Time": {
-                                    "kind": "type",
-                                    "callable_signatures": [
-                                    ],
-                                },
-                                "Time::now": {
-                                    "kind": "function",
-                                    "callable_signatures": [
-                                        "uint64_t(bool)",
-                                    ],
-                                },
-                            },
-                        },
-                        "srpc::logging": {
-                            "cpp_module": "srpc.logging",
-                            "namespace": "srpc",
-                            "symbols": {
-                                "log_line": {
-                                    "kind": "function",
-                                    "callable_signatures": [
-                                        "void(int32_t,int32_t,const int8_t*,const std::string&)",
-                                    ],
-                                },
-                            },
-                        },
-                        "srpc::reactor": {
-                            "cpp_module": "srpc.reactor",
-                            "namespace": "srpc",
-                            "symbols": {
-                                "create_sp_box_event": {
-                                    "kind": "function_template",
-                                    "callable_signatures": [
-                                        "rusty::Arc<BoxEvent<T>>()",
-                                    ],
-                                },
-                                "Fiber": {
-                                    "kind": "type",
-                                    "callable_signatures": [
-                                    ],
-                                },
-                                "IntEvent": {
-                                    "kind": "type",
-                                    "callable_signatures": [
-                                    ],
-                                },
-                                "create_sp_int_event": {
-                                    "kind": "function",
-                                    "callable_signatures": [
-                                        "rusty::Arc<IntEvent>(int32_t)",
-                                    ],
-                                },
-                                "IntEvent::set": {
-                                    "kind": "method",
-                                    "callable_signatures": [
-                                        "int32_t(int32_t)",
-                                    ],
-                                },
-                                "IntEvent::wait": {
-                                    "kind": "method",
-                                    "callable_signatures": [
-                                        "void()",
-                                    ],
-                                },
-                                "Fiber::current_fiber": {
-                                    "kind": "method",
-                                    "callable_signatures": [
-                                        "rusty::Option<rusty::Rc<Fiber>>()",
-                                    ],
-                                },
-                                "Fiber::yield_": {
-                                    "kind": "method",
-                                    "callable_signatures": [
-                                        "void()",
-                                    ],
-                                },
-                                "fiber_sleep": {
-                                    "kind": "function",
-                                    "callable_signatures": [
-                                        "void(uint64_t)",
-                                    ],
-                                },
-                                "pollworker_is_on_poll_thread": {
-                                    "kind": "function",
-                                    "callable_signatures": [
-                                        "bool()",
-                                    ],
-                                },
-                                "PollThread": {
-                                    "kind": "type",
-                                    "callable_signatures": [
-                                    ],
-                                },
-                                "PollThread::add_proxy": {
-                                    "kind": "method",
-                                    "callable_signatures": [
-                                        "void(PollableProxy)",
-                                    ],
-                                },
-                                "PollThread::update_mode": {
-                                    "kind": "method",
-                                    "callable_signatures": [
-                                        "void(int32_t,int32_t)",
-                                    ],
-                                },
-                                "PollThread::create": {
-                                    "kind": "method",
-                                    "callable_signatures": [
-                                        "rusty::Arc<PollThread>()",
-                                    ],
-                                },
-                                "PollThread::add": {
-                                    "kind": "method",
-                                    "callable_signatures": [
-                                        "void(rusty::Arc<Job>)",
-                                    ],
-                                },
-                                "fiber_create_run_impl": {
-                                    "kind": "function",
-                                    "callable_signatures": [
-                                        "rusty::Rc<Fiber>(rusty::Function<void()>,const char*,int64_t)",
-                                    ],
-                                },
-                            },
-                        },
-                        "srpc::debugging": {
-                            "cpp_module": "srpc.debugging",
-                            "namespace": "srpc",
-                            "symbols": {
-                                "verify": {
-                                    "kind": "function_template",
-                                    "callable_signatures": [
-                                        "void(bool)",
-                                    ],
-                                },
-                            },
-                        },
-                        "srpc::rand": {
-                            "cpp_module": "srpc.rand",
-                            "namespace": "srpc",
-                            "symbols": {
-                                "RandomGenerator::rand": {
-                                    "kind": "function",
-                                    "callable_signatures": [
-                                        "int32_t(int32_t,int32_t)",
-                                    ],
-                                },
-                            },
-                        },
-                        "srpc::errors": {
-                            "cpp_module": "srpc.errors",
-                            "namespace": "srpc",
-                        },
-                        "srpc::serializable": {
-                            "cpp_module": "srpc.serializable",
-                            "namespace": "srpc",
-                            "symbols": {
-                                "make_sink_proxy_buffer": {
-                                    "kind": "function",
-                                    "callable_signatures": [
-                                        "SinkProxy(BufferSink*)",
-                                    ],
-                                },
-                                "make_source_proxy_buffer": {
-                                    "kind": "function",
-                                    "callable_signatures": [
-                                        "SourceProxy(BufferSource*)",
-                                    ],
-                                },
-                                "serializable_holder_of": {
-                                    "kind": "function_template",
-                                    "callable_signatures": [
-                                        "const Holder<T>*(const SerializableBase*)",
-                                    ],
-                                },
-                                "SerializableRegistry::create": {
-                                    "kind": "function",
-                                    "callable_signatures": [
-                                        "SerializableProxy(int32_t)",
-                                    ],
-                                },
-                                "BinaryWriteArchive": {
-                                    "kind": "type",
-                                },
-                                "BinaryReadArchive": {
-                                    "kind": "type",
-                                },
-                                "SerializableBase": {
-                                    "kind": "type",
-                                },
-                                "details::SerializableSharedPtrHolder": {
-                                    "kind": "type_template_constructor",
-                                    "callable_signatures": [
-                                        "details::SerializableSharedPtrHolder<T>(rusty::Arc<T>)",
-                                    ],
-                                },
-                                "Serialize_::serialize": {
-                                    "kind": "function_template",
-                                    "callable_signatures": [
-                                        "void(const std::string&,BinaryWriteArchive&)",
-                                    ],
-                                },
-                                "Deserialize_::deserialize": {
-                                    "kind": "function_template",
-                                    "callable_signatures": [
-                                        "void(std::string&,BinaryReadArchive&)",
-                                    ],
-                                },
-                            },
-                        },
-                        "rusty": {
-                            "cpp_module": "rusty",
-                            "namespace": "rusty",
-                            "symbols": {
-                                "Arc::get": {
-                                    "kind": "method",
-                                    "callable_signatures": [
-                                        "const T*()",
-                                    ],
-                                },
-                                "arc_make_default": {
-                                    "kind": "function_template",
-                                    "callable_signatures": [
-                                        "rusty::Arc<T>()",
-                                    ],
-                                },
-                                "os::fd::OwnedFd": {
-                                    "kind": "type",
-                                    "callable_signatures": [
-                                    ],
-                                },
-                                "os::fd::OwnedFd::from_raw_fd": {
-                                    "kind": "function",
-                                    "callable_signatures": [
-                                        "OwnedFd(int)",
-                                    ],
-                                },
-                                "srpc_adl_serialize": {
-                                    "kind": "function_template",
-                                    "callable_signatures": [
-                                        "void(const T&,Archive&)",
-                                    ],
-                                },
-                                "srpc_adl_deserialize": {
-                                    "kind": "function_template",
-                                    "callable_signatures": [
-                                        "void(T&,Archive&)",
-                                    ],
-                                },
-                                "srpc_sink_write": {
-                                    "kind": "function_template",
-                                    "callable_signatures": [
-                                        "void(Sink&,const uint8_t*,size_t)",
-                                    ],
-                                },
-                                "srpc_source_read": {
-                                    "kind": "function_template",
-                                    "callable_signatures": [
-                                        "size_t(Source&,uint8_t*,size_t)",
-                                    ],
-                                },
-                                "srpc_arc_default": {
-                                    "kind": "function_template",
-                                    "callable_signatures": [
-                                        "rusty::Arc<T>()",
-                                    ],
-                                },
-                                "srpc_arc_copy": {
-                                    "kind": "function_template",
-                                    "callable_signatures": [
-                                        "rusty::Arc<T>(const T&)",
-                                    ],
-                                },
-                                "srpc_holder_proxy": {
-                                    "kind": "function_template",
-                                    "callable_signatures": [
-                                        "srpc::SerializableProxy(rusty::Arc<T>)",
-                                    ],
-                                },
-                                "srpc_factory_from_callable": {
-                                    "kind": "function_template",
-                                    "callable_signatures": [
-                                        "rusty::Function<R()>(Callable)",
-                                    ],
-                                },
-                            },
-                        },
-                        "std": {
-                            "cpp_module": "std",
-                            "namespace": "std",
-                            "symbols": {
-                                "make_pair": {
-                                    "kind": "function_template",
-                                    "callable_signatures": [
-                                        "std::pair<A,B>(A,B)",
-                                    ],
-                                },
-                                "cout": {
-                                    "kind": "object",
-                                    "callable_signatures": [
-                                    ],
-                                },
-                            },
-                        },
-                    },
-                }
+                {'version': 1,
+                 'modules': {'srpc::basetypes': {'cpp_module': 'srpc.basetypes',
+                                                 'namespace': 'srpc',
+                                                 'symbols': {'SparseInt::buf_size': {'kind': 'function',
+                                                                                     'callable_signatures': ['size_t(uint8_t)']},
+                                                             'SparseInt::dump32': {'kind': 'function',
+                                                                                   'callable_signatures': ['size_t(int32_t,uint8_t*)']},
+                                                             'SparseInt::dump64': {'kind': 'function',
+                                                                                   'callable_signatures': ['size_t(int64_t,uint8_t*)']},
+                                                             'SparseInt::load32': {'kind': 'function',
+                                                                                   'callable_signatures': ['int32_t(const '
+                                                                                                           'uint8_t*)']},
+                                                             'SparseInt::load64': {'kind': 'function',
+                                                                                   'callable_signatures': ['int64_t(const '
+                                                                                                           'uint8_t*)']},
+                                                             'Time': {'kind': 'type',
+                                                                      'callable_signatures': []},
+                                                             'Time::now': {'kind': 'function',
+                                                                           'callable_signatures': ['uint64_t(bool)']}}},
+                             'srpc::logging': {'cpp_module': 'srpc.logging',
+                                               'namespace': 'srpc',
+                                               'symbols': {'log_line': {'kind': 'function',
+                                                                        'callable_signatures': ['void(int32_t,int32_t,const '
+                                                                                                'int8_t*,std::string_view)']}}},
+                             'srpc::reactor': {'cpp_module': 'srpc.reactor',
+                                               'namespace': 'srpc',
+                                               'symbols': {'create_sp_box_event': {'kind': 'function_template',
+                                                                                   'callable_signatures': ['rusty::Arc<BoxEvent<T>>()']},
+                                                           'Fiber': {'kind': 'type',
+                                                                     'callable_signatures': []},
+                                                           'IntEvent': {'kind': 'type',
+                                                                        'callable_signatures': []},
+                                                           'create_sp_int_event': {'kind': 'function',
+                                                                                   'callable_signatures': ['rusty::Arc<IntEvent>(int32_t)']},
+                                                           'IntEvent::set': {'kind': 'method',
+                                                                             'callable_signatures': ['int32_t(int32_t)']},
+                                                           'IntEvent::wait': {'kind': 'method',
+                                                                              'callable_signatures': ['void()']},
+                                                           'Fiber::current_fiber': {'kind': 'method',
+                                                                                    'callable_signatures': ['rusty::Option<rusty::Rc<Fiber>>()']},
+                                                           'Fiber::yield_': {'kind': 'method',
+                                                                             'callable_signatures': ['void()']},
+                                                           'fiber_sleep': {'kind': 'function',
+                                                                           'callable_signatures': ['void(uint64_t)']},
+                                                           'pollworker_is_on_poll_thread': {'kind': 'function',
+                                                                                            'callable_signatures': ['bool()']},
+                                                           'PollThread': {'kind': 'type',
+                                                                          'callable_signatures': []},
+                                                           'PollThread::add_proxy': {'kind': 'method',
+                                                                                     'callable_signatures': ['void(PollableProxy)']},
+                                                           'PollThread::update_mode': {'kind': 'method',
+                                                                                       'callable_signatures': ['void(int32_t,int32_t)']},
+                                                           'PollThread::create': {'kind': 'method',
+                                                                                  'callable_signatures': ['rusty::Arc<PollThread>()']},
+                                                           'PollThread::add': {'kind': 'method',
+                                                                               'callable_signatures': ['void(rusty::Arc<Job>)']},
+                                                           'fiber_create_run_impl': {'kind': 'function',
+                                                                                     'callable_signatures': ['rusty::Rc<Fiber>(rusty::Function<void()>,const '
+                                                                                                             'char*,int64_t)']}}},
+                             'srpc::debugging': {'cpp_module': 'srpc.debugging',
+                                                 'namespace': 'srpc',
+                                                 'symbols': {'verify': {'kind': 'function_template',
+                                                                        'callable_signatures': ['void(bool)']}}},
+                             'srpc::rand': {'cpp_module': 'srpc.rand',
+                                            'namespace': 'srpc',
+                                            'symbols': {'RandomGenerator::rand': {'kind': 'function',
+                                                                                  'callable_signatures': ['int32_t(int32_t,int32_t)']}}},
+                             'srpc::errors': {'cpp_module': 'srpc.errors', 'namespace': 'srpc'},
+                             'srpc::serializable': {'cpp_module': 'srpc.serializable',
+                                                    'namespace': 'srpc',
+                                                    'symbols': {'make_sink_proxy_buffer': {'kind': 'function',
+                                                                                           'callable_signatures': ['SinkProxy(BufferSink*)']},
+                                                                'make_source_proxy_buffer': {'kind': 'function',
+                                                                                             'callable_signatures': ['SourceProxy(BufferSource*)']},
+                                                                'serializable_holder_of': {'kind': 'function_template',
+                                                                                           'callable_signatures': ['const '
+                                                                                                                   'Holder<T>*(const '
+                                                                                                                   'SerializableBase*)']},
+                                                                'SerializableRegistry::create': {'kind': 'function',
+                                                                                                 'callable_signatures': ['SerializableProxy(int32_t)']},
+                                                                'BinaryWriteArchive': {'kind': 'type'},
+                                                                'BinaryReadArchive': {'kind': 'type'},
+                                                                'SerializableBase': {'kind': 'type'},
+                                                                'details::SerializableSharedPtrHolder': {'kind': 'type_template_constructor',
+                                                                                                         'callable_signatures': ['details::SerializableSharedPtrHolder<T>(rusty::Arc<T>)']},
+                                                                'Serialize_::serialize': {'kind': 'function_template',
+                                                                                          'callable_signatures': ['void(const '
+                                                                                                                  'std::string&,BinaryWriteArchive&)']},
+                                                                'Deserialize_::deserialize': {'kind': 'function_template',
+                                                                                              'callable_signatures': ['void(std::string&,BinaryReadArchive&)']}}},
+                             'rusty': {'cpp_module': 'rusty',
+                                       'namespace': 'rusty',
+                                       'symbols': {'Arc::get': {'kind': 'method',
+                                                                'callable_signatures': ['const T*()']},
+                                                   'os::fd::OwnedFd': {'kind': 'type',
+                                                                       'callable_signatures': []},
+                                                   'os::fd::OwnedFd::from_raw_fd': {'kind': 'function',
+                                                                                    'callable_signatures': ['OwnedFd(int)']}}}}}
             )
 
     def test_manifest_names_the_canonical_rust_sources(self) -> None:
@@ -1256,11 +822,16 @@ class CheckedInCanaryTests(unittest.TestCase):
         # and committed replay have completed.
         # 13681 -> 13675: -6, retiring SparseInt's 0xFE length-8 rung, which
         # wrote eight payload bytes and reported a length of seven's worth, so
-        # the low byte never reached the wire. val_size loses its 8 arm (-2)
-        # and dump64 loses the `if n == 8` block (-4); the band folds into the
-        # nine-byte 0xFF form, which any old receiver already decodes. Matches
-        # upstream e113960af, so a subtree pull resolves to their ledger entry.
-        self.assertEqual(canonical_lines, 13675)
+        # the low byte never reached the wire. Matches upstream e113960af.
+        # 13675 -> 14879: +1204, the subtree pull 683c506ef..99f625d33. 141
+        # upstream commits, of which the load-bearing ones here are the rustc
+        # lane becoming executable (a real poll thread, real TCP, working
+        # serializable proxies), the retirement of the facade mocks that
+        # shadowed canonical Rust, and the replacement of
+        # reactor/epoll_platform_linux.cc -- a C++ carrier whose symbols were
+        # module-mangled and therefore unreachable from Rust -- with the
+        # plain-C reactor/srpc_epoll.c.
+        self.assertEqual(canonical_lines, 14879)
 
     def test_canonical_source_validation_never_normalizes_owned_bytes(self) -> None:
         payload = b"pub fn canonical() {}\n\n"
@@ -1346,45 +917,43 @@ class CheckedInCanaryTests(unittest.TestCase):
         # and any new unsafe anywhere moves a number. Columns are
         #   (#[allow(unsafe_code)], #![allow(unsafe_code)], unsafe extern,
         #    unsafe fn, unsafe {, unsafe impl, unsafe trait)
-        unsafe_census = {
-            "base/basetypes.rs": (10, 0, 1, 4, 9, 0, 0),
-            "base/callback_wrapper.rs": (0, 0, 0, 0, 0, 0, 0),
-            "rpc/internal_protocol.rs": (0, 0, 0, 0, 0, 0, 0),
-            "misc/stat.rs": (0, 0, 0, 0, 0, 0, 0),
-            "rpc/errors.rs": (0, 0, 0, 0, 0, 0, 0),
-            "rpc/connection_metrics.rs": (0, 0, 0, 0, 0, 0, 0),
-            "rpc/completion_tracker.rs": (0, 0, 0, 0, 0, 0, 0),
-            "misc/rand.rs": (3, 0, 1, 0, 2, 0, 0),
-            "rpc/request_options.rs": (0, 0, 0, 0, 0, 0, 0),
-            "rpc/reconnect_policy.rs": (0, 0, 0, 0, 0, 0, 0),
-            "rpc/circuit_breaker.rs": (2, 0, 1, 0, 1, 0, 0),
-            "rpc/connection_state.rs": (0, 0, 0, 0, 0, 0, 0),
-            "rpc/heartbeat.rs": (0, 0, 0, 0, 0, 0, 0),
-            "rpc/request_queue.rs": (0, 0, 0, 0, 0, 0, 0),
-            "rpc/load_balancer.rs": (0, 0, 0, 0, 0, 0, 0),
-            "base/debugging.rs": (4, 0, 1, 1, 8, 0, 0),
-            "base/logging.rs": (5, 0, 1, 2, 7, 0, 0),
-            "rpc/utils.rs": (5, 0, 1, 1, 5, 0, 0),
-            "rpc/frame_codec.rs": (5, 0, 0, 3, 4, 0, 0),
-            "misc/serializable.rs": (43, 0, 3, 14, 56, 0, 0),
-            "misc/serializable_envelope.rs": (8, 0, 0, 2, 16, 0, 0),
-            "reactor/epoll_wrapper.rs": (6, 0, 2, 0, 5, 0, 0),
-            "base/misc.rs": (5, 0, 1, 0, 2, 2, 2),
-            "rpc/pollable_proxy.rs": (0, 0, 0, 0, 0, 0, 0),
-            "reactor/reactor.rs": (0, 0, 3, 0, 66, 0, 0),
-            "reactor/future.rs": (3, 0, 0, 0, 3, 0, 0),
-            "rpc/idempotency.rs": (4, 0, 0, 0, 4, 0, 0),
-            "reactor/fiber.rs": (0, 1, 0, 0, 10, 0, 0),
-            "rpc/channel.rs": (2, 0, 0, 1, 0, 2, 2),
-            "rpc/callbacks.rs": (0, 0, 0, 0, 0, 0, 0),
-            "rpc/inmemory_channel.rs": (1, 1, 0, 3, 4, 1, 0),
-            "rpc/fiber_channel.rs": (0, 0, 0, 1, 7, 0, 0),
-            "base/threading.rs": (15, 0, 1, 13, 14, 0, 0),
-            "misc/any_message.rs": (1, 0, 0, 0, 8, 0, 0),
-            "rpc/tcp_channel.rs": (1, 0, 0, 6, 33, 5, 0),
-            "rpc/server.rs": (1, 1, 1, 7, 44, 4, 0),
-            "rpc/client.rs": (2, 1, 0, 2, 25, 2, 0),
-        }
+        unsafe_census = {'base/basetypes.rs': (10, 0, 1, 4, 9, 0, 0),
+         'base/callback_wrapper.rs': (0, 0, 0, 0, 0, 0, 0),
+         'rpc/internal_protocol.rs': (0, 0, 0, 0, 0, 0, 0),
+         'misc/stat.rs': (0, 0, 0, 0, 0, 0, 0),
+         'rpc/errors.rs': (0, 0, 0, 0, 0, 0, 0),
+         'rpc/connection_metrics.rs': (0, 0, 0, 0, 0, 0, 0),
+         'rpc/completion_tracker.rs': (0, 0, 0, 0, 0, 0, 0),
+         'misc/rand.rs': (3, 0, 1, 0, 2, 0, 0),
+         'rpc/request_options.rs': (0, 0, 0, 0, 0, 0, 0),
+         'rpc/reconnect_policy.rs': (0, 0, 0, 0, 0, 0, 0),
+         'rpc/circuit_breaker.rs': (2, 0, 1, 0, 1, 0, 0),
+         'rpc/connection_state.rs': (0, 0, 0, 0, 0, 0, 0),
+         'rpc/heartbeat.rs': (0, 0, 0, 0, 0, 0, 0),
+         'rpc/request_queue.rs': (0, 0, 0, 0, 0, 0, 0),
+         'rpc/load_balancer.rs': (0, 0, 0, 0, 0, 0, 0),
+         'rpc/utils.rs': (6, 0, 1, 1, 11, 0, 0),
+         'rpc/frame_codec.rs': (5, 0, 0, 3, 4, 0, 0),
+         'misc/serializable.rs': (46, 0, 1, 18, 43, 0, 0),
+         'misc/serializable_envelope.rs': (8, 0, 0, 2, 13, 0, 0),
+         'reactor/future.rs': (0, 0, 0, 0, 0, 0, 0),
+         'base/logging.rs': (4, 0, 1, 2, 6, 0, 0),
+         'rpc/idempotency.rs': (4, 0, 0, 0, 4, 0, 0),
+         'reactor/fiber.rs': (0, 1, 0, 0, 0, 0, 0),
+         'base/misc.rs': (5, 0, 1, 0, 2, 2, 2),
+         'rpc/channel.rs': (2, 0, 0, 1, 0, 0, 1),
+         'reactor/epoll_wrapper.rs': (9, 0, 1, 0, 8, 0, 0),
+         'rpc/pollable_proxy.rs': (0, 0, 0, 0, 0, 0, 0),
+         'rpc/callbacks.rs': (0, 0, 0, 0, 0, 0, 0),
+         'rpc/inmemory_channel.rs': (1, 1, 0, 3, 4, 1, 0),
+         'rpc/fiber_channel.rs': (0, 0, 0, 1, 2, 0, 0),
+         'base/threading.rs': (15, 0, 1, 13, 14, 0, 0),
+         'base/debugging.rs': (4, 0, 1, 1, 8, 0, 0),
+         'misc/any_message.rs': (1, 0, 0, 0, 3, 0, 0),
+         'rpc/tcp_channel.rs': (1, 0, 0, 6, 56, 5, 0),
+         'reactor/reactor.rs': (1, 0, 4, 0, 38, 0, 0),
+         'rpc/server.rs': (1, 1, 1, 5, 38, 0, 0),
+         'rpc/client.rs': (0, 1, 0, 3, 17, 1, 0)}
         measured = {}
         for module in DRIVER.load_manifest(CRATE, CRATE / "rust-modules.toml"):
             text = module.output.read_text(encoding="utf-8")
@@ -1479,17 +1048,36 @@ class CheckedInCanaryTests(unittest.TestCase):
             self.assertIn(symbol, basetypes)
 
         utils = utils_path.read_text(encoding="utf-8")
-        self.assertEqual(utils.count("#[allow(unsafe_code)]"), 5)
+        # 5 -> 6 allowances and 5 -> 11 unsafe blocks across the subtree pull
+        # (683c506ef..99f625d33). All of them are the same audited C boundary
+        # this test exists to fence: platform address layouts and individual
+        # socket calls in the port scan and the hostname lookup. The shape the
+        # test really pins is unchanged -- one extern "C" block, one adopt, one
+        # Safety doc -- so the widening is in the C calls, not in the surface.
+        self.assertEqual(utils.count("#[allow(unsafe_code)]"), 6)
         self.assertEqual(utils.count('unsafe extern "C"'), 1)
         self.assertEqual(utils.count("pub unsafe fn adopt"), 1)
-        self.assertEqual(utils.count("unsafe {"), 5)
+        self.assertEqual(utils.count("unsafe {"), 11)
         self.assertEqual(utils.count("/// # Safety"), 1)
         self.assertIn("    info_: *mut LegacyAddrInfo,", utils)
         self.assertIn("    owned_: Cell<bool>,", utils)
         self.assertNotIn("pub info_:", utils)
         self.assertNotIn("pub owned_:", utils)
-        for symbol in ("freeaddrinfo", "srpc_find_open_port"):
+        # srpc_find_open_port is gone: upstream moved the port scan INTO Rust
+        # (scan_open_port), so the C boundary is now the individual socket
+        # primitives it calls rather than one opaque C function. That is the
+        # direction this gate wants, so the list follows it.
+        for symbol in (
+            "freeaddrinfo",
+            "srpc_net_socket_open",
+            "srpc_net_resolve_any",
+            "srpc_net_bind_port",
+            "srpc_net_socket_name_status",
+            "srpc_net_close",
+            "srpc_net_hostname",
+        ):
             self.assertIn(symbol, utils)
+        self.assertNotIn("srpc_find_open_port", utils)
 
         frame_codec = frame_codec_path.read_text(encoding="utf-8")
         self.assertEqual(frame_codec.count("#[allow(unsafe_code"), 5)
